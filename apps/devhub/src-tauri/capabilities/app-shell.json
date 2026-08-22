@@ -1,0 +1,11 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "app-shell",
+  "description": "Permissions for the native DevHub application shell only.",
+  "webviews": ["app-shell"],
+  "permissions": [
+    "core:default",
+    "allow-get-shell-snapshot",
+    "allow-mark-shell-ready"
+  ]
+}

@@ -1,0 +1,8 @@
+packages:
+  - "apps/*"
+
+# pnpm 11 blocks dependency lifecycle scripts by default. Vite's native
+# transformer is the only dependency whose install script is required for
+# deterministic local builds.
+allowBuilds:
+  esbuild: true

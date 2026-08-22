@@ -6,6 +6,12 @@ The completed decision map is [Make the DevHub MVP implementation-ready](wayfind
 
 All production implementation and production-file corrections are delegated to subagents using `gpt-5.6-luna` with `reasoning_effort=max`. The primary agent owns architecture, task dispatch, review, independent verification, and corrective feedback. It does not patch production code directly.
 
+The repository is developed local-first. Initial Git history, production builds,
+and product verification run in the local checkout. Public repository creation,
+hosted CI/CD validation (including the `macos-15` OpenVSCode provenance run),
+tag, and release are final-wave activities; postponing them does not weaken any
+technical requirement or release gate.
+
 Normative handoff details are in `CONFIGURATION.md`, `IDENTITY-AND-LIFECYCLE.md`, `PROVIDER-CONTRACTS.md`, `IMPLEMENTATION-OWNERSHIP.md`, and `ACCEPTANCE-METHOD.md`. Implementers do not invent alternatives to those contracts.
 
 Throwaway feasibility artifacts stay below `prototypes/` and are never promoted into production by copying structure blindly.
@@ -27,6 +33,11 @@ Parallel tasks may not share production-file ownership. Interface changes are re
 
 Produce a reproducible build of one pinned upstream stable tag without source modifications. Verify artifact architecture, `--help`, authenticated loopback startup, folderless URL, folder URL, WebSocket connection, and shutdown. Document toolchain, licenses, build cache, and CI feasibility.
 
+The local Apple Silicon feasibility and provenance preparation is the prerequisite
+for production implementation. The hosted `macos-15` run is intentionally
+deferred to Wave 6 and remains `PARTIAL` until that run completes; a local run
+must not be described as hosted evidence.
+
 ### F0.2 Real Workbench host
 
 Replace prototype pages with the pinned OpenVSCode build. Verify two child WKWebViews, shared stable origin/storage, separate Workspace identity, hide/show without reload, resize, focus, ten-minute hidden continuity, and hot exit.
@@ -43,13 +54,16 @@ Package a minimal public-API Bridge extension. Prove readiness, identity, dirty 
 
 Against isolated `devhub-session` and dedicated configured tmux socket servers (default name `devhub`), verify Herdr bootstrap races, protocol mismatch, Codex/Claude profiles, exit latency and pane cleanup, controller detach/takeover, tmux external attach, recreation, and process inspection.
 
-Wave 0 is a hard gate. Later production waves do not begin around a failed invariant.
+The local portion of Wave 0 is a hard gate: later production waves do not begin
+around a failed local invariant. Hosted CI evidence is a final release gate and
+is not required to continue local product implementation after local feasibility
+preparation has passed.
 
 ## Wave 1 — repository and contracts
 
 ### R1.1 Repository foundation
 
-Initialize Git; add MIT license, readme, contribution/build instructions, the accepted provider/dependency pins, pnpm workspace, Rust toolchain, Tauri/React skeleton, formatting/linting, unit-test runners, and non-release CI.
+Initialize Git; add MIT license, readme, contribution/build instructions, the accepted provider/dependency pins, pnpm workspace, Rust toolchain, Tauri/React skeleton, formatting/linting, unit-test runners, and local smoke checks. Do not create a remote, push, tag, release, or require hosted CI for this task.
 
 ### R1.2 Domain contracts
 
@@ -153,7 +167,7 @@ Audit loopback binding, tokens, file modes, WebView capabilities, logging redact
 
 ### L6.1 Packaging
 
-Produce the ad-hoc-signed Apple Silicon app, zip, checksum, notices, install instructions, clean-machine launch smoke, and release workflow on `macos-15`.
+Produce the ad-hoc-signed Apple Silicon app, zip, checksum, notices, install instructions, clean-machine launch smoke, hosted F0.1 provenance run, and release workflow on `macos-15`.
 
 ### L6.2 Public repository
 
