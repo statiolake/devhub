@@ -5,7 +5,7 @@ Production tasks use non-overlapping file ownership. Paths below are the intende
 | Owner task | Exclusive production paths |
 | --- | --- |
 | R1.1 Repository foundation | root manifests, lockfiles, toolchain files, `.github/workflows/ci.yml`, `src-tauri/tauri.conf.json` |
-| R1.2 Domain contracts | `src-tauri/src/domain/**`, `src-tauri/src/snapshot/**` |
+| R1.2 Domain contracts | `crates/devhub-app-core/src/domain.rs`, `crates/devhub-app-core/src/snapshot.rs`, and their core-crate re-exports in `crates/devhub-app-core/src/lib.rs` |
 | R1.3 AppCoordinator contracts | `src-tauri/src/application/**`, `src-tauri/src/ports/**`, `docs/BRIDGE-PROTOCOL.md`, generated IPC/Bridge schema configuration |
 | P2.1 ConfigStore | `src-tauri/src/config/**`, configuration fixtures |
 | P2.2 StateStore | `src-tauri/src/state/**`, state fixtures |

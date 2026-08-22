@@ -2,8 +2,16 @@
 
 //! Rust-owned state for the native DevHub application shell.
 //!
-//! This crate intentionally stops at the shell seam.  It does not know about
-//! Workspaces, providers, editors, terminals, or presentation state.
+//! The pure [`domain`] and [`snapshot`] modules own Workspace, Agent,
+//! navigation, lifecycle, and immutable UI projection rules. The shell seam
+//! below remains deliberately separate: provider/editor/terminal adapters and
+//! Tauri command wiring do not enter the pure model.
+
+pub mod domain;
+pub mod snapshot;
+
+pub use domain::*;
+pub use snapshot::*;
 
 use std::fmt;
 
