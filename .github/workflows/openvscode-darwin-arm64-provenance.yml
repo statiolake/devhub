@@ -1,0 +1,106 @@
+name: OpenVSCode Darwin arm64 provenance
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/openvscode-darwin-arm64-provenance.yml"
+      - "scripts/openvscode-darwin-arm64-provenance.py"
+      - "provenance/openvscode-darwin-arm64.json"
+
+permissions:
+  contents: read
+
+jobs:
+  openvscode-darwin-arm64:
+    # macos-15 is the standard arm64 GitHub-hosted image.
+    runs-on: macos-15
+    timeout-minutes: 90
+    env:
+      OPENVSCODE_BUILD_CACHE_KEY: openvscode-npm-macos-15-arm64-1.109.5-4ffe2270-node-22.21.1
+      NPM_CONFIG_CACHE: ${{ runner.temp }}/openvscode-npm-cache
+
+    steps:
+      - name: Check out DevHub foundation
+        uses: actions/checkout@v4
+
+      - name: Cache npm downloads
+        id: npm-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/openvscode-npm-cache
+          key: ${{ env.OPENVSCODE_BUILD_CACHE_KEY }}
+
+      - name: Record runner identity
+        run: |
+          set -euo pipefail
+          test "$(uname -s)" = Darwin
+          test "$(uname -m)" = arm64
+          sw_vers
+          xcodebuild -version
+          xcrun --sdk macosx --show-sdk-version
+
+      - name: Build and verify upstream OpenVSCode
+        id: provenance
+        env:
+          DEVHUB_PROVENANCE_ENV: github-macos-15
+          DEVHUB_BUILD_CACHE_KEY: ${{ env.OPENVSCODE_BUILD_CACHE_KEY }}
+          DEVHUB_BUILD_CACHE_RESTORED: ${{ steps.npm-cache.outputs.cache-hit || 'false' }}
+          GITHUB_ACTIONS: true
+        run: |
+          set -euo pipefail
+          python3 scripts/openvscode-darwin-arm64-provenance.py \
+            --work-root "$RUNNER_TEMP/openvscode-darwin-arm64" \
+            --ledger "$RUNNER_TEMP/openvscode-darwin-arm64/ledger.json"
+          cp "$RUNNER_TEMP/openvscode-darwin-arm64/ledger.json" provenance/openvscode-darwin-arm64-ci.json
+          artifact_name="$(cat "$RUNNER_TEMP/openvscode-darwin-arm64/artifact-root.txt")"
+          printf 'artifact_name=%s\n' "$artifact_name" >> "$GITHUB_OUTPUT"
+          printf 'bundle_sha256=%s\n' "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["artifact"]["bundle_sha256"])' "$RUNNER_TEMP/openvscode-darwin-arm64/ledger.json")" >> "$GITHUB_OUTPUT"
+
+      - name: Package reproducibility evidence
+        id: package
+        env:
+          ARTIFACT_NAME: ${{ steps.provenance.outputs.artifact_name }}
+        run: |
+          set -euo pipefail
+          evidence_root="$RUNNER_TEMP/openvscode-darwin-arm64"
+          tar -C "$evidence_root" -czf "$RUNNER_TEMP/openvscode-darwin-arm64-bundle.tgz" "$ARTIFACT_NAME"
+          shasum -a 256 "$RUNNER_TEMP/openvscode-darwin-arm64-bundle.tgz" | awk '{print "artifact_archive_sha256=" $1}' | tee -a "$GITHUB_OUTPUT"
+
+      - name: Upload bundle and content-free ledger
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: openvscode-darwin-arm64-${{ github.run_id }}
+          retention-days: 7
+          if-no-files-found: error
+          path: |
+            ${{ runner.temp }}/openvscode-darwin-arm64-bundle.tgz
+            ${{ runner.temp }}/openvscode-darwin-arm64/ledger.json
+
+      - name: Publish machine-readable run summary
+        env:
+          BUNDLE_SHA256: ${{ steps.provenance.outputs.bundle_sha256 }}
+          ARCHIVE_SHA256: ${{ steps.package.outputs.artifact_archive_sha256 }}
+          ARTIFACT_DIGEST: ${{ steps.upload.outputs.artifact-digest }}
+        run: |
+          set -euo pipefail
+          {
+            echo "## F0.1 OpenVSCode Darwin arm64"
+            echo
+            echo "- status: PROVEN"
+            echo "- source: gitpod-io/openvscode-server ${OPENVSCODE_TAG:-openvscode-server-v1.109.5}"
+            echo "- commit: 4ffe2270acdf711bbefecc3e8c79f4b3631640e5"
+            echo "- bundle_sha256: ${BUNDLE_SHA256}"
+            echo "- artifact_archive_sha256: ${ARCHIVE_SHA256}"
+            echo "- Actions artifact digest: ${ARTIFACT_DIGEST}"
+            echo "- Actions run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Remove temporary source, bundle, and runtime state
+        if: ${{ always() }}
+        run: |
+          set -euo pipefail
+          rm -rf "$RUNNER_TEMP/openvscode-darwin-arm64" "$RUNNER_TEMP/openvscode-darwin-arm64-bundle.tgz"
