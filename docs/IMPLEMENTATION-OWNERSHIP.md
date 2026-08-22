@@ -6,7 +6,7 @@ Production tasks use non-overlapping file ownership. Paths below are the intende
 | --- | --- |
 | R1.1 Repository foundation | root manifests, lockfiles, toolchain files, `.github/workflows/ci.yml`, `src-tauri/tauri.conf.json` |
 | R1.2 Domain contracts | `crates/devhub-app-core/src/domain.rs`, `crates/devhub-app-core/src/snapshot.rs`, and their core-crate re-exports in `crates/devhub-app-core/src/lib.rs` |
-| R1.3 AppCoordinator contracts | `src-tauri/src/application/**`, `src-tauri/src/ports/**`, `docs/BRIDGE-PROTOCOL.md`, generated IPC/Bridge schema configuration |
+| R1.3 AppCoordinator and Bridge contracts | `crates/devhub-app-core/src/application/**`, `crates/devhub-app-core/src/ports/**`, `crates/devhub-app-core/src/bridge/**`, `crates/devhub-app-core/src/bin/generate_bridge_contract.rs`, `contracts/bridge/**`, `apps/devhub/src/generated/bridge/**`, `scripts/check-bridge-contract.sh`, `scripts/generate-bridge-contract.sh`, `docs/BRIDGE-PROTOCOL.md` |
 | P2.1 ConfigStore | `src-tauri/src/config/**`, configuration fixtures |
 | P2.2 StateStore | `src-tauri/src/state/**`, state fixtures |
 | U2.3 App Shell | `src/app/**`, `src/components/shell/**`, `src/components/sidebar/**` |
@@ -23,7 +23,7 @@ Production tasks use non-overlapping file ownership. Paths below are the intende
 | Q5.3 Brand | `assets/icon-master.svg`, `src-tauri/icons/**` |
 | L6.1 Packaging | `.github/workflows/release.yml`, packaging scripts, notices |
 
-`src/generated/**` is generator-owned and never edited manually. Rust domain/IPC types generate frontend bindings in a deterministic check; consumers do not duplicate those contracts.
+`apps/devhub/src/generated/bridge/**` is generator-owned and never edited manually. Rust Bridge types generate the committed TypeScript bindings, JSON Schema, and fixtures in a deterministic check; consumers do not duplicate those contracts. Downstream E3.5 consumes this frozen generated contract and must not regenerate or hand-edit it.
 
 ## Merge barriers
 

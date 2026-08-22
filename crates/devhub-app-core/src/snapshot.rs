@@ -299,6 +299,13 @@ impl AppModel {
         self.workspaces.iter().find(|workspace| workspace.id() == id)
     }
 
+    /// Returns the owning Workspace for an Agent without exposing provider
+    /// identity or allowing callers to mutate the aggregate behind the
+    /// coordinator seam.
+    pub fn workspace_for_agent(&self, agent_id: &AgentId) -> Option<&Workspace> {
+        self.workspaces.iter().find(|workspace| workspace.agent(agent_id).is_some())
+    }
+
     pub(crate) fn workspace_mut(&mut self, id: &WorkspaceId) -> Option<&mut Workspace> {
         self.workspaces.iter_mut().find(|workspace| workspace.id() == id)
     }
@@ -462,6 +469,39 @@ impl AppModel {
         Ok(())
     }
 
+    /// Applies a complete provider reconciliation only after every referenced
+    /// Agent identity has been validated. This keeps a malformed aggregate
+    /// from partially mutating the sole application model owner.
+    pub fn reconcile_agents(
+        &mut self,
+        reconciliation: &super::domain::AgentReconciliation,
+    ) -> Result<(), DomainError> {
+        for observation in reconciliation.observations() {
+            if self.agent(observation.agent_id()).is_none() {
+                return Err(DomainError::new(DomainErrorCode::UnknownAgent));
+            }
+        }
+        let exited =
+            reconciliation.exited().iter().cloned().collect::<std::collections::BTreeSet<_>>();
+        for agent_id in &exited {
+            if self.agent(agent_id).is_none() {
+                return Err(DomainError::new(DomainErrorCode::UnknownAgent));
+            }
+        }
+
+        for observation in reconciliation.observations() {
+            if exited.contains(observation.agent_id()) {
+                continue;
+            }
+            self.set_agent_status(observation.agent_id(), observation.status())?;
+            self.set_agent_runtime_health(observation.agent_id(), observation.runtime_health())?;
+        }
+        for agent_id in exited {
+            self.agent_exited(&agent_id)?;
+        }
+        Ok(())
+    }
+
     pub fn request_agent_stop(&mut self, agent_id: &AgentId) -> Result<(), DomainError> {
         let changed = self
             .agent_mut(agent_id)
@@ -579,8 +619,16 @@ impl AppModel {
                             DisabledReason::WorkspaceAgentRequiresAgentSelection,
                         )
                     }
+                    (WorkspaceState::Closing { .. }, Activity::Agent) => {
+                        SurfaceResolution::Disabled(
+                            DisabledReason::WorkspaceAgentRequiresAgentSelection,
+                        )
+                    }
                     (WorkspaceState::Unavailable { .. }, _) => {
                         SurfaceResolution::Disabled(DisabledReason::WorkspaceUnavailable)
+                    }
+                    (WorkspaceState::Closing { .. }, _) => {
+                        SurfaceResolution::Disabled(DisabledReason::WorkspaceClosing)
                     }
                     (WorkspaceState::ClosingFailed { .. }, _) => {
                         SurfaceResolution::Disabled(DisabledReason::WorkspaceClosingFailed)
@@ -604,6 +652,9 @@ impl AppModel {
                     (WorkspaceState::Available, Activity::Terminal) => SurfaceResolution::Enabled(
                         SurfaceKey::WorkspaceTerminal(agent.workspace_id().clone()),
                     ),
+                    (WorkspaceState::Closing { .. }, _) => {
+                        SurfaceResolution::Disabled(DisabledReason::WorkspaceClosing)
+                    }
                     (WorkspaceState::Unavailable { .. }, _) => {
                         SurfaceResolution::Disabled(DisabledReason::WorkspaceUnavailable)
                     }
@@ -760,6 +811,39 @@ impl AppModel {
             .workspace_mut(workspace_id)
             .ok_or_else(|| DomainError::new(DomainErrorCode::UnknownWorkspace))?
             .mark_closing_failed(diagnostic, progress);
+        if changed {
+            self.bump_revision();
+        }
+        Ok(())
+    }
+
+    /// Atomically enters the active Workspace close state before the
+    /// coordinator emits its first destructive cleanup effect. Creation and
+    /// other transitions are rejected while the state is `Closing`.
+    pub fn mark_workspace_closing(
+        &mut self,
+        workspace_id: &WorkspaceId,
+        progress: super::domain::CleanupProgress,
+    ) -> Result<(), DomainError> {
+        let changed = self
+            .workspace_mut(workspace_id)
+            .ok_or_else(|| DomainError::new(DomainErrorCode::UnknownWorkspace))?
+            .mark_closing(progress)?;
+        if changed {
+            self.bump_revision();
+        }
+        Ok(())
+    }
+
+    pub fn update_workspace_closing_progress(
+        &mut self,
+        workspace_id: &WorkspaceId,
+        progress: super::domain::CleanupProgress,
+    ) -> Result<(), DomainError> {
+        let changed = self
+            .workspace_mut(workspace_id)
+            .ok_or_else(|| DomainError::new(DomainErrorCode::UnknownWorkspace))?
+            .update_closing_progress(progress)?;
         if changed {
             self.bump_revision();
         }
@@ -1192,6 +1276,26 @@ mod tests {
             snapshot.activity(Activity::Editor).resolution(),
             &SurfaceResolution::Disabled(DisabledReason::WorkspaceClosingFailed)
         );
+    }
+
+    #[test]
+    fn closing_state_is_projected_before_cleanup_and_rejects_agent_creation() {
+        let (mut model, workspace_id) = model_with_workspace();
+        model.select_context(NavigationContext::Workspace(workspace_id.clone())).unwrap();
+        let progress = crate::domain::CleanupProgress::new(0, false, false);
+        model.mark_workspace_closing(&workspace_id, progress).unwrap();
+        let snapshot = model.snapshot();
+        assert!(matches!(snapshot.workspaces()[0].state(), WorkspaceState::Closing { .. }));
+        assert!(!snapshot.workspaces()[0].can_create_agent());
+        assert_eq!(
+            snapshot.activity(Activity::Editor).resolution(),
+            &SurfaceResolution::Disabled(DisabledReason::WorkspaceClosing)
+        );
+        let rejected = model
+            .add_agent(&workspace_id, AgentId::for_test("late-agent"), profile("codex", "Codex"))
+            .unwrap_err();
+        assert_eq!(rejected.code(), DomainErrorCode::WorkspaceUnavailable);
+        assert_eq!(model.snapshot().revision(), snapshot.revision());
     }
 
     #[test]

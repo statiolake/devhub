@@ -1,0 +1,6 @@
+# Contract fixtures are newline-delimited JSON, not a single JSON document.
+../../contracts/bridge/*.ndjson
+../../contracts/bridge/bridge-v1.schema.json
+
+# TypeScript is emitted byte-for-byte by the Rust contract generator.
+src/generated/bridge/index.ts

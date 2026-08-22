@@ -7,10 +7,15 @@
 //! below remains deliberately separate: provider/editor/terminal adapters and
 //! Tauri command wiring do not enter the pure model.
 
+pub mod application;
+pub mod bridge;
 pub mod domain;
+pub mod ports;
 pub mod snapshot;
 
+pub use application::*;
 pub use domain::*;
+pub use ports::*;
 pub use snapshot::*;
 
 use std::fmt;

@@ -39,6 +39,8 @@ pub enum DomainErrorCode {
     WorkspaceNotUnavailable,
     InvalidAgentControlTransition,
     WorkspaceHasLiveAgents,
+    WorkspaceClosing,
+    WorkspaceClosingFailed,
 }
 
 impl DomainErrorCode {
@@ -68,6 +70,8 @@ impl DomainErrorCode {
             Self::WorkspaceNotUnavailable => "WORKSPACE_NOT_UNAVAILABLE",
             Self::InvalidAgentControlTransition => "INVALID_AGENT_CONTROL_TRANSITION",
             Self::WorkspaceHasLiveAgents => "WORKSPACE_HAS_LIVE_AGENTS",
+            Self::WorkspaceClosing => "WORKSPACE_CLOSING",
+            Self::WorkspaceClosingFailed => "WORKSPACE_CLOSING_FAILED",
         }
     }
 }
@@ -535,6 +539,67 @@ pub enum RuntimeHealth {
     Failed,
 }
 
+/// Provider-free observation used for one atomic Agent reconciliation. The
+/// provider adapter converts its own status vocabulary before crossing this
+/// domain seam.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentObservation {
+    agent_id: AgentId,
+    status: AgentStatus,
+    runtime_health: RuntimeHealth,
+}
+
+impl AgentObservation {
+    pub const fn new(
+        agent_id: AgentId,
+        status: AgentStatus,
+        runtime_health: RuntimeHealth,
+    ) -> Self {
+        Self { agent_id, status, runtime_health }
+    }
+
+    pub fn agent_id(&self) -> &AgentId {
+        &self.agent_id
+    }
+
+    pub const fn status(&self) -> AgentStatus {
+        self.status
+    }
+
+    pub const fn runtime_health(&self) -> RuntimeHealth {
+        self.runtime_health
+    }
+}
+
+/// Complete provider reconciliation projection. Missing provider Agents are
+/// represented by `exited`; observations and exits are applied atomically by
+/// `AppModel` after all identities have been validated.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct AgentReconciliation {
+    observations: Vec<AgentObservation>,
+    exited: Vec<AgentId>,
+}
+
+impl AgentReconciliation {
+    pub fn new(
+        observations: impl IntoIterator<Item = AgentObservation>,
+        exited: impl IntoIterator<Item = AgentId>,
+    ) -> Self {
+        Self {
+            observations: observations.into_iter().collect(),
+            exited: exited.into_iter().collect(),
+        }
+    }
+
+    pub fn observations(&self) -> &[AgentObservation] {
+        &self.observations
+    }
+
+    pub fn exited(&self) -> &[AgentId] {
+        &self.exited
+    }
+}
+
 /// Product-level control lifecycle for an Agent. This is independent from
 /// visible work status and runtime health.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -832,12 +897,17 @@ impl CleanupProgress {
 pub enum WorkspaceState {
     Available,
     Unavailable { reason: DiagnosticCode },
+    Closing { progress: CleanupProgress },
     ClosingFailed { diagnostic: DiagnosticCode, progress: CleanupProgress },
 }
 
 impl WorkspaceState {
     pub const fn is_available(self) -> bool {
         matches!(self, Self::Available)
+    }
+
+    pub const fn is_closing(self) -> bool {
+        matches!(self, Self::Closing { .. })
     }
 }
 
@@ -936,6 +1006,44 @@ impl Workspace {
         true
     }
 
+    pub(crate) fn mark_closing(&mut self, progress: CleanupProgress) -> Result<bool, DomainError> {
+        match self.state {
+            WorkspaceState::Available | WorkspaceState::ClosingFailed { .. } => {
+                let next = WorkspaceState::Closing { progress };
+                if self.state == next {
+                    return Ok(false);
+                }
+                self.state = next;
+                Ok(true)
+            }
+            WorkspaceState::Closing { .. } => Err(invalid(DomainErrorCode::WorkspaceClosing)),
+            WorkspaceState::Unavailable { .. } => {
+                Err(invalid(DomainErrorCode::WorkspaceUnavailable))
+            }
+        }
+    }
+
+    pub(crate) fn update_closing_progress(
+        &mut self,
+        progress: CleanupProgress,
+    ) -> Result<bool, DomainError> {
+        match self.state {
+            WorkspaceState::Closing { progress: current } => {
+                if current == progress {
+                    return Ok(false);
+                }
+                self.state = WorkspaceState::Closing { progress };
+                Ok(true)
+            }
+            WorkspaceState::ClosingFailed { .. } => {
+                Err(invalid(DomainErrorCode::WorkspaceClosingFailed))
+            }
+            WorkspaceState::Available | WorkspaceState::Unavailable { .. } => {
+                Err(invalid(DomainErrorCode::WorkspaceUnavailable))
+            }
+        }
+    }
+
     pub fn can_create_agent(&self) -> bool {
         self.state.is_available()
     }
@@ -1024,6 +1132,7 @@ pub enum DisabledReason {
     GlobalAgentNotApplicable,
     WorkspaceAgentRequiresAgentSelection,
     WorkspaceUnavailable,
+    WorkspaceClosing,
     WorkspaceClosingFailed,
 }
 

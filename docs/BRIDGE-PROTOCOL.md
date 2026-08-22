@@ -11,13 +11,13 @@ Every message is strict JSON with exactly these envelope fields:
 ```text
 version: 1
 connection_id: UUID | null
-sequence: unsigned integer
+sequence: safe unsigned integer
 message_id: UUID
 kind: MessageKind
 payload: object
 ```
 
-`connection_id` is `null` only on the initial `hello`; every later message uses the UUID assigned by `hello_accepted`. UUIDs are lowercase canonical hyphenated strings. Each sender creates globally unique `message_id` values. Unknown fields or kinds, wrong versions, non-canonical IDs, invalid sequences, oversized messages, and invalid payloads are protocol errors. The maximum encoded message size is 256 KiB.
+`connection_id` is `null` only on the initial `hello`; every later message uses the UUID assigned by `hello_accepted`. UUIDs are lowercase canonical hyphenated strings. Each sender creates globally unique `message_id` values. Sequence numbers and `connection_generation` values are unsigned integers in the exact safe range `1..=9007199254740991` (`2^53 - 1`), so Rust and JavaScript represent them identically. Unknown fields or kinds, wrong versions, non-canonical IDs, invalid sequences, oversized messages, and invalid payloads are protocol errors. The maximum encoded message size is 256 KiB.
 
 ## Shared payload types
 
@@ -43,7 +43,7 @@ The first client message is envelope sequence `1`, `connection_id: null`, kind `
 The host accepts only the injected expected `surface_id` and responds at server sequence `1` with kind `hello_accepted`. Its envelope contains the newly assigned `connection_id`; the payload does not duplicate it:
 
 ```text
-{ accepted_version: 1, surface_id: UUID, connection_generation: unsigned integer >= 1 }
+{ accepted_version: 1, surface_id: UUID, connection_generation: safe unsigned integer >= 1 }
 ```
 
 The client then sends sequence `2`, kind `state_snapshot`, using the assigned connection ID:

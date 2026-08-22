@@ -4,10 +4,12 @@
   "packageManager": "pnpm@11.20.0",
   "scripts": {
     "fmt": "pnpm --filter @devhub/app fmt:check && cargo fmt --all -- --check",
+    "bridge:generate": "scripts/generate-bridge-contract.sh",
+    "bridge:check": "scripts/check-bridge-contract.sh",
     "lint": "pnpm --filter @devhub/app lint && cargo clippy --workspace --all-targets --all-features --locked -- -D warnings",
     "typecheck": "pnpm --filter @devhub/app typecheck",
     "test": "pnpm --filter @devhub/app test && cargo test --workspace --locked",
     "build": "pnpm --filter @devhub/app build && cargo build --workspace --locked",
-    "check": "pnpm run fmt && pnpm run lint && pnpm run typecheck && pnpm run test && cargo check --workspace --locked"
+    "check": "pnpm run bridge:check && pnpm run fmt && pnpm run lint && pnpm run typecheck && pnpm run test && cargo check --workspace --locked"
   }
 }
