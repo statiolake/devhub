@@ -7,8 +7,8 @@ Production tasks use non-overlapping file ownership. Paths below are the intende
 | R1.1 Repository foundation | root manifests, lockfiles, toolchain files, `.github/workflows/ci.yml`, `src-tauri/tauri.conf.json` |
 | R1.2 Domain contracts | `crates/devhub-app-core/src/domain.rs`, `crates/devhub-app-core/src/snapshot.rs`, and their core-crate re-exports in `crates/devhub-app-core/src/lib.rs` |
 | R1.3 AppCoordinator and Bridge contracts | `crates/devhub-app-core/src/application/**`, `crates/devhub-app-core/src/ports/**`, `crates/devhub-app-core/src/bridge/**`, `crates/devhub-app-core/src/bin/generate_bridge_contract.rs`, `contracts/bridge/**`, `apps/devhub/src/generated/bridge/**`, `scripts/check-bridge-contract.sh`, `scripts/generate-bridge-contract.sh`, `docs/BRIDGE-PROTOCOL.md` |
-| P2.1 ConfigStore | `src-tauri/src/config/**`, configuration fixtures |
-| P2.2 StateStore | `src-tauri/src/state/**`, state fixtures |
+| P2.1 ConfigStore | `crates/devhub-app-core/src/config/**`, configuration fixtures |
+| P2.2 StateStore | `crates/devhub-app-core/src/state/**`, state fixtures |
 | U2.3 App Shell | `src/app/**`, `src/components/shell/**`, `src/components/sidebar/**` |
 | U2.4 Settings | `src/settings/**`, `src/components/settings/**` |
 | U2.5 Visual foundation | `src/styles/**`, visual fixtures |
@@ -35,3 +35,8 @@ Production tasks use non-overlapping file ownership. Paths below are the intende
 6. Integration state matrix accepted before quality and release work.
 
 Only the current contract owner changes a shared interface. R1.3 owns the Bridge envelope, message catalogue, ordering, reconnect, acknowledgement, and error semantics; E3.4 and E3.5 only implement that frozen contract. A consumer requesting a change stops, reports the need, and waits for the owner or a sequential follow-up task; it does not patch shared files opportunistically.
+
+P2.1 and P2.2 share a sequential integration owner for their core-crate exports,
+`crates/devhub-app-core/src/ports/**`, `crates/devhub-app-core/Cargo.toml`, and
+the workspace lockfile. Individual ConfigStore and StateStore lanes do not edit
+those shared integration paths concurrently.

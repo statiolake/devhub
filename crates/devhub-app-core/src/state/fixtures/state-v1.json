@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "workspaces": [],
+  "navigation": {
+    "context": {
+      "kind": "global"
+    },
+    "activity": "terminal"
+  },
+  "sidebar": {
+    "width": 248,
+    "expanded_workspace_ids": []
+  },
+  "window": {
+    "frame": {
+      "x": 0,
+      "y": 0,
+      "width": 1200,
+      "height": 800,
+      "maximized": false
+    }
+  },
+  "tmux": {
+    "effective_socket_name": "devhub",
+    "transition": {
+      "kind": "stable"
+    }
+  },
+  "shutdown": {
+    "clean": true,
+    "launch_generation": 0
+  }
+}

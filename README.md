@@ -4,12 +4,14 @@ DevHub is a personal, macOS-first development workbench. Its long-term model
 organizes Workspaces, Agents, Editors, and persistent tmux Terminals in one
 native window while keeping provider implementations behind Rust-owned seams.
 
-The repository is currently in the R1.1 foundation stage. The checked-in shell
-is deliberately small: a Tauri App Shell owns the immutable native snapshot,
-and a React consumer renders the fixed Activity chrome. Workspace discovery,
-configuration, persistence, provider adapters, terminals, and OpenVSCode
-surfaces arrive in later implementation waves described in
-[`docs/IMPLEMENTATION-PLAN.md`](docs/IMPLEMENTATION-PLAN.md).
+The repository has completed its contract foundation and the ConfigStore and
+StateStore persistence gates. The checked-in shell remains deliberately small:
+a Tauri App Shell owns the immutable native snapshot, and a React consumer
+renders the fixed Activity chrome. UI and provider implementation continues in
+the later waves described in
+[`docs/IMPLEMENTATION-PLAN.md`](docs/IMPLEMENTATION-PLAN.md). Current local
+execution status is tracked in
+[`docs/IMPLEMENTATION-STATUS.md`](docs/IMPLEMENTATION-STATUS.md).
 
 ## Local development
 
@@ -56,5 +58,7 @@ and must not be inferred from a local green check.
   provider and toolchain baselines.
 - [`docs/IMPLEMENTATION-OWNERSHIP.md`](docs/IMPLEMENTATION-OWNERSHIP.md)
   assigns production seams and review gates.
+- [`docs/IMPLEMENTATION-STATUS.md`](docs/IMPLEMENTATION-STATUS.md) records
+  locally completed gates and the next implementation wave.
 
 DevHub is distributed under the [MIT License](LICENSE).

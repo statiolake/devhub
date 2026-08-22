@@ -16,6 +16,10 @@ use crate::{
 use crate::application::{OperationId, RequestedPath};
 
 pub type PortFuture<T> = Pin<Box<dyn Future<Output = Result<T, PortError>> + Send + 'static>>;
+/// StateStore keeps its content-free, typed recovery error instead of
+/// collapsing it into the generic provider-port error vocabulary.
+pub type StatePortFuture<T> =
+    Pin<Box<dyn Future<Output = Result<T, crate::state::StateError>> + Send + 'static>>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PortErrorCode {
@@ -57,15 +61,33 @@ impl CancellationToken {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// A complete validated configuration plus the exact content revision from
+/// which it was read.  The revision is part of the port value so a Settings
+/// save cannot silently overwrite an external edit.
+#[derive(Debug, Clone, PartialEq)]
 pub struct ConfigSnapshot {
-    pub schema_version: u16,
+    pub config: crate::config::Config,
+    pub revision: crate::config::ContentRevision,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PersistedState {
-    pub schema_version: u16,
+impl ConfigSnapshot {
+    pub const fn new(
+        config: crate::config::Config,
+        revision: crate::config::ContentRevision,
+    ) -> Self {
+        Self { config, revision }
+    }
+
+    pub const fn schema_version(&self) -> u16 {
+        self.config.version
+    }
 }
+
+/// The complete Rust-owned runtime-state document. Keeping the port's value
+/// equal to the deep StateStore contract prevents a compatibility adapter
+/// from accidentally dropping navigation, workspace, or transition fields.
+pub type PersistedState = crate::state::PersistedAppState;
+pub type PersistedStateLoad = crate::state::StateLoad;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkspaceCandidate {
@@ -120,8 +142,8 @@ pub trait ConfigStore: Send + Sync {
 }
 
 pub trait StateStore: Send + Sync {
-    fn load(&self, cancel: CancellationToken) -> PortFuture<PersistedState>;
-    fn save(&self, state: PersistedState, cancel: CancellationToken) -> PortFuture<()>;
+    fn load(&self, cancel: CancellationToken) -> StatePortFuture<PersistedStateLoad>;
+    fn save(&self, state: PersistedState, cancel: CancellationToken) -> StatePortFuture<()>;
 }
 
 pub trait WorkspaceDiscovery: Send + Sync {
