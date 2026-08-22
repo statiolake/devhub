@@ -1,0 +1,149 @@
+[
+  {
+    "activities": [
+      {
+        "activity": "editor",
+        "resolution": {
+          "kind": "enabled",
+          "surfaceKey": "global-editor"
+        }
+      },
+      {
+        "activity": "agent",
+        "resolution": {
+          "kind": "disabled",
+          "reason": "global-agent-not-applicable"
+        }
+      },
+      {
+        "activity": "terminal",
+        "resolution": {
+          "kind": "enabled",
+          "surfaceKey": "global-terminal"
+        }
+      }
+    ],
+    "readiness": "ready",
+    "revision": 0,
+    "schemaVersion": 1,
+    "selection": {
+      "activity": "terminal",
+      "context": {
+        "kind": "global"
+      }
+    },
+    "sidebar": {
+      "expandedWorkspaceIds": [],
+      "width": 248
+    },
+    "workspaces": []
+  },
+  {
+    "context": {
+      "kind": "global"
+    },
+    "type": "select_context"
+  },
+  {
+    "activity": "terminal",
+    "type": "select_activity"
+  },
+  {
+    "type": "resize_sidebar",
+    "width": 248
+  },
+  {
+    "expanded": true,
+    "type": "toggle_workspace_disclosure",
+    "workspaceId": "00000000-0000-4000-8000-000000000001"
+  },
+  {
+    "type": "open_workspace_picker"
+  },
+  {
+    "kind": "noop",
+    "snapshot": {
+      "activities": [
+        {
+          "activity": "editor",
+          "resolution": {
+            "kind": "enabled",
+            "surfaceKey": "global-editor"
+          }
+        },
+        {
+          "activity": "agent",
+          "resolution": {
+            "kind": "disabled",
+            "reason": "global-agent-not-applicable"
+          }
+        },
+        {
+          "activity": "terminal",
+          "resolution": {
+            "kind": "enabled",
+            "surfaceKey": "global-terminal"
+          }
+        }
+      ],
+      "readiness": "ready",
+      "revision": 0,
+      "schemaVersion": 1,
+      "selection": {
+        "activity": "terminal",
+        "context": {
+          "kind": "global"
+        }
+      },
+      "sidebar": {
+        "expandedWorkspaceIds": [],
+        "width": 248
+      },
+      "workspaces": []
+    }
+  },
+  {
+    "cursor": 0,
+    "events": [],
+    "historyGap": false,
+    "snapshot": {
+      "activities": [
+        {
+          "activity": "editor",
+          "resolution": {
+            "kind": "enabled",
+            "surfaceKey": "global-editor"
+          }
+        },
+        {
+          "activity": "agent",
+          "resolution": {
+            "kind": "disabled",
+            "reason": "global-agent-not-applicable"
+          }
+        },
+        {
+          "activity": "terminal",
+          "resolution": {
+            "kind": "enabled",
+            "surfaceKey": "global-terminal"
+          }
+        }
+      ],
+      "readiness": "ready",
+      "revision": 0,
+      "schemaVersion": 1,
+      "selection": {
+        "activity": "terminal",
+        "context": {
+          "kind": "global"
+        }
+      },
+      "sidebar": {
+        "expandedWorkspaceIds": [],
+        "width": 248
+      },
+      "workspaces": []
+    }
+  }
+]

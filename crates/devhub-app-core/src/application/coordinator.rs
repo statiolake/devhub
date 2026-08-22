@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use crate::{
     AgentId, AgentProfile, AgentProfileId, AppModel, AppSnapshot, CleanupProgress, CloseInspection,
@@ -10,7 +10,7 @@ use super::intent::{
     AgentLaunchResult, AgentStopResult, CleanupStep, IntentEnvelope, IntentOutcome, ProviderEvent,
     ProviderEventEnvelope, RequestedPath, UserIntent, WorkspaceCleanupResult,
 };
-use super::types::{ConfirmationId, IntentId, OperationId, OperationToken};
+use super::types::{ConfirmationId, IntentId, OperationId, OperationToken, ProviderEventId};
 
 /// Why the application no longer accepts user work.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -71,6 +71,13 @@ pub enum Effect {
         token: OperationToken,
         agent_id: AgentId,
     },
+    /// Compensates a provider launch when the domain commit rejects the
+    /// returned identity. This keeps provider state and the sole AppModel
+    /// owner from diverging after a late collision.
+    TerminateAgent {
+        token: OperationToken,
+        agent_id: AgentId,
+    },
     ReconcileAgents {
         token: OperationToken,
     },
@@ -92,6 +99,7 @@ pub type CoordinatorEffect = Effect;
 
 pub const MAX_INTENT_LEDGER_ENTRIES: usize = 1_024;
 pub const MAX_PROVIDER_LEDGER_ENTRIES: usize = 1_024;
+pub const MAX_CONFIRMATION_ID_ENTRIES: usize = 1_024;
 pub const MAX_COMPLETED_TOKEN_ENTRIES: usize = 1_024;
 pub const MAX_RETAINED_EVENTS: usize = 4_096;
 
@@ -226,6 +234,7 @@ enum OperationKind {
     StopAgent,
     ReconcileAgent,
     ReconcileAgents,
+    TerminateAgent,
     Cleanup(CleanupStep),
     PersistState,
 }
@@ -249,9 +258,76 @@ struct PendingOperation {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum CachedDispatch {
-    Success(IntentOutcome),
+enum DispatchFingerprint {
+    Intent { operation_id: Option<OperationId>, intent: UserIntent },
+    Provider(ProviderEvent),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CachedDispatch {
+    fingerprint: DispatchFingerprint,
+    result: CachedResult,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum CachedResult {
+    Success(Box<IntentOutcome>),
     Failure(AppError),
+}
+
+impl CachedDispatch {
+    fn from_intent(
+        operation_id: Option<&OperationId>,
+        intent: &UserIntent,
+        result: &Result<IntentOutcome, AppError>,
+    ) -> Self {
+        Self {
+            fingerprint: DispatchFingerprint::Intent {
+                operation_id: operation_id.cloned(),
+                intent: intent.clone(),
+            },
+            result: CachedResult::from_result(result),
+        }
+    }
+
+    fn from_provider(event: &ProviderEvent, result: &Result<IntentOutcome, AppError>) -> Self {
+        Self {
+            fingerprint: DispatchFingerprint::Provider(event.clone()),
+            result: CachedResult::from_result(result),
+        }
+    }
+
+    fn matches_intent(&self, operation_id: Option<&OperationId>, intent: &UserIntent) -> bool {
+        self.fingerprint
+            == DispatchFingerprint::Intent {
+                operation_id: operation_id.cloned(),
+                intent: intent.clone(),
+            }
+    }
+
+    fn matches_provider(&self, event: &ProviderEvent) -> bool {
+        self.fingerprint == DispatchFingerprint::Provider(event.clone())
+    }
+
+    fn into_result(self) -> Result<IntentOutcome, AppError> {
+        self.result.into_result()
+    }
+}
+
+impl CachedResult {
+    fn from_result(result: &Result<IntentOutcome, AppError>) -> Self {
+        match result {
+            Ok(outcome) => Self::Success(Box::new(outcome.clone())),
+            Err(error) => Self::Failure(error.clone()),
+        }
+    }
+
+    fn into_result(self) -> Result<IntentOutcome, AppError> {
+        match self {
+            Self::Success(outcome) => Ok(*outcome),
+            Self::Failure(error) => Err(error),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -314,7 +390,8 @@ pub struct AppCoordinator {
     next_sequence: u64,
     subscriber_cursor: u64,
     intent_cache: BTreeMap<IntentId, CachedDispatch>,
-    provider_event_cache: BTreeMap<OperationId, CachedDispatch>,
+    provider_event_cache: BTreeMap<ProviderEventId, CachedDispatch>,
+    confirmation_ids: BTreeSet<ConfirmationId>,
     pending: BTreeMap<OperationId, PendingOperation>,
     completed_tokens: BTreeMap<OperationId, OperationToken>,
     resolved_paths: BTreeMap<OperationId, (WorkspaceRoot, crate::DisplayPath)>,
@@ -326,10 +403,12 @@ pub struct AppCoordinator {
     cleanup: BTreeMap<WorkspaceId, CleanupState>,
     next_generation: u64,
     intent_order: VecDeque<IntentId>,
-    provider_event_order: VecDeque<OperationId>,
+    provider_event_order: VecDeque<ProviderEventId>,
+    confirmation_id_order: VecDeque<ConfirmationId>,
     completed_token_order: VecDeque<(OperationId, OperationToken)>,
     active_reconcile: Option<ActiveReconcile>,
     reconcile_epoch: u64,
+    readiness: super::types::AppReadiness,
     detached: Option<DetachReason>,
 }
 
@@ -353,6 +432,7 @@ impl AppCoordinator {
             subscriber_cursor: 0,
             intent_cache: BTreeMap::new(),
             provider_event_cache: BTreeMap::new(),
+            confirmation_ids: BTreeSet::new(),
             pending: BTreeMap::new(),
             completed_tokens: BTreeMap::new(),
             resolved_paths: BTreeMap::new(),
@@ -365,9 +445,11 @@ impl AppCoordinator {
             next_generation: 0,
             intent_order: VecDeque::new(),
             provider_event_order: VecDeque::new(),
+            confirmation_id_order: VecDeque::new(),
             completed_token_order: VecDeque::new(),
             active_reconcile: None,
             reconcile_epoch: 0,
+            readiness: super::types::AppReadiness::Starting,
             detached: None,
         };
         coordinator.emit(CoordinatorEvent::Snapshot(snapshot));
@@ -376,6 +458,16 @@ impl AppCoordinator {
 
     pub fn snapshot(&self) -> AppSnapshot {
         self.model.snapshot()
+    }
+
+    pub const fn readiness(&self) -> super::types::AppReadiness {
+        self.readiness
+    }
+
+    /// Marks native bootstrap complete without changing the domain snapshot
+    /// revision. Readiness is coordinator lifecycle, not a UI-owned model.
+    pub fn mark_ready(&mut self) {
+        self.readiness = super::types::AppReadiness::Ready;
     }
 
     /// Starts a provider reconciliation for one domain Agent. The caller
@@ -394,13 +486,17 @@ impl AppCoordinator {
             return Err(AppError::new(super::error::AppErrorCode::Domain)
                 .with_domain(DomainErrorCode::UnknownAgent));
         }
+        let next_epoch = self.reconcile_epoch.checked_add(1).ok_or_else(|| {
+            AppError::new(super::error::AppErrorCode::OperationGenerationExhausted)
+                .with_operation(operation_id.clone())
+        })?;
         self.invalidate_reconciliation();
         let (token, operation_id) = self.start_operation(
             OperationKind::ReconcileAgent,
             OperationTarget::Agent(agent_id.clone()),
             operation_id,
         )?;
-        self.reconcile_epoch = self.reconcile_epoch.saturating_add(1);
+        self.reconcile_epoch = next_epoch;
         self.active_reconcile = Some(ActiveReconcile::Agent {
             token: token.clone(),
             agent_id: agent_id.clone(),
@@ -421,13 +517,17 @@ impl AppCoordinator {
             return Err(AppError::new(super::error::AppErrorCode::OperationInProgress)
                 .with_operation(operation_id));
         }
+        let next_epoch = self.reconcile_epoch.checked_add(1).ok_or_else(|| {
+            AppError::new(super::error::AppErrorCode::OperationGenerationExhausted)
+                .with_operation(operation_id.clone())
+        })?;
         self.invalidate_reconciliation();
         let (token, operation_id) = self.start_operation(
             OperationKind::ReconcileAgents,
             OperationTarget::Application,
             operation_id,
         )?;
-        self.reconcile_epoch = self.reconcile_epoch.saturating_add(1);
+        self.reconcile_epoch = next_epoch;
         self.active_reconcile =
             Some(ActiveReconcile::Agents { token: token.clone(), epoch: self.reconcile_epoch });
         self.emit_effect(Effect::ReconcileAgents { token });
@@ -472,28 +572,44 @@ impl AppCoordinator {
     }
 
     pub fn dispatch_user(&mut self, envelope: IntentEnvelope) -> Result<IntentOutcome, AppError> {
-        let (intent_id, intent) = envelope.into_parts();
+        let (intent_id, trusted_operation_id, intent) = envelope.into_parts();
         if let Some(cached) = self.intent_cache.get(&intent_id).cloned() {
-            // A duplicate is an acknowledgement of the original result. It
-            // never re-runs a model transition or effect. The no-op event is
-            // intentionally separate from the returned cached outcome.
-            self.emit(CoordinatorEvent::Noop);
-            return cached.into_result();
+            if cached.matches_intent(trusted_operation_id.as_ref(), &intent) {
+                // A duplicate is an acknowledgement of the original result.
+                // It never re-runs a model transition or effect. The no-op
+                // event is intentionally separate from the cached outcome.
+                self.emit(CoordinatorEvent::Noop);
+                return cached.into_result();
+            }
+            let error = AppError::new(super::error::AppErrorCode::DuplicateIntent)
+                .with_intent(intent_id.clone());
+            self.emit(CoordinatorEvent::Error(error.clone()));
+            return Err(error);
         }
 
         if self.detached.is_some() {
             let result = Ok(IntentOutcome::Detached { snapshot: self.snapshot() });
-            self.cache_intent(intent_id, &result);
+            self.cache_intent(intent_id, trusted_operation_id.as_ref(), &intent, &result);
             self.emit(CoordinatorEvent::Noop);
             return result;
         }
 
-        let operation_id = operation_id_for_intent(&intent_id);
+        let Some(operation_id) = trusted_operation_id.clone() else {
+            let error = AppError::new(super::error::AppErrorCode::InvalidIntent)
+                .with_intent(intent_id.clone());
+            let result = Err(error.clone());
+            self.cache_intent(intent_id, trusted_operation_id.as_ref(), &intent, &result);
+            self.emit(CoordinatorEvent::Error(error));
+            return result;
+        };
+        let fingerprint = intent.clone();
         let result = self.dispatch_new_intent(intent, operation_id);
         if let Err(error) = &result {
             self.emit(CoordinatorEvent::Error(error.clone()));
         }
-        self.cache_intent(intent_id, &result);
+        // The command is cloned before dispatch so the exact request
+        // fingerprint remains available for duplicate-ID collision checks.
+        self.cache_intent(intent_id, trusted_operation_id.as_ref(), &fingerprint, &result);
         result
     }
 
@@ -503,15 +619,21 @@ impl AppCoordinator {
     ) -> Result<IntentOutcome, AppError> {
         let (event_id, event) = envelope.into_parts();
         if let Some(cached) = self.provider_event_cache.get(&event_id).cloned() {
-            self.emit(CoordinatorEvent::Noop);
-            return cached.into_result();
+            if cached.matches_provider(&event) {
+                self.emit(CoordinatorEvent::Noop);
+                return cached.into_result();
+            }
+            let error = AppError::new(super::error::AppErrorCode::DuplicateIntent)
+                .with_provider_event(event_id.clone());
+            self.emit(CoordinatorEvent::Error(error.clone()));
+            return Err(error);
         }
 
         let result = self.apply_provider_event(&event);
         if let Err(error) = &result {
             self.emit(CoordinatorEvent::Error(error.clone()));
         }
-        self.cache_provider_event(event_id, &result);
+        self.cache_provider_event(event_id, &event, &result);
         result
     }
 
@@ -528,6 +650,16 @@ impl AppCoordinator {
             }
             UserIntent::SelectActivity(activity) => {
                 self.model.select_activity(activity).map_err(AppError::from)?;
+                Ok(self.transition_outcome(before_revision, operation_id.clone()))
+            }
+            UserIntent::ToggleWorkspaceDisclosure { workspace_id, expanded } => {
+                self.model
+                    .set_workspace_disclosure(&workspace_id, expanded)
+                    .map_err(AppError::from)?;
+                Ok(self.transition_outcome(before_revision, operation_id.clone()))
+            }
+            UserIntent::ResizeSidebar { width } => {
+                self.model.set_sidebar_width(width).map_err(AppError::from)?;
                 Ok(self.transition_outcome(before_revision, operation_id.clone()))
             }
             UserIntent::OpenFolder { path } => {
@@ -810,6 +942,9 @@ impl AppCoordinator {
             ProviderEvent::AgentStopCompleted { token, agent_id, result } => {
                 self.complete_agent_stop(token, agent_id, *result)
             }
+            ProviderEvent::AgentTerminationCompleted { token, agent_id, result } => {
+                self.complete_agent_termination(token, agent_id, *result)
+            }
             ProviderEvent::WorkspaceCleanupCompleted { token, workspace_id, result } => {
                 self.complete_workspace_cleanup(token, workspace_id, *result)
             }
@@ -833,6 +968,7 @@ impl AppCoordinator {
             }
             ProviderEvent::AgentExited { token, agent_id } => self.agent_exited(token, agent_id),
             ProviderEvent::StatePersisted { token } => self.complete_persist(token),
+            ProviderEvent::StatePersistenceFailed { token } => self.complete_persist_failed(token),
         }
     }
 
@@ -1011,9 +1147,21 @@ impl AppCoordinator {
             })?;
         match result {
             AgentLaunchResult::Started => {
-                self.model
-                    .add_agent(workspace_id, agent_id.clone(), profile)
-                    .map_err(AppError::from)?;
+                if let Err(domain_error) =
+                    self.model.add_agent(workspace_id, agent_id.clone(), profile)
+                {
+                    let error = AppError::from(domain_error);
+                    let (terminate_token, _) = self.start_operation(
+                        OperationKind::TerminateAgent,
+                        OperationTarget::Agent(agent_id.clone()),
+                        token.operation_id().clone(),
+                    )?;
+                    self.emit_effect(Effect::TerminateAgent {
+                        token: terminate_token,
+                        agent_id: agent_id.clone(),
+                    });
+                    return Err(error);
+                }
                 let snapshot = self.snapshot();
                 self.emit(CoordinatorEvent::Snapshot(snapshot.clone()));
                 self.emit(CoordinatorEvent::OperationCompleted { token: token.clone() });
@@ -1025,6 +1173,30 @@ impl AppCoordinator {
                     .with_operation(token.operation_id().clone()))
             }
         }
+    }
+
+    fn complete_agent_termination(
+        &mut self,
+        token: &OperationToken,
+        agent_id: &AgentId,
+        result: AgentStopResult,
+    ) -> Result<IntentOutcome, AppError> {
+        self.take_pending(
+            token,
+            OperationKind::TerminateAgent,
+            |target| matches!(target, OperationTarget::Agent(id) if id == agent_id),
+        )?;
+        let snapshot = self.snapshot();
+        self.emit(CoordinatorEvent::OperationCompleted { token: token.clone() });
+        if matches!(result, AgentStopResult::Failed { .. }) {
+            self.emit(CoordinatorEvent::Error(
+                AppError::new(super::error::AppErrorCode::PortUnavailable)
+                    .with_operation(token.operation_id().clone()),
+            ));
+            return Err(AppError::new(super::error::AppErrorCode::PortUnavailable)
+                .with_operation(token.operation_id().clone()));
+        }
+        Ok(IntentOutcome::Noop { snapshot })
     }
 
     fn complete_agents_reconcile(
@@ -1064,6 +1236,17 @@ impl AppCoordinator {
         token: &OperationToken,
         confirmation_id: &ConfirmationId,
     ) -> Result<IntentOutcome, AppError> {
+        if self.confirmation_ids.contains(confirmation_id)
+            || self.confirmations.iter().any(|pending| match pending {
+                PendingConfirmationState::Stop { confirmation_id: id, .. }
+                | PendingConfirmationState::WorkspaceClose { confirmation_id: id, .. } => {
+                    id == confirmation_id
+                }
+            })
+        {
+            return Err(AppError::new(super::error::AppErrorCode::DuplicateIntent)
+                .with_operation(token.operation_id().clone()));
+        }
         let request =
             self.confirmation_requests.get(token.operation_id()).cloned().ok_or_else(|| {
                 let code = if self.pending.contains_key(token.operation_id())
@@ -1092,6 +1275,13 @@ impl AppCoordinator {
             }
         }
         self.confirmation_requests.remove(token.operation_id());
+        self.confirmation_ids.insert(confirmation_id.clone());
+        self.confirmation_id_order.push_back(confirmation_id.clone());
+        while self.confirmation_id_order.len() > MAX_CONFIRMATION_ID_ENTRIES {
+            if let Some(evicted) = self.confirmation_id_order.pop_front() {
+                self.confirmation_ids.remove(&evicted);
+            }
+        }
         match request {
             PendingConfirmationRequest::Stop { agent_id } => {
                 self.confirmations.retain(|pending| {
@@ -1143,6 +1333,24 @@ impl AppCoordinator {
         };
         let consolidated = CloseInspection::consolidate(inspection);
         if !consolidated.is_clean() {
+            if matches!(continuation, InspectionContinuation::Finalize { .. }) {
+                self.model
+                    .mark_workspace_closing_failed(
+                        workspace_id,
+                        crate::DiagnosticCode::CleanupFailed,
+                        progress,
+                    )
+                    .map_err(AppError::from)?;
+                let snapshot = self.snapshot();
+                self.emit(CoordinatorEvent::Snapshot(snapshot.clone()));
+                self.emit(CoordinatorEvent::OperationCompleted { token: token.clone() });
+                self.emit(CoordinatorEvent::Error(
+                    AppError::new(super::error::AppErrorCode::PortUnavailable)
+                        .with_operation(token.operation_id().clone()),
+                ));
+                self.queue_persist(token.operation_id().clone());
+                return Ok(IntentOutcome::Updated { snapshot });
+            }
             let (confirmation_token, operation_id) = self.start_operation(
                 OperationKind::GenerateConfirmationId,
                 OperationTarget::Workspace(workspace_id.clone()),
@@ -1277,6 +1485,7 @@ impl AppCoordinator {
                     AppError::new(super::error::AppErrorCode::PortUnavailable)
                         .with_operation(token.operation_id().clone()),
                 ));
+                self.queue_persist(token.operation_id().clone());
                 Ok(IntentOutcome::Updated { snapshot })
             }
             WorkspaceCleanupResult::StepCompleted(step) => {
@@ -1347,6 +1556,7 @@ impl AppCoordinator {
                                 AppError::new(super::error::AppErrorCode::PortUnavailable)
                                     .with_operation(token.operation_id().clone()),
                             ));
+                            self.queue_persist(token.operation_id().clone());
                             return Ok(IntentOutcome::Updated { snapshot });
                         }
                         self.model
@@ -1389,6 +1599,20 @@ impl AppCoordinator {
         })?;
         self.emit(CoordinatorEvent::OperationCompleted { token: token.clone() });
         Ok(IntentOutcome::Noop { snapshot: self.snapshot() })
+    }
+
+    fn complete_persist_failed(
+        &mut self,
+        token: &OperationToken,
+    ) -> Result<IntentOutcome, AppError> {
+        self.take_pending(token, OperationKind::PersistState, |target| {
+            matches!(target, OperationTarget::Application)
+        })?;
+        let error = AppError::new(super::error::AppErrorCode::PersistenceDegraded)
+            .with_operation(token.operation_id().clone());
+        self.emit(CoordinatorEvent::Error(error));
+        self.emit(CoordinatorEvent::OperationCompleted { token: token.clone() });
+        Ok(IntentOutcome::PersistenceDegraded { snapshot: self.snapshot() })
     }
 
     fn reconcile_agent(
@@ -1494,7 +1718,10 @@ impl AppCoordinator {
             return Err(AppError::new(super::error::AppErrorCode::OperationInProgress)
                 .with_operation(operation_id));
         }
-        self.next_generation = self.next_generation.saturating_add(1);
+        self.next_generation = self.next_generation.checked_add(1).ok_or_else(|| {
+            AppError::new(super::error::AppErrorCode::OperationGenerationExhausted)
+                .with_operation(operation_id.clone())
+        })?;
         let token = OperationToken::new(operation_id.clone(), self.next_generation);
         self.pending
             .insert(operation_id.clone(), PendingOperation { token: token.clone(), kind, target });
@@ -1535,6 +1762,7 @@ impl AppCoordinator {
                     OperationKind::ResolveAgentProfile
                         | OperationKind::GenerateAgentId
                         | OperationKind::LaunchAgent
+                        | OperationKind::TerminateAgent
                         | OperationKind::GenerateConfirmationId
                 );
                 (targets_workspace && cancellable).then(|| operation_id.clone())
@@ -1549,6 +1777,13 @@ impl AppCoordinator {
             self.launch_profiles.remove(&operation_id);
             self.confirmation_requests.remove(&operation_id);
         }
+        self.confirmations.retain(|pending| match pending {
+            PendingConfirmationState::Stop { agent_id, .. } => self
+                .model
+                .workspace_for_agent(agent_id)
+                .is_none_or(|workspace| workspace.id() != workspace_id),
+            PendingConfirmationState::WorkspaceClose { workspace_id: id, .. } => id != workspace_id,
+        });
     }
 
     fn remember_completed(&mut self, token: OperationToken) {
@@ -1592,10 +1827,16 @@ impl AppCoordinator {
         }
     }
 
-    fn cache_intent(&mut self, intent_id: IntentId, result: &Result<IntentOutcome, AppError>) {
+    fn cache_intent(
+        &mut self,
+        intent_id: IntentId,
+        operation_id: Option<&OperationId>,
+        intent: &UserIntent,
+        result: &Result<IntentOutcome, AppError>,
+    ) {
         if self
             .intent_cache
-            .insert(intent_id.clone(), CachedDispatch::from_result(result))
+            .insert(intent_id.clone(), CachedDispatch::from_intent(operation_id, intent, result))
             .is_none()
         {
             self.intent_order.push_back(intent_id);
@@ -1609,12 +1850,13 @@ impl AppCoordinator {
 
     fn cache_provider_event(
         &mut self,
-        event_id: OperationId,
+        event_id: ProviderEventId,
+        event: &ProviderEvent,
         result: &Result<IntentOutcome, AppError>,
     ) {
         if self
             .provider_event_cache
-            .insert(event_id.clone(), CachedDispatch::from_result(result))
+            .insert(event_id.clone(), CachedDispatch::from_provider(event, result))
             .is_none()
         {
             self.provider_event_order.push_back(event_id);
@@ -1634,22 +1876,6 @@ impl AppCoordinator {
             self.emit(CoordinatorEvent::Noop);
         }
         IntentOutcome::Detached { snapshot: self.snapshot() }
-    }
-}
-
-impl CachedDispatch {
-    fn from_result(result: &Result<IntentOutcome, AppError>) -> Self {
-        match result {
-            Ok(outcome) => Self::Success(outcome.clone()),
-            Err(error) => Self::Failure(error.clone()),
-        }
-    }
-
-    fn into_result(self) -> Result<IntentOutcome, AppError> {
-        match self {
-            Self::Success(outcome) => Ok(outcome),
-            Self::Failure(error) => Err(error),
-        }
     }
 }
 
@@ -1687,20 +1913,6 @@ fn cleanup_kind(result: WorkspaceCleanupResult) -> OperationKind {
     }
 }
 
-fn operation_id_for_intent(intent_id: &IntentId) -> OperationId {
-    match OperationId::from_uuid(intent_id.as_str().to_owned()) {
-        Ok(operation_id) => operation_id,
-        Err(_) => {
-            #[cfg(test)]
-            {
-                OperationId::for_test(intent_id.as_str().to_owned())
-            }
-            #[cfg(not(test))]
-            panic!("production IntentId values are canonical UUIDs")
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
@@ -1722,8 +1934,9 @@ mod tests {
     }
 
     fn intent(seed: &str, value: UserIntent) -> IntentEnvelope {
-        IntentEnvelope::new(
+        IntentEnvelope::with_operation_id(
             IntentId::from_uuid(canonical_id(seed)).expect("canonical test intent"),
+            op(&format!("{seed}-operation")),
             value,
         )
     }
@@ -1766,6 +1979,7 @@ mod tests {
                     | Effect::LaunchAgent { token, .. }
                     | Effect::InspectWorkspace { token, .. }
                     | Effect::StopAgent { token, .. }
+                    | Effect::TerminateAgent { token, .. }
                     | Effect::ReconcileAgents { token }
                     | Effect::ReconcileAgent { token, .. }
                     | Effect::CleanupWorkspace { token, .. }
@@ -1815,6 +2029,69 @@ mod tests {
         assert!(matches!(events[0].event(), CoordinatorEvent::Error(_)));
         assert_eq!(events[1].event(), &CoordinatorEvent::Noop);
         assert_eq!(coordinator.snapshot().revision(), 0);
+    }
+
+    #[test]
+    fn duplicate_ids_reject_payload_collisions_for_intents_and_provider_events() {
+        let mut coordinator = AppCoordinator::new();
+        coordinator.subscribe();
+        let intent_id = IntentId::for_test(canonical_id("intent-collision"));
+        coordinator
+            .dispatch_user(IntentEnvelope::with_operation_id(
+                intent_id.clone(),
+                op("intent-collision-operation"),
+                UserIntent::SelectContext(NavigationContext::Global),
+            ))
+            .expect("first intent");
+        let collision = coordinator
+            .dispatch_user(IntentEnvelope::with_operation_id(
+                intent_id,
+                op("intent-collision-operation-2"),
+                UserIntent::SelectActivity(Activity::Editor),
+            ))
+            .expect_err("same IntentId cannot carry a different command");
+        assert_eq!(collision.code(), super::super::error::AppErrorCode::DuplicateIntent);
+
+        let operation_collision_id = IntentId::for_test(canonical_id("intent-operation-collision"));
+        coordinator
+            .dispatch_user(IntentEnvelope::with_operation_id(
+                operation_collision_id.clone(),
+                op("intent-operation-collision-1"),
+                UserIntent::SelectActivity(Activity::Editor),
+            ))
+            .expect("first operation fingerprint");
+        let operation_collision = coordinator
+            .dispatch_user(IntentEnvelope::with_operation_id(
+                operation_collision_id,
+                op("intent-operation-collision-2"),
+                UserIntent::SelectActivity(Activity::Editor),
+            ))
+            .expect_err("operation identity is part of the exact intent payload");
+        assert_eq!(operation_collision.code(), super::super::error::AppErrorCode::DuplicateIntent);
+
+        let reconcile = coordinator.request_agents_reconcile(op("provider-collision-operation"));
+        let (token, _) = operation_effect(&coordinator.subscribe().into_events());
+        let event_id = op("provider-event-collision");
+        coordinator
+            .accept_provider_event(ProviderEventEnvelope::new(
+                event_id.clone(),
+                ProviderEvent::AgentsReconciled {
+                    token: token.clone(),
+                    reconciliation: AgentReconciliation::default(),
+                },
+            ))
+            .expect("first provider event");
+        assert!(reconcile.is_ok());
+        let collision = coordinator
+            .accept_provider_event(ProviderEventEnvelope::new(
+                event_id,
+                ProviderEvent::AgentExited {
+                    token,
+                    agent_id: AgentId::for_test("different-event-payload"),
+                },
+            ))
+            .expect_err("same ProviderEventId cannot carry a different event");
+        assert_eq!(collision.code(), super::super::error::AppErrorCode::DuplicateIntent);
     }
 
     #[test]
@@ -2202,6 +2479,129 @@ mod tests {
     }
 
     #[test]
+    fn final_non_clean_reinspection_enters_closing_failed_and_is_retryable() {
+        let mut model = AppModel::new();
+        let workspace_id = WorkspaceId::for_test("final-reinspect-workspace");
+        model
+            .add_workspace(workspace("final-reinspect-workspace", "/tmp/final-reinspect"))
+            .unwrap();
+        let mut coordinator = AppCoordinator::with_model(model);
+        coordinator.subscribe();
+        coordinator
+            .dispatch_user(intent(
+                "final-reinspect-request",
+                UserIntent::RequestCloseWorkspace { workspace_id: workspace_id.clone() },
+            ))
+            .unwrap();
+        let (inspect_token, _) = operation_effect(&coordinator.subscribe().into_events());
+        let busy = CloseInspectionInputs::new(
+            ResourceInspection::busy(1).unwrap(),
+            ResourceInspection::clean(),
+            ResourceInspection::clean(),
+            ResourceInspection::clean(),
+            ResourceInspection::clean(),
+        );
+        coordinator
+            .accept_provider_event(ProviderEventEnvelope::new(
+                op("final-reinspect-initial"),
+                ProviderEvent::WorkspaceInspectionCompleted {
+                    token: inspect_token,
+                    workspace_id: workspace_id.clone(),
+                    inspection: busy,
+                },
+            ))
+            .unwrap();
+        let (confirmation_token, _) = operation_effect(&coordinator.subscribe().into_events());
+        let confirmation = match coordinator
+            .accept_provider_event(ProviderEventEnvelope::new(
+                op("final-reinspect-confirmation"),
+                ProviderEvent::ConfirmationIdGenerated {
+                    token: confirmation_token,
+                    confirmation_id: ConfirmationId::for_test(canonical_id(
+                        "final-reinspect-confirm",
+                    )),
+                },
+            ))
+            .unwrap()
+        {
+            IntentOutcome::ConfirmationRequired { confirmation_id, .. } => confirmation_id,
+            other => panic!("expected confirmation, got {other:?}"),
+        };
+        coordinator
+            .dispatch_user(intent(
+                "final-reinspect-confirm-intent",
+                UserIntent::ConfirmCloseWorkspace { confirmation_id: confirmation },
+            ))
+            .unwrap();
+        let (reinspect_token, _) = operation_effect(&coordinator.subscribe().into_events());
+        coordinator
+            .accept_provider_event(ProviderEventEnvelope::new(
+                op("final-reinspect-clean"),
+                ProviderEvent::WorkspaceInspectionCompleted {
+                    token: reinspect_token,
+                    workspace_id: workspace_id.clone(),
+                    inspection: CloseInspectionInputs::clean(),
+                },
+            ))
+            .unwrap();
+        let (agents_token, _) = operation_effect(&coordinator.subscribe().into_events());
+        coordinator
+            .accept_provider_event(ProviderEventEnvelope::new(
+                op("final-reinspect-agents"),
+                ProviderEvent::WorkspaceCleanupCompleted {
+                    token: agents_token,
+                    workspace_id: workspace_id.clone(),
+                    result: WorkspaceCleanupResult::StepCompleted(CleanupStep::Agents),
+                },
+            ))
+            .unwrap();
+        let (terminal_token, _) = operation_effect(&coordinator.subscribe().into_events());
+        coordinator
+            .accept_provider_event(ProviderEventEnvelope::new(
+                op("final-reinspect-terminal"),
+                ProviderEvent::WorkspaceCleanupCompleted {
+                    token: terminal_token,
+                    workspace_id: workspace_id.clone(),
+                    result: WorkspaceCleanupResult::StepCompleted(CleanupStep::Terminal),
+                },
+            ))
+            .unwrap();
+        let (editor_token, _) = operation_effect(&coordinator.subscribe().into_events());
+        coordinator
+            .accept_provider_event(ProviderEventEnvelope::new(
+                op("final-reinspect-editor"),
+                ProviderEvent::WorkspaceCleanupCompleted {
+                    token: editor_token,
+                    workspace_id: workspace_id.clone(),
+                    result: WorkspaceCleanupResult::StepCompleted(CleanupStep::Editor),
+                },
+            ))
+            .unwrap();
+        let (final_token, _) = operation_effect(&coordinator.subscribe().into_events());
+        let outcome = coordinator
+            .accept_provider_event(ProviderEventEnvelope::new(
+                op("final-reinspect-busy"),
+                ProviderEvent::WorkspaceInspectionCompleted {
+                    token: final_token,
+                    workspace_id: workspace_id.clone(),
+                    inspection: CloseInspectionInputs::new(
+                        ResourceInspection::clean(),
+                        ResourceInspection::busy(1).unwrap(),
+                        ResourceInspection::clean(),
+                        ResourceInspection::clean(),
+                        ResourceInspection::clean(),
+                    ),
+                },
+            ))
+            .unwrap();
+        assert!(matches!(outcome, IntentOutcome::Updated { .. }));
+        assert!(matches!(
+            coordinator.snapshot().workspaces()[0].state(),
+            crate::WorkspaceState::ClosingFailed { .. }
+        ));
+    }
+
+    #[test]
     fn closing_tombstones_late_launches_and_serializes_close_requests() {
         let mut model = AppModel::new();
         let workspace_id = WorkspaceId::for_test("close-race-workspace");
@@ -2410,6 +2810,21 @@ mod tests {
     }
 
     #[test]
+    fn operation_generation_exhaustion_is_typed_and_does_not_register_work() {
+        let mut coordinator = AppCoordinator::new();
+        coordinator.next_generation = u64::MAX;
+        let operation_id = op("generation-exhaustion");
+        let error = coordinator
+            .request_agents_reconcile(operation_id.clone())
+            .expect_err("generation overflow must be rejected");
+        assert_eq!(error.code(), super::super::error::AppErrorCode::OperationGenerationExhausted);
+        assert_eq!(error.operation_id(), Some(&operation_id));
+        assert!(coordinator.subscribe().into_events().iter().all(|event| {
+            !matches!(event.event(), CoordinatorEvent::Effect(Effect::ReconcileAgents { .. }))
+        }));
+    }
+
+    #[test]
     fn reused_operation_id_keeps_generation_tombstones_separate() {
         let mut coordinator = AppCoordinator::new();
         coordinator.subscribe();
@@ -2536,6 +2951,72 @@ mod tests {
             ))
             .expect_err("late completion is stale after terminal launch failure");
         assert_eq!(stale.code(), super::super::error::AppErrorCode::StaleCompletion);
+    }
+
+    #[test]
+    fn launch_commit_collision_emits_compensating_termination_without_phantom_state() {
+        let mut model = AppModel::new();
+        let workspace_id = WorkspaceId::for_test("launch-commit-collision-workspace");
+        let colliding_agent = AgentId::for_test("launch-commit-collision-agent");
+        model
+            .add_workspace(workspace(
+                "launch-commit-collision-workspace",
+                "/tmp/launch-commit-collision",
+            ))
+            .unwrap();
+        model.add_agent(&workspace_id, colliding_agent.clone(), profile("codex")).unwrap();
+        let mut coordinator = AppCoordinator::with_model(model);
+        coordinator.subscribe();
+        coordinator
+            .dispatch_user(intent(
+                "launch-commit-collision-create",
+                UserIntent::CreateAgent {
+                    workspace_id: workspace_id.clone(),
+                    profile_id: AgentProfileId::for_test("codex"),
+                },
+            ))
+            .unwrap();
+        let (profile_token, _) = operation_effect(&coordinator.subscribe().into_events());
+        coordinator
+            .accept_provider_event(ProviderEventEnvelope::new(
+                op("launch-commit-collision-profile"),
+                ProviderEvent::ProfileResolved {
+                    token: profile_token,
+                    workspace_id: workspace_id.clone(),
+                    profile: profile("codex"),
+                },
+            ))
+            .unwrap();
+        let (id_token, _) = operation_effect(&coordinator.subscribe().into_events());
+        coordinator
+            .accept_provider_event(ProviderEventEnvelope::new(
+                op("launch-commit-collision-id"),
+                ProviderEvent::AgentIdGenerated {
+                    token: id_token,
+                    workspace_id: workspace_id.clone(),
+                    agent_id: colliding_agent.clone(),
+                },
+            ))
+            .unwrap();
+        let (launch_token, _) = operation_effect(&coordinator.subscribe().into_events());
+        let before = coordinator.snapshot();
+        let error = coordinator
+            .accept_provider_event(ProviderEventEnvelope::new(
+                op("launch-commit-collision-result"),
+                ProviderEvent::AgentLaunchCompleted {
+                    token: launch_token,
+                    workspace_id: workspace_id.clone(),
+                    agent_id: colliding_agent,
+                    result: AgentLaunchResult::Started,
+                },
+            ))
+            .expect_err("domain commit collision is surfaced");
+        assert_eq!(error.domain_code(), Some(DomainErrorCode::DuplicateAgent));
+        assert_eq!(coordinator.snapshot(), before);
+        let events = coordinator.subscribe().into_events();
+        assert!(events.iter().any(|event| {
+            matches!(event.event(), CoordinatorEvent::Effect(Effect::TerminateAgent { .. }))
+        }));
     }
 
     #[test]

@@ -1,6 +1,19 @@
 use std::fmt;
 
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+
 use crate::{DomainError, DomainErrorCode};
+
+/// Native application lifecycle readiness owned by the coordinator. This is
+/// not a provider status and does not create a second shell state store.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum AppReadiness {
+    Starting,
+    Ready,
+    Unavailable,
+}
 
 macro_rules! operation_id {
     ($name:ident) => {
@@ -51,6 +64,14 @@ fn is_canonical_uuid(raw: &str) -> bool {
 operation_id!(IntentId);
 operation_id!(OperationId);
 operation_id!(ConfirmationId);
+operation_id!(ProviderEventId);
+
+impl From<OperationId> for ProviderEventId {
+    fn from(operation_id: OperationId) -> Self {
+        Self::from_uuid(operation_id.as_str().to_owned())
+            .expect("an OperationId is always a canonical ProviderEventId")
+    }
+}
 
 /// A completion is accepted only for the exact operation generation that
 /// created it.  This prevents a late provider event from mutating a newer

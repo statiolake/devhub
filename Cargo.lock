@@ -574,6 +574,7 @@ name = "devhub-app"
 version = "0.1.0"
 dependencies = [
  "devhub-app-core",
+ "serde",
  "tauri",
  "tauri-build",
  "wry",

@@ -6,7 +6,7 @@
 //! workspace and agent identities to reattach after a relaunch, but runtime
 //! lifetimes remain outside this module.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
@@ -18,9 +18,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use crate::domain::{
-    Activity, AgentControlState, AgentId, AgentProfile, AgentRestoreRecord, AgentStatus,
-    DiagnosticCode, DisplayPath, NavigationContext, RuntimeHealth, WorkspaceId, WorkspaceRoot,
-    WorkspaceState,
+    Activity, AgentControlState, AgentId, AgentProfile, AgentProfileId, AgentProfileKind,
+    AgentRestoreRecord, AgentStatus, CleanupProgress, DiagnosticCode, DisplayPath,
+    NavigationContext, Repository, RepositoryId, RuntimeHealth, SurfaceResolution, WorkspaceId,
+    WorkspaceRoot, WorkspaceState,
 };
 
 /// The schema version written by this crate.
@@ -358,12 +359,43 @@ impl OpaqueProviderMapping {
 
 /// Durable agent status mapping.  This is a DevHub status projection, never a
 /// provider status or a runtime lifecycle owner.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PersistedAgentProfileKind {
+    Codex,
+    Claude,
+}
+
+impl From<AgentProfileKind> for PersistedAgentProfileKind {
+    fn from(kind: AgentProfileKind) -> Self {
+        match kind {
+            AgentProfileKind::Codex => Self::Codex,
+            AgentProfileKind::Claude => Self::Claude,
+        }
+    }
+}
+
+impl From<PersistedAgentProfileKind> for AgentProfileKind {
+    fn from(kind: PersistedAgentProfileKind) -> Self {
+        match kind {
+            PersistedAgentProfileKind::Codex => Self::Codex,
+            PersistedAgentProfileKind::Claude => Self::Claude,
+        }
+    }
+}
+
+/// The launch-time profile kind is optional only for legacy state files that
+/// predate this field. New snapshots always write it. Keeping the kind in
+/// state prevents a removed Claude profile from being silently reconstructed
+/// as Codex during startup.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AgentStateRecord {
     pub agent_id: String,
     pub workspace_id: String,
     pub profile_id: String,
+    #[serde(default)]
+    pub profile_kind: Option<PersistedAgentProfileKind>,
     #[serde(default)]
     pub profile_display_name: Option<String>,
     pub ordinal: u32,
@@ -386,6 +418,7 @@ impl fmt::Debug for AgentStateRecord {
             .field("agent_id", &self.agent_id)
             .field("workspace_id", &self.workspace_id)
             .field("profile_id", &self.profile_id)
+            .field("profile_kind", &self.profile_kind)
             .field(
                 "profile_display_name",
                 &self.profile_display_name.as_ref().map(|_| "<redacted>"),
@@ -406,6 +439,7 @@ impl AgentStateRecord {
             agent_id: record.id().to_string(),
             workspace_id: record.workspace_id().to_string(),
             profile_id: record.profile().id().to_string(),
+            profile_kind: Some(record.profile().kind().into()),
             profile_display_name: Some(record.profile().display_name().to_owned()),
             ordinal: record.ordinal(),
             temporary_name: record.temporary_name().map(str::to_owned),
@@ -420,6 +454,9 @@ impl AgentStateRecord {
         &self,
         profile: AgentProfile,
     ) -> Result<AgentRestoreRecord, StateError> {
+        if self.profile_kind.is_some_and(|kind| AgentProfileKind::from(kind) != profile.kind()) {
+            return Err(state_error(StateErrorCode::InvalidState));
+        }
         let id = AgentId::from_uuid(self.agent_id.clone())
             .map_err(|_| state_error(StateErrorCode::InvalidState))?;
         let workspace_id = WorkspaceId::from_uuid(self.workspace_id.clone())
@@ -1459,6 +1496,194 @@ impl PersistedAppState {
         Self::default()
     }
 
+    /// Hydrates the single pure application model from this validated state
+    /// document. This is deliberately owned by the persistence/bootstrap
+    /// boundary rather than [`AppModel`]: the domain model knows only domain
+    /// values, while this module translates durable records and applies the
+    /// existing navigation fallback rules.
+    ///
+    /// No filesystem, provider, editor, or tmux operation is performed here.
+    /// Provider mappings and native runtime metadata remain in this state
+    /// object for the concrete adapters that reattach after bootstrap.
+    pub fn hydrate_model(
+        &self,
+        profiles: &[AgentProfile],
+    ) -> Result<crate::snapshot::AppModel, StateError> {
+        self.hydrate_model_with_repositories(profiles, &[])
+    }
+
+    /// Hydrates with a trusted repository discovery projection. A persisted
+    /// repository ID is associated only when its full domain identity is
+    /// available in `repositories`; an ID without that projection is retained
+    /// by StateStore but not fabricated inside AppModel.
+    pub fn hydrate_model_with_repositories(
+        &self,
+        profiles: &[AgentProfile],
+        repositories: &[Repository],
+    ) -> Result<crate::snapshot::AppModel, StateError> {
+        self.validate()?;
+
+        let mut profile_by_id = BTreeMap::<AgentProfileId, AgentProfile>::new();
+        for profile in profiles {
+            let id = profile.id().clone();
+            if let Some(previous) = profile_by_id.insert(id, profile.clone()) {
+                if previous != *profile {
+                    return Err(state_error(StateErrorCode::InvalidState));
+                }
+            }
+        }
+
+        let mut model = crate::snapshot::AppModel::new();
+        for repository in repositories {
+            model
+                .register_repository(repository.clone())
+                .map_err(|_| state_error(StateErrorCode::InvalidState))?;
+        }
+
+        // `workspaces` and each `agents` vector are ordered durable records;
+        // constructing in that order preserves sidebar order and ordinals.
+        // All mutations target this temporary model, so no partially hydrated
+        // model escapes if a later record is malformed.
+        for record in &self.workspaces {
+            let (workspace_id, root, selected_path) = record.to_domain_paths()?;
+            let repository_id = record
+                .repository_id
+                .as_ref()
+                .and_then(|raw| RepositoryId::from_uuid(raw.clone()).ok())
+                .filter(|id| model.repository(id).is_some());
+            model
+                .add_workspace(crate::domain::Workspace::new(
+                    workspace_id.clone(),
+                    root,
+                    selected_path,
+                    repository_id,
+                ))
+                .map_err(|_| state_error(StateErrorCode::InvalidState))?;
+
+            match &record.lifecycle {
+                WorkspaceLifecycleRecord::Available => {}
+                WorkspaceLifecycleRecord::Unavailable { reason } => model
+                    .mark_workspace_unavailable(&workspace_id, (*reason).into())
+                    .map_err(|_| state_error(StateErrorCode::InvalidState))?,
+                WorkspaceLifecycleRecord::Closing { progress } => model
+                    .mark_workspace_closing(
+                        &workspace_id,
+                        CleanupProgress::new(
+                            progress.agents_closed,
+                            progress.terminal_closed,
+                            progress.editor_closed,
+                        ),
+                    )
+                    .map_err(|_| state_error(StateErrorCode::InvalidState))?,
+                WorkspaceLifecycleRecord::ClosingFailed { diagnostic, progress } => model
+                    .mark_workspace_closing_failed(
+                        &workspace_id,
+                        (*diagnostic).into(),
+                        CleanupProgress::new(
+                            progress.agents_closed,
+                            progress.terminal_closed,
+                            progress.editor_closed,
+                        ),
+                    )
+                    .map_err(|_| state_error(StateErrorCode::InvalidState))?,
+            }
+
+            for record in &record.agents {
+                let profile_id = AgentProfileId::from_slug(record.profile_id.clone())
+                    .map_err(|_| state_error(StateErrorCode::InvalidState))?;
+                let persisted_kind = record.profile_kind.map(AgentProfileKind::from);
+                let (profile, status, runtime_health) = match profile_by_id.get(&profile_id) {
+                    Some(configured) => {
+                        // Existing Agents retain their launch-time display
+                        // name even if current Settings changed the Profile.
+                        // A persisted kind wins because it describes the
+                        // launch-time profile, not the current Settings row.
+                        let kind = persisted_kind.unwrap_or_else(|| configured.kind());
+                        let profile = match record.profile_display_name.as_deref() {
+                            Some(display_name) => AgentProfile::new(
+                                configured.id().clone(),
+                                display_name,
+                                kind,
+                                configured.args().to_vec(),
+                                configured.env().clone(),
+                            )
+                            .map_err(|_| state_error(StateErrorCode::InvalidState))?,
+                            None => configured.clone(),
+                        };
+                        (profile, record.status.into(), record.runtime_health.into())
+                    }
+                    None => {
+                        // A Profile may be removed from Settings while its
+                        // Agent remains durable. Keep its row and identity,
+                        // but make the missing runtime explicit so startup
+                        // cannot pretend that it is attached or launchable.
+                        let kind = persisted_kind
+                            .ok_or_else(|| state_error(StateErrorCode::InvalidState))?;
+                        let display_name = record
+                            .profile_display_name
+                            .as_deref()
+                            .unwrap_or(record.profile_id.as_str());
+                        let placeholder = AgentProfile::new(
+                            profile_id.clone(),
+                            display_name,
+                            kind,
+                            Vec::new(),
+                            BTreeMap::new(),
+                        )
+                        .map_err(|_| state_error(StateErrorCode::InvalidState))?;
+                        (placeholder, AgentStatus::Waiting, RuntimeHealth::Unavailable)
+                    }
+                };
+                let restore = AgentRestoreRecord::new(
+                    AgentId::from_uuid(record.agent_id.clone())
+                        .map_err(|_| state_error(StateErrorCode::InvalidState))?,
+                    workspace_id.clone(),
+                    profile,
+                    record.ordinal,
+                    record.temporary_name.clone(),
+                    status,
+                    runtime_health,
+                    record.control_state.into(),
+                )
+                .map_err(|_| state_error(StateErrorCode::InvalidState))?;
+                model
+                    .restore_agent(restore)
+                    .map_err(|_| state_error(StateErrorCode::InvalidState))?;
+            }
+        }
+
+        let expanded = self
+            .sidebar
+            .expanded_workspace_ids
+            .iter()
+            .map(|raw| {
+                WorkspaceId::from_uuid(raw.clone())
+                    .map_err(|_| state_error(StateErrorCode::InvalidState))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        model
+            .restore_sidebar(self.sidebar.width, expanded)
+            .map_err(|_| state_error(StateErrorCode::InvalidState))?;
+
+        // Resolve persisted navigation only after all identities have been
+        // reconstructed. Unknown Workspace/Agent IDs use StateStore's
+        // canonical fallback (next Agent, Workspace Editor, or Global).
+        let navigation = self.restore_navigation()?;
+        let context = navigation.context.to_domain()?;
+        model.select_context(context).map_err(|_| state_error(StateErrorCode::InvalidState))?;
+        let requested_activity: Activity = navigation.activity.into();
+        if matches!(
+            model.resolve_surface(model.selection().context(), requested_activity),
+            SurfaceResolution::Enabled(_)
+        ) {
+            model
+                .select_activity(requested_activity)
+                .map_err(|_| state_error(StateErrorCode::InvalidState))?;
+        }
+
+        Ok(model)
+    }
+
     /// Builds a new persistence document from the immutable app snapshot.
     /// This constructor is for first-run/bootstrap documents; callers
     /// updating an existing document must use [`Self::apply_snapshot`] so
@@ -1494,7 +1719,8 @@ impl PersistedAppState {
                             agent_id: agent.id().to_string(),
                             workspace_id: agent.workspace_id().to_string(),
                             profile_id: agent.profile_id().to_string(),
-                            profile_display_name: None,
+                            profile_kind: Some(agent.profile_kind().into()),
+                            profile_display_name: Some(agent.profile_display_name().to_owned()),
                             ordinal: agent.ordinal(),
                             temporary_name: Some(agent.display_name().to_owned()),
                             status: agent.status().into(),
@@ -1510,6 +1736,15 @@ impl PersistedAppState {
                 context: NavigationContextRecord::from_domain(snapshot.selected_context()),
                 activity: snapshot.active_activity().into(),
             },
+            sidebar: SidebarState::new(
+                snapshot.sidebar().width(),
+                snapshot
+                    .sidebar()
+                    .expanded_workspace_ids()
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect(),
+            )?,
             ..Self::default()
         };
         state.validate()?;
@@ -1547,11 +1782,13 @@ impl PersistedAppState {
                     .profile_display_name
                     .clone()
                     .or_else(|| agent.profile_display_name.clone());
+                agent.profile_kind = previous_agent.profile_kind.or(agent.profile_kind);
                 agent.provider_mapping = previous_agent.provider_mapping.clone();
             }
         }
         self.workspaces = projected.workspaces;
         self.navigation = projected.navigation;
+        self.sidebar = projected.sidebar;
         self.validate()
     }
 
@@ -2445,6 +2682,17 @@ mod tests {
     }
 
     #[test]
+    fn committed_v1_agent_fixture_keeps_launch_profile_kind() {
+        let decoded = decode_state(include_bytes!("fixtures/state-v1-agent.json")).unwrap();
+        assert_eq!(decoded.state.workspaces.len(), 1);
+        assert_eq!(
+            decoded.state.workspaces[0].agents[0].profile_kind,
+            Some(PersistedAgentProfileKind::Claude)
+        );
+        assert!(!decoded.migrated);
+    }
+
+    #[test]
     fn clean_shutdown_metadata_marks_crash_window_and_clean_exit() {
         let mut state = PersistedAppState::fresh();
         assert!(state.mark_starting());
@@ -2473,6 +2721,7 @@ mod tests {
             agent_id: uuid(3),
             workspace_id: uuid(1),
             profile_id: "claude".into(),
+            profile_kind: Some(PersistedAgentProfileKind::Claude),
             profile_display_name: Some("Claude".into()),
             ordinal: 2,
             temporary_name: Some("Review agent".into()),
@@ -2570,14 +2819,25 @@ mod tests {
             )
             .unwrap();
         model.rename_agent(&agent_id, "Current display").unwrap();
+        model
+            .restore_sidebar(300, [workspace_id.clone()])
+            .expect("agent workspace can be restored expanded");
         let snapshot = model.snapshot();
         let mut state = PersistedAppState::from_snapshot(&snapshot).unwrap();
+        assert_eq!(state.sidebar.width, 300);
+        assert_eq!(state.sidebar.expanded_workspace_ids, vec![uuid(1)]);
+        assert_eq!(state.workspaces[0].agents[0].profile_display_name.as_deref(), Some("Codex"));
         state.workspaces[0].agents[0].profile_display_name = Some("Original profile".into());
         state.workspaces[0].agents[0].provider_mapping =
             Some(OpaqueProviderMapping::new("opaque-key").unwrap());
         state.workspaces[0].agents[0].status = PersistedAgentStatus::Error;
 
-        state.apply_snapshot(&snapshot).unwrap();
+        model.restore_sidebar(320, [workspace_id.clone()]).unwrap();
+        state.window.frame.width = 1_400;
+        state.apply_snapshot(&model.snapshot()).unwrap();
+        assert_eq!(state.sidebar.width, 320);
+        assert_eq!(state.sidebar.expanded_workspace_ids, vec![uuid(1)]);
+        assert_eq!(state.window.frame.width, 1_400);
         let merged = &state.workspaces[0].agents[0];
         assert_eq!(merged.profile_display_name.as_deref(), Some("Original profile"));
         assert_eq!(merged.provider_mapping.as_ref().unwrap().as_str(), "opaque-key");
@@ -2605,6 +2865,7 @@ mod tests {
             agent_id: uuid(2),
             workspace_id: uuid(1),
             profile_id: "codex".into(),
+            profile_kind: Some(PersistedAgentProfileKind::Codex),
             profile_display_name: Some("Profile secret".into()),
             ordinal: 1,
             temporary_name: Some("Agent secret".into()),
@@ -2798,6 +3059,7 @@ mod tests {
             agent_id: uuid(3),
             workspace_id: uuid(1),
             profile_id: "codex".into(),
+            profile_kind: Some(PersistedAgentProfileKind::Codex),
             profile_display_name: None,
             ordinal: 1,
             temporary_name: None,
@@ -2859,6 +3121,7 @@ mod tests {
                 agent_id: uuid(agent_seed),
                 workspace_id: uuid(1),
                 profile_id: "codex".into(),
+                profile_kind: Some(PersistedAgentProfileKind::Codex),
                 profile_display_name: None,
                 ordinal,
                 temporary_name: None,
@@ -3062,6 +3325,7 @@ mod tests {
             agent_id: uuid(2),
             workspace_id: uuid(1),
             profile_id: "codex".into(),
+            profile_kind: Some(PersistedAgentProfileKind::Codex),
             profile_display_name: Some("Codex".into()),
             ordinal: 1,
             temporary_name: None,
@@ -3094,6 +3358,197 @@ mod tests {
             state.finish_workspace_close(&uuid(1)).unwrap_err().code(),
             StateErrorCode::InvalidTransition
         );
+    }
+
+    #[test]
+    fn hydrate_model_preserves_order_navigation_sidebar_and_durable_metadata() {
+        use crate::domain::{AgentProfileKind, DisplayPath, RemoteIdentity, WorkspaceRoot};
+
+        let profile = AgentProfile::new(
+            AgentProfileId::for_test("codex"),
+            "Codex",
+            AgentProfileKind::Codex,
+            Vec::new(),
+            BTreeMap::new(),
+        )
+        .unwrap();
+        let repository = Repository::new(
+            RepositoryId::for_test(uuid(6)),
+            RemoteIdentity::normalize("https://github.com/statiolake/devhub.git").unwrap(),
+            [],
+        );
+
+        let mut first = workspace(1, "/dev/one");
+        first.repository_id = Some(repository.id().to_string());
+        first.agents.push(AgentStateRecord {
+            agent_id: uuid(2),
+            workspace_id: uuid(1),
+            profile_id: "codex".into(),
+            profile_kind: Some(PersistedAgentProfileKind::Codex),
+            profile_display_name: Some("Recovered Codex".into()),
+            ordinal: 4,
+            temporary_name: Some("Recovered Codex".into()),
+            status: PersistedAgentStatus::Waiting,
+            runtime_health: PersistedRuntimeHealth::Healthy,
+            control_state: PersistedAgentControlState::Running,
+            provider_mapping: Some(OpaqueProviderMapping::new("opaque-mapping").unwrap()),
+        });
+        first.agents.push(AgentStateRecord {
+            agent_id: uuid(3),
+            workspace_id: uuid(1),
+            profile_id: "codex".into(),
+            profile_kind: Some(PersistedAgentProfileKind::Codex),
+            profile_display_name: None,
+            ordinal: 5,
+            temporary_name: None,
+            status: PersistedAgentStatus::Idle,
+            runtime_health: PersistedRuntimeHealth::Starting,
+            control_state: PersistedAgentControlState::StopFailed {
+                diagnostic: PersistedDiagnosticCode::CleanupFailed,
+            },
+            provider_mapping: None,
+        });
+        let mut second = workspace(4, "/dev/two");
+        second.agents.push(AgentStateRecord {
+            agent_id: uuid(5),
+            workspace_id: uuid(4),
+            profile_id: "removed-profile".into(),
+            profile_kind: Some(PersistedAgentProfileKind::Claude),
+            profile_display_name: Some("Removed Profile".into()),
+            ordinal: 1,
+            temporary_name: None,
+            status: PersistedAgentStatus::Working,
+            runtime_health: PersistedRuntimeHealth::Healthy,
+            control_state: PersistedAgentControlState::Running,
+            provider_mapping: None,
+        });
+
+        let mut state = PersistedAppState::fresh();
+        state.workspaces = vec![first, second];
+        state.sidebar = SidebarState::new(320, vec![uuid(1), uuid(4)]).unwrap();
+        state.navigation = NavigationState {
+            context: NavigationContextRecord::Agent { agent_id: uuid(3) },
+            activity: ActivityRecord::Editor,
+        };
+        state.validate().unwrap();
+
+        let model = state.hydrate_model_with_repositories(&[profile], &[repository]).unwrap();
+        let snapshot = model.snapshot();
+        assert_eq!(
+            snapshot.workspaces().iter().map(|item| item.id().to_string()).collect::<Vec<_>>(),
+            vec![uuid(1), uuid(4)]
+        );
+        assert_eq!(
+            snapshot.workspaces()[0]
+                .agents()
+                .iter()
+                .map(|item| item.id().to_string())
+                .collect::<Vec<_>>(),
+            vec![uuid(2), uuid(3)]
+        );
+        assert_eq!(snapshot.workspaces()[0].agents()[0].ordinal(), 4);
+        assert_eq!(snapshot.workspaces()[0].agents()[0].status(), AgentStatus::Waiting);
+        assert_eq!(snapshot.workspaces()[0].agents()[0].runtime_health(), RuntimeHealth::Healthy);
+        assert_eq!(
+            snapshot.workspaces()[0].repository_id().unwrap(),
+            &RepositoryId::for_test(uuid(6))
+        );
+        assert!(snapshot.sidebar().is_expanded(&WorkspaceId::for_test(uuid(1))));
+        assert!(snapshot.sidebar().is_expanded(&WorkspaceId::for_test(uuid(4))));
+        assert_eq!(
+            snapshot.selected_context(),
+            &NavigationContext::Agent(AgentId::for_test(uuid(3)))
+        );
+        assert_eq!(snapshot.active_activity(), Activity::Editor);
+        assert_eq!(snapshot.workspaces()[1].agents()[0].status(), AgentStatus::Waiting);
+        assert_eq!(
+            snapshot.workspaces()[1].agents()[0].runtime_health(),
+            RuntimeHealth::Unavailable
+        );
+
+        let mut durable = PersistedAppState::from_snapshot(&snapshot).unwrap();
+        durable.workspaces[0].agents[0].provider_mapping =
+            Some(OpaqueProviderMapping::new("opaque-mapping").unwrap());
+        durable.window.frame =
+            WindowFrame { x: 10, y: 20, width: 1400, height: 900, maximized: true };
+        durable.shutdown = ShutdownMetadata { clean: false, launch_generation: 7 };
+        let expected_frame = durable.window.frame;
+        let expected_shutdown = durable.shutdown;
+        durable.apply_snapshot(&snapshot).unwrap();
+        assert_eq!(durable.window.frame, expected_frame);
+        assert_eq!(durable.shutdown, expected_shutdown);
+        assert_eq!(durable.sidebar.width, 320);
+        assert_eq!(durable.sidebar.expanded_workspace_ids, vec![uuid(1), uuid(4)]);
+        assert_eq!(
+            durable.workspaces[0].agents[0]
+                .provider_mapping
+                .as_ref()
+                .map(OpaqueProviderMapping::as_str),
+            Some("opaque-mapping")
+        );
+
+        // Keep these constructors referenced in this round-trip test to make
+        // clear that only validated domain paths cross the hydration seam.
+        assert_eq!(WorkspaceRoot::new("/dev/one").unwrap(), *snapshot.workspaces()[0].root());
+        assert_eq!(
+            DisplayPath::new("/dev/one/selected").unwrap(),
+            *snapshot.workspaces()[0].selected_path()
+        );
+    }
+
+    #[test]
+    fn hydrate_model_uses_navigation_fallback_and_rejects_invalid_records_atomically() {
+        use crate::domain::{AgentProfileKind, NavigationContext};
+
+        let profile = AgentProfile::new(
+            AgentProfileId::for_test("codex"),
+            "Codex",
+            AgentProfileKind::Codex,
+            Vec::new(),
+            BTreeMap::new(),
+        )
+        .unwrap();
+        let mut state = PersistedAppState::fresh();
+        state.workspaces.push(workspace(1, "/dev/one"));
+        state.sidebar = SidebarState::new(248, vec![uuid(1)]).unwrap();
+        state.navigation = NavigationState {
+            context: NavigationContextRecord::Agent { agent_id: uuid(9) },
+            activity: ActivityRecord::Agent,
+        };
+        state.validate().unwrap();
+        let model = state.hydrate_model(&[profile]).unwrap();
+        assert_eq!(model.snapshot().selected_context(), &NavigationContext::Global);
+        assert_eq!(model.snapshot().active_activity(), Activity::Terminal);
+        assert!(model.snapshot().sidebar().expanded_workspace_ids().is_empty());
+
+        let mut missing_kind = state.clone();
+        missing_kind.workspaces[0].agents.clear();
+        missing_kind.workspaces.push({
+            let mut record = workspace(2, "/dev/removed");
+            record.agents.push(AgentStateRecord {
+                agent_id: uuid(3),
+                workspace_id: uuid(2),
+                profile_id: "removed-profile".into(),
+                profile_kind: None,
+                profile_display_name: Some("Removed Profile".into()),
+                ordinal: 1,
+                temporary_name: None,
+                status: PersistedAgentStatus::Idle,
+                runtime_health: PersistedRuntimeHealth::Healthy,
+                control_state: PersistedAgentControlState::Running,
+                provider_mapping: None,
+            });
+            record
+        });
+        missing_kind.validate().unwrap();
+        assert_eq!(
+            missing_kind.hydrate_model(&[]).unwrap_err().code(),
+            StateErrorCode::InvalidState
+        );
+
+        let mut invalid = state;
+        invalid.workspaces[0].canonical_path = "relative/path".into();
+        assert_eq!(invalid.hydrate_model(&[]).unwrap_err().code(), StateErrorCode::InvalidState);
     }
 
     #[cfg(unix)]

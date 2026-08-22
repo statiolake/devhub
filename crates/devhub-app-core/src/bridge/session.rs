@@ -79,7 +79,7 @@ impl RequestLedger {
     }
 
     pub fn with_limits(capacity: usize, retention: Duration) -> Result<Self, ProtocolError> {
-        if capacity < REQUEST_LEDGER_MIN_ENTRIES
+        if !(REQUEST_LEDGER_MIN_ENTRIES..=REQUEST_LEDGER_MAX_ENTRIES).contains(&capacity)
             || retention < Duration::from_secs(REQUEST_LEDGER_MIN_RETENTION_SECONDS)
         {
             return Err(ProtocolError::invalid("ledger limits are below protocol minimums"));
@@ -153,6 +153,16 @@ impl RequestLedger {
 
     fn prune(&mut self, now: SystemTime) {
         let retention = self.retention;
+        // Retention is preferred while traffic is normal, but the absolute
+        // bound is non-negotiable. This preserves the latest IDs and makes a
+        // burst unable to grow the process without limit.
+        while self.entries.len() > REQUEST_LEDGER_MAX_ENTRIES {
+            let Some(oldest) = self.order.front().cloned() else {
+                break;
+            };
+            self.order.pop_front();
+            self.entries.remove(&oldest);
+        }
         while self.entries.len() > self.capacity {
             let Some(oldest) = self.order.front().cloned() else {
                 break;
@@ -381,6 +391,7 @@ pub struct BridgeHost {
     connections: BTreeMap<Uuid, HostConnection>,
     projections: BTreeMap<Uuid, SurfaceProjection>,
     ledgers: BTreeMap<Uuid, RequestLedger>,
+    reconciliation_failures: Vec<RequestFailure>,
     id_source: IdSourceHandle,
 }
 
@@ -400,6 +411,7 @@ impl BridgeHost {
             connections: BTreeMap::new(),
             projections: BTreeMap::new(),
             ledgers: BTreeMap::new(),
+            reconciliation_failures: Vec::new(),
             id_source,
         }
     }
@@ -418,6 +430,7 @@ impl BridgeHost {
             connections: BTreeMap::new(),
             projections: BTreeMap::new(),
             ledgers: BTreeMap::new(),
+            reconciliation_failures: Vec::new(),
             id_source,
         }
     }
@@ -432,6 +445,13 @@ impl BridgeHost {
 
     pub fn current_connection(&self, surface_id: &Uuid) -> Option<&Uuid> {
         self.current_connections.get(surface_id)
+    }
+
+    /// Returns failures raised while replacing a connection. A transport
+    /// caller must surface these typed outcomes and reconcile from a complete
+    /// snapshot before issuing requests on the new generation.
+    pub fn take_reconciliation_failures(&mut self) -> Vec<RequestFailure> {
+        std::mem::take(&mut self.reconciliation_failures)
     }
 
     pub fn receive(&mut self, frame: Envelope) -> HostReceiveOutcome {
@@ -678,17 +698,20 @@ impl BridgeHost {
         if let Some(previous) =
             self.current_connections.insert(payload.surface_id.clone(), connection_id.clone())
         {
-            let (pending, fingerprints) = if let Some(previous_connection) =
+            let (pending, pending_host_requests, fingerprints) = if let Some(previous_connection) =
                 self.connections.get_mut(&previous)
             {
                 previous_connection.phase = ConnectionPhase::Closed;
                 let pending = std::mem::take(&mut previous_connection.pending);
-                previous_connection.pending_host_requests.clear();
+                let pending_host_requests =
+                    std::mem::take(&mut previous_connection.pending_host_requests);
                 let fingerprints = std::mem::take(&mut previous_connection.pending_fingerprints);
-                (pending, fingerprints)
+                (pending, pending_host_requests, fingerprints)
             } else {
-                (BTreeMap::new(), BTreeMap::new())
+                (BTreeMap::new(), BTreeMap::new(), BTreeMap::new())
             };
+            self.reconciliation_failures
+                .extend(pending_host_requests.into_values().map(RequestFailure::connection_lost));
             for (request_message_id, _request) in pending {
                 let fingerprint =
                     fingerprints.get(&request_message_id).cloned().unwrap_or_default();
@@ -1044,13 +1067,19 @@ impl BridgeHost {
         let Some(connection) = self.connections.get(connection_id).cloned() else {
             return Vec::new();
         };
-        let pending: Vec<PendingRequest> = if let Some(active) =
-            self.connections.get_mut(connection_id)
-        {
+        let (pending, pending_host, fingerprints): (
+            Vec<PendingRequest>,
+            Vec<PendingRequest>,
+            BTreeMap<Uuid, String>,
+        ) = if let Some(active) = self.connections.get_mut(connection_id) {
             active.phase = ConnectionPhase::Closed;
-            active.pending.values().chain(active.pending_host_requests.values()).cloned().collect()
+            (
+                active.pending.values().cloned().collect(),
+                active.pending_host_requests.values().cloned().collect(),
+                active.pending_fingerprints.clone(),
+            )
         } else {
-            Vec::new()
+            (Vec::new(), Vec::new(), BTreeMap::new())
         };
         if let Some(active) = self.connections.get_mut(connection_id) {
             active.pending.clear();
@@ -1062,16 +1091,19 @@ impl BridgeHost {
                 code: ErrorCode::ConnectionLost,
                 summary: ContentFreeSummary::parse("connection lost").expect("static summary"),
             };
-            self.ledgers.entry(connection.surface_id.clone()).or_default().record(
+            self.ledgers.entry(connection.surface_id.clone()).or_default().record_request(
                 request.request_message_id.clone(),
+                fingerprints.get(&request.request_message_id).cloned().unwrap_or_default(),
                 cached,
                 now,
             );
         }
+        let mut all_pending = pending;
+        all_pending.extend(pending_host);
         if self.current_connections.get(&connection.surface_id) == Some(connection_id) {
             self.current_connections.remove(&connection.surface_id);
         }
-        pending.into_iter().map(RequestFailure::connection_lost).collect()
+        all_pending.into_iter().map(RequestFailure::connection_lost).collect()
     }
 
     /// Expires requests at the protocol deadline and returns response frames
@@ -1287,7 +1319,8 @@ impl BridgeHost {
             error: ErrorPayload {
                 request_message_id: None,
                 code,
-                summary: ContentFreeSummary::parse(summary).expect("static summary"),
+                summary: ContentFreeSummary::parse(summary)
+                    .unwrap_or(ContentFreeSummary::InvalidMessage),
             },
             close_connection,
         }
@@ -1427,7 +1460,8 @@ impl BridgeClient {
         ClientReceiveOutcome::ProtocolError(ErrorPayload {
             request_message_id,
             code,
-            summary: ContentFreeSummary::parse(summary).expect("static summary"),
+            summary: ContentFreeSummary::parse(summary)
+                .unwrap_or(ContentFreeSummary::InvalidMessage),
         })
     }
 
@@ -1786,7 +1820,7 @@ impl BridgeClient {
                             fingerprint,
                             CachedRequestResult::Error {
                                 code: payload.code,
-                                summary: payload.summary.clone(),
+                                summary: payload.summary,
                             },
                             now,
                         );
@@ -2111,6 +2145,82 @@ mod tests {
     }
 
     #[test]
+    fn lost_request_id_with_a_different_payload_is_rejected_after_reconnect() {
+        let surface = uuid("11111111-1111-4111-8111-111111111111");
+        let mut host = BridgeHost::new([surface.clone()]);
+        let mut client = BridgeClient::new(
+            surface.clone(),
+            uuid("44444444-4444-4444-8444-444444444444"),
+            semver("0.0.1"),
+        );
+        let connection = handshake(&mut host, &mut client);
+        let request = client
+            .request(
+                ClientRequest::OpenWorkspace(OpenWorkspaceRequestedPayload {
+                    absolute_path: path("/tmp/workspace"),
+                    source: OpenWorkspaceSource::OpenFolder,
+                }),
+                SystemTime::UNIX_EPOCH,
+            )
+            .expect("request");
+        let request_id = request.message_id().clone();
+        assert!(matches!(
+            host.receive_at(request, SystemTime::UNIX_EPOCH),
+            HostReceiveOutcome::RequestPending { .. }
+        ));
+        let failures = host.connection_lost(&connection, SystemTime::UNIX_EPOCH);
+        assert_eq!(failures.len(), 1);
+
+        let mut reconnect = BridgeClient::new(
+            surface.clone(),
+            uuid("99999999-9999-4999-8999-999999999999"),
+            semver("0.0.1"),
+        );
+        let new_connection = handshake(&mut host, &mut reconnect);
+        let replay = Envelope::new(
+            Some(new_connection),
+            3,
+            request_id,
+            MessageKind::OpenWorkspaceRequested,
+            Payload::OpenWorkspaceRequested(OpenWorkspaceRequestedPayload {
+                absolute_path: path("/tmp/different-workspace"),
+                source: OpenWorkspaceSource::OpenFolder,
+            }),
+        )
+        .expect("replayed request");
+        let outcome = host.receive_at(replay, SystemTime::UNIX_EPOCH);
+        assert!(matches!(
+            outcome,
+            HostReceiveOutcome::ProtocolError { error, .. }
+                if error.code == ErrorCode::InvalidMessage
+        ));
+    }
+
+    #[test]
+    fn replacing_a_connection_surfaces_pending_host_requests_for_reconciliation() {
+        let surface = uuid("11111111-1111-4111-8111-111111111111");
+        let mut host = BridgeHost::new([surface.clone()]);
+        let mut client = BridgeClient::new(
+            surface.clone(),
+            uuid("44444444-4444-4444-8444-444444444444"),
+            semver("0.0.1"),
+        );
+        let connection = handshake(&mut host, &mut client);
+        host.request_focus_at(&connection, FocusReason::Navigation, SystemTime::UNIX_EPOCH)
+            .expect("host request");
+        let mut replacement = BridgeClient::new(
+            surface,
+            uuid("99999999-9999-4999-8999-999999999999"),
+            semver("0.0.1"),
+        );
+        let _ = handshake(&mut host, &mut replacement);
+        let failures = host.take_reconciliation_failures();
+        assert_eq!(failures.len(), 1);
+        assert_eq!(failures[0].reason, RequestFailureReason::ConnectionLost);
+        assert!(failures[0].snapshot_reconciliation_required);
+    }
+
+    #[test]
     fn reconnect_fails_an_uncompleted_request_before_replay() {
         let surface = uuid("11111111-1111-4111-8111-111111111111");
         let mut host = BridgeHost::new([surface.clone()]);
@@ -2292,6 +2402,23 @@ mod tests {
                 start + Duration::from_secs(REQUEST_LEDGER_MIN_RETENTION_SECONDS)
             )
             .is_none());
+    }
+
+    #[test]
+    fn ledger_has_an_absolute_bound_even_during_the_retention_window() {
+        let mut ledger = RequestLedger::new();
+        let now = SystemTime::UNIX_EPOCH;
+        for _ in 0..=REQUEST_LEDGER_MAX_ENTRIES {
+            ledger.record(
+                Uuid::fresh(),
+                CachedRequestResult::Error {
+                    code: ErrorCode::RequestFailed,
+                    summary: ContentFreeSummary::parse("failed").expect("summary"),
+                },
+                now,
+            );
+        }
+        assert_eq!(ledger.len(now), REQUEST_LEDGER_MAX_ENTRIES);
     }
 
     #[test]

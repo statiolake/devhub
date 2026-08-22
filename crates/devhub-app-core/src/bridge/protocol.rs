@@ -24,6 +24,10 @@ pub const MAX_MESSAGE_BYTES: usize = 256 * 1024;
 pub const REQUEST_DEADLINE_SECONDS: u64 = 5;
 /// Minimum result-ledger capacity required by the wire contract.
 pub const REQUEST_LEDGER_MIN_ENTRIES: usize = 1_024;
+/// Absolute in-process bound for a surface ledger. The protocol minimum is
+/// retained under normal volume; this hard ceiling prevents a burst within the
+/// retention window from becoming an unbounded allocation.
+pub const REQUEST_LEDGER_MAX_ENTRIES: usize = 4_096;
 /// Minimum result-ledger retention required by the wire contract.
 pub const REQUEST_LEDGER_MIN_RETENTION_SECONDS: u64 = 10 * 60;
 /// Maximum integer that can be represented exactly by both Rust and JavaScript.
@@ -370,21 +374,110 @@ fn is_normalized_absolute_path(raw: &str) -> bool {
     raw.split('/').skip(1).all(|part| !part.is_empty() && part != "." && part != "..")
 }
 
-/// A bounded, NUL-free, content-free diagnostic summary.
-#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct ContentFreeSummary(String);
+/// A closed set of stable, content-free diagnostic summaries. Paths,
+/// commands, provider output, and arbitrary user text cannot cross the Bridge
+/// error boundary because there is no free-form summary constructor.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum ContentFreeSummary {
+    InvalidMessage,
+    InvalidIdentity,
+    UnsupportedVersion,
+    SequenceError,
+    PayloadTooLarge,
+    SecureIdentifierUnavailable,
+    ConnectionLost,
+    BridgeRequestTimedOut,
+    InvalidHelloAcceptance,
+    ResponseHasNoPendingRequest,
+    ResponseResultInvalid,
+    ErrorHasNoPendingRequest,
+    UnknownHostRequest,
+    Failed,
+}
 
 impl ContentFreeSummary {
-    pub fn parse(raw: impl Into<String>) -> Result<Self, ProtocolError> {
-        let raw = raw.into();
-        if raw.contains('\0') || raw.chars().count() > 256 {
-            return Err(ProtocolError::invalid("summary must be NUL-free and at most 256 scalars"));
-        }
-        Ok(Self(raw))
+    const ALL: [Self; 14] = [
+        Self::InvalidMessage,
+        Self::InvalidIdentity,
+        Self::UnsupportedVersion,
+        Self::SequenceError,
+        Self::PayloadTooLarge,
+        Self::SecureIdentifierUnavailable,
+        Self::ConnectionLost,
+        Self::BridgeRequestTimedOut,
+        Self::InvalidHelloAcceptance,
+        Self::ResponseHasNoPendingRequest,
+        Self::ResponseResultInvalid,
+        Self::ErrorHasNoPendingRequest,
+        Self::UnknownHostRequest,
+        Self::Failed,
+    ];
+
+    pub fn parse(raw: impl AsRef<str>) -> Result<Self, ProtocolError> {
+        let raw = raw.as_ref();
+        let value = match raw {
+            "connection lost" => Self::ConnectionLost,
+            "bridge request timed out" => Self::BridgeRequestTimedOut,
+            "invalid hello acceptance" => Self::InvalidHelloAcceptance,
+            "response has no pending request" => Self::ResponseHasNoPendingRequest,
+            "response result is invalid" => Self::ResponseResultInvalid,
+            "error has no pending request" => Self::ErrorHasNoPendingRequest,
+            "unknown host request" => Self::UnknownHostRequest,
+            "failed" => Self::Failed,
+            "unsupported bridge protocol version" => Self::UnsupportedVersion,
+            "secure identifier source unavailable" => Self::SecureIdentifierUnavailable,
+            "message exceeds the maximum encoded size" => Self::PayloadTooLarge,
+            "hello acceptance has no connection ID"
+            | "hello acceptance identity mismatch"
+            | "client has no connection ID" => Self::InvalidIdentity,
+            "hello has already been sent"
+            | "hello acceptance is out of order"
+            | "snapshot is not expected"
+            | "client connection is not established"
+            | "state snapshot is required before events"
+            | "requests require an active connection"
+            | "client sequence exhausted" => Self::SequenceError,
+            _ if raw.starts_with("invalid")
+                || raw.starts_with("path ")
+                || raw.starts_with("summary ")
+                || raw.starts_with("payload ")
+                || raw.starts_with("sequence ")
+                || raw.starts_with("non-hello ")
+                || raw.starts_with("hello must ")
+                || raw.starts_with("message kind ")
+                || raw.starts_with("response result ")
+                || raw.starts_with("ledger limits ")
+                || raw.starts_with("requests require ") =>
+            {
+                Self::InvalidMessage
+            }
+            _ => {
+                return Err(ProtocolError {
+                    code: ErrorCode::InvalidMessage,
+                    summary: Self::InvalidMessage,
+                })
+            }
+        };
+        Ok(value)
     }
 
-    pub fn as_str(&self) -> &str {
-        &self.0
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::InvalidMessage => "invalid bridge message",
+            Self::InvalidIdentity => "invalid bridge identity",
+            Self::UnsupportedVersion => "unsupported bridge protocol version",
+            Self::SequenceError => "bridge sequence error",
+            Self::PayloadTooLarge => "message exceeds the maximum encoded size",
+            Self::SecureIdentifierUnavailable => "secure identifier source unavailable",
+            Self::ConnectionLost => "connection lost",
+            Self::BridgeRequestTimedOut => "bridge request timed out",
+            Self::InvalidHelloAcceptance => "invalid hello acceptance",
+            Self::ResponseHasNoPendingRequest => "response has no pending request",
+            Self::ResponseResultInvalid => "response result is invalid",
+            Self::ErrorHasNoPendingRequest => "error has no pending request",
+            Self::UnknownHostRequest => "unknown host request",
+            Self::Failed => "failed",
+        }
     }
 }
 
@@ -421,8 +514,7 @@ impl JsonSchema for ContentFreeSummary {
     fn json_schema(_generator: &mut SchemaGenerator) -> Schema {
         json_schema!({
             "type": "string",
-            "maxLength": 256,
-            "pattern": "^[^\\u0000]*$"
+            "enum": Self::ALL.iter().map(|summary| summary.as_str()).collect::<Vec<_>>()
         })
     }
 }
@@ -1597,40 +1689,43 @@ impl ClientRequest {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProtocolError {
     code: ErrorCode,
-    summary: String,
+    summary: ContentFreeSummary,
 }
 
 impl ProtocolError {
     pub fn invalid(summary: impl Into<String>) -> Self {
-        Self { code: ErrorCode::InvalidMessage, summary: summary.into() }
+        let summary =
+            ContentFreeSummary::parse(summary.into()).unwrap_or(ContentFreeSummary::InvalidMessage);
+        Self { code: ErrorCode::InvalidMessage, summary }
     }
 
     pub fn invalid_identity(summary: impl Into<String>) -> Self {
-        Self { code: ErrorCode::InvalidIdentity, summary: summary.into() }
+        let summary = ContentFreeSummary::parse(summary.into())
+            .unwrap_or(ContentFreeSummary::InvalidIdentity);
+        Self { code: ErrorCode::InvalidIdentity, summary }
     }
 
     pub fn unsupported_version() -> Self {
         Self {
             code: ErrorCode::UnsupportedVersion,
-            summary: "unsupported bridge protocol version".to_owned(),
+            summary: ContentFreeSummary::UnsupportedVersion,
         }
     }
 
     pub fn sequence(summary: impl Into<String>) -> Self {
-        Self { code: ErrorCode::SequenceError, summary: summary.into() }
+        let summary =
+            ContentFreeSummary::parse(summary.into()).unwrap_or(ContentFreeSummary::SequenceError);
+        Self { code: ErrorCode::SequenceError, summary }
     }
 
     pub fn payload_too_large() -> Self {
-        Self {
-            code: ErrorCode::PayloadTooLarge,
-            summary: "message exceeds the maximum encoded size".to_owned(),
-        }
+        Self { code: ErrorCode::PayloadTooLarge, summary: ContentFreeSummary::PayloadTooLarge }
     }
 
     pub fn id_source_unavailable() -> Self {
         Self {
             code: ErrorCode::SurfaceUnavailable,
-            summary: "secure identifier source unavailable".to_owned(),
+            summary: ContentFreeSummary::SecureIdentifierUnavailable,
         }
     }
 
@@ -1639,7 +1734,7 @@ impl ProtocolError {
     }
 
     pub fn summary(&self) -> &str {
-        &self.summary
+        self.summary.as_str()
     }
 }
 
@@ -1971,6 +2066,7 @@ mod tests {
         assert!(AbsolutePath::parse("/tmp//secret").is_err());
         assert!(AbsolutePath::normalize("/tmp/../secret").is_ok());
         assert!(ContentFreeSummary::parse("x".repeat(257)).is_err());
+        assert!(ContentFreeSummary::parse("/Users/private/secret.txt").is_err());
 
         let bytes = vec![b' '; MAX_MESSAGE_BYTES + 1];
         assert_eq!(

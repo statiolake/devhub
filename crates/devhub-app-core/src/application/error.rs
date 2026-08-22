@@ -1,6 +1,6 @@
 use std::fmt;
 
-use super::types::{IntentId, OperationId};
+use super::types::{IntentId, OperationId, ProviderEventId};
 
 /// Stable, content-free application error codes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -14,6 +14,7 @@ pub enum AppErrorCode {
     ConfirmationRequired,
     ConfirmationExpired,
     OperationInProgress,
+    OperationGenerationExhausted,
     PersistenceDegraded,
     PortUnavailable,
 }
@@ -30,6 +31,7 @@ impl AppErrorCode {
             Self::ConfirmationRequired => "CONFIRMATION_REQUIRED",
             Self::ConfirmationExpired => "CONFIRMATION_EXPIRED",
             Self::OperationInProgress => "OPERATION_IN_PROGRESS",
+            Self::OperationGenerationExhausted => "OPERATION_GENERATION_EXHAUSTED",
             Self::PersistenceDegraded => "PERSISTENCE_DEGRADED",
             Self::PortUnavailable => "PORT_UNAVAILABLE",
         }
@@ -44,11 +46,18 @@ pub struct AppError {
     domain_code: Option<crate::DomainErrorCode>,
     intent_id: Option<IntentId>,
     operation_id: Option<OperationId>,
+    provider_event_id: Option<ProviderEventId>,
 }
 
 impl AppError {
     pub const fn new(code: AppErrorCode) -> Self {
-        Self { code, domain_code: None, intent_id: None, operation_id: None }
+        Self {
+            code,
+            domain_code: None,
+            intent_id: None,
+            operation_id: None,
+            provider_event_id: None,
+        }
     }
 
     pub const fn code(&self) -> AppErrorCode {
@@ -87,6 +96,15 @@ impl AppError {
 
     pub fn operation_id(&self) -> Option<&OperationId> {
         self.operation_id.as_ref()
+    }
+
+    pub fn with_provider_event(mut self, event_id: ProviderEventId) -> Self {
+        self.provider_event_id = Some(event_id);
+        self
+    }
+
+    pub fn provider_event_id(&self) -> Option<&ProviderEventId> {
+        self.provider_event_id.as_ref()
     }
 }
 

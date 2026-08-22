@@ -34,9 +34,10 @@ locked Rust checks. `build` creates the frontend output and performs a locked
 workspace Cargo build. More detailed prerequisites, troubleshooting, and
 manual smoke checks are in [`docs/LOCAL-DEVELOPMENT.md`](docs/LOCAL-DEVELOPMENT.md).
 
-The Rust-owned shell snapshot crosses the Tauri seam through the canonical
-fixture at [`contracts/shell-snapshot.v1.json`](contracts/shell-snapshot.v1.json),
-which is consumed by both Rust and TypeScript tests.
+The Rust-owned App Shell v1 contract is generated from the native wire types:
+[`contracts/app-shell/app-shell-v1.schema.json`](contracts/app-shell/app-shell-v1.schema.json).
+Run `pnpm run app-shell:generate` after changing the Rust seam; `pnpm run check`
+detects generated-artifact drift.
 
 ## CI and release status
 

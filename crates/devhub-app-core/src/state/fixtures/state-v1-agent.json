@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "workspaces": [
+    {
+      "workspace_id": "00000000-0000-4000-8000-000000000001",
+      "selected_path": "/dev/claude/selected",
+      "canonical_path": "/dev/claude",
+      "repository_id": null,
+      "lifecycle": {
+        "kind": "available"
+      },
+      "agents": [
+        {
+          "agent_id": "00000000-0000-4000-8000-000000000002",
+          "workspace_id": "00000000-0000-4000-8000-000000000001",
+          "profile_id": "claude",
+          "profile_kind": "claude",
+          "profile_display_name": "Claude",
+          "ordinal": 1,
+          "temporary_name": null,
+          "status": "waiting",
+          "runtime_health": "unavailable",
+          "control_state": {
+            "kind": "running"
+          },
+          "provider_mapping": null
+        }
+      ]
+    }
+  ],
+  "navigation": {
+    "context": {
+      "kind": "agent",
+      "agent_id": "00000000-0000-4000-8000-000000000002"
+    },
+    "activity": "agent"
+  },
+  "sidebar": {
+    "width": 248,
+    "expanded_workspace_ids": ["00000000-0000-4000-8000-000000000001"]
+  },
+  "window": {
+    "frame": {
+      "x": 0,
+      "y": 0,
+      "width": 1200,
+      "height": 800,
+      "maximized": false
+    }
+  },
+  "tmux": {
+    "effective_socket_name": "devhub",
+    "transition": {
+      "kind": "stable"
+    }
+  },
+  "shutdown": {
+    "clean": true,
+    "launch_generation": 0
+  }
+}

@@ -318,12 +318,14 @@ fn generated_typescript(schema: &Value) -> String {
         if name == "MessageKind" {
             continue;
         }
-        if ["UUID", "SemVer", "AbsolutePath", "ContentFreeSummary"].contains(&name.as_str()) {
+        if name == "ContentFreeSummary" && definition.get("enum").is_some() {
+            output.push_str(&format!("export type {name} = {};\n", ts_type(definition)));
+        } else if ["UUID", "SemVer", "AbsolutePath"].contains(&name.as_str()) {
             let brand = match name.as_str() {
                 "UUID" => "__devhubUuid",
                 "SemVer" => "__devhubSemVer",
                 "AbsolutePath" => "__devhubAbsolutePath",
-                _ => "__devhubSummary",
+                _ => unreachable!("handled special bridge type"),
             };
             output.push_str(&format!(
                 "export type {name} = string & {{ readonly {brand}: unique symbol }};\n"

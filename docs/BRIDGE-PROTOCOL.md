@@ -119,7 +119,7 @@ Each request receives exactly one `response` or `error`. `response` is:
   | "request_cancelled"
   | "bridge_timeout"
   | "connection_lost",
-  summary: content-free UTF-8 string of at most 256 scalar values
+  summary: one of the stable content-free diagnostic templates owned by the Rust contract
 }
 ```
 
@@ -129,7 +129,7 @@ Each request receives exactly one `response` or `error`. `response` is:
 
 After handshake, each sender increments its own sequence by exactly one. An exact duplicate frame with the same sequence and `message_id` is ignored after returning any cached request result; reusing a sequence with a different ID is a protocol error. A decreasing sequence or gap closes the connection with `sequence_error`; reconnect and the mandatory snapshot perform reconciliation rather than guessing at missing events.
 
-The host keeps a bounded request-result ledger per stable `surface_id` across connection generations for the DevHub process lifetime: at least the latest 1,024 IDs and no less than ten minutes. Reusing an extension request `message_id` returns its recorded result without repeating the side effect. The extension needs only a per-activation ledger because both host requests are idempotent.
+The host keeps a bounded request-result ledger per stable `surface_id` across connection generations for the DevHub process lifetime: at least the latest 1,024 IDs and no less than ten minutes during normal volume, with an absolute 4,096-entry ceiling under bursts. Reusing an extension request `message_id` with the exact same payload returns its recorded result without repeating the side effect; reusing it with a different payload is an `invalid_message` collision. The extension needs only a per-activation ledger because both host requests are idempotent.
 
 A request deadline is five seconds. Connection loss or timeout fails the pending request and triggers snapshot reconciliation. Neither side automatically retries a request across a connection generation. A later user intent creates a new `message_id`; replaying the old ID receives the ledger result and cannot duplicate Workspace routing.
 

@@ -65,10 +65,33 @@ cargo test --workspace --locked
 cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 ```
 
-The shared shell fixture is
-[`contracts/shell-snapshot.v1.json`](../contracts/shell-snapshot.v1.json).
-Rust and TypeScript tests both read it so changes to field names, casing, or
-native identity values fail at the seam.
+The shared App Shell v1 contract is
+[`contracts/app-shell/app-shell-v1.schema.json`](../contracts/app-shell/app-shell-v1.schema.json),
+with valid and invalid fixtures alongside it. `pnpm run app-shell:check`
+verifies the schema, fixtures, and generated TypeScript parser are in sync with
+the Rust wire types. Replay cursors are process-event sequences, independent of
+snapshot revisions; bounded-history gaps require snapshot replacement. Native
+effects and provider payloads advance that cursor internally but are filtered
+from the public replay event union.
+
+## Native bootstrap and persistence
+
+The native process uses the canonical macOS paths from the product contract:
+user configuration is loaded through `ConfigStore` from
+`~/.config/devhub/config.toml`, and runtime state is loaded through
+`JsonStateStore` from `~/Library/Application Support/DevHub/state.json`.
+Configured Agent Profiles are converted to domain profiles before the single
+`AppCoordinator` is hydrated. Workspace discovery, repository resolution, and
+provider reattachment remain later-wave adapters; they are not fabricated at
+startup. A malformed configuration or an unhydrateable legacy state fails
+bootstrap with a typed native/degraded error and never replaces the durable
+state with an empty model.
+
+Closing the only window persists the current projection but leaves the
+shutdown metadata unclean because macOS may keep the process alive. A system
+Quit persists the projection and then marks the state clean. Snapshot writes
+occur after releasing the coordinator mutex, and a failed write is returned to
+the shell as `persistence_degraded` rather than a false success.
 
 ## Running the shell
 

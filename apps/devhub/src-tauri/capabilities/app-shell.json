@@ -5,7 +5,8 @@
   "webviews": ["app-shell"],
   "permissions": [
     "core:default",
-    "allow-get-shell-snapshot",
-    "allow-mark-shell-ready"
+    "allow-get-app-snapshot",
+    "allow-dispatch-app-intent",
+    "allow-replay-app-events"
   ]
 }

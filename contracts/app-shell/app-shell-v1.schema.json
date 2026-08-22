@@ -1,0 +1,1254 @@
+{
+  "$defs": {
+    "ActivityName": {
+      "enum": ["editor", "agent", "terminal"],
+      "type": "string"
+    },
+    "ActivityWire": {
+      "additionalProperties": false,
+      "properties": {
+        "activity": {
+          "$ref": "#/$defs/ActivityName"
+        },
+        "resolution": {
+          "$ref": "#/$defs/ResolutionWire"
+        }
+      },
+      "required": ["activity", "resolution"],
+      "type": "object"
+    },
+    "AgentControlStateWire": {
+      "enum": ["running", "stopping", "stop-failed"],
+      "type": "string"
+    },
+    "AgentStatusWire": {
+      "enum": ["working", "waiting", "idle", "error"],
+      "type": "string"
+    },
+    "AgentWire": {
+      "additionalProperties": false,
+      "properties": {
+        "controlState": {
+          "$ref": "#/$defs/AgentControlStateWire"
+        },
+        "displayName": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "ordinal": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "profileId": {
+          "type": "string"
+        },
+        "runtimeHealth": {
+          "$ref": "#/$defs/RuntimeHealthWire"
+        },
+        "status": {
+          "$ref": "#/$defs/AgentStatusWire"
+        },
+        "workspaceId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "workspaceId",
+        "profileId",
+        "displayName",
+        "ordinal",
+        "status",
+        "runtimeHealth",
+        "controlState"
+      ],
+      "type": "object"
+    },
+    "AppErrorCodeWire": {
+      "enum": [
+        "invalid_intent",
+        "activity_disabled",
+        "unknown_context",
+        "workspace_unavailable",
+        "workspace_closing",
+        "workspace_close_failed",
+        "operation_pending",
+        "persistence_degraded",
+        "native_unavailable"
+      ],
+      "type": "string"
+    },
+    "AppErrorWire": {
+      "$defs": {
+        "AppErrorCodeWire": {
+          "enum": [
+            "invalid_intent",
+            "activity_disabled",
+            "unknown_context",
+            "workspace_unavailable",
+            "workspace_closing",
+            "workspace_close_failed",
+            "operation_pending",
+            "persistence_degraded",
+            "native_unavailable"
+          ],
+          "type": "string"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "$ref": "#/$defs/AppErrorCodeWire"
+        },
+        "summary": {
+          "type": "string"
+        }
+      },
+      "required": ["code", "summary"],
+      "title": "AppErrorWire",
+      "type": "object"
+    },
+    "AppIntentWire": {
+      "$defs": {
+        "ActivityName": {
+          "enum": ["editor", "agent", "terminal"],
+          "type": "string"
+        },
+        "ContextWire": {
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "global",
+                  "type": "string"
+                }
+              },
+              "required": ["kind"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "workspace",
+                  "type": "string"
+                },
+                "workspaceId": {
+                  "type": "string"
+                }
+              },
+              "required": ["kind", "workspaceId"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "agentId": {
+                  "type": "string"
+                },
+                "kind": {
+                  "const": "agent",
+                  "type": "string"
+                }
+              },
+              "required": ["kind", "agentId"],
+              "type": "object"
+            }
+          ]
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "User input accepted by the native shell. No IntentId, canonical path,\nprovider observation, or generated domain identity is accepted here; the\nnative ingress creates the correlation identity and the coordinator owns\nall resulting state transitions.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "context": {
+              "$ref": "#/$defs/ContextWire"
+            },
+            "type": {
+              "const": "select_context",
+              "type": "string"
+            }
+          },
+          "required": ["type", "context"],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "activity": {
+              "$ref": "#/$defs/ActivityName"
+            },
+            "type": {
+              "const": "select_activity",
+              "type": "string"
+            }
+          },
+          "required": ["type", "activity"],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "expanded": {
+              "type": "boolean"
+            },
+            "type": {
+              "const": "toggle_workspace_disclosure",
+              "type": "string"
+            },
+            "workspaceId": {
+              "type": "string"
+            }
+          },
+          "required": ["type", "workspaceId", "expanded"],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "const": "resize_sidebar",
+              "type": "string"
+            },
+            "width": {
+              "format": "uint16",
+              "maximum": 400,
+              "minimum": 200,
+              "type": "integer"
+            }
+          },
+          "required": ["type", "width"],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "const": "open_workspace_picker",
+              "type": "string"
+            }
+          },
+          "required": ["type"],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "const": "request_create_agent",
+              "type": "string"
+            },
+            "workspaceId": {
+              "type": "string"
+            }
+          },
+          "required": ["type", "workspaceId"],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "const": "retry_workspace",
+              "type": "string"
+            },
+            "workspaceId": {
+              "type": "string"
+            }
+          },
+          "required": ["type", "workspaceId"],
+          "type": "object"
+        }
+      ],
+      "title": "AppIntentWire"
+    },
+    "AppOutcomeWire": {
+      "$defs": {
+        "ActivityName": {
+          "enum": ["editor", "agent", "terminal"],
+          "type": "string"
+        },
+        "ActivityWire": {
+          "additionalProperties": false,
+          "properties": {
+            "activity": {
+              "$ref": "#/$defs/ActivityName"
+            },
+            "resolution": {
+              "$ref": "#/$defs/ResolutionWire"
+            }
+          },
+          "required": ["activity", "resolution"],
+          "type": "object"
+        },
+        "AgentControlStateWire": {
+          "enum": ["running", "stopping", "stop-failed"],
+          "type": "string"
+        },
+        "AgentStatusWire": {
+          "enum": ["working", "waiting", "idle", "error"],
+          "type": "string"
+        },
+        "AgentWire": {
+          "additionalProperties": false,
+          "properties": {
+            "controlState": {
+              "$ref": "#/$defs/AgentControlStateWire"
+            },
+            "displayName": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "ordinal": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "profileId": {
+              "type": "string"
+            },
+            "runtimeHealth": {
+              "$ref": "#/$defs/RuntimeHealthWire"
+            },
+            "status": {
+              "$ref": "#/$defs/AgentStatusWire"
+            },
+            "workspaceId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "workspaceId",
+            "profileId",
+            "displayName",
+            "ordinal",
+            "status",
+            "runtimeHealth",
+            "controlState"
+          ],
+          "type": "object"
+        },
+        "AppReadiness": {
+          "description": "Native application lifecycle readiness owned by the coordinator. This is\nnot a provider status and does not create a second shell state store.",
+          "enum": ["starting", "ready", "unavailable"],
+          "type": "string"
+        },
+        "AppSnapshotWire": {
+          "additionalProperties": false,
+          "properties": {
+            "activities": {
+              "items": {
+                "$ref": "#/$defs/ActivityWire"
+              },
+              "maxItems": 3,
+              "minItems": 3,
+              "type": "array"
+            },
+            "readiness": {
+              "$ref": "#/$defs/AppReadiness"
+            },
+            "revision": {
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "schemaVersion": {
+              "const": 1
+            },
+            "selection": {
+              "$ref": "#/$defs/SelectionWire"
+            },
+            "sidebar": {
+              "$ref": "#/$defs/SidebarWire"
+            },
+            "workspaces": {
+              "items": {
+                "$ref": "#/$defs/WorkspaceWire"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "schemaVersion",
+            "revision",
+            "readiness",
+            "selection",
+            "activities",
+            "workspaces",
+            "sidebar"
+          ],
+          "type": "object"
+        },
+        "ContextWire": {
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "global",
+                  "type": "string"
+                }
+              },
+              "required": ["kind"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "workspace",
+                  "type": "string"
+                },
+                "workspaceId": {
+                  "type": "string"
+                }
+              },
+              "required": ["kind", "workspaceId"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "agentId": {
+                  "type": "string"
+                },
+                "kind": {
+                  "const": "agent",
+                  "type": "string"
+                }
+              },
+              "required": ["kind", "agentId"],
+              "type": "object"
+            }
+          ]
+        },
+        "DisabledReasonWire": {
+          "enum": [
+            "global-agent-not-applicable",
+            "workspace-agent-requires-agent-selection",
+            "workspace-unavailable",
+            "workspace-closing",
+            "workspace-closing-failed"
+          ],
+          "type": "string"
+        },
+        "ResolutionWire": {
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "enabled",
+                  "type": "string"
+                },
+                "surfaceKey": {
+                  "type": "string"
+                }
+              },
+              "required": ["kind", "surfaceKey"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "disabled",
+                  "type": "string"
+                },
+                "reason": {
+                  "$ref": "#/$defs/DisabledReasonWire"
+                }
+              },
+              "required": ["kind", "reason"],
+              "type": "object"
+            }
+          ]
+        },
+        "RuntimeHealthWire": {
+          "enum": ["starting", "healthy", "degraded", "unavailable", "failed"],
+          "type": "string"
+        },
+        "SelectionWire": {
+          "additionalProperties": false,
+          "properties": {
+            "activity": {
+              "$ref": "#/$defs/ActivityName"
+            },
+            "context": {
+              "$ref": "#/$defs/ContextWire"
+            }
+          },
+          "required": ["context", "activity"],
+          "type": "object"
+        },
+        "SidebarWire": {
+          "additionalProperties": false,
+          "properties": {
+            "expandedWorkspaceIds": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "width": {
+              "format": "uint16",
+              "maximum": 400,
+              "minimum": 200,
+              "type": "integer"
+            }
+          },
+          "required": ["width", "expandedWorkspaceIds"],
+          "type": "object"
+        },
+        "WorkspaceStateWire": {
+          "enum": ["available", "unavailable", "closing", "closing-failed"],
+          "type": "string"
+        },
+        "WorkspaceWire": {
+          "additionalProperties": false,
+          "properties": {
+            "agents": {
+              "items": {
+                "$ref": "#/$defs/AgentWire"
+              },
+              "type": "array"
+            },
+            "aggregateStatus": {
+              "$ref": "#/$defs/AgentStatusWire"
+            },
+            "canCreateAgent": {
+              "type": "boolean"
+            },
+            "id": {
+              "type": "string"
+            },
+            "label": {
+              "type": "string"
+            },
+            "root": {
+              "type": "string"
+            },
+            "selectedPath": {
+              "type": "string"
+            },
+            "state": {
+              "$ref": "#/$defs/WorkspaceStateWire"
+            }
+          },
+          "required": [
+            "id",
+            "label",
+            "root",
+            "selectedPath",
+            "state",
+            "aggregateStatus",
+            "agents",
+            "canCreateAgent"
+          ],
+          "type": "object"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "noop",
+              "type": "string"
+            },
+            "snapshot": {
+              "$ref": "#/$defs/AppSnapshotWire"
+            }
+          },
+          "required": ["kind", "snapshot"],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "updated",
+              "type": "string"
+            },
+            "snapshot": {
+              "$ref": "#/$defs/AppSnapshotWire"
+            }
+          },
+          "required": ["kind", "snapshot"],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "confirmationId": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "confirmation_required",
+              "type": "string"
+            },
+            "snapshot": {
+              "$ref": "#/$defs/AppSnapshotWire"
+            }
+          },
+          "required": ["kind", "confirmationId", "snapshot"],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "deferred",
+              "type": "string"
+            },
+            "operationId": {
+              "type": "string"
+            },
+            "snapshot": {
+              "$ref": "#/$defs/AppSnapshotWire"
+            }
+          },
+          "required": ["kind", "operationId", "snapshot"],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "detached",
+              "type": "string"
+            },
+            "snapshot": {
+              "$ref": "#/$defs/AppSnapshotWire"
+            }
+          },
+          "required": ["kind", "snapshot"],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "persistence_degraded",
+              "type": "string"
+            },
+            "snapshot": {
+              "$ref": "#/$defs/AppSnapshotWire"
+            }
+          },
+          "required": ["kind", "snapshot"],
+          "type": "object"
+        }
+      ],
+      "title": "AppOutcomeWire"
+    },
+    "AppReadiness": {
+      "description": "Native application lifecycle readiness owned by the coordinator. This is\nnot a provider status and does not create a second shell state store.",
+      "enum": ["starting", "ready", "unavailable"],
+      "type": "string"
+    },
+    "AppSnapshotWire": {
+      "additionalProperties": false,
+      "properties": {
+        "activities": {
+          "items": {
+            "$ref": "#/$defs/ActivityWire"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        },
+        "readiness": {
+          "$ref": "#/$defs/AppReadiness"
+        },
+        "revision": {
+          "format": "uint64",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "schemaVersion": {
+          "const": 1
+        },
+        "selection": {
+          "$ref": "#/$defs/SelectionWire"
+        },
+        "sidebar": {
+          "$ref": "#/$defs/SidebarWire"
+        },
+        "workspaces": {
+          "items": {
+            "$ref": "#/$defs/WorkspaceWire"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "revision",
+        "readiness",
+        "selection",
+        "activities",
+        "workspaces",
+        "sidebar"
+      ],
+      "type": "object"
+    },
+    "ContextWire": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "global",
+              "type": "string"
+            }
+          },
+          "required": ["kind"],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "workspace",
+              "type": "string"
+            },
+            "workspaceId": {
+              "type": "string"
+            }
+          },
+          "required": ["kind", "workspaceId"],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "agentId": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "agent",
+              "type": "string"
+            }
+          },
+          "required": ["kind", "agentId"],
+          "type": "object"
+        }
+      ]
+    },
+    "DisabledReasonWire": {
+      "enum": [
+        "global-agent-not-applicable",
+        "workspace-agent-requires-agent-selection",
+        "workspace-unavailable",
+        "workspace-closing",
+        "workspace-closing-failed"
+      ],
+      "type": "string"
+    },
+    "ReplayEventKindWire": {
+      "enum": ["snapshot", "noop", "error", "operation_completed"],
+      "type": "string"
+    },
+    "ReplayEventWire": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/ReplayEventKindWire"
+        },
+        "sequence": {
+          "format": "uint64",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": ["sequence", "kind"],
+      "type": "object"
+    },
+    "ReplayWire": {
+      "$defs": {
+        "ActivityName": {
+          "enum": ["editor", "agent", "terminal"],
+          "type": "string"
+        },
+        "ActivityWire": {
+          "additionalProperties": false,
+          "properties": {
+            "activity": {
+              "$ref": "#/$defs/ActivityName"
+            },
+            "resolution": {
+              "$ref": "#/$defs/ResolutionWire"
+            }
+          },
+          "required": ["activity", "resolution"],
+          "type": "object"
+        },
+        "AgentControlStateWire": {
+          "enum": ["running", "stopping", "stop-failed"],
+          "type": "string"
+        },
+        "AgentStatusWire": {
+          "enum": ["working", "waiting", "idle", "error"],
+          "type": "string"
+        },
+        "AgentWire": {
+          "additionalProperties": false,
+          "properties": {
+            "controlState": {
+              "$ref": "#/$defs/AgentControlStateWire"
+            },
+            "displayName": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "ordinal": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "profileId": {
+              "type": "string"
+            },
+            "runtimeHealth": {
+              "$ref": "#/$defs/RuntimeHealthWire"
+            },
+            "status": {
+              "$ref": "#/$defs/AgentStatusWire"
+            },
+            "workspaceId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "workspaceId",
+            "profileId",
+            "displayName",
+            "ordinal",
+            "status",
+            "runtimeHealth",
+            "controlState"
+          ],
+          "type": "object"
+        },
+        "AppReadiness": {
+          "description": "Native application lifecycle readiness owned by the coordinator. This is\nnot a provider status and does not create a second shell state store.",
+          "enum": ["starting", "ready", "unavailable"],
+          "type": "string"
+        },
+        "AppSnapshotWire": {
+          "additionalProperties": false,
+          "properties": {
+            "activities": {
+              "items": {
+                "$ref": "#/$defs/ActivityWire"
+              },
+              "maxItems": 3,
+              "minItems": 3,
+              "type": "array"
+            },
+            "readiness": {
+              "$ref": "#/$defs/AppReadiness"
+            },
+            "revision": {
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "schemaVersion": {
+              "const": 1
+            },
+            "selection": {
+              "$ref": "#/$defs/SelectionWire"
+            },
+            "sidebar": {
+              "$ref": "#/$defs/SidebarWire"
+            },
+            "workspaces": {
+              "items": {
+                "$ref": "#/$defs/WorkspaceWire"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "schemaVersion",
+            "revision",
+            "readiness",
+            "selection",
+            "activities",
+            "workspaces",
+            "sidebar"
+          ],
+          "type": "object"
+        },
+        "ContextWire": {
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "global",
+                  "type": "string"
+                }
+              },
+              "required": ["kind"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "workspace",
+                  "type": "string"
+                },
+                "workspaceId": {
+                  "type": "string"
+                }
+              },
+              "required": ["kind", "workspaceId"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "agentId": {
+                  "type": "string"
+                },
+                "kind": {
+                  "const": "agent",
+                  "type": "string"
+                }
+              },
+              "required": ["kind", "agentId"],
+              "type": "object"
+            }
+          ]
+        },
+        "DisabledReasonWire": {
+          "enum": [
+            "global-agent-not-applicable",
+            "workspace-agent-requires-agent-selection",
+            "workspace-unavailable",
+            "workspace-closing",
+            "workspace-closing-failed"
+          ],
+          "type": "string"
+        },
+        "ReplayEventKindWire": {
+          "enum": ["snapshot", "noop", "error", "operation_completed"],
+          "type": "string"
+        },
+        "ReplayEventWire": {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "$ref": "#/$defs/ReplayEventKindWire"
+            },
+            "sequence": {
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": ["sequence", "kind"],
+          "type": "object"
+        },
+        "ResolutionWire": {
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "enabled",
+                  "type": "string"
+                },
+                "surfaceKey": {
+                  "type": "string"
+                }
+              },
+              "required": ["kind", "surfaceKey"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "disabled",
+                  "type": "string"
+                },
+                "reason": {
+                  "$ref": "#/$defs/DisabledReasonWire"
+                }
+              },
+              "required": ["kind", "reason"],
+              "type": "object"
+            }
+          ]
+        },
+        "RuntimeHealthWire": {
+          "enum": ["starting", "healthy", "degraded", "unavailable", "failed"],
+          "type": "string"
+        },
+        "SelectionWire": {
+          "additionalProperties": false,
+          "properties": {
+            "activity": {
+              "$ref": "#/$defs/ActivityName"
+            },
+            "context": {
+              "$ref": "#/$defs/ContextWire"
+            }
+          },
+          "required": ["context", "activity"],
+          "type": "object"
+        },
+        "SidebarWire": {
+          "additionalProperties": false,
+          "properties": {
+            "expandedWorkspaceIds": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "width": {
+              "format": "uint16",
+              "maximum": 400,
+              "minimum": 200,
+              "type": "integer"
+            }
+          },
+          "required": ["width", "expandedWorkspaceIds"],
+          "type": "object"
+        },
+        "WorkspaceStateWire": {
+          "enum": ["available", "unavailable", "closing", "closing-failed"],
+          "type": "string"
+        },
+        "WorkspaceWire": {
+          "additionalProperties": false,
+          "properties": {
+            "agents": {
+              "items": {
+                "$ref": "#/$defs/AgentWire"
+              },
+              "type": "array"
+            },
+            "aggregateStatus": {
+              "$ref": "#/$defs/AgentStatusWire"
+            },
+            "canCreateAgent": {
+              "type": "boolean"
+            },
+            "id": {
+              "type": "string"
+            },
+            "label": {
+              "type": "string"
+            },
+            "root": {
+              "type": "string"
+            },
+            "selectedPath": {
+              "type": "string"
+            },
+            "state": {
+              "$ref": "#/$defs/WorkspaceStateWire"
+            }
+          },
+          "required": [
+            "id",
+            "label",
+            "root",
+            "selectedPath",
+            "state",
+            "aggregateStatus",
+            "agents",
+            "canCreateAgent"
+          ],
+          "type": "object"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "cursor": {
+          "format": "uint64",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "events": {
+          "items": {
+            "$ref": "#/$defs/ReplayEventWire"
+          },
+          "type": "array"
+        },
+        "historyGap": {
+          "type": "boolean"
+        },
+        "snapshot": {
+          "$ref": "#/$defs/AppSnapshotWire"
+        }
+      },
+      "required": ["cursor", "historyGap", "snapshot", "events"],
+      "title": "ReplayWire",
+      "type": "object"
+    },
+    "ResolutionWire": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "enabled",
+              "type": "string"
+            },
+            "surfaceKey": {
+              "type": "string"
+            }
+          },
+          "required": ["kind", "surfaceKey"],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "disabled",
+              "type": "string"
+            },
+            "reason": {
+              "$ref": "#/$defs/DisabledReasonWire"
+            }
+          },
+          "required": ["kind", "reason"],
+          "type": "object"
+        }
+      ]
+    },
+    "RuntimeHealthWire": {
+      "enum": ["starting", "healthy", "degraded", "unavailable", "failed"],
+      "type": "string"
+    },
+    "SelectionWire": {
+      "additionalProperties": false,
+      "properties": {
+        "activity": {
+          "$ref": "#/$defs/ActivityName"
+        },
+        "context": {
+          "$ref": "#/$defs/ContextWire"
+        }
+      },
+      "required": ["context", "activity"],
+      "type": "object"
+    },
+    "SidebarWire": {
+      "additionalProperties": false,
+      "properties": {
+        "expandedWorkspaceIds": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "width": {
+          "format": "uint16",
+          "maximum": 400,
+          "minimum": 200,
+          "type": "integer"
+        }
+      },
+      "required": ["width", "expandedWorkspaceIds"],
+      "type": "object"
+    },
+    "WorkspaceStateWire": {
+      "enum": ["available", "unavailable", "closing", "closing-failed"],
+      "type": "string"
+    },
+    "WorkspaceWire": {
+      "additionalProperties": false,
+      "properties": {
+        "agents": {
+          "items": {
+            "$ref": "#/$defs/AgentWire"
+          },
+          "type": "array"
+        },
+        "aggregateStatus": {
+          "$ref": "#/$defs/AgentStatusWire"
+        },
+        "canCreateAgent": {
+          "type": "boolean"
+        },
+        "id": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "root": {
+          "type": "string"
+        },
+        "selectedPath": {
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/$defs/WorkspaceStateWire"
+        }
+      },
+      "required": [
+        "id",
+        "label",
+        "root",
+        "selectedPath",
+        "state",
+        "aggregateStatus",
+        "agents",
+        "canCreateAgent"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "https://devhub.local/contracts/app-shell/app-shell-v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/AppSnapshotWire"
+    },
+    {
+      "$ref": "#/$defs/AppIntentWire"
+    },
+    {
+      "$ref": "#/$defs/AppOutcomeWire"
+    },
+    {
+      "$ref": "#/$defs/AppErrorWire"
+    },
+    {
+      "$ref": "#/$defs/ReplayWire"
+    }
+  ],
+  "title": "DevHub App Shell v1"
+}

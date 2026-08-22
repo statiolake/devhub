@@ -41,6 +41,7 @@ pub enum DomainErrorCode {
     WorkspaceHasLiveAgents,
     WorkspaceClosing,
     WorkspaceClosingFailed,
+    InvalidSidebarWidth,
 }
 
 impl DomainErrorCode {
@@ -72,6 +73,7 @@ impl DomainErrorCode {
             Self::WorkspaceHasLiveAgents => "WORKSPACE_HAS_LIVE_AGENTS",
             Self::WorkspaceClosing => "WORKSPACE_CLOSING",
             Self::WorkspaceClosingFailed => "WORKSPACE_CLOSING_FAILED",
+            Self::InvalidSidebarWidth => "INVALID_SIDEBAR_WIDTH",
         }
     }
 }

@@ -1,0 +1,226 @@
+[
+  {
+    "activities": [
+      {
+        "activity": "editor",
+        "resolution": {
+          "kind": "enabled",
+          "surfaceKey": "global-editor"
+        }
+      },
+      {
+        "activity": "agent",
+        "resolution": {
+          "kind": "disabled",
+          "reason": "global-agent-not-applicable"
+        }
+      },
+      {
+        "activity": "terminal",
+        "resolution": {
+          "kind": "enabled",
+          "surfaceKey": "global-terminal"
+        }
+      }
+    ],
+    "readiness": "ready",
+    "revision": 0,
+    "schemaVersion": 1,
+    "selection": {
+      "activity": "terminal",
+      "context": {
+        "kind": "global"
+      }
+    },
+    "sidebar": {
+      "expandedWorkspaceIds": [],
+      "width": 248
+    },
+    "unexpected": true,
+    "workspaces": []
+  },
+  {
+    "activities": [
+      {
+        "activity": "editor",
+        "resolution": {
+          "kind": "enabled",
+          "surfaceKey": "global-editor"
+        }
+      },
+      {
+        "activity": "agent",
+        "resolution": {
+          "kind": "disabled",
+          "reason": "global-agent-not-applicable"
+        }
+      },
+      {
+        "activity": "terminal",
+        "resolution": {
+          "kind": "enabled",
+          "surfaceKey": "global-terminal"
+        }
+      }
+    ],
+    "readiness": "ready",
+    "revision": 0,
+    "schemaVersion": 2,
+    "selection": {
+      "activity": "terminal",
+      "context": {
+        "kind": "global"
+      }
+    },
+    "sidebar": {
+      "expandedWorkspaceIds": [],
+      "width": 248
+    },
+    "workspaces": []
+  },
+  {
+    "activities": [
+      {
+        "activity": "editor",
+        "resolution": {
+          "kind": "enabled",
+          "surfaceKey": "global-editor"
+        }
+      },
+      {
+        "activity": "agent",
+        "resolution": {
+          "kind": "disabled",
+          "reason": "global-agent-not-applicable"
+        }
+      },
+      {
+        "activity": "terminal",
+        "resolution": {
+          "kind": "enabled",
+          "surfaceKey": "global-terminal"
+        }
+      }
+    ],
+    "readiness": "ready",
+    "revision": 0,
+    "schemaVersion": 1,
+    "selection": {
+      "activity": "terminal",
+      "context": {
+        "kind": "global"
+      }
+    },
+    "sidebar": {
+      "expandedWorkspaceIds": [],
+      "width": 199
+    },
+    "workspaces": []
+  },
+  {
+    "activities": [
+      {
+        "activity": "editor",
+        "resolution": {
+          "kind": "enabled",
+          "surfaceKey": "global-editor"
+        }
+      },
+      {
+        "activity": "agent",
+        "resolution": {
+          "kind": "disabled",
+          "reason": "global-agent-not-applicable"
+        }
+      },
+      {
+        "activity": "terminal",
+        "resolution": {
+          "kind": "enabled",
+          "surfaceKey": "global-terminal"
+        }
+      }
+    ],
+    "readiness": "ready",
+    "revision": 9007199254740992,
+    "schemaVersion": 1,
+    "selection": {
+      "activity": "terminal",
+      "context": {
+        "kind": "global"
+      }
+    },
+    "sidebar": {
+      "expandedWorkspaceIds": [],
+      "width": 248
+    },
+    "workspaces": []
+  },
+  {
+    "type": "unknown_intent"
+  },
+  {
+    "activity": "unknown",
+    "type": "select_activity"
+  },
+  {
+    "type": "resize_sidebar",
+    "width": 401
+  },
+  {
+    "context": {
+      "extra": true,
+      "kind": "global"
+    },
+    "type": "select_context"
+  },
+  {
+    "cursor": 1,
+    "events": [
+      {
+        "kind": "effect",
+        "sequence": 1
+      }
+    ],
+    "historyGap": false,
+    "snapshot": {
+      "activities": [
+        {
+          "activity": "editor",
+          "resolution": {
+            "kind": "enabled",
+            "surfaceKey": "global-editor"
+          }
+        },
+        {
+          "activity": "agent",
+          "resolution": {
+            "kind": "disabled",
+            "reason": "global-agent-not-applicable"
+          }
+        },
+        {
+          "activity": "terminal",
+          "resolution": {
+            "kind": "enabled",
+            "surfaceKey": "global-terminal"
+          }
+        }
+      ],
+      "readiness": "ready",
+      "revision": 0,
+      "schemaVersion": 1,
+      "selection": {
+        "activity": "terminal",
+        "context": {
+          "kind": "global"
+        }
+      },
+      "sidebar": {
+        "expandedWorkspaceIds": [],
+        "width": 248
+      },
+      "workspaces": []
+    }
+  }
+]

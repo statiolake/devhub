@@ -12,8 +12,8 @@ mod types;
 pub use coordinator::{
     AppCoordinator, ConfirmationPurpose, CoordinatorEffect, CoordinatorEvent, CoordinatorReplay,
     CoordinatorSubscription, DetachReason, Effect, SequencedCoordinatorEvent,
-    MAX_COMPLETED_TOKEN_ENTRIES, MAX_INTENT_LEDGER_ENTRIES, MAX_PROVIDER_LEDGER_ENTRIES,
-    MAX_RETAINED_EVENTS,
+    MAX_COMPLETED_TOKEN_ENTRIES, MAX_CONFIRMATION_ID_ENTRIES, MAX_INTENT_LEDGER_ENTRIES,
+    MAX_PROVIDER_LEDGER_ENTRIES, MAX_RETAINED_EVENTS,
 };
 pub use error::{AppError, AppErrorCode};
 pub use intent::{
@@ -21,4 +21,6 @@ pub use intent::{
     PersistenceHealth, ProviderEvent, ProviderEventEnvelope, RequestedPath, UserIntent,
     WorkspaceCleanupResult,
 };
-pub use types::{ConfirmationId, IntentId, OperationId, OperationToken};
+pub use types::{
+    AppReadiness, ConfirmationId, IntentId, OperationId, OperationToken, ProviderEventId,
+};

@@ -4,7 +4,7 @@ use crate::{
     WorkspaceId, WorkspaceRoot,
 };
 
-use super::types::{ConfirmationId, IntentId, OperationId, OperationToken};
+use super::types::{ConfirmationId, IntentId, OperationId, OperationToken, ProviderEventId};
 
 /// A path exactly as requested by a UI/Bridge caller. It is not a canonical
 /// Workspace Root; only a resolver completion may create that domain value.
@@ -31,6 +31,8 @@ impl RequestedPath {
 pub enum UserIntent {
     SelectContext(NavigationContext),
     SelectActivity(Activity),
+    ToggleWorkspaceDisclosure { workspace_id: WorkspaceId, expanded: bool },
+    ResizeSidebar { width: u16 },
     OpenFolder { path: RequestedPath },
     NewWindow { path: Option<RequestedPath> },
     CreateAgent { workspace_id: WorkspaceId, profile_id: AgentProfileId },
@@ -52,12 +54,25 @@ pub type Intent = UserIntent;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IntentEnvelope {
     intent_id: IntentId,
+    operation_id: Option<OperationId>,
     intent: UserIntent,
 }
 
 impl IntentEnvelope {
+    /// Constructs an envelope without a trusted operation identity. Native
+    /// ingress must use [`Self::with_operation_id`] before dispatching; this
+    /// constructor remains useful for decoding/validation boundaries that have
+    /// not yet attached their trusted correlation identity.
     pub fn new(intent_id: IntentId, intent: UserIntent) -> Self {
-        Self { intent_id, intent }
+        Self { intent_id, operation_id: None, intent }
+    }
+
+    pub fn with_operation_id(
+        intent_id: IntentId,
+        operation_id: OperationId,
+        intent: UserIntent,
+    ) -> Self {
+        Self { intent_id, operation_id: Some(operation_id), intent }
     }
 
     pub fn intent_id(&self) -> &IntentId {
@@ -68,8 +83,12 @@ impl IntentEnvelope {
         &self.intent
     }
 
-    pub fn into_parts(self) -> (IntentId, UserIntent) {
-        (self.intent_id, self.intent)
+    pub fn operation_id(&self) -> Option<&OperationId> {
+        self.operation_id.as_ref()
+    }
+
+    pub fn into_parts(self) -> (IntentId, Option<OperationId>, UserIntent) {
+        (self.intent_id, self.operation_id, self.intent)
     }
 }
 
@@ -92,6 +111,11 @@ pub enum ProviderEvent {
         inspection: CloseInspectionInputs,
     },
     AgentStopCompleted {
+        token: OperationToken,
+        agent_id: AgentId,
+        result: AgentStopResult,
+    },
+    AgentTerminationCompleted {
         token: OperationToken,
         agent_id: AgentId,
         result: AgentStopResult,
@@ -138,20 +162,23 @@ pub enum ProviderEvent {
     StatePersisted {
         token: OperationToken,
     },
+    StatePersistenceFailed {
+        token: OperationToken,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProviderEventEnvelope {
-    event_id: OperationId,
+    event_id: ProviderEventId,
     event: ProviderEvent,
 }
 
 impl ProviderEventEnvelope {
-    pub fn new(event_id: OperationId, event: ProviderEvent) -> Self {
-        Self { event_id, event }
+    pub fn new(event_id: impl Into<ProviderEventId>, event: ProviderEvent) -> Self {
+        Self { event_id: event_id.into(), event }
     }
 
-    pub fn event_id(&self) -> &OperationId {
+    pub fn event_id(&self) -> &ProviderEventId {
         &self.event_id
     }
 
@@ -159,7 +186,7 @@ impl ProviderEventEnvelope {
         &self.event
     }
 
-    pub fn into_parts(self) -> (OperationId, ProviderEvent) {
+    pub fn into_parts(self) -> (ProviderEventId, ProviderEvent) {
         (self.event_id, self.event)
     }
 }

@@ -5,8 +5,22 @@
       "type": "string"
     },
     "ContentFreeSummary": {
-      "maxLength": 256,
-      "pattern": "^[^\\u0000]*$",
+      "enum": [
+        "invalid bridge message",
+        "invalid bridge identity",
+        "unsupported bridge protocol version",
+        "bridge sequence error",
+        "message exceeds the maximum encoded size",
+        "secure identifier source unavailable",
+        "connection lost",
+        "bridge request timed out",
+        "invalid hello acceptance",
+        "response has no pending request",
+        "response result is invalid",
+        "error has no pending request",
+        "unknown host request",
+        "failed"
+      ],
       "type": "string"
     },
     "Context": {

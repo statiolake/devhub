@@ -4,7 +4,7 @@
 //! receive only immutable `AppSnapshot` values, which contain semantic
 //! DevHub identities and never provider/editor surface IDs.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::domain::{
     Activity, Agent, AgentControlState, AgentId, AgentProfile, AgentProfileId, AgentRestoreRecord,
@@ -12,6 +12,11 @@ use super::domain::{
     NavigationContext, Repository, RepositoryId, RuntimeHealth, SurfaceKey, SurfaceResolution,
     Workspace, WorkspaceId, WorkspaceRoot, WorkspaceState, APP_SNAPSHOT_SCHEMA_VERSION,
 };
+
+/// App Shell geometry is a domain value, not a React presentation setting.
+pub const SIDEBAR_MIN_WIDTH: u16 = 200;
+pub const SIDEBAR_MAX_WIDTH: u16 = 400;
+pub const SIDEBAR_DEFAULT_WIDTH: u16 = 248;
 
 /// The selected context/activity pair. Context and Activity remain separate:
 /// selecting an Activity never changes the Navigation Context.
@@ -42,6 +47,27 @@ pub struct ActivitySnapshot {
     resolution: SurfaceResolution,
 }
 
+/// Rust-owned sidebar disclosure and geometry restored with the application.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SidebarSnapshot {
+    width: u16,
+    expanded_workspace_ids: Vec<WorkspaceId>,
+}
+
+impl SidebarSnapshot {
+    pub fn width(&self) -> u16 {
+        self.width
+    }
+
+    pub fn expanded_workspace_ids(&self) -> &[WorkspaceId] {
+        &self.expanded_workspace_ids
+    }
+
+    pub fn is_expanded(&self, workspace_id: &WorkspaceId) -> bool {
+        self.expanded_workspace_ids.iter().any(|candidate| candidate == workspace_id)
+    }
+}
+
 impl ActivitySnapshot {
     pub const fn activity(&self) -> Activity {
         self.activity
@@ -62,6 +88,8 @@ pub struct AgentSnapshot {
     id: AgentId,
     workspace_id: WorkspaceId,
     profile_id: AgentProfileId,
+    profile_kind: super::domain::AgentProfileKind,
+    profile_display_name: String,
     display_name: String,
     ordinal: u32,
     status: AgentStatus,
@@ -80,6 +108,14 @@ impl AgentSnapshot {
 
     pub fn profile_id(&self) -> &AgentProfileId {
         &self.profile_id
+    }
+
+    pub const fn profile_kind(&self) -> super::domain::AgentProfileKind {
+        self.profile_kind
+    }
+
+    pub fn profile_display_name(&self) -> &str {
+        &self.profile_display_name
     }
 
     pub fn display_name(&self) -> &str {
@@ -180,6 +216,7 @@ pub struct AppSnapshot {
     selection: NavigationSelection,
     activities: [ActivitySnapshot; 3],
     workspaces: Vec<WorkspaceSnapshot>,
+    sidebar: SidebarSnapshot,
 }
 
 impl AppSnapshot {
@@ -217,6 +254,10 @@ impl AppSnapshot {
     pub fn workspaces(&self) -> &[WorkspaceSnapshot] {
         &self.workspaces
     }
+
+    pub const fn sidebar(&self) -> &SidebarSnapshot {
+        &self.sidebar
+    }
 }
 
 /// Pure application model. Runtime adapters and persistence are deliberately
@@ -227,6 +268,8 @@ pub struct AppModel {
     repositories: BTreeMap<RepositoryId, Repository>,
     selection: NavigationSelection,
     next_agent_ordinals: BTreeMap<(WorkspaceId, AgentProfileId), u32>,
+    sidebar_width: u16,
+    expanded_workspace_ids: BTreeSet<WorkspaceId>,
     revision: u64,
 }
 
@@ -243,6 +286,8 @@ impl AppModel {
             repositories: BTreeMap::new(),
             selection: NavigationSelection::new(NavigationContext::Global, Activity::Terminal),
             next_agent_ordinals: BTreeMap::new(),
+            sidebar_width: SIDEBAR_DEFAULT_WIDTH,
+            expanded_workspace_ids: BTreeSet::new(),
             revision: 0,
         }
     }
@@ -258,11 +303,90 @@ impl AppModel {
             selection: self.selection.clone(),
             activities,
             workspaces: self.workspace_snapshots(),
+            sidebar: SidebarSnapshot {
+                width: self.sidebar_width,
+                expanded_workspace_ids: self.expanded_workspace_ids.iter().cloned().collect(),
+            },
         }
     }
 
     pub fn selection(&self) -> &NavigationSelection {
         &self.selection
+    }
+
+    pub const fn sidebar_width(&self) -> u16 {
+        self.sidebar_width
+    }
+
+    pub fn expanded_workspace_ids(&self) -> impl Iterator<Item = &WorkspaceId> {
+        self.expanded_workspace_ids.iter()
+    }
+
+    /// Restores durable sidebar state before the first UI snapshot is emitted.
+    /// Unknown Workspaces and rows without Agent children are rejected rather
+    /// than allowing presentation state to drift from the domain aggregate.
+    pub fn restore_sidebar(
+        &mut self,
+        width: u16,
+        expanded_workspace_ids: impl IntoIterator<Item = WorkspaceId>,
+    ) -> Result<bool, DomainError> {
+        if !(SIDEBAR_MIN_WIDTH..=SIDEBAR_MAX_WIDTH).contains(&width) {
+            return Err(DomainError::new(DomainErrorCode::InvalidSidebarWidth));
+        }
+        let mut restored = BTreeSet::new();
+        for workspace_id in expanded_workspace_ids {
+            let workspace = self
+                .workspace(&workspace_id)
+                .ok_or_else(|| DomainError::new(DomainErrorCode::UnknownWorkspace))?;
+            if !workspace.agents().is_empty() {
+                restored.insert(workspace_id);
+            }
+        }
+        let changed = self.sidebar_width != width || self.expanded_workspace_ids != restored;
+        if changed {
+            self.sidebar_width = width;
+            self.expanded_workspace_ids = restored;
+            self.bump_revision();
+        }
+        Ok(changed)
+    }
+
+    /// Applies a bounded sidebar width revision. A no-op does not advance the
+    /// snapshot revision, which keeps pointer/keyboard resize updates stable.
+    pub fn set_sidebar_width(&mut self, width: u16) -> Result<bool, DomainError> {
+        if !(SIDEBAR_MIN_WIDTH..=SIDEBAR_MAX_WIDTH).contains(&width) {
+            return Err(DomainError::new(DomainErrorCode::InvalidSidebarWidth));
+        }
+        if self.sidebar_width == width {
+            return Ok(false);
+        }
+        self.sidebar_width = width;
+        self.bump_revision();
+        Ok(true)
+    }
+
+    /// Disclosure is separate from Workspace selection and has no meaning for
+    /// a Workspace with no Agent children.
+    pub fn set_workspace_disclosure(
+        &mut self,
+        workspace_id: &WorkspaceId,
+        expanded: bool,
+    ) -> Result<bool, DomainError> {
+        let workspace = self
+            .workspace(workspace_id)
+            .ok_or_else(|| DomainError::new(DomainErrorCode::UnknownWorkspace))?;
+        if workspace.agents().is_empty() {
+            return Ok(false);
+        }
+        let changed = if expanded {
+            self.expanded_workspace_ids.insert(workspace_id.clone())
+        } else {
+            self.expanded_workspace_ids.remove(workspace_id)
+        };
+        if changed {
+            self.bump_revision();
+        }
+        Ok(changed)
     }
 
     pub fn workspaces(&self) -> &[Workspace] {
@@ -676,6 +800,9 @@ impl AppModel {
             .get(agent_index + 1)
             .map(|agent| agent.id().clone());
         self.workspaces[workspace_index].remove_agent(agent_id).expect("agent position was found");
+        if self.workspaces[workspace_index].agents().is_empty() {
+            self.expanded_workspace_ids.remove(&workspace_id);
+        }
 
         if self.selection.context == NavigationContext::Agent(agent_id.clone()) {
             self.selection = match next_agent {
@@ -724,6 +851,7 @@ impl AppModel {
             NavigationContext::Global => false,
         };
         self.workspaces.remove(index);
+        self.expanded_workspace_ids.remove(workspace_id);
         if owns_selection {
             self.selection = match next.or(previous) {
                 Some(next_workspace) => NavigationSelection::new(
@@ -908,6 +1036,8 @@ impl AppModel {
                         id: agent.id().clone(),
                         workspace_id: agent.workspace_id().clone(),
                         profile_id: agent.profile().id().clone(),
+                        profile_kind: agent.profile().kind(),
+                        profile_display_name: agent.profile().display_name().to_owned(),
                         display_name: agent.display_name(),
                         ordinal: agent.ordinal(),
                         status: agent.status(),
@@ -1000,6 +1130,47 @@ mod tests {
         let id = WorkspaceId::for_test("workspace-a");
         model.add_workspace(workspace("workspace-a", "/dev/a")).unwrap();
         (model, id)
+    }
+
+    #[test]
+    fn sidebar_width_is_bounded_and_disclosure_is_separate_from_selection() {
+        let mut model = AppModel::new();
+        let workspace_id = WorkspaceId::for_test("550e8400-e29b-41d4-a716-446655440000");
+        model
+            .add_workspace(Workspace::new(
+                workspace_id.clone(),
+                WorkspaceRoot::new("/dev/sidebar").unwrap(),
+                DisplayPath::new("/dev/sidebar").unwrap(),
+                None,
+            ))
+            .unwrap();
+
+        assert_eq!(model.sidebar_width(), SIDEBAR_DEFAULT_WIDTH);
+        assert!(!model.set_workspace_disclosure(&workspace_id, true).unwrap());
+        assert!(model.expanded_workspace_ids().next().is_none());
+        assert!(!model.set_sidebar_width(SIDEBAR_DEFAULT_WIDTH).unwrap());
+        assert!(model.set_sidebar_width(SIDEBAR_MIN_WIDTH).unwrap());
+        assert_eq!(
+            model.set_sidebar_width(SIDEBAR_MAX_WIDTH + 1).unwrap_err().code(),
+            DomainErrorCode::InvalidSidebarWidth
+        );
+
+        model
+            .add_agent(
+                &workspace_id,
+                AgentId::for_test("550e8400-e29b-41d4-a716-446655440001"),
+                profile("codex", "Codex"),
+            )
+            .unwrap();
+        model.select_context(NavigationContext::Workspace(workspace_id.clone())).unwrap();
+        assert!(model.set_workspace_disclosure(&workspace_id, true).unwrap());
+        assert_eq!(
+            model.selection().context(),
+            &NavigationContext::Workspace(workspace_id.clone())
+        );
+        assert!(model.snapshot().sidebar().is_expanded(&workspace_id));
+        assert!(model.set_workspace_disclosure(&workspace_id, false).unwrap());
+        assert!(!model.snapshot().sidebar().is_expanded(&workspace_id));
     }
 
     #[test]
