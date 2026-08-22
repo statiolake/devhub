@@ -12,7 +12,7 @@ gate, not just source-code presence.
 | OpenVSCode provenance preparation | Prepared; hosted run deferred | `d73e575` |
 | R1.1 Repository foundation | Complete | `ad77d14`, `b026279` |
 | R1.2 Domain contracts | Complete | `5b46e5e` |
-| R1.3 Coordinator and Bridge contracts | Complete; current hardening complete | `CI=true pnpm run check` (generated checks, 126 core tests, 27 frontend tests, 6 native-shell tests) |
+| R1.3 Coordinator and Bridge contracts | Complete; current hardening complete | `CI=true pnpm run check` (generated checks, 128 core tests, 29 frontend tests, 6 native-shell tests) |
 | P2.1 ConfigStore | Complete | `feat: add durable config and state` (this tracker revision) |
 | P2.2 StateStore | Complete; hydration/native persistence integration complete | `CI=true pnpm run check` and concurrent temp-home/native lifecycle tests (this tracker revision) |
 | U2.5 Visual foundation | Complete | `CI=true pnpm run check`, deterministic visual fixtures, and production fixture-bundle scan (this tracker revision) |
