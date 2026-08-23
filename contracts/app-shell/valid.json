@@ -39,6 +39,11 @@
     "workspaces": []
   },
   {
+    "availability": "available",
+    "profiles": [],
+    "sequence": 1
+  },
+  {
     "colorScheme": "light",
     "sequence": 1,
     "sidebarDensity": "compact",
@@ -64,6 +69,32 @@
     "expanded": true,
     "type": "toggle_workspace_disclosure",
     "workspaceId": "00000000-0000-4000-8000-000000000001"
+  },
+  {
+    "profileId": "codex",
+    "type": "request_create_agent",
+    "workspaceId": "00000000-0000-4000-8000-000000000001"
+  },
+  {
+    "agentId": "00000000-0000-4000-8000-000000000002",
+    "displayName": "Codex 1",
+    "type": "rename_agent"
+  },
+  {
+    "agentId": "00000000-0000-4000-8000-000000000002",
+    "type": "stop_agent"
+  },
+  {
+    "confirmationId": "00000000-0000-4000-8000-000000000003",
+    "type": "confirm_stop_agent"
+  },
+  {
+    "agentId": "00000000-0000-4000-8000-000000000002",
+    "type": "retry_stop_agent"
+  },
+  {
+    "agentId": "00000000-0000-4000-8000-000000000002",
+    "type": "reconcile_agent"
   },
   {
     "type": "open_workspace_picker"

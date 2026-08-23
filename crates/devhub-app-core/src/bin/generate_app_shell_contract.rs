@@ -22,6 +22,7 @@ fn root_schema<T: schemars::JsonSchema>() -> Value {
 fn contract_schema() -> Value {
     let roots = [
         ("AppSnapshotWire", root_schema::<AppSnapshotWire>()),
+        ("AgentProfilesWire", root_schema::<AgentProfilesWire>()),
         ("AppAppearanceWire", root_schema::<AppAppearanceWire>()),
         ("AppIntentWire", root_schema::<AppIntentWire>()),
         ("AppOutcomeWire", root_schema::<AppOutcomeWire>()),
@@ -54,6 +55,7 @@ fn contract_schema() -> Value {
         "$defs": defs,
         "oneOf": [
             { "$ref": "#/$defs/AppSnapshotWire" },
+            { "$ref": "#/$defs/AgentProfilesWire" },
             { "$ref": "#/$defs/AppAppearanceWire" },
             { "$ref": "#/$defs/AppIntentWire" },
             { "$ref": "#/$defs/AppOutcomeWire" },
@@ -90,8 +92,13 @@ fn valid_values() -> Vec<Value> {
     let snapshot = AppSnapshotWire::from_snapshot(&AppModel::new().snapshot(), AppReadiness::Ready)
         .expect("default App Shell snapshot is representable");
     let snapshot = serde_json::to_value(snapshot).expect("serialize snapshot fixture");
+    let profiles = serde_json::to_value(
+        AgentProfilesWire::from_profiles(&[], 1).expect("empty profile fixture"),
+    )
+    .expect("serialize profile fixture");
     vec![
         snapshot.clone(),
+        profiles,
         serde_json::to_value(AppAppearanceWire::from_config(
             &devhub_app_core::config::AppearanceConfig::default(),
             1,
@@ -101,6 +108,12 @@ fn valid_values() -> Vec<Value> {
         json!({ "type": "select_activity", "activity": "terminal" }),
         json!({ "type": "resize_sidebar", "width": SIDEBAR_DEFAULT_WIDTH }),
         json!({ "type": "toggle_workspace_disclosure", "workspaceId": "00000000-0000-4000-8000-000000000001", "expanded": true }),
+        json!({ "type": "request_create_agent", "workspaceId": "00000000-0000-4000-8000-000000000001", "profileId": "codex" }),
+        json!({ "type": "rename_agent", "agentId": "00000000-0000-4000-8000-000000000002", "displayName": "Codex 1" }),
+        json!({ "type": "stop_agent", "agentId": "00000000-0000-4000-8000-000000000002" }),
+        json!({ "type": "confirm_stop_agent", "confirmationId": "00000000-0000-4000-8000-000000000003" }),
+        json!({ "type": "retry_stop_agent", "agentId": "00000000-0000-4000-8000-000000000002" }),
+        json!({ "type": "reconcile_agent", "agentId": "00000000-0000-4000-8000-000000000002" }),
         json!({ "type": "open_workspace_picker" }),
         json!({ "kind": "noop", "snapshot": snapshot.clone() }),
         json!({ "cursor": 0, "historyGap": false, "snapshot" : snapshot, "events": [] }),
@@ -118,14 +131,17 @@ fn invalid_values() -> Vec<Value> {
     bad_width["sidebar"]["width"] = Value::Number((SIDEBAR_MIN_WIDTH - 1).into());
     let mut unsafe_revision = snapshot.clone();
     unsafe_revision["revision"] = Value::Number((MAX_SAFE_JS_INTEGER + 1).into());
-    let mut bad_appearance = valid[1].clone();
+    let mut bad_appearance = valid[2].clone();
     bad_appearance["sequence"] = Value::Number((MAX_SAFE_JS_INTEGER + 1).into());
+    let mut bad_profiles = valid[1].clone();
+    bad_profiles["sequence"] = Value::Number((MAX_SAFE_JS_INTEGER + 1).into());
     vec![
         unknown,
         bad_version,
         bad_width,
         unsafe_revision,
         bad_appearance,
+        bad_profiles,
         json!({ "type": "unknown_intent" }),
         json!({ "type": "select_activity", "activity": "unknown" }),
         json!({ "type": "resize_sidebar", "width": 401 }),
@@ -247,6 +263,7 @@ fn generated_typescript(schema: &Value) -> String {
     output.push_str(
         "export type Activity = ActivityName;\nexport const ACTIVITIES: readonly Activity[] = [\"editor\", \"agent\", \"terminal\"] as const;\nexport type SnapshotReadiness = AppReadiness;\nexport type NavigationContext = ContextWire;\nexport type SelectionSnapshot = SelectionWire;\nexport type ActivityResolution = ResolutionWire;\nexport type ActivitySnapshot = ActivityWire;\nexport type AgentStatus = AgentStatusWire;\nexport type RuntimeHealth = RuntimeHealthWire;\nexport type AgentControlState = AgentControlStateWire;\nexport type WorkspaceState = WorkspaceStateWire;\nexport type WorkspaceSnapshot = WorkspaceWire;\nexport type AgentSnapshot = AgentWire;\nexport type SidebarSnapshot = SidebarWire;\nexport type AppSnapshot = AppSnapshotWire;\nexport type AppIntent = AppIntentWire;\nexport type AppOutcome = AppOutcomeWire;\nexport type AppError = AppErrorWire;\nexport type AppErrorCode = AppErrorCodeWire;\nexport type AppEventCursor = ReplayWire;\nexport type AppLoadState = { readonly status: \"loading\" } | { readonly status: \"ready\"; readonly snapshot: AppSnapshot } | { readonly status: \"error\"; readonly error: AppError };\n\nexport function contextKey(context: NavigationContext): string { switch (context.kind) { case \"global\": return \"global\"; case \"workspace\": return `workspace:${context.workspaceId}`; case \"agent\": return `agent:${context.agentId}`; } }\nexport function isContextSelected(selected: NavigationContext, candidate: NavigationContext): boolean { return contextKey(selected) === contextKey(candidate); }\nexport function activityLabel(activity: Activity): string { return activity[0].toUpperCase() + activity.slice(1); }\nexport function workspaceById(snapshot: AppSnapshot, workspaceId: string): WorkspaceSnapshot | undefined { return snapshot.workspaces.find((workspace) => workspace.id === workspaceId); }\nexport function workspaceForContext(snapshot: AppSnapshot, context: NavigationContext): WorkspaceSnapshot | undefined { if (context.kind === \"workspace\") return workspaceById(snapshot, context.workspaceId); if (context.kind === \"agent\") return snapshot.workspaces.find((workspace) => workspace.agents.some((agent) => agent.id === context.agentId)); return undefined; }\nexport function activeActivitySnapshot(snapshot: AppSnapshot): ActivitySnapshot { return snapshot.activities.find(({ activity }) => activity === snapshot.selection.activity) ?? snapshot.activities[0]; }\nexport function isWorkspaceExpanded(snapshot: AppSnapshot, workspaceId: string): boolean { return snapshot.sidebar.expandedWorkspaceIds.includes(workspaceId); }\n\n",
     );
+    output.push_str("export type AgentProfile = AgentProfileWire;\nexport type AgentProfiles = AgentProfilesWire;\n\n");
     output.push_str("const APP_SHELL_SCHEMA = ");
     output.push_str(&schema_text);
     output.push_str(" as const;\n\n");
@@ -376,7 +393,18 @@ function freeze<T>(value: T): T {
   return value;
 }
 
+function validateAgentProfilesProjection(value: AgentProfiles): void {
+  const diagnostic = value.diagnostic ?? null;
+  if (value.availability === "available" && diagnostic !== null)
+    throw new Error("available agent profiles cannot contain a diagnostic");
+  if (value.availability !== "available" && diagnostic === null)
+    throw new Error("degraded or unavailable agent profiles require a diagnostic");
+  if (value.availability === "unavailable" && value.profiles.length > 0)
+    throw new Error("unavailable agent profiles cannot contain choices");
+}
+
 export function parseAppAppearance(value: unknown): AppAppearance { check({ $ref: "#/$defs/AppAppearanceWire" }, value); return freeze(value as AppAppearance); }
+export function parseAgentProfiles(value: unknown): AgentProfiles { check({ $ref: "#/$defs/AgentProfilesWire" }, value); const profiles = value as AgentProfiles; validateAgentProfilesProjection(profiles); return freeze(profiles); }
 export function parseAppSnapshot(value: unknown): AppSnapshot { check({ $ref: "#/$defs/AppSnapshotWire" }, value); return freeze(value as AppSnapshot); }
 export function parseAppIntent(value: unknown): AppIntent { check({ $ref: "#/$defs/AppIntentWire" }, value); return freeze(value as AppIntent); }
 export function parseAppOutcome(value: unknown): AppOutcome { check({ $ref: "#/$defs/AppOutcomeWire" }, value); return freeze(value as AppOutcome); }

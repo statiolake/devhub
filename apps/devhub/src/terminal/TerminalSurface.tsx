@@ -26,6 +26,7 @@ export interface TerminalSurfaceProps {
   readonly surfaceLabel: string;
   readonly appearance?: AppAppearance;
   readonly client?: TerminalClient;
+  readonly hideTitle?: boolean;
 }
 
 type ConnectionState = "connecting" | "connected" | "disconnected";
@@ -142,6 +143,7 @@ export function TerminalSurface({
   surfaceLabel,
   appearance,
   client = defaultTerminalClient,
+  hideTitle = false,
 }: TerminalSurfaceProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const clientRef = useRef(client);
@@ -552,7 +554,7 @@ export function TerminalSurface({
 
   return (
     <div className="terminal-surface-shell">
-      <h1 className="terminal-surface-title">{surfaceLabel}</h1>
+      {!hideTitle && <h1 className="terminal-surface-title">{surfaceLabel}</h1>}
       <div
         ref={hostRef}
         className="terminal-surface"

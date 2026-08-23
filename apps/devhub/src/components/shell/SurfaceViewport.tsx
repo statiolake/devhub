@@ -7,8 +7,9 @@ import {
   type WorkspaceSnapshot,
   workspaceForContext,
 } from "../../generated/app-shell";
-import { StatusMark } from "../sidebar/StatusMark";
 import { TerminalSurface } from "../../terminal/TerminalSurface";
+import { defaultAgentSurfaceClient } from "../../agent/client";
+import { disabledReasonLabel } from "./activityPresentation";
 
 export interface SurfaceViewportProps {
   readonly snapshot: AppSnapshot;
@@ -117,9 +118,13 @@ function SurfaceClosing({
 function SurfaceAgent({
   snapshot,
   workspace,
+  surfaceKey,
+  appearance,
 }: {
   readonly snapshot: AppSnapshot;
   readonly workspace?: WorkspaceSnapshot;
+  readonly surfaceKey: string;
+  readonly appearance?: AppAppearance;
 }) {
   const agentId =
     snapshot.selection.context.kind === "agent"
@@ -135,24 +140,26 @@ function SurfaceAgent({
       />
     );
   }
+  if (agent.controlState !== "running") {
+    return (
+      <SurfaceUnavailable
+        activity="agent"
+        reason={
+          agent.controlState === "stopping"
+            ? "This Agent is stopping. Its control surface is read-only until cleanup completes."
+            : "This Agent could not be stopped cleanly. Retry stop before reconnecting its control surface."
+        }
+        workspace={workspace}
+      />
+    );
+  }
   return (
-    <div className="surface-state surface-empty-state">
-      <SurfaceMark activity="agent" />
-      <p className="surface-kicker">Agent Surface</p>
-      <h1>{agent.displayName}</h1>
-      <div className="surface-agent-status">
-        <StatusMark status={agent.status} />
-        <span>
-          {agent.runtimeHealth === "healthy"
-            ? "Connected"
-            : agent.runtimeHealth}
-        </span>
-      </div>
-      <p className="surface-copy">
-        The provider control stream will mount here when the Agent Surface is
-        available.
-      </p>
-    </div>
+    <TerminalSurface
+      surfaceKey={surfaceKey}
+      surfaceLabel={agent.displayName}
+      appearance={appearance}
+      client={defaultAgentSurfaceClient}
+    />
   );
 }
 
@@ -216,7 +223,7 @@ export function SurfaceViewport({
         <SurfaceUnavailable
           activity={activity}
           workspace={workspace}
-          reason={activitySnapshot.resolution.reason.replaceAll("-", " ")}
+          reason={disabledReasonLabel(activitySnapshot.resolution.reason)}
         />
       </section>
     );
@@ -226,9 +233,8 @@ export function SurfaceViewport({
     <section
       className="surface"
       aria-label="Surface"
-      aria-live="polite"
       data-surface-key={activitySnapshot.resolution.surfaceKey}
-      data-surface-state={activity === "terminal" ? "terminal" : "empty"}
+      data-surface-state={activity === "terminal" ? "terminal" : activity}
     >
       {intentError && <InlineIntentError message={intentError} />}
       {activity === "terminal" ? (
@@ -242,7 +248,12 @@ export function SurfaceViewport({
           appearance={appearance}
         />
       ) : activity === "agent" ? (
-        <SurfaceAgent snapshot={snapshot} workspace={workspace} />
+        <SurfaceAgent
+          snapshot={snapshot}
+          workspace={workspace}
+          surfaceKey={activitySnapshot.resolution.surfaceKey}
+          appearance={appearance}
+        />
       ) : (
         <SurfaceEmpty
           activity={activity}

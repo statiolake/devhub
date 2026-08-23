@@ -299,7 +299,9 @@ fn real_herdr_agent_runtime_lifecycle() {
         attach_with_retry(&runtime, codex_id.clone(), "codex-surface-a", false, &mut sequence);
     let recent = first.read_recent().expect("codex terminal output");
     assert!(
-        recent.contains("DEVHUB_HERDR_CODEX_READY"),
+        recent
+            .windows(b"DEVHUB_HERDR_CODEX_READY".len())
+            .any(|window| window == b"DEVHUB_HERDR_CODEX_READY"),
         "unexpected deterministic terminal output"
     );
     let live_owner = match drive(runtime.attach_surface(

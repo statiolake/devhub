@@ -42,6 +42,7 @@ pub enum UserIntent {
     StopAgent { agent_id: AgentId },
     ConfirmStopAgent { confirmation_id: ConfirmationId },
     RetryStopAgent { agent_id: AgentId },
+    ReconcileAgent { agent_id: AgentId },
     RequestCloseWorkspace { workspace_id: WorkspaceId },
     ConfirmCloseWorkspace { confirmation_id: ConfirmationId },
     RetryCloseWorkspace { workspace_id: WorkspaceId },

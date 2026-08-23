@@ -31,7 +31,7 @@ use devhub_app_core::ports::{
 use devhub_app_core::state::{OwnedSessionRecord, PersistedAppState, RequiredTerminalSet};
 use devhub_app_core::{DiagnosticCode, ResourceInspection, WorkspaceId};
 
-mod contract;
+pub(crate) mod contract;
 mod pty;
 pub(crate) use contract::{
     validate_attach_request, validate_attachment_id, validate_input_sequence, validate_schema,

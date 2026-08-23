@@ -20,6 +20,7 @@ import type {
   AppLoadState,
   AppOutcome,
   AppSnapshot,
+  AgentProfiles,
   ConfirmationPurposeWire,
 } from "../generated/app-shell";
 import { parseAppError } from "../generated/app-shell";
@@ -71,6 +72,12 @@ export function AppShellProvider({
   const [attempt, setAttempt] = useState(0);
   const [state, setState] = useState<AppLoadState>({ status: "loading" });
   const [appearance, setAppearance] = useState<AppAppearance>();
+  const [agentProfiles, setAgentProfiles] = useState<AgentProfiles>({
+    sequence: 1,
+    availability: "unavailable",
+    diagnostic: "projection_unavailable",
+    profiles: [],
+  });
   const [intentError, setIntentError] = useState<AppError | null>(null);
   const [pickerCandidates, setPickerCandidates] = useState<
     WorkspacePickerCandidate[]
@@ -79,10 +86,14 @@ export function AppShellProvider({
   const [pendingConfirmation, setPendingConfirmation] = useState<{
     confirmationId: string;
     purpose: ConfirmationPurposeWire;
+    agentId?: string;
   } | null>(null);
+  const [confirmationBusy, setConfirmationBusy] = useState(false);
+  const confirmationBusyRef = useRef(false);
   const lastRevision = useRef(-1);
   const lastEventCursor = useRef(0);
   const lastAppearanceSequence = useRef(-1);
+  const lastProfileSequence = useRef(0);
   const generation = useRef(0);
   const pickerOperation = useRef<string | null>(null);
   const pickerSequence = useRef(-1);
@@ -108,9 +119,11 @@ export function AppShellProvider({
     let active = true;
     let unsubscribe: (() => void) | undefined;
     let unsubscribeAppearance: (() => void) | undefined;
+    let unsubscribeProfiles: (() => void) | undefined;
     let unsubscribePicker: (() => void) | undefined;
     lastRevision.current = -1;
     lastAppearanceSequence.current = -1;
+    lastProfileSequence.current = 0;
 
     const applyIfActive = (snapshot: AppSnapshot) => {
       if (active && generation.current === currentGeneration)
@@ -122,6 +135,27 @@ export function AppShellProvider({
       if (next.sequence < lastAppearanceSequence.current) return;
       lastAppearanceSequence.current = next.sequence;
       setAppearance(next);
+    };
+
+    const applyProfilesIfActive = (next: AgentProfiles) => {
+      if (!active || generation.current !== currentGeneration) return;
+      if (next.sequence <= lastProfileSequence.current) return;
+      lastProfileSequence.current = next.sequence;
+      setAgentProfiles(next);
+    };
+
+    const markProfilesUnavailable = () => {
+      if (!active || generation.current !== currentGeneration) return;
+      const sequence = Math.max(1, lastProfileSequence.current + 1);
+      // This is a local transport fallback, not a Rust-owned projection
+      // sequence. Do not advance the native cursor or a successful same-
+      // revision query could be discarded after a subscription failure.
+      setAgentProfiles({
+        sequence,
+        availability: "unavailable",
+        diagnostic: "projection_unavailable",
+        profiles: [],
+      });
     };
 
     const initialize = async () => {
@@ -196,6 +230,22 @@ export function AppShellProvider({
           }
           unsubscribeAppearance = cleanupAppearance;
         }
+        if (client.subscribeAgentProfiles) {
+          try {
+            const cleanupProfiles = await client.subscribeAgentProfiles(
+              applyProfilesIfActive,
+            );
+            if (!active) {
+              cleanupProfiles();
+              return;
+            }
+            unsubscribeProfiles = cleanupProfiles;
+          } catch {
+            // Keep query failure explicit. An empty list would make the
+            // picker indistinguishable from a valid no-profile config.
+            markProfilesUnavailable();
+          }
+        }
         if (client.getAppearance) {
           try {
             applyAppearanceIfActive(await client.getAppearance());
@@ -203,6 +253,15 @@ export function AppShellProvider({
             // Appearance is a non-blocking projection. The Workbench remains
             // usable with its compact native default if the optional query is
             // unavailable during startup.
+          }
+        }
+        if (client.getAgentProfiles) {
+          try {
+            applyProfilesIfActive(await client.getAgentProfiles());
+          } catch {
+            // Profile discovery is optional transport wiring, but failure is
+            // not equivalent to an empty enabled-profile set.
+            markProfilesUnavailable();
           }
         }
         if (client.replay) {
@@ -228,6 +287,7 @@ export function AppShellProvider({
       generation.current += 1;
       unsubscribe?.();
       unsubscribeAppearance?.();
+      unsubscribeProfiles?.();
       unsubscribePicker?.();
     };
   }, [applySnapshot, attempt, client]);
@@ -247,6 +307,15 @@ export function AppShellProvider({
           setPendingConfirmation({
             confirmationId: outcome.confirmationId,
             purpose: outcome.purpose,
+            // A confirmation can be replaced by native while the one-shot
+            // operation is being submitted. Preserve the original Agent
+            // identity because the replacement intent carries only its token.
+            agentId:
+              intent.type === "stop_agent"
+                ? intent.agentId
+                : outcome.purpose.kind === "agent_stop"
+                  ? pendingConfirmation?.agentId
+                  : undefined,
           });
         }
         return outcome;
@@ -257,7 +326,7 @@ export function AppShellProvider({
         return undefined;
       }
     },
-    [applySnapshot, client],
+    [applySnapshot, client, pendingConfirmation],
   );
 
   const retry = useCallback(() => {
@@ -329,21 +398,43 @@ export function AppShellProvider({
   }, [client]);
 
   const confirmPending = useCallback(async () => {
-    if (!pendingConfirmation) return;
+    if (!pendingConfirmation || confirmationBusyRef.current) return;
+    confirmationBusyRef.current = true;
+    setConfirmationBusy(true);
     const confirmationId = pendingConfirmation.confirmationId;
-    if (pendingConfirmation.purpose.kind !== "workspace_close") {
-      // Agent-stop confirmations are owned by the Agent surface in the next
-      // shell wave; never reinterpret one as a workspace close.
-      setPendingConfirmation(null);
-      return;
+    try {
+      let outcome: AppOutcome | undefined;
+      if (pendingConfirmation.purpose.kind === "agent_stop") {
+        if (!pendingConfirmation.agentId) {
+          setPendingConfirmation(null);
+          return;
+        }
+        outcome = await dispatch({
+          type: "confirm_stop_agent",
+          confirmationId,
+        });
+      } else {
+        outcome = await dispatch({
+          type: "confirm_close_workspace",
+          confirmationId,
+        });
+      }
+
+      // Keep the typed confirmation available when the command itself failed at
+      // the transport boundary. A successful confirmation transitions the Rust
+      // row into stopping/closing and consumes this one-shot operation; a
+      // failure must remain retryable without inventing a second local state.
+      // If native replaces the confirmation while this request is in flight,
+      // the replacement remains visible and is not consumed by this response.
+      if (outcome) {
+        setPendingConfirmation((current) =>
+          current?.confirmationId === confirmationId ? null : current,
+        );
+      }
+    } finally {
+      confirmationBusyRef.current = false;
+      setConfirmationBusy(false);
     }
-    await dispatch({
-      type: "confirm_close_workspace",
-      confirmationId,
-    });
-    setPendingConfirmation((current) =>
-      current?.confirmationId === confirmationId ? null : current,
-    );
   }, [dispatch, pendingConfirmation]);
 
   const dismissCloseConfirmation = useCallback(() => {
@@ -363,7 +454,9 @@ export function AppShellProvider({
       cancelWorkspacePicker,
       selectWorkspacePicker,
       chooseWorkspaceFolder,
+      agentProfiles,
       pendingConfirmation,
+      confirmationBusy,
       confirmPending,
       dismissCloseConfirmation,
     }),
@@ -378,7 +471,9 @@ export function AppShellProvider({
       selectWorkspacePicker,
       startWorkspacePicker,
       state,
+      agentProfiles,
       pendingConfirmation,
+      confirmationBusy,
       chooseWorkspaceFolder,
       confirmPending,
       dismissCloseConfirmation,

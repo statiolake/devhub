@@ -30,7 +30,7 @@ impl AgentSurface {
         self.runtime.surface_send_text(&self.agent_id, &self.surface_key, text)
     }
 
-    pub fn read_recent(&self) -> Result<String, PortError> {
+    pub fn read_recent(&self) -> Result<Vec<u8>, PortError> {
         self.runtime.surface_read_recent(&self.agent_id, &self.surface_key)
     }
 

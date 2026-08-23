@@ -269,6 +269,26 @@ impl HerdrAgentRuntime {
     ) -> PortFuture<super::surface::AgentSurface> {
         let runtime = self.clone();
         spawn_operation(cancel.clone(), "devhub-agent-surface-attach", move || {
+            runtime
+                .attach_surface_sync(agent_id, surface_key, takeover, &cancel)
+                .map(|(surface, _)| surface)
+        })
+    }
+
+    /// Attaches a foreground Agent Surface and returns the provider-free
+    /// observation produced by the same attach transaction. Native state must
+    /// apply this observation instead of waiting for the next background
+    /// reconciliation tick, otherwise an attach can briefly expose stale
+    /// status or runtime health.
+    pub fn attach_surface_with_observation(
+        &self,
+        agent_id: AgentId,
+        surface_key: String,
+        takeover: bool,
+        cancel: CancellationToken,
+    ) -> PortFuture<(super::surface::AgentSurface, AgentObservation)> {
+        let runtime = self.clone();
+        spawn_operation(cancel.clone(), "devhub-agent-surface-attach", move || {
             runtime.attach_surface_sync(agent_id, surface_key, takeover, &cancel)
         })
     }
@@ -649,7 +669,22 @@ impl HerdrAgentRuntime {
             recover_mapping(&snapshot, &agent_id, root, workspace_id, generation)
                 .ok_or_else(unavailable_port)?
         };
-        let pane = pane_for(&snapshot, &mapping).ok_or_else(unavailable_port)?;
+        let Some(pane) = pane_for(&snapshot, &mapping) else {
+            // Keep a restored mapping in the provider-private state even when
+            // its pane disappeared before the first attach completed. The
+            // next continuous reconciliation must be able to turn that
+            // authoritative absence into a natural-exit observation; dropping
+            // the mapping here would leave the durable Agent row orphaned
+            // forever because `reconcile_sync` only projects owned mappings.
+            let pane_id = mapping.pane_id.clone();
+            let mut state = self.inner.state.lock().map_err(|_| failed_port())?;
+            state.confirmed_agents.remove(&agent_id);
+            state.mappings.insert(agent_id.clone(), mapping);
+            drop(state);
+            self.inner.transport.register_pane_for_status(&pane_id);
+            self.refresh_subscription();
+            return Err(unavailable_port());
+        };
         let (status, runtime_health) = pane.status.project();
         let pane_confirms_active = pane.agent.is_some() && !pane.status.is_exited();
         let replaced_pane_id = {
@@ -968,13 +1003,13 @@ impl HerdrAgentRuntime {
         surface_key: String,
         takeover: bool,
         cancel: &CancellationToken,
-    ) -> Result<super::surface::AgentSurface, PortError> {
+    ) -> Result<(super::surface::AgentSurface, AgentObservation), PortError> {
         if surface_key.is_empty() || surface_key.len() > MAX_SURFACE_KEY_BYTES {
             return Err(PortError::from(AgentRuntimeError::new(
                 AgentRuntimeErrorCode::InvalidProfile,
             )));
         }
-        let _ = self.attach_sync(agent_id.clone(), None, cancel)?;
+        let observation = self.attach_sync(agent_id.clone(), None, cancel)?;
         let _operation = self.inner.operation_gate.acquire(cancel)?;
         let mut state = self.inner.state.lock().map_err(|_| failed_port())?;
         if state.surfaces.iter().any(|(key, owner)| owner == &agent_id && key != &surface_key) {
@@ -996,7 +1031,7 @@ impl HerdrAgentRuntime {
             .map_err(PortError::from)?;
         state.surfaces.insert(surface_key.clone(), agent_id.clone());
         state.controls.insert(surface_key.clone(), Arc::clone(&control));
-        Ok(super::surface::AgentSurface::new(self.clone(), agent_id, surface_key))
+        Ok((super::surface::AgentSurface::new(self.clone(), agent_id, surface_key), observation))
     }
 
     fn wait_for_coalesced_invalidation(&self, cancel: &CancellationToken) -> Result<(), PortError> {
@@ -1171,7 +1206,7 @@ impl HerdrAgentRuntime {
         &self,
         agent_id: &AgentId,
         surface_key: &str,
-    ) -> Result<String, PortError> {
+    ) -> Result<Vec<u8>, PortError> {
         let control = {
             let state = self.inner.state.lock().map_err(|_| failed_port())?;
             if state.surfaces.get(surface_key).is_some_and(|owner| owner == agent_id) {
@@ -1490,17 +1525,25 @@ mod tests {
 
     struct FakeTransport {
         responses: Mutex<VecDeque<(String, Result<Value, AgentRuntimeError>)>>,
+        subscriptions: std::sync::atomic::AtomicUsize,
     }
 
     impl FakeTransport {
         fn new(
             responses: impl IntoIterator<Item = (String, Result<Value, AgentRuntimeError>)>,
         ) -> Self {
-            Self { responses: Mutex::new(responses.into_iter().collect()) }
+            Self {
+                responses: Mutex::new(responses.into_iter().collect()),
+                subscriptions: std::sync::atomic::AtomicUsize::new(0),
+            }
         }
 
         fn remaining(&self) -> usize {
             self.responses.lock().expect("responses").len()
+        }
+
+        fn subscription_count(&self) -> usize {
+            self.subscriptions.load(std::sync::atomic::Ordering::Acquire)
         }
     }
 
@@ -1518,6 +1561,7 @@ mod tests {
             &self,
             _invalidation: Arc<Invalidation>,
         ) -> Result<SubscriptionHandle, AgentRuntimeError> {
+            self.subscriptions.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
             let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
             let worker_stop = Arc::clone(&stop);
             let worker = thread::spawn(move || {
@@ -1591,7 +1635,10 @@ mod tests {
             ("pane.list".to_owned(), Ok(json!({ "panes": [] }))),
             ("agent.list".to_owned(), Ok(json!({ "agents": [] }))),
         ]));
-        let runtime = HerdrAgentRuntime::with_transport(context(), transport);
+        let runtime = HerdrAgentRuntime::with_transport(
+            context(),
+            Arc::clone(&transport) as Arc<dyn ProviderTransport>,
+        );
         let token = CancellationToken::new(
             devhub_app_core::OperationId::from_uuid(
                 "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa".to_owned(),
@@ -1600,6 +1647,7 @@ mod tests {
         );
         let health = drive(runtime.bootstrap(token)).expect("health");
         assert_eq!(health.state(), AgentRuntimeHealthState::Healthy);
+        assert_eq!(transport.subscription_count(), 1, "bootstrap installs continuous invalidation");
     }
 
     #[test]
@@ -1640,6 +1688,114 @@ mod tests {
         .expect_err("oversized profile must fail locally");
         assert_eq!(error.code(), PortErrorCode::Failed);
         assert_eq!(transport.remaining(), 1, "provider must not receive validation failures");
+    }
+
+    #[test]
+    fn missing_persisted_pane_remains_owned_until_reconcile_can_emit_natural_exit() {
+        let transport = Arc::new(FakeTransport::new([
+            (
+                "ping".to_owned(),
+                Ok(json!({
+                    "type": "pong",
+                    "version": "0.8.1",
+                    "protocol": 20,
+                    "capabilities": { "live_handoff": true }
+                })),
+            ),
+            (
+                "session.snapshot".to_owned(),
+                Ok(json!({ "snapshot": { "workspaces": [], "panes": [] } })),
+            ),
+        ]));
+        let journal = std::env::temp_dir()
+            .join(format!("devhub-agent-runtime-missing-pane-{}.json", std::process::id()));
+        let runtime = HerdrAgentRuntime::with_transport_and_journal(
+            context(),
+            Arc::clone(&transport) as Arc<dyn ProviderTransport>,
+            journal.clone(),
+        );
+        let agent_id = AgentId::from_uuid("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa").unwrap();
+        let workspace_id = WorkspaceId::from_uuid("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb").unwrap();
+        let root = WorkspaceRoot::new("/tmp/devhub-restored-agent").unwrap();
+        runtime
+            .register_agent_workspace(agent_id.clone(), workspace_id.clone(), root.clone())
+            .unwrap();
+        let mapping = ProviderMapping {
+            workspace_id: "provider-workspace".to_owned(),
+            tab_id: "provider-tab".to_owned(),
+            pane_id: "provider-pane".to_owned(),
+            terminal_id: "provider-terminal".to_owned(),
+            workspace_root: root.as_path().to_path_buf(),
+            workspace_domain_id: Some(workspace_id),
+            generation: 1,
+        };
+        let opaque = encode_provider_mapping(&mapping).expect("opaque mapping");
+        let error = drive(
+            runtime.attach(
+                agent_id.clone(),
+                Some(opaque),
+                CancellationToken::new(
+                    devhub_app_core::OperationId::from_uuid(
+                        "cccccccc-cccc-4ccc-8ccc-cccccccccccc".to_owned(),
+                    )
+                    .unwrap(),
+                ),
+            ),
+        )
+        .expect_err("a missing provider pane is not attachable");
+        assert_eq!(error.code(), PortErrorCode::Unavailable);
+        assert!(runtime
+            .inner
+            .state
+            .lock()
+            .expect("runtime state")
+            .mappings
+            .contains_key(&agent_id));
+        let _ = std::fs::remove_file(journal);
+    }
+
+    #[test]
+    fn unmounted_agent_natural_exit_is_projected_from_provider_reconciliation() {
+        let journal = std::fs::canonicalize(std::env::temp_dir())
+            .expect("canonical temp directory")
+            .join(format!("devhub-agent-runtime-natural-exit-{}.json", std::process::id()));
+        let runtime = HerdrAgentRuntime::with_transport_and_journal(
+            context(),
+            Arc::new(FakeTransport::new([])),
+            journal.clone(),
+        );
+        let agent_id = AgentId::from_uuid("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa").unwrap();
+        let workspace_id = WorkspaceId::from_uuid("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb").unwrap();
+        let mapping = ProviderMapping {
+            workspace_id: "provider-workspace".to_owned(),
+            tab_id: "provider-tab".to_owned(),
+            pane_id: "provider-pane".to_owned(),
+            terminal_id: "provider-terminal".to_owned(),
+            workspace_root: PathBuf::from("/tmp/devhub-natural-exit"),
+            workspace_domain_id: Some(workspace_id),
+            generation: 1,
+        };
+        runtime
+            .inner
+            .state
+            .lock()
+            .expect("runtime state")
+            .mappings
+            .insert(agent_id.clone(), mapping);
+
+        let (observations, exited) = runtime
+            .project_snapshot(&ProviderSnapshot::default())
+            .expect("provider absence is a reconciliation result");
+        assert!(observations.is_empty());
+        assert_eq!(exited, vec![agent_id.clone()]);
+        assert!(runtime
+            .inner
+            .state
+            .lock()
+            .expect("runtime state")
+            .tombstones
+            .contains_key(&agent_id));
+        let _ = std::fs::remove_file(journal);
     }
 
     fn drive<T>(mut future: PortFuture<T>) -> Result<T, PortError> {

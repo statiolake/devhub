@@ -13,6 +13,8 @@ import type {
   AppIntent,
   AppOutcome,
   AppSnapshot,
+  AgentProfiles,
+  DisabledReasonWire,
 } from "../generated/app-shell";
 import type { AppShellClient, WorkspacePickerEvent } from "./client";
 import {
@@ -22,6 +24,7 @@ import {
   unavailableSnapshot,
   workspaceSnapshot,
 } from "../visual-fixtures/app-shell";
+import { disabledReasonCopy } from "../components/shell/activityPresentation";
 
 function client(snapshot: AppSnapshot): AppShellClient {
   return {
@@ -44,6 +47,63 @@ function client(snapshot: AppSnapshot): AppShellClient {
 }
 
 describe("App Shell navigation matrix", () => {
+  it("opens the enabled profile picker and dispatches the selected profile", async () => {
+    const appClient = client(workspaceSnapshot);
+    const profiles: AgentProfiles = {
+      sequence: 2,
+      availability: "available",
+      profiles: [
+        { id: "codex", displayName: "Codex Default", kind: "codex" },
+        { id: "claude", displayName: "Claude Review", kind: "claude" },
+      ],
+    };
+    appClient.getAgentProfiles = vi.fn().mockResolvedValue(profiles);
+    appClient.subscribeAgentProfiles = vi
+      .fn()
+      .mockResolvedValue(() => undefined);
+    render(<AppShell client={appClient} />);
+
+    const create = await screen.findByRole("button", {
+      name: "Create agent in devhub",
+    });
+    expect(create).toBeEnabled();
+    fireEvent.click(create);
+    expect(
+      await screen.findByRole("dialog", { name: "New Agent" }),
+    ).toBeInTheDocument();
+    expect(document.activeElement).toHaveTextContent("Codex Default");
+    fireEvent.click(screen.getByRole("button", { name: /Claude Review/ }));
+
+    await waitFor(() =>
+      expect(appClient.dispatch).toHaveBeenCalledWith({
+        type: "request_create_agent",
+        workspaceId: "workspace-1",
+        profileId: "claude",
+      }),
+    );
+    expect(
+      screen.queryByRole("dialog", { name: "New Agent" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("does not let a profile subscription failure hide a successful query", async () => {
+    const appClient = client(workspaceSnapshot);
+    const profiles: AgentProfiles = {
+      sequence: 1,
+      availability: "available",
+      profiles: [{ id: "codex", displayName: "Codex", kind: "codex" }],
+    };
+    appClient.subscribeAgentProfiles = vi
+      .fn()
+      .mockRejectedValue(new Error("profile event unavailable"));
+    appClient.getAgentProfiles = vi.fn().mockResolvedValue(profiles);
+    render(<AppShell client={appClient} />);
+
+    expect(
+      await screen.findByRole("button", { name: "Create agent in devhub" }),
+    ).toBeEnabled();
+  });
+
   it.each([
     [globalSnapshot, "Scratch", "Terminal", "global-terminal"],
     [workspaceSnapshot, "devhub", "Editor", "workspace-editor:workspace-1"],
@@ -68,7 +128,7 @@ describe("App Shell navigation matrix", () => {
 
   it("has no disclosure, child, or placeholder affordance for a workspace without agents", async () => {
     render(<AppShell client={client(workspaceSnapshot)} />);
-    await screen.findByRole("button", { name: "devhub workspace" });
+    await screen.findByRole("button", { name: /devhub workspace/ });
 
     expect(
       screen.queryByRole("button", { name: /agents$/i }),
@@ -89,7 +149,7 @@ describe("App Shell navigation matrix", () => {
   it("keeps disclosure separate from Workspace selection", async () => {
     const appClient = client(agentSnapshot);
     render(<AppShell client={appClient} />);
-    await screen.findByRole("button", { name: "devhub workspace" });
+    await screen.findByRole("button", { name: /devhub workspace/ });
 
     fireEvent.click(
       screen.getByRole("button", { name: "Collapse devhub agents" }),
@@ -106,7 +166,7 @@ describe("App Shell navigation matrix", () => {
       context: { kind: "workspace", workspaceId: "workspace-1" },
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "devhub workspace" }));
+    fireEvent.click(screen.getByRole("button", { name: /devhub workspace/ }));
     await waitFor(() =>
       expect(appClient.dispatch).toHaveBeenCalledWith({
         type: "select_context",
@@ -121,13 +181,197 @@ describe("App Shell navigation matrix", () => {
       await screen.findByRole("button", { name: /Codex 1/ }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Codex 1, Working agent" }),
+      screen.getByRole("button", {
+        name: "Codex 1, Working agent, Connected",
+      }),
     ).toHaveTextContent("Codex 1Connected");
     expect(
-      screen.getByRole("button", { name: "Claude 1, Waiting agent" }),
+      screen.getByRole("button", {
+        name: "Claude 1, Waiting agent, Connected",
+      }),
     ).toHaveTextContent("Claude 1Connected");
     expect(screen.getAllByLabelText("Working")).not.toHaveLength(0);
     expect(screen.getAllByLabelText("Waiting")).not.toHaveLength(0);
+  });
+
+  it("requires one typed confirmation before stopping an Agent and keeps focus in the dialog", async () => {
+    const appClient = client(agentSnapshot);
+    vi.mocked(appClient.dispatch).mockImplementation(
+      async (intent: AppIntent): Promise<AppOutcome> => {
+        if (intent.type === "stop_agent") {
+          return {
+            kind: "confirmation_required",
+            confirmationId: "confirmation-agent-1",
+            snapshot: agentSnapshot,
+            purpose: { kind: "agent_stop" },
+          };
+        }
+        return {
+          kind: "deferred",
+          operationId: "stop-op",
+          snapshot: agentSnapshot,
+        };
+      },
+    );
+    render(<AppShell client={appClient} />);
+    const stop = (
+      await screen.findAllByRole("button", { name: "Stop agent" })
+    )[0];
+    fireEvent.click(stop);
+
+    const dialog = await screen.findByRole("dialog", { name: "Stop Codex 1?" });
+    expect(dialog).toHaveTextContent("This stops the Agent runtime");
+    await waitFor(() =>
+      expect(document.activeElement).toHaveTextContent("Cancel"),
+    );
+    fireEvent.keyDown(document, { key: "Tab" });
+    expect(document.activeElement).toHaveTextContent("Stop Agent");
+    fireEvent.click(screen.getByRole("button", { name: "Stop Agent" }));
+    await waitFor(() =>
+      expect(appClient.dispatch).toHaveBeenLastCalledWith({
+        type: "confirm_stop_agent",
+        confirmationId: "confirmation-agent-1",
+      }),
+    );
+  });
+
+  it("submits a confirmation once, disables actions in flight, and restores retry after completion", async () => {
+    const appClient = client(agentSnapshot);
+    let resolveConfirm: ((outcome: AppOutcome) => void) | undefined;
+    vi.mocked(appClient.dispatch).mockImplementation(
+      (intent: AppIntent): Promise<AppOutcome> => {
+        if (intent.type === "stop_agent") {
+          return Promise.resolve({
+            kind: "confirmation_required",
+            confirmationId: "confirmation-agent-1",
+            snapshot: agentSnapshot,
+            purpose: { kind: "agent_stop" },
+          });
+        }
+        if (intent.type === "confirm_stop_agent") {
+          return new Promise((resolve) => {
+            resolveConfirm = resolve;
+          });
+        }
+        return Promise.resolve({ kind: "noop", snapshot: agentSnapshot });
+      },
+    );
+    render(<AppShell client={appClient} />);
+    fireEvent.click(
+      (await screen.findAllByRole("button", { name: "Stop agent" }))[0],
+    );
+    const submit = await screen.findByRole("button", { name: "Stop Agent" });
+
+    fireEvent.click(submit);
+    fireEvent.click(submit);
+    await waitFor(() =>
+      expect(
+        vi
+          .mocked(appClient.dispatch)
+          .mock.calls.filter(
+            ([intent]) => intent.type === "confirm_stop_agent",
+          ),
+      ).toHaveLength(1),
+    );
+    expect(submit).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
+
+    if (!resolveConfirm) throw new Error("confirmation did not start");
+    await act(async () => {
+      resolveConfirm?.({
+        kind: "deferred",
+        operationId: "stop-op",
+        snapshot: agentSnapshot,
+      });
+      await Promise.resolve();
+    });
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", { name: "Stop Codex 1?" }),
+      ).not.toBeInTheDocument(),
+    );
+  });
+
+  it("keeps confirmation retryable after a submission error", async () => {
+    const appClient = client(agentSnapshot);
+    let attempts = 0;
+    vi.mocked(appClient.dispatch).mockImplementation(
+      async (intent: AppIntent): Promise<AppOutcome> => {
+        if (intent.type === "stop_agent") {
+          return {
+            kind: "confirmation_required",
+            confirmationId: "confirmation-agent-1",
+            snapshot: agentSnapshot,
+            purpose: { kind: "agent_stop" },
+          };
+        }
+        if (intent.type === "confirm_stop_agent" && attempts++ === 0) {
+          throw new Error("temporary native failure");
+        }
+        return {
+          kind: "deferred",
+          operationId: "stop-op",
+          snapshot: agentSnapshot,
+        };
+      },
+    );
+    render(<AppShell client={appClient} />);
+    fireEvent.click(
+      (await screen.findAllByRole("button", { name: "Stop agent" }))[0],
+    );
+    const submit = await screen.findByRole("button", { name: "Stop Agent" });
+    fireEvent.click(submit);
+    await waitFor(() => expect(submit).toBeEnabled());
+    fireEvent.click(submit);
+    await waitFor(() =>
+      expect(
+        vi
+          .mocked(appClient.dispatch)
+          .mock.calls.filter(
+            ([intent]) => intent.type === "confirm_stop_agent",
+          ),
+      ).toHaveLength(2),
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", { name: "Stop Codex 1?" }),
+      ).not.toBeInTheDocument(),
+    );
+  });
+
+  it("keeps a native replacement confirmation visible with its original Agent", async () => {
+    const appClient = client(agentSnapshot);
+    vi.mocked(appClient.dispatch).mockImplementation(
+      async (intent: AppIntent): Promise<AppOutcome> => {
+        if (intent.type === "stop_agent") {
+          return {
+            kind: "confirmation_required",
+            confirmationId: "confirmation-agent-1",
+            snapshot: agentSnapshot,
+            purpose: { kind: "agent_stop" },
+          };
+        }
+        return {
+          kind: "confirmation_required",
+          confirmationId: "confirmation-agent-replacement",
+          snapshot: agentSnapshot,
+          purpose: { kind: "agent_stop" },
+        };
+      },
+    );
+    render(<AppShell client={appClient} />);
+    fireEvent.click(
+      (await screen.findAllByRole("button", { name: "Stop agent" }))[0],
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Stop Agent" }));
+    expect(
+      await screen.findByRole("dialog", { name: "Stop Codex 1?" }),
+    ).toBeInTheDocument();
+    expect(
+      vi
+        .mocked(appClient.dispatch)
+        .mock.calls.filter(([intent]) => intent.type === "confirm_stop_agent"),
+    ).toHaveLength(1);
   });
 
   it("disables exactly the Activity choices Rust resolves as disabled", async () => {
@@ -137,7 +381,7 @@ describe("App Shell navigation matrix", () => {
     expect(screen.getByRole("button", { name: "Terminal" })).toBeEnabled();
     expect(
       screen.getByRole("button", {
-        name: "Agent (global agent not applicable), unavailable",
+        name: `Agent (${disabledReasonCopy["global-agent-not-applicable"]}), unavailable`,
       }),
     ).toBeDisabled();
   });
@@ -158,6 +402,65 @@ describe("App Shell states and accessibility", () => {
       await screen.findByRole("heading", { name: "closing" }),
     ).toBeInTheDocument();
     expect(screen.getByText(/could not be closed/i)).toBeInTheDocument();
+  });
+
+  it.each(Object.keys(disabledReasonCopy) as DisabledReasonWire[])(
+    "renders friendly copy for disabled Surface reason %s",
+    async (reason) => {
+      const snapshot: AppSnapshot = {
+        ...workspaceSnapshot,
+        selection: { ...workspaceSnapshot.selection, activity: "agent" },
+        activities: workspaceSnapshot.activities.map((activity) =>
+          activity.activity === "agent"
+            ? { activity: "agent", resolution: { kind: "disabled", reason } }
+            : activity,
+        ),
+      };
+      const view = render(<AppShell client={client(snapshot)} />);
+      await screen.findByText(disabledReasonCopy[reason]);
+      const surface = screen.getByRole("region", { name: "Surface" });
+      expect(surface).toHaveTextContent(disabledReasonCopy[reason]);
+      expect(surface).not.toHaveTextContent(reason);
+      view.unmount();
+    },
+  );
+
+  it("restores confirmation focus to a surviving Workspace row after natural Agent removal", async () => {
+    const appClient = client(agentSnapshot);
+    let onSnapshot: ((snapshot: AppSnapshot) => void) | undefined;
+    vi.mocked(appClient.subscribe).mockImplementation(async (listener) => {
+      onSnapshot = listener;
+      return () => undefined;
+    });
+    vi.mocked(appClient.dispatch).mockImplementation(
+      async (intent: AppIntent): Promise<AppOutcome> =>
+        intent.type === "stop_agent"
+          ? {
+              kind: "confirmation_required",
+              confirmationId: "confirmation-agent-1",
+              snapshot: agentSnapshot,
+              purpose: { kind: "agent_stop" },
+            }
+          : { kind: "noop", snapshot: agentSnapshot },
+    );
+    render(<AppShell client={appClient} />);
+    const stop = (
+      await screen.findAllByRole("button", { name: "Stop agent" })
+    )[0];
+    stop.focus();
+    fireEvent.click(stop);
+    await screen.findByRole("dialog", { name: "Stop Codex 1?" });
+
+    act(() => onSnapshot?.({ ...workspaceSnapshot, revision: 2 }));
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", { name: "Stop Codex 1?" }),
+      ).not.toBeInTheDocument(),
+    );
+    expect(stop.isConnected).toBe(false);
+    expect(document.activeElement).toBe(
+      screen.getByRole("button", { name: /devhub workspace/ }),
+    );
   });
 
   it("keeps loading state explicit until the native snapshot arrives", async () => {

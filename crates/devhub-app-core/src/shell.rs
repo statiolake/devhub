@@ -14,10 +14,11 @@ use crate::application::{
 };
 use crate::config::AppearanceConfig;
 use crate::{
-    Activity, AgentControlState, AgentId, AgentStatus, AppError, AppErrorCode, AppSnapshot,
-    CloseInspectionProjection, DiagnosticCode, DisabledReason, DomainErrorCode, NavigationContext,
-    ResourceInspection, RuntimeHealth, SurfaceKey, SurfaceResolution, UserIntent,
-    WorkspaceAggregateStatus, WorkspaceId, WorkspaceState, SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH,
+    Activity, AgentControlState, AgentId, AgentProfile, AgentProfileKind, AgentStatus, AppError,
+    AppErrorCode, AppSnapshot, CloseInspectionProjection, DiagnosticCode, DisabledReason,
+    DomainErrorCode, NavigationContext, ResourceInspection, RuntimeHealth, SurfaceKey,
+    SurfaceResolution, UserIntent, WorkspaceAggregateStatus, WorkspaceId, WorkspaceState,
+    SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH,
 };
 
 pub const APP_SHELL_SCHEMA_VERSION: u16 = 1;
@@ -285,6 +286,137 @@ pub struct AgentWire {
     control_state: AgentControlStateWire,
 }
 
+/// Secret-free profile choices exposed to the Workbench Agent picker. Args and
+/// environment are intentionally omitted: the native coordinator resolves
+/// the selected profile and retains the complete launch-time snapshot.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AgentProfileWire {
+    id: String,
+    display_name: String,
+    kind: AgentProfileKindWire,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum AgentProfileKindWire {
+    Codex,
+    Claude,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AgentProfilesWire {
+    #[schemars(range(min = 1, max = MAX_SAFE_JS_INTEGER))]
+    sequence: u64,
+    availability: AgentProfilesAvailabilityWire,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    diagnostic: Option<AgentProfilesDiagnosticWire>,
+    profiles: Vec<AgentProfileWire>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum AgentProfilesAvailabilityWire {
+    Available,
+    Degraded,
+    Unavailable,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentProfilesDiagnosticWire {
+    ConfigurationInvalid,
+    ConfigurationConflict,
+    ProjectionUnavailable,
+}
+
+impl AgentProfilesWire {
+    pub fn from_profiles(
+        profiles: &[AgentProfile],
+        sequence: u64,
+    ) -> Result<Self, SnapshotWireError> {
+        if sequence == 0 || sequence > MAX_SAFE_JS_INTEGER {
+            return Err(SnapshotWireError::UnsafeInteger);
+        }
+        let profiles = profiles
+            .iter()
+            .map(|profile| AgentProfileWire {
+                id: profile.id().to_string(),
+                display_name: profile.display_name().to_owned(),
+                kind: match profile.kind() {
+                    AgentProfileKind::Codex => AgentProfileKindWire::Codex,
+                    AgentProfileKind::Claude => AgentProfileKindWire::Claude,
+                },
+            })
+            .collect();
+        Ok(Self {
+            sequence,
+            availability: AgentProfilesAvailabilityWire::Available,
+            diagnostic: None,
+            profiles,
+        })
+    }
+
+    pub fn degraded(mut self, diagnostic: AgentProfilesDiagnosticWire) -> Self {
+        self.availability = AgentProfilesAvailabilityWire::Degraded;
+        self.diagnostic = Some(diagnostic);
+        self
+    }
+
+    pub fn unavailable(
+        sequence: u64,
+        diagnostic: AgentProfilesDiagnosticWire,
+    ) -> Result<Self, SnapshotWireError> {
+        if sequence == 0 || sequence > MAX_SAFE_JS_INTEGER {
+            return Err(SnapshotWireError::UnsafeInteger);
+        }
+        Ok(Self {
+            sequence,
+            availability: AgentProfilesAvailabilityWire::Unavailable,
+            diagnostic: Some(diagnostic),
+            profiles: Vec::new(),
+        })
+    }
+
+    pub fn validate(&self) -> Result<(), SnapshotWireError> {
+        if self.sequence == 0 || self.sequence > MAX_SAFE_JS_INTEGER {
+            return Err(SnapshotWireError::UnsafeInteger);
+        }
+        if self.profiles.iter().any(|profile| {
+            profile.id.trim().is_empty()
+                || profile.display_name.trim().is_empty()
+                || profile.display_name.contains('\0')
+        }) {
+            return Err(SnapshotWireError::InvalidContract("invalid agent profile projection"));
+        }
+        if self.availability == AgentProfilesAvailabilityWire::Unavailable
+            && !self.profiles.is_empty()
+        {
+            return Err(SnapshotWireError::InvalidContract(
+                "unavailable agent profile projection must not contain choices",
+            ));
+        }
+        if self.availability == AgentProfilesAvailabilityWire::Available
+            && self.diagnostic.is_some()
+        {
+            return Err(SnapshotWireError::InvalidContract(
+                "available agent profile projection cannot contain a diagnostic",
+            ));
+        }
+        if self.availability != AgentProfilesAvailabilityWire::Available
+            && self.diagnostic.is_none()
+        {
+            return Err(SnapshotWireError::InvalidContract(
+                "degraded agent profile projection requires a diagnostic",
+            ));
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum AgentStatusWire {
@@ -330,6 +462,31 @@ pub enum AppIntentWire {
     RequestCreateAgent {
         #[serde(rename = "workspaceId")]
         workspace_id: String,
+        #[serde(rename = "profileId")]
+        profile_id: String,
+    },
+    RenameAgent {
+        #[serde(rename = "agentId")]
+        agent_id: String,
+        #[serde(rename = "displayName")]
+        #[schemars(rename = "displayName")]
+        display_name: String,
+    },
+    StopAgent {
+        #[serde(rename = "agentId")]
+        agent_id: String,
+    },
+    ConfirmStopAgent {
+        #[serde(rename = "confirmationId")]
+        confirmation_id: String,
+    },
+    RetryStopAgent {
+        #[serde(rename = "agentId")]
+        agent_id: String,
+    },
+    ReconcileAgent {
+        #[serde(rename = "agentId")]
+        agent_id: String,
     },
     RetryWorkspace {
         #[serde(rename = "workspaceId")]
@@ -644,10 +801,36 @@ impl AppIntentWire {
             Self::RetryCloseWorkspace { workspace_id } => Ok(UserIntent::RetryCloseWorkspace {
                 workspace_id: parse_workspace_id(workspace_id)?,
             }),
-            // A profile chooser/composer owns the profile selection. The
-            // shell must not invent a profile merely to make this button
-            // appear successful, so this MVP ingress is explicitly rejected.
-            Self::RequestCreateAgent { .. } => Err(InvalidIntent),
+            Self::RequestCreateAgent { workspace_id, profile_id } => Ok(UserIntent::CreateAgent {
+                workspace_id: parse_workspace_id(workspace_id)?,
+                profile_id: crate::AgentProfileId::from_slug(profile_id)
+                    .map_err(|_| InvalidIntent)?,
+            }),
+            Self::RenameAgent { agent_id, display_name } => {
+                if display_name.trim().is_empty()
+                    || display_name.contains('\0')
+                    || display_name.chars().count() > 256
+                {
+                    return Err(InvalidIntent);
+                }
+                Ok(UserIntent::RenameAgent {
+                    agent_id: AgentId::from_uuid(agent_id).map_err(|_| InvalidIntent)?,
+                    display_name,
+                })
+            }
+            Self::StopAgent { agent_id } => Ok(UserIntent::StopAgent {
+                agent_id: AgentId::from_uuid(agent_id).map_err(|_| InvalidIntent)?,
+            }),
+            Self::ConfirmStopAgent { confirmation_id } => Ok(UserIntent::ConfirmStopAgent {
+                confirmation_id: ConfirmationId::from_uuid(confirmation_id)
+                    .map_err(|_| InvalidIntent)?,
+            }),
+            Self::RetryStopAgent { agent_id } => Ok(UserIntent::RetryStopAgent {
+                agent_id: AgentId::from_uuid(agent_id).map_err(|_| InvalidIntent)?,
+            }),
+            Self::ReconcileAgent { agent_id } => Ok(UserIntent::ReconcileAgent {
+                agent_id: AgentId::from_uuid(agent_id).map_err(|_| InvalidIntent)?,
+            }),
         }
     }
 }
@@ -1020,6 +1203,8 @@ fn control_state_name(state: AgentControlState) -> AgentControlStateWire {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use super::*;
     use crate::{AppCoordinator, AppModel, OperationId};
 
@@ -1045,12 +1230,47 @@ mod tests {
 
     #[test]
     fn app_intent_wire_rejects_unsupported_profileless_creation() {
-        let intent: AppIntentWire = serde_json::from_value(serde_json::json!({
+        let result = serde_json::from_value::<AppIntentWire>(serde_json::json!({
             "type": "request_create_agent",
             "workspaceId": "00000000-0000-4000-8000-000000000001"
+        }));
+        assert!(result.is_err());
+
+        let intent: AppIntentWire = serde_json::from_value(serde_json::json!({
+            "type": "request_create_agent",
+            "workspaceId": "00000000-0000-4000-8000-000000000001",
+            "profileId": "codex"
         }))
-        .expect("request shape is strict and valid");
-        assert!(intent.into_user_intent().is_err());
+        .expect("profile selection is required");
+        assert!(intent.into_user_intent().is_ok());
+    }
+
+    #[test]
+    fn profile_projection_is_secret_free_and_sequence_bound() {
+        let profile = AgentProfile::new(
+            crate::AgentProfileId::from_slug("codex").expect("profile id"),
+            "Codex",
+            AgentProfileKind::Codex,
+            vec!["--model".to_owned(), "secret-model".to_owned()],
+            BTreeMap::from([(String::from("TOKEN"), String::from("secret-value"))]),
+        )
+        .expect("profile");
+        let wire = AgentProfilesWire::from_profiles(&[profile], 7).expect("profile projection");
+        let value = serde_json::to_value(wire).expect("profile wire serializes");
+        assert_eq!(value["sequence"], 7);
+        assert_eq!(
+            value["profiles"][0],
+            serde_json::json!({
+                "id": "codex",
+                "displayName": "Codex",
+                "kind": "codex",
+            })
+        );
+        let encoded = value.to_string();
+        assert!(!encoded.contains("secret-model"));
+        assert!(!encoded.contains("secret-value"));
+        assert!(!encoded.contains("args"));
+        assert!(!encoded.contains("env"));
     }
 
     #[test]
@@ -1129,6 +1349,10 @@ mod tests {
             } else if value.get("cursor").is_some() {
                 let replay: ReplayWire = serde_json::from_value(value).expect("valid replay");
                 replay.validate().expect("valid replay constraints");
+            } else if value.get("profiles").is_some() {
+                let profiles: AgentProfilesWire =
+                    serde_json::from_value(value).expect("valid profile projection");
+                profiles.validate().expect("valid profile projection constraints");
             } else if value.get("sidebarDensity").is_some() {
                 let appearance: AppAppearanceWire =
                     serde_json::from_value(value).expect("valid appearance projection");

@@ -89,7 +89,7 @@ function surfaceKey(value: unknown): string {
     /\s/u.test(key) ||
     key.includes("\0") ||
     (key !== "global-terminal" &&
-      !/^workspace-terminal:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u.test(
+      !/^(?:workspace-terminal|agent):[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u.test(
         key,
       ))
   ) {

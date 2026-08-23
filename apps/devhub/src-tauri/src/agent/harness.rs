@@ -620,7 +620,11 @@ fn pinned_herdr_081_harness_covers_launch_status_exit_reconnect_surface_and_retr
     let first_surface =
         drive(runtime.attach_surface(agent_id.clone(), "surface-a".to_owned(), false, token(3)))
             .expect("surface attach");
-    assert!(first_surface.read_recent().expect("terminal frame").contains("herdr-harness"));
+    assert!(first_surface
+        .read_recent()
+        .expect("terminal frame")
+        .windows(b"herdr-harness".len())
+        .any(|window| window == b"herdr-harness"));
     assert!(drive(runtime.attach_surface(
         agent_id.clone(),
         "surface-a".to_owned(),

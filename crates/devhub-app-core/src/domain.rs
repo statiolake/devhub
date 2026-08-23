@@ -470,13 +470,30 @@ pub enum AgentProfileKind {
 
 /// A user-configured profile snapshot.  An Agent keeps a clone at launch so
 /// later profile edits do not mutate an already-running session.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// The profile can contain credentials in its environment or command-line
+/// arguments. Keep those values out of `Debug` output because profiles cross
+/// the coordinator effect seam and are commonly included in adapter errors.
+#[derive(Clone, PartialEq, Eq)]
 pub struct AgentProfile {
     id: AgentProfileId,
     display_name: String,
     kind: AgentProfileKind,
     args: Vec<String>,
     env: BTreeMap<String, String>,
+}
+
+impl fmt::Debug for AgentProfile {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("AgentProfile")
+            .field("id", &self.id)
+            .field("display_name", &"<redacted>")
+            .field("kind", &self.kind)
+            .field("args_count", &self.args.len())
+            .field("env_count", &self.env.len())
+            .finish()
+    }
 }
 
 impl AgentProfile {

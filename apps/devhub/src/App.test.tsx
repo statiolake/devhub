@@ -23,7 +23,7 @@ describe("DevHub app shell", () => {
     expect(screen.getByRole("button", { name: "Editor" })).toBeEnabled();
     expect(
       screen.getByRole("button", {
-        name: "Agent (global agent not applicable), unavailable",
+        name: "Agent (Select an Agent to open its control surface.), unavailable",
       }),
     ).toBeDisabled();
     expect(screen.getByRole("button", { name: "Terminal" })).toHaveAttribute(

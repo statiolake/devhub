@@ -10,6 +10,7 @@ import {
   parseAppIntent,
   parseAppOutcome,
   parseAppSnapshot,
+  parseAgentProfiles,
   parseWorkspacePickerEvent as parseGeneratedWorkspacePickerEvent,
   type AppError,
   type AppAppearance,
@@ -17,15 +18,19 @@ import {
   type AppIntent,
   type AppOutcome,
   type AppSnapshot,
+  type AgentProfiles,
   type WorkspacePickerEventWire,
 } from "../generated/app-shell";
 
 export const GET_APP_SNAPSHOT_COMMAND = "get_app_snapshot" as const;
 export const GET_APP_APPEARANCE_COMMAND = "get_app_appearance" as const;
+export const GET_AGENT_PROFILES_COMMAND = "get_agent_profiles" as const;
 export const DISPATCH_APP_INTENT_COMMAND = "dispatch_app_intent" as const;
 export const REPLAY_APP_EVENTS_COMMAND = "replay_app_events" as const;
 export const APP_SNAPSHOT_CHANGED_EVENT = "app://snapshot-changed" as const;
 export const APP_APPEARANCE_CHANGED_EVENT = "app://appearance-changed" as const;
+export const APP_AGENT_PROFILES_CHANGED_EVENT =
+  "app://agent-profiles-changed" as const;
 export const START_WORKSPACE_PICKER_COMMAND = "start_workspace_picker" as const;
 export const CANCEL_WORKSPACE_PICKER_COMMAND =
   "cancel_workspace_picker" as const;
@@ -54,13 +59,16 @@ export function parseWorkspacePickerEvent(
 
 export type AppSnapshotListener = (snapshot: AppSnapshot) => void;
 export type AppAppearanceListener = (appearance: AppAppearance) => void;
+export type AgentProfilesListener = (profiles: AgentProfiles) => void;
 
 export interface AppShellClient {
   getSnapshot(): Promise<AppSnapshot>;
   getAppearance?(): Promise<AppAppearance>;
+  getAgentProfiles?(): Promise<AgentProfiles>;
   dispatch(intent: AppIntent): Promise<AppOutcome>;
   subscribe(listener: AppSnapshotListener): Promise<UnlistenFn>;
   subscribeAppearance?(listener: AppAppearanceListener): Promise<UnlistenFn>;
+  subscribeAgentProfiles?(listener: AgentProfilesListener): Promise<UnlistenFn>;
   replay?(cursor: number): Promise<AppEventCursor>;
   startWorkspacePicker?(query?: string): Promise<string>;
   cancelWorkspacePicker?(): Promise<void>;
@@ -100,6 +108,11 @@ export function createTauriAppShellClient(
         await transport.invoke<unknown>(GET_APP_APPEARANCE_COMMAND),
       );
     },
+    async getAgentProfiles() {
+      return parseAgentProfiles(
+        await transport.invoke<unknown>(GET_AGENT_PROFILES_COMMAND),
+      );
+    },
     async dispatch(intent) {
       const wireIntent = parseAppIntent(intent);
       return parseAppOutcome(
@@ -117,6 +130,12 @@ export function createTauriAppShellClient(
     subscribeAppearance(listener) {
       return transport.listen<unknown>(APP_APPEARANCE_CHANGED_EVENT, (event) =>
         listener(parseAppAppearance(event.payload)),
+      );
+    },
+    subscribeAgentProfiles(listener) {
+      return transport.listen<unknown>(
+        APP_AGENT_PROFILES_CHANGED_EVENT,
+        (event) => listener(parseAgentProfiles(event.payload)),
       );
     },
     async replay(cursor) {

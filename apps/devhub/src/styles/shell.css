@@ -143,6 +143,20 @@
   text-align: left;
 }
 
+.sidebar-context-button {
+  display: flex;
+}
+
+.agent-row {
+  padding-right: 2px;
+}
+
+.agent-row-action {
+  width: 30px;
+  flex-basis: 30px;
+  font-size: 15px;
+}
+
 .sidebar-context-button:hover,
 .agent-row:hover,
 .scratch-row:hover {
@@ -180,6 +194,13 @@
   padding: 6px 8px;
 }
 
+.workspace-picker-header h2 {
+  margin: 0;
+  color: var(--graphite);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
 .workspace-picker-results {
   display: grid;
   max-height: 240px;
@@ -203,6 +224,68 @@
   background: var(--selection);
 }
 .workspace-picker-result small {
+  color: var(--secondary);
+}
+
+.agent-profile-picker {
+  position: fixed;
+  z-index: 20;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: color-mix(in srgb, var(--graphite) 24%, transparent);
+}
+
+.agent-profile-picker-card {
+  display: flex;
+  width: min(420px, calc(100vw - 32px));
+  max-height: min(560px, calc(100vh - 32px));
+  flex-direction: column;
+  gap: var(--space-3);
+  overflow: auto;
+  padding: 22px;
+  border: 1px solid var(--selection-line);
+  border-radius: var(--radius-medium);
+  background: var(--surface);
+  box-shadow: 0 20px 60px color-mix(in srgb, var(--graphite) 25%, transparent);
+}
+
+.agent-profile-picker-card h2,
+.agent-profile-picker-card p {
+  margin: 0;
+}
+
+.agent-profile-picker-card p {
+  color: var(--secondary);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.agent-profile-options {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.agent-profile-options button {
+  display: flex;
+  min-height: 48px;
+  align-items: center;
+  justify-content: space-between;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-small);
+  background: transparent;
+  padding: 0 var(--space-3);
+  text-align: left;
+  cursor: pointer;
+}
+
+.agent-profile-options button:hover,
+.agent-profile-options button:focus-visible {
+  border-color: var(--selection-line);
+  background: var(--selection);
+}
+
+.agent-profile-options small {
   color: var(--secondary);
 }
 
@@ -611,14 +694,6 @@ body.is-resizing-sidebar {
 .surface-closing-state .surface-mark {
   border-color: color-mix(in srgb, var(--waiting) 50%, var(--line));
   color: var(--waiting);
-}
-
-.surface-agent-status {
-  display: flex;
-  min-height: 28px;
-  align-items: center;
-  gap: var(--space-2);
-  margin-top: var(--space-5);
 }
 
 .primary-button {

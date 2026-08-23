@@ -4,6 +4,7 @@ import {
   type AppIntent,
   type AppSnapshot,
 } from "../../generated/app-shell";
+import { disabledReasonLabel } from "./activityPresentation";
 
 export interface TitlebarActivitiesProps {
   readonly snapshot: AppSnapshot;
@@ -22,7 +23,7 @@ export function TitlebarActivities({
           const label = activityLabel(activity);
           const disabled = resolution.kind === "disabled";
           const reason = disabled
-            ? ` (${resolution.reason.replaceAll("-", " ")})`
+            ? ` (${disabledReasonLabel(resolution.reason)})`
             : "";
           return (
             <button

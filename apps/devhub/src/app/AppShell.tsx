@@ -54,6 +54,7 @@ function Workbench() {
     dispatch,
     retry,
     pendingConfirmation,
+    confirmationBusy,
     confirmPending,
     dismissCloseConfirmation,
   } = useAppShell();
@@ -65,20 +66,47 @@ function Workbench() {
   );
   const confirmationRef = useRef<HTMLElement | null>(null);
   const previousFocus = useRef<HTMLElement | null>(null);
+  const closePurpose = pendingConfirmation?.purpose;
+  const pendingAgent =
+    pendingConfirmation?.purpose.kind === "agent_stop"
+      ? state.status === "ready"
+        ? state.snapshot.workspaces
+            .flatMap((workspace) => workspace.agents)
+            .find((agent) => agent.id === pendingConfirmation.agentId)
+        : undefined
+      : undefined;
+  const pendingConfirmationId = pendingConfirmation?.confirmationId;
+  const pendingWorkspaceId = pendingAgent?.workspaceId;
+
+  const restoreFocus = useCallback((target: HTMLElement | null | undefined) => {
+    if (
+      !target?.isConnected ||
+      target.hasAttribute("disabled") ||
+      target.getAttribute("aria-hidden") === "true" ||
+      target.tabIndex < 0
+    ) {
+      return false;
+    }
+    target.focus();
+    return document.activeElement === target;
+  }, []);
+
   useEffect(() => {
-    if (!pendingConfirmation) return;
+    if (pendingConfirmationId === undefined) return;
     previousFocus.current = document.activeElement as HTMLElement | null;
     const dialog = confirmationRef.current;
-    const first = dialog?.querySelector<HTMLElement>("button");
+    const first = dialog?.querySelector<HTMLElement>("button:not([disabled])");
     first?.focus();
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
+      if (event.key === "Escape" && !event.isComposing) {
         event.preventDefault();
         dismissCloseConfirmation();
         return;
       }
       if (event.key !== "Tab" || !dialog) return;
-      const buttons = [...dialog.querySelectorAll<HTMLElement>("button")];
+      const buttons = [
+        ...dialog.querySelectorAll<HTMLElement>("button:not([disabled])"),
+      ];
       if (buttons.length === 0) return;
       const index = buttons.indexOf(document.activeElement as HTMLElement);
       const next = event.shiftKey
@@ -92,11 +120,41 @@ function Workbench() {
     document.addEventListener("keydown", onKeyDown);
     return () => {
       document.removeEventListener("keydown", onKeyDown);
-      previousFocus.current?.focus();
+      const restored = restoreFocus(previousFocus.current);
+      if (!restored && pendingWorkspaceId) {
+        const workspaceButton = [
+          ...document.querySelectorAll<HTMLElement>("[data-workspace-id]"),
+        ].find((element) => element.dataset.workspaceId === pendingWorkspaceId);
+        if (!restoreFocus(workspaceButton)) {
+          restoreFocus(
+            document.querySelector<HTMLElement>(
+              '[aria-label="Workspace navigation"] button:not([disabled])',
+            ),
+          );
+        }
+      } else if (!restored) {
+        restoreFocus(
+          document.querySelector<HTMLElement>(
+            '[aria-label="Workspace navigation"] button:not([disabled])',
+          ),
+        );
+      }
       previousFocus.current = null;
     };
-  }, [dismissCloseConfirmation, pendingConfirmation]);
-  const closePurpose = pendingConfirmation?.purpose;
+  }, [
+    dismissCloseConfirmation,
+    pendingConfirmationId,
+    pendingWorkspaceId,
+    restoreFocus,
+  ]);
+  useEffect(() => {
+    if (pendingConfirmation?.purpose.kind === "agent_stop" && !pendingAgent) {
+      // Natural-exit reconciliation removes the Agent and its confirmation
+      // atomically in Rust. Clear the local dialog as soon as that snapshot
+      // arrives instead of leaving a generic stale confirmation behind.
+      dismissCloseConfirmation();
+    }
+  }, [dismissCloseConfirmation, pendingAgent, pendingConfirmation]);
   const closeInspection =
     closePurpose?.kind === "workspace_close"
       ? closePurpose.inspection
@@ -175,53 +233,69 @@ function Workbench() {
           appearance={appearance}
         />
       </div>
-      {pendingConfirmation && (
-        <div className="confirmation-backdrop" role="presentation">
-          <section
-            ref={confirmationRef}
-            className="confirmation-dialog"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="close-workspace-title"
-            aria-describedby="close-workspace-description"
-          >
-            <h2 id="close-workspace-title">
-              {closeInspection
-                ? `Close ${closeInspection.workspaceLabel}?`
-                : "Confirm action?"}
-            </h2>
-            <p id="close-workspace-description">
-              {closeInspection
-                ? "The following workspace resources need confirmation before they are closed."
-                : "Confirm this operation to continue."}
-            </p>
-            {resources.length > 0 && (
-              <ul className="confirmation-resources">
-                {resources.map(([label, resource]) => (
-                  <li key={label}>
-                    <span>{label}</span>
-                    <span>{closeResourceStatus(resource)}</span>
-                  </li>
-                ))}
-              </ul>
-            )}
-            <div className="confirmation-actions">
-              <button type="button" onClick={dismissCloseConfirmation}>
-                Cancel
-              </button>
-              {closeInspection && (
-                <button
-                  className="primary-button"
-                  type="button"
-                  onClick={() => void confirmPending()}
-                >
-                  Close workspace
-                </button>
+      {pendingConfirmation &&
+        (pendingConfirmation.purpose.kind !== "agent_stop" || pendingAgent) && (
+          <div className="confirmation-backdrop" role="presentation">
+            <section
+              ref={confirmationRef}
+              className="confirmation-dialog"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="confirmation-title"
+              aria-describedby="confirmation-description"
+            >
+              <h2 id="confirmation-title">
+                {closeInspection
+                  ? `Close ${closeInspection.workspaceLabel}?`
+                  : pendingAgent
+                    ? `Stop ${pendingAgent.displayName}?`
+                    : "Confirm action?"}
+              </h2>
+              <p id="confirmation-description">
+                {closeInspection
+                  ? "The following workspace resources need confirmation before they are closed."
+                  : pendingAgent
+                    ? "This stops the Agent runtime. It can be retried if cleanup fails."
+                    : "Confirm this operation to continue."}
+              </p>
+              {resources.length > 0 && (
+                <ul className="confirmation-resources">
+                  {resources.map(([label, resource]) => (
+                    <li key={label}>
+                      <span>{label}</span>
+                      <span>{closeResourceStatus(resource)}</span>
+                    </li>
+                  ))}
+                </ul>
               )}
-            </div>
-          </section>
-        </div>
-      )}
+              <div className="confirmation-actions">
+                <button
+                  type="button"
+                  onClick={dismissCloseConfirmation}
+                  disabled={confirmationBusy}
+                >
+                  Cancel
+                </button>
+                {(closeInspection || pendingAgent) && (
+                  <button
+                    className="primary-button"
+                    type="button"
+                    onClick={() => void confirmPending()}
+                    disabled={confirmationBusy}
+                  >
+                    {confirmationBusy
+                      ? pendingAgent
+                        ? "Stopping…"
+                        : "Closing…"
+                      : pendingAgent
+                        ? "Stop Agent"
+                        : "Close workspace"}
+                  </button>
+                )}
+              </div>
+            </section>
+          </div>
+        )}
     </main>
   );
 }

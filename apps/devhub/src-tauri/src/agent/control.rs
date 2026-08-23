@@ -24,7 +24,10 @@ const READ_POLL_TIMEOUT: Duration = Duration::from_millis(10);
 /// content-free adapter errors; the target terminal ID is never exposed.
 pub(crate) trait TerminalControl: Send + Sync {
     fn send_text(&self, text: &str) -> Result<(), AgentRuntimeError>;
-    fn read_recent(&self) -> Result<String, AgentRuntimeError>;
+    /// Returns the bytes observed since the previous read. The control stream
+    /// is binary-safe: terminal escape sequences and non-UTF-8 bytes must
+    /// reach the xterm decoder unchanged.
+    fn read_recent(&self) -> Result<Vec<u8>, AgentRuntimeError>;
     fn detach(&self);
 }
 
@@ -37,8 +40,8 @@ impl TerminalControl for NoopTerminalControl {
         Ok(())
     }
 
-    fn read_recent(&self) -> Result<String, AgentRuntimeError> {
-        Ok(String::new())
+    fn read_recent(&self) -> Result<Vec<u8>, AgentRuntimeError> {
+        Ok(Vec::new())
     }
 
     fn detach(&self) {}
@@ -213,7 +216,7 @@ impl TerminalControl for HerdrTerminalControl {
         write_message(&mut *stream, &ClientMessage::Input { data: text.as_bytes().to_vec() })
     }
 
-    fn read_recent(&self) -> Result<String, AgentRuntimeError> {
+    fn read_recent(&self) -> Result<Vec<u8>, AgentRuntimeError> {
         let mut stream = self.stream.lock().map_err(|_| internal())?;
         let mut output = Vec::new();
         let pending = {
@@ -230,7 +233,7 @@ impl TerminalControl for HerdrTerminalControl {
                 Err(error) => return Err(error),
             }
         }
-        Ok(String::from_utf8_lossy(&output).into_owned())
+        Ok(output)
     }
 
     fn detach(&self) {
@@ -519,6 +522,22 @@ mod tests {
         assert_eq!(server_tag(&frame).expect("tag"), 2);
         let error = AgentRuntimeError::new(AgentRuntimeErrorCode::BoundedInput);
         assert!(!format!("{error:?}").contains("provider-terminal"));
+    }
+
+    #[test]
+    fn terminal_frame_preserves_non_utf8_control_bytes() {
+        let bytes = [0_u8, 0xff, 0x1b, b'[', b'2', b'J'];
+        let mut frame = Vec::new();
+        push_varint(&mut frame, 2); // Terminal frame
+        push_varint(&mut frame, 7); // provider sequence
+        push_varint(&mut frame, 80); // width
+        push_varint(&mut frame, 24); // height
+        frame.push(0); // not a full redraw
+        push_bytes(&mut frame, &bytes).expect("bounded bytes");
+
+        let mut output = Vec::new();
+        append_terminal_bytes(&frame, &mut output).expect("terminal payload");
+        assert_eq!(output, bytes);
     }
 
     #[test]

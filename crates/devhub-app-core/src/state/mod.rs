@@ -36,6 +36,12 @@ const MAX_SIDEBAR_WIDTH: u16 = 400;
 const DEFAULT_WINDOW_WIDTH: u32 = 1_200;
 const DEFAULT_WINDOW_HEIGHT: u32 = 800;
 const MAX_AGENT_NAME_BYTES: usize = 512;
+const MAX_AGENT_PROFILE_ARGS: usize = 128;
+const MAX_AGENT_PROFILE_ARG_BYTES: usize = 4_096;
+const MAX_AGENT_PROFILE_ENV_ENTRIES: usize = 128;
+const MAX_AGENT_PROFILE_ENV_KEY_BYTES: usize = 256;
+const MAX_AGENT_PROFILE_ENV_VALUE_BYTES: usize = 16_384;
+const MAX_AGENT_PROFILE_SNAPSHOT_BYTES: usize = 256 * 1024;
 const MAX_OPAQUE_MAPPING_BYTES: usize = 4096;
 
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -398,6 +404,15 @@ pub struct AgentStateRecord {
     pub profile_kind: Option<PersistedAgentProfileKind>,
     #[serde(default)]
     pub profile_display_name: Option<String>,
+    /// Complete launch-time arguments. `None` is retained only for state
+    /// written before launch profiles became immutable snapshots; new
+    /// records always write `Some`, including for an empty argument list.
+    #[serde(default)]
+    pub profile_args: Option<Vec<String>>,
+    /// Complete launch-time environment. `None` is retained only for legacy
+    /// records; an empty environment in a new record is `Some(empty)`.
+    #[serde(default)]
+    pub profile_env: Option<BTreeMap<String, String>>,
     pub ordinal: u32,
     #[serde(default)]
     pub temporary_name: Option<String>,
@@ -423,6 +438,8 @@ impl fmt::Debug for AgentStateRecord {
                 "profile_display_name",
                 &self.profile_display_name.as_ref().map(|_| "<redacted>"),
             )
+            .field("profile_args_count", &self.profile_args.as_ref().map(Vec::len))
+            .field("profile_env_count", &self.profile_env.as_ref().map(BTreeMap::len))
             .field("ordinal", &self.ordinal)
             .field("temporary_name", &self.temporary_name.as_ref().map(|_| "<redacted>"))
             .field("status", &self.status)
@@ -441,6 +458,8 @@ impl AgentStateRecord {
             profile_id: record.profile().id().to_string(),
             profile_kind: Some(record.profile().kind().into()),
             profile_display_name: Some(record.profile().display_name().to_owned()),
+            profile_args: Some(record.profile().args().to_vec()),
+            profile_env: Some(record.profile().env().clone()),
             ordinal: record.ordinal(),
             temporary_name: record.temporary_name().map(str::to_owned),
             status: record.status().into(),
@@ -454,9 +473,7 @@ impl AgentStateRecord {
         &self,
         profile: AgentProfile,
     ) -> Result<AgentRestoreRecord, StateError> {
-        if self.profile_kind.is_some_and(|kind| AgentProfileKind::from(kind) != profile.kind()) {
-            return Err(state_error(StateErrorCode::InvalidState));
-        }
+        let profile = self.launch_profile(Some(&profile))?;
         let id = AgentId::from_uuid(self.agent_id.clone())
             .map_err(|_| state_error(StateErrorCode::InvalidState))?;
         let workspace_id = WorkspaceId::from_uuid(self.workspace_id.clone())
@@ -474,6 +491,44 @@ impl AgentStateRecord {
         .map_err(|_| state_error(StateErrorCode::InvalidState))
     }
 
+    /// Reconstructs the launch-time profile carried by this record. Complete
+    /// snapshots never consult the fallback profile, so editing or removing
+    /// a Settings profile cannot change an already-running Agent on reload.
+    /// The fallback is used only for pre-snapshot state documents that did
+    /// not carry args/env (and therefore cannot recover values they never
+    /// persisted).
+    fn launch_profile(&self, fallback: Option<&AgentProfile>) -> Result<AgentProfile, StateError> {
+        let kind = self
+            .profile_kind
+            .map(AgentProfileKind::from)
+            .or_else(|| fallback.map(AgentProfile::kind))
+            .ok_or_else(|| state_error(StateErrorCode::InvalidState))?;
+        let display_name = self
+            .profile_display_name
+            .as_deref()
+            .or_else(|| fallback.map(AgentProfile::display_name))
+            .ok_or_else(|| state_error(StateErrorCode::InvalidState))?;
+        let args = self
+            .profile_args
+            .clone()
+            .or_else(|| fallback.map(|profile| profile.args().to_vec()))
+            .ok_or_else(|| state_error(StateErrorCode::InvalidState))?;
+        let env = self
+            .profile_env
+            .clone()
+            .or_else(|| fallback.map(|profile| profile.env().clone()))
+            .ok_or_else(|| state_error(StateErrorCode::InvalidState))?;
+        AgentProfile::new(
+            AgentProfileId::from_slug(self.profile_id.clone())
+                .map_err(|_| state_error(StateErrorCode::InvalidState))?,
+            display_name,
+            kind,
+            args,
+            env,
+        )
+        .map_err(|_| state_error(StateErrorCode::InvalidState))
+    }
+
     fn validate(&self) -> Result<(), StateError> {
         validate_uuid(&self.agent_id)?;
         validate_uuid(&self.workspace_id)?;
@@ -486,6 +541,43 @@ impl AgentStateRecord {
         }
         if let Some(name) = &self.profile_display_name {
             validate_display_name(name)?;
+        }
+        if let Some(args) = &self.profile_args {
+            if args.len() > MAX_AGENT_PROFILE_ARGS
+                || args
+                    .iter()
+                    .any(|arg| arg.len() > MAX_AGENT_PROFILE_ARG_BYTES || arg.contains('\0'))
+            {
+                return Err(state_error(StateErrorCode::InvalidState));
+            }
+        }
+        if let Some(env) = &self.profile_env {
+            if env.len() > MAX_AGENT_PROFILE_ENV_ENTRIES
+                || env.iter().any(|(key, value)| {
+                    key.is_empty()
+                        || key.len() > MAX_AGENT_PROFILE_ENV_KEY_BYTES
+                        || value.len() > MAX_AGENT_PROFILE_ENV_VALUE_BYTES
+                        || key.contains('\0')
+                        || value.contains('\0')
+                        || !is_environment_name(key)
+                })
+            {
+                return Err(state_error(StateErrorCode::InvalidState));
+            }
+        }
+        let snapshot_bytes = self
+            .profile_args
+            .as_ref()
+            .map(|args| args.iter().map(String::len).sum::<usize>())
+            .unwrap_or_default()
+            .saturating_add(
+                self.profile_env
+                    .as_ref()
+                    .map(|env| env.iter().map(|(key, value)| key.len() + value.len()).sum())
+                    .unwrap_or_default(),
+            );
+        if snapshot_bytes > MAX_AGENT_PROFILE_SNAPSHOT_BYTES {
+            return Err(state_error(StateErrorCode::InvalidState));
         }
         if let Some(mapping) = &self.provider_mapping {
             let _ = OpaqueProviderMapping::new(mapping.value.clone())?;
@@ -1826,47 +1918,42 @@ impl PersistedAppState {
             for record in &record.agents {
                 let profile_id = AgentProfileId::from_slug(record.profile_id.clone())
                     .map_err(|_| state_error(StateErrorCode::InvalidState))?;
-                let persisted_kind = record.profile_kind.map(AgentProfileKind::from);
                 let (profile, status, runtime_health) = match profile_by_id.get(&profile_id) {
                     Some(configured) => {
-                        // Existing Agents retain their launch-time display
-                        // name even if current Settings changed the Profile.
-                        // A persisted kind wins because it describes the
-                        // launch-time profile, not the current Settings row.
-                        let kind = persisted_kind.unwrap_or_else(|| configured.kind());
-                        let profile = match record.profile_display_name.as_deref() {
-                            Some(display_name) => AgentProfile::new(
-                                configured.id().clone(),
-                                display_name,
-                                kind,
-                                configured.args().to_vec(),
-                                configured.env().clone(),
-                            )
-                            .map_err(|_| state_error(StateErrorCode::InvalidState))?,
-                            None => configured.clone(),
-                        };
+                        // Complete records are immutable launch snapshots and
+                        // never consult current Settings. The fallback is
+                        // reached only for pre-snapshot records that did not
+                        // persist args/env.
+                        let profile = record.launch_profile(Some(configured))?;
                         (profile, record.status.into(), record.runtime_health.into())
                     }
                     None => {
                         // A Profile may be removed from Settings while its
-                        // Agent remains durable. Keep its row and identity,
-                        // but make the missing runtime explicit so startup
-                        // cannot pretend that it is attached or launchable.
-                        let kind = persisted_kind
-                            .ok_or_else(|| state_error(StateErrorCode::InvalidState))?;
-                        let display_name = record
-                            .profile_display_name
-                            .as_deref()
-                            .unwrap_or(record.profile_id.as_str());
-                        let placeholder = AgentProfile::new(
-                            profile_id.clone(),
-                            display_name,
-                            kind,
-                            Vec::new(),
-                            BTreeMap::new(),
-                        )
-                        .map_err(|_| state_error(StateErrorCode::InvalidState))?;
-                        (placeholder, AgentStatus::Waiting, RuntimeHealth::Unavailable)
+                        // Agent remains durable. A complete snapshot still
+                        // hydrates normally; only a legacy record without
+                        // enough data needs an unavailable placeholder.
+                        let profile = match record.launch_profile(None) {
+                            Ok(profile) => profile,
+                            Err(_) => {
+                                let kind = record
+                                    .profile_kind
+                                    .map(AgentProfileKind::from)
+                                    .ok_or_else(|| state_error(StateErrorCode::InvalidState))?;
+                                let display_name = record
+                                    .profile_display_name
+                                    .as_deref()
+                                    .unwrap_or(record.profile_id.as_str());
+                                AgentProfile::new(
+                                    profile_id.clone(),
+                                    display_name,
+                                    kind,
+                                    Vec::new(),
+                                    BTreeMap::new(),
+                                )
+                                .map_err(|_| state_error(StateErrorCode::InvalidState))?
+                            }
+                        };
+                        (profile, AgentStatus::Waiting, RuntimeHealth::Unavailable)
                     }
                 };
                 let restore = AgentRestoreRecord::new(
@@ -1956,6 +2043,8 @@ impl PersistedAppState {
                             profile_id: agent.profile_id().to_string(),
                             profile_kind: Some(agent.profile_kind().into()),
                             profile_display_name: Some(agent.profile_display_name().to_owned()),
+                            profile_args: Some(agent.profile().args().to_vec()),
+                            profile_env: Some(agent.profile().env().clone()),
                             ordinal: agent.ordinal(),
                             temporary_name: Some(agent.display_name().to_owned()),
                             status: agent.status().into(),
@@ -2018,6 +2107,10 @@ impl PersistedAppState {
                     .clone()
                     .or_else(|| agent.profile_display_name.clone());
                 agent.profile_kind = previous_agent.profile_kind.or(agent.profile_kind);
+                agent.profile_args =
+                    previous_agent.profile_args.clone().or_else(|| agent.profile_args.clone());
+                agent.profile_env =
+                    previous_agent.profile_env.clone().or_else(|| agent.profile_env.clone());
                 agent.provider_mapping = previous_agent.provider_mapping.clone();
             }
         }
@@ -2156,6 +2249,52 @@ impl PersistedAppState {
 
     pub fn workspace_mut(&mut self, workspace_id: &str) -> Option<&mut WorkspaceStateRecord> {
         self.workspaces.iter_mut().find(|workspace| workspace.workspace_id == workspace_id)
+    }
+
+    /// Records an adapter-supplied reattachment key without giving the state
+    /// layer any provider vocabulary to interpret. The mapping is durable
+    /// metadata, not part of the AppSnapshot/UI projection.
+    pub fn set_agent_provider_mapping(
+        &mut self,
+        agent_id: &AgentId,
+        mapping: OpaqueProviderMapping,
+    ) -> Result<bool, StateError> {
+        let raw_agent_id = agent_id.as_str();
+        let agent = self
+            .workspaces
+            .iter_mut()
+            .flat_map(|workspace| workspace.agents.iter_mut())
+            .find(|agent| agent.agent_id == raw_agent_id)
+            .ok_or_else(|| state_error(StateErrorCode::InvalidTransition))?;
+        if agent.provider_mapping.as_ref() == Some(&mapping) {
+            return Ok(false);
+        }
+        agent.provider_mapping = Some(mapping);
+        Ok(true)
+    }
+
+    /// Removes a provider mapping after a trusted runtime has proved that the
+    /// corresponding resource is gone. This is idempotent for cleanup/retry.
+    pub fn clear_agent_provider_mapping(&mut self, agent_id: &AgentId) -> Result<bool, StateError> {
+        let raw_agent_id = agent_id.as_str();
+        let agent = self
+            .workspaces
+            .iter_mut()
+            .flat_map(|workspace| workspace.agents.iter_mut())
+            .find(|agent| agent.agent_id == raw_agent_id)
+            .ok_or_else(|| state_error(StateErrorCode::InvalidTransition))?;
+        Ok(agent.provider_mapping.take().is_some())
+    }
+
+    /// Returns the opaque mapping for a durable Agent. Callers may pass it
+    /// back to the provider adapter but must not decode or display it.
+    pub fn agent_provider_mapping(&self, agent_id: &AgentId) -> Option<&OpaqueProviderMapping> {
+        let raw_agent_id = agent_id.as_str();
+        self.workspaces
+            .iter()
+            .flat_map(|workspace| workspace.agents.iter())
+            .find(|agent| agent.agent_id == raw_agent_id)
+            .and_then(|agent| agent.provider_mapping.as_ref())
     }
 
     pub fn begin_workspace_close(&mut self, workspace_id: &str) -> Result<bool, StateError> {
@@ -2345,6 +2484,13 @@ fn validate_display_name(value: &str) -> Result<(), StateError> {
         return Err(state_error(StateErrorCode::InvalidState));
     }
     Ok(())
+}
+
+fn is_environment_name(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    !bytes.is_empty()
+        && (bytes[0].is_ascii_alphabetic() || bytes[0] == b'_')
+        && bytes[1..].iter().all(|byte| byte.is_ascii_alphanumeric() || *byte == b'_')
 }
 
 fn validate_absolute_path(value: &str) -> Result<(), StateError> {
@@ -2962,6 +3108,8 @@ mod tests {
             profile_id: "claude".into(),
             profile_kind: Some(PersistedAgentProfileKind::Claude),
             profile_display_name: Some("Claude".into()),
+            profile_args: None,
+            profile_env: None,
             ordinal: 2,
             temporary_name: Some("Review agent".into()),
             status: PersistedAgentStatus::Waiting,
@@ -3116,6 +3264,11 @@ mod tests {
             profile_id: "codex".into(),
             profile_kind: Some(PersistedAgentProfileKind::Codex),
             profile_display_name: Some("Profile secret".into()),
+            profile_args: Some(vec!["private-argument".into()]),
+            profile_env: Some(BTreeMap::from([(
+                "PRIVATE_TOKEN".into(),
+                "private-secret-value".into(),
+            )])),
             ordinal: 1,
             temporary_name: Some("Agent secret".into()),
             status: PersistedAgentStatus::Idle,
@@ -3129,6 +3282,8 @@ mod tests {
         assert!(!state_debug.contains("provider-secret"));
         assert!(!state_debug.contains("Profile secret"));
         assert!(!state_debug.contains("Agent secret"));
+        assert!(!state_debug.contains("private-argument"));
+        assert!(!state_debug.contains("private-secret-value"));
 
         let mapping_debug = format!("{:?}", OpaqueProviderMapping::new("provider-secret").unwrap());
         assert!(!mapping_debug.contains("provider-secret"));
@@ -3310,6 +3465,8 @@ mod tests {
             profile_id: "codex".into(),
             profile_kind: Some(PersistedAgentProfileKind::Codex),
             profile_display_name: None,
+            profile_args: None,
+            profile_env: None,
             ordinal: 1,
             temporary_name: None,
             status: PersistedAgentStatus::Idle,
@@ -3375,6 +3532,8 @@ mod tests {
                 profile_id: "codex".into(),
                 profile_kind: Some(PersistedAgentProfileKind::Codex),
                 profile_display_name: None,
+                profile_args: None,
+                profile_env: None,
                 ordinal,
                 temporary_name: None,
                 status: PersistedAgentStatus::Idle,
@@ -3727,6 +3886,8 @@ mod tests {
             profile_id: "codex".into(),
             profile_kind: Some(PersistedAgentProfileKind::Codex),
             profile_display_name: Some("Codex".into()),
+            profile_args: None,
+            profile_env: None,
             ordinal: 1,
             temporary_name: None,
             status: PersistedAgentStatus::Idle,
@@ -3787,6 +3948,8 @@ mod tests {
             profile_id: "codex".into(),
             profile_kind: Some(PersistedAgentProfileKind::Codex),
             profile_display_name: Some("Recovered Codex".into()),
+            profile_args: Some(Vec::new()),
+            profile_env: Some(BTreeMap::new()),
             ordinal: 4,
             temporary_name: Some("Recovered Codex".into()),
             status: PersistedAgentStatus::Waiting,
@@ -3800,6 +3963,8 @@ mod tests {
             profile_id: "codex".into(),
             profile_kind: Some(PersistedAgentProfileKind::Codex),
             profile_display_name: None,
+            profile_args: None,
+            profile_env: None,
             ordinal: 5,
             temporary_name: None,
             status: PersistedAgentStatus::Idle,
@@ -3816,6 +3981,8 @@ mod tests {
             profile_id: "removed-profile".into(),
             profile_kind: Some(PersistedAgentProfileKind::Claude),
             profile_display_name: Some("Removed Profile".into()),
+            profile_args: None,
+            profile_env: None,
             ordinal: 1,
             temporary_name: None,
             status: PersistedAgentStatus::Working,
@@ -3898,6 +4065,141 @@ mod tests {
     }
 
     #[test]
+    fn launch_profile_snapshot_survives_save_reload_and_settings_changes() {
+        let workspace_id = WorkspaceId::from_uuid(uuid(1)).unwrap();
+        let agent_id = AgentId::from_uuid(uuid(2)).unwrap();
+        let profile_id = AgentProfileId::for_test("codex");
+        let launch_profile = AgentProfile::new(
+            profile_id.clone(),
+            "Launch Codex",
+            crate::domain::AgentProfileKind::Codex,
+            vec!["--model".into(), "launch-model".into()],
+            BTreeMap::from([("LAUNCH_TOKEN".into(), "launch-secret".into())]),
+        )
+        .unwrap();
+        let profile_debug = format!("{launch_profile:?}");
+        assert!(!profile_debug.contains("launch-model"));
+        assert!(!profile_debug.contains("launch-secret"));
+        let mut model = crate::snapshot::AppModel::new();
+        model
+            .add_workspace(crate::domain::Workspace::new(
+                workspace_id.clone(),
+                WorkspaceRoot::new("/repo/profile-snapshot").unwrap(),
+                DisplayPath::new("/repo/profile-snapshot").unwrap(),
+                None,
+            ))
+            .unwrap();
+        model.add_agent(&workspace_id, agent_id.clone(), launch_profile.clone()).unwrap();
+
+        let mut state = PersistedAppState::from_snapshot(&model.snapshot()).unwrap();
+        let record = &state.workspaces[0].agents[0];
+        assert_eq!(record.profile_kind, Some(PersistedAgentProfileKind::Codex));
+        assert_eq!(record.profile_display_name.as_deref(), Some("Launch Codex"));
+        assert_eq!(
+            record.profile_args.as_ref().unwrap(),
+            &vec!["--model".to_owned(), "launch-model".to_owned()]
+        );
+        assert_eq!(
+            record.profile_env.as_ref().and_then(|env| env.get("LAUNCH_TOKEN")).map(String::as_str),
+            Some("launch-secret")
+        );
+
+        let mapping = OpaqueProviderMapping::new("opaque-launch-mapping").unwrap();
+        state.set_agent_provider_mapping(&agent_id, mapping).unwrap();
+        let (store, directory) = temp_store();
+        store.save_state(&state).unwrap();
+        let reloaded = store.load_or_default().unwrap();
+        assert_eq!(
+            reloaded.agent_provider_mapping(&agent_id).map(OpaqueProviderMapping::as_str),
+            Some("opaque-launch-mapping")
+        );
+
+        let changed_settings = AgentProfile::new(
+            profile_id,
+            "Changed Settings",
+            crate::domain::AgentProfileKind::Claude,
+            vec!["--model".into(), "changed-model".into()],
+            BTreeMap::from([("LAUNCH_TOKEN".into(), "changed-secret".into())]),
+        )
+        .unwrap();
+        let hydrated = reloaded.hydrate_model(&[changed_settings]).unwrap();
+        let hydrated_snapshot = hydrated.snapshot();
+        let hydrated_profile = hydrated_snapshot.workspaces()[0].agents()[0].profile();
+        assert_eq!(hydrated_profile.display_name(), "Launch Codex");
+        assert_eq!(hydrated_profile.kind(), crate::domain::AgentProfileKind::Codex);
+        assert_eq!(hydrated_profile.args(), ["--model", "launch-model"]);
+        assert_eq!(
+            hydrated_profile.env().get("LAUNCH_TOKEN").map(String::as_str),
+            Some("launch-secret")
+        );
+        cleanup(&directory);
+    }
+
+    #[test]
+    fn legacy_agent_fixture_remains_hydratable_without_fabricating_snapshot_fields() {
+        let decoded = decode_state(include_bytes!("fixtures/state-v1-agent.json")).unwrap();
+        let record = &decoded.state.workspaces[0].agents[0];
+        assert!(record.profile_args.is_none());
+        assert!(record.profile_env.is_none());
+        let profile = AgentProfile::new(
+            AgentProfileId::for_test("claude"),
+            "Current Claude",
+            crate::domain::AgentProfileKind::Claude,
+            vec!["--legacy".into()],
+            BTreeMap::new(),
+        )
+        .unwrap();
+        let model = decoded.state.hydrate_model(&[profile]).unwrap();
+        assert_eq!(model.snapshot().workspaces()[0].agents()[0].profile().args(), ["--legacy"]);
+    }
+
+    #[test]
+    fn launch_profile_snapshot_is_bounded_at_the_state_boundary() {
+        let mut state = PersistedAppState::fresh();
+        let mut record = workspace(1, "/repo/bounded-profile");
+        record.agents.push(AgentStateRecord {
+            agent_id: uuid(2),
+            workspace_id: uuid(1),
+            profile_id: "codex".into(),
+            profile_kind: Some(PersistedAgentProfileKind::Codex),
+            profile_display_name: Some("Codex".into()),
+            profile_args: Some(vec!["arg".into(); MAX_AGENT_PROFILE_ARGS + 1]),
+            profile_env: Some(BTreeMap::new()),
+            ordinal: 1,
+            temporary_name: None,
+            status: PersistedAgentStatus::Idle,
+            runtime_health: PersistedRuntimeHealth::Starting,
+            control_state: PersistedAgentControlState::Running,
+            provider_mapping: None,
+        });
+        state.workspaces.push(record);
+        assert_eq!(state.validate().unwrap_err().code(), StateErrorCode::InvalidState);
+
+        let mut value_bounded = PersistedAppState::fresh();
+        let mut record = workspace(1, "/repo/bounded-env");
+        record.agents.push(AgentStateRecord {
+            agent_id: uuid(2),
+            workspace_id: uuid(1),
+            profile_id: "codex".into(),
+            profile_kind: Some(PersistedAgentProfileKind::Codex),
+            profile_display_name: Some("Codex".into()),
+            profile_args: Some(Vec::new()),
+            profile_env: Some(BTreeMap::from([(
+                "TOKEN".into(),
+                "x".repeat(MAX_AGENT_PROFILE_ENV_VALUE_BYTES + 1),
+            )])),
+            ordinal: 1,
+            temporary_name: None,
+            status: PersistedAgentStatus::Idle,
+            runtime_health: PersistedRuntimeHealth::Starting,
+            control_state: PersistedAgentControlState::Running,
+            provider_mapping: None,
+        });
+        value_bounded.workspaces.push(record);
+        assert_eq!(value_bounded.validate().unwrap_err().code(), StateErrorCode::InvalidState);
+    }
+
+    #[test]
     fn hydrate_model_uses_navigation_fallback_and_rejects_invalid_records_atomically() {
         use crate::domain::{AgentProfileKind, NavigationContext};
 
@@ -3932,6 +4234,8 @@ mod tests {
                 profile_id: "removed-profile".into(),
                 profile_kind: None,
                 profile_display_name: Some("Removed Profile".into()),
+                profile_args: None,
+                profile_env: None,
                 ordinal: 1,
                 temporary_name: None,
                 status: PersistedAgentStatus::Idle,

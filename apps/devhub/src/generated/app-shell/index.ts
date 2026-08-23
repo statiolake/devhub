@@ -14,6 +14,26 @@ export interface ActivityWire {
   readonly resolution: ResolutionWire;
 }
 export type AgentControlStateWire = "running" | "stopping" | "stop-failed";
+export type AgentProfileKindWire = "codex" | "claude";
+export interface AgentProfileWire {
+  readonly displayName: string;
+  readonly id: string;
+  readonly kind: AgentProfileKindWire;
+}
+export type AgentProfilesAvailabilityWire =
+  | "available"
+  | "degraded"
+  | "unavailable";
+export type AgentProfilesDiagnosticWire =
+  | "configuration_invalid"
+  | "configuration_conflict"
+  | "projection_unavailable";
+export interface AgentProfilesWire {
+  readonly availability: AgentProfilesAvailabilityWire;
+  readonly diagnostic?: AgentProfilesDiagnosticWire | null;
+  readonly profiles: readonly AgentProfileWire[];
+  readonly sequence: number;
+}
 export type AgentStatusWire = "working" | "waiting" | "idle" | "error";
 export interface AgentWire {
   readonly controlState: AgentControlStateWire;
@@ -70,8 +90,30 @@ export type AppIntentWire =
       readonly type: "open_workspace_picker";
     }
   | {
+      readonly profileId: string;
       readonly type: "request_create_agent";
       readonly workspaceId: string;
+    }
+  | {
+      readonly agentId: string;
+      readonly displayName: string;
+      readonly type: "rename_agent";
+    }
+  | {
+      readonly agentId: string;
+      readonly type: "stop_agent";
+    }
+  | {
+      readonly confirmationId: string;
+      readonly type: "confirm_stop_agent";
+    }
+  | {
+      readonly agentId: string;
+      readonly type: "retry_stop_agent";
+    }
+  | {
+      readonly agentId: string;
+      readonly type: "reconcile_agent";
     }
   | {
       readonly type: "retry_workspace";
@@ -372,6 +414,9 @@ export function isWorkspaceExpanded(
   return snapshot.sidebar.expandedWorkspaceIds.includes(workspaceId);
 }
 
+export type AgentProfile = AgentProfileWire;
+export type AgentProfiles = AgentProfilesWire;
+
 const APP_SHELL_SCHEMA = {
   $defs: {
     ActivityName: { enum: ["editor", "agent", "terminal"], type: "string" },
@@ -387,6 +432,84 @@ const APP_SHELL_SCHEMA = {
     AgentControlStateWire: {
       enum: ["running", "stopping", "stop-failed"],
       type: "string",
+    },
+    AgentProfileKindWire: { enum: ["codex", "claude"], type: "string" },
+    AgentProfileWire: {
+      additionalProperties: false,
+      description:
+        "Secret-free profile choices exposed to the Workbench Agent picker. Args and\nenvironment are intentionally omitted: the native coordinator resolves\nthe selected profile and retains the complete launch-time snapshot.",
+      properties: {
+        displayName: { type: "string" },
+        id: { type: "string" },
+        kind: { $ref: "#/$defs/AgentProfileKindWire" },
+      },
+      required: ["id", "displayName", "kind"],
+      type: "object",
+    },
+    AgentProfilesAvailabilityWire: {
+      enum: ["available", "degraded", "unavailable"],
+      type: "string",
+    },
+    AgentProfilesDiagnosticWire: {
+      enum: [
+        "configuration_invalid",
+        "configuration_conflict",
+        "projection_unavailable",
+      ],
+      type: "string",
+    },
+    AgentProfilesWire: {
+      $defs: {
+        AgentProfileKindWire: { enum: ["codex", "claude"], type: "string" },
+        AgentProfileWire: {
+          additionalProperties: false,
+          description:
+            "Secret-free profile choices exposed to the Workbench Agent picker. Args and\nenvironment are intentionally omitted: the native coordinator resolves\nthe selected profile and retains the complete launch-time snapshot.",
+          properties: {
+            displayName: { type: "string" },
+            id: { type: "string" },
+            kind: { $ref: "#/$defs/AgentProfileKindWire" },
+          },
+          required: ["id", "displayName", "kind"],
+          type: "object",
+        },
+        AgentProfilesAvailabilityWire: {
+          enum: ["available", "degraded", "unavailable"],
+          type: "string",
+        },
+        AgentProfilesDiagnosticWire: {
+          enum: [
+            "configuration_invalid",
+            "configuration_conflict",
+            "projection_unavailable",
+          ],
+          type: "string",
+        },
+      },
+      $schema: "https://json-schema.org/draft/2020-12/schema",
+      additionalProperties: false,
+      properties: {
+        availability: { $ref: "#/$defs/AgentProfilesAvailabilityWire" },
+        diagnostic: {
+          anyOf: [
+            { $ref: "#/$defs/AgentProfilesDiagnosticWire" },
+            { type: "null" },
+          ],
+        },
+        profiles: {
+          items: { $ref: "#/$defs/AgentProfileWire" },
+          type: "array",
+        },
+        sequence: {
+          format: "uint64",
+          maximum: 9007199254740991,
+          minimum: 1,
+          type: "integer",
+        },
+      },
+      required: ["sequence", "availability", "profiles"],
+      title: "AgentProfilesWire",
+      type: "object",
     },
     AgentStatusWire: {
       enum: ["working", "waiting", "idle", "error"],
@@ -593,10 +716,57 @@ const APP_SHELL_SCHEMA = {
         {
           additionalProperties: false,
           properties: {
+            profileId: { type: "string" },
             type: { const: "request_create_agent", type: "string" },
             workspaceId: { type: "string" },
           },
-          required: ["type", "workspaceId"],
+          required: ["type", "workspaceId", "profileId"],
+          type: "object",
+        },
+        {
+          additionalProperties: false,
+          properties: {
+            agentId: { type: "string" },
+            displayName: { type: "string" },
+            type: { const: "rename_agent", type: "string" },
+          },
+          required: ["type", "agentId", "displayName"],
+          type: "object",
+        },
+        {
+          additionalProperties: false,
+          properties: {
+            agentId: { type: "string" },
+            type: { const: "stop_agent", type: "string" },
+          },
+          required: ["type", "agentId"],
+          type: "object",
+        },
+        {
+          additionalProperties: false,
+          properties: {
+            confirmationId: { type: "string" },
+            type: { const: "confirm_stop_agent", type: "string" },
+          },
+          required: ["type", "confirmationId"],
+          type: "object",
+        },
+        {
+          additionalProperties: false,
+          properties: {
+            agentId: { type: "string" },
+            type: { const: "retry_stop_agent", type: "string" },
+          },
+          required: ["type", "agentId"],
+          type: "object",
+        },
+        {
+          additionalProperties: false,
+          properties: {
+            agentId: { type: "string" },
+            type: { const: "reconcile_agent", type: "string" },
+          },
+          required: ["type", "agentId"],
           type: "object",
         },
         {
@@ -1634,6 +1804,7 @@ const APP_SHELL_SCHEMA = {
   $schema: "https://json-schema.org/draft/2020-12/schema",
   oneOf: [
     { $ref: "#/$defs/AppSnapshotWire" },
+    { $ref: "#/$defs/AgentProfilesWire" },
     { $ref: "#/$defs/AppAppearanceWire" },
     { $ref: "#/$defs/AppIntentWire" },
     { $ref: "#/$defs/AppOutcomeWire" },
@@ -1755,9 +1926,27 @@ function freeze<T>(value: T): T {
   return value;
 }
 
+function validateAgentProfilesProjection(value: AgentProfiles): void {
+  const diagnostic = value.diagnostic ?? null;
+  if (value.availability === "available" && diagnostic !== null)
+    throw new Error("available agent profiles cannot contain a diagnostic");
+  if (value.availability !== "available" && diagnostic === null)
+    throw new Error(
+      "degraded or unavailable agent profiles require a diagnostic",
+    );
+  if (value.availability === "unavailable" && value.profiles.length > 0)
+    throw new Error("unavailable agent profiles cannot contain choices");
+}
+
 export function parseAppAppearance(value: unknown): AppAppearance {
   check({ $ref: "#/$defs/AppAppearanceWire" }, value);
   return freeze(value as AppAppearance);
+}
+export function parseAgentProfiles(value: unknown): AgentProfiles {
+  check({ $ref: "#/$defs/AgentProfilesWire" }, value);
+  const profiles = value as AgentProfiles;
+  validateAgentProfilesProjection(profiles);
+  return freeze(profiles);
 }
 export function parseAppSnapshot(value: unknown): AppSnapshot {
   check({ $ref: "#/$defs/AppSnapshotWire" }, value);

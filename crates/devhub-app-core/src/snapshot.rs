@@ -87,6 +87,9 @@ impl ActivitySnapshot {
 pub struct AgentSnapshot {
     id: AgentId,
     workspace_id: WorkspaceId,
+    /// Retained only for the persistence boundary. No public accessor or
+    /// wire conversion exposes profile args/env to the UI.
+    profile: AgentProfile,
     profile_id: AgentProfileId,
     profile_kind: super::domain::AgentProfileKind,
     profile_display_name: String,
@@ -116,6 +119,10 @@ impl AgentSnapshot {
 
     pub fn profile_display_name(&self) -> &str {
         &self.profile_display_name
+    }
+
+    pub(crate) fn profile(&self) -> &AgentProfile {
+        &self.profile
     }
 
     pub fn display_name(&self) -> &str {
@@ -1100,6 +1107,7 @@ impl AppModel {
                     .map(|agent| AgentSnapshot {
                         id: agent.id().clone(),
                         workspace_id: agent.workspace_id().clone(),
+                        profile: agent.profile().clone(),
                         profile_id: agent.profile().id().clone(),
                         profile_kind: agent.profile().kind(),
                         profile_display_name: agent.profile().display_name().to_owned(),

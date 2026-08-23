@@ -26,16 +26,18 @@ use devhub_app_core::state::{
 };
 use devhub_app_core::{classify_runtime, SettingsRuntimeWire};
 use devhub_app_core::{
-    Activity, AgentLaunchResult, AgentProfile as DomainAgentProfile, AgentProfileId,
-    AgentProfileKind, AgentStopResult, AppAppearanceWire, AppCoordinator, AppErrorWire,
-    AppIntentWire, AppOutcomeWire, AppReadiness, AppSnapshot, AppSnapshotWire, CancellationToken,
-    CleanupStep, CloseInspectionInputs, ConfirmationId, CoordinatorEvent, DiagnosticCode, Effect,
-    IdGenerator, IntentEnvelope, IntentId, IntentOutcome, JsonStateStore, OperationId,
-    OperationToken, PortError, PortErrorCode, ProviderEvent, ProviderEventEnvelope,
-    ProviderEventId, ReplayWire, ResourceInspection, SettingsErrorWire, SettingsRuntimeHealthWire,
-    SettingsSaveRequestWire, SettingsSnapshotWire, SettingsSocketChangeRequestWire, SurfaceKey,
-    SurfaceResolution, TerminalTarget, UserIntent, WorkspaceCleanupResult, WorkspaceId,
-    WorkspacePickerEventWire, SETTINGS_SEQUENCE_MAX,
+    Activity, AgentControlState, AgentLaunchResult, AgentObservation,
+    AgentProfile as DomainAgentProfile, AgentProfileId, AgentProfileKind,
+    AgentProfilesDiagnosticWire, AgentProfilesWire, AgentStopResult, AppAppearanceWire,
+    AppCoordinator, AppErrorWire, AppIntentWire, AppOutcomeWire, AppReadiness, AppSnapshot,
+    AppSnapshotWire, CancellationToken, CleanupStep, CloseInspectionInputs, ConfirmationId,
+    CoordinatorEvent, DiagnosticCode, Effect, IdGenerator, IntentEnvelope, IntentId, IntentOutcome,
+    JsonStateStore, OpaqueProviderMapping, OperationId, OperationToken, PortError, PortErrorCode,
+    ProviderEvent, ProviderEventEnvelope, ProviderEventId, ReplayWire, ResourceInspection,
+    RuntimeHealth, SettingsErrorWire, SettingsRuntimeHealthWire, SettingsSaveRequestWire,
+    SettingsSnapshotWire, SettingsSocketChangeRequestWire, SurfaceKey, SurfaceResolution,
+    TerminalTarget, UserIntent, WorkspaceCleanupResult, WorkspaceId, WorkspacePickerEventWire,
+    SETTINGS_SEQUENCE_MAX,
 };
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::{AppHandle, Emitter, Manager, State, Webview, WebviewUrl, WebviewWindowBuilder};
@@ -47,7 +49,7 @@ mod repository;
 mod runtime;
 mod terminal;
 mod workspace_resolver;
-use agent::HerdrAgentRuntime;
+use agent::{AgentSurfaceManager, HerdrAgentRuntime};
 use discovery::DiscoveryEngine;
 use editor::{
     BridgeEvent, BridgeEventSink, BridgeRequest, BridgeRequestDisposition, BridgeRequestResult,
@@ -65,6 +67,7 @@ use workspace_resolver::MacWorkspacePathResolver;
 
 pub const APP_SNAPSHOT_CHANGED_EVENT: &str = "app://snapshot-changed";
 pub const APP_APPEARANCE_CHANGED_EVENT: &str = "app://appearance-changed";
+pub const APP_AGENT_PROFILES_CHANGED_EVENT: &str = "app://agent-profiles-changed";
 pub const APP_WORKSPACE_PICKER_EVENT: &str = "app://workspace-picker";
 pub const APP_SHELL_WINDOW_LABEL: &str = "app-shell";
 pub const SETTINGS_CHANGED_EVENT: &str = "settings://changed";
@@ -405,8 +408,13 @@ struct NativeAppState {
     _terminal_runtime: TmuxTerminalRuntime,
     _workspace_resolver: MacWorkspacePathResolver,
     agent_runtime: HerdrAgentRuntime,
+    agent_surfaces: AgentSurfaceManager,
     editor_host: EditorHost,
-    profiles: Vec<DomainAgentProfile>,
+    profiles: Mutex<Vec<DomainAgentProfile>>,
+    /// Opaque mappings are kept in native memory until the StateStore/core
+    /// projection commits them. They never enter the App Shell wire DTO.
+    agent_mappings: Mutex<BTreeMap<devhub_app_core::AgentId, OpaqueProviderMapping>>,
+    agent_reconciler_running: AtomicBool,
     bridge_sink: Arc<NativeBridgeSink>,
     picker_cancel: Mutex<Option<CancellationToken>>,
 }
@@ -465,6 +473,19 @@ fn emit_app_appearance(app: &AppHandle, state: &NativeAppState) {
     }
 }
 
+fn emit_agent_profiles(app: &AppHandle, state: &NativeAppState) {
+    match state.agent_profiles() {
+        Ok(profiles) => {
+            if let Err(error) =
+                app.emit_to(APP_SHELL_WINDOW_LABEL, APP_AGENT_PROFILES_CHANGED_EVENT, profiles)
+            {
+                eprintln!("DevHub Agent profile notification unavailable: {error}");
+            }
+        }
+        Err(error) => eprintln!("DevHub Agent profile projection unavailable: {error:?}"),
+    }
+}
+
 impl NativeAppState {
     fn bootstrap(home: &Path) -> Result<Self, AppErrorWire> {
         let store = JsonStateStore::for_home(home);
@@ -518,6 +539,15 @@ impl NativeAppState {
             persisted.tmux.effective_socket_name.clone(),
         );
         let profiles = load_config_profiles(loaded_config.config())?;
+        let restored_agent_mappings = persisted
+            .workspaces
+            .iter()
+            .flat_map(|workspace| workspace.agents.iter())
+            .filter_map(|agent| {
+                let id = devhub_app_core::AgentId::from_uuid(agent.agent_id.clone()).ok()?;
+                Some((id, agent.provider_mapping.clone()?))
+            })
+            .collect::<BTreeMap<_, _>>();
         let agent_journal =
             store.path().parent().unwrap_or(home).join("agent-runtime-journal.json");
         let agent_runtime = HerdrAgentRuntime::from_environment_with_journal(
@@ -559,11 +589,142 @@ impl NativeAppState {
             _terminal_runtime: terminal_runtime,
             _workspace_resolver: MacWorkspacePathResolver::new(home),
             agent_runtime,
+            agent_surfaces: AgentSurfaceManager::new(),
             editor_host,
-            profiles,
+            profiles: Mutex::new(profiles),
+            agent_mappings: Mutex::new(restored_agent_mappings),
+            agent_reconciler_running: AtomicBool::new(true),
             bridge_sink,
             picker_cancel: Mutex::new(None),
         })
+    }
+
+    /// Installs the native AgentRuntime reconciliation loop once for the
+    /// process. It owns startup reattachment and continues to consume the
+    /// provider subscription/invalidation seam even when no Agent Surface is
+    /// mounted, so Sidebar status and natural exits do not depend on view
+    /// attachment.
+    fn start_agent_reconciler(&self, app: &AppHandle) {
+        let worker_app = app.clone();
+        let _ = std::thread::Builder::new().name("devhub-agent-reconciler".to_owned()).spawn(
+            move || {
+                let mut restored = false;
+                while let Some(state) = worker_app.try_state::<NativeAppState>() {
+                    if !state.agent_reconciler_running.load(Ordering::Acquire) {
+                        break;
+                    }
+                    if !restored {
+                        state.bootstrap_agent_runtime();
+                        state.restore_agents_for_runtime(&worker_app);
+                        restored = true;
+                    }
+                    state.reconcile_agents_background(&worker_app);
+                    std::thread::sleep(Duration::from_millis(300));
+                }
+            },
+        );
+    }
+
+    fn bootstrap_agent_runtime(&self) {
+        let Ok(operation_id) = self.id_generator.next_operation_id() else { return };
+        // Bootstrap on the native worker even when no Agent Surface is
+        // mounted (or no Agent exists yet). This installs the provider
+        // invalidation subscription once at startup and leaves the runtime's
+        // typed health available for the first launch/reconciliation attempt;
+        // a provider outage is degraded state, not an app-shell bootstrap
+        // failure.
+        let _ = tauri::async_runtime::block_on(
+            self.agent_runtime.bootstrap(CancellationToken::new(operation_id)),
+        );
+    }
+
+    fn restore_agents_for_runtime(&self, app: &AppHandle) {
+        let Ok(snapshot) = self.current_snapshot() else { return };
+        for workspace in snapshot.workspaces() {
+            for agent in workspace.agents() {
+                let _ = self.agent_runtime.register_agent_workspace(
+                    agent.id().clone(),
+                    workspace.id().clone(),
+                    workspace.root().clone(),
+                );
+            }
+        }
+        let mappings =
+            self.agent_mappings.lock().ok().map(|mappings| mappings.clone()).unwrap_or_default();
+        for (agent_id, mapping) in mappings {
+            let attached_agent_id = agent_id.clone();
+            let operation_id = match self.id_generator.next_operation_id() {
+                Ok(operation_id) => operation_id,
+                Err(_) => continue,
+            };
+            let result = tauri::async_runtime::block_on(self.agent_runtime.attach(
+                agent_id,
+                Some(mapping),
+                CancellationToken::new(operation_id),
+            ));
+            match result {
+                Ok(observation) => self.apply_agent_observation(app, observation),
+                Err(_) => self.mark_agent_runtime_failure(
+                    app,
+                    attached_agent_id,
+                    match self.agent_runtime.health().runtime_health() {
+                        RuntimeHealth::Healthy | RuntimeHealth::Starting => RuntimeHealth::Degraded,
+                        health => health,
+                    },
+                ),
+            }
+        }
+    }
+
+    fn reconcile_agents_background(&self, app: &AppHandle) {
+        let Ok(snapshot) = self.current_snapshot() else { return };
+        if snapshot.workspaces().iter().all(|workspace| workspace.agents().is_empty()) {
+            return;
+        }
+        let before_revision = snapshot.revision();
+        let operation_id = match self.id_generator.next_operation_id() {
+            Ok(operation_id) => operation_id,
+            Err(_) => return,
+        };
+        let effects = {
+            let Ok(mut coordinator) = self.coordinator.lock() else { return };
+            match coordinator.request_agents_reconcile(operation_id) {
+                Ok(_) => Self::drain_effects(&mut coordinator),
+                Err(_) => return,
+            }
+        };
+        let Ok(execution) = self.execute_effects(effects) else { return };
+        if execution.error.is_some() {
+            // A failed provider reconciliation must remain visible on each
+            // existing row, but it must not be interpreted as natural exit.
+            // Use the same typed degraded observation as a surface read
+            // failure and let a later successful reconciliation recover it.
+            let agent_ids = snapshot
+                .workspaces()
+                .iter()
+                .flat_map(|workspace| workspace.agents().iter().map(|agent| agent.id().clone()))
+                .collect::<Vec<_>>();
+            let runtime_health = match self.agent_runtime.health().runtime_health() {
+                RuntimeHealth::Healthy | RuntimeHealth::Starting => RuntimeHealth::Degraded,
+                health => health,
+            };
+            for agent_id in agent_ids {
+                self.mark_agent_runtime_failure(app, agent_id, runtime_health);
+            }
+            return;
+        }
+        if execution.snapshot.revision() == before_revision {
+            return;
+        }
+        let readiness = self
+            .coordinator
+            .lock()
+            .map(|coordinator| coordinator.readiness())
+            .unwrap_or(AppReadiness::Unavailable);
+        let Ok(snapshot) = AppSnapshotWire::from_snapshot(&execution.snapshot, readiness) else {
+            return;
+        };
+        let _ = app.emit_to(APP_SHELL_WINDOW_LABEL, APP_SNAPSHOT_CHANGED_EVENT, snapshot);
     }
 
     fn install_bridge_router(&self, app: &AppHandle) {
@@ -631,6 +792,7 @@ impl NativeAppState {
             }
             let mut state = self.store.load_or_default().map_err(persistence_error)?;
             state.apply_snapshot(snapshot).map_err(persistence_error)?;
+            self.apply_agent_mappings(&mut state, snapshot).map_err(persistence_error)?;
             self.store.save_state(&state).map_err(persistence_error)?;
             let mut persistence = self.persistence.lock().map_err(state_error)?;
             persistence.persisted_revision =
@@ -643,10 +805,33 @@ impl NativeAppState {
         let _commit = self.state_commit.lock().map_err(state_error)?;
         let mut state = self.store.load_or_default().map_err(persistence_error)?;
         state.apply_snapshot(snapshot).map_err(persistence_error)?;
+        self.apply_agent_mappings(&mut state, snapshot).map_err(persistence_error)?;
         state.mark_clean_shutdown();
         self.store.save_state(&state).map_err(persistence_error)?;
         let mut persistence = self.persistence.lock().map_err(state_error)?;
         persistence.persisted_revision = persistence.persisted_revision.max(snapshot.revision());
+        Ok(())
+    }
+
+    fn apply_agent_mappings(
+        &self,
+        state: &mut devhub_app_core::PersistedAppState,
+        snapshot: &AppSnapshot,
+    ) -> Result<(), devhub_app_core::state::StateError> {
+        let active = snapshot
+            .workspaces()
+            .iter()
+            .flat_map(|workspace| workspace.agents().iter().map(|agent| agent.id().clone()))
+            .collect::<std::collections::BTreeSet<_>>();
+        let mut mappings = self.agent_mappings.lock().map_err(|_| {
+            devhub_app_core::state::StateError::new(
+                devhub_app_core::state::StateErrorCode::InvalidState,
+            )
+        })?;
+        mappings.retain(|agent_id, _| active.contains(agent_id));
+        for (agent_id, mapping) in mappings.iter() {
+            state.set_agent_provider_mapping(agent_id, mapping.clone())?;
+        }
         Ok(())
     }
 
@@ -737,8 +922,37 @@ impl NativeAppState {
     }
 
     fn profile(&self, profile_id: &AgentProfileId) -> Result<DomainAgentProfile, AppErrorWire> {
-        self.profiles.iter().find(|profile| profile.id() == profile_id).cloned().ok_or_else(|| {
-            AppErrorWire::native_unavailable().with_summary("agent profile unavailable")
+        self.profiles
+            .lock()
+            .map_err(state_error)?
+            .iter()
+            .find(|profile| profile.id() == profile_id)
+            .cloned()
+            .ok_or_else(|| {
+                AppErrorWire::native_unavailable().with_summary("agent profile unavailable")
+            })
+    }
+
+    fn agent_profiles(&self) -> Result<AgentProfilesWire, AppErrorWire> {
+        let (sequence, diagnostic) = {
+            let settings = self.settings.lock().map_err(state_error)?;
+            let diagnostic = settings.diagnostic.as_ref().map(|diagnostic| match diagnostic.code {
+                devhub_app_core::SettingsDiagnosticCodeWire::Conflict => {
+                    AgentProfilesDiagnosticWire::ConfigurationConflict
+                }
+                devhub_app_core::SettingsDiagnosticCodeWire::StateUnavailable => {
+                    AgentProfilesDiagnosticWire::ProjectionUnavailable
+                }
+                _ => AgentProfilesDiagnosticWire::ConfigurationInvalid,
+            });
+            (settings.sequence, diagnostic)
+        };
+        let profiles = self.profiles.lock().map_err(state_error)?;
+        let projection =
+            AgentProfilesWire::from_profiles(&profiles, sequence).map_err(state_error)?;
+        Ok(match diagnostic {
+            Some(diagnostic) => projection.degraded(diagnostic),
+            None => projection,
         })
     }
 
@@ -797,10 +1011,12 @@ impl NativeAppState {
                 Effect::Noop => {}
                 Effect::Detach(reason) => match reason {
                     devhub_app_core::DetachReason::WindowClosed => {
-                        self._terminal_runtime.detach_webview(APP_SHELL_WINDOW_LABEL)
+                        self._terminal_runtime.detach_webview(APP_SHELL_WINDOW_LABEL);
+                        self.agent_surfaces.detach_webview(APP_SHELL_WINDOW_LABEL);
                     }
                     devhub_app_core::DetachReason::Quit => {
-                        self._terminal_runtime.detach_all_surfaces()
+                        self._terminal_runtime.detach_all_surfaces();
+                        self.agent_surfaces.detach_all();
                     }
                 },
                 Effect::ResolveWorkspacePath { token, path } => {
@@ -928,7 +1144,7 @@ impl NativeAppState {
                         .iter()
                         .find(|workspace| workspace.id() == &workspace_id)
                         .map(|workspace| workspace.root().clone());
-                    let result =
+                    let launch =
                         root.ok_or_else(AppErrorWire::native_unavailable).and_then(|root| {
                             self.agent_runtime
                                 .register_agent_workspace(
@@ -942,9 +1158,15 @@ impl NativeAppState {
                                 profile,
                                 Self::effect_cancel(&token),
                             ))
-                            .map(|_| AgentLaunchResult::Started)
                             .map_err(Self::provider_failure)
                         });
+                    let result = launch.and_then(|receipt| {
+                        self.agent_mappings
+                            .lock()
+                            .map_err(|_| AppErrorWire::native_unavailable())?
+                            .insert(agent_id.clone(), receipt.provider_mapping);
+                        Ok(AgentLaunchResult::Started)
+                    });
                     let event = ProviderEvent::AgentLaunchCompleted {
                         token,
                         workspace_id,
@@ -1379,6 +1601,7 @@ impl NativeAppState {
     /// after its last window closes, so this is not a clean quit.
     fn close_window(&self) -> Result<(), AppErrorWire> {
         self._terminal_runtime.detach_webview(APP_SHELL_WINDOW_LABEL);
+        self.agent_surfaces.detach_webview(APP_SHELL_WINDOW_LABEL);
         let (_, effects) = self.dispatch_lifecycle(UserIntent::WindowClosed)?;
         let execution = self.execute_effects(effects)?;
         if let Some(error) = execution.error {
@@ -1390,7 +1613,9 @@ impl NativeAppState {
     /// A process quit detaches the coordinator, persists its final projection,
     /// and only then marks the durable lifecycle as clean.
     fn quit(&self) -> Result<(), AppErrorWire> {
+        self.agent_reconciler_running.store(false, Ordering::Release);
         self._terminal_runtime.detach_all_surfaces();
+        self.agent_surfaces.detach_all();
         let (_, effects) = self.dispatch_lifecycle(UserIntent::Quit)?;
         let execution = self.execute_effects(effects)?;
         if let Some(error) = execution.error {
@@ -1511,6 +1736,11 @@ impl NativeAppState {
     }
 
     fn apply_loaded_config(&self, loaded: LoadedConfig) -> Result<(), SettingsErrorWire> {
+        // Profile choices are a live, secret-free projection. Existing Agents
+        // already own cloned launch-time profiles in AppModel and are not
+        // changed by this replacement.
+        let next_profiles = load_config_profiles(loaded.config())
+            .map_err(|_| SettingsErrorWire::invalid_config())?;
         let active_transition = matches!(
             self.load_transition_state(&self.transition_store())?.tmux.transition,
             SocketTransitionState::CleaningOld { .. }
@@ -1541,6 +1771,8 @@ impl NativeAppState {
         Self::advance_settings_sequence(&mut settings)?;
         settings.loaded = loaded;
         settings.diagnostic = None;
+        drop(settings);
+        *self.profiles.lock().map_err(|_| SettingsErrorWire::native_unavailable())? = next_profiles;
         Ok(())
     }
 
@@ -1578,11 +1810,23 @@ impl NativeAppState {
             .map_err(|_| SettingsErrorWire::native_unavailable())?
             .take();
         let Some(candidate) = candidate else { return Ok(()) };
+        let next_profiles = match load_config_profiles(candidate.config()) {
+            Ok(profiles) => profiles,
+            Err(_) => {
+                *self
+                    .deferred_config
+                    .lock()
+                    .map_err(|_| SettingsErrorWire::native_unavailable())? = Some(candidate);
+                return Err(SettingsErrorWire::invalid_config());
+            }
+        };
         let mut settings =
             self.settings.lock().map_err(|_| SettingsErrorWire::native_unavailable())?;
         Self::advance_settings_sequence(&mut settings)?;
         settings.loaded = candidate;
         settings.diagnostic = None;
+        drop(settings);
+        *self.profiles.lock().map_err(|_| SettingsErrorWire::native_unavailable())? = next_profiles;
         Ok(())
     }
 
@@ -1811,6 +2055,196 @@ impl NativeAppState {
             webview_label,
             request.target_generation,
         )
+    }
+
+    fn agent_surface_attach(
+        &self,
+        app: &AppHandle,
+        webview_label: &str,
+        request: AttachRequest,
+        channel: tauri::ipc::Channel<tauri::ipc::InvokeResponseBody>,
+    ) -> Result<AttachReceipt, TerminalError> {
+        self.resolve_agent_surface(&request.surface_key)?;
+        let callback_app = app.clone();
+        let on_failure: Arc<dyn Fn(devhub_app_core::AgentId) + Send + Sync> =
+            Arc::new(move |agent_id| {
+                let app = callback_app.clone();
+                tauri::async_runtime::spawn(async move {
+                    let _ = tauri::async_runtime::spawn_blocking(move || {
+                        if let Some(state) = app.try_state::<NativeAppState>() {
+                            state.mark_agent_runtime_failure(
+                                &app,
+                                agent_id,
+                                RuntimeHealth::Degraded,
+                            );
+                        }
+                    })
+                    .await;
+                });
+            });
+        let (receipt, observation) = self.agent_surfaces.attach(
+            &self.agent_runtime,
+            webview_label,
+            request,
+            channel,
+            on_failure,
+        )?;
+        self.apply_agent_observation(app, observation);
+        Ok(receipt)
+    }
+
+    /// Applies one provider-free Agent observation through the same tokened
+    /// coordinator seam used by foreground reconciliation. Startup attach
+    /// observations therefore become visible immediately, while a later
+    /// aggregate reconcile remains authoritative for natural exits.
+    fn apply_agent_observation(&self, app: &AppHandle, observation: AgentObservation) {
+        let operation_id = match self.id_generator.next_operation_id() {
+            Ok(operation_id) => operation_id,
+            Err(_) => return,
+        };
+        let mut effects = {
+            let Ok(mut coordinator) = self.coordinator.lock() else {
+                return;
+            };
+            match coordinator.request_agent_reconcile(operation_id, observation.agent_id().clone())
+            {
+                Ok(_) => Self::drain_effects(&mut coordinator),
+                Err(_) => return,
+            }
+        };
+        let token = effects.iter().find_map(|effect| match effect {
+            Effect::ReconcileAgent { token, .. } => Some(token.clone()),
+            _ => None,
+        });
+        let Some(token) = token else { return };
+        effects.retain(|effect| !matches!(effect, Effect::ReconcileAgent { .. }));
+        let event_id = match self.id_generator.next_operation_id().map(ProviderEventId::from) {
+            Ok(event_id) => event_id,
+            Err(_) => return,
+        };
+        let completed = {
+            let Ok(mut coordinator) = self.coordinator.lock() else {
+                return;
+            };
+            if coordinator
+                .accept_provider_event(ProviderEventEnvelope::new(
+                    event_id,
+                    ProviderEvent::AgentStatusChanged {
+                        token,
+                        agent_id: observation.agent_id().clone(),
+                        status: observation.status(),
+                        runtime_health: observation.runtime_health(),
+                    },
+                ))
+                .is_err()
+            {
+                return;
+            }
+            Self::drain_effects(&mut coordinator)
+        };
+        effects.extend(completed);
+        let Ok(execution) = self.execute_effects(effects) else {
+            return;
+        };
+        let readiness = self
+            .coordinator
+            .lock()
+            .map(|coordinator| coordinator.readiness())
+            .unwrap_or(AppReadiness::Unavailable);
+        let Ok(snapshot) = AppSnapshotWire::from_snapshot(&execution.snapshot, readiness) else {
+            return;
+        };
+        // The callback is intentionally content-free: only the reconciled
+        // Rust-owned snapshot crosses back to the Workbench webview.
+        let _ = app.emit_to(APP_SHELL_WINDOW_LABEL, APP_SNAPSHOT_CHANGED_EVENT, snapshot);
+    }
+
+    /// A control-stream failure is a view/runtime degradation, not evidence
+    /// that the provider Agent exited. Complete a native reconciliation epoch
+    /// with a typed degraded observation while leaving natural-exit removal to
+    /// the continuous provider reconciliation worker.
+    fn mark_agent_runtime_failure(
+        &self,
+        app: &AppHandle,
+        agent_id: devhub_app_core::AgentId,
+        runtime_health: RuntimeHealth,
+    ) {
+        self.apply_agent_observation(
+            app,
+            AgentObservation::new(agent_id, devhub_app_core::AgentStatus::Error, runtime_health),
+        );
+    }
+
+    fn resolve_agent_surface(&self, surface_key: &str) -> Result<(), TerminalError> {
+        let Some(agent_id) = surface_key.strip_prefix("agent:") else {
+            return Err(TerminalError::new(TerminalErrorCode::InvalidSurface));
+        };
+        let agent_id = devhub_app_core::AgentId::from_uuid(agent_id.to_owned())
+            .map_err(|_| TerminalError::new(TerminalErrorCode::InvalidSurface))?;
+        let coordinator =
+            self.coordinator.lock().map_err(|_| TerminalError::new(TerminalErrorCode::Internal))?;
+        if coordinator.snapshot().active_activity() != Activity::Agent {
+            return Err(TerminalError::new(TerminalErrorCode::SurfaceUnavailable));
+        }
+        let agent_is_interactive = coordinator
+            .snapshot()
+            .workspaces()
+            .iter()
+            .flat_map(|workspace| workspace.agents().iter())
+            .find(|agent| agent.id() == &agent_id)
+            .is_some_and(|agent| agent.control_state() == AgentControlState::Running);
+        if !agent_is_interactive {
+            // The provider control stream becomes read-only as soon as the
+            // Rust-owned stop lifecycle enters Stopping/StopFailed. A stale
+            // webview cannot keep writing merely because it retained an old
+            // opaque attachment receipt.
+            return Err(TerminalError::new(TerminalErrorCode::SurfaceUnavailable));
+        }
+        match coordinator.snapshot().activity(Activity::Agent).resolution() {
+            SurfaceResolution::Enabled(SurfaceKey::Agent(expected)) if expected == &agent_id => {
+                Ok(())
+            }
+            SurfaceResolution::Enabled(_) => {
+                Err(TerminalError::new(TerminalErrorCode::StaleTarget))
+            }
+            SurfaceResolution::Disabled(_) => {
+                Err(TerminalError::new(TerminalErrorCode::SurfaceUnavailable))
+            }
+        }
+    }
+
+    fn agent_surface_input(
+        &self,
+        webview_label: &str,
+        request: InputRequest,
+    ) -> Result<(), TerminalError> {
+        self.resolve_agent_surface(&request.surface_key)?;
+        self.agent_surfaces.input(webview_label, request)
+    }
+
+    fn agent_surface_resize(
+        &self,
+        webview_label: &str,
+        request: ResizeRequest,
+    ) -> Result<(), TerminalError> {
+        self.resolve_agent_surface(&request.surface_key)?;
+        self.agent_surfaces.resize(webview_label, request)
+    }
+
+    fn agent_surface_acknowledge(
+        &self,
+        webview_label: &str,
+        request: AckRequest,
+    ) -> Result<(), TerminalError> {
+        self.agent_surfaces.acknowledge(webview_label, request)
+    }
+
+    fn agent_surface_detach(
+        &self,
+        webview_label: &str,
+        request: DetachRequest,
+    ) -> Result<(), TerminalError> {
+        self.agent_surfaces.detach(webview_label, request)
     }
 
     /// Reconciles only the non-destructive part of a configured socket
@@ -2591,6 +3025,7 @@ impl NativeAppState {
                         Ok(()) => {
                             settings_changed = true;
                             appearance_changed = true;
+                            emit_agent_profiles(&handle, &state);
                         }
                         Err(_) => {
                             // A valid external edit that races a confirmed
@@ -2600,16 +3035,23 @@ impl NativeAppState {
                             // diagnostic instead of silently dropping it.
                             settings_changed = true;
                             appearance_changed = false;
+                            emit_agent_profiles(&handle, &state);
                         }
                     }
                 }
                 Ok(ReloadOutcome::Unchanged { .. }) => {
                     settings_changed = state.clear_config_diagnostic().unwrap_or(false);
                     appearance_changed = false;
+                    if settings_changed {
+                        emit_agent_profiles(&handle, &state);
+                    }
                 }
                 Err(diagnostic) => {
                     settings_changed = state.apply_config_diagnostic(diagnostic).unwrap_or(false);
                     appearance_changed = false;
+                    if settings_changed {
+                        emit_agent_profiles(&handle, &state);
+                    }
                 }
             }
             if settings_changed {
@@ -2672,6 +3114,11 @@ fn get_app_snapshot(state: State<'_, NativeAppState>) -> Result<AppSnapshotWire,
     let coordinator = state.coordinator.lock().map_err(state_error)?;
     AppSnapshotWire::from_snapshot(&coordinator.snapshot(), coordinator.readiness())
         .map_err(state_error)
+}
+
+#[tauri::command]
+fn get_agent_profiles(state: State<'_, NativeAppState>) -> Result<AgentProfilesWire, AppErrorWire> {
+    state.agent_profiles()
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -2863,6 +3310,7 @@ fn save_settings(
     let snapshot = state.save_settings(payload)?;
     emit_settings_snapshot(&app, snapshot.clone());
     emit_app_appearance(&app, &state);
+    emit_agent_profiles(&app, &state);
     Ok(snapshot)
 }
 
@@ -2879,6 +3327,7 @@ fn reload_settings(
             if snapshot.sequence > before {
                 emit_settings_snapshot(&app, snapshot.clone());
                 emit_app_appearance(&app, &state);
+                emit_agent_profiles(&app, &state);
             }
             Ok(snapshot)
         }
@@ -2887,6 +3336,7 @@ fn reload_settings(
                 if let Ok(snapshot) = state.settings_snapshot() {
                     emit_settings_snapshot(&app, snapshot);
                 }
+                emit_agent_profiles(&app, &state);
             }
             Err(error)
         }
@@ -2973,12 +3423,73 @@ async fn terminal_detach(
 }
 
 #[tauri::command]
+async fn agent_surface_attach(
+    app: AppHandle,
+    webview: Webview<tauri::Wry>,
+    payload: AttachRequest,
+    channel: tauri::ipc::Channel<tauri::ipc::InvokeResponseBody>,
+) -> Result<AttachReceipt, TerminalError> {
+    let webview_label = webview.label().to_owned();
+    let callback_app = app.clone();
+    terminal_worker(app, move |state| {
+        state.agent_surface_attach(&callback_app, &webview_label, payload, channel)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn agent_surface_input(
+    app: AppHandle,
+    webview: Webview<tauri::Wry>,
+    payload: InputRequest,
+) -> Result<(), TerminalError> {
+    let webview_label = webview.label().to_owned();
+    terminal_worker(app, move |state| state.agent_surface_input(&webview_label, payload)).await
+}
+
+#[tauri::command]
+async fn agent_surface_resize(
+    app: AppHandle,
+    webview: Webview<tauri::Wry>,
+    payload: ResizeRequest,
+) -> Result<(), TerminalError> {
+    let webview_label = webview.label().to_owned();
+    terminal_worker(app, move |state| state.agent_surface_resize(&webview_label, payload)).await
+}
+
+#[tauri::command]
+async fn agent_surface_acknowledge(
+    app: AppHandle,
+    webview: Webview<tauri::Wry>,
+    payload: AckRequest,
+) -> Result<(), TerminalError> {
+    let webview_label = webview.label().to_owned();
+    terminal_worker(app, move |state| state.agent_surface_acknowledge(&webview_label, payload))
+        .await
+}
+
+#[tauri::command]
+async fn agent_surface_detach(
+    app: AppHandle,
+    webview: Webview<tauri::Wry>,
+    payload: DetachRequest,
+) -> Result<(), TerminalError> {
+    let webview_label = webview.label().to_owned();
+    terminal_worker(app, move |state| state.agent_surface_detach(&webview_label, payload)).await
+}
+
+#[tauri::command]
 async fn apply_socket_change(
+    app: AppHandle,
     state: State<'_, NativeAppState>,
     payload: SettingsSocketChangeRequestWire,
 ) -> Result<SettingsSnapshotWire, SettingsErrorWire> {
     payload.validate()?;
-    state.apply_socket_change(payload).await
+    let result = state.apply_socket_change(payload).await;
+    if result.is_ok() {
+        emit_agent_profiles(&app, &state);
+    }
+    result
 }
 
 fn show_settings_window(app: &AppHandle) -> Result<(), String> {
@@ -3055,6 +3566,7 @@ pub fn run() {
             app.state::<NativeAppState>()
                 .install_config_watcher(app.handle())
                 .map_err(|_| std::io::Error::other("DevHub Settings watcher unavailable"))?;
+            app.state::<NativeAppState>().start_agent_reconciler(app.handle());
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 let state = handle.state::<NativeAppState>();
@@ -3063,6 +3575,7 @@ pub fn run() {
                         if let Ok(snapshot) = state.settings_snapshot() {
                             emit_settings_snapshot(&handle, snapshot);
                         }
+                        emit_agent_profiles(&handle, &state);
                     }
                     Err(error) => {
                         eprintln!("DevHub socket transition resume unavailable: {error:?}");
@@ -3100,6 +3613,7 @@ pub fn run() {
                 }
             });
             emit_app_appearance(app.handle(), &app.state::<NativeAppState>());
+            emit_agent_profiles(app.handle(), &app.state::<NativeAppState>());
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -3128,6 +3642,7 @@ pub fn run() {
             select_workspace_picker,
             choose_workspace_folder,
             get_app_appearance,
+            get_agent_profiles,
             dispatch_app_intent,
             replay_app_events,
             terminal_attach,
@@ -3135,6 +3650,11 @@ pub fn run() {
             terminal_resize,
             terminal_acknowledge,
             terminal_detach,
+            agent_surface_attach,
+            agent_surface_input,
+            agent_surface_resize,
+            agent_surface_acknowledge,
+            agent_surface_detach,
             get_settings_snapshot,
             save_settings,
             reload_settings,
@@ -4050,8 +4570,15 @@ mod tests {
         state.store.save_state(&persisted).expect("persist active transition");
 
         let before = state.settings_snapshot().expect("last-good settings snapshot");
+        let before_profiles = serde_json::to_value(state.agent_profiles().expect("profiles"))
+            .expect("profile projection");
+        let original_profile_name = before_profiles["profiles"][0]["displayName"]
+            .as_str()
+            .expect("default profile name")
+            .to_owned();
         let mut external = before.config.clone().into_config().expect("config model");
         external.runtimes.tmux_socket_name = "devhub-external-target".to_owned();
+        external.agent_profiles[0].display_name = "Deferred external profile".to_owned();
         std::fs::write(
             state.config_store.path(),
             external.to_toml().expect("external config TOML"),
@@ -4068,6 +4595,10 @@ mod tests {
             deferred.diagnostic.as_ref().map(|diagnostic| diagnostic.code),
             Some(devhub_app_core::SettingsDiagnosticCodeWire::Conflict)
         );
+        let degraded_profiles = serde_json::to_value(state.agent_profiles().expect("profiles"))
+            .expect("degraded profile projection");
+        assert_eq!(degraded_profiles["availability"], "degraded");
+        assert_eq!(degraded_profiles["profiles"][0]["displayName"], original_profile_name);
         assert!(state.deferred_config.lock().unwrap().is_some());
 
         let mut stable = state.store.load_or_default().expect("load active state");
@@ -4082,6 +4613,10 @@ mod tests {
             reconciled.runtime.socket_change.configured_socket_name
                 != reconciled.runtime.socket_change.effective_socket_name
         );
+        let reconciled_profiles = serde_json::to_value(state.agent_profiles().expect("profiles"))
+            .expect("reconciled profile projection");
+        assert_eq!(reconciled_profiles["availability"], "available");
+        assert_eq!(reconciled_profiles["profiles"][0]["displayName"], "Deferred external profile");
         remove_temp_home(&home);
     }
 

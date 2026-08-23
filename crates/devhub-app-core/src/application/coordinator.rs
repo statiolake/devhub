@@ -432,6 +432,11 @@ pub struct AppCoordinator {
     provider_event_order: VecDeque<ProviderEventId>,
     confirmation_id_order: VecDeque<ConfirmationId>,
     completed_token_order: VecDeque<(OperationId, OperationToken)>,
+    /// Stop completions that raced a provider-proven natural exit are
+    /// idempotent acknowledgements. Keying by the full token keeps an old
+    /// completion from being accepted for a reused operation ID/generation.
+    natural_exit_stop_tokens: BTreeMap<OperationToken, AgentId>,
+    natural_exit_stop_order: VecDeque<OperationToken>,
     active_reconcile: Option<ActiveReconcile>,
     reconcile_epoch: u64,
     readiness: super::types::AppReadiness,
@@ -478,6 +483,8 @@ impl AppCoordinator {
             provider_event_order: VecDeque::new(),
             confirmation_id_order: VecDeque::new(),
             completed_token_order: VecDeque::new(),
+            natural_exit_stop_tokens: BTreeMap::new(),
+            natural_exit_stop_order: VecDeque::new(),
             active_reconcile: None,
             reconcile_epoch: 0,
             readiness: super::types::AppReadiness::Starting,
@@ -733,6 +740,9 @@ impl AppCoordinator {
             }
             UserIntent::RetryStopAgent { agent_id } => {
                 self.retry_stop(agent_id, operation_id.clone())
+            }
+            UserIntent::ReconcileAgent { agent_id } => {
+                self.request_agent_reconcile(operation_id.clone(), agent_id)
             }
             UserIntent::RequestCloseWorkspace { workspace_id } => self.begin_workspace_inspection(
                 workspace_id,
@@ -1357,6 +1367,13 @@ impl AppCoordinator {
                     });
                     return Err(error);
                 }
+                // A successful launch is also a navigation event. The Agent
+                // row is created and selected in the same Rust-owned
+                // snapshot so the sidebar and Agent Activity surface cannot
+                // briefly disagree about the newly launched runtime.
+                self.model
+                    .select_context(crate::NavigationContext::Agent(agent_id.clone()))
+                    .map_err(AppError::from)?;
                 let snapshot = self.snapshot();
                 self.emit(CoordinatorEvent::Snapshot(snapshot.clone()));
                 self.emit(CoordinatorEvent::OperationCompleted { token: token.clone() });
@@ -1411,15 +1428,44 @@ impl AppCoordinator {
             matches!(target, OperationTarget::Application)
         })?;
         self.active_reconcile = None;
+        // Validate every referenced identity before cancelling any local stop
+        // state so a malformed aggregate cannot partially mutate
+        // confirmations or operations. Once validated, each exit is cleaned
+        // in this same coordinator turn as the provider reconciliation.
+        for observation in reconciliation.observations() {
+            if self.model.workspace_for_agent(observation.agent_id()).is_none() {
+                return Err(AppError::new(super::error::AppErrorCode::Domain)
+                    .with_domain(DomainErrorCode::UnknownAgent)
+                    .with_operation(token.operation_id().clone()));
+            }
+        }
+        for agent_id in reconciliation.exited() {
+            if self.model.workspace_for_agent(agent_id).is_none() {
+                return Err(AppError::new(super::error::AppErrorCode::Domain)
+                    .with_domain(DomainErrorCode::UnknownAgent)
+                    .with_operation(token.operation_id().clone()));
+            }
+        }
+        let canceled_stop_tokens = reconciliation
+            .exited()
+            .iter()
+            .flat_map(|agent_id| self.cancel_agent_stop_state_after_exit(agent_id))
+            .collect::<Vec<_>>();
         let before_revision = self.model.snapshot().revision();
         self.model.reconcile_agents(reconciliation).map_err(AppError::from)?;
         let snapshot = self.snapshot();
         if snapshot.revision() == before_revision {
+            for stop_token in canceled_stop_tokens {
+                self.emit(CoordinatorEvent::OperationCompleted { token: stop_token });
+            }
             self.emit(CoordinatorEvent::OperationCompleted { token: token.clone() });
             self.emit(CoordinatorEvent::Noop);
             Ok(IntentOutcome::Noop { snapshot })
         } else {
             self.emit(CoordinatorEvent::Snapshot(snapshot.clone()));
+            for stop_token in canceled_stop_tokens {
+                self.emit(CoordinatorEvent::OperationCompleted { token: stop_token });
+            }
             self.emit(CoordinatorEvent::OperationCompleted { token: token.clone() });
             self.queue_persist(token.operation_id().clone());
             Ok(IntentOutcome::Updated { snapshot })
@@ -1705,6 +1751,22 @@ impl AppCoordinator {
         agent_id: &AgentId,
         result: AgentStopResult,
     ) -> Result<IntentOutcome, AppError> {
+        // Natural reconciliation may have removed the Agent and tombstoned
+        // this exact StopAgent token before the provider returned. Treat a
+        // later successful stop result as an idempotent acknowledgement, but
+        // reject it if a new Agent has since reused the same domain ID.
+        if let Some(expected_agent_id) = self.natural_exit_stop_tokens.get(token) {
+            if expected_agent_id != agent_id {
+                return Err(AppError::new(super::error::AppErrorCode::StaleCompletion)
+                    .with_operation(token.operation_id().clone()));
+            }
+            if self.model.workspace_for_agent(agent_id).is_some() {
+                return Err(AppError::new(super::error::AppErrorCode::StaleCompletion)
+                    .with_operation(token.operation_id().clone()));
+            }
+            self.emit(CoordinatorEvent::OperationCompleted { token: token.clone() });
+            return Ok(IntentOutcome::Noop { snapshot: self.snapshot() });
+        }
         self.take_pending(
             token,
             OperationKind::StopAgent,
@@ -1712,7 +1774,20 @@ impl AppCoordinator {
         )?;
         match result {
             AgentStopResult::Stopped => {
-                self.model.agent_exited(agent_id).map_err(AppError::from)?
+                // The provider may have proved removal through another path
+                // after this stop operation was issued. Once the domain row
+                // is gone, acknowledge the completion without touching a
+                // replacement Agent that reuses the same ID.
+                if self.model.workspace_for_agent(agent_id).is_none() {
+                    self.remember_natural_exit_stop(token.clone(), agent_id.clone());
+                    self.emit(CoordinatorEvent::OperationCompleted { token: token.clone() });
+                    return Ok(IntentOutcome::Noop { snapshot: self.snapshot() });
+                }
+                self.model.agent_exited(agent_id).map_err(AppError::from)?;
+                // Any reconciliation inventory already in flight predates
+                // this removal. Invalidate it before a replacement Agent can
+                // be observed under the same domain identity.
+                self.invalidate_reconciliation_after_agent_removal(agent_id);
             }
             AgentStopResult::Failed { diagnostic } => {
                 self.model.mark_agent_stop_failed(agent_id, diagnostic).map_err(AppError::from)?;
@@ -2075,11 +2150,97 @@ impl AppCoordinator {
             |target| matches!(target, OperationTarget::Agent(id) if id == agent_id),
         )?;
         self.active_reconcile = None;
-        self.model.agent_exited(agent_id).map_err(AppError::from)?;
+        let stop_tokens = self.cancel_agent_stop_state_after_exit(agent_id);
+        // A stop completion can win the race just before this reconciliation
+        // event. Removal is already proved in that case, so the natural-exit
+        // event is an idempotent completion rather than an error. No model
+        // mutation is attempted against a replacement Agent.
+        let removed = self.model.workspace_for_agent(agent_id).is_some();
+        if removed {
+            self.model.agent_exited(agent_id).map_err(AppError::from)?;
+        }
         let snapshot = self.snapshot();
-        self.emit(CoordinatorEvent::Snapshot(snapshot.clone()));
+        if removed {
+            self.emit(CoordinatorEvent::Snapshot(snapshot.clone()));
+        }
+        for stop_token in stop_tokens {
+            self.emit(CoordinatorEvent::OperationCompleted { token: stop_token });
+        }
+        self.emit(CoordinatorEvent::OperationCompleted { token: token.clone() });
         self.queue_persist(token.operation_id().clone());
-        Ok(IntentOutcome::Updated { snapshot })
+        if removed {
+            Ok(IntentOutcome::Updated { snapshot })
+        } else {
+            Ok(IntentOutcome::Noop { snapshot })
+        }
+    }
+
+    /// Cancels all stop confirmation/operation state for an Agent after the
+    /// provider has proved that it exited. The whole operation is performed
+    /// in one coordinator turn, so no orphan confirmation can be projected
+    /// between removal and cleanup.
+    fn cancel_agent_stop_state_after_exit(&mut self, agent_id: &AgentId) -> Vec<OperationToken> {
+        let operation_ids = self
+            .pending
+            .iter()
+            .filter_map(|(operation_id, pending)| {
+                let matches_agent =
+                    matches!(&pending.target, OperationTarget::Agent(id) if id == agent_id);
+                let matches_stop = matches!(
+                    pending.kind,
+                    OperationKind::StopAgent | OperationKind::GenerateConfirmationId
+                );
+                (matches_agent && matches_stop).then(|| operation_id.clone())
+            })
+            .collect::<Vec<_>>();
+        let mut completed_stop_tokens = Vec::new();
+        for operation_id in operation_ids {
+            let Some(pending) = self.pending.remove(&operation_id) else { continue };
+            let token = pending.token;
+            self.remember_completed(token.clone());
+            self.clear_operation_auxiliary_state(&token);
+            if pending.kind == OperationKind::StopAgent {
+                self.remember_natural_exit_stop(token.clone(), agent_id.clone());
+                completed_stop_tokens.push(token);
+            }
+        }
+
+        let confirmation_request_ids = self
+            .confirmation_requests
+            .iter()
+            .filter(|(_, request)| {
+                matches!(request, PendingConfirmationRequest::Stop { agent_id: id } if id == agent_id)
+            })
+            .map(|(operation_id, _)| operation_id.clone())
+            .collect::<Vec<_>>();
+        for operation_id in confirmation_request_ids {
+            self.confirmation_requests.remove(&operation_id);
+        }
+        self.confirmations.retain(|pending| {
+            !matches!(pending, PendingConfirmationState::Stop { agent_id: id, .. } if id == agent_id)
+        });
+        completed_stop_tokens
+    }
+
+    fn remember_natural_exit_stop(&mut self, token: OperationToken, agent_id: AgentId) {
+        self.natural_exit_stop_tokens.insert(token.clone(), agent_id);
+        self.natural_exit_stop_order.push_back(token);
+        while self.natural_exit_stop_order.len() > MAX_COMPLETED_TOKEN_ENTRIES {
+            let Some(evicted) = self.natural_exit_stop_order.pop_front() else { break };
+            self.natural_exit_stop_tokens.remove(&evicted);
+        }
+    }
+
+    fn invalidate_reconciliation_after_agent_removal(&mut self, agent_id: &AgentId) {
+        let should_invalidate = self.active_reconcile.as_ref().is_some_and(|active| match active {
+            ActiveReconcile::Agent { agent_id: active_agent, .. } => active_agent == agent_id,
+            // An aggregate inventory was observed before this removal, so it
+            // must not be allowed to remove or update a replacement row.
+            ActiveReconcile::Agents { .. } => true,
+        });
+        if should_invalidate {
+            self.invalidate_reconciliation();
+        }
     }
 
     fn take_pending<F>(
@@ -2713,6 +2874,11 @@ mod tests {
             ))
             .unwrap();
         assert_eq!(coordinator.snapshot().workspaces()[0].agents().len(), 1);
+        assert_eq!(
+            coordinator.snapshot().selection().context(),
+            &NavigationContext::Agent(AgentId::for_test("created-agent"))
+        );
+        assert_eq!(coordinator.snapshot().selection().activity(), Activity::Agent);
     }
 
     #[test]
@@ -2782,6 +2948,212 @@ mod tests {
             ))
             .unwrap();
         assert!(coordinator.snapshot().workspaces()[0].agents().is_empty());
+    }
+
+    #[test]
+    fn natural_exit_atomically_clears_stop_confirmation_and_tombstones_stop_completion() {
+        let workspace_id = WorkspaceId::for_test("natural-exit-workspace");
+        let confirmation_agent = AgentId::for_test("natural-exit-confirmation-agent");
+        let stopping_agent = AgentId::for_test("natural-exit-stopping-agent");
+        let completion_first_agent = AgentId::for_test("natural-exit-completion-first-agent");
+        let mut model = AppModel::new();
+        model.add_workspace(workspace(&workspace_id.to_string(), "/tmp/natural-exit")).unwrap();
+        model.add_agent(&workspace_id, confirmation_agent.clone(), profile("codex")).unwrap();
+        model.add_agent(&workspace_id, stopping_agent.clone(), profile("claude")).unwrap();
+        model.add_agent(&workspace_id, completion_first_agent.clone(), profile("codex")).unwrap();
+        let mut coordinator = AppCoordinator::with_model(model);
+        coordinator.subscribe();
+
+        coordinator
+            .dispatch_user(intent(
+                "natural-exit-confirmation-request",
+                UserIntent::StopAgent { agent_id: confirmation_agent.clone() },
+            ))
+            .unwrap();
+        let (confirmation_generation, _) = operation_effect(&coordinator.subscribe().into_events());
+        let confirmation_id = ConfirmationId::for_test(canonical_id("natural-exit-confirmation"));
+        coordinator
+            .accept_provider_event(ProviderEventEnvelope::new(
+                op("natural-exit-confirmation-generated"),
+                ProviderEvent::ConfirmationIdGenerated {
+                    token: confirmation_generation,
+                    confirmation_id: confirmation_id.clone(),
+                },
+            ))
+            .unwrap();
+        coordinator.subscribe();
+        coordinator.request_agents_reconcile(op("natural-exit-confirmation-reconcile")).unwrap();
+        let (confirmation_reconcile_token, _) =
+            operation_effect(&coordinator.subscribe().into_events());
+        coordinator
+            .accept_provider_event(ProviderEventEnvelope::new(
+                op("natural-exit-confirmation-exited"),
+                ProviderEvent::AgentsReconciled {
+                    token: confirmation_reconcile_token,
+                    reconciliation: AgentReconciliation::new([], [confirmation_agent.clone()]),
+                },
+            ))
+            .unwrap();
+        assert!(coordinator.snapshot().workspaces()[0]
+            .agents()
+            .iter()
+            .all(|agent| agent.id() != &confirmation_agent));
+        let expired = coordinator
+            .dispatch_user(intent(
+                "natural-exit-confirmation-confirm",
+                UserIntent::ConfirmStopAgent { confirmation_id },
+            ))
+            .expect_err("a naturally exited Agent cannot retain a confirmation");
+        assert_eq!(expired.code(), super::super::error::AppErrorCode::ConfirmationExpired);
+
+        coordinator.subscribe();
+        coordinator
+            .dispatch_user(intent(
+                "natural-exit-stop-request",
+                UserIntent::StopAgent { agent_id: stopping_agent.clone() },
+            ))
+            .unwrap();
+        let (stop_confirmation_token, _) = operation_effect(&coordinator.subscribe().into_events());
+        let stop_confirmation_id = ConfirmationId::for_test(canonical_id("natural-exit-stop"));
+        coordinator
+            .accept_provider_event(ProviderEventEnvelope::new(
+                op("natural-exit-stop-confirmation-generated"),
+                ProviderEvent::ConfirmationIdGenerated {
+                    token: stop_confirmation_token,
+                    confirmation_id: stop_confirmation_id.clone(),
+                },
+            ))
+            .unwrap();
+        coordinator.subscribe();
+        coordinator
+            .dispatch_user(intent(
+                "natural-exit-stop-confirm",
+                UserIntent::ConfirmStopAgent { confirmation_id: stop_confirmation_id },
+            ))
+            .unwrap();
+        let (stop_token, _) = operation_effect(&coordinator.subscribe().into_events());
+        coordinator.request_agents_reconcile(op("natural-exit-stop-reconcile")).unwrap();
+        let (stop_reconcile_token, _) = operation_effect(&coordinator.subscribe().into_events());
+        coordinator
+            .accept_provider_event(ProviderEventEnvelope::new(
+                op("natural-exit-stop-exited"),
+                ProviderEvent::AgentsReconciled {
+                    token: stop_reconcile_token,
+                    reconciliation: AgentReconciliation::new([], [stopping_agent.clone()]),
+                },
+            ))
+            .unwrap();
+        assert!(coordinator.snapshot().workspaces()[0]
+            .agents()
+            .iter()
+            .all(|agent| agent.id() != &stopping_agent));
+        let late = coordinator
+            .accept_provider_event(ProviderEventEnvelope::new(
+                op("natural-exit-stop-late-completion"),
+                ProviderEvent::AgentStopCompleted {
+                    token: stop_token.clone(),
+                    agent_id: stopping_agent.clone(),
+                    result: AgentStopResult::Stopped,
+                },
+            ))
+            .expect("natural removal makes stop completion idempotent");
+        assert!(matches!(late, IntentOutcome::Noop { .. }));
+        let duplicate_late = coordinator
+            .accept_provider_event(ProviderEventEnvelope::new(
+                op("natural-exit-stop-late-duplicate"),
+                ProviderEvent::AgentStopCompleted {
+                    token: stop_token.clone(),
+                    agent_id: stopping_agent.clone(),
+                    result: AgentStopResult::Stopped,
+                },
+            ))
+            .expect("duplicate stop completion remains idempotent");
+        assert!(matches!(duplicate_late, IntentOutcome::Noop { .. }));
+
+        coordinator
+            .model
+            .add_agent(&workspace_id, stopping_agent.clone(), profile("claude"))
+            .unwrap();
+        let stale = coordinator
+            .accept_provider_event(ProviderEventEnvelope::new(
+                op("natural-exit-stop-late-reused-agent"),
+                ProviderEvent::AgentStopCompleted {
+                    token: stop_token,
+                    agent_id: stopping_agent.clone(),
+                    result: AgentStopResult::Stopped,
+                },
+            ))
+            .expect_err("old completion must not mutate a replacement Agent");
+        assert_eq!(stale.code(), super::super::error::AppErrorCode::StaleCompletion);
+        assert!(coordinator.snapshot().workspaces()[0]
+            .agents()
+            .iter()
+            .any(|agent| agent.id() == &stopping_agent));
+
+        coordinator
+            .dispatch_user(intent(
+                "natural-exit-completion-first-request",
+                UserIntent::StopAgent { agent_id: completion_first_agent.clone() },
+            ))
+            .unwrap();
+        let (completion_first_confirmation_token, _) =
+            operation_effect(&coordinator.subscribe().into_events());
+        let completion_first_confirmation_id =
+            ConfirmationId::for_test(canonical_id("natural-exit-completion-first-confirmation"));
+        coordinator
+            .accept_provider_event(ProviderEventEnvelope::new(
+                op("natural-exit-completion-first-confirmation-generated"),
+                ProviderEvent::ConfirmationIdGenerated {
+                    token: completion_first_confirmation_token,
+                    confirmation_id: completion_first_confirmation_id.clone(),
+                },
+            ))
+            .unwrap();
+        coordinator.subscribe();
+        coordinator
+            .dispatch_user(intent(
+                "natural-exit-completion-first-confirm",
+                UserIntent::ConfirmStopAgent { confirmation_id: completion_first_confirmation_id },
+            ))
+            .unwrap();
+        let (completion_first_stop_token, _) =
+            operation_effect(&coordinator.subscribe().into_events());
+        coordinator
+            .request_agent_reconcile(
+                op("natural-exit-completion-first-reconcile"),
+                completion_first_agent.clone(),
+            )
+            .unwrap();
+        let (completion_first_reconcile_token, _) =
+            operation_effect(&coordinator.subscribe().into_events());
+        coordinator
+            .accept_provider_event(ProviderEventEnvelope::new(
+                op("natural-exit-completion-first-stop-completed"),
+                ProviderEvent::AgentStopCompleted {
+                    token: completion_first_stop_token,
+                    agent_id: completion_first_agent.clone(),
+                    result: AgentStopResult::Stopped,
+                },
+            ))
+            .unwrap();
+        coordinator
+            .model
+            .add_agent(&workspace_id, completion_first_agent.clone(), profile("codex"))
+            .unwrap();
+        let stale_exit = coordinator
+            .accept_provider_event(ProviderEventEnvelope::new(
+                op("natural-exit-completion-first-stale-exit"),
+                ProviderEvent::AgentExited {
+                    token: completion_first_reconcile_token,
+                    agent_id: completion_first_agent.clone(),
+                },
+            ))
+            .expect_err("a stop completion invalidates an older natural-exit observation");
+        assert_eq!(stale_exit.code(), super::super::error::AppErrorCode::StaleCompletion);
+        assert!(coordinator.snapshot().workspaces()[0]
+            .agents()
+            .iter()
+            .any(|agent| agent.id() == &completion_first_agent));
     }
 
     #[test]

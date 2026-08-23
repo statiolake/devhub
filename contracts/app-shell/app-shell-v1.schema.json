@@ -21,6 +21,108 @@
       "enum": ["running", "stopping", "stop-failed"],
       "type": "string"
     },
+    "AgentProfileKindWire": {
+      "enum": ["codex", "claude"],
+      "type": "string"
+    },
+    "AgentProfileWire": {
+      "additionalProperties": false,
+      "description": "Secret-free profile choices exposed to the Workbench Agent picker. Args and\nenvironment are intentionally omitted: the native coordinator resolves\nthe selected profile and retains the complete launch-time snapshot.",
+      "properties": {
+        "displayName": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/AgentProfileKindWire"
+        }
+      },
+      "required": ["id", "displayName", "kind"],
+      "type": "object"
+    },
+    "AgentProfilesAvailabilityWire": {
+      "enum": ["available", "degraded", "unavailable"],
+      "type": "string"
+    },
+    "AgentProfilesDiagnosticWire": {
+      "enum": [
+        "configuration_invalid",
+        "configuration_conflict",
+        "projection_unavailable"
+      ],
+      "type": "string"
+    },
+    "AgentProfilesWire": {
+      "$defs": {
+        "AgentProfileKindWire": {
+          "enum": ["codex", "claude"],
+          "type": "string"
+        },
+        "AgentProfileWire": {
+          "additionalProperties": false,
+          "description": "Secret-free profile choices exposed to the Workbench Agent picker. Args and\nenvironment are intentionally omitted: the native coordinator resolves\nthe selected profile and retains the complete launch-time snapshot.",
+          "properties": {
+            "displayName": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "$ref": "#/$defs/AgentProfileKindWire"
+            }
+          },
+          "required": ["id", "displayName", "kind"],
+          "type": "object"
+        },
+        "AgentProfilesAvailabilityWire": {
+          "enum": ["available", "degraded", "unavailable"],
+          "type": "string"
+        },
+        "AgentProfilesDiagnosticWire": {
+          "enum": [
+            "configuration_invalid",
+            "configuration_conflict",
+            "projection_unavailable"
+          ],
+          "type": "string"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "availability": {
+          "$ref": "#/$defs/AgentProfilesAvailabilityWire"
+        },
+        "diagnostic": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentProfilesDiagnosticWire"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "profiles": {
+          "items": {
+            "$ref": "#/$defs/AgentProfileWire"
+          },
+          "type": "array"
+        },
+        "sequence": {
+          "format": "uint64",
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": ["sequence", "availability", "profiles"],
+      "title": "AgentProfilesWire",
+      "type": "object"
+    },
     "AgentStatusWire": {
       "enum": ["working", "waiting", "idle", "error"],
       "type": "string"
@@ -301,6 +403,9 @@
         {
           "additionalProperties": false,
           "properties": {
+            "profileId": {
+              "type": "string"
+            },
             "type": {
               "const": "request_create_agent",
               "type": "string"
@@ -309,7 +414,80 @@
               "type": "string"
             }
           },
-          "required": ["type", "workspaceId"],
+          "required": ["type", "workspaceId", "profileId"],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "agentId": {
+              "type": "string"
+            },
+            "displayName": {
+              "type": "string"
+            },
+            "type": {
+              "const": "rename_agent",
+              "type": "string"
+            }
+          },
+          "required": ["type", "agentId", "displayName"],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "agentId": {
+              "type": "string"
+            },
+            "type": {
+              "const": "stop_agent",
+              "type": "string"
+            }
+          },
+          "required": ["type", "agentId"],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "confirmationId": {
+              "type": "string"
+            },
+            "type": {
+              "const": "confirm_stop_agent",
+              "type": "string"
+            }
+          },
+          "required": ["type", "confirmationId"],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "agentId": {
+              "type": "string"
+            },
+            "type": {
+              "const": "retry_stop_agent",
+              "type": "string"
+            }
+          },
+          "required": ["type", "agentId"],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "agentId": {
+              "type": "string"
+            },
+            "type": {
+              "const": "reconcile_agent",
+              "type": "string"
+            }
+          },
+          "required": ["type", "agentId"],
           "type": "object"
         },
         {
@@ -1853,6 +2031,9 @@
   "oneOf": [
     {
       "$ref": "#/$defs/AppSnapshotWire"
+    },
+    {
+      "$ref": "#/$defs/AgentProfilesWire"
     },
     {
       "$ref": "#/$defs/AppAppearanceWire"

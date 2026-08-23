@@ -5,6 +5,7 @@ import {
   parseAppAppearance,
   parseAppEventCursor,
   parseAppIntent,
+  parseAgentProfiles,
   parseAppSnapshot,
   parseWorkspacePickerEvent,
   type AppEventCursor,
@@ -26,6 +27,9 @@ describe("generated App Shell v1 contract", () => {
     const appearance = values.find(
       (value) => isRecord(value) && "sidebarDensity" in value,
     );
+    const profiles = values.find(
+      (value) => isRecord(value) && "profiles" in value,
+    );
     const intent = values.find(
       (value) => isRecord(value) && value.type === "select_context",
     );
@@ -33,8 +37,22 @@ describe("generated App Shell v1 contract", () => {
 
     expect(() => parseAppSnapshot(snapshot)).not.toThrow();
     expect(() => parseAppAppearance(appearance)).not.toThrow();
+    expect(() => parseAgentProfiles(profiles)).not.toThrow();
     expect(() => parseAppIntent(intent)).not.toThrow();
     expect(() => parseAppEventCursor(replay)).not.toThrow();
+  });
+
+  it("rejects an unavailable profile projection without a typed diagnostic", () => {
+    const profiles = (validFixtures as unknown[]).find(
+      (value) => isRecord(value) && "profiles" in value,
+    );
+    expect(() =>
+      parseAgentProfiles({
+        ...(profiles as Record<string, unknown>),
+        availability: "unavailable",
+        diagnostic: null,
+      }),
+    ).toThrow();
   });
 
   it("rejects every shared invalid fixture", () => {
@@ -43,6 +61,8 @@ describe("generated App Shell v1 contract", () => {
         expect(() => parseAppIntent(value)).toThrow();
       } else if (isRecord(value) && "cursor" in value) {
         expect(() => parseAppEventCursor(value)).toThrow();
+      } else if (isRecord(value) && "profiles" in value) {
+        expect(() => parseAgentProfiles(value)).toThrow();
       } else if (isRecord(value) && "sidebarDensity" in value) {
         expect(() => parseAppAppearance(value)).toThrow();
       } else {

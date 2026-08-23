@@ -5,6 +5,7 @@
 //! identifiers must remain private to this module and its submodules.
 
 mod api;
+mod channel;
 mod contract;
 mod control;
 mod error;
@@ -18,6 +19,7 @@ mod harness;
 #[cfg(test)]
 mod real_harness;
 
+pub(crate) use channel::AgentSurfaceManager;
 pub(crate) use contract::HERDR_SESSION_NAME;
 pub use error::AgentRuntimeErrorCode;
 pub use model::{AgentRuntimeHealth, AgentRuntimeHealthState};

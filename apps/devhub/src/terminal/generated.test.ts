@@ -93,4 +93,26 @@ describe("terminal v1 generated contract", () => {
       ),
     ).toThrow();
   });
+
+  it("accepts semantic Agent Surface keys without widening provider targets", () => {
+    expect(
+      decodeTerminalFrame(
+        raw(1, {
+          ...fixture.started,
+          surfaceKey: "agent:00000000-0000-4000-8000-000000000001",
+        }),
+      ),
+    ).toMatchObject({
+      type: "started",
+      surfaceKey: "agent:00000000-0000-4000-8000-000000000001",
+    });
+    expect(() =>
+      decodeTerminalFrame(
+        raw(1, {
+          ...fixture.started,
+          surfaceKey: "agent:/tmp/provider-pane",
+        }),
+      ),
+    ).toThrow();
+  });
 });

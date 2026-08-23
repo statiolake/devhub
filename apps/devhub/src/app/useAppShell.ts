@@ -5,6 +5,7 @@ import type {
   AppIntent,
   AppLoadState,
   AppOutcome,
+  AgentProfiles,
   ConfirmationPurposeWire,
 } from "../generated/app-shell";
 import type { WorkspacePickerCandidate } from "./client";
@@ -23,10 +24,13 @@ export interface AppShellContextValue {
     path: string,
   ) => Promise<AppOutcome | undefined>;
   readonly chooseWorkspaceFolder: () => Promise<string | undefined>;
+  readonly agentProfiles: AgentProfiles;
   readonly pendingConfirmation: {
     readonly confirmationId: string;
     readonly purpose: ConfirmationPurposeWire;
+    readonly agentId?: string;
   } | null;
+  readonly confirmationBusy: boolean;
   readonly confirmPending: () => Promise<void>;
   readonly dismissCloseConfirmation: () => void;
 }
