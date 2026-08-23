@@ -116,6 +116,10 @@ pub(crate) struct ResolvedExecutable {
 }
 
 impl ResolvedExecutable {
+    pub(crate) fn basename(&self) -> Option<&str> {
+        self.path.file_name().and_then(|name| name.to_str())
+    }
+
     #[cfg(test)]
     pub(crate) const fn mode(&self) -> ResolutionMode {
         self.mode
@@ -272,6 +276,10 @@ impl RuntimeLaunchContext {
 
     pub(crate) fn home(&self) -> &Path {
         &self.home
+    }
+
+    pub(crate) fn environment_value(&self, name: &str) -> Option<&OsStr> {
+        self.environment.get(OsStr::new(name)).map(OsString::as_os_str)
     }
 
     /// Applies the same current directory and isolated environment to an
@@ -513,6 +521,13 @@ impl ChildCleanup {
         if self.state.begin() {
             terminate_and_reap(child, self.process_id);
         }
+    }
+
+    /// Records that the leader has already been reaped.  This prevents a
+    /// later bounded-pipe cleanup from signalling a potentially reused
+    /// process-group identifier.
+    pub(crate) fn mark_reaped(&mut self) {
+        self.state.terminated = true;
     }
 }
 

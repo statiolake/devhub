@@ -13,10 +13,39 @@ use std::time::SystemTime;
 
 use crate::{
     AgentId, AgentObservation, AgentProfile, AgentProfileId, AgentReconciliation,
-    CloseInspectionInputs, DisplayPath, RemoteIdentity, WorkspaceId, WorkspaceRoot,
+    CloseInspectionInputs, DisplayPath, RemoteIdentity, ResourceInspection, WorkspaceId,
+    WorkspaceRoot,
 };
 
 use crate::application::{OperationId, RequestedPath};
+pub use crate::state::SocketTargetPreflightState;
+
+/// Validated tmux socket identity shared by Config, StateStore, and the
+/// native TerminalRuntime. The inner string is private so callers cannot
+/// smuggle a selector, path, or empty name across the seam.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct SocketName(String);
+
+impl SocketName {
+    pub fn new(value: impl Into<String>) -> Result<Self, PortError> {
+        let value = value.into();
+        if crate::state::is_valid_socket_name(&value) {
+            Ok(Self(value))
+        } else {
+            Err(PortError::new(PortErrorCode::Failed))
+        }
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Debug for SocketName {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("SocketName(<redacted>)")
+    }
+}
 
 pub type PortFuture<T> = Pin<Box<dyn Future<Output = Result<T, PortError>> + Send + 'static>>;
 /// StateStore keeps its content-free, typed recovery error instead of
@@ -395,9 +424,195 @@ pub struct BridgeObservation {
     pub dirty: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// A terminal surface target expressed entirely in DevHub domain values.
+/// Provider session/window/pane identifiers never cross this boundary.
+///
+/// The fields are private so an adapter cannot construct a target with a
+/// provider-derived identity or accidentally replace the canonical Workspace
+/// root.  Use the constructors below and carry the resulting value through
+/// the port unchanged.
+#[derive(Clone, PartialEq, Eq)]
+pub struct TerminalTarget(TerminalTargetKind);
+
+#[derive(Clone, PartialEq, Eq)]
+enum TerminalTargetKind {
+    Scratch,
+    Workspace(WorkspaceTerminalTarget),
+}
+
+impl TerminalTarget {
+    pub const fn scratch() -> Self {
+        Self(TerminalTargetKind::Scratch)
+    }
+
+    pub fn workspace(workspace_id: WorkspaceId, root: WorkspaceRoot) -> Self {
+        Self(TerminalTargetKind::Workspace(WorkspaceTerminalTarget::new(workspace_id, root)))
+    }
+
+    pub fn workspace_id(&self) -> Option<&WorkspaceId> {
+        match &self.0 {
+            TerminalTargetKind::Scratch => None,
+            TerminalTargetKind::Workspace(target) => Some(target.workspace_id()),
+        }
+    }
+
+    pub fn root(&self) -> Option<&WorkspaceRoot> {
+        match &self.0 {
+            TerminalTargetKind::Scratch => None,
+            TerminalTargetKind::Workspace(target) => Some(target.root()),
+        }
+    }
+}
+
+impl fmt::Debug for TerminalTarget {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.0 {
+            TerminalTargetKind::Scratch => formatter.write_str("Scratch"),
+            TerminalTargetKind::Workspace(_) => formatter.write_str("Workspace(<redacted>)"),
+        }
+    }
+}
+
+/// A Workspace-specific target used for destructive terminal cleanup.
+///
+/// Keeping Scratch out of this type makes it impossible for a generic close
+/// call to terminate the global terminal by mistake.  The root is carried as
+/// an expected identity and must be revalidated by the native adapter before
+/// it mutates a tmux session.
+#[derive(Clone, PartialEq, Eq)]
+pub struct WorkspaceTerminalTarget {
+    workspace_id: WorkspaceId,
+    root: WorkspaceRoot,
+}
+
+impl WorkspaceTerminalTarget {
+    pub fn new(workspace_id: WorkspaceId, root: WorkspaceRoot) -> Self {
+        Self { workspace_id, root }
+    }
+
+    pub fn workspace_id(&self) -> &WorkspaceId {
+        &self.workspace_id
+    }
+
+    pub fn root(&self) -> &WorkspaceRoot {
+        &self.root
+    }
+}
+
+impl fmt::Debug for WorkspaceTerminalTarget {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("WorkspaceTerminalTarget(<redacted>)")
+    }
+}
+
+/// The canonical persisted preflight state.  The alias keeps terminal code
+/// readable while ensuring Settings, StateStore, and the provider seam cannot
+/// drift into separate socket-state enums.
+pub type TerminalPreflightState = SocketTargetPreflightState;
+
+/// Result of probing the requested socket name.  The requested name is part
+/// of the value so a delayed completion cannot be applied to a different
+/// socket transition.
+pub struct TerminalPreflight {
+    requested_socket_name: SocketName,
+    state: SocketTargetPreflightState,
+    owned_session_count: u32,
+    unknown_session_count: u32,
+}
+
+impl TerminalPreflight {
+    pub fn try_new(
+        requested_socket_name: SocketName,
+        state: SocketTargetPreflightState,
+        owned_session_count: u32,
+        unknown_session_count: u32,
+    ) -> Result<Self, PortError> {
+        if (state == SocketTargetPreflightState::TargetAbsent
+            && (owned_session_count != 0 || unknown_session_count != 0))
+            || (state == SocketTargetPreflightState::TargetDevhubEmpty && owned_session_count != 0)
+        {
+            return Err(PortError::new(PortErrorCode::Failed));
+        }
+        Ok(Self { requested_socket_name, state, owned_session_count, unknown_session_count })
+    }
+
+    pub fn requested_socket_name(&self) -> &str {
+        self.requested_socket_name.as_str()
+    }
+
+    pub const fn state(&self) -> SocketTargetPreflightState {
+        self.state
+    }
+
+    pub const fn owned_session_count(&self) -> u32 {
+        self.owned_session_count
+    }
+
+    pub const fn unknown_session_count(&self) -> u32 {
+        self.unknown_session_count
+    }
+}
+
+impl fmt::Debug for TerminalPreflight {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("TerminalPreflight")
+            .field("requested_socket_name", &self.requested_socket_name)
+            .field("state", &self.state)
+            .field("owned_session_count", &self.owned_session_count)
+            .field("unknown_session_count", &self.unknown_session_count)
+            .finish()
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct TerminalInspection {
+    process: ResourceInspection,
+    extra_panes: ResourceInspection,
+    extra_windows: ResourceInspection,
+}
+
+impl TerminalInspection {
+    pub const fn new(
+        process: ResourceInspection,
+        extra_panes: ResourceInspection,
+        extra_windows: ResourceInspection,
+    ) -> Self {
+        Self { process, extra_panes, extra_windows }
+    }
+
+    pub const fn process(&self) -> ResourceInspection {
+        self.process
+    }
+
+    pub const fn extra_panes(&self) -> ResourceInspection {
+        self.extra_panes
+    }
+
+    pub const fn extra_windows(&self) -> ResourceInspection {
+        self.extra_windows
+    }
+}
+
+#[derive(Clone, PartialEq, Eq)]
 pub struct TerminalResult {
-    pub workspace_id: Option<WorkspaceId>,
+    target: TerminalTarget,
+}
+
+impl TerminalResult {
+    pub fn new(target: TerminalTarget) -> Self {
+        Self { target }
+    }
+
+    pub fn target(&self) -> &TerminalTarget {
+        &self.target
+    }
+}
+
+impl fmt::Debug for TerminalResult {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.debug_struct("TerminalResult").field("target", &self.target).finish()
+    }
 }
 
 pub trait ConfigStore: Send + Sync {
@@ -495,14 +710,24 @@ pub trait AgentRuntime: Send + Sync {
 }
 
 pub trait TerminalRuntime: Send + Sync {
+    fn preflight(
+        &self,
+        requested_socket_name: SocketName,
+        cancel: CancellationToken,
+    ) -> PortFuture<TerminalPreflight>;
     fn ensure(
         &self,
-        workspace_id: Option<WorkspaceId>,
+        target: TerminalTarget,
         cancel: CancellationToken,
     ) -> PortFuture<TerminalResult>;
+    fn inspect(
+        &self,
+        target: TerminalTarget,
+        cancel: CancellationToken,
+    ) -> PortFuture<TerminalInspection>;
     fn close_workspace(
         &self,
-        workspace_id: WorkspaceId,
+        target: WorkspaceTerminalTarget,
         cancel: CancellationToken,
     ) -> PortFuture<()>;
 }
@@ -609,5 +834,54 @@ mod tests {
         let debug = format!("{resolution:?}");
         assert!(debug.contains("redacted"));
         assert!(!debug.contains("private-repo"));
+    }
+
+    #[test]
+    fn terminal_targets_and_socket_names_are_validated_and_redacted() {
+        let socket = SocketName::new("devhub").expect("valid socket");
+        assert_eq!(socket.as_str(), "devhub");
+        assert!(SocketName::new("").is_err());
+        assert!(SocketName::new("../escape").is_err());
+        let socket_debug = format!("{socket:?}");
+        assert!(socket_debug.contains("redacted"));
+        assert!(!socket_debug.contains("devhub"));
+
+        let workspace = WorkspaceRoot::new("/Users/statiolake/private-project").expect("root");
+        let workspace_id =
+            WorkspaceId::from_uuid("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa").expect("workspace id");
+        let target = TerminalTarget::workspace(workspace_id, workspace);
+        let target_debug = format!("{target:?}");
+        assert!(target_debug.contains("redacted"));
+        assert!(!target_debug.contains("private-project"));
+        assert!(format!(
+            "{:?}",
+            WorkspaceTerminalTarget::new(
+                WorkspaceId::from_uuid("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb").expect("id"),
+                WorkspaceRoot::new("/Users/statiolake/another-private-project").expect("root"),
+            )
+        )
+        .contains("redacted"));
+    }
+
+    #[test]
+    fn terminal_port_is_object_safe_and_preflight_invariants_are_checked() {
+        fn assert_object_safe(_: Option<&dyn TerminalRuntime>) {}
+        assert_object_safe(None);
+
+        let socket = SocketName::new("devhub").expect("valid socket");
+        let preflight = TerminalPreflight::try_new(
+            socket.clone(),
+            SocketTargetPreflightState::MarkedSessions,
+            1,
+            2,
+        )
+        .expect("valid preflight");
+        assert_eq!(preflight.requested_socket_name(), "devhub");
+        assert_eq!(preflight.owned_session_count(), 1);
+        assert_eq!(preflight.unknown_session_count(), 2);
+        assert!(
+            TerminalPreflight::try_new(socket, SocketTargetPreflightState::TargetAbsent, 1, 0,)
+                .is_err()
+        );
     }
 }

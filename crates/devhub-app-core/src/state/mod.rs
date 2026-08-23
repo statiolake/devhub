@@ -2134,11 +2134,14 @@ fn normalize_path_string(value: &str) -> String {
     normalized.to_string_lossy().into_owned()
 }
 
+pub(crate) fn is_valid_socket_name(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 64
+        && value.bytes().all(|byte| byte.is_ascii_alphanumeric() || b"_.-".contains(&byte))
+}
+
 fn validate_socket_name(value: &str) -> Result<(), StateError> {
-    if value.is_empty()
-        || value.len() > 64
-        || !value.bytes().all(|byte| byte.is_ascii_alphanumeric() || b"_.-".contains(&byte))
-    {
+    if !is_valid_socket_name(value) {
         return Err(state_error(StateErrorCode::InvalidState));
     }
     Ok(())

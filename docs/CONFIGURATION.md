@@ -83,7 +83,10 @@ When the file is absent, DevHub creates this default atomically. A missing optio
 - Leading `~` is expanded only when it is the complete first path component. Environment-variable and shell expansion are not performed.
 - Runtime strings may be absolute paths or command names. Relative paths containing `/` are rejected.
 - `tmux_socket_name` matches `[A-Za-z0-9_.-]{1,64}`.
-- `tmux_args` must not set `-L`, `-S`, or a conflicting socket selector.
+- `tmux_args` is a closed allowlist of the standalone flags `-u` and `-2`.
+  Socket selectors, config-file selectors, command names, separators, and all
+  other tmux options are rejected. DevHub inserts its own dedicated `-L`
+  socket selector and command boundary after these flags.
 - Agent environment keys must be valid environment names. Values remain opaque and are never logged.
 - Invalid content keeps the complete last-known-good configuration active; partial application is forbidden.
 
@@ -94,6 +97,18 @@ When the file is absent, DevHub creates this default atomically. A missing optio
 ## Runtimes
 
 `shell`, `git`, `tmux`, and `herdr` default to the values above. Runtime paths, imported environment, and extra tmux arguments apply only on the next DevHub launch. A socket-name change is first evaluated on the next launch: it becomes effective immediately only when the previous socket has no marked sessions and target preflight succeeds; otherwise it enters the pending/conflict flow below and may be applied live after the conflict is cleared and any required destruction is confirmed. Settings shows configured, resolved, and effective values.
+
+When DevHub creates a previously absent dedicated tmux server, its startup
+bootstrap quietly sources exactly one trusted user configuration, using the
+normal precedence: `$HOME/.tmux.conf`, then `$XDG_CONFIG_HOME/tmux/tmux.conf`
+when `XDG_CONFIG_HOME` is absolute, otherwise `$HOME/.config/tmux/tmux.conf`.
+If none exists it sources `/dev/null`. The selected path is resolved from the
+startup-frozen launch context and passed through one fixed environment
+variable; it is never interpolated into a command argument. The Homebrew
+system config is intentionally not sourced because `-f` replaces tmux's
+system/user startup selection and DevHub needs a deterministic, app-owned
+server boundary. User configuration runs before DevHub's Scratch metadata and
+ownership marker, so the final marker is written only after the exact setup.
 
 Changing `tmux_socket_name` cannot strand live terminals. On launch, DevHub probes the previous effective socket recorded in StateStore. If marked Scratch or Workspace sessions remain, the previous name stays effective and Settings reports a pending change rather than silently switching. The Runtimes section then offers `Apply socket change…`; it first verifies that the target socket is absent or correctly marked with no marked DevHub sessions, then shows one destructive confirmation with the exact old Scratch and Workspace session counts. A target conflict changes nothing. Accepting runs the persisted transition defined in `IDENTITY-AND-LIFECYCLE.md`: old cleanup failure keeps the old name effective, while failure to recreate fresh sessions after the new-name commit keeps the new name effective and retries only missing sessions. Unknown unmarked sessions are never destroyed. Agents and Editors are unaffected, and terminal processes are never migrated across servers.
 

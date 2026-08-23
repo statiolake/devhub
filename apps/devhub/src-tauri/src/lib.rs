@@ -27,10 +27,12 @@ use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder
 pub mod discovery;
 mod repository;
 mod runtime;
+mod terminal;
 mod workspace_resolver;
 use discovery::DiscoveryEngine;
 use repository::{GitRepositoryResolver, GitRepositoryResolverConfig};
 use runtime::{LoginEnvironmentStatus, RuntimeLaunchContext};
+use terminal::TmuxTerminalRuntime;
 use workspace_resolver::MacWorkspacePathResolver;
 
 pub const APP_SNAPSHOT_CHANGED_EVENT: &str = "app://snapshot-changed";
@@ -108,6 +110,7 @@ struct NativeAppState {
     _runtime_context: RuntimeLaunchContext,
     _workspace_discovery: DiscoveryEngine,
     _repository_resolver: GitRepositoryResolver,
+    _terminal_runtime: TmuxTerminalRuntime,
     _workspace_resolver: MacWorkspacePathResolver,
 }
 
@@ -175,6 +178,13 @@ impl NativeAppState {
             };
         let workspace_discovery =
             DiscoveryEngine::with_runtime_context(loaded_config.config(), runtime_context.clone());
+        let terminal_runtime = TmuxTerminalRuntime::new(
+            runtime_context.clone(),
+            runtime_context.resolve(&loaded_config.config().runtimes.tmux).ok(),
+            runtime_context.resolve(&loaded_config.config().runtimes.shell).ok(),
+            loaded_config.config().runtimes.tmux_args.clone(),
+            persisted.tmux.effective_socket_name.clone(),
+        );
         let profiles = load_config_profiles(loaded_config.config())?;
         let model = persisted.hydrate_model(&profiles).map_err(persistence_error)?;
         let mut coordinator = AppCoordinator::with_model(model);
@@ -199,6 +209,7 @@ impl NativeAppState {
             _runtime_context: runtime_context,
             _workspace_discovery: workspace_discovery,
             _repository_resolver: repository_resolver,
+            _terminal_runtime: terminal_runtime,
             _workspace_resolver: MacWorkspacePathResolver::new(home),
         })
     }
@@ -943,7 +954,7 @@ mod tests {
         config.runtimes.shell = "/bin/sh".to_owned();
         config.runtimes.tmux = "/bin/false".to_owned();
         config.runtimes.herdr = "/bin/false".to_owned();
-        config.runtimes.tmux_args = vec!["--test-runtime-change".to_owned()];
+        config.runtimes.tmux_args = vec!["-u".to_owned()];
 
         let after = state
             .save_settings(devhub_app_core::SettingsSaveRequestWire {
@@ -973,7 +984,7 @@ mod tests {
         config.runtimes.shell = "/bin/sh".to_owned();
         config.runtimes.tmux = "/bin/false".to_owned();
         config.runtimes.herdr = "/bin/false".to_owned();
-        config.runtimes.tmux_args = vec!["--reloaded-runtime-change".to_owned()];
+        config.runtimes.tmux_args = vec!["-2".to_owned()];
         std::fs::write(state.config_store.path(), config.to_toml().expect("runtime TOML"))
             .expect("write external runtime config");
 

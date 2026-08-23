@@ -41,20 +41,21 @@ complete.
 | Gate | Result | Remaining scope |
 | --- | --- | --- |
 | U2.3 App Shell | Partial | Native App Shell structure, navigation, immutable state/error handling, persistence, accessibility basics, and visual fixtures are complete. Context menus, confirmation sheets, and real provider surfaces remain for later integration waves. |
+| T3.3 TerminalRuntime | Partial | Slice A is complete: startup-frozen dedicated tmux ownership, race-safe bootstrap, trusted user-config selection, exact Scratch/Workspace session metadata, socket preflight, fail-closed inspection, idempotent close, and isolated real-tmux validation. Slice B remains for persisted socket transition/recreation and Settings apply integration; Slice C remains for PTY attach/resize/detach, xterm framing, and terminal-surface integration. |
 
 ## Next
 
-1. T3.3 TerminalRuntime: add the dedicated tmux server, verified sessions,
-   Scratch/Workspace terminals, PTY framing, recreation, attach compatibility,
-   busy inspection, and resumable socket replacement.
+1. T3.3 Slice B: integrate persisted socket transition/recreation with the
+   Settings apply flow, preserving preflight, conflict, confirmation, and
+   resumable cleanup semantics.
 
 The latest local validation also includes `CI=true pnpm run build` and
 `CI=true pnpm --filter @devhub/app exec tauri build --debug --no-bundle`.
 
 ## Later waves
 
-- Wave 3: T3.3 TerminalRuntime, E3.4 EditorHost, E3.5 Bridge extension, and
-  A3.6 AgentRuntime providers.
+- Wave 3: T3.3 TerminalRuntime completion, E3.4 EditorHost, E3.5 Bridge
+  extension, and A3.6 AgentRuntime providers.
 - Wave 4: workspace, agent, app lifecycle, keyboard, and diagnostics
   integration.
 - Wave 5: accessibility/IME, performance/endurance, brand, security, and

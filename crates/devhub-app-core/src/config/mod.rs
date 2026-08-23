@@ -1189,7 +1189,7 @@ fn validate_runtime(
                 location_for_key(document, input, "runtimes.tmux_args"),
             ));
         }
-        if is_socket_selector(argument) {
+        if !is_safe_tmux_argument(argument) {
             return Err(ConfigError::validation(
                 ValidationCode::ForbiddenTmuxArgument,
                 format!("runtimes.tmux_args[{index}]"),
@@ -1385,22 +1385,18 @@ fn is_environment_name(name: &str) -> bool {
 }
 
 fn is_socket_name(name: &str) -> bool {
-    !name.is_empty()
-        && name.len() <= 64
-        && name
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'.' | b'-'))
+    crate::state::is_valid_socket_name(name)
 }
 
-fn is_socket_selector(argument: &str) -> bool {
-    argument == "-L"
-        || argument == "-S"
-        || argument.starts_with("-L")
-        || argument.starts_with("-S")
-        || argument == "--socket"
-        || argument == "--socket-name"
-        || argument.starts_with("--socket=")
-        || argument.starts_with("--socket-name=")
+/// The only tmux client flags that may cross the native runtime boundary.
+///
+/// Arguments are placed before DevHub's dedicated `-L` selector and before
+/// every command.  An open-ended passthrough would therefore allow a config
+/// value to change the server, config file, command parser, or output mode.
+/// Keep this allowlist deliberately small and share it with the native
+/// adapter, rather than maintaining a second parser there.
+pub fn is_safe_tmux_argument(argument: &str) -> bool {
+    matches!(argument, "-u" | "-2")
 }
 
 fn source_location(
@@ -2127,6 +2123,21 @@ CLEAR_SECRET = "clear-secret"
         ];
         for raw in invalids {
             assert!(Config::parse(raw).is_err(), "invalid input accepted: {raw}");
+        }
+    }
+
+    #[test]
+    fn tmux_args_use_a_closed_native_allowlist() {
+        for argument in ["-u", "-2"] {
+            let input = format!("version = 1\n[runtimes]\ntmux_args = [\"{argument}\"]\n");
+            assert!(Config::parse(&input).is_ok(), "allowlisted argument rejected: {argument}");
+        }
+        for argument in
+            ["-L", "-S", "-f", "-v", "--config-file", "--socket=other", "new-session", ";"]
+        {
+            let input = format!("version = 1\n[runtimes]\ntmux_args = [\"{argument}\"]\n");
+            let error = Config::parse(&input).expect_err("unsafe tmux argument accepted");
+            assert_eq!(error.code(), ValidationCode::ForbiddenTmuxArgument);
         }
     }
 
