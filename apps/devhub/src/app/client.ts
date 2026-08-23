@@ -10,12 +10,14 @@ import {
   parseAppIntent,
   parseAppOutcome,
   parseAppSnapshot,
+  parseWorkspacePickerEvent as parseGeneratedWorkspacePickerEvent,
   type AppError,
   type AppAppearance,
   type AppEventCursor,
   type AppIntent,
   type AppOutcome,
   type AppSnapshot,
+  type WorkspacePickerEventWire,
 } from "../generated/app-shell";
 
 export const GET_APP_SNAPSHOT_COMMAND = "get_app_snapshot" as const;
@@ -24,6 +26,31 @@ export const DISPATCH_APP_INTENT_COMMAND = "dispatch_app_intent" as const;
 export const REPLAY_APP_EVENTS_COMMAND = "replay_app_events" as const;
 export const APP_SNAPSHOT_CHANGED_EVENT = "app://snapshot-changed" as const;
 export const APP_APPEARANCE_CHANGED_EVENT = "app://appearance-changed" as const;
+export const START_WORKSPACE_PICKER_COMMAND = "start_workspace_picker" as const;
+export const CANCEL_WORKSPACE_PICKER_COMMAND =
+  "cancel_workspace_picker" as const;
+export const SELECT_WORKSPACE_PICKER_COMMAND =
+  "select_workspace_picker" as const;
+export const CHOOSE_WORKSPACE_FOLDER_COMMAND =
+  "choose_workspace_folder" as const;
+export const APP_WORKSPACE_PICKER_EVENT = "app://workspace-picker" as const;
+
+export interface WorkspacePickerCandidate {
+  readonly operationId: string;
+  readonly sequence: number;
+  readonly label: string;
+  readonly searchText: string;
+  readonly path: string;
+  readonly score: number;
+}
+
+export type WorkspacePickerEvent = WorkspacePickerEventWire;
+
+export function parseWorkspacePickerEvent(
+  value: unknown,
+): WorkspacePickerEvent {
+  return parseGeneratedWorkspacePickerEvent(value);
+}
 
 export type AppSnapshotListener = (snapshot: AppSnapshot) => void;
 export type AppAppearanceListener = (appearance: AppAppearance) => void;
@@ -35,6 +62,13 @@ export interface AppShellClient {
   subscribe(listener: AppSnapshotListener): Promise<UnlistenFn>;
   subscribeAppearance?(listener: AppAppearanceListener): Promise<UnlistenFn>;
   replay?(cursor: number): Promise<AppEventCursor>;
+  startWorkspacePicker?(query?: string): Promise<string>;
+  cancelWorkspacePicker?(): Promise<void>;
+  selectWorkspacePicker?(path: string): Promise<AppOutcome>;
+  chooseWorkspaceFolder?(): Promise<string | undefined>;
+  subscribeWorkspacePicker?(
+    listener: (event: WorkspacePickerEvent) => void,
+  ): Promise<UnlistenFn>;
 }
 
 export interface AppShellTransport {
@@ -90,6 +124,32 @@ export function createTauriAppShellClient(
         cursor,
       });
       return parseAppEventCursor(value);
+    },
+    startWorkspacePicker(query = "") {
+      return transport.invoke<string>(START_WORKSPACE_PICKER_COMMAND, {
+        query,
+      });
+    },
+    cancelWorkspacePicker() {
+      return transport.invoke<void>(CANCEL_WORKSPACE_PICKER_COMMAND);
+    },
+    async selectWorkspacePicker(path) {
+      return parseAppOutcome(
+        await transport.invoke<unknown>(SELECT_WORKSPACE_PICKER_COMMAND, {
+          path,
+        }),
+      );
+    },
+    async chooseWorkspaceFolder() {
+      return transport.invoke<string | undefined>(
+        CHOOSE_WORKSPACE_FOLDER_COMMAND,
+      );
+    },
+    subscribeWorkspacePicker(listener) {
+      return transport.listen<WorkspacePickerEvent>(
+        APP_WORKSPACE_PICKER_EVENT,
+        (event) => listener(parseWorkspacePickerEvent(event.payload)),
+      );
     },
   };
 }

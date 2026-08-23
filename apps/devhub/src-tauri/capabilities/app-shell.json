@@ -6,6 +6,10 @@
   "permissions": [
     "core:default",
     "allow-get-app-snapshot",
+    "allow-start-workspace-picker",
+    "allow-cancel-workspace-picker",
+    "allow-select-workspace-picker",
+    "allow-choose-workspace-folder",
     "allow-get-app-appearance",
     "allow-dispatch-app-intent",
     "allow-replay-app-events",

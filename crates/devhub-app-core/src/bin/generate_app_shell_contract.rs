@@ -25,6 +25,7 @@ fn contract_schema() -> Value {
         ("AppAppearanceWire", root_schema::<AppAppearanceWire>()),
         ("AppIntentWire", root_schema::<AppIntentWire>()),
         ("AppOutcomeWire", root_schema::<AppOutcomeWire>()),
+        ("WorkspacePickerEventWire", root_schema::<WorkspacePickerEventWire>()),
         ("AppErrorWire", root_schema::<AppErrorWire>()),
         ("ReplayWire", root_schema::<ReplayWire>()),
     ];
@@ -56,6 +57,7 @@ fn contract_schema() -> Value {
             { "$ref": "#/$defs/AppAppearanceWire" },
             { "$ref": "#/$defs/AppIntentWire" },
             { "$ref": "#/$defs/AppOutcomeWire" },
+            { "$ref": "#/$defs/WorkspacePickerEventWire" },
             { "$ref": "#/$defs/AppErrorWire" },
             { "$ref": "#/$defs/ReplayWire" }
         ]
@@ -160,6 +162,16 @@ fn ts_type(schema: &Value) -> String {
     if let Some(values) = schema.get("oneOf").and_then(Value::as_array) {
         return values.iter().map(ts_type).collect::<Vec<_>>().join(" | ");
     }
+    if let Some(values) = schema.get("anyOf").and_then(Value::as_array) {
+        return values.iter().map(ts_type).collect::<Vec<_>>().join(" | ");
+    }
+    if let Some(values) = schema.get("type").and_then(Value::as_array) {
+        return values
+            .iter()
+            .map(|value| ts_type(&json!({ "type": value })))
+            .collect::<Vec<_>>()
+            .join(" | ");
+    }
     match schema.get("type").and_then(Value::as_str) {
         Some("string") => schema
             .get("enum")
@@ -174,6 +186,7 @@ fn ts_type(schema: &Value) -> String {
             })
             .filter(|value| !value.is_empty())
             .unwrap_or_else(|| "string".to_owned()),
+        Some("null") => "null".to_owned(),
         Some("integer") | Some("number") => "number".to_owned(),
         Some("boolean") => "boolean".to_owned(),
         Some("array") => format!(
@@ -308,6 +321,18 @@ function check(schema: Schema, value: unknown): void {
     if (key === "anyOf" ? passed < 1 : passed !== 1) throw new Error(`${key} mismatch`);
   }
   if (Array.isArray(schema.allOf)) for (const candidate of schema.allOf) check(candidate, value);
+  if (Array.isArray(schema.type)) {
+    const matched = schema.type.some((type: unknown) => {
+      try {
+        check({ ...schema, type }, value);
+        return true;
+      } catch {
+        return false;
+      }
+    });
+    if (!matched) throw new Error("type mismatch");
+    return;
+  }
   if (schema.type === "object") {
     if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("object expected");
     const item = value as Record<string, unknown>;
@@ -340,6 +365,7 @@ function check(schema: Schema, value: unknown): void {
     if (schema.maximum !== undefined && value > schema.maximum) throw new Error("number too large");
   }
   if (schema.type === "boolean" && typeof value !== "boolean") throw new Error("boolean expected");
+  if (schema.type === "null" && value !== null) throw new Error("null expected");
 }
 
 function freeze<T>(value: T): T {
@@ -356,6 +382,7 @@ export function parseAppIntent(value: unknown): AppIntent { check({ $ref: "#/$de
 export function parseAppOutcome(value: unknown): AppOutcome { check({ $ref: "#/$defs/AppOutcomeWire" }, value); return freeze(value as AppOutcome); }
 export function parseAppError(value: unknown): AppError { check({ $ref: "#/$defs/AppErrorWire" }, value); return freeze(value as AppError); }
 export function parseAppEventCursor(value: unknown): AppEventCursor { check({ $ref: "#/$defs/ReplayWire" }, value); return freeze(value as AppEventCursor); }
+export function parseWorkspacePickerEvent(value: unknown): WorkspacePickerEventWire { check({ $ref: "#/$defs/WorkspacePickerEventWire" }, value); return freeze(value as WorkspacePickerEventWire); }
 export function validateAppShell(value: unknown): void { const errors: unknown[] = []; for (const candidate of (APP_SHELL_SCHEMA.oneOf as readonly Schema[])) { try { check(candidate, value); return; } catch (error) { errors.push(error); } } throw new Error(`invalid App Shell value (${errors.length} alternatives rejected)`); }
 "###;
 

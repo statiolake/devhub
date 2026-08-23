@@ -325,6 +325,65 @@
           },
           "required": ["type", "workspaceId"],
           "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "type": {
+              "const": "locate_workspace",
+              "type": "string"
+            },
+            "workspaceId": {
+              "type": "string"
+            }
+          },
+          "required": ["type", "workspaceId", "path"],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "const": "request_close_workspace",
+              "type": "string"
+            },
+            "workspaceId": {
+              "type": "string"
+            }
+          },
+          "required": ["type", "workspaceId"],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "confirmationId": {
+              "type": "string"
+            },
+            "type": {
+              "const": "confirm_close_workspace",
+              "type": "string"
+            }
+          },
+          "required": ["type", "confirmationId"],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "const": "retry_close_workspace",
+              "type": "string"
+            },
+            "workspaceId": {
+              "type": "string"
+            }
+          },
+          "required": ["type", "workspaceId"],
+          "type": "object"
         }
       ],
       "title": "AppIntentWire"
@@ -449,6 +508,128 @@
             "sidebar"
           ],
           "type": "object"
+        },
+        "CloseDiagnosticWire": {
+          "enum": [
+            "root_missing",
+            "root_inaccessible",
+            "close_agents_unknown",
+            "close_terminal_unknown",
+            "close_editor_unknown",
+            "cleanup_failed",
+            "runtime_unavailable"
+          ],
+          "type": "string"
+        },
+        "CloseInspectionWire": {
+          "additionalProperties": false,
+          "properties": {
+            "agents": {
+              "$ref": "#/$defs/CloseResourceWire"
+            },
+            "terminalPanes": {
+              "$ref": "#/$defs/CloseResourceWire"
+            },
+            "terminalProcesses": {
+              "$ref": "#/$defs/CloseResourceWire"
+            },
+            "terminalWindows": {
+              "$ref": "#/$defs/CloseResourceWire"
+            },
+            "unsavedEditors": {
+              "$ref": "#/$defs/CloseResourceWire"
+            },
+            "workspaceId": {
+              "type": "string"
+            },
+            "workspaceLabel": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "workspaceId",
+            "workspaceLabel",
+            "agents",
+            "terminalProcesses",
+            "terminalPanes",
+            "terminalWindows",
+            "unsavedEditors"
+          ],
+          "type": "object"
+        },
+        "CloseResourceWire": {
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "clean",
+                  "type": "string"
+                }
+              },
+              "required": ["kind"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "count": {
+                  "format": "uint32",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "kind": {
+                  "const": "busy",
+                  "type": "string"
+                }
+              },
+              "required": ["kind", "count"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "diagnostic": {
+                  "$ref": "#/$defs/CloseDiagnosticWire"
+                },
+                "kind": {
+                  "const": "unknown",
+                  "type": "string"
+                }
+              },
+              "required": ["kind", "diagnostic"],
+              "type": "object"
+            }
+          ]
+        },
+        "ConfirmationPurposeWire": {
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "inspection": {
+                  "$ref": "#/$defs/CloseInspectionWire"
+                },
+                "kind": {
+                  "const": "workspace_close",
+                  "type": "string"
+                }
+              },
+              "required": ["kind", "inspection"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "agent_stop",
+                  "type": "string"
+                }
+              },
+              "required": ["kind"],
+              "type": "object"
+            }
+          ]
         },
         "ContextWire": {
           "oneOf": [
@@ -659,11 +840,14 @@
               "const": "confirmation_required",
               "type": "string"
             },
+            "purpose": {
+              "$ref": "#/$defs/ConfirmationPurposeWire"
+            },
             "snapshot": {
               "$ref": "#/$defs/AppSnapshotWire"
             }
           },
-          "required": ["kind", "confirmationId", "snapshot"],
+          "required": ["kind", "confirmationId", "snapshot", "purpose"],
           "type": "object"
         },
         {
@@ -769,6 +953,128 @@
         "sidebar"
       ],
       "type": "object"
+    },
+    "CloseDiagnosticWire": {
+      "enum": [
+        "root_missing",
+        "root_inaccessible",
+        "close_agents_unknown",
+        "close_terminal_unknown",
+        "close_editor_unknown",
+        "cleanup_failed",
+        "runtime_unavailable"
+      ],
+      "type": "string"
+    },
+    "CloseInspectionWire": {
+      "additionalProperties": false,
+      "properties": {
+        "agents": {
+          "$ref": "#/$defs/CloseResourceWire"
+        },
+        "terminalPanes": {
+          "$ref": "#/$defs/CloseResourceWire"
+        },
+        "terminalProcesses": {
+          "$ref": "#/$defs/CloseResourceWire"
+        },
+        "terminalWindows": {
+          "$ref": "#/$defs/CloseResourceWire"
+        },
+        "unsavedEditors": {
+          "$ref": "#/$defs/CloseResourceWire"
+        },
+        "workspaceId": {
+          "type": "string"
+        },
+        "workspaceLabel": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "workspaceId",
+        "workspaceLabel",
+        "agents",
+        "terminalProcesses",
+        "terminalPanes",
+        "terminalWindows",
+        "unsavedEditors"
+      ],
+      "type": "object"
+    },
+    "CloseResourceWire": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "clean",
+              "type": "string"
+            }
+          },
+          "required": ["kind"],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "count": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "kind": {
+              "const": "busy",
+              "type": "string"
+            }
+          },
+          "required": ["kind", "count"],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "diagnostic": {
+              "$ref": "#/$defs/CloseDiagnosticWire"
+            },
+            "kind": {
+              "const": "unknown",
+              "type": "string"
+            }
+          },
+          "required": ["kind", "diagnostic"],
+          "type": "object"
+        }
+      ]
+    },
+    "ConfirmationPurposeWire": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "inspection": {
+              "$ref": "#/$defs/CloseInspectionWire"
+            },
+            "kind": {
+              "const": "workspace_close",
+              "type": "string"
+            }
+          },
+          "required": ["kind", "inspection"],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "agent_stop",
+              "type": "string"
+            }
+          },
+          "required": ["kind"],
+          "type": "object"
+        }
+      ]
     },
     "ContextWire": {
       "oneOf": [
@@ -1247,6 +1553,253 @@
       "required": ["width", "expandedWorkspaceIds"],
       "type": "object"
     },
+    "WorkspacePickerEventWire": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Streaming Workspace Picker payload. This is part of the App Shell\ncontract so native and TypeScript consumers cannot silently diverge on\nevent shape or progress semantics.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "candidate",
+              "type": "string"
+            },
+            "label": {
+              "maxLength": 32768,
+              "minLength": 1,
+              "type": "string"
+            },
+            "operationId": {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            },
+            "path": {
+              "maxLength": 32768,
+              "minLength": 1,
+              "type": "string"
+            },
+            "score": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "searchText": {
+              "maxLength": 32768,
+              "minLength": 1,
+              "type": "string"
+            },
+            "sequence": {
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "kind",
+            "operationId",
+            "sequence",
+            "label",
+            "searchText",
+            "path",
+            "score"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "started",
+              "type": "string"
+            },
+            "operationId": {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            },
+            "sequence": {
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": ["kind", "operationId", "sequence"],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "errorCount": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "kind": {
+              "const": "source-error",
+              "type": "string"
+            },
+            "operationId": {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            },
+            "sequence": {
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "sourceId": {
+              "type": "string"
+            },
+            "truncated": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "kind",
+            "operationId",
+            "sequence",
+            "sourceId",
+            "errorCount",
+            "truncated"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "candidateCount": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "errorCount": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "kind": {
+              "const": "source-completed",
+              "type": "string"
+            },
+            "operationId": {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            },
+            "sequence": {
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "sourceId": {
+              "type": "string"
+            },
+            "stderrBytes": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "kind",
+            "operationId",
+            "sequence",
+            "sourceId",
+            "candidateCount",
+            "errorCount",
+            "stderrBytes"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "cancelled",
+              "type": "string"
+            },
+            "operationId": {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            },
+            "sequence": {
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "sourceId": {
+              "type": ["string", "null"]
+            }
+          },
+          "required": ["kind", "operationId", "sequence"],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "cancelled": {
+              "type": "boolean"
+            },
+            "candidateCount": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "errorCount": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "kind": {
+              "const": "completed",
+              "type": "string"
+            },
+            "operationId": {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            },
+            "sequence": {
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "sourceId": {
+              "type": ["string", "null"]
+            },
+            "stderrBytes": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "truncated": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "kind",
+            "operationId",
+            "sequence",
+            "candidateCount",
+            "errorCount",
+            "stderrBytes",
+            "cancelled",
+            "truncated"
+          ],
+          "type": "object"
+        }
+      ],
+      "title": "WorkspacePickerEventWire"
+    },
     "WorkspaceStateWire": {
       "enum": ["available", "unavailable", "closing", "closing-failed"],
       "type": "string"
@@ -1309,6 +1862,9 @@
     },
     {
       "$ref": "#/$defs/AppOutcomeWire"
+    },
+    {
+      "$ref": "#/$defs/WorkspacePickerEventWire"
     },
     {
       "$ref": "#/$defs/AppErrorWire"

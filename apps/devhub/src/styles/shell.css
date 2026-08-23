@@ -159,6 +159,70 @@
   color: var(--secondary);
 }
 
+.workspace-picker {
+  margin: var(--space-2) 0 var(--space-3);
+  padding: var(--space-2);
+  border: 1px solid var(--selection-line);
+  border-radius: var(--radius-small);
+  background: var(--surface);
+}
+
+.workspace-picker-header,
+.confirmation-actions {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.workspace-picker-header input {
+  min-width: 0;
+  flex: 1;
+  padding: 6px 8px;
+}
+
+.workspace-picker-results {
+  display: grid;
+  max-height: 240px;
+  gap: 2px;
+  margin-top: var(--space-2);
+  overflow: auto;
+}
+
+.workspace-picker-result {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  border: 0;
+  padding: 7px 8px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.workspace-picker-result:hover {
+  background: var(--selection);
+}
+.workspace-picker-result small {
+  color: var(--secondary);
+}
+
+.confirmation-backdrop {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: color-mix(in srgb, var(--graphite) 24%, transparent);
+}
+
+.confirmation-dialog {
+  width: min(420px, calc(100vw - 32px));
+  padding: 22px;
+  border: 1px solid var(--selection-line);
+  border-radius: var(--radius-medium);
+  background: var(--surface);
+  box-shadow: 0 20px 60px color-mix(in srgb, var(--graphite) 25%, transparent);
+}
+
 .disclosure-button {
   display: grid;
   width: 32px;

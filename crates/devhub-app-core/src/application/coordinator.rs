@@ -2,13 +2,15 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use crate::{
     AgentId, AgentProfile, AgentProfileId, AppModel, AppSnapshot, CleanupProgress, CloseInspection,
-    CloseInspectionInputs, DomainErrorCode, WorkspaceId, WorkspaceRoot,
+    CloseInspectionInputs, CloseInspectionProjection, DomainErrorCode, WorkspaceCloseRollback,
+    WorkspaceId, WorkspaceRoot,
 };
 
 use super::error::AppError;
 use super::intent::{
-    AgentLaunchResult, AgentStopResult, CleanupStep, IntentEnvelope, IntentOutcome, ProviderEvent,
-    ProviderEventEnvelope, RequestedPath, UserIntent, WorkspaceCleanupResult,
+    AgentLaunchResult, AgentStopResult, CleanupStep, ConfirmationOutcomePurpose, IntentEnvelope,
+    IntentOutcome, ProviderEvent, ProviderEventEnvelope, RequestedPath, UserIntent,
+    WorkspaceCleanupResult,
 };
 use super::types::{ConfirmationId, IntentId, OperationId, OperationToken, ProviderEventId};
 
@@ -242,6 +244,7 @@ enum OperationKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum OperationTarget {
     Path(RequestedPath),
+    WorkspacePath { workspace_id: WorkspaceId },
     ResolvedPath { root: WorkspaceRoot, selected_path: crate::DisplayPath },
     Workspace(WorkspaceId),
     Agent(AgentId),
@@ -347,13 +350,27 @@ enum PendingConfirmationState {
         confirmation_id: ConfirmationId,
         workspace_id: WorkspaceId,
         progress: CleanupProgress,
+        inspection: CloseInspectionProjection,
     },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum PendingConfirmationRequest {
-    Stop { agent_id: AgentId },
-    WorkspaceClose { workspace_id: WorkspaceId, progress: CleanupProgress },
+    Stop {
+        agent_id: AgentId,
+    },
+    WorkspaceClose {
+        workspace_id: WorkspaceId,
+        progress: CleanupProgress,
+        inspection: CloseInspectionProjection,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum CleanupPersistenceContinuation {
+    StartNext { workspace_id: WorkspaceId, progress: CleanupProgress },
+    FinalInspection { workspace_id: WorkspaceId, progress: CleanupProgress },
+    FinalizeWorkspace { workspace_id: WorkspaceId, progress: CleanupProgress },
 }
 
 /// Exactly one provider reconciliation epoch may be active at a time. An
@@ -401,6 +418,15 @@ pub struct AppCoordinator {
     confirmation_requests: BTreeMap<OperationId, PendingConfirmationRequest>,
     confirmations: Vec<PendingConfirmationState>,
     cleanup: BTreeMap<WorkspaceId, CleanupState>,
+    cleanup_persistence: BTreeMap<OperationId, CleanupPersistenceContinuation>,
+    finalization_pending: BTreeSet<OperationId>,
+    finalization_workspaces: BTreeMap<OperationId, WorkspaceId>,
+    finalization_roots: BTreeMap<WorkspaceRoot, OperationId>,
+    /// Model image retained while the final removal save is in flight. The
+    /// durable journal still contains the Closing tombstone; restoring this
+    /// image on a failed save makes the in-process retry state agree with the
+    /// relaunch state without repeating provider destruction.
+    finalization_backups: BTreeMap<OperationId, WorkspaceCloseRollback>,
     next_generation: u64,
     intent_order: VecDeque<IntentId>,
     provider_event_order: VecDeque<ProviderEventId>,
@@ -442,6 +468,11 @@ impl AppCoordinator {
             confirmation_requests: BTreeMap::new(),
             confirmations: Vec::new(),
             cleanup: BTreeMap::new(),
+            cleanup_persistence: BTreeMap::new(),
+            finalization_pending: BTreeSet::new(),
+            finalization_workspaces: BTreeMap::new(),
+            finalization_roots: BTreeMap::new(),
+            finalization_backups: BTreeMap::new(),
             next_generation: 0,
             intent_order: VecDeque::new(),
             provider_event_order: VecDeque::new(),
@@ -668,6 +699,12 @@ impl AppCoordinator {
             UserIntent::NewWindow { path: Some(path) } => {
                 self.begin_workspace_resolution(path, operation_id.clone())
             }
+            UserIntent::RetryWorkspace { workspace_id } => {
+                self.begin_workspace_retry(workspace_id, operation_id.clone())
+            }
+            UserIntent::LocateWorkspace { workspace_id, path } => {
+                self.begin_workspace_relocation(workspace_id, path, operation_id.clone())
+            }
             UserIntent::NewWindow { path: None } => {
                 // `AppModel::select_context` intentionally resets the
                 // canonical activity for a context. Avoid invoking it when
@@ -737,6 +774,47 @@ impl AppCoordinator {
         let (token, operation_id) = self.start_operation(
             OperationKind::ResolveWorkspacePath,
             OperationTarget::Path(path.clone()),
+            operation_id,
+        )?;
+        self.emit_effect(Effect::ResolveWorkspacePath { token, path });
+        Ok(IntentOutcome::Deferred { operation_id, snapshot: self.snapshot() })
+    }
+
+    fn begin_workspace_retry(
+        &mut self,
+        workspace_id: WorkspaceId,
+        operation_id: OperationId,
+    ) -> Result<IntentOutcome, AppError> {
+        let workspace = self.model.workspace(&workspace_id).ok_or_else(|| {
+            AppError::new(super::error::AppErrorCode::Domain)
+                .with_domain(DomainErrorCode::UnknownWorkspace)
+        })?;
+        if !matches!(workspace.state(), crate::WorkspaceState::Unavailable { .. }) {
+            return Err(AppError::new(super::error::AppErrorCode::Domain)
+                .with_domain(DomainErrorCode::WorkspaceNotUnavailable));
+        }
+        let path = RequestedPath::new(workspace.selected_path().as_path().to_string_lossy())
+            .map_err(AppError::from)?;
+        self.begin_workspace_relocation(workspace_id, path, operation_id)
+    }
+
+    fn begin_workspace_relocation(
+        &mut self,
+        workspace_id: WorkspaceId,
+        path: RequestedPath,
+        operation_id: OperationId,
+    ) -> Result<IntentOutcome, AppError> {
+        let workspace = self.model.workspace(&workspace_id).ok_or_else(|| {
+            AppError::new(super::error::AppErrorCode::Domain)
+                .with_domain(DomainErrorCode::UnknownWorkspace)
+        })?;
+        if !matches!(workspace.state(), crate::WorkspaceState::Unavailable { .. }) {
+            return Err(AppError::new(super::error::AppErrorCode::Domain)
+                .with_domain(DomainErrorCode::WorkspaceNotUnavailable));
+        }
+        let (token, operation_id) = self.start_operation(
+            OperationKind::ResolveWorkspacePath,
+            OperationTarget::WorkspacePath { workspace_id },
             operation_id,
         )?;
         self.emit_effect(Effect::ResolveWorkspacePath { token, path });
@@ -866,7 +944,8 @@ impl AppCoordinator {
         match workspace.state() {
             crate::WorkspaceState::Closing { .. }
                 if !matches!(continuation, InspectionContinuation::Finalize { .. })
-                    || !continuing_cleanup =>
+                    && !(matches!(continuation, InspectionContinuation::Retry { .. })
+                        && !continuing_cleanup) =>
             {
                 return Err(AppError::new(super::error::AppErrorCode::Domain)
                     .with_domain(DomainErrorCode::WorkspaceClosing));
@@ -928,6 +1007,29 @@ impl AppCoordinator {
         )
     }
 
+    /// Re-enters provider inspection for a durable Closing record recovered
+    /// after relaunch. The native adapter supplies a fresh operation identity;
+    /// no in-memory cleanup token is assumed to survive the crash.
+    pub fn resume_persisted_close(
+        &mut self,
+        workspace_id: WorkspaceId,
+        operation_id: OperationId,
+    ) -> Result<IntentOutcome, AppError> {
+        let progress = self
+            .model
+            .workspace(&workspace_id)
+            .and_then(|workspace| workspace.state().cleanup_progress())
+            .ok_or_else(|| {
+                AppError::new(super::error::AppErrorCode::Domain)
+                    .with_domain(DomainErrorCode::UnknownWorkspace)
+            })?;
+        self.begin_workspace_inspection(
+            workspace_id,
+            operation_id,
+            InspectionContinuation::Retry { progress },
+        )
+    }
+
     fn apply_provider_event(&mut self, event: &ProviderEvent) -> Result<IntentOutcome, AppError> {
         match event {
             ProviderEvent::WorkspacePathResolved { token, root, selected_path } => {
@@ -969,7 +1071,51 @@ impl AppCoordinator {
             ProviderEvent::AgentExited { token, agent_id } => self.agent_exited(token, agent_id),
             ProviderEvent::StatePersisted { token } => self.complete_persist(token),
             ProviderEvent::StatePersistenceFailed { token } => self.complete_persist_failed(token),
+            ProviderEvent::OperationFailed { token } => self.complete_operation_failed(token),
         }
+    }
+
+    fn complete_operation_failed(
+        &mut self,
+        token: &OperationToken,
+    ) -> Result<IntentOutcome, AppError> {
+        let Some(pending) = self.pending.get(token.operation_id()).cloned() else {
+            let code = if self.completed_tokens.contains_key(token.operation_id()) {
+                super::error::AppErrorCode::StaleCompletion
+            } else {
+                super::error::AppErrorCode::UnknownOperation
+            };
+            return Err(AppError::new(code).with_operation(token.operation_id().clone()));
+        };
+        if pending.token != *token {
+            return Err(AppError::new(super::error::AppErrorCode::StaleCompletion)
+                .with_operation(token.operation_id().clone()));
+        }
+        self.pending.remove(token.operation_id());
+        self.clear_operation_auxiliary_state(token);
+        self.remember_completed(token.clone());
+        Err(AppError::new(super::error::AppErrorCode::PortUnavailable)
+            .with_operation(token.operation_id().clone()))
+    }
+
+    fn clear_operation_auxiliary_state(&mut self, token: &OperationToken) {
+        let operation_id = token.operation_id();
+        self.resolved_paths.remove(operation_id);
+        self.resolved_profiles.remove(operation_id);
+        self.launch_profiles.remove(operation_id);
+        self.inspection_continuations.remove(operation_id);
+        self.confirmation_requests.remove(operation_id);
+        self.cleanup_persistence.remove(operation_id);
+        self.finalization_pending.remove(operation_id);
+        if let Some(workspace_id) = self.finalization_workspaces.remove(operation_id) {
+            self.cleanup.remove(&workspace_id);
+            self.finalization_backups.remove(operation_id);
+            self.finalization_roots.retain(|_, owner| owner != operation_id);
+        }
+        if self.active_reconcile.as_ref().is_some_and(|active| active.token() == token) {
+            self.active_reconcile = None;
+        }
+        self.cleanup.retain(|_, state| &state.operation_id != operation_id);
     }
 
     fn complete_workspace_path(
@@ -979,8 +1125,26 @@ impl AppCoordinator {
         selected_path: &crate::DisplayPath,
     ) -> Result<IntentOutcome, AppError> {
         let pending = self.take_pending(token, OperationKind::ResolveWorkspacePath, |target| {
-            matches!(target, OperationTarget::Path(_))
+            matches!(target, OperationTarget::Path(_) | OperationTarget::WorkspacePath { .. })
         })?;
+        let relocating_workspace = match &pending.target {
+            OperationTarget::WorkspacePath { workspace_id } => Some(workspace_id.clone()),
+            OperationTarget::Path(_) => None,
+            _ => unreachable!("workspace path completion target was validated above"),
+        };
+        if let Some(workspace_id) = relocating_workspace {
+            self.model
+                .relocate_workspace(&workspace_id, root.clone(), selected_path.clone())
+                .map_err(AppError::from)?;
+            self.model
+                .select_context(crate::NavigationContext::Workspace(workspace_id))
+                .map_err(AppError::from)?;
+            let snapshot = self.snapshot();
+            self.emit(CoordinatorEvent::Snapshot(snapshot.clone()));
+            self.emit(CoordinatorEvent::OperationCompleted { token: token.clone() });
+            self.queue_persist(token.operation_id().clone());
+            return Ok(IntentOutcome::Updated { snapshot });
+        }
         let previous_operation_id = pending.token.operation_id().clone();
         self.resolved_paths
             .insert(previous_operation_id.clone(), (root.clone(), selected_path.clone()));
@@ -1018,6 +1182,37 @@ impl AppCoordinator {
                 AppError::new(super::error::AppErrorCode::UnknownOperation)
                     .with_operation(token.operation_id().clone())
             })?;
+        if self.finalization_roots.contains_key(&root) {
+            return Err(AppError::new(super::error::AppErrorCode::Domain)
+                .with_domain(DomainErrorCode::DuplicateWorkspaceRoot)
+                .with_operation(token.operation_id().clone()));
+        }
+        // Canonical Workspace Root is the uniqueness key. Opening an already
+        // open root is a focus operation, not a duplicate-resource failure.
+        // Resolve the existing identity before attempting any model mutation
+        // so the coordinator remains the sole owner of selection state.
+        if let Some(existing_id) = self
+            .model
+            .workspaces()
+            .iter()
+            .find(|workspace| workspace.state().is_available() && workspace.root() == &root)
+            .map(|workspace| workspace.id().clone())
+        {
+            let before_revision = self.model.snapshot().revision();
+            self.model
+                .select_context(crate::NavigationContext::Workspace(existing_id))
+                .map_err(AppError::from)?;
+            let snapshot = self.snapshot();
+            if snapshot.revision() != before_revision {
+                self.emit(CoordinatorEvent::Snapshot(snapshot.clone()));
+                self.emit(CoordinatorEvent::OperationCompleted { token: token.clone() });
+                self.queue_persist(token.operation_id().clone());
+                return Ok(IntentOutcome::Updated { snapshot });
+            }
+            self.emit(CoordinatorEvent::OperationCompleted { token: token.clone() });
+            self.emit(CoordinatorEvent::Noop);
+            return Ok(IntentOutcome::Noop { snapshot });
+        }
         self.model
             .add_workspace(crate::Workspace::new(workspace_id.clone(), root, selected_path, None))
             .map_err(AppError::from)?;
@@ -1282,6 +1477,12 @@ impl AppCoordinator {
                 self.confirmation_ids.remove(&evicted);
             }
         }
+        let purpose = match &request {
+            PendingConfirmationRequest::WorkspaceClose { inspection, .. } => {
+                ConfirmationOutcomePurpose::WorkspaceClose { inspection: inspection.clone() }
+            }
+            PendingConfirmationRequest::Stop { .. } => ConfirmationOutcomePurpose::AgentStop,
+        };
         match request {
             PendingConfirmationRequest::Stop { agent_id } => {
                 self.confirmations.retain(|pending| {
@@ -1292,7 +1493,7 @@ impl AppCoordinator {
                     agent_id,
                 });
             }
-            PendingConfirmationRequest::WorkspaceClose { workspace_id, progress } => {
+            PendingConfirmationRequest::WorkspaceClose { workspace_id, progress, inspection } => {
                 self.confirmations.retain(|pending| {
                     !matches!(pending, PendingConfirmationState::WorkspaceClose { workspace_id: id, .. } if id == &workspace_id)
                 });
@@ -1300,6 +1501,7 @@ impl AppCoordinator {
                     confirmation_id: confirmation_id.clone(),
                     workspace_id,
                     progress,
+                    inspection: inspection.clone(),
                 });
             }
         }
@@ -1307,6 +1509,7 @@ impl AppCoordinator {
         Ok(IntentOutcome::ConfirmationRequired {
             confirmation_id: confirmation_id.clone(),
             snapshot: self.snapshot(),
+            purpose,
         })
     }
 
@@ -1351,16 +1554,39 @@ impl AppCoordinator {
                 self.queue_persist(token.operation_id().clone());
                 return Ok(IntentOutcome::Updated { snapshot });
             }
+            if !matches!(continuation, InspectionContinuation::Begin) {
+                // Confirmation and retry are already authorized by the
+                // caller. Reinspection verifies current provider state, but
+                // must not manufacture a second confirmation loop.
+                return self.start_cleanup(
+                    workspace_id.clone(),
+                    progress,
+                    token.operation_id().clone(),
+                );
+            }
             let (confirmation_token, operation_id) = self.start_operation(
                 OperationKind::GenerateConfirmationId,
                 OperationTarget::Workspace(workspace_id.clone()),
                 token.operation_id().clone(),
             )?;
+            let workspace_label = self
+                .snapshot()
+                .workspaces()
+                .iter()
+                .find(|workspace| workspace.id() == workspace_id)
+                .map(|workspace| workspace.label().to_owned())
+                .unwrap_or_else(|| "Workspace".to_owned());
+            let inspection = CloseInspectionProjection::from_inputs(
+                workspace_id.clone(),
+                workspace_label,
+                inspection,
+            );
             self.confirmation_requests.insert(
                 operation_id.clone(),
                 PendingConfirmationRequest::WorkspaceClose {
                     workspace_id: workspace_id.clone(),
                     progress,
+                    inspection,
                 },
             );
             self.emit_effect(Effect::GenerateConfirmationId {
@@ -1385,15 +1611,62 @@ impl AppCoordinator {
             AppError::new(super::error::AppErrorCode::Domain)
                 .with_domain(DomainErrorCode::UnknownWorkspace)
         })?;
+        let initial_state = workspace.state();
         let continuing = self
             .cleanup
             .get(&workspace_id)
             .is_some_and(|state| state.operation_id == operation_id && state.progress == progress);
-        if workspace.state().is_closing() && !continuing {
+        let persisted_resume = workspace.state().cleanup_progress() == Some(progress)
+            && !self.cleanup.contains_key(&workspace_id);
+        if workspace.state().is_closing() && !continuing && !persisted_resume {
             return Err(AppError::new(super::error::AppErrorCode::Domain)
                 .with_domain(DomainErrorCode::WorkspaceClosing));
         }
+        if persisted_resume {
+            self.cleanup.insert(
+                workspace_id.clone(),
+                CleanupState {
+                    operation_id: operation_id.clone(),
+                    workspace_id: workspace_id.clone(),
+                    progress,
+                },
+            );
+        }
         let step = next_cleanup_step(progress);
+
+        // Closing is a durable tombstone, not merely an in-memory UI state.
+        // Persist it before the first destructive provider effect, including
+        // retries after a previous persistence failure. The continuation is
+        // consumed by `complete_persist`, which then re-enters this method
+        // and is allowed to emit the Agents cleanup effect.
+        let needs_initial_persist = progress == CleanupProgress::new(0, false, false)
+            && !persisted_resume
+            && (!continuing
+                || matches!(initial_state, crate::WorkspaceState::ClosingFailed { .. }));
+        if needs_initial_persist {
+            if !continuing || matches!(initial_state, crate::WorkspaceState::ClosingFailed { .. }) {
+                self.model
+                    .mark_workspace_closing(&workspace_id, progress)
+                    .map_err(AppError::from)?;
+                self.cancel_workspace_agent_operations(&workspace_id);
+                self.invalidate_reconciliation();
+                self.emit(CoordinatorEvent::Snapshot(self.snapshot()));
+            }
+            self.cleanup.insert(
+                workspace_id.clone(),
+                CleanupState {
+                    operation_id: operation_id.clone(),
+                    workspace_id: workspace_id.clone(),
+                    progress,
+                },
+            );
+            self.cleanup_persistence.insert(
+                operation_id.clone(),
+                CleanupPersistenceContinuation::StartNext { workspace_id, progress },
+            );
+            self.queue_persist(operation_id.clone());
+            return Ok(IntentOutcome::Deferred { operation_id, snapshot: self.snapshot() });
+        }
         let (token, operation_id) = self.start_operation(
             OperationKind::Cleanup(step),
             OperationTarget::Workspace(workspace_id.clone()),
@@ -1404,7 +1677,7 @@ impl AppCoordinator {
         // operation registration. This prevents a completion that was
         // already in flight from observing an Available Workspace between
         // the first cleanup effect and the domain transition.
-        if !continuing {
+        if !continuing && !persisted_resume {
             if let Err(error) = self.model.mark_workspace_closing(&workspace_id, progress) {
                 self.pending.remove(&operation_id);
                 self.remember_completed(token);
@@ -1499,9 +1772,8 @@ impl AppCoordinator {
                         .model
                         .workspace(workspace_id)
                         .map(|workspace| workspace.agents().len() as u32)
-                        .unwrap_or(0)
-                        .max(1);
-                    CleanupProgress::new(
+                        .unwrap_or(0);
+                    CleanupProgress::after_agents(
                         count,
                         progress.terminal_closed(),
                         progress.editor_closed(),
@@ -1559,10 +1831,6 @@ impl AppCoordinator {
                             self.queue_persist(token.operation_id().clone());
                             return Ok(IntentOutcome::Updated { snapshot });
                         }
-                        self.model
-                            .close_workspace(workspace_id, CloseInspection::Clean)
-                            .map_err(AppError::from)?;
-                        self.cleanup.remove(workspace_id);
                     }
                 }
                 if !matches!(step, CleanupStep::StateCommitted) {
@@ -1574,19 +1842,47 @@ impl AppCoordinator {
                 self.emit(CoordinatorEvent::Snapshot(snapshot.clone()));
                 self.emit(CoordinatorEvent::OperationCompleted { token: token.clone() });
                 match step {
-                    CleanupStep::Agents | CleanupStep::Terminal => self.start_cleanup(
-                        workspace_id.clone(),
-                        next_progress,
-                        token.operation_id().clone(),
-                    ),
-                    CleanupStep::Editor => self.begin_workspace_inspection(
-                        workspace_id.clone(),
-                        token.operation_id().clone(),
-                        InspectionContinuation::Finalize { progress: next_progress },
-                    ),
-                    CleanupStep::StateCommitted => {
+                    CleanupStep::Agents | CleanupStep::Terminal => {
+                        self.cleanup_persistence.insert(
+                            token.operation_id().clone(),
+                            CleanupPersistenceContinuation::StartNext {
+                                workspace_id: workspace_id.clone(),
+                                progress: next_progress,
+                            },
+                        );
                         self.queue_persist(token.operation_id().clone());
-                        Ok(IntentOutcome::Updated { snapshot })
+                        Ok(IntentOutcome::Deferred {
+                            operation_id: token.operation_id().clone(),
+                            snapshot,
+                        })
+                    }
+                    CleanupStep::Editor => {
+                        self.cleanup_persistence.insert(
+                            token.operation_id().clone(),
+                            CleanupPersistenceContinuation::FinalInspection {
+                                workspace_id: workspace_id.clone(),
+                                progress: next_progress,
+                            },
+                        );
+                        self.queue_persist(token.operation_id().clone());
+                        Ok(IntentOutcome::Deferred {
+                            operation_id: token.operation_id().clone(),
+                            snapshot,
+                        })
+                    }
+                    CleanupStep::StateCommitted => {
+                        self.cleanup_persistence.insert(
+                            token.operation_id().clone(),
+                            CleanupPersistenceContinuation::FinalizeWorkspace {
+                                workspace_id: workspace_id.clone(),
+                                progress: next_progress,
+                            },
+                        );
+                        self.queue_persist(token.operation_id().clone());
+                        Ok(IntentOutcome::Deferred {
+                            operation_id: token.operation_id().clone(),
+                            snapshot,
+                        })
                     }
                 }
             }
@@ -1598,6 +1894,52 @@ impl AppCoordinator {
             matches!(target, OperationTarget::Application)
         })?;
         self.emit(CoordinatorEvent::OperationCompleted { token: token.clone() });
+        if let Some(continuation) = self.cleanup_persistence.remove(token.operation_id()) {
+            return match continuation {
+                CleanupPersistenceContinuation::StartNext { workspace_id, progress } => {
+                    self.start_cleanup(workspace_id, progress, token.operation_id().clone())
+                }
+                CleanupPersistenceContinuation::FinalInspection { workspace_id, progress } => self
+                    .begin_workspace_inspection(
+                        workspace_id,
+                        token.operation_id().clone(),
+                        InspectionContinuation::Finalize { progress },
+                    ),
+                CleanupPersistenceContinuation::FinalizeWorkspace { workspace_id, .. } => {
+                    let workspace = self.model.workspace(&workspace_id).ok_or_else(|| {
+                        AppError::new(super::error::AppErrorCode::StaleCompletion)
+                            .with_operation(token.operation_id().clone())
+                    })?;
+                    if !workspace.state().is_closing() || !workspace.agents().is_empty() {
+                        return Err(AppError::new(super::error::AppErrorCode::StaleCompletion)
+                            .with_operation(token.operation_id().clone()));
+                    }
+                    let backup = self
+                        .model
+                        .close_workspace_for_persistence(&workspace_id, CloseInspection::Clean)
+                        .map_err(AppError::from)?;
+                    self.finalization_roots
+                        .insert(backup.root().clone(), token.operation_id().clone());
+                    self.cleanup.remove(&workspace_id);
+                    self.finalization_pending.insert(token.operation_id().clone());
+                    self.finalization_workspaces.insert(token.operation_id().clone(), workspace_id);
+                    self.finalization_backups.insert(token.operation_id().clone(), backup);
+                    let snapshot = self.snapshot();
+                    self.emit(CoordinatorEvent::Snapshot(snapshot.clone()));
+                    self.queue_persist(token.operation_id().clone());
+                    Ok(IntentOutcome::Deferred {
+                        operation_id: token.operation_id().clone(),
+                        snapshot,
+                    })
+                }
+            };
+        }
+        if self.finalization_pending.remove(token.operation_id()) {
+            self.finalization_workspaces.remove(token.operation_id());
+            if let Some(backup) = self.finalization_backups.remove(token.operation_id()) {
+                self.finalization_roots.remove(backup.root());
+            }
+        }
         Ok(IntentOutcome::Noop { snapshot: self.snapshot() })
     }
 
@@ -1608,8 +1950,66 @@ impl AppCoordinator {
         self.take_pending(token, OperationKind::PersistState, |target| {
             matches!(target, OperationTarget::Application)
         })?;
+        if let Some(continuation) = self.cleanup_persistence.remove(token.operation_id()) {
+            let continuation = match continuation {
+                CleanupPersistenceContinuation::StartNext { workspace_id, progress }
+                | CleanupPersistenceContinuation::FinalInspection { workspace_id, progress } => {
+                    Some((workspace_id, progress))
+                }
+                CleanupPersistenceContinuation::FinalizeWorkspace { workspace_id, progress } => {
+                    self.finalization_pending.remove(token.operation_id());
+                    Some((workspace_id, progress))
+                }
+            };
+            if let Some((workspace_id, progress)) = continuation {
+                self.model
+                    .mark_workspace_closing_failed(
+                        &workspace_id,
+                        crate::DiagnosticCode::CleanupFailed,
+                        progress,
+                    )
+                    .map_err(AppError::from)?;
+            }
+        }
+        // A failed final removal save leaves the durable Closing tombstone in
+        // the previous journal generation; startup can safely finish that
+        // tombstone without repeating provider destruction.
+        if self.finalization_pending.remove(token.operation_id()) {
+            let workspace_id = self.finalization_workspaces.remove(token.operation_id());
+            if let Some(backup) = self.finalization_backups.remove(token.operation_id()) {
+                let root = backup.root().clone();
+                self.model.rollback_workspace_close(backup).map_err(AppError::from)?;
+                self.finalization_roots.remove(&root);
+                if let Some(workspace_id) = workspace_id {
+                    let progress = match self
+                        .model
+                        .workspace(&workspace_id)
+                        .map(|workspace| workspace.state())
+                    {
+                        Some(crate::WorkspaceState::Closing { progress }) => progress,
+                        _ => CleanupProgress::new(0, false, false),
+                    };
+                    self.model
+                        .mark_workspace_closing_failed(
+                            &workspace_id,
+                            crate::DiagnosticCode::CleanupFailed,
+                            progress,
+                        )
+                        .map_err(AppError::from)?;
+                    self.cleanup.insert(
+                        workspace_id.clone(),
+                        CleanupState {
+                            operation_id: token.operation_id().clone(),
+                            workspace_id: workspace_id.clone(),
+                            progress,
+                        },
+                    );
+                }
+            }
+        }
         let error = AppError::new(super::error::AppErrorCode::PersistenceDegraded)
             .with_operation(token.operation_id().clone());
+        self.emit(CoordinatorEvent::Snapshot(self.snapshot()));
         self.emit(CoordinatorEvent::Error(error));
         self.emit(CoordinatorEvent::OperationCompleted { token: token.clone() });
         Ok(IntentOutcome::PersistenceDegraded { snapshot: self.snapshot() })
@@ -1880,7 +2280,7 @@ impl AppCoordinator {
 }
 
 fn next_cleanup_step(progress: CleanupProgress) -> CleanupStep {
-    if progress.agents_closed() == 0 {
+    if !progress.agents_step_completed() {
         CleanupStep::Agents
     } else if !progress.terminal_closed() {
         CleanupStep::Terminal
@@ -1893,15 +2293,13 @@ fn next_cleanup_step(progress: CleanupProgress) -> CleanupStep {
 
 fn progress_after_step(progress: CleanupProgress, step: CleanupStep) -> CleanupProgress {
     match step {
-        CleanupStep::Agents => {
-            CleanupProgress::new(1, progress.terminal_closed(), progress.editor_closed())
-        }
-        CleanupStep::Terminal => {
-            CleanupProgress::new(progress.agents_closed(), true, progress.editor_closed())
-        }
-        CleanupStep::Editor => {
-            CleanupProgress::new(progress.agents_closed(), progress.terminal_closed(), true)
-        }
+        CleanupStep::Agents => CleanupProgress::after_agents(
+            progress.agents_closed(),
+            progress.terminal_closed(),
+            progress.editor_closed(),
+        ),
+        CleanupStep::Terminal => progress.with_terminal_closed(true),
+        CleanupStep::Editor => progress.with_editor_closed(true),
         CleanupStep::StateCommitted => progress,
     }
 }
@@ -2148,6 +2546,59 @@ mod tests {
     }
 
     #[test]
+    fn opening_an_already_open_canonical_root_focuses_existing_workspace() {
+        let mut model = AppModel::new();
+        let existing_id = WorkspaceId::for_test("already-open-workspace");
+        let root = WorkspaceRoot::new("/tmp/already-open").unwrap();
+        model
+            .add_workspace(crate::Workspace::new(
+                existing_id.clone(),
+                root.clone(),
+                DisplayPath::new("/tmp/already-open").unwrap(),
+                None,
+            ))
+            .unwrap();
+        let mut coordinator = AppCoordinator::with_model(model);
+        coordinator.subscribe();
+
+        coordinator
+            .dispatch_user(intent(
+                "open-existing-root",
+                UserIntent::OpenFolder { path: RequestedPath::new("/tmp/already-open").unwrap() },
+            ))
+            .unwrap();
+        let (path_token, _) = operation_effect(&coordinator.subscribe().into_events());
+        coordinator
+            .accept_provider_event(ProviderEventEnvelope::new(
+                op("existing-path-resolved"),
+                ProviderEvent::WorkspacePathResolved {
+                    token: path_token,
+                    root,
+                    selected_path: DisplayPath::new("/tmp/already-open").unwrap(),
+                },
+            ))
+            .unwrap();
+        let (id_token, _) = operation_effect(&coordinator.subscribe().into_events());
+        let outcome = coordinator
+            .accept_provider_event(ProviderEventEnvelope::new(
+                op("existing-id-generated"),
+                ProviderEvent::WorkspaceIdGenerated {
+                    token: id_token,
+                    workspace_id: WorkspaceId::for_test("discarded-new-workspace"),
+                },
+            ))
+            .unwrap();
+
+        assert!(matches!(outcome, IntentOutcome::Updated { .. }));
+        assert_eq!(coordinator.snapshot().workspaces().len(), 1);
+        assert_eq!(
+            coordinator.snapshot().selection().context(),
+            &NavigationContext::Workspace(existing_id)
+        );
+        assert_eq!(coordinator.snapshot().selection().activity(), Activity::Editor);
+    }
+
+    #[test]
     fn stale_wrong_kind_completion_is_content_free_and_does_not_mutate() {
         let mut coordinator = AppCoordinator::new();
         coordinator.subscribe();
@@ -2173,6 +2624,38 @@ mod tests {
         assert_eq!(error.intent_id(), None);
         assert_eq!(error.operation_id().expect("operation id"), error.operation_id().unwrap());
         assert_eq!(coordinator.snapshot(), before);
+    }
+
+    #[test]
+    fn persisted_close_resume_reinspects_and_does_not_reconfirm_busy_resources() {
+        let workspace_id = WorkspaceId::for_test("resume-close");
+        let mut model = AppModel::new();
+        model.add_workspace(workspace(workspace_id.as_str(), "/tmp/resume-close")).unwrap();
+        model.mark_workspace_closing(&workspace_id, CleanupProgress::new(0, false, false)).unwrap();
+        let mut coordinator = AppCoordinator::with_model(model);
+        coordinator.subscribe();
+        coordinator
+            .resume_persisted_close(workspace_id.clone(), op("resume-close-operation"))
+            .unwrap();
+        let (inspection_token, _) = operation_effect(&coordinator.subscribe().into_events());
+        coordinator
+            .accept_provider_event(ProviderEventEnvelope::new(
+                op("resume-close-inspection"),
+                ProviderEvent::WorkspaceInspectionCompleted {
+                    token: inspection_token,
+                    workspace_id: workspace_id.clone(),
+                    inspection: CloseInspectionInputs::new(
+                        ResourceInspection::busy(1).unwrap(),
+                        ResourceInspection::Clean,
+                        ResourceInspection::Clean,
+                        ResourceInspection::Clean,
+                        ResourceInspection::Clean,
+                    ),
+                },
+            ))
+            .unwrap();
+        let (_, cleanup_effect) = operation_effect(&coordinator.subscribe().into_events());
+        assert!(matches!(cleanup_effect, Effect::CleanupWorkspace { .. }));
     }
 
     #[test]
@@ -2366,6 +2849,15 @@ mod tests {
                 },
             ))
             .unwrap();
+        let (initial_persist_token, initial_persist_effect) =
+            operation_effect(&coordinator.subscribe().into_events());
+        assert!(matches!(initial_persist_effect, Effect::PersistState { .. }));
+        coordinator
+            .accept_provider_event(ProviderEventEnvelope::new(
+                op("initial-close-persisted"),
+                ProviderEvent::StatePersisted { token: initial_persist_token },
+            ))
+            .unwrap();
         let (agents_token, effect) = operation_effect(&coordinator.subscribe().into_events());
         assert!(matches!(effect, Effect::CleanupWorkspace { step: CleanupStep::Agents, .. }));
         assert!(matches!(
@@ -2386,6 +2878,15 @@ mod tests {
             coordinator.snapshot().workspaces()[0].state(),
             crate::WorkspaceState::Closing { .. }
         ));
+        let (agents_persist_token, persist_effect) =
+            operation_effect(&coordinator.subscribe().into_events());
+        assert!(matches!(persist_effect, Effect::PersistState { .. }));
+        coordinator
+            .accept_provider_event(ProviderEventEnvelope::new(
+                op("agents-persisted"),
+                ProviderEvent::StatePersisted { token: agents_persist_token },
+            ))
+            .unwrap();
         let (terminal_token, effect) = operation_effect(&coordinator.subscribe().into_events());
         assert!(matches!(effect, Effect::CleanupWorkspace { step: CleanupStep::Terminal, .. }));
         coordinator
@@ -2435,6 +2936,15 @@ mod tests {
                 },
             ))
             .unwrap();
+        let (retry_terminal_persist_token, persist_effect) =
+            operation_effect(&coordinator.subscribe().into_events());
+        assert!(matches!(persist_effect, Effect::PersistState { .. }));
+        coordinator
+            .accept_provider_event(ProviderEventEnvelope::new(
+                op("terminal-retry-persisted"),
+                ProviderEvent::StatePersisted { token: retry_terminal_persist_token },
+            ))
+            .unwrap();
         let (editor_token, effect) = operation_effect(&coordinator.subscribe().into_events());
         assert!(matches!(effect, Effect::CleanupWorkspace { step: CleanupStep::Editor, .. }));
         coordinator
@@ -2445,6 +2955,15 @@ mod tests {
                     workspace_id: workspace_id.clone(),
                     result: WorkspaceCleanupResult::StepCompleted(CleanupStep::Editor),
                 },
+            ))
+            .unwrap();
+        let (editor_persist_token, persist_effect) =
+            operation_effect(&coordinator.subscribe().into_events());
+        assert!(matches!(persist_effect, Effect::PersistState { .. }));
+        coordinator
+            .accept_provider_event(ProviderEventEnvelope::new(
+                op("editor-persisted"),
+                ProviderEvent::StatePersisted { token: editor_persist_token },
             ))
             .unwrap();
         let (final_inspect_token, effect) =
@@ -2473,6 +2992,15 @@ mod tests {
                     workspace_id,
                     result: WorkspaceCleanupResult::StepCompleted(CleanupStep::StateCommitted),
                 },
+            ))
+            .unwrap();
+        let (final_persist_token, final_persist_effect) =
+            operation_effect(&coordinator.subscribe().into_events());
+        assert!(matches!(final_persist_effect, Effect::PersistState { .. }));
+        coordinator
+            .accept_provider_event(ProviderEventEnvelope::new(
+                op("final-state-persisted"),
+                ProviderEvent::StatePersisted { token: final_persist_token },
             ))
             .unwrap();
         assert!(coordinator.snapshot().workspaces().is_empty());
@@ -2544,6 +3072,15 @@ mod tests {
                 },
             ))
             .unwrap();
+        let (initial_persist_token, initial_persist_effect) =
+            operation_effect(&coordinator.subscribe().into_events());
+        assert!(matches!(initial_persist_effect, Effect::PersistState { .. }));
+        coordinator
+            .accept_provider_event(ProviderEventEnvelope::new(
+                op("final-reinspect-initial-persisted"),
+                ProviderEvent::StatePersisted { token: initial_persist_token },
+            ))
+            .unwrap();
         let (agents_token, _) = operation_effect(&coordinator.subscribe().into_events());
         coordinator
             .accept_provider_event(ProviderEventEnvelope::new(
@@ -2553,6 +3090,15 @@ mod tests {
                     workspace_id: workspace_id.clone(),
                     result: WorkspaceCleanupResult::StepCompleted(CleanupStep::Agents),
                 },
+            ))
+            .unwrap();
+        let (agents_persist_token, persist_effect) =
+            operation_effect(&coordinator.subscribe().into_events());
+        assert!(matches!(persist_effect, Effect::PersistState { .. }));
+        coordinator
+            .accept_provider_event(ProviderEventEnvelope::new(
+                op("final-reinspect-agents-persisted"),
+                ProviderEvent::StatePersisted { token: agents_persist_token },
             ))
             .unwrap();
         let (terminal_token, _) = operation_effect(&coordinator.subscribe().into_events());
@@ -2566,6 +3112,15 @@ mod tests {
                 },
             ))
             .unwrap();
+        let (terminal_persist_token, persist_effect) =
+            operation_effect(&coordinator.subscribe().into_events());
+        assert!(matches!(persist_effect, Effect::PersistState { .. }));
+        coordinator
+            .accept_provider_event(ProviderEventEnvelope::new(
+                op("final-reinspect-terminal-persisted"),
+                ProviderEvent::StatePersisted { token: terminal_persist_token },
+            ))
+            .unwrap();
         let (editor_token, _) = operation_effect(&coordinator.subscribe().into_events());
         coordinator
             .accept_provider_event(ProviderEventEnvelope::new(
@@ -2575,6 +3130,15 @@ mod tests {
                     workspace_id: workspace_id.clone(),
                     result: WorkspaceCleanupResult::StepCompleted(CleanupStep::Editor),
                 },
+            ))
+            .unwrap();
+        let (editor_persist_token, persist_effect) =
+            operation_effect(&coordinator.subscribe().into_events());
+        assert!(matches!(persist_effect, Effect::PersistState { .. }));
+        coordinator
+            .accept_provider_event(ProviderEventEnvelope::new(
+                op("final-reinspect-editor-persisted"),
+                ProviderEvent::StatePersisted { token: editor_persist_token },
             ))
             .unwrap();
         let (final_token, _) = operation_effect(&coordinator.subscribe().into_events());
@@ -2660,6 +3224,15 @@ mod tests {
                 },
             ))
             .unwrap();
+        let (initial_persist_token, initial_persist_effect) =
+            operation_effect(&coordinator.subscribe().into_events());
+        assert!(matches!(initial_persist_effect, Effect::PersistState { .. }));
+        coordinator
+            .accept_provider_event(ProviderEventEnvelope::new(
+                op("close-race-initial-persisted"),
+                ProviderEvent::StatePersisted { token: initial_persist_token },
+            ))
+            .unwrap();
         let (agents_token, effect) = operation_effect(&coordinator.subscribe().into_events());
         assert!(matches!(effect, Effect::CleanupWorkspace { step: CleanupStep::Agents, .. }));
         assert!(matches!(
@@ -2696,6 +3269,15 @@ mod tests {
                 },
             ))
             .unwrap();
+        let (agents_persist_token, persist_effect) =
+            operation_effect(&coordinator.subscribe().into_events());
+        assert!(matches!(persist_effect, Effect::PersistState { .. }));
+        coordinator
+            .accept_provider_event(ProviderEventEnvelope::new(
+                op("close-race-agents-persisted"),
+                ProviderEvent::StatePersisted { token: agents_persist_token },
+            ))
+            .unwrap();
         let (terminal_token, effect) = operation_effect(&coordinator.subscribe().into_events());
         assert!(matches!(effect, Effect::CleanupWorkspace { step: CleanupStep::Terminal, .. }));
 
@@ -2723,6 +3305,15 @@ mod tests {
                 },
             ))
             .unwrap();
+        let (terminal_persist_token, persist_effect) =
+            operation_effect(&coordinator.subscribe().into_events());
+        assert!(matches!(persist_effect, Effect::PersistState { .. }));
+        coordinator
+            .accept_provider_event(ProviderEventEnvelope::new(
+                op("close-race-terminal-persisted"),
+                ProviderEvent::StatePersisted { token: terminal_persist_token },
+            ))
+            .unwrap();
         let (editor_token, effect) = operation_effect(&coordinator.subscribe().into_events());
         assert!(matches!(effect, Effect::CleanupWorkspace { step: CleanupStep::Editor, .. }));
         coordinator
@@ -2733,6 +3324,15 @@ mod tests {
                     workspace_id: workspace_id.clone(),
                     result: WorkspaceCleanupResult::StepCompleted(CleanupStep::Editor),
                 },
+            ))
+            .unwrap();
+        let (editor_persist_token, persist_effect) =
+            operation_effect(&coordinator.subscribe().into_events());
+        assert!(matches!(persist_effect, Effect::PersistState { .. }));
+        coordinator
+            .accept_provider_event(ProviderEventEnvelope::new(
+                op("close-race-editor-persisted"),
+                ProviderEvent::StatePersisted { token: editor_persist_token },
             ))
             .unwrap();
         let (final_inspect_token, effect) =
@@ -2761,6 +3361,15 @@ mod tests {
                     workspace_id,
                     result: WorkspaceCleanupResult::StepCompleted(CleanupStep::StateCommitted),
                 },
+            ))
+            .unwrap();
+        let (final_persist_token, final_persist_effect) =
+            operation_effect(&coordinator.subscribe().into_events());
+        assert!(matches!(final_persist_effect, Effect::PersistState { .. }));
+        coordinator
+            .accept_provider_event(ProviderEventEnvelope::new(
+                op("close-race-final-state-persisted"),
+                ProviderEvent::StatePersisted { token: final_persist_token },
             ))
             .unwrap();
         assert!(coordinator.snapshot().workspaces().is_empty());

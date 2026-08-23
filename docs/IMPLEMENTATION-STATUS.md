@@ -22,9 +22,10 @@ gate, not just source-code presence.
 | T3.3 Slice B                          | Complete                                                    | Persisted old-socket cleanup/new-socket activation and recreation state machine, two-stage Settings Apply confirmation, exact target/inventory revalidation, crash/relaunch recovery, dynamic effective-socket rebinding, conflict-safe retries, and targeted Settings IPC; `CI=true pnpm run check`, `CI=true pnpm run build`, and isolated real-tmux transition regressions pass (103 native tests, 140 core tests, 51 frontend tests; this tracker revision)                                                                                                                          |
 | T3.3 Slice C                          | Complete                                                    | Strict raw Tauri Channel v1 terminal contract, Rust-owned target and attachment identity, xterm.js terminal surface, bounded flow control and input writes, resize/detach/session survival, Workspace Terminal cleanup integration, socket-transition race protection, and deterministic generated contract; `CI=true pnpm run check` (67 frontend tests, 114 native tests, 140 core tests), `CI=true pnpm run build`, `CI=true pnpm --filter @devhub/app exec tauri build --debug --no-bundle`, and the unsandboxed real-tmux PTY lifecycle regression all pass (this tracker revision) |
 | T3.3 TerminalRuntime                  | Complete                                                    | Dedicated verified tmux sessions, Scratch and Workspace terminals, PTY attach/resize/detach, xterm framing, external attach compatibility, busy inspection, idempotent termination, target preflight, persisted socket transitions, and provider-safe cleanup are complete; evidence is the Slice C validation above (this tracker revision)                                                                                                                                                                                                                                             |
-| E3.4 EditorHost                        | Complete; standalone provider slice                         | Rust-owned authenticated loopback Bridge transport, persisted OpenVSCode token/data/port/profile paths, process supervision and bounded recovery, stable Global/Workspace surfaces, shared isolated storage, surface-aware navigation, and raw WRY child WebViews through the exact IPC-safe 0.55.1 fork; formatting, all-feature clippy, 146 native library tests, and the real pinned OpenVSCode smoke pass (this tracker revision) |
-| E3.5 Bridge extension                  | Complete; standalone provider slice                         | Frozen Bridge v1 readiness, identity, dirty-state, folder/new-window, request-ledger, reconnect, and typed host-request integration; deterministic VSIX ID/version/main/manifest/digest validation, authenticated native transport, and the real pinned OpenVSCode smoke pass (this tracker revision) |
-| A3.6 AgentRuntime                       | Complete; standalone provider slice                         | Herdr 0.8.1/protocol-20 bootstrap and capability gate, profile validation, opaque mappings, subscription-buffer-snapshot reconciliation, launch/control/status projection, lifecycle cleanup/tombstones, reconnect, attach/detach/takeover, and idempotent termination; `cargo test -p devhub-app --lib agent:: --locked --offline` (26 passed, 3 ignored), `scripts/check-agent-runtime-real.sh` against the pinned Herdr 0.8.1 binary, `cargo test --workspace --locked`, and full checks pass (this tracker revision) |
+| E3.4 EditorHost                       | Complete; standalone provider slice                         | Rust-owned authenticated loopback Bridge transport, persisted OpenVSCode token/data/port/profile paths, process supervision and bounded recovery, stable Global/Workspace surfaces, shared isolated storage, surface-aware navigation, and raw WRY child WebViews through the exact IPC-safe 0.55.1 fork; formatting, all-feature clippy, 146 native library tests, and the real pinned OpenVSCode smoke pass (this tracker revision)                                                                                                                                                    |
+| E3.5 Bridge extension                 | Complete; standalone provider slice                         | Frozen Bridge v1 readiness, identity, dirty-state, folder/new-window, request-ledger, reconnect, and typed host-request integration; deterministic VSIX ID/version/main/manifest/digest validation, authenticated native transport, and the real pinned OpenVSCode smoke pass (this tracker revision)                                                                                                                                                                                                                                                                                    |
+| A3.6 AgentRuntime                     | Complete; standalone provider slice                         | Herdr 0.8.1/protocol-20 bootstrap and capability gate, profile validation, opaque mappings, subscription-buffer-snapshot reconciliation, launch/control/status projection, lifecycle cleanup/tombstones, reconnect, attach/detach/takeover, and idempotent termination; `cargo test -p devhub-app --lib agent:: --locked --offline` (26 passed, 3 ignored), `scripts/check-agent-runtime-real.sh` against the pinned Herdr 0.8.1 binary, `cargo test --workspace --locked`, and full checks pass (this tracker revision)                                                                 |
+| I4.1 Workspace operations             | Complete                                                    | Rust-owned streaming Workspace Picker with fuzzy discovery, canonical duplicate-root focus, native Open Folder/Locate, unavailable Retry/Locate/Close recovery, real tmux/Herdr/Editor effects, bounded Bridge routing, durable inspected close with ordered cleanup and restart recovery, and accessible typed confirmations; `CI=true pnpm run check` (74 frontend tests, 179 native tests passed plus 3 intentionally ignored, 144 core tests), the real Herdr 0.8.1 runner, and `git diff --check` pass (this tracker revision)                                                      |
 
 P2.1 provides the versioned TOML model, defaults and strict validation,
 comment-preserving conflict-safe writes, symlink-safe atomic replacement,
@@ -42,20 +43,20 @@ five-section navigation. TerminalRuntime now provides the separate persistent
 tmux-backed terminal surface without replacing or policing the upstream VS
 Code Integrated Terminal.
 
-E3.4, E3.5, and A3.6 are complete as standalone provider slices. App Shell
-mounting, router ownership, native-window lifecycle, Dock/quit integration,
-and provider attachment remain deliberately deferred to Wave 4 integration;
-this status does not imply those integrated lifecycle surfaces have landed.
+E3.4, E3.5, and A3.6 remain complete provider slices, and I4.1 now integrates
+their trusted workspace effects through the Rust-owned coordinator and App
+Shell. Agent UX, app lifecycle, and the remaining later-wave surfaces are not
+implied by this workspace-operations status.
 
 ## Partial gates
 
-| Gate           | Result  | Remaining scope                                                                                                                                                                                                                                 |
-| -------------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| U2.3 App Shell | Partial | Native App Shell structure, navigation, immutable state/error handling, persistence, accessibility basics, and visual fixtures are complete. Context menus, confirmation sheets, and real provider surfaces remain for later integration waves. |
+| Gate           | Result  | Remaining scope                                                                                                                                                                                                                                                                                                                            |
+| -------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| U2.3 App Shell | Partial | Native App Shell structure, navigation, immutable state/error handling, persistence, streaming picker, unavailable-workspace recovery, typed confirmation projection, and integrated workspace provider surfaces are complete. Context menus, the agent surface, app lifecycle, keyboard behavior, and diagnostics remain for later gates. |
 
 ## Next
 
-1. I4.1 Workspace operations.
+1. I4.2 Agent UX.
 
 The latest local validation also includes `CI=true pnpm run build` and
 `CI=true pnpm --filter @devhub/app exec tauri build --debug --no-bundle`.
@@ -64,8 +65,8 @@ The latest local validation also includes `CI=true pnpm run build` and
 
 - Wave 3: A3.6 AgentRuntime, E3.4 EditorHost, and E3.5 Bridge extension are
   complete as standalone provider slices.
-- Wave 4: workspace, agent, app lifecycle, keyboard, and diagnostics
-  integration.
+- Wave 4: agent, app lifecycle, keyboard, and diagnostics integration; I4.1
+  workspace/provider integration is landed.
 - Wave 5: accessibility/IME, performance/endurance, brand, security, and
   notices.
 - Wave 6: packaging, public repository setup, and version `0.1.0` release.

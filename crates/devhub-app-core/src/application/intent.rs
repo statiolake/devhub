@@ -1,7 +1,7 @@
 use crate::{
     Activity, AgentId, AgentProfile, AgentProfileId, AgentReconciliation, AgentStatus,
-    CloseInspectionInputs, DiagnosticCode, DisplayPath, NavigationContext, RuntimeHealth,
-    WorkspaceId, WorkspaceRoot,
+    CloseInspectionInputs, CloseInspectionProjection, DiagnosticCode, DisplayPath,
+    NavigationContext, RuntimeHealth, WorkspaceId, WorkspaceRoot,
 };
 
 use super::types::{ConfirmationId, IntentId, OperationId, OperationToken, ProviderEventId};
@@ -35,6 +35,8 @@ pub enum UserIntent {
     ResizeSidebar { width: u16 },
     OpenFolder { path: RequestedPath },
     NewWindow { path: Option<RequestedPath> },
+    RetryWorkspace { workspace_id: WorkspaceId },
+    LocateWorkspace { workspace_id: WorkspaceId, path: RequestedPath },
     CreateAgent { workspace_id: WorkspaceId, profile_id: AgentProfileId },
     RenameAgent { agent_id: AgentId, display_name: String },
     StopAgent { agent_id: AgentId },
@@ -165,6 +167,12 @@ pub enum ProviderEvent {
     StatePersistenceFailed {
         token: OperationToken,
     },
+    /// The trusted native adapter could not complete an operation. This
+    /// consumes the token so a failed provider call cannot strand the
+    /// coordinator in an indefinitely pending state.
+    OperationFailed {
+        token: OperationToken,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -225,12 +233,33 @@ pub enum PersistenceHealth {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IntentOutcome {
-    Noop { snapshot: crate::AppSnapshot },
-    Updated { snapshot: crate::AppSnapshot },
-    ConfirmationRequired { confirmation_id: ConfirmationId, snapshot: crate::AppSnapshot },
-    Deferred { operation_id: OperationId, snapshot: crate::AppSnapshot },
-    Detached { snapshot: crate::AppSnapshot },
-    PersistenceDegraded { snapshot: crate::AppSnapshot },
+    Noop {
+        snapshot: crate::AppSnapshot,
+    },
+    Updated {
+        snapshot: crate::AppSnapshot,
+    },
+    ConfirmationRequired {
+        confirmation_id: ConfirmationId,
+        snapshot: crate::AppSnapshot,
+        purpose: ConfirmationOutcomePurpose,
+    },
+    Deferred {
+        operation_id: OperationId,
+        snapshot: crate::AppSnapshot,
+    },
+    Detached {
+        snapshot: crate::AppSnapshot,
+    },
+    PersistenceDegraded {
+        snapshot: crate::AppSnapshot,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConfirmationOutcomePurpose {
+    WorkspaceClose { inspection: CloseInspectionProjection },
+    AgentStop,
 }
 
 impl IntentOutcome {

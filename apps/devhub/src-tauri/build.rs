@@ -2,6 +2,10 @@ fn main() {
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(
         tauri_build::AppManifest::new().commands(&[
             "get_app_snapshot",
+            "start_workspace_picker",
+            "cancel_workspace_picker",
+            "select_workspace_picker",
+            "choose_workspace_folder",
             "get_app_appearance",
             "dispatch_app_intent",
             "replay_app_events",

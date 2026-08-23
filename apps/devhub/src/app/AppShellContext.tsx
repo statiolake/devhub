@@ -10,6 +10,8 @@ import {
   createTauriAppShellClient,
   parseTransportError,
   type AppShellClient,
+  type WorkspacePickerCandidate,
+  type WorkspacePickerEvent,
 } from "./client";
 import type {
   AppAppearance,
@@ -18,6 +20,7 @@ import type {
   AppLoadState,
   AppOutcome,
   AppSnapshot,
+  ConfirmationPurposeWire,
 } from "../generated/app-shell";
 import { parseAppError } from "../generated/app-shell";
 import { AppShellContext, type AppShellContextValue } from "./useAppShell";
@@ -69,10 +72,25 @@ export function AppShellProvider({
   const [state, setState] = useState<AppLoadState>({ status: "loading" });
   const [appearance, setAppearance] = useState<AppAppearance>();
   const [intentError, setIntentError] = useState<AppError | null>(null);
+  const [pickerCandidates, setPickerCandidates] = useState<
+    WorkspacePickerCandidate[]
+  >([]);
+  const [pickerBusy, setPickerBusy] = useState(false);
+  const [pendingConfirmation, setPendingConfirmation] = useState<{
+    confirmationId: string;
+    purpose: ConfirmationPurposeWire;
+  } | null>(null);
   const lastRevision = useRef(-1);
   const lastEventCursor = useRef(0);
   const lastAppearanceSequence = useRef(-1);
   const generation = useRef(0);
+  const pickerOperation = useRef<string | null>(null);
+  const pickerSequence = useRef(-1);
+  const pickerStartGeneration = useRef(0);
+  const pickerBufferedEvents = useRef<WorkspacePickerEvent[]>([]);
+  const pickerEventProcessor = useRef<
+    ((event: WorkspacePickerEvent) => void) | null
+  >(null);
 
   const applySnapshot = useCallback((snapshot: AppSnapshot) => {
     if (snapshot.revision < lastRevision.current) return;
@@ -90,6 +108,7 @@ export function AppShellProvider({
     let active = true;
     let unsubscribe: (() => void) | undefined;
     let unsubscribeAppearance: (() => void) | undefined;
+    let unsubscribePicker: (() => void) | undefined;
     lastRevision.current = -1;
     lastAppearanceSequence.current = -1;
 
@@ -115,6 +134,58 @@ export function AppShellProvider({
           return;
         }
         unsubscribe = cleanup;
+        if (client.subscribeWorkspacePicker) {
+          const processPickerEvent = (event: WorkspacePickerEvent) => {
+            if (event.operationId !== pickerOperation.current) return;
+            if (event.kind === "started") {
+              pickerSequence.current = event.sequence;
+              setPickerCandidates([]);
+              setPickerBusy(true);
+              return;
+            }
+            if (event.sequence <= pickerSequence.current) return;
+            if (event.kind === "candidate") {
+              pickerSequence.current = event.sequence;
+              const candidate = {
+                operationId: event.operationId,
+                sequence: event.sequence,
+                label: event.label,
+                searchText: event.searchText,
+                path: event.path,
+                score: event.score,
+              };
+              setPickerCandidates((current) => {
+                if (current.some((item) => item.path === event.path))
+                  return current;
+                return [...current, candidate].slice(-1000);
+              });
+            } else if (
+              event.kind === "completed" ||
+              event.kind === "cancelled"
+            ) {
+              pickerSequence.current = event.sequence;
+              setPickerBusy(false);
+            } else {
+              pickerSequence.current = event.sequence;
+            }
+          };
+          pickerEventProcessor.current = processPickerEvent;
+          const cleanupPicker = await client.subscribeWorkspacePicker(
+            (event) => {
+              if (!active || generation.current !== currentGeneration) return;
+              if (!pickerOperation.current) {
+                pickerBufferedEvents.current = [
+                  ...pickerBufferedEvents.current,
+                  event,
+                ].slice(-64);
+                return;
+              }
+              processPickerEvent(event);
+            },
+          );
+          if (!active) cleanupPicker();
+          else unsubscribePicker = cleanupPicker;
+        }
         if (client.subscribeAppearance) {
           const cleanupAppearance = await client.subscribeAppearance(
             applyAppearanceIfActive,
@@ -157,6 +228,7 @@ export function AppShellProvider({
       generation.current += 1;
       unsubscribe?.();
       unsubscribeAppearance?.();
+      unsubscribePicker?.();
     };
   }, [applySnapshot, attempt, client]);
 
@@ -170,6 +242,12 @@ export function AppShellProvider({
         applySnapshot(outcome.snapshot);
         if (outcome.kind === "persistence_degraded") {
           setIntentError(PERSISTENCE_DEGRADED_ERROR);
+        }
+        if (outcome.kind === "confirmation_required") {
+          setPendingConfirmation({
+            confirmationId: outcome.confirmationId,
+            purpose: outcome.purpose,
+          });
         }
         return outcome;
       } catch (error) {
@@ -189,9 +267,122 @@ export function AppShellProvider({
     setAttempt((current) => current + 1);
   }, []);
 
+  const startWorkspacePicker = useCallback(
+    async (query = "") => {
+      if (!client.startWorkspacePicker) return;
+      const requestGeneration = ++pickerStartGeneration.current;
+      setPickerBusy(true);
+      setPickerCandidates([]);
+      pickerOperation.current = null;
+      pickerSequence.current = -1;
+      pickerBufferedEvents.current = [];
+      let operationId: string;
+      try {
+        operationId = await client.startWorkspacePicker(query);
+      } catch (error) {
+        if (requestGeneration === pickerStartGeneration.current) {
+          setPickerBusy(false);
+          setIntentError(toAppError(error));
+        }
+        return;
+      }
+      if (requestGeneration !== pickerStartGeneration.current) return;
+      pickerOperation.current = operationId;
+      pickerSequence.current = -1;
+      const buffered = pickerBufferedEvents.current;
+      pickerBufferedEvents.current = [];
+      for (const event of buffered) {
+        if (event.operationId === operationId) {
+          pickerEventProcessor.current?.(event);
+        }
+      }
+    },
+    [client],
+  );
+
+  const cancelWorkspacePicker = useCallback(async () => {
+    ++pickerStartGeneration.current;
+    pickerOperation.current = null;
+    pickerSequence.current = -1;
+    pickerBufferedEvents.current = [];
+    setPickerCandidates([]);
+    setPickerBusy(false);
+    try {
+      await client.cancelWorkspacePicker?.();
+    } catch (error) {
+      setIntentError(toAppError(error));
+    }
+  }, [client]);
+
+  const selectWorkspacePicker = useCallback(
+    async (path: string) => {
+      const outcome = await client.selectWorkspacePicker?.(path);
+      if (outcome) applySnapshot(outcome.snapshot);
+      setPickerBusy(false);
+      return outcome;
+    },
+    [applySnapshot, client],
+  );
+
+  const chooseWorkspaceFolder = useCallback(async () => {
+    return client.chooseWorkspaceFolder?.();
+  }, [client]);
+
+  const confirmPending = useCallback(async () => {
+    if (!pendingConfirmation) return;
+    const confirmationId = pendingConfirmation.confirmationId;
+    if (pendingConfirmation.purpose.kind !== "workspace_close") {
+      // Agent-stop confirmations are owned by the Agent surface in the next
+      // shell wave; never reinterpret one as a workspace close.
+      setPendingConfirmation(null);
+      return;
+    }
+    await dispatch({
+      type: "confirm_close_workspace",
+      confirmationId,
+    });
+    setPendingConfirmation((current) =>
+      current?.confirmationId === confirmationId ? null : current,
+    );
+  }, [dispatch, pendingConfirmation]);
+
+  const dismissCloseConfirmation = useCallback(() => {
+    setPendingConfirmation(null);
+  }, []);
+
   const value = useMemo<AppShellContextValue>(
-    () => ({ state, appearance, intentError, dispatch, retry }),
-    [appearance, dispatch, intentError, retry, state],
+    () => ({
+      state,
+      appearance,
+      intentError,
+      dispatch,
+      retry,
+      pickerCandidates,
+      pickerBusy,
+      startWorkspacePicker,
+      cancelWorkspacePicker,
+      selectWorkspacePicker,
+      chooseWorkspaceFolder,
+      pendingConfirmation,
+      confirmPending,
+      dismissCloseConfirmation,
+    }),
+    [
+      appearance,
+      cancelWorkspacePicker,
+      dispatch,
+      intentError,
+      pickerBusy,
+      pickerCandidates,
+      retry,
+      selectWorkspacePicker,
+      startWorkspacePicker,
+      state,
+      pendingConfirmation,
+      chooseWorkspaceFolder,
+      confirmPending,
+      dismissCloseConfirmation,
+    ],
   );
 
   return (

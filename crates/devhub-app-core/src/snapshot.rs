@@ -273,9 +273,29 @@ pub struct AppModel {
     revision: u64,
 }
 
+/// Exact rollback information for the short interval between removing a
+/// Workspace from the in-memory projection and committing that removal to the
+/// durable state store. It deliberately contains only that Workspace and the
+/// selection/disclosure values affected by its removal; unrelated model
+/// mutations remain live if the final save fails.
+#[derive(Debug, Clone)]
+pub(crate) struct WorkspaceCloseRollback {
+    workspace: Workspace,
+    index: usize,
+    expanded: bool,
+    selection_before: NavigationSelection,
+    selection_after: NavigationSelection,
+}
+
 impl Default for AppModel {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl WorkspaceCloseRollback {
+    pub(crate) fn root(&self) -> &WorkspaceRoot {
+        self.workspace.root()
     }
 }
 
@@ -865,6 +885,51 @@ impl AppModel {
         Ok(())
     }
 
+    /// Removes a clean Workspace while returning the exact, narrow rollback
+    /// token needed if the following state commit fails.
+    pub(crate) fn close_workspace_for_persistence(
+        &mut self,
+        workspace_id: &WorkspaceId,
+        inspection: CloseInspection,
+    ) -> Result<WorkspaceCloseRollback, DomainError> {
+        let index = self
+            .workspaces
+            .iter()
+            .position(|workspace| workspace.id() == workspace_id)
+            .ok_or_else(|| DomainError::new(DomainErrorCode::UnknownWorkspace))?;
+        let workspace = self.workspaces[index].clone();
+        let selection_before = self.selection.clone();
+        let expanded = self.expanded_workspace_ids.contains(workspace_id);
+        self.close_workspace(workspace_id, inspection)?;
+        let selection_after = self.selection.clone();
+        Ok(WorkspaceCloseRollback { workspace, index, expanded, selection_before, selection_after })
+    }
+
+    /// Restores only the Workspace captured by `close_workspace_for_persistence`.
+    /// If another operation changed navigation while the save was in flight,
+    /// that newer selection is retained rather than being rolled back.
+    pub(crate) fn rollback_workspace_close(
+        &mut self,
+        rollback: WorkspaceCloseRollback,
+    ) -> Result<(), DomainError> {
+        if self.workspace(rollback.workspace.id()).is_some() {
+            return Err(DomainError::new(DomainErrorCode::DuplicateWorkspaceRoot));
+        }
+        if self.workspaces.iter().any(|workspace| workspace.root() == rollback.workspace.root()) {
+            return Err(DomainError::new(DomainErrorCode::DuplicateWorkspaceRoot));
+        }
+        let index = rollback.index.min(self.workspaces.len());
+        self.workspaces.insert(index, rollback.workspace);
+        if rollback.expanded {
+            self.expanded_workspace_ids.insert(self.workspaces[index].id().clone());
+        }
+        if self.selection == rollback.selection_after {
+            self.selection = rollback.selection_before;
+        }
+        self.bump_revision();
+        Ok(())
+    }
+
     /// Locate an unavailable Workspace without changing its identity. The
     /// duplicate-root check runs before mutation, so a rejected locate is
     /// atomic and preserves the old root and live Agents.
@@ -1311,6 +1376,29 @@ mod tests {
             model.selection(),
             &NavigationSelection::new(NavigationContext::Global, Activity::Terminal)
         );
+    }
+
+    #[test]
+    fn failed_deferred_close_rolls_back_only_target_workspace_after_concurrent_mutation() {
+        let mut model = AppModel::new();
+        let first = WorkspaceId::for_test("deferred-first");
+        let second = WorkspaceId::for_test("deferred-second");
+        model.add_workspace(workspace("deferred-first", "/dev/deferred-first")).unwrap();
+        model.add_workspace(workspace("deferred-second", "/dev/deferred-second")).unwrap();
+        model.select_context(NavigationContext::Workspace(first.clone())).unwrap();
+
+        let rollback =
+            model.close_workspace_for_persistence(&first, CloseInspection::Clean).unwrap();
+        // This represents a newer, unrelated navigation mutation while the
+        // final state save is in flight.
+        model.select_context(NavigationContext::Workspace(second.clone())).unwrap();
+        model.select_activity(Activity::Terminal).unwrap();
+        model.rollback_workspace_close(rollback).unwrap();
+
+        assert_eq!(model.workspaces().len(), 2);
+        assert!(model.workspace(&first).is_some());
+        assert!(model.workspace(&second).is_some());
+        assert_eq!(model.selection().context(), &NavigationContext::Workspace(second));
     }
 
     #[test]

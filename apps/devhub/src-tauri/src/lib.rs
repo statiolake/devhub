@@ -1,33 +1,41 @@
 #![forbid(unsafe_code)]
 
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::mpsc::{sync_channel, SyncSender, TrySendError};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use devhub_app_core::config::{
     default_config_path, AgentProfileKind as ConfigAgentProfileKind, ConfigDiagnostic, ConfigStore,
     LoadedConfig, ReloadOutcome, RuntimeConfig,
 };
-use devhub_app_core::ports::{SocketName, TerminalRuntime, WorkspaceTerminalTarget};
+use devhub_app_core::ports::{
+    AgentRuntime, EditorHost as EditorHostPort, SocketName, TerminalRuntime,
+    WorkspaceDiscovery as WorkspaceDiscoveryPort, WorkspaceDiscoveryEvent,
+    WorkspaceDiscoveryEventKind, WorkspaceDiscoverySink, WorkspacePathResolver,
+    WorkspaceTerminalTarget,
+};
 use devhub_app_core::state::{
-    CleanupSessionStatus, RecreationSessionStatus, SocketTargetPreflightState,
-    SocketTransitionState,
+    CleanupSessionStatus, PersistedDiagnosticCode, RecreationSessionStatus,
+    SocketTargetPreflightState, SocketTransitionState, WorkspaceLifecycleRecord,
 };
 use devhub_app_core::{classify_runtime, SettingsRuntimeWire};
 use devhub_app_core::{
-    Activity, AgentProfile as DomainAgentProfile, AgentProfileId, AgentProfileKind,
-    AppAppearanceWire, AppCoordinator, AppErrorWire, AppIntentWire, AppOutcomeWire, AppSnapshot,
-    AppSnapshotWire, CancellationToken, CleanupStep, CoordinatorEvent, DiagnosticCode, Effect,
+    Activity, AgentLaunchResult, AgentProfile as DomainAgentProfile, AgentProfileId,
+    AgentProfileKind, AgentStopResult, AppAppearanceWire, AppCoordinator, AppErrorWire,
+    AppIntentWire, AppOutcomeWire, AppReadiness, AppSnapshot, AppSnapshotWire, CancellationToken,
+    CleanupStep, CloseInspectionInputs, ConfirmationId, CoordinatorEvent, DiagnosticCode, Effect,
     IdGenerator, IntentEnvelope, IntentId, IntentOutcome, JsonStateStore, OperationId,
     OperationToken, PortError, PortErrorCode, ProviderEvent, ProviderEventEnvelope,
-    ProviderEventId, ReplayWire, SettingsErrorWire, SettingsRuntimeHealthWire,
+    ProviderEventId, ReplayWire, ResourceInspection, SettingsErrorWire, SettingsRuntimeHealthWire,
     SettingsSaveRequestWire, SettingsSnapshotWire, SettingsSocketChangeRequestWire, SurfaceKey,
-    SurfaceResolution, TerminalTarget, UserIntent, WorkspaceCleanupResult, SETTINGS_SEQUENCE_MAX,
+    SurfaceResolution, TerminalTarget, UserIntent, WorkspaceCleanupResult, WorkspaceId,
+    WorkspacePickerEventWire, SETTINGS_SEQUENCE_MAX,
 };
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::{AppHandle, Emitter, Manager, State, Webview, WebviewUrl, WebviewWindowBuilder};
@@ -39,7 +47,12 @@ mod repository;
 mod runtime;
 mod terminal;
 mod workspace_resolver;
+use agent::HerdrAgentRuntime;
 use discovery::DiscoveryEngine;
+use editor::{
+    BridgeEvent, BridgeEventSink, BridgeRequest, BridgeRequestDisposition, BridgeRequestResult,
+};
+use editor::{EditorHost, EditorHostConfig};
 use repository::{GitRepositoryResolver, GitRepositoryResolverConfig};
 use runtime::{LoginEnvironmentStatus, RuntimeLaunchContext};
 use terminal::{
@@ -52,12 +65,267 @@ use workspace_resolver::MacWorkspacePathResolver;
 
 pub const APP_SNAPSHOT_CHANGED_EVENT: &str = "app://snapshot-changed";
 pub const APP_APPEARANCE_CHANGED_EVENT: &str = "app://appearance-changed";
+pub const APP_WORKSPACE_PICKER_EVENT: &str = "app://workspace-picker";
 pub const APP_SHELL_WINDOW_LABEL: &str = "app-shell";
 pub const SETTINGS_CHANGED_EVENT: &str = "settings://changed";
 pub const SETTINGS_WINDOW_LABEL: &str = "settings";
 pub const OPEN_SETTINGS_MENU_ID: &str = "open-settings";
-const MAX_UNHANDLED_EFFECTS: usize = 128;
 const MAX_EFFECT_STEPS: usize = 1_024;
+const FOLDER_CHOOSER_SCRIPT: &str =
+    "POSIX path of (choose folder with prompt \"Open Workspace Folder\")";
+
+fn bridge_request_failed_result() -> BridgeRequestResult {
+    BridgeRequestResult::Error {
+        code: devhub_app_core::bridge::ErrorCode::RequestFailed,
+        summary: devhub_app_core::bridge::ContentFreeSummary::Failed,
+    }
+}
+
+fn folder_chooser_status(
+    status: std::process::ExitStatus,
+    stderr: &[u8],
+) -> Result<bool, AppErrorWire> {
+    if status.success() {
+        return Ok(true);
+    }
+    // osascript reports AppleScript's user-cancelled error (-128) as a
+    // process failure; only that explicit status is a normal cancellation.
+    if stderr.windows(5).any(|window| window == b"-128)") {
+        Ok(false)
+    } else {
+        Err(AppErrorWire::native_unavailable())
+    }
+}
+
+struct NativeBridgeSink {
+    router: Mutex<Option<BridgeRouter>>,
+    observations: Mutex<BTreeMap<String, BridgeObservation>>,
+    failed_requests: Mutex<VecDeque<(String, u64, String)>>,
+}
+
+type BridgeRouter = Arc<dyn Fn(BridgeRequest) + Send + Sync>;
+
+#[derive(Clone)]
+struct BridgeObservation {
+    generation: u64,
+    connected: bool,
+    readiness: devhub_app_core::bridge::Readiness,
+    context: Option<devhub_app_core::bridge::Context>,
+    dirty: bool,
+}
+
+impl Default for NativeBridgeSink {
+    fn default() -> Self {
+        Self {
+            router: Mutex::new(None),
+            observations: Mutex::new(BTreeMap::new()),
+            failed_requests: Mutex::new(VecDeque::new()),
+        }
+    }
+}
+
+impl NativeBridgeSink {
+    fn editor_observation(&self, workspace_id: &WorkspaceId) -> Option<BridgeObservation> {
+        let observations = self.observations.lock().ok()?;
+        observations.values().find(|observation| {
+            matches!(observation.context.as_ref(), Some(devhub_app_core::bridge::Context::Workspace { workspace_id: id, .. }) if id.as_str() == workspace_id.as_str())
+        }).cloned()
+    }
+
+    fn request_is_live(&self, request: &BridgeRequest) -> bool {
+        let Ok(observations) = self.observations.lock() else { return false };
+        let live =
+            observations.get(request.handle().surface_id().as_str()).is_some_and(|observation| {
+                observation.connected
+                    && observation.generation == request.handle().connection_generation()
+            });
+        drop(observations);
+        let Ok(failed) = self.failed_requests.lock() else { return false };
+        live && !failed.iter().any(|key| {
+            key == &(
+                request.handle().surface_id().as_str().to_owned(),
+                request.handle().connection_generation(),
+                request.handle().request_message_id().as_str().to_owned(),
+            )
+        })
+    }
+}
+
+impl NativeBridgeSink {
+    fn install_router<F>(&self, router: F)
+    where
+        F: Fn(BridgeRequest) + Send + Sync + 'static,
+    {
+        if let Ok(mut slot) = self.router.lock() {
+            *slot = Some(Arc::new(router));
+        }
+    }
+}
+
+impl BridgeEventSink for NativeBridgeSink {
+    fn on_event(&self, event: BridgeEvent) {
+        let (surface_id, generation) = match &event {
+            BridgeEvent::Connected { surface_id, generation }
+            | BridgeEvent::Disconnected { surface_id, generation }
+            | BridgeEvent::Snapshot { surface_id, generation, .. }
+            | BridgeEvent::ReadinessChanged { surface_id, generation, .. }
+            | BridgeEvent::IdentityChanged { surface_id, generation, .. }
+            | BridgeEvent::DirtyChanged { surface_id, generation, .. } => (surface_id, *generation),
+            BridgeEvent::RequestFailed { handle, .. } => {
+                if let Ok(mut failed) = self.failed_requests.lock() {
+                    let key = (
+                        handle.surface_id().as_str().to_owned(),
+                        handle.connection_generation(),
+                        handle.request_message_id().as_str().to_owned(),
+                    );
+                    if let Some(position) = failed.iter().position(|entry| entry == &key) {
+                        failed.remove(position);
+                    }
+                    failed.push_back(key);
+                    while failed.len() > 256 {
+                        failed.pop_front();
+                    }
+                }
+                return;
+            }
+        };
+        let Ok(mut observations) = self.observations.lock() else { return };
+        let entry = observations.entry(surface_id.as_str().to_owned()).or_insert_with(|| {
+            BridgeObservation {
+                generation,
+                connected: false,
+                readiness: devhub_app_core::bridge::Readiness::Unavailable,
+                context: None,
+                dirty: false,
+            }
+        });
+        if generation < entry.generation {
+            return;
+        }
+        entry.generation = generation;
+        match event {
+            BridgeEvent::Connected { .. } => entry.connected = true,
+            BridgeEvent::Disconnected { .. } => entry.connected = false,
+            BridgeEvent::Snapshot { readiness, context, dirty, .. } => {
+                entry.connected = true;
+                entry.readiness = readiness;
+                entry.context = Some(context);
+                entry.dirty = dirty;
+            }
+            BridgeEvent::ReadinessChanged { readiness, .. } => entry.readiness = readiness,
+            BridgeEvent::IdentityChanged { context, .. } => entry.context = Some(context),
+            BridgeEvent::DirtyChanged { dirty, .. } => entry.dirty = dirty,
+            BridgeEvent::RequestFailed { .. } => {}
+        }
+    }
+
+    fn on_request(&self, request: &BridgeRequest) -> BridgeRequestDisposition {
+        match request.request() {
+            devhub_app_core::bridge::ClientRequest::OpenWorkspace(_)
+            | devhub_app_core::bridge::ClientRequest::NewWindow(_) => {
+                if let Ok(router) = self.router.lock() {
+                    if let Some(router) = router.as_ref() {
+                        router(request.clone());
+                        return BridgeRequestDisposition::Pending;
+                    }
+                }
+                BridgeRequestDisposition::Immediate(BridgeRequestResult::Error {
+                    code: devhub_app_core::bridge::ErrorCode::SurfaceUnavailable,
+                    summary: devhub_app_core::bridge::ContentFreeSummary::Failed,
+                })
+            }
+            devhub_app_core::bridge::ClientRequest::RequestStateSnapshot(_) => {
+                BridgeRequestDisposition::Immediate(BridgeRequestResult::SnapshotWillFollow)
+            }
+            devhub_app_core::bridge::ClientRequest::Focus(_) => {
+                BridgeRequestDisposition::Immediate(BridgeRequestResult::Focused)
+            }
+        }
+    }
+}
+
+struct PickerSink {
+    app: AppHandle,
+    query: String,
+    last_sequence: AtomicU64,
+}
+
+impl PickerSink {
+    fn next_sequence(&self) -> u64 {
+        self.last_sequence.fetch_add(1, Ordering::AcqRel).saturating_add(1)
+    }
+
+    fn observe_sequence(&self, sequence: u64) {
+        let _ = self.last_sequence.fetch_max(sequence, Ordering::AcqRel);
+    }
+}
+
+impl WorkspaceDiscoverySink for PickerSink {
+    fn emit(&self, event: WorkspaceDiscoveryEvent) {
+        self.observe_sequence(event.sequence);
+        match event.kind {
+            WorkspaceDiscoveryEventKind::Candidate { candidate, projection, .. } => {
+                let Some(matched) = discovery::fuzzy_match(&self.query, &projection) else {
+                    return;
+                };
+                let Some(path) = candidate.selected_path.as_path().to_str() else { return };
+                let payload = WorkspacePickerEventWire::Candidate {
+                    operation_id: event.operation_id.to_string(),
+                    sequence: event.sequence,
+                    label: projection.label,
+                    search_text: projection.search_text,
+                    path: path.to_owned(),
+                    score: matched.score,
+                };
+                let _ =
+                    self.app.emit_to(APP_SHELL_WINDOW_LABEL, APP_WORKSPACE_PICKER_EVENT, payload);
+            }
+            WorkspaceDiscoveryEventKind::SourceError { source_id, code, count } => {
+                let _ = self.app.emit_to(
+                    APP_SHELL_WINDOW_LABEL,
+                    APP_WORKSPACE_PICKER_EVENT,
+                    WorkspacePickerEventWire::SourceError {
+                        operation_id: event.operation_id.to_string(),
+                        sequence: event.sequence,
+                        source_id,
+                        error_count: count,
+                        truncated: matches!(code, devhub_app_core::ports::WorkspaceDiscoveryErrorCode::OutputLimit | devhub_app_core::ports::WorkspaceDiscoveryErrorCode::CandidateLimit),
+                    },
+                );
+            }
+            WorkspaceDiscoveryEventKind::SourceCompleted {
+                source_id,
+                candidate_count,
+                error_count,
+                stderr_bytes,
+            } => {
+                let _ = self.app.emit_to(
+                    APP_SHELL_WINDOW_LABEL,
+                    APP_WORKSPACE_PICKER_EVENT,
+                    WorkspacePickerEventWire::SourceCompleted {
+                        operation_id: event.operation_id.to_string(),
+                        sequence: event.sequence,
+                        source_id,
+                        candidate_count,
+                        error_count,
+                        stderr_bytes,
+                    },
+                );
+            }
+            WorkspaceDiscoveryEventKind::Cancelled { source_id } => {
+                let _ = self.app.emit_to(
+                    APP_SHELL_WINDOW_LABEL,
+                    APP_WORKSPACE_PICKER_EVENT,
+                    WorkspacePickerEventWire::Cancelled {
+                        operation_id: event.operation_id.to_string(),
+                        sequence: event.sequence,
+                        source_id,
+                    },
+                );
+            }
+        }
+    }
+}
 
 struct NativeIdGenerator;
 
@@ -129,7 +397,6 @@ struct NativeAppState {
     persistence: Mutex<PersistenceState>,
     state_commit: Mutex<()>,
     pending_native_error: Mutex<Option<AppErrorWire>>,
-    unhandled_effects: Mutex<VecDeque<Effect>>,
     socket_transition_busy: AtomicBool,
     id_generator: NativeIdGenerator,
     _runtime_context: RuntimeLaunchContext,
@@ -137,12 +404,18 @@ struct NativeAppState {
     _repository_resolver: GitRepositoryResolver,
     _terminal_runtime: TmuxTerminalRuntime,
     _workspace_resolver: MacWorkspacePathResolver,
+    agent_runtime: HerdrAgentRuntime,
+    editor_host: EditorHost,
+    profiles: Vec<DomainAgentProfile>,
+    bridge_sink: Arc<NativeBridgeSink>,
+    picker_cancel: Mutex<Option<CancellationToken>>,
 }
 
 struct EffectExecution {
     snapshot: AppSnapshot,
     outcome: Option<IntentOutcome>,
     error: Option<AppErrorWire>,
+    persistence_degraded: bool,
 }
 
 struct SocketTransitionGate<'a> {
@@ -195,7 +468,25 @@ fn emit_app_appearance(app: &AppHandle, state: &NativeAppState) {
 impl NativeAppState {
     fn bootstrap(home: &Path) -> Result<Self, AppErrorWire> {
         let store = JsonStateStore::for_home(home);
-        let persisted = store.mark_starting().map_err(persistence_error)?;
+        let mut persisted = store.mark_starting().map_err(persistence_error)?;
+        // Reconcile roots before hydrating the model. This makes a relaunch
+        // deterministic: a previously available workspace whose root has
+        // disappeared is immediately actionable as Unavailable, while an
+        // in-flight close remains owned by its durable cleanup record.
+        let mut startup_reconciled = false;
+        for workspace in &mut persisted.workspaces {
+            if matches!(workspace.lifecycle, WorkspaceLifecycleRecord::Available)
+                && !Path::new(&workspace.canonical_path).is_dir()
+            {
+                workspace.lifecycle = WorkspaceLifecycleRecord::Unavailable {
+                    reason: PersistedDiagnosticCode::RootMissing,
+                };
+                startup_reconciled = true;
+            }
+        }
+        if startup_reconciled {
+            store.save_state(&persisted).map_err(persistence_error)?;
+        }
         let config_store = ConfigStore::new(default_config_path(home));
         let loaded_config = config_store.load().map_err(state_error)?;
         let runtime_context = RuntimeLaunchContext::from_startup(
@@ -227,6 +518,18 @@ impl NativeAppState {
             persisted.tmux.effective_socket_name.clone(),
         );
         let profiles = load_config_profiles(loaded_config.config())?;
+        let agent_journal =
+            store.path().parent().unwrap_or(home).join("agent-runtime-journal.json");
+        let agent_runtime = HerdrAgentRuntime::from_environment_with_journal(
+            home,
+            &startup_runtime_config.herdr,
+            agent_journal,
+        )
+        .map_err(|_| AppErrorWire::native_unavailable())?;
+        let bridge_sink = Arc::new(NativeBridgeSink::default());
+        let editor_host = EditorHost::new(
+            EditorHostConfig::new(home, None).with_bridge_event_sink(bridge_sink.clone()),
+        );
         let model = persisted.hydrate_model(&profiles).map_err(persistence_error)?;
         let mut coordinator = AppCoordinator::with_model(model);
         coordinator.mark_ready();
@@ -248,7 +551,6 @@ impl NativeAppState {
             persistence: Mutex::new(PersistenceState { persisted_revision }),
             state_commit: Mutex::new(()),
             pending_native_error: Mutex::new(None),
-            unhandled_effects: Mutex::new(VecDeque::new()),
             socket_transition_busy: AtomicBool::new(false),
             id_generator: NativeIdGenerator,
             _runtime_context: runtime_context,
@@ -256,7 +558,53 @@ impl NativeAppState {
             _repository_resolver: repository_resolver,
             _terminal_runtime: terminal_runtime,
             _workspace_resolver: MacWorkspacePathResolver::new(home),
+            agent_runtime,
+            editor_host,
+            profiles,
+            bridge_sink,
+            picker_cancel: Mutex::new(None),
         })
+    }
+
+    fn install_bridge_router(&self, app: &AppHandle) {
+        let app = app.clone();
+        let (sender, receiver): (SyncSender<BridgeRequest>, _) = sync_channel(64);
+        let worker_app = app.clone();
+        std::thread::Builder::new()
+            .name("devhub-bridge-router".to_owned())
+            .spawn(move || {
+                while let Ok(request) = receiver.recv() {
+                    let Some(state) = worker_app.try_state::<NativeAppState>() else { break };
+                    // A disconnect/timeout event invalidates the generation;
+                    // do not run an old request's mutating coordinator intent.
+                    if !state.bridge_sink.request_is_live(&request) {
+                        continue;
+                    }
+                    if let Err(error) = state.route_bridge_request(&request) {
+                        state.record_native_error(error);
+                        if state.bridge_sink.request_is_live(&request) {
+                            let _ = state.editor_host.complete_bridge_request(
+                                request.handle().clone(),
+                                bridge_request_failed_result(),
+                            );
+                        }
+                    }
+                }
+            })
+            .ok();
+        self.bridge_sink.install_router(move |request| {
+            let Err(error) = sender.try_send(request) else { return };
+            let request = match error {
+                TrySendError::Full(request) | TrySendError::Disconnected(request) => request,
+            };
+            if let Some(state) = app.try_state::<NativeAppState>() {
+                let _ = state.editor_host.complete_bridge_request(
+                    request.handle().clone(),
+                    bridge_request_failed_result(),
+                );
+                state.record_native_error(AppErrorWire::native_unavailable());
+            }
+        });
     }
 
     fn record_native_error(&self, error: AppErrorWire) {
@@ -314,15 +662,6 @@ impl NativeAppState {
             .collect()
     }
 
-    fn retain_unhandled_effect(&self, effect: Effect) {
-        if let Ok(mut effects) = self.unhandled_effects.lock() {
-            if effects.len() >= MAX_UNHANDLED_EFFECTS {
-                effects.pop_front();
-            }
-            effects.push_back(effect);
-        }
-    }
-
     fn complete_persistence(
         &self,
         token: OperationToken,
@@ -362,6 +701,47 @@ impl NativeAppState {
             .map_err(|error| AppErrorWire::from_error(&error))
     }
 
+    fn accept_provider_event(&self, event: ProviderEvent) -> Result<IntentOutcome, AppErrorWire> {
+        let event_id = self
+            .id_generator
+            .next_operation_id()
+            .map(ProviderEventId::from)
+            .map_err(|_| AppErrorWire::native_unavailable())?;
+        let mut coordinator = self.coordinator.lock().map_err(state_error)?;
+        coordinator
+            .accept_provider_event(ProviderEventEnvelope::new(event_id, event))
+            .map_err(|error| AppErrorWire::from_error(&error))
+    }
+
+    fn fail_provider_operation(
+        &self,
+        token: OperationToken,
+    ) -> Result<IntentOutcome, AppErrorWire> {
+        self.accept_provider_event(ProviderEvent::OperationFailed { token })
+    }
+
+    fn effect_cancel(token: &OperationToken) -> CancellationToken {
+        CancellationToken::new(token.operation_id().clone())
+    }
+
+    fn provider_failure(error: PortError) -> AppErrorWire {
+        let summary = match error.code() {
+            PortErrorCode::Cancelled => "provider operation cancelled",
+            PortErrorCode::Unavailable => "provider unavailable",
+            PortErrorCode::Incompatible => "provider incompatible",
+            PortErrorCode::TimedOut => "provider operation timed out",
+            PortErrorCode::Conflict => "provider state conflict",
+            PortErrorCode::Failed => "provider operation failed",
+        };
+        AppErrorWire::native_unavailable().with_summary(summary)
+    }
+
+    fn profile(&self, profile_id: &AgentProfileId) -> Result<DomainAgentProfile, AppErrorWire> {
+        self.profiles.iter().find(|profile| profile.id() == profile_id).cloned().ok_or_else(|| {
+            AppErrorWire::native_unavailable().with_summary("agent profile unavailable")
+        })
+    }
+
     fn current_snapshot(&self) -> Result<AppSnapshot, AppErrorWire> {
         self.coordinator
             .lock()
@@ -369,17 +749,48 @@ impl NativeAppState {
             .map_err(state_error)
     }
 
+    /// Reconstructs provider cleanup from durable Closing records after a
+    /// relaunch. Each workspace gets a fresh operation token and is
+    /// re-inspected before any remaining destructive step is emitted.
+    fn resume_persisted_closing(&self) -> Result<Option<AppSnapshot>, AppErrorWire> {
+        let workspaces = self
+            .current_snapshot()?
+            .workspaces()
+            .iter()
+            .filter(|workspace| workspace.state().cleanup_progress().is_some())
+            .map(|workspace| workspace.id().clone())
+            .collect::<Vec<_>>();
+        let had_workspaces = !workspaces.is_empty();
+        for workspace_id in workspaces {
+            let operation_id = self
+                .id_generator
+                .next_operation_id()
+                .map_err(|_| AppErrorWire::native_unavailable())?;
+            let effects = {
+                let mut coordinator = self.coordinator.lock().map_err(state_error)?;
+                coordinator
+                    .resume_persisted_close(workspace_id, operation_id)
+                    .map_err(|error| AppErrorWire::from_error(&error))?;
+                Self::drain_effects(&mut coordinator)
+            };
+            let _ = self.execute_effects(effects)?;
+        }
+        if !had_workspaces {
+            Ok(None)
+        } else {
+            Ok(Some(self.current_snapshot()?))
+        }
+    }
+
     fn execute_effects(&self, effects: Vec<Effect>) -> Result<EffectExecution, AppErrorWire> {
         let mut pending = VecDeque::from(effects);
         let mut first_error = None;
         let mut last_outcome = None;
+        let mut persistence_degraded = false;
         let mut steps = 0_usize;
         while let Some(effect) = pending.pop_front() {
             steps = steps.saturating_add(1);
             if steps > MAX_EFFECT_STEPS {
-                for remaining in pending {
-                    self.retain_unhandled_effect(remaining);
-                }
                 return Err(state_error("native effect worklist exceeded its bounded step limit"));
             }
             match effect {
@@ -392,9 +803,232 @@ impl NativeAppState {
                         self._terminal_runtime.detach_all_surfaces()
                     }
                 },
+                Effect::ResolveWorkspacePath { token, path } => {
+                    let result = tauri::async_runtime::block_on(
+                        self._workspace_resolver.resolve(path, Self::effect_cancel(&token)),
+                    );
+                    match result {
+                        Ok(resolved) => {
+                            let outcome =
+                                self.accept_provider_event(ProviderEvent::WorkspacePathResolved {
+                                    token,
+                                    root: resolved.root,
+                                    selected_path: resolved.selected_path,
+                                });
+                            if let Ok(value) = &outcome {
+                                last_outcome = Some(value.clone());
+                            }
+                            if first_error.is_none() {
+                                first_error = outcome.err();
+                            }
+                        }
+                        Err(error) => {
+                            let completion = self.fail_provider_operation(token);
+                            if first_error.is_none() {
+                                first_error = completion
+                                    .err()
+                                    .or_else(|| Some(Self::provider_failure(error)));
+                            }
+                        }
+                    }
+                }
+                Effect::GenerateWorkspaceId { token, .. } => {
+                    let raw = self.id_generator.next_operation_id().map_err(|_| {
+                        AppErrorWire::native_unavailable()
+                            .with_summary("workspace identity unavailable")
+                    });
+                    match raw.and_then(|id| {
+                        WorkspaceId::from_uuid(id.as_str().to_owned()).map_err(|_| {
+                            AppErrorWire::native_unavailable()
+                                .with_summary("workspace identity unavailable")
+                        })
+                    }) {
+                        Ok(workspace_id) => {
+                            let outcome =
+                                self.accept_provider_event(ProviderEvent::WorkspaceIdGenerated {
+                                    token,
+                                    workspace_id,
+                                });
+                            if let Ok(value) = &outcome {
+                                last_outcome = Some(value.clone());
+                            }
+                            if first_error.is_none() {
+                                first_error = outcome.err();
+                            }
+                        }
+                        Err(error) => {
+                            let completion = self.fail_provider_operation(token);
+                            if first_error.is_none() {
+                                first_error = completion.err().or(Some(error));
+                            }
+                        }
+                    }
+                }
+                Effect::ResolveAgentProfile { token, workspace_id, profile_id } => {
+                    match self.profile(&profile_id) {
+                        Ok(profile) => {
+                            let outcome =
+                                self.accept_provider_event(ProviderEvent::ProfileResolved {
+                                    token,
+                                    workspace_id,
+                                    profile,
+                                });
+                            if let Ok(value) = &outcome {
+                                last_outcome = Some(value.clone());
+                            }
+                            if first_error.is_none() {
+                                first_error = outcome.err();
+                            }
+                        }
+                        Err(error) => {
+                            let completion = self.fail_provider_operation(token);
+                            if first_error.is_none() {
+                                first_error = completion.err().or(Some(error));
+                            }
+                        }
+                    }
+                }
+                Effect::GenerateAgentId { token, workspace_id } => {
+                    let raw = self.id_generator.next_operation_id().map_err(|_| {
+                        AppErrorWire::native_unavailable()
+                            .with_summary("agent identity unavailable")
+                    });
+                    match raw.and_then(|id| {
+                        devhub_app_core::AgentId::from_uuid(id.as_str().to_owned()).map_err(|_| {
+                            AppErrorWire::native_unavailable()
+                                .with_summary("agent identity unavailable")
+                        })
+                    }) {
+                        Ok(agent_id) => {
+                            let outcome =
+                                self.accept_provider_event(ProviderEvent::AgentIdGenerated {
+                                    token,
+                                    workspace_id,
+                                    agent_id,
+                                });
+                            if let Ok(value) = &outcome {
+                                last_outcome = Some(value.clone());
+                            }
+                            if first_error.is_none() {
+                                first_error = outcome.err();
+                            }
+                        }
+                        Err(error) => {
+                            let completion = self.fail_provider_operation(token);
+                            if first_error.is_none() {
+                                first_error = completion.err().or(Some(error));
+                            }
+                        }
+                    }
+                }
+                Effect::LaunchAgent { token, workspace_id, agent_id, profile } => {
+                    let root = self
+                        .current_snapshot()?
+                        .workspaces()
+                        .iter()
+                        .find(|workspace| workspace.id() == &workspace_id)
+                        .map(|workspace| workspace.root().clone());
+                    let result =
+                        root.ok_or_else(AppErrorWire::native_unavailable).and_then(|root| {
+                            self.agent_runtime
+                                .register_agent_workspace(
+                                    agent_id.clone(),
+                                    workspace_id.clone(),
+                                    root.clone(),
+                                )
+                                .map_err(Self::provider_failure)?;
+                            tauri::async_runtime::block_on(self.agent_runtime.launch(
+                                agent_id.clone(),
+                                profile,
+                                Self::effect_cancel(&token),
+                            ))
+                            .map(|_| AgentLaunchResult::Started)
+                            .map_err(Self::provider_failure)
+                        });
+                    let event = ProviderEvent::AgentLaunchCompleted {
+                        token,
+                        workspace_id,
+                        agent_id,
+                        result: result.clone().unwrap_or(AgentLaunchResult::Failed {
+                            diagnostic: DiagnosticCode::RuntimeUnavailable,
+                        }),
+                    };
+                    let completion = self.accept_provider_event(event);
+                    if let Ok(value) = &completion {
+                        last_outcome = Some(value.clone());
+                    }
+                    if first_error.is_none() {
+                        first_error = result.err().or_else(|| completion.err());
+                    }
+                }
+                Effect::StopAgent { token, agent_id } => {
+                    let result = tauri::async_runtime::block_on(
+                        self.agent_runtime.terminate(agent_id.clone(), Self::effect_cancel(&token)),
+                    )
+                    .map(|_| AgentStopResult::Stopped)
+                    .unwrap_or(AgentStopResult::Failed {
+                        diagnostic: DiagnosticCode::CleanupFailed,
+                    });
+                    let completion =
+                        self.accept_provider_event(ProviderEvent::AgentStopCompleted {
+                            token,
+                            agent_id,
+                            result,
+                        });
+                    if let Ok(value) = &completion {
+                        last_outcome = Some(value.clone());
+                    }
+                    if first_error.is_none() {
+                        first_error = completion.err();
+                    }
+                }
+                Effect::TerminateAgent { token, agent_id } => {
+                    let result = tauri::async_runtime::block_on(
+                        self.agent_runtime.terminate(agent_id.clone(), Self::effect_cancel(&token)),
+                    )
+                    .map(|_| AgentStopResult::Stopped)
+                    .unwrap_or(AgentStopResult::Failed {
+                        diagnostic: DiagnosticCode::CleanupFailed,
+                    });
+                    let completion =
+                        self.accept_provider_event(ProviderEvent::AgentTerminationCompleted {
+                            token,
+                            agent_id,
+                            result,
+                        });
+                    if let Ok(value) = &completion {
+                        last_outcome = Some(value.clone());
+                    }
+                    if first_error.is_none() {
+                        first_error = completion.err();
+                    }
+                }
+                Effect::GenerateConfirmationId { token, .. } => {
+                    match ConfirmationId::from_uuid(token.operation_id().as_str().to_owned()) {
+                        Ok(confirmation_id) => {
+                            let completion = self.accept_provider_event(
+                                ProviderEvent::ConfirmationIdGenerated { token, confirmation_id },
+                            );
+                            if let Ok(value) = &completion {
+                                last_outcome = Some(value.clone());
+                            }
+                            if first_error.is_none() {
+                                first_error = completion.err();
+                            }
+                        }
+                        Err(_) if first_error.is_none() => {
+                            first_error = self
+                                .fail_provider_operation(token)
+                                .err()
+                                .or_else(|| Some(AppErrorWire::native_unavailable()));
+                        }
+                        Err(_) => {}
+                    }
+                }
                 Effect::PersistState { token } => {
                     let snapshot = self.current_snapshot()?;
                     let persistence_result = self.persist_snapshot(&snapshot, false);
+                    persistence_degraded = persistence_result.is_err();
                     let completion_result =
                         self.complete_persistence(token, persistence_result.is_ok());
                     if let Ok(outcome) = &completion_result {
@@ -409,6 +1043,255 @@ impl NativeAppState {
                     }
                     if first_error.is_none() {
                         first_error = completion_result.err().or_else(|| persistence_result.err());
+                    }
+                }
+                Effect::InspectWorkspace { token, workspace_id } => {
+                    let snapshot = self.current_snapshot()?;
+                    let workspace = snapshot
+                        .workspaces()
+                        .iter()
+                        .find(|workspace| workspace.id() == &workspace_id);
+                    let inspection = if let Some(workspace) = workspace {
+                        let target = TerminalTarget::workspace(
+                            workspace_id.clone(),
+                            workspace.root().clone(),
+                        );
+                        let terminal = tauri::async_runtime::block_on(
+                            self._terminal_runtime.inspect(target, Self::effect_cancel(&token)),
+                        )
+                        .unwrap_or_else(|_| {
+                            devhub_app_core::ports::TerminalInspection::new(
+                                ResourceInspection::unknown(DiagnosticCode::CloseTerminalUnknown),
+                                ResourceInspection::unknown(DiagnosticCode::CloseTerminalUnknown),
+                                ResourceInspection::unknown(DiagnosticCode::CloseTerminalUnknown),
+                            )
+                        });
+                        let owned_agent_ids = workspace
+                            .agents()
+                            .iter()
+                            .map(|agent| agent.id().clone())
+                            .collect::<std::collections::BTreeSet<_>>();
+                        let agents = match tauri::async_runtime::block_on(
+                            self.agent_runtime.reconcile(Self::effect_cancel(&token)),
+                        ) {
+                            Ok(reconciliation) => {
+                                let count = reconciliation
+                                    .observations()
+                                    .iter()
+                                    .filter(|observation| {
+                                        owned_agent_ids.contains(observation.agent_id())
+                                    })
+                                    .count();
+                                if count == 0 {
+                                    ResourceInspection::clean()
+                                } else {
+                                    ResourceInspection::busy(
+                                        u32::try_from(count).unwrap_or(u32::MAX),
+                                    )
+                                    .unwrap_or(
+                                        ResourceInspection::unknown(
+                                            DiagnosticCode::CloseAgentsUnknown,
+                                        ),
+                                    )
+                                }
+                            }
+                            Err(_) => {
+                                ResourceInspection::unknown(DiagnosticCode::CloseAgentsUnknown)
+                            }
+                        };
+                        let editor = match self.editor_host.snapshot(
+                            &editor::EditorSurfaceKey::Workspace(workspace_id.to_string()),
+                        ) {
+                            None => ResourceInspection::clean(),
+                            Some(surface) if !surface.visible && !surface.mounted => {
+                                ResourceInspection::clean()
+                            }
+                            Some(_) => match self.bridge_sink.editor_observation(&workspace_id) {
+                                Some(observation)
+                                    if observation.connected
+                                        && observation.readiness
+                                            == devhub_app_core::bridge::Readiness::Ready
+                                        && observation.dirty =>
+                                {
+                                    ResourceInspection::busy(1).unwrap_or_else(|_| {
+                                        ResourceInspection::unknown(
+                                            DiagnosticCode::CloseEditorUnknown,
+                                        )
+                                    })
+                                }
+                                Some(observation)
+                                    if observation.connected
+                                        && observation.readiness
+                                            == devhub_app_core::bridge::Readiness::Ready =>
+                                {
+                                    ResourceInspection::clean()
+                                }
+                                _ => {
+                                    ResourceInspection::unknown(DiagnosticCode::CloseEditorUnknown)
+                                }
+                            },
+                        };
+                        CloseInspectionInputs::new(
+                            agents,
+                            terminal.process(),
+                            terminal.extra_panes(),
+                            terminal.extra_windows(),
+                            editor,
+                        )
+                    } else {
+                        CloseInspectionInputs::new(
+                            ResourceInspection::unknown(DiagnosticCode::CloseAgentsUnknown),
+                            ResourceInspection::unknown(DiagnosticCode::CloseTerminalUnknown),
+                            ResourceInspection::unknown(DiagnosticCode::CloseTerminalUnknown),
+                            ResourceInspection::unknown(DiagnosticCode::CloseTerminalUnknown),
+                            ResourceInspection::unknown(DiagnosticCode::CloseEditorUnknown),
+                        )
+                    };
+                    let completion =
+                        self.accept_provider_event(ProviderEvent::WorkspaceInspectionCompleted {
+                            token,
+                            workspace_id,
+                            inspection,
+                        });
+                    if let Ok(value) = &completion {
+                        last_outcome = Some(value.clone());
+                    }
+                    if first_error.is_none() {
+                        first_error = completion.err();
+                    }
+                }
+                Effect::ReconcileAgents { token } => {
+                    let result = tauri::async_runtime::block_on(
+                        self.agent_runtime.reconcile(Self::effect_cancel(&token)),
+                    );
+                    if let Ok(reconciliation) = result {
+                        let completion =
+                            self.accept_provider_event(ProviderEvent::AgentsReconciled {
+                                token,
+                                reconciliation,
+                            });
+                        if let Ok(value) = &completion {
+                            last_outcome = Some(value.clone());
+                        }
+                        if first_error.is_none() {
+                            first_error = completion.err();
+                        }
+                    } else if first_error.is_none() {
+                        first_error = self.fail_provider_operation(token).err().or_else(|| {
+                            Some(
+                                AppErrorWire::native_unavailable()
+                                    .with_summary("agent runtime unavailable"),
+                            )
+                        });
+                    }
+                }
+                Effect::ReconcileAgent { token, agent_id } => {
+                    let result = tauri::async_runtime::block_on(
+                        self.agent_runtime.reconcile(Self::effect_cancel(&token)),
+                    );
+                    match result {
+                        Ok(reconciliation) => {
+                            let observation = reconciliation
+                                .observations()
+                                .iter()
+                                .find(|observation| observation.agent_id() == &agent_id);
+                            let event = match observation {
+                                Some(observation) => ProviderEvent::AgentStatusChanged {
+                                    token,
+                                    agent_id,
+                                    status: observation.status(),
+                                    runtime_health: observation.runtime_health(),
+                                },
+                                None => ProviderEvent::AgentExited { token, agent_id },
+                            };
+                            let completion = self.accept_provider_event(event);
+                            if let Ok(value) = &completion {
+                                last_outcome = Some(value.clone());
+                            }
+                            if first_error.is_none() {
+                                first_error = completion.err();
+                            }
+                        }
+                        Err(_) if first_error.is_none() => {
+                            first_error = self.fail_provider_operation(token).err().or_else(|| {
+                                Some(
+                                    AppErrorWire::native_unavailable()
+                                        .with_summary("agent runtime unavailable"),
+                                )
+                            });
+                        }
+                        Err(_) => {}
+                    }
+                }
+                Effect::CleanupWorkspace { token, workspace_id, step: CleanupStep::Agents } => {
+                    let agent_ids = self
+                        .current_snapshot()?
+                        .workspaces()
+                        .iter()
+                        .find(|workspace| workspace.id() == &workspace_id)
+                        .map(|workspace| {
+                            workspace
+                                .agents()
+                                .iter()
+                                .map(|agent| agent.id().clone())
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default();
+                    let mut result = WorkspaceCleanupResult::StepCompleted(CleanupStep::Agents);
+                    for agent_id in agent_ids {
+                        if tauri::async_runtime::block_on(
+                            self.agent_runtime.terminate(agent_id, Self::effect_cancel(&token)),
+                        )
+                        .is_err()
+                        {
+                            result = WorkspaceCleanupResult::Failed {
+                                step: CleanupStep::Agents,
+                                diagnostic: DiagnosticCode::CleanupFailed,
+                            };
+                            break;
+                        }
+                    }
+                    let completion = self.complete_workspace_cleanup(token, workspace_id, result);
+                    if let Ok(value) = &completion {
+                        last_outcome = Some(value.clone());
+                    }
+                    if first_error.is_none() {
+                        first_error = completion.err();
+                    }
+                }
+                Effect::CleanupWorkspace { token, workspace_id, step: CleanupStep::Editor } => {
+                    let result = tauri::async_runtime::block_on(
+                        self.editor_host
+                            .close_workspace(workspace_id.clone(), Self::effect_cancel(&token)),
+                    )
+                    .map(|_| WorkspaceCleanupResult::StepCompleted(CleanupStep::Editor))
+                    .unwrap_or(WorkspaceCleanupResult::Failed {
+                        step: CleanupStep::Editor,
+                        diagnostic: DiagnosticCode::CleanupFailed,
+                    });
+                    let completion = self.complete_workspace_cleanup(token, workspace_id, result);
+                    if let Ok(value) = &completion {
+                        last_outcome = Some(value.clone());
+                    }
+                    if first_error.is_none() {
+                        first_error = completion.err();
+                    }
+                }
+                Effect::CleanupWorkspace {
+                    token,
+                    workspace_id,
+                    step: CleanupStep::StateCommitted,
+                } => {
+                    let completion = self.complete_workspace_cleanup(
+                        token,
+                        workspace_id,
+                        WorkspaceCleanupResult::StepCompleted(CleanupStep::StateCommitted),
+                    );
+                    if let Ok(value) = &completion {
+                        last_outcome = Some(value.clone());
+                    }
+                    if first_error.is_none() {
+                        first_error = completion.err();
                     }
                 }
                 Effect::CleanupWorkspace { token, workspace_id, step: CleanupStep::Terminal } => {
@@ -458,13 +1341,6 @@ impl NativeAppState {
                         first_error = completion_result.err();
                     }
                 }
-                Effect::CleanupWorkspace { .. } => {
-                    // Agent/editor/state cleanup has no native implementation
-                    // in this adapter yet. Keep the exact effect/token for a
-                    // later provider instead of reporting a false success.
-                    self.retain_unhandled_effect(effect);
-                }
-                other => self.retain_unhandled_effect(other),
             }
             // A cleanup completion can synchronously emit the next effect
             // (for example Editor after Terminal). Drain it into this same
@@ -477,6 +1353,7 @@ impl NativeAppState {
             snapshot: self.current_snapshot()?,
             outcome: last_outcome,
             error: first_error,
+            persistence_degraded,
         })
     }
 
@@ -542,13 +1419,84 @@ impl NativeAppState {
         let final_outcome = execution.outcome.as_ref().unwrap_or(&outcome);
         let mut wire =
             AppOutcomeWire::from_outcome(final_outcome, readiness).map_err(state_error)?;
-        if execution.error.is_some() {
+        if let Some(error) = execution.error {
+            if !execution.persistence_degraded {
+                return Err(error);
+            }
             wire = AppOutcomeWire::PersistenceDegraded {
                 snapshot: AppSnapshotWire::from_snapshot(&execution.snapshot, readiness)
                     .map_err(state_error)?,
             };
         }
         Ok((wire, changed))
+    }
+
+    fn route_bridge_request(&self, request: &BridgeRequest) -> Result<(), AppErrorWire> {
+        let intent = match request.request() {
+            devhub_app_core::bridge::ClientRequest::OpenWorkspace(payload) => {
+                UserIntent::OpenFolder {
+                    path: devhub_app_core::RequestedPath::new(payload.absolute_path.as_str())
+                        .map_err(|_| AppErrorWire::native_unavailable())?,
+                }
+            }
+            devhub_app_core::bridge::ClientRequest::NewWindow(payload) => UserIntent::NewWindow {
+                path: payload
+                    .absolute_path
+                    .as_ref()
+                    .map(|path| devhub_app_core::RequestedPath::new(path.as_str()))
+                    .transpose()
+                    .map_err(|_| AppErrorWire::native_unavailable())?,
+            },
+            _ => return Ok(()),
+        };
+        let result = match self.dispatch_intent(intent) {
+            Ok(_) => self
+                .bridge_result_for_snapshot(&self.current_snapshot()?)
+                .unwrap_or(bridge_request_failed_result()),
+            Err(_) => bridge_request_failed_result(),
+        };
+        if !self.bridge_sink.request_is_live(request) {
+            return Ok(());
+        }
+        self.editor_host
+            .complete_bridge_request(request.handle().clone(), result)
+            .map_err(state_error)?;
+        Ok(())
+    }
+
+    fn bridge_result_for_snapshot(
+        &self,
+        snapshot: &AppSnapshot,
+    ) -> Result<BridgeRequestResult, AppErrorWire> {
+        match snapshot.selected_context() {
+            devhub_app_core::NavigationContext::Global => Ok(BridgeRequestResult::GlobalRouted {
+                context: devhub_app_core::bridge::Context::Global,
+            }),
+            devhub_app_core::NavigationContext::Workspace(workspace_id) => {
+                let workspace = snapshot
+                    .workspaces()
+                    .iter()
+                    .find(|workspace| workspace.id() == workspace_id)
+                    .ok_or_else(AppErrorWire::native_unavailable)?;
+                let id = devhub_app_core::bridge::Uuid::parse(workspace.id().as_str().to_owned())
+                    .map_err(|_| AppErrorWire::native_unavailable())?;
+                let root = workspace
+                    .root()
+                    .as_path()
+                    .to_str()
+                    .ok_or_else(AppErrorWire::native_unavailable)
+                    .and_then(|root| {
+                        devhub_app_core::bridge::AbsolutePath::normalize(root)
+                            .map_err(|_| AppErrorWire::native_unavailable())
+                    })?;
+                Ok(BridgeRequestResult::WorkspaceRouted {
+                    context: devhub_app_core::bridge::Context::workspace(id, root),
+                })
+            }
+            devhub_app_core::NavigationContext::Agent(_) => Ok(BridgeRequestResult::GlobalRouted {
+                context: devhub_app_core::bridge::Context::Global,
+            }),
+        }
     }
 
     fn advance_settings_sequence(
@@ -1726,6 +2674,127 @@ fn get_app_snapshot(state: State<'_, NativeAppState>) -> Result<AppSnapshotWire,
         .map_err(state_error)
 }
 
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct PickerStartRequest {
+    #[serde(default)]
+    query: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct PickerSelectionRequest {
+    path: String,
+}
+
+#[tauri::command]
+async fn choose_workspace_folder() -> Result<Option<String>, AppErrorWire> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let output = ProcessCommand::new("osascript")
+            .args(["-e", FOLDER_CHOOSER_SCRIPT])
+            .output()
+            .map_err(|_| AppErrorWire::native_unavailable())?;
+        if !folder_chooser_status(output.status, &output.stderr)? {
+            return Ok(None);
+        }
+        let path = String::from_utf8(output.stdout)
+            .map_err(|_| AppErrorWire::native_unavailable())?
+            .trim()
+            .to_owned();
+        if path.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(path))
+        }
+    })
+    .await
+    .map_err(|_| AppErrorWire::native_unavailable())?
+}
+
+#[tauri::command]
+fn start_workspace_picker(
+    app: AppHandle,
+    state: State<'_, NativeAppState>,
+    payload: PickerStartRequest,
+) -> Result<String, AppErrorWire> {
+    let operation_id =
+        state.id_generator.next_operation_id().map_err(|_| AppErrorWire::native_unavailable())?;
+    let cancel = CancellationToken::new(operation_id.clone());
+    if let Ok(mut previous) = state.picker_cancel.lock() {
+        if let Some(previous) = previous.replace(cancel.clone()) {
+            previous.cancel();
+        }
+    }
+    let _ = app.emit_to(
+        APP_SHELL_WINDOW_LABEL,
+        APP_WORKSPACE_PICKER_EVENT,
+        WorkspacePickerEventWire::Started { operation_id: operation_id.to_string(), sequence: 0 },
+    );
+    let engine = state._workspace_discovery.clone();
+    let query = payload.query.chars().take(256).collect::<String>();
+    let worker_app = app.clone();
+    let operation_wire = operation_id.to_string();
+    tauri::async_runtime::spawn(async move {
+        let picker_sink = Arc::new(PickerSink {
+            app: worker_app.clone(),
+            query,
+            last_sequence: AtomicU64::new(0),
+        });
+        let sink: Arc<dyn WorkspaceDiscoverySink> = picker_sink.clone();
+        let summary = engine.discover(cancel.clone(), sink).await;
+        if let Ok(summary) = summary {
+            let _ = worker_app.emit_to(
+                APP_SHELL_WINDOW_LABEL,
+                APP_WORKSPACE_PICKER_EVENT,
+                WorkspacePickerEventWire::Completed {
+                    operation_id: operation_id.to_string(),
+                    sequence: picker_sink.next_sequence(),
+                    source_id: None,
+                    candidate_count: summary.candidate_count,
+                    error_count: summary.error_count,
+                    stderr_bytes: summary.stderr_bytes,
+                    cancelled: summary.cancelled,
+                    truncated: summary.truncated,
+                },
+            );
+        }
+        if let Some(state) = worker_app.try_state::<NativeAppState>() {
+            if let Ok(mut active) = state.picker_cancel.lock() {
+                if active.as_ref().is_some_and(|token| token.operation_id() == &operation_id) {
+                    active.take();
+                }
+            }
+        }
+    });
+    Ok(operation_wire)
+}
+
+#[tauri::command]
+fn cancel_workspace_picker(state: State<'_, NativeAppState>) -> Result<(), AppErrorWire> {
+    if let Ok(mut active) = state.picker_cancel.lock() {
+        if let Some(token) = active.take() {
+            token.cancel();
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn select_workspace_picker(
+    app: AppHandle,
+    payload: PickerSelectionRequest,
+) -> Result<AppOutcomeWire, AppErrorWire> {
+    let path = devhub_app_core::RequestedPath::new(payload.path)
+        .map_err(|_| AppErrorWire::invalid_intent())?;
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<NativeAppState>();
+        state.dispatch_intent(UserIntent::OpenFolder { path })
+    })
+    .await
+    .map_err(|_| AppErrorWire::native_unavailable())??;
+    Ok(result.0)
+}
+
 #[tauri::command]
 fn get_app_appearance(
     state: State<'_, NativeAppState>,
@@ -1734,13 +2803,24 @@ fn get_app_appearance(
 }
 
 #[tauri::command]
-fn dispatch_app_intent(
+async fn dispatch_app_intent(
     app: AppHandle,
-    state: State<'_, NativeAppState>,
     payload: AppIntentWire,
 ) -> Result<AppOutcomeWire, AppErrorWire> {
     let intent = payload.into_user_intent().map_err(|_| AppErrorWire::invalid_intent())?;
-    let (wire, changed) = state.dispatch_intent(intent)?;
+    // Provider calls are deliberately kept off the Tauri command thread. The
+    // coordinator transaction is still serialized by its mutex, while
+    // Herdr/tmux/editor work and its tokened completions run on the bounded
+    // blocking executor used by the native adapters.
+    let worker_app = app.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let state = worker_app.state::<NativeAppState>();
+        let (wire, changed) = state.dispatch_intent(intent)?;
+        Ok::<_, AppErrorWire>((wire, changed))
+    })
+    .await
+    .map_err(|_| AppErrorWire::native_unavailable())?;
+    let (wire, changed) = result?;
     if changed {
         if let Err(error) =
             app.emit_to(APP_SHELL_WINDOW_LABEL, APP_SNAPSHOT_CHANGED_EVENT, wire.snapshot())
@@ -1971,6 +3051,7 @@ pub fn run() {
             let state = NativeAppState::bootstrap(&home)
                 .map_err(|_| std::io::Error::other("DevHub native bootstrap failed"))?;
             app.manage(state);
+            app.state::<NativeAppState>().install_bridge_router(app.handle());
             app.state::<NativeAppState>()
                 .install_config_watcher(app.handle())
                 .map_err(|_| std::io::Error::other("DevHub Settings watcher unavailable"))?;
@@ -1986,6 +3067,36 @@ pub fn run() {
                     Err(error) => {
                         eprintln!("DevHub socket transition resume unavailable: {error:?}");
                     }
+                }
+                let resume_handle = handle.clone();
+                let resume_result = tauri::async_runtime::spawn_blocking(move || {
+                    resume_handle.state::<NativeAppState>().resume_persisted_closing()
+                })
+                .await;
+                match resume_result {
+                    Ok(Ok(Some(snapshot))) => {
+                        match AppSnapshotWire::from_snapshot(&snapshot, AppReadiness::Ready) {
+                            Ok(snapshot) => {
+                                if let Err(error) = handle.emit_to(
+                                    APP_SHELL_WINDOW_LABEL,
+                                    APP_SNAPSHOT_CHANGED_EVENT,
+                                    snapshot,
+                                ) {
+                                    eprintln!(
+                                        "DevHub startup snapshot notification unavailable: {error}"
+                                    );
+                                }
+                            }
+                            Err(error) => handle
+                                .state::<NativeAppState>()
+                                .record_native_error(state_error(error)),
+                        }
+                    }
+                    Ok(Ok(None)) => {}
+                    Ok(Err(error)) => handle.state::<NativeAppState>().record_native_error(error),
+                    Err(_) => handle
+                        .state::<NativeAppState>()
+                        .record_native_error(AppErrorWire::native_unavailable()),
                 }
             });
             emit_app_appearance(app.handle(), &app.state::<NativeAppState>());
@@ -2012,6 +3123,10 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             get_app_snapshot,
+            start_workspace_picker,
+            cancel_workspace_picker,
+            select_workspace_picker,
+            choose_workspace_folder,
             get_app_appearance,
             dispatch_app_intent,
             replay_app_events,
@@ -2066,6 +3181,125 @@ mod tests {
     use devhub_app_core::{CancellationToken, SettingsRuntimeHealthValueWire, WorkspaceRoot};
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::{Arc, Barrier};
+
+    #[test]
+    fn folder_chooser_only_treats_explicit_apple_cancel_as_normal() {
+        let success = ProcessCommand::new("true").status().expect("true status");
+        assert!(folder_chooser_status(success, &[]).expect("success status"));
+        let cancelled = ProcessCommand::new("false").status().expect("false status");
+        assert!(!folder_chooser_status(cancelled, b"execution error: User canceled. (-128)")
+            .expect("cancel status"));
+        let failed = ProcessCommand::new("false").status().expect("false status");
+        assert!(folder_chooser_status(failed, b"execution error: unavailable").is_err());
+    }
+
+    #[test]
+    fn bridge_observation_tracks_clean_busy_and_disconnect_states() {
+        let sink = NativeBridgeSink::default();
+        let surface = editor::BridgeSurfaceId::from_uuid(
+            devhub_app_core::bridge::Uuid::parse("00000000-0000-4000-8000-000000000001")
+                .expect("surface id"),
+        );
+        let workspace =
+            devhub_app_core::bridge::Uuid::parse("00000000-0000-4000-8000-000000000002")
+                .expect("workspace id");
+        let root =
+            devhub_app_core::bridge::AbsolutePath::parse("/tmp/devhub").expect("absolute root");
+        sink.on_event(BridgeEvent::Snapshot {
+            surface_id: surface.clone(),
+            generation: 1,
+            readiness: devhub_app_core::bridge::Readiness::Ready,
+            context: devhub_app_core::bridge::Context::Workspace {
+                workspace_id: workspace,
+                canonical_root: root,
+            },
+            dirty: false,
+        });
+        let workspace_id =
+            WorkspaceId::from_uuid("00000000-0000-4000-8000-000000000002".to_owned())
+                .expect("domain workspace id");
+        let observation = sink.editor_observation(&workspace_id).expect("observation");
+        assert!(observation.connected && !observation.dirty);
+        sink.on_event(BridgeEvent::DirtyChanged {
+            surface_id: surface.clone(),
+            generation: 1,
+            dirty: true,
+        });
+        assert!(sink.editor_observation(&workspace_id).expect("dirty observation").dirty);
+        sink.on_event(BridgeEvent::Disconnected { surface_id: surface, generation: 1 });
+        assert!(
+            !sink.editor_observation(&workspace_id).expect("disconnected observation").connected
+        );
+    }
+
+    #[test]
+    fn bridge_request_failures_are_handle_scoped_and_keep_newest_tombstones() {
+        let sink = NativeBridgeSink::default();
+        let surface = editor::BridgeSurfaceId::from_uuid(
+            devhub_app_core::bridge::Uuid::parse("00000000-0000-4000-8000-000000000011")
+                .expect("surface id"),
+        );
+        let workspace =
+            devhub_app_core::bridge::Uuid::parse("00000000-0000-4000-8000-000000000012")
+                .expect("workspace id");
+        let root =
+            devhub_app_core::bridge::AbsolutePath::parse("/tmp/devhub").expect("absolute root");
+        sink.on_event(BridgeEvent::Snapshot {
+            surface_id: surface.clone(),
+            generation: 1,
+            readiness: devhub_app_core::bridge::Readiness::Ready,
+            context: devhub_app_core::bridge::Context::Workspace {
+                workspace_id: workspace,
+                canonical_root: root,
+            },
+            dirty: false,
+        });
+        for index in 0..257_u64 {
+            let request_message_id = devhub_app_core::bridge::Uuid::parse(format!(
+                "00000000-0000-4000-8000-{index:012x}"
+            ))
+            .expect("request id");
+            sink.on_event(BridgeEvent::RequestFailed {
+                handle: editor::BridgeRequestHandle::for_test(
+                    surface.clone(),
+                    devhub_app_core::bridge::Uuid::parse("00000000-0000-4000-8000-000000000013")
+                        .expect("connection id"),
+                    1,
+                    request_message_id,
+                ),
+                reason: devhub_app_core::bridge::RequestFailureReason::TimedOut,
+            });
+        }
+        let failed = sink.failed_requests.lock().expect("failure ledger");
+        assert_eq!(failed.len(), 256);
+        assert!(failed.iter().any(|(_, _, request_id)| request_id.ends_with("000000000100")));
+        assert!(!failed.iter().any(|(_, _, request_id)| request_id.ends_with("000000000000")));
+        drop(failed);
+        assert!(sink
+            .observations
+            .lock()
+            .expect("observations")
+            .get(surface.as_str())
+            .is_some_and(|observation| observation.connected));
+    }
+
+    #[test]
+    fn oversized_wire_path_is_rejected_and_maps_to_typed_request_failure() {
+        // AbsolutePath is intentionally more permissive than RequestedPath;
+        // this is a valid Bridge payload that must fail in the route worker,
+        // not remain pending until the Bridge deadline.
+        let raw = format!("/{}", "x".repeat(32_768));
+        let wire_path = devhub_app_core::bridge::AbsolutePath::parse(raw)
+            .expect("wire path remains within the Bridge bound");
+        assert!(devhub_app_core::RequestedPath::new(wire_path.as_str()).is_err());
+        assert_eq!(
+            bridge_request_failed_result(),
+            BridgeRequestResult::Error {
+                code: devhub_app_core::bridge::ErrorCode::RequestFailed,
+                summary: devhub_app_core::bridge::ContentFreeSummary::Failed,
+            }
+        );
+    }
 
     static TEMP_HOME_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -3010,6 +4244,10 @@ mod tests {
             serde_json::json!([
                 "core:default",
                 "allow-get-app-snapshot",
+                "allow-start-workspace-picker",
+                "allow-cancel-workspace-picker",
+                "allow-select-workspace-picker",
+                "allow-choose-workspace-folder",
                 "allow-get-app-appearance",
                 "allow-dispatch-app-intent",
                 "allow-replay-app-events",

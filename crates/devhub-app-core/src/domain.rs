@@ -872,17 +872,43 @@ pub enum DiagnosticCode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CleanupProgress {
     agents_closed: u32,
+    agents_step_completed: bool,
     terminal_closed: bool,
     editor_closed: bool,
 }
 
 impl CleanupProgress {
     pub const fn new(agents_closed: u32, terminal_closed: bool, editor_closed: bool) -> Self {
-        Self { agents_closed, terminal_closed, editor_closed }
+        Self {
+            agents_closed,
+            agents_step_completed: agents_closed > 0,
+            terminal_closed,
+            editor_closed,
+        }
+    }
+
+    pub const fn after_agents(
+        agents_closed: u32,
+        terminal_closed: bool,
+        editor_closed: bool,
+    ) -> Self {
+        Self { agents_closed, agents_step_completed: true, terminal_closed, editor_closed }
     }
 
     pub const fn agents_closed(self) -> u32 {
         self.agents_closed
+    }
+
+    pub const fn agents_step_completed(self) -> bool {
+        self.agents_step_completed
+    }
+
+    pub const fn with_terminal_closed(self, terminal_closed: bool) -> Self {
+        Self { terminal_closed, ..self }
+    }
+
+    pub const fn with_editor_closed(self, editor_closed: bool) -> Self {
+        Self { editor_closed, ..self }
     }
 
     pub const fn terminal_closed(self) -> bool {
@@ -910,6 +936,13 @@ impl WorkspaceState {
 
     pub const fn is_closing(self) -> bool {
         matches!(self, Self::Closing { .. })
+    }
+
+    pub const fn cleanup_progress(self) -> Option<CleanupProgress> {
+        match self {
+            Self::Closing { progress } | Self::ClosingFailed { progress, .. } => Some(progress),
+            Self::Available | Self::Unavailable { .. } => None,
+        }
     }
 }
 
@@ -1210,6 +1243,85 @@ impl CloseInspectionInputs {
             ResourceInspection::Clean,
             ResourceInspection::Clean,
         )
+    }
+
+    pub const fn agents(&self) -> ResourceInspection {
+        self.agents
+    }
+
+    pub const fn terminal_processes(&self) -> ResourceInspection {
+        self.terminal_processes
+    }
+
+    pub const fn terminal_panes(&self) -> ResourceInspection {
+        self.terminal_panes
+    }
+
+    pub const fn terminal_windows(&self) -> ResourceInspection {
+        self.terminal_windows
+    }
+
+    pub const fn unsaved_editors(&self) -> ResourceInspection {
+        self.unsaved_editors
+    }
+}
+
+/// Rust-owned, content-free projection used by the consolidated close
+/// confirmation. The UI renders these states but never recomputes them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CloseInspectionProjection {
+    workspace_id: WorkspaceId,
+    workspace_label: String,
+    agents: ResourceInspection,
+    terminal_processes: ResourceInspection,
+    terminal_panes: ResourceInspection,
+    terminal_windows: ResourceInspection,
+    unsaved_editors: ResourceInspection,
+}
+
+impl CloseInspectionProjection {
+    pub fn from_inputs(
+        workspace_id: WorkspaceId,
+        workspace_label: impl Into<String>,
+        inputs: CloseInspectionInputs,
+    ) -> Self {
+        Self {
+            workspace_id,
+            workspace_label: workspace_label.into(),
+            agents: inputs.agents(),
+            terminal_processes: inputs.terminal_processes(),
+            terminal_panes: inputs.terminal_panes(),
+            terminal_windows: inputs.terminal_windows(),
+            unsaved_editors: inputs.unsaved_editors(),
+        }
+    }
+
+    pub fn workspace_id(&self) -> &WorkspaceId {
+        &self.workspace_id
+    }
+
+    pub fn workspace_label(&self) -> &str {
+        &self.workspace_label
+    }
+
+    pub const fn agents(&self) -> ResourceInspection {
+        self.agents
+    }
+
+    pub const fn terminal_processes(&self) -> ResourceInspection {
+        self.terminal_processes
+    }
+
+    pub const fn terminal_panes(&self) -> ResourceInspection {
+        self.terminal_panes
+    }
+
+    pub const fn terminal_windows(&self) -> ResourceInspection {
+        self.terminal_windows
+    }
+
+    pub const fn unsaved_editors(&self) -> ResourceInspection {
+        self.unsaved_editors
     }
 }
 
@@ -1547,5 +1659,25 @@ mod tests {
             &[DiagnosticCode::CloseTerminalUnknown, DiagnosticCode::CloseEditorUnknown]
         );
         assert!(!unknown.is_clean());
+    }
+
+    #[test]
+    fn close_inspection_projection_retains_workspace_identity_and_each_resource_state() {
+        let projection = CloseInspectionProjection::from_inputs(
+            WorkspaceId::for_test("workspace-a"),
+            "DevHub",
+            CloseInspectionInputs::new(
+                ResourceInspection::busy(2).unwrap(),
+                ResourceInspection::unknown(DiagnosticCode::CloseTerminalUnknown),
+                ResourceInspection::clean(),
+                ResourceInspection::clean(),
+                ResourceInspection::busy(1).unwrap(),
+            ),
+        );
+        assert_eq!(projection.workspace_id().as_str(), "workspace-a");
+        assert_eq!(projection.workspace_label(), "DevHub");
+        assert_eq!(projection.agents(), ResourceInspection::Busy { count: 2 });
+        assert_eq!(projection.terminal_panes(), ResourceInspection::Clean);
+        assert_eq!(projection.unsaved_editors(), ResourceInspection::Busy { count: 1 });
     }
 }

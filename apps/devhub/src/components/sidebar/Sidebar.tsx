@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type PointerEvent as ReactPointerEvent,
@@ -23,10 +24,12 @@ function WorkspaceRow({
   workspace,
   snapshot,
   onDispatch,
+  chooseWorkspaceFolder,
 }: {
   readonly workspace: WorkspaceSnapshot;
   readonly snapshot: AppSnapshot;
   readonly onDispatch: (intent: AppIntent) => void;
+  readonly chooseWorkspaceFolder: () => Promise<string | undefined>;
 }) {
   const selected =
     snapshot.selection.context.kind === "workspace" &&
@@ -97,6 +100,71 @@ function WorkspaceRow({
             disabled
           >
             <span aria-hidden="true">＋</span>
+          </button>
+        )}
+        {workspace.state === "unavailable" && (
+          <>
+            <button
+              className="row-action-button"
+              type="button"
+              aria-label={`Retry ${workspace.label}`}
+              title="Retry workspace"
+              onClick={() =>
+                dispatch({ type: "retry_workspace", workspaceId: workspace.id })
+              }
+            >
+              ↻
+            </button>
+            <button
+              className="row-action-button"
+              type="button"
+              aria-label={`Locate ${workspace.label}`}
+              title="Locate workspace"
+              onClick={() => {
+                void chooseWorkspaceFolder().then((path) => {
+                  if (path)
+                    dispatch({
+                      type: "locate_workspace",
+                      workspaceId: workspace.id,
+                      path,
+                    });
+                });
+              }}
+            >
+              ⌕
+            </button>
+          </>
+        )}
+        {workspace.state === "closing-failed" && (
+          <button
+            className="row-action-button"
+            type="button"
+            aria-label={`Retry closing ${workspace.label}`}
+            title="Retry close"
+            onClick={() =>
+              dispatch({
+                type: "retry_close_workspace",
+                workspaceId: workspace.id,
+              })
+            }
+          >
+            ↻
+          </button>
+        )}
+        {workspace.state !== "closing" && (
+          <button
+            className="row-action-button"
+            type="button"
+            aria-label={`Close ${workspace.label}`}
+            title="Close workspace"
+            onClick={() =>
+              dispatch({
+                type: "request_close_workspace",
+                workspaceId: workspace.id,
+              })
+            }
+          >
+            ×
           </button>
         )}
       </div>
@@ -256,9 +324,49 @@ function SidebarResizeHandle({
 }
 
 export function Sidebar({ snapshot }: SidebarProps) {
-  const { dispatch } = useAppShell();
+  const {
+    dispatch,
+    pickerCandidates,
+    pickerBusy,
+    startWorkspacePicker,
+    cancelWorkspacePicker,
+    selectWorkspacePicker,
+    chooseWorkspaceFolder,
+  } = useAppShell();
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerQuery, setPickerQuery] = useState("");
+  const pickerTriggerRef = useRef<HTMLButtonElement>(null);
+  const rankedCandidates = useMemo(
+    () => [...pickerCandidates].sort((left, right) => right.score - left.score),
+    [pickerCandidates],
+  );
+
+  useEffect(() => {
+    if (!pickerOpen) return undefined;
+    const timer = window.setTimeout(() => {
+      void cancelWorkspacePicker().then(() =>
+        startWorkspacePicker(pickerQuery),
+      );
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [cancelWorkspacePicker, pickerOpen, pickerQuery, startWorkspacePicker]);
   const [inProgressWidth, setInProgressWidth] = useState<number | null>(null);
   const renderedWidth = inProgressWidth ?? snapshot.sidebar.width;
+
+  const closePicker = useCallback(() => {
+    setPickerOpen(false);
+    pickerTriggerRef.current?.focus();
+  }, []);
+
+  const finishPickerAction = useCallback(
+    (action?: () => Promise<unknown>) => {
+      void cancelWorkspacePicker()
+        .then(() => action?.())
+        .catch(() => undefined)
+        .finally(closePicker);
+    },
+    [cancelWorkspacePicker, closePicker],
+  );
 
   const onDispatch = useCallback(
     (intent: AppIntent) => {
@@ -292,15 +400,78 @@ export function Sidebar({ snapshot }: SidebarProps) {
         <div className="sidebar-section-heading">
           <h2>Workspaces</h2>
           <button
+            ref={pickerTriggerRef}
             className="section-action-button"
             type="button"
-            aria-label="Open workspace picker, unavailable"
-            title="Workspace discovery is not available yet"
-            disabled
+            aria-label="Open workspace picker"
+            title="Open workspace picker"
+            onClick={() => {
+              setPickerOpen(true);
+            }}
           >
             <span aria-hidden="true">＋</span>
           </button>
         </div>
+        {pickerOpen && (
+          <section className="workspace-picker" aria-label="Workspace picker">
+            <div className="workspace-picker-header">
+              <input
+                autoFocus
+                aria-label="Filter workspaces"
+                placeholder="Filter workspaces"
+                value={pickerQuery}
+                onChange={(event) => setPickerQuery(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && rankedCandidates[0]) {
+                    finishPickerAction(() =>
+                      selectWorkspacePicker(rankedCandidates[0].path),
+                    );
+                  }
+                  if (event.key === "Escape") {
+                    finishPickerAction();
+                  }
+                }}
+              />
+              <button type="button" onClick={() => finishPickerAction()}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  finishPickerAction(async () => {
+                    const path = await chooseWorkspaceFolder();
+                    if (path) await selectWorkspacePicker(path);
+                  })
+                }
+              >
+                Open Folder…
+              </button>
+            </div>
+            <div className="workspace-picker-results" aria-live="polite">
+              {rankedCandidates.map((candidate) => (
+                <button
+                  type="button"
+                  className="workspace-picker-result"
+                  key={`${candidate.operationId}:${candidate.path}`}
+                  onClick={() =>
+                    finishPickerAction(() =>
+                      selectWorkspacePicker(candidate.path),
+                    )
+                  }
+                >
+                  <span>{candidate.label}</span>
+                  <small>{candidate.path}</small>
+                </button>
+              ))}
+              {!pickerBusy && pickerCandidates.length === 0 && (
+                <p>No workspaces found.</p>
+              )}
+              {pickerBusy && (
+                <p role="status">Searching configured locations…</p>
+              )}
+            </div>
+          </section>
+        )}
         {snapshot.workspaces.length > 0 ? (
           <ul className="workspace-tree" aria-label="Open workspaces">
             {snapshot.workspaces.map((workspace) => (
@@ -309,6 +480,7 @@ export function Sidebar({ snapshot }: SidebarProps) {
                 workspace={workspace}
                 snapshot={snapshot}
                 onDispatch={onDispatch}
+                chooseWorkspaceFolder={chooseWorkspaceFolder}
               />
             ))}
           </ul>

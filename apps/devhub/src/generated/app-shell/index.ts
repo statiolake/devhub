@@ -76,6 +76,23 @@ export type AppIntentWire =
   | {
       readonly type: "retry_workspace";
       readonly workspaceId: string;
+    }
+  | {
+      readonly path: string;
+      readonly type: "locate_workspace";
+      readonly workspaceId: string;
+    }
+  | {
+      readonly type: "request_close_workspace";
+      readonly workspaceId: string;
+    }
+  | {
+      readonly confirmationId: string;
+      readonly type: "confirm_close_workspace";
+    }
+  | {
+      readonly type: "retry_close_workspace";
+      readonly workspaceId: string;
     };
 export type AppOutcomeWire =
   | {
@@ -89,6 +106,7 @@ export type AppOutcomeWire =
   | {
       readonly confirmationId: string;
       readonly kind: "confirmation_required";
+      readonly purpose: ConfirmationPurposeWire;
       readonly snapshot: AppSnapshotWire;
     }
   | {
@@ -115,6 +133,43 @@ export interface AppSnapshotWire {
   readonly sidebar: SidebarWire;
   readonly workspaces: readonly WorkspaceWire[];
 }
+export type CloseDiagnosticWire =
+  | "root_missing"
+  | "root_inaccessible"
+  | "close_agents_unknown"
+  | "close_terminal_unknown"
+  | "close_editor_unknown"
+  | "cleanup_failed"
+  | "runtime_unavailable";
+export interface CloseInspectionWire {
+  readonly agents: CloseResourceWire;
+  readonly terminalPanes: CloseResourceWire;
+  readonly terminalProcesses: CloseResourceWire;
+  readonly terminalWindows: CloseResourceWire;
+  readonly unsavedEditors: CloseResourceWire;
+  readonly workspaceId: string;
+  readonly workspaceLabel: string;
+}
+export type CloseResourceWire =
+  | {
+      readonly kind: "clean";
+    }
+  | {
+      readonly count: number;
+      readonly kind: "busy";
+    }
+  | {
+      readonly diagnostic: CloseDiagnosticWire;
+      readonly kind: "unknown";
+    };
+export type ConfirmationPurposeWire =
+  | {
+      readonly inspection: CloseInspectionWire;
+      readonly kind: "workspace_close";
+    }
+  | {
+      readonly kind: "agent_stop";
+    };
 export type ContextWire =
   | {
       readonly kind: "global";
@@ -171,6 +226,55 @@ export interface SidebarWire {
   readonly expandedWorkspaceIds: readonly string[];
   readonly width: number;
 }
+export type WorkspacePickerEventWire =
+  | {
+      readonly kind: "candidate";
+      readonly label: string;
+      readonly operationId: string;
+      readonly path: string;
+      readonly score: number;
+      readonly searchText: string;
+      readonly sequence: number;
+    }
+  | {
+      readonly kind: "started";
+      readonly operationId: string;
+      readonly sequence: number;
+    }
+  | {
+      readonly errorCount: number;
+      readonly kind: "source-error";
+      readonly operationId: string;
+      readonly sequence: number;
+      readonly sourceId: string;
+      readonly truncated: boolean;
+    }
+  | {
+      readonly candidateCount: number;
+      readonly errorCount: number;
+      readonly kind: "source-completed";
+      readonly operationId: string;
+      readonly sequence: number;
+      readonly sourceId: string;
+      readonly stderrBytes: number;
+    }
+  | {
+      readonly kind: "cancelled";
+      readonly operationId: string;
+      readonly sequence: number;
+      readonly sourceId?: string | null;
+    }
+  | {
+      readonly cancelled: boolean;
+      readonly candidateCount: number;
+      readonly errorCount: number;
+      readonly kind: "completed";
+      readonly operationId: string;
+      readonly sequence: number;
+      readonly sourceId?: string | null;
+      readonly stderrBytes: number;
+      readonly truncated: boolean;
+    };
 export type WorkspaceStateWire =
   | "available"
   | "unavailable"
@@ -504,6 +608,43 @@ const APP_SHELL_SCHEMA = {
           required: ["type", "workspaceId"],
           type: "object",
         },
+        {
+          additionalProperties: false,
+          properties: {
+            path: { type: "string" },
+            type: { const: "locate_workspace", type: "string" },
+            workspaceId: { type: "string" },
+          },
+          required: ["type", "workspaceId", "path"],
+          type: "object",
+        },
+        {
+          additionalProperties: false,
+          properties: {
+            type: { const: "request_close_workspace", type: "string" },
+            workspaceId: { type: "string" },
+          },
+          required: ["type", "workspaceId"],
+          type: "object",
+        },
+        {
+          additionalProperties: false,
+          properties: {
+            confirmationId: { type: "string" },
+            type: { const: "confirm_close_workspace", type: "string" },
+          },
+          required: ["type", "confirmationId"],
+          type: "object",
+        },
+        {
+          additionalProperties: false,
+          properties: {
+            type: { const: "retry_close_workspace", type: "string" },
+            workspaceId: { type: "string" },
+          },
+          required: ["type", "workspaceId"],
+          type: "object",
+        },
       ],
       title: "AppIntentWire",
     },
@@ -591,6 +732,87 @@ const APP_SHELL_SCHEMA = {
             "sidebar",
           ],
           type: "object",
+        },
+        CloseDiagnosticWire: {
+          enum: [
+            "root_missing",
+            "root_inaccessible",
+            "close_agents_unknown",
+            "close_terminal_unknown",
+            "close_editor_unknown",
+            "cleanup_failed",
+            "runtime_unavailable",
+          ],
+          type: "string",
+        },
+        CloseInspectionWire: {
+          additionalProperties: false,
+          properties: {
+            agents: { $ref: "#/$defs/CloseResourceWire" },
+            terminalPanes: { $ref: "#/$defs/CloseResourceWire" },
+            terminalProcesses: { $ref: "#/$defs/CloseResourceWire" },
+            terminalWindows: { $ref: "#/$defs/CloseResourceWire" },
+            unsavedEditors: { $ref: "#/$defs/CloseResourceWire" },
+            workspaceId: { type: "string" },
+            workspaceLabel: { type: "string" },
+          },
+          required: [
+            "workspaceId",
+            "workspaceLabel",
+            "agents",
+            "terminalProcesses",
+            "terminalPanes",
+            "terminalWindows",
+            "unsavedEditors",
+          ],
+          type: "object",
+        },
+        CloseResourceWire: {
+          oneOf: [
+            {
+              additionalProperties: false,
+              properties: { kind: { const: "clean", type: "string" } },
+              required: ["kind"],
+              type: "object",
+            },
+            {
+              additionalProperties: false,
+              properties: {
+                count: { format: "uint32", minimum: 0, type: "integer" },
+                kind: { const: "busy", type: "string" },
+              },
+              required: ["kind", "count"],
+              type: "object",
+            },
+            {
+              additionalProperties: false,
+              properties: {
+                diagnostic: { $ref: "#/$defs/CloseDiagnosticWire" },
+                kind: { const: "unknown", type: "string" },
+              },
+              required: ["kind", "diagnostic"],
+              type: "object",
+            },
+          ],
+        },
+        ConfirmationPurposeWire: {
+          oneOf: [
+            {
+              additionalProperties: false,
+              properties: {
+                inspection: { $ref: "#/$defs/CloseInspectionWire" },
+                kind: { const: "workspace_close", type: "string" },
+              },
+              required: ["kind", "inspection"],
+              type: "object",
+            },
+            {
+              additionalProperties: false,
+              properties: { kind: { const: "agent_stop", type: "string" } },
+              required: ["kind"],
+              type: "object",
+            },
+          ],
         },
         ContextWire: {
           oneOf: [
@@ -733,9 +955,10 @@ const APP_SHELL_SCHEMA = {
           properties: {
             confirmationId: { type: "string" },
             kind: { const: "confirmation_required", type: "string" },
+            purpose: { $ref: "#/$defs/ConfirmationPurposeWire" },
             snapshot: { $ref: "#/$defs/AppSnapshotWire" },
           },
-          required: ["kind", "confirmationId", "snapshot"],
+          required: ["kind", "confirmationId", "snapshot", "purpose"],
           type: "object",
         },
         {
@@ -807,6 +1030,87 @@ const APP_SHELL_SCHEMA = {
         "sidebar",
       ],
       type: "object",
+    },
+    CloseDiagnosticWire: {
+      enum: [
+        "root_missing",
+        "root_inaccessible",
+        "close_agents_unknown",
+        "close_terminal_unknown",
+        "close_editor_unknown",
+        "cleanup_failed",
+        "runtime_unavailable",
+      ],
+      type: "string",
+    },
+    CloseInspectionWire: {
+      additionalProperties: false,
+      properties: {
+        agents: { $ref: "#/$defs/CloseResourceWire" },
+        terminalPanes: { $ref: "#/$defs/CloseResourceWire" },
+        terminalProcesses: { $ref: "#/$defs/CloseResourceWire" },
+        terminalWindows: { $ref: "#/$defs/CloseResourceWire" },
+        unsavedEditors: { $ref: "#/$defs/CloseResourceWire" },
+        workspaceId: { type: "string" },
+        workspaceLabel: { type: "string" },
+      },
+      required: [
+        "workspaceId",
+        "workspaceLabel",
+        "agents",
+        "terminalProcesses",
+        "terminalPanes",
+        "terminalWindows",
+        "unsavedEditors",
+      ],
+      type: "object",
+    },
+    CloseResourceWire: {
+      oneOf: [
+        {
+          additionalProperties: false,
+          properties: { kind: { const: "clean", type: "string" } },
+          required: ["kind"],
+          type: "object",
+        },
+        {
+          additionalProperties: false,
+          properties: {
+            count: { format: "uint32", minimum: 0, type: "integer" },
+            kind: { const: "busy", type: "string" },
+          },
+          required: ["kind", "count"],
+          type: "object",
+        },
+        {
+          additionalProperties: false,
+          properties: {
+            diagnostic: { $ref: "#/$defs/CloseDiagnosticWire" },
+            kind: { const: "unknown", type: "string" },
+          },
+          required: ["kind", "diagnostic"],
+          type: "object",
+        },
+      ],
+    },
+    ConfirmationPurposeWire: {
+      oneOf: [
+        {
+          additionalProperties: false,
+          properties: {
+            inspection: { $ref: "#/$defs/CloseInspectionWire" },
+            kind: { const: "workspace_close", type: "string" },
+          },
+          required: ["kind", "inspection"],
+          type: "object",
+        },
+        {
+          additionalProperties: false,
+          properties: { kind: { const: "agent_stop", type: "string" } },
+          required: ["kind"],
+          type: "object",
+        },
+      ],
     },
     ContextWire: {
       oneOf: [
@@ -1149,6 +1453,154 @@ const APP_SHELL_SCHEMA = {
       required: ["width", "expandedWorkspaceIds"],
       type: "object",
     },
+    WorkspacePickerEventWire: {
+      $schema: "https://json-schema.org/draft/2020-12/schema",
+      description:
+        "Streaming Workspace Picker payload. This is part of the App Shell\ncontract so native and TypeScript consumers cannot silently diverge on\nevent shape or progress semantics.",
+      oneOf: [
+        {
+          additionalProperties: false,
+          properties: {
+            kind: { const: "candidate", type: "string" },
+            label: { maxLength: 32768, minLength: 1, type: "string" },
+            operationId: { maxLength: 128, minLength: 1, type: "string" },
+            path: { maxLength: 32768, minLength: 1, type: "string" },
+            score: { format: "uint32", minimum: 0, type: "integer" },
+            searchText: { maxLength: 32768, minLength: 1, type: "string" },
+            sequence: {
+              format: "uint64",
+              maximum: 9007199254740991,
+              minimum: 0,
+              type: "integer",
+            },
+          },
+          required: [
+            "kind",
+            "operationId",
+            "sequence",
+            "label",
+            "searchText",
+            "path",
+            "score",
+          ],
+          type: "object",
+        },
+        {
+          additionalProperties: false,
+          properties: {
+            kind: { const: "started", type: "string" },
+            operationId: { maxLength: 128, minLength: 1, type: "string" },
+            sequence: {
+              format: "uint64",
+              maximum: 9007199254740991,
+              minimum: 0,
+              type: "integer",
+            },
+          },
+          required: ["kind", "operationId", "sequence"],
+          type: "object",
+        },
+        {
+          additionalProperties: false,
+          properties: {
+            errorCount: { format: "uint32", minimum: 0, type: "integer" },
+            kind: { const: "source-error", type: "string" },
+            operationId: { maxLength: 128, minLength: 1, type: "string" },
+            sequence: {
+              format: "uint64",
+              maximum: 9007199254740991,
+              minimum: 0,
+              type: "integer",
+            },
+            sourceId: { type: "string" },
+            truncated: { type: "boolean" },
+          },
+          required: [
+            "kind",
+            "operationId",
+            "sequence",
+            "sourceId",
+            "errorCount",
+            "truncated",
+          ],
+          type: "object",
+        },
+        {
+          additionalProperties: false,
+          properties: {
+            candidateCount: { format: "uint32", minimum: 0, type: "integer" },
+            errorCount: { format: "uint32", minimum: 0, type: "integer" },
+            kind: { const: "source-completed", type: "string" },
+            operationId: { maxLength: 128, minLength: 1, type: "string" },
+            sequence: {
+              format: "uint64",
+              maximum: 9007199254740991,
+              minimum: 0,
+              type: "integer",
+            },
+            sourceId: { type: "string" },
+            stderrBytes: { format: "uint32", minimum: 0, type: "integer" },
+          },
+          required: [
+            "kind",
+            "operationId",
+            "sequence",
+            "sourceId",
+            "candidateCount",
+            "errorCount",
+            "stderrBytes",
+          ],
+          type: "object",
+        },
+        {
+          additionalProperties: false,
+          properties: {
+            kind: { const: "cancelled", type: "string" },
+            operationId: { maxLength: 128, minLength: 1, type: "string" },
+            sequence: {
+              format: "uint64",
+              maximum: 9007199254740991,
+              minimum: 0,
+              type: "integer",
+            },
+            sourceId: { type: ["string", "null"] },
+          },
+          required: ["kind", "operationId", "sequence"],
+          type: "object",
+        },
+        {
+          additionalProperties: false,
+          properties: {
+            cancelled: { type: "boolean" },
+            candidateCount: { format: "uint32", minimum: 0, type: "integer" },
+            errorCount: { format: "uint32", minimum: 0, type: "integer" },
+            kind: { const: "completed", type: "string" },
+            operationId: { maxLength: 128, minLength: 1, type: "string" },
+            sequence: {
+              format: "uint64",
+              maximum: 9007199254740991,
+              minimum: 0,
+              type: "integer",
+            },
+            sourceId: { type: ["string", "null"] },
+            stderrBytes: { format: "uint32", minimum: 0, type: "integer" },
+            truncated: { type: "boolean" },
+          },
+          required: [
+            "kind",
+            "operationId",
+            "sequence",
+            "candidateCount",
+            "errorCount",
+            "stderrBytes",
+            "cancelled",
+            "truncated",
+          ],
+          type: "object",
+        },
+      ],
+      title: "WorkspacePickerEventWire",
+    },
     WorkspaceStateWire: {
       enum: ["available", "unavailable", "closing", "closing-failed"],
       type: "string",
@@ -1185,6 +1637,7 @@ const APP_SHELL_SCHEMA = {
     { $ref: "#/$defs/AppAppearanceWire" },
     { $ref: "#/$defs/AppIntentWire" },
     { $ref: "#/$defs/AppOutcomeWire" },
+    { $ref: "#/$defs/WorkspacePickerEventWire" },
     { $ref: "#/$defs/AppErrorWire" },
     { $ref: "#/$defs/ReplayWire" },
   ],
@@ -1224,6 +1677,18 @@ function check(schema: Schema, value: unknown): void {
   }
   if (Array.isArray(schema.allOf))
     for (const candidate of schema.allOf) check(candidate, value);
+  if (Array.isArray(schema.type)) {
+    const matched = schema.type.some((type: unknown) => {
+      try {
+        check({ ...schema, type }, value);
+        return true;
+      } catch {
+        return false;
+      }
+    });
+    if (!matched) throw new Error("type mismatch");
+    return;
+  }
   if (schema.type === "object") {
     if (typeof value !== "object" || value === null || Array.isArray(value))
       throw new Error("object expected");
@@ -1277,6 +1742,8 @@ function check(schema: Schema, value: unknown): void {
   }
   if (schema.type === "boolean" && typeof value !== "boolean")
     throw new Error("boolean expected");
+  if (schema.type === "null" && value !== null)
+    throw new Error("null expected");
 }
 
 function freeze<T>(value: T): T {
@@ -1311,6 +1778,12 @@ export function parseAppError(value: unknown): AppError {
 export function parseAppEventCursor(value: unknown): AppEventCursor {
   check({ $ref: "#/$defs/ReplayWire" }, value);
   return freeze(value as AppEventCursor);
+}
+export function parseWorkspacePickerEvent(
+  value: unknown,
+): WorkspacePickerEventWire {
+  check({ $ref: "#/$defs/WorkspacePickerEventWire" }, value);
+  return freeze(value as WorkspacePickerEventWire);
 }
 export function validateAppShell(value: unknown): void {
   const errors: unknown[] = [];

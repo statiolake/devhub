@@ -14,7 +14,7 @@ import type {
   AppOutcome,
   AppSnapshot,
 } from "../generated/app-shell";
-import type { AppShellClient } from "./client";
+import type { AppShellClient, WorkspacePickerEvent } from "./client";
 import {
   agentSnapshot,
   closingFailedSnapshot,
@@ -82,10 +82,8 @@ describe("App Shell navigation matrix", () => {
       }),
     ).toBeDisabled();
     expect(
-      screen.getByRole("button", {
-        name: "Open workspace picker, unavailable",
-      }),
-    ).toBeDisabled();
+      screen.getByRole("button", { name: "Open workspace picker" }),
+    ).toBeEnabled();
   });
 
   it("keeps disclosure separate from Workspace selection", async () => {
@@ -179,6 +177,146 @@ describe("App Shell states and accessibility", () => {
         screen.getByRole("heading", { name: "Scratch" }),
       ).toBeInTheDocument(),
     );
+  });
+
+  it("renders unknown close resources with friendly verification wording", async () => {
+    const appClient = client(workspaceSnapshot);
+    vi.mocked(appClient.dispatch).mockResolvedValue({
+      kind: "confirmation_required",
+      confirmationId: "confirmation-1",
+      snapshot: workspaceSnapshot,
+      purpose: {
+        kind: "workspace_close",
+        inspection: {
+          workspaceId: "workspace-1",
+          workspaceLabel: "devhub",
+          agents: { kind: "unknown", diagnostic: "close_agents_unknown" },
+          terminalProcesses: { kind: "clean" },
+          terminalPanes: {
+            kind: "unknown",
+            diagnostic: "close_terminal_unknown",
+          },
+          terminalWindows: { kind: "clean" },
+          unsavedEditors: { kind: "clean" },
+        },
+      },
+    });
+    render(<AppShell client={appClient} />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Close devhub" }),
+    );
+
+    expect(await screen.findByRole("dialog")).toHaveTextContent(
+      "Could not verify agents",
+    );
+    expect(screen.getByRole("dialog")).toHaveTextContent(
+      "Could not verify terminal state",
+    );
+    expect(screen.getByRole("dialog")).not.toHaveTextContent(
+      "close_terminal_unknown",
+    );
+  });
+
+  it("cancels discovery before picker selection and restores trigger focus", async () => {
+    const appClient = client(globalSnapshot);
+    let pickerListener: ((event: WorkspacePickerEvent) => void) | undefined;
+    appClient.startWorkspacePicker = vi.fn().mockResolvedValue("picker-1");
+    appClient.cancelWorkspacePicker = vi.fn().mockResolvedValue(undefined);
+    appClient.selectWorkspacePicker = vi.fn().mockResolvedValue({
+      kind: "noop",
+      snapshot: globalSnapshot,
+    });
+    appClient.subscribeWorkspacePicker = vi
+      .fn()
+      .mockImplementation(async (listener) => {
+        pickerListener = listener;
+        return () => undefined;
+      });
+    render(<AppShell client={appClient} />);
+
+    const trigger = await screen.findByRole("button", {
+      name: "Open workspace picker",
+    });
+    fireEvent.click(trigger);
+    await waitFor(() =>
+      expect(appClient.startWorkspacePicker).toHaveBeenCalledWith(""),
+    );
+    act(() =>
+      pickerListener?.({
+        kind: "started",
+        operationId: "picker-1",
+        sequence: 0,
+      }),
+    );
+    act(() =>
+      pickerListener?.({
+        kind: "candidate",
+        operationId: "picker-1",
+        sequence: 1,
+        label: "DevHub",
+        searchText: "DevHub /tmp/devhub",
+        path: "/tmp/devhub",
+        score: 100,
+      }),
+    );
+    const candidate = await screen.findByRole("button", { name: /DevHub/ });
+    fireEvent.click(candidate);
+
+    await waitFor(() =>
+      expect(appClient.selectWorkspacePicker).toHaveBeenCalledWith(
+        "/tmp/devhub",
+      ),
+    );
+    expect(appClient.cancelWorkspacePicker).toHaveBeenCalled();
+    expect(
+      vi.mocked(appClient.cancelWorkspacePicker).mock.invocationCallOrder[0],
+    ).toBeLessThan(
+      vi.mocked(appClient.selectWorkspacePicker).mock.invocationCallOrder[0],
+    );
+    expect(document.activeElement).toBe(trigger);
+  });
+
+  it("cancels discovery before native folder selection", async () => {
+    const appClient = client(globalSnapshot);
+    let resolveFolder: (path: string | undefined) => void = () => undefined;
+    appClient.startWorkspacePicker = vi.fn().mockResolvedValue("picker-1");
+    appClient.cancelWorkspacePicker = vi.fn().mockResolvedValue(undefined);
+    appClient.chooseWorkspaceFolder = vi.fn(
+      () =>
+        new Promise<string | undefined>((resolve) => {
+          resolveFolder = resolve;
+        }),
+    );
+    appClient.selectWorkspacePicker = vi.fn().mockResolvedValue({
+      kind: "noop",
+      snapshot: globalSnapshot,
+    });
+    appClient.subscribeWorkspacePicker = vi
+      .fn()
+      .mockResolvedValue(() => undefined);
+    render(<AppShell client={appClient} />);
+
+    const trigger = await screen.findByRole("button", {
+      name: "Open workspace picker",
+    });
+    fireEvent.click(trigger);
+    await waitFor(() =>
+      expect(appClient.startWorkspacePicker).toHaveBeenCalledWith(""),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Open Folder…" }));
+    await waitFor(() =>
+      expect(appClient.chooseWorkspaceFolder).toHaveBeenCalled(),
+    );
+    expect(appClient.cancelWorkspacePicker).toHaveBeenCalled();
+    expect(appClient.selectWorkspacePicker).not.toHaveBeenCalled();
+
+    resolveFolder("/tmp/chosen");
+    await waitFor(() =>
+      expect(appClient.selectWorkspacePicker).toHaveBeenCalledWith(
+        "/tmp/chosen",
+      ),
+    );
+    expect(document.activeElement).toBe(trigger);
   });
 
   it("does not regress when an event wins the subscribe-before-query race", async () => {

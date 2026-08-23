@@ -114,12 +114,26 @@ pub struct BridgeRequestHandle {
 }
 
 impl BridgeRequestHandle {
+    #[cfg(test)]
+    pub(crate) fn for_test(
+        surface_id: BridgeSurfaceId,
+        connection_id: Uuid,
+        connection_generation: u64,
+        request_message_id: Uuid,
+    ) -> Self {
+        Self { surface_id, connection_id, connection_generation, request_message_id }
+    }
+
     pub fn surface_id(&self) -> &BridgeSurfaceId {
         &self.surface_id
     }
 
     pub fn connection_generation(&self) -> u64 {
         self.connection_generation
+    }
+
+    pub fn request_message_id(&self) -> &Uuid {
+        &self.request_message_id
     }
 }
 

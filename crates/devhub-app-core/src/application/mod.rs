@@ -17,9 +17,9 @@ pub use coordinator::{
 };
 pub use error::{AppError, AppErrorCode};
 pub use intent::{
-    AgentLaunchResult, AgentStopResult, CleanupStep, Intent, IntentEnvelope, IntentOutcome,
-    PersistenceHealth, ProviderEvent, ProviderEventEnvelope, RequestedPath, UserIntent,
-    WorkspaceCleanupResult,
+    AgentLaunchResult, AgentStopResult, CleanupStep, ConfirmationOutcomePurpose, Intent,
+    IntentEnvelope, IntentOutcome, PersistenceHealth, ProviderEvent, ProviderEventEnvelope,
+    RequestedPath, UserIntent, WorkspaceCleanupResult,
 };
 pub use types::{
     AppReadiness, ConfirmationId, IntentId, OperationId, OperationToken, ProviderEventId,

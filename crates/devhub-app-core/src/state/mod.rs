@@ -647,6 +647,8 @@ pub struct PersistedCleanupProgress {
     #[serde(default)]
     pub agents_closed: u32,
     #[serde(default)]
+    pub agents_step_completed: bool,
+    #[serde(default)]
     pub terminal_closed: bool,
     #[serde(default)]
     pub editor_closed: bool,
@@ -677,6 +679,7 @@ impl From<WorkspaceState> for WorkspaceLifecycleRecord {
             WorkspaceState::Closing { progress } => Self::Closing {
                 progress: PersistedCleanupProgress {
                     agents_closed: progress.agents_closed(),
+                    agents_step_completed: progress.agents_step_completed(),
                     terminal_closed: progress.terminal_closed(),
                     editor_closed: progress.editor_closed(),
                 },
@@ -685,6 +688,7 @@ impl From<WorkspaceState> for WorkspaceLifecycleRecord {
                 diagnostic: diagnostic.into(),
                 progress: PersistedCleanupProgress {
                     agents_closed: progress.agents_closed(),
+                    agents_step_completed: progress.agents_step_completed(),
                     terminal_closed: progress.terminal_closed(),
                     editor_closed: progress.editor_closed(),
                 },
@@ -1783,22 +1787,38 @@ impl PersistedAppState {
                 WorkspaceLifecycleRecord::Closing { progress } => model
                     .mark_workspace_closing(
                         &workspace_id,
-                        CleanupProgress::new(
-                            progress.agents_closed,
-                            progress.terminal_closed,
-                            progress.editor_closed,
-                        ),
+                        if progress.agents_step_completed {
+                            CleanupProgress::after_agents(
+                                progress.agents_closed,
+                                progress.terminal_closed,
+                                progress.editor_closed,
+                            )
+                        } else {
+                            CleanupProgress::new(
+                                progress.agents_closed,
+                                progress.terminal_closed,
+                                progress.editor_closed,
+                            )
+                        },
                     )
                     .map_err(|_| state_error(StateErrorCode::InvalidState))?,
                 WorkspaceLifecycleRecord::ClosingFailed { diagnostic, progress } => model
                     .mark_workspace_closing_failed(
                         &workspace_id,
                         (*diagnostic).into(),
-                        CleanupProgress::new(
-                            progress.agents_closed,
-                            progress.terminal_closed,
-                            progress.editor_closed,
-                        ),
+                        if progress.agents_step_completed {
+                            CleanupProgress::after_agents(
+                                progress.agents_closed,
+                                progress.terminal_closed,
+                                progress.editor_closed,
+                            )
+                        } else {
+                            CleanupProgress::new(
+                                progress.agents_closed,
+                                progress.terminal_closed,
+                                progress.editor_closed,
+                            )
+                        },
                     )
                     .map_err(|_| state_error(StateErrorCode::InvalidState))?,
             }
@@ -2931,6 +2951,7 @@ mod tests {
             diagnostic: PersistedDiagnosticCode::CleanupFailed,
             progress: PersistedCleanupProgress {
                 agents_closed: 1,
+                agents_step_completed: true,
                 terminal_closed: false,
                 editor_closed: false,
             },
@@ -3305,6 +3326,7 @@ mod tests {
         invalid_progress.lifecycle = WorkspaceLifecycleRecord::Closing {
             progress: PersistedCleanupProgress {
                 agents_closed: 0,
+                agents_step_completed: false,
                 terminal_closed: false,
                 editor_closed: true,
             },
@@ -3319,6 +3341,7 @@ mod tests {
                 &uuid(7),
                 PersistedCleanupProgress {
                     agents_closed: 0,
+                    agents_step_completed: false,
                     terminal_closed: true,
                     editor_closed: true,
                 },
@@ -3330,6 +3353,7 @@ mod tests {
                     &uuid(7),
                     PersistedCleanupProgress {
                         agents_closed: 0,
+                        agents_step_completed: false,
                         terminal_closed: false,
                         editor_closed: false,
                     },
@@ -3717,6 +3741,7 @@ mod tests {
                 &uuid(1),
                 PersistedCleanupProgress {
                     agents_closed: 1,
+                    agents_step_completed: true,
                     terminal_closed: false,
                     editor_closed: false,
                 },

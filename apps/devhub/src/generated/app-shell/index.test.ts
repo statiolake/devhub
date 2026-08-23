@@ -6,6 +6,7 @@ import {
   parseAppEventCursor,
   parseAppIntent,
   parseAppSnapshot,
+  parseWorkspacePickerEvent,
   type AppEventCursor,
   type AppAppearance,
   type AppIntent,
@@ -97,5 +98,23 @@ describe("generated App Shell v1 contract", () => {
     ) as AppAppearance;
     expect(appearance.colorScheme).toBe("light");
     expect(Object.isFrozen(appearance)).toBe(true);
+  });
+
+  it("parses the generated closed picker event union", () => {
+    const event = parseWorkspacePickerEvent({
+      kind: "cancelled",
+      operationId: "picker-1",
+      sequence: 1,
+      sourceId: null,
+    });
+    expect(event.kind).toBe("cancelled");
+    expect(() =>
+      parseWorkspacePickerEvent({
+        kind: "started",
+        operationId: "picker-1",
+        sequence: 1,
+        irrelevant: true,
+      }),
+    ).toThrow();
   });
 });

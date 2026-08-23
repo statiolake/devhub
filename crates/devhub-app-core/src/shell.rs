@@ -8,13 +8,16 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
-use crate::application::{AppReadiness, CoordinatorEvent, CoordinatorReplay, IntentOutcome};
+use crate::application::{
+    AppReadiness, ConfirmationId, ConfirmationOutcomePurpose, CoordinatorEvent, CoordinatorReplay,
+    IntentOutcome, RequestedPath,
+};
 use crate::config::AppearanceConfig;
 use crate::{
     Activity, AgentControlState, AgentId, AgentStatus, AppError, AppErrorCode, AppSnapshot,
-    DisabledReason, DomainErrorCode, NavigationContext, RuntimeHealth, SurfaceKey,
-    SurfaceResolution, UserIntent, WorkspaceAggregateStatus, WorkspaceId, WorkspaceState,
-    SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH,
+    CloseInspectionProjection, DiagnosticCode, DisabledReason, DomainErrorCode, NavigationContext,
+    ResourceInspection, RuntimeHealth, SurfaceKey, SurfaceResolution, UserIntent,
+    WorkspaceAggregateStatus, WorkspaceId, WorkspaceState, SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH,
 };
 
 pub const APP_SHELL_SCHEMA_VERSION: u16 = 1;
@@ -332,6 +335,23 @@ pub enum AppIntentWire {
         #[serde(rename = "workspaceId")]
         workspace_id: String,
     },
+    LocateWorkspace {
+        #[serde(rename = "workspaceId")]
+        workspace_id: String,
+        path: String,
+    },
+    RequestCloseWorkspace {
+        #[serde(rename = "workspaceId")]
+        workspace_id: String,
+    },
+    ConfirmCloseWorkspace {
+        #[serde(rename = "confirmationId")]
+        confirmation_id: String,
+    },
+    RetryCloseWorkspace {
+        #[serde(rename = "workspaceId")]
+        workspace_id: String,
+    },
 }
 
 pub type ContextInputWire = ContextWire;
@@ -350,6 +370,7 @@ pub enum AppOutcomeWire {
         #[serde(rename = "confirmationId")]
         confirmation_id: String,
         snapshot: AppSnapshotWire,
+        purpose: ConfirmationPurposeWire,
     },
     Deferred {
         #[serde(rename = "operationId")]
@@ -362,6 +383,161 @@ pub enum AppOutcomeWire {
     PersistenceDegraded {
         snapshot: AppSnapshotWire,
     },
+}
+
+/// Streaming Workspace Picker payload. This is part of the App Shell
+/// contract so native and TypeScript consumers cannot silently diverge on
+/// event shape or progress semantics.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(
+    tag = "kind",
+    rename_all = "kebab-case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+#[schemars(rename_all = "kebab-case", deny_unknown_fields)]
+pub enum WorkspacePickerEventWire {
+    Candidate {
+        #[schemars(length(min = 1, max = 128))]
+        operation_id: String,
+        #[schemars(range(max = MAX_SAFE_JS_INTEGER))]
+        sequence: u64,
+        #[schemars(length(min = 1, max = 32_768))]
+        label: String,
+        #[schemars(length(min = 1, max = 32_768))]
+        search_text: String,
+        #[schemars(length(min = 1, max = 32_768))]
+        path: String,
+        score: u32,
+    },
+    Started {
+        #[schemars(length(min = 1, max = 128))]
+        operation_id: String,
+        #[schemars(range(max = MAX_SAFE_JS_INTEGER))]
+        sequence: u64,
+    },
+    SourceError {
+        #[schemars(length(min = 1, max = 128))]
+        operation_id: String,
+        #[schemars(range(max = MAX_SAFE_JS_INTEGER))]
+        sequence: u64,
+        source_id: String,
+        error_count: u32,
+        truncated: bool,
+    },
+    SourceCompleted {
+        #[schemars(length(min = 1, max = 128))]
+        operation_id: String,
+        #[schemars(range(max = MAX_SAFE_JS_INTEGER))]
+        sequence: u64,
+        source_id: String,
+        candidate_count: u32,
+        error_count: u32,
+        stderr_bytes: u32,
+    },
+    Cancelled {
+        #[schemars(length(min = 1, max = 128))]
+        operation_id: String,
+        #[schemars(range(max = MAX_SAFE_JS_INTEGER))]
+        sequence: u64,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        source_id: Option<String>,
+    },
+    Completed {
+        #[schemars(length(min = 1, max = 128))]
+        operation_id: String,
+        #[schemars(range(max = MAX_SAFE_JS_INTEGER))]
+        sequence: u64,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        source_id: Option<String>,
+        candidate_count: u32,
+        error_count: u32,
+        stderr_bytes: u32,
+        cancelled: bool,
+        truncated: bool,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+#[schemars(rename_all = "snake_case", deny_unknown_fields)]
+pub enum ConfirmationPurposeWire {
+    WorkspaceClose { inspection: CloseInspectionWire },
+    AgentStop,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+#[schemars(rename_all = "snake_case", deny_unknown_fields)]
+pub enum CloseResourceWire {
+    Clean,
+    Busy { count: u32 },
+    Unknown { diagnostic: CloseDiagnosticWire },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CloseDiagnosticWire {
+    RootMissing,
+    RootInaccessible,
+    CloseAgentsUnknown,
+    CloseTerminalUnknown,
+    CloseEditorUnknown,
+    CleanupFailed,
+    RuntimeUnavailable,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CloseInspectionWire {
+    pub workspace_id: String,
+    pub workspace_label: String,
+    pub agents: CloseResourceWire,
+    pub terminal_processes: CloseResourceWire,
+    pub terminal_panes: CloseResourceWire,
+    pub terminal_windows: CloseResourceWire,
+    pub unsaved_editors: CloseResourceWire,
+}
+
+impl CloseResourceWire {
+    fn from_domain(value: ResourceInspection) -> Self {
+        match value {
+            ResourceInspection::Clean => Self::Clean,
+            ResourceInspection::Busy { count } => Self::Busy { count },
+            ResourceInspection::Unknown { diagnostic } => {
+                Self::Unknown { diagnostic: CloseDiagnosticWire::from_domain(diagnostic) }
+            }
+        }
+    }
+}
+
+impl CloseDiagnosticWire {
+    fn from_domain(value: DiagnosticCode) -> Self {
+        match value {
+            DiagnosticCode::RootMissing => Self::RootMissing,
+            DiagnosticCode::RootInaccessible => Self::RootInaccessible,
+            DiagnosticCode::CloseAgentsUnknown => Self::CloseAgentsUnknown,
+            DiagnosticCode::CloseTerminalUnknown => Self::CloseTerminalUnknown,
+            DiagnosticCode::CloseEditorUnknown => Self::CloseEditorUnknown,
+            DiagnosticCode::CleanupFailed => Self::CleanupFailed,
+            DiagnosticCode::RuntimeUnavailable => Self::RuntimeUnavailable,
+        }
+    }
+}
+
+impl CloseInspectionWire {
+    fn from_domain(value: &CloseInspectionProjection) -> Result<Self, SnapshotWireError> {
+        Ok(Self {
+            workspace_id: value.workspace_id().to_string(),
+            workspace_label: value.workspace_label().to_owned(),
+            agents: CloseResourceWire::from_domain(value.agents()),
+            terminal_processes: CloseResourceWire::from_domain(value.terminal_processes()),
+            terminal_panes: CloseResourceWire::from_domain(value.terminal_panes()),
+            terminal_windows: CloseResourceWire::from_domain(value.terminal_windows()),
+            unsaved_editors: CloseResourceWire::from_domain(value.unsaved_editors()),
+        })
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -448,7 +624,26 @@ impl AppIntentWire {
             // The picker is a UI affordance. Until the resolver/file dialog
             // adapter is wired, treating it as a failed intent is safer than
             // returning a false success or inventing a canonical path.
-            Self::OpenWorkspacePicker | Self::RetryWorkspace { .. } => Err(InvalidIntent),
+            Self::OpenWorkspacePicker => Err(InvalidIntent),
+            Self::RetryWorkspace { workspace_id } => {
+                Ok(UserIntent::RetryWorkspace { workspace_id: parse_workspace_id(workspace_id)? })
+            }
+            Self::LocateWorkspace { workspace_id, path } => Ok(UserIntent::LocateWorkspace {
+                workspace_id: parse_workspace_id(workspace_id)?,
+                path: RequestedPath::new(path).map_err(|_| InvalidIntent)?,
+            }),
+            Self::RequestCloseWorkspace { workspace_id } => Ok(UserIntent::RequestCloseWorkspace {
+                workspace_id: parse_workspace_id(workspace_id)?,
+            }),
+            Self::ConfirmCloseWorkspace { confirmation_id } => {
+                Ok(UserIntent::ConfirmCloseWorkspace {
+                    confirmation_id: ConfirmationId::from_uuid(confirmation_id)
+                        .map_err(|_| InvalidIntent)?,
+                })
+            }
+            Self::RetryCloseWorkspace { workspace_id } => Ok(UserIntent::RetryCloseWorkspace {
+                workspace_id: parse_workspace_id(workspace_id)?,
+            }),
             // A profile chooser/composer owns the profile selection. The
             // shell must not invent a profile merely to make this button
             // appear successful, so this MVP ingress is explicitly rejected.
@@ -505,10 +700,18 @@ impl AppOutcomeWire {
         Ok(match outcome {
             IntentOutcome::Noop { .. } => Self::Noop { snapshot },
             IntentOutcome::Updated { .. } => Self::Updated { snapshot },
-            IntentOutcome::ConfirmationRequired { confirmation_id, .. } => {
+            IntentOutcome::ConfirmationRequired { confirmation_id, purpose, .. } => {
                 Self::ConfirmationRequired {
                     confirmation_id: confirmation_id.to_string(),
                     snapshot,
+                    purpose: match purpose {
+                        ConfirmationOutcomePurpose::WorkspaceClose { inspection } => {
+                            ConfirmationPurposeWire::WorkspaceClose {
+                                inspection: CloseInspectionWire::from_domain(inspection)?,
+                            }
+                        }
+                        ConfirmationOutcomePurpose::AgentStop => ConfirmationPurposeWire::AgentStop,
+                    },
                 }
             }
             IntentOutcome::Deferred { operation_id, .. } => {
