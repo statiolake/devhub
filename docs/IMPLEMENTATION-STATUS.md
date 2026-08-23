@@ -17,6 +17,7 @@ gate, not just source-code presence.
 | P2.2 StateStore | Complete; hydration/native persistence integration complete | `CI=true pnpm run check` and concurrent temp-home/native lifecycle tests (this tracker revision) |
 | U2.4 Settings Window | Complete | Rust-owned ConfigStore Settings projection, singleton window/menu, five sections (General, Workspaces, Agents, Runtimes, Appearance), strict generated contracts, targeted IPC, AppAppearance propagation, dev fixtures, and accessibility basics; `CI=true pnpm run check` (49 frontend tests, 133 core tests, 14 native tests), `CI=true pnpm run build`, and `CI=true pnpm --filter @devhub/app exec tauri build --debug --no-bundle` all pass (this tracker revision) |
 | U2.5 Visual foundation | Complete | `CI=true pnpm run check`, deterministic visual fixtures, and production fixture-bundle scan (this tracker revision) |
+| D3.1 WorkspaceDiscovery | Complete | Cancellable filesystem and command sources with deterministic traversal, source-local visited state, Git repository/worktree matching, canonical dedupe, fuzzy projection, bounded/redacted events, operation-scoped sequencing, and isolated diagnostics; `CI=true CARGO_NET_OFFLINE=true pnpm run check` (50 native tests, 133 core tests, 49 frontend tests), `CI=true CARGO_NET_OFFLINE=true pnpm run build`, `CI=true CARGO_NET_OFFLINE=true pnpm --filter @devhub/app exec tauri build --debug --no-bundle`, native clippy, and `git diff --check` pass (this tracker revision) |
 
 P2.1 provides the versioned TOML model, defaults and strict validation,
 comment-preserving conflict-safe writes, symlink-safe atomic replacement,
@@ -42,16 +43,16 @@ complete.
 
 ## Next
 
-1. Wave 3 provider waves: WorkspaceDiscovery, repository resolution,
-   TerminalRuntime, EditorHost, Bridge extension, and AgentRuntime.
+1. D3.2 Repository resolution: resolve Git common directories and normalized
+   remotes without conflating Repository identity with Workspace identity.
 
 The latest local validation also includes `CI=true pnpm run build` and
 `CI=true pnpm --filter @devhub/app exec tauri build --debug --no-bundle`.
 
 ## Later waves
 
-- Wave 3: WorkspaceDiscovery, repository resolution, TerminalRuntime,
-  EditorHost, Bridge extension, and AgentRuntime providers.
+- Wave 3: D3.2 repository resolution, then T3.3 TerminalRuntime, E3.4
+  EditorHost, E3.5 Bridge extension, and A3.6 AgentRuntime providers.
 - Wave 4: workspace, agent, app lifecycle, keyboard, and diagnostics
   integration.
 - Wave 5: accessibility/IME, performance/endurance, brand, security, and

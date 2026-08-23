@@ -24,6 +24,7 @@ use devhub_app_core::{
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
 
+pub mod discovery;
 mod workspace_resolver;
 use workspace_resolver::MacWorkspacePathResolver;
 

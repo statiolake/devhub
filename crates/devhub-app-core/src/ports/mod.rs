@@ -3,8 +3,11 @@
 //! These traits mention only DevHub values.  Tauri, WRY, Herdr, tmux, Git,
 //! OpenVSCode, process handles and provider IDs belong in later adapters.
 
+use std::fmt;
 use std::future::Future;
+use std::hash::{Hash, Hasher};
 use std::pin::Pin;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::SystemTime;
 
@@ -46,18 +49,62 @@ impl PortError {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+/// A cancellation handle shared by a caller and its provider adapter.
+///
+/// The operation ID remains the stable value used for diagnostics at the port
+/// boundary. Equality additionally includes the shared cancellation identity:
+/// two independent tokens for one operation must not compare equal, while a
+/// clone/child token intentionally does.
+#[derive(Clone)]
 pub struct CancellationToken {
     operation_id: OperationId,
+    cancelled: Arc<AtomicBool>,
 }
 
 impl CancellationToken {
-    pub const fn new(operation_id: OperationId) -> Self {
-        Self { operation_id }
+    pub fn new(operation_id: OperationId) -> Self {
+        Self { operation_id, cancelled: Arc::new(AtomicBool::new(false)) }
     }
 
     pub fn operation_id(&self) -> &OperationId {
         &self.operation_id
+    }
+
+    pub fn cancel(&self) {
+        self.cancelled.store(true, Ordering::Release);
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::Acquire)
+    }
+
+    pub fn child(&self) -> Self {
+        self.clone()
+    }
+}
+
+impl fmt::Debug for CancellationToken {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("CancellationToken")
+            .field("operation_id", &self.operation_id)
+            .field("cancelled", &self.is_cancelled())
+            .finish()
+    }
+}
+
+impl PartialEq for CancellationToken {
+    fn eq(&self, other: &Self) -> bool {
+        self.operation_id == other.operation_id && Arc::ptr_eq(&self.cancelled, &other.cancelled)
+    }
+}
+
+impl Eq for CancellationToken {}
+
+impl Hash for CancellationToken {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.operation_id.hash(state);
+        (Arc::as_ptr(&self.cancelled) as usize).hash(state);
     }
 }
 
@@ -89,10 +136,153 @@ impl ConfigSnapshot {
 pub type PersistedState = crate::state::PersistedAppState;
 pub type PersistedStateLoad = crate::state::StateLoad;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct WorkspaceCandidate {
     pub root: WorkspaceRoot,
     pub selected_path: DisplayPath,
+}
+
+impl fmt::Debug for WorkspaceCandidate {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("WorkspaceCandidate")
+            .field("root", &"<redacted>")
+            .field("selected_path", &"<redacted>")
+            .finish()
+    }
+}
+
+/// Stable, provider-free picker projection. The discovery adapter owns how
+/// these strings are derived; the UI only consumes the projection.
+#[derive(Clone, PartialEq, Eq)]
+pub struct WorkspaceSearchProjection {
+    pub label: String,
+    pub search_text: String,
+    pub tie_break: String,
+}
+
+impl fmt::Debug for WorkspaceSearchProjection {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("WorkspaceSearchProjection")
+            .field("label", &"<redacted>")
+            .field("search_text", &"<redacted>")
+            .field("tie_break", &"<redacted>")
+            .finish()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum WorkspaceDiscoveryErrorCode {
+    SourceUnavailable,
+    PermissionDenied,
+    Io,
+    InvalidCandidate,
+    InvalidUtf8,
+    CommandUnavailable,
+    CommandFailed,
+    CommandTimedOut,
+    OutputLimit,
+    CandidateLimit,
+}
+
+/// Content-free event kind emitted while configured sources are scanned.
+/// Source IDs are validated configuration IDs, never raw paths or commands.
+#[derive(Clone, PartialEq, Eq)]
+pub enum WorkspaceDiscoveryEventKind {
+    Candidate {
+        source_id: String,
+        candidate: WorkspaceCandidate,
+        projection: WorkspaceSearchProjection,
+    },
+    SourceError {
+        source_id: String,
+        code: WorkspaceDiscoveryErrorCode,
+        count: u32,
+    },
+    SourceCompleted {
+        source_id: String,
+        candidate_count: u32,
+        error_count: u32,
+        stderr_bytes: u32,
+    },
+    Cancelled {
+        source_id: Option<String>,
+    },
+}
+
+impl fmt::Debug for WorkspaceDiscoveryEventKind {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Candidate { source_id, .. } => formatter
+                .debug_struct("Candidate")
+                .field("source_id", source_id)
+                .field("candidate", &"<redacted>")
+                .field("projection", &"<redacted>")
+                .finish(),
+            Self::SourceError { source_id, code, count } => formatter
+                .debug_struct("SourceError")
+                .field("source_id", source_id)
+                .field("code", code)
+                .field("count", count)
+                .finish(),
+            Self::SourceCompleted { source_id, candidate_count, error_count, stderr_bytes } => {
+                formatter
+                    .debug_struct("SourceCompleted")
+                    .field("source_id", source_id)
+                    .field("candidate_count", candidate_count)
+                    .field("error_count", error_count)
+                    .field("stderr_bytes", stderr_bytes)
+                    .finish()
+            }
+            Self::Cancelled { source_id } => {
+                formatter.debug_struct("Cancelled").field("source_id", source_id).finish()
+            }
+        }
+    }
+}
+
+/// A discovery event is scoped to one scan operation and carries a sequence
+/// independent of model/content revisions.  Consumers can reject a late
+/// event from a cooperatively-cancelled scan by checking both fields before
+/// applying its provider-free kind.
+#[derive(Clone, PartialEq, Eq)]
+pub struct WorkspaceDiscoveryEvent {
+    pub operation_id: OperationId,
+    pub sequence: u64,
+    pub kind: WorkspaceDiscoveryEventKind,
+}
+
+impl fmt::Debug for WorkspaceDiscoveryEvent {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("WorkspaceDiscoveryEvent")
+            .field("operation_id", &self.operation_id)
+            .field("sequence", &self.sequence)
+            .field("kind", &self.kind)
+            .finish()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct WorkspaceDiscoverySummary {
+    pub candidate_count: u32,
+    pub source_count: u32,
+    pub error_count: u32,
+    /// Aggregate stderr byte count from command sources. Content is never
+    /// retained or exposed through this value.
+    pub stderr_bytes: u32,
+    pub cancelled: bool,
+    /// A configured safety bound or output bound stopped the scan before all
+    /// eligible entries could be represented. This is distinct from caller
+    /// cancellation.
+    pub truncated: bool,
+}
+
+/// Object-safe event sink. Implementations may forward events to an app
+/// model, a Tauri adapter, or a deterministic test collector.
+pub trait WorkspaceDiscoverySink: Send + Sync {
+    fn emit(&self, event: WorkspaceDiscoveryEvent);
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -147,7 +337,11 @@ pub trait StateStore: Send + Sync {
 }
 
 pub trait WorkspaceDiscovery: Send + Sync {
-    fn discover(&self, cancel: CancellationToken) -> PortFuture<Vec<WorkspaceCandidate>>;
+    fn discover(
+        &self,
+        cancel: CancellationToken,
+        sink: Arc<dyn WorkspaceDiscoverySink>,
+    ) -> PortFuture<WorkspaceDiscoverySummary>;
 }
 
 pub trait WorkspacePathResolver: Send + Sync {
