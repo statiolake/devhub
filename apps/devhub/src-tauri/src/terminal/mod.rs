@@ -11,7 +11,7 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::task::{Context, Poll, Waker};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -25,9 +25,10 @@ use crate::runtime::{ChildCleanup, ResolvedExecutable, RuntimeLaunchContext};
 use devhub_app_core::config::is_safe_tmux_argument;
 use devhub_app_core::ports::{
     CancellationToken, PortError, PortErrorCode, PortFuture, SocketName,
-    SocketTargetPreflightState, TerminalInspection, TerminalPreflight, TerminalResult,
-    TerminalRuntime, TerminalTarget, WorkspaceTerminalTarget,
+    SocketTargetPreflightState, TerminalInspection, TerminalOwnedSessions, TerminalPreflight,
+    TerminalResult, TerminalRuntime, TerminalTarget, WorkspaceTerminalTarget,
 };
+use devhub_app_core::state::{OwnedSessionRecord, PersistedAppState, RequiredTerminalSet};
 use devhub_app_core::{DiagnosticCode, ResourceInspection, WorkspaceId};
 
 const PROTOCOL_OPTION: &str = "@devhub-protocol";
@@ -97,6 +98,92 @@ impl OperationDeadline {
     }
 }
 
+#[derive(Default)]
+struct RuntimeGateState {
+    transition_active: bool,
+    active_operations: usize,
+}
+
+/// Logical read/write exclusion for the one native terminal owner. The
+/// permit keeps ownership across provider I/O, while the mutex is held only
+/// while acquiring or releasing that permit. Ordinary operations therefore
+/// cannot slip between the final old-socket inventory and the effective-name
+/// commit, and cancellation can still interrupt a waiter.
+struct RuntimeOperationGate {
+    state: Mutex<RuntimeGateState>,
+    wake: Condvar,
+}
+
+pub(crate) struct RuntimeOperationPermit {
+    gate: Arc<RuntimeOperationGate>,
+}
+
+pub(crate) struct RuntimeTransitionPermit {
+    gate: Arc<RuntimeOperationGate>,
+}
+
+impl RuntimeOperationGate {
+    fn acquire_operation(
+        self: &Arc<Self>,
+        cancel: &CancellationToken,
+    ) -> Result<RuntimeOperationPermit, PortError> {
+        let mut state = self.state.lock().map_err(|_| PortError::new(PortErrorCode::Failed))?;
+        loop {
+            if cancel.is_cancelled() {
+                return Err(PortError::new(PortErrorCode::Cancelled));
+            }
+            if !state.transition_active {
+                state.active_operations = state.active_operations.saturating_add(1);
+                return Ok(RuntimeOperationPermit { gate: Arc::clone(self) });
+            }
+            state = self
+                .wake
+                .wait_timeout(state, POLL_INTERVAL)
+                .map_err(|_| PortError::new(PortErrorCode::Failed))?
+                .0;
+        }
+    }
+
+    fn acquire_transition(
+        self: &Arc<Self>,
+        cancel: &CancellationToken,
+    ) -> Result<RuntimeTransitionPermit, PortError> {
+        let mut state = self.state.lock().map_err(|_| PortError::new(PortErrorCode::Failed))?;
+        loop {
+            if cancel.is_cancelled() {
+                return Err(PortError::new(PortErrorCode::Cancelled));
+            }
+            if !state.transition_active && state.active_operations == 0 {
+                state.transition_active = true;
+                return Ok(RuntimeTransitionPermit { gate: Arc::clone(self) });
+            }
+            state = self
+                .wake
+                .wait_timeout(state, POLL_INTERVAL)
+                .map_err(|_| PortError::new(PortErrorCode::Failed))?
+                .0;
+        }
+    }
+}
+
+impl Drop for RuntimeOperationPermit {
+    fn drop(&mut self) {
+        if let Ok(mut state) = self.gate.state.lock() {
+            state.active_operations = state.active_operations.saturating_sub(1);
+            self.gate.wake.notify_all();
+        }
+    }
+}
+
+impl Drop for RuntimeTransitionPermit {
+    fn drop(&mut self) {
+        if let Ok(mut state) = self.gate.state.lock() {
+            state.transition_active = false;
+            self.gate.wake.notify_all();
+        }
+    }
+}
+
 /// A startup-frozen tmux adapter.  A missing executable is represented by
 /// `None` and is a runtime health failure, not a process-start failure.
 #[derive(Clone)]
@@ -105,7 +192,8 @@ pub(crate) struct TmuxTerminalRuntime {
     tmux: Option<ResolvedExecutable>,
     shell_name: Option<String>,
     tmux_args: Vec<String>,
-    effective_socket: Option<SocketName>,
+    effective_socket: Arc<Mutex<Option<SocketName>>>,
+    operation_gate: Arc<RuntimeOperationGate>,
     timeout: Duration,
 }
 
@@ -123,7 +211,11 @@ impl TmuxTerminalRuntime {
             tmux: tmux.filter(|_| tmux_args_valid),
             shell_name: shell.and_then(|shell| shell.basename().map(str::to_owned)),
             tmux_args: if tmux_args_valid { tmux_args } else { Vec::new() },
-            effective_socket: SocketName::new(effective_socket_name).ok(),
+            effective_socket: Arc::new(Mutex::new(SocketName::new(effective_socket_name).ok())),
+            operation_gate: Arc::new(RuntimeOperationGate {
+                state: Mutex::new(RuntimeGateState::default()),
+                wake: Condvar::new(),
+            }),
             timeout: DEFAULT_TIMEOUT,
         }
     }
@@ -138,8 +230,106 @@ impl TmuxTerminalRuntime {
         self.tmux.as_ref().ok_or_else(|| PortError::new(PortErrorCode::Unavailable))
     }
 
-    fn socket(&self) -> Result<&SocketName, PortError> {
-        self.effective_socket.as_ref().ok_or_else(|| PortError::new(PortErrorCode::Failed))
+    fn socket(&self) -> Result<SocketName, PortError> {
+        self.effective_socket
+            .lock()
+            .map_err(|_| PortError::new(PortErrorCode::Failed))?
+            .clone()
+            .ok_or_else(|| PortError::new(PortErrorCode::Failed))
+    }
+
+    pub(crate) fn adapter_available(&self) -> bool {
+        self.tmux.is_some()
+            && self.effective_socket.lock().ok().is_some_and(|socket| socket.is_some())
+    }
+
+    pub(crate) fn set_effective_socket(&self, socket: SocketName) -> Result<(), PortError> {
+        *self.effective_socket.lock().map_err(|_| PortError::new(PortErrorCode::Failed))? =
+            Some(socket);
+        Ok(())
+    }
+
+    pub(crate) fn begin_transition(
+        &self,
+        cancel: &CancellationToken,
+    ) -> Result<RuntimeTransitionPermit, PortError> {
+        self.operation_gate.acquire_transition(cancel)
+    }
+
+    pub(crate) fn transition_preflight(
+        &self,
+        socket: SocketName,
+        cancel: CancellationToken,
+    ) -> PortFuture<TerminalPreflight> {
+        let runtime = self.clone();
+        let worker_cancel = cancel.clone();
+        spawn_operation(cancel, move || runtime.preflight_sync(socket, &worker_cancel))
+    }
+
+    pub(crate) fn transition_inspect_owned_sessions(
+        &self,
+        socket: SocketName,
+        cancel: CancellationToken,
+    ) -> PortFuture<TerminalOwnedSessions> {
+        let runtime = self.clone();
+        let worker_cancel = cancel.clone();
+        spawn_operation(cancel, move || {
+            runtime.inspect_owned_sessions_sync(&socket, &worker_cancel)
+        })
+    }
+
+    pub(crate) fn transition_close_owned_session(
+        &self,
+        socket: SocketName,
+        session: OwnedSessionRecord,
+        cancel: CancellationToken,
+    ) -> PortFuture<()> {
+        let runtime = self.clone();
+        let worker_cancel = cancel.clone();
+        spawn_operation(cancel, move || {
+            runtime.close_owned_session_sync(&socket, &session, &worker_cancel)
+        })
+    }
+
+    pub(crate) fn transition_ensure_on_socket(
+        &self,
+        socket: SocketName,
+        target: TerminalTarget,
+        cancel: CancellationToken,
+    ) -> PortFuture<TerminalResult> {
+        let runtime = self.clone();
+        let worker_cancel = cancel.clone();
+        spawn_operation(cancel, move || {
+            runtime.ensure_sync_on_socket(&socket, &target, &worker_cancel)
+        })
+    }
+
+    fn operation_permit(
+        &self,
+        cancel: &CancellationToken,
+    ) -> Result<RuntimeOperationPermit, PortError> {
+        self.operation_gate.acquire_operation(cancel)
+    }
+
+    /// Builds the recreation set from the canonical persisted open Workspace
+    /// records. Session names are deterministic domain values; provider
+    /// handles never leave this adapter.
+    pub(crate) fn required_terminal_set(
+        &self,
+        state: &PersistedAppState,
+    ) -> Result<RequiredTerminalSet, PortError> {
+        let mut sessions =
+            vec![OwnedSessionRecord::Scratch { session_name: SCRATCH_SESSION.to_owned() }];
+        for workspace in &state.workspaces {
+            let workspace_id = WorkspaceId::from_uuid(workspace.workspace_id.clone())
+                .map_err(|_| PortError::new(PortErrorCode::Failed))?;
+            let digest = workspace_digest(Path::new(&workspace.canonical_path))?;
+            sessions.push(OwnedSessionRecord::Workspace {
+                workspace_id: workspace_id.to_string(),
+                session_name: format!("ws-{}", &digest[..20]),
+            });
+        }
+        RequiredTerminalSet::new(sessions).map_err(|_| PortError::new(PortErrorCode::Failed))
     }
 
     fn preflight_sync(
@@ -176,11 +366,20 @@ impl TmuxTerminalRuntime {
         target: &TerminalTarget,
         cancel: &CancellationToken,
     ) -> Result<TerminalResult, PortError> {
-        let socket = self.socket()?.clone();
+        let socket = self.socket()?;
+        self.ensure_sync_on_socket(&socket, target, cancel)
+    }
+
+    fn ensure_sync_on_socket(
+        &self,
+        socket: &SocketName,
+        target: &TerminalTarget,
+        cancel: &CancellationToken,
+    ) -> Result<TerminalResult, PortError> {
         let deadline = OperationDeadline::new(self.timeout);
-        self.ensure_version(&socket, cancel, deadline)?;
-        self.ensure_server(&socket, cancel, deadline)?;
-        let sessions = self.list_sessions(&socket, cancel, deadline)?;
+        self.ensure_version(socket, cancel, deadline)?;
+        self.ensure_server(socket, cancel, deadline)?;
+        let sessions = self.list_sessions(socket, cancel, deadline)?;
         let (session_name, root, workspace_id, context) =
             self.target_identity(target, &sessions)?;
         if let Some(existing) = sessions.iter().find(|session| session.name == session_name) {
@@ -191,8 +390,139 @@ impl TmuxTerminalRuntime {
         }
         let spec =
             SessionSpec { name: &session_name, root: &root, context, workspace_id: &workspace_id };
-        self.create_session(&socket, &spec, cancel, deadline)?;
+        self.create_session(socket, &spec, cancel, deadline)?;
         Ok(TerminalResult::new(target.clone()))
+    }
+
+    /// Lists exact marked sessions from a dedicated socket. This is the only
+    /// operation that turns provider metadata into durable cleanup records;
+    /// unmarked sessions remain an opaque count and never become kill targets.
+    fn inspect_owned_sessions_sync(
+        &self,
+        socket: &SocketName,
+        cancel: &CancellationToken,
+    ) -> Result<TerminalOwnedSessions, PortError> {
+        let deadline = OperationDeadline::new(self.timeout);
+        self.ensure_version(socket, cancel, deadline)?;
+        let marker = self.marker_state(socket, cancel, deadline)?;
+        match marker {
+            MarkerState::Absent => return TerminalOwnedSessions::new(Vec::new(), 0),
+            MarkerState::Wrong => return Err(PortError::new(PortErrorCode::Conflict)),
+            MarkerState::Owned => {}
+        }
+        let sessions = self.list_sessions(socket, cancel, deadline)?;
+        let mut owned = Vec::new();
+        for session in &sessions {
+            if !session.is_marked(&self.context_home()) {
+                continue;
+            }
+            owned.push(self.owned_session_record(session)?);
+        }
+        let unknown = sessions.len().saturating_sub(owned.len());
+        TerminalOwnedSessions::new(owned, u32::try_from(unknown).unwrap_or(u32::MAX))
+    }
+
+    fn owned_session_record(&self, session: &SessionInfo) -> Result<OwnedSessionRecord, PortError> {
+        match (session.context.as_deref(), session.workspace_id.as_deref()) {
+            (Some(GLOBAL_CONTEXT), Some(GLOBAL_ID)) if session.name == SCRATCH_SESSION => {
+                Ok(OwnedSessionRecord::Scratch { session_name: SCRATCH_SESSION.to_owned() })
+            }
+            (Some(WORKSPACE_CONTEXT), Some(workspace_id)) => {
+                let workspace_id = WorkspaceId::from_uuid(workspace_id.to_owned())
+                    .map_err(|_| PortError::new(PortErrorCode::Conflict))?;
+                Ok(OwnedSessionRecord::Workspace {
+                    workspace_id: workspace_id.to_string(),
+                    session_name: session.name.clone(),
+                })
+            }
+            _ => Err(PortError::new(PortErrorCode::Conflict)),
+        }
+    }
+
+    fn close_owned_session_sync(
+        &self,
+        socket: &SocketName,
+        expected: &OwnedSessionRecord,
+        cancel: &CancellationToken,
+    ) -> Result<(), PortError> {
+        let deadline = OperationDeadline::new(self.timeout);
+        self.ensure_version(socket, cancel, deadline)?;
+        match self.marker_state(socket, cancel, deadline)? {
+            MarkerState::Absent => return Ok(()),
+            MarkerState::Wrong => return Err(PortError::new(PortErrorCode::Conflict)),
+            MarkerState::Owned => {}
+        }
+        let sessions = self.list_sessions(socket, cancel, deadline)?;
+        let Some(_) = sessions.iter().find(|session| {
+            session.name == expected.session_name() && self.matches_owned_record(session, expected)
+        }) else {
+            // A missing exact session is already complete. A same-name
+            // unmarked/replaced session is a conflict and must remain intact.
+            if sessions.iter().any(|session| session.name == expected.session_name()) {
+                return Err(PortError::new(PortErrorCode::Conflict));
+            }
+            return Ok(());
+        };
+        // The first marker/list pair only establishes an idempotent candidate.
+        // Reinspect both immediately before kill so a replaced session or a
+        // server marker change cannot turn this exact record into a broad
+        // name-based destructive operation.
+        match self.marker_state(socket, cancel, deadline)? {
+            MarkerState::Absent => return Ok(()),
+            MarkerState::Wrong => return Err(PortError::new(PortErrorCode::Conflict)),
+            MarkerState::Owned => {}
+        }
+        let current_sessions = self.list_sessions(socket, cancel, deadline)?;
+        let Some(current) = current_sessions.iter().find(|session| {
+            session.name == expected.session_name() && self.matches_owned_record(session, expected)
+        }) else {
+            if current_sessions.iter().any(|session| session.name == expected.session_name()) {
+                return Err(PortError::new(PortErrorCode::Conflict));
+            }
+            return Ok(());
+        };
+        let root =
+            current.root.as_deref().map(PathBuf::from).unwrap_or_else(|| self.context_home());
+        let output = self.run_tmux(
+            socket,
+            &["kill-session".to_owned(), "-t".to_owned(), expected.session_name().to_owned()],
+            &root,
+            cancel,
+            deadline,
+        )?;
+        if !output.status.success() {
+            return Err(PortError::new(PortErrorCode::Failed));
+        }
+        // Confirm the destructive operation's result. This makes completion
+        // idempotent across a crash and prevents a replacement from being
+        // mistaken for the owned session we intended to remove.
+        let remaining = self.list_sessions(socket, cancel, deadline)?;
+        match remaining.iter().find(|session| session.name == expected.session_name()) {
+            None => Ok(()),
+            Some(session) if self.matches_owned_record(session, expected) => {
+                Err(PortError::new(PortErrorCode::Failed))
+            }
+            Some(_) => Err(PortError::new(PortErrorCode::Conflict)),
+        }
+    }
+
+    fn matches_owned_record(&self, session: &SessionInfo, expected: &OwnedSessionRecord) -> bool {
+        match expected {
+            OwnedSessionRecord::Scratch { session_name } => {
+                session.name == session_name.as_str()
+                    && session.matches(GLOBAL_CONTEXT, GLOBAL_ID, &self.context_home())
+            }
+            OwnedSessionRecord::Workspace { workspace_id, session_name } => {
+                let Some(root) = session.root.as_deref() else {
+                    return false;
+                };
+                session.name == session_name.as_str()
+                    && session.context.as_deref() == Some(WORKSPACE_CONTEXT)
+                    && session.workspace_id.as_deref() == Some(workspace_id)
+                    && is_root_metadata(root)
+                    && is_workspace_session_name(session_name, root)
+            }
+        }
     }
 
     fn inspect_sync(
@@ -201,7 +531,7 @@ impl TmuxTerminalRuntime {
         cancel: &CancellationToken,
     ) -> Result<TerminalInspection, PortError> {
         let socket = match self.socket() {
-            Ok(socket) => socket.clone(),
+            Ok(socket) => socket,
             Err(error) => return inspection_failure(error),
         };
         let deadline = OperationDeadline::new(self.timeout);
@@ -272,7 +602,7 @@ impl TmuxTerminalRuntime {
         target: &WorkspaceTerminalTarget,
         cancel: &CancellationToken,
     ) -> Result<(), PortError> {
-        let socket = self.socket()?.clone();
+        let socket = self.socket()?;
         let deadline = OperationDeadline::new(self.timeout);
         self.ensure_version(&socket, cancel, deadline)?;
         match self.marker_state(&socket, cancel, deadline)? {
@@ -392,7 +722,15 @@ impl TmuxTerminalRuntime {
             if is_no_server_error(&output.stderr) {
                 return Ok(MarkerState::Absent);
             }
-            return Err(PortError::new(PortErrorCode::Failed));
+            // A reachable server without this option is an existing foreign
+            // server, not an absent server. Treat a missing marker as the
+            // same fail-closed conflict as an explicitly wrong marker.
+            return Ok(MarkerState::Wrong);
+        }
+        if output.stdout.is_empty() {
+            // A live server without the ownership option is a foreign or
+            // legacy server, never an absent target.
+            return Ok(MarkerState::Wrong);
         }
         let value = parse_option_value(&output.stdout)?;
         if value == PROTOCOL_VALUE {
@@ -487,7 +825,8 @@ impl TmuxTerminalRuntime {
         if !spec.root.is_dir() {
             return Err(PortError::new(PortErrorCode::Unavailable));
         }
-        if self.marker_state(socket, cancel, deadline)? != MarkerState::Owned {
+        let initial_marker = self.marker_state(socket, cancel, deadline)?;
+        if initial_marker != MarkerState::Owned {
             return Err(PortError::new(PortErrorCode::Conflict));
         }
         let canonical_root =
@@ -526,7 +865,8 @@ impl TmuxTerminalRuntime {
         // ownership check protects path validation; this one prevents a
         // server that changed marker state while we were preparing argv from
         // receiving a destructive command.
-        if self.marker_state(socket, cancel, deadline)? != MarkerState::Owned {
+        let final_marker = self.marker_state(socket, cancel, deadline)?;
+        if final_marker != MarkerState::Owned {
             return Err(PortError::new(PortErrorCode::Conflict));
         }
         let output = self.run_tmux(socket, &args, &self.context_home(), cancel, deadline)?;
@@ -807,7 +1147,7 @@ impl fmt::Debug for TmuxTerminalRuntime {
             .debug_struct("TmuxTerminalRuntime")
             .field("tmux", &self.tmux)
             .field("tmux_args_count", &self.tmux_args.len())
-            .field("effective_socket", &self.effective_socket)
+            .field("effective_socket", &self.effective_socket.lock().ok())
             .field("timeout", &self.timeout)
             .finish()
     }
@@ -822,6 +1162,7 @@ impl TerminalRuntime for TmuxTerminalRuntime {
         let runtime = self.clone();
         let worker_cancel = cancel.clone();
         spawn_operation(cancel, move || {
+            let _permit = runtime.operation_permit(&worker_cancel)?;
             runtime.preflight_sync(requested_socket_name, &worker_cancel)
         })
     }
@@ -833,7 +1174,10 @@ impl TerminalRuntime for TmuxTerminalRuntime {
     ) -> PortFuture<TerminalResult> {
         let runtime = self.clone();
         let worker_cancel = cancel.clone();
-        spawn_operation(cancel, move || runtime.ensure_sync(&target, &worker_cancel))
+        spawn_operation(cancel, move || {
+            let _permit = runtime.operation_permit(&worker_cancel)?;
+            runtime.ensure_sync(&target, &worker_cancel)
+        })
     }
 
     fn inspect(
@@ -843,7 +1187,10 @@ impl TerminalRuntime for TmuxTerminalRuntime {
     ) -> PortFuture<TerminalInspection> {
         let runtime = self.clone();
         let worker_cancel = cancel.clone();
-        spawn_operation(cancel, move || runtime.inspect_sync(&target, &worker_cancel))
+        spawn_operation(cancel, move || {
+            let _permit = runtime.operation_permit(&worker_cancel)?;
+            runtime.inspect_sync(&target, &worker_cancel)
+        })
     }
 
     fn close_workspace(
@@ -853,7 +1200,51 @@ impl TerminalRuntime for TmuxTerminalRuntime {
     ) -> PortFuture<()> {
         let runtime = self.clone();
         let worker_cancel = cancel.clone();
-        spawn_operation(cancel, move || runtime.close_sync(&target, &worker_cancel))
+        spawn_operation(cancel, move || {
+            let _permit = runtime.operation_permit(&worker_cancel)?;
+            runtime.close_sync(&target, &worker_cancel)
+        })
+    }
+
+    fn inspect_owned_sessions(
+        &self,
+        socket: SocketName,
+        cancel: CancellationToken,
+    ) -> PortFuture<TerminalOwnedSessions> {
+        let runtime = self.clone();
+        let worker_cancel = cancel.clone();
+        spawn_operation(cancel, move || {
+            let _permit = runtime.operation_permit(&worker_cancel)?;
+            runtime.inspect_owned_sessions_sync(&socket, &worker_cancel)
+        })
+    }
+
+    fn close_owned_session(
+        &self,
+        socket: SocketName,
+        session: OwnedSessionRecord,
+        cancel: CancellationToken,
+    ) -> PortFuture<()> {
+        let runtime = self.clone();
+        let worker_cancel = cancel.clone();
+        spawn_operation(cancel, move || {
+            let _permit = runtime.operation_permit(&worker_cancel)?;
+            runtime.close_owned_session_sync(&socket, &session, &worker_cancel)
+        })
+    }
+
+    fn ensure_on_socket(
+        &self,
+        socket: SocketName,
+        target: TerminalTarget,
+        cancel: CancellationToken,
+    ) -> PortFuture<TerminalResult> {
+        let runtime = self.clone();
+        let worker_cancel = cancel.clone();
+        spawn_operation(cancel, move || {
+            let _permit = runtime.operation_permit(&worker_cancel)?;
+            runtime.ensure_sync_on_socket(&socket, &target, &worker_cancel)
+        })
     }
 }
 
@@ -891,6 +1282,9 @@ impl Drop for BootstrapConfig {
 }
 
 static BOOTSTRAP_SEQUENCE: AtomicUsize = AtomicUsize::new(0);
+
+#[cfg(test)]
+static REAL_TEST_SEQUENCE: AtomicUsize = AtomicUsize::new(0);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MarkerState {
@@ -1316,12 +1710,68 @@ impl Drop for TmuxServerGuard<'_> {
 }
 
 #[cfg(test)]
+struct RealTmuxFixture {
+    home: PathBuf,
+    runtime: TmuxTerminalRuntime,
+    socket: SocketName,
+    cancel: CancellationToken,
+}
+
+#[cfg(test)]
+impl Drop for RealTmuxFixture {
+    fn drop(&mut self) {
+        let _ = self.runtime.run_tmux(
+            &self.socket,
+            &["kill-server".to_owned()],
+            &self.home,
+            &self.cancel,
+            OperationDeadline::new(self.runtime.timeout),
+        );
+        let _ = fs::remove_dir_all(&self.home);
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use devhub_app_core::{WorkspaceId, WorkspaceRoot};
 
     fn root() -> WorkspaceRoot {
         WorkspaceRoot::new("/tmp/devhub-terminal-test").expect("root")
+    }
+
+    fn real_tmux_fixture(label: &str) -> Option<RealTmuxFixture> {
+        if std::env::var_os("CODEX_SANDBOX").is_some_and(|value| value == "seatbelt") {
+            return None;
+        }
+        let tmux_path = [
+            Path::new("/opt/homebrew/bin/tmux"),
+            Path::new("/usr/local/bin/tmux"),
+            Path::new("/usr/bin/tmux"),
+        ]
+        .into_iter()
+        .find(|path| path.is_file())?;
+        let sequence = REAL_TEST_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let home = std::env::temp_dir()
+            .join(format!("devhub-socket-transition-{label}-{}-{sequence}", std::process::id()));
+        fs::create_dir_all(&home).ok()?;
+        let home = fs::canonicalize(&home).ok()?;
+        let socket =
+            SocketName::new(format!("dh{label}{}{}", std::process::id(), sequence)).ok()?;
+        let context = RuntimeLaunchContext::new(&home, std::env::vars_os().collect()).ok()?;
+        let runtime = TmuxTerminalRuntime::new(
+            context,
+            Some(ResolvedExecutable::for_test(tmux_path)),
+            None,
+            Vec::new(),
+            socket.as_str(),
+        )
+        .with_timeout(Duration::from_secs(5));
+        let operation = devhub_app_core::application::OperationId::from_uuid(format!(
+            "00000000-0000-4000-8000-{sequence:012x}"
+        ))
+        .ok()?;
+        Some(RealTmuxFixture { home, runtime, socket, cancel: CancellationToken::new(operation) })
     }
 
     #[test]
@@ -1461,6 +1911,302 @@ mod tests {
             Ok(_) => panic!("cancelled operation spawned a child"),
         };
         assert_eq!(cancelled_error.code(), PortErrorCode::Cancelled);
+    }
+
+    #[test]
+    fn runtime_gate_excludes_normal_operations_and_honors_cancellation() {
+        let gate = Arc::new(RuntimeOperationGate {
+            state: Mutex::new(RuntimeGateState::default()),
+            wake: Condvar::new(),
+        });
+        let transition_operation = devhub_app_core::application::OperationId::from_uuid(
+            "00000000-0000-4000-8000-000000000061",
+        )
+        .expect("transition operation id");
+        let transition_cancel = CancellationToken::new(transition_operation);
+        let lease = gate.acquire_transition(&transition_cancel).expect("transition lease");
+
+        let operation = devhub_app_core::application::OperationId::from_uuid(
+            "00000000-0000-4000-8000-000000000062",
+        )
+        .expect("normal operation id");
+        let operation_cancel = CancellationToken::new(operation);
+        let waiting_gate = Arc::clone(&gate);
+        let waiting_cancel = operation_cancel.clone();
+        let waiter = thread::spawn(move || waiting_gate.acquire_operation(&waiting_cancel));
+        thread::sleep(Duration::from_millis(20));
+        operation_cancel.cancel();
+        let waited = waiter.join().expect("gate waiter join");
+        assert!(matches!(waited, Err(error) if error.code() == PortErrorCode::Cancelled));
+
+        drop(lease);
+        let operation = devhub_app_core::application::OperationId::from_uuid(
+            "00000000-0000-4000-8000-000000000063",
+        )
+        .expect("post-transition operation id");
+        let post_transition_cancel = CancellationToken::new(operation);
+        let _permit = gate
+            .acquire_operation(&post_transition_cancel)
+            .expect("normal operation after transition");
+    }
+
+    #[test]
+    fn real_transition_sockets_cover_conflicts_unknown_preservation_and_dynamic_rebind() {
+        let Some(old) = real_tmux_fixture("old") else {
+            return;
+        };
+        let Some(target) = real_tmux_fixture("target") else {
+            return;
+        };
+        let Some(wrong) = real_tmux_fixture("wrong") else {
+            return;
+        };
+
+        let old_socket = old.socket.clone();
+        old.runtime.preflight_sync(old_socket.clone(), &old.cancel).expect("old absent preflight");
+        assert_eq!(
+            old.runtime
+                .preflight_sync(old_socket.clone(), &old.cancel)
+                .expect("old absent preflight state")
+                .state(),
+            SocketTargetPreflightState::TargetAbsent
+        );
+        assert_eq!(
+            target
+                .runtime
+                .preflight_sync(target.socket.clone(), &target.cancel)
+                .expect("target absent preflight")
+                .state(),
+            SocketTargetPreflightState::TargetAbsent
+        );
+        old.runtime
+            .ensure_server(&old_socket, &old.cancel, OperationDeadline::new(old.runtime.timeout))
+            .expect("old owned server");
+        let unknown = old
+            .runtime
+            .run_tmux(
+                &old_socket,
+                &[
+                    "new-session".to_owned(),
+                    "-d".to_owned(),
+                    "-s".to_owned(),
+                    "foreign".to_owned(),
+                    "-c".to_owned(),
+                    old.home.to_string_lossy().into_owned(),
+                ],
+                &old.home,
+                &old.cancel,
+                OperationDeadline::new(old.runtime.timeout),
+            )
+            .expect("unknown session");
+        assert!(unknown.status.success());
+        assert_eq!(
+            old.runtime
+                .preflight_sync(old_socket.clone(), &old.cancel)
+                .expect("old marked preflight")
+                .state(),
+            SocketTargetPreflightState::MarkedSessions
+        );
+        let inventory = old
+            .runtime
+            .inspect_owned_sessions_sync(&old_socket, &old.cancel)
+            .expect("old inventory");
+        assert_eq!(
+            inventory.sessions(),
+            &[OwnedSessionRecord::Scratch { session_name: SCRATCH_SESSION.to_owned() }]
+        );
+        assert_eq!(inventory.unknown_session_count(), 1);
+        old.runtime
+            .close_owned_session_sync(
+                &old_socket,
+                &OwnedSessionRecord::Scratch { session_name: SCRATCH_SESSION.to_owned() },
+                &old.cancel,
+            )
+            .expect("partial scratch cleanup");
+        let remaining = old
+            .runtime
+            .list_sessions(&old_socket, &old.cancel, OperationDeadline::new(old.runtime.timeout))
+            .expect("unknown remains");
+        assert!(remaining.iter().any(|session| session.name == "foreign"));
+
+        target
+            .runtime
+            .ensure_server(
+                &target.socket,
+                &target.cancel,
+                OperationDeadline::new(target.runtime.timeout),
+            )
+            .expect("marked target");
+        assert_eq!(
+            target
+                .runtime
+                .preflight_sync(target.socket.clone(), &target.cancel)
+                .expect("marked target preflight")
+                .state(),
+            SocketTargetPreflightState::MarkedSessions
+        );
+        wrong
+            .runtime
+            .run_tmux(
+                &wrong.socket,
+                &[
+                    "new-session".to_owned(),
+                    "-d".to_owned(),
+                    "-s".to_owned(),
+                    "foreign".to_owned(),
+                    "-c".to_owned(),
+                    wrong.home.to_string_lossy().into_owned(),
+                ],
+                &wrong.home,
+                &wrong.cancel,
+                OperationDeadline::new(wrong.runtime.timeout),
+            )
+            .expect("wrong-marker server");
+        wrong
+            .runtime
+            .run_tmux(
+                &wrong.socket,
+                &[
+                    "set-option".to_owned(),
+                    "-g".to_owned(),
+                    PROTOCOL_OPTION.to_owned(),
+                    "999".to_owned(),
+                ],
+                &wrong.home,
+                &wrong.cancel,
+                OperationDeadline::new(wrong.runtime.timeout),
+            )
+            .expect("wrong marker");
+        assert_eq!(
+            wrong
+                .runtime
+                .preflight_sync(wrong.socket.clone(), &wrong.cancel)
+                .expect("wrong marker preflight")
+                .state(),
+            SocketTargetPreflightState::WrongMarker
+        );
+
+        let tmux_path = [
+            Path::new("/opt/homebrew/bin/tmux"),
+            Path::new("/usr/local/bin/tmux"),
+            Path::new("/usr/bin/tmux"),
+        ]
+        .into_iter()
+        .find(|path| path.is_file())
+        .expect("tmux binary");
+        let missing_socket = SocketName::new(format!(
+            "dhmissing{}{}",
+            std::process::id(),
+            REAL_TEST_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ))
+        .expect("missing-marker socket");
+        let missing_home = old.home.to_string_lossy().into_owned();
+        let missing_setup = Command::new(tmux_path)
+            .env_remove("TMUX")
+            .env_remove("TMUX_PANE")
+            .args([
+                "-f",
+                "/dev/null",
+                "-L",
+                missing_socket.as_str(),
+                "new-session",
+                "-d",
+                "-s",
+                "foreign",
+                "-c",
+                missing_home.as_str(),
+            ])
+            .output()
+            .expect("missing-marker server");
+        assert!(missing_setup.status.success());
+        assert_eq!(
+            old.runtime
+                .preflight_sync(missing_socket.clone(), &old.cancel)
+                .expect("missing marker preflight")
+                .state(),
+            SocketTargetPreflightState::WrongMarker
+        );
+        let _ = Command::new(tmux_path)
+            .env_remove("TMUX")
+            .env_remove("TMUX_PANE")
+            .args(["-L", missing_socket.as_str(), "kill-server"])
+            .status();
+
+        let workspace_path = old.home.join("workspace");
+        fs::create_dir(&workspace_path).expect("workspace directory");
+        let workspace_root = WorkspaceRoot::new(fs::canonicalize(&workspace_path).expect("root"))
+            .expect("workspace root");
+        let workspace_id =
+            WorkspaceId::from_uuid("00000000-0000-4000-8000-000000000051").expect("workspace id");
+        old.runtime
+            .ensure_server(&old_socket, &old.cancel, OperationDeadline::new(old.runtime.timeout))
+            .expect("workspace preflight server");
+        old.runtime
+            .ensure_sync(
+                &TerminalTarget::workspace(workspace_id.clone(), workspace_root.clone()),
+                &old.cancel,
+            )
+            .expect("workspace recreation after partial cleanup");
+        let inventory = old
+            .runtime
+            .inspect_owned_sessions_sync(&old_socket, &old.cancel)
+            .expect("partial inventory");
+        let workspace_session = inventory
+            .sessions()
+            .iter()
+            .find(|session| matches!(session, OwnedSessionRecord::Workspace { .. }))
+            .cloned()
+            .expect("workspace record");
+        old.runtime
+            .close_owned_session_sync(&old_socket, &workspace_session, &old.cancel)
+            .expect("workspace cleanup");
+        old.runtime
+            .close_owned_session_sync(
+                &old_socket,
+                &OwnedSessionRecord::Scratch { session_name: SCRATCH_SESSION.to_owned() },
+                &old.cancel,
+            )
+            .expect("idempotent scratch cleanup");
+        let inventory = old
+            .runtime
+            .inspect_owned_sessions_sync(&old_socket, &old.cancel)
+            .expect("old exact inventory is empty");
+        assert!(inventory.sessions().is_empty());
+        assert_eq!(inventory.unknown_session_count(), 1);
+
+        let rebound_socket = SocketName::new(format!(
+            "dhrebind{}",
+            REAL_TEST_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ))
+        .expect("rebind socket");
+        old.runtime
+            .ensure_server(
+                &rebound_socket,
+                &old.cancel,
+                OperationDeadline::new(old.runtime.timeout),
+            )
+            .expect("new effective server");
+        old.runtime.set_effective_socket(rebound_socket.clone()).expect("dynamic effective socket");
+        old.runtime
+            .ensure_sync(&TerminalTarget::scratch(), &old.cancel)
+            .expect("ordinary runtime follows rebind");
+        assert!(old
+            .runtime
+            .list_sessions(
+                &rebound_socket,
+                &old.cancel,
+                OperationDeadline::new(old.runtime.timeout)
+            )
+            .expect("rebound sessions")
+            .iter()
+            .any(|session| session.name == SCRATCH_SESSION));
+        let _ = old.runtime.run_tmux(
+            &rebound_socket,
+            &["kill-server".to_owned()],
+            &old.home,
+            &old.cancel,
+            OperationDeadline::new(old.runtime.timeout),
+        );
     }
 
     #[test]

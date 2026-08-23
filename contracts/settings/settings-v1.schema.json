@@ -178,6 +178,7 @@
       "enum": [
         "invalid_config",
         "external_edit_conflict",
+        "stale_socket_change",
         "invalid_file",
         "runtime_unavailable",
         "native_unavailable",
@@ -245,6 +246,7 @@
           "enum": [
             "invalid_config",
             "external_edit_conflict",
+            "stale_socket_change",
             "invalid_file",
             "runtime_unavailable",
             "native_unavailable",
@@ -1044,6 +1046,11 @@
             "confirmationRequired": {
               "type": "boolean"
             },
+            "conflictSessionCount": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
             "effectiveSocketName": {
               "type": "string"
             },
@@ -1081,6 +1088,7 @@
             "workspaceSessionCount",
             "completedSessionCount",
             "failedSessionCount",
+            "conflictSessionCount",
             "confirmationRequired",
             "adapterAvailable"
           ],
@@ -1254,9 +1262,15 @@
           "maximum": 1,
           "minimum": 1,
           "type": "integer"
+        },
+        "sequence": {
+          "format": "uint64",
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "type": "integer"
         }
       },
-      "required": ["schemaVersion", "revision", "confirmed"],
+      "required": ["schemaVersion", "revision", "sequence", "confirmed"],
       "title": "SettingsSocketChangeRequestWire",
       "type": "object"
     },
@@ -1276,6 +1290,11 @@
         },
         "confirmationRequired": {
           "type": "boolean"
+        },
+        "conflictSessionCount": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
         },
         "effectiveSocketName": {
           "type": "string"
@@ -1314,6 +1333,7 @@
         "workspaceSessionCount",
         "completedSessionCount",
         "failedSessionCount",
+        "conflictSessionCount",
         "confirmationRequired",
         "adapterAvailable"
       ],

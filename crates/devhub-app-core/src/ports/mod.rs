@@ -11,6 +11,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::SystemTime;
 
+use crate::state::OwnedSessionRecord;
 use crate::{
     AgentId, AgentObservation, AgentProfile, AgentProfileId, AgentReconciliation,
     CloseInspectionInputs, DisplayPath, RemoteIdentity, ResourceInspection, WorkspaceId,
@@ -565,6 +566,38 @@ impl fmt::Debug for TerminalPreflight {
     }
 }
 
+/// The provider-free inventory of exact marked sessions on one dedicated
+/// socket. Unknown sessions are represented only by a bounded count and can
+/// never be passed to a destructive operation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TerminalOwnedSessions {
+    sessions: Vec<OwnedSessionRecord>,
+    unknown_session_count: u32,
+}
+
+impl TerminalOwnedSessions {
+    pub fn new(
+        sessions: Vec<OwnedSessionRecord>,
+        unknown_session_count: u32,
+    ) -> Result<Self, PortError> {
+        let mut names = std::collections::BTreeSet::new();
+        for session in &sessions {
+            if !names.insert(session.session_name().to_owned()) {
+                return Err(PortError::new(PortErrorCode::Failed));
+            }
+        }
+        Ok(Self { sessions, unknown_session_count })
+    }
+
+    pub fn sessions(&self) -> &[OwnedSessionRecord] {
+        &self.sessions
+    }
+
+    pub const fn unknown_session_count(&self) -> u32 {
+        self.unknown_session_count
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct TerminalInspection {
     process: ResourceInspection,
@@ -730,6 +763,49 @@ pub trait TerminalRuntime: Send + Sync {
         target: WorkspaceTerminalTarget,
         cancel: CancellationToken,
     ) -> PortFuture<()>;
+
+    /// Lists only exact marked sessions on the supplied socket. The adapter
+    /// must classify ownership immediately before returning this value.
+    fn inspect_owned_sessions(
+        &self,
+        socket: SocketName,
+        cancel: CancellationToken,
+    ) -> PortFuture<TerminalOwnedSessions> {
+        Box::pin(async move {
+            let _ = (socket, cancel);
+            Err(PortError::new(PortErrorCode::Unavailable))
+        })
+    }
+
+    /// Idempotently terminates one previously verified marked session. The
+    /// adapter re-verifies marker and metadata at the destructive seam and
+    /// must refuse an unknown or replaced session.
+    fn close_owned_session(
+        &self,
+        socket: SocketName,
+        session: OwnedSessionRecord,
+        cancel: CancellationToken,
+    ) -> PortFuture<()> {
+        Box::pin(async move {
+            let _ = (socket, session, cancel);
+            Err(PortError::new(PortErrorCode::Unavailable))
+        })
+    }
+
+    /// Ensures a fresh Scratch or open-Workspace session on an explicit
+    /// socket. This is distinct from `ensure`, which targets the current
+    /// effective socket and is used by ordinary Terminal Activity opening.
+    fn ensure_on_socket(
+        &self,
+        socket: SocketName,
+        target: TerminalTarget,
+        cancel: CancellationToken,
+    ) -> PortFuture<TerminalResult> {
+        Box::pin(async move {
+            let _ = (socket, target, cancel);
+            Err(PortError::new(PortErrorCode::Unavailable))
+        })
+    }
 }
 
 /// Domain-owned seam for the narrow Bridge observation contract. Content and

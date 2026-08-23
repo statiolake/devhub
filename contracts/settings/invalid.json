@@ -146,6 +146,7 @@
         "completedSessionCount": 0,
         "configuredSocketName": "devhub",
         "confirmationRequired": false,
+        "conflictSessionCount": 0,
         "effectiveSocketName": "devhub",
         "failedSessionCount": 0,
         "requestedSocketName": null,
@@ -463,6 +464,7 @@
     "confirmed": false,
     "revision": "0000000000000000000000000000000000000000000000000000000000000000",
     "schemaVersion": 1,
+    "sequence": 1,
     "unexpected": true
   }
 ]

@@ -4,6 +4,7 @@ use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -11,15 +12,20 @@ use devhub_app_core::config::{
     default_config_path, AgentProfileKind as ConfigAgentProfileKind, ConfigDiagnostic, ConfigStore,
     LoadedConfig, ReloadOutcome, RuntimeConfig,
 };
+use devhub_app_core::ports::{SocketName, TerminalRuntime};
+use devhub_app_core::state::{
+    CleanupSessionStatus, RecreationSessionStatus, SocketTargetPreflightState,
+    SocketTransitionState,
+};
 use devhub_app_core::{classify_runtime, SettingsRuntimeWire};
 use devhub_app_core::{
     AgentProfile as DomainAgentProfile, AgentProfileId, AgentProfileKind, AppAppearanceWire,
     AppCoordinator, AppErrorWire, AppIntentWire, AppOutcomeWire, AppSnapshot, AppSnapshotWire,
-    CoordinatorEvent, Effect, IdGenerator, IntentEnvelope, IntentId, JsonStateStore, OperationId,
-    OperationToken, PortError, PortErrorCode, ProviderEvent, ProviderEventEnvelope,
-    ProviderEventId, ReplayWire, SettingsErrorWire, SettingsRuntimeHealthWire,
-    SettingsSaveRequestWire, SettingsSnapshotWire, SettingsSocketChangeRequestWire, UserIntent,
-    SETTINGS_SEQUENCE_MAX,
+    CancellationToken, CoordinatorEvent, Effect, IdGenerator, IntentEnvelope, IntentId,
+    JsonStateStore, OperationId, OperationToken, PortError, PortErrorCode, ProviderEvent,
+    ProviderEventEnvelope, ProviderEventId, ReplayWire, SettingsErrorWire,
+    SettingsRuntimeHealthWire, SettingsSaveRequestWire, SettingsSnapshotWire,
+    SettingsSocketChangeRequestWire, TerminalTarget, UserIntent, SETTINGS_SEQUENCE_MAX,
 };
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
@@ -101,17 +107,34 @@ struct NativeAppState {
     config_store: ConfigStore,
     settings: Mutex<SettingsProjection>,
     config_watcher: Mutex<Option<devhub_app_core::config::ConfigWatcher>>,
+    /// A valid external config edit observed during a confirmed transition.
+    /// It is intentionally kept outside `settings.loaded` until the durable
+    /// transition reaches Stable, so the Settings projection remains the
+    /// last-good value and the ConfigStore revision can be reconciled later.
+    deferred_config: Mutex<Option<LoadedConfig>>,
     home: PathBuf,
     startup_runtime_config: RuntimeConfig,
     startup_import_login_environment: bool,
     persistence: Mutex<PersistenceState>,
+    state_commit: Mutex<()>,
     pending_native_error: Mutex<Option<AppErrorWire>>,
+    socket_transition_busy: AtomicBool,
     id_generator: NativeIdGenerator,
     _runtime_context: RuntimeLaunchContext,
     _workspace_discovery: DiscoveryEngine,
     _repository_resolver: GitRepositoryResolver,
     _terminal_runtime: TmuxTerminalRuntime,
     _workspace_resolver: MacWorkspacePathResolver,
+}
+
+struct SocketTransitionGate<'a> {
+    busy: &'a AtomicBool,
+}
+
+impl Drop for SocketTransitionGate<'_> {
+    fn drop(&mut self) {
+        self.busy.store(false, Ordering::Release);
+    }
 }
 
 fn state_error(error: impl std::fmt::Display) -> AppErrorWire {
@@ -200,11 +223,14 @@ impl NativeAppState {
                 diagnostic: None,
             }),
             config_watcher: Mutex::new(None),
+            deferred_config: Mutex::new(None),
             home: home.to_path_buf(),
             startup_runtime_config,
             startup_import_login_environment,
             persistence: Mutex::new(PersistenceState { persisted_revision }),
+            state_commit: Mutex::new(()),
             pending_native_error: Mutex::new(None),
+            socket_transition_busy: AtomicBool::new(false),
             id_generator: NativeIdGenerator,
             _runtime_context: runtime_context,
             _workspace_discovery: workspace_discovery,
@@ -229,23 +255,30 @@ impl NativeAppState {
     /// coordinator mutex. The revision guard makes an older in-flight command
     /// harmless after a newer snapshot has committed first.
     fn persist_snapshot(&self, snapshot: &AppSnapshot, force: bool) -> Result<(), AppErrorWire> {
-        let mut persistence = self.persistence.lock().map_err(state_error)?;
-        if !force && snapshot.revision() <= persistence.persisted_revision {
-            return Ok(());
+        {
+            let _commit = self.state_commit.lock().map_err(state_error)?;
+            let persisted_revision =
+                self.persistence.lock().map_err(state_error)?.persisted_revision;
+            if !force && snapshot.revision() <= persisted_revision {
+                return Ok(());
+            }
+            let mut state = self.store.load_or_default().map_err(persistence_error)?;
+            state.apply_snapshot(snapshot).map_err(persistence_error)?;
+            self.store.save_state(&state).map_err(persistence_error)?;
+            let mut persistence = self.persistence.lock().map_err(state_error)?;
+            persistence.persisted_revision =
+                persistence.persisted_revision.max(snapshot.revision());
         }
-        let mut state = self.store.load_or_default().map_err(persistence_error)?;
-        state.apply_snapshot(snapshot).map_err(persistence_error)?;
-        self.store.save_state(&state).map_err(persistence_error)?;
-        persistence.persisted_revision = persistence.persisted_revision.max(snapshot.revision());
         Ok(())
     }
 
     fn persist_clean_snapshot(&self, snapshot: &AppSnapshot) -> Result<(), AppErrorWire> {
-        let mut persistence = self.persistence.lock().map_err(state_error)?;
+        let _commit = self.state_commit.lock().map_err(state_error)?;
         let mut state = self.store.load_or_default().map_err(persistence_error)?;
         state.apply_snapshot(snapshot).map_err(persistence_error)?;
         state.mark_clean_shutdown();
         self.store.save_state(&state).map_err(persistence_error)?;
+        let mut persistence = self.persistence.lock().map_err(state_error)?;
         persistence.persisted_revision = persistence.persisted_revision.max(snapshot.revision());
         Ok(())
     }
@@ -371,10 +404,77 @@ impl NativeAppState {
     }
 
     fn apply_loaded_config(&self, loaded: LoadedConfig) -> Result<(), SettingsErrorWire> {
+        let active_transition = matches!(
+            self.load_transition_state(&self.transition_store())?.tmux.transition,
+            SocketTransitionState::CleaningOld { .. }
+                | SocketTransitionState::OldCleaned { .. }
+                | SocketTransitionState::RecreationPending { .. }
+        );
+        let settings = self.settings.lock().map_err(|_| SettingsErrorWire::native_unavailable())?;
+        if active_transition
+            && loaded.config().runtimes.tmux_socket_name
+                != settings.loaded.config().runtimes.tmux_socket_name
+        {
+            // A confirmed destructive phase owns its requested socket until
+            // it reaches Stable. External edits cannot overwrite that
+            // in-flight configured target projection; retain the candidate
+            // for an explicit post-transition reconciliation instead.
+            drop(settings);
+            self.defer_external_config(loaded)?;
+            return Err(SettingsErrorWire::stale_socket_change());
+        }
+        drop(settings);
+        // A newer valid file revision supersedes any previously deferred
+        // candidate (for example, an external edit that restores the
+        // in-flight socket while changing only appearance). Keep the latest
+        // ConfigStore revision authoritative for post-transition reconciliation.
+        self.deferred_config.lock().map_err(|_| SettingsErrorWire::native_unavailable())?.take();
         let mut settings =
             self.settings.lock().map_err(|_| SettingsErrorWire::native_unavailable())?;
         Self::advance_settings_sequence(&mut settings)?;
         settings.loaded = loaded;
+        settings.diagnostic = None;
+        Ok(())
+    }
+
+    fn defer_external_config(&self, loaded: LoadedConfig) -> Result<(), SettingsErrorWire> {
+        *self.deferred_config.lock().map_err(|_| SettingsErrorWire::native_unavailable())? =
+            Some(loaded);
+        let mut settings =
+            self.settings.lock().map_err(|_| SettingsErrorWire::native_unavailable())?;
+        let diagnostic = Some(devhub_app_core::SettingsDiagnosticWire {
+            code: devhub_app_core::SettingsDiagnosticCodeWire::Conflict,
+            path: Some("runtimes.tmux_socket_name".to_owned()),
+            line: None,
+            column: None,
+        });
+        if settings.diagnostic != diagnostic {
+            Self::advance_settings_sequence(&mut settings)?;
+            settings.diagnostic = diagnostic;
+        }
+        Ok(())
+    }
+
+    /// Applies a valid watcher candidate only after the transition commit
+    /// point. If a transition is still active, the candidate remains queued.
+    fn reconcile_deferred_config(&self) -> Result<(), SettingsErrorWire> {
+        let is_stable = matches!(
+            self.load_transition_state(&self.transition_store())?.tmux.transition,
+            SocketTransitionState::Stable
+        );
+        if !is_stable {
+            return Ok(());
+        }
+        let candidate = self
+            .deferred_config
+            .lock()
+            .map_err(|_| SettingsErrorWire::native_unavailable())?
+            .take();
+        let Some(candidate) = candidate else { return Ok(()) };
+        let mut settings =
+            self.settings.lock().map_err(|_| SettingsErrorWire::native_unavailable())?;
+        Self::advance_settings_sequence(&mut settings)?;
+        settings.loaded = candidate;
         settings.diagnostic = None;
         Ok(())
     }
@@ -395,6 +495,17 @@ impl NativeAppState {
     }
 
     fn clear_config_diagnostic(&self) -> Result<bool, SettingsErrorWire> {
+        if self
+            .deferred_config
+            .lock()
+            .map_err(|_| SettingsErrorWire::native_unavailable())?
+            .is_some()
+        {
+            // ConfigStore may report the deferred revision as Unchanged on
+            // the next watcher tick. Keep the conflict visible until the
+            // transition commit point reconciles that candidate.
+            return Ok(false);
+        }
         let mut settings =
             self.settings.lock().map_err(|_| SettingsErrorWire::native_unavailable())?;
         if settings.diagnostic.is_none() {
@@ -414,9 +525,699 @@ impl NativeAppState {
         Ok(AppAppearanceWire::from_config(&settings.loaded.config().appearance, settings.sequence))
     }
 
+    fn transition_store(&self) -> JsonStateStore {
+        JsonStateStore::new(self.store.path().to_path_buf())
+    }
+
+    fn load_transition_state(
+        &self,
+        store: &JsonStateStore,
+    ) -> Result<devhub_app_core::PersistedAppState, SettingsErrorWire> {
+        let _commit =
+            self.state_commit.lock().map_err(|_| SettingsErrorWire::native_unavailable())?;
+        store.load_or_default().map_err(|_| SettingsErrorWire::invalid_file())
+    }
+
+    fn transition_cancel(&self) -> Result<CancellationToken, SettingsErrorWire> {
+        let operation = self
+            .id_generator
+            .next_operation_id()
+            .map_err(|_| SettingsErrorWire::native_unavailable())?;
+        Ok(CancellationToken::new(operation))
+    }
+
+    /// Reconciles only the non-destructive part of a configured socket
+    /// change. It creates/refreshes the persisted Pending projection, probes
+    /// the requested target, and snapshots the exact marked old-session set
+    /// before Settings can ask for confirmation. Provider I/O happens with no
+    /// state/settings lock held; each result is committed only after an exact
+    /// transition comparison against the latest durable document.
+    async fn prepare_socket_transition(
+        &self,
+    ) -> Result<devhub_app_core::PersistedAppState, SettingsErrorWire> {
+        let configured_socket = {
+            self.settings
+                .lock()
+                .map_err(|_| SettingsErrorWire::native_unavailable())?
+                .loaded
+                .config()
+                .runtimes
+                .tmux_socket_name
+                .clone()
+        };
+        let store = self.transition_store();
+        let mut state = self.load_transition_state(&store)?;
+        let required = self
+            ._terminal_runtime
+            .required_terminal_set(&state)
+            .map_err(|_| SettingsErrorWire::runtime_unavailable())?;
+
+        match state.tmux.transition {
+            SocketTransitionState::Stable | SocketTransitionState::Pending { .. } => {
+                let before = state.tmux.transition.clone();
+                state
+                    .tmux
+                    .request_socket_change(configured_socket, required)
+                    .map_err(|_| SettingsErrorWire::runtime_unavailable())?;
+                if state.tmux.transition != before {
+                    self.save_transition_state(&store, &before, &state)?;
+                }
+            }
+            SocketTransitionState::CleaningOld { .. }
+            | SocketTransitionState::OldCleaned { .. }
+            | SocketTransitionState::RecreationPending { .. } => {}
+        }
+
+        // At most one probe and one inventory pass are needed for this
+        // snapshot. A changed transition is left for the next call rather
+        // than allowing a stale provider result to overwrite it.
+        state = self.load_transition_state(&store)?;
+        let requested = match &state.tmux.transition {
+            SocketTransitionState::Pending { requested_socket_name, .. } => {
+                requested_socket_name.clone()
+            }
+            _ => return Ok(state),
+        };
+        if self._terminal_runtime.adapter_available() {
+            let socket =
+                SocketName::new(requested).map_err(|_| SettingsErrorWire::runtime_unavailable())?;
+            let cancel = self.transition_cancel()?;
+            let result = self
+                ._terminal_runtime
+                .preflight(socket, cancel)
+                .await
+                .map_err(Self::socket_port_error)?;
+            let latest = self.load_transition_state(&store)?;
+            if latest.tmux.transition == state.tmux.transition {
+                let mut next = latest;
+                next.tmux
+                    .record_target_preflight(result.state())
+                    .map_err(|_| SettingsErrorWire::runtime_unavailable())?;
+                if next.tmux.transition != state.tmux.transition {
+                    self.save_transition_state(&store, &state.tmux.transition, &next)?;
+                }
+            }
+        }
+
+        state = self.load_transition_state(&store)?;
+        let (old_socket, target_state, already_verified) = match &state.tmux.transition {
+            SocketTransitionState::Pending { preflight, verified_old_sessions, .. } => (
+                state.tmux.effective_socket_name.clone(),
+                *preflight,
+                verified_old_sessions.is_some(),
+            ),
+            _ => return Ok(state),
+        };
+        if !already_verified
+            && matches!(
+                target_state,
+                SocketTargetPreflightState::TargetAbsent
+                    | SocketTargetPreflightState::TargetDevhubEmpty
+            )
+            && self._terminal_runtime.adapter_available()
+        {
+            let old_socket = SocketName::new(old_socket)
+                .map_err(|_| SettingsErrorWire::runtime_unavailable())?;
+            let cancel = self.transition_cancel()?;
+            let inventory = self
+                ._terminal_runtime
+                .inspect_owned_sessions(old_socket, cancel)
+                .await
+                .map_err(Self::socket_port_error)?;
+            let latest = self.load_transition_state(&store)?;
+            if latest.tmux.transition == state.tmux.transition {
+                let mut next = latest;
+                next.tmux
+                    .record_verified_old_sessions(inventory.sessions().to_owned())
+                    .map_err(|_| SettingsErrorWire::runtime_unavailable())?;
+                if next.tmux.transition != state.tmux.transition {
+                    self.save_transition_state(&store, &state.tmux.transition, &next)?;
+                } else {
+                    // Preserve the exact loaded state when the inspection is
+                    // an idempotent no-op; no cursor bump is needed.
+                }
+                state = next;
+            } else {
+                state = latest;
+            }
+        }
+        Ok(state)
+    }
+
+    fn bump_settings_sequence(&self) -> Result<(), SettingsErrorWire> {
+        let mut settings =
+            self.settings.lock().map_err(|_| SettingsErrorWire::native_unavailable())?;
+        Self::advance_settings_sequence(&mut settings)
+    }
+
+    fn socket_request_is_current(
+        &self,
+        request: &SettingsSocketChangeRequestWire,
+    ) -> Result<(), SettingsErrorWire> {
+        let settings = self.settings.lock().map_err(|_| SettingsErrorWire::native_unavailable())?;
+        if settings.sequence != request.sequence
+            || settings.loaded.revision().to_string() != request.revision
+        {
+            return Err(SettingsErrorWire::stale_socket_change());
+        }
+        Ok(())
+    }
+
+    fn save_transition_state(
+        &self,
+        store: &JsonStateStore,
+        expected: &SocketTransitionState,
+        state: &devhub_app_core::PersistedAppState,
+    ) -> Result<(), SettingsErrorWire> {
+        {
+            let _commit =
+                self.state_commit.lock().map_err(|_| SettingsErrorWire::native_unavailable())?;
+            let mut latest =
+                store.load_or_default().map_err(|_| SettingsErrorWire::invalid_file())?;
+            if latest.tmux.transition != *expected {
+                return Err(SettingsErrorWire::stale_socket_change());
+            }
+            latest.tmux = state.tmux.clone();
+            store.save_state(&latest).map_err(|_| SettingsErrorWire::invalid_file())?;
+        }
+        self.bump_settings_sequence()
+    }
+
+    fn target_for_session(
+        state: &devhub_app_core::PersistedAppState,
+        session: &devhub_app_core::state::OwnedSessionRecord,
+    ) -> Result<TerminalTarget, SettingsErrorWire> {
+        match session {
+            devhub_app_core::state::OwnedSessionRecord::Scratch { .. } => {
+                Ok(TerminalTarget::scratch())
+            }
+            devhub_app_core::state::OwnedSessionRecord::Workspace { workspace_id, .. } => {
+                let workspace = state
+                    .workspaces
+                    .iter()
+                    .find(|workspace| workspace.workspace_id == *workspace_id)
+                    .ok_or_else(SettingsErrorWire::runtime_unavailable)?;
+                let id = devhub_app_core::WorkspaceId::from_uuid(workspace.workspace_id.clone())
+                    .map_err(|_| SettingsErrorWire::runtime_unavailable())?;
+                let root = devhub_app_core::WorkspaceRoot::new(workspace.canonical_path.clone())
+                    .map_err(|_| SettingsErrorWire::runtime_unavailable())?;
+                Ok(TerminalTarget::workspace(id, root))
+            }
+        }
+    }
+
+    fn socket_port_error(error: devhub_app_core::PortError) -> SettingsErrorWire {
+        match error.code() {
+            PortErrorCode::Cancelled => SettingsErrorWire::native_unavailable(),
+            PortErrorCode::Conflict
+            | PortErrorCode::Unavailable
+            | PortErrorCode::Incompatible
+            | PortErrorCode::TimedOut
+            | PortErrorCode::Failed => SettingsErrorWire::runtime_unavailable(),
+        }
+    }
+
+    /// Rechecks the target and the complete exact old inventory immediately
+    /// before the first destructive cleanup command.  A changed cursor is
+    /// written back as Pending and reported as stale; the caller therefore
+    /// never kills anything based on an obsolete confirmation sheet.
+    async fn revalidate_before_first_cleanup(
+        &self,
+        store: &JsonStateStore,
+        snapshot: &devhub_app_core::PersistedAppState,
+    ) -> Result<(), SettingsErrorWire> {
+        let (
+            old_socket_name,
+            requested_socket_name,
+            expected_preflight,
+            expected_sessions,
+            all_pending,
+        ) = match &snapshot.tmux.transition {
+            SocketTransitionState::CleaningOld {
+                old_socket_name,
+                requested_socket_name,
+                target_preflight,
+                sessions,
+                ..
+            } => {
+                let all_pending =
+                    sessions.iter().all(|record| record.status == CleanupSessionStatus::Pending);
+                (
+                    old_socket_name.clone(),
+                    requested_socket_name.clone(),
+                    *target_preflight,
+                    if all_pending {
+                        sessions.iter().map(|record| record.session.clone()).collect()
+                    } else {
+                        Vec::new()
+                    },
+                    all_pending,
+                )
+            }
+            _ => return Ok(()),
+        };
+        let requested = SocketName::new(requested_socket_name)
+            .map_err(|_| SettingsErrorWire::runtime_unavailable())?;
+        let preflight_cancel = self.transition_cancel()?;
+        let fresh_preflight = self
+            ._terminal_runtime
+            .transition_preflight(requested, preflight_cancel)
+            .await
+            .map_err(Self::socket_port_error)?
+            .state();
+
+        let same_transition =
+            |store: &JsonStateStore,
+             expected: &devhub_app_core::PersistedAppState|
+             -> Result<devhub_app_core::PersistedAppState, SettingsErrorWire> {
+                let latest = self.load_transition_state(store)?;
+                if latest.tmux.transition != expected.tmux.transition {
+                    return Err(SettingsErrorWire::stale_socket_change());
+                }
+                Ok(latest)
+            };
+
+        if fresh_preflight != expected_preflight {
+            if !all_pending {
+                let mut latest = same_transition(store, snapshot)?;
+                latest
+                    .tmux
+                    .update_cleaning_target_preflight(fresh_preflight)
+                    .map_err(|_| SettingsErrorWire::runtime_unavailable())?;
+                self.save_transition_state(store, &snapshot.tmux.transition, &latest)?;
+                if matches!(
+                    fresh_preflight,
+                    SocketTargetPreflightState::TargetAbsent
+                        | SocketTargetPreflightState::TargetDevhubEmpty
+                ) {
+                    // A partial cleanup may continue across the two safe
+                    // valid target states; no destructive target is adopted.
+                    return Ok(());
+                }
+                // Persist the conflict cursor so Settings can show a typed
+                // pause. A later valid probe changes this cursor again and
+                // resumes instead of remaining permanently stale.
+                return Err(SettingsErrorWire::stale_socket_change());
+            }
+            let mut latest = same_transition(store, snapshot)?;
+            latest
+                .tmux
+                .return_cleaning_to_pending(fresh_preflight, None)
+                .map_err(|_| SettingsErrorWire::runtime_unavailable())?;
+            self.save_transition_state(store, &snapshot.tmux.transition, &latest)?;
+            return Err(SettingsErrorWire::stale_socket_change());
+        }
+        if !matches!(
+            fresh_preflight,
+            SocketTargetPreflightState::TargetAbsent
+                | SocketTargetPreflightState::TargetDevhubEmpty
+        ) {
+            if !all_pending {
+                return Err(SettingsErrorWire::stale_socket_change());
+            }
+            let mut latest = same_transition(store, snapshot)?;
+            latest
+                .tmux
+                .return_cleaning_to_pending(fresh_preflight, None)
+                .map_err(|_| SettingsErrorWire::runtime_unavailable())?;
+            self.save_transition_state(store, &snapshot.tmux.transition, &latest)?;
+            return Err(SettingsErrorWire::stale_socket_change());
+        }
+
+        if !all_pending {
+            return Ok(());
+        }
+        let old_socket = SocketName::new(old_socket_name)
+            .map_err(|_| SettingsErrorWire::runtime_unavailable())?;
+        let inventory_cancel = self.transition_cancel()?;
+        let fresh_sessions = match self
+            ._terminal_runtime
+            .transition_inspect_owned_sessions(old_socket, inventory_cancel)
+            .await
+        {
+            Ok(inventory) => inventory.sessions().to_owned(),
+            Err(error) if error.code() == PortErrorCode::Conflict => {
+                let mut latest = same_transition(store, snapshot)?;
+                latest
+                    .tmux
+                    .return_cleaning_to_pending(fresh_preflight, None)
+                    .map_err(|_| SettingsErrorWire::runtime_unavailable())?;
+                self.save_transition_state(store, &snapshot.tmux.transition, &latest)?;
+                return Err(SettingsErrorWire::stale_socket_change());
+            }
+            Err(error) => return Err(Self::socket_port_error(error)),
+        };
+        let expected_set = expected_sessions.into_iter().collect::<std::collections::BTreeSet<_>>();
+        let fresh_set = fresh_sessions.iter().cloned().collect::<std::collections::BTreeSet<_>>();
+        if expected_set != fresh_set {
+            let mut latest = same_transition(store, snapshot)?;
+            latest
+                .tmux
+                .return_cleaning_to_pending(fresh_preflight, Some(fresh_sessions))
+                .map_err(|_| SettingsErrorWire::runtime_unavailable())?;
+            self.save_transition_state(store, &snapshot.tmux.transition, &latest)?;
+            return Err(SettingsErrorWire::stale_socket_change());
+        }
+        Ok(())
+    }
+
+    /// Resumes every persisted post-confirmation phase. Each provider call is
+    /// outside durable-state access; after it completes the latest state is
+    /// reloaded and the exact transition/status is compared before commit.
+    async fn resume_socket_transition(
+        &self,
+        confirmed: bool,
+    ) -> Result<devhub_app_core::PersistedAppState, SettingsErrorWire> {
+        let store = self.transition_store();
+        // Hold a logical runtime-level write lease across the complete
+        // confirmed transition. The gate's mutex is only held while the
+        // permit is acquired/released; provider and store I/O remain
+        // outside every mutex.
+        let transition_cancel = self.transition_cancel()?;
+        let _runtime_lease = self
+            ._terminal_runtime
+            .begin_transition(&transition_cancel)
+            .map_err(Self::socket_port_error)?;
+        loop {
+            let mut state = self.load_transition_state(&store)?;
+            match &state.tmux.transition {
+                SocketTransitionState::Stable => {
+                    self.reconcile_deferred_config()?;
+                    return self.load_transition_state(&store);
+                }
+                SocketTransitionState::Pending {
+                    preflight,
+                    verified_old_sessions: Some(_),
+                    ..
+                } if confirmed
+                    && matches!(
+                        preflight,
+                        SocketTargetPreflightState::TargetAbsent
+                            | SocketTargetPreflightState::TargetDevhubEmpty
+                    ) =>
+                {
+                    let before = state.tmux.transition.clone();
+                    state
+                        .tmux
+                        .start_cleaning_old()
+                        .map_err(|_| SettingsErrorWire::runtime_unavailable())?;
+                    let latest = self.load_transition_state(&store)?;
+                    if latest.tmux.transition != before {
+                        return Err(SettingsErrorWire::stale_socket_change());
+                    }
+                    self.save_transition_state(&store, &before, &state)?;
+                }
+                SocketTransitionState::Pending { .. } => {
+                    return Err(SettingsErrorWire::runtime_unavailable())
+                }
+                SocketTransitionState::CleaningOld { .. } => {
+                    let initial_state = state.clone();
+                    self.revalidate_before_first_cleanup(&store, &initial_state).await?;
+                    state = self.load_transition_state(&store)?;
+                    let (old_socket_name, sessions) = match &state.tmux.transition {
+                        SocketTransitionState::CleaningOld {
+                            old_socket_name, sessions, ..
+                        } => (old_socket_name.clone(), sessions.clone()),
+                        _ => return Err(SettingsErrorWire::stale_socket_change()),
+                    };
+                    let old_socket = SocketName::new(old_socket_name.clone())
+                        .map_err(|_| SettingsErrorWire::runtime_unavailable())?;
+                    for record in sessions {
+                        if matches!(
+                            record.status,
+                            CleanupSessionStatus::Completed | CleanupSessionStatus::Conflict
+                        ) {
+                            continue;
+                        }
+                        let result = self
+                            ._terminal_runtime
+                            .transition_close_owned_session(
+                                old_socket.clone(),
+                                record.session.clone(),
+                                self.transition_cancel()?,
+                            )
+                            .await;
+                        if let Err(error) = &result {
+                            if error.code() == PortErrorCode::Cancelled {
+                                return Err(Self::socket_port_error(*error));
+                            }
+                        }
+                        let latest = self.load_transition_state(&store)?;
+                        if !matches!(
+                            latest.tmux.transition,
+                            SocketTransitionState::CleaningOld { .. }
+                        ) {
+                            return Err(SettingsErrorWire::stale_socket_change());
+                        }
+                        let mut next = latest;
+                        let expected_transition = next.tmux.transition.clone();
+                        next.tmux
+                            .mark_old_session(
+                                record.session.session_name(),
+                                if result.is_ok() {
+                                    CleanupSessionStatus::Completed
+                                } else {
+                                    CleanupSessionStatus::Failed
+                                },
+                            )
+                            .map_err(|_| SettingsErrorWire::runtime_unavailable())?;
+                        self.save_transition_state(&store, &expected_transition, &next)?;
+                    }
+                    let mut latest = self.load_transition_state(&store)?;
+                    let inventory_cancel = self.transition_cancel()?;
+                    let fresh_inventory = self
+                        ._terminal_runtime
+                        .transition_inspect_owned_sessions(old_socket, inventory_cancel)
+                        .await
+                        .map_err(Self::socket_port_error)?;
+                    if !matches!(latest.tmux.transition, SocketTransitionState::CleaningOld { .. })
+                    {
+                        return Err(SettingsErrorWire::stale_socket_change());
+                    }
+                    let expected_transition = latest.tmux.transition.clone();
+                    let changed = latest
+                        .tmux
+                        .reconcile_old_sessions(fresh_inventory.sessions().to_owned())
+                        .map_err(|_| SettingsErrorWire::runtime_unavailable())?;
+                    if changed {
+                        self.save_transition_state(&store, &expected_transition, &latest)?;
+                    }
+                    let failed = matches!(
+                        latest.tmux.transition,
+                        SocketTransitionState::CleaningOld { ref sessions, .. }
+                            if sessions.iter().any(|record| record.status == CleanupSessionStatus::Failed)
+                    );
+                    if failed {
+                        return Ok(latest);
+                    }
+                    let conflict = matches!(
+                        latest.tmux.transition,
+                        SocketTransitionState::CleaningOld { ref sessions, .. }
+                            if sessions.iter().any(|record| record.status == CleanupSessionStatus::Conflict)
+                    );
+                    if conflict {
+                        return Ok(latest);
+                    }
+                    let complete = matches!(
+                        latest.tmux.transition,
+                        SocketTransitionState::CleaningOld { ref sessions, .. }
+                            if sessions.iter().all(|record| record.status == CleanupSessionStatus::Completed)
+                    );
+                    if !complete {
+                        continue;
+                    }
+                    let expected_transition = latest.tmux.transition.clone();
+                    latest
+                        .tmux
+                        .finish_old_cleanup()
+                        .map_err(|_| SettingsErrorWire::runtime_unavailable())?;
+                    self.save_transition_state(&store, &expected_transition, &latest)?;
+                }
+                SocketTransitionState::OldCleaned { .. } => {
+                    let new_socket_name = match &state.tmux.transition {
+                        SocketTransitionState::OldCleaned { new_socket_name, .. } => {
+                            new_socket_name.clone()
+                        }
+                        _ => unreachable!("transition matched OldCleaned"),
+                    };
+                    let target = SocketName::new(new_socket_name.clone())
+                        .map_err(|_| SettingsErrorWire::runtime_unavailable())?;
+                    let preflight = self
+                        ._terminal_runtime
+                        .transition_preflight(target, self.transition_cancel()?)
+                        .await
+                        .map_err(Self::socket_port_error)?
+                        .state();
+                    if !matches!(
+                        preflight,
+                        SocketTargetPreflightState::TargetAbsent
+                            | SocketTargetPreflightState::TargetDevhubEmpty
+                    ) {
+                        // The old socket is already proven clean, so keep the
+                        // durable OldCleaned cursor and wait for the target
+                        // conflict to be resolved. Never adopt or mutate a
+                        // marked/wrong-marker target here.
+                        return Err(SettingsErrorWire::stale_socket_change());
+                    }
+                    let latest = self.load_transition_state(&store)?;
+                    if latest.tmux.transition != state.tmux.transition {
+                        return Err(SettingsErrorWire::stale_socket_change());
+                    }
+                    let expected_transition = state.tmux.transition.clone();
+                    state
+                        .tmux
+                        .commit_new_socket()
+                        .map_err(|_| SettingsErrorWire::runtime_unavailable())?;
+                    self.save_transition_state(&store, &expected_transition, &state)?;
+                    self._terminal_runtime
+                        .set_effective_socket(
+                            SocketName::new(new_socket_name)
+                                .map_err(|_| SettingsErrorWire::runtime_unavailable())?,
+                        )
+                        .map_err(|_| SettingsErrorWire::runtime_unavailable())?;
+                }
+                SocketTransitionState::RecreationPending {
+                    effective_socket_name,
+                    sessions,
+                    ..
+                } => {
+                    let socket = SocketName::new(effective_socket_name.clone())
+                        .map_err(|_| SettingsErrorWire::runtime_unavailable())?;
+                    let sessions = sessions.clone();
+                    for record in sessions {
+                        if record.status == RecreationSessionStatus::Completed {
+                            continue;
+                        }
+                        let target = Self::target_for_session(&state, &record.session)?;
+                        let result = self
+                            ._terminal_runtime
+                            .transition_ensure_on_socket(
+                                socket.clone(),
+                                target,
+                                self.transition_cancel()?,
+                            )
+                            .await;
+                        if let Err(error) = &result {
+                            if error.code() == PortErrorCode::Cancelled {
+                                return Err(Self::socket_port_error(*error));
+                            }
+                        }
+                        let latest = self.load_transition_state(&store)?;
+                        if !matches!(
+                            latest.tmux.transition,
+                            SocketTransitionState::RecreationPending { .. }
+                        ) {
+                            return Err(SettingsErrorWire::stale_socket_change());
+                        }
+                        let mut next = latest;
+                        let expected_transition = next.tmux.transition.clone();
+                        next.tmux
+                            .mark_recreated(
+                                record.session.session_name(),
+                                if result.is_ok() {
+                                    RecreationSessionStatus::Completed
+                                } else {
+                                    RecreationSessionStatus::Failed
+                                },
+                            )
+                            .map_err(|_| SettingsErrorWire::runtime_unavailable())?;
+                        self.save_transition_state(&store, &expected_transition, &next)?;
+                    }
+                    let mut latest = self.load_transition_state(&store)?;
+                    let complete = matches!(
+                        latest.tmux.transition,
+                        SocketTransitionState::RecreationPending { ref sessions, .. }
+                            if sessions.iter().all(|record| record.status == RecreationSessionStatus::Completed)
+                    );
+                    if !complete {
+                        return Ok(latest);
+                    }
+                    let expected_transition = latest.tmux.transition.clone();
+                    latest
+                        .tmux
+                        .finish_recreation()
+                        .map_err(|_| SettingsErrorWire::runtime_unavailable())?;
+                    self.save_transition_state(&store, &expected_transition, &latest)?;
+                }
+            }
+        }
+    }
+
+    /// Startup recovery is deliberately conservative for Pending: it may
+    /// refresh a read-only preflight/inventory cursor, but only a confirmed
+    /// Settings operation may cross into cleanup. Every already-confirmed
+    /// phase resumes automatically after the native runtime is registered.
+    async fn resume_startup_socket_transition(
+        &self,
+    ) -> Result<devhub_app_core::PersistedAppState, SettingsErrorWire> {
+        if self
+            .socket_transition_busy
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return Err(SettingsErrorWire::runtime_unavailable());
+        }
+        let _busy = SocketTransitionGate { busy: &self.socket_transition_busy };
+        let prepared = self.prepare_socket_transition().await?;
+        if matches!(
+            prepared.tmux.transition,
+            SocketTransitionState::CleaningOld { .. }
+                | SocketTransitionState::OldCleaned { .. }
+                | SocketTransitionState::RecreationPending { .. }
+        ) || matches!(
+            prepared.tmux.transition,
+            SocketTransitionState::Pending {
+                preflight: SocketTargetPreflightState::TargetAbsent
+                    | SocketTargetPreflightState::TargetDevhubEmpty,
+                verified_old_sessions: Some(ref sessions),
+                ..
+            } if sessions.is_empty()
+        ) {
+            // A startup probe that has already verified a valid target and an
+            // exact empty old inventory is non-destructive. It may cross the
+            // persisted commit point without asking the user to reconfirm.
+            self.resume_socket_transition(true).await
+        } else {
+            Ok(prepared)
+        }
+    }
+
+    async fn apply_socket_change(
+        &self,
+        request: SettingsSocketChangeRequestWire,
+    ) -> Result<SettingsSnapshotWire, SettingsErrorWire> {
+        if self
+            .socket_transition_busy
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return Err(SettingsErrorWire::runtime_unavailable());
+        }
+        let _busy = SocketTransitionGate { busy: &self.socket_transition_busy };
+
+        self.socket_request_is_current(&request)?;
+        let prepared = self.prepare_socket_transition().await?;
+        if !request.confirmed {
+            return self.settings_snapshot();
+        }
+        // prepare_socket_transition can perform a provider read and persist a
+        // newer cursor.  Recheck the caller's confirmed cursor after that
+        // read, immediately before entering the destructive phase.
+        self.socket_request_is_current(&request)?;
+        if matches!(prepared.tmux.transition, SocketTransitionState::Stable) {
+            return Err(SettingsErrorWire::stale_socket_change());
+        }
+        let state = self.resume_socket_transition(true).await?;
+        let _ = state;
+        self.settings_snapshot()
+    }
+
     fn settings_snapshot(&self) -> Result<SettingsSnapshotWire, SettingsErrorWire> {
-        let persisted =
-            self.store.load_or_default().map_err(|_| SettingsErrorWire::invalid_file())?;
+        // Snapshot projection is read-only.  Provider inspection and Pending
+        // cursor mutation belong exclusively to the serialized Apply command;
+        // watcher/recheck calls must not race that operation or silently move
+        // a transition forward.
+        let persisted = self.load_transition_state(&self.transition_store())?;
         let settings = self.settings.lock().map_err(|_| SettingsErrorWire::native_unavailable())?;
         let mut effective_runtime = self.startup_runtime_config.clone();
         effective_runtime.tmux_socket_name = persisted.tmux.effective_socket_name.clone();
@@ -437,7 +1238,18 @@ impl NativeAppState {
                 devhub_app_core::SettingsRuntimeHealthValueWire::Failed
             }
         };
-        let runtime = SettingsRuntimeWire::from_runtime_view(&view, &persisted.tmux, health, false);
+        health.tmux = if self._terminal_runtime.adapter_available() {
+            devhub_app_core::SettingsRuntimeHealthValueWire::Healthy
+        } else {
+            devhub_app_core::SettingsRuntimeHealthValueWire::Unavailable
+        };
+        health.inspection_available = self._terminal_runtime.adapter_available();
+        let runtime = SettingsRuntimeWire::from_runtime_view(
+            &view,
+            &persisted.tmux,
+            health,
+            self._terminal_runtime.adapter_available(),
+        );
         Ok(SettingsSnapshotWire::from_loaded(
             &settings.loaded,
             settings.sequence,
@@ -454,6 +1266,26 @@ impl NativeAppState {
         let expected_revision = devhub_app_core::parse_revision(&request.revision)
             .ok_or_else(SettingsErrorWire::invalid_config)?;
         let config = request.config.into_config()?;
+        let active_transition = matches!(
+            self.load_transition_state(&self.transition_store())?.tmux.transition,
+            SocketTransitionState::CleaningOld { .. }
+                | SocketTransitionState::OldCleaned { .. }
+                | SocketTransitionState::RecreationPending { .. }
+        );
+        if active_transition {
+            let configured_socket = self
+                .settings
+                .lock()
+                .map_err(|_| SettingsErrorWire::native_unavailable())?
+                .loaded
+                .config()
+                .runtimes
+                .tmux_socket_name
+                .clone();
+            if config.runtimes.tmux_socket_name != configured_socket {
+                return Err(SettingsErrorWire::stale_socket_change());
+            }
+        }
         let loaded = self.config_store.save(expected_revision, config).map_err(settings_error)?;
         self.apply_loaded_config(loaded)?;
         self.settings_snapshot()
@@ -483,11 +1315,21 @@ impl NativeAppState {
             let appearance_changed;
             match outcome {
                 Ok(ReloadOutcome::Applied(loaded)) => {
-                    if state.apply_loaded_config(loaded).is_err() {
-                        return;
+                    match state.apply_loaded_config(loaded) {
+                        Ok(()) => {
+                            settings_changed = true;
+                            appearance_changed = true;
+                        }
+                        Err(_) => {
+                            // A valid external edit that races a confirmed
+                            // socket transition is retained as a deferred
+                            // candidate by apply_loaded_config. Emit the
+                            // last-good projection plus its typed conflict
+                            // diagnostic instead of silently dropping it.
+                            settings_changed = true;
+                            appearance_changed = false;
+                        }
                     }
-                    settings_changed = true;
-                    appearance_changed = true;
                 }
                 Ok(ReloadOutcome::Unchanged { .. }) => {
                     settings_changed = state.clear_config_diagnostic().unwrap_or(false);
@@ -666,16 +1508,12 @@ fn open_log_folder(
 }
 
 #[tauri::command]
-fn apply_socket_change(
+async fn apply_socket_change(
     state: State<'_, NativeAppState>,
     payload: SettingsSocketChangeRequestWire,
 ) -> Result<SettingsSnapshotWire, SettingsErrorWire> {
     payload.validate()?;
-    // TerminalRuntime owns inspection, confirmation and session recreation.
-    // Keeping this command typed-but-unavailable avoids claiming success before
-    // that provider adapter exists and keeps the operation isolated from agents.
-    let _ = state;
-    Err(SettingsErrorWire::runtime_unavailable())
+    state.apply_socket_change(payload).await
 }
 
 fn show_settings_window(app: &AppHandle) -> Result<(), String> {
@@ -751,6 +1589,20 @@ pub fn run() {
             app.state::<NativeAppState>()
                 .install_config_watcher(app.handle())
                 .map_err(|_| std::io::Error::other("DevHub Settings watcher unavailable"))?;
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let state = handle.state::<NativeAppState>();
+                match state.resume_startup_socket_transition().await {
+                    Ok(_) => {
+                        if let Ok(snapshot) = state.settings_snapshot() {
+                            emit_settings_snapshot(&handle, snapshot);
+                        }
+                    }
+                    Err(error) => {
+                        eprintln!("DevHub socket transition resume unavailable: {error:?}");
+                    }
+                }
+            });
             emit_app_appearance(app.handle(), &app.state::<NativeAppState>());
             Ok(())
         })
@@ -790,6 +1642,9 @@ pub fn run() {
 mod tests {
     use super::*;
     use crate::runtime::{LoginEnvironmentStatus, RuntimeErrorCode};
+    use devhub_app_core::state::{
+        OwnedSessionRecord, RecreationSessionRecord, RequiredTerminalSet,
+    };
     use devhub_app_core::{CancellationToken, SettingsRuntimeHealthValueWire, WorkspaceRoot};
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::{Arc, Barrier};
@@ -801,11 +1656,21 @@ mod tests {
         let path = std::env::temp_dir()
             .join(format!("devhub-native-shell-{}-{sequence}", std::process::id()));
         std::fs::create_dir_all(&path).expect("create native shell test home");
-        path
+        std::fs::canonicalize(path).expect("canonicalize native shell test home")
     }
 
     fn remove_temp_home(path: &Path) {
         std::fs::remove_dir_all(path).expect("remove native shell test home");
+    }
+
+    fn available_tmux_binary() -> Option<&'static Path> {
+        [
+            Path::new("/opt/homebrew/bin/tmux"),
+            Path::new("/usr/local/bin/tmux"),
+            Path::new("/usr/bin/tmux"),
+        ]
+        .into_iter()
+        .find(|path| path.is_file())
     }
 
     #[test]
@@ -882,7 +1747,10 @@ mod tests {
         let state = NativeAppState::bootstrap(&home).expect("ambient startup");
         let snapshot = state.settings_snapshot().expect("settings snapshot");
         assert_eq!(snapshot.runtime.health.shell, SettingsRuntimeHealthValueWire::Unavailable);
-        assert!(!snapshot.runtime.health.inspection_available);
+        assert_eq!(
+            snapshot.runtime.health.inspection_available,
+            state._terminal_runtime.adapter_available()
+        );
         remove_temp_home(&home);
     }
 
@@ -895,8 +1763,673 @@ mod tests {
         assert_eq!(snapshot.schema_version, devhub_app_core::SETTINGS_SCHEMA_VERSION);
         assert_eq!(snapshot.sequence, 1);
         assert_eq!(snapshot.revision.len(), 64);
-        assert!(!snapshot.runtime.health.inspection_available);
-        assert!(!snapshot.runtime.socket_change.adapter_available);
+        assert_eq!(
+            snapshot.runtime.health.inspection_available,
+            state._terminal_runtime.adapter_available()
+        );
+        assert_eq!(
+            snapshot.runtime.socket_change.adapter_available,
+            state._terminal_runtime.adapter_available()
+        );
+        remove_temp_home(&home);
+    }
+
+    #[test]
+    fn socket_apply_is_two_stage_read_only_between_phases_and_rebinds_live_runtime() {
+        if std::env::var_os("CODEX_SANDBOX").is_some_and(|value| value == "seatbelt") {
+            return;
+        }
+        let Some(tmux_binary) = available_tmux_binary() else {
+            return;
+        };
+        let home = temp_home();
+        let sequence = TEMP_HOME_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let old_socket = format!("dh-native-old-{}-{}", std::process::id(), sequence);
+        let new_socket = format!("dh-native-new-{}-{}", std::process::id(), sequence);
+        let old_name = SocketName::new(old_socket.clone()).expect("old socket");
+        let new_name = SocketName::new(new_socket.clone()).expect("new socket");
+
+        let store = JsonStateStore::for_home(&home);
+        let mut persisted = devhub_app_core::PersistedAppState::fresh();
+        persisted.tmux.effective_socket_name = old_socket;
+        store.save_state(&persisted).expect("seed effective socket");
+        let config_store = ConfigStore::new(default_config_path(&home));
+        let loaded = config_store.load().expect("default config");
+        let mut config = loaded.config().clone();
+        config.runtimes.tmux_socket_name = new_socket;
+        config_store.save(loaded.revision(), config).expect("new configured socket");
+
+        let state = NativeAppState::bootstrap(&home).expect("bootstrap native state");
+        if !state._terminal_runtime.adapter_available() {
+            remove_temp_home(&home);
+            return;
+        }
+        let old_cancel = state.transition_cancel().expect("old cancellation");
+        tauri::async_runtime::block_on(
+            state._terminal_runtime.ensure(TerminalTarget::scratch(), old_cancel),
+        )
+        .expect("old Scratch");
+
+        let before = state.settings_snapshot().expect("initial snapshot");
+        assert_eq!(
+            before.runtime.socket_change.state,
+            devhub_app_core::SettingsSocketTransitionWire::Stable
+        );
+        let prepared = tauri::async_runtime::block_on(state.apply_socket_change(
+            SettingsSocketChangeRequestWire {
+                schema_version: devhub_app_core::SETTINGS_SCHEMA_VERSION,
+                revision: before.revision.clone(),
+                sequence: before.sequence,
+                confirmed: false,
+            },
+        ))
+        .expect("read-only apply preflight");
+        assert_eq!(
+            prepared.runtime.socket_change.state,
+            devhub_app_core::SettingsSocketTransitionWire::Pending
+        );
+        assert!(prepared.runtime.socket_change.confirmation_required);
+        assert_eq!(prepared.runtime.socket_change.scratch_session_count, 1);
+        assert!(prepared.sequence > before.sequence);
+
+        let reread = state.settings_snapshot().expect("read-only projection");
+        assert_eq!(reread, prepared);
+        assert_eq!(
+            reread.runtime.socket_change.state,
+            devhub_app_core::SettingsSocketTransitionWire::Pending
+        );
+
+        // The confirmation cursor is not a permission to trust stale target
+        // observations.  A marked target created after the sheet was shown
+        // must be rejected before the old socket is touched.
+        tauri::async_runtime::block_on(state._terminal_runtime.ensure_on_socket(
+            new_name.clone(),
+            TerminalTarget::scratch(),
+            state.transition_cancel().expect("target mutation cancellation"),
+        ))
+        .expect("mutate target after preflight");
+        let stale_target = tauri::async_runtime::block_on(state.apply_socket_change(
+            SettingsSocketChangeRequestWire {
+                schema_version: devhub_app_core::SETTINGS_SCHEMA_VERSION,
+                revision: prepared.revision.clone(),
+                sequence: prepared.sequence,
+                confirmed: true,
+            },
+        ))
+        .expect_err("changed target must stale before cleanup");
+        assert_eq!(stale_target.code, devhub_app_core::SettingsErrorCodeWire::StaleSocketChange);
+        let stale_target_snapshot = state.settings_snapshot().expect("stale target snapshot");
+        assert_eq!(
+            stale_target_snapshot.runtime.socket_change.target_preflight,
+            devhub_app_core::SettingsSocketPreflightWire::MarkedSessions
+        );
+        assert_eq!(stale_target_snapshot.runtime.socket_change.scratch_session_count, 0);
+        let old_after_target_change =
+            tauri::async_runtime::block_on(state._terminal_runtime.inspect_owned_sessions(
+                old_name.clone(),
+                state.transition_cancel().expect("old inspection cancellation"),
+            ))
+            .expect("old inventory after target stale");
+        assert_eq!(old_after_target_change.sessions().len(), 1);
+
+        // Clear the target conflict, then change the old exact inventory after
+        // a fresh confirmation snapshot.  Revalidation must return Pending
+        // with the refreshed zero-count inventory without killing anything.
+        tauri::async_runtime::block_on(state._terminal_runtime.close_owned_session(
+            new_name.clone(),
+            devhub_app_core::state::OwnedSessionRecord::Scratch {
+                session_name: "scratch".to_owned(),
+            },
+            state.transition_cancel().expect("target cleanup cancellation"),
+        ))
+        .expect("clear target conflict");
+        let prepared_again = tauri::async_runtime::block_on(state.apply_socket_change(
+            SettingsSocketChangeRequestWire {
+                schema_version: devhub_app_core::SETTINGS_SCHEMA_VERSION,
+                revision: stale_target_snapshot.revision.clone(),
+                sequence: stale_target_snapshot.sequence,
+                confirmed: false,
+            },
+        ))
+        .expect("refresh target and old inventory");
+        assert!(prepared_again.runtime.socket_change.confirmation_required);
+        assert_eq!(prepared_again.runtime.socket_change.scratch_session_count, 1);
+        tauri::async_runtime::block_on(state._terminal_runtime.close_owned_session(
+            old_name.clone(),
+            devhub_app_core::state::OwnedSessionRecord::Scratch {
+                session_name: "scratch".to_owned(),
+            },
+            state.transition_cancel().expect("old mutation cancellation"),
+        ))
+        .expect("mutate old inventory after confirmation");
+        let stale_inventory = tauri::async_runtime::block_on(state.apply_socket_change(
+            SettingsSocketChangeRequestWire {
+                schema_version: devhub_app_core::SETTINGS_SCHEMA_VERSION,
+                revision: prepared_again.revision.clone(),
+                sequence: prepared_again.sequence,
+                confirmed: true,
+            },
+        ))
+        .expect_err("changed old inventory must stale before cleanup");
+        assert_eq!(stale_inventory.code, devhub_app_core::SettingsErrorCodeWire::StaleSocketChange);
+        let refreshed = state.settings_snapshot().expect("refreshed old inventory snapshot");
+        assert_eq!(
+            refreshed.runtime.socket_change.state,
+            devhub_app_core::SettingsSocketTransitionWire::Pending
+        );
+        assert_eq!(refreshed.runtime.socket_change.scratch_session_count, 0);
+        assert!(refreshed.runtime.socket_change.confirmation_required);
+
+        let completed = tauri::async_runtime::block_on(state.apply_socket_change(
+            SettingsSocketChangeRequestWire {
+                schema_version: devhub_app_core::SETTINGS_SCHEMA_VERSION,
+                revision: refreshed.revision.clone(),
+                sequence: refreshed.sequence,
+                confirmed: true,
+            },
+        ))
+        .expect("confirmed transition after refreshed inventory");
+        assert_eq!(
+            completed.runtime.socket_change.state,
+            devhub_app_core::SettingsSocketTransitionWire::Stable
+        );
+        assert_eq!(completed.runtime.socket_change.effective_socket_name, new_name.as_str());
+        let old_inventory = tauri::async_runtime::block_on(
+            state
+                ._terminal_runtime
+                .inspect_owned_sessions(old_name.clone(), state.transition_cancel().unwrap()),
+        )
+        .expect("old inventory after cleanup");
+        assert!(old_inventory.sessions().is_empty());
+        let new_inventory = tauri::async_runtime::block_on(
+            state
+                ._terminal_runtime
+                .inspect_owned_sessions(new_name.clone(), state.transition_cancel().unwrap()),
+        )
+        .expect("new inventory after recreation");
+        assert_eq!(new_inventory.sessions().len(), 1);
+        tauri::async_runtime::block_on(state._terminal_runtime.ensure(
+            TerminalTarget::scratch(),
+            state.transition_cancel().expect("rebind cancellation"),
+        ))
+        .expect("ordinary runtime uses the committed socket");
+
+        for socket in [old_name, new_name] {
+            let _ = ProcessCommand::new(tmux_binary)
+                .args(["-L", socket.as_str(), "kill-server"])
+                .status();
+        }
+        remove_temp_home(&home);
+    }
+
+    #[test]
+    fn startup_pending_empty_inventory_commits_without_confirmation() {
+        if std::env::var_os("CODEX_SANDBOX").is_some_and(|value| value == "seatbelt") {
+            return;
+        }
+        let Some(tmux_binary) = available_tmux_binary() else {
+            return;
+        };
+        let home = temp_home();
+        let sequence = TEMP_HOME_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let old_socket =
+            SocketName::new(format!("dh-pending-old-{}-{sequence}", std::process::id()))
+                .expect("old socket");
+        let new_socket =
+            SocketName::new(format!("dh-pending-new-{}-{sequence}", std::process::id()))
+                .expect("new socket");
+        let store = JsonStateStore::for_home(&home);
+        let mut persisted = devhub_app_core::PersistedAppState::fresh();
+        persisted.tmux.effective_socket_name = old_socket.as_str().to_owned();
+        store.save_state(&persisted).expect("seed effective socket");
+        let config_store = ConfigStore::new(default_config_path(&home));
+        let loaded = config_store.load().expect("default config");
+        let mut config = loaded.config().clone();
+        config.runtimes.tmux_socket_name = new_socket.as_str().to_owned();
+        config_store.save(loaded.revision(), config).expect("new configured socket");
+
+        let state = NativeAppState::bootstrap(&home).expect("bootstrap native state");
+        if !state._terminal_runtime.adapter_available() {
+            remove_temp_home(&home);
+            return;
+        }
+        let required = RequiredTerminalSet::new([OwnedSessionRecord::Scratch {
+            session_name: "scratch".to_owned(),
+        }])
+        .expect("required Scratch");
+        let mut pending = store.load_or_default().expect("load pending state");
+        pending
+            .tmux
+            .request_socket_change(new_socket.as_str(), required)
+            .expect("request socket change");
+        pending
+            .tmux
+            .record_target_preflight(SocketTargetPreflightState::TargetAbsent)
+            .expect("target preflight");
+        pending.tmux.record_verified_old_sessions([]).expect("empty exact old inventory");
+        store.save_state(&pending).expect("persist pending snapshot");
+        drop(state);
+
+        let relaunched = NativeAppState::bootstrap(&home).expect("relaunch native state");
+        let resumed = tauri::async_runtime::block_on(relaunched.resume_startup_socket_transition())
+            .expect("startup should resume empty pending inventory");
+        assert!(matches!(resumed.tmux.transition, SocketTransitionState::Stable));
+        assert_eq!(resumed.tmux.effective_socket_name, new_socket.as_str());
+        let inventory =
+            tauri::async_runtime::block_on(relaunched._terminal_runtime.inspect_owned_sessions(
+                new_socket.clone(),
+                relaunched.transition_cancel().expect("new inspection cancellation"),
+            ))
+            .expect("new inventory");
+        assert_eq!(inventory.sessions().len(), 1);
+        assert_eq!(inventory.sessions()[0].session_name(), "scratch");
+
+        let _ = ProcessCommand::new(tmux_binary)
+            .args(["-L", new_socket.as_str(), "kill-server"])
+            .status();
+        remove_temp_home(&home);
+    }
+
+    #[test]
+    fn partial_cleanup_rechecks_valid_target_change_and_resumes_afterward() {
+        if std::env::var_os("CODEX_SANDBOX").is_some_and(|value| value == "seatbelt") {
+            return;
+        }
+        let Some(tmux_binary) = available_tmux_binary() else {
+            return;
+        };
+        let home = temp_home();
+        let sequence = TEMP_HOME_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let old_socket =
+            SocketName::new(format!("dh-partial-old-{}-{sequence}", std::process::id()))
+                .expect("old socket");
+        let new_socket =
+            SocketName::new(format!("dh-partial-new-{}-{sequence}", std::process::id()))
+                .expect("new socket");
+        let orphan_root = home.join("orphan-workspace");
+        std::fs::create_dir(&orphan_root).expect("orphan workspace directory");
+        let workspace_id =
+            devhub_app_core::WorkspaceId::from_uuid("00000000-0000-4000-8000-000000000071")
+                .expect("orphan workspace id");
+        let workspace_root = WorkspaceRoot::new(orphan_root).expect("orphan workspace root");
+        let store = JsonStateStore::for_home(&home);
+        let mut persisted = devhub_app_core::PersistedAppState::fresh();
+        persisted.tmux.effective_socket_name = old_socket.as_str().to_owned();
+        store.save_state(&persisted).expect("seed effective socket");
+        let config_store = ConfigStore::new(default_config_path(&home));
+        let loaded = config_store.load().expect("default config");
+        let mut config = loaded.config().clone();
+        config.runtimes.tmux_socket_name = new_socket.as_str().to_owned();
+        config_store.save(loaded.revision(), config).expect("new configured socket");
+
+        let state = NativeAppState::bootstrap(&home).expect("bootstrap native state");
+        if !state._terminal_runtime.adapter_available() {
+            remove_temp_home(&home);
+            return;
+        }
+        tauri::async_runtime::block_on(state._terminal_runtime.ensure_on_socket(
+            old_socket.clone(),
+            TerminalTarget::scratch(),
+            state.transition_cancel().expect("old Scratch cancellation"),
+        ))
+        .expect("old Scratch");
+        tauri::async_runtime::block_on(state._terminal_runtime.ensure_on_socket(
+            old_socket.clone(),
+            TerminalTarget::workspace(workspace_id, workspace_root),
+            state.transition_cancel().expect("old workspace cancellation"),
+        ))
+        .expect("old orphan workspace");
+        let old_inventory =
+            tauri::async_runtime::block_on(state._terminal_runtime.inspect_owned_sessions(
+                old_socket.clone(),
+                state.transition_cancel().expect("old inventory cancellation"),
+            ))
+            .expect("old exact inventory");
+        assert_eq!(old_inventory.sessions().len(), 2);
+        let orphan = old_inventory
+            .sessions()
+            .iter()
+            .find(|session| matches!(session, OwnedSessionRecord::Workspace { .. }))
+            .cloned()
+            .expect("orphan workspace record");
+
+        let mut active = store.load_or_default().expect("load state");
+        let required = RequiredTerminalSet::new([OwnedSessionRecord::Scratch {
+            session_name: "scratch".to_owned(),
+        }])
+        .expect("recreation only needs Scratch");
+        active
+            .tmux
+            .request_socket_change(new_socket.as_str(), required)
+            .expect("request socket change");
+        active
+            .tmux
+            .record_target_preflight(SocketTargetPreflightState::TargetAbsent)
+            .expect("target absent cursor");
+        active
+            .tmux
+            .record_verified_old_sessions(old_inventory.sessions().to_owned())
+            .expect("persist full cleanup inventory");
+        active.tmux.start_cleaning_old().expect("start cleanup");
+        active
+            .tmux
+            .mark_old_session("scratch", CleanupSessionStatus::Completed)
+            .expect("persist partial completion");
+        store.save_state(&active).expect("persist partial cleanup");
+
+        // The target changed only between the two safe valid states. The
+        // retry must persist DevhubEmpty and continue the remaining orphan,
+        // rather than returning a permanent stale cursor.
+        tauri::async_runtime::block_on(state._terminal_runtime.ensure_on_socket(
+            new_socket.clone(),
+            TerminalTarget::scratch(),
+            state.transition_cancel().expect("target setup cancellation"),
+        ))
+        .expect("create valid marked target");
+        tauri::async_runtime::block_on(state._terminal_runtime.close_owned_session(
+            new_socket.clone(),
+            OwnedSessionRecord::Scratch { session_name: "scratch".to_owned() },
+            state.transition_cancel().expect("target emptying cancellation"),
+        ))
+        .expect("leave target marker with no marked sessions");
+        let before = state.settings_snapshot().expect("partial snapshot");
+        let completed = tauri::async_runtime::block_on(state.apply_socket_change(
+            SettingsSocketChangeRequestWire {
+                schema_version: devhub_app_core::SETTINGS_SCHEMA_VERSION,
+                revision: before.revision,
+                sequence: before.sequence,
+                confirmed: true,
+            },
+        ))
+        .expect("partial retry after valid target change");
+        assert_eq!(
+            completed.runtime.socket_change.state,
+            devhub_app_core::SettingsSocketTransitionWire::Stable
+        );
+        assert_eq!(completed.runtime.socket_change.effective_socket_name, new_socket.as_str());
+        let old_after =
+            tauri::async_runtime::block_on(state._terminal_runtime.inspect_owned_sessions(
+                old_socket.clone(),
+                state.transition_cancel().expect("old final inventory cancellation"),
+            ))
+            .expect("old final inventory");
+        assert!(old_after.sessions().is_empty());
+        let new_after =
+            tauri::async_runtime::block_on(state._terminal_runtime.inspect_owned_sessions(
+                new_socket.clone(),
+                state.transition_cancel().expect("new final inventory cancellation"),
+            ))
+            .expect("new final inventory");
+        assert_eq!(new_after.sessions().len(), 1);
+        assert_eq!(new_after.sessions()[0].session_name(), "scratch");
+        assert!(orphan.session_name().starts_with("ws-"));
+
+        for socket in [old_socket, new_socket] {
+            let _ = ProcessCommand::new(tmux_binary)
+                .args(["-L", socket.as_str(), "kill-server"])
+                .status();
+        }
+        remove_temp_home(&home);
+    }
+
+    #[test]
+    fn startup_resume_retries_persisted_cleanup_and_recreation_failures() {
+        if std::env::var_os("CODEX_SANDBOX").is_some_and(|value| value == "seatbelt") {
+            return;
+        }
+        let Some(tmux_binary) = available_tmux_binary() else {
+            return;
+        };
+        let home = temp_home();
+        let sequence = TEMP_HOME_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let old_socket = format!("dh-resume-old-{}-{sequence}", std::process::id());
+        let new_socket = format!("dh-resume-new-{}-{sequence}", std::process::id());
+        let old_name = SocketName::new(old_socket.clone()).expect("old socket");
+        let new_name = SocketName::new(new_socket.clone()).expect("new socket");
+        let store = JsonStateStore::for_home(&home);
+        let mut seed = devhub_app_core::PersistedAppState::fresh();
+        seed.tmux.effective_socket_name = old_socket;
+        store.save_state(&seed).expect("seed old effective socket");
+        let config_store = ConfigStore::new(default_config_path(&home));
+        let loaded = config_store.load().expect("default config");
+        let mut config = loaded.config().clone();
+        config.runtimes.tmux_socket_name = new_socket;
+        config_store.save(loaded.revision(), config).expect("new configured socket");
+
+        let state = NativeAppState::bootstrap(&home).expect("bootstrap native state");
+        if !state._terminal_runtime.adapter_available() {
+            remove_temp_home(&home);
+            return;
+        }
+        tauri::async_runtime::block_on(state._terminal_runtime.ensure(
+            TerminalTarget::scratch(),
+            state.transition_cancel().expect("old setup cancellation"),
+        ))
+        .expect("old Scratch");
+
+        // Persist a confirmed cleanup with a prior failed attempt.  Relaunch
+        // must retry this exact record, finish the old proof, commit the new
+        // effective socket, and only then recreate Scratch.
+        let mut persisted = store.load_or_default().expect("load startup state");
+        let required = RequiredTerminalSet::new([OwnedSessionRecord::Scratch {
+            session_name: "scratch".to_owned(),
+        }])
+        .expect("required Scratch");
+        persisted
+            .tmux
+            .request_socket_change(new_name.as_str(), required)
+            .expect("request socket change");
+        persisted
+            .tmux
+            .record_target_preflight(SocketTargetPreflightState::TargetAbsent)
+            .expect("target preflight");
+        persisted
+            .tmux
+            .record_verified_old_sessions([OwnedSessionRecord::Scratch {
+                session_name: "scratch".to_owned(),
+            }])
+            .expect("old inventory");
+        persisted.tmux.start_cleaning_old().expect("start cleanup");
+        persisted
+            .tmux
+            .mark_old_session("scratch", CleanupSessionStatus::Failed)
+            .expect("persist failed cleanup attempt");
+        store.save_state(&persisted).expect("persist cleanup retry point");
+        drop(state);
+
+        let relaunched = NativeAppState::bootstrap(&home).expect("relaunch cleanup retry");
+        let resumed = tauri::async_runtime::block_on(relaunched.resume_startup_socket_transition())
+            .expect("startup cleanup and recreation resume");
+        assert!(matches!(resumed.tmux.transition, SocketTransitionState::Stable));
+        assert_eq!(resumed.tmux.effective_socket_name, new_name.as_str());
+        let old_inventory =
+            tauri::async_runtime::block_on(relaunched._terminal_runtime.inspect_owned_sessions(
+                old_name.clone(),
+                relaunched.transition_cancel().expect("old verify cancellation"),
+            ))
+            .expect("old inventory after startup resume");
+        assert!(old_inventory.sessions().is_empty());
+        let new_inventory =
+            tauri::async_runtime::block_on(relaunched._terminal_runtime.inspect_owned_sessions(
+                new_name.clone(),
+                relaunched.transition_cancel().expect("new verify cancellation"),
+            ))
+            .expect("new inventory after startup resume");
+        assert_eq!(new_inventory.sessions().len(), 1);
+
+        // A crash after the commit but during recreation is a different
+        // durable phase.  Keep the committed effective socket and failed
+        // recreation record, then verify relaunch resumes without rollback.
+        let mut recreation = relaunched.store.load_or_default().expect("load stable state");
+        let required = RequiredTerminalSet::new([OwnedSessionRecord::Scratch {
+            session_name: "scratch".to_owned(),
+        }])
+        .expect("recreation required Scratch");
+        recreation.tmux.transition = SocketTransitionState::RecreationPending {
+            effective_socket_name: new_name.as_str().to_owned(),
+            required,
+            sessions: vec![RecreationSessionRecord {
+                session: OwnedSessionRecord::Scratch { session_name: "scratch".to_owned() },
+                status: RecreationSessionStatus::Failed,
+            }],
+        };
+        recreation.tmux.effective_socket_name = new_name.as_str().to_owned();
+        relaunched.store.save_state(&recreation).expect("persist recreation retry point");
+        drop(relaunched);
+
+        let resumed_again = NativeAppState::bootstrap(&home).expect("relaunch recreation retry");
+        let recreation_result =
+            tauri::async_runtime::block_on(resumed_again.resume_startup_socket_transition())
+                .expect("startup recreation resume");
+        assert!(matches!(recreation_result.tmux.transition, SocketTransitionState::Stable));
+        assert_eq!(recreation_result.tmux.effective_socket_name, new_name.as_str());
+
+        for socket in [old_name, new_name] {
+            let _ = ProcessCommand::new(tmux_binary)
+                .args(["-L", socket.as_str(), "kill-server"])
+                .status();
+        }
+        remove_temp_home(&home);
+    }
+
+    #[test]
+    fn app_snapshot_persistence_merges_while_socket_operation_gate_is_busy() {
+        let home = temp_home();
+        let state = NativeAppState::bootstrap(&home).expect("bootstrap native app");
+        let mut persisted = state.store.load_or_default().expect("load state");
+        let required = RequiredTerminalSet::new([OwnedSessionRecord::Scratch {
+            session_name: "scratch".to_owned(),
+        }])
+        .expect("required Scratch");
+        persisted
+            .tmux
+            .request_socket_change("devhub-concurrent-target", required)
+            .expect("request transition");
+        persisted
+            .tmux
+            .record_target_preflight(SocketTargetPreflightState::TargetAbsent)
+            .expect("target preflight");
+        persisted.tmux.record_verified_old_sessions([]).expect("empty old inventory");
+        state.store.save_state(&persisted).expect("persist transition document");
+
+        // This flag represents a provider operation waiting on tmux. Ordinary
+        // application persistence must not use it as a document-write lock.
+        state.socket_transition_busy.store(true, Ordering::Release);
+        let (outcome, changed) = state
+            .dispatch_intent(UserIntent::ResizeSidebar { width: 300 })
+            .expect("app persistence is independent of transition I/O");
+        state.socket_transition_busy.store(false, Ordering::Release);
+        assert!(changed);
+        assert!(matches!(outcome, AppOutcomeWire::Updated { .. }));
+
+        let merged = state.store.load_or_default().expect("load merged state");
+        assert_eq!(merged.sidebar.width, 300);
+        assert!(matches!(
+            merged.tmux.transition,
+            SocketTransitionState::Pending {
+                ref requested_socket_name,
+                verified_old_sessions: Some(ref sessions),
+                ..
+            } if requested_socket_name == "devhub-concurrent-target" && sessions.is_empty()
+        ));
+        remove_temp_home(&home);
+    }
+
+    #[test]
+    fn configured_socket_save_is_rejected_during_confirmed_transition() {
+        let home = temp_home();
+        let state = NativeAppState::bootstrap(&home).expect("bootstrap native app");
+        let mut persisted = state.store.load_or_default().expect("load state");
+        let required = RequiredTerminalSet::new([OwnedSessionRecord::Scratch {
+            session_name: "scratch".to_owned(),
+        }])
+        .expect("required Scratch");
+        persisted
+            .tmux
+            .request_socket_change("devhub-active-target", required)
+            .expect("request transition");
+        persisted
+            .tmux
+            .record_target_preflight(SocketTargetPreflightState::TargetAbsent)
+            .expect("target preflight");
+        persisted.tmux.record_verified_old_sessions([]).expect("old inventory");
+        persisted.tmux.start_cleaning_old().expect("confirmed cleanup phase");
+        state.store.save_state(&persisted).expect("persist active transition");
+
+        let before = state.settings_snapshot().expect("settings snapshot");
+        let mut config = before.config.clone();
+        config.runtimes.tmux_socket_name = "devhub-overwrite".to_owned();
+        let error = state
+            .save_settings(SettingsSaveRequestWire {
+                schema_version: devhub_app_core::SETTINGS_SCHEMA_VERSION,
+                revision: before.revision.clone(),
+                config,
+            })
+            .expect_err("active transition owns configured socket");
+        assert_eq!(error.code, devhub_app_core::SettingsErrorCodeWire::StaleSocketChange);
+        let after = state.settings_snapshot().expect("settings after rejected save");
+        assert_eq!(after.config.runtimes.tmux_socket_name, before.config.runtimes.tmux_socket_name);
+        assert_eq!(
+            after.runtime.socket_change.requested_socket_name,
+            Some("devhub-active-target".to_owned())
+        );
+        remove_temp_home(&home);
+    }
+
+    #[test]
+    fn external_socket_edit_during_transition_is_deferred_and_reconciled_after_stable() {
+        let home = temp_home();
+        let state = NativeAppState::bootstrap(&home).expect("bootstrap native app");
+        let mut persisted = state.store.load_or_default().expect("load state");
+        let required = RequiredTerminalSet::new([OwnedSessionRecord::Scratch {
+            session_name: "scratch".to_owned(),
+        }])
+        .expect("required Scratch");
+        persisted
+            .tmux
+            .request_socket_change("devhub-confirmed-target", required)
+            .expect("request transition");
+        persisted
+            .tmux
+            .record_target_preflight(SocketTargetPreflightState::TargetAbsent)
+            .expect("target preflight");
+        persisted.tmux.record_verified_old_sessions([]).expect("old inventory");
+        persisted.tmux.start_cleaning_old().expect("confirmed cleanup phase");
+        state.store.save_state(&persisted).expect("persist active transition");
+
+        let before = state.settings_snapshot().expect("last-good settings snapshot");
+        let mut external = before.config.clone().into_config().expect("config model");
+        external.runtimes.tmux_socket_name = "devhub-external-target".to_owned();
+        std::fs::write(
+            state.config_store.path(),
+            external.to_toml().expect("external config TOML"),
+        )
+        .expect("write external config");
+        let error = state.reload_settings().expect_err("active transition defers edit");
+        assert_eq!(error.code, devhub_app_core::SettingsErrorCodeWire::StaleSocketChange);
+        let deferred = state.settings_snapshot().expect("deferred projection");
+        assert_eq!(
+            deferred.config.runtimes.tmux_socket_name,
+            before.config.runtimes.tmux_socket_name
+        );
+        assert_eq!(
+            deferred.diagnostic.as_ref().map(|diagnostic| diagnostic.code),
+            Some(devhub_app_core::SettingsDiagnosticCodeWire::Conflict)
+        );
+        assert!(state.deferred_config.lock().unwrap().is_some());
+
+        let mut stable = state.store.load_or_default().expect("load active state");
+        stable.tmux.transition = SocketTransitionState::Stable;
+        state.store.save_state(&stable).expect("persist stable transition");
+        tauri::async_runtime::block_on(state.resume_socket_transition(true))
+            .expect("reconcile deferred config at stable");
+        let reconciled = state.settings_snapshot().expect("reconciled settings");
+        assert_eq!(reconciled.config.runtimes.tmux_socket_name, "devhub-external-target");
+        assert!(reconciled.diagnostic.is_none());
+        assert!(
+            reconciled.runtime.socket_change.configured_socket_name
+                != reconciled.runtime.socket_change.effective_socket_name
+        );
         remove_temp_home(&home);
     }
 

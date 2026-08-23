@@ -836,9 +836,9 @@ impl OwnedSessionRecord {
     }
 }
 
-/// The complete set of terminals that must be carried across a socket
-/// transition: one Scratch session and exactly one marked session per open
-/// Workspace. Unknown tmux sessions are never part of this value.
+/// The complete set of terminals that must be recreated on the new socket:
+/// one Scratch session and exactly one marked session per currently open
+/// Workspace. Unknown or orphaned tmux sessions are never part of this value.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RequiredTerminalSet {
@@ -893,6 +893,9 @@ pub enum CleanupSessionStatus {
     Pending,
     Completed,
     Failed,
+    /// The same session name was observed with different ownership metadata.
+    /// This is a durable pause, never a kill target.
+    Conflict,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -941,6 +944,7 @@ pub enum SocketTargetPreflightState {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SocketTransitionNextAction {
     AwaitTargetPreflight,
+    InspectOldSessions,
     CleanOldSessions,
     FinishOldCleanup,
     RecreateSessions,
@@ -951,6 +955,10 @@ impl SocketTargetPreflightState {
     const fn is_valid_target(self) -> bool {
         matches!(self, Self::TargetAbsent | Self::TargetDevhubEmpty)
     }
+}
+
+fn default_cleaning_target_preflight() -> SocketTargetPreflightState {
+    SocketTargetPreflightState::TargetAbsent
 }
 
 /// Persisted tmux socket-transition state.  Each variant is restartable and
@@ -965,11 +973,23 @@ pub enum SocketTransitionState {
         required: RequiredTerminalSet,
         #[serde(default)]
         preflight: SocketTargetPreflightState,
+        /// The exact marked sessions inspected on the old effective socket.
+        /// `None` means that old-session inspection has not completed yet;
+        /// `Some(empty)` is a valid inspection result and means there is no
+        /// owned session to destroy. This is intentionally distinct from
+        /// `required`, which is only the new-socket recreation set.
+        #[serde(default)]
+        verified_old_sessions: Option<Vec<OwnedSessionRecord>>,
     },
     CleaningOld {
         old_socket_name: String,
         requested_socket_name: String,
         required: RequiredTerminalSet,
+        /// Older transition documents reached this phase only after a valid
+        /// target preflight, so the compatibility default is the least
+        /// permissive valid target and is rechecked before any kill.
+        #[serde(default = "default_cleaning_target_preflight")]
+        target_preflight: SocketTargetPreflightState,
         sessions: Vec<CleanupSessionRecord>,
     },
     OldCleaned {
@@ -989,19 +1009,39 @@ impl SocketTransitionState {
         validate_socket_name(effective_socket_name)?;
         match self {
             Self::Stable => {}
-            Self::Pending { requested_socket_name, required, .. } => {
+            Self::Pending { requested_socket_name, required, preflight, verified_old_sessions } => {
                 validate_socket_name(requested_socket_name)?;
                 required.validate()?;
+                if let Some(sessions) = verified_old_sessions {
+                    if !preflight.is_valid_target() {
+                        return Err(state_error(StateErrorCode::InvalidState));
+                    }
+                    let refs = sessions.iter().collect::<Vec<_>>();
+                    validate_unique_sessions(&refs)?;
+                }
                 if requested_socket_name == effective_socket_name {
                     return Err(state_error(StateErrorCode::InvalidState));
                 }
             }
-            Self::CleaningOld { old_socket_name, requested_socket_name, required, sessions } => {
+            Self::CleaningOld {
+                old_socket_name,
+                requested_socket_name,
+                required,
+                target_preflight,
+                sessions,
+            } => {
                 validate_socket_name(old_socket_name)?;
                 validate_socket_name(requested_socket_name)?;
                 required.validate()?;
                 validate_cleanup_sessions(sessions)?;
-                if !same_terminal_set(required, sessions.iter().map(|record| &record.session)) {
+                // A confirmed cleanup may observe a target marker/session
+                // conflict after one or more old sessions were removed. Keep
+                // that exact conflict cursor durable so Retry can re-probe
+                // and recover; a brand-new all-Pending phase still requires
+                // a valid target before it can exist.
+                if !target_preflight.is_valid_target()
+                    && sessions.iter().all(|record| record.status == CleanupSessionStatus::Pending)
+                {
                     return Err(state_error(StateErrorCode::InvalidState));
                 }
                 if effective_socket_name != old_socket_name
@@ -1059,6 +1099,9 @@ impl SocketTransitionState {
             Self::Stable => None,
             Self::Pending { preflight, .. } if !preflight.is_valid_target() => {
                 Some(SocketTransitionNextAction::AwaitTargetPreflight)
+            }
+            Self::Pending { verified_old_sessions: None, .. } => {
+                Some(SocketTransitionNextAction::InspectOldSessions)
             }
             Self::Pending { .. } => Some(SocketTransitionNextAction::CleanOldSessions),
             Self::CleaningOld { sessions, .. }
@@ -1157,15 +1200,28 @@ impl TmuxState {
                         requested_socket_name: previous_requested,
                         required: previous_required,
                         preflight,
+                        ..
                     } if previous_requested == &requested && previous_required == &required => {
                         *preflight
                     }
                     _ => SocketTargetPreflightState::NotChecked,
                 };
+                let verified_old_sessions = match &self.transition {
+                    SocketTransitionState::Pending {
+                        requested_socket_name: previous_requested,
+                        required: previous_required,
+                        verified_old_sessions,
+                        ..
+                    } if previous_requested == &requested && previous_required == &required => {
+                        verified_old_sessions.clone()
+                    }
+                    _ => None,
+                };
                 let next = SocketTransitionState::Pending {
                     requested_socket_name: requested,
                     required,
                     preflight,
+                    verified_old_sessions,
                 };
                 let changed = self.transition != next;
                 self.transition = next;
@@ -1184,7 +1240,12 @@ impl TmuxState {
         outcome: SocketTargetPreflightState,
     ) -> Result<bool, StateError> {
         let preflight = match &mut self.transition {
-            SocketTransitionState::Pending { preflight, .. } => preflight,
+            SocketTransitionState::Pending { preflight, verified_old_sessions, .. } => {
+                if *preflight != outcome {
+                    *verified_old_sessions = None;
+                }
+                preflight
+            }
             _ => return Err(state_error(StateErrorCode::InvalidTransition)),
         };
         let changed = *preflight != outcome;
@@ -1192,30 +1253,166 @@ impl TmuxState {
         Ok(changed)
     }
 
-    pub fn start_cleaning_old(&mut self) -> Result<bool, StateError> {
-        let (requested, required, preflight) = match &self.transition {
-            SocketTransitionState::Pending { requested_socket_name, required, preflight } => {
-                (requested_socket_name.clone(), required.clone(), *preflight)
+    /// Persists the complete provider-verified marked-session inventory from
+    /// the old effective socket. This inventory is intentionally allowed to
+    /// contain sessions for Workspaces that are no longer open: those are
+    /// cleanup-only records and must be destroyed before activation. Unknown
+    /// sessions never cross this seam.
+    pub fn record_verified_old_sessions(
+        &mut self,
+        sessions: impl IntoIterator<Item = OwnedSessionRecord>,
+    ) -> Result<bool, StateError> {
+        let pending = match &mut self.transition {
+            SocketTransitionState::Pending { verified_old_sessions, preflight, .. } => {
+                if !preflight.is_valid_target() {
+                    return Err(state_error(StateErrorCode::InvalidTransition));
+                }
+                verified_old_sessions
             }
+            _ => return Err(state_error(StateErrorCode::InvalidTransition)),
+        };
+        let sessions = sessions.into_iter().collect::<Vec<_>>();
+        let refs = sessions.iter().collect::<Vec<_>>();
+        validate_unique_sessions(&refs)?;
+        let next = Some(sessions);
+        let changed = *pending != next;
+        *pending = next;
+        Ok(changed)
+    }
+
+    pub fn start_cleaning_old(&mut self) -> Result<bool, StateError> {
+        let (requested, required, preflight, verified_old_sessions) = match &self.transition {
+            SocketTransitionState::Pending {
+                requested_socket_name,
+                required,
+                preflight,
+                verified_old_sessions: Some(sessions),
+            } => (requested_socket_name.clone(), required.clone(), *preflight, sessions.clone()),
             _ => return Err(state_error(StateErrorCode::InvalidTransition)),
         };
         if !preflight.is_valid_target() {
             return Err(state_error(StateErrorCode::InvalidTransition));
         }
-        let records = required
-            .sessions()
-            .iter()
-            .cloned()
+        let records = verified_old_sessions
+            .into_iter()
             .map(|session| CleanupSessionRecord { session, status: CleanupSessionStatus::Pending })
             .collect();
         let next = SocketTransitionState::CleaningOld {
             old_socket_name: self.effective_socket_name.clone(),
             requested_socket_name: requested,
             required,
+            target_preflight: preflight,
             sessions: records,
         };
         let changed = self.transition != next;
         self.transition = next;
+        Ok(changed)
+    }
+
+    /// Returns a not-yet-destructive cleanup plan to Pending after a fresh
+    /// provider recheck changed either the requested target or the exact old
+    /// inventory.  The caller persists this value before reporting a stale
+    /// confirmation; no cleanup record is carried across the boundary because
+    /// the provider result is the new inspection cursor.
+    pub fn return_cleaning_to_pending(
+        &mut self,
+        preflight: SocketTargetPreflightState,
+        verified_old_sessions: Option<Vec<OwnedSessionRecord>>,
+    ) -> Result<bool, StateError> {
+        let (requested_socket_name, required) = match &self.transition {
+            SocketTransitionState::CleaningOld { requested_socket_name, required, .. } => {
+                (requested_socket_name.clone(), required.clone())
+            }
+            _ => return Err(state_error(StateErrorCode::InvalidTransition)),
+        };
+        let verified_old_sessions = if preflight.is_valid_target() {
+            let sessions =
+                verified_old_sessions.ok_or_else(|| state_error(StateErrorCode::InvalidState))?;
+            let refs = sessions.iter().collect::<Vec<_>>();
+            validate_unique_sessions(&refs)?;
+            Some(sessions)
+        } else {
+            None
+        };
+        let next = SocketTransitionState::Pending {
+            requested_socket_name,
+            required,
+            preflight,
+            verified_old_sessions,
+        };
+        let changed = self.transition != next;
+        self.transition = next;
+        Ok(changed)
+    }
+
+    /// Reconciles a fresh exact inventory with the persisted cleanup ledger.
+    /// A missing exact record is complete (idempotent retry), a still-present
+    /// record becomes Pending again, and a newly discovered marked session is
+    /// appended as a cleanup-only record. Unknown sessions are not represented
+    /// and therefore cannot become kill targets.
+    pub fn reconcile_old_sessions(
+        &mut self,
+        observed: impl IntoIterator<Item = OwnedSessionRecord>,
+    ) -> Result<bool, StateError> {
+        let observed = observed.into_iter().collect::<Vec<_>>();
+        let refs = observed.iter().collect::<Vec<_>>();
+        validate_unique_sessions(&refs)?;
+        let transition = match &mut self.transition {
+            SocketTransitionState::CleaningOld { sessions, .. } => sessions,
+            _ => return Err(state_error(StateErrorCode::InvalidTransition)),
+        };
+        let observed_by_name = observed
+            .iter()
+            .map(|session| (session.session_name(), session))
+            .collect::<BTreeMap<_, _>>();
+        let mut changed = false;
+        for record in transition.iter_mut() {
+            match observed_by_name.get(record.session.session_name()) {
+                Some(observed) if **observed == record.session => {
+                    // A failed attempt remains failed so the operation can
+                    // stop with a durable Retry point. A Completed or
+                    // Conflict record appearing again with the exact
+                    // metadata is safe to retry.
+                    if matches!(
+                        record.status,
+                        CleanupSessionStatus::Completed | CleanupSessionStatus::Conflict
+                    ) {
+                        record.status = CleanupSessionStatus::Pending;
+                        changed = true;
+                    }
+                }
+                Some(_) => {
+                    // Same-name replacement is not an orphan and must never
+                    // be appended as a second durable record. Persist the
+                    // conflict on the original record and leave the provider
+                    // session untouched until a later exact reinspection.
+                    if record.status != CleanupSessionStatus::Conflict {
+                        record.status = CleanupSessionStatus::Conflict;
+                        changed = true;
+                    }
+                }
+                None => {
+                    // Missing exact records are idempotently complete. This
+                    // also resolves a prior same-name conflict once the
+                    // replacement has disappeared.
+                    if record.status != CleanupSessionStatus::Completed {
+                        record.status = CleanupSessionStatus::Completed;
+                        changed = true;
+                    }
+                }
+            }
+        }
+        for session in observed {
+            if !transition
+                .iter()
+                .any(|record| record.session.session_name() == session.session_name())
+            {
+                transition
+                    .push(CleanupSessionRecord { session, status: CleanupSessionStatus::Pending });
+                changed = true;
+            }
+        }
+        transition.sort_by(|left, right| left.session.cmp(&right.session));
         Ok(changed)
     }
 
@@ -1250,6 +1447,23 @@ impl TmuxState {
         Ok(true)
     }
 
+    /// Records a fresh target probe while retaining the confirmed cleanup
+    /// ledger. This is used by a partially completed transition: a valid
+    /// Absent/DevHubEmpty change is safe to adopt, while a conflict remains a
+    /// durable pause until a later probe recovers it.
+    pub fn update_cleaning_target_preflight(
+        &mut self,
+        preflight: SocketTargetPreflightState,
+    ) -> Result<bool, StateError> {
+        let target_preflight = match &mut self.transition {
+            SocketTransitionState::CleaningOld { target_preflight, .. } => target_preflight,
+            _ => return Err(state_error(StateErrorCode::InvalidTransition)),
+        };
+        let changed = *target_preflight != preflight;
+        *target_preflight = preflight;
+        Ok(changed)
+    }
+
     pub fn retry_old_cleanup(&mut self) -> Result<bool, StateError> {
         let sessions = match &mut self.transition {
             SocketTransitionState::CleaningOld { sessions, .. } => sessions,
@@ -1272,6 +1486,7 @@ impl TmuxState {
                 requested_socket_name,
                 required,
                 sessions,
+                ..
             } => (
                 old_socket_name.clone(),
                 requested_socket_name.clone(),
@@ -2754,6 +2969,16 @@ mod tests {
         ]);
         state.tmux.request_socket_change("next", required).unwrap();
         state.tmux.record_target_preflight(SocketTargetPreflightState::TargetAbsent).unwrap();
+        state
+            .tmux
+            .record_verified_old_sessions([
+                OwnedSessionRecord::Scratch { session_name: "scratch".into() },
+                OwnedSessionRecord::Workspace {
+                    workspace_id: uuid(99),
+                    session_name: "ws-0123456789abcdef0123".into(),
+                },
+            ])
+            .unwrap();
         state.tmux.start_cleaning_old().unwrap();
         state.tmux.mark_old_session("scratch", CleanupSessionStatus::Failed).unwrap();
         state.shutdown.clean = false;
@@ -3155,6 +3380,10 @@ mod tests {
             required_set(vec![OwnedSessionRecord::Scratch { session_name: "scratch".into() }]);
         tmux.request_socket_change("devhub-next", required).unwrap();
         tmux.record_target_preflight(SocketTargetPreflightState::TargetAbsent).unwrap();
+        tmux.record_verified_old_sessions([OwnedSessionRecord::Scratch {
+            session_name: "scratch".into(),
+        }])
+        .unwrap();
         tmux = serde_json::from_slice(&serde_json::to_vec(&tmux).unwrap()).unwrap();
         tmux.start_cleaning_old().unwrap();
         tmux = serde_json::from_slice(&serde_json::to_vec(&tmux).unwrap()).unwrap();
@@ -3180,6 +3409,10 @@ mod tests {
             required_set(vec![OwnedSessionRecord::Scratch { session_name: "scratch".into() }]);
         tmux.request_socket_change("next", required).unwrap();
         tmux.record_target_preflight(SocketTargetPreflightState::TargetAbsent).unwrap();
+        tmux.record_verified_old_sessions([OwnedSessionRecord::Scratch {
+            session_name: "scratch".into(),
+        }])
+        .unwrap();
         tmux.start_cleaning_old().unwrap();
         tmux.mark_old_session("scratch", CleanupSessionStatus::Completed).unwrap();
         assert_eq!(
@@ -3227,6 +3460,14 @@ mod tests {
         ]);
         tmux.request_socket_change("next", required).unwrap();
         tmux.record_target_preflight(SocketTargetPreflightState::TargetAbsent).unwrap();
+        tmux.record_verified_old_sessions([
+            OwnedSessionRecord::Scratch { session_name: "scratch".into() },
+            OwnedSessionRecord::Workspace {
+                workspace_id: uuid(1),
+                session_name: "ws-0123456789abcdef0123".into(),
+            },
+        ])
+        .unwrap();
         tmux.start_cleaning_old().unwrap();
         tmux.mark_old_session("scratch", CleanupSessionStatus::Failed).unwrap();
         tmux.mark_old_session("ws-0123456789abcdef0123", CleanupSessionStatus::Completed).unwrap();
@@ -3271,6 +3512,10 @@ mod tests {
         );
 
         tmux.record_target_preflight(SocketTargetPreflightState::TargetAbsent).unwrap();
+        tmux.record_verified_old_sessions([OwnedSessionRecord::Scratch {
+            session_name: "scratch".into(),
+        }])
+        .unwrap();
         tmux.start_cleaning_old().unwrap();
         assert_eq!(
             required.sessions(),
@@ -3280,6 +3525,130 @@ mod tests {
             tmux.transition,
             SocketTransitionState::CleaningOld { ref sessions, .. }
                 if sessions.len() == 1 && sessions[0].session.session_name() == "scratch"
+        ));
+    }
+
+    #[test]
+    fn cleanup_inventory_is_independent_from_recreation_and_rechecks_are_restartable() {
+        let required =
+            required_set(vec![OwnedSessionRecord::Scratch { session_name: "scratch".into() }]);
+        let orphan = OwnedSessionRecord::Workspace {
+            workspace_id: uuid(99),
+            session_name: "ws-0123456789abcdef0123".into(),
+        };
+        let mut tmux = TmuxState::default();
+        tmux.request_socket_change("next", required.clone()).unwrap();
+        tmux.record_target_preflight(SocketTargetPreflightState::TargetAbsent).unwrap();
+        tmux.record_verified_old_sessions([
+            OwnedSessionRecord::Scratch { session_name: "scratch".into() },
+            orphan.clone(),
+        ])
+        .unwrap();
+        tmux.start_cleaning_old().unwrap();
+        assert_eq!(required.sessions().len(), 1);
+        assert!(matches!(
+            tmux.transition,
+            SocketTransitionState::CleaningOld { ref sessions, .. }
+                if sessions.len() == 2
+        ));
+
+        tmux.mark_old_session("scratch", CleanupSessionStatus::Completed).unwrap();
+        tmux.reconcile_old_sessions([orphan.clone()]).unwrap();
+        assert!(matches!(
+            tmux.transition,
+            SocketTransitionState::CleaningOld { ref sessions, .. }
+                if sessions.len() == 2
+                    && sessions.iter().any(|record| {
+                        record.session == orphan && record.status == CleanupSessionStatus::Pending
+                    })
+        ));
+        tmux.return_cleaning_to_pending(SocketTargetPreflightState::WrongMarker, None).unwrap();
+        assert!(matches!(
+            tmux.transition,
+            SocketTransitionState::Pending {
+                preflight: SocketTargetPreflightState::WrongMarker,
+                verified_old_sessions: None,
+                ..
+            }
+        ));
+        tmux.record_target_preflight(SocketTargetPreflightState::TargetAbsent).unwrap();
+        tmux.record_verified_old_sessions([orphan]).unwrap();
+        tmux.start_cleaning_old().unwrap();
+        tmux.mark_old_session("ws-0123456789abcdef0123", CleanupSessionStatus::Completed).unwrap();
+        tmux.reconcile_old_sessions([]).unwrap();
+        assert_eq!(
+            tmux.transition.next_action(),
+            Some(SocketTransitionNextAction::FinishOldCleanup)
+        );
+
+        // A partial cleanup can pause on a target conflict, but the cursor
+        // remains durable and becomes resumable when a later probe is valid.
+        let mut conflicted = TmuxState::default();
+        conflicted
+            .request_socket_change(
+                "next",
+                required_set(vec![OwnedSessionRecord::Scratch { session_name: "scratch".into() }]),
+            )
+            .unwrap();
+        conflicted.record_target_preflight(SocketTargetPreflightState::TargetAbsent).unwrap();
+        conflicted
+            .record_verified_old_sessions([OwnedSessionRecord::Scratch {
+                session_name: "scratch".into(),
+            }])
+            .unwrap();
+        conflicted.start_cleaning_old().unwrap();
+        conflicted.mark_old_session("scratch", CleanupSessionStatus::Completed).unwrap();
+        conflicted
+            .update_cleaning_target_preflight(SocketTargetPreflightState::WrongMarker)
+            .unwrap();
+        conflicted.validate().unwrap();
+        conflicted
+            .update_cleaning_target_preflight(SocketTargetPreflightState::TargetDevhubEmpty)
+            .unwrap();
+        conflicted.validate().unwrap();
+    }
+
+    #[test]
+    fn same_name_metadata_replacement_is_one_durable_conflict_record() {
+        let original = OwnedSessionRecord::Workspace {
+            workspace_id: uuid(1),
+            session_name: "ws-0123456789abcdef0123".into(),
+        };
+        let replacement = OwnedSessionRecord::Workspace {
+            workspace_id: uuid(2),
+            session_name: "ws-0123456789abcdef0123".into(),
+        };
+        let mut tmux = TmuxState::default();
+        tmux.request_socket_change(
+            "next",
+            required_set(vec![OwnedSessionRecord::Scratch { session_name: "scratch".into() }]),
+        )
+        .unwrap();
+        tmux.record_target_preflight(SocketTargetPreflightState::TargetAbsent).unwrap();
+        tmux.record_verified_old_sessions([original.clone()]).unwrap();
+        tmux.start_cleaning_old().unwrap();
+
+        assert!(tmux.reconcile_old_sessions([replacement]).unwrap());
+        let SocketTransitionState::CleaningOld { ref sessions, .. } = tmux.transition else {
+            panic!("replacement must keep cleanup paused");
+        };
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].session, original);
+        assert_eq!(sessions[0].status, CleanupSessionStatus::Conflict);
+        tmux.validate().unwrap();
+        assert_eq!(
+            tmux.transition.next_action(),
+            Some(SocketTransitionNextAction::CleanOldSessions)
+        );
+
+        // Once the replacement disappears, the exact old record is complete;
+        // no replacement record is ever appended to durable state.
+        tmux.reconcile_old_sessions([]).unwrap();
+        assert!(matches!(
+            tmux.transition,
+            SocketTransitionState::CleaningOld { ref sessions, .. }
+                if sessions.len() == 1
+                    && sessions[0].status == CleanupSessionStatus::Completed
         ));
     }
 
@@ -3313,6 +3682,10 @@ mod tests {
         assert!(tmux.transition.is_stable());
         tmux.request_socket_change("other", required).unwrap();
         tmux.record_target_preflight(SocketTargetPreflightState::TargetAbsent).unwrap();
+        tmux.record_verified_old_sessions([OwnedSessionRecord::Scratch {
+            session_name: "scratch".into(),
+        }])
+        .unwrap();
         tmux.start_cleaning_old().unwrap();
         assert_eq!(
             tmux.mark_old_session("unknown", CleanupSessionStatus::Completed).unwrap_err().code(),

@@ -87,6 +87,7 @@ fn valid_values() -> Vec<Value> {
         json!({
             "schemaVersion": 1,
             "revision": "0000000000000000000000000000000000000000000000000000000000000000",
+            "sequence": 1,
             "confirmed": false
         }),
         json!({
@@ -116,6 +117,7 @@ fn invalid_values() -> Vec<Value> {
         json!({
             "schemaVersion": 1,
             "revision": "0000000000000000000000000000000000000000000000000000000000000000",
+            "sequence": 1,
             "confirmed": false,
             "unexpected": true
         }),

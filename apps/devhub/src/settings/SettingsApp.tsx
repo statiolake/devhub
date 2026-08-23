@@ -42,6 +42,8 @@ function errorMessage(error: SettingsError): string {
       return "The configuration file could not be read or written.";
     case "runtime_unavailable":
       return "Terminal runtime inspection is not available yet.";
+    case "stale_socket_change":
+      return "The socket transition changed while Settings was open. Recheck the current runtime state, then apply again.";
     case "permission_denied":
       return "DevHub does not have permission to complete that native action.";
     case "native_unavailable":
@@ -656,7 +658,7 @@ function RuntimesSection({
   runtime: SettingsRuntimeWire;
   onRecheck: () => void;
   onOpenLogs: () => void;
-  onApplySocketChange: (socket: SettingsRuntimeWire["socketChange"]) => void;
+  onApplySocketChange: () => void;
   socketTriggerRef: React.RefObject<HTMLButtonElement | null>;
   busy: boolean;
 }) {
@@ -743,9 +745,20 @@ function RuntimesSection({
           />
         </div>
         <p>
-          {runtime.socketChange.adapterAvailable
-            ? "Target inspection is available; confirmation is required before session recreation."
-            : "Apply is unavailable: TerminalRuntime inspection and session recreation are not connected yet."}
+          {!runtime.socketChange.adapterAvailable
+            ? "Apply is unavailable: TerminalRuntime inspection and session recreation are not connected yet."
+            : runtime.socketChange.state === "pending"
+              ? runtime.socketChange.confirmationRequired
+                ? "The target and exact old-session inventory are verified; confirmation is required before cleanup."
+                : "Inspecting the target and old-session inventory before confirmation."
+              : runtime.socketChange.conflictSessionCount > 0
+                ? "This transition is paused because a marked session was replaced with different ownership metadata; resolve that conflict before retrying."
+                : runtime.socketChange.targetPreflight === "wrong_marker" ||
+                    runtime.socketChange.targetPreflight === "marked_sessions"
+                  ? "This transition is paused because the target socket changed during cleanup; Retry rechecks it before touching another session."
+                  : runtime.socketChange.failedSessionCount > 0
+                    ? "This confirmed transition is paused after a session failure; Retry resumes only the remaining exact sessions."
+                    : "This confirmed transition is resumable; Resume continues from its persisted phase. No Agents or Editors are changed."}
         </p>
         <div className="settings-runtime-values">
           <RuntimeValue
@@ -769,15 +782,35 @@ function RuntimesSection({
           type="button"
           className="settings-button quiet"
           ref={socketTriggerRef}
-          onClick={() => onApplySocketChange(runtime.socketChange)}
-          disabled={!runtime.socketChange.adapterAvailable || busy}
+          onClick={onApplySocketChange}
+          disabled={
+            !runtime.socketChange.adapterAvailable ||
+            (runtime.socketChange.state === "stable"
+              ? runtime.socketChange.configuredSocketName ===
+                runtime.socketChange.effectiveSocketName
+              : runtime.socketChange.state !== "pending" &&
+                runtime.socketChange.state !== "cleaning_old" &&
+                runtime.socketChange.state !== "old_cleaned" &&
+                runtime.socketChange.state !== "recreation_pending") ||
+            busy
+          }
         >
-          Apply socket change
+          {runtime.socketChange.state === "stable" ||
+          runtime.socketChange.state === "pending"
+            ? "Apply socket change"
+            : runtime.socketChange.conflictSessionCount > 0
+              ? "Resolve socket transition"
+              : runtime.socketChange.targetPreflight === "wrong_marker" ||
+                  runtime.socketChange.targetPreflight === "marked_sessions"
+                ? "Retry socket transition"
+                : runtime.socketChange.failedSessionCount > 0
+                  ? "Retry socket transition"
+                  : "Resume socket transition"}
         </button>
       </div>
       <Field
         label="tmux socket name"
-        help="Changing this is restart-required and never mutates Agents or Editors."
+        help="Changing this transitions the terminal socket without restarting, and never mutates Agents or Editors."
       >
         <input
           aria-label="tmux socket name"
@@ -942,6 +975,10 @@ export function SettingsApp({
   const [busy, setBusy] = useState(false);
   const [socketConfirmation, setSocketConfirmation] =
     useState<SettingsRuntimeWire["socketChange"]>();
+  const [socketConfirmationSequence, setSocketConfirmationSequence] =
+    useState<number>();
+  const [socketConfirmationRevision, setSocketConfirmationRevision] =
+    useState<string>();
   const socketTriggerRef = useRef<HTMLButtonElement>(null);
   const socketCancelRef = useRef<HTMLButtonElement>(null);
   const socketWasOpen = useRef(false);
@@ -969,6 +1006,7 @@ export function SettingsApp({
       receivedEventSequence = next.sequence;
       lastSequence.current = next.sequence;
       setSnapshot(next);
+      setSocketConfirmation(undefined);
       if (preserveDraft) {
         setError({
           code: "external_edit_conflict",
@@ -1102,14 +1140,75 @@ export function SettingsApp({
         if (mountGeneration.current === generation) setBusy(false);
       });
   };
-  const confirmSocketChange = () => {
+  const reportSocketError = (value: unknown, generation: number) => {
+    if (mountGeneration.current !== generation) return;
+    const parsed = parseSettingsTransportError(value);
+    setError(parsed);
+    if (parsed.code !== "stale_socket_change") return;
+    setSocketConfirmation(undefined);
+    setSocketConfirmationSequence(undefined);
+    setSocketConfirmationRevision(undefined);
+    void client
+      .recheck()
+      .then((next) => {
+        if (
+          mountGeneration.current === generation &&
+          next.sequence >= lastSequence.current
+        ) {
+          lastSequence.current = next.sequence;
+          setSnapshot(next);
+        }
+      })
+      .catch(() => {
+        // Keep the typed stale error visible when the follow-up projection is
+        // unavailable; the next explicit Recheck can retry the read.
+      });
+  };
+  const prepareSocketChange = () => {
     if (!snapshot) return;
     const generation = mountGeneration.current;
+    const retrying =
+      snapshot.runtime.socketChange.state !== "pending" &&
+      snapshot.runtime.socketChange.state !== "stable";
     setBusy(true);
     void client
       .applySocketChange({
         schemaVersion: SETTINGS_SCHEMA_VERSION,
         revision: snapshot.revision,
+        sequence: snapshot.sequence,
+        confirmed: retrying,
+      })
+      .then((next) => {
+        if (mountGeneration.current !== generation) return;
+        if (next.sequence < lastSequence.current) return;
+        lastSequence.current = next.sequence;
+        setSnapshot(next);
+        if (next.runtime.socketChange.confirmationRequired) {
+          setSocketConfirmation(next.runtime.socketChange);
+          setSocketConfirmationSequence(next.sequence);
+          setSocketConfirmationRevision(next.revision);
+          setError(undefined);
+        } else {
+          setSocketConfirmation(undefined);
+        }
+      })
+      .catch((value: unknown) => {
+        reportSocketError(value, generation);
+      })
+      .finally(() => {
+        if (mountGeneration.current === generation) setBusy(false);
+      });
+  };
+  const confirmSocketChange = () => {
+    if (!snapshot || !socketConfirmationSequence || !socketConfirmationRevision)
+      return;
+    const generation = mountGeneration.current;
+    setBusy(true);
+    void client
+      .applySocketChange({
+        schemaVersion: SETTINGS_SCHEMA_VERSION,
+        revision: socketConfirmationRevision,
+        sequence: socketConfirmationSequence,
         confirmed: true,
       })
       .then((next) => {
@@ -1118,11 +1217,12 @@ export function SettingsApp({
         lastSequence.current = next.sequence;
         setSnapshot(next);
         setSocketConfirmation(undefined);
+        setSocketConfirmationSequence(undefined);
+        setSocketConfirmationRevision(undefined);
         setError(undefined);
       })
       .catch((value: unknown) => {
-        if (mountGeneration.current === generation)
-          setError(parseSettingsTransportError(value));
+        reportSocketError(value, generation);
       })
       .finally(() => {
         if (mountGeneration.current === generation) setBusy(false);
@@ -1189,6 +1289,8 @@ export function SettingsApp({
               if (event.key === "Escape") {
                 event.preventDefault();
                 setSocketConfirmation(undefined);
+                setSocketConfirmationSequence(undefined);
+                setSocketConfirmationRevision(undefined);
               }
             }}
           >
@@ -1209,7 +1311,11 @@ export function SettingsApp({
                 type="button"
                 className="settings-button quiet"
                 ref={socketCancelRef}
-                onClick={() => setSocketConfirmation(undefined)}
+                onClick={() => {
+                  setSocketConfirmation(undefined);
+                  setSocketConfirmationSequence(undefined);
+                  setSocketConfirmationRevision(undefined);
+                }}
                 disabled={busy}
               >
                 Cancel
@@ -1259,7 +1365,7 @@ export function SettingsApp({
               update={update}
               runtime={snapshot.runtime}
               onRecheck={recheck}
-              onApplySocketChange={setSocketConfirmation}
+              onApplySocketChange={prepareSocketChange}
               socketTriggerRef={socketTriggerRef}
               onOpenLogs={() => {
                 void client

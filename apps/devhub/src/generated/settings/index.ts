@@ -65,6 +65,7 @@ export interface SettingsDiagnosticWire {
 export type SettingsErrorCodeWire =
   | "invalid_config"
   | "external_edit_conflict"
+  | "stale_socket_change"
   | "invalid_file"
   | "runtime_unavailable"
   | "native_unavailable"
@@ -141,12 +142,14 @@ export interface SettingsSocketChangeRequestWire {
   readonly confirmed: boolean;
   readonly revision: string;
   readonly schemaVersion: number;
+  readonly sequence: number;
 }
 export interface SettingsSocketChangeWire {
   readonly adapterAvailable: boolean;
   readonly completedSessionCount: number;
   readonly configuredSocketName: string;
   readonly confirmationRequired: boolean;
+  readonly conflictSessionCount: number;
   readonly effectiveSocketName: string;
   readonly failedSessionCount: number;
   readonly requestedSocketName?: string | null;
@@ -322,6 +325,7 @@ const SETTINGS_SCHEMA = {
       enum: [
         "invalid_config",
         "external_edit_conflict",
+        "stale_socket_change",
         "invalid_file",
         "runtime_unavailable",
         "native_unavailable",
@@ -377,6 +381,7 @@ const SETTINGS_SCHEMA = {
           enum: [
             "invalid_config",
             "external_edit_conflict",
+            "stale_socket_change",
             "invalid_file",
             "runtime_unavailable",
             "native_unavailable",
@@ -888,6 +893,11 @@ const SETTINGS_SCHEMA = {
             },
             configuredSocketName: { type: "string" },
             confirmationRequired: { type: "boolean" },
+            conflictSessionCount: {
+              format: "uint32",
+              minimum: 0,
+              type: "integer",
+            },
             effectiveSocketName: { type: "string" },
             failedSessionCount: {
               format: "uint32",
@@ -917,6 +927,7 @@ const SETTINGS_SCHEMA = {
             "workspaceSessionCount",
             "completedSessionCount",
             "failedSessionCount",
+            "conflictSessionCount",
             "confirmationRequired",
             "adapterAvailable",
           ],
@@ -1036,8 +1047,14 @@ const SETTINGS_SCHEMA = {
           minimum: 1,
           type: "integer",
         },
+        sequence: {
+          format: "uint64",
+          maximum: 9007199254740991,
+          minimum: 1,
+          type: "integer",
+        },
       },
-      required: ["schemaVersion", "revision", "confirmed"],
+      required: ["schemaVersion", "revision", "sequence", "confirmed"],
       title: "SettingsSocketChangeRequestWire",
       type: "object",
     },
@@ -1052,6 +1069,7 @@ const SETTINGS_SCHEMA = {
         },
         configuredSocketName: { type: "string" },
         confirmationRequired: { type: "boolean" },
+        conflictSessionCount: { format: "uint32", minimum: 0, type: "integer" },
         effectiveSocketName: { type: "string" },
         failedSessionCount: { format: "uint32", minimum: 0, type: "integer" },
         requestedSocketName: { type: ["string", "null"] },
@@ -1073,6 +1091,7 @@ const SETTINGS_SCHEMA = {
         "workspaceSessionCount",
         "completedSessionCount",
         "failedSessionCount",
+        "conflictSessionCount",
         "confirmationRequired",
         "adapterAvailable",
       ],

@@ -105,6 +105,118 @@ describe("SettingsApp", () => {
     ).toBeDisabled();
   });
 
+  it("enables the initial Apply when configured and effective sockets differ", async () => {
+    const base = parseSettingsSnapshot(validFixtures[0]) as SettingsSnapshot;
+    const snapshot: SettingsSnapshot = {
+      ...base,
+      runtime: {
+        ...base.runtime,
+        health: {
+          ...base.runtime.health,
+          inspectionAvailable: true,
+          tmux: "healthy",
+        },
+        socketChange: {
+          ...base.runtime.socketChange,
+          state: "stable",
+          configuredSocketName: "devhub-next",
+          effectiveSocketName: "devhub-current",
+          requestedSocketName: null,
+          targetPreflight: "not_checked",
+          confirmationRequired: false,
+          adapterAvailable: true,
+        },
+      },
+    };
+    const { client } = makeClient(snapshot);
+    render(<SettingsApp client={client} />);
+    await screen.findByRole("heading", { name: "General" });
+    fireEvent.click(screen.getByRole("button", { name: "Runtimes" }));
+
+    const apply = screen.getByRole("button", { name: "Apply socket change" });
+    expect(apply).toBeEnabled();
+    fireEvent.click(apply);
+    await waitFor(() =>
+      expect(client.applySocketChange).toHaveBeenCalledOnce(),
+    );
+    expect(client.applySocketChange).toHaveBeenCalledWith({
+      schemaVersion: 1,
+      revision: snapshot.revision,
+      sequence: snapshot.sequence,
+      confirmed: false,
+    });
+  });
+
+  it("uses a fresh sequence cursor for the confirmation round trip", async () => {
+    const base = parseSettingsSnapshot(validFixtures[0]) as SettingsSnapshot;
+    const pending: SettingsSnapshot = {
+      ...base,
+      sequence: 5,
+      runtime: {
+        ...base.runtime,
+        socketChange: {
+          ...base.runtime.socketChange,
+          state: "pending",
+          configuredSocketName: "new-socket",
+          effectiveSocketName: "old-socket",
+          requestedSocketName: "new-socket",
+          targetPreflight: "target_absent",
+          scratchSessionCount: 2,
+          workspaceSessionCount: 1,
+          confirmationRequired: true,
+          adapterAvailable: true,
+        },
+      },
+    };
+    const prepared = { ...pending, sequence: 6 };
+    const completed: SettingsSnapshot = {
+      ...prepared,
+      sequence: 7,
+      runtime: {
+        ...prepared.runtime,
+        socketChange: {
+          ...prepared.runtime.socketChange,
+          state: "stable",
+          effectiveSocketName: "new-socket",
+          requestedSocketName: null,
+          targetPreflight: "not_checked",
+          scratchSessionCount: 0,
+          workspaceSessionCount: 0,
+          confirmationRequired: false,
+        },
+      },
+    };
+    const { client } = makeClient(pending);
+    client.applySocketChange = vi
+      .fn()
+      .mockResolvedValueOnce(prepared)
+      .mockResolvedValueOnce(completed);
+    render(<SettingsApp client={client} />);
+    await screen.findByRole("heading", { name: "General" });
+    fireEvent.click(screen.getByRole("button", { name: "Runtimes" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Apply socket change" }),
+    );
+    expect(await screen.findByRole("dialog")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+
+    await waitFor(() =>
+      expect(client.applySocketChange).toHaveBeenCalledTimes(2),
+    );
+    expect(client.applySocketChange).toHaveBeenNthCalledWith(1, {
+      schemaVersion: 1,
+      revision: pending.revision,
+      sequence: pending.sequence,
+      confirmed: false,
+    });
+    expect(client.applySocketChange).toHaveBeenNthCalledWith(2, {
+      schemaVersion: 1,
+      revision: prepared.revision,
+      sequence: prepared.sequence,
+      confirmed: true,
+    });
+  });
+
   it("preserves argv values exactly and exposes CRUD/accessibility controls", async () => {
     const { client } = makeClient();
     render(<SettingsApp client={client} />);

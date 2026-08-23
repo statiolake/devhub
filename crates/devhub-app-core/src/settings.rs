@@ -200,6 +200,7 @@ pub struct SettingsSocketChangeWire {
     pub workspace_session_count: u32,
     pub completed_session_count: u32,
     pub failed_session_count: u32,
+    pub conflict_session_count: u32,
     pub confirmation_required: bool,
     pub adapter_available: bool,
 }
@@ -270,6 +271,7 @@ pub struct SettingsDiagnosticWire {
 pub enum SettingsErrorCodeWire {
     InvalidConfig,
     ExternalEditConflict,
+    StaleSocketChange,
     InvalidFile,
     RuntimeUnavailable,
     NativeUnavailable,
@@ -312,6 +314,8 @@ pub struct SettingsSocketChangeRequestWire {
     pub schema_version: u16,
     #[schemars(regex(pattern = "^[0-9a-f]{64}$"))]
     pub revision: String,
+    #[schemars(range(min = 1, max = SETTINGS_SEQUENCE_MAX))]
+    pub sequence: u64,
     pub confirmed: bool,
 }
 
@@ -584,6 +588,8 @@ impl SettingsSocketChangeRequestWire {
     pub fn validate(&self) -> Result<(), SettingsErrorWire> {
         if self.schema_version != SETTINGS_SCHEMA_VERSION
             || parse_revision(&self.revision).is_none()
+            || self.sequence == 0
+            || self.sequence > SETTINGS_SEQUENCE_MAX
         {
             return Err(SettingsErrorWire::invalid_config());
         }
@@ -661,26 +667,47 @@ impl SettingsSocketChangeWire {
             workspace_session_count: 0,
             completed_session_count: 0,
             failed_session_count: 0,
+            conflict_session_count: 0,
             confirmation_required: false,
             adapter_available,
         };
         match transition {
             SocketTransitionState::Stable => {}
-            SocketTransitionState::Pending { requested_socket_name, required, preflight } => {
+            SocketTransitionState::Pending {
+                requested_socket_name,
+                preflight,
+                verified_old_sessions,
+                ..
+            } => {
                 output.state = SettingsSocketTransitionWire::Pending;
                 output.requested_socket_name = Some(requested_socket_name.clone());
                 output.target_preflight = (*preflight).into();
-                set_required_counts(&mut output, required.sessions());
+                // Before the old socket inventory is verified, do not claim
+                // that the confirmation counts are exact. Once present, the
+                // persisted inventory is the destructive set and may include
+                // orphaned sessions beyond the recreation set.
+                if let Some(sessions) = verified_old_sessions {
+                    set_required_counts(&mut output, sessions);
+                } else {
+                    set_required_counts(&mut output, &[]);
+                }
                 output.confirmation_required = adapter_available
                     && matches!(
                         preflight,
                         SocketTargetPreflightState::TargetAbsent
                             | SocketTargetPreflightState::TargetDevhubEmpty
-                    );
+                    )
+                    && verified_old_sessions.is_some();
             }
-            SocketTransitionState::CleaningOld { requested_socket_name, sessions, .. } => {
+            SocketTransitionState::CleaningOld {
+                requested_socket_name,
+                target_preflight,
+                sessions,
+                ..
+            } => {
                 output.state = SettingsSocketTransitionWire::CleaningOld;
                 output.requested_socket_name = Some(requested_socket_name.clone());
+                output.target_preflight = (*target_preflight).into();
                 set_cleanup_counts(&mut output, sessions);
             }
             SocketTransitionState::OldCleaned { new_socket_name, required, .. } => {
@@ -726,6 +753,9 @@ fn set_cleanup_counts(
             as u32;
     output.failed_session_count =
         sessions.iter().filter(|record| record.status == CleanupSessionStatus::Failed).count()
+            as u32;
+    output.conflict_session_count =
+        sessions.iter().filter(|record| record.status == CleanupSessionStatus::Conflict).count()
             as u32;
 }
 
@@ -827,6 +857,14 @@ impl SettingsErrorWire {
     pub const fn runtime_unavailable() -> Self {
         Self {
             code: SettingsErrorCodeWire::RuntimeUnavailable,
+            diagnostic: None,
+            current_revision: None,
+        }
+    }
+
+    pub const fn stale_socket_change() -> Self {
+        Self {
+            code: SettingsErrorCodeWire::StaleSocketChange,
             diagnostic: None,
             current_revision: None,
         }

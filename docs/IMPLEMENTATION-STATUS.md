@@ -19,6 +19,7 @@ gate, not just source-code presence.
 | U2.5 Visual foundation | Complete | `CI=true pnpm run check`, deterministic visual fixtures, and production fixture-bundle scan (this tracker revision) |
 | D3.1 WorkspaceDiscovery | Complete | Cancellable filesystem and command sources with deterministic traversal, source-local visited state, Git repository/worktree matching, canonical dedupe, fuzzy projection, bounded/redacted events, operation-scoped sequencing, and isolated diagnostics; `CI=true CARGO_NET_OFFLINE=true pnpm run check` (50 native tests, 133 core tests, 49 frontend tests), `CI=true CARGO_NET_OFFLINE=true pnpm run build`, `CI=true CARGO_NET_OFFLINE=true pnpm --filter @devhub/app exec tauri build --debug --no-bundle`, native clippy, and `git diff --check` pass (this tracker revision) |
 | D3.2 Repository resolution | Complete | Shared startup `RuntimeLaunchContext`; exact Git common-directory/top-level validation, normal and linked worktrees, normalized remote precedence/aliases, nonfatal unavailable Git/login-shell runtime health, frozen next-launch Settings semantics, and Discovery command integration; `CI=true pnpm run check`, `CI=true pnpm run build`, `CI=true pnpm --filter @devhub/app exec tauri build --debug --no-bundle` pass (84 native tests, 135 core tests, 49 frontend tests; this tracker revision) |
+| T3.3 Slice B | Complete | Persisted old-socket cleanup/new-socket activation and recreation state machine, two-stage Settings Apply confirmation, exact target/inventory revalidation, crash/relaunch recovery, dynamic effective-socket rebinding, conflict-safe retries, and targeted Settings IPC; `CI=true pnpm run check`, `CI=true pnpm run build`, and isolated real-tmux transition regressions pass (103 native tests, 140 core tests, 51 frontend tests; this tracker revision) |
 
 P2.1 provides the versioned TOML model, defaults and strict validation,
 comment-preserving conflict-safe writes, symlink-safe atomic replacement,
@@ -32,22 +33,21 @@ coordinator mutex over I/O, and preserves launch-time Agent profile metadata.
 U2.4 projects that Rust-owned configuration through a strict Settings contract
 and targeted Settings-webview IPC, with a native Settings window/menu,
 AppAppearance propagation, deterministic development fixtures, and accessible
-five-section navigation. TerminalRuntime inspection and tmux socket recreation
-remain Wave 3 provider-deferred; this gate does not claim those operations are
-complete.
+five-section navigation. TerminalRuntime PTY attach/resize/detach, xterm
+framing, and terminal-surface integration remain Wave 3 provider-deferred; this
+gate does not claim those operations are complete.
 
 ## Partial gates
 
 | Gate | Result | Remaining scope |
 | --- | --- | --- |
 | U2.3 App Shell | Partial | Native App Shell structure, navigation, immutable state/error handling, persistence, accessibility basics, and visual fixtures are complete. Context menus, confirmation sheets, and real provider surfaces remain for later integration waves. |
-| T3.3 TerminalRuntime | Partial | Slice A is complete: startup-frozen dedicated tmux ownership, race-safe bootstrap, trusted user-config selection, exact Scratch/Workspace session metadata, socket preflight, fail-closed inspection, idempotent close, and isolated real-tmux validation. Slice B remains for persisted socket transition/recreation and Settings apply integration; Slice C remains for PTY attach/resize/detach, xterm framing, and terminal-surface integration. |
+| T3.3 TerminalRuntime | Partial | Slices A and B are complete: startup-frozen dedicated tmux ownership, race-safe bootstrap, trusted user-config selection, exact Scratch/Workspace session metadata, socket preflight, fail-closed inspection, idempotent close, persisted socket transition/recreation, Settings Apply integration, and isolated real-tmux validation. Slice C remains for PTY attach/resize/detach, xterm framing, and terminal-surface integration. |
 
 ## Next
 
-1. T3.3 Slice B: integrate persisted socket transition/recreation with the
-   Settings apply flow, preserving preflight, conflict, confirmation, and
-   resumable cleanup semantics.
+1. T3.3 Slice C: integrate PTY attach/resize/detach, xterm framing, and the
+   terminal surface while preserving the completed socket-transition seams.
 
 The latest local validation also includes `CI=true pnpm run build` and
 `CI=true pnpm --filter @devhub/app exec tauri build --debug --no-bundle`.
