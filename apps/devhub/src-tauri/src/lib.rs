@@ -32,6 +32,7 @@ use devhub_app_core::{
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::{AppHandle, Emitter, Manager, State, Webview, WebviewUrl, WebviewWindowBuilder};
 
+pub mod agent;
 pub mod discovery;
 pub mod editor;
 mod repository;

@@ -24,6 +24,7 @@ gate, not just source-code presence.
 | T3.3 TerminalRuntime                  | Complete                                                    | Dedicated verified tmux sessions, Scratch and Workspace terminals, PTY attach/resize/detach, xterm framing, external attach compatibility, busy inspection, idempotent termination, target preflight, persisted socket transitions, and provider-safe cleanup are complete; evidence is the Slice C validation above (this tracker revision)                                                                                                                                                                                                                                             |
 | E3.4 EditorHost                        | Complete; standalone provider slice                         | Rust-owned authenticated loopback Bridge transport, persisted OpenVSCode token/data/port/profile paths, process supervision and bounded recovery, stable Global/Workspace surfaces, shared isolated storage, surface-aware navigation, and raw WRY child WebViews through the exact IPC-safe 0.55.1 fork; formatting, all-feature clippy, 146 native library tests, and the real pinned OpenVSCode smoke pass (this tracker revision) |
 | E3.5 Bridge extension                  | Complete; standalone provider slice                         | Frozen Bridge v1 readiness, identity, dirty-state, folder/new-window, request-ledger, reconnect, and typed host-request integration; deterministic VSIX ID/version/main/manifest/digest validation, authenticated native transport, and the real pinned OpenVSCode smoke pass (this tracker revision) |
+| A3.6 AgentRuntime                       | Complete; standalone provider slice                         | Herdr 0.8.1/protocol-20 bootstrap and capability gate, profile validation, opaque mappings, subscription-buffer-snapshot reconciliation, launch/control/status projection, lifecycle cleanup/tombstones, reconnect, attach/detach/takeover, and idempotent termination; `cargo test -p devhub-app --lib agent:: --locked --offline` (26 passed, 3 ignored), `scripts/check-agent-runtime-real.sh` against the pinned Herdr 0.8.1 binary, `cargo test --workspace --locked`, and full checks pass (this tracker revision) |
 
 P2.1 provides the versioned TOML model, defaults and strict validation,
 comment-preserving conflict-safe writes, symlink-safe atomic replacement,
@@ -41,10 +42,10 @@ five-section navigation. TerminalRuntime now provides the separate persistent
 tmux-backed terminal surface without replacing or policing the upstream VS
 Code Integrated Terminal.
 
-E3.4 and E3.5 are complete as standalone provider slices. App Shell mounting,
-router ownership, native-window lifecycle, Dock/quit integration, and provider
-attachment remain deliberately deferred to I4.3; this status does not imply
-those integrated lifecycle surfaces have landed.
+E3.4, E3.5, and A3.6 are complete as standalone provider slices. App Shell
+mounting, router ownership, native-window lifecycle, Dock/quit integration,
+and provider attachment remain deliberately deferred to Wave 4 integration;
+this status does not imply those integrated lifecycle surfaces have landed.
 
 ## Partial gates
 
@@ -54,18 +55,15 @@ those integrated lifecycle surfaces have landed.
 
 ## Next
 
-1. A3.6 AgentRuntime: implement Herdr bootstrap/health, profile validation,
-   hidden provider mappings, subscribe-buffer-snapshot reconciliation, launch,
-   terminal control, status projection, exit cleanup tombstones, conditional
-   takeover, and idempotent termination.
+1. I4.1 Workspace operations.
 
 The latest local validation also includes `CI=true pnpm run build` and
 `CI=true pnpm --filter @devhub/app exec tauri build --debug --no-bundle`.
 
 ## Later waves
 
-- Wave 3: A3.6 AgentRuntime provider; E3.4 EditorHost and E3.5 Bridge
-  extension are complete as standalone provider slices.
+- Wave 3: A3.6 AgentRuntime, E3.4 EditorHost, and E3.5 Bridge extension are
+  complete as standalone provider slices.
 - Wave 4: workspace, agent, app lifecycle, keyboard, and diagnostics
   integration.
 - Wave 5: accessibility/IME, performance/endurance, brand, security, and

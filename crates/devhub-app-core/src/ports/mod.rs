@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::SystemTime;
 
-use crate::state::OwnedSessionRecord;
+use crate::state::{OpaqueProviderMapping, OwnedSessionRecord};
 use crate::{
     AgentId, AgentObservation, AgentProfile, AgentProfileId, AgentReconciliation,
     CloseInspectionInputs, DisplayPath, RemoteIdentity, ResourceInspection, WorkspaceId,
@@ -409,6 +409,9 @@ pub struct EditorHostResult {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentLaunchReceipt {
     pub agent_id: AgentId,
+    /// Adapter-owned reattachment state. The application may persist this
+    /// value, but must not interpret, log, or display its contents.
+    pub provider_mapping: OpaqueProviderMapping,
 }
 
 pub type AgentAttachment = AgentObservation;
@@ -722,12 +725,17 @@ pub trait AgentRuntime: Send + Sync {
     ) -> PortFuture<AgentLaunchReceipt>;
     fn terminate(&self, agent_id: AgentId, cancel: CancellationToken) -> PortFuture<()>;
 
-    /// Re-attaches a persisted domain Agent after app/provider
-    /// reconstruction. The default keeps old adapters source-compatible
-    /// until they implement this capability.
-    fn attach(&self, agent_id: AgentId, cancel: CancellationToken) -> PortFuture<AgentAttachment> {
+    /// Re-attaches a persisted domain Agent after app/provider reconstruction.
+    /// The mapping is adapter-owned and may be absent when the provider can
+    /// reconstruct a marked resource authoritatively.
+    fn attach(
+        &self,
+        agent_id: AgentId,
+        provider_mapping: Option<OpaqueProviderMapping>,
+        cancel: CancellationToken,
+    ) -> PortFuture<AgentAttachment> {
         Box::pin(async move {
-            let _ = (agent_id, cancel);
+            let _ = (agent_id, provider_mapping, cancel);
             Err(PortError::new(PortErrorCode::Unavailable))
         })
     }

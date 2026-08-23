@@ -469,14 +469,13 @@ fn run_login_shell_with_limits(
     let stdout_result = join_reader_bounded(stdout_reader, Instant::now() + READER_JOIN_GRACE);
     let stderr_result = join_reader_bounded(stderr_reader, Instant::now() + READER_JOIN_GRACE);
 
-    if let Some(code) = terminal_error {
+    if let Some(code) = observed_terminal_error(
+        terminal_error,
+        stdout_limit_hit.load(Ordering::Acquire),
+        stderr_limit_hit.load(Ordering::Acquire),
+        reader_failed.load(Ordering::Acquire),
+    ) {
         return Err(RuntimeError::new(code));
-    }
-    if stdout_limit_hit.load(Ordering::Acquire) || stderr_limit_hit.load(Ordering::Acquire) {
-        return Err(RuntimeError::new(RuntimeErrorCode::ShellOutputLimit));
-    }
-    if reader_failed.load(Ordering::Acquire) {
-        return Err(RuntimeError::new(RuntimeErrorCode::InvalidEnvironmentCapture));
     }
     if stderr_result.is_none() {
         return Err(RuntimeError::new(RuntimeErrorCode::InvalidEnvironmentCapture));
@@ -492,6 +491,24 @@ fn run_login_shell_with_limits(
     }
 
     parse_captured_environment(&stdout.bytes)
+}
+
+fn observed_terminal_error(
+    terminal_error: Option<RuntimeErrorCode>,
+    stdout_limit_hit: bool,
+    stderr_limit_hit: bool,
+    reader_failed: bool,
+) -> Option<RuntimeErrorCode> {
+    // Reader threads can observe a limit or I/O failure while the bounded
+    // post-termination join is draining their pipes. Those observations are
+    // stronger than a wall-clock timeout selected before the join.
+    if stdout_limit_hit || stderr_limit_hit {
+        Some(RuntimeErrorCode::ShellOutputLimit)
+    } else if reader_failed {
+        Some(RuntimeErrorCode::InvalidEnvironmentCapture)
+    } else {
+        terminal_error
+    }
 }
 
 struct CaptureReaderOutput {
@@ -1018,7 +1035,7 @@ sys.stdout.flush()
         let output_shell_path = temp.child("output-login");
         write_python_executable(
             &output_shell_path,
-            "import sys, time\nsys.stdout.buffer.write(b'x' * 4096)\nsys.stdout.flush()\ntime.sleep(5)",
+            "import sys\nsys.stdout.buffer.write(b'x' * 4096)\nsys.stdout.flush()",
         );
         let output_shell =
             ambient.resolve(output_shell_path.to_str().expect("shell path")).expect("output shell");
@@ -1028,6 +1045,22 @@ sys.stdout.flush()
                 .expect_err("output limit");
         assert_eq!(output_limit.code(), RuntimeErrorCode::ShellOutputLimit);
         assert!(started.elapsed() < Duration::from_secs(2));
+    }
+
+    #[test]
+    fn login_shell_reader_observations_win_over_timeout_race() {
+        assert_eq!(
+            observed_terminal_error(Some(RuntimeErrorCode::ShellTimedOut), true, false, false,),
+            Some(RuntimeErrorCode::ShellOutputLimit)
+        );
+        assert_eq!(
+            observed_terminal_error(Some(RuntimeErrorCode::ShellTimedOut), false, false, true,),
+            Some(RuntimeErrorCode::InvalidEnvironmentCapture)
+        );
+        assert_eq!(
+            observed_terminal_error(Some(RuntimeErrorCode::ShellTimedOut), false, false, false),
+            Some(RuntimeErrorCode::ShellTimedOut)
+        );
     }
 
     #[test]

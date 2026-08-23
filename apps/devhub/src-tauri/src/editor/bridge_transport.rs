@@ -29,6 +29,7 @@ const BRIDGE_PATH: &str = "/bridge";
 const MAX_HTTP_HEADERS: usize = 16 * 1024;
 const MAX_FRAME_BYTES: usize = devhub_app_core::bridge::MAX_MESSAGE_BYTES;
 const MAX_CONNECTIONS: usize = 128;
+const OUTBOUND_QUEUE_CAPACITY: usize = 32;
 const ACCEPT_POLL: Duration = Duration::from_millis(25);
 const SOCKET_READ_POLL: Duration = Duration::from_millis(100);
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
@@ -200,7 +201,8 @@ struct BridgeConnection {
     surface_id: BridgeSurfaceId,
     connection_id: Uuid,
     connection_generation: u64,
-    stream: Arc<Mutex<BridgeSocket>>,
+    outbound: std::sync::mpsc::SyncSender<String>,
+    abort: TcpStream,
     finished: AtomicBool,
 }
 
@@ -216,10 +218,7 @@ impl fmt::Debug for BridgeConnection {
 
 impl BridgeConnection {
     fn close(&self) {
-        if let Ok(mut stream) = self.stream.lock() {
-            let _ = stream.close(None);
-            let _ = stream.get_mut().shutdown();
-        }
+        let _ = self.abort.shutdown(Shutdown::Both);
     }
 
     fn finish_once(&self) -> bool {
@@ -270,10 +269,6 @@ struct HeaderLimitedStream {
 impl HeaderLimitedStream {
     fn new(inner: TcpStream) -> Self {
         Self { inner, header_bytes: 0, header_complete: false, header_tail: Vec::with_capacity(3) }
-    }
-
-    fn shutdown(&mut self) -> io::Result<()> {
-        self.inner.shutdown(Shutdown::Both)
     }
 }
 
@@ -606,7 +601,7 @@ impl BridgeTransport {
             .map_err(|_| EditorError::new(EditorErrorCode::BridgeUnavailable))?;
             (connection, envelope)
         };
-        write_text_frame(&connection.0.stream, &connection.1)
+        queue_text_frame(&self.inner, &connection.0, &connection.1)
     }
 
     pub(crate) fn stop(&self) -> EditorResult<()> {
@@ -798,7 +793,7 @@ fn expire_requests(inner: &BridgeTransportInner) {
         return;
     };
     for (connection, response) in responses {
-        let _ = write_text_frame(&connection.stream, &response);
+        let _ = queue_text_frame(inner, &connection, &response);
     }
 }
 
@@ -809,14 +804,17 @@ fn connection_loop(stream: TcpStream, inner: Arc<BridgeTransportInner>) {
     let result = (|| -> EditorResult<()> {
         let mut socket = accept_socket(stream, &inner)?;
         let _ = socket.get_mut().inner.set_read_timeout(Some(SOCKET_READ_POLL));
-        let socket = Arc::new(Mutex::new(socket));
+        let abort = socket
+            .get_ref()
+            .inner
+            .try_clone()
+            .map_err(|_| EditorError::new(EditorErrorCode::BridgeUnavailable))?;
+        let (outbound, outbound_rx) =
+            std::sync::mpsc::sync_channel::<String>(OUTBOUND_QUEUE_CAPACITY);
         loop {
             expire_requests(&inner);
-            let frame = match socket
-                .lock()
-                .map_err(|_| EditorError::new(EditorErrorCode::LifecycleConflict))?
-                .read()
-            {
+            flush_outbound(&mut socket, &outbound_rx)?;
+            let frame = match socket.read() {
                 Ok(frame) => frame,
                 Err(tungstenite::Error::Io(error))
                     if matches!(
@@ -847,8 +845,16 @@ fn connection_loop(stream: TcpStream, inner: Arc<BridgeTransportInner>) {
                             Payload::Hello(payload) => payload.surface_id.clone(),
                             _ => return Err(EditorError::new(EditorErrorCode::BridgeUnavailable)),
                         };
-                        let accepted =
-                            handle_hello(&inner, surface_id, envelope, Arc::clone(&socket))?;
+                        let accepted = handle_hello(
+                            &inner,
+                            surface_id,
+                            envelope,
+                            outbound.clone(),
+                            abort.try_clone().map_err(|_| {
+                                EditorError::new(EditorErrorCode::BridgeUnavailable)
+                            })?,
+                            &mut socket,
+                        )?;
                         connection = Some(accepted);
                         continue;
                     }
@@ -930,7 +936,9 @@ fn handle_hello(
     inner: &BridgeTransportInner,
     surface_uuid: Uuid,
     hello: Envelope,
-    stream: Arc<Mutex<BridgeSocket>>,
+    outbound: std::sync::mpsc::SyncSender<String>,
+    abort: TcpStream,
+    socket: &mut BridgeSocket,
 ) -> EditorResult<Arc<BridgeConnection>> {
     let (accepted, old_connection, connection, event, failures) = {
         let mut state =
@@ -966,7 +974,8 @@ fn handle_hello(
             surface_id: surface_id.clone(),
             connection_id,
             connection_generation: generation,
-            stream,
+            outbound,
+            abort,
             finished: AtomicBool::new(false),
         });
         state.connections.insert(surface_uuid, Arc::clone(&connection));
@@ -976,7 +985,7 @@ fn handle_hello(
     if let Some(old_connection) = old_connection {
         old_connection.close();
     }
-    write_text_frame(&connection.stream, &accepted)?;
+    send_text_frame(socket, &accepted)?;
     for failure in failures {
         inner.sink.on_event(request_failure_event(&connection.surface_id, failure));
     }
@@ -1071,7 +1080,7 @@ fn handle_message(
                 BridgeRequestDisposition::Pending => {}
             }
         }
-        TransportAction::Send(envelope) => write_text_frame(&connection.stream, &envelope)?,
+        TransportAction::Send(envelope) => queue_text_frame(inner, connection, &envelope)?,
         TransportAction::Close => return Err(EditorError::new(EditorErrorCode::BridgeUnavailable)),
     }
     Ok(())
@@ -1138,7 +1147,7 @@ fn complete_request_inner(
             .map_err(|_| EditorError::new(EditorErrorCode::BridgeUnavailable))?;
         (connection, response)
     };
-    write_text_frame(&connection.stream, &response)
+    queue_text_frame(inner, &connection, &response)
 }
 
 fn finish_connection(inner: &BridgeTransportInner, connection: &Arc<BridgeConnection>) {
@@ -1189,7 +1198,7 @@ fn request_failure_event(
     }
 }
 
-fn write_text_frame(stream: &Arc<Mutex<BridgeSocket>>, envelope: &Envelope) -> EditorResult<()> {
+fn encode_text_payload(envelope: &Envelope) -> EditorResult<String> {
     let payload =
         envelope.encode().map_err(|_| EditorError::new(EditorErrorCode::BridgeUnavailable))?;
     let payload = String::from_utf8(payload)
@@ -1197,20 +1206,56 @@ fn write_text_frame(stream: &Arc<Mutex<BridgeSocket>>, envelope: &Envelope) -> E
     if payload.len() > MAX_FRAME_BYTES {
         return Err(EditorError::new(EditorErrorCode::BridgeUnavailable));
     }
-    stream
-        .lock()
-        .map_err(|_| EditorError::new(EditorErrorCode::LifecycleConflict))?
-        .write(Message::text(payload))
+    Ok(payload)
+}
+
+fn queue_text_frame(
+    inner: &BridgeTransportInner,
+    connection: &Arc<BridgeConnection>,
+    envelope: &Envelope,
+) -> EditorResult<()> {
+    let payload = encode_text_payload(envelope)?;
+    match connection.outbound.try_send(payload) {
+        Ok(()) => Ok(()),
+        Err(_) => {
+            abort_connection(inner, connection);
+            Err(EditorError::new(EditorErrorCode::BridgeUnavailable))
+        }
+    }
+}
+
+fn send_text_frame(socket: &mut BridgeSocket, envelope: &Envelope) -> EditorResult<()> {
+    let payload = encode_text_payload(envelope)?;
+    socket
+        .send(Message::text(payload))
         .map_err(|_| EditorError::new(EditorErrorCode::BridgeUnavailable))
+}
+
+fn flush_outbound(
+    socket: &mut BridgeSocket,
+    outbound: &std::sync::mpsc::Receiver<String>,
+) -> EditorResult<()> {
+    for payload in outbound.try_iter() {
+        socket
+            .send(Message::text(payload))
+            .map_err(|_| EditorError::new(EditorErrorCode::BridgeUnavailable))?;
+    }
+    Ok(())
+}
+
+fn abort_connection(inner: &BridgeTransportInner, connection: &Arc<BridgeConnection>) {
+    connection.close();
+    finish_connection(inner, connection);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use devhub_app_core::bridge::{
-        FocusPayload, FocusReason, HelloPayload, ResponseResult, SemVer, StateSnapshotPayload,
+        AbsolutePath, HelloPayload, OpenWorkspaceRequestedPayload, OpenWorkspaceSource,
+        RequestFailureReason, ResponseResult, SemVer, StateSnapshotPayload,
     };
-    use std::io::{Read, Write};
+    use std::io::{Cursor, Read, Write};
     use std::net::TcpStream;
     use std::sync::atomic::AtomicUsize;
     use std::sync::Mutex;
@@ -1436,15 +1481,18 @@ mod tests {
         .expect("snapshot");
         write_test_client_frame(&mut client, &snapshot.encode().expect("snapshot bytes"));
         let request_id = Uuid::parse("99999999-9999-4999-8999-999999999999").expect("request");
-        let focus = Envelope::new(
+        let open_workspace = Envelope::new(
             Some(connection),
             3,
             request_id.clone(),
-            MessageKind::Focus,
-            Payload::Focus(FocusPayload { reason: FocusReason::Navigation }),
+            MessageKind::OpenWorkspaceRequested,
+            Payload::OpenWorkspaceRequested(OpenWorkspaceRequestedPayload {
+                absolute_path: AbsolutePath::parse("/tmp/workspace").expect("path"),
+                source: OpenWorkspaceSource::OpenFolder,
+            }),
         )
-        .expect("focus");
-        write_test_client_frame(&mut client, &focus.encode().expect("focus bytes"));
+        .expect("open workspace");
+        write_test_client_frame(&mut client, &open_workspace.encode().expect("request bytes"));
         let handle = loop {
             if let Some(request) = sink.requests.lock().expect("requests").pop() {
                 break request.handle().clone();
@@ -1453,11 +1501,22 @@ mod tests {
         };
         assert_eq!(handle.connection_generation(), 1);
         let stale_handle = handle.clone();
-        transport.complete_bridge_request(handle, BridgeRequestResult::Focused).expect("complete");
-        let response = Envelope::decode(&read_test_server_frame(&mut client)).expect("response");
-        assert!(
-            matches!(response.payload(), Payload::Response(payload) if payload.request_message_id == request_id && payload.result == ResponseResult::Focused)
+        let context = Context::workspace(
+            Uuid::parse("10101010-1010-4010-8010-101010101010").expect("workspace"),
+            AbsolutePath::parse("/tmp/workspace").expect("path"),
         );
+        transport
+            .complete_bridge_request(
+                handle,
+                BridgeRequestResult::WorkspaceRouted { context: context.clone() },
+            )
+            .expect("complete");
+        let response = Envelope::decode(&read_test_server_frame(&mut client)).expect("response");
+        let Payload::Response(payload) = response.payload() else {
+            panic!("expected response payload");
+        };
+        assert_eq!(payload.request_message_id, request_id);
+        assert_eq!(payload.result, ResponseResult::WorkspaceRouted { context });
         let _ = client.shutdown(Shutdown::Both);
         std::thread::sleep(Duration::from_millis(25));
         let mut reconnect =
@@ -1541,15 +1600,18 @@ mod tests {
         .expect("snapshot");
         write_test_client_frame(&mut client, &snapshot.encode().expect("snapshot bytes"));
         let request_id = Uuid::parse("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee").expect("request");
-        let focus = Envelope::new(
+        let open_workspace = Envelope::new(
             Some(connection),
             3,
             request_id.clone(),
-            MessageKind::Focus,
-            Payload::Focus(FocusPayload { reason: FocusReason::Navigation }),
+            MessageKind::OpenWorkspaceRequested,
+            Payload::OpenWorkspaceRequested(OpenWorkspaceRequestedPayload {
+                absolute_path: AbsolutePath::parse("/tmp/workspace").expect("path"),
+                source: OpenWorkspaceSource::OpenFolder,
+            }),
         )
-        .expect("focus");
-        write_test_client_frame(&mut client, &focus.encode().expect("focus bytes"));
+        .expect("open workspace");
+        write_test_client_frame(&mut client, &open_workspace.encode().expect("request bytes"));
         let _handle = loop {
             if let Some(request) = sink.requests.lock().expect("requests").pop() {
                 break request.handle().clone();
@@ -1583,6 +1645,126 @@ mod tests {
         pinger.join().expect("pinger");
         assert!(timed_out, "pending request remained alive under continuous ping traffic");
         transport.stop().expect("stop");
+    }
+
+    #[test]
+    fn outbound_queue_overflow_disconnects_and_reconciles_pending_request_once() {
+        let surface = Uuid::parse("12121212-1212-4121-8121-121212121212").expect("surface");
+        let sink = Arc::new(RecordingSink::default());
+        let token = SecretToken::from_bytes_for_test([4; 32]);
+        let listener = match TcpListener::bind((super::super::paths::LOOPBACK_HOST, 0)) {
+            Ok(listener) => listener,
+            Err(error) if error.kind() == io::ErrorKind::PermissionDenied => return,
+            Err(error) => panic!("bind probe: {error}"),
+        };
+        let address = listener.local_addr().expect("address");
+        let abort = TcpStream::connect(address).expect("abort peer");
+        let (_abort_server, _) = listener.accept().expect("abort accept");
+
+        let mut host = BridgeHost::new([surface.clone()]);
+        let hello = Envelope::new(
+            None,
+            1,
+            Uuid::parse("13131313-1313-4131-8131-131313131313").expect("hello message"),
+            MessageKind::Hello,
+            Payload::Hello(HelloPayload {
+                extension_version: SemVer::parse("0.1.0").expect("version"),
+                surface_id: surface.clone(),
+                workbench_instance_id: Uuid::parse("14141414-1414-4141-8141-141414141414")
+                    .expect("instance"),
+            }),
+        )
+        .expect("hello");
+        let accepted = match host.receive_at(hello, SystemTime::UNIX_EPOCH) {
+            HostReceiveOutcome::HelloAccepted(accepted) => accepted,
+            other => panic!("hello was not accepted: {other:?}"),
+        };
+        let connection_id = accepted.connection_id().cloned().expect("connection");
+        let generation = match accepted.payload() {
+            Payload::HelloAccepted(payload) => payload.connection_generation,
+            _ => panic!("missing generation"),
+        };
+        let snapshot = Envelope::new(
+            Some(connection_id.clone()),
+            2,
+            Uuid::parse("15151515-1515-4151-8151-151515151515").expect("snapshot message"),
+            MessageKind::StateSnapshot,
+            Payload::StateSnapshot(StateSnapshotPayload {
+                surface_id: surface.clone(),
+                readiness: Readiness::Ready,
+                context: Context::Global,
+                dirty: false,
+            }),
+        )
+        .expect("snapshot");
+        assert_eq!(
+            host.receive_at(snapshot, SystemTime::UNIX_EPOCH),
+            HostReceiveOutcome::SnapshotApplied
+        );
+        let (outbound, _outbound_rx) =
+            std::sync::mpsc::sync_channel::<String>(OUTBOUND_QUEUE_CAPACITY);
+        let connection = Arc::new(BridgeConnection {
+            surface_id: BridgeSurfaceId::from_uuid(surface.clone()),
+            connection_id: connection_id.clone(),
+            connection_generation: generation,
+            outbound,
+            abort,
+            finished: AtomicBool::new(false),
+        });
+        let endpoint_token = bearer_token(token.hex()).expect("endpoint token");
+        let endpoint = Arc::new(
+            LoopbackEndpoint::new("ws://127.0.0.1:1/bridge".to_owned(), endpoint_token)
+                .expect("endpoint"),
+        );
+        let inner = Arc::new(BridgeTransportInner {
+            endpoint,
+            expected_host: "127.0.0.1:1".to_owned(),
+            stop: AtomicBool::new(false),
+            pending_connections: std::sync::atomic::AtomicUsize::new(0),
+            next_worker_id: AtomicU64::new(1),
+            worker_panicked: AtomicBool::new(false),
+            workers: Mutex::new(BTreeMap::new()),
+            state: Mutex::new(TransportState {
+                expected: BTreeSet::from([surface.clone()]),
+                hosts: BTreeMap::from([(surface.clone(), host)]),
+                connections: BTreeMap::from([(surface.clone(), Arc::clone(&connection))]),
+            }),
+            sink: sink.clone(),
+            id_source: Arc::new(Mutex::new(devhub_app_core::bridge::SecureIdSource)),
+            clock: Arc::new(SystemClock),
+            listener_thread: Mutex::new(None),
+        });
+
+        for _ in 0..OUTBOUND_QUEUE_CAPACITY {
+            connection.outbound.try_send(String::new()).expect("fill outbound queue");
+        }
+        let transport = BridgeTransport {
+            inner: Arc::clone(&inner),
+            owner: Arc::new(BridgeTransportOwner { count: AtomicUsize::new(1) }),
+            token,
+            endpoint: "ws://127.0.0.1:1/bridge".to_owned(),
+        };
+        let surface_id = BridgeSurfaceId::from_uuid(surface.clone());
+        assert!(transport.request_focus(&surface_id).is_err());
+        assert!(connection.finished.load(Ordering::Acquire));
+        assert!(inner.state.lock().expect("state").connections.is_empty());
+
+        assert!(transport.request_focus(&surface_id).is_err());
+        let events = sink.events.lock().expect("events");
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(
+                    event,
+                    BridgeEvent::RequestFailed { reason: RequestFailureReason::ConnectionLost, .. }
+                ))
+                .count(),
+            1
+        );
+        assert_eq!(
+            events.iter().filter(|event| matches!(event, BridgeEvent::Disconnected { .. })).count(),
+            1
+        );
     }
 
     #[test]
@@ -1655,12 +1837,55 @@ mod tests {
     }
 
     fn write_test_client_control_frame(stream: &mut TcpStream, opcode: u8, payload: &[u8]) {
-        assert!(payload.len() < 126);
+        let frame = encode_test_client_frame(opcode, payload);
+        stream.write_all(&frame).expect("frame");
+    }
+
+    fn encode_test_client_frame(opcode: u8, payload: &[u8]) -> Vec<u8> {
+        let payload_len = u64::try_from(payload.len()).expect("payload length fits u64");
+        assert!(payload_len <= 0x7fff_ffff_ffff_ffff, "RFC6455 payload length must fit in 63 bits");
         let mask = [1_u8, 2, 3, 4];
-        let mut frame = vec![0x80 | opcode, 0x80 | payload.len() as u8];
+        let mut frame = vec![0x80 | opcode];
+        const MAX_EXTENDED_16: u64 = u16::MAX as u64;
+        match payload_len {
+            0..=125 => frame.push(0x80 | payload_len as u8),
+            126..=MAX_EXTENDED_16 => {
+                frame.push(0x80 | 126);
+                frame.extend_from_slice(&(payload_len as u16).to_be_bytes());
+            }
+            payload_len => {
+                frame.push(0x80 | 127);
+                frame.extend_from_slice(&payload_len.to_be_bytes());
+            }
+        }
         frame.extend_from_slice(&mask);
         frame.extend(payload.iter().enumerate().map(|(index, byte)| byte ^ mask[index % 4]));
-        stream.write_all(&frame).expect("frame");
+        frame
+    }
+
+    #[test]
+    fn test_client_frame_extended_lengths_round_trip_through_tungstenite_parser() {
+        for payload_len in [125, 126, usize::from(u16::MAX), usize::from(u16::MAX) + 1] {
+            let payload: Vec<u8> = (0..payload_len).map(|index| (index % 251) as u8).collect();
+            let frame = encode_test_client_frame(0x1, &payload);
+            let mut cursor = Cursor::new(frame.as_slice());
+            let (header, encoded_len) =
+                tungstenite::protocol::frame::FrameHeader::parse(&mut cursor)
+                    .expect("parse test client frame")
+                    .expect("complete test client frame header");
+            assert_eq!(encoded_len, payload_len as u64);
+            assert!(header.is_final);
+            assert_eq!(header.mask, Some([1, 2, 3, 4]));
+            let payload_start = cursor.position() as usize;
+            let masked_payload = &frame[payload_start..];
+            assert_eq!(masked_payload.len(), payload_len);
+            let unmasked: Vec<u8> = masked_payload
+                .iter()
+                .enumerate()
+                .map(|(index, byte)| byte ^ [1_u8, 2, 3, 4][index % 4])
+                .collect();
+            assert_eq!(unmasked, payload);
+        }
     }
 
     fn read_test_server_frame(stream: &mut TcpStream) -> Vec<u8> {
