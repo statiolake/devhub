@@ -291,10 +291,84 @@ pub struct ResolvedWorkspacePath {
     pub selected_path: DisplayPath,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum RepositoryResolutionState {
+    /// The workspace root is not inside a Git work tree.
+    NotRepository,
+    /// The workspace is a Git work tree, but no valid remote was found.
+    NoRemote,
+    /// At least one remote URL normalized to a repository identity.
+    Associated,
+}
+
+/// The provider-free result of Git metadata resolution.
+///
+/// `primary_remote` is the selected normalized identity; `aliases` contains
+/// every distinct valid normalized remote. Raw URLs, remote names, Git paths,
+/// and process diagnostics never cross this boundary.
+#[derive(Clone, PartialEq, Eq)]
 pub struct RepositoryResolution {
-    /// Normalized domain identity. Raw Git URL strings never cross this seam.
-    pub remote: Option<RemoteIdentity>,
+    state: RepositoryResolutionState,
+    primary_remote: Option<RemoteIdentity>,
+    aliases: Vec<RemoteIdentity>,
+}
+
+impl RepositoryResolution {
+    pub fn not_repository() -> Self {
+        Self {
+            state: RepositoryResolutionState::NotRepository,
+            primary_remote: None,
+            aliases: Vec::new(),
+        }
+    }
+
+    pub fn no_remote() -> Self {
+        Self {
+            state: RepositoryResolutionState::NoRemote,
+            primary_remote: None,
+            aliases: Vec::new(),
+        }
+    }
+
+    pub fn associated(
+        primary: RemoteIdentity,
+        aliases: impl IntoIterator<Item = RemoteIdentity>,
+    ) -> Self {
+        let mut aliases = aliases.into_iter().collect::<Vec<_>>();
+        if !aliases.iter().any(|alias| alias == &primary) {
+            aliases.push(primary.clone());
+        }
+        aliases.sort();
+        aliases.dedup();
+        Self {
+            state: RepositoryResolutionState::Associated,
+            primary_remote: Some(primary),
+            aliases,
+        }
+    }
+
+    pub const fn state(&self) -> RepositoryResolutionState {
+        self.state
+    }
+
+    pub fn primary_remote(&self) -> Option<&RemoteIdentity> {
+        self.primary_remote.as_ref()
+    }
+
+    pub fn aliases(&self) -> &[RemoteIdentity] {
+        &self.aliases
+    }
+}
+
+impl fmt::Debug for RepositoryResolution {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("RepositoryResolution")
+            .field("state", &self.state)
+            .field("primary_remote", &self.primary_remote.as_ref().map(|_| "<redacted>"))
+            .field("alias_count", &self.aliases.len())
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -496,3 +570,44 @@ pub type SharedPort<T> = Arc<T>;
 
 /// Compatibility spelling for adapters that call this seam a profile store.
 pub use AgentProfileResolver as ProfileResolver;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn remote(raw: &str) -> RemoteIdentity {
+        RemoteIdentity::normalize(raw).expect("valid remote fixture")
+    }
+
+    #[test]
+    fn repository_resolution_constructors_preserve_state_invariants() {
+        let not_repository = RepositoryResolution::not_repository();
+        assert_eq!(not_repository.state(), RepositoryResolutionState::NotRepository);
+        assert!(not_repository.primary_remote().is_none());
+        assert!(not_repository.aliases().is_empty());
+
+        let no_remote = RepositoryResolution::no_remote();
+        assert_eq!(no_remote.state(), RepositoryResolutionState::NoRemote);
+        assert!(no_remote.primary_remote().is_none());
+        assert!(no_remote.aliases().is_empty());
+
+        let primary = remote("https://github.com/owner/repo.git");
+        let alias = remote("https://code.example/team/repo.git");
+        let associated = RepositoryResolution::associated(
+            primary.clone(),
+            [alias.clone(), primary.clone(), alias.clone()],
+        );
+        assert_eq!(associated.state(), RepositoryResolutionState::Associated);
+        assert_eq!(associated.primary_remote(), Some(&primary));
+        assert_eq!(associated.aliases(), &[alias, primary]);
+    }
+
+    #[test]
+    fn repository_resolution_debug_redacts_normalized_remote_values() {
+        let primary = remote("https://github.com/owner/private-repo.git");
+        let resolution = RepositoryResolution::associated(primary, []);
+        let debug = format!("{resolution:?}");
+        assert!(debug.contains("redacted"));
+        assert!(!debug.contains("private-repo"));
+    }
+}

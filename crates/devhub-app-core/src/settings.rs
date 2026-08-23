@@ -604,7 +604,8 @@ impl SettingsRuntimeWire {
             || configured.git != effective.git
             || configured.tmux != effective.tmux
             || configured.herdr != effective.herdr
-            || configured.tmux_args != effective.tmux_args;
+            || configured.tmux_args != effective.tmux_args
+            || view.configured_import_login_environment != view.effective_import_login_environment;
         Self {
             configured,
             resolved: SettingsResolvedRuntimeConfigWire::from(&view.resolved),
@@ -898,7 +899,11 @@ pub fn classify_runtime(config: &RuntimeConfig) -> ResolvedRuntimeConfig {
 pub fn runtime_view_for_config(config: &Config, effective_socket_name: &str) -> RuntimeView {
     let mut effective = config.runtimes.clone();
     effective.tmux_socket_name = effective_socket_name.to_owned();
-    config.runtime_view(classify_runtime(&config.runtimes), effective)
+    config.runtime_view(
+        classify_runtime(&config.runtimes),
+        effective,
+        config.general.import_login_environment,
+    )
 }
 
 pub fn settings_diagnostic_from_error(error: &ConfigError) -> SettingsDiagnosticWire {

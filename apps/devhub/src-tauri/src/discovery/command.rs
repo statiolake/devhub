@@ -7,12 +7,13 @@
 use std::fmt;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
+use crate::runtime::{ChildCleanup, RuntimeLaunchContext};
 use devhub_app_core::config::CommandSource;
 use devhub_app_core::ports::{CancellationToken, WorkspaceDiscoveryErrorCode};
 
@@ -26,6 +27,7 @@ pub(super) const MAX_LINE_BYTES: usize = 8 * 1024;
 const MIN_TIMEOUT_MS: u32 = 100;
 const MAX_TIMEOUT_MS: u32 = 30_000;
 const POLL_INTERVAL: Duration = Duration::from_millis(5);
+const READER_JOIN_GRACE: Duration = Duration::from_millis(250);
 
 /// A candidate path produced by one command line.  The selected path is the
 /// user-visible spelling after leading-`~` expansion; the canonical path is
@@ -113,14 +115,11 @@ impl CommandRun {
     }
 }
 
-/// Execute exactly one configured command source.
-///
-/// `home` is the only working-directory input.  The command array is passed
-/// directly to `std::process::Command`; no shell, login environment, or
-/// string re-parsing is involved.  The returned records retain source order.
-pub(super) fn run_command_source(
+/// Execute a command source with the immutable startup runtime context.
+/// Configured argv is passed directly and is never interpreted by a shell.
+pub(super) fn run_command_source_with_context(
     source: &CommandSource,
-    home: &Path,
+    context: &RuntimeLaunchContext,
     cancel: &CancellationToken,
 ) -> CommandRun {
     if cancel.is_cancelled() {
@@ -138,13 +137,11 @@ pub(super) fn run_command_source(
         return CommandRun::new(CommandOutcome::Failed, Vec::new());
     }
 
-    let mut command = Command::new(executable);
-    command
-        .args(arguments)
-        .current_dir(home)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+    let Ok(resolved) = context.resolve(executable) else {
+        return CommandRun::new(CommandOutcome::Unavailable, Vec::new());
+    };
+    let mut command = context.command(&resolved);
+    command.args(arguments).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
 
     let mut child = match command.spawn() {
         Ok(child) => child,
@@ -161,13 +158,14 @@ pub(super) fn run_command_source(
         }
     };
 
+    let mut cleanup = ChildCleanup::new(child.id());
     let stdout = match child.stdout.take() {
         Some(stdout) => stdout,
-        None => return reap_after_spawn_failure(&mut child),
+        None => return reap_after_spawn_failure(&mut child, &mut cleanup),
     };
     let stderr = match child.stderr.take() {
         Some(stderr) => stderr,
-        None => return reap_after_spawn_failure(&mut child),
+        None => return reap_after_spawn_failure(&mut child, &mut cleanup),
     };
 
     let stdout_state = Arc::new(StreamState::new(MAX_STDOUT_BYTES));
@@ -175,15 +173,15 @@ pub(super) fn run_command_source(
     let stdout_thread = match spawn_reader(stdout, Arc::clone(&stdout_state), true) {
         Ok(thread) => thread,
         Err(_) => {
-            terminate_and_wait(&mut child);
+            cleanup.terminate(&mut child);
             return CommandRun::new(CommandOutcome::Failed, Vec::new());
         }
     };
     let stderr_thread = match spawn_reader(stderr, Arc::clone(&stderr_state), false) {
         Ok(thread) => thread,
         Err(_) => {
-            terminate_and_wait(&mut child);
-            let _ = join_reader(stdout_thread);
+            cleanup.terminate(&mut child);
+            reap_readers(Some(stdout_thread), None, Instant::now() + READER_JOIN_GRACE);
             return CommandRun::new(CommandOutcome::Failed, Vec::new());
         }
     };
@@ -193,22 +191,22 @@ pub(super) fn run_command_source(
     let status = loop {
         if cancel.is_cancelled() {
             interrupted = Some(CommandOutcome::Cancelled);
-            terminate_and_wait(&mut child);
+            cleanup.terminate(&mut child);
             break None;
         }
         if stdout_state.limit_reached() || stderr_state.limit_reached() {
             interrupted = Some(CommandOutcome::OutputLimit);
-            terminate_and_wait(&mut child);
+            cleanup.terminate(&mut child);
             break None;
         }
         if stdout_state.read_failed() || stderr_state.read_failed() {
             interrupted = Some(CommandOutcome::Failed);
-            terminate_and_wait(&mut child);
+            cleanup.terminate(&mut child);
             break None;
         }
         if Instant::now() >= deadline {
             interrupted = Some(CommandOutcome::TimedOut);
-            terminate_and_wait(&mut child);
+            cleanup.terminate(&mut child);
             break None;
         }
 
@@ -217,16 +215,23 @@ pub(super) fn run_command_source(
             Ok(None) => thread::sleep(POLL_INTERVAL),
             Err(_) => {
                 interrupted = Some(CommandOutcome::Failed);
-                terminate_and_wait(&mut child);
+                cleanup.terminate(&mut child);
                 break None;
             }
         }
     };
 
-    // The child has exited or has been killed and waited for before joining
-    // readers.  This order guarantees no reader is left blocked on a pipe.
-    let stdout = join_reader(stdout_thread);
-    let stderr = join_reader(stderr_thread);
+    // A leader can exit while a descendant still owns one of its pipes. Wait
+    // only for a bounded grace period; the shared cleanup guard then kills the
+    // process group once and reaps any still-running readers asynchronously.
+    let (stdout, stderr) =
+        match join_readers_bounded(stdout_thread, stderr_thread, &mut child, &mut cleanup) {
+            Ok(readers) => readers,
+            Err(()) => {
+                let outcome = interrupted.unwrap_or(CommandOutcome::TimedOut);
+                return CommandRun::with_stderr(outcome, Vec::new(), stderr_state.bytes_observed());
+            }
+        };
     let stderr_bytes = stderr.byte_count.max(stderr_state.bytes_observed());
     if let Some(outcome) = interrupted {
         return CommandRun::with_stderr(outcome, Vec::new(), stderr_bytes);
@@ -245,19 +250,14 @@ pub(super) fn run_command_source(
         return CommandRun::with_stderr(CommandOutcome::Failed, Vec::new(), stderr_bytes);
     }
 
-    let mut run = parse_stdout(&stdout.bytes, home);
+    let mut run = parse_stdout(&stdout.bytes, context.home());
     run.stderr_bytes = stderr_bytes;
     run
 }
 
-fn reap_after_spawn_failure(child: &mut Child) -> CommandRun {
-    terminate_and_wait(child);
+fn reap_after_spawn_failure(child: &mut Child, cleanup: &mut ChildCleanup) -> CommandRun {
+    cleanup.terminate(child);
     CommandRun::new(CommandOutcome::Failed, Vec::new())
-}
-
-fn terminate_and_wait(child: &mut Child) {
-    let _ = child.kill();
-    let _ = child.wait();
 }
 
 struct StreamState {
@@ -347,6 +347,63 @@ fn join_reader(handle: JoinHandle<ReaderOutput>) -> ReaderOutput {
     })
 }
 
+fn join_readers_bounded(
+    stdout_reader: JoinHandle<ReaderOutput>,
+    stderr_reader: JoinHandle<ReaderOutput>,
+    child: &mut Child,
+    cleanup: &mut ChildCleanup,
+) -> Result<(ReaderOutput, ReaderOutput), ()> {
+    let mut stdout_reader = Some(stdout_reader);
+    let mut stderr_reader = Some(stderr_reader);
+    let mut stdout = None;
+    let mut stderr = None;
+    let deadline = Instant::now() + READER_JOIN_GRACE;
+
+    loop {
+        if stdout.is_none() && stdout_reader.as_ref().is_some_and(JoinHandle::is_finished) {
+            stdout = stdout_reader.take().map(join_reader);
+        }
+        if stderr.is_none() && stderr_reader.as_ref().is_some_and(JoinHandle::is_finished) {
+            stderr = stderr_reader.take().map(join_reader);
+        }
+        if stdout.is_some() && stderr.is_some() {
+            return Ok((
+                stdout.take().expect("stdout result"),
+                stderr.take().expect("stderr result"),
+            ));
+        }
+        if Instant::now() >= deadline {
+            cleanup.terminate(child);
+            reap_readers(stdout_reader, stderr_reader, Instant::now() + READER_JOIN_GRACE);
+            return Err(());
+        }
+        thread::sleep(POLL_INTERVAL);
+    }
+}
+
+fn reap_readers(
+    stdout_reader: Option<JoinHandle<ReaderOutput>>,
+    stderr_reader: Option<JoinHandle<ReaderOutput>>,
+    deadline: Instant,
+) {
+    let readers = [stdout_reader, stderr_reader];
+    while readers.iter().flatten().any(|reader| !reader.is_finished()) && Instant::now() < deadline
+    {
+        thread::sleep(POLL_INTERVAL);
+    }
+    for reader in readers.into_iter().flatten() {
+        if reader.is_finished() {
+            let _ = reader.join();
+        } else {
+            let _ = thread::Builder::new().name("devhub-discovery-reader-reaper".to_owned()).spawn(
+                move || {
+                    let _ = reader.join();
+                },
+            );
+        }
+    }
+}
+
 fn parse_stdout(stdout: &[u8], home: &Path) -> CommandRun {
     let text = match std::str::from_utf8(stdout) {
         Ok(text) => text,
@@ -424,6 +481,7 @@ fn expand_leading_tilde(raw: &str, home: &Path) -> PathBuf {
 mod tests {
     use super::*;
     use devhub_app_core::application::OperationId;
+    use std::collections::BTreeMap;
     use std::fs;
     use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -459,6 +517,16 @@ mod tests {
         CommandSource { id: "command-test".to_owned(), command, timeout_ms }
     }
 
+    fn run_test_command_source(
+        source: &CommandSource,
+        home: &Path,
+        cancel: &CancellationToken,
+    ) -> CommandRun {
+        let context = RuntimeLaunchContext::new(home.to_path_buf(), std::env::vars_os().collect())
+            .expect("test runtime context");
+        run_command_source_with_context(source, &context, cancel)
+    }
+
     fn candidate_paths(run: &CommandRun) -> Vec<PathBuf> {
         run.records
             .iter()
@@ -479,7 +547,7 @@ mod tests {
         fs::create_dir_all(&second).expect("second");
         let argument =
             format!("{}\n{}\r\n{}  \n", first.display(), second.display(), first.display());
-        let run = run_command_source(
+        let run = run_test_command_source(
             &source(vec!["/usr/bin/printf".to_owned(), "%s".to_owned(), argument], 2_000),
             &tree.path,
             &token(1),
@@ -500,8 +568,11 @@ mod tests {
     #[test]
     fn launches_with_injected_home_as_the_working_directory() {
         let tree = TempTree::new("cwd");
-        let run =
-            run_command_source(&source(vec!["/bin/pwd".to_owned()], 2_000), &tree.path, &token(11));
+        let run = run_test_command_source(
+            &source(vec!["/bin/pwd".to_owned()], 2_000),
+            &tree.path,
+            &token(11),
+        );
         assert_eq!(run.outcome, CommandOutcome::Completed);
         assert_eq!(
             candidate_paths(&run),
@@ -519,7 +590,7 @@ mod tests {
         fs::write(&file, b"file").expect("file");
         let argument =
             format!("~/valid\nrelative\n{}/missing\n{}\n", valid.display(), file.display());
-        let run = run_command_source(
+        let run = run_test_command_source(
             &source(vec!["/usr/bin/printf".to_owned(), "%s".to_owned(), argument], 2_000),
             &tree.path,
             &token(2),
@@ -544,7 +615,7 @@ mod tests {
         let tree = TempTree::new("failure");
         let valid = tree.path.join("valid");
         fs::create_dir_all(&valid).expect("valid");
-        let run = run_command_source(
+        let run = run_test_command_source(
             &source(vec!["/usr/bin/false".to_owned()], 2_000),
             &tree.path,
             &token(3),
@@ -557,7 +628,7 @@ mod tests {
     #[test]
     fn strict_utf8_is_a_source_diagnostic() {
         let tree = TempTree::new("utf8");
-        let run = run_command_source(
+        let run = run_test_command_source(
             &source(
                 vec!["/usr/bin/printf".to_owned(), "%b".to_owned(), "\\377\\n".to_owned()],
                 2_000,
@@ -577,7 +648,7 @@ mod tests {
     fn timeout_and_cancellation_kill_and_reap_the_child() {
         let tree = TempTree::new("interrupt");
         let started = Instant::now();
-        let timeout = run_command_source(
+        let timeout = run_test_command_source(
             &source(vec!["/bin/sleep".to_owned(), "30".to_owned()], 100),
             &tree.path,
             &token(4),
@@ -589,7 +660,7 @@ mod tests {
         let worker_cancel = cancel.clone();
         let worker_home = tree.path.clone();
         let worker = thread::spawn(move || {
-            run_command_source(
+            run_test_command_source(
                 &source(vec!["/bin/sleep".to_owned(), "30".to_owned()], 30_000),
                 &worker_home,
                 &worker_cancel,
@@ -603,11 +674,34 @@ mod tests {
         assert!(cancellation_started.elapsed() < Duration::from_secs(2));
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn leader_exit_with_descendant_holding_pipes_is_bounded() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tree = TempTree::new("descendant-pipes");
+        let script = tree.path.join("leader-exits");
+        fs::write(&script, "#!/bin/sh\nsleep 30 &\nprintf '%s\\n' \"$PWD\"\nexit 0\n")
+            .expect("script");
+        let mut permissions = fs::metadata(&script).expect("script metadata").permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&script, permissions).expect("script permissions");
+
+        let started = Instant::now();
+        let run = run_test_command_source(
+            &source(vec![script.to_string_lossy().into_owned()], 2_000),
+            &tree.path,
+            &token(43),
+        );
+        assert_eq!(run.outcome, CommandOutcome::TimedOut);
+        assert!(started.elapsed() < Duration::from_secs(2));
+    }
+
     #[cfg(target_os = "macos")]
     #[test]
     fn stdout_and_stderr_limits_are_bounded() {
         let tree = TempTree::new("limits");
-        let stdout = run_command_source(
+        let stdout = run_test_command_source(
             &source(vec!["/usr/bin/yes".to_owned()], 2_000),
             &tree.path,
             &token(6),
@@ -619,7 +713,7 @@ mod tests {
             (0..(MAX_STDERR_BYTES / 64 + 128))
                 .map(|index| format!("/definitely/missing/devhub-{index:060}")),
         );
-        let stderr = run_command_source(&source(stderr_command, 2_000), &tree.path, &token(7));
+        let stderr = run_test_command_source(&source(stderr_command, 2_000), &tree.path, &token(7));
         assert_eq!(stderr.outcome, CommandOutcome::OutputLimit);
         assert_eq!(stderr.stderr_bytes, MAX_STDERR_BYTES);
         let debug = format!("{stderr:?}");
@@ -633,10 +727,10 @@ mod tests {
         let tree = TempTree::new("line-limits");
         let mut many_lines = vec!["/usr/bin/printf".to_owned(), "%s".to_owned()];
         many_lines.extend((0..(MAX_LINES + 1)).map(|_| "x\n".to_owned()));
-        let too_many = run_command_source(&source(many_lines, 2_000), &tree.path, &token(41));
+        let too_many = run_test_command_source(&source(many_lines, 2_000), &tree.path, &token(41));
         assert_eq!(too_many.outcome, CommandOutcome::OutputLimit);
 
-        let too_long = run_command_source(
+        let too_long = run_test_command_source(
             &source(
                 vec![
                     "/usr/bin/printf".to_owned(),
@@ -655,7 +749,7 @@ mod tests {
     fn rejects_invalid_timeout_without_spawning() {
         let tree = TempTree::new("invalid-timeout");
         for timeout in [0, MIN_TIMEOUT_MS - 1, MAX_TIMEOUT_MS + 1] {
-            let run = run_command_source(
+            let run = run_test_command_source(
                 &source(vec!["/usr/bin/false".to_owned()], timeout),
                 &tree.path,
                 &token(8 + u128::from(timeout)),
@@ -682,5 +776,37 @@ mod tests {
         assert!(output.read_failed);
         assert!(!output.limit_reached);
         assert_eq!(map_candidate_io_error(io::ErrorKind::Other), WorkspaceDiscoveryErrorCode::Io);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn frozen_runtime_context_supplies_command_environment_and_working_directory() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tree = TempTree::new("runtime-context");
+        let candidate = tree.path.join("candidate");
+        fs::create_dir_all(&candidate).expect("candidate");
+        let script = tree.path.join("emit-root");
+        fs::write(&script, "#!/bin/sh\nprintf '%s\\n' \"$DEVHUB_DISCOVERY_ROOT\"\n")
+            .expect("script");
+        let mut permissions = fs::metadata(&script).expect("script metadata").permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&script, permissions).expect("script permissions");
+
+        let context = RuntimeLaunchContext::new(
+            tree.path.clone(),
+            BTreeMap::from([(
+                std::ffi::OsString::from("DEVHUB_DISCOVERY_ROOT"),
+                candidate.clone().into_os_string(),
+            )]),
+        )
+        .expect("runtime context");
+        let run = run_command_source_with_context(
+            &source(vec![script.to_string_lossy().into_owned()], 2_000),
+            &context,
+            &token(100),
+        );
+        assert_eq!(run.outcome, CommandOutcome::Completed);
+        assert_eq!(candidate_paths(&run), vec![candidate]);
     }
 }

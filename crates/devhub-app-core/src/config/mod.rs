@@ -360,8 +360,15 @@ impl Config {
         &self,
         resolved: ResolvedRuntimeConfig,
         effective: RuntimeConfig,
+        effective_import_login_environment: bool,
     ) -> RuntimeView {
-        RuntimeView::new(self.runtimes.clone(), resolved, effective)
+        RuntimeView::new(
+            self.runtimes.clone(),
+            resolved,
+            effective,
+            self.general.import_login_environment,
+            effective_import_login_environment,
+        )
     }
 
     fn validate_with_document(
@@ -937,6 +944,8 @@ pub struct RuntimeView {
     pub configured: RuntimeConfig,
     pub resolved: ResolvedRuntimeConfig,
     pub effective: RuntimeConfig,
+    pub configured_import_login_environment: bool,
+    pub effective_import_login_environment: bool,
     pub tmux_socket: TmuxSocketView,
 }
 
@@ -956,13 +965,22 @@ impl RuntimeView {
         configured: RuntimeConfig,
         resolved: ResolvedRuntimeConfig,
         effective: RuntimeConfig,
+        configured_import_login_environment: bool,
+        effective_import_login_environment: bool,
     ) -> Self {
         let tmux_socket = TmuxSocketView {
             configured: configured.tmux_socket_name.clone(),
             effective: effective.tmux_socket_name.clone(),
             pending: configured.tmux_socket_name != effective.tmux_socket_name,
         };
-        Self { configured, resolved, effective, tmux_socket }
+        Self {
+            configured,
+            resolved,
+            effective,
+            configured_import_login_environment,
+            effective_import_login_environment,
+            tmux_socket,
+        }
     }
 }
 
@@ -2203,7 +2221,11 @@ CLEAR_SECRET = "clear-secret"
             tmux: ResolvedRuntime::CommandName("tmux".to_owned()),
             herdr: ResolvedRuntime::AbsolutePath(PathBuf::from("/opt/devhub/herdr")),
         };
-        let view = config.runtime_view(resolved.clone(), effective);
+        let view = config.runtime_view(
+            resolved.clone(),
+            effective,
+            config.general.import_login_environment,
+        );
         assert_eq!(view.tmux_socket.configured, "devhub");
         assert_eq!(view.tmux_socket.effective, "old");
         assert!(view.tmux_socket.pending);

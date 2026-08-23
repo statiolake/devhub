@@ -9,9 +9,9 @@ use std::time::Duration;
 
 use devhub_app_core::config::{
     default_config_path, AgentProfileKind as ConfigAgentProfileKind, ConfigDiagnostic, ConfigStore,
-    LoadedConfig, ReloadOutcome,
+    LoadedConfig, ReloadOutcome, RuntimeConfig,
 };
-use devhub_app_core::{runtime_view_for_config, SettingsRuntimeWire};
+use devhub_app_core::{classify_runtime, SettingsRuntimeWire};
 use devhub_app_core::{
     AgentProfile as DomainAgentProfile, AgentProfileId, AgentProfileKind, AppAppearanceWire,
     AppCoordinator, AppErrorWire, AppIntentWire, AppOutcomeWire, AppSnapshot, AppSnapshotWire,
@@ -25,7 +25,12 @@ use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
 
 pub mod discovery;
+mod repository;
+mod runtime;
 mod workspace_resolver;
+use discovery::DiscoveryEngine;
+use repository::{GitRepositoryResolver, GitRepositoryResolverConfig};
+use runtime::{LoginEnvironmentStatus, RuntimeLaunchContext};
 use workspace_resolver::MacWorkspacePathResolver;
 
 pub const APP_SNAPSHOT_CHANGED_EVENT: &str = "app://snapshot-changed";
@@ -95,9 +100,14 @@ struct NativeAppState {
     settings: Mutex<SettingsProjection>,
     config_watcher: Mutex<Option<devhub_app_core::config::ConfigWatcher>>,
     home: PathBuf,
+    startup_runtime_config: RuntimeConfig,
+    startup_import_login_environment: bool,
     persistence: Mutex<PersistenceState>,
     pending_native_error: Mutex<Option<AppErrorWire>>,
     id_generator: NativeIdGenerator,
+    _runtime_context: RuntimeLaunchContext,
+    _workspace_discovery: DiscoveryEngine,
+    _repository_resolver: GitRepositoryResolver,
     _workspace_resolver: MacWorkspacePathResolver,
 }
 
@@ -144,6 +154,27 @@ impl NativeAppState {
         let persisted = store.mark_starting().map_err(persistence_error)?;
         let config_store = ConfigStore::new(default_config_path(home));
         let loaded_config = config_store.load().map_err(state_error)?;
+        let runtime_context = RuntimeLaunchContext::from_startup(
+            home,
+            loaded_config.config().general.import_login_environment,
+            &loaded_config.config().runtimes.shell,
+        )
+        .map_err(state_error)?;
+        let startup_runtime_config = loaded_config.config().runtimes.clone();
+        let startup_import_login_environment =
+            loaded_config.config().general.import_login_environment;
+        let repository_resolver =
+            match runtime_context.resolve(&loaded_config.config().runtimes.git) {
+                Ok(git_executable) => GitRepositoryResolver::new(GitRepositoryResolverConfig::new(
+                    runtime_context.clone(),
+                    git_executable,
+                )),
+                Err(_) => GitRepositoryResolver::new(GitRepositoryResolverConfig::unavailable(
+                    runtime_context.clone(),
+                )),
+            };
+        let workspace_discovery =
+            DiscoveryEngine::with_runtime_context(loaded_config.config(), runtime_context.clone());
         let profiles = load_config_profiles(loaded_config.config())?;
         let model = persisted.hydrate_model(&profiles).map_err(persistence_error)?;
         let mut coordinator = AppCoordinator::with_model(model);
@@ -160,9 +191,14 @@ impl NativeAppState {
             }),
             config_watcher: Mutex::new(None),
             home: home.to_path_buf(),
+            startup_runtime_config,
+            startup_import_login_environment,
             persistence: Mutex::new(PersistenceState { persisted_revision }),
             pending_native_error: Mutex::new(None),
             id_generator: NativeIdGenerator,
+            _runtime_context: runtime_context,
+            _workspace_discovery: workspace_discovery,
+            _repository_resolver: repository_resolver,
             _workspace_resolver: MacWorkspacePathResolver::new(home),
         })
     }
@@ -371,16 +407,26 @@ impl NativeAppState {
         let persisted =
             self.store.load_or_default().map_err(|_| SettingsErrorWire::invalid_file())?;
         let settings = self.settings.lock().map_err(|_| SettingsErrorWire::native_unavailable())?;
-        let view = runtime_view_for_config(
-            settings.loaded.config(),
-            &persisted.tmux.effective_socket_name,
+        let mut effective_runtime = self.startup_runtime_config.clone();
+        effective_runtime.tmux_socket_name = persisted.tmux.effective_socket_name.clone();
+        let view = settings.loaded.config().runtime_view(
+            classify_runtime(&self.startup_runtime_config),
+            effective_runtime,
+            self.startup_import_login_environment,
         );
-        let runtime = SettingsRuntimeWire::from_runtime_view(
-            &view,
-            &persisted.tmux,
-            SettingsRuntimeHealthWire::unavailable(),
-            false,
-        );
+        let mut health = SettingsRuntimeHealthWire::unavailable();
+        health.shell = match self._runtime_context.login_environment_status() {
+            LoginEnvironmentStatus::Ambient => {
+                devhub_app_core::SettingsRuntimeHealthValueWire::Unavailable
+            }
+            LoginEnvironmentStatus::Imported => {
+                devhub_app_core::SettingsRuntimeHealthValueWire::Healthy
+            }
+            LoginEnvironmentStatus::Failed(_) => {
+                devhub_app_core::SettingsRuntimeHealthValueWire::Failed
+            }
+        };
+        let runtime = SettingsRuntimeWire::from_runtime_view(&view, &persisted.tmux, health, false);
         Ok(SettingsSnapshotWire::from_loaded(
             &settings.loaded,
             settings.sequence,
@@ -732,6 +778,8 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::runtime::{LoginEnvironmentStatus, RuntimeErrorCode};
+    use devhub_app_core::{CancellationToken, SettingsRuntimeHealthValueWire, WorkspaceRoot};
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::{Arc, Barrier};
 
@@ -768,6 +816,62 @@ mod tests {
         let persisted = state.store.load_or_default().expect("load bootstrap state");
         assert!(!persisted.shutdown.clean);
         assert_eq!(persisted.shutdown.launch_generation, 1);
+        remove_temp_home(&home);
+    }
+
+    #[test]
+    fn bootstrap_allows_missing_git_and_keeps_repository_resolver_unavailable() {
+        let home = temp_home();
+        let config_store = ConfigStore::new(default_config_path(&home));
+        let loaded = config_store.load().expect("create default config");
+        let mut config = loaded.config().clone();
+        config.runtimes.git = home.join("missing-git").to_string_lossy().into_owned();
+        config_store.save(loaded.revision(), config).expect("save missing git config");
+
+        let state = NativeAppState::bootstrap(&home).expect("missing git must not block startup");
+        assert!(!state._repository_resolver.is_available());
+        let workspace = WorkspaceRoot::new(home.clone()).expect("test workspace root");
+        let operation = OperationId::from_uuid("00000000-0000-4000-8000-000000000031")
+            .expect("test operation ID");
+        let error = state
+            ._repository_resolver
+            .resolve_sync(&workspace, &CancellationToken::new(operation))
+            .expect_err("unavailable git resolver");
+        assert_eq!(error.code(), PortErrorCode::Unavailable);
+        remove_temp_home(&home);
+    }
+
+    #[test]
+    fn bootstrap_allows_missing_login_shell_and_records_runtime_health_failure() {
+        let home = temp_home();
+        let config_store = ConfigStore::new(default_config_path(&home));
+        let loaded = config_store.load().expect("create default config");
+        let mut config = loaded.config().clone();
+        config.runtimes.shell = home.join("missing-login-shell").to_string_lossy().into_owned();
+        config_store.save(loaded.revision(), config).expect("save missing shell config");
+
+        let state =
+            NativeAppState::bootstrap(&home).expect("missing login shell must not block startup");
+        assert_eq!(
+            state._runtime_context.login_environment_status(),
+            LoginEnvironmentStatus::Failed(RuntimeErrorCode::MissingExecutable)
+        );
+        remove_temp_home(&home);
+    }
+
+    #[test]
+    fn disabled_login_import_reports_shell_unavailable_until_inspected() {
+        let home = temp_home();
+        let config_store = ConfigStore::new(default_config_path(&home));
+        let loaded = config_store.load().expect("create default config");
+        let mut config = loaded.config().clone();
+        config.general.import_login_environment = false;
+        config_store.save(loaded.revision(), config).expect("save import setting");
+
+        let state = NativeAppState::bootstrap(&home).expect("ambient startup");
+        let snapshot = state.settings_snapshot().expect("settings snapshot");
+        assert_eq!(snapshot.runtime.health.shell, SettingsRuntimeHealthValueWire::Unavailable);
+        assert!(!snapshot.runtime.health.inspection_available);
         remove_temp_home(&home);
     }
 
@@ -822,6 +926,61 @@ mod tests {
             .expect("save current revision");
         assert_eq!(after.sequence, before.sequence + 1);
         assert_ne!(after.revision, before.revision);
+        remove_temp_home(&home);
+    }
+
+    #[test]
+    fn accepted_runtime_changes_do_not_mutate_startup_launch_context_until_relaunch() {
+        let home = temp_home();
+        let state = NativeAppState::bootstrap(&home).expect("bootstrap native app");
+        let startup_context = state._runtime_context.clone();
+        let startup_resolver = format!("{:?}", state._repository_resolver);
+        let before = state.settings_snapshot().expect("settings snapshot");
+        let effective_before = before.runtime.effective.clone();
+        let mut config = before.config.clone();
+        config.general.import_login_environment = !config.general.import_login_environment;
+        config.runtimes.git = "/bin/false".to_owned();
+        config.runtimes.shell = "/bin/sh".to_owned();
+        config.runtimes.tmux = "/bin/false".to_owned();
+        config.runtimes.herdr = "/bin/false".to_owned();
+        config.runtimes.tmux_args = vec!["--test-runtime-change".to_owned()];
+
+        let after = state
+            .save_settings(devhub_app_core::SettingsSaveRequestWire {
+                schema_version: devhub_app_core::SETTINGS_SCHEMA_VERSION,
+                revision: before.revision,
+                config,
+            })
+            .expect("save runtime setting");
+
+        assert_eq!(after.config.runtimes.git, "/bin/false");
+        assert!(after.runtime.restart_required);
+        assert_eq!(after.runtime.effective, effective_before);
+        assert_eq!(state._runtime_context, startup_context);
+        assert_eq!(format!("{:?}", state._repository_resolver), startup_resolver);
+        remove_temp_home(&home);
+    }
+
+    #[test]
+    fn reloaded_runtime_changes_keep_startup_effective_values_until_relaunch() {
+        let home = temp_home();
+        let state = NativeAppState::bootstrap(&home).expect("bootstrap native app");
+        let before = state.settings_snapshot().expect("settings snapshot");
+        let effective_before = before.runtime.effective.clone();
+        let mut config = before.config.clone().into_config().expect("wire config");
+        config.general.import_login_environment = !config.general.import_login_environment;
+        config.runtimes.git = "/bin/false".to_owned();
+        config.runtimes.shell = "/bin/sh".to_owned();
+        config.runtimes.tmux = "/bin/false".to_owned();
+        config.runtimes.herdr = "/bin/false".to_owned();
+        config.runtimes.tmux_args = vec!["--reloaded-runtime-change".to_owned()];
+        std::fs::write(state.config_store.path(), config.to_toml().expect("runtime TOML"))
+            .expect("write external runtime config");
+
+        let after = state.reload_settings().expect("reload runtime config");
+        assert!(after.runtime.restart_required);
+        assert_eq!(after.runtime.effective, effective_before);
+        assert_eq!(after.config.runtimes.git, "/bin/false");
         remove_temp_home(&home);
     }
 

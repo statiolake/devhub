@@ -17,6 +17,7 @@ use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, Waker};
 use std::thread::JoinHandle;
 
+use crate::runtime::RuntimeLaunchContext;
 mod command;
 
 use devhub_app_core::config::{
@@ -52,18 +53,33 @@ impl Default for DiscoveryLimits {
 pub struct DiscoveryEngine {
     sources: Vec<WorkspaceSource>,
     home: PathBuf,
+    runtime_context: RuntimeLaunchContext,
     limits: DiscoveryLimits,
 }
 
 impl DiscoveryEngine {
-    pub fn new(config: &Config, home: impl Into<PathBuf>) -> Self {
-        Self::with_limits(config, home, DiscoveryLimits::default())
+    pub(crate) fn with_runtime_context(
+        config: &Config,
+        runtime_context: RuntimeLaunchContext,
+    ) -> Self {
+        Self::with_runtime_context_and_limits(
+            config,
+            runtime_context.home().to_path_buf(),
+            runtime_context,
+            DiscoveryLimits::default(),
+        )
     }
 
-    pub fn with_limits(config: &Config, home: impl Into<PathBuf>, limits: DiscoveryLimits) -> Self {
+    fn with_runtime_context_and_limits(
+        config: &Config,
+        home: PathBuf,
+        runtime_context: RuntimeLaunchContext,
+        limits: DiscoveryLimits,
+    ) -> Self {
         Self {
             sources: config.workspace_sources.clone(),
-            home: home.into(),
+            home,
+            runtime_context,
             limits: DiscoveryLimits {
                 max_candidates: limits.max_candidates.max(1),
                 max_events: limits.max_events.max(1),
@@ -187,7 +203,8 @@ impl DiscoveryEngine {
         state: &mut ScanState<'_>,
         run: &mut SourceRun,
     ) -> bool {
-        let command_run = command::run_command_source(source, &self.home, cancel);
+        let command_run =
+            command::run_command_source_with_context(source, &self.runtime_context, cancel);
         run.stderr_bytes = u32::try_from(command_run.stderr_bytes).unwrap_or(u32::MAX);
         match command_run.outcome {
             command::CommandOutcome::Cancelled => return true,
@@ -902,11 +919,33 @@ mod tests {
         Config { workspace_sources: sources, ..Config::default() }
     }
 
+    fn test_context(home: &Path) -> RuntimeLaunchContext {
+        RuntimeLaunchContext::new(home.to_path_buf(), std::env::vars_os().collect())
+            .expect("test runtime context")
+    }
+
+    fn test_engine(config: &Config, home: &Path) -> DiscoveryEngine {
+        DiscoveryEngine::with_runtime_context(config, test_context(home))
+    }
+
+    fn test_engine_with_limits(
+        config: &Config,
+        home: &Path,
+        limits: DiscoveryLimits,
+    ) -> DiscoveryEngine {
+        DiscoveryEngine::with_runtime_context_and_limits(
+            config,
+            home.to_path_buf(),
+            test_context(home),
+            limits,
+        )
+    }
+
     fn scan(
         config: Config,
         home: &Path,
     ) -> (WorkspaceDiscoverySummary, Vec<WorkspaceDiscoveryEventKind>) {
-        let engine = DiscoveryEngine::new(&config, home);
+        let engine = test_engine(&config, home);
         let cancel = CancellationToken::new(
             devhub_app_core::application::OperationId::from_uuid(
                 "00000000-0000-4000-8000-000000000001",
@@ -1217,7 +1256,7 @@ mod tests {
         let tree = TempTree::new("command-cancel");
         let command =
             command_source("command", vec!["/bin/sleep".to_owned(), "30".to_owned()], 30_000);
-        let engine = DiscoveryEngine::new(&config(vec![command]), &tree.path);
+        let engine = test_engine(&config(vec![command]), &tree.path);
         let cancel = CancellationToken::new(
             devhub_app_core::application::OperationId::from_uuid(
                 "00000000-0000-4000-8000-000000000010",
@@ -1282,7 +1321,7 @@ mod tests {
         fs::create_dir_all(&project).expect("create project");
         let source =
             filesystem_source("source", &tree.path, 1, Some(1), vec![WorkspaceKind::Directory]);
-        let engine = DiscoveryEngine::new(&config(vec![source]), &tree.path);
+        let engine = test_engine(&config(vec![source]), &tree.path);
         let cancel = CancellationToken::new(
             devhub_app_core::application::OperationId::from_uuid(
                 "00000000-0000-4000-8000-000000000021",
@@ -1308,7 +1347,7 @@ mod tests {
         fs::create_dir_all(tree.child("project")).expect("create project");
         let source =
             filesystem_source("source", &tree.path, 1, Some(1), vec![WorkspaceKind::Directory]);
-        let engine = DiscoveryEngine::new(&config(vec![source]), &tree.path);
+        let engine = test_engine(&config(vec![source]), &tree.path);
         let old_operation = devhub_app_core::application::OperationId::from_uuid(
             "00000000-0000-4000-8000-000000000022",
         )
@@ -1356,7 +1395,7 @@ mod tests {
         }
         let source =
             filesystem_source("source", &tree.path, 1, Some(1), vec![WorkspaceKind::Directory]);
-        let engine = DiscoveryEngine::new(&config(vec![source]), &tree.path);
+        let engine = test_engine(&config(vec![source]), &tree.path);
         let cancel = CancellationToken::new(
             devhub_app_core::application::OperationId::from_uuid(
                 "00000000-0000-4000-8000-000000000002",
@@ -1381,7 +1420,7 @@ mod tests {
         fs::create_dir_all(tree.child("b")).expect("create second directory");
         let source =
             filesystem_source("source", &tree.path, 1, Some(1), vec![WorkspaceKind::Directory]);
-        let engine = DiscoveryEngine::with_limits(
+        let engine = test_engine_with_limits(
             &config(vec![source]),
             &tree.path,
             DiscoveryLimits { max_candidates: 10, max_events: 1 },
@@ -1413,7 +1452,7 @@ mod tests {
         fs::create_dir_all(tree.child("b")).expect("create second directory");
         let source =
             filesystem_source("source", &tree.path, 1, Some(1), vec![WorkspaceKind::Directory]);
-        let engine = DiscoveryEngine::with_limits(
+        let engine = test_engine_with_limits(
             &config(vec![source]),
             &tree.path,
             DiscoveryLimits { max_candidates: 1, max_events: 20 },
@@ -1552,7 +1591,7 @@ mod tests {
         let source =
             filesystem_source("source", &tree.path, 0, Some(0), vec![WorkspaceKind::Directory]);
         let engine: Arc<dyn DiscoveryPort> =
-            Arc::new(DiscoveryEngine::new(&config(vec![source]), &tree.path));
+            Arc::new(test_engine(&config(vec![source]), &tree.path));
         let cancel = CancellationToken::new(
             devhub_app_core::application::OperationId::from_uuid(
                 "00000000-0000-4000-8000-000000000008",
@@ -1573,7 +1612,7 @@ mod tests {
         }
         let source =
             filesystem_source("source", &tree.path, 1, Some(1), vec![WorkspaceKind::Directory]);
-        let engine = DiscoveryEngine::new(&config(vec![source]), &tree.path);
+        let engine = test_engine(&config(vec![source]), &tree.path);
         let cancel = CancellationToken::new(
             devhub_app_core::application::OperationId::from_uuid(
                 "00000000-0000-4000-8000-000000000009",
@@ -1600,7 +1639,7 @@ mod tests {
         fs::create_dir_all(tree.child("valid")).expect("create valid directory");
         let source =
             filesystem_source("source", &tree.path, 1, Some(1), vec![WorkspaceKind::Directory]);
-        let engine = DiscoveryEngine::with_limits(
+        let engine = test_engine_with_limits(
             &config(vec![source]),
             &tree.path,
             DiscoveryLimits { max_candidates: 1, max_events: 32 },
@@ -1661,7 +1700,7 @@ mod tests {
         let source =
             filesystem_source("source", &tree.path, 0, Some(0), vec![WorkspaceKind::Directory]);
         let engine: Arc<dyn DiscoveryPort> =
-            Arc::new(DiscoveryEngine::new(&config(vec![source]), &tree.path));
+            Arc::new(test_engine(&config(vec![source]), &tree.path));
         let cancel = CancellationToken::new(
             devhub_app_core::application::OperationId::from_uuid(
                 "00000000-0000-4000-8000-000000000004",

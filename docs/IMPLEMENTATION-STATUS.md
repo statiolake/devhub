@@ -18,6 +18,7 @@ gate, not just source-code presence.
 | U2.4 Settings Window | Complete | Rust-owned ConfigStore Settings projection, singleton window/menu, five sections (General, Workspaces, Agents, Runtimes, Appearance), strict generated contracts, targeted IPC, AppAppearance propagation, dev fixtures, and accessibility basics; `CI=true pnpm run check` (49 frontend tests, 133 core tests, 14 native tests), `CI=true pnpm run build`, and `CI=true pnpm --filter @devhub/app exec tauri build --debug --no-bundle` all pass (this tracker revision) |
 | U2.5 Visual foundation | Complete | `CI=true pnpm run check`, deterministic visual fixtures, and production fixture-bundle scan (this tracker revision) |
 | D3.1 WorkspaceDiscovery | Complete | Cancellable filesystem and command sources with deterministic traversal, source-local visited state, Git repository/worktree matching, canonical dedupe, fuzzy projection, bounded/redacted events, operation-scoped sequencing, and isolated diagnostics; `CI=true CARGO_NET_OFFLINE=true pnpm run check` (50 native tests, 133 core tests, 49 frontend tests), `CI=true CARGO_NET_OFFLINE=true pnpm run build`, `CI=true CARGO_NET_OFFLINE=true pnpm --filter @devhub/app exec tauri build --debug --no-bundle`, native clippy, and `git diff --check` pass (this tracker revision) |
+| D3.2 Repository resolution | Complete | Shared startup `RuntimeLaunchContext`; exact Git common-directory/top-level validation, normal and linked worktrees, normalized remote precedence/aliases, nonfatal unavailable Git/login-shell runtime health, frozen next-launch Settings semantics, and Discovery command integration; `CI=true pnpm run check`, `CI=true pnpm run build`, `CI=true pnpm --filter @devhub/app exec tauri build --debug --no-bundle` pass (84 native tests, 135 core tests, 49 frontend tests; this tracker revision) |
 
 P2.1 provides the versioned TOML model, defaults and strict validation,
 comment-preserving conflict-safe writes, symlink-safe atomic replacement,
@@ -43,16 +44,17 @@ complete.
 
 ## Next
 
-1. D3.2 Repository resolution: resolve Git common directories and normalized
-   remotes without conflating Repository identity with Workspace identity.
+1. T3.3 TerminalRuntime: add the dedicated tmux server, verified sessions,
+   Scratch/Workspace terminals, PTY framing, recreation, attach compatibility,
+   busy inspection, and resumable socket replacement.
 
 The latest local validation also includes `CI=true pnpm run build` and
 `CI=true pnpm --filter @devhub/app exec tauri build --debug --no-bundle`.
 
 ## Later waves
 
-- Wave 3: D3.2 repository resolution, then T3.3 TerminalRuntime, E3.4
-  EditorHost, E3.5 Bridge extension, and A3.6 AgentRuntime providers.
+- Wave 3: T3.3 TerminalRuntime, E3.4 EditorHost, E3.5 Bridge extension, and
+  A3.6 AgentRuntime providers.
 - Wave 4: workspace, agent, app lifecycle, keyboard, and diagnostics
   integration.
 - Wave 5: accessibility/IME, performance/endurance, brand, security, and
