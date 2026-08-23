@@ -7,19 +7,21 @@ gate, not just source-code presence.
 
 ## Completed locally
 
-| Gate | Result | Local commit or evidence |
-| --- | --- | --- |
-| OpenVSCode provenance preparation | Prepared; hosted run deferred | `d73e575` |
-| R1.1 Repository foundation | Complete | `ad77d14`, `b026279` |
-| R1.2 Domain contracts | Complete | `5b46e5e` |
-| R1.3 Coordinator and Bridge contracts | Complete; current hardening complete | `CI=true pnpm run check` (generated checks, 128 core tests, 29 frontend tests, 6 native-shell tests) |
-| P2.1 ConfigStore | Complete | `feat: add durable config and state` (this tracker revision) |
-| P2.2 StateStore | Complete; hydration/native persistence integration complete | `CI=true pnpm run check` and concurrent temp-home/native lifecycle tests (this tracker revision) |
-| U2.4 Settings Window | Complete | Rust-owned ConfigStore Settings projection, singleton window/menu, five sections (General, Workspaces, Agents, Runtimes, Appearance), strict generated contracts, targeted IPC, AppAppearance propagation, dev fixtures, and accessibility basics; `CI=true pnpm run check` (49 frontend tests, 133 core tests, 14 native tests), `CI=true pnpm run build`, and `CI=true pnpm --filter @devhub/app exec tauri build --debug --no-bundle` all pass (this tracker revision) |
-| U2.5 Visual foundation | Complete | `CI=true pnpm run check`, deterministic visual fixtures, and production fixture-bundle scan (this tracker revision) |
-| D3.1 WorkspaceDiscovery | Complete | Cancellable filesystem and command sources with deterministic traversal, source-local visited state, Git repository/worktree matching, canonical dedupe, fuzzy projection, bounded/redacted events, operation-scoped sequencing, and isolated diagnostics; `CI=true CARGO_NET_OFFLINE=true pnpm run check` (50 native tests, 133 core tests, 49 frontend tests), `CI=true CARGO_NET_OFFLINE=true pnpm run build`, `CI=true CARGO_NET_OFFLINE=true pnpm --filter @devhub/app exec tauri build --debug --no-bundle`, native clippy, and `git diff --check` pass (this tracker revision) |
-| D3.2 Repository resolution | Complete | Shared startup `RuntimeLaunchContext`; exact Git common-directory/top-level validation, normal and linked worktrees, normalized remote precedence/aliases, nonfatal unavailable Git/login-shell runtime health, frozen next-launch Settings semantics, and Discovery command integration; `CI=true pnpm run check`, `CI=true pnpm run build`, `CI=true pnpm --filter @devhub/app exec tauri build --debug --no-bundle` pass (84 native tests, 135 core tests, 49 frontend tests; this tracker revision) |
-| T3.3 Slice B | Complete | Persisted old-socket cleanup/new-socket activation and recreation state machine, two-stage Settings Apply confirmation, exact target/inventory revalidation, crash/relaunch recovery, dynamic effective-socket rebinding, conflict-safe retries, and targeted Settings IPC; `CI=true pnpm run check`, `CI=true pnpm run build`, and isolated real-tmux transition regressions pass (103 native tests, 140 core tests, 51 frontend tests; this tracker revision) |
+| Gate                                  | Result                                                      | Local commit or evidence                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| ------------------------------------- | ----------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| OpenVSCode provenance preparation     | Prepared; hosted run deferred                               | `d73e575`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| R1.1 Repository foundation            | Complete                                                    | `ad77d14`, `b026279`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| R1.2 Domain contracts                 | Complete                                                    | `5b46e5e`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| R1.3 Coordinator and Bridge contracts | Complete; current hardening complete                        | `CI=true pnpm run check` (generated checks, 128 core tests, 29 frontend tests, 6 native-shell tests)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| P2.1 ConfigStore                      | Complete                                                    | `feat: add durable config and state` (this tracker revision)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| P2.2 StateStore                       | Complete; hydration/native persistence integration complete | `CI=true pnpm run check` and concurrent temp-home/native lifecycle tests (this tracker revision)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| U2.4 Settings Window                  | Complete                                                    | Rust-owned ConfigStore Settings projection, singleton window/menu, five sections (General, Workspaces, Agents, Runtimes, Appearance), strict generated contracts, targeted IPC, AppAppearance propagation, dev fixtures, and accessibility basics; `CI=true pnpm run check` (49 frontend tests, 133 core tests, 14 native tests), `CI=true pnpm run build`, and `CI=true pnpm --filter @devhub/app exec tauri build --debug --no-bundle` all pass (this tracker revision)                                                                                                                |
+| U2.5 Visual foundation                | Complete                                                    | `CI=true pnpm run check`, deterministic visual fixtures, and production fixture-bundle scan (this tracker revision)                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| D3.1 WorkspaceDiscovery               | Complete                                                    | Cancellable filesystem and command sources with deterministic traversal, source-local visited state, Git repository/worktree matching, canonical dedupe, fuzzy projection, bounded/redacted events, operation-scoped sequencing, and isolated diagnostics; `CI=true CARGO_NET_OFFLINE=true pnpm run check` (50 native tests, 133 core tests, 49 frontend tests), `CI=true CARGO_NET_OFFLINE=true pnpm run build`, `CI=true CARGO_NET_OFFLINE=true pnpm --filter @devhub/app exec tauri build --debug --no-bundle`, native clippy, and `git diff --check` pass (this tracker revision)    |
+| D3.2 Repository resolution            | Complete                                                    | Shared startup `RuntimeLaunchContext`; exact Git common-directory/top-level validation, normal and linked worktrees, normalized remote precedence/aliases, nonfatal unavailable Git/login-shell runtime health, frozen next-launch Settings semantics, and Discovery command integration; `CI=true pnpm run check`, `CI=true pnpm run build`, `CI=true pnpm --filter @devhub/app exec tauri build --debug --no-bundle` pass (84 native tests, 135 core tests, 49 frontend tests; this tracker revision)                                                                                  |
+| T3.3 Slice B                          | Complete                                                    | Persisted old-socket cleanup/new-socket activation and recreation state machine, two-stage Settings Apply confirmation, exact target/inventory revalidation, crash/relaunch recovery, dynamic effective-socket rebinding, conflict-safe retries, and targeted Settings IPC; `CI=true pnpm run check`, `CI=true pnpm run build`, and isolated real-tmux transition regressions pass (103 native tests, 140 core tests, 51 frontend tests; this tracker revision)                                                                                                                          |
+| T3.3 Slice C                          | Complete                                                    | Strict raw Tauri Channel v1 terminal contract, Rust-owned target and attachment identity, xterm.js terminal surface, bounded flow control and input writes, resize/detach/session survival, Workspace Terminal cleanup integration, socket-transition race protection, and deterministic generated contract; `CI=true pnpm run check` (67 frontend tests, 114 native tests, 140 core tests), `CI=true pnpm run build`, `CI=true pnpm --filter @devhub/app exec tauri build --debug --no-bundle`, and the unsandboxed real-tmux PTY lifecycle regression all pass (this tracker revision) |
+| T3.3 TerminalRuntime                  | Complete                                                    | Dedicated verified tmux sessions, Scratch and Workspace terminals, PTY attach/resize/detach, xterm framing, external attach compatibility, busy inspection, idempotent termination, target preflight, persisted socket transitions, and provider-safe cleanup are complete; evidence is the Slice C validation above (this tracker revision)                                                                                                                                                                                                                                             |
 
 P2.1 provides the versioned TOML model, defaults and strict validation,
 comment-preserving conflict-safe writes, symlink-safe atomic replacement,
@@ -33,29 +35,32 @@ coordinator mutex over I/O, and preserves launch-time Agent profile metadata.
 U2.4 projects that Rust-owned configuration through a strict Settings contract
 and targeted Settings-webview IPC, with a native Settings window/menu,
 AppAppearance propagation, deterministic development fixtures, and accessible
-five-section navigation. TerminalRuntime PTY attach/resize/detach, xterm
-framing, and terminal-surface integration remain Wave 3 provider-deferred; this
-gate does not claim those operations are complete.
+five-section navigation. TerminalRuntime now provides the separate persistent
+tmux-backed terminal surface without replacing or policing the upstream VS
+Code Integrated Terminal.
 
 ## Partial gates
 
-| Gate | Result | Remaining scope |
-| --- | --- | --- |
+| Gate           | Result  | Remaining scope                                                                                                                                                                                                                                 |
+| -------------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | U2.3 App Shell | Partial | Native App Shell structure, navigation, immutable state/error handling, persistence, accessibility basics, and visual fixtures are complete. Context menus, confirmation sheets, and real provider surfaces remain for later integration waves. |
-| T3.3 TerminalRuntime | Partial | Slices A and B are complete: startup-frozen dedicated tmux ownership, race-safe bootstrap, trusted user-config selection, exact Scratch/Workspace session metadata, socket preflight, fail-closed inspection, idempotent close, persisted socket transition/recreation, Settings Apply integration, and isolated real-tmux validation. Slice C remains for PTY attach/resize/detach, xterm framing, and terminal-surface integration. |
 
 ## Next
 
-1. T3.3 Slice C: integrate PTY attach/resize/detach, xterm framing, and the
-   terminal surface while preserving the completed socket-transition seams.
+1. E3.4 EditorHost: implement OpenVSCode token/data/port management, process
+   supervision, child WebView lifecycle, stable data storage, layout,
+   origin/capability isolation, recovery, and host navigation handling.
+2. E3.5 Bridge extension: implement and bundle the frozen Bridge v1 contract
+   for readiness, identity, dirty state, folder/new-window requests, and
+   extension-host reconnection.
 
 The latest local validation also includes `CI=true pnpm run build` and
 `CI=true pnpm --filter @devhub/app exec tauri build --debug --no-bundle`.
 
 ## Later waves
 
-- Wave 3: T3.3 TerminalRuntime completion, E3.4 EditorHost, E3.5 Bridge
-  extension, and A3.6 AgentRuntime providers.
+- Wave 3: E3.4 EditorHost, E3.5 Bridge extension, and A3.6 AgentRuntime
+  providers.
 - Wave 4: workspace, agent, app lifecycle, keyboard, and diagnostics
   integration.
 - Wave 5: accessibility/IME, performance/endurance, brand, security, and
@@ -65,6 +70,8 @@ The latest local validation also includes `CI=true pnpm run build` and
 The repository remains local-only with no Git remote. Hosted CI, hosted
 OpenVSCode provenance, signing, publication, and release validation are
 explicitly deferred to Wave 6 and are not implied by local green checks.
+`prototypes/` remains intentionally untracked and outside production
+manifests, checks, and release artifacts.
 
 See [IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md) for gate definitions and
 [IMPLEMENTATION-OWNERSHIP.md](IMPLEMENTATION-OWNERSHIP.md) for file ownership

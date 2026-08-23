@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+use std::collections::VecDeque;
 use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -12,23 +13,24 @@ use devhub_app_core::config::{
     default_config_path, AgentProfileKind as ConfigAgentProfileKind, ConfigDiagnostic, ConfigStore,
     LoadedConfig, ReloadOutcome, RuntimeConfig,
 };
-use devhub_app_core::ports::{SocketName, TerminalRuntime};
+use devhub_app_core::ports::{SocketName, TerminalRuntime, WorkspaceTerminalTarget};
 use devhub_app_core::state::{
     CleanupSessionStatus, RecreationSessionStatus, SocketTargetPreflightState,
     SocketTransitionState,
 };
 use devhub_app_core::{classify_runtime, SettingsRuntimeWire};
 use devhub_app_core::{
-    AgentProfile as DomainAgentProfile, AgentProfileId, AgentProfileKind, AppAppearanceWire,
-    AppCoordinator, AppErrorWire, AppIntentWire, AppOutcomeWire, AppSnapshot, AppSnapshotWire,
-    CancellationToken, CoordinatorEvent, Effect, IdGenerator, IntentEnvelope, IntentId,
-    JsonStateStore, OperationId, OperationToken, PortError, PortErrorCode, ProviderEvent,
-    ProviderEventEnvelope, ProviderEventId, ReplayWire, SettingsErrorWire,
-    SettingsRuntimeHealthWire, SettingsSaveRequestWire, SettingsSnapshotWire,
-    SettingsSocketChangeRequestWire, TerminalTarget, UserIntent, SETTINGS_SEQUENCE_MAX,
+    Activity, AgentProfile as DomainAgentProfile, AgentProfileId, AgentProfileKind,
+    AppAppearanceWire, AppCoordinator, AppErrorWire, AppIntentWire, AppOutcomeWire, AppSnapshot,
+    AppSnapshotWire, CancellationToken, CleanupStep, CoordinatorEvent, DiagnosticCode, Effect,
+    IdGenerator, IntentEnvelope, IntentId, IntentOutcome, JsonStateStore, OperationId,
+    OperationToken, PortError, PortErrorCode, ProviderEvent, ProviderEventEnvelope,
+    ProviderEventId, ReplayWire, SettingsErrorWire, SettingsRuntimeHealthWire,
+    SettingsSaveRequestWire, SettingsSnapshotWire, SettingsSocketChangeRequestWire, SurfaceKey,
+    SurfaceResolution, TerminalTarget, UserIntent, WorkspaceCleanupResult, SETTINGS_SEQUENCE_MAX,
 };
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
-use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Emitter, Manager, State, Webview, WebviewUrl, WebviewWindowBuilder};
 
 pub mod discovery;
 mod repository;
@@ -38,7 +40,12 @@ mod workspace_resolver;
 use discovery::DiscoveryEngine;
 use repository::{GitRepositoryResolver, GitRepositoryResolverConfig};
 use runtime::{LoginEnvironmentStatus, RuntimeLaunchContext};
-use terminal::TmuxTerminalRuntime;
+use terminal::{
+    validate_attach_request, validate_attachment_id, validate_input_sequence, validate_schema,
+    validate_surface_key, AckRequest, AttachReceipt, AttachRequest, AttachmentIdentity,
+    DetachRequest, InputRequest, ResizeRequest, TerminalError, TerminalErrorCode, TerminalPtySize,
+    TmuxTerminalRuntime,
+};
 use workspace_resolver::MacWorkspacePathResolver;
 
 pub const APP_SNAPSHOT_CHANGED_EVENT: &str = "app://snapshot-changed";
@@ -47,6 +54,8 @@ pub const APP_SHELL_WINDOW_LABEL: &str = "app-shell";
 pub const SETTINGS_CHANGED_EVENT: &str = "settings://changed";
 pub const SETTINGS_WINDOW_LABEL: &str = "settings";
 pub const OPEN_SETTINGS_MENU_ID: &str = "open-settings";
+const MAX_UNHANDLED_EFFECTS: usize = 128;
+const MAX_EFFECT_STEPS: usize = 1_024;
 
 struct NativeIdGenerator;
 
@@ -118,6 +127,7 @@ struct NativeAppState {
     persistence: Mutex<PersistenceState>,
     state_commit: Mutex<()>,
     pending_native_error: Mutex<Option<AppErrorWire>>,
+    unhandled_effects: Mutex<VecDeque<Effect>>,
     socket_transition_busy: AtomicBool,
     id_generator: NativeIdGenerator,
     _runtime_context: RuntimeLaunchContext,
@@ -125,6 +135,12 @@ struct NativeAppState {
     _repository_resolver: GitRepositoryResolver,
     _terminal_runtime: TmuxTerminalRuntime,
     _workspace_resolver: MacWorkspacePathResolver,
+}
+
+struct EffectExecution {
+    snapshot: AppSnapshot,
+    outcome: Option<IntentOutcome>,
+    error: Option<AppErrorWire>,
 }
 
 struct SocketTransitionGate<'a> {
@@ -230,6 +246,7 @@ impl NativeAppState {
             persistence: Mutex::new(PersistenceState { persisted_revision }),
             state_commit: Mutex::new(()),
             pending_native_error: Mutex::new(None),
+            unhandled_effects: Mutex::new(VecDeque::new()),
             socket_transition_busy: AtomicBool::new(false),
             id_generator: NativeIdGenerator,
             _runtime_context: runtime_context,
@@ -283,23 +300,32 @@ impl NativeAppState {
         Ok(())
     }
 
-    fn drain_persistence_effects(coordinator: &mut AppCoordinator) -> Vec<OperationToken> {
+    fn drain_effects(coordinator: &mut AppCoordinator) -> Vec<Effect> {
         coordinator
             .subscribe()
             .into_events()
             .into_iter()
             .filter_map(|event| match event.into_event() {
-                CoordinatorEvent::Effect(Effect::PersistState { token }) => Some(token),
+                CoordinatorEvent::Effect(effect) => Some(effect),
                 _ => None,
             })
             .collect()
+    }
+
+    fn retain_unhandled_effect(&self, effect: Effect) {
+        if let Ok(mut effects) = self.unhandled_effects.lock() {
+            if effects.len() >= MAX_UNHANDLED_EFFECTS {
+                effects.pop_front();
+            }
+            effects.push_back(effect);
+        }
     }
 
     fn complete_persistence(
         &self,
         token: OperationToken,
         succeeded: bool,
-    ) -> Result<(), AppErrorWire> {
+    ) -> Result<IntentOutcome, AppErrorWire> {
         let event = if succeeded {
             ProviderEvent::StatePersisted { token: token.clone() }
         } else {
@@ -313,30 +339,149 @@ impl NativeAppState {
         let mut coordinator = self.coordinator.lock().map_err(state_error)?;
         coordinator
             .accept_provider_event(ProviderEventEnvelope::new(event_id, event))
-            .map(|_| ())
             .map_err(|error| AppErrorWire::from_error(&error))
     }
 
-    fn execute_persistence_effects(
+    fn complete_workspace_cleanup(
         &self,
-        snapshot: &AppSnapshot,
-        effects: Vec<OperationToken>,
-    ) -> Result<(), AppErrorWire> {
+        token: OperationToken,
+        workspace_id: devhub_app_core::WorkspaceId,
+        result: WorkspaceCleanupResult,
+    ) -> Result<IntentOutcome, AppErrorWire> {
+        let event = ProviderEvent::WorkspaceCleanupCompleted { token, workspace_id, result };
+        let event_id = self
+            .id_generator
+            .next_operation_id()
+            .map(ProviderEventId::from)
+            .map_err(|_| AppErrorWire::native_unavailable())?;
+        let mut coordinator = self.coordinator.lock().map_err(state_error)?;
+        coordinator
+            .accept_provider_event(ProviderEventEnvelope::new(event_id, event))
+            .map_err(|error| AppErrorWire::from_error(&error))
+    }
+
+    fn current_snapshot(&self) -> Result<AppSnapshot, AppErrorWire> {
+        self.coordinator
+            .lock()
+            .map(|coordinator| coordinator.snapshot().clone())
+            .map_err(state_error)
+    }
+
+    fn execute_effects(&self, effects: Vec<Effect>) -> Result<EffectExecution, AppErrorWire> {
+        let mut pending = VecDeque::from(effects);
         let mut first_error = None;
-        for token in effects {
-            let persistence_result = self.persist_snapshot(snapshot, false);
-            let completion_result = self.complete_persistence(token, persistence_result.is_ok());
-            if first_error.is_none() {
-                first_error = completion_result.err().or_else(|| persistence_result.err());
+        let mut last_outcome = None;
+        let mut steps = 0_usize;
+        while let Some(effect) = pending.pop_front() {
+            steps = steps.saturating_add(1);
+            if steps > MAX_EFFECT_STEPS {
+                for remaining in pending {
+                    self.retain_unhandled_effect(remaining);
+                }
+                return Err(state_error("native effect worklist exceeded its bounded step limit"));
+            }
+            match effect {
+                Effect::Noop => {}
+                Effect::Detach(reason) => match reason {
+                    devhub_app_core::DetachReason::WindowClosed => {
+                        self._terminal_runtime.detach_webview(APP_SHELL_WINDOW_LABEL)
+                    }
+                    devhub_app_core::DetachReason::Quit => {
+                        self._terminal_runtime.detach_all_surfaces()
+                    }
+                },
+                Effect::PersistState { token } => {
+                    let snapshot = self.current_snapshot()?;
+                    let persistence_result = self.persist_snapshot(&snapshot, false);
+                    let completion_result =
+                        self.complete_persistence(token, persistence_result.is_ok());
+                    if let Ok(outcome) = &completion_result {
+                        // Successful persistence completes as a domain Noop;
+                        // preserve the initiating Updated/Deferred outcome in
+                        // that case.  A degraded completion is meaningful and
+                        // must reach the command response with the latest
+                        // coordinator snapshot.
+                        if !matches!(outcome, IntentOutcome::Noop { .. }) {
+                            last_outcome = Some(outcome.clone());
+                        }
+                    }
+                    if first_error.is_none() {
+                        first_error = completion_result.err().or_else(|| persistence_result.err());
+                    }
+                }
+                Effect::CleanupWorkspace { token, workspace_id, step: CleanupStep::Terminal } => {
+                    let snapshot = self.current_snapshot()?;
+                    let result = snapshot
+                        .workspaces()
+                        .iter()
+                        .find(|workspace| workspace.id() == &workspace_id)
+                        .map(|workspace| {
+                            let workspace_target = WorkspaceTerminalTarget::new(
+                                workspace_id.clone(),
+                                workspace.root().clone(),
+                            );
+                            let target = TerminalTarget::workspace(
+                                workspace_id.clone(),
+                                workspace.root().clone(),
+                            );
+                            self._terminal_runtime.detach_target(&target);
+                            let close_result = self
+                                .terminal_operation_cancel()
+                                .map_err(|_| ())
+                                .and_then(|cancel| {
+                                    self._terminal_runtime
+                                        .close_workspace_target(&workspace_target, &cancel)
+                                        .map_err(|_| ())
+                                });
+                            match close_result {
+                                Ok(()) => {
+                                    WorkspaceCleanupResult::StepCompleted(CleanupStep::Terminal)
+                                }
+                                Err(()) => WorkspaceCleanupResult::Failed {
+                                    step: CleanupStep::Terminal,
+                                    diagnostic: DiagnosticCode::CleanupFailed,
+                                },
+                            }
+                        })
+                        .unwrap_or(WorkspaceCleanupResult::Failed {
+                            step: CleanupStep::Terminal,
+                            diagnostic: DiagnosticCode::CloseTerminalUnknown,
+                        });
+                    let completion_result =
+                        self.complete_workspace_cleanup(token, workspace_id, result);
+                    if let Ok(outcome) = &completion_result {
+                        last_outcome = Some(outcome.clone());
+                    }
+                    if first_error.is_none() {
+                        first_error = completion_result.err();
+                    }
+                }
+                Effect::CleanupWorkspace { .. } => {
+                    // Agent/editor/state cleanup has no native implementation
+                    // in this adapter yet. Keep the exact effect/token for a
+                    // later provider instead of reporting a false success.
+                    self.retain_unhandled_effect(effect);
+                }
+                other => self.retain_unhandled_effect(other),
+            }
+            // A cleanup completion can synchronously emit the next effect
+            // (for example Editor after Terminal). Drain it into this same
+            // bounded worklist so no coordinator effect is silently lost.
+            if let Ok(mut coordinator) = self.coordinator.lock() {
+                pending.extend(Self::drain_effects(&mut coordinator));
             }
         }
-        first_error.map_or(Ok(()), Err)
+        Ok(EffectExecution {
+            snapshot: self.current_snapshot()?,
+            outcome: last_outcome,
+            error: first_error,
+        })
     }
 
     fn dispatch_lifecycle(
         &self,
         intent: UserIntent,
-    ) -> Result<(AppSnapshot, Vec<OperationToken>), AppErrorWire> {
+    ) -> Result<(AppSnapshot, Vec<Effect>), AppErrorWire> {
         let intent_id = self.id_generator.next_intent_id()?;
         let operation_id = self
             .id_generator
@@ -346,7 +491,7 @@ impl NativeAppState {
         let outcome = coordinator
             .dispatch_user(IntentEnvelope::with_operation_id(intent_id, operation_id, intent))
             .map_err(|error| AppErrorWire::from_error(&error))?;
-        let effects = Self::drain_persistence_effects(&mut coordinator);
+        let effects = Self::drain_effects(&mut coordinator);
         Ok((outcome.snapshot().clone(), effects))
     }
 
@@ -354,17 +499,25 @@ impl NativeAppState {
     /// process lifecycle marked unclean. macOS may keep the application alive
     /// after its last window closes, so this is not a clean quit.
     fn close_window(&self) -> Result<(), AppErrorWire> {
-        let (snapshot, effects) = self.dispatch_lifecycle(UserIntent::WindowClosed)?;
-        self.execute_persistence_effects(&snapshot, effects)?;
-        self.persist_snapshot(&snapshot, true)
+        self._terminal_runtime.detach_webview(APP_SHELL_WINDOW_LABEL);
+        let (_, effects) = self.dispatch_lifecycle(UserIntent::WindowClosed)?;
+        let execution = self.execute_effects(effects)?;
+        if let Some(error) = execution.error {
+            return Err(error);
+        }
+        self.persist_snapshot(&execution.snapshot, true)
     }
 
     /// A process quit detaches the coordinator, persists its final projection,
     /// and only then marks the durable lifecycle as clean.
     fn quit(&self) -> Result<(), AppErrorWire> {
-        let (snapshot, effects) = self.dispatch_lifecycle(UserIntent::Quit)?;
-        self.execute_persistence_effects(&snapshot, effects)?;
-        self.persist_clean_snapshot(&snapshot)
+        self._terminal_runtime.detach_all_surfaces();
+        let (_, effects) = self.dispatch_lifecycle(UserIntent::Quit)?;
+        let execution = self.execute_effects(effects)?;
+        if let Some(error) = execution.error {
+            return Err(error);
+        }
+        self.persist_clean_snapshot(&execution.snapshot)
     }
 
     fn dispatch_intent(&self, intent: UserIntent) -> Result<(AppOutcomeWire, bool), AppErrorWire> {
@@ -373,21 +526,25 @@ impl NativeAppState {
             .id_generator
             .next_operation_id()
             .map_err(|_| AppErrorWire::native_unavailable())?;
-        let (outcome, changed, readiness, domain_snapshot, effects) = {
+        let (outcome, before, readiness, effects) = {
             let mut coordinator = self.coordinator.lock().map_err(state_error)?;
             let before = coordinator.snapshot().revision();
             let outcome = coordinator
                 .dispatch_user(IntentEnvelope::with_operation_id(intent_id, operation_id, intent))
                 .map_err(|error| AppErrorWire::from_error(&error))?;
-            let changed = outcome.snapshot().revision() != before;
-            let domain_snapshot = outcome.snapshot().clone();
-            let effects = Self::drain_persistence_effects(&mut coordinator);
-            (outcome, changed, coordinator.readiness(), domain_snapshot, effects)
+            let effects = Self::drain_effects(&mut coordinator);
+            (outcome, before, coordinator.readiness(), effects)
         };
-        let mut wire = AppOutcomeWire::from_outcome(&outcome, readiness).map_err(state_error)?;
-        if changed && self.execute_persistence_effects(&domain_snapshot, effects).is_err() {
-            let snapshot = wire.snapshot().clone();
-            wire = AppOutcomeWire::PersistenceDegraded { snapshot };
+        let execution = self.execute_effects(effects)?;
+        let changed = execution.snapshot.revision() != before;
+        let final_outcome = execution.outcome.as_ref().unwrap_or(&outcome);
+        let mut wire =
+            AppOutcomeWire::from_outcome(final_outcome, readiness).map_err(state_error)?;
+        if execution.error.is_some() {
+            wire = AppOutcomeWire::PersistenceDegraded {
+                snapshot: AppSnapshotWire::from_snapshot(&execution.snapshot, readiness)
+                    .map_err(state_error)?,
+            };
         }
         Ok((wire, changed))
     }
@@ -544,6 +701,166 @@ impl NativeAppState {
             .next_operation_id()
             .map_err(|_| SettingsErrorWire::native_unavailable())?;
         Ok(CancellationToken::new(operation))
+    }
+
+    /// Resolves the semantic terminal surface against the current immutable
+    /// AppSnapshot. The webview supplies only the generated surface key; the
+    /// canonical Workspace root and tmux target are recovered here.
+    fn resolve_terminal_target(&self, surface_key: &str) -> Result<TerminalTarget, TerminalError> {
+        validate_surface_key(surface_key)?;
+        let coordinator =
+            self.coordinator.lock().map_err(|_| TerminalError::new(TerminalErrorCode::Internal))?;
+        let snapshot = coordinator.snapshot();
+        if snapshot.active_activity() != Activity::Terminal {
+            return Err(TerminalError::new(TerminalErrorCode::SurfaceUnavailable));
+        }
+        let resolution = snapshot.activity(Activity::Terminal).resolution();
+        let target = match resolution {
+            SurfaceResolution::Enabled(SurfaceKey::GlobalTerminal)
+                if surface_key == "global-terminal" =>
+            {
+                TerminalTarget::scratch()
+            }
+            SurfaceResolution::Enabled(SurfaceKey::WorkspaceTerminal(workspace_id)) => {
+                let expected = format!("workspace-terminal:{workspace_id}");
+                if surface_key != expected {
+                    return Err(TerminalError::new(TerminalErrorCode::InvalidSurface));
+                }
+                let workspace = snapshot
+                    .workspaces()
+                    .iter()
+                    .find(|workspace| workspace.id() == workspace_id)
+                    .ok_or_else(|| TerminalError::new(TerminalErrorCode::SurfaceUnavailable))?;
+                TerminalTarget::workspace(workspace_id.clone(), workspace.root().clone())
+            }
+            _ => return Err(TerminalError::new(TerminalErrorCode::SurfaceUnavailable)),
+        };
+        Ok(target)
+    }
+
+    fn terminal_operation_cancel(&self) -> Result<CancellationToken, TerminalError> {
+        let operation = self
+            .id_generator
+            .next_operation_id()
+            .map_err(|_| TerminalError::new(TerminalErrorCode::RuntimeUnavailable))?;
+        Ok(CancellationToken::new(operation))
+    }
+
+    fn terminal_attach(
+        &self,
+        webview_label: &str,
+        request: AttachRequest,
+        channel: tauri::ipc::Channel<tauri::ipc::InvokeResponseBody>,
+    ) -> Result<AttachReceipt, TerminalError> {
+        validate_attach_request(&request)?;
+        let size = TerminalPtySize {
+            cols: request.cols,
+            rows: request.rows,
+            pixel_width: request.pixel_width,
+            pixel_height: request.pixel_height,
+        };
+        let target = self.resolve_terminal_target(&request.surface_key)?;
+        let cancel = self.terminal_operation_cancel()?;
+        self._terminal_runtime.attach_surface(
+            &target,
+            request.surface_key,
+            webview_label.to_owned(),
+            size,
+            channel,
+            &cancel,
+        )
+    }
+
+    fn terminal_input(
+        &self,
+        webview_label: &str,
+        request: InputRequest,
+    ) -> Result<(), TerminalError> {
+        validate_schema(request.schema_version)?;
+        validate_surface_key(&request.surface_key)?;
+        validate_attachment_id(&request.attachment_id)?;
+        validate_input_sequence(request.input_sequence)?;
+        let target = self.resolve_terminal_target(&request.surface_key)?;
+        let identity = AttachmentIdentity {
+            target: &target,
+            surface_key: &request.surface_key,
+            attachment_id: &request.attachment_id,
+            webview_label,
+            target_generation: request.target_generation,
+        };
+        self._terminal_runtime.terminal_input(identity, request.input_sequence, &request.bytes)
+    }
+
+    fn terminal_resize(
+        &self,
+        webview_label: &str,
+        request: ResizeRequest,
+    ) -> Result<(), TerminalError> {
+        validate_schema(request.schema_version)?;
+        validate_surface_key(&request.surface_key)?;
+        validate_attachment_id(&request.attachment_id)?;
+        let target = self.resolve_terminal_target(&request.surface_key)?;
+        let identity = AttachmentIdentity {
+            target: &target,
+            surface_key: &request.surface_key,
+            attachment_id: &request.attachment_id,
+            webview_label,
+            target_generation: request.target_generation,
+        };
+        let cancel = self.terminal_operation_cancel()?;
+        self._terminal_runtime.terminal_resize(
+            identity,
+            TerminalPtySize {
+                cols: request.cols,
+                rows: request.rows,
+                pixel_width: request.pixel_width,
+                pixel_height: request.pixel_height,
+            },
+            &cancel,
+        )
+    }
+
+    fn terminal_acknowledge(
+        &self,
+        webview_label: &str,
+        request: AckRequest,
+    ) -> Result<(), TerminalError> {
+        validate_schema(request.schema_version)?;
+        validate_surface_key(&request.surface_key)?;
+        validate_attachment_id(&request.attachment_id)?;
+        validate_input_sequence(request.sequence)?;
+        let target = self.resolve_terminal_target(&request.surface_key)?;
+        let identity = AttachmentIdentity {
+            target: &target,
+            surface_key: &request.surface_key,
+            attachment_id: &request.attachment_id,
+            webview_label,
+            target_generation: request.target_generation,
+        };
+        self._terminal_runtime.terminal_acknowledge(identity, request.sequence)
+    }
+
+    fn terminal_detach(
+        &self,
+        webview_label: &str,
+        request: DetachRequest,
+    ) -> Result<(), TerminalError> {
+        validate_schema(request.schema_version)?;
+        validate_surface_key(&request.surface_key)?;
+        validate_attachment_id(&request.attachment_id)?;
+        if request.target_generation == 0 {
+            return Err(TerminalError::new(TerminalErrorCode::WrongAttachment));
+        }
+        // Detach deliberately does not resolve the current snapshot. A
+        // stale surface must still be able to release its PTY client after a
+        // context switch; the manager verifies the exact opaque handle and
+        // webview owner before killing only that client.
+        self._terminal_runtime.detach_surface(
+            &request.surface_key,
+            &request.attachment_id,
+            webview_label,
+            request.target_generation,
+        )
     }
 
     /// Reconciles only the non-destructive part of a configured socket
@@ -898,6 +1215,11 @@ impl NativeAppState {
             ._terminal_runtime
             .begin_transition(&transition_cancel)
             .map_err(Self::socket_port_error)?;
+        // A confirmed or startup-resumed socket transition may close or
+        // recreate tmux sessions. Reap every PTY client before touching that
+        // ownership state; the tmux sessions themselves remain managed by the
+        // transition provider.
+        self._terminal_runtime.detach_all_surfaces();
         loop {
             let mut state = self.load_transition_state(&store)?;
             match &state.tmux.transition {
@@ -1507,6 +1829,67 @@ fn open_log_folder(
     state.open_log_folder()
 }
 
+async fn terminal_worker<T, F>(app: AppHandle, operation: F) -> Result<T, TerminalError>
+where
+    T: Send + 'static,
+    F: FnOnce(&NativeAppState) -> Result<T, TerminalError> + Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(move || operation(&app.state::<NativeAppState>()))
+        .await
+        .map_err(|_| TerminalError::new(TerminalErrorCode::Internal))?
+}
+
+#[tauri::command]
+async fn terminal_attach(
+    app: AppHandle,
+    webview: Webview<tauri::Wry>,
+    payload: AttachRequest,
+    channel: tauri::ipc::Channel<tauri::ipc::InvokeResponseBody>,
+) -> Result<AttachReceipt, TerminalError> {
+    let webview_label = webview.label().to_owned();
+    terminal_worker(app, move |state| state.terminal_attach(&webview_label, payload, channel)).await
+}
+
+#[tauri::command]
+async fn terminal_input(
+    app: AppHandle,
+    webview: Webview<tauri::Wry>,
+    payload: InputRequest,
+) -> Result<(), TerminalError> {
+    let webview_label = webview.label().to_owned();
+    terminal_worker(app, move |state| state.terminal_input(&webview_label, payload)).await
+}
+
+#[tauri::command]
+async fn terminal_resize(
+    app: AppHandle,
+    webview: Webview<tauri::Wry>,
+    payload: ResizeRequest,
+) -> Result<(), TerminalError> {
+    let webview_label = webview.label().to_owned();
+    terminal_worker(app, move |state| state.terminal_resize(&webview_label, payload)).await
+}
+
+#[tauri::command]
+async fn terminal_acknowledge(
+    app: AppHandle,
+    webview: Webview<tauri::Wry>,
+    payload: AckRequest,
+) -> Result<(), TerminalError> {
+    let webview_label = webview.label().to_owned();
+    terminal_worker(app, move |state| state.terminal_acknowledge(&webview_label, payload)).await
+}
+
+#[tauri::command]
+async fn terminal_detach(
+    app: AppHandle,
+    webview: Webview<tauri::Wry>,
+    payload: DetachRequest,
+) -> Result<(), TerminalError> {
+    let webview_label = webview.label().to_owned();
+    terminal_worker(app, move |state| state.terminal_detach(&webview_label, payload)).await
+}
+
 #[tauri::command]
 async fn apply_socket_change(
     state: State<'_, NativeAppState>,
@@ -1608,10 +1991,21 @@ pub fn run() {
         })
         .on_window_event(|window, event| {
             if window.label() == "app-shell" && matches!(event, tauri::WindowEvent::Destroyed) {
-                let state = window.app_handle().state::<NativeAppState>();
-                if let Err(error) = state.close_window() {
-                    state.record_native_error(error);
-                }
+                let app = window.app_handle().clone();
+                let worker_app = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    let result = tauri::async_runtime::spawn_blocking(move || {
+                        worker_app.state::<NativeAppState>().close_window()
+                    })
+                    .await;
+                    match result {
+                        Ok(Ok(())) => {}
+                        Ok(Err(error)) => app.state::<NativeAppState>().record_native_error(error),
+                        Err(_) => app
+                            .state::<NativeAppState>()
+                            .record_native_error(AppErrorWire::native_unavailable()),
+                    }
+                });
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -1619,6 +2013,11 @@ pub fn run() {
             get_app_appearance,
             dispatch_app_intent,
             replay_app_events,
+            terminal_attach,
+            terminal_input,
+            terminal_resize,
+            terminal_acknowledge,
+            terminal_detach,
             get_settings_snapshot,
             save_settings,
             reload_settings,
@@ -1629,11 +2028,28 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building DevHub")
         .run(|app_handle: &AppHandle, event| {
-            if matches!(event, tauri::RunEvent::ExitRequested { .. }) {
-                let state = app_handle.state::<NativeAppState>();
-                if let Err(error) = state.quit() {
-                    state.record_native_error(error);
-                }
+            if let tauri::RunEvent::ExitRequested { api, .. } = event {
+                api.prevent_exit();
+                let app = app_handle.clone();
+                let worker_app = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    let result = tauri::async_runtime::spawn_blocking(move || {
+                        worker_app.state::<NativeAppState>().quit()
+                    })
+                    .await;
+                    match result {
+                        Ok(Ok(())) => app.exit(0),
+                        Ok(Err(error)) => {
+                            app.state::<NativeAppState>().record_native_error(error);
+                            app.exit(1);
+                        }
+                        Err(_) => {
+                            app.state::<NativeAppState>()
+                                .record_native_error(AppErrorWire::native_unavailable());
+                            app.exit(1);
+                        }
+                    }
+                });
             }
         })
 }
@@ -2594,7 +3010,12 @@ mod tests {
                 "allow-get-app-snapshot",
                 "allow-get-app-appearance",
                 "allow-dispatch-app-intent",
-                "allow-replay-app-events"
+                "allow-replay-app-events",
+                "allow-terminal-attach",
+                "allow-terminal-input",
+                "allow-terminal-resize",
+                "allow-terminal-acknowledge",
+                "allow-terminal-detach"
             ])
         );
         assert!(app_shell.get("windows").is_none());

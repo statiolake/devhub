@@ -2,15 +2,18 @@ import {
   activeActivitySnapshot,
   activityLabel,
   type Activity,
+  type AppAppearance,
   type AppSnapshot,
   type WorkspaceSnapshot,
   workspaceForContext,
 } from "../../generated/app-shell";
 import { StatusMark } from "../sidebar/StatusMark";
+import { TerminalSurface } from "../../terminal/TerminalSurface";
 
 export interface SurfaceViewportProps {
   readonly snapshot: AppSnapshot;
   readonly intentError?: string;
+  readonly appearance?: AppAppearance;
 }
 
 function InlineIntentError({ message }: { readonly message: string }) {
@@ -156,6 +159,7 @@ function SurfaceAgent({
 export function SurfaceViewport({
   snapshot,
   intentError,
+  appearance,
 }: SurfaceViewportProps) {
   const activity = snapshot.selection.activity;
   const activitySnapshot = activeActivitySnapshot(snapshot);
@@ -224,10 +228,20 @@ export function SurfaceViewport({
       aria-label="Surface"
       aria-live="polite"
       data-surface-key={activitySnapshot.resolution.surfaceKey}
-      data-surface-state="empty"
+      data-surface-state={activity === "terminal" ? "terminal" : "empty"}
     >
       {intentError && <InlineIntentError message={intentError} />}
-      {activity === "agent" ? (
+      {activity === "terminal" ? (
+        <TerminalSurface
+          surfaceKey={activitySnapshot.resolution.surfaceKey}
+          surfaceLabel={
+            snapshot.selection.context.kind === "global"
+              ? "Scratch"
+              : (workspace?.label ?? "Workspace")
+          }
+          appearance={appearance}
+        />
+      ) : activity === "agent" ? (
         <SurfaceAgent snapshot={snapshot} workspace={workspace} />
       ) : (
         <SurfaceEmpty

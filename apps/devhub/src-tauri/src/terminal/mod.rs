@@ -31,6 +31,16 @@ use devhub_app_core::ports::{
 use devhub_app_core::state::{OwnedSessionRecord, PersistedAppState, RequiredTerminalSet};
 use devhub_app_core::{DiagnosticCode, ResourceInspection, WorkspaceId};
 
+mod contract;
+mod pty;
+pub(crate) use contract::{
+    validate_attach_request, validate_attachment_id, validate_input_sequence, validate_schema,
+    validate_surface_key, AckRequest, AttachReceipt, AttachRequest, DetachRequest, InputRequest,
+    PtySize as TerminalPtySize, ResizeRequest, TerminalError, TerminalErrorCode,
+};
+pub(crate) use pty::AttachmentIdentity;
+use pty::{AttachContext, AttachmentManager};
+
 const PROTOCOL_OPTION: &str = "@devhub-protocol";
 const PROTOCOL_VALUE: &str = "1";
 const CONTEXT_OPTION: &str = "@devhub-context";
@@ -194,6 +204,7 @@ pub(crate) struct TmuxTerminalRuntime {
     tmux_args: Vec<String>,
     effective_socket: Arc<Mutex<Option<SocketName>>>,
     operation_gate: Arc<RuntimeOperationGate>,
+    attachments: AttachmentManager,
     timeout: Duration,
 }
 
@@ -216,6 +227,7 @@ impl TmuxTerminalRuntime {
                 state: Mutex::new(RuntimeGateState::default()),
                 wake: Condvar::new(),
             }),
+            attachments: AttachmentManager::new(),
             timeout: DEFAULT_TIMEOUT,
         }
     }
@@ -247,6 +259,87 @@ impl TmuxTerminalRuntime {
         *self.effective_socket.lock().map_err(|_| PortError::new(PortErrorCode::Failed))? =
             Some(socket);
         Ok(())
+    }
+
+    /// Attaches one short-lived PTY client to an already verified marked
+    /// session. The attachment manager owns only the client process and file
+    /// descriptors; the tmux session remains owned by this runtime.
+    pub(crate) fn attach_surface(
+        &self,
+        target: &TerminalTarget,
+        surface_key: String,
+        webview_label: String,
+        size: TerminalPtySize,
+        channel: tauri::ipc::Channel<tauri::ipc::InvokeResponseBody>,
+        cancel: &CancellationToken,
+    ) -> Result<AttachReceipt, TerminalError> {
+        self.attachments.attach(
+            self,
+            AttachContext { target, surface_key, webview_label, size, channel, cancel },
+        )
+    }
+
+    pub(crate) fn terminal_input(
+        &self,
+        identity: AttachmentIdentity<'_>,
+        input_sequence: u64,
+        bytes: &[u8],
+    ) -> Result<(), TerminalError> {
+        self.attachments.input(identity, input_sequence, bytes)
+    }
+
+    pub(crate) fn terminal_resize(
+        &self,
+        identity: AttachmentIdentity<'_>,
+        size: TerminalPtySize,
+        cancel: &CancellationToken,
+    ) -> Result<(), TerminalError> {
+        let _permit = self.operation_permit(cancel).map_err(TerminalError::from_port)?;
+        self.attachments.resize(identity, size)?;
+        self.resize_owned_window(identity.target, size, cancel).map_err(TerminalError::from_port)
+    }
+
+    pub(crate) fn terminal_acknowledge(
+        &self,
+        identity: AttachmentIdentity<'_>,
+        sequence: u64,
+    ) -> Result<(), TerminalError> {
+        self.attachments.acknowledge(identity, sequence)
+    }
+
+    pub(crate) fn detach_surface(
+        &self,
+        surface_key: &str,
+        attachment_id: &str,
+        webview_label: &str,
+        target_generation: u64,
+    ) -> Result<(), TerminalError> {
+        self.attachments.detach(surface_key, attachment_id, webview_label, target_generation)
+    }
+
+    pub(crate) fn detach_webview(&self, webview_label: &str) {
+        self.attachments.detach_webview(webview_label);
+    }
+
+    pub(crate) fn detach_all_surfaces(&self) {
+        self.attachments.detach_all();
+    }
+
+    pub(crate) fn detach_target(&self, target: &TerminalTarget) {
+        self.attachments.detach_target(target);
+    }
+
+    /// Closes one exact marked Workspace session after its PTY clients have
+    /// been detached.  The operation permit serializes this destructive
+    /// provider call with socket transitions and carries cancellation through
+    /// every tmux probe/revalidation.
+    pub(crate) fn close_workspace_target(
+        &self,
+        target: &WorkspaceTerminalTarget,
+        cancel: &CancellationToken,
+    ) -> Result<(), PortError> {
+        let _permit = self.operation_permit(cancel)?;
+        self.close_sync(target, cancel)
     }
 
     pub(crate) fn begin_transition(
@@ -638,6 +731,52 @@ impl TmuxTerminalRuntime {
             &socket,
             &["kill-session".to_owned(), "-t".to_owned(), session_name],
             root.as_path(),
+            cancel,
+            deadline,
+        )?;
+        if output.status.success() {
+            Ok(())
+        } else {
+            Err(PortError::new(PortErrorCode::Failed))
+        }
+    }
+
+    /// tmux keeps a detached session window at its previous dimensions even
+    /// after the attached client reports a new terminal size.  Resize the
+    /// exact marked target as part of the same operation-gated resize so the
+    /// interactive pane, not only the client PTY, observes the request.
+    fn resize_owned_window(
+        &self,
+        target: &TerminalTarget,
+        size: TerminalPtySize,
+        cancel: &CancellationToken,
+    ) -> Result<(), PortError> {
+        let socket = self.socket()?;
+        let deadline = OperationDeadline::new(self.timeout);
+        self.ensure_version(&socket, cancel, deadline)?;
+        if self.marker_state(&socket, cancel, deadline)? != MarkerState::Owned {
+            return Err(PortError::new(PortErrorCode::Conflict));
+        }
+        let sessions = self.list_sessions(&socket, cancel, deadline)?;
+        let (session_name, root, workspace_id, context) =
+            self.target_identity(target, &sessions)?;
+        let exact = sessions
+            .iter()
+            .find(|session| session.name == session_name)
+            .filter(|session| session.matches(context, &workspace_id, &root))
+            .ok_or_else(|| PortError::new(PortErrorCode::Conflict))?;
+        let output = self.run_tmux(
+            &socket,
+            &[
+                "resize-window".to_owned(),
+                "-t".to_owned(),
+                exact.name.clone(),
+                "-x".to_owned(),
+                size.cols.to_string(),
+                "-y".to_owned(),
+                size.rows.to_string(),
+            ],
+            &root,
             cancel,
             deadline,
         )?;
@@ -2353,7 +2492,7 @@ mod tests {
         assert!(sessions.iter().any(|session| {
             session.matches(WORKSPACE_CONTEXT, workspace_id.as_str(), &canonical_workspace_path)
         }));
-        runtime.close_sync(&workspace_target, &cancel).expect("workspace close");
+        runtime.close_workspace_target(&workspace_target, &cancel).expect("workspace close");
         let sessions = runtime
             .list_sessions(&socket, &cancel, OperationDeadline::new(runtime.timeout))
             .expect("remaining scratch session");
@@ -2495,5 +2634,276 @@ mod tests {
         std::fs::remove_file(home.join(".tmux.conf")).expect("home config removed");
         std::fs::remove_dir_all(home.join("xdg")).expect("xdg config removed");
         std::fs::remove_dir(&home).expect("temporary tmux home removed");
+    }
+
+    fn decode_test_channel_frame(
+        body: tauri::ipc::InvokeResponseBody,
+    ) -> Option<(String, u64, Vec<u8>)> {
+        let tauri::ipc::InvokeResponseBody::Raw(bytes) = body else {
+            return None;
+        };
+        if bytes.len() < 8 {
+            return None;
+        }
+        let header_len = u32::from_le_bytes(bytes[4..8].try_into().ok()?) as usize;
+        if 8 + header_len > bytes.len() {
+            return None;
+        }
+        let header: serde_json::Value = serde_json::from_slice(&bytes[8..8 + header_len]).ok()?;
+        let frame_type = header.get("type")?.as_str()?.to_owned();
+        let sequence = header.get("sequence")?.as_u64()?;
+        Some((frame_type, sequence, bytes[8 + header_len..].to_vec()))
+    }
+
+    fn terminal_identity<'a>(
+        target: &'a TerminalTarget,
+        surface_key: &'a str,
+        attachment_id: &'a str,
+        webview_label: &'a str,
+        target_generation: u64,
+    ) -> AttachmentIdentity<'a> {
+        AttachmentIdentity { target, surface_key, attachment_id, webview_label, target_generation }
+    }
+
+    #[test]
+    fn real_tmux_pty_roundtrip_resize_detach_and_replacement_preserve_session() {
+        let Some(fixture) = real_tmux_fixture("pty") else {
+            return;
+        };
+        let target = TerminalTarget::scratch();
+        fixture.runtime.ensure_sync(&target, &fixture.cancel).expect("Scratch session");
+
+        let (frame_sender, frame_receiver) = std::sync::mpsc::channel();
+        let channel = tauri::ipc::Channel::new(move |body| {
+            let _ = frame_sender.send(body);
+            Ok(())
+        });
+        let size = TerminalPtySize { cols: 80, rows: 24, pixel_width: 0, pixel_height: 0 };
+        let receipt = fixture
+            .runtime
+            .attach_surface(
+                &target,
+                "global-terminal".to_owned(),
+                "real-pty-window".to_owned(),
+                size,
+                channel,
+                &fixture.cancel,
+            )
+            .expect("attach PTY client");
+        let (frame_type, sequence, payload) = decode_test_channel_frame(
+            frame_receiver.recv_timeout(Duration::from_secs(3)).expect("Started frame"),
+        )
+        .expect("raw Started frame");
+        assert_eq!(frame_type, "started");
+        assert_eq!(sequence, 0);
+        assert!(payload.is_empty());
+
+        fixture
+            .runtime
+            .terminal_input(
+                terminal_identity(
+                    &target,
+                    "global-terminal",
+                    &receipt.attachment_id,
+                    "real-pty-window",
+                    receipt.target_generation,
+                ),
+                1,
+                b"printf 'DEVHUB_PTY_'$(printf 'ROUNDTRIP_OUTPUT')'\\n'\r",
+            )
+            .expect("write ordered input");
+        let marker = b"DEVHUB_PTY_ROUNDTRIP_OUTPUT";
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut saw_marker = false;
+        while Instant::now() < deadline && !saw_marker {
+            let body =
+                frame_receiver.recv_timeout(Duration::from_millis(250)).expect("PTY output frame");
+            let Some((frame_type, sequence, payload)) = decode_test_channel_frame(body) else {
+                continue;
+            };
+            if frame_type == "output" {
+                saw_marker |= payload.windows(marker.len()).any(|window| window == marker);
+                fixture
+                    .runtime
+                    .terminal_acknowledge(
+                        terminal_identity(
+                            &target,
+                            "global-terminal",
+                            &receipt.attachment_id,
+                            "real-pty-window",
+                            receipt.target_generation,
+                        ),
+                        sequence,
+                    )
+                    .expect("cumulative output ACK");
+            }
+            if frame_type == "error" {
+                break;
+            }
+        }
+        assert!(saw_marker, "the attached tmux pane must echo the input marker");
+
+        fixture
+            .runtime
+            .terminal_resize(
+                terminal_identity(
+                    &target,
+                    "global-terminal",
+                    &receipt.attachment_id,
+                    "real-pty-window",
+                    receipt.target_generation,
+                ),
+                TerminalPtySize { cols: 100, rows: 30, pixel_width: 0, pixel_height: 0 },
+                &fixture.cancel,
+            )
+            .expect("queue PTY resize");
+        let resize_deadline = Instant::now() + Duration::from_secs(3);
+        let mut resized = false;
+        while Instant::now() < resize_deadline {
+            let pane = fixture
+                .runtime
+                .run_tmux(
+                    &fixture.socket,
+                    &[
+                        "display-message".to_owned(),
+                        "-p".to_owned(),
+                        "-t".to_owned(),
+                        "scratch:0.0".to_owned(),
+                        "#{pane_width}x#{pane_height}".to_owned(),
+                    ],
+                    &fixture.home,
+                    &fixture.cancel,
+                    OperationDeadline::new(fixture.runtime.timeout),
+                )
+                .expect("inspect tmux pane dimensions");
+            resized = pane.stdout.windows(b"100x30".len()).any(|window| window == b"100x30");
+            if resized {
+                break;
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+        assert!(resized, "the exact owned tmux pane must observe the requested geometry");
+        thread::sleep(Duration::from_millis(250));
+
+        fixture
+            .runtime
+            .terminal_input(
+                terminal_identity(
+                    &target,
+                    "global-terminal",
+                    &receipt.attachment_id,
+                    "real-pty-window",
+                    receipt.target_generation,
+                ),
+                2,
+                b"printf 'DEVHUB_PTY_'$(printf 'SIZE_OUTPUT')':'; stty size; printf '\\n'\r",
+            )
+            .expect("query resized PTY dimensions");
+        let size_deadline = Instant::now() + Duration::from_secs(3);
+        let mut size_output = Vec::new();
+        let mut saw_size = false;
+        while Instant::now() < size_deadline && !saw_size {
+            let body = frame_receiver
+                .recv_timeout(Duration::from_millis(250))
+                .expect("resized PTY output frame");
+            let Some((frame_type, sequence, payload)) = decode_test_channel_frame(body) else {
+                continue;
+            };
+            if frame_type == "output" {
+                size_output.extend_from_slice(&payload);
+                saw_size = size_output
+                    .windows(b"DEVHUB_PTY_SIZE_OUTPUT:".len())
+                    .any(|window| window == b"DEVHUB_PTY_SIZE_OUTPUT:")
+                    && size_output.windows(b"30 100".len()).any(|window| window == b"30 100");
+                fixture
+                    .runtime
+                    .terminal_acknowledge(
+                        terminal_identity(
+                            &target,
+                            "global-terminal",
+                            &receipt.attachment_id,
+                            "real-pty-window",
+                            receipt.target_generation,
+                        ),
+                        sequence,
+                    )
+                    .expect("ACK resized output");
+            }
+        }
+        assert!(saw_size, "the attached shell must observe the requested PTY rows and columns");
+
+        fixture
+            .runtime
+            .detach_surface(
+                "global-terminal",
+                &receipt.attachment_id,
+                "real-pty-window",
+                receipt.target_generation,
+            )
+            .expect("detach PTY client");
+        assert_eq!(fixture.runtime.attachments.count(), 0);
+        assert!(fixture
+            .runtime
+            .list_sessions(
+                &fixture.socket,
+                &fixture.cancel,
+                OperationDeadline::new(fixture.runtime.timeout),
+            )
+            .expect("session survives PTY detach")
+            .iter()
+            .any(|session| session.name == SCRATCH_SESSION && session.is_marked(&fixture.home)));
+
+        // Repeated attach replaces the old view only.  The stale receipt is
+        // rejected by identity/generation, while the new client remains
+        // usable and the tmux owner is untouched.
+        let replacement_channel = tauri::ipc::Channel::new(|_| Ok(()));
+        let replacement = fixture
+            .runtime
+            .attach_surface(
+                &target,
+                "global-terminal".to_owned(),
+                "real-pty-window".to_owned(),
+                size,
+                replacement_channel,
+                &fixture.cancel,
+            )
+            .expect("replacement attach");
+        let latest_channel = tauri::ipc::Channel::new(|_| Ok(()));
+        let latest = fixture
+            .runtime
+            .attach_surface(
+                &target,
+                "global-terminal".to_owned(),
+                "real-pty-window".to_owned(),
+                size,
+                latest_channel,
+                &fixture.cancel,
+            )
+            .expect("second replacement attach");
+        assert_ne!(replacement.attachment_id, latest.attachment_id);
+        assert!(matches!(
+            fixture.runtime.terminal_input(
+                terminal_identity(
+                    &target,
+                    "global-terminal",
+                    &replacement.attachment_id,
+                    "real-pty-window",
+                    replacement.target_generation,
+                ),
+                1,
+                b"stale\r",
+            ),
+            Err(error) if error.code() == TerminalErrorCode::WrongAttachment
+        ));
+        fixture
+            .runtime
+            .detach_surface(
+                "global-terminal",
+                &latest.attachment_id,
+                "real-pty-window",
+                latest.target_generation,
+            )
+            .expect("detach replacement");
+        assert_eq!(fixture.runtime.attachments.count(), 0);
     }
 }

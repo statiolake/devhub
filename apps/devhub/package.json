@@ -5,8 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "fmt": "prettier --write src index.html package.json vite.config.ts eslint.config.js ../../contracts",
-    "fmt:check": "prettier --check src index.html package.json vite.config.ts eslint.config.js ../../contracts",
+    "fmt": "prettier --write src index.html package.json vite.config.ts eslint.config.js ../../contracts ../../scripts/check-terminal-contract.mjs ../../scripts/generate-terminal-contract.mjs",
+    "fmt:check": "prettier --check src index.html package.json vite.config.ts eslint.config.js ../../contracts ../../scripts/check-terminal-contract.mjs ../../scripts/generate-terminal-contract.mjs",
     "build": "tsc -p tsconfig.app.json --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc -p tsconfig.app.json --noEmit",
@@ -17,6 +17,8 @@
   },
   "dependencies": {
     "@tauri-apps/api": "2.11.1",
+    "@xterm/addon-fit": "0.11.0",
+    "@xterm/xterm": "6.0.0",
     "react": "19.1.1",
     "react-dom": "19.1.1"
   },

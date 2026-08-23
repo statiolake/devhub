@@ -8,6 +8,11 @@
     "allow-get-app-snapshot",
     "allow-get-app-appearance",
     "allow-dispatch-app-intent",
-    "allow-replay-app-events"
+    "allow-replay-app-events",
+    "allow-terminal-attach",
+    "allow-terminal-input",
+    "allow-terminal-resize",
+    "allow-terminal-acknowledge",
+    "allow-terminal-detach"
   ]
 }

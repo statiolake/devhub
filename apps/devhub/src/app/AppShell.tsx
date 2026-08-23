@@ -85,6 +85,7 @@ function Workbench() {
         <SurfaceViewport
           snapshot={state.snapshot}
           intentError={intentError?.summary}
+          appearance={appearance}
         />
       </div>
     </main>

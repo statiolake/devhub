@@ -120,6 +120,10 @@ impl ResolvedExecutable {
         self.path.file_name().and_then(|name| name.to_str())
     }
 
+    pub(crate) fn path(&self) -> &Path {
+        &self.path
+    }
+
     #[cfg(test)]
     pub(crate) const fn mode(&self) -> ResolutionMode {
         self.mode
@@ -280,6 +284,13 @@ impl RuntimeLaunchContext {
 
     pub(crate) fn environment_value(&self, name: &str) -> Option<&OsStr> {
         self.environment.get(OsStr::new(name)).map(OsString::as_os_str)
+    }
+
+    /// The PTY adapter uses the same startup-frozen environment as every
+    /// other native child. Values stay inside the child command and never
+    /// cross a product wire contract or diagnostic surface.
+    pub(crate) fn environment_entries(&self) -> impl Iterator<Item = (&OsString, &OsString)> {
+        self.environment.iter()
     }
 
     /// Applies the same current directory and isolated environment to an
