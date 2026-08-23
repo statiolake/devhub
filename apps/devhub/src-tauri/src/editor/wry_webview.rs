@@ -13,7 +13,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 const MAIN_THREAD_CALL_TIMEOUT: Duration = Duration::from_secs(8);
 
@@ -203,6 +203,15 @@ fn dispatch(
     id: u64,
     command: NativeCommand,
 ) -> EditorResult<()> {
+    dispatch_until(window, id, command, Instant::now() + MAIN_THREAD_CALL_TIMEOUT)
+}
+
+fn dispatch_until(
+    window: &tauri::Window<tauri::Wry>,
+    id: u64,
+    command: NativeCommand,
+    deadline: Instant,
+) -> EditorResult<()> {
     let (sender, receiver) = mpsc::sync_channel(1);
     let state = Arc::new(DispatchState::<()>::default());
     let callback_state = Arc::clone(&state);
@@ -252,7 +261,11 @@ fn dispatch(
             let _ = sender.send(result);
         })
         .map_err(|_| EditorError::new(EditorErrorCode::WebViewUnavailable))?;
-    wait_for_dispatch(&state, receiver)
+    wait_for_dispatch_with_timeout(
+        &state,
+        receiver,
+        deadline.saturating_duration_since(Instant::now()),
+    )
 }
 
 #[derive(Default)]
@@ -275,7 +288,15 @@ fn wait_for_dispatch<T: Clone>(
     state: &Arc<DispatchState<T>>,
     receiver: mpsc::Receiver<EditorResult<T>>,
 ) -> EditorResult<T> {
-    match receiver.recv_timeout(MAIN_THREAD_CALL_TIMEOUT) {
+    wait_for_dispatch_with_timeout(state, receiver, MAIN_THREAD_CALL_TIMEOUT)
+}
+
+fn wait_for_dispatch_with_timeout<T: Clone>(
+    state: &Arc<DispatchState<T>>,
+    receiver: mpsc::Receiver<EditorResult<T>>,
+    timeout: Duration,
+) -> EditorResult<T> {
+    match receiver.recv_timeout(timeout) {
         Ok(result) => result,
         Err(_) => {
             // Serialize timeout cancellation with the UI callback. If the
@@ -320,10 +341,14 @@ impl EditorWebView for RawWryEditorWebView {
     }
 
     fn close(&self) -> EditorResult<()> {
+        self.close_until(Instant::now() + MAIN_THREAD_CALL_TIMEOUT)
+    }
+
+    fn close_until(&self, deadline: Instant) -> EditorResult<()> {
         if self.closed.swap(true, Ordering::AcqRel) {
             return Ok(());
         }
-        match dispatch(&self.window, self.id, NativeCommand::Close) {
+        match dispatch_until(&self.window, self.id, NativeCommand::Close, deadline) {
             Ok(()) => Ok(()),
             Err(error) => {
                 self.closed.store(false, Ordering::Release);

@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use devhub_app_core::ports::{
     CancellationToken, EditorHost as EditorHostPort, EditorHostResult, PortError, PortErrorCode,
@@ -188,15 +188,32 @@ impl EditorHost {
     }
 
     pub fn attach_webview_host(&self, host: Arc<dyn WebViewHost>) -> EditorResult<()> {
-        *self
+        let mut webviews = self
             .webviews
             .lock()
-            .map_err(|_| EditorError::new(EditorErrorCode::LifecycleConflict))? = Some(host);
+            .map_err(|_| EditorError::new(EditorErrorCode::LifecycleConflict))?;
+        let already_attached = self
+            .state
+            .lock()
+            .map_err(|_| EditorError::new(EditorErrorCode::LifecycleConflict))?
+            .window_attached;
+        if webviews.is_some() && already_attached {
+            return Err(EditorError::new(EditorErrorCode::LifecycleConflict));
+        }
+        *webviews = Some(host);
         self.state
             .lock()
             .map_err(|_| EditorError::new(EditorErrorCode::LifecycleConflict))?
             .window_attached = true;
         Ok(())
+    }
+
+    /// Reports whether a live native Window host is attached. The native
+    /// shell uses this to retry a startup/Dock reconstruction after a missing
+    /// WRY/OpenVSCode resource becomes available, without rebuilding an
+    /// already-attached host or duplicating child WebViews.
+    pub fn window_attached(&self) -> bool {
+        self.state.lock().map(|state| state.window_attached).unwrap_or(false)
     }
 
     pub fn navigation_decision(
@@ -489,6 +506,23 @@ impl EditorHost {
             .focus()
     }
 
+    /// Hides every mounted child while retaining each semantic surface
+    /// record. This is used when the restored Activity is Agent or Terminal:
+    /// Editor WebViews are reconstructed once, but no editor child is allowed
+    /// to cover the active App Shell surface.
+    pub fn hide_surfaces(&self) -> EditorResult<()> {
+        let mut state =
+            self.state.lock().map_err(|_| EditorError::new(EditorErrorCode::LifecycleConflict))?;
+        for record in state.surfaces.values_mut() {
+            if let Some(webview) = record.webview.as_ref() {
+                webview.hide()?;
+            }
+            record.visible = false;
+        }
+        state.active = None;
+        Ok(())
+    }
+
     /// Ask the Bridge extension to reconcile its full Workbench projection.
     /// The request carries only the stable native surface identity.
     pub fn request_bridge_snapshot(&self, key: &EditorSurfaceKey) -> EditorResult<()> {
@@ -548,13 +582,22 @@ impl EditorHost {
     /// Close the native child WebViews but deliberately retain the server,
     /// token, registry, and provider profile for Dock reconstruction.
     pub fn close_window(&self) -> EditorResult<()> {
+        self.close_window_until(Instant::now() + Duration::from_secs(5))
+    }
+
+    fn close_window_until(&self, deadline: Instant) -> EditorResult<()> {
         let mut state =
             self.state.lock().map_err(|_| EditorError::new(EditorErrorCode::LifecycleConflict))?;
         let mut destroyed = 0_u16;
         let mut first_error = None;
         for record in state.surfaces.values_mut() {
             if let Some(webview) = record.webview.take() {
-                match webview.close() {
+                let close_result = if Instant::now() < deadline {
+                    webview.close_until(deadline)
+                } else {
+                    Err(EditorError::new(EditorErrorCode::WebViewUnavailable))
+                };
+                match close_result {
                     Ok(()) => destroyed = destroyed.saturating_add(1),
                     Err(error) => {
                         record.webview = Some(webview);
@@ -580,26 +623,71 @@ impl EditorHost {
     /// Close children first, then stop only the verified process group and
     /// remove the ephemeral token. Durable state and stable origin remain.
     pub fn shutdown(&self) -> EditorResult<()> {
-        self.close_window()?;
-        {
-            let state = self
-                .state
-                .lock()
-                .map_err(|_| EditorError::new(EditorErrorCode::LifecycleConflict))?;
+        self.shutdown_until(Instant::now() + Duration::from_secs(5))
+    }
+
+    /// Deadline-aware native shutdown used by process quit. Child-WebView
+    /// calls are synchronous by WRY contract, while Bridge/listener workers
+    /// receive the same absolute deadline and never outlive a bounded join
+    /// attempt. A timeout is returned so the caller cannot mark clean state.
+    pub fn shutdown_until(&self, deadline: Instant) -> EditorResult<()> {
+        // Cleanup is best-effort as one bounded transaction: a child-WebView
+        // or Bridge worker failure must not prevent the owned OpenVSCode
+        // process from receiving its shutdown request. The first error is
+        // returned after every independent local resource has been attempted;
+        // callers then refuse to mark clean shutdown.
+        let mut first_error = self.close_window_until(deadline).err();
+        if let Ok(state) = self.state.lock() {
             if let Some(runtime) = state.runtime.as_ref() {
-                runtime.bridge.stop()?;
+                if let Err(error) = runtime.bridge.stop_until(deadline) {
+                    if first_error.is_none() {
+                        first_error = Some(error);
+                    }
+                }
             }
+        } else if first_error.is_none() {
+            first_error = Some(EditorError::new(EditorErrorCode::LifecycleConflict));
+        }
+        if Instant::now() >= deadline && first_error.is_none() {
+            first_error = Some(EditorError::new(EditorErrorCode::BridgeUnavailable));
         }
         let mut process = self
             .process
             .lock()
             .map_err(|_| EditorError::new(EditorErrorCode::LifecycleConflict))?;
-        process.stop()?;
+        let process_stopped = match process.stop_until(deadline) {
+            Ok(true) => true,
+            Ok(false) => {
+                if first_error.is_none() {
+                    first_error = Some(EditorError::new(EditorErrorCode::ProcessUnavailable));
+                }
+                false
+            }
+            Err(error) => {
+                if first_error.is_none() {
+                    first_error = Some(error);
+                }
+                false
+            }
+        };
+        drop(process);
         let mut state =
             self.state.lock().map_err(|_| EditorError::new(EditorErrorCode::LifecycleConflict))?;
-        if let Some(runtime) = state.runtime.take() {
-            runtime.paths.remove_ephemeral_token()?;
-            append_lifecycle_log(&runtime.paths, LifecycleEvent::ServerStopped)?;
+        if process_stopped {
+            if let Some(runtime) = state.runtime.take() {
+                if let Err(error) = runtime.paths.remove_ephemeral_token() {
+                    if first_error.is_none() {
+                        first_error = Some(error);
+                    }
+                }
+                if let Err(error) =
+                    append_lifecycle_log(&runtime.paths, LifecycleEvent::ServerStopped)
+                {
+                    if first_error.is_none() {
+                        first_error = Some(error);
+                    }
+                }
+            }
         }
         state.failed = None;
         state.window_attached = false;
@@ -608,7 +696,7 @@ impl EditorHost {
             .webviews
             .lock()
             .map_err(|_| EditorError::new(EditorErrorCode::LifecycleConflict))? = None;
-        Ok(())
+        first_error.map_or(Ok(()), Err)
     }
 
     pub fn close_workspace_surface(&self, workspace_id: &str) -> EditorResult<()> {
@@ -778,10 +866,10 @@ mod tests {
             }
         }
 
-        fn terminate(&mut self) -> EditorResult<()> {
+        fn terminate_until(&mut self, _deadline: Instant) -> EditorResult<bool> {
             self.alive.store(false, Ordering::Release);
             self.terminated.fetch_add(1, Ordering::AcqRel);
-            Ok(())
+            Ok(true)
         }
     }
 
@@ -803,6 +891,39 @@ mod tests {
                 alive: self.alive.clone(),
                 terminated: self.terminated.clone(),
             }))
+        }
+    }
+
+    struct ExpiredDeadlineProcess {
+        terminated: Arc<AtomicBool>,
+    }
+
+    impl ManagedProcess for ExpiredDeadlineProcess {
+        fn identity(&self) -> super::super::process::ProcessIdentity {
+            super::super::process::ProcessIdentity::new(101, "/pinned/openvscode-server")
+        }
+
+        fn identity_verified(&self) -> bool {
+            true
+        }
+
+        fn try_wait(&mut self) -> EditorResult<Option<ProcessExit>> {
+            Ok(None)
+        }
+
+        fn terminate_until(&mut self, _deadline: Instant) -> EditorResult<bool> {
+            self.terminated.store(true, Ordering::Release);
+            Ok(false)
+        }
+    }
+
+    struct ExpiredDeadlineAdapter {
+        terminated: Arc<AtomicBool>,
+    }
+
+    impl ProcessAdapter for ExpiredDeadlineAdapter {
+        fn spawn(&self, _spec: &ProcessSpec) -> EditorResult<Box<dyn ManagedProcess>> {
+            Ok(Box::new(ExpiredDeadlineProcess { terminated: self.terminated.clone() }))
         }
     }
 
@@ -953,6 +1074,7 @@ mod tests {
             2
         );
         assert!(!host.snapshot(&global).expect("global snapshot").mounted);
+        assert_eq!(terminated.load(Ordering::Acquire), 0, "Window Close must not stop OpenVSCode");
         host.attach_webview_host(webviews.clone()).expect("reattach");
         host.ensure_surface(global.clone(), None, bounds).expect("reconstruct global");
         assert_eq!(webviews.created.lock().expect("created").len(), 3);
@@ -969,6 +1091,37 @@ mod tests {
         host.shutdown().expect("shutdown");
         assert_eq!(terminated.load(Ordering::Acquire), 1);
         assert!(!paths.token_file().exists());
+    }
+
+    #[test]
+    fn shutdown_attempts_owned_server_after_deadline_expired() {
+        let root = test_root("expired-deadline");
+        let home = root.join("home");
+        fs::create_dir_all(&home).expect("home");
+        let terminated = Arc::new(AtomicBool::new(false));
+        let host = EditorHost::with_adapters(
+            EditorHostConfig::new(&home, None),
+            Arc::new(ExpiredDeadlineAdapter { terminated: terminated.clone() }),
+            Arc::new(FakeReadiness { ready: true, calls: Arc::new(AtomicUsize::new(0)) }),
+            Arc::new(FakePorts),
+        );
+        host.process
+            .lock()
+            .expect("process")
+            .spawn(
+                &ExpiredDeadlineAdapter { terminated: terminated.clone() },
+                &ProcessSpec::new("/pinned/openvscode-server", []),
+            )
+            .expect("owned process");
+
+        let result = host.shutdown_until(Instant::now());
+        assert!(result.is_err(), "an incomplete handoff cannot be clean");
+        assert!(
+            terminated.load(Ordering::Acquire),
+            "quit must initiate termination after deadline"
+        );
+        assert!(host.process.lock().expect("process").process().is_none());
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

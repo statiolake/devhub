@@ -27,6 +27,7 @@ gate, not just source-code presence.
 | A3.6 AgentRuntime                     | Complete; standalone provider slice                         | Herdr 0.8.1/protocol-20 bootstrap and capability gate, profile validation, opaque mappings, subscription-buffer-snapshot reconciliation, launch/control/status projection, lifecycle cleanup/tombstones, reconnect, attach/detach/takeover, and idempotent termination; `cargo test -p devhub-app --lib agent:: --locked --offline` (26 passed, 3 ignored), `scripts/check-agent-runtime-real.sh` against the pinned Herdr 0.8.1 binary, `cargo test --workspace --locked`, and full checks pass (this tracker revision)                                                                                                         |
 | I4.1 Workspace operations             | Complete                                                    | Rust-owned streaming Workspace Picker with fuzzy discovery, canonical duplicate-root focus, native Open Folder/Locate, unavailable Retry/Locate/Close recovery, real tmux/Herdr/Editor effects, bounded Bridge routing, durable inspected close with ordered cleanup and restart recovery, and accessible typed confirmations; `CI=true pnpm run check` (74 frontend tests, 179 native tests passed plus 3 intentionally ignored, 144 core tests), the real Herdr 0.8.1 runner, and `git diff --check` pass (this tracker revision)                                                                                              |
 | I4.2 Agent UX                         | Complete                                                    | Rust-owned enabled-profile projection with typed degraded/unavailable states, launch-time profile snapshots and durable opaque provider mappings, stable profile-based naming/rename, continuous AgentRuntime reconciliation, binary-safe bounded xterm control streams, working/waiting/idle/error and aggregate status semantics, stop/natural-exit race handling, detach/app-quit nontermination, and accessible navigation/dialog/focus/IME behavior; `CI=true pnpm run check` (89 frontend tests, 149 core tests, 186 native tests passed plus 3 intentionally ignored) and `git diff --check` pass (this tracker revision) |
+| I4.3 App lifecycle                    | Complete; automated green; interactive pending              | Lifecycle transaction gate, generation-bound commands, guarded single-window Close/Dock reconstruction and projection cleanup, quit-only OpenVSCode shutdown, provider/tmux survival, exact persistence/relaunch recovery, bounded shutdown, and stale-event protection; `CI=true pnpm run check` PASS; `cargo test -p devhub-app --lib`: 212 passed, 3 ignored; focused lifecycle/Bridge/attach/window-generation audits PASS. Interactive Apple Silicon close/reopen, quit/relaunch, and 8-Workspace/16-Agent/9-Editor scale acceptance remains a separate pending quality/release lane (this tracker revision)                |
 
 P2.1 provides the versioned TOML model, defaults and strict validation,
 comment-preserving conflict-safe writes, symlink-safe atomic replacement,
@@ -45,22 +46,25 @@ tmux-backed terminal surface without replacing or policing the upstream VS
 Code Integrated Terminal.
 
 E3.4, E3.5, and A3.6 remain complete provider slices. I4.1 integrates their
-trusted workspace effects through the Rust-owned coordinator and App Shell, and
-I4.2 adds the Rust-owned Agent UX around the same seams: profile availability,
-launch snapshots and opaque mappings, continuous reconciliation, binary-safe
-control surfaces, status/stop semantics, and accessibility. Context menus, app
-lifecycle, keyboard behavior beyond the shipped basics, diagnostics, and the
-remaining later-wave surfaces are not implied by these completed gates.
+trusted workspace effects through the Rust-owned coordinator, I4.2 adds the
+Rust-owned Agent UX around the same seams, and I4.3 completes the app lifecycle
+boundary: profile availability, launch snapshots and opaque mappings, continuous
+reconciliation, binary-safe control surfaces, status/stop semantics,
+accessibility, single-window reconstruction, and provider-safe quit/relaunch.
+Interactive Apple Silicon lifecycle scale and relaunch acceptance is still a
+separate pending quality/release record; context menus, keyboard behavior beyond
+the shipped basics, diagnostics, and the remaining later-wave surfaces are not
+implied by these completed gates.
 
 ## Partial gates
 
-| Gate           | Result  | Remaining scope                                                                                                                                                                                                                                                                                                   |
-| -------------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| U2.3 App Shell | Partial | Native App Shell structure, navigation, immutable state/error handling, persistence, streaming picker, unavailable-workspace recovery, typed confirmations, integrated workspace provider surfaces, and Agent UX are complete. Context menus, app lifecycle, keyboard behavior, and diagnostics remain for I4.3+. |
+| Gate           | Result  | Remaining scope                                                                                                                                                                                                                                                                                                        |
+| -------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| U2.3 App Shell | Partial | Native App Shell structure, navigation, immutable state/error handling, persistence, streaming picker, unavailable-workspace recovery, typed confirmations, integrated workspace provider surfaces, Agent UX, and I4.3 app lifecycle are complete. Context menus, keyboard behavior, and diagnostics remain for I4.4+. |
 
 ## Next
 
-1. I4.3 App lifecycle.
+1. I4.4 Keyboard routing.
 
 The latest local validation also includes `CI=true pnpm run build` and
 `CI=true pnpm --filter @devhub/app exec tauri build --debug --no-bundle`.
@@ -69,8 +73,9 @@ The latest local validation also includes `CI=true pnpm run build` and
 
 - Wave 3: A3.6 AgentRuntime, E3.4 EditorHost, and E3.5 Bridge extension are
   complete as standalone provider slices.
-- Wave 4: I4.1 workspace/provider integration and I4.2 Agent UX are complete;
-  I4.3 app lifecycle, context menus, keyboard behavior, and diagnostics remain.
+- Wave 4: I4.1 workspace/provider integration, I4.2 Agent UX, and I4.3 app
+  lifecycle are complete; context menus, keyboard behavior, and diagnostics
+  remain.
 - Wave 5: accessibility/IME, performance/endurance, brand, security, and
   notices.
 - Wave 6: packaging, public repository setup, and version `0.1.0` release.

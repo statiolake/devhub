@@ -16,8 +16,13 @@ import {
 import { SettingsApp } from "./SettingsApp";
 import type { SettingsClient } from "./client";
 
+const closeWindow = vi.hoisted(() => vi.fn(async () => undefined));
+
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
+vi.mock("@tauri-apps/api/window", () => ({
+  getCurrentWindow: () => ({ close: closeWindow }),
+}));
 
 function makeClient(initialSnapshot?: SettingsSnapshot) {
   const snapshot =
@@ -46,6 +51,19 @@ function makeClient(initialSnapshot?: SettingsSnapshot) {
 }
 
 describe("SettingsApp", () => {
+  it("keeps Cmd-W local to the Settings singleton", async () => {
+    const { client } = makeClient();
+    closeWindow.mockClear();
+    render(<SettingsApp client={client} />);
+    await screen.findByRole("heading", { name: "General" });
+
+    fireEvent.keyDown(document, { key: "w", metaKey: true });
+    await waitFor(() => expect(closeWindow).toHaveBeenCalledOnce());
+    closeWindow.mockClear();
+    fireEvent.keyDown(document, { key: "w", metaKey: true, ctrlKey: true });
+    expect(closeWindow).not.toHaveBeenCalled();
+  });
+
   it("renders the five native Settings sections and keeps a local dirty draft", async () => {
     const { client } = makeClient();
     render(<SettingsApp client={client} />);

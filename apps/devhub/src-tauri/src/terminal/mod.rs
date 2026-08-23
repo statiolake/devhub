@@ -325,6 +325,12 @@ impl TmuxTerminalRuntime {
         self.attachments.detach_all();
     }
 
+    /// Bounded app-quit variant. It cancels in-flight attach publication,
+    /// closes PTY readers/reapers, and leaves the owned tmux sessions intact.
+    pub(crate) fn detach_all_surfaces_until(&self, deadline: Instant) -> bool {
+        self.attachments.detach_all_until(deadline)
+    }
+
     pub(crate) fn detach_target(&self, target: &TerminalTarget) {
         self.attachments.detach_target(target);
     }

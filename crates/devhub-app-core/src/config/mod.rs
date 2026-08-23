@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use toml_edit::{DocumentMut, Item, Table, TableLike};
@@ -893,10 +893,24 @@ pub struct ConfigWatcher {
 
 impl ConfigWatcher {
     /// Requests the watcher to stop and waits for its polling thread.
-    pub fn stop(mut self) {
+    pub fn stop(self) {
+        let _ = self.stop_until(Instant::now() + Duration::from_secs(5));
+    }
+
+    /// Bounded shutdown used by the native lifecycle. The watcher owns no
+    /// provider resource, so a still-running poller may be detached after its
+    /// stop flag is set rather than delaying process exit indefinitely.
+    pub fn stop_until(mut self, deadline: Instant) -> bool {
         self.stop.store(true, Ordering::Release);
-        if let Some(handle) = self.handle.take() {
-            let _ = handle.join();
+        let Some(handle) = self.handle.take() else { return true };
+        while !handle.is_finished() && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(5));
+        }
+        if handle.is_finished() {
+            handle.join().is_ok()
+        } else {
+            drop(handle);
+            false
         }
     }
 }
@@ -906,7 +920,11 @@ impl Drop for ConfigWatcher {
         self.stop.store(true, Ordering::Release);
         if let Some(handle) = self.handle.take() {
             if handle.thread().id() != thread::current().id() {
-                let _ = handle.join();
+                if handle.is_finished() {
+                    let _ = handle.join();
+                } else {
+                    drop(handle);
+                }
             }
         }
     }

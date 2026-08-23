@@ -7,8 +7,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{sync_channel, SyncSender, TrySendError};
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::sync::{Arc, Condvar, Mutex};
+use std::time::{Duration, Instant};
 
 use devhub_app_core::config::{
     default_config_path, AgentProfileKind as ConfigAgentProfileKind, ConfigDiagnostic, ConfigStore,
@@ -39,12 +39,14 @@ use devhub_app_core::{
     TerminalTarget, UserIntent, WorkspaceCleanupResult, WorkspaceId, WorkspacePickerEventWire,
     SETTINGS_SEQUENCE_MAX,
 };
+use raw_window_handle::HasWindowHandle;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::{AppHandle, Emitter, Manager, State, Webview, WebviewUrl, WebviewWindowBuilder};
 
 pub mod agent;
 pub mod discovery;
 pub mod editor;
+mod integration;
 mod repository;
 mod runtime;
 mod terminal;
@@ -55,6 +57,8 @@ use editor::{
     BridgeEvent, BridgeEventSink, BridgeRequest, BridgeRequestDisposition, BridgeRequestResult,
 };
 use editor::{EditorHost, EditorHostConfig};
+use editor::{NavigationRequest, NavigationRouter, WryWebViewHost};
+use integration::lifecycle::{safe_restore_frame, DisplayWorkArea, LifecycleGate, Phase};
 use repository::{GitRepositoryResolver, GitRepositoryResolverConfig};
 use runtime::{LoginEnvironmentStatus, RuntimeLaunchContext};
 use terminal::{
@@ -73,6 +77,8 @@ pub const APP_SHELL_WINDOW_LABEL: &str = "app-shell";
 pub const SETTINGS_CHANGED_EVENT: &str = "settings://changed";
 pub const SETTINGS_WINDOW_LABEL: &str = "settings";
 pub const OPEN_SETTINGS_MENU_ID: &str = "open-settings";
+const CLOSE_WINDOW_MENU_ID: &str = "close-window";
+const QUIT_MENU_ID: &str = "quit-devhub";
 const MAX_EFFECT_STEPS: usize = 1_024;
 const FOLDER_CHOOSER_SCRIPT: &str =
     "POSIX path of (choose folder with prompt \"Open Workspace Folder\")";
@@ -163,6 +169,15 @@ impl NativeBridgeSink {
             *slot = Some(Arc::new(router));
         }
     }
+
+    /// Drops the only sender held by the bridge route closure. The route
+    /// worker's receive loop then exits instead of surviving app quit with a
+    /// detached listener thread.
+    fn clear_router(&self) {
+        if let Ok(mut slot) = self.router.lock() {
+            slot.take();
+        }
+    }
 }
 
 impl BridgeEventSink for NativeBridgeSink {
@@ -247,10 +262,101 @@ impl BridgeEventSink for NativeBridgeSink {
     }
 }
 
+/// Navigation adapter for raw Editor child WebViews. It is deliberately
+/// App-Shell-only: folder requests become Rust-owned intents and external
+/// links are handed to the user's default browser without exposing Tauri IPC
+/// to the child WebView.
+#[derive(Clone)]
+struct NativeNavigationRouter {
+    app: AppHandle,
+    window_identity: NativeWindowIdentity,
+}
+
+impl NativeNavigationRouter {
+    fn is_current_open(&self, state: &NativeAppState) -> bool {
+        state.lifecycle.phase() == Phase::Open
+            && state.is_current_native_identity(self.window_identity)
+    }
+}
+
+impl NavigationRouter for NativeNavigationRouter {
+    fn route_workspace(
+        &self,
+        _surface: &str,
+        request: &NavigationRequest,
+    ) -> editor::EditorResult<()> {
+        let NavigationRequest::Workspace { absolute_path } = request else {
+            return Err(editor::EditorError::new(editor::EditorErrorCode::NavigationDenied));
+        };
+        let Some(state) = self.app.try_state::<NativeAppState>() else {
+            return Err(editor::EditorError::new(editor::EditorErrorCode::LifecycleConflict));
+        };
+        let lifecycle = state
+            .capture_open_lifecycle_token()
+            .map_err(|_| editor::EditorError::new(editor::EditorErrorCode::LifecycleConflict))?;
+        let path = devhub_app_core::RequestedPath::new(absolute_path.to_string_lossy().to_string())
+            .map_err(|_| editor::EditorError::new(editor::EditorErrorCode::NavigationDenied))?;
+        let app = self.app.clone();
+        let window_identity = self.window_identity;
+        // WRY invokes navigation handlers on the AppKit thread. Dispatch the
+        // Rust intent away from that thread because an Editor surface switch
+        // may synchronously create/hide another raw child WebView.
+        tauri::async_runtime::spawn_blocking(move || {
+            let Some(state) = app.try_state::<NativeAppState>() else { return };
+            if !state.is_current_native_identity(window_identity)
+                || state.lifecycle.phase() != Phase::Open
+            {
+                return;
+            }
+            match state.dispatch_intent_with_lifecycle(UserIntent::OpenFolder { path }, lifecycle) {
+                Ok((outcome, changed)) if changed => {
+                    let _ = app.emit_to(
+                        APP_SHELL_WINDOW_LABEL,
+                        APP_SNAPSHOT_CHANGED_EVENT,
+                        outcome.snapshot(),
+                    );
+                }
+                Ok(_) => {}
+                Err(error) => state.record_native_error(error),
+            }
+        });
+        Ok(())
+    }
+
+    fn open_external(&self, request: &NavigationRequest) -> editor::EditorResult<()> {
+        let NavigationRequest::External { url } = request else {
+            return Err(editor::EditorError::new(editor::EditorErrorCode::NavigationDenied));
+        };
+        let Some(state) = self.app.try_state::<NativeAppState>() else {
+            return Err(editor::EditorError::new(editor::EditorErrorCode::LifecycleConflict));
+        };
+        if !self.is_current_open(&state) {
+            return Err(editor::EditorError::new(editor::EditorErrorCode::LifecycleConflict));
+        }
+        let app = self.app.clone();
+        let window_identity = self.window_identity;
+        let url = url.to_string();
+        tauri::async_runtime::spawn_blocking(move || {
+            let Some(state) = app.try_state::<NativeAppState>() else { return };
+            if !state.is_current_native_identity(window_identity)
+                || state.lifecycle.phase() != Phase::Open
+            {
+                return;
+            }
+            let status = ProcessCommand::new("open").arg(url).status();
+            if status.as_ref().is_err() || !status.map(|status| status.success()).unwrap_or(false) {
+                state.record_native_error(AppErrorWire::native_unavailable());
+            }
+        });
+        Ok(())
+    }
+}
+
 struct PickerSink {
     app: AppHandle,
     query: String,
     last_sequence: AtomicU64,
+    lifecycle: NativeLifecycleToken,
 }
 
 impl PickerSink {
@@ -261,10 +367,22 @@ impl PickerSink {
     fn observe_sequence(&self, sequence: u64) {
         let _ = self.last_sequence.fetch_max(sequence, Ordering::AcqRel);
     }
+
+    fn is_current(&self) -> bool {
+        self.app
+            .try_state::<NativeAppState>()
+            .is_some_and(|state| state.validate_app_lifecycle_token(self.lifecycle).is_ok())
+    }
 }
 
 impl WorkspaceDiscoverySink for PickerSink {
     fn emit(&self, event: WorkspaceDiscoveryEvent) {
+        // Discovery can finish after its App Shell has been detached. A
+        // generation check prevents those provider callbacks from appearing
+        // in a newly reconstructed picker with the same Window label.
+        if !self.is_current() {
+            return;
+        }
         self.observe_sequence(event.sequence);
         match event.kind {
             WorkspaceDiscoveryEventKind::Candidate { candidate, projection, .. } => {
@@ -377,6 +495,30 @@ struct PersistenceState {
     persisted_revision: u64,
 }
 
+/// A native worker handle with an explicit completion bit. `JoinHandle::join`
+/// has no timeout; the lifecycle lane polls this bit and drops a still-busy
+/// handle at the quit deadline so an unresponsive provider reader cannot hang
+/// process exit forever. The worker itself observes its stop flag and exits
+/// without owning any provider resource.
+struct ManagedThread {
+    handle: std::thread::JoinHandle<()>,
+    done: Arc<AtomicBool>,
+}
+
+fn join_managed_thread(thread: ManagedThread, deadline: Instant) -> bool {
+    while !thread.done.load(Ordering::Acquire) && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    if !thread.done.load(Ordering::Acquire) {
+        // Dropping the handle detaches only this app-local worker. Its stop
+        // flag was already set by the caller; no Herdr Agent or tmux session
+        // is owned by this join path.
+        drop(thread.handle);
+        return false;
+    }
+    thread.handle.join().is_ok()
+}
+
 struct SettingsProjection {
     loaded: LoadedConfig,
     sequence: u64,
@@ -385,6 +527,15 @@ struct SettingsProjection {
 
 struct NativeAppState {
     coordinator: Mutex<AppCoordinator>,
+    /// Serializes lifecycle generation changes/coordinator replacement with
+    /// every coordinator mutation. A lifecycle token is only meaningful while
+    /// this gate is held; checking it before taking `coordinator` alone would
+    /// let an old worker pass, then mutate a newly reopened coordinator.
+    coordinator_transaction: Mutex<()>,
+    /// The one process/window ownership gate. Closing a Window moves this to
+    /// `Closed`; it never tears down provider runtimes. Reopen is the only
+    /// transition that reconstructs the native host.
+    lifecycle: LifecycleGate,
     store: JsonStateStore,
     config_store: ConfigStore,
     settings: Mutex<SettingsProjection>,
@@ -410,6 +561,7 @@ struct NativeAppState {
     agent_runtime: HerdrAgentRuntime,
     agent_surfaces: AgentSurfaceManager,
     editor_host: EditorHost,
+    editor_bounds: Mutex<editor::EditorBounds>,
     profiles: Mutex<Vec<DomainAgentProfile>>,
     /// Opaque mappings are kept in native memory until the StateStore/core
     /// projection commits them. They never enter the App Shell wire DTO.
@@ -417,6 +569,74 @@ struct NativeAppState {
     agent_reconciler_running: AtomicBool,
     bridge_sink: Arc<NativeBridgeSink>,
     picker_cancel: Mutex<Option<CancellationToken>>,
+    bridge_router_handle: Mutex<Option<ManagedThread>>,
+    agent_reconciler_handle: Mutex<Option<ManagedThread>>,
+    /// Suppresses geometry events generated by applying the persisted frame;
+    /// otherwise the native default frame can race the restore and overwrite
+    /// the durable position before reconstruction has finished.
+    frame_restore_running: AtomicBool,
+    /// Generation currently owning the coalesced frame writer. A late writer
+    /// from the previous Window must not clear scheduling state for a newly
+    /// reopened Window.
+    frame_persist_generation: AtomicU64,
+    frame_persist_ticket: AtomicU64,
+    frame_persist_scheduled: AtomicBool,
+    frame_persist_dirty: AtomicBool,
+    frame_persist_workers: AtomicU64,
+    frame_persist_error: Mutex<Option<AppErrorWire>>,
+    /// The raw native handle identifies a concrete AppKit Window instance;
+    /// labels are intentionally insufficient because a late Destroyed event
+    /// from the prior instance can arrive after Dock created its replacement.
+    native_window_identity: Mutex<Option<NativeWindowIdentity>>,
+    /// Serializes startup/Dock host reconstruction even when macOS delivers
+    /// duplicate reopen notifications before the first WRY mount finishes.
+    reconstruction_running: AtomicBool,
+    reconstruction_result: Mutex<Option<Result<(), AppErrorWire>>>,
+    /// Covers the whole Dock activation, including stable-label Window
+    /// creation. Reopen events can arrive concurrently before Tauri registers
+    /// the newly built Window, so guarding only the raw host mount is too late.
+    dock_reopen_running: AtomicBool,
+    dock_reopen_result: Mutex<Option<Result<(), AppErrorWire>>>,
+    /// ExitRequested is delivered again by `app.exit` on some Tauri/Wry
+    /// versions. These flags make that allowance explicit and single-flight.
+    quit_requested: AtomicBool,
+    exit_allowed: AtomicBool,
+    close_allowance: Mutex<Option<NativeWindowIdentity>>,
+    closing_window: Mutex<Option<NativeWindowIdentity>>,
+    /// Snapshot captured before a guarded WindowClosed transaction. The
+    /// native close is still reversible until AppKit delivers Destroyed, so a
+    /// failed persist/close can restore the coordinator without touching the
+    /// provider-owned projections.
+    close_rollback_snapshot: Mutex<Option<AppSnapshot>>,
+    /// Owns cleanup for the concrete Window generation. Both a guarded close
+    /// worker and an unguarded Destroyed path reserve this token; Dock reopen
+    /// waits for it before mounting a replacement, so an old detach cannot
+    /// remove the replacement's fresh terminal/Agent channels.
+    window_cleanup: Mutex<Option<WindowCleanupToken>>,
+    window_cleanup_wake: Condvar,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct NativeWindowIdentity {
+    handle_key: u64,
+    lifecycle_generation: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct WindowCleanupToken {
+    handle_key: u64,
+    lifecycle_generation: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct NativeLifecycleToken {
+    generation: u64,
+    window_identity: Option<NativeWindowIdentity>,
+}
+
+struct BridgeRoute {
+    request: BridgeRequest,
+    lifecycle: NativeLifecycleToken,
 }
 
 struct EffectExecution {
@@ -444,8 +664,56 @@ fn persistence_error(error: impl std::fmt::Display) -> AppErrorWire {
     AppErrorWire::persistence_degraded().with_summary(error.to_string())
 }
 
+/// Claims a process-level single-flight transition. The native event loop may
+/// deliver duplicate ExitRequested notifications while the first shutdown is
+/// still being persisted; only the owner that flips this bit may run quit.
+fn claim_single_flight(flag: &AtomicBool) -> bool {
+    flag.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire).is_ok()
+}
+
+/// Tauri emits `ExitRequested { code: None }` when the last native Window is
+/// closed on macOS. That is a Window-surface transition, not an explicit app
+/// quit: keep the process alive so Dock activation can reconstruct it. Only a
+/// concrete exit code (menu/app exit or an OS quit request) may enter the
+/// process-owned shutdown path.
+fn is_explicit_exit_request(code: Option<i32>) -> bool {
+    code.is_some()
+}
+
 fn settings_error(error: devhub_app_core::config::ConfigError) -> SettingsErrorWire {
     SettingsErrorWire::from_config(error)
+}
+
+/// Returns a process-local identity for one concrete native Window. Tauri's
+/// public Window equality intentionally uses only the stable label, so it
+/// cannot distinguish an old `app-shell` instance from a newly reopened one.
+fn native_window_handle_key(window: &tauri::Window<tauri::Wry>) -> Option<u64> {
+    let handle = window.window_handle().ok()?.as_raw();
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    handle.hash(&mut hasher);
+    Some(hasher.finish())
+}
+
+fn frame_persist_owner_matches(
+    current_generation: u64,
+    current_ticket: u64,
+    worker_generation: u64,
+    worker_ticket: u64,
+) -> bool {
+    current_generation == worker_generation && current_ticket == worker_ticket
+}
+
+fn frame_persist_phase_allowed(phase: Phase) -> bool {
+    matches!(phase, Phase::Open | Phase::Closing | Phase::Quitting)
+}
+
+fn native_identity_matches(
+    current: Option<NativeWindowIdentity>,
+    expected: NativeWindowIdentity,
+    lifecycle_generation: u64,
+) -> bool {
+    lifecycle_generation == expected.lifecycle_generation && current == Some(expected)
 }
 
 /// Settings snapshots contain user profiles and environment values. They are
@@ -487,6 +755,406 @@ fn emit_agent_profiles(app: &AppHandle, state: &NativeAppState) {
 }
 
 impl NativeAppState {
+    fn bind_native_window(&self, window: &tauri::Window<tauri::Wry>) {
+        let identity = native_window_handle_key(window).map(|handle_key| NativeWindowIdentity {
+            handle_key,
+            lifecycle_generation: self.lifecycle.generation(),
+        });
+        if let Ok(mut current) = self.native_window_identity.lock() {
+            *current = identity;
+        }
+    }
+
+    fn native_window_identity(
+        &self,
+        window: &tauri::Window<tauri::Wry>,
+    ) -> Option<NativeWindowIdentity> {
+        let handle_key = native_window_handle_key(window)?;
+        self.native_window_identity.lock().ok()?.as_ref().copied().filter(|identity| {
+            identity.handle_key == handle_key
+                && identity.lifecycle_generation == self.lifecycle.generation()
+        })
+    }
+
+    fn is_current_native_window(&self, window: &tauri::Window<tauri::Wry>) -> bool {
+        self.native_window_identity(window).is_some()
+    }
+
+    fn is_current_native_identity(&self, identity: NativeWindowIdentity) -> bool {
+        native_identity_matches(
+            self.native_window_identity.lock().ok().and_then(|current| *current),
+            identity,
+            self.lifecycle.generation(),
+        )
+    }
+
+    fn capture_lifecycle_token(&self) -> NativeLifecycleToken {
+        NativeLifecycleToken {
+            generation: self.lifecycle.generation(),
+            window_identity: self.native_window_identity.lock().ok().and_then(|current| *current),
+        }
+    }
+
+    fn begin_close_transaction(&self) -> bool {
+        self.coordinator_transaction.lock().ok().is_some_and(|_| self.lifecycle.begin_close())
+    }
+
+    fn finish_close_transaction(&self) {
+        if let Ok(_transaction) = self.coordinator_transaction.lock() {
+            self.lifecycle.finish_close();
+        }
+    }
+
+    fn abort_close_transaction(&self) {
+        if let Ok(_transaction) = self.coordinator_transaction.lock() {
+            self.lifecycle.abort_close();
+        }
+    }
+
+    fn abort_reopen_transaction(&self) {
+        if let Ok(_transaction) = self.coordinator_transaction.lock() {
+            self.lifecycle.abort_reopen();
+        }
+    }
+
+    fn mark_unexpected_destroyed_transaction(&self) {
+        if let Ok(_transaction) = self.coordinator_transaction.lock() {
+            self.lifecycle.mark_unexpected_destroyed();
+        }
+    }
+
+    fn begin_quit_transaction(&self) -> bool {
+        self.coordinator_transaction.lock().ok().is_some_and(|_| self.lifecycle.begin_quit())
+    }
+
+    fn force_quit_after_close_timeout_transaction(&self) -> bool {
+        self.coordinator_transaction
+            .lock()
+            .ok()
+            .is_some_and(|_| self.lifecycle.force_quit_after_close_timeout())
+    }
+
+    fn finish_quit_transaction(&self) {
+        if let Ok(_transaction) = self.coordinator_transaction.lock() {
+            self.lifecycle.finish_quit();
+        }
+    }
+
+    fn lifecycle_token_is_open(&self, token: NativeLifecycleToken) -> bool {
+        self.lifecycle.phase() == Phase::Open
+            && self.lifecycle.generation() == token.generation
+            && token
+                .window_identity
+                .is_none_or(|identity| self.is_current_native_identity(identity))
+    }
+
+    fn require_lifecycle_token(&self, token: NativeLifecycleToken) -> Result<(), TerminalError> {
+        if self.lifecycle_token_is_open(token) {
+            Ok(())
+        } else {
+            Err(TerminalError::new(TerminalErrorCode::SurfaceUnavailable))
+        }
+    }
+
+    fn require_app_lifecycle_token(&self, token: NativeLifecycleToken) -> Result<(), AppErrorWire> {
+        if self.lifecycle_token_is_open(token) {
+            Ok(())
+        } else {
+            Err(AppErrorWire::native_unavailable()
+                .with_summary("stale App Shell lifecycle generation"))
+        }
+    }
+
+    /// Captures an App Shell token at the same transaction boundary used by
+    /// coordinator access. A caller must not read the phase/generation first
+    /// and then acquire the coordinator gate: close/reopen could otherwise
+    /// swap the projection between those two operations.
+    fn capture_open_lifecycle_token(&self) -> Result<NativeLifecycleToken, AppErrorWire> {
+        let _transaction = self.coordinator_transaction.lock().map_err(state_error)?;
+        self.capture_open_lifecycle_token_locked()
+    }
+
+    /// Same capture as [`Self::capture_open_lifecycle_token`] for callers
+    /// that already own the coordinator transaction gate.
+    fn capture_open_lifecycle_token_locked(&self) -> Result<NativeLifecycleToken, AppErrorWire> {
+        let token = self.capture_lifecycle_token();
+        self.require_app_lifecycle_token(token)?;
+        Ok(token)
+    }
+
+    fn validate_app_lifecycle_token(
+        &self,
+        token: NativeLifecycleToken,
+    ) -> Result<(), AppErrorWire> {
+        let _transaction = self.coordinator_transaction.lock().map_err(state_error)?;
+        self.require_app_lifecycle_token(token)
+    }
+
+    fn validate_terminal_lifecycle_token(
+        &self,
+        token: NativeLifecycleToken,
+    ) -> Result<(), TerminalError> {
+        let _transaction = self
+            .coordinator_transaction
+            .lock()
+            .map_err(|_| TerminalError::new(TerminalErrorCode::Internal))?;
+        self.require_lifecycle_token(token)
+    }
+
+    fn require_settings_lifecycle_token(
+        &self,
+        token: NativeLifecycleToken,
+    ) -> Result<(), SettingsErrorWire> {
+        if self.lifecycle_token_is_open(token) {
+            Ok(())
+        } else {
+            Err(SettingsErrorWire::native_unavailable())
+        }
+    }
+
+    fn capture_settings_lifecycle_token(&self) -> Result<NativeLifecycleToken, SettingsErrorWire> {
+        self.capture_open_lifecycle_token().map_err(|_| SettingsErrorWire::native_unavailable())
+    }
+
+    fn validate_settings_lifecycle_token(
+        &self,
+        token: NativeLifecycleToken,
+    ) -> Result<(), SettingsErrorWire> {
+        let _transaction = self
+            .coordinator_transaction
+            .lock()
+            .map_err(|_| SettingsErrorWire::native_unavailable())?;
+        self.require_settings_lifecycle_token(token)
+    }
+
+    fn app_snapshot_with_lifecycle(
+        &self,
+        token: NativeLifecycleToken,
+    ) -> Result<AppSnapshotWire, AppErrorWire> {
+        let _transaction = self.coordinator_transaction.lock().map_err(state_error)?;
+        self.require_app_lifecycle_token(token)?;
+        let coordinator = self.coordinator.lock().map_err(state_error)?;
+        AppSnapshotWire::from_snapshot(&coordinator.snapshot(), coordinator.readiness())
+            .map_err(state_error)
+    }
+
+    fn replay_with_lifecycle(
+        &self,
+        token: NativeLifecycleToken,
+        cursor: u64,
+    ) -> Result<ReplayWire, AppErrorWire> {
+        let _transaction = self.coordinator_transaction.lock().map_err(state_error)?;
+        self.require_app_lifecycle_token(token)?;
+        let coordinator = self.coordinator.lock().map_err(state_error)?;
+        ReplayWire::from_replay(&coordinator.replay_from(cursor), coordinator.readiness())
+            .map_err(state_error)
+    }
+
+    fn agent_profiles_with_lifecycle(
+        &self,
+        token: NativeLifecycleToken,
+    ) -> Result<AgentProfilesWire, AppErrorWire> {
+        let _transaction = self.coordinator_transaction.lock().map_err(state_error)?;
+        self.require_app_lifecycle_token(token)?;
+        self.agent_profiles()
+    }
+
+    fn app_appearance_with_lifecycle(
+        &self,
+        token: NativeLifecycleToken,
+    ) -> Result<AppAppearanceWire, SettingsErrorWire> {
+        let _transaction = self
+            .coordinator_transaction
+            .lock()
+            .map_err(|_| SettingsErrorWire::native_unavailable())?;
+        self.require_settings_lifecycle_token(token)?;
+        self.app_appearance()
+    }
+
+    fn settings_snapshot_with_lifecycle(
+        &self,
+        token: NativeLifecycleToken,
+    ) -> Result<SettingsSnapshotWire, SettingsErrorWire> {
+        {
+            let _transaction = self
+                .coordinator_transaction
+                .lock()
+                .map_err(|_| SettingsErrorWire::native_unavailable())?;
+            self.require_settings_lifecycle_token(token)?;
+        }
+        let snapshot = self.settings_snapshot()?;
+        let _transaction = self
+            .coordinator_transaction
+            .lock()
+            .map_err(|_| SettingsErrorWire::native_unavailable())?;
+        self.require_settings_lifecycle_token(token)?;
+        Ok(snapshot)
+    }
+
+    fn require_lifecycle_transaction_token(
+        &self,
+        token: Option<NativeLifecycleToken>,
+    ) -> Result<(), AppErrorWire> {
+        match token {
+            Some(token) => self.require_app_lifecycle_token(token),
+            None => Ok(()),
+        }
+    }
+
+    fn require_provider_event_transaction_token(
+        &self,
+        token: Option<NativeLifecycleToken>,
+    ) -> Result<(), AppErrorWire> {
+        match token {
+            Some(token) => self.require_app_lifecycle_token(token),
+            None if self.lifecycle.phase() == Phase::Open => Ok(()),
+            None => Err(AppErrorWire::native_unavailable()
+                .with_summary("stale provider event after Window reconstruction")),
+        }
+    }
+
+    fn clear_native_window_if_current(&self, window: &tauri::Window<tauri::Wry>) {
+        let Some(identity) = self.native_window_identity(window) else { return };
+        if let Ok(mut current) = self.native_window_identity.lock() {
+            if current.as_ref().is_some_and(|current| *current == identity) {
+                *current = None;
+            }
+        }
+    }
+
+    fn set_close_allowance(&self, identity: NativeWindowIdentity) {
+        if let Ok(mut allowance) = self.close_allowance.lock() {
+            *allowance = Some(identity);
+        }
+    }
+
+    /// The allowance belongs to the concrete Window until its Destroyed
+    /// event. A duplicate CloseRequested must observe the same one-shot
+    /// native close permission without consuming it before Destroyed arrives.
+    fn close_allowance_matches(&self, window: &tauri::Window<tauri::Wry>) -> bool {
+        let Some(identity) = self.native_window_identity(window) else { return false };
+        self.close_allowance.lock().ok().and_then(|allowance| *allowance) == Some(identity)
+    }
+
+    fn require_close_cleanup_token(
+        &self,
+        token: Option<WindowCleanupToken>,
+    ) -> Result<(), AppErrorWire> {
+        if self.lifecycle.phase() != Phase::Closing {
+            return Err(
+                AppErrorWire::native_unavailable().with_summary("stale Window close lifecycle")
+            );
+        }
+        if let Some(token) = token {
+            let current =
+                self.native_window_identity.lock().map_err(state_error)?.as_ref().copied();
+            if current
+                != Some(NativeWindowIdentity {
+                    handle_key: token.handle_key,
+                    lifecycle_generation: token.lifecycle_generation,
+                })
+            {
+                return Err(AppErrorWire::native_unavailable()
+                    .with_summary("stale native Window close identity"));
+            }
+            if self.lifecycle.generation() != token.lifecycle_generation {
+                return Err(AppErrorWire::native_unavailable()
+                    .with_summary("stale native Window close generation"));
+            }
+        }
+        Ok(())
+    }
+
+    fn capture_close_rollback_snapshot(&self) -> Result<(), AppErrorWire> {
+        let snapshot = self.current_snapshot()?;
+        *self.close_rollback_snapshot.lock().map_err(state_error)? = Some(snapshot);
+        Ok(())
+    }
+
+    fn clear_close_rollback_snapshot(&self) {
+        if let Ok(mut snapshot) = self.close_rollback_snapshot.lock() {
+            snapshot.take();
+        }
+    }
+
+    /// Restores only the Rust-owned projection after a reversible close
+    /// failure. WindowClosed detachment is deliberately deferred until the
+    /// concrete native Window has emitted Destroyed, so this path never needs
+    /// to guess how to reattach a half-detached terminal/Agent channel.
+    fn restore_failed_close(&self) -> Result<(), AppErrorWire> {
+        let snapshot = self.close_rollback_snapshot.lock().map_err(state_error)?.take();
+        if let Some(snapshot) = snapshot {
+            self.persist_snapshot(&snapshot, true)?;
+            self.rehydrate_coordinator_from_store()?;
+        }
+        Ok(())
+    }
+
+    fn begin_window_cleanup(&self, token: WindowCleanupToken) -> bool {
+        let Ok(mut cleanup) = self.window_cleanup.lock() else { return false };
+        if cleanup.is_some() {
+            return false;
+        }
+        *cleanup = Some(token);
+        true
+    }
+
+    fn finish_window_cleanup(&self, token: WindowCleanupToken) {
+        if let Ok(mut cleanup) = self.window_cleanup.lock() {
+            if cleanup.as_ref().is_some_and(|current| *current == token) {
+                *cleanup = None;
+                self.window_cleanup_wake.notify_all();
+            }
+        }
+    }
+
+    fn wait_for_window_cleanup(&self, deadline: Instant) -> bool {
+        let Ok(mut cleanup) = self.window_cleanup.lock() else { return false };
+        while cleanup.is_some() && Instant::now() < deadline {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            let Ok((next, _)) = self.window_cleanup_wake.wait_timeout(cleanup, remaining) else {
+                return false;
+            };
+            cleanup = next;
+        }
+        cleanup.is_none()
+    }
+
+    fn window_cleanup_is_current(&self, token: WindowCleanupToken) -> bool {
+        self.window_cleanup
+            .lock()
+            .ok()
+            .and_then(|cleanup| *cleanup)
+            .is_some_and(|current| current == token)
+    }
+
+    fn start_window_projection_cleanup(&self, app: &AppHandle, token: WindowCleanupToken) {
+        let worker_app = app.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            if let Some(state) = worker_app.try_state::<NativeAppState>() {
+                let deadline = Instant::now() + Duration::from_secs(5);
+                if state.window_cleanup_is_current(token) {
+                    if let Err(error) = state.editor_host.detach_webview_host() {
+                        state.record_native_error(state_error(error));
+                    }
+                    if !state._terminal_runtime.detach_all_surfaces_until(deadline) {
+                        state.record_native_error(
+                            AppErrorWire::native_unavailable()
+                                .with_summary("terminal projection cleanup exceeded deadline"),
+                        );
+                    }
+                    if !state.agent_surfaces.detach_all_until(deadline) {
+                        state.record_native_error(
+                            AppErrorWire::native_unavailable()
+                                .with_summary("Agent projection cleanup exceeded deadline"),
+                        );
+                    }
+                }
+                state.finish_window_cleanup(token);
+            }
+        });
+    }
+
     fn bootstrap(home: &Path) -> Result<Self, AppErrorWire> {
         let store = JsonStateStore::for_home(home);
         let mut persisted = store.mark_starting().map_err(persistence_error)?;
@@ -566,6 +1234,8 @@ impl NativeAppState {
         let persisted_revision = coordinator.snapshot().revision();
         Ok(Self {
             coordinator: Mutex::new(coordinator),
+            coordinator_transaction: Mutex::new(()),
+            lifecycle: LifecycleGate::new(),
             store,
             config_store,
             settings: Mutex::new(SettingsProjection {
@@ -591,12 +1261,293 @@ impl NativeAppState {
             agent_runtime,
             agent_surfaces: AgentSurfaceManager::new(),
             editor_host,
+            editor_bounds: Mutex::new(editor::EditorBounds::new(0.0, 0.0, 900.0, 560.0)),
             profiles: Mutex::new(profiles),
             agent_mappings: Mutex::new(restored_agent_mappings),
             agent_reconciler_running: AtomicBool::new(true),
             bridge_sink,
             picker_cancel: Mutex::new(None),
+            bridge_router_handle: Mutex::new(None),
+            agent_reconciler_handle: Mutex::new(None),
+            frame_restore_running: AtomicBool::new(false),
+            frame_persist_generation: AtomicU64::new(0),
+            frame_persist_ticket: AtomicU64::new(0),
+            frame_persist_scheduled: AtomicBool::new(false),
+            frame_persist_dirty: AtomicBool::new(false),
+            frame_persist_workers: AtomicU64::new(0),
+            frame_persist_error: Mutex::new(None),
+            native_window_identity: Mutex::new(None),
+            reconstruction_running: AtomicBool::new(false),
+            reconstruction_result: Mutex::new(None),
+            dock_reopen_running: AtomicBool::new(false),
+            dock_reopen_result: Mutex::new(None),
+            quit_requested: AtomicBool::new(false),
+            exit_allowed: AtomicBool::new(false),
+            close_allowance: Mutex::new(None),
+            closing_window: Mutex::new(None),
+            close_rollback_snapshot: Mutex::new(None),
+            window_cleanup: Mutex::new(None),
+            window_cleanup_wake: Condvar::new(),
         })
+    }
+
+    /// Attach the raw child-WebView host to the current main Window and
+    /// reconstruct every durable Editor surface. Provider terminal/Agent
+    /// surfaces remain lazy and are attached only by their visible frontend
+    /// viewport.
+    fn reconstruct_window(&self, app: &AppHandle) -> Result<(), AppErrorWire> {
+        let generation = self.lifecycle.generation();
+        let mut result = if self.lifecycle.phase() == Phase::Open {
+            self.reconstruct_window_inner(app)
+        } else {
+            Err(AppErrorWire::native_unavailable()
+                .with_summary("window reconstruction raced process shutdown"))
+        };
+        if result.is_ok()
+            && (self.lifecycle.phase() != Phase::Open || self.lifecycle.generation() != generation)
+        {
+            result = Err(AppErrorWire::native_unavailable()
+                .with_summary("window reconstruction became stale"));
+        }
+        if result.is_err() {
+            // A failed mount must leave the host detached. Otherwise a
+            // partially mounted WRY host would make the next Dock activation
+            // look like a successful reconstruction and suppress the retry.
+            // Keep OpenVSCode running: only its child surfaces are rolled
+            // back, and the next attempt can reuse its hot-exit state.
+            if let Err(error) = self.editor_host.detach_webview_host() {
+                self.record_native_error(state_error(error));
+            }
+        }
+        result
+    }
+
+    fn wait_for_reconstruction(&self, deadline: Instant) -> bool {
+        while self.reconstruction_running.load(Ordering::Acquire) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        !self.reconstruction_running.load(Ordering::Acquire)
+    }
+
+    fn wait_for_frame_persist(&self, deadline: Instant) -> bool {
+        while self.frame_persist_workers.load(Ordering::Acquire) != 0 && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        self.frame_persist_workers.load(Ordering::Acquire) == 0
+    }
+
+    fn clear_frame_persist_error(&self) {
+        if let Ok(mut error) = self.frame_persist_error.lock() {
+            *error = None;
+        }
+    }
+
+    fn take_frame_persist_error(&self) -> Option<AppErrorWire> {
+        self.frame_persist_error.lock().ok().and_then(|mut error| error.take())
+    }
+
+    fn reconstruct_window_inner(&self, app: &AppHandle) -> Result<(), AppErrorWire> {
+        let lifecycle = self.capture_open_lifecycle_token()?;
+        let window = app
+            .get_webview_window(APP_SHELL_WINDOW_LABEL)
+            .ok_or_else(AppErrorWire::native_unavailable)?;
+        let parent = window.as_ref().window();
+        self.bind_native_window(&parent);
+        let window_identity =
+            self.native_window_identity(&parent).ok_or_else(AppErrorWire::native_unavailable)?;
+        self.restore_window_frame(&parent)?;
+        // A failed Dock reconstruction is retryable, but a successful retry
+        // must never stack a second raw WRY host or child-WebView registry on
+        // top of the first one.
+        self.editor_host.detach_webview_host().map_err(state_error)?;
+        let router: Arc<dyn NavigationRouter> =
+            Arc::new(NativeNavigationRouter { app: app.clone(), window_identity });
+        self.editor_host
+            .attach_webview_host(Arc::new(WryWebViewHost::new(parent.clone(), router)))
+            .map_err(state_error)?;
+
+        let size = parent.inner_size().map_err(|_| AppErrorWire::native_unavailable())?;
+        let bounds = editor::EditorBounds::new(
+            0.0,
+            0.0,
+            f64::from(size.width.max(1)),
+            f64::from(size.height.max(1)),
+        );
+        *self.editor_bounds.lock().map_err(state_error)? = bounds;
+        let snapshot = self.current_snapshot_with_lifecycle(lifecycle)?;
+        // Global Editor is a fixed singleton. Available Workspace Editors are
+        // keyed by persisted Workspace ID; an unavailable root remains a
+        // durable sidebar row but has no child WebView to mount.
+        let mut mount_error =
+            self.editor_host.ensure_surface(editor::EditorSurfaceKey::Global, None, bounds).err();
+        for workspace in snapshot.workspaces() {
+            if workspace.state().is_available() {
+                if let Err(error) = self.editor_host.ensure_surface(
+                    editor::EditorSurfaceKey::Workspace(workspace.id().to_string()),
+                    Some(workspace.root().as_path().to_path_buf()),
+                    bounds,
+                ) {
+                    mount_error.get_or_insert(error);
+                }
+            }
+        }
+        if let Some(error) = mount_error {
+            return Err(state_error(error));
+        }
+
+        // `ensure_surface` selects its argument for visibility. Mounting all
+        // records above therefore ends with the last workspace visible; apply
+        // the Rust-owned Activity/Context selection as the final visibility
+        // decision.
+        self.editor_host.hide_surfaces().map_err(state_error)?;
+        if snapshot.active_activity() == Activity::Editor {
+            let selected = match snapshot.selected_context() {
+                devhub_app_core::NavigationContext::Global => {
+                    Some(editor::EditorSurfaceKey::Global)
+                }
+                devhub_app_core::NavigationContext::Workspace(id) => snapshot
+                    .workspaces()
+                    .iter()
+                    .find(|workspace| workspace.id() == id && workspace.state().is_available())
+                    .map(|_| editor::EditorSurfaceKey::Workspace(id.to_string())),
+                devhub_app_core::NavigationContext::Agent(agent_id) => {
+                    snapshot.workspaces().iter().find_map(|workspace| {
+                        (workspace.state().is_available()
+                            && workspace.agents().iter().any(|agent| agent.id() == agent_id))
+                        .then(|| editor::EditorSurfaceKey::Workspace(workspace.id().to_string()))
+                    })
+                }
+            };
+            if let Some(selected) = selected {
+                let root = match &selected {
+                    editor::EditorSurfaceKey::Global => None,
+                    editor::EditorSurfaceKey::Workspace(id) => snapshot
+                        .workspaces()
+                        .iter()
+                        .find(|workspace| workspace.id().to_string() == *id)
+                        .filter(|workspace| workspace.state().is_available())
+                        .map(|workspace| workspace.root().as_path().to_path_buf()),
+                };
+                if matches!(&selected, editor::EditorSurfaceKey::Global) || root.is_some() {
+                    self.editor_host.ensure_surface(selected, root, bounds).map_err(state_error)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn reconstruct_window_once(&self, app: &AppHandle) -> Result<(), AppErrorWire> {
+        if self
+            .reconstruction_running
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            // The first reconstruction owns the same Window generation. A
+            // duplicate Dock event must wait for that owner before showing
+            // or focusing the Window; returning early would expose a shell
+            // whose raw children are only partially mounted.
+            if !self.wait_for_reconstruction(Instant::now() + Duration::from_secs(5)) {
+                return Err(AppErrorWire::native_unavailable()
+                    .with_summary("window reconstruction did not finish before Dock activation"));
+            }
+            return self
+                .reconstruction_result
+                .lock()
+                .ok()
+                .and_then(|result| result.clone())
+                .unwrap_or_else(|| {
+                    Err(AppErrorWire::native_unavailable()
+                        .with_summary("window reconstruction result was unavailable"))
+                });
+        }
+        if let Ok(mut result) = self.reconstruction_result.lock() {
+            *result = None;
+        }
+        let result = self.reconstruct_window(app);
+        if let Ok(mut completed) = self.reconstruction_result.lock() {
+            *completed = Some(result.clone());
+        }
+        self.reconstruction_running.store(false, Ordering::Release);
+        result
+    }
+
+    /// Keeps raw Editor child visibility in lockstep with the Rust-owned
+    /// Activity/Context selection. The App Shell still renders typed
+    /// unavailable states underneath a missing OpenVSCode host; a provider
+    /// failure never deletes the durable projection.
+    fn sync_editor_surface_with_lifecycle(
+        &self,
+        lifecycle: NativeLifecycleToken,
+    ) -> Result<(), AppErrorWire> {
+        let snapshot = self.current_snapshot_with_lifecycle(lifecycle)?;
+        self.sync_editor_surface_for_snapshot(&snapshot);
+        Ok(())
+    }
+
+    fn sync_editor_surface_for_snapshot(&self, snapshot: &AppSnapshot) {
+        if snapshot.active_activity() != Activity::Editor {
+            let _ = self.editor_host.hide_surfaces();
+            return;
+        }
+        let selected = match snapshot.selected_context() {
+            devhub_app_core::NavigationContext::Global => {
+                Some((editor::EditorSurfaceKey::Global, None))
+            }
+            devhub_app_core::NavigationContext::Workspace(id) => snapshot
+                .workspaces()
+                .iter()
+                .find(|workspace| workspace.id() == id && workspace.state().is_available())
+                .map(|workspace| {
+                    (
+                        editor::EditorSurfaceKey::Workspace(id.to_string()),
+                        Some(workspace.root().as_path().to_path_buf()),
+                    )
+                }),
+            devhub_app_core::NavigationContext::Agent(agent_id) => snapshot
+                .workspaces()
+                .iter()
+                .find(|workspace| {
+                    workspace.state().is_available()
+                        && workspace.agents().iter().any(|agent| agent.id() == agent_id)
+                })
+                .map(|workspace| {
+                    (
+                        editor::EditorSurfaceKey::Workspace(workspace.id().to_string()),
+                        Some(workspace.root().as_path().to_path_buf()),
+                    )
+                }),
+        };
+        let Some((key, root)) = selected else {
+            let _ = self.editor_host.hide_surfaces();
+            return;
+        };
+        let bounds = self
+            .editor_bounds
+            .lock()
+            .map(|bounds| *bounds)
+            .unwrap_or_else(|_| editor::EditorBounds::new(0.0, 0.0, 900.0, 560.0));
+        let _ = self.editor_host.ensure_surface(key, root, bounds);
+    }
+
+    /// The existing startup Window is already constructed by Tauri's config.
+    /// Reuse it and run the same reconstruction path used by Dock activation.
+    fn attach_startup_window(&self, app: &AppHandle) {
+        match self.reconstruct_window_once(app) {
+            Ok(()) => {
+                if let Some(window) = app.get_webview_window(APP_SHELL_WINDOW_LABEL) {
+                    if let Err(error) = window.show().and_then(|_| window.set_focus()) {
+                        self.record_native_error(state_error(error));
+                    }
+                }
+            }
+            Err(error) => {
+                // Missing OpenVSCode resources are a typed degraded Activity,
+                // not a reason to discard the durable shell snapshot or stop
+                // Agents. Keep the startup shell hidden until a Dock retry
+                // reconstructs its child surfaces successfully.
+                self.record_native_error(error);
+            }
+        }
     }
 
     /// Installs the native AgentRuntime reconciliation loop once for the
@@ -605,8 +1556,19 @@ impl NativeAppState {
     /// mounted, so Sidebar status and natural exits do not depend on view
     /// attachment.
     fn start_agent_reconciler(&self, app: &AppHandle) {
+        if self
+            .agent_reconciler_handle
+            .lock()
+            .ok()
+            .and_then(|slot| slot.as_ref().map(|_| ()))
+            .is_some()
+        {
+            return;
+        }
         let worker_app = app.clone();
-        let _ = std::thread::Builder::new().name("devhub-agent-reconciler".to_owned()).spawn(
+        let done = Arc::new(AtomicBool::new(false));
+        let worker_done = done.clone();
+        let handle = std::thread::Builder::new().name("devhub-agent-reconciler".to_owned()).spawn(
             move || {
                 let mut restored = false;
                 while let Some(state) = worker_app.try_state::<NativeAppState>() {
@@ -621,8 +1583,14 @@ impl NativeAppState {
                     state.reconcile_agents_background(&worker_app);
                     std::thread::sleep(Duration::from_millis(300));
                 }
+                worker_done.store(true, Ordering::Release);
             },
         );
+        if let Ok(handle) = handle {
+            if let Ok(mut slot) = self.agent_reconciler_handle.lock() {
+                *slot = Some(ManagedThread { handle, done });
+            }
+        }
     }
 
     fn bootstrap_agent_runtime(&self) {
@@ -639,7 +1607,8 @@ impl NativeAppState {
     }
 
     fn restore_agents_for_runtime(&self, app: &AppHandle) {
-        let Ok(snapshot) = self.current_snapshot() else { return };
+        let Ok(lifecycle) = self.capture_open_lifecycle_token() else { return };
+        let Ok(snapshot) = self.current_snapshot_with_lifecycle(lifecycle) else { return };
         for workspace in snapshot.workspaces() {
             for agent in workspace.agents() {
                 let _ = self.agent_runtime.register_agent_workspace(
@@ -663,21 +1632,29 @@ impl NativeAppState {
                 CancellationToken::new(operation_id),
             ));
             match result {
-                Ok(observation) => self.apply_agent_observation(app, observation),
-                Err(_) => self.mark_agent_runtime_failure(
+                Ok(observation) => {
+                    self.apply_agent_observation_if_current(app, observation, lifecycle)
+                }
+                Err(_) => self.mark_agent_runtime_failure_if_current(
                     app,
                     attached_agent_id,
                     match self.agent_runtime.health().runtime_health() {
                         RuntimeHealth::Healthy | RuntimeHealth::Starting => RuntimeHealth::Degraded,
                         health => health,
                     },
+                    lifecycle,
                 ),
             }
         }
     }
 
     fn reconcile_agents_background(&self, app: &AppHandle) {
-        let Ok(snapshot) = self.current_snapshot() else { return };
+        if self.lifecycle.phase() != Phase::Open {
+            return;
+        }
+        let Ok(lifecycle) = self.capture_open_lifecycle_token() else { return };
+        let lifecycle_generation = lifecycle.generation;
+        let Ok(snapshot) = self.current_snapshot_with_lifecycle(lifecycle) else { return };
         if snapshot.workspaces().iter().all(|workspace| workspace.agents().is_empty()) {
             return;
         }
@@ -687,13 +1664,29 @@ impl NativeAppState {
             Err(_) => return,
         };
         let effects = {
+            let Ok(_transaction) = self.coordinator_transaction.lock() else { return };
+            if self.require_app_lifecycle_token(lifecycle).is_err() {
+                return;
+            }
             let Ok(mut coordinator) = self.coordinator.lock() else { return };
             match coordinator.request_agents_reconcile(operation_id) {
                 Ok(_) => Self::drain_effects(&mut coordinator),
                 Err(_) => return,
             }
         };
-        let Ok(execution) = self.execute_effects(effects) else { return };
+        // Provider reconciliation can block while a Window is detached. Do
+        // not publish its completion into a newly reconstructed generation.
+        if self.lifecycle.phase() != Phase::Open
+            || self.lifecycle.generation() != lifecycle_generation
+        {
+            return;
+        }
+        let Ok(execution) = self.execute_effects_for_lifecycle(effects, lifecycle) else { return };
+        if self.lifecycle.phase() != Phase::Open
+            || self.lifecycle.generation() != lifecycle_generation
+        {
+            return;
+        }
         if execution.error.is_some() {
             // A failed provider reconciliation must remain visible on each
             // existing row, but it must not be interpreted as natural exit.
@@ -709,18 +1702,28 @@ impl NativeAppState {
                 health => health,
             };
             for agent_id in agent_ids {
-                self.mark_agent_runtime_failure(app, agent_id, runtime_health);
+                self.mark_agent_runtime_failure_with_lifecycle(
+                    app,
+                    agent_id,
+                    runtime_health,
+                    lifecycle,
+                );
             }
             return;
         }
         if execution.snapshot.revision() == before_revision {
             return;
         }
-        let readiness = self
-            .coordinator
-            .lock()
-            .map(|coordinator| coordinator.readiness())
-            .unwrap_or(AppReadiness::Unavailable);
+        let readiness = {
+            let Ok(_transaction) = self.coordinator_transaction.lock() else { return };
+            if self.require_app_lifecycle_token(lifecycle).is_err() {
+                return;
+            }
+            self.coordinator
+                .lock()
+                .map(|coordinator| coordinator.readiness())
+                .unwrap_or(AppReadiness::Unavailable)
+        };
         let Ok(snapshot) = AppSnapshotWire::from_snapshot(&execution.snapshot, readiness) else {
             return;
         };
@@ -728,22 +1731,35 @@ impl NativeAppState {
     }
 
     fn install_bridge_router(&self, app: &AppHandle) {
+        if self
+            .bridge_router_handle
+            .lock()
+            .ok()
+            .and_then(|slot| slot.as_ref().map(|_| ()))
+            .is_some()
+        {
+            return;
+        }
         let app = app.clone();
-        let (sender, receiver): (SyncSender<BridgeRequest>, _) = sync_channel(64);
+        let (sender, receiver): (SyncSender<BridgeRoute>, _) = sync_channel(64);
         let worker_app = app.clone();
-        std::thread::Builder::new()
-            .name("devhub-bridge-router".to_owned())
-            .spawn(move || {
-                while let Ok(request) = receiver.recv() {
+        let done = Arc::new(AtomicBool::new(false));
+        let worker_done = done.clone();
+        let worker =
+            std::thread::Builder::new().name("devhub-bridge-router".to_owned()).spawn(move || {
+                while let Ok(route) = receiver.recv() {
+                    let request = &route.request;
                     let Some(state) = worker_app.try_state::<NativeAppState>() else { break };
                     // A disconnect/timeout event invalidates the generation;
                     // do not run an old request's mutating coordinator intent.
-                    if !state.bridge_sink.request_is_live(&request) {
+                    if !state.lifecycle_token_is_open(route.lifecycle)
+                        || !state.bridge_sink.request_is_live(request)
+                    {
                         continue;
                     }
-                    if let Err(error) = state.route_bridge_request(&request) {
+                    if let Err(error) = state.route_bridge_request(request, route.lifecycle) {
                         state.record_native_error(error);
-                        if state.bridge_sink.request_is_live(&request) {
+                        if state.bridge_sink.request_is_live(request) {
                             let _ = state.editor_host.complete_bridge_request(
                                 request.handle().clone(),
                                 bridge_request_failed_result(),
@@ -751,12 +1767,21 @@ impl NativeAppState {
                         }
                     }
                 }
-            })
-            .ok();
+                worker_done.store(true, Ordering::Release);
+            });
+        if let Ok(worker) = worker {
+            if let Ok(mut slot) = self.bridge_router_handle.lock() {
+                *slot = Some(ManagedThread { handle: worker, done });
+            }
+        }
         self.bridge_sink.install_router(move |request| {
-            let Err(error) = sender.try_send(request) else { return };
+            let lifecycle = app
+                .try_state::<NativeAppState>()
+                .map(|state| state.capture_lifecycle_token())
+                .unwrap_or(NativeLifecycleToken { generation: 0, window_identity: None });
+            let Err(error) = sender.try_send(BridgeRoute { request, lifecycle }) else { return };
             let request = match error {
-                TrySendError::Full(request) | TrySendError::Disconnected(request) => request,
+                TrySendError::Full(route) | TrySendError::Disconnected(route) => route.request,
             };
             if let Some(state) = app.try_state::<NativeAppState>() {
                 let _ = state.editor_host.complete_bridge_request(
@@ -847,10 +1872,21 @@ impl NativeAppState {
             .collect()
     }
 
+    fn drain_effects_for_lifecycle(
+        &self,
+        lifecycle: Option<NativeLifecycleToken>,
+    ) -> Result<Vec<Effect>, AppErrorWire> {
+        let _transaction = self.coordinator_transaction.lock().map_err(state_error)?;
+        self.require_lifecycle_transaction_token(lifecycle)?;
+        let mut coordinator = self.coordinator.lock().map_err(state_error)?;
+        Ok(Self::drain_effects(&mut coordinator))
+    }
+
     fn complete_persistence(
         &self,
         token: OperationToken,
         succeeded: bool,
+        lifecycle: Option<NativeLifecycleToken>,
     ) -> Result<IntentOutcome, AppErrorWire> {
         let event = if succeeded {
             ProviderEvent::StatePersisted { token: token.clone() }
@@ -862,6 +1898,8 @@ impl NativeAppState {
             .next_operation_id()
             .map(ProviderEventId::from)
             .map_err(|_| AppErrorWire::native_unavailable())?;
+        let _transaction = self.coordinator_transaction.lock().map_err(state_error)?;
+        self.require_provider_event_transaction_token(lifecycle)?;
         let mut coordinator = self.coordinator.lock().map_err(state_error)?;
         coordinator
             .accept_provider_event(ProviderEventEnvelope::new(event_id, event))
@@ -873,6 +1911,7 @@ impl NativeAppState {
         token: OperationToken,
         workspace_id: devhub_app_core::WorkspaceId,
         result: WorkspaceCleanupResult,
+        lifecycle: Option<NativeLifecycleToken>,
     ) -> Result<IntentOutcome, AppErrorWire> {
         let event = ProviderEvent::WorkspaceCleanupCompleted { token, workspace_id, result };
         let event_id = self
@@ -880,13 +1919,21 @@ impl NativeAppState {
             .next_operation_id()
             .map(ProviderEventId::from)
             .map_err(|_| AppErrorWire::native_unavailable())?;
+        let _transaction = self.coordinator_transaction.lock().map_err(state_error)?;
+        self.require_provider_event_transaction_token(lifecycle)?;
         let mut coordinator = self.coordinator.lock().map_err(state_error)?;
         coordinator
             .accept_provider_event(ProviderEventEnvelope::new(event_id, event))
             .map_err(|error| AppErrorWire::from_error(&error))
     }
 
-    fn accept_provider_event(&self, event: ProviderEvent) -> Result<IntentOutcome, AppErrorWire> {
+    fn accept_provider_event_with_lifecycle(
+        &self,
+        event: ProviderEvent,
+        lifecycle: Option<NativeLifecycleToken>,
+    ) -> Result<IntentOutcome, AppErrorWire> {
+        let _transaction = self.coordinator_transaction.lock().map_err(state_error)?;
+        self.require_provider_event_transaction_token(lifecycle)?;
         let event_id = self
             .id_generator
             .next_operation_id()
@@ -898,11 +1945,15 @@ impl NativeAppState {
             .map_err(|error| AppErrorWire::from_error(&error))
     }
 
-    fn fail_provider_operation(
+    fn fail_provider_operation_with_lifecycle(
         &self,
         token: OperationToken,
+        lifecycle: Option<NativeLifecycleToken>,
     ) -> Result<IntentOutcome, AppErrorWire> {
-        self.accept_provider_event(ProviderEvent::OperationFailed { token })
+        self.accept_provider_event_with_lifecycle(
+            ProviderEvent::OperationFailed { token },
+            lifecycle,
+        )
     }
 
     fn effect_cancel(token: &OperationToken) -> CancellationToken {
@@ -963,6 +2014,28 @@ impl NativeAppState {
             .map_err(state_error)
     }
 
+    fn current_snapshot_with_lifecycle(
+        &self,
+        lifecycle: NativeLifecycleToken,
+    ) -> Result<AppSnapshot, AppErrorWire> {
+        let _transaction = self.coordinator_transaction.lock().map_err(state_error)?;
+        self.require_app_lifecycle_token(lifecycle)?;
+        self.coordinator
+            .lock()
+            .map(|coordinator| coordinator.snapshot().clone())
+            .map_err(state_error)
+    }
+
+    fn snapshot_for_effect(
+        &self,
+        lifecycle: Option<NativeLifecycleToken>,
+    ) -> Result<AppSnapshot, AppErrorWire> {
+        match lifecycle {
+            Some(lifecycle) => self.current_snapshot_with_lifecycle(lifecycle),
+            None => self.current_snapshot(),
+        }
+    }
+
     /// Reconstructs provider cleanup from durable Closing records after a
     /// relaunch. Each workspace gets a fresh operation token and is
     /// re-inspected before any remaining destructive step is emitted.
@@ -981,6 +2054,7 @@ impl NativeAppState {
                 .next_operation_id()
                 .map_err(|_| AppErrorWire::native_unavailable())?;
             let effects = {
+                let _transaction = self.coordinator_transaction.lock().map_err(state_error)?;
                 let mut coordinator = self.coordinator.lock().map_err(state_error)?;
                 coordinator
                     .resume_persisted_close(workspace_id, operation_id)
@@ -997,6 +2071,44 @@ impl NativeAppState {
     }
 
     fn execute_effects(&self, effects: Vec<Effect>) -> Result<EffectExecution, AppErrorWire> {
+        self.execute_effects_until_with_options(effects, None, None, false)
+    }
+
+    fn execute_effects_for_lifecycle(
+        &self,
+        effects: Vec<Effect>,
+        lifecycle: NativeLifecycleToken,
+    ) -> Result<EffectExecution, AppErrorWire> {
+        self.execute_effects_until_with_options(effects, None, Some(lifecycle), false)
+    }
+
+    /// Runs the coordinator's WindowClosed transaction while keeping native
+    /// child projections attached. The CloseRequested handler has prevented
+    /// AppKit destruction; the actual terminal/Agent/WRY detach is committed
+    /// by the guarded Destroyed event after the native close is irreversible.
+    fn execute_effects_for_window_close(
+        &self,
+        effects: Vec<Effect>,
+    ) -> Result<EffectExecution, AppErrorWire> {
+        self.execute_effects_until_with_options(effects, None, None, true)
+    }
+
+    fn execute_effects_until(
+        &self,
+        effects: Vec<Effect>,
+        deadline: Option<Instant>,
+        lifecycle: Option<NativeLifecycleToken>,
+    ) -> Result<EffectExecution, AppErrorWire> {
+        self.execute_effects_until_with_options(effects, deadline, lifecycle, false)
+    }
+
+    fn execute_effects_until_with_options(
+        &self,
+        effects: Vec<Effect>,
+        deadline: Option<Instant>,
+        lifecycle: Option<NativeLifecycleToken>,
+        defer_window_detach: bool,
+    ) -> Result<EffectExecution, AppErrorWire> {
         let mut pending = VecDeque::from(effects);
         let mut first_error = None;
         let mut last_outcome = None;
@@ -1007,16 +2119,59 @@ impl NativeAppState {
             if steps > MAX_EFFECT_STEPS {
                 return Err(state_error("native effect worklist exceeded its bounded step limit"));
             }
+            if let Some(lifecycle) = lifecycle {
+                self.require_app_lifecycle_token(lifecycle)?;
+            }
             match effect {
                 Effect::Noop => {}
                 Effect::Detach(reason) => match reason {
                     devhub_app_core::DetachReason::WindowClosed => {
+                        if defer_window_detach {
+                            continue;
+                        }
                         self._terminal_runtime.detach_webview(APP_SHELL_WINDOW_LABEL);
                         self.agent_surfaces.detach_webview(APP_SHELL_WINDOW_LABEL);
+                        // A child WebView belongs to the Window, not to the
+                        // OpenVSCode process. Drop the native host as well so
+                        // a later Dock reconstruction cannot retain a parent
+                        // handle from the destroyed Window.
+                        if let Err(error) = self.editor_host.detach_webview_host() {
+                            if first_error.is_none() {
+                                first_error = Some(state_error(error));
+                            }
+                        }
                     }
                     devhub_app_core::DetachReason::Quit => {
-                        self._terminal_runtime.detach_all_surfaces();
-                        self.agent_surfaces.detach_all();
+                        let terminal_stopped = if let Some(deadline) = deadline {
+                            self._terminal_runtime.detach_all_surfaces_until(deadline)
+                        } else {
+                            self._terminal_runtime.detach_all_surfaces();
+                            true
+                        };
+                        if !terminal_stopped && first_error.is_none() {
+                            first_error = Some(
+                                AppErrorWire::native_unavailable()
+                                    .with_summary("terminal detach exceeded lifecycle deadline"),
+                            );
+                        }
+                        let agents_stopped = if let Some(deadline) = deadline {
+                            self.agent_surfaces.detach_all_until(deadline)
+                        } else {
+                            self.agent_surfaces.detach_all();
+                            true
+                        };
+                        if !agents_stopped && first_error.is_none() {
+                            first_error =
+                                Some(AppErrorWire::native_unavailable().with_summary(
+                                    "Agent Surface detach exceeded lifecycle deadline",
+                                ));
+                        }
+                        // NativeAppState::quit_with_window explicitly owns
+                        // the bounded OpenVSCode shutdown before dispatching
+                        // this coordinator detach. Keep this effect limited
+                        // to surface detachment so quit-after-Window-Close
+                        // cannot rely on a detached coordinator and so the
+                        // host is never stopped twice.
                     }
                 },
                 Effect::ResolveWorkspacePath { token, path } => {
@@ -1025,12 +2180,14 @@ impl NativeAppState {
                     );
                     match result {
                         Ok(resolved) => {
-                            let outcome =
-                                self.accept_provider_event(ProviderEvent::WorkspacePathResolved {
+                            let outcome = self.accept_provider_event_with_lifecycle(
+                                ProviderEvent::WorkspacePathResolved {
                                     token,
                                     root: resolved.root,
                                     selected_path: resolved.selected_path,
-                                });
+                                },
+                                lifecycle,
+                            );
                             if let Ok(value) = &outcome {
                                 last_outcome = Some(value.clone());
                             }
@@ -1039,7 +2196,8 @@ impl NativeAppState {
                             }
                         }
                         Err(error) => {
-                            let completion = self.fail_provider_operation(token);
+                            let completion =
+                                self.fail_provider_operation_with_lifecycle(token, lifecycle);
                             if first_error.is_none() {
                                 first_error = completion
                                     .err()
@@ -1060,11 +2218,10 @@ impl NativeAppState {
                         })
                     }) {
                         Ok(workspace_id) => {
-                            let outcome =
-                                self.accept_provider_event(ProviderEvent::WorkspaceIdGenerated {
-                                    token,
-                                    workspace_id,
-                                });
+                            let outcome = self.accept_provider_event_with_lifecycle(
+                                ProviderEvent::WorkspaceIdGenerated { token, workspace_id },
+                                lifecycle,
+                            );
                             if let Ok(value) = &outcome {
                                 last_outcome = Some(value.clone());
                             }
@@ -1073,7 +2230,8 @@ impl NativeAppState {
                             }
                         }
                         Err(error) => {
-                            let completion = self.fail_provider_operation(token);
+                            let completion =
+                                self.fail_provider_operation_with_lifecycle(token, lifecycle);
                             if first_error.is_none() {
                                 first_error = completion.err().or(Some(error));
                             }
@@ -1083,12 +2241,10 @@ impl NativeAppState {
                 Effect::ResolveAgentProfile { token, workspace_id, profile_id } => {
                     match self.profile(&profile_id) {
                         Ok(profile) => {
-                            let outcome =
-                                self.accept_provider_event(ProviderEvent::ProfileResolved {
-                                    token,
-                                    workspace_id,
-                                    profile,
-                                });
+                            let outcome = self.accept_provider_event_with_lifecycle(
+                                ProviderEvent::ProfileResolved { token, workspace_id, profile },
+                                lifecycle,
+                            );
                             if let Ok(value) = &outcome {
                                 last_outcome = Some(value.clone());
                             }
@@ -1097,7 +2253,8 @@ impl NativeAppState {
                             }
                         }
                         Err(error) => {
-                            let completion = self.fail_provider_operation(token);
+                            let completion =
+                                self.fail_provider_operation_with_lifecycle(token, lifecycle);
                             if first_error.is_none() {
                                 first_error = completion.err().or(Some(error));
                             }
@@ -1116,12 +2273,10 @@ impl NativeAppState {
                         })
                     }) {
                         Ok(agent_id) => {
-                            let outcome =
-                                self.accept_provider_event(ProviderEvent::AgentIdGenerated {
-                                    token,
-                                    workspace_id,
-                                    agent_id,
-                                });
+                            let outcome = self.accept_provider_event_with_lifecycle(
+                                ProviderEvent::AgentIdGenerated { token, workspace_id, agent_id },
+                                lifecycle,
+                            );
                             if let Ok(value) = &outcome {
                                 last_outcome = Some(value.clone());
                             }
@@ -1130,7 +2285,8 @@ impl NativeAppState {
                             }
                         }
                         Err(error) => {
-                            let completion = self.fail_provider_operation(token);
+                            let completion =
+                                self.fail_provider_operation_with_lifecycle(token, lifecycle);
                             if first_error.is_none() {
                                 first_error = completion.err().or(Some(error));
                             }
@@ -1139,7 +2295,7 @@ impl NativeAppState {
                 }
                 Effect::LaunchAgent { token, workspace_id, agent_id, profile } => {
                     let root = self
-                        .current_snapshot()?
+                        .snapshot_for_effect(lifecycle)?
                         .workspaces()
                         .iter()
                         .find(|workspace| workspace.id() == &workspace_id)
@@ -1175,7 +2331,7 @@ impl NativeAppState {
                             diagnostic: DiagnosticCode::RuntimeUnavailable,
                         }),
                     };
-                    let completion = self.accept_provider_event(event);
+                    let completion = self.accept_provider_event_with_lifecycle(event, lifecycle);
                     if let Ok(value) = &completion {
                         last_outcome = Some(value.clone());
                     }
@@ -1191,12 +2347,10 @@ impl NativeAppState {
                     .unwrap_or(AgentStopResult::Failed {
                         diagnostic: DiagnosticCode::CleanupFailed,
                     });
-                    let completion =
-                        self.accept_provider_event(ProviderEvent::AgentStopCompleted {
-                            token,
-                            agent_id,
-                            result,
-                        });
+                    let completion = self.accept_provider_event_with_lifecycle(
+                        ProviderEvent::AgentStopCompleted { token, agent_id, result },
+                        lifecycle,
+                    );
                     if let Ok(value) = &completion {
                         last_outcome = Some(value.clone());
                     }
@@ -1212,12 +2366,10 @@ impl NativeAppState {
                     .unwrap_or(AgentStopResult::Failed {
                         diagnostic: DiagnosticCode::CleanupFailed,
                     });
-                    let completion =
-                        self.accept_provider_event(ProviderEvent::AgentTerminationCompleted {
-                            token,
-                            agent_id,
-                            result,
-                        });
+                    let completion = self.accept_provider_event_with_lifecycle(
+                        ProviderEvent::AgentTerminationCompleted { token, agent_id, result },
+                        lifecycle,
+                    );
                     if let Ok(value) = &completion {
                         last_outcome = Some(value.clone());
                     }
@@ -1228,8 +2380,9 @@ impl NativeAppState {
                 Effect::GenerateConfirmationId { token, .. } => {
                     match ConfirmationId::from_uuid(token.operation_id().as_str().to_owned()) {
                         Ok(confirmation_id) => {
-                            let completion = self.accept_provider_event(
+                            let completion = self.accept_provider_event_with_lifecycle(
                                 ProviderEvent::ConfirmationIdGenerated { token, confirmation_id },
+                                lifecycle,
                             );
                             if let Ok(value) = &completion {
                                 last_outcome = Some(value.clone());
@@ -1240,7 +2393,7 @@ impl NativeAppState {
                         }
                         Err(_) if first_error.is_none() => {
                             first_error = self
-                                .fail_provider_operation(token)
+                                .fail_provider_operation_with_lifecycle(token, lifecycle)
                                 .err()
                                 .or_else(|| Some(AppErrorWire::native_unavailable()));
                         }
@@ -1248,11 +2401,11 @@ impl NativeAppState {
                     }
                 }
                 Effect::PersistState { token } => {
-                    let snapshot = self.current_snapshot()?;
+                    let snapshot = self.snapshot_for_effect(lifecycle)?;
                     let persistence_result = self.persist_snapshot(&snapshot, false);
                     persistence_degraded = persistence_result.is_err();
                     let completion_result =
-                        self.complete_persistence(token, persistence_result.is_ok());
+                        self.complete_persistence(token, persistence_result.is_ok(), lifecycle);
                     if let Ok(outcome) = &completion_result {
                         // Successful persistence completes as a domain Noop;
                         // preserve the initiating Updated/Deferred outcome in
@@ -1268,7 +2421,7 @@ impl NativeAppState {
                     }
                 }
                 Effect::InspectWorkspace { token, workspace_id } => {
-                    let snapshot = self.current_snapshot()?;
+                    let snapshot = self.snapshot_for_effect(lifecycle)?;
                     let workspace = snapshot
                         .workspaces()
                         .iter()
@@ -1369,12 +2522,14 @@ impl NativeAppState {
                             ResourceInspection::unknown(DiagnosticCode::CloseEditorUnknown),
                         )
                     };
-                    let completion =
-                        self.accept_provider_event(ProviderEvent::WorkspaceInspectionCompleted {
+                    let completion = self.accept_provider_event_with_lifecycle(
+                        ProviderEvent::WorkspaceInspectionCompleted {
                             token,
                             workspace_id,
                             inspection,
-                        });
+                        },
+                        lifecycle,
+                    );
                     if let Ok(value) = &completion {
                         last_outcome = Some(value.clone());
                     }
@@ -1387,11 +2542,10 @@ impl NativeAppState {
                         self.agent_runtime.reconcile(Self::effect_cancel(&token)),
                     );
                     if let Ok(reconciliation) = result {
-                        let completion =
-                            self.accept_provider_event(ProviderEvent::AgentsReconciled {
-                                token,
-                                reconciliation,
-                            });
+                        let completion = self.accept_provider_event_with_lifecycle(
+                            ProviderEvent::AgentsReconciled { token, reconciliation },
+                            lifecycle,
+                        );
                         if let Ok(value) = &completion {
                             last_outcome = Some(value.clone());
                         }
@@ -1399,12 +2553,15 @@ impl NativeAppState {
                             first_error = completion.err();
                         }
                     } else if first_error.is_none() {
-                        first_error = self.fail_provider_operation(token).err().or_else(|| {
-                            Some(
-                                AppErrorWire::native_unavailable()
-                                    .with_summary("agent runtime unavailable"),
-                            )
-                        });
+                        first_error = self
+                            .fail_provider_operation_with_lifecycle(token, lifecycle)
+                            .err()
+                            .or_else(|| {
+                                Some(
+                                    AppErrorWire::native_unavailable()
+                                        .with_summary("agent runtime unavailable"),
+                                )
+                            });
                     }
                 }
                 Effect::ReconcileAgent { token, agent_id } => {
@@ -1426,7 +2583,8 @@ impl NativeAppState {
                                 },
                                 None => ProviderEvent::AgentExited { token, agent_id },
                             };
-                            let completion = self.accept_provider_event(event);
+                            let completion =
+                                self.accept_provider_event_with_lifecycle(event, lifecycle);
                             if let Ok(value) = &completion {
                                 last_outcome = Some(value.clone());
                             }
@@ -1435,19 +2593,22 @@ impl NativeAppState {
                             }
                         }
                         Err(_) if first_error.is_none() => {
-                            first_error = self.fail_provider_operation(token).err().or_else(|| {
-                                Some(
-                                    AppErrorWire::native_unavailable()
-                                        .with_summary("agent runtime unavailable"),
-                                )
-                            });
+                            first_error = self
+                                .fail_provider_operation_with_lifecycle(token, lifecycle)
+                                .err()
+                                .or_else(|| {
+                                    Some(
+                                        AppErrorWire::native_unavailable()
+                                            .with_summary("agent runtime unavailable"),
+                                    )
+                                });
                         }
                         Err(_) => {}
                     }
                 }
                 Effect::CleanupWorkspace { token, workspace_id, step: CleanupStep::Agents } => {
                     let agent_ids = self
-                        .current_snapshot()?
+                        .snapshot_for_effect(lifecycle)?
                         .workspaces()
                         .iter()
                         .find(|workspace| workspace.id() == &workspace_id)
@@ -1473,7 +2634,8 @@ impl NativeAppState {
                             break;
                         }
                     }
-                    let completion = self.complete_workspace_cleanup(token, workspace_id, result);
+                    let completion =
+                        self.complete_workspace_cleanup(token, workspace_id, result, lifecycle);
                     if let Ok(value) = &completion {
                         last_outcome = Some(value.clone());
                     }
@@ -1491,7 +2653,8 @@ impl NativeAppState {
                         step: CleanupStep::Editor,
                         diagnostic: DiagnosticCode::CleanupFailed,
                     });
-                    let completion = self.complete_workspace_cleanup(token, workspace_id, result);
+                    let completion =
+                        self.complete_workspace_cleanup(token, workspace_id, result, lifecycle);
                     if let Ok(value) = &completion {
                         last_outcome = Some(value.clone());
                     }
@@ -1508,6 +2671,7 @@ impl NativeAppState {
                         token,
                         workspace_id,
                         WorkspaceCleanupResult::StepCompleted(CleanupStep::StateCommitted),
+                        lifecycle,
                     );
                     if let Ok(value) = &completion {
                         last_outcome = Some(value.clone());
@@ -1517,7 +2681,7 @@ impl NativeAppState {
                     }
                 }
                 Effect::CleanupWorkspace { token, workspace_id, step: CleanupStep::Terminal } => {
-                    let snapshot = self.current_snapshot()?;
+                    let snapshot = self.snapshot_for_effect(lifecycle)?;
                     let result = snapshot
                         .workspaces()
                         .iter()
@@ -1555,7 +2719,7 @@ impl NativeAppState {
                             diagnostic: DiagnosticCode::CloseTerminalUnknown,
                         });
                     let completion_result =
-                        self.complete_workspace_cleanup(token, workspace_id, result);
+                        self.complete_workspace_cleanup(token, workspace_id, result, lifecycle);
                     if let Ok(outcome) = &completion_result {
                         last_outcome = Some(outcome.clone());
                     }
@@ -1567,12 +2731,10 @@ impl NativeAppState {
             // A cleanup completion can synchronously emit the next effect
             // (for example Editor after Terminal). Drain it into this same
             // bounded worklist so no coordinator effect is silently lost.
-            if let Ok(mut coordinator) = self.coordinator.lock() {
-                pending.extend(Self::drain_effects(&mut coordinator));
-            }
+            pending.extend(self.drain_effects_for_lifecycle(lifecycle)?);
         }
         Ok(EffectExecution {
-            snapshot: self.current_snapshot()?,
+            snapshot: self.snapshot_for_effect(lifecycle)?,
             outcome: last_outcome,
             error: first_error,
             persistence_degraded,
@@ -1583,11 +2745,23 @@ impl NativeAppState {
         &self,
         intent: UserIntent,
     ) -> Result<(AppSnapshot, Vec<Effect>), AppErrorWire> {
+        self.dispatch_lifecycle_with_close_token(intent, None)
+    }
+
+    fn dispatch_lifecycle_with_close_token(
+        &self,
+        intent: UserIntent,
+        cleanup_token: Option<WindowCleanupToken>,
+    ) -> Result<(AppSnapshot, Vec<Effect>), AppErrorWire> {
         let intent_id = self.id_generator.next_intent_id()?;
         let operation_id = self
             .id_generator
             .next_operation_id()
             .map_err(|_| AppErrorWire::native_unavailable())?;
+        let _transaction = self.coordinator_transaction.lock().map_err(state_error)?;
+        if cleanup_token.is_some() {
+            self.require_close_cleanup_token(cleanup_token)?;
+        }
         let mut coordinator = self.coordinator.lock().map_err(state_error)?;
         let outcome = coordinator
             .dispatch_user(IntentEnvelope::with_operation_id(intent_id, operation_id, intent))
@@ -1596,41 +2770,568 @@ impl NativeAppState {
         Ok((outcome.snapshot().clone(), effects))
     }
 
-    /// A window close detaches the native surface but deliberately leaves the
-    /// process lifecycle marked unclean. macOS may keep the application alive
-    /// after its last window closes, so this is not a clean quit.
+    fn persist_window_frame_for_generation(
+        &self,
+        window: &tauri::Window<tauri::Wry>,
+        expected_generation: Option<u64>,
+        expected_window_handle: Option<u64>,
+    ) -> Result<(), AppErrorWire> {
+        let position = window.inner_position().map_err(|_| AppErrorWire::native_unavailable())?;
+        let size = window.inner_size().map_err(|_| AppErrorWire::native_unavailable())?;
+        let maximized = window.is_maximized().map_err(|_| AppErrorWire::native_unavailable())?;
+        let frame = devhub_app_core::state::WindowFrame {
+            x: position.x,
+            y: position.y,
+            width: size.width,
+            height: size.height,
+            maximized,
+        }
+        .validate()
+        .map_err(persistence_error)?;
+        let _commit = self.state_commit.lock().map_err(state_error)?;
+        if let Some(expected_generation) = expected_generation {
+            if let Some(expected_window_handle) = expected_window_handle {
+                if !self.frame_persist_token_is_current(
+                    window,
+                    expected_generation,
+                    expected_window_handle,
+                ) {
+                    return Ok(());
+                }
+            }
+        }
+        if let Some(expected_window_handle) = expected_window_handle {
+            if native_window_handle_key(window) != Some(expected_window_handle) {
+                return Ok(());
+            }
+        }
+        let mut state = self.store.load_or_default().map_err(persistence_error)?;
+        state.window.frame = frame;
+        self.store.save_state(&state).map_err(persistence_error)
+    }
+
+    /// A frame writer owns one concrete Window generation. It may finish
+    /// after CloseRequested/ExitRequested has moved the lifecycle to Closing
+    /// or Quitting, but never after that generation has been replaced.
+    fn frame_persist_token_is_current(
+        &self,
+        window: &tauri::Window<tauri::Wry>,
+        generation: u64,
+        handle_key: u64,
+    ) -> bool {
+        if self.lifecycle.generation() != generation
+            || !frame_persist_phase_allowed(self.lifecycle.phase())
+            || native_window_handle_key(window) != Some(handle_key)
+        {
+            return false;
+        }
+        self.native_window_identity.lock().ok().and_then(|current| *current).is_some_and(
+            |identity| {
+                identity.handle_key == handle_key && identity.lifecycle_generation == generation
+            },
+        )
+    }
+
+    /// Coalesces native Moved/Resized notifications into one serialized
+    /// state-store write. The final event wins, even if a display sends a
+    /// burst while the previous atomic save is still in flight.
+    fn schedule_window_frame_persist(&self, window: &tauri::Window<tauri::Wry>) {
+        if self.frame_restore_running.load(Ordering::Acquire) {
+            return;
+        }
+        let Some(window_handle) = native_window_handle_key(window) else { return };
+        let generation = self.lifecycle.generation();
+        self.frame_persist_dirty.store(true, Ordering::Release);
+        let already_scheduled = self
+            .frame_persist_scheduled
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err();
+        if already_scheduled && self.frame_persist_generation.load(Ordering::Acquire) == generation
+        {
+            return;
+        }
+        // A different generation may still own the old scheduled bit while
+        // it notices the close. Let this event start a writer for the new
+        // Window; the stale worker will exit without clearing our bit.
+        self.frame_persist_generation.store(generation, Ordering::Release);
+        let ticket = self.frame_persist_ticket.fetch_add(1, Ordering::AcqRel).saturating_add(1);
+        let app = window.app_handle().clone();
+        let window = window.clone();
+        self.frame_persist_workers.fetch_add(1, Ordering::AcqRel);
+        tauri::async_runtime::spawn_blocking(move || {
+            let mut ticket = ticket;
+            while let Some(state) = app.try_state::<NativeAppState>() {
+                if !frame_persist_owner_matches(
+                    state.frame_persist_generation.load(Ordering::Acquire),
+                    state.frame_persist_ticket.load(Ordering::Acquire),
+                    generation,
+                    ticket,
+                ) {
+                    break;
+                }
+                if !state.frame_persist_token_is_current(&window, generation, window_handle) {
+                    // A stale worker must never clear flags now owned by a
+                    // reopened Window. Only the exact generation/ticket that
+                    // owns the flags may release them.
+                    if frame_persist_owner_matches(
+                        state.frame_persist_generation.load(Ordering::Acquire),
+                        state.frame_persist_ticket.load(Ordering::Acquire),
+                        generation,
+                        ticket,
+                    ) {
+                        state.frame_persist_dirty.store(false, Ordering::Release);
+                        state.frame_persist_scheduled.store(false, Ordering::Release);
+                    }
+                    break;
+                }
+                state.frame_persist_dirty.store(false, Ordering::Release);
+                if let Err(error) = state.persist_window_frame_for_generation(
+                    &window,
+                    Some(generation),
+                    Some(window_handle),
+                ) {
+                    if let Ok(mut frame_error) = state.frame_persist_error.lock() {
+                        *frame_error = Some(error);
+                    }
+                }
+                if !frame_persist_owner_matches(
+                    state.frame_persist_generation.load(Ordering::Acquire),
+                    state.frame_persist_ticket.load(Ordering::Acquire),
+                    generation,
+                    ticket,
+                ) || !state.frame_persist_token_is_current(&window, generation, window_handle)
+                {
+                    break;
+                }
+                if state.frame_persist_dirty.swap(false, Ordering::AcqRel) {
+                    continue;
+                }
+                if !frame_persist_owner_matches(
+                    state.frame_persist_generation.load(Ordering::Acquire),
+                    state.frame_persist_ticket.load(Ordering::Acquire),
+                    generation,
+                    ticket,
+                ) {
+                    break;
+                }
+                state.frame_persist_scheduled.store(false, Ordering::Release);
+                // Close the small race between the last dirty check and
+                // clearing the scheduled bit. A new event either sees the
+                // bit and is consumed by this loop, or schedules its own
+                // worker after the bit is cleared.
+                if state.frame_persist_dirty.swap(false, Ordering::AcqRel)
+                    && state
+                        .frame_persist_scheduled
+                        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+                        .is_ok()
+                {
+                    ticket =
+                        state.frame_persist_ticket.fetch_add(1, Ordering::AcqRel).saturating_add(1);
+                    continue;
+                }
+                break;
+            }
+            if let Some(state) = app.try_state::<NativeAppState>() {
+                state.frame_persist_workers.fetch_sub(1, Ordering::AcqRel);
+            }
+        });
+    }
+
+    /// Applies the durable frame through the current display topology. A
+    /// disconnected monitor cannot strand the main Window off-screen.
+    fn restore_window_frame(&self, window: &tauri::Window<tauri::Wry>) -> Result<(), AppErrorWire> {
+        self.frame_restore_running.store(true, Ordering::Release);
+        let result = (|| {
+            let mut state = self.store.load_or_default().map_err(persistence_error)?;
+            let displays = window
+                .available_monitors()
+                .map_err(|_| AppErrorWire::native_unavailable())?
+                .into_iter()
+                .map(|monitor| {
+                    let work_area = monitor.work_area();
+                    DisplayWorkArea::new(
+                        work_area.position.x,
+                        work_area.position.y,
+                        work_area.size.width,
+                        work_area.size.height,
+                    )
+                })
+                .collect::<Vec<_>>();
+            let frame = safe_restore_frame(state.window.frame, &displays);
+            let currently_maximized =
+                window.is_maximized().map_err(|_| AppErrorWire::native_unavailable())?;
+            // A previously maximized Window may ignore geometry updates until
+            // it has been restored. Apply the unmaximize transition first,
+            // then set the clamped physical frame, and finally re-maximize if
+            // requested.
+            if !frame.maximized && currently_maximized {
+                window.unmaximize().map_err(|_| AppErrorWire::native_unavailable())?;
+            }
+            window
+                .set_position(tauri::Position::Physical(tauri::PhysicalPosition::new(
+                    frame.x, frame.y,
+                )))
+                .map_err(|_| AppErrorWire::native_unavailable())?;
+            window
+                .set_size(tauri::Size::Physical(tauri::PhysicalSize::new(
+                    frame.width,
+                    frame.height,
+                )))
+                .map_err(|_| AppErrorWire::native_unavailable())?;
+            if frame.maximized {
+                window.maximize().map_err(|_| AppErrorWire::native_unavailable())?;
+            }
+            // Commit the validated/clamped frame after applying it. This
+            // closes a startup race with a native default-frame event that
+            // may have queued a persist before reconstruction acquired the
+            // restore guard.
+            let _commit = self.state_commit.lock().map_err(state_error)?;
+            state.window.frame = frame;
+            self.store.save_state(&state).map_err(persistence_error)?;
+            Ok(())
+        })();
+        self.frame_restore_running.store(false, Ordering::Release);
+        result
+    }
+
+    /// A window close commits an unclean detached coordinator. In the native
+    /// path raw terminal/Agent/WRY projections are detached by Destroyed after
+    /// the irreversible close; this test seam has no concrete Window.
+    #[cfg(test)]
     fn close_window(&self) -> Result<(), AppErrorWire> {
-        self._terminal_runtime.detach_webview(APP_SHELL_WINDOW_LABEL);
-        self.agent_surfaces.detach_webview(APP_SHELL_WINDOW_LABEL);
-        let (_, effects) = self.dispatch_lifecycle(UserIntent::WindowClosed)?;
-        let execution = self.execute_effects(effects)?;
+        if !self.begin_close_transaction() {
+            return Ok(());
+        }
+        let result = self.close_window_claimed(None, None);
+        if result.is_ok() {
+            self.finish_close_transaction();
+            self.clear_close_rollback_snapshot();
+        } else {
+            let rollback = self.restore_failed_close();
+            self.abort_close_transaction();
+            rollback?;
+        }
+        result
+    }
+
+    fn close_window_claimed(
+        &self,
+        window: Option<&tauri::Window<tauri::Wry>>,
+        cleanup_token: Option<WindowCleanupToken>,
+    ) -> Result<(), AppErrorWire> {
+        self.clear_frame_persist_error();
+        self.capture_close_rollback_snapshot()?;
+        if let Some(window) = window {
+            // Capture on an app-local worker before touching child WebViews.
+            // Close must not block the native event thread on state-store I/O.
+            self.schedule_window_frame_persist(window);
+        }
+        if !self.wait_for_frame_persist(Instant::now() + Duration::from_secs(5)) {
+            return Err(AppErrorWire::native_unavailable()
+                .with_summary("window frame persistence did not stop before close"));
+        }
+        if let Some(error) = self.take_frame_persist_error() {
+            return Err(error);
+        }
+        if !self.wait_for_reconstruction(Instant::now() + Duration::from_secs(5)) {
+            return Err(AppErrorWire::native_unavailable()
+                .with_summary("window reconstruction did not stop before close"));
+        }
+        if let Ok(mut picker) = self.picker_cancel.lock() {
+            if let Some(token) = picker.take() {
+                token.cancel();
+            }
+        }
+        let (_, effects) =
+            self.dispatch_lifecycle_with_close_token(UserIntent::WindowClosed, cleanup_token)?;
+        let execution = self.execute_effects_for_window_close(effects)?;
         if let Some(error) = execution.error {
             return Err(error);
         }
+        let _transaction = self.coordinator_transaction.lock().map_err(state_error)?;
+        self.require_close_cleanup_token(cleanup_token)?;
         self.persist_snapshot(&execution.snapshot, true)
     }
 
-    /// A process quit detaches the coordinator, persists its final projection,
-    /// and only then marks the durable lifecycle as clean.
-    fn quit(&self) -> Result<(), AppErrorWire> {
-        self.agent_reconciler_running.store(false, Ordering::Release);
-        self._terminal_runtime.detach_all_surfaces();
-        self.agent_surfaces.detach_all();
-        let (_, effects) = self.dispatch_lifecycle(UserIntent::Quit)?;
-        let execution = self.execute_effects(effects)?;
-        if let Some(error) = execution.error {
-            return Err(error);
-        }
-        self.persist_clean_snapshot(&execution.snapshot)
+    fn load_coordinator_from_store(&self) -> Result<(AppCoordinator, u64), AppErrorWire> {
+        let persisted = self.store.load_or_default().map_err(persistence_error)?;
+        let profiles = self.profiles.lock().map_err(state_error)?.clone();
+        let model = persisted.hydrate_model(&profiles).map_err(persistence_error)?;
+        let mut coordinator = AppCoordinator::with_model(model);
+        coordinator.mark_ready();
+        let revision = coordinator.snapshot().revision();
+        Ok((coordinator, revision))
     }
 
+    /// Installs a pre-hydrated coordinator. The caller must hold
+    /// `coordinator_transaction`; lifecycle generation changes and this
+    /// replacement therefore form one transaction from the point of view of
+    /// every command/provider completion.
+    fn replace_coordinator_locked(
+        &self,
+        coordinator: AppCoordinator,
+        revision: u64,
+    ) -> Result<(), AppErrorWire> {
+        *self.coordinator.lock().map_err(state_error)? = coordinator;
+        self.persistence.lock().map_err(state_error)?.persisted_revision = revision;
+        Ok(())
+    }
+
+    fn rehydrate_coordinator_from_store(&self) -> Result<(), AppErrorWire> {
+        let (coordinator, revision) = self.load_coordinator_from_store()?;
+        let _transaction = self.coordinator_transaction.lock().map_err(state_error)?;
+        self.replace_coordinator_locked(coordinator, revision)
+    }
+
+    /// Rehydrates the sole coordinator from the durable Rust-owned snapshot
+    /// after Dock activation. Replacing the coordinator also discards all
+    /// pending operation ledgers and old event cursors, so stale completions
+    /// from the destroyed Window cannot mutate the reconstructed projection.
+    fn reopen(&self) -> Result<bool, AppErrorWire> {
+        // Hydrate before claiming Open so a concurrent explicit quit can win
+        // while disk I/O is in progress. Once the gate is acquired, the
+        // generation transition and coordinator replacement are inseparable.
+        let (coordinator, revision) = self.load_coordinator_from_store()?;
+        let transaction = self.coordinator_transaction.lock().map_err(state_error)?;
+        if !self.lifecycle.begin_reopen() {
+            return Ok(false);
+        }
+        let result = self.replace_coordinator_locked(coordinator, revision).map(|()| true);
+        if result.is_err() {
+            // Reopen remains a usable process state. Returning the gate to
+            // Closed allows the next Dock activation to retry reconstruction.
+            self.lifecycle.abort_reopen();
+        }
+        drop(transaction);
+        result
+    }
+
+    fn reopen_from_dock(&self, app: &AppHandle) -> Result<(), AppErrorWire> {
+        if !claim_single_flight(&self.dock_reopen_running) {
+            // A second Dock notification can arrive before the first one has
+            // mounted WRY children. Wait for that owner and return the same
+            // result; showing/focusing a half-reconstructed Window here
+            // would make the outcome depend on event timing.
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while self.dock_reopen_running.load(Ordering::Acquire) && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            return self
+                .dock_reopen_result
+                .lock()
+                .ok()
+                .and_then(|result| result.clone())
+                .unwrap_or_else(|| {
+                    Err(AppErrorWire::native_unavailable()
+                        .with_summary("Dock reconstruction did not produce a result"))
+                });
+        }
+        if let Ok(mut result) = self.dock_reopen_result.lock() {
+            *result = None;
+        }
+        let result = (|| {
+            if !self.wait_for_window_cleanup(Instant::now() + Duration::from_secs(5)) {
+                return Err(AppErrorWire::native_unavailable()
+                    .with_summary("previous Window cleanup did not finish before reopen"));
+            }
+            let reopened = self.reopen()?;
+            if !reopened
+                && matches!(self.lifecycle.phase(), Phase::Closing | Phase::Quitting | Phase::Quit)
+            {
+                // A Dock activation racing the close/quit event belongs to
+                // the old Window generation. Let that transition finish;
+                // reopening is retried by the next genuine activation
+                // instead of showing a Window whose raw children are still
+                // being detached.
+                return Ok(());
+            }
+            let window_was_missing = app.get_webview_window(APP_SHELL_WINDOW_LABEL).is_none();
+            let claimed_reconstruction =
+                reopened || window_was_missing || !self.editor_host.window_attached();
+            let result = (|| {
+                let window = ensure_app_shell_window(app, self)?;
+                if claimed_reconstruction {
+                    self.reconstruct_window_once(app)?;
+                }
+                window.show().map_err(|_| AppErrorWire::native_unavailable())?;
+                window.set_focus().map_err(|_| AppErrorWire::native_unavailable())?;
+                Ok::<(), AppErrorWire>(())
+            })();
+            if result.is_err() && claimed_reconstruction {
+                // Keep the process alive and make the next Dock activation a
+                // genuine retry rather than a duplicate-window attempt.
+                self.abort_reopen_transaction();
+            }
+            result
+        })();
+        if let Ok(mut completed) = self.dock_reopen_result.lock() {
+            *completed = Some(result.clone());
+        }
+        self.dock_reopen_running.store(false, Ordering::Release);
+        result
+    }
+
+    /// A process quit detaches the coordinator, stops only DevHub-owned
+    /// listeners and OpenVSCode, persists the exact final projection, and
+    /// then marks the durable lifecycle clean. This method is idempotent so a
+    /// native ExitRequested re-entry cannot recurse into shutdown.
+    #[cfg(test)]
+    fn quit(&self) -> Result<(), AppErrorWire> {
+        self.quit_with_window(None)
+    }
+
+    fn quit_with_window(
+        &self,
+        window: Option<&tauri::Window<tauri::Wry>>,
+    ) -> Result<(), AppErrorWire> {
+        if !self.begin_quit_transaction() {
+            if self.lifecycle.phase() == Phase::Closing
+                && self.force_quit_after_close_timeout_transaction()
+            {
+                // Continue with explicit native cleanup below. The close
+                // worker's captured generation is now stale and cannot issue
+                // a second Window close.
+            } else {
+                return match self.lifecycle.phase() {
+                    Phase::Quitting | Phase::Quit => Ok(()),
+                    _ => Err(AppErrorWire::native_unavailable()
+                        .with_summary("close did not finish before quit deadline")),
+                };
+            }
+        }
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut first_error = None;
+        self.clear_frame_persist_error();
+        if let Some(window) = window {
+            // Native geometry capture/persistence is asynchronous. A slow
+            // store cannot consume the quit deadline before owned process
+            // termination is attempted.
+            self.schedule_window_frame_persist(window);
+        }
+        if !self.wait_for_reconstruction(deadline) {
+            first_error.get_or_insert_with(|| {
+                AppErrorWire::native_unavailable()
+                    .with_summary("window reconstruction did not stop before quit deadline")
+            });
+        }
+        self.agent_reconciler_running.store(false, Ordering::Release);
+        if let Ok(mut picker) = self.picker_cancel.lock() {
+            if let Some(token) = picker.take() {
+                token.cancel();
+            }
+        }
+        if let Ok(mut watcher) = self.config_watcher.lock() {
+            if let Some(watcher) = watcher.take() {
+                if !watcher.stop_until(deadline) {
+                    first_error = Some(
+                        AppErrorWire::native_unavailable()
+                            .with_summary("Settings watcher did not stop before quit deadline"),
+                    );
+                }
+            }
+        }
+        self.bridge_sink.clear_router();
+        if let Ok(mut handle) = self.bridge_router_handle.lock() {
+            if let Some(handle) = handle.take() {
+                if !join_managed_thread(handle, deadline) {
+                    first_error.get_or_insert_with(|| {
+                        AppErrorWire::native_unavailable()
+                            .with_summary("Bridge router did not stop before quit deadline")
+                    });
+                }
+            }
+        }
+        if let Ok(mut handle) = self.agent_reconciler_handle.lock() {
+            if let Some(handle) = handle.take() {
+                if !join_managed_thread(handle, deadline) {
+                    first_error.get_or_insert_with(|| {
+                        AppErrorWire::native_unavailable()
+                            .with_summary("Agent reconciler did not stop before quit deadline")
+                    });
+                }
+            }
+        }
+        if !self._terminal_runtime.detach_all_surfaces_until(deadline) {
+            first_error.get_or_insert_with(|| {
+                AppErrorWire::native_unavailable()
+                    .with_summary("terminal reader/reaper did not stop before quit deadline")
+            });
+        }
+        if !self.agent_surfaces.detach_all_until(deadline) {
+            first_error.get_or_insert_with(|| {
+                AppErrorWire::native_unavailable()
+                    .with_summary("Agent Surface readers did not stop before quit deadline")
+            });
+        }
+        // Releasing the provider subscription is local cleanup only. It does
+        // not issue any Herdr terminate or tmux close operation.
+        if !self.agent_runtime.shutdown_until(deadline) {
+            first_error.get_or_insert_with(|| {
+                AppErrorWire::native_unavailable()
+                    .with_summary("Agent event reader did not stop before quit deadline")
+            });
+        }
+        // Do this explicitly even when the coordinator previously received a
+        // WindowClosed detach. A detached coordinator intentionally emits no
+        // second Quit effect, but OpenVSCode is still DevHub-owned and must be
+        // stopped exactly once on process quit.
+        // Always enter EditorHost shutdown, even when earlier app-local joins
+        // exhausted the deadline. Its process supervisor still sends the
+        // termination request and hands an unreaped Child to the bounded
+        // app-local reaper, so OpenVSCode cannot survive this quit path.
+        if let Err(error) = self.editor_host.shutdown_until(deadline) {
+            first_error.get_or_insert_with(|| state_error(error));
+        }
+        // Drain frame persistence only after owned shutdown has been
+        // initiated. A blocked state-store writer therefore cannot postpone
+        // OpenVSCode termination; it simply keeps clean shutdown false.
+        if !self.wait_for_frame_persist(deadline) {
+            first_error.get_or_insert_with(|| {
+                AppErrorWire::native_unavailable()
+                    .with_summary("window frame persistence did not stop before quit deadline")
+            });
+        }
+        if let Some(error) = self.take_frame_persist_error() {
+            first_error.get_or_insert(error);
+        }
+        let result = (|| {
+            let (_, effects) = self.dispatch_lifecycle(UserIntent::Quit)?;
+            let execution = self.execute_effects_until(effects, Some(deadline), None)?;
+            if let Some(error) = execution.error {
+                return Err(error);
+            }
+            if let Some(error) = first_error {
+                return Err(error);
+            }
+            if Instant::now() >= deadline {
+                return Err(AppErrorWire::native_unavailable()
+                    .with_summary("quit deadline exceeded before durable clean shutdown"));
+            }
+            self.persist_clean_snapshot(&execution.snapshot)
+        })();
+        self.finish_quit_transaction();
+        result
+    }
+
+    #[cfg(test)]
     fn dispatch_intent(&self, intent: UserIntent) -> Result<(AppOutcomeWire, bool), AppErrorWire> {
+        let lifecycle = self.capture_lifecycle_token();
+        self.dispatch_intent_with_lifecycle(intent, lifecycle)
+    }
+
+    fn dispatch_intent_with_lifecycle(
+        &self,
+        intent: UserIntent,
+        lifecycle: NativeLifecycleToken,
+    ) -> Result<(AppOutcomeWire, bool), AppErrorWire> {
         let intent_id = self.id_generator.next_intent_id()?;
         let operation_id = self
             .id_generator
             .next_operation_id()
             .map_err(|_| AppErrorWire::native_unavailable())?;
         let (outcome, before, readiness, effects) = {
+            let _transaction = self.coordinator_transaction.lock().map_err(state_error)?;
+            self.require_app_lifecycle_token(lifecycle)?;
             let mut coordinator = self.coordinator.lock().map_err(state_error)?;
             let before = coordinator.snapshot().revision();
             let outcome = coordinator
@@ -1639,7 +3340,9 @@ impl NativeAppState {
             let effects = Self::drain_effects(&mut coordinator);
             (outcome, before, coordinator.readiness(), effects)
         };
-        let execution = self.execute_effects(effects)?;
+        let execution = self.execute_effects_for_lifecycle(effects, lifecycle)?;
+        self.validate_app_lifecycle_token(lifecycle)?;
+        self.sync_editor_surface_with_lifecycle(lifecycle)?;
         let changed = execution.snapshot.revision() != before;
         let final_outcome = execution.outcome.as_ref().unwrap_or(&outcome);
         let mut wire =
@@ -1656,7 +3359,12 @@ impl NativeAppState {
         Ok((wire, changed))
     }
 
-    fn route_bridge_request(&self, request: &BridgeRequest) -> Result<(), AppErrorWire> {
+    fn route_bridge_request(
+        &self,
+        request: &BridgeRequest,
+        lifecycle: NativeLifecycleToken,
+    ) -> Result<(), AppErrorWire> {
+        self.validate_app_lifecycle_token(lifecycle)?;
         let intent = match request.request() {
             devhub_app_core::bridge::ClientRequest::OpenWorkspace(payload) => {
                 UserIntent::OpenFolder {
@@ -1674,12 +3382,11 @@ impl NativeAppState {
             },
             _ => return Ok(()),
         };
-        let result = match self.dispatch_intent(intent) {
-            Ok(_) => self
-                .bridge_result_for_snapshot(&self.current_snapshot()?)
-                .unwrap_or(bridge_request_failed_result()),
+        let result = match self.dispatch_intent_with_lifecycle(intent, lifecycle) {
+            Ok(_) => self.bridge_result_for_lifecycle(lifecycle),
             Err(_) => bridge_request_failed_result(),
         };
+        self.validate_app_lifecycle_token(lifecycle)?;
         if !self.bridge_sink.request_is_live(request) {
             return Ok(());
         }
@@ -1687,6 +3394,13 @@ impl NativeAppState {
             .complete_bridge_request(request.handle().clone(), result)
             .map_err(state_error)?;
         Ok(())
+    }
+
+    fn bridge_result_for_lifecycle(&self, lifecycle: NativeLifecycleToken) -> BridgeRequestResult {
+        let Ok(snapshot) = self.current_snapshot_with_lifecycle(lifecycle) else {
+            return bridge_request_failed_result();
+        };
+        self.bridge_result_for_snapshot(&snapshot).unwrap_or(bridge_request_failed_result())
     }
 
     fn bridge_result_for_snapshot(
@@ -1900,7 +3614,16 @@ impl NativeAppState {
     /// Resolves the semantic terminal surface against the current immutable
     /// AppSnapshot. The webview supplies only the generated surface key; the
     /// canonical Workspace root and tmux target are recovered here.
-    fn resolve_terminal_target(&self, surface_key: &str) -> Result<TerminalTarget, TerminalError> {
+    fn resolve_terminal_target(
+        &self,
+        surface_key: &str,
+        lifecycle: NativeLifecycleToken,
+    ) -> Result<TerminalTarget, TerminalError> {
+        let _transaction = self
+            .coordinator_transaction
+            .lock()
+            .map_err(|_| TerminalError::new(TerminalErrorCode::Internal))?;
+        self.require_lifecycle_token(lifecycle)?;
         validate_surface_key(surface_key)?;
         let coordinator =
             self.coordinator.lock().map_err(|_| TerminalError::new(TerminalErrorCode::Internal))?;
@@ -1945,6 +3668,7 @@ impl NativeAppState {
         webview_label: &str,
         request: AttachRequest,
         channel: tauri::ipc::Channel<tauri::ipc::InvokeResponseBody>,
+        lifecycle: NativeLifecycleToken,
     ) -> Result<AttachReceipt, TerminalError> {
         validate_attach_request(&request)?;
         let size = TerminalPtySize {
@@ -1953,7 +3677,7 @@ impl NativeAppState {
             pixel_width: request.pixel_width,
             pixel_height: request.pixel_height,
         };
-        let target = self.resolve_terminal_target(&request.surface_key)?;
+        let target = self.resolve_terminal_target(&request.surface_key, lifecycle)?;
         let cancel = self.terminal_operation_cancel()?;
         self._terminal_runtime.attach_surface(
             &target,
@@ -1969,12 +3693,13 @@ impl NativeAppState {
         &self,
         webview_label: &str,
         request: InputRequest,
+        lifecycle: NativeLifecycleToken,
     ) -> Result<(), TerminalError> {
         validate_schema(request.schema_version)?;
         validate_surface_key(&request.surface_key)?;
         validate_attachment_id(&request.attachment_id)?;
         validate_input_sequence(request.input_sequence)?;
-        let target = self.resolve_terminal_target(&request.surface_key)?;
+        let target = self.resolve_terminal_target(&request.surface_key, lifecycle)?;
         let identity = AttachmentIdentity {
             target: &target,
             surface_key: &request.surface_key,
@@ -1989,11 +3714,12 @@ impl NativeAppState {
         &self,
         webview_label: &str,
         request: ResizeRequest,
+        lifecycle: NativeLifecycleToken,
     ) -> Result<(), TerminalError> {
         validate_schema(request.schema_version)?;
         validate_surface_key(&request.surface_key)?;
         validate_attachment_id(&request.attachment_id)?;
-        let target = self.resolve_terminal_target(&request.surface_key)?;
+        let target = self.resolve_terminal_target(&request.surface_key, lifecycle)?;
         let identity = AttachmentIdentity {
             target: &target,
             surface_key: &request.surface_key,
@@ -2018,12 +3744,13 @@ impl NativeAppState {
         &self,
         webview_label: &str,
         request: AckRequest,
+        lifecycle: NativeLifecycleToken,
     ) -> Result<(), TerminalError> {
         validate_schema(request.schema_version)?;
         validate_surface_key(&request.surface_key)?;
         validate_attachment_id(&request.attachment_id)?;
         validate_input_sequence(request.sequence)?;
-        let target = self.resolve_terminal_target(&request.surface_key)?;
+        let target = self.resolve_terminal_target(&request.surface_key, lifecycle)?;
         let identity = AttachmentIdentity {
             target: &target,
             surface_key: &request.surface_key,
@@ -2063,8 +3790,13 @@ impl NativeAppState {
         webview_label: &str,
         request: AttachRequest,
         channel: tauri::ipc::Channel<tauri::ipc::InvokeResponseBody>,
+        lifecycle: NativeLifecycleToken,
     ) -> Result<AttachReceipt, TerminalError> {
-        self.resolve_agent_surface(&request.surface_key)?;
+        self.resolve_agent_surface(&request.surface_key, lifecycle)?;
+        // The reader callback can outlive the child WebView that created it.
+        // Carry the command's original native generation through every
+        // callback; recapturing the current generation here would let an old
+        // attach completion mutate a newly reopened coordinator.
         let callback_app = app.clone();
         let on_failure: Arc<dyn Fn(devhub_app_core::AgentId) + Send + Sync> =
             Arc::new(move |agent_id| {
@@ -2072,10 +3804,11 @@ impl NativeAppState {
                 tauri::async_runtime::spawn(async move {
                     let _ = tauri::async_runtime::spawn_blocking(move || {
                         if let Some(state) = app.try_state::<NativeAppState>() {
-                            state.mark_agent_runtime_failure(
+                            state.mark_agent_runtime_failure_if_current(
                                 &app,
                                 agent_id,
                                 RuntimeHealth::Degraded,
+                                lifecycle,
                             );
                         }
                     })
@@ -2089,20 +3822,25 @@ impl NativeAppState {
             channel,
             on_failure,
         )?;
-        self.apply_agent_observation(app, observation);
+        self.apply_agent_observation_with_lifecycle(app, observation, lifecycle);
         Ok(receipt)
     }
 
-    /// Applies one provider-free Agent observation through the same tokened
-    /// coordinator seam used by foreground reconciliation. Startup attach
-    /// observations therefore become visible immediately, while a later
-    /// aggregate reconcile remains authoritative for natural exits.
-    fn apply_agent_observation(&self, app: &AppHandle, observation: AgentObservation) {
+    fn apply_agent_observation_with_lifecycle(
+        &self,
+        app: &AppHandle,
+        observation: AgentObservation,
+        lifecycle: NativeLifecycleToken,
+    ) {
         let operation_id = match self.id_generator.next_operation_id() {
             Ok(operation_id) => operation_id,
             Err(_) => return,
         };
         let mut effects = {
+            let Ok(_transaction) = self.coordinator_transaction.lock() else { return };
+            if self.require_app_lifecycle_token(lifecycle).is_err() {
+                return;
+            }
             let Ok(mut coordinator) = self.coordinator.lock() else {
                 return;
             };
@@ -2123,6 +3861,10 @@ impl NativeAppState {
             Err(_) => return,
         };
         let completed = {
+            let Ok(_transaction) = self.coordinator_transaction.lock() else { return };
+            if self.require_app_lifecycle_token(lifecycle).is_err() {
+                return;
+            }
             let Ok(mut coordinator) = self.coordinator.lock() else {
                 return;
             };
@@ -2143,9 +3885,12 @@ impl NativeAppState {
             Self::drain_effects(&mut coordinator)
         };
         effects.extend(completed);
-        let Ok(execution) = self.execute_effects(effects) else {
+        let Ok(execution) = self.execute_effects_for_lifecycle(effects, lifecycle) else {
             return;
         };
+        if self.validate_app_lifecycle_token(lifecycle).is_err() {
+            return;
+        }
         let readiness = self
             .coordinator
             .lock()
@@ -2159,23 +3904,55 @@ impl NativeAppState {
         let _ = app.emit_to(APP_SHELL_WINDOW_LABEL, APP_SNAPSHOT_CHANGED_EVENT, snapshot);
     }
 
-    /// A control-stream failure is a view/runtime degradation, not evidence
-    /// that the provider Agent exited. Complete a native reconciliation epoch
-    /// with a typed degraded observation while leaving natural-exit removal to
-    /// the continuous provider reconciliation worker.
-    fn mark_agent_runtime_failure(
+    fn apply_agent_observation_if_current(
+        &self,
+        app: &AppHandle,
+        observation: AgentObservation,
+        lifecycle: NativeLifecycleToken,
+    ) {
+        if self.validate_app_lifecycle_token(lifecycle).is_err() {
+            return;
+        }
+        self.apply_agent_observation_with_lifecycle(app, observation, lifecycle);
+    }
+
+    fn mark_agent_runtime_failure_with_lifecycle(
         &self,
         app: &AppHandle,
         agent_id: devhub_app_core::AgentId,
         runtime_health: RuntimeHealth,
+        lifecycle: NativeLifecycleToken,
     ) {
-        self.apply_agent_observation(
+        if self.validate_app_lifecycle_token(lifecycle).is_err() {
+            return;
+        }
+        self.apply_agent_observation_with_lifecycle(
             app,
             AgentObservation::new(agent_id, devhub_app_core::AgentStatus::Error, runtime_health),
+            lifecycle,
         );
     }
 
-    fn resolve_agent_surface(&self, surface_key: &str) -> Result<(), TerminalError> {
+    fn mark_agent_runtime_failure_if_current(
+        &self,
+        app: &AppHandle,
+        agent_id: devhub_app_core::AgentId,
+        runtime_health: RuntimeHealth,
+        lifecycle: NativeLifecycleToken,
+    ) {
+        self.mark_agent_runtime_failure_with_lifecycle(app, agent_id, runtime_health, lifecycle);
+    }
+
+    fn resolve_agent_surface(
+        &self,
+        surface_key: &str,
+        lifecycle: NativeLifecycleToken,
+    ) -> Result<(), TerminalError> {
+        let _transaction = self
+            .coordinator_transaction
+            .lock()
+            .map_err(|_| TerminalError::new(TerminalErrorCode::Internal))?;
+        self.require_lifecycle_token(lifecycle)?;
         let Some(agent_id) = surface_key.strip_prefix("agent:") else {
             return Err(TerminalError::new(TerminalErrorCode::InvalidSurface));
         };
@@ -2217,8 +3994,9 @@ impl NativeAppState {
         &self,
         webview_label: &str,
         request: InputRequest,
+        lifecycle: NativeLifecycleToken,
     ) -> Result<(), TerminalError> {
-        self.resolve_agent_surface(&request.surface_key)?;
+        self.resolve_agent_surface(&request.surface_key, lifecycle)?;
         self.agent_surfaces.input(webview_label, request)
     }
 
@@ -2226,8 +4004,9 @@ impl NativeAppState {
         &self,
         webview_label: &str,
         request: ResizeRequest,
+        lifecycle: NativeLifecycleToken,
     ) -> Result<(), TerminalError> {
-        self.resolve_agent_surface(&request.surface_key)?;
+        self.resolve_agent_surface(&request.surface_key, lifecycle)?;
         self.agent_surfaces.resize(webview_label, request)
     }
 
@@ -2888,10 +4667,21 @@ impl NativeAppState {
         }
     }
 
+    #[cfg(test)]
     async fn apply_socket_change(
         &self,
         request: SettingsSocketChangeRequestWire,
     ) -> Result<SettingsSnapshotWire, SettingsErrorWire> {
+        let lifecycle = self.capture_settings_lifecycle_token()?;
+        self.apply_socket_change_with_lifecycle(request, lifecycle).await
+    }
+
+    async fn apply_socket_change_with_lifecycle(
+        &self,
+        request: SettingsSocketChangeRequestWire,
+        lifecycle: NativeLifecycleToken,
+    ) -> Result<SettingsSnapshotWire, SettingsErrorWire> {
+        self.validate_settings_lifecycle_token(lifecycle)?;
         if self
             .socket_transition_busy
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
@@ -2903,6 +4693,7 @@ impl NativeAppState {
 
         self.socket_request_is_current(&request)?;
         let prepared = self.prepare_socket_transition().await?;
+        self.validate_settings_lifecycle_token(lifecycle)?;
         if !request.confirmed {
             return self.settings_snapshot();
         }
@@ -2914,6 +4705,7 @@ impl NativeAppState {
             return Err(SettingsErrorWire::stale_socket_change());
         }
         let state = self.resume_socket_transition(true).await?;
+        self.validate_settings_lifecycle_token(lifecycle)?;
         let _ = state;
         self.settings_snapshot()
     }
@@ -3017,6 +4809,9 @@ impl NativeAppState {
             let Some(state) = handle.try_state::<NativeAppState>() else {
                 return;
             };
+            if matches!(state.lifecycle.phase(), Phase::Closing | Phase::Quitting | Phase::Quit) {
+                return;
+            }
             let settings_changed;
             let appearance_changed;
             match outcome {
@@ -3111,14 +4906,14 @@ fn get_app_snapshot(state: State<'_, NativeAppState>) -> Result<AppSnapshotWire,
     if let Some(error) = state.take_native_error() {
         return Err(error);
     }
-    let coordinator = state.coordinator.lock().map_err(state_error)?;
-    AppSnapshotWire::from_snapshot(&coordinator.snapshot(), coordinator.readiness())
-        .map_err(state_error)
+    let token = state.capture_open_lifecycle_token()?;
+    state.app_snapshot_with_lifecycle(token)
 }
 
 #[tauri::command]
 fn get_agent_profiles(state: State<'_, NativeAppState>) -> Result<AgentProfilesWire, AppErrorWire> {
-    state.agent_profiles()
+    let token = state.capture_open_lifecycle_token()?;
+    state.agent_profiles_with_lifecycle(token)
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -3135,8 +4930,9 @@ struct PickerSelectionRequest {
 }
 
 #[tauri::command]
-async fn choose_workspace_folder() -> Result<Option<String>, AppErrorWire> {
-    tauri::async_runtime::spawn_blocking(|| {
+async fn choose_workspace_folder(app: AppHandle) -> Result<Option<String>, AppErrorWire> {
+    let token = app.state::<NativeAppState>().capture_open_lifecycle_token()?;
+    let result = tauri::async_runtime::spawn_blocking(move || {
         let output = ProcessCommand::new("osascript")
             .args(["-e", FOLDER_CHOOSER_SCRIPT])
             .output()
@@ -3155,7 +4951,9 @@ async fn choose_workspace_folder() -> Result<Option<String>, AppErrorWire> {
         }
     })
     .await
-    .map_err(|_| AppErrorWire::native_unavailable())?
+    .map_err(|_| AppErrorWire::native_unavailable())??;
+    app.state::<NativeAppState>().require_app_lifecycle_token(token)?;
+    Ok(result)
 }
 
 #[tauri::command]
@@ -3164,14 +4962,21 @@ fn start_workspace_picker(
     state: State<'_, NativeAppState>,
     payload: PickerStartRequest,
 ) -> Result<String, AppErrorWire> {
-    let operation_id =
-        state.id_generator.next_operation_id().map_err(|_| AppErrorWire::native_unavailable())?;
-    let cancel = CancellationToken::new(operation_id.clone());
-    if let Ok(mut previous) = state.picker_cancel.lock() {
-        if let Some(previous) = previous.replace(cancel.clone()) {
-            previous.cancel();
+    let (lifecycle, operation_id, cancel) = {
+        let _transaction = state.coordinator_transaction.lock().map_err(state_error)?;
+        let lifecycle = state.capture_open_lifecycle_token_locked()?;
+        let operation_id = state
+            .id_generator
+            .next_operation_id()
+            .map_err(|_| AppErrorWire::native_unavailable())?;
+        let cancel = CancellationToken::new(operation_id.clone());
+        if let Ok(mut previous) = state.picker_cancel.lock() {
+            if let Some(previous) = previous.replace(cancel.clone()) {
+                previous.cancel();
+            }
         }
-    }
+        (lifecycle, operation_id, cancel)
+    };
     let _ = app.emit_to(
         APP_SHELL_WINDOW_LABEL,
         APP_WORKSPACE_PICKER_EVENT,
@@ -3186,24 +4991,27 @@ fn start_workspace_picker(
             app: worker_app.clone(),
             query,
             last_sequence: AtomicU64::new(0),
+            lifecycle,
         });
         let sink: Arc<dyn WorkspaceDiscoverySink> = picker_sink.clone();
         let summary = engine.discover(cancel.clone(), sink).await;
         if let Ok(summary) = summary {
-            let _ = worker_app.emit_to(
-                APP_SHELL_WINDOW_LABEL,
-                APP_WORKSPACE_PICKER_EVENT,
-                WorkspacePickerEventWire::Completed {
-                    operation_id: operation_id.to_string(),
-                    sequence: picker_sink.next_sequence(),
-                    source_id: None,
-                    candidate_count: summary.candidate_count,
-                    error_count: summary.error_count,
-                    stderr_bytes: summary.stderr_bytes,
-                    cancelled: summary.cancelled,
-                    truncated: summary.truncated,
-                },
-            );
+            if picker_sink.is_current() {
+                let _ = worker_app.emit_to(
+                    APP_SHELL_WINDOW_LABEL,
+                    APP_WORKSPACE_PICKER_EVENT,
+                    WorkspacePickerEventWire::Completed {
+                        operation_id: operation_id.to_string(),
+                        sequence: picker_sink.next_sequence(),
+                        source_id: None,
+                        candidate_count: summary.candidate_count,
+                        error_count: summary.error_count,
+                        stderr_bytes: summary.stderr_bytes,
+                        cancelled: summary.cancelled,
+                        truncated: summary.truncated,
+                    },
+                );
+            }
         }
         if let Some(state) = worker_app.try_state::<NativeAppState>() {
             if let Ok(mut active) = state.picker_cancel.lock() {
@@ -3218,6 +5026,8 @@ fn start_workspace_picker(
 
 #[tauri::command]
 fn cancel_workspace_picker(state: State<'_, NativeAppState>) -> Result<(), AppErrorWire> {
+    let _transaction = state.coordinator_transaction.lock().map_err(state_error)?;
+    state.capture_open_lifecycle_token_locked()?;
     if let Ok(mut active) = state.picker_cancel.lock() {
         if let Some(token) = active.take() {
             token.cancel();
@@ -3233,9 +5043,14 @@ async fn select_workspace_picker(
 ) -> Result<AppOutcomeWire, AppErrorWire> {
     let path = devhub_app_core::RequestedPath::new(payload.path)
         .map_err(|_| AppErrorWire::invalid_intent())?;
+    let token = app.state::<NativeAppState>().capture_open_lifecycle_token()?;
     let result = tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<NativeAppState>();
-        state.dispatch_intent(UserIntent::OpenFolder { path })
+        state.require_app_lifecycle_token(token)?;
+        let result =
+            state.dispatch_intent_with_lifecycle(UserIntent::OpenFolder { path }, token)?;
+        state.require_app_lifecycle_token(token)?;
+        Ok(result)
     })
     .await
     .map_err(|_| AppErrorWire::native_unavailable())??;
@@ -3246,7 +5061,10 @@ async fn select_workspace_picker(
 fn get_app_appearance(
     state: State<'_, NativeAppState>,
 ) -> Result<AppAppearanceWire, SettingsErrorWire> {
-    state.app_appearance()
+    let token = state
+        .capture_open_lifecycle_token()
+        .map_err(|_| SettingsErrorWire::native_unavailable())?;
+    state.app_appearance_with_lifecycle(token)
 }
 
 #[tauri::command]
@@ -3259,10 +5077,13 @@ async fn dispatch_app_intent(
     // coordinator transaction is still serialized by its mutex, while
     // Herdr/tmux/editor work and its tokened completions run on the bounded
     // blocking executor used by the native adapters.
+    let token = app.state::<NativeAppState>().capture_open_lifecycle_token()?;
     let worker_app = app.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
         let state = worker_app.state::<NativeAppState>();
-        let (wire, changed) = state.dispatch_intent(intent)?;
+        state.require_app_lifecycle_token(token)?;
+        let (wire, changed) = state.dispatch_intent_with_lifecycle(intent, token)?;
+        state.require_app_lifecycle_token(token)?;
         Ok::<_, AppErrorWire>((wire, changed))
     })
     .await
@@ -3289,16 +5110,16 @@ fn replay_app_events(
     state: State<'_, NativeAppState>,
     payload: ReplayRequest,
 ) -> Result<ReplayWire, AppErrorWire> {
-    let coordinator = state.coordinator.lock().map_err(state_error)?;
-    ReplayWire::from_replay(&coordinator.replay_from(payload.cursor), coordinator.readiness())
-        .map_err(state_error)
+    let token = state.capture_open_lifecycle_token()?;
+    state.replay_with_lifecycle(token, payload.cursor)
 }
 
 #[tauri::command]
 fn get_settings_snapshot(
     state: State<'_, NativeAppState>,
 ) -> Result<SettingsSnapshotWire, SettingsErrorWire> {
-    state.settings_snapshot()
+    let token = state.capture_settings_lifecycle_token()?;
+    state.settings_snapshot_with_lifecycle(token)
 }
 
 #[tauri::command]
@@ -3307,7 +5128,9 @@ fn save_settings(
     state: State<'_, NativeAppState>,
     payload: SettingsSaveRequestWire,
 ) -> Result<SettingsSnapshotWire, SettingsErrorWire> {
+    let token = state.capture_settings_lifecycle_token()?;
     let snapshot = state.save_settings(payload)?;
+    state.validate_settings_lifecycle_token(token)?;
     emit_settings_snapshot(&app, snapshot.clone());
     emit_app_appearance(&app, &state);
     emit_agent_profiles(&app, &state);
@@ -3320,10 +5143,12 @@ fn reload_settings(
     state: State<'_, NativeAppState>,
     payload: devhub_app_core::SettingsCommandRequestWire,
 ) -> Result<SettingsSnapshotWire, SettingsErrorWire> {
+    let token = state.capture_settings_lifecycle_token()?;
     payload.validate()?;
     let before = state.settings_sequence()?;
     match state.reload_settings() {
         Ok(snapshot) => {
+            state.validate_settings_lifecycle_token(token)?;
             if snapshot.sequence > before {
                 emit_settings_snapshot(&app, snapshot.clone());
                 emit_app_appearance(&app, &state);
@@ -3332,6 +5157,7 @@ fn reload_settings(
             Ok(snapshot)
         }
         Err(error) => {
+            state.validate_settings_lifecycle_token(token)?;
             if state.settings_sequence()? > before {
                 if let Ok(snapshot) = state.settings_snapshot() {
                     emit_settings_snapshot(&app, snapshot);
@@ -3348,8 +5174,10 @@ fn recheck_settings(
     state: State<'_, NativeAppState>,
     payload: devhub_app_core::SettingsCommandRequestWire,
 ) -> Result<SettingsSnapshotWire, SettingsErrorWire> {
+    let token = state.capture_settings_lifecycle_token()?;
     payload.validate()?;
-    state.settings_snapshot()
+    state.validate_settings_lifecycle_token(token)?;
+    state.settings_snapshot_with_lifecycle(token)
 }
 
 #[tauri::command]
@@ -3357,18 +5185,30 @@ fn open_log_folder(
     state: State<'_, NativeAppState>,
     payload: devhub_app_core::SettingsCommandRequestWire,
 ) -> Result<(), SettingsErrorWire> {
+    let token = state.capture_settings_lifecycle_token()?;
     payload.validate()?;
-    state.open_log_folder()
+    state.open_log_folder()?;
+    state.validate_settings_lifecycle_token(token)
 }
 
 async fn terminal_worker<T, F>(app: AppHandle, operation: F) -> Result<T, TerminalError>
 where
     T: Send + 'static,
-    F: FnOnce(&NativeAppState) -> Result<T, TerminalError> + Send + 'static,
+    F: FnOnce(&NativeAppState, NativeLifecycleToken) -> Result<T, TerminalError> + Send + 'static,
 {
-    tauri::async_runtime::spawn_blocking(move || operation(&app.state::<NativeAppState>()))
-        .await
-        .map_err(|_| TerminalError::new(TerminalErrorCode::Internal))?
+    let token = app
+        .state::<NativeAppState>()
+        .capture_open_lifecycle_token()
+        .map_err(|_| TerminalError::new(TerminalErrorCode::SurfaceUnavailable))?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<NativeAppState>();
+        state.validate_terminal_lifecycle_token(token)?;
+        let value = operation(&state, token)?;
+        state.validate_terminal_lifecycle_token(token)?;
+        Ok(value)
+    })
+    .await
+    .map_err(|_| TerminalError::new(TerminalErrorCode::Internal))?
 }
 
 #[tauri::command]
@@ -3379,7 +5219,21 @@ async fn terminal_attach(
     channel: tauri::ipc::Channel<tauri::ipc::InvokeResponseBody>,
 ) -> Result<AttachReceipt, TerminalError> {
     let webview_label = webview.label().to_owned();
-    terminal_worker(app, move |state| state.terminal_attach(&webview_label, payload, channel)).await
+    let surface_key = payload.surface_key.clone();
+    terminal_worker(app, move |state, token| {
+        let receipt = state.terminal_attach(&webview_label, payload, channel, token)?;
+        if state.validate_terminal_lifecycle_token(token).is_err() {
+            let _ = state._terminal_runtime.detach_surface(
+                &surface_key,
+                &receipt.attachment_id,
+                &webview_label,
+                receipt.target_generation,
+            );
+            return Err(TerminalError::new(TerminalErrorCode::SurfaceUnavailable));
+        }
+        Ok(receipt)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -3389,7 +5243,8 @@ async fn terminal_input(
     payload: InputRequest,
 ) -> Result<(), TerminalError> {
     let webview_label = webview.label().to_owned();
-    terminal_worker(app, move |state| state.terminal_input(&webview_label, payload)).await
+    terminal_worker(app, move |state, token| state.terminal_input(&webview_label, payload, token))
+        .await
 }
 
 #[tauri::command]
@@ -3399,7 +5254,8 @@ async fn terminal_resize(
     payload: ResizeRequest,
 ) -> Result<(), TerminalError> {
     let webview_label = webview.label().to_owned();
-    terminal_worker(app, move |state| state.terminal_resize(&webview_label, payload)).await
+    terminal_worker(app, move |state, token| state.terminal_resize(&webview_label, payload, token))
+        .await
 }
 
 #[tauri::command]
@@ -3409,7 +5265,10 @@ async fn terminal_acknowledge(
     payload: AckRequest,
 ) -> Result<(), TerminalError> {
     let webview_label = webview.label().to_owned();
-    terminal_worker(app, move |state| state.terminal_acknowledge(&webview_label, payload)).await
+    terminal_worker(app, move |state, token| {
+        state.terminal_acknowledge(&webview_label, payload, token)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -3419,7 +5278,7 @@ async fn terminal_detach(
     payload: DetachRequest,
 ) -> Result<(), TerminalError> {
     let webview_label = webview.label().to_owned();
-    terminal_worker(app, move |state| state.terminal_detach(&webview_label, payload)).await
+    terminal_worker(app, move |state, _token| state.terminal_detach(&webview_label, payload)).await
 }
 
 #[tauri::command]
@@ -3431,8 +5290,14 @@ async fn agent_surface_attach(
 ) -> Result<AttachReceipt, TerminalError> {
     let webview_label = webview.label().to_owned();
     let callback_app = app.clone();
-    terminal_worker(app, move |state| {
-        state.agent_surface_attach(&callback_app, &webview_label, payload, channel)
+    terminal_worker(app, move |state, token| {
+        let receipt =
+            state.agent_surface_attach(&callback_app, &webview_label, payload, channel, token)?;
+        if state.validate_terminal_lifecycle_token(token).is_err() {
+            let _ = state.agent_surfaces.detach_receipt(&webview_label, &receipt);
+            return Err(TerminalError::new(TerminalErrorCode::SurfaceUnavailable));
+        }
+        Ok(receipt)
     })
     .await
 }
@@ -3444,7 +5309,10 @@ async fn agent_surface_input(
     payload: InputRequest,
 ) -> Result<(), TerminalError> {
     let webview_label = webview.label().to_owned();
-    terminal_worker(app, move |state| state.agent_surface_input(&webview_label, payload)).await
+    terminal_worker(app, move |state, token| {
+        state.agent_surface_input(&webview_label, payload, token)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -3454,7 +5322,10 @@ async fn agent_surface_resize(
     payload: ResizeRequest,
 ) -> Result<(), TerminalError> {
     let webview_label = webview.label().to_owned();
-    terminal_worker(app, move |state| state.agent_surface_resize(&webview_label, payload)).await
+    terminal_worker(app, move |state, token| {
+        state.agent_surface_resize(&webview_label, payload, token)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -3464,8 +5335,10 @@ async fn agent_surface_acknowledge(
     payload: AckRequest,
 ) -> Result<(), TerminalError> {
     let webview_label = webview.label().to_owned();
-    terminal_worker(app, move |state| state.agent_surface_acknowledge(&webview_label, payload))
-        .await
+    terminal_worker(app, move |state, _token| {
+        state.agent_surface_acknowledge(&webview_label, payload)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -3475,7 +5348,8 @@ async fn agent_surface_detach(
     payload: DetachRequest,
 ) -> Result<(), TerminalError> {
     let webview_label = webview.label().to_owned();
-    terminal_worker(app, move |state| state.agent_surface_detach(&webview_label, payload)).await
+    terminal_worker(app, move |state, _token| state.agent_surface_detach(&webview_label, payload))
+        .await
 }
 
 #[tauri::command]
@@ -3485,7 +5359,11 @@ async fn apply_socket_change(
     payload: SettingsSocketChangeRequestWire,
 ) -> Result<SettingsSnapshotWire, SettingsErrorWire> {
     payload.validate()?;
-    let result = state.apply_socket_change(payload).await;
+    let token = state.capture_settings_lifecycle_token()?;
+    let result = state.apply_socket_change_with_lifecycle(payload, token).await;
+    if result.is_ok() {
+        state.validate_settings_lifecycle_token(token)?;
+    }
     if result.is_ok() {
         emit_agent_profiles(&app, &state);
     }
@@ -3494,6 +5372,9 @@ async fn apply_socket_change(
 
 fn show_settings_window(app: &AppHandle) -> Result<(), String> {
     if let Some(window) = app.get_webview_window(SETTINGS_WINDOW_LABEL) {
+        window
+            .set_menu(build_settings_menu(app).map_err(|error| error.to_string())?)
+            .map_err(|error| error.to_string())?;
         window.show().map_err(|error| error.to_string())?;
         window.set_focus().map_err(|error| error.to_string())?;
         return Ok(());
@@ -3509,19 +5390,54 @@ fn show_settings_window(app: &AppHandle) -> Result<(), String> {
     .resizable(true)
     .decorations(true)
     .center()
+    .menu(build_settings_menu(app).map_err(|error| error.to_string())?)
     .build()
     .map_err(|error| error.to_string())?;
     window.set_focus().map_err(|error| error.to_string())
 }
 
-fn build_app_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
+/// Returns the one main Window, creating it only after the prior instance has
+/// been destroyed. The label is stable, so Tauri itself rejects any attempted
+/// duplicate and the lifecycle gate prevents reaching that race in normal
+/// operation.
+fn ensure_app_shell_window(
+    app: &AppHandle,
+    state: &NativeAppState,
+) -> Result<tauri::WebviewWindow<tauri::Wry>, AppErrorWire> {
+    if let Some(window) = app.get_webview_window(APP_SHELL_WINDOW_LABEL) {
+        return Ok(window);
+    }
+    let persisted = state.store.load_or_default().map_err(persistence_error)?;
+    let frame = safe_restore_frame(persisted.window.frame, &[]);
+    WebviewWindowBuilder::new(app, APP_SHELL_WINDOW_LABEL, WebviewUrl::App("index.html".into()))
+        .title("DevHub")
+        .inner_size(f64::from(frame.width), f64::from(frame.height))
+        .min_inner_size(900.0, 560.0)
+        .position(f64::from(frame.x), f64::from(frame.y))
+        .resizable(true)
+        .decorations(true)
+        .title_bar_style(tauri::TitleBarStyle::Overlay)
+        .hidden_title(true)
+        .traffic_light_position(tauri::LogicalPosition::new(16.0, 16.0))
+        .visible(false)
+        .maximized(frame.maximized)
+        .build()
+        .map_err(|_| AppErrorWire::native_unavailable())
+}
+
+fn build_window_menu(
+    app: &AppHandle,
+    close_accelerator: Option<&str>,
+) -> tauri::Result<Menu<tauri::Wry>> {
     let about = PredefinedMenuItem::about(app, Some("About DevHub"), None)?;
     let open_settings =
         MenuItem::with_id(app, OPEN_SETTINGS_MENU_ID, "Settings…", true, Some("CmdOrCtrl+,"))?;
     let hide = PredefinedMenuItem::hide(app, Some("Hide DevHub"))?;
     let hide_others = PredefinedMenuItem::hide_others(app, Some("Hide Others"))?;
     let show_all = PredefinedMenuItem::show_all(app, Some("Show All"))?;
-    let quit = PredefinedMenuItem::quit(app, Some("Quit DevHub"))?;
+    // Deliberately click-only. Cmd-Q is owned by the lifecycle event path and
+    // must not recursively synthesize another predefined Quit action.
+    let quit = MenuItem::with_id(app, QUIT_MENU_ID, "Quit DevHub", true, None::<&str>)?;
     let app_menu = Submenu::with_items(
         app,
         "DevHub",
@@ -3539,21 +5455,55 @@ fn build_app_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         Submenu::with_items(app, "Edit", true, &[&undo, &redo, &cut, &copy, &paste, &select_all])?;
 
     let minimize = PredefinedMenuItem::minimize(app, Some("Minimize"))?;
-    let close_window = PredefinedMenuItem::close_window(app, Some("Close Window"))?;
+    // The main Window passes no accelerator, leaving Cmd-W for the future
+    // command router. The Settings-only window menu passes Cmd-W explicitly.
+    let close_window =
+        MenuItem::with_id(app, CLOSE_WINDOW_MENU_ID, "Close Window", true, close_accelerator)?;
     let window_menu = Submenu::with_items(app, "Window", true, &[&minimize, &close_window])?;
-    // The focus-scoped Close Window item closes Settings when it is key while
-    // preserving the existing app-shell close lifecycle when the workbench is key.
     Menu::with_items(app, &[&app_menu, &edit_menu, &window_menu])
+}
+
+fn build_app_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
+    build_window_menu(app, None)
+}
+
+fn build_settings_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
+    build_window_menu(app, Some("CmdOrCtrl+W"))
 }
 
 pub fn run() {
     tauri::Builder::default()
         .menu(build_app_menu)
         .on_menu_event(|app, event| {
-            if event.id().as_ref() == OPEN_SETTINGS_MENU_ID {
-                if let Err(error) = show_settings_window(app) {
-                    eprintln!("DevHub Settings window unavailable: {error}");
+            match event.id().as_ref() {
+                OPEN_SETTINGS_MENU_ID => {
+                    if let Err(error) = show_settings_window(app) {
+                        eprintln!("DevHub Settings window unavailable: {error}");
+                    }
                 }
+                CLOSE_WINDOW_MENU_ID => {
+                    let settings = app.get_webview_window(SETTINGS_WINDOW_LABEL);
+                    let target = if settings
+                        .as_ref()
+                        .is_some_and(|window| window.is_focused().unwrap_or(false))
+                    {
+                        settings.map(|window| window.as_ref().window().clone())
+                    } else {
+                        app.get_webview_window(APP_SHELL_WINDOW_LABEL)
+                            .map(|window| window.as_ref().window().clone())
+                    };
+                    if let Some(window) = target {
+                        if let Err(error) = window.close() {
+                            eprintln!("DevHub Window close unavailable: {error}");
+                        }
+                    }
+                }
+                QUIT_MENU_ID => {
+                    // ExitRequested performs the single-flight native quit;
+                    // this call only asks Tauri to enter that path.
+                    app.exit(0);
+                }
+                _ => {}
             }
         })
         .setup(|app| {
@@ -3567,6 +5517,10 @@ pub fn run() {
                 .install_config_watcher(app.handle())
                 .map_err(|_| std::io::Error::other("DevHub Settings watcher unavailable"))?;
             app.state::<NativeAppState>().start_agent_reconciler(app.handle());
+            let startup_handle = app.handle().clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                startup_handle.state::<NativeAppState>().attach_startup_window(&startup_handle);
+            });
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 let state = handle.state::<NativeAppState>();
@@ -3617,22 +5571,212 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            if window.label() == "app-shell" && matches!(event, tauri::WindowEvent::Destroyed) {
-                let app = window.app_handle().clone();
-                let worker_app = app.clone();
-                tauri::async_runtime::spawn(async move {
-                    let result = tauri::async_runtime::spawn_blocking(move || {
-                        worker_app.state::<NativeAppState>().close_window()
-                    })
-                    .await;
-                    match result {
-                        Ok(Ok(())) => {}
-                        Ok(Err(error)) => app.state::<NativeAppState>().record_native_error(error),
-                        Err(_) => app
-                            .state::<NativeAppState>()
-                            .record_native_error(AppErrorWire::native_unavailable()),
+            if window.label() != APP_SHELL_WINDOW_LABEL {
+                return;
+            }
+            let app = window.app_handle().clone();
+            let state = app.state::<NativeAppState>();
+            match event {
+                tauri::WindowEvent::CloseRequested { api, .. } => {
+                    // A stable label is shared by every reconstruction, so
+                    // reject events from an older native Window before they
+                    // can consume the current close lifecycle.
+                    if !state.is_current_native_window(window) {
+                        return;
                     }
-                });
+                    // The only unguarded close is the explicit close issued
+                    // after the worker has captured/persisted the frame and
+                    // coordinator snapshot. Raw child projections remain
+                    // owned until the irreversible Destroyed event.
+                    if state.close_allowance_matches(window)
+                        || matches!(state.lifecycle.phase(), Phase::Quitting | Phase::Quit)
+                    {
+                        return;
+                    }
+                    api.prevent_close();
+                    if !state.begin_close_transaction() {
+                        return;
+                    }
+                    let close_generation = state.lifecycle.generation();
+                    let Some(close_identity) = state.native_window_identity(window) else {
+                        state.abort_close_transaction();
+                        return;
+                    };
+                    let cleanup_token = WindowCleanupToken {
+                        handle_key: close_identity.handle_key,
+                        lifecycle_generation: close_generation,
+                    };
+                    if let Ok(mut closing) = state.closing_window.lock() {
+                        *closing = Some(close_identity);
+                    }
+                    if !state.begin_window_cleanup(cleanup_token) {
+                        if let Ok(mut closing) = state.closing_window.lock() {
+                            *closing = None;
+                        }
+                        state.abort_close_transaction();
+                        state.record_native_error(
+                            AppErrorWire::native_unavailable()
+                                .with_summary("Window cleanup is already owned"),
+                        );
+                        return;
+                    }
+                    let worker_app = app.clone();
+                    let worker_window = window.clone();
+                    let close_window = window.clone();
+                    tauri::async_runtime::spawn(async move {
+                        let result = tauri::async_runtime::spawn_blocking(move || {
+                            worker_app
+                                .state::<NativeAppState>()
+                                .close_window_claimed(Some(&worker_window), Some(cleanup_token))
+                        })
+                        .await;
+                        let state = close_window.app_handle().state::<NativeAppState>();
+                        if state.lifecycle.generation() != close_generation
+                            || state.lifecycle.phase() != Phase::Closing
+                            || state.native_window_identity(&close_window) != Some(close_identity)
+                        {
+                            // Destroyed may have finalized this generation
+                            // while the bounded close worker was still in
+                            // provider/WebView cleanup. Dock reopen waits for
+                            // this token before mounting the replacement.
+                            return;
+                        }
+                        match result {
+                            Ok(Ok(())) => {
+                                state.set_close_allowance(close_identity);
+                                if let Err(error) = close_window.close() {
+                                    if let Ok(mut allowance) = state.close_allowance.lock() {
+                                        *allowance = None;
+                                    }
+                                    if let Ok(mut closing) = state.closing_window.lock() {
+                                        *closing = None;
+                                    }
+                                    state.finish_window_cleanup(cleanup_token);
+                                    let rollback = state.restore_failed_close();
+                                    state.abort_close_transaction();
+                                    state.record_native_error(state_error(error));
+                                    if let Err(rollback_error) = rollback {
+                                        state.record_native_error(rollback_error);
+                                    }
+                                }
+                                // `Destroyed`, not this worker, commits the
+                                // Closing -> Closed transition. This guards a
+                                // late event from an old Window generation.
+                            }
+                            Ok(Err(error)) => {
+                                if let Ok(mut closing) = state.closing_window.lock() {
+                                    *closing = None;
+                                }
+                                state.finish_window_cleanup(cleanup_token);
+                                let rollback = state.restore_failed_close();
+                                state.abort_close_transaction();
+                                state.record_native_error(error);
+                                if let Err(rollback_error) = rollback {
+                                    state.record_native_error(rollback_error);
+                                }
+                            }
+                            Err(_) => {
+                                if let Ok(mut closing) = state.closing_window.lock() {
+                                    *closing = None;
+                                }
+                                state.finish_window_cleanup(cleanup_token);
+                                let rollback = state.restore_failed_close();
+                                state.abort_close_transaction();
+                                state.record_native_error(AppErrorWire::native_unavailable());
+                                if let Err(rollback_error) = rollback {
+                                    state.record_native_error(rollback_error);
+                                }
+                            }
+                        }
+                    });
+                }
+                tauri::WindowEvent::Destroyed => {
+                    let Some(identity) = state.native_window_identity(window) else {
+                        return;
+                    };
+                    let closing_matches = state
+                        .closing_window
+                        .lock()
+                        .ok()
+                        .and_then(|closing| *closing)
+                        .is_some_and(|closing| closing == identity);
+                    if state.lifecycle.phase() == Phase::Closing && closing_matches {
+                        let cleanup_token = WindowCleanupToken {
+                            handle_key: identity.handle_key,
+                            lifecycle_generation: identity.lifecycle_generation,
+                        };
+                        let close_was_guarded = state.close_allowance_matches(window);
+                        if let Ok(mut allowance) = state.close_allowance.lock() {
+                            *allowance = None;
+                        }
+                        if let Ok(mut closing) = state.closing_window.lock() {
+                            *closing = None;
+                        }
+                        state.clear_native_window_if_current(window);
+                        state.finish_close_transaction();
+                        state.clear_close_rollback_snapshot();
+                        if close_was_guarded || state.window_cleanup_is_current(cleanup_token) {
+                            state.start_window_projection_cleanup(&app, cleanup_token);
+                        }
+                    } else if state.lifecycle.phase() == Phase::Open {
+                        // AppKit can destroy a Window without first delivering
+                        // CloseRequested (crash-equivalent teardown). The
+                        // identity match above proves this is the current
+                        // concrete Window; visibility is not a generation
+                        // discriminator and is intentionally not consulted.
+                        state.clear_native_window_if_current(window);
+                        state.mark_unexpected_destroyed_transaction();
+                        let cleanup_token = WindowCleanupToken {
+                            handle_key: identity.handle_key,
+                            lifecycle_generation: identity.lifecycle_generation,
+                        };
+                        if state.begin_window_cleanup(cleanup_token) {
+                            state.start_window_projection_cleanup(&app, cleanup_token);
+                        }
+                    }
+                }
+                tauri::WindowEvent::Moved(_) => {
+                    if state.lifecycle.phase() == Phase::Open
+                        && state.is_current_native_window(window)
+                    {
+                        state.schedule_window_frame_persist(window);
+                    }
+                }
+                tauri::WindowEvent::Resized(size) if state.lifecycle.phase() == Phase::Open => {
+                    if !state.is_current_native_window(window) {
+                        return;
+                    }
+                    let bounds = editor::EditorBounds::new(
+                        0.0,
+                        0.0,
+                        f64::from(size.width.max(1)),
+                        f64::from(size.height.max(1)),
+                    );
+                    if let Ok(mut current) = state.editor_bounds.lock() {
+                        *current = bounds;
+                    }
+                    // WRY marshals child-WebView operations onto the AppKit
+                    // thread. Window events already arrive there, so perform
+                    // the synchronous host call on a blocking worker to avoid
+                    // recursively waiting for the same main-thread queue.
+                    let layout_generation = state.lifecycle.generation();
+                    let layout_identity = state.native_window_identity(window);
+                    let layout_app = app.clone();
+                    tauri::async_runtime::spawn_blocking(move || {
+                        if let Some(state) = layout_app.try_state::<NativeAppState>() {
+                            if state.lifecycle.phase() == Phase::Open
+                                && state.lifecycle.generation() == layout_generation
+                                && layout_identity.is_some_and(|identity| {
+                                    state.is_current_native_identity(identity)
+                                })
+                            {
+                                let _ = state.editor_host.set_layout(bounds);
+                            }
+                        }
+                    });
+                    state.schedule_window_frame_persist(window);
+                }
+                _ => {}
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -3665,28 +5809,67 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building DevHub")
         .run(|app_handle: &AppHandle, event| {
-            if let tauri::RunEvent::ExitRequested { api, .. } = event {
-                api.prevent_exit();
-                let app = app_handle.clone();
-                let worker_app = app.clone();
-                tauri::async_runtime::spawn(async move {
-                    let result = tauri::async_runtime::spawn_blocking(move || {
-                        worker_app.state::<NativeAppState>().quit()
-                    })
-                    .await;
-                    match result {
-                        Ok(Ok(())) => app.exit(0),
-                        Ok(Err(error)) => {
-                            app.state::<NativeAppState>().record_native_error(error);
-                            app.exit(1);
+            match event {
+                tauri::RunEvent::Reopen { .. } => {
+                    let app = app_handle.clone();
+                    let worker_app = app.clone();
+                    tauri::async_runtime::spawn(async move {
+                        let result = tauri::async_runtime::spawn_blocking(move || {
+                            worker_app.state::<NativeAppState>().reopen_from_dock(&worker_app)
+                        })
+                        .await;
+                        match result {
+                            Ok(Ok(())) => {}
+                            Ok(Err(error)) => {
+                                app.state::<NativeAppState>().record_native_error(error)
+                            }
+                            Err(_) => app
+                                .state::<NativeAppState>()
+                                .record_native_error(AppErrorWire::native_unavailable()),
                         }
-                        Err(_) => {
-                            app.state::<NativeAppState>()
-                                .record_native_error(AppErrorWire::native_unavailable());
-                            app.exit(1);
-                        }
+                    });
+                }
+                tauri::RunEvent::ExitRequested { api, code, .. } => {
+                    let state = app_handle.state::<NativeAppState>();
+                    // The second ExitRequested generated by app.exit is an
+                    // explicit allowance, not a recursive shutdown request.
+                    if state.exit_allowed.load(Ordering::Acquire) {
+                        return;
                     }
-                });
+                    if !is_explicit_exit_request(code) {
+                        api.prevent_exit();
+                        return;
+                    }
+                    api.prevent_exit();
+                    if !claim_single_flight(&state.quit_requested) {
+                        return;
+                    }
+                    let app = app_handle.clone();
+                    let worker_app = app.clone();
+                    tauri::async_runtime::spawn(async move {
+                        let result = tauri::async_runtime::spawn_blocking(move || {
+                            let window = worker_app
+                                .get_webview_window(APP_SHELL_WINDOW_LABEL)
+                                .map(|window| window.as_ref().window().clone());
+                            worker_app.state::<NativeAppState>().quit_with_window(window.as_ref())
+                        })
+                        .await;
+                        let state = app.state::<NativeAppState>();
+                        state.exit_allowed.store(true, Ordering::Release);
+                        match result {
+                            Ok(Ok(())) => app.exit(0),
+                            Ok(Err(error)) => {
+                                state.record_native_error(error);
+                                app.exit(1);
+                            }
+                            Err(_) => {
+                                state.record_native_error(AppErrorWire::native_unavailable());
+                                app.exit(1);
+                            }
+                        }
+                    });
+                }
+                _ => {}
             }
         })
 }
@@ -3711,6 +5894,13 @@ mod tests {
             .expect("cancel status"));
         let failed = ProcessCommand::new("false").status().expect("false status");
         assert!(folder_chooser_status(failed, b"execution error: unavailable").is_err());
+    }
+
+    #[test]
+    fn implicit_last_window_exit_request_keeps_process_dock_reopenable() {
+        assert!(!is_explicit_exit_request(None));
+        assert!(is_explicit_exit_request(Some(0)));
+        assert!(is_explicit_exit_request(Some(1)));
     }
 
     #[test]
@@ -4784,16 +6974,33 @@ mod tests {
                 "allow-select-workspace-picker",
                 "allow-choose-workspace-folder",
                 "allow-get-app-appearance",
+                "allow-get-agent-profiles",
                 "allow-dispatch-app-intent",
                 "allow-replay-app-events",
                 "allow-terminal-attach",
                 "allow-terminal-input",
                 "allow-terminal-resize",
                 "allow-terminal-acknowledge",
-                "allow-terminal-detach"
+                "allow-terminal-detach",
+                "allow-agent-surface-attach",
+                "allow-agent-surface-input",
+                "allow-agent-surface-resize",
+                "allow-agent-surface-acknowledge",
+                "allow-agent-surface-detach"
             ])
         );
         assert!(app_shell.get("windows").is_none());
+        let app_manifest = include_str!("../build.rs");
+        for command in [
+            "\"get_agent_profiles\"",
+            "\"agent_surface_attach\"",
+            "\"agent_surface_input\"",
+            "\"agent_surface_resize\"",
+            "\"agent_surface_acknowledge\"",
+            "\"agent_surface_detach\"",
+        ] {
+            assert!(app_manifest.contains(command), "AppManifest command missing: {command}");
+        }
     }
 
     #[test]
@@ -4810,10 +7017,14 @@ mod tests {
             "PredefinedMenuItem::hide_others",
             "PredefinedMenuItem::show_all",
             "PredefinedMenuItem::minimize",
-            "PredefinedMenuItem::close_window",
+            "CLOSE_WINDOW_MENU_ID",
+            "build_settings_menu(app)",
+            "Some(\"CmdOrCtrl+W\")",
         ] {
             assert!(source.contains(marker), "native menu marker missing: {marker}");
         }
+        let forbidden_close = format!("{}{}", "PredefinedMenuItem::", "close_window");
+        assert!(!source.contains(&forbidden_close));
         assert!(source.contains("index.html?window=settings"));
         assert!(source.contains("get_webview_window(SETTINGS_WINDOW_LABEL)"));
     }
@@ -4848,6 +7059,244 @@ mod tests {
         assert!(!state.store.load_or_default().expect("load after close").shutdown.clean);
         state.quit().expect("quit app");
         assert!(state.store.load_or_default().expect("load after quit").shutdown.clean);
+        remove_temp_home(&home);
+    }
+
+    #[test]
+    fn failed_close_restores_attached_coordinator_for_a_retry() {
+        let home = temp_home();
+        let state = NativeAppState::bootstrap(&home).expect("bootstrap native app");
+        state.store.fail_once(devhub_app_core::AtomicFailurePoint::BeforeTempWrite);
+        assert!(state.close_window().is_err());
+        assert_eq!(state.lifecycle.phase(), Phase::Open);
+        // The failed transaction must restore the pre-close coordinator so a
+        // second close genuinely executes instead of treating it as a no-op.
+        state.close_window().expect("retry close");
+        assert_eq!(state.lifecycle.phase(), Phase::Closed);
+        remove_temp_home(&home);
+    }
+
+    #[test]
+    fn close_reopen_is_singleton_and_quit_after_close_stops_owned_lifecycle_only() {
+        let home = temp_home();
+        let state = NativeAppState::bootstrap(&home).expect("bootstrap native app");
+        let before = state.current_snapshot().expect("initial snapshot");
+
+        state.close_window().expect("close window");
+        assert_eq!(state.lifecycle.phase(), Phase::Closed);
+        assert_eq!(state.current_snapshot().expect("closed snapshot"), before);
+        state.close_window().expect("duplicate close is harmless");
+        assert!(state.reopen().expect("reopen claim should be accepted"));
+        assert_eq!(state.lifecycle.phase(), Phase::Open);
+        assert_eq!(state.current_snapshot().expect("restored snapshot"), before);
+        assert!(!state.reopen().expect("duplicate reopen is harmless"));
+
+        // A coordinator detached by WindowClosed emits no second Quit effect;
+        // native quit still owns OpenVSCode/app-local cleanup and persists a
+        // clean final state without terminating Herdr or tmux providers.
+        state.close_window().expect("close before quit");
+        state.quit().expect("quit after close");
+        assert_eq!(state.lifecycle.phase(), Phase::Quit);
+        assert!(state.store.load_or_default().expect("clean final state").shutdown.clean);
+        assert!(state.quit().is_ok(), "quit is idempotent after completion");
+        remove_temp_home(&home);
+    }
+
+    #[test]
+    fn failed_reopen_returns_to_closed_for_a_later_dock_retry() {
+        let home = temp_home();
+        let state = NativeAppState::bootstrap(&home).expect("bootstrap native app");
+        state.close_window().expect("close window");
+        assert!(state.lifecycle.begin_reopen());
+        // Simulate a WRY/display reconstruction failure after the durable
+        // coordinator claim. The gate must make the next Dock event retryable.
+        state.lifecycle.abort_reopen();
+        assert_eq!(state.lifecycle.phase(), Phase::Closed);
+        assert!(state.reopen().expect("retry reopen"));
+        assert_eq!(state.lifecycle.phase(), Phase::Open);
+        remove_temp_home(&home);
+    }
+
+    #[test]
+    fn exit_requested_quit_claim_is_nonrecursive_and_single_flight() {
+        let claimed = AtomicBool::new(false);
+        assert!(claim_single_flight(&claimed));
+        // A programmatic app.exit is allowed only after the owner has
+        // completed cleanup; a second ExitRequested while that work is in
+        // flight cannot enter a second quit path.
+        assert!(!claim_single_flight(&claimed));
+
+        let claims = Arc::new(AtomicBool::new(false));
+        let workers = (0..16)
+            .map(|_| {
+                let claims = Arc::clone(&claims);
+                std::thread::spawn(move || claim_single_flight(&claims))
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            workers
+                .into_iter()
+                .filter_map(|worker| worker.join().ok())
+                .filter(|claimed| *claimed)
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn stale_window_generation_cannot_match_reused_native_handle() {
+        let old = NativeWindowIdentity { handle_key: 77, lifecycle_generation: 1 };
+        let reopened = NativeWindowIdentity { handle_key: 77, lifecycle_generation: 2 };
+        assert!(!native_identity_matches(Some(old), old, 2));
+        assert!(!native_identity_matches(Some(reopened), old, 2));
+        assert!(native_identity_matches(Some(reopened), reopened, 2));
+    }
+
+    #[test]
+    fn stale_frame_worker_cannot_clear_reopened_window_flags() {
+        assert!(!frame_persist_owner_matches(2, 21, 1, 20));
+        assert!(!frame_persist_owner_matches(2, 21, 2, 20));
+        assert!(frame_persist_owner_matches(2, 21, 2, 21));
+    }
+
+    #[test]
+    fn frame_persistence_keeps_the_owned_token_through_close_and_quit() {
+        assert!(frame_persist_phase_allowed(Phase::Open));
+        assert!(frame_persist_phase_allowed(Phase::Closing));
+        assert!(frame_persist_phase_allowed(Phase::Quitting));
+        assert!(!frame_persist_phase_allowed(Phase::Closed));
+        assert!(!frame_persist_phase_allowed(Phase::Quit));
+    }
+
+    #[test]
+    fn window_cleanup_token_blocks_reopen_until_the_owner_finishes() {
+        let home = temp_home();
+        let state = NativeAppState::bootstrap(&home).expect("bootstrap native app");
+        let token = WindowCleanupToken {
+            handle_key: 42,
+            lifecycle_generation: state.lifecycle.generation(),
+        };
+        assert!(state.begin_window_cleanup(token));
+        assert!(!state.wait_for_window_cleanup(Instant::now() + Duration::from_millis(5)));
+        state.finish_window_cleanup(token);
+        assert!(state.wait_for_window_cleanup(Instant::now() + Duration::from_millis(50)));
+        remove_temp_home(&home);
+    }
+
+    #[test]
+    fn stale_intent_cannot_mutate_reopened_coordinator_after_atomic_generation_swap() {
+        let home = temp_home();
+        let state = Arc::new(NativeAppState::bootstrap(&home).expect("bootstrap native app"));
+        let old_token = state.capture_lifecycle_token();
+        let before = state.current_snapshot().expect("initial snapshot");
+
+        // Hold the transaction gate while a worker is in flight. The close,
+        // reopen generation change, and coordinator replacement happen before
+        // that worker can validate/mutate. An implementation that validated
+        // outside this gate could still apply ResizeSidebar to the new
+        // coordinator and only fail its post-dispatch check.
+        let transaction = state.coordinator_transaction.lock().expect("transaction gate");
+        let worker_state = Arc::clone(&state);
+        let worker = std::thread::spawn(move || {
+            worker_state
+                .dispatch_intent_with_lifecycle(UserIntent::ResizeSidebar { width: 777 }, old_token)
+        });
+        std::thread::sleep(Duration::from_millis(10));
+
+        assert!(state.lifecycle.begin_close());
+        state.lifecycle.finish_close();
+        assert!(state.lifecycle.begin_reopen());
+        let (replacement, revision) = state.load_coordinator_from_store().expect("rehydrate");
+        state
+            .replace_coordinator_locked(replacement, revision)
+            .expect("install reopened coordinator");
+        drop(transaction);
+
+        let result = worker.join().expect("stale worker joins");
+        assert!(result.is_err(), "old lifecycle worker must be rejected atomically");
+        assert_eq!(
+            state.current_snapshot().expect("reopened snapshot").sidebar().width(),
+            before.sidebar().width(),
+            "stale command must not mutate the newly reopened coordinator"
+        );
+        remove_temp_home(&home);
+    }
+
+    #[test]
+    fn quit_does_not_mark_clean_when_a_local_worker_misses_the_deadline() {
+        let done = Arc::new(AtomicBool::new(false));
+        let worker_done = Arc::clone(&done);
+        let worker = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(100));
+            worker_done.store(true, Ordering::Release);
+        });
+        let start = Instant::now();
+        assert!(!join_managed_thread(
+            ManagedThread { handle: worker, done },
+            start + Duration::from_millis(10)
+        ));
+        assert!(start.elapsed() < Duration::from_millis(90));
+    }
+
+    #[test]
+    fn lifecycle_rehydrates_eight_workspaces_and_sixteen_agents_without_duplicates() {
+        let home = temp_home();
+        let profile = DomainAgentProfile::new(
+            AgentProfileId::from_slug("codex").expect("profile id"),
+            "Codex",
+            AgentProfileKind::Codex,
+            Vec::new(),
+            BTreeMap::new(),
+        )
+        .expect("profile");
+        let mut model = devhub_app_core::AppModel::new();
+        for workspace_index in 0..8_u32 {
+            let root_path = home.join(format!("workspace-{workspace_index}"));
+            std::fs::create_dir_all(&root_path).expect("workspace root");
+            let root = WorkspaceRoot::new(root_path.clone()).expect("workspace root identity");
+            let workspace_id = WorkspaceId::from_uuid(format!(
+                "00000000-0000-4000-8000-{:012x}",
+                workspace_index + 1
+            ))
+            .expect("workspace id");
+            model
+                .add_workspace(devhub_app_core::Workspace::new(
+                    workspace_id.clone(),
+                    root,
+                    devhub_app_core::DisplayPath::new(root_path).expect("selected path"),
+                    None,
+                ))
+                .expect("workspace");
+            for agent_index in 0..2_u32 {
+                let agent_number = workspace_index * 2 + agent_index + 1;
+                let agent_id = devhub_app_core::AgentId::from_uuid(format!(
+                    "00000000-0000-4000-8000-{:012x}",
+                    100_u32 + agent_number
+                ))
+                .expect("agent id");
+                model.add_agent(&workspace_id, agent_id, profile.clone()).expect("agent");
+            }
+        }
+        let durable = devhub_app_core::PersistedAppState::from_snapshot(&model.snapshot())
+            .expect("durable scale snapshot");
+        JsonStateStore::for_home(&home).save_state(&durable).expect("save scale snapshot");
+
+        let state = NativeAppState::bootstrap(&home).expect("bootstrap scale state");
+        let before = state.current_snapshot().expect("scale snapshot");
+        assert_eq!(before.workspaces().len(), 8);
+        assert_eq!(
+            before.workspaces().iter().map(|workspace| workspace.agents().len()).sum::<usize>(),
+            16
+        );
+        state.close_window().expect("close scale state");
+        assert!(state.reopen().expect("reopen scale state"));
+        let after = state.current_snapshot().expect("restored scale snapshot");
+        assert_eq!(after.workspaces().len(), 8);
+        assert_eq!(
+            after.workspaces().iter().map(|workspace| workspace.agents().len()).sum::<usize>(),
+            16
+        );
+        state.quit().expect("quit scale state");
         remove_temp_home(&home);
     }
 

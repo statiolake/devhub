@@ -5,6 +5,7 @@ use super::error::EditorResult;
 use super::url::{AuthenticatedUrl, EditorOrigin, NavigationRequest};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use std::time::Instant;
 
 #[path = "wry_webview.rs"]
 mod wry_webview;
@@ -66,6 +67,13 @@ pub trait EditorWebView: Send {
     fn set_bounds(&self, bounds: EditorBounds) -> EditorResult<()>;
     fn focus(&self) -> EditorResult<()>;
     fn close(&self) -> EditorResult<()>;
+
+    /// Deadline-aware close used by process quit. Test/in-memory adapters can
+    /// use the ordinary close path; native WRY adapters override this to
+    /// bound the main-thread dispatch itself.
+    fn close_until(&self, _deadline: Instant) -> EditorResult<()> {
+        self.close()
+    }
 }
 
 pub trait WebViewHost: Send + Sync {

@@ -3,7 +3,8 @@
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
-use std::time::Duration;
+use std::thread;
+use std::time::{Duration, Instant};
 
 use super::error::{EditorError, EditorErrorCode, EditorResult};
 
@@ -82,7 +83,11 @@ pub trait ManagedProcess: Send {
     fn identity(&self) -> ProcessIdentity;
     fn identity_verified(&self) -> bool;
     fn try_wait(&mut self) -> EditorResult<Option<ProcessExit>>;
-    fn terminate(&mut self) -> EditorResult<()>;
+
+    /// Implementations must provide a deadline-aware stop operation. The
+    /// process adapter may need to reap a child and that wait is allowed to
+    /// outlive a quit deadline only in an explicitly owned reaper.
+    fn terminate_until(&mut self, deadline: Instant) -> EditorResult<bool>;
 }
 
 pub trait ProcessAdapter: Send + Sync {
@@ -121,7 +126,7 @@ impl ProcessAdapter for SystemProcessAdapter {
             command.spawn().map_err(|_| EditorError::new(EditorErrorCode::ProcessUnavailable))?;
         let pid = child.id();
         let process = SystemManagedProcess {
-            child,
+            child: Some(child),
             identity: ProcessIdentity::new(pid, spec.executable().to_path_buf()),
             cleanup: crate::runtime::ChildCleanup::new(pid),
             reaped: false,
@@ -131,7 +136,7 @@ impl ProcessAdapter for SystemProcessAdapter {
 }
 
 struct SystemManagedProcess {
-    child: Child,
+    child: Option<Child>,
     identity: ProcessIdentity,
     cleanup: crate::runtime::ChildCleanup,
     reaped: bool,
@@ -151,8 +156,10 @@ impl ManagedProcess for SystemManagedProcess {
     }
 
     fn try_wait(&mut self) -> EditorResult<Option<ProcessExit>> {
-        let status = self
-            .child
+        let Some(child) = self.child.as_mut() else {
+            return Ok(Some(ProcessExit { code: None }));
+        };
+        let status = child
             .try_wait()
             .map(|status| status.map(ProcessExit::from))
             .map_err(|_| EditorError::new(EditorErrorCode::ProcessUnavailable))?;
@@ -170,12 +177,26 @@ impl ManagedProcess for SystemManagedProcess {
         Ok(status)
     }
 
-    fn terminate(&mut self) -> EditorResult<()> {
+    fn terminate_until(&mut self, deadline: Instant) -> EditorResult<bool> {
         if !self.identity_verified() {
             return Err(EditorError::new(EditorErrorCode::ProcessIdentityMismatch));
         }
-        self.cleanup.terminate(&mut self.child);
-        Ok(())
+        let Some(mut child) = self.child.take() else { return Ok(true) };
+        let stopped = self.cleanup.terminate_until(&mut child, deadline);
+        if !stopped {
+            // The process group has already received termination signals. Move
+            // the owned Child to an app-local reaper so this bounded lifecycle
+            // path never calls Child::wait after its deadline.
+            let _ = thread::Builder::new().name("devhub-openvscode-reaper".to_owned()).spawn(
+                move || {
+                    let _ = child.wait();
+                },
+            );
+        } else {
+            self.cleanup.mark_reaped();
+        }
+        self.reaped = true;
+        Ok(stopped)
     }
 }
 
@@ -246,18 +267,27 @@ impl ProcessSupervisor {
     }
 
     pub fn stop(&mut self) -> EditorResult<()> {
-        let Some(process) = self.process.as_mut() else { return Ok(()) };
+        if !self.stop_until(Instant::now() + Duration::from_secs(5))? {
+            return Err(EditorError::new(EditorErrorCode::ProcessUnavailable));
+        }
+        Ok(())
+    }
+
+    /// Stops the owned process without ever waiting beyond `deadline`. A
+    /// false result means an app-local reaper owns the still-running Child;
+    /// callers must treat that as a failed clean shutdown.
+    pub fn stop_until(&mut self, deadline: Instant) -> EditorResult<bool> {
+        let Some(process) = self.process.as_mut() else { return Ok(true) };
         if process.try_wait()?.is_some() {
             self.process = None;
-            return Ok(());
+            return Ok(true);
         }
         if !process.identity_verified() {
             return Err(EditorError::new(EditorErrorCode::ProcessIdentityMismatch));
         }
-        process.terminate()?;
-        let _ = process.try_wait();
+        let stopped = process.terminate_until(deadline)?;
         self.process = None;
-        Ok(())
+        Ok(stopped)
     }
 
     pub fn forget_after_exit(&mut self) {
@@ -294,10 +324,10 @@ mod tests {
             }
         }
 
-        fn terminate(&mut self) -> EditorResult<()> {
+        fn terminate_until(&mut self, _deadline: Instant) -> EditorResult<bool> {
             *self.terminated.lock().expect("terminated") = true;
             self.alive = false;
-            Ok(())
+            Ok(true)
         }
     }
 
@@ -317,6 +347,37 @@ mod tests {
         }
     }
 
+    struct DeadlineProcess;
+
+    impl ManagedProcess for DeadlineProcess {
+        fn identity(&self) -> ProcessIdentity {
+            ProcessIdentity::new(43, "/pinned/openvscode-server")
+        }
+
+        fn identity_verified(&self) -> bool {
+            true
+        }
+
+        fn try_wait(&mut self) -> EditorResult<Option<ProcessExit>> {
+            Ok(None)
+        }
+
+        fn terminate_until(&mut self, deadline: Instant) -> EditorResult<bool> {
+            while Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            Ok(false)
+        }
+    }
+
+    struct DeadlineAdapter;
+
+    impl ProcessAdapter for DeadlineAdapter {
+        fn spawn(&self, _spec: &ProcessSpec) -> EditorResult<Box<dyn ManagedProcess>> {
+            Ok(Box::new(DeadlineProcess))
+        }
+    }
+
     #[test]
     fn stop_requires_verified_identity_and_only_stops_owned_child() {
         let terminated = Arc::new(Mutex::new(false));
@@ -332,6 +393,18 @@ mod tests {
         unverified.spawn(&adapter, &spec).expect("spawn");
         let error = unverified.stop().expect_err("identity mismatch");
         assert_eq!(error.code(), EditorErrorCode::ProcessIdentityMismatch);
+    }
+
+    #[test]
+    fn stop_until_does_not_fall_back_to_an_unbounded_terminate() {
+        let mut supervisor = ProcessSupervisor::new(1);
+        supervisor
+            .spawn(&DeadlineAdapter, &ProcessSpec::new("/pinned/openvscode-server", []))
+            .expect("spawn");
+        let started = Instant::now();
+        assert!(!supervisor.stop_until(started + Duration::from_millis(25)).expect("bounded stop"));
+        assert!(started.elapsed() < Duration::from_millis(250));
+        assert!(supervisor.process().is_none());
     }
 
     #[test]

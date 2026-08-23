@@ -223,6 +223,25 @@ impl HerdrAgentRuntime {
             .unwrap_or_else(|_| AgentRuntimeHealth::failed(AgentRuntimeErrorCode::Internal))
     }
 
+    /// Stop only DevHub's subscription listener. The provider session,
+    /// Agents, and their panes are deliberately left running; a future
+    /// process can reconnect from the durable opaque mappings/journal.
+    pub fn shutdown(&self) {
+        let _ = self.shutdown_until(Instant::now() + Duration::from_secs(5));
+    }
+
+    /// Bounded variant used by native quit. It only joins the app-local
+    /// invalidation reader and never sends a provider terminate request.
+    pub fn shutdown_until(&self, deadline: Instant) -> bool {
+        let subscription =
+            self.inner.subscription.lock().ok().and_then(|mut current| current.take());
+        if let Some(subscription) = subscription {
+            subscription.stop_until(deadline)
+        } else {
+            true
+        }
+    }
+
     pub fn bootstrap(&self, cancel: CancellationToken) -> PortFuture<AgentRuntimeHealth> {
         let runtime = self.clone();
         spawn_operation(cancel.clone(), "devhub-agent-bootstrap", move || {
@@ -291,6 +310,22 @@ impl HerdrAgentRuntime {
         spawn_operation(cancel.clone(), "devhub-agent-surface-attach", move || {
             runtime.attach_surface_sync(agent_id, surface_key, takeover, &cancel)
         })
+    }
+
+    /// Runs the surface attach body on a caller-owned worker. The normal port
+    /// method above owns its own detached operation thread, which is correct
+    /// for foreground commands but leaves a native lifecycle caller without a
+    /// JoinHandle for an in-flight attach. AgentSurfaceManager uses this
+    /// narrow synchronous seam so quit can cancel and join the exact worker
+    /// that is doing provider I/O against its absolute deadline.
+    pub(crate) fn attach_surface_with_observation_sync(
+        &self,
+        agent_id: AgentId,
+        surface_key: String,
+        takeover: bool,
+        cancel: &CancellationToken,
+    ) -> Result<(super::surface::AgentSurface, AgentObservation), PortError> {
+        self.attach_surface_sync(agent_id, surface_key, takeover, cancel)
     }
 
     pub fn detach_surface(&self, surface: &super::surface::AgentSurface) {

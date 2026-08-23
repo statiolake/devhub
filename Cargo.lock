@@ -633,6 +633,7 @@ dependencies = [
  "flate2",
  "nix",
  "portable-pty",
+ "raw-window-handle",
  "serde",
  "serde_json",
  "sha2",

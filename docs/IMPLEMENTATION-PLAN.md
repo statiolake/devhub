@@ -4,7 +4,15 @@ The completed decision map is [Make the DevHub MVP implementation-ready](wayfind
 
 ## Execution policy
 
-All production implementation and production-file corrections are delegated to subagents using `gpt-5.6-luna` with `reasoning_effort=max`. The primary agent owns architecture, task dispatch, review, independent verification, and corrective feedback. It does not patch production code directly.
+Beginning with the next newly spawned implementation agent, all production
+implementation and production-file corrections are delegated to subagents using
+`gpt-5.6-luna` with `reasoning_effort=high`. Sol/root normally routes work,
+aggregates audits, and waits; implementation agents own production edits. If
+debugging stalls, the cause does not converge, or the same failure repeats, the
+implementation agent must immediately send a `HELP:` request containing the
+symptoms, latest failure, and hypotheses. Sol begins targeted diagnosis/design
+assistance only after receiving that request and does not implement production
+code.
 
 The repository is developed local-first. Initial Git history, production builds,
 and product verification run in the local checkout. Public repository creation,

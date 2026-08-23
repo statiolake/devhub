@@ -22,6 +22,10 @@ use std::time::{Duration, Instant};
 use std::process::Output;
 
 #[cfg(unix)]
+use nix::sys::signal::{kill, Signal};
+#[cfg(unix)]
+use nix::unistd::Pid;
+#[cfg(unix)]
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
@@ -551,6 +555,28 @@ impl ChildCleanup {
         }
     }
 
+    /// Terminates the owned process group and polls the leader only until the
+    /// supplied lifecycle deadline. A caller that receives `false` may move
+    /// the Child to a bounded app-local reaper instead of blocking quit on
+    /// `Child::wait`.
+    pub(crate) fn terminate_until(&mut self, child: &mut Child, deadline: Instant) -> bool {
+        if self.state.begin() {
+            #[cfg(unix)]
+            terminate_process_group_until(self.process_id, deadline);
+            let _ = child.kill();
+        }
+        loop {
+            match child.try_wait() {
+                Ok(Some(_)) => return true,
+                Ok(None) if Instant::now() < deadline => {
+                    thread::sleep(POLL_INTERVAL);
+                }
+                Ok(None) => return false,
+                Err(_) => return false,
+            }
+        }
+    }
+
     /// Records that the leader has already been reaped.  This prevents a
     /// later bounded-pipe cleanup from signalling a potentially reused
     /// process-group identifier.
@@ -639,6 +665,31 @@ fn terminate_process_group(process_id: u32) {
             thread::sleep(Duration::from_millis(25));
         }
     }
+}
+
+#[cfg(unix)]
+fn terminate_process_group_until(process_id: u32, deadline: Instant) {
+    // Signal synchronously before checking the deadline. A quit deadline can
+    // be exhausted by an unrelated local worker, but the owned OpenVSCode
+    // process group must still receive termination before its Child is handed
+    // to the bounded reaper. If time remains, allow TERM a short grace period
+    // before escalating; with no time left, KILL is issued immediately.
+    send_process_group_signal(process_id, Signal::SIGTERM);
+    if Instant::now() < deadline {
+        thread::sleep(
+            Duration::from_millis(25).min(deadline.saturating_duration_since(Instant::now())),
+        );
+    }
+    send_process_group_signal(process_id, Signal::SIGKILL);
+}
+
+#[cfg(unix)]
+fn send_process_group_signal(process_id: u32, signal: Signal) {
+    let Ok(process_id) = i32::try_from(process_id) else { return };
+    // The adapter creates the child in its own process group, so the negative
+    // PID targets only DevHub-owned OpenVSCode descendants. ESRCH is expected
+    // when the group exited between the bounded identity check and this call.
+    let _ = kill(Pid::from_raw(-process_id), signal);
 }
 
 #[cfg(not(unix))]

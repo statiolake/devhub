@@ -991,6 +991,29 @@ export function SettingsApp({
     setDirty(value);
   };
 
+  // The native Window menu intentionally has no global Cmd-W accelerator:
+  // Workbench Cmd-W belongs to the future command router. Settings keeps its
+  // conventional singleton-window shortcut locally so it remains usable
+  // without reintroducing a focus-ambiguous native Close item.
+  useEffect(() => {
+    const closeOnCommandW = (event: KeyboardEvent) => {
+      if (
+        !event.metaKey ||
+        event.ctrlKey ||
+        event.altKey ||
+        event.key.toLowerCase() !== "w"
+      ) {
+        return;
+      }
+      event.preventDefault();
+      void import("@tauri-apps/api/window").then(({ getCurrentWindow }) =>
+        getCurrentWindow().close(),
+      );
+    };
+    window.addEventListener("keydown", closeOnCommandW);
+    return () => window.removeEventListener("keydown", closeOnCommandW);
+  }, []);
+
   useEffect(() => {
     const generation = mountGeneration.current + 1;
     mountGeneration.current = generation;

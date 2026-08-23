@@ -21,6 +21,7 @@ pub use bridge_transport::{
     BridgeEvent, BridgeEventSink, BridgeRequest, BridgeRequestDisposition, BridgeRequestHandle,
     BridgeRequestResult, BridgeSurfaceId,
 };
+pub use error::{EditorError, EditorErrorCode, EditorResult};
 pub use host::{EditorHost, EditorHostConfig, EditorSurfaceKey, EditorSurfaceSnapshot};
 pub use url::{ExternalUrl, NavigationDecision, NavigationRequest};
 pub use webview::EditorBounds;

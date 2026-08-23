@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -106,12 +106,27 @@ impl SubscriptionHandle {
     }
 
     pub(crate) fn stop(&self) {
+        let _ = self.stop_until(Instant::now() + Duration::from_secs(5));
+    }
+
+    /// Requests subscription shutdown and waits only until the caller's
+    /// lifecycle deadline. Herdr sessions are provider-owned and are never
+    /// terminated by this local listener cleanup.
+    pub(crate) fn stop_until(&self, deadline: Instant) -> bool {
         self.stop.store(true, Ordering::Release);
         if let Ok(mut thread) = self.thread.lock() {
-            if let Some(thread) = thread.take() {
-                let _ = thread.join();
+            let Some(thread_handle) = thread.take() else { return true };
+            while !thread_handle.is_finished() && Instant::now() < deadline {
+                thread::sleep(Duration::from_millis(5));
             }
+            if thread_handle.is_finished() {
+                return thread_handle.join().is_ok();
+            }
+            // The worker observes `stop` and is intentionally detached at
+            // the process deadline rather than blocking app exit.
+            drop(thread_handle);
         }
+        false
     }
 }
 
@@ -120,7 +135,14 @@ impl Drop for SubscriptionHandle {
         self.stop.store(true, Ordering::Release);
         if let Ok(thread) = self.thread.get_mut() {
             if let Some(thread) = thread.take() {
-                let _ = thread.join();
+                if thread.is_finished() {
+                    let _ = thread.join();
+                } else {
+                    // Never turn a bounded quit into an unbounded Drop join.
+                    // The reader has its stop flag and will finish without
+                    // owning or terminating provider sessions.
+                    drop(thread);
+                }
             }
         }
     }

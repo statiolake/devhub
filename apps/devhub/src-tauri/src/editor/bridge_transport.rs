@@ -250,6 +250,7 @@ struct BridgeTransportInner {
     endpoint: Arc<LoopbackEndpoint>,
     expected_host: String,
     stop: AtomicBool,
+    stop_claimed: AtomicBool,
     pending_connections: std::sync::atomic::AtomicUsize,
     next_worker_id: AtomicU64,
     worker_panicked: AtomicBool,
@@ -268,6 +269,28 @@ struct Worker {
 
 struct BridgeTransportOwner {
     count: AtomicUsize,
+}
+
+/// Serializes physical transport shutdown without making `Drop` wait for an
+/// already-running lifecycle shutdown. A second caller reports a conflict;
+/// the caller that owns the claim remains responsible for the bounded attempt.
+struct StopClaim<'a> {
+    claimed: &'a AtomicBool,
+}
+
+impl<'a> StopClaim<'a> {
+    fn try_acquire(claimed: &'a AtomicBool) -> Option<Self> {
+        claimed
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .ok()
+            .map(|_| Self { claimed })
+    }
+}
+
+impl Drop for StopClaim<'_> {
+    fn drop(&mut self) {
+        self.claimed.store(false, Ordering::Release);
+    }
 }
 
 /// Bounds the bytes consumed by tungstenite's HTTP upgrade parser without
@@ -430,6 +453,7 @@ impl BridgeTransport {
             endpoint,
             expected_host: format!("{}:{port}", super::paths::LOOPBACK_HOST),
             stop: AtomicBool::new(false),
+            stop_claimed: AtomicBool::new(false),
             pending_connections: std::sync::atomic::AtomicUsize::new(0),
             next_worker_id: AtomicU64::new(1),
             worker_panicked: AtomicBool::new(false),
@@ -473,6 +497,7 @@ impl BridgeTransport {
             endpoint,
             expected_host: "127.0.0.1:1".to_owned(),
             stop: AtomicBool::new(false),
+            stop_claimed: AtomicBool::new(false),
             pending_connections: std::sync::atomic::AtomicUsize::new(0),
             next_worker_id: AtomicU64::new(1),
             worker_panicked: AtomicBool::new(false),
@@ -618,7 +643,19 @@ impl BridgeTransport {
         queue_text_frame(&self.inner, &connection.0, &connection.1)
     }
 
+    #[cfg(test)]
     pub(crate) fn stop(&self) -> EditorResult<()> {
+        self.stop_until(Instant::now() + Duration::from_secs(2))
+    }
+
+    /// Stops the listener and all connection workers before the caller's
+    /// lifecycle deadline. Handles that cannot observe the socket shutdown
+    /// remain in the registry for a later retry; this method never performs an
+    /// unbounded join on the quit path.
+    pub(crate) fn stop_until(&self, deadline: Instant) -> EditorResult<()> {
+        let Some(_claim) = StopClaim::try_acquire(&self.inner.stop_claimed) else {
+            return Err(EditorError::new(EditorErrorCode::LifecycleConflict));
+        };
         let first_stop = !self.inner.stop.swap(true, Ordering::AcqRel);
         if first_stop {
             let connections = self
@@ -631,17 +668,35 @@ impl BridgeTransport {
                 connection.close();
             }
         }
-        if let Some(thread) = self
+        let listener_thread = self
             .inner
             .listener_thread
             .lock()
             .map_err(|_| EditorError::new(EditorErrorCode::LifecycleConflict))?
-            .take()
-        {
-            thread.join().map_err(|_| EditorError::new(EditorErrorCode::BridgeUnavailable))?;
+            .take();
+        let mut first_error = None;
+        if let Some(thread) = listener_thread {
+            let thread = thread;
+            while !thread.is_finished() && Instant::now() < deadline {
+                thread::sleep(Duration::from_millis(5));
+            }
+            if !thread.is_finished() {
+                match self.inner.listener_thread.lock() {
+                    Ok(mut slot) => *slot = Some(thread),
+                    Err(_) => {
+                        first_error = Some(EditorError::new(EditorErrorCode::LifecycleConflict))
+                    }
+                }
+                if first_error.is_none() {
+                    first_error = Some(EditorError::new(EditorErrorCode::BridgeUnavailable));
+                }
+            } else {
+                if thread.join().is_err() && first_error.is_none() {
+                    first_error = Some(EditorError::new(EditorErrorCode::BridgeUnavailable));
+                }
+            }
         }
         shutdown_workers(&self.inner);
-        let deadline = Instant::now() + Duration::from_secs(2);
         loop {
             let finished = self
                 .inner
@@ -656,10 +711,9 @@ impl BridgeTransport {
                 })
                 .map_err(|_| EditorError::new(EditorErrorCode::LifecycleConflict))?;
             for worker in finished {
-                worker
-                    .handle
-                    .join()
-                    .map_err(|_| EditorError::new(EditorErrorCode::BridgeUnavailable))?;
+                if worker.handle.join().is_err() && first_error.is_none() {
+                    first_error = Some(EditorError::new(EditorErrorCode::BridgeUnavailable));
+                }
             }
             let remaining = self
                 .inner
@@ -671,13 +725,14 @@ impl BridgeTransport {
                 if self.inner.worker_panicked.load(Ordering::Acquire) {
                     return Err(EditorError::new(EditorErrorCode::BridgeUnavailable));
                 }
-                return Ok(());
+                return first_error.map_or(Ok(()), Err);
             }
             if Instant::now() >= deadline {
                 // Keep the handles in the registry. A later shutdown attempt
                 // can repeat the raw shutdown and reap a worker that was
                 // temporarily unable to observe the first close.
-                return Err(EditorError::new(EditorErrorCode::BridgeUnavailable));
+                return Err(first_error
+                    .unwrap_or_else(|| EditorError::new(EditorErrorCode::BridgeUnavailable)));
             }
             thread::sleep(Duration::from_millis(5));
         }
@@ -687,7 +742,11 @@ impl BridgeTransport {
 impl Drop for BridgeTransport {
     fn drop(&mut self) {
         if self.owner.count.fetch_sub(1, Ordering::AcqRel) == 1 {
-            let _ = self.stop();
+            // Drop is a last-resort ownership release, not the lifecycle
+            // deadline. Request shutdown and reap only work already finished;
+            // active socket workers retain their stop flag and detached Join
+            // handles rather than extending process quit with a fresh wait.
+            let _ = self.stop_until(Instant::now());
         }
     }
 }
@@ -1270,7 +1329,7 @@ mod tests {
         RequestFailureReason, ResponseResult, SemVer, StateSnapshotPayload,
     };
     use std::io::{Cursor, Read, Write};
-    use std::net::TcpStream;
+    use std::net::{SocketAddr, TcpStream};
     use std::sync::atomic::AtomicUsize;
     use std::sync::Mutex;
 
@@ -1734,6 +1793,7 @@ mod tests {
             endpoint,
             expected_host: "127.0.0.1:1".to_owned(),
             stop: AtomicBool::new(false),
+            stop_claimed: AtomicBool::new(false),
             pending_connections: std::sync::atomic::AtomicUsize::new(0),
             next_worker_id: AtomicU64::new(1),
             worker_panicked: AtomicBool::new(false),
@@ -1797,7 +1857,7 @@ mod tests {
             .and_then(|value| value.split('/').next())
             .and_then(|value| value.parse::<u16>().ok())
             .expect("endpoint port");
-        let peer = TcpStream::connect((super::super::paths::LOOPBACK_HOST, port));
+        let peer = connect_test_port(port);
         if peer.is_err() {
             let _ = transport.stop();
             return;
@@ -1825,13 +1885,67 @@ mod tests {
             .and_then(|value| value.split('/').next())
             .and_then(|value| value.parse::<u16>().ok())
             .expect("endpoint port");
-        let _peer = TcpStream::connect((super::super::paths::LOOPBACK_HOST, port));
+        let _peer = connect_test_port(port).expect("peer");
         let temporary = transport.clone();
         drop(temporary);
-        assert!(TcpStream::connect((super::super::paths::LOOPBACK_HOST, port)).is_ok());
+        assert!(connect_test_port(port).is_ok());
         std::thread::sleep(Duration::from_millis(50));
+        let started = Instant::now();
         drop(transport);
-        assert!(TcpStream::connect((super::super::paths::LOOPBACK_HOST, port)).is_err());
+        assert!(started.elapsed() < Duration::from_millis(250));
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while Instant::now() < deadline && connect_test_port(port).is_ok() {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(connect_test_port(port).is_err());
+    }
+
+    #[test]
+    fn dropping_transport_does_not_wait_for_silent_worker() {
+        let token = SecretToken::from_bytes_for_test([7; 32]);
+        let transport =
+            match BridgeTransport::bind(token, Vec::<Uuid>::new(), Arc::new(NoopBridgeEventSink)) {
+                Ok(transport) => transport,
+                Err(error) if error.code() == EditorErrorCode::BridgeUnavailable => return,
+                Err(error) => panic!("transport bind: {error:?}"),
+            };
+        let port = transport
+            .endpoint()
+            .split(':')
+            .nth(2)
+            .and_then(|value| value.split('/').next())
+            .and_then(|value| value.parse::<u16>().ok())
+            .expect("endpoint port");
+        let _peer = connect_test_port(port).expect("peer");
+        std::thread::sleep(Duration::from_millis(50));
+        let started = Instant::now();
+        drop(transport);
+        assert!(started.elapsed() < Duration::from_millis(250));
+    }
+
+    #[test]
+    fn shutdown_claim_conflict_is_bounded_and_retryable() {
+        let token = SecretToken::from_bytes_for_test([6; 32]);
+        let transport =
+            match BridgeTransport::bind(token, Vec::<Uuid>::new(), Arc::new(NoopBridgeEventSink)) {
+                Ok(transport) => transport,
+                Err(error) if error.code() == EditorErrorCode::BridgeUnavailable => return,
+                Err(error) => panic!("transport bind: {error:?}"),
+            };
+        transport.inner.stop_claimed.store(true, Ordering::Release);
+        let started = Instant::now();
+        let error = transport
+            .stop_until(Instant::now() + Duration::from_secs(1))
+            .expect_err("claimed stop");
+        assert_eq!(error.code(), EditorErrorCode::LifecycleConflict);
+        assert!(started.elapsed() < Duration::from_millis(50));
+        transport.inner.stop_claimed.store(false, Ordering::Release);
+        transport.stop().expect("retry after claim");
+    }
+
+    fn connect_test_port(port: u16) -> io::Result<TcpStream> {
+        let address = SocketAddr::from(([127, 0, 0, 1], port));
+        TcpStream::connect_timeout(&address, Duration::from_millis(100))
     }
 
     fn read_test_headers(stream: &mut TcpStream) -> String {

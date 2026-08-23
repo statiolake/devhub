@@ -11,12 +11,18 @@
     "allow-select-workspace-picker",
     "allow-choose-workspace-folder",
     "allow-get-app-appearance",
+    "allow-get-agent-profiles",
     "allow-dispatch-app-intent",
     "allow-replay-app-events",
     "allow-terminal-attach",
     "allow-terminal-input",
     "allow-terminal-resize",
     "allow-terminal-acknowledge",
-    "allow-terminal-detach"
+    "allow-terminal-detach",
+    "allow-agent-surface-attach",
+    "allow-agent-surface-input",
+    "allow-agent-surface-resize",
+    "allow-agent-surface-acknowledge",
+    "allow-agent-surface-detach"
   ]
 }

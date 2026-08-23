@@ -321,8 +321,25 @@ impl AttachmentManager {
     where
         F: Fn(&str, &TerminalTarget) -> bool,
     {
+        self.invalidate_matching_until(
+            advance_epoch,
+            matches,
+            Instant::now() + Duration::from_secs(5),
+        )
+        .0
+    }
+
+    fn invalidate_matching_until<F>(
+        &self,
+        advance_epoch: bool,
+        matches: F,
+        deadline: Instant,
+    ) -> (Vec<Attachment>, bool)
+    where
+        F: Fn(&str, &TerminalTarget) -> bool,
+    {
         let Ok(mut lifecycle) = self.state.lifecycle.lock() else {
-            return Vec::new();
+            return (Vec::new(), false);
         };
         if advance_epoch {
             lifecycle.epoch = lifecycle.epoch.wrapping_add(1);
@@ -344,6 +361,7 @@ impl AttachmentManager {
         // publish a child. Attachments publish under this lifecycle lock, so
         // waiting here closes the race without holding the map lock while
         // reaping PTY threads.
+        let mut completed = true;
         loop {
             let pending = lifecycle
                 .in_flight
@@ -352,13 +370,32 @@ impl AttachmentManager {
             if !pending {
                 break;
             }
-            lifecycle = match self.state.lifecycle_wake.wait(lifecycle) {
-                Ok(next) => next,
-                Err(_) => return removed.unwrap_or_default(),
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                completed = false;
+                break;
+            }
+            lifecycle = match self.state.lifecycle_wake.wait_timeout(lifecycle, remaining) {
+                Ok((next, result)) if result.timed_out() => {
+                    completed = false;
+                    next
+                }
+                Ok((next, _)) => next,
+                Err(_) => return (removed.unwrap_or_default(), false),
             };
+            if !lifecycle
+                .in_flight
+                .values()
+                .any(|in_flight| matches(&in_flight.webview_label, &in_flight.target))
+            {
+                break;
+            }
+            if !completed {
+                break;
+            }
         }
         drop(lifecycle);
-        removed.unwrap_or_default()
+        (removed.unwrap_or_default(), completed)
     }
 
     pub(crate) fn attach(
@@ -739,10 +776,15 @@ impl AttachmentManager {
     }
 
     pub(crate) fn detach_all(&self) {
-        let removed = self.invalidate_matching(true, |_, _| true);
+        let _ = self.detach_all_until(Instant::now() + Duration::from_secs(5));
+    }
+
+    pub(crate) fn detach_all_until(&self, deadline: Instant) -> bool {
+        let (removed, mut completed) = self.invalidate_matching_until(true, |_, _| true, deadline);
         for attachment in removed {
-            attachment.stop_and_reap();
+            completed &= attachment.stop_and_reap_until(deadline);
         }
+        completed
     }
 
     pub(crate) fn detach_target(&self, target: &TerminalTarget) {
@@ -869,6 +911,10 @@ impl Attachment {
     }
 
     fn stop_and_reap(&self) {
+        let _ = self.stop_and_reap_until(Instant::now() + Duration::from_secs(5));
+    }
+
+    fn stop_and_reap_until(&self, deadline: Instant) -> bool {
         self.stop_and_kill();
         // Close both PTY endpoints before joining workers. The reader owns a
         // cloned read FD, while this Attachment owns the master and writer;
@@ -880,25 +926,27 @@ impl Attachment {
         if let Ok(mut master) = self.master.lock() {
             master.take();
         }
+        let mut completed = true;
         if let Ok(mut worker) = self.resize.worker.lock() {
             if let Some(handle) = worker.take() {
                 if handle.thread().id() != thread::current().id() {
-                    join_reaper(handle);
+                    completed &= join_reaper_until(handle, deadline);
                 }
             }
         }
         let handle = self.reader.lock().ok().and_then(|mut reader| reader.take());
         if let Some(handle) = handle {
             if handle.thread().id() != thread::current().id() {
-                join_reaper(handle);
+                completed &= join_reaper_until(handle, deadline);
             }
         }
         // The reader normally owns the wait.  A reader spawn failure leaves
         // the child in this slot, so take and reap it here as the fallback;
         // this is also safe if a worker exits before taking ownership.
-        if let Some(mut child) = self.child_slot.lock().ok().and_then(|mut slot| slot.take()) {
-            kill_and_wait(&mut *child);
+        if let Some(child) = self.child_slot.lock().ok().and_then(|mut slot| slot.take()) {
+            completed &= reap_child_until(child, deadline);
         }
+        completed
     }
 }
 
@@ -1277,13 +1325,36 @@ fn generation_seed() -> Option<u64> {
     (seed != 0).then_some(seed)
 }
 
-fn join_reaper(handle: thread::JoinHandle<()>) {
+fn join_reaper_until(handle: thread::JoinHandle<()>, deadline: Instant) -> bool {
     // `stop_and_reap` closes the writer and master before reaching this point,
-    // and the reader observes the stop flag/child kill. portable-pty's PTY
-    // read therefore has a deterministic EOF/EIO wakeup. Join synchronously
-    // so the native command never returns while a worker or child is owned by
-    // a detached thread.
-    let _ = handle.join();
+    // and the reader observes the stop flag/child kill. Normally this is an
+    // immediate EOF/EIO wakeup; the deadline keeps a broken PTY implementation
+    // from hanging process quit forever.
+    while !handle.is_finished() && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(2));
+    }
+    if handle.is_finished() {
+        handle.join().is_ok()
+    } else {
+        drop(handle);
+        false
+    }
+}
+
+fn reap_child_until(mut child: Box<dyn Child + Send + Sync>, deadline: Instant) -> bool {
+    let (done_tx, done_rx) = std::sync::mpsc::sync_channel(1);
+    let worker = thread::Builder::new().name("devhub-pty-reaper".to_owned()).spawn(move || {
+        kill_and_wait(&mut *child);
+        let _ = done_tx.send(());
+    });
+    let Ok(worker) = worker else { return false };
+    let remaining = deadline.saturating_duration_since(Instant::now());
+    if done_rx.recv_timeout(remaining).is_ok() {
+        worker.join().is_ok()
+    } else {
+        drop(worker);
+        false
+    }
 }
 
 fn send_frame(
