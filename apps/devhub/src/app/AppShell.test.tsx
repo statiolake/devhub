@@ -8,6 +8,7 @@ import {
 import { describe, expect, it, vi } from "vitest";
 import { AppShell } from "./AppShell";
 import type {
+  AppAppearance,
   AppEventCursor,
   AppIntent,
   AppOutcome,
@@ -432,5 +433,47 @@ describe("App Shell states and accessibility", () => {
         width: 252,
       }),
     );
+  });
+
+  it("queries appearance after subscribing and ignores an older live appearance event", async () => {
+    const appClient = client(globalSnapshot);
+    let appearanceListener: ((appearance: AppAppearance) => void) | undefined;
+    const initialAppearance: AppAppearance = {
+      colorScheme: "light",
+      sequence: 2,
+      sidebarDensity: "comfortable",
+      terminalFontFamily: "SF Mono",
+      terminalFontSize: 13,
+      terminalLineHeight: 1.2,
+    };
+    appClient.subscribeAppearance = vi.fn(async (listener) => {
+      appearanceListener = listener;
+      return () => undefined;
+    });
+    appClient.getAppearance = vi.fn().mockResolvedValue(initialAppearance);
+
+    render(<AppShell client={appClient} />);
+    await screen.findByRole("button", { name: "Scratch terminal" });
+    await waitFor(() =>
+      expect(document.querySelector(".app-shell")).toHaveAttribute(
+        "data-sidebar-density",
+        "comfortable",
+      ),
+    );
+
+    await act(async () => {
+      appearanceListener?.({
+        ...initialAppearance,
+        sequence: 1,
+        sidebarDensity: "compact",
+      });
+      await Promise.resolve();
+    });
+    expect(document.querySelector(".app-shell")).toHaveAttribute(
+      "data-sidebar-density",
+      "comfortable",
+    );
+    expect(appClient.subscribeAppearance).toHaveBeenCalled();
+    expect(appClient.getAppearance).toHaveBeenCalled();
   });
 });

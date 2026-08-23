@@ -19,7 +19,7 @@ export function AppShell({ client }: AppShellProps) {
 }
 
 function Workbench() {
-  const { state, intentError, dispatch, retry } = useAppShell();
+  const { state, appearance, intentError, dispatch, retry } = useAppShell();
   const onDispatch = useCallback(
     (intent: Parameters<typeof dispatch>[0]) => {
       void dispatch(intent);
@@ -74,7 +74,11 @@ function Workbench() {
   }
 
   return (
-    <main className="app-shell" data-readiness={state.snapshot.readiness}>
+    <main
+      className="app-shell"
+      data-readiness={state.snapshot.readiness}
+      data-sidebar-density={appearance?.sidebarDensity ?? "compact"}
+    >
       <TitlebarActivities snapshot={state.snapshot} onDispatch={onDispatch} />
       <div className="workbench">
         <Sidebar snapshot={state.snapshot} />

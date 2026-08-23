@@ -12,6 +12,7 @@ import {
   type AppShellClient,
 } from "./client";
 import type {
+  AppAppearance,
   AppError,
   AppIntent,
   AppLoadState,
@@ -66,9 +67,11 @@ export function AppShellProvider({
 }: AppShellProviderProps) {
   const [attempt, setAttempt] = useState(0);
   const [state, setState] = useState<AppLoadState>({ status: "loading" });
+  const [appearance, setAppearance] = useState<AppAppearance>();
   const [intentError, setIntentError] = useState<AppError | null>(null);
   const lastRevision = useRef(-1);
   const lastEventCursor = useRef(0);
+  const lastAppearanceSequence = useRef(-1);
   const generation = useRef(0);
 
   const applySnapshot = useCallback((snapshot: AppSnapshot) => {
@@ -86,11 +89,20 @@ export function AppShellProvider({
     const currentGeneration = ++generation.current;
     let active = true;
     let unsubscribe: (() => void) | undefined;
+    let unsubscribeAppearance: (() => void) | undefined;
     lastRevision.current = -1;
+    lastAppearanceSequence.current = -1;
 
     const applyIfActive = (snapshot: AppSnapshot) => {
       if (active && generation.current === currentGeneration)
         applySnapshot(snapshot);
+    };
+
+    const applyAppearanceIfActive = (next: AppAppearance) => {
+      if (!active || generation.current !== currentGeneration) return;
+      if (next.sequence < lastAppearanceSequence.current) return;
+      lastAppearanceSequence.current = next.sequence;
+      setAppearance(next);
     };
 
     const initialize = async () => {
@@ -103,6 +115,25 @@ export function AppShellProvider({
           return;
         }
         unsubscribe = cleanup;
+        if (client.subscribeAppearance) {
+          const cleanupAppearance = await client.subscribeAppearance(
+            applyAppearanceIfActive,
+          );
+          if (!active) {
+            cleanupAppearance();
+            return;
+          }
+          unsubscribeAppearance = cleanupAppearance;
+        }
+        if (client.getAppearance) {
+          try {
+            applyAppearanceIfActive(await client.getAppearance());
+          } catch {
+            // Appearance is a non-blocking projection. The Workbench remains
+            // usable with its compact native default if the optional query is
+            // unavailable during startup.
+          }
+        }
         if (client.replay) {
           const replay = await client.replay(lastEventCursor.current);
           if (!active || generation.current !== currentGeneration) return;
@@ -125,6 +156,7 @@ export function AppShellProvider({
       active = false;
       generation.current += 1;
       unsubscribe?.();
+      unsubscribeAppearance?.();
     };
   }, [applySnapshot, attempt, client]);
 
@@ -158,8 +190,8 @@ export function AppShellProvider({
   }, []);
 
   const value = useMemo<AppShellContextValue>(
-    () => ({ state, intentError, dispatch, retry }),
-    [dispatch, intentError, retry, state],
+    () => ({ state, appearance, intentError, dispatch, retry }),
+    [appearance, dispatch, intentError, retry, state],
   );
 
   return (

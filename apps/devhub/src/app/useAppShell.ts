@@ -1,5 +1,6 @@
 import { createContext, useContext } from "react";
 import type {
+  AppAppearance,
   AppError,
   AppIntent,
   AppLoadState,
@@ -8,6 +9,7 @@ import type {
 
 export interface AppShellContextValue {
   readonly state: AppLoadState;
+  readonly appearance: AppAppearance | undefined;
   readonly intentError: AppError | null;
   readonly dispatch: (intent: AppIntent) => Promise<AppOutcome | undefined>;
   readonly retry: () => void;

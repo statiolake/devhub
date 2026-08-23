@@ -67,6 +67,66 @@
       ],
       "type": "object"
     },
+    "AppAppearanceWire": {
+      "$defs": {
+        "AppColorSchemeWire": {
+          "enum": ["light"],
+          "type": "string"
+        },
+        "AppSidebarDensityWire": {
+          "enum": ["compact", "comfortable"],
+          "type": "string"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "description": "The only appearance data the Workbench webview may receive from Settings.\n\nThis is intentionally a separate projection from `SettingsSnapshotWire`:\nit contains no profiles, workspace sources, revisions, diagnostics, or\nenvironment values. The terminal fields are retained for the future xterm\nsurface; the Workbench currently consumes `sidebar_density`.",
+      "properties": {
+        "colorScheme": {
+          "$ref": "#/$defs/AppColorSchemeWire"
+        },
+        "sequence": {
+          "format": "uint64",
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "sidebarDensity": {
+          "$ref": "#/$defs/AppSidebarDensityWire"
+        },
+        "terminalFontFamily": {
+          "maxLength": 128,
+          "minLength": 1,
+          "type": "string"
+        },
+        "terminalFontSize": {
+          "format": "uint8",
+          "maximum": 24,
+          "minimum": 9,
+          "type": "integer"
+        },
+        "terminalLineHeight": {
+          "format": "double",
+          "maximum": 2.0,
+          "minimum": 1.0,
+          "type": "number"
+        }
+      },
+      "required": [
+        "sequence",
+        "colorScheme",
+        "sidebarDensity",
+        "terminalFontFamily",
+        "terminalFontSize",
+        "terminalLineHeight"
+      ],
+      "title": "AppAppearanceWire",
+      "type": "object"
+    },
+    "AppColorSchemeWire": {
+      "enum": ["light"],
+      "type": "string"
+    },
     "AppErrorCodeWire": {
       "enum": [
         "invalid_intent",
@@ -659,6 +719,10 @@
       "enum": ["starting", "ready", "unavailable"],
       "type": "string"
     },
+    "AppSidebarDensityWire": {
+      "enum": ["compact", "comfortable"],
+      "type": "string"
+    },
     "AppSnapshotWire": {
       "additionalProperties": false,
       "properties": {
@@ -1236,6 +1300,9 @@
   "oneOf": [
     {
       "$ref": "#/$defs/AppSnapshotWire"
+    },
+    {
+      "$ref": "#/$defs/AppAppearanceWire"
     },
     {
       "$ref": "#/$defs/AppIntentWire"

@@ -6,6 +6,7 @@
   "permissions": [
     "core:default",
     "allow-get-app-snapshot",
+    "allow-get-app-appearance",
     "allow-dispatch-app-intent",
     "allow-replay-app-events"
   ]

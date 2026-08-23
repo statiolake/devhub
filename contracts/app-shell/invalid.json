@@ -157,6 +157,14 @@
     "workspaces": []
   },
   {
+    "colorScheme": "light",
+    "sequence": 9007199254740992,
+    "sidebarDensity": "compact",
+    "terminalFontFamily": "SF Mono",
+    "terminalFontSize": 13,
+    "terminalLineHeight": 1.2
+  },
+  {
     "type": "unknown_intent"
   },
   {

@@ -107,6 +107,19 @@
   text-align: left;
 }
 
+.app-shell[data-sidebar-density="comfortable"] .sidebar-row {
+  min-height: 46px;
+}
+
+.app-shell[data-sidebar-density="comfortable"] .sidebar-context-button,
+.app-shell[data-sidebar-density="comfortable"] .agent-row {
+  min-height: 44px;
+}
+
+.app-shell[data-sidebar-density="comfortable"] .sidebar-row-copy {
+  padding: 7px 0;
+}
+
 .sidebar-row.is-selected {
   border-color: var(--selection-line);
   background: var(--selection);

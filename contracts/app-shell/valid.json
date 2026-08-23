@@ -39,6 +39,14 @@
     "workspaces": []
   },
   {
+    "colorScheme": "light",
+    "sequence": 1,
+    "sidebarDensity": "compact",
+    "terminalFontFamily": "SF Mono",
+    "terminalFontSize": 13,
+    "terminalLineHeight": 1.2
+  },
+  {
     "context": {
       "kind": "global"
     },

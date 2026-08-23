@@ -5,11 +5,13 @@ import {
   MAX_SIDEBAR_WIDTH,
   MIN_SIDEBAR_WIDTH,
   parseAppError,
+  parseAppAppearance,
   parseAppEventCursor,
   parseAppIntent,
   parseAppOutcome,
   parseAppSnapshot,
   type AppError,
+  type AppAppearance,
   type AppEventCursor,
   type AppIntent,
   type AppOutcome,
@@ -17,16 +19,21 @@ import {
 } from "../generated/app-shell";
 
 export const GET_APP_SNAPSHOT_COMMAND = "get_app_snapshot" as const;
+export const GET_APP_APPEARANCE_COMMAND = "get_app_appearance" as const;
 export const DISPATCH_APP_INTENT_COMMAND = "dispatch_app_intent" as const;
 export const REPLAY_APP_EVENTS_COMMAND = "replay_app_events" as const;
 export const APP_SNAPSHOT_CHANGED_EVENT = "app://snapshot-changed" as const;
+export const APP_APPEARANCE_CHANGED_EVENT = "app://appearance-changed" as const;
 
 export type AppSnapshotListener = (snapshot: AppSnapshot) => void;
+export type AppAppearanceListener = (appearance: AppAppearance) => void;
 
 export interface AppShellClient {
   getSnapshot(): Promise<AppSnapshot>;
+  getAppearance?(): Promise<AppAppearance>;
   dispatch(intent: AppIntent): Promise<AppOutcome>;
   subscribe(listener: AppSnapshotListener): Promise<UnlistenFn>;
+  subscribeAppearance?(listener: AppAppearanceListener): Promise<UnlistenFn>;
   replay?(cursor: number): Promise<AppEventCursor>;
 }
 
@@ -54,6 +61,11 @@ export function createTauriAppShellClient(
         await transport.invoke<unknown>(GET_APP_SNAPSHOT_COMMAND),
       );
     },
+    async getAppearance() {
+      return parseAppAppearance(
+        await transport.invoke<unknown>(GET_APP_APPEARANCE_COMMAND),
+      );
+    },
     async dispatch(intent) {
       const wireIntent = parseAppIntent(intent);
       return parseAppOutcome(
@@ -66,6 +78,11 @@ export function createTauriAppShellClient(
     subscribe(listener) {
       return transport.listen<unknown>(APP_SNAPSHOT_CHANGED_EVENT, (event) =>
         listener(parseAppSnapshot(event.payload)),
+      );
+    },
+    subscribeAppearance(listener) {
+      return transport.listen<unknown>(APP_APPEARANCE_CHANGED_EVENT, (event) =>
+        listener(parseAppAppearance(event.payload)),
       );
     },
     async replay(cursor) {

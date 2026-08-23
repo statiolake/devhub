@@ -1,6 +1,7 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { ShellApp } from "./App";
+import { SettingsApp } from "./settings/SettingsApp";
 import "./styles.css";
 
 const root = document.getElementById("root");
@@ -12,6 +13,33 @@ if (!root) {
 const mountNode = root;
 
 async function mount() {
+  if (import.meta.env.DEV) {
+    const { parseSettingsFixtureQuery } = await import(
+      "./visual-fixtures/settings-route"
+    );
+    const settingsFixture = parseSettingsFixtureQuery(window.location.search);
+    if (settingsFixture) {
+      const { renderSettingsFixture } = await import(
+        "./visual-fixtures/settings-harness"
+      );
+      createRoot(mountNode).render(
+        <StrictMode>{renderSettingsFixture(settingsFixture)}</StrictMode>,
+      );
+      return;
+    }
+  }
+
+  if (
+    new URLSearchParams(window.location.search).get("window") === "settings"
+  ) {
+    createRoot(mountNode).render(
+      <StrictMode>
+        <SettingsApp />
+      </StrictMode>,
+    );
+    return;
+  }
+
   if (import.meta.env.DEV) {
     const { parseFixtureQuery, fixtureSnapshots } = await import(
       "./visual-fixtures/route"

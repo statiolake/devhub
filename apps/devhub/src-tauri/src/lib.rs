@@ -2,25 +2,37 @@
 
 use std::fs::File;
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::process::Command as ProcessCommand;
 use std::sync::Mutex;
+use std::time::Duration;
 
 use devhub_app_core::config::{
-    default_config_path, AgentProfileKind as ConfigAgentProfileKind, ConfigStore,
+    default_config_path, AgentProfileKind as ConfigAgentProfileKind, ConfigDiagnostic, ConfigStore,
+    LoadedConfig, ReloadOutcome,
 };
+use devhub_app_core::{runtime_view_for_config, SettingsRuntimeWire};
 use devhub_app_core::{
-    AgentProfile as DomainAgentProfile, AgentProfileId, AgentProfileKind, AppCoordinator,
-    AppErrorWire, AppIntentWire, AppOutcomeWire, AppSnapshot, AppSnapshotWire, CoordinatorEvent,
-    Effect, IdGenerator, IntentEnvelope, IntentId, JsonStateStore, OperationId, OperationToken,
-    PortError, PortErrorCode, ProviderEvent, ProviderEventEnvelope, ProviderEventId, ReplayWire,
-    UserIntent,
+    AgentProfile as DomainAgentProfile, AgentProfileId, AgentProfileKind, AppAppearanceWire,
+    AppCoordinator, AppErrorWire, AppIntentWire, AppOutcomeWire, AppSnapshot, AppSnapshotWire,
+    CoordinatorEvent, Effect, IdGenerator, IntentEnvelope, IntentId, JsonStateStore, OperationId,
+    OperationToken, PortError, PortErrorCode, ProviderEvent, ProviderEventEnvelope,
+    ProviderEventId, ReplayWire, SettingsErrorWire, SettingsRuntimeHealthWire,
+    SettingsSaveRequestWire, SettingsSnapshotWire, SettingsSocketChangeRequestWire, UserIntent,
+    SETTINGS_SEQUENCE_MAX,
 };
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
+use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
 
 mod workspace_resolver;
 use workspace_resolver::MacWorkspacePathResolver;
 
 pub const APP_SNAPSHOT_CHANGED_EVENT: &str = "app://snapshot-changed";
+pub const APP_APPEARANCE_CHANGED_EVENT: &str = "app://appearance-changed";
+pub const APP_SHELL_WINDOW_LABEL: &str = "app-shell";
+pub const SETTINGS_CHANGED_EVENT: &str = "settings://changed";
+pub const SETTINGS_WINDOW_LABEL: &str = "settings";
+pub const OPEN_SETTINGS_MENU_ID: &str = "open-settings";
 
 struct NativeIdGenerator;
 
@@ -69,9 +81,19 @@ struct PersistenceState {
     persisted_revision: u64,
 }
 
+struct SettingsProjection {
+    loaded: LoadedConfig,
+    sequence: u64,
+    diagnostic: Option<devhub_app_core::SettingsDiagnosticWire>,
+}
+
 struct NativeAppState {
     coordinator: Mutex<AppCoordinator>,
     store: JsonStateStore,
+    config_store: ConfigStore,
+    settings: Mutex<SettingsProjection>,
+    config_watcher: Mutex<Option<devhub_app_core::config::ConfigWatcher>>,
+    home: PathBuf,
     persistence: Mutex<PersistenceState>,
     pending_native_error: Mutex<Option<AppErrorWire>>,
     id_generator: NativeIdGenerator,
@@ -86,11 +108,42 @@ fn persistence_error(error: impl std::fmt::Display) -> AppErrorWire {
     AppErrorWire::persistence_degraded().with_summary(error.to_string())
 }
 
+fn settings_error(error: devhub_app_core::config::ConfigError) -> SettingsErrorWire {
+    SettingsErrorWire::from_config(error)
+}
+
+/// Settings snapshots contain user profiles and environment values. They are
+/// therefore routed only to the settings webview and never broadcast through
+/// the application event bus.
+fn emit_settings_snapshot(app: &AppHandle, snapshot: SettingsSnapshotWire) {
+    if let Err(error) = app.emit_to(SETTINGS_WINDOW_LABEL, SETTINGS_CHANGED_EVENT, snapshot) {
+        eprintln!("DevHub Settings notification unavailable: {error}");
+    }
+}
+
+/// The Workbench receives only this small, secret-free appearance projection.
+/// Agent env values, workspace sources, and Settings revisions never cross
+/// this event boundary.
+fn emit_app_appearance(app: &AppHandle, state: &NativeAppState) {
+    match state.app_appearance() {
+        Ok(appearance) => {
+            if let Err(error) =
+                app.emit_to(APP_SHELL_WINDOW_LABEL, APP_APPEARANCE_CHANGED_EVENT, appearance)
+            {
+                eprintln!("DevHub appearance notification unavailable: {error}");
+            }
+        }
+        Err(error) => eprintln!("DevHub appearance projection unavailable: {error:?}"),
+    }
+}
+
 impl NativeAppState {
     fn bootstrap(home: &Path) -> Result<Self, AppErrorWire> {
         let store = JsonStateStore::for_home(home);
         let persisted = store.mark_starting().map_err(persistence_error)?;
-        let profiles = load_config_profiles(home)?;
+        let config_store = ConfigStore::new(default_config_path(home));
+        let loaded_config = config_store.load().map_err(state_error)?;
+        let profiles = load_config_profiles(loaded_config.config())?;
         let model = persisted.hydrate_model(&profiles).map_err(persistence_error)?;
         let mut coordinator = AppCoordinator::with_model(model);
         coordinator.mark_ready();
@@ -98,6 +151,14 @@ impl NativeAppState {
         Ok(Self {
             coordinator: Mutex::new(coordinator),
             store,
+            config_store,
+            settings: Mutex::new(SettingsProjection {
+                loaded: loaded_config,
+                sequence: 1,
+                diagnostic: None,
+            }),
+            config_watcher: Mutex::new(None),
+            home: home.to_path_buf(),
             persistence: Mutex::new(PersistenceState { persisted_revision }),
             pending_native_error: Mutex::new(None),
             id_generator: NativeIdGenerator,
@@ -249,12 +310,168 @@ impl NativeAppState {
         }
         Ok((wire, changed))
     }
+
+    fn advance_settings_sequence(
+        settings: &mut SettingsProjection,
+    ) -> Result<(), SettingsErrorWire> {
+        settings.sequence = settings
+            .sequence
+            .checked_add(1)
+            .filter(|sequence| *sequence <= SETTINGS_SEQUENCE_MAX)
+            .ok_or_else(SettingsErrorWire::native_unavailable)?;
+        Ok(())
+    }
+
+    fn apply_loaded_config(&self, loaded: LoadedConfig) -> Result<(), SettingsErrorWire> {
+        let mut settings =
+            self.settings.lock().map_err(|_| SettingsErrorWire::native_unavailable())?;
+        Self::advance_settings_sequence(&mut settings)?;
+        settings.loaded = loaded;
+        settings.diagnostic = None;
+        Ok(())
+    }
+
+    fn apply_config_diagnostic(
+        &self,
+        diagnostic: ConfigDiagnostic,
+    ) -> Result<bool, SettingsErrorWire> {
+        let mut settings =
+            self.settings.lock().map_err(|_| SettingsErrorWire::native_unavailable())?;
+        let next = Some((&diagnostic).into());
+        if settings.diagnostic == next {
+            return Ok(false);
+        }
+        Self::advance_settings_sequence(&mut settings)?;
+        settings.diagnostic = next;
+        Ok(true)
+    }
+
+    fn clear_config_diagnostic(&self) -> Result<bool, SettingsErrorWire> {
+        let mut settings =
+            self.settings.lock().map_err(|_| SettingsErrorWire::native_unavailable())?;
+        if settings.diagnostic.is_none() {
+            return Ok(false);
+        }
+        Self::advance_settings_sequence(&mut settings)?;
+        settings.diagnostic = None;
+        Ok(true)
+    }
+
+    fn settings_sequence(&self) -> Result<u64, SettingsErrorWire> {
+        Ok(self.settings.lock().map_err(|_| SettingsErrorWire::native_unavailable())?.sequence)
+    }
+
+    fn app_appearance(&self) -> Result<AppAppearanceWire, SettingsErrorWire> {
+        let settings = self.settings.lock().map_err(|_| SettingsErrorWire::native_unavailable())?;
+        Ok(AppAppearanceWire::from_config(&settings.loaded.config().appearance, settings.sequence))
+    }
+
+    fn settings_snapshot(&self) -> Result<SettingsSnapshotWire, SettingsErrorWire> {
+        let persisted =
+            self.store.load_or_default().map_err(|_| SettingsErrorWire::invalid_file())?;
+        let settings = self.settings.lock().map_err(|_| SettingsErrorWire::native_unavailable())?;
+        let view = runtime_view_for_config(
+            settings.loaded.config(),
+            &persisted.tmux.effective_socket_name,
+        );
+        let runtime = SettingsRuntimeWire::from_runtime_view(
+            &view,
+            &persisted.tmux,
+            SettingsRuntimeHealthWire::unavailable(),
+            false,
+        );
+        Ok(SettingsSnapshotWire::from_loaded(
+            &settings.loaded,
+            settings.sequence,
+            runtime,
+            settings.diagnostic.clone(),
+        ))
+    }
+
+    fn save_settings(
+        &self,
+        request: SettingsSaveRequestWire,
+    ) -> Result<SettingsSnapshotWire, SettingsErrorWire> {
+        request.validate()?;
+        let expected_revision = devhub_app_core::parse_revision(&request.revision)
+            .ok_or_else(SettingsErrorWire::invalid_config)?;
+        let config = request.config.into_config()?;
+        let loaded = self.config_store.save(expected_revision, config).map_err(settings_error)?;
+        self.apply_loaded_config(loaded)?;
+        self.settings_snapshot()
+    }
+
+    fn reload_settings(&self) -> Result<SettingsSnapshotWire, SettingsErrorWire> {
+        match self.config_store.reload() {
+            Ok(ReloadOutcome::Unchanged { .. }) => {
+                self.clear_config_diagnostic()?;
+            }
+            Ok(ReloadOutcome::Applied(loaded)) => self.apply_loaded_config(loaded)?,
+            Err(error) => {
+                self.apply_config_diagnostic(error.diagnostic())?;
+                return Err(settings_error(error));
+            }
+        }
+        self.settings_snapshot()
+    }
+
+    fn install_config_watcher(&self, app: &AppHandle) -> Result<(), SettingsErrorWire> {
+        let handle = app.clone();
+        let watcher = self.config_store.watch(Duration::from_millis(150), move |outcome| {
+            let Some(state) = handle.try_state::<NativeAppState>() else {
+                return;
+            };
+            let settings_changed;
+            let appearance_changed;
+            match outcome {
+                Ok(ReloadOutcome::Applied(loaded)) => {
+                    if state.apply_loaded_config(loaded).is_err() {
+                        return;
+                    }
+                    settings_changed = true;
+                    appearance_changed = true;
+                }
+                Ok(ReloadOutcome::Unchanged { .. }) => {
+                    settings_changed = state.clear_config_diagnostic().unwrap_or(false);
+                    appearance_changed = false;
+                }
+                Err(diagnostic) => {
+                    settings_changed = state.apply_config_diagnostic(diagnostic).unwrap_or(false);
+                    appearance_changed = false;
+                }
+            }
+            if settings_changed {
+                if let Ok(snapshot) = state.settings_snapshot() {
+                    emit_settings_snapshot(&handle, snapshot);
+                }
+            }
+            if appearance_changed {
+                emit_app_appearance(&handle, &state);
+            }
+        });
+        let mut slot =
+            self.config_watcher.lock().map_err(|_| SettingsErrorWire::native_unavailable())?;
+        *slot = Some(watcher);
+        Ok(())
+    }
+
+    fn open_log_folder(&self) -> Result<(), SettingsErrorWire> {
+        let logs = self.home.join("Library").join("Logs").join("DevHub");
+        std::fs::create_dir_all(&logs).map_err(|_| SettingsErrorWire::permission_denied())?;
+        ProcessCommand::new("open")
+            .arg(&logs)
+            .status()
+            .map_err(|_| SettingsErrorWire::native_unavailable())?
+            .success()
+            .then_some(())
+            .ok_or_else(SettingsErrorWire::native_unavailable)
+    }
 }
 
-fn load_config_profiles(home: &Path) -> Result<Vec<DomainAgentProfile>, AppErrorWire> {
-    let loaded = ConfigStore::new(default_config_path(home)).load().map_err(state_error)?;
-    loaded
-        .config()
+fn load_config_profiles(
+    config: &devhub_app_core::config::Config,
+) -> Result<Vec<DomainAgentProfile>, AppErrorWire> {
+    config
         .agent_profiles
         .iter()
         .map(|profile| {
@@ -286,6 +503,13 @@ fn get_app_snapshot(state: State<'_, NativeAppState>) -> Result<AppSnapshotWire,
 }
 
 #[tauri::command]
+fn get_app_appearance(
+    state: State<'_, NativeAppState>,
+) -> Result<AppAppearanceWire, SettingsErrorWire> {
+    state.app_appearance()
+}
+
+#[tauri::command]
 fn dispatch_app_intent(
     app: AppHandle,
     state: State<'_, NativeAppState>,
@@ -294,7 +518,9 @@ fn dispatch_app_intent(
     let intent = payload.into_user_intent().map_err(|_| AppErrorWire::invalid_intent())?;
     let (wire, changed) = state.dispatch_intent(intent)?;
     if changed {
-        if let Err(error) = app.emit(APP_SNAPSHOT_CHANGED_EVENT, wire.snapshot()) {
+        if let Err(error) =
+            app.emit_to(APP_SHELL_WINDOW_LABEL, APP_SNAPSHOT_CHANGED_EVENT, wire.snapshot())
+        {
             eprintln!("DevHub snapshot notification unavailable: {error}");
         }
     }
@@ -317,19 +543,161 @@ fn replay_app_events(
         .map_err(state_error)
 }
 
+#[tauri::command]
+fn get_settings_snapshot(
+    state: State<'_, NativeAppState>,
+) -> Result<SettingsSnapshotWire, SettingsErrorWire> {
+    state.settings_snapshot()
+}
+
+#[tauri::command]
+fn save_settings(
+    app: AppHandle,
+    state: State<'_, NativeAppState>,
+    payload: SettingsSaveRequestWire,
+) -> Result<SettingsSnapshotWire, SettingsErrorWire> {
+    let snapshot = state.save_settings(payload)?;
+    emit_settings_snapshot(&app, snapshot.clone());
+    emit_app_appearance(&app, &state);
+    Ok(snapshot)
+}
+
+#[tauri::command]
+fn reload_settings(
+    app: AppHandle,
+    state: State<'_, NativeAppState>,
+    payload: devhub_app_core::SettingsCommandRequestWire,
+) -> Result<SettingsSnapshotWire, SettingsErrorWire> {
+    payload.validate()?;
+    let before = state.settings_sequence()?;
+    match state.reload_settings() {
+        Ok(snapshot) => {
+            if snapshot.sequence > before {
+                emit_settings_snapshot(&app, snapshot.clone());
+                emit_app_appearance(&app, &state);
+            }
+            Ok(snapshot)
+        }
+        Err(error) => {
+            if state.settings_sequence()? > before {
+                if let Ok(snapshot) = state.settings_snapshot() {
+                    emit_settings_snapshot(&app, snapshot);
+                }
+            }
+            Err(error)
+        }
+    }
+}
+
+#[tauri::command]
+fn recheck_settings(
+    state: State<'_, NativeAppState>,
+    payload: devhub_app_core::SettingsCommandRequestWire,
+) -> Result<SettingsSnapshotWire, SettingsErrorWire> {
+    payload.validate()?;
+    state.settings_snapshot()
+}
+
+#[tauri::command]
+fn open_log_folder(
+    state: State<'_, NativeAppState>,
+    payload: devhub_app_core::SettingsCommandRequestWire,
+) -> Result<(), SettingsErrorWire> {
+    payload.validate()?;
+    state.open_log_folder()
+}
+
+#[tauri::command]
+fn apply_socket_change(
+    state: State<'_, NativeAppState>,
+    payload: SettingsSocketChangeRequestWire,
+) -> Result<SettingsSnapshotWire, SettingsErrorWire> {
+    payload.validate()?;
+    // TerminalRuntime owns inspection, confirmation and session recreation.
+    // Keeping this command typed-but-unavailable avoids claiming success before
+    // that provider adapter exists and keeps the operation isolated from agents.
+    let _ = state;
+    Err(SettingsErrorWire::runtime_unavailable())
+}
+
+fn show_settings_window(app: &AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window(SETTINGS_WINDOW_LABEL) {
+        window.show().map_err(|error| error.to_string())?;
+        window.set_focus().map_err(|error| error.to_string())?;
+        return Ok(());
+    }
+    let window = WebviewWindowBuilder::new(
+        app,
+        SETTINGS_WINDOW_LABEL,
+        WebviewUrl::App("index.html?window=settings".into()),
+    )
+    .title("Settings")
+    .inner_size(780.0, 620.0)
+    .min_inner_size(680.0, 480.0)
+    .resizable(true)
+    .decorations(true)
+    .center()
+    .build()
+    .map_err(|error| error.to_string())?;
+    window.set_focus().map_err(|error| error.to_string())
+}
+
+fn build_app_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
+    let about = PredefinedMenuItem::about(app, Some("About DevHub"), None)?;
+    let open_settings =
+        MenuItem::with_id(app, OPEN_SETTINGS_MENU_ID, "Settings…", true, Some("CmdOrCtrl+,"))?;
+    let hide = PredefinedMenuItem::hide(app, Some("Hide DevHub"))?;
+    let hide_others = PredefinedMenuItem::hide_others(app, Some("Hide Others"))?;
+    let show_all = PredefinedMenuItem::show_all(app, Some("Show All"))?;
+    let quit = PredefinedMenuItem::quit(app, Some("Quit DevHub"))?;
+    let app_menu = Submenu::with_items(
+        app,
+        "DevHub",
+        true,
+        &[&about, &open_settings, &hide, &hide_others, &show_all, &quit],
+    )?;
+
+    let undo = PredefinedMenuItem::undo(app, Some("Undo"))?;
+    let redo = PredefinedMenuItem::redo(app, Some("Redo"))?;
+    let cut = PredefinedMenuItem::cut(app, Some("Cut"))?;
+    let copy = PredefinedMenuItem::copy(app, Some("Copy"))?;
+    let paste = PredefinedMenuItem::paste(app, Some("Paste"))?;
+    let select_all = PredefinedMenuItem::select_all(app, Some("Select All"))?;
+    let edit_menu =
+        Submenu::with_items(app, "Edit", true, &[&undo, &redo, &cut, &copy, &paste, &select_all])?;
+
+    let minimize = PredefinedMenuItem::minimize(app, Some("Minimize"))?;
+    let close_window = PredefinedMenuItem::close_window(app, Some("Close Window"))?;
+    let window_menu = Submenu::with_items(app, "Window", true, &[&minimize, &close_window])?;
+    // The focus-scoped Close Window item closes Settings when it is key while
+    // preserving the existing app-shell close lifecycle when the workbench is key.
+    Menu::with_items(app, &[&app_menu, &edit_menu, &window_menu])
+}
+
 pub fn run() {
     tauri::Builder::default()
+        .menu(build_app_menu)
+        .on_menu_event(|app, event| {
+            if event.id().as_ref() == OPEN_SETTINGS_MENU_ID {
+                if let Err(error) = show_settings_window(app) {
+                    eprintln!("DevHub Settings window unavailable: {error}");
+                }
+            }
+        })
         .setup(|app| {
             let home =
                 app.path().home_dir().map_err(|error| std::io::Error::other(error.to_string()))?;
-            app.manage(
-                NativeAppState::bootstrap(&home)
-                    .map_err(|_| std::io::Error::other("DevHub native bootstrap failed"))?,
-            );
+            let state = NativeAppState::bootstrap(&home)
+                .map_err(|_| std::io::Error::other("DevHub native bootstrap failed"))?;
+            app.manage(state);
+            app.state::<NativeAppState>()
+                .install_config_watcher(app.handle())
+                .map_err(|_| std::io::Error::other("DevHub Settings watcher unavailable"))?;
+            emit_app_appearance(app.handle(), &app.state::<NativeAppState>());
             Ok(())
         })
         .on_window_event(|window, event| {
-            if matches!(event, tauri::WindowEvent::Destroyed) {
+            if window.label() == "app-shell" && matches!(event, tauri::WindowEvent::Destroyed) {
                 let state = window.app_handle().state::<NativeAppState>();
                 if let Err(error) = state.close_window() {
                     state.record_native_error(error);
@@ -338,8 +706,15 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             get_app_snapshot,
+            get_app_appearance,
             dispatch_app_intent,
-            replay_app_events
+            replay_app_events,
+            get_settings_snapshot,
+            save_settings,
+            reload_settings,
+            recheck_settings,
+            open_log_folder,
+            apply_socket_change
         ])
         .build(tauri::generate_context!())
         .expect("error while building DevHub")
@@ -392,6 +767,176 @@ mod tests {
         let persisted = state.store.load_or_default().expect("load bootstrap state");
         assert!(!persisted.shutdown.clean);
         assert_eq!(persisted.shutdown.launch_generation, 1);
+        remove_temp_home(&home);
+    }
+
+    #[test]
+    fn settings_snapshot_uses_content_revision_and_honest_runtime_unavailable_state() {
+        let home = temp_home();
+        let state = NativeAppState::bootstrap(&home).expect("bootstrap native app");
+        let snapshot = state.settings_snapshot().expect("settings snapshot");
+        snapshot.validate().expect("native snapshot is contract-valid");
+        assert_eq!(snapshot.schema_version, devhub_app_core::SETTINGS_SCHEMA_VERSION);
+        assert_eq!(snapshot.sequence, 1);
+        assert_eq!(snapshot.revision.len(), 64);
+        assert!(!snapshot.runtime.health.inspection_available);
+        assert!(!snapshot.runtime.socket_change.adapter_available);
+        remove_temp_home(&home);
+    }
+
+    #[test]
+    fn settings_save_rejects_stale_revision_without_overwriting_last_good_config() {
+        let home = temp_home();
+        let state = NativeAppState::bootstrap(&home).expect("bootstrap native app");
+        let before = state.settings_snapshot().expect("settings snapshot");
+        let mut config = before.config.clone();
+        config.general.import_login_environment = !config.general.import_login_environment;
+        let error = state
+            .save_settings(devhub_app_core::SettingsSaveRequestWire {
+                schema_version: devhub_app_core::SETTINGS_SCHEMA_VERSION,
+                revision: "f".repeat(64),
+                config,
+            })
+            .expect_err("stale revision must conflict");
+        assert_eq!(error.code, devhub_app_core::SettingsErrorCodeWire::ExternalEditConflict);
+        let after = state.settings_snapshot().expect("settings snapshot after conflict");
+        assert_eq!(after.revision, before.revision);
+        assert_eq!(after.config, before.config);
+        remove_temp_home(&home);
+    }
+
+    #[test]
+    fn accepted_settings_projection_changes_advance_independent_sequence() {
+        let home = temp_home();
+        let state = NativeAppState::bootstrap(&home).expect("bootstrap native app");
+        let before = state.settings_snapshot().expect("settings snapshot");
+        let mut config = before.config.clone();
+        config.general.import_login_environment = !config.general.import_login_environment;
+        let after = state
+            .save_settings(devhub_app_core::SettingsSaveRequestWire {
+                schema_version: devhub_app_core::SETTINGS_SCHEMA_VERSION,
+                revision: before.revision.clone(),
+                config,
+            })
+            .expect("save current revision");
+        assert_eq!(after.sequence, before.sequence + 1);
+        assert_ne!(after.revision, before.revision);
+        remove_temp_home(&home);
+    }
+
+    #[test]
+    fn invalid_external_settings_keep_last_good_projection_and_expose_redacted_diagnostic() {
+        let home = temp_home();
+        let state = NativeAppState::bootstrap(&home).expect("bootstrap native app");
+        std::fs::write(state.config_store.path(), "version = [not valid")
+            .expect("write invalid config");
+        let error = state.reload_settings().expect_err("invalid external config");
+        assert_eq!(error.code, devhub_app_core::SettingsErrorCodeWire::InvalidConfig);
+        let snapshot = state.settings_snapshot().expect("last-known-good snapshot");
+        assert!(snapshot.diagnostic.is_some());
+        assert_eq!(snapshot.config.version, 1);
+        remove_temp_home(&home);
+    }
+
+    #[test]
+    fn invalid_then_restored_unchanged_config_clears_diagnostic_and_advances_sequence() {
+        let home = temp_home();
+        let state = NativeAppState::bootstrap(&home).expect("bootstrap native app");
+        let path = state.config_store.path().to_path_buf();
+        let original = std::fs::read(&path).expect("read valid config");
+        let before = state.settings_snapshot().expect("initial snapshot");
+        std::fs::write(&path, "version = [not valid").expect("write invalid config");
+        state.reload_settings().expect_err("invalid external config");
+        let invalid = state.settings_snapshot().expect("diagnostic snapshot");
+        assert!(invalid.sequence > before.sequence);
+        assert!(invalid.diagnostic.is_some());
+
+        std::fs::write(&path, original).expect("restore valid config");
+        let restored = state.reload_settings().expect("unchanged last-good config");
+        assert!(restored.sequence > invalid.sequence);
+        assert!(restored.diagnostic.is_none());
+        remove_temp_home(&home);
+    }
+
+    #[test]
+    fn settings_capability_is_scoped_to_the_single_settings_webview() {
+        let settings: serde_json::Value =
+            serde_json::from_str(include_str!("../capabilities/settings.json"))
+                .expect("valid Settings capability");
+        assert_eq!(settings["webviews"], serde_json::json!(["settings"]));
+        assert_eq!(
+            settings["permissions"],
+            serde_json::json!([
+                "core:default",
+                "allow-get-settings-snapshot",
+                "allow-save-settings",
+                "allow-reload-settings",
+                "allow-recheck-settings",
+                "allow-open-log-folder",
+                "allow-apply-socket-change"
+            ])
+        );
+        assert!(settings.get("windows").is_none());
+        assert!(!settings.to_string().contains("app-shell"));
+
+        let app_shell: serde_json::Value =
+            serde_json::from_str(include_str!("../capabilities/app-shell.json"))
+                .expect("valid App Shell capability");
+        assert_eq!(app_shell["webviews"], serde_json::json!(["app-shell"]));
+        assert_eq!(
+            app_shell["permissions"],
+            serde_json::json!([
+                "core:default",
+                "allow-get-app-snapshot",
+                "allow-get-app-appearance",
+                "allow-dispatch-app-intent",
+                "allow-replay-app-events"
+            ])
+        );
+        assert!(app_shell.get("windows").is_none());
+    }
+
+    #[test]
+    fn native_menu_keeps_settings_singleton_and_standard_mac_edit_window_actions() {
+        let source = include_str!("lib.rs");
+        for marker in [
+            "OPEN_SETTINGS_MENU_ID",
+            "PredefinedMenuItem::undo",
+            "PredefinedMenuItem::redo",
+            "PredefinedMenuItem::cut",
+            "PredefinedMenuItem::copy",
+            "PredefinedMenuItem::paste",
+            "PredefinedMenuItem::select_all",
+            "PredefinedMenuItem::hide_others",
+            "PredefinedMenuItem::show_all",
+            "PredefinedMenuItem::minimize",
+            "PredefinedMenuItem::close_window",
+        ] {
+            assert!(source.contains(marker), "native menu marker missing: {marker}");
+        }
+        assert!(source.contains("index.html?window=settings"));
+        assert!(source.contains("get_webview_window(SETTINGS_WINDOW_LABEL)"));
+    }
+
+    #[test]
+    fn settings_snapshots_are_targeted_and_appearance_is_a_separate_safe_projection() {
+        let source = include_str!("lib.rs");
+        assert!(
+            source.contains("app.emit_to(SETTINGS_WINDOW_LABEL, SETTINGS_CHANGED_EVENT, snapshot)")
+        );
+        let forbidden_broadcast = format!(".emit({}...", "SETTINGS_CHANGED_EVENT");
+        assert!(!source.contains(&forbidden_broadcast));
+        let forbidden_app_broadcast = format!(".emit({}...", "APP_SNAPSHOT_CHANGED_EVENT");
+        assert!(!source.contains(&forbidden_app_broadcast));
+        assert!(source.contains("app.emit_to(APP_SHELL_WINDOW_LABEL, APP_APPEARANCE_CHANGED_EVENT"));
+
+        let home = temp_home();
+        let state = NativeAppState::bootstrap(&home).expect("bootstrap native app");
+        let appearance = state.app_appearance().expect("appearance projection");
+        let encoded = format!("{appearance:?}");
+        assert!(encoded.contains("sidebar_density"));
+        assert!(!encoded.contains("agentProfiles"));
+        assert!(!encoded.contains("env"));
         remove_temp_home(&home);
     }
 

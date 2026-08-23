@@ -2,10 +2,12 @@ import validFixtures from "../../../../../contracts/app-shell/valid.json";
 import invalidFixtures from "../../../../../contracts/app-shell/invalid.json";
 import { describe, expect, it } from "vitest";
 import {
+  parseAppAppearance,
   parseAppEventCursor,
   parseAppIntent,
   parseAppSnapshot,
   type AppEventCursor,
+  type AppAppearance,
   type AppIntent,
   type AppSnapshot,
 } from "./index";
@@ -20,12 +22,16 @@ describe("generated App Shell v1 contract", () => {
     const snapshot = values.find(
       (value) => isRecord(value) && "schemaVersion" in value,
     );
+    const appearance = values.find(
+      (value) => isRecord(value) && "sidebarDensity" in value,
+    );
     const intent = values.find(
       (value) => isRecord(value) && value.type === "select_context",
     );
     const replay = values.find((value) => isRecord(value) && "cursor" in value);
 
     expect(() => parseAppSnapshot(snapshot)).not.toThrow();
+    expect(() => parseAppAppearance(appearance)).not.toThrow();
     expect(() => parseAppIntent(intent)).not.toThrow();
     expect(() => parseAppEventCursor(replay)).not.toThrow();
   });
@@ -36,6 +42,8 @@ describe("generated App Shell v1 contract", () => {
         expect(() => parseAppIntent(value)).toThrow();
       } else if (isRecord(value) && "cursor" in value) {
         expect(() => parseAppEventCursor(value)).toThrow();
+      } else if (isRecord(value) && "sidebarDensity" in value) {
+        expect(() => parseAppAppearance(value)).toThrow();
       } else {
         expect(() => parseAppSnapshot(value)).toThrow();
       }
@@ -79,5 +87,15 @@ describe("generated App Shell v1 contract", () => {
       ),
     ) as AppIntent;
     expect(Object.isFrozen(intent)).toBe(true);
+  });
+
+  it("keeps appearance projections closed and immutable", () => {
+    const appearance = parseAppAppearance(
+      (validFixtures as unknown[]).find(
+        (value) => isRecord(value) && "sidebarDensity" in value,
+      ),
+    ) as AppAppearance;
+    expect(appearance.colorScheme).toBe("light");
+    expect(Object.isFrozen(appearance)).toBe(true);
   });
 });

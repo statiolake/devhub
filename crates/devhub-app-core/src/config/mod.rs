@@ -458,6 +458,29 @@ impl ContentRevision {
     pub const fn as_bytes(self) -> [u8; 32] {
         self.0
     }
+
+    /// Parses the lowercase hexadecimal form used by the Settings wire
+    /// contract.  Revisions are opaque concurrency tokens, never user data.
+    pub fn from_hex(raw: &str) -> Option<Self> {
+        if raw.len() != 64
+            || !raw.bytes().all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+        {
+            return None;
+        }
+        let mut bytes = [0_u8; 32];
+        for (index, pair) in raw.as_bytes().chunks_exact(2).enumerate() {
+            bytes[index] = hex_nibble(pair[0])? << 4 | hex_nibble(pair[1])?;
+        }
+        Some(Self(bytes))
+    }
+}
+
+fn hex_nibble(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        _ => None,
+    }
 }
 
 impl fmt::Display for ContentRevision {
@@ -2087,6 +2110,14 @@ CLEAR_SECRET = "clear-secret"
         for raw in invalids {
             assert!(Config::parse(raw).is_err(), "invalid input accepted: {raw}");
         }
+    }
+
+    #[test]
+    fn content_revision_rejects_uppercase_hex_at_the_wire_boundary() {
+        let lowercase = "abcdef0123456789".repeat(4);
+        assert_eq!(lowercase.len(), 64);
+        assert!(ContentRevision::from_hex(&lowercase).is_some());
+        assert!(ContentRevision::from_hex(&lowercase.to_ascii_uppercase()).is_none());
     }
 
     #[test]

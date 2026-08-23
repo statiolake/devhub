@@ -15,6 +15,7 @@ gate, not just source-code presence.
 | R1.3 Coordinator and Bridge contracts | Complete; current hardening complete | `CI=true pnpm run check` (generated checks, 128 core tests, 29 frontend tests, 6 native-shell tests) |
 | P2.1 ConfigStore | Complete | `feat: add durable config and state` (this tracker revision) |
 | P2.2 StateStore | Complete; hydration/native persistence integration complete | `CI=true pnpm run check` and concurrent temp-home/native lifecycle tests (this tracker revision) |
+| U2.4 Settings Window | Complete | Rust-owned ConfigStore Settings projection, singleton window/menu, five sections (General, Workspaces, Agents, Runtimes, Appearance), strict generated contracts, targeted IPC, AppAppearance propagation, dev fixtures, and accessibility basics; `CI=true pnpm run check` (49 frontend tests, 133 core tests, 14 native tests), `CI=true pnpm run build`, and `CI=true pnpm --filter @devhub/app exec tauri build --debug --no-bundle` all pass (this tracker revision) |
 | U2.5 Visual foundation | Complete | `CI=true pnpm run check`, deterministic visual fixtures, and production fixture-bundle scan (this tracker revision) |
 
 P2.1 provides the versioned TOML model, defaults and strict validation,
@@ -26,6 +27,12 @@ socket transitions, redaction, and the StateStore port. Its current
 integration hydrates the sole Rust AppCoordinator from canonical ConfigStore
 and StateStore paths, serializes snapshot persistence without holding the
 coordinator mutex over I/O, and preserves launch-time Agent profile metadata.
+U2.4 projects that Rust-owned configuration through a strict Settings contract
+and targeted Settings-webview IPC, with a native Settings window/menu,
+AppAppearance propagation, deterministic development fixtures, and accessible
+five-section navigation. TerminalRuntime inspection and tmux socket recreation
+remain Wave 3 provider-deferred; this gate does not claim those operations are
+complete.
 
 ## Partial gates
 
@@ -35,8 +42,7 @@ coordinator mutex over I/O, and preserves launch-time Agent profile metadata.
 
 ## Next
 
-1. U2.4 Settings Window
-2. Wave 3 provider waves: WorkspaceDiscovery, repository resolution,
+1. Wave 3 provider waves: WorkspaceDiscovery, repository resolution,
    TerminalRuntime, EditorHost, Bridge extension, and AgentRuntime.
 
 The latest local validation also includes `CI=true pnpm run build` and

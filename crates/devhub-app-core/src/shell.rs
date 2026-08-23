@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 
 use crate::application::{AppReadiness, CoordinatorEvent, CoordinatorReplay, IntentOutcome};
+use crate::config::AppearanceConfig;
 use crate::{
     Activity, AgentControlState, AgentId, AgentStatus, AppError, AppErrorCode, AppSnapshot,
     DisabledReason, DomainErrorCode, NavigationContext, RuntimeHealth, SurfaceKey,
@@ -18,6 +19,74 @@ use crate::{
 
 pub const APP_SHELL_SCHEMA_VERSION: u16 = 1;
 pub const MAX_SAFE_JS_INTEGER: u64 = 9_007_199_254_740_991;
+
+/// The only appearance data the Workbench webview may receive from Settings.
+///
+/// This is intentionally a separate projection from `SettingsSnapshotWire`:
+/// it contains no profiles, workspace sources, revisions, diagnostics, or
+/// environment values. The terminal fields are retained for the future xterm
+/// surface; the Workbench currently consumes `sidebar_density`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AppAppearanceWire {
+    #[schemars(range(min = 1, max = MAX_SAFE_JS_INTEGER))]
+    pub sequence: u64,
+    pub color_scheme: AppColorSchemeWire,
+    pub sidebar_density: AppSidebarDensityWire,
+    #[schemars(length(min = 1, max = 128))]
+    pub terminal_font_family: String,
+    #[schemars(range(min = 9, max = 24))]
+    pub terminal_font_size: u8,
+    #[schemars(range(min = 1.0, max = 2.0))]
+    pub terminal_line_height: f64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum AppColorSchemeWire {
+    Light,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum AppSidebarDensityWire {
+    Compact,
+    Comfortable,
+}
+
+impl AppAppearanceWire {
+    pub fn from_config(config: &AppearanceConfig, sequence: u64) -> Self {
+        Self {
+            sequence,
+            color_scheme: AppColorSchemeWire::Light,
+            sidebar_density: match config.sidebar_density.as_str() {
+                "comfortable" => AppSidebarDensityWire::Comfortable,
+                _ => AppSidebarDensityWire::Compact,
+            },
+            terminal_font_family: config.terminal_font_family.clone(),
+            terminal_font_size: config.terminal_font_size,
+            terminal_line_height: config.terminal_line_height,
+        }
+    }
+
+    pub fn validate(&self) -> Result<(), SnapshotWireError> {
+        if self.sequence == 0 || self.sequence > MAX_SAFE_JS_INTEGER {
+            return Err(SnapshotWireError::UnsafeInteger);
+        }
+        if self.terminal_font_family.trim().is_empty()
+            || self.terminal_font_family.chars().count() > 128
+            || !(9..=24).contains(&self.terminal_font_size)
+            || !self.terminal_line_height.is_finite()
+            || !(1.0..=2.0).contains(&self.terminal_line_height)
+        {
+            return Err(SnapshotWireError::InvalidContract(
+                "appearance projection is outside the supported range",
+            ));
+        }
+        Ok(())
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SnapshotWireError {
@@ -857,6 +926,10 @@ mod tests {
             } else if value.get("cursor").is_some() {
                 let replay: ReplayWire = serde_json::from_value(value).expect("valid replay");
                 replay.validate().expect("valid replay constraints");
+            } else if value.get("sidebarDensity").is_some() {
+                let appearance: AppAppearanceWire =
+                    serde_json::from_value(value).expect("valid appearance projection");
+                appearance.validate().expect("valid appearance projection");
             } else if value.get("kind").is_some() {
                 let outcome: AppOutcomeWire = serde_json::from_value(value).expect("valid outcome");
                 outcome.snapshot().validate().expect("valid outcome snapshot");
@@ -887,6 +960,14 @@ mod tests {
                 serde_json::from_value::<ReplayWire>(value.clone())
                     .and_then(|replay| {
                         replay
+                            .validate()
+                            .map_err(|error| serde_json::Error::io(std::io::Error::other(error)))
+                    })
+                    .is_err()
+            } else if value.get("sidebarDensity").is_some() {
+                serde_json::from_value::<AppAppearanceWire>(value.clone())
+                    .and_then(|appearance| {
+                        appearance
                             .validate()
                             .map_err(|error| serde_json::Error::io(std::io::Error::other(error)))
                     })

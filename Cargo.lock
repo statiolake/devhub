@@ -575,6 +575,7 @@ version = "0.1.0"
 dependencies = [
  "devhub-app-core",
  "serde",
+ "serde_json",
  "tauri",
  "tauri-build",
  "wry",

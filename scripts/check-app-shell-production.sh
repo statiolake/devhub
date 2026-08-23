@@ -17,6 +17,17 @@ fixture_markers=(
   "agentSnapshot"
   "unavailableSnapshot"
   "closingFailedSnapshot"
+  "settingsFixtureSnapshots"
+  "renderSettingsFixture"
+  "createSettingsFixtureClient"
+  "settings-ready"
+  # `settings-dirty` is also the production SettingsApp's semantic dirty-state
+  # class. The fixture module is covered by the module marker above and by the
+  # other fixture-only route names below, so do not treat this shared class as
+  # evidence that development fixture code was bundled.
+  "settings-conflict"
+  "settings-invalid-diagnostic"
+  "settings-socket-confirmation"
 )
 
 for marker in "${fixture_markers[@]}"; do
