@@ -1,0 +1,49 @@
+{
+  "name": "@devhub/bridge",
+  "displayName": "DevHub Bridge",
+  "description": "The narrow public-API Bridge between DevHub and OpenVSCode.",
+  "version": "0.1.0",
+  "publisher": "devhub",
+  "license": "MIT",
+  "private": true,
+  "engines": {
+    "vscode": "^1.109.0"
+  },
+  "main": "./dist/extension.js",
+  "extensionKind": [
+    "workspace"
+  ],
+  "activationEvents": [
+    "*"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "devhub.bridge.openFolder",
+        "title": "DevHub: Open Folder"
+      },
+      {
+        "command": "devhub.bridge.newWindow",
+        "title": "DevHub: New Window"
+      }
+    ]
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "package": "node scripts/package.mjs",
+    "reproducible": "node scripts/reproducible.mjs",
+    "fmt:check": "prettier --check src scripts test package.json tsconfig.json README.md",
+    "fmt": "prettier --write src scripts test package.json tsconfig.json README.md",
+    "lint": "node scripts/check.mjs",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "node scripts/test.mjs",
+    "check": "pnpm run build && pnpm run typecheck && pnpm run test && pnpm run lint && pnpm run package && pnpm run reproducible"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.1",
+    "@types/vscode": "1.109.0",
+    "esbuild": "0.25.12",
+    "prettier": "3.6.2",
+    "typescript": "5.9.2"
+  }
+}

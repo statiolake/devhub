@@ -33,6 +33,7 @@ use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::{AppHandle, Emitter, Manager, State, Webview, WebviewUrl, WebviewWindowBuilder};
 
 pub mod discovery;
+pub mod editor;
 mod repository;
 mod runtime;
 mod terminal;

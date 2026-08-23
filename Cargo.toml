@@ -10,3 +10,8 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.97.1"
 license = "MIT"
+
+[patch.crates-io]
+# ADR 0013 requires Editor child views to have no implicit WRY IPC global.
+# This exact 0.55.1 fork changes only that no-handler bootstrap behavior.
+wry = { path = "apps/devhub/src-tauri/vendor/wry" }
