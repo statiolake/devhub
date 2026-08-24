@@ -97,6 +97,14 @@
       ]
     },
     "diagnostic": null,
+    "diagnostics": {
+      "health": "unavailable",
+      "logDirectory": "~/Library/Logs/DevHub",
+      "logLevel": "info",
+      "previousExit": "clean",
+      "recentCodes": [],
+      "sessionId": "00000000-0000-4000-8000-000000000000"
+    },
     "revision": "0000000000000000000000000000000000000000000000000000000000000000",
     "runtime": {
       "configured": {
@@ -360,6 +368,7 @@
   },
   {
     "confirmed": false,
+    "retry": false,
     "revision": "0000000000000000000000000000000000000000000000000000000000000000",
     "schemaVersion": 1,
     "sequence": 1

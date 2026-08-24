@@ -23,6 +23,7 @@ function createSettingsFixtureClient(
     reload: async () => snapshot,
     recheck: async () => snapshot,
     openLogFolder: async () => undefined,
+    copyDiagnostics: async () => undefined,
     applySocketChange: async () => snapshot,
     subscribe: async (next) => {
       listener = next;

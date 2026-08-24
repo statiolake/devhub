@@ -223,6 +223,17 @@ impl HerdrAgentRuntime {
             .unwrap_or_else(|_| AgentRuntimeHealth::failed(AgentRuntimeErrorCode::Internal))
     }
 
+    /// Performs a fresh bounded provider handshake for Settings recheck. The
+    /// bootstrap path owns its own operation gate and does not require any
+    /// App Shell mutex to be held by the caller.
+    pub(crate) fn recheck_health(&self) -> AgentRuntimeHealth {
+        let operation_id =
+            devhub_app_core::OperationId::from_uuid("00000000-0000-4000-8000-000000000002")
+                .expect("static health probe operation id");
+        let cancel = CancellationToken::new(operation_id);
+        tauri::async_runtime::block_on(self.bootstrap(cancel)).unwrap_or_else(|_| self.health())
+    }
+
     /// Stop only DevHub's subscription listener. The provider session,
     /// Agents, and their panes are deliberately left running; a future
     /// process can reconnect from the durable opaque mappings/journal.

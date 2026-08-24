@@ -97,6 +97,14 @@
       ]
     },
     "diagnostic": null,
+    "diagnostics": {
+      "health": "unavailable",
+      "logDirectory": "~/Library/Logs/DevHub",
+      "logLevel": "info",
+      "previousExit": "clean",
+      "recentCodes": [],
+      "sessionId": "00000000-0000-4000-8000-000000000000"
+    },
     "revision": "0000000000000000000000000000000000000000000000000000000000000000",
     "runtime": {
       "configured": {
@@ -456,6 +464,174 @@
     },
     "revision": "ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789",
     "schemaVersion": 1
+  },
+  {
+    "config": {
+      "agentProfiles": [
+        {
+          "args": [],
+          "displayName": "Codex",
+          "env": {},
+          "id": "codex",
+          "kind": "codex"
+        },
+        {
+          "args": [],
+          "displayName": "Claude",
+          "env": {},
+          "id": "claude",
+          "kind": "claude"
+        }
+      ],
+      "appearance": {
+        "colorScheme": "light",
+        "sidebarDensity": "compact",
+        "terminalFontFamily": "SF Mono",
+        "terminalFontSize": 13,
+        "terminalLineHeight": 1.2
+      },
+      "general": {
+        "importLoginEnvironment": true
+      },
+      "runtimes": {
+        "git": "git",
+        "herdr": "herdr",
+        "shell": "/bin/zsh",
+        "tmux": "tmux",
+        "tmuxArgs": [],
+        "tmuxSocketName": "devhub"
+      },
+      "version": 1,
+      "workspaceSources": [
+        {
+          "command": ["workspace_path", "-d"],
+          "id": "daily",
+          "timeoutMs": 2000,
+          "type": "command"
+        },
+        {
+          "excludeNames": [
+            ".git",
+            "node_modules",
+            "target",
+            "dist",
+            "build",
+            ".cache"
+          ],
+          "id": "dev-git",
+          "includeHidden": false,
+          "kinds": ["git_repository", "git_worktree"],
+          "maxDepth": 4,
+          "minDepth": 1,
+          "path": "~/dev",
+          "type": "filesystem"
+        },
+        {
+          "excludeNames": [
+            ".git",
+            "node_modules",
+            "target",
+            "dist",
+            "build",
+            ".cache"
+          ],
+          "id": "work",
+          "includeHidden": false,
+          "kinds": ["directory"],
+          "maxDepth": 1,
+          "minDepth": 1,
+          "path": "~/workspace/work",
+          "type": "filesystem"
+        },
+        {
+          "excludeNames": [
+            ".git",
+            "node_modules",
+            "target",
+            "dist",
+            "build",
+            ".cache"
+          ],
+          "id": "home-git",
+          "includeHidden": false,
+          "kinds": ["git_repository", "git_worktree"],
+          "maxDepth": 2,
+          "minDepth": 1,
+          "path": "~",
+          "type": "filesystem"
+        }
+      ]
+    },
+    "diagnostic": null,
+    "diagnostics": {
+      "health": "unavailable",
+      "logDirectory": "~/Library/Logs/DevHub",
+      "logLevel": "info",
+      "previousExit": "clean",
+      "recentCodes": [],
+      "sessionId": "00000000-0000-4000-8000-00000000000g"
+    },
+    "revision": "0000000000000000000000000000000000000000000000000000000000000000",
+    "runtime": {
+      "configured": {
+        "git": "git",
+        "herdr": "herdr",
+        "shell": "/bin/zsh",
+        "tmux": "tmux",
+        "tmuxArgs": [],
+        "tmuxSocketName": "devhub"
+      },
+      "effective": {
+        "git": "git",
+        "herdr": "herdr",
+        "shell": "/bin/zsh",
+        "tmux": "tmux",
+        "tmuxArgs": [],
+        "tmuxSocketName": "devhub"
+      },
+      "health": {
+        "git": "unavailable",
+        "herdr": "unavailable",
+        "inspectionAvailable": false,
+        "shell": "unavailable",
+        "tmux": "unavailable"
+      },
+      "resolved": {
+        "git": {
+          "kind": "command_name",
+          "value": "git"
+        },
+        "herdr": {
+          "kind": "command_name",
+          "value": "herdr"
+        },
+        "shell": {
+          "kind": "absolute_path",
+          "value": "/bin/zsh"
+        },
+        "tmux": {
+          "kind": "command_name",
+          "value": "tmux"
+        }
+      },
+      "restartRequired": false,
+      "socketChange": {
+        "adapterAvailable": false,
+        "completedSessionCount": 0,
+        "configuredSocketName": "devhub",
+        "confirmationRequired": false,
+        "conflictSessionCount": 0,
+        "effectiveSocketName": "devhub",
+        "failedSessionCount": 0,
+        "requestedSocketName": null,
+        "scratchSessionCount": 0,
+        "state": "stable",
+        "targetPreflight": "not_checked",
+        "workspaceSessionCount": 0
+      }
+    },
+    "schemaVersion": 1,
+    "sequence": 1
   },
   {
     "schemaVersion": 2

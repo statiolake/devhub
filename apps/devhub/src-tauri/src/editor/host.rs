@@ -216,6 +216,13 @@ impl EditorHost {
         self.state.lock().map(|state| state.window_attached).unwrap_or(false)
     }
 
+    /// A read-only host health fact for the Settings recheck seam. OpenVSCode
+    /// readiness itself is reported by the Bridge sink; this verifies that
+    /// the native host is still attached without mutating editor state.
+    pub fn recheck_health(&self) -> bool {
+        self.window_attached()
+    }
+
     pub fn navigation_decision(
         &self,
         key: &EditorSurfaceKey,

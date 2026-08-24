@@ -19,9 +19,11 @@ if rg -n '"windows"' "$settings_capability" "$shell_capability" >/dev/null; then
   exit 1
 fi
 
-if rg -n 'settings|allow-(get|save|reload|recheck|open-log|apply-socket)-settings|socket-change' "$shell_capability" >/dev/null; then
+if rg -n 'allow-(get|save|reload|recheck|open-log|apply-socket)-settings|socket-change' "$shell_capability" >/dev/null; then
   echo "Settings permission leaked into app-shell capability" >&2
   exit 1
 fi
+
+rg -q 'allow-open-settings-window' "$shell_capability"
 
 echo "Settings capability scope is valid"

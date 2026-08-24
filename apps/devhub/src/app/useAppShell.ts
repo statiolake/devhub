@@ -16,6 +16,7 @@ export interface AppShellContextValue {
   readonly intentError: AppError | null;
   readonly dispatch: (intent: AppIntent) => Promise<AppOutcome | undefined>;
   readonly retry: () => void;
+  readonly openSettings: () => Promise<void>;
   readonly pickerCandidates: readonly WorkspacePickerCandidate[];
   readonly pickerBusy: boolean;
   readonly startWorkspacePicker: (query?: string) => Promise<void>;

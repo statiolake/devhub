@@ -720,6 +720,63 @@ body.is-resizing-sidebar {
   transform: scale(0.98);
 }
 
+.surface-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  align-items: center;
+}
+
+.secondary-button {
+  min-height: 40px;
+  margin-top: var(--space-6);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--graphite);
+  cursor: pointer;
+  padding: 0 var(--space-4);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.secondary-button:hover {
+  border-color: var(--pine);
+}
+
+.surface-error-details {
+  margin-top: var(--space-6);
+  color: var(--secondary);
+  font-size: 12px;
+}
+
+.surface-error-details summary {
+  cursor: pointer;
+  font-weight: 650;
+}
+
+.surface-error-details dl {
+  display: grid;
+  gap: var(--space-2);
+  margin: var(--space-3) 0 0;
+}
+
+.surface-error-details dl div {
+  display: grid;
+  grid-template-columns: 84px 1fr;
+  gap: var(--space-3);
+}
+
+.surface-error-details dt {
+  color: var(--secondary);
+}
+
+.surface-error-details dd {
+  margin: 0;
+  color: var(--graphite);
+  font-family: var(--font-mono);
+}
+
 @keyframes surface-pulse {
   0%,
   100% {

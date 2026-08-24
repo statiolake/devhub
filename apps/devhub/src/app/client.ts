@@ -39,6 +39,7 @@ export const SELECT_WORKSPACE_PICKER_COMMAND =
 export const CHOOSE_WORKSPACE_FOLDER_COMMAND =
   "choose_workspace_folder" as const;
 export const APP_WORKSPACE_PICKER_EVENT = "app://workspace-picker" as const;
+export const OPEN_SETTINGS_WINDOW_COMMAND = "open_settings_window" as const;
 
 export interface WorkspacePickerCandidate {
   readonly operationId: string;
@@ -74,6 +75,7 @@ export interface AppShellClient {
   cancelWorkspacePicker?(): Promise<void>;
   selectWorkspacePicker?(path: string): Promise<AppOutcome>;
   chooseWorkspaceFolder?(): Promise<string | undefined>;
+  openSettings?(): Promise<void>;
   subscribeWorkspacePicker?(
     listener: (event: WorkspacePickerEvent) => void,
   ): Promise<UnlistenFn>;
@@ -164,6 +166,9 @@ export function createTauriAppShellClient(
         CHOOSE_WORKSPACE_FOLDER_COMMAND,
       );
     },
+    openSettings() {
+      return transport.invoke<void>(OPEN_SETTINGS_WINDOW_COMMAND);
+    },
     subscribeWorkspacePicker(listener) {
       return transport.listen<WorkspacePickerEvent>(
         APP_WORKSPACE_PICKER_EVENT,
@@ -181,6 +186,10 @@ export function parseTransportError(value: unknown): AppError {
     return {
       code: "native_unavailable",
       summary: "The native app shell is unavailable.",
+      module: "app",
+      timestampMs: 0,
+      runtimeVersion: "unknown",
+      actions: ["retry", "open_settings"],
     };
   }
 }

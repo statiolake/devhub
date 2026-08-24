@@ -52,6 +52,14 @@
     "terminalLineHeight": 1.2
   },
   {
+    "actions": ["retry", "open_settings"],
+    "code": "native_unavailable",
+    "module": "app",
+    "runtimeVersion": "0.1.0",
+    "summary": "The native app shell is unavailable.",
+    "timestampMs": 1
+  },
+  {
     "context": {
       "kind": "global"
     },

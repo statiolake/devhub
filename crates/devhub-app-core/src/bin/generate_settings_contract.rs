@@ -68,8 +68,22 @@ fn fixture_snapshot() -> Value {
         SettingsRuntimeHealthWire::unavailable(),
         false,
     );
-    serde_json::to_value(SettingsSnapshotWire::from_config(&config, revision, 1, runtime, None))
-        .expect("serialize Settings snapshot fixture")
+    serde_json::to_value(SettingsSnapshotWire::from_config(
+        &config,
+        revision,
+        1,
+        runtime,
+        None,
+        SettingsDiagnosticsWire {
+            session_id: "00000000-0000-4000-8000-000000000000".to_owned(),
+            log_directory: "~/Library/Logs/DevHub".to_owned(),
+            log_level: SettingsLogLevelWire::Info,
+            previous_exit: SettingsPreviousExitWire::Clean,
+            health: SettingsRuntimeHealthValueWire::Unavailable,
+            recent_codes: Vec::new(),
+        },
+    ))
+    .expect("serialize Settings snapshot fixture")
 }
 
 fn valid_values() -> Vec<Value> {
@@ -88,7 +102,8 @@ fn valid_values() -> Vec<Value> {
             "schemaVersion": 1,
             "revision": "0000000000000000000000000000000000000000000000000000000000000000",
             "sequence": 1,
-            "confirmed": false
+            "confirmed": false,
+            "retry": false
         }),
         json!({
             "code": "invalid_config",
@@ -108,11 +123,15 @@ fn invalid_values() -> Vec<Value> {
     bad_save["revision"] = Value::String("not-a-revision".to_owned());
     let mut bad_uppercase_save = valid[2].clone();
     bad_uppercase_save["revision"] = Value::String("ABCDEF0123456789".repeat(4));
+    let mut bad_session_id = valid[0].clone();
+    bad_session_id["diagnostics"]["sessionId"] =
+        Value::String("00000000-0000-4000-8000-00000000000g".to_owned());
     vec![
         bad_snapshot,
         bad_config,
         bad_save,
         bad_uppercase_save,
+        bad_session_id,
         json!({ "schemaVersion": 2 }),
         json!({
             "schemaVersion": 1,

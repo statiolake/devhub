@@ -35,6 +35,7 @@ function makeClient(initialSnapshot?: SettingsSnapshot) {
     reload: vi.fn(async () => snapshot),
     recheck: vi.fn(async () => snapshot),
     openLogFolder: vi.fn(async () => undefined),
+    copyDiagnostics: vi.fn(async () => undefined),
     applySocketChange: vi.fn(async () => snapshot),
     subscribe: vi.fn(async (next) => {
       listener = next;
@@ -162,6 +163,7 @@ describe("SettingsApp", () => {
       revision: snapshot.revision,
       sequence: snapshot.sequence,
       confirmed: false,
+      retry: false,
     });
   });
 
@@ -226,12 +228,14 @@ describe("SettingsApp", () => {
       revision: pending.revision,
       sequence: pending.sequence,
       confirmed: false,
+      retry: false,
     });
     expect(client.applySocketChange).toHaveBeenNthCalledWith(2, {
       schemaVersion: 1,
       revision: prepared.revision,
       sequence: prepared.sequence,
       confirmed: true,
+      retry: false,
     });
   });
 

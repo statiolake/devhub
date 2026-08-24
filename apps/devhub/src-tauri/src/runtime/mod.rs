@@ -221,6 +221,41 @@ impl RuntimeLaunchContext {
         self.login_environment_status
     }
 
+    /// Performs a bounded, fresh login-shell probe for Settings recheck. The
+    /// startup status remains immutable; this method is deliberately read-only
+    /// and returns only a boolean health fact.
+    pub(crate) fn recheck_login_shell(&self, configured_shell: &str) -> bool {
+        let Ok(shell) = self.resolve(configured_shell) else { return false };
+        self.run_login_shell(&shell).is_ok()
+    }
+
+    /// Runs a bounded direct executable probe without consulting a shell or
+    /// exposing child output. This is used by Settings recheck for git and
+    /// other configured command adapters.
+    pub(crate) fn recheck_command(&self, configured: &str, argument: &str) -> bool {
+        let Ok(executable) = self.resolve(configured) else { return false };
+        let mut command = self.command(&executable);
+        command
+            .arg(argument)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+        let Ok(mut child) = command.spawn() else { return false };
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        loop {
+            match child.try_wait() {
+                Ok(Some(status)) => return status.success(),
+                Ok(None) if std::time::Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Ok(None) | Err(_) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return false;
+                }
+            }
+        }
+    }
+
     /// Resolves an absolute path, a leading-`~` path, or a command name.
     ///
     /// Relative paths containing a separator are never interpreted relative

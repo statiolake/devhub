@@ -7,6 +7,7 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::fmt;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::application::{
     AppReadiness, ConfirmationId, ConfirmationOutcomePurpose, CoordinatorEvent, CoordinatorReplay,
@@ -711,12 +712,39 @@ pub enum AppErrorCodeWire {
     NativeUnavailable,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AppErrorModuleWire {
+    App,
+    Config,
+    State,
+    Editor,
+    Bridge,
+    Agent,
+    Terminal,
+    Settings,
+    Diagnostics,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AppErrorActionWire {
+    Retry,
+    OpenSettings,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AppErrorWire {
     code: AppErrorCodeWire,
     summary: String,
+    module: AppErrorModuleWire,
+    #[schemars(range(max = MAX_SAFE_JS_INTEGER))]
+    timestamp_ms: u64,
+    #[schemars(length(min = 1, max = 64))]
+    runtime_version: String,
+    actions: Vec<AppErrorActionWire>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -908,23 +936,48 @@ impl AppOutcomeWire {
 
 impl AppErrorWire {
     pub fn native_unavailable() -> Self {
-        Self { code: AppErrorCodeWire::NativeUnavailable, summary: "native_unavailable".to_owned() }
+        Self::at(AppErrorCodeWire::NativeUnavailable, 0)
     }
 
     pub fn invalid_intent() -> Self {
-        Self { code: AppErrorCodeWire::InvalidIntent, summary: "invalid_intent".to_owned() }
+        Self::at(AppErrorCodeWire::InvalidIntent, 0)
     }
 
     pub fn persistence_degraded() -> Self {
-        Self {
-            code: AppErrorCodeWire::PersistenceDegraded,
-            summary: "persistence_degraded".to_owned(),
-        }
+        Self::at(AppErrorCodeWire::PersistenceDegraded, 0)
     }
 
-    pub fn with_summary(mut self, summary: impl Into<String>) -> Self {
-        self.summary = summary.into();
+    /// Keeps the old call-site shape while making the boundary content-free.
+    /// Native/provider error text is never allowed to become product data.
+    pub fn with_summary(mut self, _summary: impl Into<String>) -> Self {
+        self.summary = safe_error_summary(self.code).to_owned();
         self
+    }
+
+    pub fn with_module(mut self, module: AppErrorModuleWire) -> Self {
+        self.module = module;
+        self
+    }
+
+    pub fn at(code: AppErrorCodeWire, timestamp_ms: u64) -> Self {
+        let timestamp_ms = if timestamp_ms == 0 { now_ms() } else { timestamp_ms };
+        let module = default_error_module(code);
+        let actions = if matches!(
+            code,
+            AppErrorCodeWire::NativeUnavailable | AppErrorCodeWire::PersistenceDegraded
+        ) {
+            vec![AppErrorActionWire::Retry, AppErrorActionWire::OpenSettings]
+        } else {
+            vec![AppErrorActionWire::Retry]
+        };
+        Self {
+            code,
+            summary: safe_error_summary(code).to_owned(),
+            module,
+            timestamp_ms,
+            runtime_version: env!("CARGO_PKG_VERSION").to_owned(),
+            actions,
+        }
     }
 
     pub fn from_error(error: &AppError) -> Self {
@@ -955,8 +1008,38 @@ impl AppErrorWire {
             AppErrorCode::PersistenceDegraded => AppErrorCodeWire::PersistenceDegraded,
             AppErrorCode::PortUnavailable => AppErrorCodeWire::NativeUnavailable,
         };
-        let summary = format!("{code:?}");
-        Self { summary, code }
+        Self::at(code, 0)
+    }
+}
+
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis().min(MAX_SAFE_JS_INTEGER as u128) as u64)
+        .unwrap_or(0)
+}
+
+fn default_error_module(code: AppErrorCodeWire) -> AppErrorModuleWire {
+    match code {
+        AppErrorCodeWire::PersistenceDegraded => AppErrorModuleWire::State,
+        AppErrorCodeWire::NativeUnavailable => AppErrorModuleWire::App,
+        _ => AppErrorModuleWire::App,
+    }
+}
+
+fn safe_error_summary(code: AppErrorCodeWire) -> &'static str {
+    match code {
+        AppErrorCodeWire::InvalidIntent => "The requested action is not available.",
+        AppErrorCodeWire::ActivityDisabled => {
+            "This activity is unavailable in the current context."
+        }
+        AppErrorCodeWire::UnknownContext => "The selected context is no longer available.",
+        AppErrorCodeWire::WorkspaceUnavailable => "The workspace is unavailable.",
+        AppErrorCodeWire::WorkspaceClosing => "The workspace is already closing.",
+        AppErrorCodeWire::WorkspaceCloseFailed => "The workspace could not be closed cleanly.",
+        AppErrorCodeWire::OperationPending => "Another operation is still in progress.",
+        AppErrorCodeWire::PersistenceDegraded => "Changes could not be saved.",
+        AppErrorCodeWire::NativeUnavailable => "The native app shell is unavailable.",
     }
 }
 
@@ -1274,6 +1357,19 @@ mod tests {
     }
 
     #[test]
+    fn error_surface_is_stable_timestamped_and_content_free() {
+        let error = AppErrorWire::at(AppErrorCodeWire::NativeUnavailable, 7)
+            .with_summary("provider secret and raw failure text");
+        let value = serde_json::to_value(error).expect("error surface serializes");
+        assert_eq!(value["code"], "native_unavailable");
+        assert_eq!(value["module"], "app");
+        assert_eq!(value["timestampMs"], 7);
+        assert_eq!(value["actions"], serde_json::json!(["retry", "open_settings"]));
+        assert!(!value.to_string().contains("provider secret"));
+        assert!(!value.to_string().contains("raw failure"));
+    }
+
+    #[test]
     fn app_intent_wire_rejects_unknown_fields() {
         let result = serde_json::from_value::<AppIntentWire>(serde_json::json!({
             "type": "resize_sidebar",
@@ -1360,6 +1456,9 @@ mod tests {
             } else if value.get("kind").is_some() {
                 let outcome: AppOutcomeWire = serde_json::from_value(value).expect("valid outcome");
                 outcome.snapshot().validate().expect("valid outcome snapshot");
+            } else if value.get("code").is_some() && value.get("actions").is_some() {
+                let error: AppErrorWire = serde_json::from_value(value).expect("valid error");
+                assert!(error.timestamp_ms <= MAX_SAFE_JS_INTEGER);
             } else {
                 let snapshot: AppSnapshotWire =
                     serde_json::from_value(value).expect("valid snapshot");

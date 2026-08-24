@@ -647,8 +647,11 @@ function RuntimesSection({
   config,
   update,
   runtime,
+  diagnostics,
   onRecheck,
   onOpenLogs,
+  onCopyDiagnostics,
+  actionStatus,
   onApplySocketChange,
   socketTriggerRef,
   busy,
@@ -656,8 +659,11 @@ function RuntimesSection({
   config: SettingsConfig;
   update: (next: SettingsConfig) => void;
   runtime: SettingsRuntimeWire;
+  diagnostics: SettingsSnapshot["diagnostics"];
   onRecheck: () => void;
   onOpenLogs: () => void;
+  onCopyDiagnostics: () => void;
+  actionStatus?: string;
   onApplySocketChange: () => void;
   socketTriggerRef: React.RefObject<HTMLButtonElement | null>;
   busy: boolean;
@@ -720,6 +726,27 @@ function RuntimesSection({
         >
           Open log folder
         </button>
+        <button
+          type="button"
+          className="settings-button quiet"
+          onClick={onCopyDiagnostics}
+          disabled={busy}
+        >
+          Copy diagnostics
+        </button>
+        <p className="settings-diagnostics-summary">
+          Session {diagnostics.sessionId}; previous exit{" "}
+          {diagnostics.previousExit}.
+        </p>
+        {actionStatus ? (
+          <p
+            className="settings-action-status"
+            role="status"
+            aria-live="polite"
+          >
+            {actionStatus}
+          </p>
+        ) : null}
       </div>
       <div className="settings-runtime-callout">
         <div className="settings-callout-heading">
@@ -973,6 +1000,7 @@ export function SettingsApp({
   const [section, setSection] = useState<Section>("General");
   const [error, setError] = useState<SettingsError>();
   const [busy, setBusy] = useState(false);
+  const [actionStatus, setActionStatus] = useState<string>();
   const [socketConfirmation, setSocketConfirmation] =
     useState<SettingsRuntimeWire["socketChange"]>();
   const [socketConfirmationSequence, setSocketConfirmationSequence] =
@@ -1200,6 +1228,7 @@ export function SettingsApp({
         revision: snapshot.revision,
         sequence: snapshot.sequence,
         confirmed: retrying,
+        retry: retrying,
       })
       .then((next) => {
         if (mountGeneration.current !== generation) return;
@@ -1233,6 +1262,7 @@ export function SettingsApp({
         revision: socketConfirmationRevision,
         sequence: socketConfirmationSequence,
         confirmed: true,
+        retry: false,
       })
       .then((next) => {
         if (mountGeneration.current !== generation) return;
@@ -1387,16 +1417,39 @@ export function SettingsApp({
               config={draft}
               update={update}
               runtime={snapshot.runtime}
+              diagnostics={snapshot.diagnostics}
               onRecheck={recheck}
               onApplySocketChange={prepareSocketChange}
               socketTriggerRef={socketTriggerRef}
               onOpenLogs={() => {
+                setActionStatus("Opening the local diagnostics folder…");
                 void client
                   .openLogFolder()
+                  .then(() => setActionStatus("Diagnostics folder opened."))
                   .catch((value: unknown) =>
-                    setError(parseSettingsTransportError(value)),
+                    (() => {
+                      const parsed = parseSettingsTransportError(value);
+                      setError(parsed);
+                      setActionStatus(errorMessage(parsed));
+                    })(),
                   );
               }}
+              onCopyDiagnostics={() => {
+                setActionStatus("Copying a redacted diagnostics summary…");
+                void client
+                  .copyDiagnostics()
+                  .then(() =>
+                    setActionStatus("Redacted diagnostics summary copied."),
+                  )
+                  .catch((value: unknown) =>
+                    (() => {
+                      const parsed = parseSettingsTransportError(value);
+                      setError(parsed);
+                      setActionStatus(errorMessage(parsed));
+                    })(),
+                  );
+              }}
+              actionStatus={actionStatus}
               busy={busy}
             />
           ) : null}

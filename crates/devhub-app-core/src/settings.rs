@@ -37,6 +37,39 @@ pub struct SettingsSnapshotWire {
     pub config: SettingsConfigWire,
     pub runtime: SettingsRuntimeWire,
     pub diagnostic: Option<SettingsDiagnosticWire>,
+    pub diagnostics: SettingsDiagnosticsWire,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SettingsDiagnosticsWire {
+    #[schemars(regex(
+        pattern = "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    ))]
+    pub session_id: String,
+    #[schemars(regex(pattern = "^~/Library/Logs/DevHub$"))]
+    pub log_directory: String,
+    pub log_level: SettingsLogLevelWire,
+    pub previous_exit: SettingsPreviousExitWire,
+    pub health: SettingsRuntimeHealthValueWire,
+    #[schemars(length(max = 16))]
+    pub recent_codes: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SettingsLogLevelWire {
+    Info,
+    Debug,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SettingsPreviousExitWire {
+    Clean,
+    Unclean,
+    Unknown,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -317,6 +350,10 @@ pub struct SettingsSocketChangeRequestWire {
     #[schemars(range(min = 1, max = SETTINGS_SEQUENCE_MAX))]
     pub sequence: u64,
     pub confirmed: bool,
+    /// True only when the user is explicitly retrying a previously failed or
+    /// persisted transition. This keeps the first destructive confirmation
+    /// distinguishable from a later retry at the diagnostics seam.
+    pub retry: bool,
 }
 
 impl From<&Config> for SettingsConfigWire {
@@ -526,6 +563,7 @@ impl SettingsSnapshotWire {
         sequence: u64,
         runtime: SettingsRuntimeWire,
         diagnostic: Option<SettingsDiagnosticWire>,
+        diagnostics: SettingsDiagnosticsWire,
     ) -> Self {
         Self {
             schema_version: SETTINGS_SCHEMA_VERSION,
@@ -534,6 +572,7 @@ impl SettingsSnapshotWire {
             config: SettingsConfigWire::from(config),
             runtime,
             diagnostic,
+            diagnostics,
         }
     }
 
@@ -542,6 +581,7 @@ impl SettingsSnapshotWire {
         sequence: u64,
         runtime: SettingsRuntimeWire,
         diagnostic: Option<SettingsDiagnosticWire>,
+        diagnostics: SettingsDiagnosticsWire,
     ) -> Self {
         Self {
             schema_version: SETTINGS_SCHEMA_VERSION,
@@ -550,6 +590,7 @@ impl SettingsSnapshotWire {
             config: SettingsConfigWire::from(loaded.config()),
             runtime,
             diagnostic,
+            diagnostics,
         }
     }
 
@@ -561,8 +602,37 @@ impl SettingsSnapshotWire {
             return Err(SettingsErrorWire::invalid_config());
         }
         let _ = parse_revision(&self.revision).ok_or_else(SettingsErrorWire::invalid_config)?;
+        if !is_diagnostic_session_id(&self.diagnostics.session_id)
+            || self.diagnostics.log_directory != "~/Library/Logs/DevHub"
+            || self.diagnostics.recent_codes.len() > 16
+            || self.diagnostics.recent_codes.iter().any(|code| {
+                code.is_empty()
+                    || code.len() > 64
+                    || !code.chars().all(|character| {
+                        character.is_ascii_lowercase()
+                            || character.is_ascii_digit()
+                            || character == '_'
+                    })
+            })
+        {
+            return Err(SettingsErrorWire::invalid_config());
+        }
         self.config.clone().into_config().map(|_| ())
     }
+}
+
+fn is_diagnostic_session_id(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    bytes.len() == 36
+        && [8, 13, 18, 23].iter().all(|&index| bytes[index] == b'-')
+        && bytes.iter().enumerate().all(|(index, &byte)| {
+            if [8, 13, 18, 23].contains(&index) {
+                return true;
+            }
+            byte.is_ascii_hexdigit()
+        })
+        && bytes[14] == b'4'
+        && matches!(bytes[19], b'8'..=b'9' | b'a'..=b'b')
 }
 
 impl SettingsSaveRequestWire {

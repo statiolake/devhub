@@ -104,6 +104,8 @@ fn valid_values() -> Vec<Value> {
             1,
         ))
         .expect("serialize appearance fixture"),
+        serde_json::to_value(AppErrorWire::at(AppErrorCodeWire::NativeUnavailable, 1))
+            .expect("serialize error surface fixture"),
         json!({ "type": "select_context", "context": { "kind": "global" } }),
         json!({ "type": "select_activity", "activity": "terminal" }),
         json!({ "type": "resize_sidebar", "width": SIDEBAR_DEFAULT_WIDTH }),

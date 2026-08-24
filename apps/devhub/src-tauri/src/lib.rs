@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::fs::File;
 use std::io::Read;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command as ProcessCommand;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{sync_channel, SyncSender, TrySendError};
@@ -34,16 +34,18 @@ use devhub_app_core::{
     CoordinatorEvent, DiagnosticCode, Effect, IdGenerator, IntentEnvelope, IntentId, IntentOutcome,
     JsonStateStore, OpaqueProviderMapping, OperationId, OperationToken, PortError, PortErrorCode,
     ProviderEvent, ProviderEventEnvelope, ProviderEventId, ReplayWire, ResourceInspection,
-    RuntimeHealth, SettingsErrorWire, SettingsRuntimeHealthWire, SettingsSaveRequestWire,
-    SettingsSnapshotWire, SettingsSocketChangeRequestWire, SurfaceKey, SurfaceResolution,
-    TerminalTarget, UserIntent, WorkspaceCleanupResult, WorkspaceId, WorkspacePickerEventWire,
-    SETTINGS_SEQUENCE_MAX,
+    RuntimeHealth, SettingsDiagnosticsWire, SettingsErrorWire, SettingsLogLevelWire,
+    SettingsPreviousExitWire, SettingsRuntimeHealthValueWire, SettingsRuntimeHealthWire,
+    SettingsSaveRequestWire, SettingsSnapshotWire, SettingsSocketChangeRequestWire, SurfaceKey,
+    SurfaceResolution, TerminalTarget, UserIntent, WorkspaceCleanupResult, WorkspaceId,
+    WorkspacePickerEventWire, SETTINGS_SEQUENCE_MAX,
 };
 use raw_window_handle::HasWindowHandle;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::{AppHandle, Emitter, Manager, State, Webview, WebviewUrl, WebviewWindowBuilder};
 
 pub mod agent;
+mod diagnostics;
 pub mod discovery;
 pub mod editor;
 mod integration;
@@ -53,6 +55,10 @@ mod runtime;
 mod terminal;
 mod workspace_resolver;
 use agent::{AgentSurfaceManager, HerdrAgentRuntime};
+use diagnostics::{
+    Code as LogCode, DiagnosticEvent, Diagnostics, Health as DiagnosticHealth, LifecyclePhase,
+    Module as DiagnosticModule, PreviousExit as DiagnosticPreviousExit,
+};
 use discovery::DiscoveryEngine;
 use editor::{
     BridgeEvent, BridgeEventSink, BridgeRequest, BridgeRequestDisposition, BridgeRequestResult,
@@ -79,6 +85,7 @@ pub const APP_SHELL_WINDOW_LABEL: &str = "app-shell";
 pub const SETTINGS_CHANGED_EVENT: &str = "settings://changed";
 pub const SETTINGS_WINDOW_LABEL: &str = "settings";
 pub const OPEN_SETTINGS_MENU_ID: &str = "open-settings";
+pub const OPEN_SETTINGS_WINDOW_COMMAND: &str = "open_settings_window";
 const CLOSE_WINDOW_MENU_ID: &str = "close-window";
 const QUIT_MENU_ID: &str = "quit-devhub";
 const MAX_EFFECT_STEPS: usize = 1_024;
@@ -136,6 +143,12 @@ impl Default for NativeBridgeSink {
 }
 
 impl NativeBridgeSink {
+    fn recheck_health(&self) -> bool {
+        self.observations.lock().ok().is_some_and(|observations| {
+            observations.values().any(|observation| observation.connected)
+        })
+    }
+
     fn editor_observation(&self, workspace_id: &WorkspaceId) -> Option<BridgeObservation> {
         let observations = self.observations.lock().ok()?;
         observations.values().find(|observation| {
@@ -527,6 +540,29 @@ struct SettingsProjection {
     diagnostic: Option<devhub_app_core::SettingsDiagnosticWire>,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct RuntimeHealthProbe {
+    shell: SettingsRuntimeHealthValueWire,
+    git: SettingsRuntimeHealthValueWire,
+    tmux: SettingsRuntimeHealthValueWire,
+    herdr: SettingsRuntimeHealthValueWire,
+    editor: bool,
+    bridge: bool,
+    diagnostics: DiagnosticHealth,
+}
+
+impl RuntimeHealthProbe {
+    fn all_available(self) -> bool {
+        self.shell == SettingsRuntimeHealthValueWire::Healthy
+            && self.git == SettingsRuntimeHealthValueWire::Healthy
+            && self.tmux == SettingsRuntimeHealthValueWire::Healthy
+            && self.herdr == SettingsRuntimeHealthValueWire::Healthy
+            && self.editor
+            && self.bridge
+            && matches!(self.diagnostics, DiagnosticHealth::Healthy)
+    }
+}
+
 struct NativeAppState {
     coordinator: Mutex<AppCoordinator>,
     /// Serializes lifecycle generation changes/coordinator replacement with
@@ -541,13 +577,14 @@ struct NativeAppState {
     store: JsonStateStore,
     config_store: ConfigStore,
     settings: Mutex<SettingsProjection>,
+    runtime_health_probe: Mutex<Option<RuntimeHealthProbe>>,
+    diagnostics: Diagnostics,
     config_watcher: Mutex<Option<devhub_app_core::config::ConfigWatcher>>,
     /// A valid external config edit observed during a confirmed transition.
     /// It is intentionally kept outside `settings.loaded` until the durable
     /// transition reaches Stable, so the Settings projection remains the
     /// last-good value and the ConfigStore revision can be reconciled later.
     deferred_config: Mutex<Option<LoadedConfig>>,
-    home: PathBuf,
     startup_runtime_config: RuntimeConfig,
     startup_import_login_environment: bool,
     persistence: Mutex<PersistenceState>,
@@ -664,11 +701,13 @@ impl Drop for SocketTransitionGate<'_> {
 }
 
 fn state_error(error: impl std::fmt::Display) -> AppErrorWire {
-    AppErrorWire::native_unavailable().with_summary(error.to_string())
+    let _ = error;
+    AppErrorWire::native_unavailable()
 }
 
 fn persistence_error(error: impl std::fmt::Display) -> AppErrorWire {
-    AppErrorWire::persistence_degraded().with_summary(error.to_string())
+    let _ = error;
+    AppErrorWire::persistence_degraded()
 }
 
 /// Claims a process-level single-flight transition. The native event loop may
@@ -728,7 +767,10 @@ fn native_identity_matches(
 /// the application event bus.
 fn emit_settings_snapshot(app: &AppHandle, snapshot: SettingsSnapshotWire) {
     if let Err(error) = app.emit_to(SETTINGS_WINDOW_LABEL, SETTINGS_CHANGED_EVENT, snapshot) {
-        eprintln!("DevHub Settings notification unavailable: {error}");
+        let _ = error;
+        if let Some(state) = app.try_state::<NativeAppState>() {
+            state.record_native_error(AppErrorWire::native_unavailable());
+        }
     }
 }
 
@@ -741,10 +783,14 @@ fn emit_app_appearance(app: &AppHandle, state: &NativeAppState) {
             if let Err(error) =
                 app.emit_to(APP_SHELL_WINDOW_LABEL, APP_APPEARANCE_CHANGED_EVENT, appearance)
             {
-                eprintln!("DevHub appearance notification unavailable: {error}");
+                let _ = error;
+                state.record_native_error(AppErrorWire::native_unavailable());
             }
         }
-        Err(error) => eprintln!("DevHub appearance projection unavailable: {error:?}"),
+        Err(error) => {
+            let _ = error;
+            state.record_native_error(AppErrorWire::native_unavailable());
+        }
     }
 }
 
@@ -754,10 +800,11 @@ fn emit_agent_profiles(app: &AppHandle, state: &NativeAppState) {
             if let Err(error) =
                 app.emit_to(APP_SHELL_WINDOW_LABEL, APP_AGENT_PROFILES_CHANGED_EVENT, profiles)
             {
-                eprintln!("DevHub Agent profile notification unavailable: {error}");
+                let _ = error;
+                state.record_native_error(AppErrorWire::native_unavailable());
             }
         }
-        Err(error) => eprintln!("DevHub Agent profile projection unavailable: {error:?}"),
+        Err(error) => state.record_native_error(error),
     }
 }
 
@@ -1201,7 +1248,40 @@ impl NativeAppState {
 
     fn bootstrap(home: &Path) -> Result<Self, AppErrorWire> {
         let store = JsonStateStore::for_home(home);
+        let previous_exit = store
+            .load_or_default()
+            .ok()
+            .map(|state| {
+                if state.shutdown.clean {
+                    DiagnosticPreviousExit::Clean
+                } else {
+                    DiagnosticPreviousExit::Unclean
+                }
+            })
+            .unwrap_or(DiagnosticPreviousExit::Unknown);
         let mut persisted = store.mark_starting().map_err(persistence_error)?;
+        let diagnostics = Diagnostics::open(
+            home,
+            env!("CARGO_PKG_VERSION"),
+            match previous_exit {
+                DiagnosticPreviousExit::Clean => Some(true),
+                DiagnosticPreviousExit::Unclean => Some(false),
+                DiagnosticPreviousExit::Unknown => None,
+            },
+        );
+        // Schema-version facts are typed even when no migration is needed;
+        // this makes startup provenance observable without exposing config or
+        // state contents.
+        diagnostics.emit(DiagnosticEvent::Migration {
+            module: DiagnosticModule::Config,
+            from: 1,
+            to: 1,
+        });
+        diagnostics.emit(DiagnosticEvent::Migration {
+            module: DiagnosticModule::State,
+            from: 1,
+            to: 1,
+        });
         // Reconcile roots before hydrating the model. This makes a relaunch
         // deterministic: a previously available workspace whose root has
         // disappeared is immediately actionable as Unavailable, while an
@@ -1287,9 +1367,10 @@ impl NativeAppState {
                 sequence: 1,
                 diagnostic: None,
             }),
+            runtime_health_probe: Mutex::new(None),
+            diagnostics,
             config_watcher: Mutex::new(None),
             deferred_config: Mutex::new(None),
-            home: home.to_path_buf(),
             startup_runtime_config,
             startup_import_login_environment,
             persistence: Mutex::new(PersistenceState { persisted_revision }),
@@ -1486,6 +1567,9 @@ impl NativeAppState {
             if let Err(error) = self.editor_host.detach_webview_host() {
                 self.record_native_error(state_error(error));
             }
+        }
+        if result.is_ok() {
+            self.diagnostics.emit(DiagnosticEvent::Lifecycle { phase: LifecyclePhase::Ready });
         }
         result
     }
@@ -1927,6 +2011,10 @@ impl NativeAppState {
                         continue;
                     }
                     if let Err(error) = state.route_bridge_request(request, route.lifecycle) {
+                        state.diagnostics.emit(DiagnosticEvent::ProviderExit {
+                            component: diagnostics::Component::Bridge,
+                            code: LogCode::BridgeDisconnected,
+                        });
                         state.record_native_error(error);
                         if state.bridge_sink.request_is_live(request) {
                             let _ = state.editor_host.complete_bridge_request(
@@ -1966,7 +2054,10 @@ impl NativeAppState {
         if let Ok(mut pending) = self.pending_native_error.lock() {
             *pending = Some(error.clone());
         }
-        eprintln!("DevHub native lifecycle error: {error:?}");
+        self.diagnostics.emit(DiagnosticEvent::Error {
+            module: DiagnosticModule::App,
+            code: LogCode::NativeUnavailable,
+        });
     }
 
     fn take_native_error(&self) -> Option<AppErrorWire> {
@@ -1996,12 +2087,17 @@ impl NativeAppState {
     }
 
     fn persist_clean_snapshot(&self, snapshot: &AppSnapshot) -> Result<(), AppErrorWire> {
-        let _commit = self.state_commit.lock().map_err(state_error)?;
-        let mut state = self.store.load_or_default().map_err(persistence_error)?;
-        state.apply_snapshot(snapshot).map_err(persistence_error)?;
-        self.apply_agent_mappings(&mut state, snapshot).map_err(persistence_error)?;
-        state.mark_clean_shutdown();
-        self.store.save_state(&state).map_err(persistence_error)?;
+        {
+            let _commit = self.state_commit.lock().map_err(state_error)?;
+            let mut state = self.store.load_or_default().map_err(persistence_error)?;
+            state.apply_snapshot(snapshot).map_err(persistence_error)?;
+            self.apply_agent_mappings(&mut state, snapshot).map_err(persistence_error)?;
+            state.mark_clean_shutdown();
+            self.store.save_state(&state).map_err(persistence_error)?;
+        }
+        self.diagnostics.emit(DiagnosticEvent::Lifecycle { phase: LifecyclePhase::Quit });
+        self.diagnostics.mark_clean_shutdown();
+        let _ = self.diagnostics.shutdown(Duration::from_secs(2));
         let mut persistence = self.persistence.lock().map_err(state_error)?;
         persistence.persisted_revision = persistence.persisted_revision.max(snapshot.revision());
         Ok(())
@@ -2218,6 +2314,11 @@ impl NativeAppState {
             .collect::<Vec<_>>();
         let had_workspaces = !workspaces.is_empty();
         for workspace_id in workspaces {
+            self.diagnostics.emit(DiagnosticEvent::Retry {
+                module: diagnostics::Module::State,
+                code: LogCode::ProviderReconnect,
+                attempt: 1,
+            });
             let operation_id = self
                 .id_generator
                 .next_operation_id()
@@ -2230,7 +2331,14 @@ impl NativeAppState {
                     .map_err(|error| AppErrorWire::from_error(&error))?;
                 Self::drain_effects(&mut coordinator)
             };
-            let _ = self.execute_effects(effects)?;
+            if let Err(error) = self.execute_effects(effects) {
+                self.diagnostics.emit(DiagnosticEvent::Retry {
+                    module: diagnostics::Module::State,
+                    code: LogCode::RetryLimit,
+                    attempt: 1,
+                });
+                return Err(error);
+            }
         }
         if !had_workspaces {
             Ok(None)
@@ -2750,7 +2858,18 @@ impl NativeAppState {
                                     status: observation.status(),
                                     runtime_health: observation.runtime_health(),
                                 },
-                                None => ProviderEvent::AgentExited { token, agent_id },
+                                None => {
+                                    // A missing observation is a natural Agent
+                                    // exit. Record the typed fact at the
+                                    // runtime ownership seam before handing
+                                    // the tokened event to the coordinator;
+                                    // the Agent ID never crosses diagnostics.
+                                    self.diagnostics.emit(DiagnosticEvent::ProviderExit {
+                                        component: diagnostics::Component::Agent,
+                                        code: LogCode::ProviderExited,
+                                    });
+                                    ProviderEvent::AgentExited { token, agent_id }
+                                }
                             };
                             let completion =
                                 self.accept_provider_event_with_lifecycle(event, lifecycle);
@@ -2803,6 +2922,12 @@ impl NativeAppState {
                             break;
                         }
                     }
+                    if matches!(&result, WorkspaceCleanupResult::Failed { .. }) {
+                        self.diagnostics.emit(DiagnosticEvent::ProviderExit {
+                            component: diagnostics::Component::Agent,
+                            code: LogCode::ProviderExited,
+                        });
+                    }
                     let completion =
                         self.complete_workspace_cleanup(token, workspace_id, result, lifecycle);
                     if let Ok(value) = &completion {
@@ -2822,6 +2947,12 @@ impl NativeAppState {
                         step: CleanupStep::Editor,
                         diagnostic: DiagnosticCode::CleanupFailed,
                     });
+                    if matches!(&result, WorkspaceCleanupResult::Failed { .. }) {
+                        self.diagnostics.emit(DiagnosticEvent::ProviderExit {
+                            component: diagnostics::Component::Editor,
+                            code: LogCode::EditorDisconnected,
+                        });
+                    }
                     let completion =
                         self.complete_workspace_cleanup(token, workspace_id, result, lifecycle);
                     if let Ok(value) = &completion {
@@ -2887,6 +3018,12 @@ impl NativeAppState {
                             step: CleanupStep::Terminal,
                             diagnostic: DiagnosticCode::CloseTerminalUnknown,
                         });
+                    if matches!(&result, WorkspaceCleanupResult::Failed { .. }) {
+                        self.diagnostics.emit(DiagnosticEvent::ProviderExit {
+                            component: diagnostics::Component::Terminal,
+                            code: LogCode::TerminalDisconnected,
+                        });
+                    }
                     let completion_result =
                         self.complete_workspace_cleanup(token, workspace_id, result, lifecycle);
                     if let Ok(outcome) = &completion_result {
@@ -3188,6 +3325,7 @@ impl NativeAppState {
         window: Option<&tauri::Window<tauri::Wry>>,
         cleanup_token: Option<WindowCleanupToken>,
     ) -> Result<(), AppErrorWire> {
+        self.diagnostics.emit(DiagnosticEvent::Lifecycle { phase: LifecyclePhase::WindowClose });
         self.clear_frame_persist_error();
         self.capture_close_rollback_snapshot()?;
         if let Some(window) = window {
@@ -3329,10 +3467,19 @@ impl NativeAppState {
             if result.is_err() && claimed_reconstruction {
                 // Keep the process alive and make the next Dock activation a
                 // genuine retry rather than a duplicate-window attempt.
+                self.diagnostics.emit(DiagnosticEvent::Retry {
+                    module: diagnostics::Module::App,
+                    code: LogCode::RetryLimit,
+                    attempt: 1,
+                });
                 self.abort_reopen_transaction();
             }
             result
         })();
+        if result.is_ok() {
+            self.diagnostics
+                .emit(DiagnosticEvent::Lifecycle { phase: LifecyclePhase::WindowReopen });
+        }
         if let Ok(mut completed) = self.dock_reopen_result.lock() {
             *completed = Some(result.clone());
         }
@@ -4830,6 +4977,11 @@ impl NativeAppState {
             // A startup probe that has already verified a valid target and an
             // exact empty old inventory is non-destructive. It may cross the
             // persisted commit point without asking the user to reconfirm.
+            self.diagnostics.emit(DiagnosticEvent::Retry {
+                module: diagnostics::Module::Settings,
+                code: LogCode::ProviderReconnect,
+                attempt: 1,
+            });
             self.resume_socket_transition(true).await
         } else {
             Ok(prepared)
@@ -4873,10 +5025,105 @@ impl NativeAppState {
         if matches!(prepared.tmux.transition, SocketTransitionState::Stable) {
             return Err(SettingsErrorWire::stale_socket_change());
         }
+        if request.retry {
+            // `retry` is explicit user intent from Settings. The initial
+            // confirmation remains a separate event so diagnostics never
+            // over-count a first destructive transition as a retry.
+            self.diagnostics.emit(DiagnosticEvent::Retry {
+                module: diagnostics::Module::Settings,
+                code: LogCode::ProviderReconnect,
+                attempt: 1,
+            });
+        }
         let state = self.resume_socket_transition(true).await?;
         self.validate_settings_lifecycle_token(lifecycle)?;
         let _ = state;
         self.settings_snapshot()
+    }
+
+    /// Runs fresh adapter probes without holding Settings, persistence, or
+    /// coordinator locks. The resulting facts are atomically published as one
+    /// projection and are reused by Settings and Copy Diagnostics.
+    fn recheck_runtime_health(&self) -> RuntimeHealthProbe {
+        let config = self.startup_runtime_config.clone();
+        let shell = if self._runtime_context.recheck_login_shell(&config.shell) {
+            SettingsRuntimeHealthValueWire::Healthy
+        } else {
+            SettingsRuntimeHealthValueWire::Failed
+        };
+        let git = if self._runtime_context.recheck_command(&config.git, "--version") {
+            SettingsRuntimeHealthValueWire::Healthy
+        } else {
+            SettingsRuntimeHealthValueWire::Unavailable
+        };
+        let tmux = if self._terminal_runtime.recheck_health() {
+            SettingsRuntimeHealthValueWire::Healthy
+        } else {
+            SettingsRuntimeHealthValueWire::Unavailable
+        };
+        let herdr = match self.agent_runtime.recheck_health().runtime_health() {
+            RuntimeHealth::Healthy => SettingsRuntimeHealthValueWire::Healthy,
+            RuntimeHealth::Starting => SettingsRuntimeHealthValueWire::Starting,
+            RuntimeHealth::Degraded => SettingsRuntimeHealthValueWire::Degraded,
+            RuntimeHealth::Unavailable => SettingsRuntimeHealthValueWire::Unavailable,
+            RuntimeHealth::Failed => SettingsRuntimeHealthValueWire::Failed,
+        };
+        let editor = self.editor_host.recheck_health();
+        let bridge = self.bridge_sink.recheck_health();
+        let diagnostics = if self.diagnostics.flush(Duration::from_secs(2)) {
+            self.diagnostics.health()
+        } else {
+            DiagnosticHealth::Degraded
+        };
+        let probe = RuntimeHealthProbe { shell, git, tmux, herdr, editor, bridge, diagnostics };
+        if !probe.all_available() {
+            self.diagnostics.emit(DiagnosticEvent::Health {
+                component: diagnostics::Component::Settings,
+                health: DiagnosticHealth::Degraded,
+                code: Some(LogCode::RuntimeUnavailable),
+            });
+        } else {
+            self.diagnostics.emit(DiagnosticEvent::Health {
+                component: diagnostics::Component::Settings,
+                health: DiagnosticHealth::Healthy,
+                code: None,
+            });
+        }
+        if !probe.all_available() {
+            self.diagnostics.emit(DiagnosticEvent::Retry {
+                module: DiagnosticModule::Settings,
+                code: LogCode::RuntimeUnavailable,
+                attempt: 1,
+            });
+        }
+        if probe.herdr != SettingsRuntimeHealthValueWire::Healthy {
+            self.diagnostics.emit(DiagnosticEvent::ProviderExit {
+                component: diagnostics::Component::Agent,
+                code: LogCode::ProviderExited,
+            });
+        }
+        if probe.tmux != SettingsRuntimeHealthValueWire::Healthy {
+            self.diagnostics.emit(DiagnosticEvent::ProviderExit {
+                component: diagnostics::Component::Terminal,
+                code: LogCode::TerminalDisconnected,
+            });
+        }
+        if !probe.editor {
+            self.diagnostics.emit(DiagnosticEvent::ProviderExit {
+                component: diagnostics::Component::Editor,
+                code: LogCode::EditorDisconnected,
+            });
+        }
+        if !probe.bridge {
+            self.diagnostics.emit(DiagnosticEvent::ProviderExit {
+                component: diagnostics::Component::Bridge,
+                code: LogCode::BridgeDisconnected,
+            });
+        }
+        if let Ok(mut current) = self.runtime_health_probe.lock() {
+            *current = Some(probe);
+        }
+        probe
     }
 
     fn settings_snapshot(&self) -> Result<SettingsSnapshotWire, SettingsErrorWire> {
@@ -4905,23 +5152,84 @@ impl NativeAppState {
                 devhub_app_core::SettingsRuntimeHealthValueWire::Failed
             }
         };
+        health.git = if self._runtime_context.resolve(&self.startup_runtime_config.git).is_ok() {
+            devhub_app_core::SettingsRuntimeHealthValueWire::Healthy
+        } else {
+            devhub_app_core::SettingsRuntimeHealthValueWire::Unavailable
+        };
         health.tmux = if self._terminal_runtime.adapter_available() {
             devhub_app_core::SettingsRuntimeHealthValueWire::Healthy
         } else {
             devhub_app_core::SettingsRuntimeHealthValueWire::Unavailable
         };
+        health.herdr = match self.agent_runtime.health().runtime_health() {
+            RuntimeHealth::Healthy => devhub_app_core::SettingsRuntimeHealthValueWire::Healthy,
+            RuntimeHealth::Starting => devhub_app_core::SettingsRuntimeHealthValueWire::Starting,
+            RuntimeHealth::Degraded => devhub_app_core::SettingsRuntimeHealthValueWire::Degraded,
+            RuntimeHealth::Unavailable => {
+                devhub_app_core::SettingsRuntimeHealthValueWire::Unavailable
+            }
+            RuntimeHealth::Failed => devhub_app_core::SettingsRuntimeHealthValueWire::Failed,
+        };
         health.inspection_available = self._terminal_runtime.adapter_available();
+        let probe = self.runtime_health_probe.lock().ok().and_then(|current| *current);
+        if let Some(probe) = probe {
+            health.shell = probe.shell;
+            health.git = probe.git;
+            health.tmux = probe.tmux;
+            health.herdr = probe.herdr;
+            health.inspection_available = probe.tmux == SettingsRuntimeHealthValueWire::Healthy;
+        }
+        let diagnostic_health = probe.map_or_else(
+            || {
+                if health.tmux == SettingsRuntimeHealthValueWire::Healthy {
+                    self.diagnostics.health()
+                } else {
+                    DiagnosticHealth::Degraded
+                }
+            },
+            |probe| {
+                if probe.all_available() {
+                    probe.diagnostics
+                } else {
+                    DiagnosticHealth::Degraded
+                }
+            },
+        );
         let runtime = SettingsRuntimeWire::from_runtime_view(
             &view,
             &persisted.tmux,
             health,
             self._terminal_runtime.adapter_available(),
         );
+        let diagnostic_view =
+            self.diagnostics.view(diagnostic_health, self.diagnostics.previous_exit());
         Ok(SettingsSnapshotWire::from_loaded(
             &settings.loaded,
             settings.sequence,
             runtime,
             settings.diagnostic.clone(),
+            SettingsDiagnosticsWire {
+                session_id: diagnostic_view.session_id,
+                log_directory: diagnostic_view.log_directory,
+                log_level: match diagnostic_view.log_level {
+                    diagnostics::LogLevel::Info => SettingsLogLevelWire::Info,
+                    diagnostics::LogLevel::Debug => SettingsLogLevelWire::Debug,
+                },
+                previous_exit: match diagnostic_view.previous_exit {
+                    DiagnosticPreviousExit::Clean => SettingsPreviousExitWire::Clean,
+                    DiagnosticPreviousExit::Unclean => SettingsPreviousExitWire::Unclean,
+                    DiagnosticPreviousExit::Unknown => SettingsPreviousExitWire::Unknown,
+                },
+                health: match diagnostic_view.health {
+                    DiagnosticHealth::Starting => SettingsRuntimeHealthValueWire::Starting,
+                    DiagnosticHealth::Healthy => SettingsRuntimeHealthValueWire::Healthy,
+                    DiagnosticHealth::Degraded => SettingsRuntimeHealthValueWire::Degraded,
+                    DiagnosticHealth::Unavailable => SettingsRuntimeHealthValueWire::Unavailable,
+                    DiagnosticHealth::Failed => SettingsRuntimeHealthValueWire::Failed,
+                },
+                recent_codes: diagnostic_view.recent_codes,
+            },
         ))
     }
 
@@ -4955,6 +5263,11 @@ impl NativeAppState {
         }
         let loaded = self.config_store.save(expected_revision, config).map_err(settings_error)?;
         self.apply_loaded_config(loaded)?;
+        self.diagnostics.emit(DiagnosticEvent::Health {
+            component: diagnostics::Component::Settings,
+            health: DiagnosticHealth::Healthy,
+            code: Some(LogCode::ConfigReloaded),
+        });
         self.settings_snapshot()
     }
 
@@ -4966,9 +5279,18 @@ impl NativeAppState {
             Ok(ReloadOutcome::Applied(loaded)) => self.apply_loaded_config(loaded)?,
             Err(error) => {
                 self.apply_config_diagnostic(error.diagnostic())?;
+                self.diagnostics.emit(DiagnosticEvent::Error {
+                    module: DiagnosticModule::Config,
+                    code: LogCode::ConfigInvalid,
+                });
                 return Err(settings_error(error));
             }
         }
+        self.diagnostics.emit(DiagnosticEvent::Health {
+            component: diagnostics::Component::Config,
+            health: DiagnosticHealth::Healthy,
+            code: Some(LogCode::ConfigReloaded),
+        });
         self.settings_snapshot()
     }
 
@@ -5031,18 +5353,6 @@ impl NativeAppState {
             self.config_watcher.lock().map_err(|_| SettingsErrorWire::native_unavailable())?;
         *slot = Some(watcher);
         Ok(())
-    }
-
-    fn open_log_folder(&self) -> Result<(), SettingsErrorWire> {
-        let logs = self.home.join("Library").join("Logs").join("DevHub");
-        std::fs::create_dir_all(&logs).map_err(|_| SettingsErrorWire::permission_denied())?;
-        ProcessCommand::new("open")
-            .arg(&logs)
-            .status()
-            .map_err(|_| SettingsErrorWire::native_unavailable())?
-            .success()
-            .then_some(())
-            .ok_or_else(SettingsErrorWire::native_unavailable)
     }
 }
 
@@ -5262,7 +5572,8 @@ async fn dispatch_app_intent(
         if let Err(error) =
             app.emit_to(APP_SHELL_WINDOW_LABEL, APP_SNAPSHOT_CHANGED_EVENT, wire.snapshot())
         {
-            eprintln!("DevHub snapshot notification unavailable: {error}");
+            let _ = error;
+            app.state::<NativeAppState>().record_native_error(AppErrorWire::native_unavailable());
         }
     }
     Ok(wire)
@@ -5339,24 +5650,74 @@ fn reload_settings(
 }
 
 #[tauri::command]
-fn recheck_settings(
+async fn recheck_settings(
+    app: AppHandle,
     state: State<'_, NativeAppState>,
     payload: devhub_app_core::SettingsCommandRequestWire,
 ) -> Result<SettingsSnapshotWire, SettingsErrorWire> {
     let token = state.capture_settings_lifecycle_token()?;
     payload.validate()?;
+    tauri::async_runtime::spawn_blocking(move || {
+        app.state::<NativeAppState>().recheck_runtime_health();
+    })
+    .await
+    .map_err(|_| SettingsErrorWire::native_unavailable())?;
     state.validate_settings_lifecycle_token(token)?;
     state.settings_snapshot_with_lifecycle(token)
 }
 
 #[tauri::command]
-fn open_log_folder(
+async fn open_log_folder(
     state: State<'_, NativeAppState>,
     payload: devhub_app_core::SettingsCommandRequestWire,
 ) -> Result<(), SettingsErrorWire> {
     let token = state.capture_settings_lifecycle_token()?;
     payload.validate()?;
-    state.open_log_folder()?;
+    let diagnostics = state.diagnostics.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        diagnostics.open_log_folder(Duration::from_secs(5))
+    })
+    .await
+    .map_err(|_| SettingsErrorWire::native_unavailable())?
+    .map_err(|error| match error {
+        diagnostics::ActionError::PermissionDenied => SettingsErrorWire::permission_denied(),
+        diagnostics::ActionError::Unavailable | diagnostics::ActionError::TimedOut => {
+            SettingsErrorWire::native_unavailable()
+        }
+    })?;
+    state.validate_settings_lifecycle_token(token)
+}
+
+#[tauri::command]
+async fn copy_diagnostics(
+    state: State<'_, NativeAppState>,
+    payload: devhub_app_core::SettingsCommandRequestWire,
+) -> Result<(), SettingsErrorWire> {
+    let token = state.capture_settings_lifecycle_token()?;
+    payload.validate()?;
+    let health = state.runtime_health_probe.lock().ok().and_then(|probe| *probe).map_or(
+        DiagnosticHealth::Degraded,
+        |probe| {
+            if probe.all_available() {
+                DiagnosticHealth::Healthy
+            } else {
+                DiagnosticHealth::Degraded
+            }
+        },
+    );
+    let previous_exit = state.diagnostics.previous_exit();
+    let diagnostics = state.diagnostics.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        diagnostics.copy_summary(health, previous_exit, Duration::from_secs(5))
+    })
+    .await
+    .map_err(|_| SettingsErrorWire::native_unavailable())?
+    .map_err(|error| match error {
+        diagnostics::ActionError::PermissionDenied => SettingsErrorWire::permission_denied(),
+        diagnostics::ActionError::Unavailable | diagnostics::ActionError::TimedOut => {
+            SettingsErrorWire::native_unavailable()
+        }
+    })?;
     state.validate_settings_lifecycle_token(token)
 }
 
@@ -5565,6 +5926,14 @@ pub(crate) fn show_settings_window(app: &AppHandle) -> Result<(), String> {
     window.set_focus().map_err(|error| error.to_string())
 }
 
+/// App Shell-only bridge to the native Settings singleton. The command never
+/// grants Settings WebView IPC to the App Shell; it only asks the native host
+/// to reuse or create the already-scoped Settings window and focus it.
+#[tauri::command]
+fn open_settings_window(app: AppHandle) -> Result<(), AppErrorWire> {
+    show_settings_window(&app).map_err(|_| AppErrorWire::native_unavailable())
+}
+
 /// Returns the one main Window, creating it only after the prior instance has
 /// been destroyed. The label is stable, so Tauri itself rejects any attempted
 /// duplicate and the lifecycle gate prevents reaching that race in normal
@@ -5647,7 +6016,9 @@ pub fn run() {
             match event.id().as_ref() {
                 OPEN_SETTINGS_MENU_ID => {
                     if let Err(error) = show_settings_window(app) {
-                        eprintln!("DevHub Settings window unavailable: {error}");
+                        let _ = error;
+                        app.state::<NativeAppState>()
+                            .record_native_error(AppErrorWire::native_unavailable());
                     }
                 }
                 CLOSE_WINDOW_MENU_ID => {
@@ -5663,7 +6034,9 @@ pub fn run() {
                     };
                     if let Some(window) = target {
                         if let Err(error) = window.close() {
-                            eprintln!("DevHub Window close unavailable: {error}");
+                            let _ = error;
+                            app.state::<NativeAppState>()
+                                .record_native_error(AppErrorWire::native_unavailable());
                         }
                     }
                 }
@@ -5684,7 +6057,9 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             if let Err(error) = app.state::<NativeAppState>().install_keyboard_monitor(app.handle())
             {
-                eprintln!("DevHub native keyboard monitor unavailable: {error}");
+                let _ = error;
+                app.state::<NativeAppState>()
+                    .record_native_error(AppErrorWire::native_unavailable());
             }
             app.state::<NativeAppState>().install_bridge_router(app.handle());
             app.state::<NativeAppState>()
@@ -5706,7 +6081,8 @@ pub fn run() {
                         emit_agent_profiles(&handle, &state);
                     }
                     Err(error) => {
-                        eprintln!("DevHub socket transition resume unavailable: {error:?}");
+                        let _ = error;
+                        state.record_native_error(AppErrorWire::native_unavailable());
                     }
                 }
                 let resume_handle = handle.clone();
@@ -5723,9 +6099,10 @@ pub fn run() {
                                     APP_SNAPSHOT_CHANGED_EVENT,
                                     snapshot,
                                 ) {
-                                    eprintln!(
-                                        "DevHub startup snapshot notification unavailable: {error}"
-                                    );
+                                    let _ = error;
+                                    handle
+                                        .state::<NativeAppState>()
+                                        .record_native_error(AppErrorWire::native_unavailable());
                                 }
                             }
                             Err(error) => handle
@@ -5978,7 +6355,9 @@ pub fn run() {
             reload_settings,
             recheck_settings,
             open_log_folder,
-            apply_socket_change
+            copy_diagnostics,
+            apply_socket_change,
+            open_settings_window
         ])
         .build(tauri::generate_context!())
         .expect("error while building DevHub")
@@ -6357,6 +6736,7 @@ mod tests {
                 revision: before.revision.clone(),
                 sequence: before.sequence,
                 confirmed: false,
+                retry: false,
             },
         ))
         .expect("read-only apply preflight");
@@ -6390,6 +6770,7 @@ mod tests {
                 revision: prepared.revision.clone(),
                 sequence: prepared.sequence,
                 confirmed: true,
+                retry: false,
             },
         ))
         .expect_err("changed target must stale before cleanup");
@@ -6425,6 +6806,7 @@ mod tests {
                 revision: stale_target_snapshot.revision.clone(),
                 sequence: stale_target_snapshot.sequence,
                 confirmed: false,
+                retry: false,
             },
         ))
         .expect("refresh target and old inventory");
@@ -6444,6 +6826,7 @@ mod tests {
                 revision: prepared_again.revision.clone(),
                 sequence: prepared_again.sequence,
                 confirmed: true,
+                retry: false,
             },
         ))
         .expect_err("changed old inventory must stale before cleanup");
@@ -6462,6 +6845,7 @@ mod tests {
                 revision: refreshed.revision.clone(),
                 sequence: refreshed.sequence,
                 confirmed: true,
+                retry: false,
             },
         ))
         .expect("confirmed transition after refreshed inventory");
@@ -6484,6 +6868,11 @@ mod tests {
         )
         .expect("new inventory after recreation");
         assert_eq!(new_inventory.sessions().len(), 1);
+        assert!(state.diagnostics.flush(Duration::from_secs(2)));
+        let initial_log =
+            std::fs::read_to_string(state.diagnostics.directory().join("devhub.jsonl"))
+                .expect("initial transition diagnostics");
+        assert!(!initial_log.lines().any(|line| line.contains("\"event\":\"retry\"")));
         tauri::async_runtime::block_on(state._terminal_runtime.ensure(
             TerminalTarget::scratch(),
             state.transition_cancel().expect("rebind cancellation"),
@@ -6675,6 +7064,7 @@ mod tests {
                 revision: before.revision,
                 sequence: before.sequence,
                 confirmed: true,
+                retry: true,
             },
         ))
         .expect("partial retry after valid target change");
@@ -6683,6 +7073,10 @@ mod tests {
             devhub_app_core::SettingsSocketTransitionWire::Stable
         );
         assert_eq!(completed.runtime.socket_change.effective_socket_name, new_socket.as_str());
+        assert!(state.diagnostics.flush(Duration::from_secs(2)));
+        let retry_log = std::fs::read_to_string(state.diagnostics.directory().join("devhub.jsonl"))
+            .expect("retry transition diagnostics");
+        assert!(retry_log.lines().any(|line| line.contains("\"event\":\"retry\"")));
         let old_after =
             tauri::async_runtime::block_on(state._terminal_runtime.inspect_owned_sessions(
                 old_socket.clone(),
@@ -7128,6 +7522,7 @@ mod tests {
                 "allow-reload-settings",
                 "allow-recheck-settings",
                 "allow-open-log-folder",
+                "allow-copy-diagnostics",
                 "allow-apply-socket-change"
             ])
         );
@@ -7160,7 +7555,8 @@ mod tests {
                 "allow-agent-surface-input",
                 "allow-agent-surface-resize",
                 "allow-agent-surface-acknowledge",
-                "allow-agent-surface-detach"
+                "allow-agent-surface-detach",
+                "allow-open-settings-window"
             ])
         );
         assert!(app_shell.get("windows").is_none());
@@ -7172,6 +7568,7 @@ mod tests {
             "\"agent_surface_resize\"",
             "\"agent_surface_acknowledge\"",
             "\"agent_surface_detach\"",
+            "\"open_settings_window\"",
         ] {
             assert!(app_manifest.contains(command), "AppManifest command missing: {command}");
         }
@@ -7201,6 +7598,38 @@ mod tests {
         assert!(!source.contains(&forbidden_close));
         assert!(source.contains("index.html?window=settings"));
         assert!(source.contains("get_webview_window(SETTINGS_WINDOW_LABEL)"));
+    }
+
+    #[test]
+    fn open_settings_command_reuses_and_focuses_the_singleton_window() {
+        let source = include_str!("lib.rs");
+        for marker in [
+            "fn open_settings_window(app: AppHandle)",
+            "show_settings_window(&app)",
+            "if let Some(window) = app.get_webview_window(SETTINGS_WINDOW_LABEL)",
+            "window.show()",
+            "window.set_focus()",
+            "WebviewWindowBuilder::new(",
+        ] {
+            assert!(source.contains(marker), "Settings singleton marker missing: {marker}");
+        }
+    }
+
+    #[test]
+    fn provider_exit_and_retry_seams_emit_only_typed_content_free_facts() {
+        let source = include_str!("lib.rs");
+        for marker in [
+            "self.diagnostics.emit(DiagnosticEvent::ProviderExit",
+            "code: LogCode::ProviderExited",
+            "self.diagnostics.emit(DiagnosticEvent::Retry",
+            "code: LogCode::ProviderReconnect",
+            "code: LogCode::RetryLimit",
+            "module: diagnostics::Module::State",
+            "module: diagnostics::Module::Settings",
+            "module: diagnostics::Module::App",
+        ] {
+            assert!(source.contains(marker), "diagnostic seam marker missing: {marker}");
+        }
     }
 
     #[test]

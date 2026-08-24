@@ -5,7 +5,7 @@ import { useAppShell } from "./useAppShell";
 import { Sidebar } from "../components/sidebar/Sidebar";
 import { TitlebarActivities } from "../components/shell/TitlebarActivities";
 import { SurfaceViewport } from "../components/shell/SurfaceViewport";
-import type { CloseResourceWire } from "../generated/app-shell";
+import type { AppError, CloseResourceWire } from "../generated/app-shell";
 
 function closeResourceStatus(resource: CloseResourceWire): string {
   switch (resource.kind) {
@@ -46,6 +46,80 @@ export function AppShell({ client }: AppShellProps) {
   );
 }
 
+function ErrorSurface({
+  error,
+  retry,
+  openSettings,
+}: {
+  readonly error: AppError;
+  readonly retry: () => void;
+  readonly openSettings: () => Promise<void>;
+}) {
+  const showSettings = error.actions.includes("open_settings");
+  const primaryActionRef = useRef<HTMLButtonElement | null>(null);
+  const detailsRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    (primaryActionRef.current ?? detailsRef.current)?.focus();
+  }, [error]);
+
+  return (
+    <section className="surface" aria-label="Error surface" aria-live="polite">
+      <div className="surface-state surface-error-state" role="alert">
+        <span className="surface-mark" aria-hidden="true">
+          !
+        </span>
+        <p className="surface-kicker">{error.module} error</p>
+        <h1>The workbench is unavailable</h1>
+        <p className="surface-copy">{error.summary}</p>
+        <div className="surface-actions">
+          {error.actions.includes("retry") && (
+            <button
+              ref={primaryActionRef}
+              className="primary-button"
+              type="button"
+              onClick={retry}
+            >
+              Try again
+            </button>
+          )}
+          {showSettings && (
+            <button
+              className="secondary-button"
+              type="button"
+              ref={
+                error.actions.includes("retry") ? undefined : primaryActionRef
+              }
+              onClick={() => void openSettings()}
+            >
+              Open Settings
+            </button>
+          )}
+        </div>
+        <details className="surface-error-details">
+          <summary ref={detailsRef} tabIndex={0}>
+            Technical details
+          </summary>
+          <dl>
+            <div>
+              <dt>Code</dt>
+              <dd>{error.code}</dd>
+            </div>
+            <div>
+              <dt>Runtime</dt>
+              <dd>{error.runtimeVersion}</dd>
+            </div>
+            <div>
+              <dt>Timestamp</dt>
+              <dd>{error.timestampMs}</dd>
+            </div>
+          </dl>
+        </details>
+      </div>
+    </section>
+  );
+}
+
 function Workbench() {
   const {
     state,
@@ -53,6 +127,7 @@ function Workbench() {
     intentError,
     dispatch,
     retry,
+    openSettings,
     pendingConfirmation,
     confirmationBusy,
     confirmPending,
@@ -201,19 +276,11 @@ function Workbench() {
     return (
       <main className="app-shell app-shell-state">
         <div className="titlebar titlebar-state" data-tauri-drag-region />
-        <section className="surface" aria-label="Surface" aria-live="polite">
-          <div className="surface-state surface-error-state" role="alert">
-            <span className="surface-mark" aria-hidden="true">
-              !
-            </span>
-            <p className="surface-kicker">Connection error</p>
-            <h1>The workbench is unavailable</h1>
-            <p className="surface-copy">{state.error.summary}</p>
-            <button className="primary-button" type="button" onClick={retry}>
-              Try again
-            </button>
-          </div>
-        </section>
+        <ErrorSurface
+          error={state.error}
+          retry={retry}
+          openSettings={openSettings}
+        />
       </main>
     );
   }

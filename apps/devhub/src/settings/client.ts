@@ -18,6 +18,7 @@ export const SETTINGS_COMMANDS = {
   reload: "reload_settings",
   recheck: "recheck_settings",
   openLogFolder: "open_log_folder",
+  copyDiagnostics: "copy_diagnostics",
   applySocketChange: "apply_socket_change",
 } as const;
 
@@ -42,6 +43,7 @@ export interface SettingsClient {
   reload(): Promise<SettingsSnapshot>;
   recheck(): Promise<SettingsSnapshot>;
   openLogFolder(): Promise<void>;
+  copyDiagnostics(): Promise<void>;
   applySocketChange(
     request: SettingsSocketChangeRequestWire,
   ): Promise<SettingsSnapshot>;
@@ -87,6 +89,12 @@ export function createTauriSettingsClient(
     async openLogFolder() {
       await transport.invoke<unknown>(
         SETTINGS_COMMANDS.openLogFolder,
+        commandRequest(),
+      );
+    },
+    async copyDiagnostics() {
+      await transport.invoke<unknown>(
+        SETTINGS_COMMANDS.copyDiagnostics,
         commandRequest(),
       );
     },

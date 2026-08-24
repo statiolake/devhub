@@ -27,10 +27,21 @@ import { parseAppError } from "../generated/app-shell";
 import { AppShellContext, type AppShellContextValue } from "./useAppShell";
 
 const defaultClient = createTauriAppShellClient();
+const FALLBACK_ERROR: AppError = {
+  code: "native_unavailable",
+  summary: "The native app shell is unavailable.",
+  module: "app",
+  timestampMs: 0,
+  runtimeVersion: "unknown",
+  actions: ["retry", "open_settings"],
+};
 const PERSISTENCE_DEGRADED_ERROR: AppError = {
   code: "persistence_degraded",
-  summary:
-    "Changes could not be saved. The current workbench remains available.",
+  summary: "Changes could not be saved.",
+  module: "state",
+  timestampMs: 0,
+  runtimeVersion: "unknown",
+  actions: ["retry", "open_settings"],
 };
 
 function toAppError(error: unknown): AppError {
@@ -47,12 +58,9 @@ function toAppError(error: unknown): AppError {
       // Tauri may wrap a structured command error in a plain message. Keep
       // the transport failure visible when it is not our strict error DTO.
     }
-    return { code: "native_unavailable", summary: error.message };
+    return FALLBACK_ERROR;
   }
-  return {
-    code: "native_unavailable",
-    summary: "The native app shell could not be reached.",
-  };
+  return FALLBACK_ERROR;
 }
 
 export interface AppShellProviderProps {
@@ -336,6 +344,10 @@ export function AppShellProvider({
     setAttempt((current) => current + 1);
   }, []);
 
+  const openSettings = useCallback(async () => {
+    await client.openSettings?.();
+  }, [client]);
+
   const startWorkspacePicker = useCallback(
     async (query = "") => {
       if (!client.startWorkspacePicker) return;
@@ -448,6 +460,7 @@ export function AppShellProvider({
       intentError,
       dispatch,
       retry,
+      openSettings,
       pickerCandidates,
       pickerBusy,
       startWorkspacePicker,
@@ -465,6 +478,7 @@ export function AppShellProvider({
       cancelWorkspacePicker,
       dispatch,
       intentError,
+      openSettings,
       pickerBusy,
       pickerCandidates,
       retry,

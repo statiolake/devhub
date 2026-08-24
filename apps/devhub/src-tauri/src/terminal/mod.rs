@@ -255,6 +255,17 @@ impl TmuxTerminalRuntime {
             && self.effective_socket.lock().ok().is_some_and(|socket| socket.is_some())
     }
 
+    /// Fresh read-only health probe used by Settings recheck. It verifies the
+    /// executable, protocol, and current socket without creating sessions.
+    pub(crate) fn recheck_health(&self) -> bool {
+        let Ok(socket) = self.socket() else { return false };
+        let operation_id =
+            devhub_app_core::OperationId::from_uuid("00000000-0000-4000-8000-000000000001")
+                .expect("static health probe operation id");
+        let cancel = CancellationToken::new(operation_id);
+        self.preflight_sync(socket, &cancel).is_ok()
+    }
+
     pub(crate) fn set_effective_socket(&self, socket: SocketName) -> Result<(), PortError> {
         *self.effective_socket.lock().map_err(|_| PortError::new(PortErrorCode::Failed))? =
             Some(socket);

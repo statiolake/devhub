@@ -718,7 +718,11 @@ describe("App Shell states and accessibility", () => {
     const appClient = client(workspaceSnapshot);
     vi.mocked(appClient.dispatch).mockRejectedValue({
       code: "invalid_intent",
-      summary: "picker unavailable",
+      summary: "The requested action is not available.",
+      module: "app",
+      timestampMs: 1,
+      runtimeVersion: "0.1.0",
+      actions: ["retry"],
     });
     render(<AppShell client={appClient} />);
     await screen.findByRole("heading", { name: "devhub" });
@@ -730,7 +734,7 @@ describe("App Shell states and accessibility", () => {
     );
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "picker unavailable",
+      "The requested action is not available.",
     );
     expect(screen.getByRole("region", { name: "Surface" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "devhub" })).toBeInTheDocument();

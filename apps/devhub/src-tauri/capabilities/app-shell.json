@@ -23,6 +23,7 @@
     "allow-agent-surface-input",
     "allow-agent-surface-resize",
     "allow-agent-surface-acknowledge",
-    "allow-agent-surface-detach"
+    "allow-agent-surface-detach",
+    "allow-open-settings-window"
   ]
 }

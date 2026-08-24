@@ -54,6 +54,7 @@ export interface AppAppearanceWire {
   readonly terminalLineHeight: number;
 }
 export type AppColorSchemeWire = "light";
+export type AppErrorActionWire = "retry" | "open_settings";
 export type AppErrorCodeWire =
   | "invalid_intent"
   | "activity_disabled"
@@ -64,9 +65,23 @@ export type AppErrorCodeWire =
   | "operation_pending"
   | "persistence_degraded"
   | "native_unavailable";
+export type AppErrorModuleWire =
+  | "app"
+  | "config"
+  | "state"
+  | "editor"
+  | "bridge"
+  | "agent"
+  | "terminal"
+  | "settings"
+  | "diagnostics";
 export interface AppErrorWire {
+  readonly actions: readonly AppErrorActionWire[];
   readonly code: AppErrorCodeWire;
+  readonly module: AppErrorModuleWire;
+  readonly runtimeVersion: string;
   readonly summary: string;
+  readonly timestampMs: number;
 }
 export type AppIntentWire =
   | {
@@ -586,6 +601,7 @@ const APP_SHELL_SCHEMA = {
       type: "object",
     },
     AppColorSchemeWire: { enum: ["light"], type: "string" },
+    AppErrorActionWire: { enum: ["retry", "open_settings"], type: "string" },
     AppErrorCodeWire: {
       enum: [
         "invalid_intent",
@@ -600,8 +616,26 @@ const APP_SHELL_SCHEMA = {
       ],
       type: "string",
     },
+    AppErrorModuleWire: {
+      enum: [
+        "app",
+        "config",
+        "state",
+        "editor",
+        "bridge",
+        "agent",
+        "terminal",
+        "settings",
+        "diagnostics",
+      ],
+      type: "string",
+    },
     AppErrorWire: {
       $defs: {
+        AppErrorActionWire: {
+          enum: ["retry", "open_settings"],
+          type: "string",
+        },
         AppErrorCodeWire: {
           enum: [
             "invalid_intent",
@@ -616,14 +650,47 @@ const APP_SHELL_SCHEMA = {
           ],
           type: "string",
         },
+        AppErrorModuleWire: {
+          enum: [
+            "app",
+            "config",
+            "state",
+            "editor",
+            "bridge",
+            "agent",
+            "terminal",
+            "settings",
+            "diagnostics",
+          ],
+          type: "string",
+        },
       },
       $schema: "https://json-schema.org/draft/2020-12/schema",
       additionalProperties: false,
       properties: {
+        actions: {
+          items: { $ref: "#/$defs/AppErrorActionWire" },
+          type: "array",
+        },
         code: { $ref: "#/$defs/AppErrorCodeWire" },
+        module: { $ref: "#/$defs/AppErrorModuleWire" },
+        runtimeVersion: { maxLength: 64, minLength: 1, type: "string" },
         summary: { type: "string" },
+        timestampMs: {
+          format: "uint64",
+          maximum: 9007199254740991,
+          minimum: 0,
+          type: "integer",
+        },
       },
-      required: ["code", "summary"],
+      required: [
+        "code",
+        "summary",
+        "module",
+        "timestampMs",
+        "runtimeVersion",
+        "actions",
+      ],
       title: "AppErrorWire",
       type: "object",
     },

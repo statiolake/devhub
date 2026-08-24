@@ -174,6 +174,44 @@
       "required": ["code"],
       "type": "object"
     },
+    "SettingsDiagnosticsWire": {
+      "additionalProperties": false,
+      "properties": {
+        "health": {
+          "$ref": "#/$defs/SettingsRuntimeHealthValueWire"
+        },
+        "logDirectory": {
+          "pattern": "^~/Library/Logs/DevHub$",
+          "type": "string"
+        },
+        "logLevel": {
+          "$ref": "#/$defs/SettingsLogLevelWire"
+        },
+        "previousExit": {
+          "$ref": "#/$defs/SettingsPreviousExitWire"
+        },
+        "recentCodes": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 16,
+          "type": "array"
+        },
+        "sessionId": {
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sessionId",
+        "logDirectory",
+        "logLevel",
+        "previousExit",
+        "health",
+        "recentCodes"
+      ],
+      "type": "object"
+    },
     "SettingsErrorCodeWire": {
       "enum": [
         "invalid_config",
@@ -288,6 +326,14 @@
       },
       "required": ["importLoginEnvironment"],
       "type": "object"
+    },
+    "SettingsLogLevelWire": {
+      "enum": ["info", "debug"],
+      "type": "string"
+    },
+    "SettingsPreviousExitWire": {
+      "enum": ["clean", "unclean", "unknown"],
+      "type": "string"
     },
     "SettingsResolvedRuntimeConfigWire": {
       "additionalProperties": false,
@@ -864,6 +910,44 @@
           "required": ["code"],
           "type": "object"
         },
+        "SettingsDiagnosticsWire": {
+          "additionalProperties": false,
+          "properties": {
+            "health": {
+              "$ref": "#/$defs/SettingsRuntimeHealthValueWire"
+            },
+            "logDirectory": {
+              "pattern": "^~/Library/Logs/DevHub$",
+              "type": "string"
+            },
+            "logLevel": {
+              "$ref": "#/$defs/SettingsLogLevelWire"
+            },
+            "previousExit": {
+              "$ref": "#/$defs/SettingsPreviousExitWire"
+            },
+            "recentCodes": {
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 16,
+              "type": "array"
+            },
+            "sessionId": {
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "type": "string"
+            }
+          },
+          "required": [
+            "sessionId",
+            "logDirectory",
+            "logLevel",
+            "previousExit",
+            "health",
+            "recentCodes"
+          ],
+          "type": "object"
+        },
         "SettingsGeneralWire": {
           "additionalProperties": false,
           "properties": {
@@ -873,6 +957,14 @@
           },
           "required": ["importLoginEnvironment"],
           "type": "object"
+        },
+        "SettingsLogLevelWire": {
+          "enum": ["info", "debug"],
+          "type": "string"
+        },
+        "SettingsPreviousExitWire": {
+          "enum": ["clean", "unclean", "unknown"],
+          "type": "string"
         },
         "SettingsResolvedRuntimeConfigWire": {
           "additionalProperties": false,
@@ -1216,6 +1308,9 @@
             }
           ]
         },
+        "diagnostics": {
+          "$ref": "#/$defs/SettingsDiagnosticsWire"
+        },
         "revision": {
           "pattern": "^[0-9a-f]{64}$",
           "type": "string"
@@ -1241,7 +1336,8 @@
         "sequence",
         "revision",
         "config",
-        "runtime"
+        "runtime",
+        "diagnostics"
       ],
       "title": "SettingsSnapshotWire",
       "type": "object"
@@ -1251,6 +1347,10 @@
       "additionalProperties": false,
       "properties": {
         "confirmed": {
+          "type": "boolean"
+        },
+        "retry": {
+          "description": "True only when the user is explicitly retrying a previously failed or\npersisted transition. This keeps the first destructive confirmation\ndistinguishable from a later retry at the diagnostics seam.",
           "type": "boolean"
         },
         "revision": {
@@ -1270,7 +1370,13 @@
           "type": "integer"
         }
       },
-      "required": ["schemaVersion", "revision", "sequence", "confirmed"],
+      "required": [
+        "schemaVersion",
+        "revision",
+        "sequence",
+        "confirmed",
+        "retry"
+      ],
       "title": "SettingsSocketChangeRequestWire",
       "type": "object"
     },

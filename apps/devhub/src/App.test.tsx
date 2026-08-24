@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 import type { AppShellClient } from "./app/client";
@@ -37,6 +37,7 @@ describe("DevHub app shell", () => {
 
   it("shows a connection failure with a retry affordance", async () => {
     const appClient = client();
+    appClient.openSettings = vi.fn().mockResolvedValue(undefined);
     vi.mocked(appClient.getSnapshot).mockRejectedValueOnce(
       new Error("native host stopped"),
     );
@@ -47,9 +48,24 @@ describe("DevHub app shell", () => {
         name: "The workbench is unavailable",
       }),
     ).toBeInTheDocument();
-    expect(screen.getByText("native host stopped")).toBeInTheDocument();
+    expect(
+      screen.getByText("The native app shell is unavailable."),
+    ).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Try again" }),
     ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Open Settings" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Technical details")).toBeInTheDocument();
+    expect(document.activeElement).toBe(
+      screen.getByRole("button", { name: "Try again" }),
+    );
+    expect(screen.queryByText("native host stopped")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Open Settings" }));
+    await waitFor(() =>
+      expect(appClient.openSettings).toHaveBeenCalledTimes(1),
+    );
   });
 });

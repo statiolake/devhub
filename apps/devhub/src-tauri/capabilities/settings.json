@@ -10,6 +10,7 @@
     "allow-reload-settings",
     "allow-recheck-settings",
     "allow-open-log-folder",
+    "allow-copy-diagnostics",
     "allow-apply-socket-change"
   ]
 }

@@ -25,7 +25,9 @@ fn main() {
             "reload_settings",
             "recheck_settings",
             "open_log_folder",
+            "copy_diagnostics",
             "apply_socket_change",
+            "open_settings_window",
         ]),
     ))
     .expect("failed to generate Tauri application ACL");

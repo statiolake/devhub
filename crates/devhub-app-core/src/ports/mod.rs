@@ -826,10 +826,6 @@ pub trait BridgeHost: Send + Sync {
     ) -> PortFuture<BridgeObservation>;
 }
 
-pub trait Diagnostics: Send + Sync {
-    fn record(&self, code: &'static str);
-}
-
 pub trait Clock: Send + Sync {
     fn now(&self) -> SystemTime;
 }

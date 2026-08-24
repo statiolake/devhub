@@ -62,6 +62,14 @@ export interface SettingsDiagnosticWire {
   readonly line?: number | null;
   readonly path?: string | null;
 }
+export interface SettingsDiagnosticsWire {
+  readonly health: SettingsRuntimeHealthValueWire;
+  readonly logDirectory: string;
+  readonly logLevel: SettingsLogLevelWire;
+  readonly previousExit: SettingsPreviousExitWire;
+  readonly recentCodes: readonly string[];
+  readonly sessionId: string;
+}
 export type SettingsErrorCodeWire =
   | "invalid_config"
   | "external_edit_conflict"
@@ -78,6 +86,8 @@ export interface SettingsErrorWire {
 export interface SettingsGeneralWire {
   readonly importLoginEnvironment: boolean;
 }
+export type SettingsLogLevelWire = "info" | "debug";
+export type SettingsPreviousExitWire = "clean" | "unclean" | "unknown";
 export interface SettingsResolvedRuntimeConfigWire {
   readonly git: SettingsResolvedRuntimeWire;
   readonly herdr: SettingsResolvedRuntimeWire;
@@ -133,6 +143,7 @@ export interface SettingsSaveRequestWire {
 export interface SettingsSnapshotWire {
   readonly config: SettingsConfigWire;
   readonly diagnostic?: SettingsDiagnosticWire | null;
+  readonly diagnostics: SettingsDiagnosticsWire;
   readonly revision: string;
   readonly runtime: SettingsRuntimeWire;
   readonly schemaVersion: number;
@@ -140,6 +151,7 @@ export interface SettingsSnapshotWire {
 }
 export interface SettingsSocketChangeRequestWire {
   readonly confirmed: boolean;
+  readonly retry: boolean;
   readonly revision: string;
   readonly schemaVersion: number;
   readonly sequence: number;
@@ -321,6 +333,30 @@ const SETTINGS_SCHEMA = {
       required: ["code"],
       type: "object",
     },
+    SettingsDiagnosticsWire: {
+      additionalProperties: false,
+      properties: {
+        health: { $ref: "#/$defs/SettingsRuntimeHealthValueWire" },
+        logDirectory: { pattern: "^~/Library/Logs/DevHub$", type: "string" },
+        logLevel: { $ref: "#/$defs/SettingsLogLevelWire" },
+        previousExit: { $ref: "#/$defs/SettingsPreviousExitWire" },
+        recentCodes: { items: { type: "string" }, maxItems: 16, type: "array" },
+        sessionId: {
+          pattern:
+            "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+          type: "string",
+        },
+      },
+      required: [
+        "sessionId",
+        "logDirectory",
+        "logLevel",
+        "previousExit",
+        "health",
+        "recentCodes",
+      ],
+      type: "object",
+    },
     SettingsErrorCodeWire: {
       enum: [
         "invalid_config",
@@ -408,6 +444,11 @@ const SETTINGS_SCHEMA = {
       properties: { importLoginEnvironment: { type: "boolean" } },
       required: ["importLoginEnvironment"],
       type: "object",
+    },
+    SettingsLogLevelWire: { enum: ["info", "debug"], type: "string" },
+    SettingsPreviousExitWire: {
+      enum: ["clean", "unclean", "unknown"],
+      type: "string",
     },
     SettingsResolvedRuntimeConfigWire: {
       additionalProperties: false,
@@ -781,11 +822,47 @@ const SETTINGS_SCHEMA = {
           required: ["code"],
           type: "object",
         },
+        SettingsDiagnosticsWire: {
+          additionalProperties: false,
+          properties: {
+            health: { $ref: "#/$defs/SettingsRuntimeHealthValueWire" },
+            logDirectory: {
+              pattern: "^~/Library/Logs/DevHub$",
+              type: "string",
+            },
+            logLevel: { $ref: "#/$defs/SettingsLogLevelWire" },
+            previousExit: { $ref: "#/$defs/SettingsPreviousExitWire" },
+            recentCodes: {
+              items: { type: "string" },
+              maxItems: 16,
+              type: "array",
+            },
+            sessionId: {
+              pattern:
+                "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              type: "string",
+            },
+          },
+          required: [
+            "sessionId",
+            "logDirectory",
+            "logLevel",
+            "previousExit",
+            "health",
+            "recentCodes",
+          ],
+          type: "object",
+        },
         SettingsGeneralWire: {
           additionalProperties: false,
           properties: { importLoginEnvironment: { type: "boolean" } },
           required: ["importLoginEnvironment"],
           type: "object",
+        },
+        SettingsLogLevelWire: { enum: ["info", "debug"], type: "string" },
+        SettingsPreviousExitWire: {
+          enum: ["clean", "unclean", "unknown"],
+          type: "string",
         },
         SettingsResolvedRuntimeConfigWire: {
           additionalProperties: false,
@@ -1016,6 +1093,7 @@ const SETTINGS_SCHEMA = {
         diagnostic: {
           anyOf: [{ $ref: "#/$defs/SettingsDiagnosticWire" }, { type: "null" }],
         },
+        diagnostics: { $ref: "#/$defs/SettingsDiagnosticsWire" },
         revision: { pattern: "^[0-9a-f]{64}$", type: "string" },
         runtime: { $ref: "#/$defs/SettingsRuntimeWire" },
         schemaVersion: {
@@ -1031,7 +1109,14 @@ const SETTINGS_SCHEMA = {
           type: "integer",
         },
       },
-      required: ["schemaVersion", "sequence", "revision", "config", "runtime"],
+      required: [
+        "schemaVersion",
+        "sequence",
+        "revision",
+        "config",
+        "runtime",
+        "diagnostics",
+      ],
       title: "SettingsSnapshotWire",
       type: "object",
     },
@@ -1040,6 +1125,11 @@ const SETTINGS_SCHEMA = {
       additionalProperties: false,
       properties: {
         confirmed: { type: "boolean" },
+        retry: {
+          description:
+            "True only when the user is explicitly retrying a previously failed or\npersisted transition. This keeps the first destructive confirmation\ndistinguishable from a later retry at the diagnostics seam.",
+          type: "boolean",
+        },
         revision: { pattern: "^[0-9a-f]{64}$", type: "string" },
         schemaVersion: {
           format: "uint16",
@@ -1054,7 +1144,7 @@ const SETTINGS_SCHEMA = {
           type: "integer",
         },
       },
-      required: ["schemaVersion", "revision", "sequence", "confirmed"],
+      required: ["schemaVersion", "revision", "sequence", "confirmed", "retry"],
       title: "SettingsSocketChangeRequestWire",
       type: "object",
     },
