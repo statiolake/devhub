@@ -34,11 +34,13 @@ import shutil
 import signal
 import stat
 import subprocess
+import sys
 import tempfile
 import time
 import select
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterator, Mapping, Sequence
+from typing import Any, Iterator, Literal, Mapping, Sequence
 
 
 SCHEMA_VERSION = 1
@@ -315,11 +317,27 @@ def _product_matches(executable: Path) -> bool:
     )
 
 
-def _openvscode_candidates() -> list[tuple[str, Path]]:
-    candidates: list[tuple[str, Path]] = []
+def _openvscode_candidates() -> list[tuple[str, Path, Path | None]]:
+    candidates: list[tuple[str, Path, Path | None]] = []
+    # The release operator may stage the verified arm64 resource outside the
+    # checkout.  Keep this path as a discovery seam (never as report data),
+    # ahead of the build-tree fallbacks so a stale local artifact cannot win.
+    pinned_resource = Path("/private/tmp/devhub-q52-resource")
+    candidates.extend(
+        (
+            "pinned_temp_resource",
+            pinned_resource / relative,
+            pinned_resource,
+        )
+        for relative in (
+            Path("openvscode-server/bin/openvscode-server"),
+            Path("openvscode/vscode-reh-web-darwin-arm64/bin/openvscode-server"),
+            Path("vscode-reh-web-darwin-arm64/bin/openvscode-server"),
+        )
+    )
     override = os.environ.get("DEVHUB_OPENVSCODE_EXECUTABLE")
     if override:
-        candidates.append(("environment_override", Path(override)))
+        candidates.append(("environment_override", Path(override), None))
     resource_override = os.environ.get("DEVHUB_RESOURCE_DIR")
     if resource_override:
         resource_root = Path(resource_override)
@@ -327,6 +345,7 @@ def _openvscode_candidates() -> list[tuple[str, Path]]:
             (
                 "resource_override",
                 resource_root / relative,
+                resource_root,
             )
             for relative in (
                 Path("openvscode-server/bin/openvscode-server"),
@@ -341,7 +360,7 @@ def _openvscode_candidates() -> list[tuple[str, Path]]:
         ROOT / "target" / "debug" / "resources" / "openvscode-server" / "bin" / "openvscode-server",
         ROOT / "target" / "debug" / "resources" / "openvscode" / "vscode-reh-web-darwin-arm64" / "bin" / "openvscode-server",
     )
-    candidates.extend(("workspace_or_build", path) for path in relative)
+    candidates.extend(("workspace_or_build", path, None) for path in relative)
     # These are deterministic product resource locations.  They are used only
     # for discovery and are never included in the report.
     user_root = Path.home()
@@ -349,27 +368,54 @@ def _openvscode_candidates() -> list[tuple[str, Path]]:
         (
             "user_application_support",
             user_root / "Library" / "Application Support" / product / "openvscode-server" / "bin" / "openvscode-server",
+            None,
         )
         for product in ("DevHub", "io.github.statiolake.devhub")
     )
     return candidates
 
 
-def discover_openvscode() -> tuple[dict[str, Any], Path | None]:
+@dataclass(frozen=True)
+class OpenVSCodeArtifact:
+    executable: Path
+    resource_root: Path | None
+    source: str
+
+    def report(self) -> dict[str, Any]:
+        return {"status": "available", "source": self.source, "pinned_identity": "verified"}
+
+
+def _provider_environment(
+    base: Mapping[str, str], artifact: OpenVSCodeArtifact | None
+) -> dict[str, str]:
+    """Propagate the complete verified provider resource boundary."""
+
+    environment = dict(base)
+    if artifact is None:
+        return environment
+    if artifact.resource_root is not None:
+        environment["DEVHUB_RESOURCE_DIR"] = str(artifact.resource_root)
+        environment.pop("DEVHUB_OPENVSCODE_EXECUTABLE", None)
+    else:
+        environment["DEVHUB_OPENVSCODE_EXECUTABLE"] = str(artifact.executable)
+    return environment
+
+
+def discover_openvscode() -> tuple[dict[str, Any], OpenVSCodeArtifact | None]:
     seen: set[str] = set()
-    for source, candidate in _openvscode_candidates():
+    for source, candidate, resource_root in _openvscode_candidates():
         key = str(candidate)
         if key in seen:
             continue
         seen.add(key)
         if _regular_executable(candidate) and _product_matches(candidate):
-            return (
-                {
-                    "status": "available",
-                    "source": source,
-                    "pinned_identity": "verified",
-                },
-                candidate,
+            if resource_root is None and source == "workspace_or_build":
+                for parent in candidate.parents:
+                    if (parent / "product.json").is_file():
+                        resource_root = parent
+                        break
+            return OpenVSCodeArtifact(candidate, resource_root, source).report(), OpenVSCodeArtifact(
+                candidate, resource_root, source
             )
     return (
         {
@@ -379,18 +425,6 @@ def discover_openvscode() -> tuple[dict[str, Any], Path | None]:
         },
         None,
     )
-
-
-def _resource_owns_openvscode(openvscode: Path | None) -> bool:
-    """Use the app resource seam when the verified executable is inside it."""
-
-    resource_override = os.environ.get("DEVHUB_RESOURCE_DIR")
-    if not resource_override or openvscode is None:
-        return False
-    try:
-        return openvscode.resolve().is_relative_to(Path(resource_override).resolve())
-    except (OSError, ValueError):
-        return False
 
 
 def _bundle_for_executable(executable: Path) -> Path | None:
@@ -435,8 +469,59 @@ def _gui_probe() -> dict[str, Any]:
     }
 
 
-def probe_host() -> tuple[dict[str, Any], Path | None]:
-    openvscode, executable = discover_openvscode()
+def _reference_context_facts() -> dict[str, Any]:
+    """Record only the bounded facts needed to classify the reference Mac.
+
+    Hardware identifiers are deliberately excluded.  The acceptance context
+    is a capability tuple (arm64, 12 cores, 24 GB, macOS 26.5), not a machine
+    identity.  Missing sysctls are represented as ``unknown`` and therefore
+    cannot accidentally turn a local run into a reference claim.
+    """
+
+    facts: dict[str, Any] = {
+        "architecture": platform.machine() or "unknown",
+        "cpu_cores": None,
+        "memory_gb": None,
+        "os_major": None,
+        "reference_target": "Apple Silicon; 12 CPU cores; 24 GB; macOS 26.5",
+        "status": "not_proven",
+    }
+    if platform.system() == "Darwin" and shutil.which("sysctl"):
+        for key, field in (("hw.ncpu", "cpu_cores"), ("hw.memsize", "memory_gb")):
+            try:
+                result = subprocess.run(
+                    ["sysctl", "-n", key],
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
+                    check=False,
+                    text=True,
+                    timeout=2,
+                )
+                if result.returncode == 0:
+                    value = int(result.stdout.strip())
+                    facts[field] = value if field == "cpu_cores" else round(value / (1024**3), 1)
+            except (OSError, ValueError, subprocess.SubprocessError):
+                pass
+    release = platform.release().split(".", 1)[0]
+    try:
+        facts["os_major"] = int(release)
+    except ValueError:
+        pass
+    if (
+        facts["architecture"] == "arm64"
+        and facts["cpu_cores"] == 12
+        and facts["memory_gb"] == 24.0
+        and facts["os_major"] == 25
+    ):
+        # Darwin 25 is macOS 26.0-26.x.  The exact minor release is captured
+        # separately by the host OS release, without storing a machine ID.
+        facts["status"] = "reference_capability_match"
+    return facts
+
+
+def probe_host() -> tuple[dict[str, Any], OpenVSCodeArtifact | None]:
+    openvscode_report, openvscode = discover_openvscode()
     binary, bundle = _devhub_launch_target()
     gui = _gui_probe()
     host = {
@@ -457,15 +542,16 @@ def probe_host() -> tuple[dict[str, Any], Path | None]:
         "artifacts": {
             "devhub_debug_binary": "available" if _regular_executable(binary) else "missing",
             "devhub_debug_app_bundle": "available" if bundle is not None else "missing",
-            "openvscode": openvscode,
+            "openvscode": openvscode_report,
         },
         "gui": gui,
         "execution_boundary": _execution_boundary(),
         "reference_context": "not_proven",
+        "reference_context_facts": _reference_context_facts(),
         "machine_identifiers": "omitted",
         "ambient_paths": "omitted",
     }
-    return host, executable
+    return host, openvscode
 
 
 def _marker_seen(log_file: Path, marker: str, offset: int) -> tuple[bool, int]:
@@ -1016,8 +1102,8 @@ end tell
     return result.returncode == 0
 
 
-def _cleanup_owned_processes(home: Path, app_pid: int) -> None:
-    """Bound cleanup to commands carrying this run's unique isolated HOME."""
+def _owned_processes(home: Path, app_pid: int) -> list[int] | None:
+    """Return only processes carrying this run's exact isolated HOME."""
 
     try:
         result = subprocess.run(
@@ -1027,12 +1113,13 @@ def _cleanup_owned_processes(home: Path, app_pid: int) -> None:
             stderr=subprocess.DEVNULL,
             check=False,
             text=True,
-            timeout=3,
+            timeout=2,
         )
     except (OSError, subprocess.SubprocessError):
-        return
+        return None
     owned: list[int] = []
     home_text = str(home)
+    excluded = {os.getpid(), app_pid}
     for line in result.stdout.splitlines():
         fields = line.strip().split(None, 1)
         if len(fields) != 2 or home_text not in fields[1]:
@@ -1041,20 +1128,48 @@ def _cleanup_owned_processes(home: Path, app_pid: int) -> None:
             pid = int(fields[0])
         except ValueError:
             continue
-        if pid not in {os.getpid(), app_pid}:
+        if pid not in excluded:
             owned.append(pid)
-    for pid in owned:
-        try:
-            os.kill(pid, signal.SIGTERM)
-        except (ProcessLookupError, PermissionError, OSError):
-            pass
-    if owned:
-        time.sleep(0.15)
-    for pid in owned:
-        try:
-            os.kill(pid, signal.SIGKILL)
-        except (ProcessLookupError, PermissionError, OSError):
-            pass
+    return owned
+
+
+def _cleanup_owned_processes(home: Path, app_pid: int) -> bool:
+    """Reconcile q52-owned children until two scans are empty.
+
+    OpenVSCode can reparent a delayed node child to launchd after the app PID
+    exits. Re-scan within a short deadline so that child is still matched by
+    this run's canonical temporary HOME before TemporaryDirectory removes it.
+    """
+
+    deadline = time.monotonic() + 3.0
+    empty_scans = 0
+    while time.monotonic() < deadline:
+        owned = _owned_processes(home, app_pid)
+        if owned is None:
+            return False
+        if not owned:
+            empty_scans += 1
+            if empty_scans >= 2:
+                return True
+            time.sleep(0.08)
+            continue
+        empty_scans = 0
+        for pid in owned:
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except (ProcessLookupError, PermissionError, OSError):
+                pass
+        time.sleep(0.12)
+        remaining = _owned_processes(home, app_pid)
+        if remaining is None:
+            return False
+        for pid in remaining:
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError, OSError):
+                pass
+        time.sleep(0.08)
+    return False
 
 
 def _owned_openvscode_pids(home: Path, app_pid: int) -> list[int]:
@@ -1099,12 +1214,46 @@ def _kill_owned_openvscode(home: Path, app_pid: int) -> int:
     return len(pids)
 
 
+def _stop_owned_process(process: _ProcessHandle, *, graceful: bool) -> None:
+    """Stop one exact app PID with a bounded cleanup policy.
+
+    Disposable timing attempts must not spend the graceful menu-Quit budget:
+    their isolated HOME and private tmux namespace are thrown away after the
+    marker boundary.  The graceful policy is reserved for the quit/relaunch
+    lifecycle harness, where clean state and provider retention are evidence.
+    """
+
+    if process.poll() is not None:
+        return
+    if graceful:
+        _request_quit(process.pid)
+        try:
+            process.wait(timeout=INTERACTION_TIMEOUT_SECONDS)
+            return
+        except subprocess.TimeoutExpired:
+            pass
+    process.terminate()
+    try:
+        process.wait(timeout=2)
+        return
+    except subprocess.TimeoutExpired:
+        pass
+    process.kill()
+    try:
+        process.wait(timeout=2)
+    except subprocess.TimeoutExpired:
+        # The ownership-bound reaper below still performs a final bounded
+        # signal sweep. Never let cleanup turn a failed marker into a hang.
+        pass
+
+
 @contextlib.contextmanager
 def _running_app(
     executable: Path,
-    openvscode: Path | None,
+    openvscode: OpenVSCodeArtifact | None,
     *,
     seed_picker: bool = False,
+    cleanup_policy: Literal["fast", "graceful"] = "fast",
 ) -> Iterator[tuple[_ProcessHandle, Path, Path, float]]:
     """Launch one real app with a canonical isolated HOME."""
 
@@ -1127,15 +1276,13 @@ def _running_app(
                 )
             except (OSError, subprocess.SubprocessError):
                 pass
-        environment = os.environ.copy()
+        environment = _provider_environment(os.environ, openvscode)
         environment["HOME"] = str(safe_home)
         # tmux's socket namespace is independent from HOME.  Keep every
         # measured launch in a private, trusted namespace so a prior run
         # cannot make its Scratch identity collide with this run.
         environment["TMUX_TMPDIR"] = str(tmux_tmpdir)
         environment["DEVHUB_Q5_PERFORMANCE"] = "1"
-        if openvscode is not None and not _resource_owns_openvscode(openvscode):
-            environment["DEVHUB_OPENVSCODE_EXECUTABLE"] = str(openvscode)
         log_file = safe_home / "Library" / "Logs" / "DevHub" / "devhub.jsonl"
         started = time.monotonic()
         try:
@@ -1162,19 +1309,11 @@ def _running_app(
         try:
             yield process, safe_home, log_file, started
         finally:
-            if process.poll() is None:
-                _request_quit(process.pid)
-                try:
-                    process.wait(timeout=INTERACTION_TIMEOUT_SECONDS)
-                except subprocess.TimeoutExpired:
-                    process.terminate()
-                    try:
-                        process.wait(timeout=2)
-                    except subprocess.TimeoutExpired:
-                        process.kill()
-                        process.wait(timeout=5)
-            _cleanup_owned_processes(safe_home, process.pid)
+            _stop_owned_process(process, graceful=cleanup_policy == "graceful")
+            cleaned = _cleanup_owned_processes(safe_home, process.pid)
             _cleanup_owned_tmux(tmux_tmpdir)
+            if not cleaned:
+                raise OSError("owned_cleanup_incomplete")
 
 
 def _cleanup_owned_tmux(tmux_tmpdir: Path) -> None:
@@ -1200,7 +1339,7 @@ def _cleanup_owned_tmux(tmux_tmpdir: Path) -> None:
         pass
 
 
-def _launch_shell_attempt(executable: Path, openvscode: Path | None) -> dict[str, Any]:
+def _launch_shell_attempt(executable: Path, openvscode: OpenVSCodeArtifact | None) -> dict[str, Any]:
     """Launch DevHub and wait for the AppShell marker, retaining no output."""
 
     with tempfile.TemporaryDirectory(prefix="devhub-q52-") as temp_home:
@@ -1213,12 +1352,10 @@ def _launch_shell_attempt(executable: Path, openvscode: Path | None) -> dict[str
         _seed_native_config(safe_home)
         tmux_tmpdir = safe_home / ".tmux"
         tmux_tmpdir.mkdir(mode=0o700)
-        env = os.environ.copy()
+        env = _provider_environment(os.environ, openvscode)
         env["HOME"] = str(safe_home)
         env["TMUX_TMPDIR"] = str(tmux_tmpdir)
         env["DEVHUB_Q5_PERFORMANCE"] = "1"
-        if openvscode is not None and not _resource_owns_openvscode(openvscode):
-            env["DEVHUB_OPENVSCODE_EXECUTABLE"] = str(openvscode)
         log_file = safe_home / "Library" / "Logs" / "DevHub" / "devhub.jsonl"
         started = time.monotonic()
         try:
@@ -1254,19 +1391,16 @@ def _launch_shell_attempt(executable: Path, openvscode: Path | None) -> dict[str
             reason = "marker_timeout"
         else:
             reason = "marker_observed"
-        if process.poll() is None:
-            _request_quit(process.pid)
-            try:
-                process.wait(timeout=INTERACTION_TIMEOUT_SECONDS)
-            except subprocess.TimeoutExpired:
-                process.terminate()
-                try:
-                    process.wait(timeout=2)
-                except subprocess.TimeoutExpired:
-                    process.kill()
-                    process.wait(timeout=5)
-        _cleanup_owned_processes(safe_home, process.pid)
+        _stop_owned_process(process, graceful=False)
+        cleaned = _cleanup_owned_processes(safe_home, process.pid)
         _cleanup_owned_tmux(tmux_tmpdir)
+        if not cleaned:
+            return {
+                "status": "blocked",
+                "elapsed_ms": elapsed,
+                "marker": "app_shell_interactive",
+                "reason": "owned_cleanup_incomplete",
+            }
         return {
             "status": status,
             "elapsed_ms": elapsed,
@@ -1277,7 +1411,7 @@ def _launch_shell_attempt(executable: Path, openvscode: Path | None) -> dict[str
 
 def _marker_attempt(
     executable: Path,
-    openvscode: Path | None,
+    openvscode: OpenVSCodeArtifact | None,
     input_driver: _NativeInput | None,
     marker: str,
     *,
@@ -1384,7 +1518,7 @@ def _marker_attempt(
 
 def _scratch_attempt(
     executable: Path,
-    openvscode: Path | None,
+    openvscode: OpenVSCodeArtifact | None,
     input_driver: _NativeInput | None,
 ) -> dict[str, Any]:
     """Prove Scratch input acceptance followed by a rendered local response."""
@@ -1530,7 +1664,7 @@ def _scratch_attempt(
 
 def _activity_attempt(
     executable: Path,
-    openvscode: Path | None,
+    openvscode: OpenVSCodeArtifact | None,
     input_driver: _NativeInput | None,
 ) -> dict[str, Any]:
     """Switch from the mounted Terminal activity to Editor via native input."""
@@ -1619,7 +1753,7 @@ def _activity_attempt(
 
 def _warm_reconstruction_attempt(
     executable: Path,
-    openvscode: Path | None,
+    openvscode: OpenVSCodeArtifact | None,
     input_driver: _NativeInput | None,
 ) -> dict[str, Any]:
     """Close and reopen the real Window through the native menu and Dock."""
@@ -1719,9 +1853,210 @@ def _warm_reconstruction_attempt(
         }
 
 
+def _window_reconstruction_matrix(
+    executable: Path,
+    openvscode: OpenVSCodeArtifact | None,
+    cycles: int = 10,
+) -> dict[str, Any]:
+    """Exercise close/Dock reconstruction repeatedly on one exact PID.
+
+    This is intentionally separate from the warm timing scenario: the timing
+    run measures one reconstruction per fresh setup, while this matrix proves
+    that the same Window identity survives ten consecutive close/reopen
+    transitions.  A missing native marker leaves the matrix blocked.
+    """
+
+    if cycles != 10:
+        raise NativeReportError("window reconstruction matrix requires ten cycles")
+    try:
+        with _running_app(executable, openvscode) as (process, _home, log_file, _started):
+            ready, offset, _ = _wait_for_marker(log_file, "window_reconstruction_ready", 0)
+            if not ready:
+                return {
+                    "status": "blocked",
+                    "cycles_required": cycles,
+                    "cycles_completed": 0,
+                    "identity_verified": False,
+                    "reason": "initial_reconstruction_timeout",
+                }
+            completed = 0
+            for cycle in range(cycles):
+                if not _close_window(process.pid):
+                    return {
+                        "status": "blocked",
+                        "cycles_required": cycles,
+                        "cycles_completed": completed,
+                        "identity_verified": False,
+                        "reason": "native_window_close_failed",
+                    }
+                deadline = time.monotonic() + 5.0
+                while time.monotonic() < deadline and _window_count(process.pid) != 0:
+                    time.sleep(0.05)
+                if _window_count(process.pid) != 0:
+                    return {
+                        "status": "blocked",
+                        "cycles_required": cycles,
+                        "cycles_completed": completed,
+                        "identity_verified": False,
+                        "reason": "window_did_not_close",
+                    }
+                bundle = _bundle_for_executable(executable)
+                if bundle is None or not _launchservices_reopen(bundle, process.pid):
+                    return {
+                        "status": "blocked",
+                        "cycles_required": cycles,
+                        "cycles_completed": completed,
+                        "identity_verified": False,
+                        "reason": "native_dock_reopen_unavailable",
+                    }
+                deadline = time.monotonic() + INTERACTION_TIMEOUT_SECONDS
+                while time.monotonic() < deadline:
+                    if _window_count(process.pid) == 1:
+                        break
+                    if process.poll() is not None:
+                        return {
+                            "status": "blocked",
+                            "cycles_required": cycles,
+                            "cycles_completed": completed,
+                            "identity_verified": False,
+                            "reason": "process_exited_during_reconstruction",
+                        }
+                    time.sleep(0.05)
+                if _window_count(process.pid) != 1:
+                    return {
+                        "status": "blocked",
+                        "cycles_required": cycles,
+                        "cycles_completed": completed,
+                        "identity_verified": False,
+                        "reason": "reopened_window_not_bound_to_pid",
+                    }
+                found, offset, _ = _wait_for_marker(
+                    log_file, "window_shown_focused", offset, timeout=INTERACTION_TIMEOUT_SECONDS
+                )
+                if not found:
+                    return {
+                        "status": "blocked",
+                        "cycles_required": cycles,
+                        "cycles_completed": completed,
+                        "identity_verified": False,
+                        "reason": "reconstruction_marker_timeout",
+                    }
+                completed = cycle + 1
+            return {
+                "status": "covered",
+                "cycles_required": cycles,
+                "cycles_completed": completed,
+                "identity_verified": True,
+                "reason": "ten exact-PID close/reopen cycles completed",
+            }
+    except OSError:
+        return {
+            "status": "blocked",
+            "cycles_required": cycles,
+            "cycles_completed": 0,
+            "identity_verified": False,
+            "reason": "devhub_launch_unavailable",
+        }
+
+
+def _editor_host_lifecycle_facts(home: Path) -> dict[str, Any]:
+    """Read only the app-owned, content-free EditorHost lifecycle log."""
+
+    counts: list[int] = []
+    destroyed: list[int] = []
+    try:
+        lines = (home / "Library" / "Logs" / "DevHub" / "editor-host.log").read_text(
+            encoding="utf-8", errors="replace"
+        ).splitlines()
+    except OSError:
+        lines = []
+    for line in lines[-128:]:
+        fields = line.split()
+        if len(fields) != 2 or fields[0] not in {"event=webviews_created", "event=webviews_destroyed"}:
+            continue
+        try:
+            count = int(fields[1].split("=", 1)[1])
+        except (IndexError, ValueError):
+            continue
+        if fields[0] == "event=webviews_created":
+            counts.append(count)
+        else:
+            destroyed.append(count)
+    return {
+        "max_created": max(counts, default=0),
+        "max_destroyed": max(destroyed, default=0),
+        "log_observed": bool(counts or destroyed),
+    }
+
+
+def _editor_scale_probe(executable: Path, openvscode: OpenVSCodeArtifact | None) -> dict[str, Any]:
+    """Observe real EditorHost/Bridge scale facts without inventing agents.
+
+    The probe is deliberately conservative: mounted WebViews and Bridge-ready
+    identities are read from the app-owned closed markers, but Agent liveness
+    and hidden-surface continuity require a separate operator fixture.  Thus a
+    partial observation can only explain why the gate remains pending.
+    """
+
+    try:
+        with _running_app(executable, openvscode) as (process, home, log_file, _started):
+            shell_ok, offset, _ = _wait_for_marker(log_file, "app_shell_interactive", 0)
+            if not shell_ok:
+                return {
+                    "status": "blocked",
+                    "reason": "app_shell_marker_timeout",
+                    "observed_editor_webviews": 0,
+                    "observed_bridge_ready_surfaces": 0,
+                    "agent_count": None,
+                    "hidden_continuity": "not_executed",
+                }
+            # The Rust sink emits one first-ready marker per stable surface.
+            # Wait only for the authoritative count; no timeout is converted
+            # to a synthetic sample.
+            deadline = time.monotonic() + INTERACTION_TIMEOUT_SECONDS
+            bridge_ready = 0
+            while time.monotonic() < deadline:
+                bridge_ready = _performance_markers(log_file).count("editor_bridge_ready")
+                if bridge_ready >= 9:
+                    break
+                if process.poll() is not None:
+                    break
+                time.sleep(0.05)
+            facts = _editor_host_lifecycle_facts(home)
+            mounted = max(facts["max_created"], bridge_ready)
+            if mounted < 9 or bridge_ready < 9:
+                return {
+                    "status": "blocked",
+                    "reason": "real_state_did_not_mount_nine_editor_webviews",
+                    "observed_editor_webviews": mounted,
+                    "observed_bridge_ready_surfaces": bridge_ready,
+                    "agent_count": None,
+                    "hidden_continuity": "not_executed",
+                    "lifecycle_facts": facts,
+                }
+            return {
+                "status": "blocked",
+                "reason": "live_agent_fixture_and_hidden_continuity_not_executed",
+                "observed_editor_webviews": mounted,
+                "observed_bridge_ready_surfaces": bridge_ready,
+                "agent_count": None,
+                "hidden_continuity": "not_executed",
+                "lifecycle_facts": facts,
+            }
+    except OSError:
+        return {
+            "status": "blocked",
+            "reason": "devhub_launch_unavailable",
+            "observed_editor_webviews": 0,
+            "observed_bridge_ready_surfaces": 0,
+            "agent_count": None,
+            "hidden_continuity": "not_executed",
+        }
+
+
 def _managed_openvscode_crash_attempt(
     executable: Path,
-    openvscode: Path | None,
+    openvscode: OpenVSCodeArtifact | None,
     input_driver: _NativeInput | None,
 ) -> dict[str, Any]:
     """Crash one owned OpenVSCode child and wait for the real bridge recovery."""
@@ -1828,11 +2163,13 @@ def _managed_openvscode_crash_attempt(
 def _run_timing_scenario(
     scenario: str,
     executable: Path,
-    openvscode: Path | None,
+    openvscode: OpenVSCodeArtifact | None,
     input_driver: _NativeInput | None,
 ) -> dict[str, Any]:
     attempts: list[dict[str, Any]] = []
     for role, run in [("setup", None), *[("measured", index + 1) for index in range(MEASURED_RUNS)]]:
+        run_label = "setup" if run is None else f"run {run}/{MEASURED_RUNS}"
+        print(f"q5.2: {scenario} {run_label} start", file=sys.stderr, flush=True)
         if scenario == "scratch_interactive":
             result = _scratch_attempt(executable, openvscode, input_driver)
         elif scenario == "workspace_picker_first_result":
@@ -1852,6 +2189,11 @@ def _run_timing_scenario(
             result = _warm_reconstruction_attempt(executable, openvscode, input_driver)
         else:
             raise NativeReportError(f"unknown interactive scenario: {scenario}")
+        print(
+            f"q5.2: {scenario} {run_label} {result.get('status', 'unknown')}",
+            file=sys.stderr,
+            flush=True,
+        )
         attempts.append({"role": role, **({"run": run} if run is not None else {}), **result})
     samples = [
         attempt["elapsed_ms"]
@@ -1922,7 +2264,13 @@ def _matrix_entry(identifier: str, requirement: str, reason: str) -> dict[str, A
     }
 
 
-def execute(host: Mapping[str, Any], openvscode: Path | None, *, run_providers: bool) -> dict[str, Any]:
+def execute(
+    host: Mapping[str, Any],
+    openvscode: OpenVSCodeArtifact | None,
+    *,
+    run_providers: bool,
+    only_scenario: str | None = None,
+) -> dict[str, Any]:
     artifacts = host["artifacts"]
     gui = host["gui"]
     execution_boundary = host["execution_boundary"]
@@ -1951,13 +2299,31 @@ def execute(host: Mapping[str, Any], openvscode: Path | None, *, run_providers: 
     # app and GUI session exist, even if the managed editor bundle is missing;
     # the resulting marker timeout is useful blocker evidence and is never
     # promoted to an editor or reference-context timing claim.
-    if binary_available and gui_available and native_boundary_available:
+    run_shell = only_scenario in (None, "process_cold_shell")
+    if run_shell and binary_available and gui_available and native_boundary_available:
+        print("q5.2: process_cold_shell setup start", file=sys.stderr, flush=True)
         shell_attempts.append({"role": "setup", **_launch_shell_attempt(binary, openvscode)})
+        print(
+            f"q5.2: process_cold_shell setup {shell_attempts[-1].get('status', 'unknown')}",
+            file=sys.stderr,
+            flush=True,
+        )
         for index in range(MEASURED_RUNS):
-            shell_attempts.append(
-                {"role": "measured", "run": index + 1, **_launch_shell_attempt(binary, openvscode)}
+            print(
+                f"q5.2: process_cold_shell run {index + 1}/{MEASURED_RUNS} start",
+                file=sys.stderr,
+                flush=True,
             )
-    else:
+            attempt = _launch_shell_attempt(binary, openvscode)
+            shell_attempts.append(
+                {"role": "measured", "run": index + 1, **attempt}
+            )
+            print(
+                f"q5.2: process_cold_shell run {index + 1}/{MEASURED_RUNS} {attempt.get('status', 'unknown')}",
+                file=sys.stderr,
+                flush=True,
+            )
+    elif run_shell:
         shell_attempts = [
             {"role": "setup", "status": "skipped", "reason": ";".join(blockers)},
             *[
@@ -2004,6 +2370,11 @@ def execute(host: Mapping[str, Any], openvscode: Path | None, *, run_providers: 
     )
     for timing_id in TIMING_IDS:
         if timing_id == "process_cold_shell":
+            continue
+        if only_scenario is not None and timing_id != only_scenario:
+            timing_runs[timing_id] = _timing_entry(
+                f"scenario_filter:{only_scenario}; not executed"
+            )
             continue
         if binary_available and gui_available and native_boundary_available:
             if timing_id == "warm_workbench_reconstruction" and not app_bundle_available:
@@ -2105,26 +2476,58 @@ def execute(host: Mapping[str, Any], openvscode: Path | None, *, run_providers: 
         }
 
     native_reason = ";".join(blockers) or "GUI, pinned bundle, and reference context are required for this native matrix."
-    scale = [
-        _matrix_entry(
-            "scale-eight-workspaces-sixteen-agents-nine-editors",
-            "8 Workspaces; 16 live Agents across >=4 Workspaces; 9 Editor WebViews",
-            native_reason,
-        ),
-        _matrix_entry(
-            "hidden-editor-continuity",
-            "Hide >=5 Editor WebViews for 10 minutes; verify identity, Bridge, dirty state, input",
-            native_reason,
-        ),
-    ]
-    lifecycle = [
-        _matrix_entry("window-reconstruction-10x", "Window reconstruction x10", native_reason),
-        _matrix_entry(
-            "quit-relaunch-5x",
-            "Quit/relaunch x5 with >=2 Agents and >=2 live Workspace tmux sessions",
-            native_reason,
-        ),
-    ]
+    run_matrices = only_scenario is None
+    if run_matrices and binary_available and gui_available and native_boundary_available and bundle_available:
+        scale_probe = _editor_scale_probe(binary, openvscode)
+        scale = [
+            {
+                "id": "scale-eight-workspaces-sixteen-agents-nine-editors",
+                "requirement": "8 Workspaces; 16 live Agents across >=4 Workspaces; 9 Editor WebViews",
+                **scale_probe,
+            },
+            {
+                "id": "hidden-editor-continuity",
+                "requirement": "Hide >=5 Editor WebViews for 10 minutes; verify identity, Bridge, dirty state, input",
+                "status": "blocked",
+                "reason": "ten-minute hidden-surface interaction fixture not executed",
+                "observed_editor_webviews": scale_probe.get("observed_editor_webviews", 0),
+                "hidden_continuity": "not_executed",
+            },
+        ]
+        lifecycle_matrix = _window_reconstruction_matrix(binary, openvscode)
+        lifecycle = [
+            {
+                "id": "window-reconstruction-10x",
+                "requirement": "Window reconstruction x10",
+                **lifecycle_matrix,
+            },
+            _matrix_entry(
+                "quit-relaunch-5x",
+                "Quit/relaunch x5 with >=2 Agents and >=2 live Workspace tmux sessions",
+                "persistent-provider relaunch fixture not executed",
+            ),
+        ]
+    else:
+        scale = [
+            _matrix_entry(
+                "scale-eight-workspaces-sixteen-agents-nine-editors",
+                "8 Workspaces; 16 live Agents across >=4 Workspaces; 9 Editor WebViews",
+                native_reason,
+            ),
+            _matrix_entry(
+                "hidden-editor-continuity",
+                "Hide >=5 Editor WebViews for 10 minutes; verify identity, Bridge, dirty state, input",
+                native_reason,
+            ),
+        ]
+        lifecycle = [
+            _matrix_entry("window-reconstruction-10x", "Window reconstruction x10", native_reason),
+            _matrix_entry(
+                "quit-relaunch-5x",
+                "Quit/relaunch x5 with >=2 Agents and >=2 live Workspace tmux sessions",
+                native_reason,
+            ),
+        ]
     crashes = [
         _matrix_entry(
             "managed-openvscode",
@@ -2222,6 +2625,37 @@ def validate_report(report: Mapping[str, Any]) -> None:
             raise NativeReportError(f"timing sample invalid: {timing_id}")
         if samples and entry.get("p95_ms") != nearest_rank_p95(samples):
             raise NativeReportError(f"timing p95 missing or incorrect: {timing_id}")
+    scale = report.get("scale_endurance")
+    if not isinstance(scale, list) or not all(isinstance(entry, Mapping) for entry in scale) or [entry.get("id") for entry in scale] != [
+        "scale-eight-workspaces-sixteen-agents-nine-editors",
+        "hidden-editor-continuity",
+    ]:
+        raise NativeReportError("native scale matrix drifted")
+    lifecycle = report.get("lifecycle")
+    if not isinstance(lifecycle, list) or not all(isinstance(entry, Mapping) for entry in lifecycle) or [entry.get("id") for entry in lifecycle] != [
+        "window-reconstruction-10x",
+        "quit-relaunch-5x",
+    ]:
+        raise NativeReportError("native lifecycle matrix drifted")
+    # A matrix is evidence-bearing only when its exact requirement and
+    # verification facts are present.  In particular, no caller can turn a
+    # validator-only placeholder into a pass by changing one status field.
+    for entry in [*scale, *lifecycle]:
+        if not isinstance(entry, Mapping) or not isinstance(entry.get("requirement"), str):
+            raise NativeReportError("native matrix requirement missing")
+        if entry.get("status") == "covered":
+            if entry.get("id") == "window-reconstruction-10x":
+                if entry.get("cycles_completed") != 10 or entry.get("identity_verified") is not True:
+                    raise NativeReportError("window matrix claimed without ten identity-bound cycles")
+            elif entry.get("id") == "scale-eight-workspaces-sixteen-agents-nine-editors":
+                if entry.get("observed_editor_webviews") != 9 or entry.get("agent_count") != 16:
+                    raise NativeReportError("scale matrix claimed without exact live counts")
+            elif entry.get("id") == "hidden-editor-continuity":
+                if entry.get("hidden_continuity") != "verified":
+                    raise NativeReportError("hidden continuity claimed without verified evidence")
+            elif entry.get("id") == "quit-relaunch-5x":
+                if entry.get("cycles_completed") != 5 or entry.get("agents_retained") != 2 or entry.get("tmux_sessions_retained") != 2:
+                    raise NativeReportError("relaunch matrix claimed without retained provider counts")
     if report.get("redaction", {}).get("machine_identifiers") != "omitted":
         raise NativeReportError("machine identifiers must be omitted")
     for location, key, value in _walk(report):
@@ -2234,11 +2668,27 @@ def validate_report(report: Mapping[str, Any]) -> None:
 def write_report(path: Path, report: Mapping[str, Any]) -> None:
     validate_report(report)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    payload = json.dumps(report, indent=2) + "\n"
+    # Never truncate a previously accepted evidence file if the process is
+    # interrupted while serializing or hardening the replacement.
+    temporary: Path | None = None
     try:
-        path.chmod(0o600)
-    except OSError:
-        pass
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=path.parent, prefix=f".{path.name}.", suffix=".tmp", delete=False
+        ) as stream:
+            temporary = Path(stream.name)
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        temporary.chmod(0o600)
+        os.replace(temporary, path)
+        temporary = None
+    finally:
+        if temporary is not None:
+            try:
+                temporary.unlink()
+            except OSError:
+                pass
 
 
 def self_test() -> None:
@@ -2246,6 +2696,16 @@ def self_test() -> None:
         raise NativeReportError("sandbox boundary preflight failed")
     if _execution_boundary({})["reason"] != "native_execution_boundary_available":
         raise NativeReportError("native boundary preflight failed")
+    resource_artifact = OpenVSCodeArtifact(
+        Path("/private/tmp/q52-resource"), Path("/private/tmp/q52-resource"), "self_test"
+    )
+    resource_environment = _provider_environment({}, resource_artifact)
+    if resource_environment.get("DEVHUB_RESOURCE_DIR") != "/private/tmp/q52-resource" or "DEVHUB_OPENVSCODE_EXECUTABLE" in resource_environment:
+        raise NativeReportError("verified resource root was not propagated")
+    executable_artifact = OpenVSCodeArtifact(Path("/private/tmp/q52-server"), None, "self_test")
+    executable_environment = _provider_environment({}, executable_artifact)
+    if executable_environment.get("DEVHUB_OPENVSCODE_EXECUTABLE") != "/private/tmp/q52-server":
+        raise NativeReportError("standalone executable override was not propagated")
     # The measured value is anchored to the event timestamp, not to the
     # helper process return time. Simulated helper latency therefore cannot
     # inflate or deflate the product interval.
@@ -2299,6 +2759,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output", type=Path, default=ROOT / "docs" / "evidence" / "q5.2-native-report.json")
     parser.add_argument("--report", type=Path)
     parser.add_argument("--skip-providers", action="store_true", help="do not run real provider checks")
+    parser.add_argument(
+        "--only-scenario",
+        choices=TIMING_IDS,
+        help="execute one timing scenario (all other entries remain blocked)",
+    )
     return parser.parse_args()
 
 
@@ -2318,7 +2783,12 @@ def main() -> int:
             print(f"Q5.2 native report valid: {report_path.name}")
             return 0
         host, openvscode = probe_host()
-        report = execute(host, openvscode, run_providers=args.execute and not args.skip_providers)
+        report = execute(
+            host,
+            openvscode,
+            run_providers=args.execute and not args.skip_providers,
+            only_scenario=args.only_scenario,
+        )
         write_report(args.output, report)
         print(f"Q5.2 native report written: {args.output.name}")
         return 0
