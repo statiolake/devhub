@@ -32,6 +32,7 @@ gate, not just source-code presence.
 | I4.4 Keyboard routing                 | Complete; automated green; interactive pending              | One isolated native KeyRouter reserves only the one-second Command-Q prefix, forwards the original trusted NSEvent exactly once after a validated second press, preserves ordinary macOS shortcuts/IME paths, routes Settings Command-Comma, and binds semantic SurfaceKey to native responder ancestry, window identity/number, and lifecycle generation for raw Editor and App Shell surfaces. Focused router suite: 9 passed; both keyboard/WRY boundary audits PASS; `CI=true pnpm run check` PASS in the unsandboxed native lane (243 native tests passed, 3 intentionally ignored); `CI=true pnpm run build`, `CI=true pnpm --filter @devhub/app exec tauri build --debug --no-bundle`, pinned-target build, clippy, formatting, and `git diff --check` PASS. Real Apple Silicon/OpenVSCode/xterm trusted Cmd-Q forwarding, ordinary shortcut behavior, responder-ancestry behavior with live WebKit descendants, and Japanese IME interactive verification remain pending for the Q5.1 release gate (this tracker revision) |
 | I4.5 Diagnostics                      | Complete; automated green; interactive pending              | Rust-owned bounded content-free structured writer with rotation, private filesystem and symlink safety, crash marker, typed redacted events, fresh runtime probes, Error Surface details/actions, and Settings Copy Diagnostics/Open Log Folder/Recheck actions. App Shell and Settings ACL isolation is exact; diagnostics-focused suite (10 passed), privacy/module/contract audits PASS; final unsandboxed `CI=true pnpm run check` PASS (243 native tests passed, 3 intentionally ignored; 150 core tests; 101 frontend tests; 17 Bridge tests), `CI=true pnpm run build`, and `CI=true pnpm --filter @devhub/app exec tauri build --debug --no-bundle` PASS. Real Finder log-folder access, clipboard copy behavior, and Settings focus remain interactive checks; broader Wave 5 acceptance is still pending (this tracker revision)                                                                                                                                                                                                                       |
 | Q5.1 Accessibility and IME           | Complete; Apple Silicon interactive release gate pending    | Keyboard/tree traversal, modal focus isolation and restoration, semantic landmarks/status/errors, full UTF-8 workspace path names, 40px hit targets, zoom-safe responsive CSS, reduced-motion/transparency/contrast/forced-colors fallbacks, xterm native-input labeling, and Japanese IME guards across picker/rename/Settings/confirmation seams; 101 frontend tests, 243 native tests, 150 core tests, and 17 Bridge tests passed with 3 native tests intentionally ignored; unsandboxed `CI=true pnpm run check`, `CI=true pnpm run build`, `CI=true pnpm --filter @devhub/app exec tauri build --debug --no-bundle`, and `git diff --check` PASS. Real Apple Silicon VoiceOver, OpenVSCode/WKWebView responder-chain, xterm native-input, Japanese IME, Finder log-folder access, clipboard copy behavior, and Settings focus remain explicit release-gate evidence and are not claimed by automation (this tracker revision) |
+| Q5.2 Performance and endurance       | Complete; Apple Silicon interaction/release gate pending | Deterministic redacted report contract and validator pass via `scripts/check-performance.sh`; `CI=true pnpm run check` PASS unsandboxed (101 frontend tests, 17 Bridge tests, 243 native tests plus 3 intentionally ignored, 150 core tests), `CI=true pnpm run build`, `CI=true pnpm --filter @devhub/app exec tauri build --debug --no-bundle`, and `git diff --check` PASS. Focused real tmux transition and PTY continuity tests (1 each), EditorHost crash-recovery test (1), lifecycle gate tests (8), 8-Workspace/16-Agent identity reconciliation (1), and the isolated Herdr 0.8.1 API/control/runtime harness including provider-server crash recovery PASS. The raw report in [`docs/evidence/q5.2-local-report.json`](evidence/q5.2-local-report.json) preserves the redacted environment; its tmux transition matrix is PASS while all six p95 timings, native 8-Workspace/16-Agent/9-Editor scale and ten-minute continuity, repeated Window/Quit/relaunch, and independent native OpenVSCode/Herdr/tmux crash isolation results remain pending; no unmeasured budget is claimed (this tracker revision) |
 
 P2.1 provides the versioned TOML model, defaults and strict validation,
 comment-preserving conflict-safe writes, symlink-safe atomic replacement,
@@ -73,7 +74,7 @@ completion.
 
 ## Next
 
-1. Q5.2 Performance and endurance.
+1. Q5.3 Brand assets.
 
 The latest local validation also includes `CI=true pnpm run build` and
 `CI=true pnpm --filter @devhub/app exec tauri build --debug --no-bundle`.
@@ -86,9 +87,9 @@ The latest local validation also includes `CI=true pnpm run build` and
   lifecycle, I4.4 keyboard routing, and I4.5 diagnostics are complete. Live
   keyboard/IME behavior and remaining interactive quality checks are tracked
   under Q5.1; context menus remain a separate quality backlog item.
-- Wave 5: Q5.1 accessibility/IME is automated-green with its reference-Mac
-  interaction gate pending; performance/endurance, brand, security, and
-  notices remain next.
+- Wave 5: Q5.1 accessibility/IME and Q5.2 performance/endurance are
+  automated-green with their Apple Silicon interaction/release gates pending;
+  Q5.3 brand assets is next, followed by security and notices.
 - Wave 6: packaging, public repository setup, and version `0.1.0` release.
 
 The repository remains local-only with no Git remote. Hosted CI, hosted
@@ -99,4 +100,5 @@ manifests, checks, and release artifacts.
 
 See [IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md) for gate definitions and
 [IMPLEMENTATION-OWNERSHIP.md](IMPLEMENTATION-OWNERSHIP.md) for file ownership
-and merge barriers.
+and merge barriers. Q5.2's executable reporting contract and manual-reference
+procedure are in [Q5.2-PERFORMANCE.md](Q5.2-PERFORMANCE.md).

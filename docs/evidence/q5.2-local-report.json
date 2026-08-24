@@ -1,0 +1,276 @@
+{
+  "schema_version": 1,
+  "gate": "Q5.2",
+  "recorded_at_utc": "2026-08-24",
+  "sample_policy": {
+    "setup_runs": 1,
+    "measured_runs": 10,
+    "percentile": "nearest_rank_p95",
+    "raw_samples_preserved": true
+  },
+  "environment": {
+    "platform": {
+      "os": "Darwin",
+      "os_release": "25.5.0",
+      "architecture": "arm64"
+    },
+    "toolchain": {
+      "python": "Python 3.14.6",
+      "node": "v26.7.0",
+      "pnpm": "11.20.0",
+      "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+      "cargo": "cargo 1.97.1 (c980f4866 2026-06-30)",
+      "tmux": "tmux 3.7b",
+      "herdr": "herdr 0.8.1"
+    },
+    "machine_identifiers": "omitted",
+    "ambient_paths": "omitted"
+  },
+  "timings": {
+    "process_cold_shell": {
+      "label": "process-cold Shell presentation",
+      "budget_ms": 2000.0,
+      "definition": "DevHub and managed OpenVSCode are absent before launch.",
+      "interactive": true,
+      "status": "pending",
+      "measurement_kind": "not-measured",
+      "setup_runs": 0,
+      "measured_runs": 0,
+      "samples_ms": [],
+      "p95_ms": null,
+      "reason": "Requires ten native reference-context interaction samples; GUI interaction is not automatable in this local checkout."
+    },
+    "scratch_interactive": {
+      "label": "Scratch interactive response",
+      "budget_ms": 3000.0,
+      "definition": "Global Scratch accepts input and produces its local response.",
+      "interactive": true,
+      "status": "pending",
+      "measurement_kind": "not-measured",
+      "setup_runs": 0,
+      "measured_runs": 0,
+      "samples_ms": [],
+      "p95_ms": null,
+      "reason": "Requires ten native reference-context interaction samples; GUI interaction is not automatable in this local checkout."
+    },
+    "workspace_picker_first_result": {
+      "label": "Workspace Picker first result",
+      "budget_ms": 300.0,
+      "definition": "The first result appears while query input remains responsive during scan.",
+      "interactive": true,
+      "status": "pending",
+      "measurement_kind": "not-measured",
+      "setup_runs": 0,
+      "measured_runs": 0,
+      "samples_ms": [],
+      "p95_ms": null,
+      "reason": "Requires ten native reference-context interaction samples; personal source-tree scan is not reproducible here."
+    },
+    "mounted_activity_switch": {
+      "label": "mounted Activity switch",
+      "budget_ms": 100.0,
+      "definition": "Switch between already-mounted Activities without provider startup.",
+      "interactive": true,
+      "status": "pending",
+      "measurement_kind": "not-measured",
+      "setup_runs": 0,
+      "measured_runs": 0,
+      "samples_ms": [],
+      "p95_ms": null,
+      "reason": "Requires ten native reference-context interaction samples."
+    },
+    "cold_openvscode_interactive": {
+      "label": "cold OpenVSCode interactive response",
+      "budget_ms": 10000.0,
+      "definition": "Managed OpenVSCode is absent; the Workbench accepts input.",
+      "interactive": true,
+      "status": "pending",
+      "measurement_kind": "not-measured",
+      "setup_runs": 0,
+      "measured_runs": 0,
+      "samples_ms": [],
+      "p95_ms": null,
+      "reason": "Requires ten native reference-context interaction samples against the pinned OpenVSCode bundle."
+    },
+    "warm_workbench_reconstruction": {
+      "label": "warm Workbench reconstruction",
+      "budget_ms": 5000.0,
+      "definition": "The provider is warm while the main Window is reconstructed.",
+      "interactive": true,
+      "status": "pending",
+      "measurement_kind": "not-measured",
+      "setup_runs": 0,
+      "measured_runs": 0,
+      "samples_ms": [],
+      "p95_ms": null,
+      "reason": "Requires ten native reference-context Window reconstruction samples."
+    }
+  },
+  "scale_endurance": {
+    "workspaces": {
+      "required": 8,
+      "observed": null,
+      "status": "pending",
+      "evidence": "Native scale run pending."
+    },
+    "live_agents": {
+      "required": 16,
+      "minimum_workspace_distribution": 4,
+      "observed": null,
+      "observed_workspace_distribution": null,
+      "status": "pending",
+      "evidence": "Native scale run pending."
+    },
+    "editor_webviews": {
+      "required": 9,
+      "required_identity": "global plus eight Workspace Editors",
+      "observed": null,
+      "global_present": null,
+      "workspace_identity_count": null,
+      "status": "pending",
+      "evidence": "Native scale run pending."
+    },
+    "hidden_surface_continuity": {
+      "required_hidden_surfaces": 5,
+      "required_hidden_minutes": 10,
+      "observed_hidden_surfaces": null,
+      "observed_hidden_minutes": null,
+      "checks": {
+        "load_identity": "pending",
+        "bridge_connection": "pending",
+        "dirty_state": "pending",
+        "input": "pending"
+      },
+      "status": "pending",
+      "evidence": "Native scale run pending."
+    },
+    "window_reconstruction": {
+      "required_runs": 10,
+      "observed_runs": 0,
+      "status": "pending",
+      "evidence": "Native lifecycle run pending."
+    },
+    "quit_relaunch": {
+      "required_runs": 5,
+      "observed_runs": 0,
+      "minimum_live_agents": 2,
+      "minimum_live_workspace_tmux_sessions": 2,
+      "survival_checks": {
+        "agents": "pending",
+        "workspace_tmux_sessions": "pending",
+        "navigation": "pending"
+      },
+      "status": "pending",
+      "evidence": "Native lifecycle run pending."
+    }
+  },
+  "provider_crashes": {
+    "managed_openvscode": {
+      "status": "pending",
+      "isolation_verified": false,
+      "recovery_verified": false,
+      "evidence": "Independent native crash run pending."
+    },
+    "herdr_connection_or_server": {
+      "status": "pending",
+      "isolation_verified": false,
+      "recovery_verified": false,
+      "evidence": "Independent native crash run pending."
+    },
+    "owned_tmux_session": {
+      "status": "pending",
+      "isolation_verified": false,
+      "recovery_verified": false,
+      "evidence": "Independent native crash run pending."
+    }
+  },
+  "tmux_transition_matrix": {
+    "required_cases": [
+      "absent_target",
+      "wrong_marker_conflict",
+      "marked_target_conflict",
+      "preserved_unknown_sessions",
+      "partial_old_cleanup",
+      "crash_relaunch_each_transition_state",
+      "recreation_failure_after_new_effective_name"
+    ],
+    "status": "pass",
+    "cases": {
+      "absent_target": "pass",
+      "wrong_marker_conflict": "pass",
+      "marked_target_conflict": "pass",
+      "preserved_unknown_sessions": "pass",
+      "partial_old_cleanup": "pass",
+      "crash_relaunch_each_transition_state": "pass",
+      "recreation_failure_after_new_effective_name": "pass"
+    },
+    "evidence": "Unsandboxed full workspace tests plus focused real transition test pass; no unmarked session was mutated."
+  },
+  "local_checks": [
+    {
+      "id": "q5-acceptance-contract",
+      "status": "pass",
+      "command": "python3 scripts/q5-performance.py --check",
+      "evidence": "Schema, budget set, p95 rule, scale matrix, crash matrix, and redaction checks pass."
+    },
+    {
+      "id": "q5-validator-self-test",
+      "status": "pass",
+      "command": "python3 scripts/q5-performance.py --self-test",
+      "evidence": "Synthetic validator test confirms nine samples cannot claim a budget."
+    },
+    {
+      "id": "full-implementation-check",
+      "status": "pass",
+      "command": "CI=true pnpm run check",
+      "evidence": "Unsandboxed: 101 frontend, 17 Bridge, 243 native plus 3 ignored, and 150 core tests passed."
+    },
+    {
+      "id": "production-build",
+      "status": "pass",
+      "command": "CI=true pnpm run build",
+      "evidence": "Frontend, Bridge package, production fixture scan, and locked Cargo build passed."
+    },
+    {
+      "id": "tauri-debug-build",
+      "status": "pass",
+      "command": "CI=true pnpm --filter @devhub/app exec tauri build --debug --no-bundle",
+      "evidence": "Debug no-bundle application built successfully."
+    },
+    {
+      "id": "real-tmux-transition-matrix",
+      "status": "pass",
+      "command": "cargo test --offline --locked -p devhub-app --lib terminal::tests::real_transition_sockets_cover_conflicts_unknown_preservation_and_dynamic_rebind -- --exact",
+      "evidence": "Focused real-tmux transition test passed; full workspace run also passed."
+    },
+    {
+      "id": "real-tmux-pty-continuity",
+      "status": "pass",
+      "command": "cargo test --offline --locked -p devhub-app --lib terminal::tests::real_tmux_pty_roundtrip_resize_detach_and_replacement_preserve_session -- --exact",
+      "evidence": "Focused real-tmux PTY roundtrip, resize, detach, and replacement test passed."
+    },
+    {
+      "id": "herdr-provider-harness",
+      "status": "pass",
+      "command": "scripts/check-agent-runtime-real.sh",
+      "evidence": "Pinned Herdr 0.8.1 API/control/runtime lifecycle passed, including isolated server crash/recovery."
+    },
+    {
+      "id": "native-lifecycle-and-scale-identity",
+      "status": "pass",
+      "command": "focused EditorHost, lifecycle, and 8-Workspace/16-Agent identity tests",
+      "evidence": "EditorHost crash recovery, 8 lifecycle gate tests, and identity reconciliation passed."
+    },
+    {
+      "id": "reference-mac-interaction-matrix",
+      "status": "pending",
+      "command": "reference-Mac manual/native acceptance procedure in docs/Q5.2-PERFORMANCE.md",
+      "evidence": "Six p95 timings, nine Editor continuity, repeated lifecycle, and independent native crash isolation require reference-Mac interaction; no unmeasured budget is claimed."
+    }
+  ],
+  "redaction": {
+    "machine_identifiers": "omitted",
+    "absolute_paths": "omitted",
+    "unbounded_process_output": "omitted"
+  }
+}
