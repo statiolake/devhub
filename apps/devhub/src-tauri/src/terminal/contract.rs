@@ -134,7 +134,7 @@ pub enum FrameKind {
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase", tag = "type")]
+#[serde(rename_all = "camelCase", rename_all_fields = "camelCase", tag = "type")]
 pub enum TerminalFrame {
     Started {
         schema_version: u16,
@@ -470,5 +470,46 @@ mod tests {
         assert_eq!(fixture["limits"]["maxSurfaceKeyBytes"], MAX_SURFACE_KEY_BYTES);
         assert_eq!(fixture["limits"]["maxInputSequence"], MAX_INPUT_SEQUENCE);
         assert_eq!(fixture["limits"]["maxTargetGeneration"], MAX_TARGET_GENERATION);
+    }
+
+    fn encoded_header(frame: &TerminalFrame) -> serde_json::Value {
+        let InvokeResponseBody::Raw(raw) = encode_frame(frame).expect("frame") else {
+            panic!("terminal metadata frame must use raw Channel bytes");
+        };
+        let header_bytes =
+            u32::from_le_bytes(raw[4..8].try_into().expect("header length")) as usize;
+        serde_json::from_slice(&raw[8..8 + header_bytes]).expect("frame header JSON")
+    }
+
+    #[test]
+    fn metadata_frames_match_shared_fixture_field_names_and_values() {
+        let fixture = shared_fixture();
+        let attachment_id = fixture["receipt"]["attachmentId"].as_str().expect("attachment id");
+
+        let started = TerminalFrame::Started {
+            schema_version: TERMINAL_PROTOCOL_VERSION,
+            attachment_id: attachment_id.to_owned(),
+            sequence: fixture["started"]["sequence"].as_u64().expect("started sequence"),
+            surface_key: fixture["started"]["surfaceKey"].as_str().expect("surface key").to_owned(),
+            target_generation: fixture["started"]["targetGeneration"].as_u64().expect("generation"),
+            cols: fixture["started"]["cols"].as_u64().expect("columns") as u16,
+            rows: fixture["started"]["rows"].as_u64().expect("rows") as u16,
+        };
+        let error = TerminalFrame::Error {
+            schema_version: TERMINAL_PROTOCOL_VERSION,
+            attachment_id: attachment_id.to_owned(),
+            sequence: fixture["errorMetadata"]["sequence"].as_u64().expect("error sequence"),
+            error: TerminalError::new(TerminalErrorCode::ChannelClosed),
+        };
+        let exited = TerminalFrame::Exited {
+            schema_version: TERMINAL_PROTOCOL_VERSION,
+            attachment_id: attachment_id.to_owned(),
+            sequence: fixture["exited"]["sequence"].as_u64().expect("exit sequence"),
+            reason: ExitReason::Detached,
+        };
+
+        assert_eq!(encoded_header(&started), fixture["started"]);
+        assert_eq!(encoded_header(&error), fixture["errorMetadata"]);
+        assert_eq!(encoded_header(&exited), fixture["exited"]);
     }
 }

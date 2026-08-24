@@ -98,6 +98,21 @@ pub enum PerformanceMarker {
     PickerFirstResult,
     EditorBridgeReady,
     WindowReconstructionReady,
+    DockReopenReceived,
+    DockReopenSucceeded,
+    DockReopenFailed,
+    ProjectionCleanupStarted,
+    EditorHostDetached,
+    TerminalSurfacesDetached,
+    AgentSurfacesDetached,
+    ProjectionCleanupFinished,
+    ReopenWorkerEntered,
+    CleanupWaitFinished,
+    CleanupWaitTimedOut,
+    CoordinatorReopened,
+    WindowBuilt,
+    HostReconstructed,
+    WindowShownFocused,
     TerminalAttachEntered,
     TerminalAttachFailedInvalidRequest,
     TerminalAttachFailedInvalidSurface,
@@ -115,6 +130,52 @@ pub enum PerformanceMarker {
     TerminalAttachFailedInternal,
     TerminalAttachSucceeded,
     TerminalAttachInvokeRejected,
+    TerminalResizeInvokeEntered,
+    TerminalResizeInvokeRejected,
+    TerminalInputInvokeEntered,
+    TerminalInputInvokeRejected,
+    TerminalResizeEntered,
+    TerminalResizeFailedInvalidRequest,
+    TerminalResizeFailedInvalidSurface,
+    TerminalResizeFailedSurfaceUnavailable,
+    TerminalResizeFailedStaleTarget,
+    TerminalResizeFailedWrongAttachment,
+    TerminalResizeFailedAttachmentLimit,
+    TerminalResizeFailedSessionUnavailable,
+    TerminalResizeFailedPtyUnavailable,
+    TerminalResizeFailedInputTooLarge,
+    TerminalResizeFailedInvalidResize,
+    TerminalResizeFailedChannelClosed,
+    TerminalResizeFailedBackpressure,
+    TerminalResizeFailedRuntimeUnavailable,
+    TerminalResizeFailedInternal,
+    TerminalResizeSucceeded,
+    TerminalInputEntered,
+    TerminalInputFailedInvalidRequest,
+    TerminalInputFailedInvalidSurface,
+    TerminalInputFailedSurfaceUnavailable,
+    TerminalInputFailedStaleTarget,
+    TerminalInputFailedWrongAttachment,
+    TerminalInputFailedAttachmentLimit,
+    TerminalInputFailedSessionUnavailable,
+    TerminalInputFailedPtyUnavailable,
+    TerminalInputFailedInputTooLarge,
+    TerminalInputFailedInvalidResize,
+    TerminalInputFailedChannelClosed,
+    TerminalInputFailedBackpressure,
+    TerminalInputFailedRuntimeUnavailable,
+    TerminalInputFailedInternal,
+    TerminalInputSucceeded,
+    TerminalChannelCallbackReceived,
+    TerminalStartedFrameValidated,
+    TerminalFrameDecodeOrIdentityFailed,
+    TerminalHandshakeTimeoutBeforeReceipt,
+    TerminalHandshakeTimeoutAfterReceipt,
+    TerminalReceiptBeforeStarted,
+    TerminalOutputRendered,
+    TerminalOutputAfterInputRendered,
+    EditorProviderDegraded,
+    EditorProviderRecovered,
 }
 
 #[allow(dead_code)]
@@ -1723,6 +1784,10 @@ mod tests {
             PerformanceMarker::TerminalAttachFailedInternal,
             PerformanceMarker::TerminalAttachSucceeded,
             PerformanceMarker::TerminalAttachInvokeRejected,
+            PerformanceMarker::TerminalResizeInvokeEntered,
+            PerformanceMarker::TerminalResizeInvokeRejected,
+            PerformanceMarker::TerminalInputInvokeEntered,
+            PerformanceMarker::TerminalInputInvokeRejected,
         ];
         let encoded: Vec<String> = markers
             .iter()
@@ -1748,10 +1813,159 @@ mod tests {
                 "\"terminal_attach_failed_internal\"",
                 "\"terminal_attach_succeeded\"",
                 "\"terminal_attach_invoke_rejected\"",
+                "\"terminal_resize_invoke_entered\"",
+                "\"terminal_resize_invoke_rejected\"",
+                "\"terminal_input_invoke_entered\"",
+                "\"terminal_input_invoke_rejected\"",
             ]
         );
         assert!(encoded.iter().all(|marker| {
-            marker.contains("terminal_attach_") && !marker.contains('/') && !marker.contains(':')
+            (marker.contains("terminal_attach_")
+                || marker == "\"terminal_resize_invoke_rejected\""
+                || marker == "\"terminal_resize_invoke_entered\""
+                || marker == "\"terminal_input_invoke_entered\""
+                || marker == "\"terminal_input_invoke_rejected\"")
+                && !marker.contains('/')
+                && !marker.contains(':')
+        }));
+    }
+
+    #[test]
+    fn terminal_resize_input_and_render_markers_are_closed_content_free() {
+        let markers = [
+            PerformanceMarker::TerminalResizeEntered,
+            PerformanceMarker::TerminalResizeFailedInvalidRequest,
+            PerformanceMarker::TerminalResizeFailedInvalidSurface,
+            PerformanceMarker::TerminalResizeFailedSurfaceUnavailable,
+            PerformanceMarker::TerminalResizeFailedStaleTarget,
+            PerformanceMarker::TerminalResizeFailedWrongAttachment,
+            PerformanceMarker::TerminalResizeFailedAttachmentLimit,
+            PerformanceMarker::TerminalResizeFailedSessionUnavailable,
+            PerformanceMarker::TerminalResizeFailedPtyUnavailable,
+            PerformanceMarker::TerminalResizeFailedInputTooLarge,
+            PerformanceMarker::TerminalResizeFailedInvalidResize,
+            PerformanceMarker::TerminalResizeFailedChannelClosed,
+            PerformanceMarker::TerminalResizeFailedBackpressure,
+            PerformanceMarker::TerminalResizeFailedRuntimeUnavailable,
+            PerformanceMarker::TerminalResizeFailedInternal,
+            PerformanceMarker::TerminalResizeSucceeded,
+            PerformanceMarker::TerminalInputEntered,
+            PerformanceMarker::TerminalInputFailedInvalidRequest,
+            PerformanceMarker::TerminalInputFailedInvalidSurface,
+            PerformanceMarker::TerminalInputFailedSurfaceUnavailable,
+            PerformanceMarker::TerminalInputFailedStaleTarget,
+            PerformanceMarker::TerminalInputFailedWrongAttachment,
+            PerformanceMarker::TerminalInputFailedAttachmentLimit,
+            PerformanceMarker::TerminalInputFailedSessionUnavailable,
+            PerformanceMarker::TerminalInputFailedPtyUnavailable,
+            PerformanceMarker::TerminalInputFailedInputTooLarge,
+            PerformanceMarker::TerminalInputFailedInvalidResize,
+            PerformanceMarker::TerminalInputFailedChannelClosed,
+            PerformanceMarker::TerminalInputFailedBackpressure,
+            PerformanceMarker::TerminalInputFailedRuntimeUnavailable,
+            PerformanceMarker::TerminalInputFailedInternal,
+            PerformanceMarker::TerminalInputSucceeded,
+            PerformanceMarker::TerminalChannelCallbackReceived,
+            PerformanceMarker::TerminalStartedFrameValidated,
+            PerformanceMarker::TerminalFrameDecodeOrIdentityFailed,
+            PerformanceMarker::TerminalHandshakeTimeoutBeforeReceipt,
+            PerformanceMarker::TerminalHandshakeTimeoutAfterReceipt,
+            PerformanceMarker::TerminalReceiptBeforeStarted,
+            PerformanceMarker::TerminalOutputRendered,
+            PerformanceMarker::TerminalOutputAfterInputRendered,
+            PerformanceMarker::EditorProviderDegraded,
+            PerformanceMarker::EditorProviderRecovered,
+        ];
+        let encoded: Vec<String> = markers
+            .iter()
+            .map(|marker| serde_json::to_string(marker).expect("marker JSON"))
+            .collect();
+        assert!(encoded.iter().all(|marker| {
+            (marker.contains("terminal_resize_")
+                || marker.contains("terminal_input_")
+                || marker.contains("terminal_channel_")
+                || marker.contains("terminal_started_frame_")
+                || marker.contains("terminal_frame_decode_")
+                || marker.contains("terminal_handshake_timeout_")
+                || marker.contains("terminal_receipt_before_")
+                || marker == "\"terminal_output_rendered\""
+                || marker == "\"terminal_output_after_input_rendered\""
+                || marker == "\"editor_provider_degraded\""
+                || marker == "\"editor_provider_recovered\"")
+                && !marker.contains('/')
+                && !marker.contains(':')
+        }));
+        assert!(encoded.contains(&"\"terminal_resize_entered\"".to_owned()));
+        assert!(encoded.contains(&"\"terminal_input_succeeded\"".to_owned()));
+        assert!(encoded.contains(&"\"terminal_channel_callback_received\"".to_owned()));
+        assert!(encoded.contains(&"\"terminal_started_frame_validated\"".to_owned()));
+        assert!(encoded.contains(&"\"terminal_frame_decode_or_identity_failed\"".to_owned()));
+        assert!(encoded.contains(&"\"terminal_handshake_timeout_before_receipt\"".to_owned()));
+        assert!(encoded.contains(&"\"terminal_handshake_timeout_after_receipt\"".to_owned()));
+        assert!(encoded.contains(&"\"terminal_receipt_before_started\"".to_owned()));
+        assert!(encoded.contains(&"\"terminal_output_rendered\"".to_owned()));
+        assert!(encoded.contains(&"\"terminal_output_after_input_rendered\"".to_owned()));
+    }
+
+    #[test]
+    fn dock_reopen_markers_are_closed_content_free() {
+        let markers = [
+            PerformanceMarker::DockReopenReceived,
+            PerformanceMarker::DockReopenSucceeded,
+            PerformanceMarker::DockReopenFailed,
+        ];
+        let encoded: Vec<String> = markers
+            .iter()
+            .map(|marker| serde_json::to_string(marker).expect("marker JSON"))
+            .collect();
+        assert_eq!(
+            encoded,
+            ["\"dock_reopen_received\"", "\"dock_reopen_succeeded\"", "\"dock_reopen_failed\"",]
+        );
+        assert!(encoded.iter().all(|marker| {
+            marker.starts_with("\"dock_reopen_") && !marker.contains('/') && !marker.contains(':')
+        }));
+    }
+
+    #[test]
+    fn lifecycle_projection_and_reopen_markers_are_closed_content_free() {
+        let markers = [
+            PerformanceMarker::ProjectionCleanupStarted,
+            PerformanceMarker::EditorHostDetached,
+            PerformanceMarker::TerminalSurfacesDetached,
+            PerformanceMarker::AgentSurfacesDetached,
+            PerformanceMarker::ProjectionCleanupFinished,
+            PerformanceMarker::ReopenWorkerEntered,
+            PerformanceMarker::CleanupWaitFinished,
+            PerformanceMarker::CleanupWaitTimedOut,
+            PerformanceMarker::CoordinatorReopened,
+            PerformanceMarker::WindowBuilt,
+            PerformanceMarker::HostReconstructed,
+            PerformanceMarker::WindowShownFocused,
+        ];
+        let encoded: Vec<String> = markers
+            .iter()
+            .map(|marker| serde_json::to_string(marker).expect("marker JSON"))
+            .collect();
+        assert_eq!(
+            encoded,
+            [
+                "\"projection_cleanup_started\"",
+                "\"editor_host_detached\"",
+                "\"terminal_surfaces_detached\"",
+                "\"agent_surfaces_detached\"",
+                "\"projection_cleanup_finished\"",
+                "\"reopen_worker_entered\"",
+                "\"cleanup_wait_finished\"",
+                "\"cleanup_wait_timed_out\"",
+                "\"coordinator_reopened\"",
+                "\"window_built\"",
+                "\"host_reconstructed\"",
+                "\"window_shown_focused\"",
+            ]
+        );
+        assert!(encoded.iter().all(|marker| {
+            !marker.contains('/') && !marker.contains(':') && marker.starts_with('\"')
         }));
     }
 

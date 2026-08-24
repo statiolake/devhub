@@ -48,7 +48,32 @@ export type AppPerformanceMarker =
   | "activity_interactive"
   | "scratch_interactive"
   | "picker_first_result"
-  | "terminal_attach_invoke_rejected";
+  | "dock_reopen_received"
+  | "dock_reopen_succeeded"
+  | "dock_reopen_failed"
+  | "terminal_attach_invoke_rejected"
+  | "terminal_resize_invoke_entered"
+  | "terminal_resize_invoke_rejected"
+  | "terminal_input_invoke_entered"
+  | "terminal_input_invoke_rejected"
+  | "terminal_output_rendered"
+  | "terminal_output_after_input_rendered"
+  | "terminal_channel_callback_received"
+  | "terminal_started_frame_validated"
+  | "terminal_frame_decode_or_identity_failed"
+  | "terminal_handshake_timeout_before_receipt"
+  | "terminal_handshake_timeout_after_receipt"
+  | "terminal_receipt_before_started";
+
+export type TerminalChannelDiagnostic = Extract<
+  AppPerformanceMarker,
+  | "terminal_channel_callback_received"
+  | "terminal_started_frame_validated"
+  | "terminal_frame_decode_or_identity_failed"
+  | "terminal_handshake_timeout_before_receipt"
+  | "terminal_handshake_timeout_after_receipt"
+  | "terminal_receipt_before_started"
+>;
 
 export interface WorkspacePickerCandidate {
   readonly operationId: string;

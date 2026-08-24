@@ -36,6 +36,7 @@ import stat
 import subprocess
 import tempfile
 import time
+import select
 from pathlib import Path
 from typing import Any, Iterator, Mapping, Sequence
 
@@ -69,6 +70,21 @@ PERFORMANCE_MARKER_VOCABULARY = frozenset(
         "picker_first_result",
         "editor_bridge_ready",
         "window_reconstruction_ready",
+        "dock_reopen_received",
+        "dock_reopen_succeeded",
+        "dock_reopen_failed",
+        "projection_cleanup_started",
+        "editor_host_detached",
+        "terminal_surfaces_detached",
+        "agent_surfaces_detached",
+        "projection_cleanup_finished",
+        "reopen_worker_entered",
+        "cleanup_wait_finished",
+        "cleanup_wait_timed_out",
+        "coordinator_reopened",
+        "window_built",
+        "host_reconstructed",
+        "window_shown_focused",
         "terminal_attach_entered",
         "terminal_attach_failed_invalid_request",
         "terminal_attach_failed_invalid_surface",
@@ -86,6 +102,52 @@ PERFORMANCE_MARKER_VOCABULARY = frozenset(
         "terminal_attach_failed_internal",
         "terminal_attach_succeeded",
         "terminal_attach_invoke_rejected",
+        "terminal_resize_invoke_entered",
+        "terminal_resize_invoke_rejected",
+        "terminal_input_invoke_entered",
+        "terminal_input_invoke_rejected",
+        "terminal_resize_entered",
+        "terminal_resize_succeeded",
+        "terminal_resize_failed_invalid_request",
+        "terminal_resize_failed_invalid_surface",
+        "terminal_resize_failed_surface_unavailable",
+        "terminal_resize_failed_stale_target",
+        "terminal_resize_failed_wrong_attachment",
+        "terminal_resize_failed_attachment_limit",
+        "terminal_resize_failed_session_unavailable",
+        "terminal_resize_failed_pty_unavailable",
+        "terminal_resize_failed_input_too_large",
+        "terminal_resize_failed_invalid_resize",
+        "terminal_resize_failed_channel_closed",
+        "terminal_resize_failed_backpressure",
+        "terminal_resize_failed_runtime_unavailable",
+        "terminal_resize_failed_internal",
+        "terminal_input_entered",
+        "terminal_input_succeeded",
+        "terminal_input_failed_invalid_request",
+        "terminal_input_failed_invalid_surface",
+        "terminal_input_failed_surface_unavailable",
+        "terminal_input_failed_stale_target",
+        "terminal_input_failed_wrong_attachment",
+        "terminal_input_failed_attachment_limit",
+        "terminal_input_failed_session_unavailable",
+        "terminal_input_failed_pty_unavailable",
+        "terminal_input_failed_input_too_large",
+        "terminal_input_failed_invalid_resize",
+        "terminal_input_failed_channel_closed",
+        "terminal_input_failed_backpressure",
+        "terminal_input_failed_runtime_unavailable",
+        "terminal_input_failed_internal",
+        "terminal_channel_callback_received",
+        "terminal_started_frame_validated",
+        "terminal_frame_decode_or_identity_failed",
+        "terminal_handshake_timeout_before_receipt",
+        "terminal_handshake_timeout_after_receipt",
+        "terminal_receipt_before_started",
+        "terminal_output_rendered",
+        "terminal_output_after_input_rendered",
+        "editor_provider_degraded",
+        "editor_provider_recovered",
     }
 )
 
@@ -475,9 +537,9 @@ def _performance_markers(log_file: Path) -> list[str]:
 
 def _terminal_error_codes(markers: Sequence[str]) -> list[str]:
     return [
-        marker.removeprefix("terminal_attach_failed_")
+        marker.split("_failed_", 1)[1]
         for marker in markers
-        if marker.startswith("terminal_attach_failed_")
+        if marker.startswith(("terminal_attach_failed_", "terminal_resize_failed_", "terminal_input_failed_"))
     ]
 
 
@@ -486,7 +548,10 @@ def _marker_timeout_reason(markers: Sequence[str]) -> str:
 
     errors = _terminal_error_codes(markers)
     if errors:
-        return f"terminal_attach_failed_{errors[0]}"
+        for prefix in ("terminal_attach_failed_", "terminal_resize_failed_", "terminal_input_failed_"):
+            matching = next((marker for marker in markers if marker.startswith(prefix)), None)
+            if matching is not None:
+                return matching
     if "terminal_attach_invoke_rejected" in markers and "terminal_attach_entered" not in markers:
         return "terminal_attach_invoke_rejected"
     if "terminal_attach_succeeded" in markers:
@@ -539,11 +604,36 @@ def _wait_for_marker(
     return False, offset, None
 
 
+def _elapsed_from_native_event(event_timestamp_ns: int, marker_timestamp_ms: int) -> float:
+    """Convert the final native event and diagnostics marker to one clock.
+
+    The input actor reports Unix wall-clock nanoseconds at the final CGEvent
+    dispatch boundary. Rust diagnostics report Unix wall-clock milliseconds,
+    so the event is compared at the diagnostics' exact millisecond resolution
+    rather than treating sub-millisecond truncation as an ordering failure.
+    A marker before that shared-resolution event is a clock-domain/order
+    failure, never a value that may be corrected by subtracting a harness
+    constant.
+    """
+
+    if event_timestamp_ns <= 0 or marker_timestamp_ms <= 0:
+        raise NativeReportError("native event clock sample is invalid")
+    marker_timestamp_ns = marker_timestamp_ms * 1_000_000
+    event_timestamp_at_marker_resolution_ns = (event_timestamp_ns // 1_000_000) * 1_000_000
+    if marker_timestamp_ns < event_timestamp_at_marker_resolution_ns:
+        raise NativeReportError("event_marker_clock_order_invalid")
+    return round(
+        (marker_timestamp_ns - event_timestamp_at_marker_resolution_ns) / 1_000_000,
+        3,
+    )
+
+
 class _NativeInput:
-    """Compile and invoke the real CoreGraphics input helper once per run."""
+    """One persistent CoreGraphics actor for one native driver run."""
 
     def __init__(self, executable: Path):
         self.executable = executable
+        self._process: subprocess.Popen[str] | None = None
 
     @classmethod
     def build(cls) -> "_NativeInput | None":
@@ -566,22 +656,69 @@ class _NativeInput:
             return None
         if result.returncode != 0 or not _regular_executable(output):
             return None
-        return cls(output)
-
-    def invoke(self, *arguments: str) -> bool:
+        actor = cls(output)
         try:
-            result = subprocess.run(
-                [str(self.executable), *arguments],
+            actor._process = subprocess.Popen(
+                [str(actor.executable)],
                 cwd=ROOT,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,
-                check=False,
-                timeout=2,
+                text=True,
+                bufsize=1,
             )
+        except OSError:
+            return None
+        return actor
+
+    def close(self) -> None:
+        process = self._process
+        self._process = None
+        if process is None:
+            return
+        try:
+            if process.stdin is not None:
+                process.stdin.close()
+        except OSError:
+            pass
+        try:
+            process.wait(timeout=2)
+        except (OSError, subprocess.TimeoutExpired):
+            process.kill()
+            try:
+                process.wait(timeout=2)
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+
+    def invoke(self, *arguments: str) -> int | None:
+        process = self._process
+        if process is None or process.poll() is not None or process.stdin is None or process.stdout is None:
+            return None
+        try:
+            process.stdin.write(" ".join(arguments) + "\n")
+            process.stdin.flush()
+            ready, _, _ = select.select(
+                [process.stdout], [], [], 2.0
+            )
+            if not ready:
+                return None
+            response = process.stdout.readline().strip()
         except (OSError, subprocess.SubprocessError):
-            return False
-        return result.returncode == 0
+            return None
+        fields = response.split()
+        if len(fields) != 2 or fields[0] != "posted":
+            return None
+        try:
+            timestamp_ns = int(fields[1])
+        except ValueError:
+            return None
+        return timestamp_ns if timestamp_ns > 0 else None
+
+    def __enter__(self) -> "_NativeInput":
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        self.close()
 
 
 class _ProcessHandle:
@@ -694,6 +831,68 @@ class _NativeBundleLauncher:
 _NATIVE_BUNDLE_LAUNCHER: _NativeBundleLauncher | None = None
 
 
+class _NativeBundleReopener:
+    """Ask LaunchServices/AppKit to reopen one already-running bundle PID."""
+
+    def __init__(self, executable: Path):
+        self.executable = executable
+
+    @classmethod
+    def build(cls) -> "_NativeBundleReopener | None":
+        if platform.system() != "Darwin" or shutil.which("swiftc") is None:
+            return None
+        source = ROOT / "scripts" / "q5-native-reopen.swift"
+        if not source.is_file():
+            return None
+        output = Path(tempfile.gettempdir()) / f"devhub-q52-native-reopen-{os.getpid()}"
+        module_cache = Path(tempfile.gettempdir()) / f"devhub-q52-swift-reopen-cache-{os.getpid()}"
+        module_cache.mkdir(mode=0o700, exist_ok=True)
+        try:
+            result = subprocess.run(
+                [
+                    "swiftc",
+                    "-module-cache-path",
+                    str(module_cache),
+                    str(source),
+                    "-o",
+                    str(output),
+                ],
+                cwd=ROOT,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+                timeout=30,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return None
+        if result.returncode != 0 or not _regular_executable(output):
+            return None
+        return cls(output)
+
+    def reopen(self, bundle: Path, pid: int) -> bool:
+        try:
+            result = subprocess.run(
+                [str(self.executable), str(bundle), str(pid)],
+                cwd=ROOT,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                check=False,
+                text=True,
+                timeout=20,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return False
+        try:
+            return result.returncode == 0 and int(result.stdout.strip()) == pid
+        except (TypeError, ValueError):
+            return False
+
+
+_NATIVE_BUNDLE_REOPENER: _NativeBundleReopener | None = None
+
+
 def _window_origin(pid: int) -> tuple[int, int] | None:
     """Return the launched process's only visible window origin.
 
@@ -762,21 +961,15 @@ end tell
         return None
 
 
-def _launchservices_reopen(bundle_identifier: str) -> bool:
-    """Ask LaunchServices to reopen the already-running bundle."""
+def _launchservices_reopen(bundle: Path, pid: int) -> bool:
+    """Reopen through AppKit/LaunchServices while requiring the same PID."""
 
-    try:
-        result = subprocess.run(
-            ["/usr/bin/open", "-b", bundle_identifier],
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=False,
-            timeout=3,
-        )
-    except (OSError, subprocess.SubprocessError):
+    global _NATIVE_BUNDLE_REOPENER
+    if _NATIVE_BUNDLE_REOPENER is None:
+        _NATIVE_BUNDLE_REOPENER = _NativeBundleReopener.build()
+    if _NATIVE_BUNDLE_REOPENER is None:
         return False
-    return result.returncode == 0
+    return _NATIVE_BUNDLE_REOPENER.reopen(bundle, pid)
 
 
 def _close_window(pid: int) -> bool:
@@ -895,10 +1088,10 @@ def _owned_openvscode_pids(home: Path, app_pid: int) -> list[int]:
 
 
 def _kill_owned_openvscode(home: Path, app_pid: int) -> int:
-    """Crash only the managed OpenVSCode children for one isolated run."""
+    """Crash one managed OpenVSCode child for one isolated run."""
 
     pids = _owned_openvscode_pids(home, app_pid)
-    for pid in pids:
+    for pid in pids[:1]:
         try:
             os.kill(pid, signal.SIGKILL)
         except (ProcessLookupError, PermissionError, OSError):
@@ -1114,6 +1307,7 @@ def _marker_attempt(
                     "ordered_markers": markers,
                     "terminal_error_codes": _terminal_error_codes(markers),
                 }
+            action_timestamp_ns: int | None = None
             if action is None:
                 action_started = started
                 marker_offset = shell_offset
@@ -1129,15 +1323,15 @@ def _marker_attempt(
                 x = origin[0] + action[0]
                 y = origin[1] + action[1]
                 marker_offset = _log_end(log_file)
-                action_started = time.monotonic()
-                if not input_driver.invoke("activate", str(x), str(y)):
+                action_timestamp_ns = input_driver.invoke("click", str(x), str(y))
+                if action_timestamp_ns is None:
                     return {
                         "status": "blocked",
                         "elapsed_ms": None,
                         "marker": marker,
                         "reason": "native_input_event_failed",
                     }
-            found, _next_offset, _timestamp = _wait_for_marker(
+            found, _next_offset, marker_timestamp_ms = _wait_for_marker(
                 log_file, marker, marker_offset
             )
             if not found:
@@ -1150,12 +1344,178 @@ def _marker_attempt(
                     "ordered_markers": markers,
                     "terminal_error_codes": _terminal_error_codes(markers),
                 }
+            if action_timestamp_ns is not None and marker_timestamp_ms is not None:
+                try:
+                    elapsed_ms = _elapsed_from_native_event(
+                        action_timestamp_ns, marker_timestamp_ms
+                    )
+                except NativeReportError as error:
+                    markers = _performance_markers(log_file)
+                    return {
+                        "status": "blocked",
+                        "elapsed_ms": None,
+                        "marker": marker,
+                        "reason": str(error),
+                        "ordered_markers": markers,
+                        "terminal_error_codes": _terminal_error_codes(markers),
+                    }
+                measurement_clock = "unix_wall_event_boundary_ns_to_diagnostics_ms"
+            else:
+                elapsed_ms = round((time.monotonic() - action_started) * 1000, 3)
+                measurement_clock = "process_monotonic_start_to_diagnostics_marker"
             markers = _performance_markers(log_file)
             return {
                 "status": "pass",
-                "elapsed_ms": round((time.monotonic() - action_started) * 1000, 3),
+                "elapsed_ms": elapsed_ms,
                 "marker": marker,
                 "reason": "marker_observed",
+                "measurement_clock": measurement_clock,
+                "ordered_markers": markers,
+                "terminal_error_codes": _terminal_error_codes(markers),
+            }
+    except OSError:
+        return {
+            "status": "unavailable",
+            "elapsed_ms": None,
+            "marker": marker,
+            "reason": "devhub_launch_unavailable",
+        }
+
+
+def _scratch_attempt(
+    executable: Path,
+    openvscode: Path | None,
+    input_driver: _NativeInput | None,
+) -> dict[str, Any]:
+    """Prove Scratch input acceptance followed by a rendered local response."""
+
+    marker = "scratch_interactive"
+    if input_driver is None:
+        return {
+            "status": "blocked",
+            "elapsed_ms": None,
+            "marker": marker,
+            "reason": "native_input_helper_unavailable",
+        }
+    try:
+        with _running_app(executable, openvscode) as (process, _home, log_file, _started):
+            shell_ok, shell_offset, _ = _wait_for_marker(
+                log_file, "app_shell_interactive", 0
+            )
+            if not shell_ok:
+                markers = _performance_markers(log_file)
+                return {
+                    "status": "blocked",
+                    "elapsed_ms": None,
+                    "marker": marker,
+                    "reason": "app_shell_marker_timeout",
+                    "ordered_markers": markers,
+                    "terminal_error_codes": _terminal_error_codes(markers),
+                }
+            attached, attach_offset, _ = _wait_for_marker(
+                log_file, "terminal_attach_succeeded", shell_offset
+            )
+            if not attached:
+                markers = _performance_markers(log_file)
+                return {
+                    "status": "blocked",
+                    "elapsed_ms": None,
+                    "marker": marker,
+                    "reason": _marker_timeout_reason(markers),
+                    "ordered_markers": markers,
+                    "terminal_error_codes": _terminal_error_codes(markers),
+                }
+            marker_offset = max(attach_offset, _log_end(log_file))
+            origin = _wait_for_window_origin(process.pid)
+            if origin is None:
+                return {
+                    "status": "blocked",
+                    "elapsed_ms": None,
+                    "marker": marker,
+                    "reason": "native_window_geometry_unavailable",
+                    "ordered_markers": _performance_markers(log_file),
+                }
+            # Focus the exact launched app's xterm viewport before posting the
+            # harmless empty Enter sentinel. The focus event is setup only;
+            # the measured interval begins at the sentinel's final CGEvent.
+            if input_driver.invoke("click", str(origin[0] + 500), str(origin[1] + 200)) is None:
+                return {
+                    "status": "blocked",
+                    "elapsed_ms": None,
+                    "marker": marker,
+                    "reason": "native_input_event_failed",
+                    "ordered_markers": _performance_markers(log_file),
+                }
+            event_timestamp_ns = input_driver.invoke("press-enter")
+            if event_timestamp_ns is None:
+                markers = _performance_markers(log_file)
+                return {
+                    "status": "blocked",
+                    "elapsed_ms": None,
+                    "marker": marker,
+                    "reason": "native_input_event_failed",
+                    "ordered_markers": markers,
+                    "terminal_error_codes": _terminal_error_codes(markers),
+                }
+            found, _next_offset, marker_timestamp_ms = _wait_for_marker(
+                log_file, marker, marker_offset
+            )
+            markers = _performance_markers(log_file)
+            if not found:
+                return {
+                    "status": "blocked",
+                    "elapsed_ms": None,
+                    "marker": marker,
+                    "reason": _marker_timeout_reason(markers),
+                    "ordered_markers": markers,
+                    "terminal_error_codes": _terminal_error_codes(markers),
+                }
+            required = (
+                "terminal_input_invoke_entered",
+                "terminal_input_succeeded",
+                "terminal_output_after_input_rendered",
+            )
+            marker_positions = {value: markers.index(value) for value in required if value in markers}
+            if len(marker_positions) != len(required) or not (
+                marker_positions[required[0]]
+                < marker_positions[required[1]]
+                < marker_positions[required[2]]
+                < markers.index(marker)
+            ):
+                return {
+                    "status": "blocked",
+                    "elapsed_ms": None,
+                    "marker": marker,
+                    "reason": "scratch_interactive_boundary_incomplete",
+                    "ordered_markers": markers,
+                    "terminal_error_codes": _terminal_error_codes(markers),
+                }
+            if marker_timestamp_ms is None:
+                return {
+                    "status": "blocked",
+                    "elapsed_ms": None,
+                    "marker": marker,
+                    "reason": "marker_timestamp_missing",
+                    "ordered_markers": markers,
+                    "terminal_error_codes": _terminal_error_codes(markers),
+                }
+            try:
+                elapsed_ms = _elapsed_from_native_event(event_timestamp_ns, marker_timestamp_ms)
+            except NativeReportError as error:
+                return {
+                    "status": "blocked",
+                    "elapsed_ms": None,
+                    "marker": marker,
+                    "reason": str(error),
+                    "ordered_markers": markers,
+                    "terminal_error_codes": _terminal_error_codes(markers),
+                }
+            return {
+                "status": "pass",
+                "elapsed_ms": elapsed_ms,
+                "marker": marker,
+                "reason": "input_accepted_and_local_response_rendered",
+                "measurement_clock": "unix_wall_event_boundary_ns_to_diagnostics_ms",
                 "ordered_markers": markers,
                 "terminal_error_codes": _terminal_error_codes(markers),
             }
@@ -1201,34 +1561,52 @@ def _activity_attempt(
                     "marker": marker,
                     "reason": "native_window_geometry_unavailable",
                 }
-            # Establish a known precondition without counting that transition.
-            baseline = _log_end(log_file)
-            terminal_x, terminal_y = origin[0] + 405, origin[1] + 27
-            input_driver.invoke("activate", str(terminal_x), str(terminal_y))
-            _wait_for_marker(log_file, marker, baseline, timeout=1.0)
             baseline = _log_end(log_file)
             editor_x, editor_y = origin[0] + 247, origin[1] + 27
-            started = time.monotonic()
-            if not input_driver.invoke("activate", str(editor_x), str(editor_y)):
+            event_timestamp_ns = input_driver.invoke("click", str(editor_x), str(editor_y))
+            if event_timestamp_ns is None:
                 return {
                     "status": "blocked",
                     "elapsed_ms": None,
                     "marker": marker,
                     "reason": "native_input_event_failed",
                 }
-            found, _next_offset, _timestamp = _wait_for_marker(log_file, marker, baseline)
+            found, _next_offset, marker_timestamp_ms = _wait_for_marker(log_file, marker, baseline)
             if not found:
+                markers = _performance_markers(log_file)
                 return {
                     "status": "blocked",
                     "elapsed_ms": None,
                     "marker": marker,
-                    "reason": "marker_timeout",
+                    "reason": _marker_timeout_reason(markers),
+                    "ordered_markers": markers,
+                    "terminal_error_codes": _terminal_error_codes(markers),
+                }
+            if marker_timestamp_ms is None:
+                return {
+                    "status": "blocked",
+                    "elapsed_ms": None,
+                    "marker": marker,
+                    "reason": "marker_timestamp_missing",
+                }
+            try:
+                elapsed_ms = _elapsed_from_native_event(event_timestamp_ns, marker_timestamp_ms)
+            except NativeReportError as error:
+                markers = _performance_markers(log_file)
+                return {
+                    "status": "blocked",
+                    "elapsed_ms": None,
+                    "marker": marker,
+                    "reason": str(error),
+                    "ordered_markers": markers,
+                    "terminal_error_codes": _terminal_error_codes(markers),
                 }
             return {
                 "status": "pass",
-                "elapsed_ms": round((time.monotonic() - started) * 1000, 3),
+                "elapsed_ms": elapsed_ms,
                 "marker": marker,
                 "reason": "marker_observed",
+                "measurement_clock": "unix_wall_event_boundary_ns_to_diagnostics_ms",
             }
     except OSError:
         return {
@@ -1246,10 +1624,15 @@ def _warm_reconstruction_attempt(
 ) -> dict[str, Any]:
     """Close and reopen the real Window through the native menu and Dock."""
 
-    marker = "window_reconstruction_ready"
+    # Host reconstruction is an internal readiness boundary. The measured
+    # interactive endpoint is the closed marker emitted only after the real
+    # Window has been shown and focused again.
+    marker = "window_shown_focused"
     try:
         with _running_app(executable, openvscode) as (process, _home, log_file, _started):
-            ready, offset, _ = _wait_for_marker(log_file, marker, 0)
+            ready, offset, _ = _wait_for_marker(
+                log_file, "window_reconstruction_ready", 0
+            )
             if not ready:
                 return {
                     "status": "blocked",
@@ -1272,7 +1655,15 @@ def _warm_reconstruction_attempt(
                 time.sleep(0.05)
             offset = _log_end(log_file)
             started = time.monotonic()
-            if not _launchservices_reopen("io.github.statiolake.devhub"):
+            bundle = _bundle_for_executable(executable)
+            if bundle is None:
+                return {
+                    "status": "blocked",
+                    "elapsed_ms": None,
+                    "marker": marker,
+                    "reason": "debug_app_bundle_missing",
+                }
+            if not _launchservices_reopen(bundle, process.pid):
                 return {
                     "status": "blocked",
                     "elapsed_ms": None,
@@ -1331,6 +1722,7 @@ def _warm_reconstruction_attempt(
 def _managed_openvscode_crash_attempt(
     executable: Path,
     openvscode: Path | None,
+    input_driver: _NativeInput | None,
 ) -> dict[str, Any]:
     """Crash one owned OpenVSCode child and wait for the real bridge recovery."""
 
@@ -1377,20 +1769,52 @@ def _managed_openvscode_crash_attempt(
                     "recovery_verified": False,
                     "reason": "managed_openvscode_pid_unavailable",
                 }
-            recovered, _next_offset, _ = _wait_for_marker(log_file, marker, offset, timeout=20.0)
+            degraded, degraded_offset, _ = _wait_for_marker(
+                log_file, "editor_provider_degraded", offset, timeout=10.0
+            )
             isolated = process.poll() is None
+            if not degraded:
+                return {
+                    "status": "blocked",
+                    "isolation_verified": isolated,
+                    "recovery_verified": False,
+                    "reason": "editor_provider_degraded_marker_timeout",
+                    "ordered_markers": _performance_markers(log_file),
+                }
+            origin = _wait_for_window_origin(process.pid)
+            if origin is None or input_driver is None:
+                return {
+                    "status": "blocked",
+                    "isolation_verified": isolated,
+                    "recovery_verified": False,
+                    "reason": "native_window_geometry_unavailable_after_crash",
+                    "ordered_markers": _performance_markers(log_file),
+                }
+            if input_driver.invoke("click", str(origin[0] + 247), str(origin[1] + 27)) is None:
+                return {
+                    "status": "blocked",
+                    "isolation_verified": isolated,
+                    "recovery_verified": False,
+                    "reason": "native_input_event_failed_after_crash",
+                    "ordered_markers": _performance_markers(log_file),
+                }
+            recovered, _next_offset, _ = _wait_for_marker(
+                log_file, "editor_provider_recovered", degraded_offset, timeout=20.0
+            )
             if not recovered:
                 return {
                     "status": "blocked",
                     "isolation_verified": isolated,
                     "recovery_verified": False,
-                    "reason": "editor_bridge_marker_timeout_after_crash",
+                    "reason": "editor_provider_recovered_marker_timeout",
+                    "ordered_markers": _performance_markers(log_file),
                 }
             return {
                 "status": "covered",
                 "isolation_verified": isolated,
                 "recovery_verified": True,
                 "reason": "managed_openvscode_crash_recovered",
+                "ordered_markers": _performance_markers(log_file),
             }
     except OSError:
         return {
@@ -1410,7 +1834,7 @@ def _run_timing_scenario(
     attempts: list[dict[str, Any]] = []
     for role, run in [("setup", None), *[("measured", index + 1) for index in range(MEASURED_RUNS)]]:
         if scenario == "scratch_interactive":
-            result = _marker_attempt(executable, openvscode, input_driver, "scratch_interactive")
+            result = _scratch_attempt(executable, openvscode, input_driver)
         elif scenario == "workspace_picker_first_result":
             result = _marker_attempt(
                 executable,
@@ -1722,7 +2146,7 @@ def execute(host: Mapping[str, Any], openvscode: Path | None, *, run_providers: 
         crashes[0] = {
             "id": "managed-openvscode",
             "requirement": "Crash managed OpenVSCode; verify isolation and recovery",
-            **_managed_openvscode_crash_attempt(binary, openvscode),
+            **_managed_openvscode_crash_attempt(binary, openvscode, input_driver),
         }
     if provider_checks.get("herdr_real_runtime", {}).get("status") == "pass":
         crashes[1].update({"status": "covered", "isolation_verified": True, "recovery_verified": True})
@@ -1730,6 +2154,9 @@ def execute(host: Mapping[str, Any], openvscode: Path | None, *, run_providers: 
         "tmux_pty_continuity", {}
     ).get("status") == "pass":
         crashes[2].update({"status": "covered", "isolation_verified": True, "recovery_verified": True})
+
+    if input_driver is not None:
+        input_driver.close()
 
     return {
         "schema_version": SCHEMA_VERSION,
@@ -1819,6 +2246,26 @@ def self_test() -> None:
         raise NativeReportError("sandbox boundary preflight failed")
     if _execution_boundary({})["reason"] != "native_execution_boundary_available":
         raise NativeReportError("native boundary preflight failed")
+    # The measured value is anchored to the event timestamp, not to the
+    # helper process return time. Simulated helper latency therefore cannot
+    # inflate or deflate the product interval.
+    event_timestamp_ns = 1_000_000_000_000
+    marker_timestamp_ms = 1_001_500
+    expected = _elapsed_from_native_event(event_timestamp_ns, marker_timestamp_ms)
+    injected_helper_return_ns = event_timestamp_ns + 900_000_000
+    if expected != _elapsed_from_native_event(event_timestamp_ns, marker_timestamp_ms):
+        raise NativeReportError("helper latency changed event timing")
+    if injected_helper_return_ns <= event_timestamp_ns or expected != 1_500.0:
+        raise NativeReportError("event timing self-test setup invalid")
+    if _elapsed_from_native_event(1_000_000_999_999, 1_000_000) != 0.0:
+        raise NativeReportError("millisecond clock quantization changed event timing")
+    try:
+        _elapsed_from_native_event(2_000_000_000_000, 1_999_999)
+    except NativeReportError as error:
+        if str(error) != "event_marker_clock_order_invalid":
+            raise
+    else:
+        raise NativeReportError("event/marker clock ordering was not validated")
     host = {
         "platform": {"os": "Darwin", "os_release": "local", "architecture": "arm64"},
         "toolchain": {},

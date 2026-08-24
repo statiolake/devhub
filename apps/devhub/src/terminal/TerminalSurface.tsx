@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
+import type { TerminalChannelDiagnostic } from "../app/client";
 import type { AppAppearance } from "../generated/app-shell";
 import {
   defaultTerminalClient,
@@ -29,6 +30,13 @@ export interface TerminalSurfaceProps {
   readonly hideTitle?: boolean;
   readonly onInteractive?: () => void;
   readonly onAttachInvokeRejected?: () => void;
+  readonly onResizeInvokeEntered?: () => void;
+  readonly onResizeInvokeRejected?: () => void;
+  readonly onInputInvokeEntered?: () => void;
+  readonly onInputInvokeRejected?: () => void;
+  readonly onOutputRendered?: () => void;
+  readonly onOutputAfterInputRendered?: () => void;
+  readonly onChannelDiagnostic?: (marker: TerminalChannelDiagnostic) => void;
 }
 
 type ConnectionState = "connecting" | "connected" | "disconnected";
@@ -148,6 +156,13 @@ export function TerminalSurface({
   hideTitle = false,
   onInteractive,
   onAttachInvokeRejected,
+  onResizeInvokeEntered,
+  onResizeInvokeRejected,
+  onInputInvokeEntered,
+  onInputInvokeRejected,
+  onOutputRendered,
+  onOutputAfterInputRendered,
+  onChannelDiagnostic,
 }: TerminalSurfaceProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const clientRef = useRef(client);
@@ -156,12 +171,26 @@ export function TerminalSurface({
   const controllerRef = useRef<{ retry: () => void } | null>(null);
   const interactiveRef = useRef(onInteractive);
   const attachInvokeRejectedRef = useRef(onAttachInvokeRejected);
+  const resizeInvokeEnteredRef = useRef(onResizeInvokeEntered);
+  const resizeInvokeRejectedRef = useRef(onResizeInvokeRejected);
+  const inputInvokeEnteredRef = useRef(onInputInvokeEntered);
+  const inputInvokeRejectedRef = useRef(onInputInvokeRejected);
+  const outputRenderedRef = useRef(onOutputRendered);
+  const outputAfterInputRenderedRef = useRef(onOutputAfterInputRendered);
+  const channelDiagnosticRef = useRef(onChannelDiagnostic);
   const [connection, setConnection] = useState<ConnectionState>("connecting");
   const [error, setError] = useState<string>();
 
   clientRef.current = client;
   interactiveRef.current = onInteractive;
   attachInvokeRejectedRef.current = onAttachInvokeRejected;
+  resizeInvokeEnteredRef.current = onResizeInvokeEntered;
+  resizeInvokeRejectedRef.current = onResizeInvokeRejected;
+  inputInvokeEnteredRef.current = onInputInvokeEntered;
+  inputInvokeRejectedRef.current = onInputInvokeRejected;
+  outputRenderedRef.current = onOutputRendered;
+  outputAfterInputRenderedRef.current = onOutputAfterInputRendered;
+  channelDiagnosticRef.current = onChannelDiagnostic;
 
   useEffect(() => {
     const host = hostRef.current;
@@ -184,6 +213,39 @@ export function TerminalSurface({
     let resizeTimer: ReturnType<typeof setTimeout> | undefined;
     let pendingResize: TerminalSize | undefined;
     let currentSize = FALLBACK_SIZE;
+    let inputAccepted = false;
+    let outputAfterInput = false;
+    let inputResponsePending = false;
+    let interactiveReported = false;
+    let firstOutputRendered = false;
+    let outputAfterInputRendered = false;
+    let inputGestureEpoch = 0;
+    let armedInputGestureEpoch: number | undefined;
+    let consumedInputGestureEpoch: number | undefined;
+
+    const reportInteractiveIfReady = () => {
+      if (
+        !inputResponsePending ||
+        !inputAccepted ||
+        !outputAfterInput ||
+        interactiveReported
+      ) {
+        return;
+      }
+      interactiveReported = true;
+      interactiveRef.current?.();
+    };
+
+    const discardInputGesture = () => {
+      inputGestureEpoch += 1;
+      armedInputGestureEpoch = undefined;
+      consumedInputGestureEpoch = undefined;
+    };
+
+    const armInputGesture = () => {
+      inputGestureEpoch += 1;
+      armedInputGestureEpoch = inputGestureEpoch;
+    };
 
     let terminal: Terminal;
     let fit: FitAddon;
@@ -259,10 +321,20 @@ export function TerminalSurface({
         nextReceipt.targetGeneration,
         size,
       );
-      await clientRef.current.resize({
-        ...request,
-        attachmentId: nextReceipt.attachmentId,
-      });
+      try {
+        resizeInvokeEnteredRef.current?.();
+        await clientRef.current.resize({
+          ...request,
+          attachmentId: nextReceipt.attachmentId,
+        });
+      } catch (resizeError: unknown) {
+        try {
+          resizeInvokeRejectedRef.current?.();
+        } catch {
+          // Diagnostics must never alter terminal resize behavior.
+        }
+        throw resizeError;
+      }
     };
 
     const queueResize = (size: TerminalSize, serial: number) => {
@@ -290,16 +362,26 @@ export function TerminalSurface({
 
     const attach = async () => {
       const serial = ++attachSerial;
+      discardInputGesture();
       const previousReceipt = receipt;
       if (previousReceipt && !receiptDetached) detachExact(previousReceipt);
       receipt = undefined;
       receiptDetached = false;
       inputQueue = undefined;
+      inputAccepted = false;
+      outputAfterInput = false;
+      inputResponsePending = false;
+      interactiveReported = false;
+      firstOutputRendered = false;
+      outputAfterInputRendered = false;
       const decoder = new TerminalFrameDecoder();
       let started: StartedFrame | undefined;
       let returnedReceipt: TerminalReceipt | undefined;
       let channelFailure: unknown;
       let channelFailed = false;
+      let firstChannelCallbackReceived = false;
+      let startedFrameValidated = false;
+      let frameFailureReported = false;
       let resolveStarted: () => void = () => undefined;
       let rejectStarted: (reason?: unknown) => void = () => undefined;
       let handshakeTimer: ReturnType<typeof setTimeout> | undefined;
@@ -309,6 +391,28 @@ export function TerminalSurface({
         resolveStarted = resolve;
         rejectStarted = reject;
       });
+      const reportChannelDiagnostic = (marker: TerminalChannelDiagnostic) => {
+        try {
+          channelDiagnosticRef.current?.(marker);
+        } catch {
+          // Diagnostics must never alter terminal Channel behavior.
+        }
+      };
+      const validateStartedFrame = (
+        frame: StartedFrame,
+        frameReceipt: TerminalReceipt,
+      ) => {
+        validateStarted(surfaceKey, frameReceipt, frame);
+        if (!startedFrameValidated) {
+          startedFrameValidated = true;
+          reportChannelDiagnostic("terminal_started_frame_validated");
+        }
+      };
+      const reportFrameFailure = () => {
+        if (frameFailureReported) return;
+        frameFailureReported = true;
+        reportChannelDiagnostic("terminal_frame_decode_or_identity_failed");
+      };
       setConnection("connecting");
       setError(undefined);
       currentSize = terminalSize(fit);
@@ -329,6 +433,22 @@ export function TerminalSurface({
               receiptDetached
             ) {
               return;
+            }
+            if (!firstOutputRendered) {
+              firstOutputRendered = true;
+              outputRenderedRef.current?.();
+            }
+            if (inputResponsePending) {
+              outputAfterInput = true;
+              if (!outputAfterInputRendered) {
+                outputAfterInputRendered = true;
+                try {
+                  outputAfterInputRenderedRef.current?.();
+                } catch {
+                  // Diagnostics must never alter terminal rendering.
+                }
+              }
+              reportInteractiveIfReady();
             }
             void clientRef.current
               .acknowledge({
@@ -351,13 +471,17 @@ export function TerminalSurface({
 
       const onFrame = (value: unknown) => {
         if (disposed || serial !== attachSerial || channelFailed) return;
+        if (!firstChannelCallbackReceived) {
+          firstChannelCallbackReceived = true;
+          reportChannelDiagnostic("terminal_channel_callback_received");
+        }
         try {
           const frame = decoder.push(value);
           if (!isTerminalFrame(frame)) return;
           if (frame.type === "started") {
             started = frame;
             if (returnedReceipt) {
-              validateStarted(surfaceKey, returnedReceipt, frame);
+              validateStartedFrame(frame, returnedReceipt);
             }
             if (
               returnedReceipt &&
@@ -390,6 +514,7 @@ export function TerminalSurface({
           }
           processFrame(frame, returnedReceipt);
         } catch (frameError: unknown) {
+          reportFrameFailure();
           channelFailed = true;
           channelFailure = frameError;
           if (returnedReceipt && handshakeTimer !== undefined) {
@@ -403,6 +528,11 @@ export function TerminalSurface({
 
       handshakeTimer = setTimeout(() => {
         const timeout = new Error("terminal Channel handshake timed out");
+        reportChannelDiagnostic(
+          returnedReceipt
+            ? "terminal_handshake_timeout_after_receipt"
+            : "terminal_handshake_timeout_before_receipt",
+        );
         channelFailed = true;
         channelFailure = timeout;
         rejectStarted(timeout);
@@ -441,13 +571,16 @@ export function TerminalSurface({
           detachExact(returnedReceipt);
           return;
         }
+        if (!started) {
+          reportChannelDiagnostic("terminal_receipt_before_started");
+        }
         if (!validReceipt(surfaceKey, returnedReceipt)) {
           throw new Error("terminal attachment receipt is invalid");
         }
         receipt = returnedReceipt;
         if (channelFailure) throw channelFailure;
         await startedReady;
-        if (started) validateStarted(surfaceKey, returnedReceipt, started);
+        if (started) validateStartedFrame(started, returnedReceipt);
         if (handshakeTimer !== undefined) {
           clearTimeout(handshakeTimer);
           handshakeTimer = undefined;
@@ -469,7 +602,6 @@ export function TerminalSurface({
         };
         setConnection("connected");
         await sendResize(returnedReceipt, currentSize, serial);
-        interactiveRef.current?.();
       } catch (attachError: unknown) {
         if (handshakeTimer !== undefined) {
           clearTimeout(handshakeTimer);
@@ -504,8 +636,14 @@ export function TerminalSurface({
         fail(queue.serial, inputError);
         return;
       }
-      for (const bytes of chunks) {
+      const gestureEpoch = armedInputGestureEpoch;
+      const qualifiedGesture =
+        gestureEpoch !== undefined &&
+        gestureEpoch !== consumedInputGestureEpoch;
+      if (qualifiedGesture) consumedInputGestureEpoch = gestureEpoch;
+      for (const [chunkIndex, bytes] of chunks.entries()) {
         if (bytes.length === 0 || queue.failed) continue;
+        const qualifiesInteractive = qualifiedGesture && chunkIndex === 0;
         const sequence = ++queue.nextSequence;
         queue.tail = queue.tail
           .then(async () => {
@@ -518,16 +656,37 @@ export function TerminalSurface({
             ) {
               return;
             }
-            await clientRef.current.input({
-              schemaVersion: TERMINAL_PROTOCOL_VERSION,
-              surfaceKey,
-              attachmentId: currentReceipt.attachmentId,
-              targetGeneration: currentReceipt.targetGeneration,
-              inputSequence: sequence,
-              bytes,
-            });
+            inputResponsePending =
+              qualifiesInteractive && Boolean(interactiveRef.current);
+            inputAccepted = false;
+            outputAfterInput = false;
+            try {
+              inputInvokeEnteredRef.current?.();
+              await clientRef.current.input({
+                schemaVersion: TERMINAL_PROTOCOL_VERSION,
+                surfaceKey,
+                attachmentId: currentReceipt.attachmentId,
+                targetGeneration: currentReceipt.targetGeneration,
+                inputSequence: sequence,
+                bytes,
+              });
+            } catch (inputError: unknown) {
+              try {
+                inputInvokeRejectedRef.current?.();
+              } catch {
+                // Diagnostics must never alter terminal input behavior.
+              }
+              throw inputError;
+            }
+            inputAccepted = true;
+            reportInteractiveIfReady();
           })
-          .catch((inputError: unknown) => fail(queue.serial, inputError));
+          .catch((inputError: unknown) => {
+            inputResponsePending = false;
+            inputAccepted = false;
+            outputAfterInput = false;
+            fail(queue.serial, inputError);
+          });
       }
     });
 
@@ -541,6 +700,7 @@ export function TerminalSurface({
     }
     const focusTerminal = () => terminal.focus();
     host.addEventListener("click", focusTerminal);
+    host.addEventListener("keydown", armInputGesture, true);
     void attach();
     terminal.focus();
 
@@ -561,6 +721,8 @@ export function TerminalSurface({
       resizeRef.current = null;
       observer?.disconnect();
       host.removeEventListener("click", focusTerminal);
+      host.removeEventListener("keydown", armInputGesture, true);
+      discardInputGesture();
       dataDisposable.dispose();
       if (receipt && !receiptDetached) detachExact(receipt);
       receipt = undefined;

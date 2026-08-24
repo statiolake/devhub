@@ -258,6 +258,44 @@ export function SurfaceViewport({
               ? () => recordPerformanceMarker("terminal_attach_invoke_rejected")
               : undefined
           }
+          onResizeInvokeEntered={
+            snapshot.selection.context.kind === "global"
+              ? () => recordPerformanceMarker("terminal_resize_invoke_entered")
+              : undefined
+          }
+          onResizeInvokeRejected={
+            snapshot.selection.context.kind === "global"
+              ? () => recordPerformanceMarker("terminal_resize_invoke_rejected")
+              : undefined
+          }
+          onInputInvokeEntered={
+            snapshot.selection.context.kind === "global"
+              ? () => recordPerformanceMarker("terminal_input_invoke_entered")
+              : undefined
+          }
+          onInputInvokeRejected={
+            snapshot.selection.context.kind === "global"
+              ? () => recordPerformanceMarker("terminal_input_invoke_rejected")
+              : undefined
+          }
+          onOutputRendered={
+            snapshot.selection.context.kind === "global"
+              ? () => recordPerformanceMarker("terminal_output_rendered")
+              : undefined
+          }
+          onOutputAfterInputRendered={
+            snapshot.selection.context.kind === "global"
+              ? () =>
+                  recordPerformanceMarker(
+                    "terminal_output_after_input_rendered",
+                  )
+              : undefined
+          }
+          onChannelDiagnostic={
+            snapshot.selection.context.kind === "global"
+              ? (marker) => recordPerformanceMarker(marker)
+              : undefined
+          }
         />
       ) : activity === "agent" ? (
         <SurfaceAgent

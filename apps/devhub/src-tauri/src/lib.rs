@@ -122,6 +122,7 @@ struct NativeBridgeSink {
     failed_requests: Mutex<VecDeque<(String, u64, String)>>,
     performance_diagnostics: Mutex<Option<Diagnostics>>,
     performance_ready_surfaces: Mutex<BTreeSet<String>>,
+    performance_provider_degraded: AtomicBool,
 }
 
 type BridgeRouter = Arc<dyn Fn(BridgeRequest) + Send + Sync>;
@@ -143,6 +144,7 @@ impl Default for NativeBridgeSink {
             failed_requests: Mutex::new(VecDeque::new()),
             performance_diagnostics: Mutex::new(None),
             performance_ready_surfaces: Mutex::new(BTreeSet::new()),
+            performance_provider_degraded: AtomicBool::new(false),
         }
     }
 }
@@ -208,6 +210,7 @@ impl NativeBridgeSink {
 
 impl BridgeEventSink for NativeBridgeSink {
     fn on_event(&self, event: BridgeEvent) {
+        let provider_disconnected = matches!(&event, BridgeEvent::Disconnected { .. });
         let ready_surface = match &event {
             BridgeEvent::Snapshot { surface_id, readiness, .. }
                 if *readiness == devhub_app_core::bridge::Readiness::Ready =>
@@ -276,18 +279,33 @@ impl BridgeEventSink for NativeBridgeSink {
         }
         drop(observations);
         if let Some(surface_id) = ready_surface {
-            let first_ready = self
-                .performance_ready_surfaces
-                .lock()
-                .map(|mut surfaces| surfaces.insert(surface_id))
-                .unwrap_or(false);
-            if first_ready {
-                if let Ok(diagnostics) = self.performance_diagnostics.lock() {
-                    if let Some(diagnostics) = diagnostics.as_ref() {
-                        let _ = diagnostics.emit(DiagnosticEvent::Performance {
-                            marker: PerformanceMarker::EditorBridgeReady,
-                        });
-                    }
+            let recovering = self.performance_provider_degraded.swap(false, Ordering::AcqRel);
+            if let Ok(diagnostics) = self.performance_diagnostics.lock() {
+                if let Some(diagnostics) = diagnostics.as_ref() {
+                    let marker = if recovering {
+                        PerformanceMarker::EditorProviderRecovered
+                    } else {
+                        let first_ready = self
+                            .performance_ready_surfaces
+                            .lock()
+                            .map(|mut surfaces| surfaces.insert(surface_id))
+                            .unwrap_or(false);
+                        if !first_ready {
+                            return;
+                        }
+                        PerformanceMarker::EditorBridgeReady
+                    };
+                    let _ = diagnostics.emit(DiagnosticEvent::Performance { marker });
+                }
+            }
+        }
+        if provider_disconnected && !self.performance_provider_degraded.swap(true, Ordering::AcqRel)
+        {
+            if let Ok(diagnostics) = self.performance_diagnostics.lock() {
+                if let Some(diagnostics) = diagnostics.as_ref() {
+                    let _ = diagnostics.emit(DiagnosticEvent::Performance {
+                        marker: PerformanceMarker::EditorProviderDegraded,
+                    });
                 }
             }
         }
@@ -805,6 +823,32 @@ fn native_identity_matches(
     lifecycle_generation == expected.lifecycle_generation && current == Some(expected)
 }
 
+/// Resolve a guarded Destroyed event from the identity captured at
+/// CloseRequested. AppKit may have torn down the raw Window handle before the
+/// Destroyed callback runs, so the callback must not ask the dead object for
+/// another handle. Every stored identity and the cleanup reservation still
+/// has to agree before the close can finalize.
+fn guarded_destroyed_identity(
+    phase: Phase,
+    lifecycle_generation: u64,
+    current: Option<NativeWindowIdentity>,
+    closing: Option<NativeWindowIdentity>,
+    allowance: Option<NativeWindowIdentity>,
+    cleanup: Option<WindowCleanupToken>,
+) -> Option<NativeWindowIdentity> {
+    let identity = closing?;
+    let expected_cleanup = WindowCleanupToken {
+        handle_key: identity.handle_key,
+        lifecycle_generation: identity.lifecycle_generation,
+    };
+    (phase == Phase::Closing
+        && lifecycle_generation == identity.lifecycle_generation
+        && current == Some(identity)
+        && allowance == Some(identity)
+        && cleanup == Some(expected_cleanup))
+    .then_some(identity)
+}
+
 /// Settings snapshots contain user profiles and environment values. They are
 /// therefore routed only to the settings webview and never broadcast through
 /// the application event bus.
@@ -863,10 +907,10 @@ impl NativeAppState {
         Ok(())
     }
 
-    /// Emit the terminal attach probe without making diagnostics part of the
-    /// terminal command's error path. This is intentionally opt-in and only
-    /// accepts the closed PerformanceMarker vocabulary.
-    fn record_terminal_attach_probe(&self, marker: PerformanceMarker) {
+    /// Emit a closed performance boundary probe without making diagnostics
+    /// part of the product operation's error path. This is intentionally
+    /// opt-in and accepts only the closed PerformanceMarker vocabulary.
+    fn record_performance_probe(&self, marker: PerformanceMarker) {
         if self.performance_markers_enabled {
             let _ = self.diagnostics.emit(DiagnosticEvent::Performance { marker });
         }
@@ -1164,16 +1208,17 @@ impl NativeAppState {
         }
     }
 
-    fn clear_native_window_if_current(&self, window: &tauri::Window<tauri::Wry>) {
-        let Some(identity) = self.native_window_identity(window) else { return };
+    fn clear_native_window_if_identity(&self, identity: NativeWindowIdentity) -> bool {
         if let Ok(mut current) = self.native_window_identity.lock() {
             if current.as_ref().is_some_and(|current| *current == identity) {
                 *current = None;
                 if let Ok(mut focus) = self.app_shell_focus.lock() {
                     *focus = None;
                 }
+                return true;
             }
         }
+        false
     }
 
     fn set_close_allowance(&self, identity: NativeWindowIdentity) {
@@ -1187,7 +1232,22 @@ impl NativeAppState {
     /// native close permission without consuming it before Destroyed arrives.
     fn close_allowance_matches(&self, window: &tauri::Window<tauri::Wry>) -> bool {
         let Some(identity) = self.native_window_identity(window) else { return false };
+        self.close_allowance_matches_identity(identity)
+    }
+
+    fn close_allowance_matches_identity(&self, identity: NativeWindowIdentity) -> bool {
         self.close_allowance.lock().ok().and_then(|allowance| *allowance) == Some(identity)
+    }
+
+    fn resolve_guarded_destroyed_identity(&self) -> Option<NativeWindowIdentity> {
+        guarded_destroyed_identity(
+            self.lifecycle.phase(),
+            self.lifecycle.generation(),
+            self.native_window_identity.lock().ok().and_then(|current| *current),
+            self.closing_window.lock().ok().and_then(|closing| *closing),
+            self.close_allowance.lock().ok().and_then(|allowance| *allowance),
+            self.window_cleanup.lock().ok().and_then(|cleanup| *cleanup),
+        )
     }
 
     fn require_close_cleanup_token(
@@ -1283,6 +1343,7 @@ impl NativeAppState {
     }
 
     fn start_window_projection_cleanup(&self, app: &AppHandle, token: WindowCleanupToken) {
+        self.record_performance_probe(PerformanceMarker::ProjectionCleanupStarted);
         let worker_app = app.clone();
         tauri::async_runtime::spawn_blocking(move || {
             if let Some(state) = worker_app.try_state::<NativeAppState>() {
@@ -1290,14 +1351,20 @@ impl NativeAppState {
                 if state.window_cleanup_is_current(token) {
                     if let Err(error) = state.editor_host.detach_webview_host() {
                         state.record_native_error(state_error(error));
+                    } else {
+                        state.record_performance_probe(PerformanceMarker::EditorHostDetached);
                     }
-                    if !state._terminal_runtime.detach_all_surfaces_until(deadline) {
+                    if state._terminal_runtime.detach_all_surfaces_until(deadline) {
+                        state.record_performance_probe(PerformanceMarker::TerminalSurfacesDetached);
+                    } else {
                         state.record_native_error(
                             AppErrorWire::native_unavailable()
                                 .with_summary("terminal projection cleanup exceeded deadline"),
                         );
                     }
-                    if !state.agent_surfaces.detach_all_until(deadline) {
+                    if state.agent_surfaces.detach_all_until(deadline) {
+                        state.record_performance_probe(PerformanceMarker::AgentSurfacesDetached);
+                    } else {
                         state.record_native_error(
                             AppErrorWire::native_unavailable()
                                 .with_summary("Agent projection cleanup exceeded deadline"),
@@ -1305,6 +1372,7 @@ impl NativeAppState {
                     }
                 }
                 state.finish_window_cleanup(token);
+                state.record_performance_probe(PerformanceMarker::ProjectionCleanupFinished);
             }
         });
     }
@@ -3505,6 +3573,7 @@ impl NativeAppState {
     }
 
     fn reopen_from_dock(&self, app: &AppHandle) -> Result<(), AppErrorWire> {
+        self.record_performance_probe(PerformanceMarker::ReopenWorkerEntered);
         if !claim_single_flight(&self.dock_reopen_running) {
             // A second Dock notification can arrive before the first one has
             // mounted WRY children. Wait for that owner and return the same
@@ -3529,10 +3598,15 @@ impl NativeAppState {
         }
         let result = (|| {
             if !self.wait_for_window_cleanup(Instant::now() + Duration::from_secs(5)) {
+                self.record_performance_probe(PerformanceMarker::CleanupWaitTimedOut);
                 return Err(AppErrorWire::native_unavailable()
                     .with_summary("previous Window cleanup did not finish before reopen"));
             }
+            self.record_performance_probe(PerformanceMarker::CleanupWaitFinished);
             let reopened = self.reopen()?;
+            if reopened {
+                self.record_performance_probe(PerformanceMarker::CoordinatorReopened);
+            }
             if !reopened
                 && matches!(self.lifecycle.phase(), Phase::Closing | Phase::Quitting | Phase::Quit)
             {
@@ -3548,11 +3622,14 @@ impl NativeAppState {
                 reopened || window_was_missing || !self.editor_host.window_attached();
             let result = (|| {
                 let window = ensure_app_shell_window(app, self)?;
+                self.record_performance_probe(PerformanceMarker::WindowBuilt);
                 if claimed_reconstruction {
                     self.reconstruct_window_once(app)?;
+                    self.record_performance_probe(PerformanceMarker::HostReconstructed);
                 }
                 window.show().map_err(|_| AppErrorWire::native_unavailable())?;
                 window.set_focus().map_err(|_| AppErrorWire::native_unavailable())?;
+                self.record_performance_probe(PerformanceMarker::WindowShownFocused);
                 Ok::<(), AppErrorWire>(())
             })();
             if result.is_err() && claimed_reconstruction {
@@ -5476,6 +5553,60 @@ fn terminal_attach_failure_marker(code: TerminalErrorCode) -> PerformanceMarker 
     }
 }
 
+fn terminal_resize_failure_marker(code: TerminalErrorCode) -> PerformanceMarker {
+    match code {
+        TerminalErrorCode::InvalidRequest => PerformanceMarker::TerminalResizeFailedInvalidRequest,
+        TerminalErrorCode::InvalidSurface => PerformanceMarker::TerminalResizeFailedInvalidSurface,
+        TerminalErrorCode::SurfaceUnavailable => {
+            PerformanceMarker::TerminalResizeFailedSurfaceUnavailable
+        }
+        TerminalErrorCode::StaleTarget => PerformanceMarker::TerminalResizeFailedStaleTarget,
+        TerminalErrorCode::WrongAttachment => {
+            PerformanceMarker::TerminalResizeFailedWrongAttachment
+        }
+        TerminalErrorCode::AttachmentLimit => {
+            PerformanceMarker::TerminalResizeFailedAttachmentLimit
+        }
+        TerminalErrorCode::SessionUnavailable => {
+            PerformanceMarker::TerminalResizeFailedSessionUnavailable
+        }
+        TerminalErrorCode::PtyUnavailable => PerformanceMarker::TerminalResizeFailedPtyUnavailable,
+        TerminalErrorCode::InputTooLarge => PerformanceMarker::TerminalResizeFailedInputTooLarge,
+        TerminalErrorCode::InvalidResize => PerformanceMarker::TerminalResizeFailedInvalidResize,
+        TerminalErrorCode::ChannelClosed => PerformanceMarker::TerminalResizeFailedChannelClosed,
+        TerminalErrorCode::Backpressure => PerformanceMarker::TerminalResizeFailedBackpressure,
+        TerminalErrorCode::RuntimeUnavailable => {
+            PerformanceMarker::TerminalResizeFailedRuntimeUnavailable
+        }
+        TerminalErrorCode::Internal => PerformanceMarker::TerminalResizeFailedInternal,
+    }
+}
+
+fn terminal_input_failure_marker(code: TerminalErrorCode) -> PerformanceMarker {
+    match code {
+        TerminalErrorCode::InvalidRequest => PerformanceMarker::TerminalInputFailedInvalidRequest,
+        TerminalErrorCode::InvalidSurface => PerformanceMarker::TerminalInputFailedInvalidSurface,
+        TerminalErrorCode::SurfaceUnavailable => {
+            PerformanceMarker::TerminalInputFailedSurfaceUnavailable
+        }
+        TerminalErrorCode::StaleTarget => PerformanceMarker::TerminalInputFailedStaleTarget,
+        TerminalErrorCode::WrongAttachment => PerformanceMarker::TerminalInputFailedWrongAttachment,
+        TerminalErrorCode::AttachmentLimit => PerformanceMarker::TerminalInputFailedAttachmentLimit,
+        TerminalErrorCode::SessionUnavailable => {
+            PerformanceMarker::TerminalInputFailedSessionUnavailable
+        }
+        TerminalErrorCode::PtyUnavailable => PerformanceMarker::TerminalInputFailedPtyUnavailable,
+        TerminalErrorCode::InputTooLarge => PerformanceMarker::TerminalInputFailedInputTooLarge,
+        TerminalErrorCode::InvalidResize => PerformanceMarker::TerminalInputFailedInvalidResize,
+        TerminalErrorCode::ChannelClosed => PerformanceMarker::TerminalInputFailedChannelClosed,
+        TerminalErrorCode::Backpressure => PerformanceMarker::TerminalInputFailedBackpressure,
+        TerminalErrorCode::RuntimeUnavailable => {
+            PerformanceMarker::TerminalInputFailedRuntimeUnavailable
+        }
+        TerminalErrorCode::Internal => PerformanceMarker::TerminalInputFailedInternal,
+    }
+}
+
 fn load_config_profiles(
     config: &devhub_app_core::config::Config,
 ) -> Result<Vec<DomainAgentProfile>, AppErrorWire> {
@@ -5885,7 +6016,7 @@ async fn terminal_attach(
     channel: tauri::ipc::Channel<tauri::ipc::InvokeResponseBody>,
 ) -> Result<AttachReceipt, TerminalError> {
     let state = app.state::<NativeAppState>();
-    state.record_terminal_attach_probe(PerformanceMarker::TerminalAttachEntered);
+    state.record_performance_probe(PerformanceMarker::TerminalAttachEntered);
     let webview_label = webview.label().to_owned();
     let surface_key = payload.surface_key.clone();
     let result = terminal_worker(app.clone(), move |state, token| {
@@ -5903,10 +6034,8 @@ async fn terminal_attach(
     })
     .await;
     match &result {
-        Ok(_) => state.record_terminal_attach_probe(PerformanceMarker::TerminalAttachSucceeded),
-        Err(error) => {
-            state.record_terminal_attach_probe(terminal_attach_failure_marker(error.code()))
-        }
+        Ok(_) => state.record_performance_probe(PerformanceMarker::TerminalAttachSucceeded),
+        Err(error) => state.record_performance_probe(terminal_attach_failure_marker(error.code())),
     }
     result
 }
@@ -5917,9 +6046,18 @@ async fn terminal_input(
     webview: Webview<tauri::Wry>,
     payload: InputRequest,
 ) -> Result<(), TerminalError> {
+    let state = app.state::<NativeAppState>();
+    state.record_performance_probe(PerformanceMarker::TerminalInputEntered);
     let webview_label = webview.label().to_owned();
-    terminal_worker(app, move |state, token| state.terminal_input(&webview_label, payload, token))
-        .await
+    let result = terminal_worker(app.clone(), move |state, token| {
+        state.terminal_input(&webview_label, payload, token)
+    })
+    .await;
+    match &result {
+        Ok(_) => state.record_performance_probe(PerformanceMarker::TerminalInputSucceeded),
+        Err(error) => state.record_performance_probe(terminal_input_failure_marker(error.code())),
+    }
+    result
 }
 
 #[tauri::command]
@@ -5928,9 +6066,18 @@ async fn terminal_resize(
     webview: Webview<tauri::Wry>,
     payload: ResizeRequest,
 ) -> Result<(), TerminalError> {
+    let state = app.state::<NativeAppState>();
+    state.record_performance_probe(PerformanceMarker::TerminalResizeEntered);
     let webview_label = webview.label().to_owned();
-    terminal_worker(app, move |state, token| state.terminal_resize(&webview_label, payload, token))
-        .await
+    let result = terminal_worker(app.clone(), move |state, token| {
+        state.terminal_resize(&webview_label, payload, token)
+    })
+    .await;
+    match &result {
+        Ok(_) => state.record_performance_probe(PerformanceMarker::TerminalResizeSucceeded),
+        Err(error) => state.record_performance_probe(terminal_resize_failure_marker(error.code())),
+    }
+    result
 }
 
 #[tauri::command]
@@ -6401,40 +6548,50 @@ pub fn run() {
                     });
                 }
                 tauri::WindowEvent::Destroyed => {
-                    let Some(identity) = state.native_window_identity(window) else {
-                        return;
-                    };
-                    let closing_matches = state
-                        .closing_window
-                        .lock()
-                        .ok()
-                        .and_then(|closing| *closing)
-                        .is_some_and(|closing| closing == identity);
-                    if state.lifecycle.phase() == Phase::Closing && closing_matches {
+                    if state.lifecycle.phase() == Phase::Closing {
+                        // AppKit may have invalidated the raw handle before
+                        // this callback. Resolve the guarded close entirely
+                        // from the identity captured at CloseRequested and
+                        // the stored cleanup/allowance reservations.
+                        let Some(identity) = state.resolve_guarded_destroyed_identity() else {
+                            return;
+                        };
                         let cleanup_token = WindowCleanupToken {
                             handle_key: identity.handle_key,
                             lifecycle_generation: identity.lifecycle_generation,
                         };
-                        let close_was_guarded = state.close_allowance_matches(window);
                         if let Ok(mut allowance) = state.close_allowance.lock() {
-                            *allowance = None;
+                            if allowance.as_ref().is_some_and(|allowance| *allowance == identity) {
+                                *allowance = None;
+                            } else {
+                                return;
+                            }
                         }
                         if let Ok(mut closing) = state.closing_window.lock() {
-                            *closing = None;
+                            if closing.as_ref().is_some_and(|closing| *closing == identity) {
+                                *closing = None;
+                            } else {
+                                return;
+                            }
                         }
-                        state.clear_native_window_if_current(window);
+                        if !state.clear_native_window_if_identity(identity) {
+                            return;
+                        }
                         state.finish_close_transaction();
                         state.clear_close_rollback_snapshot();
-                        if close_was_guarded || state.window_cleanup_is_current(cleanup_token) {
-                            state.start_window_projection_cleanup(&app, cleanup_token);
-                        }
+                        state.start_window_projection_cleanup(&app, cleanup_token);
                     } else if state.lifecycle.phase() == Phase::Open {
                         // AppKit can destroy a Window without first delivering
                         // CloseRequested (crash-equivalent teardown). The
                         // identity match above proves this is the current
                         // concrete Window; visibility is not a generation
                         // discriminator and is intentionally not consulted.
-                        state.clear_native_window_if_current(window);
+                        let Some(identity) = state.native_window_identity(window) else {
+                            return;
+                        };
+                        if !state.clear_native_window_if_identity(identity) {
+                            return;
+                        }
                         state.mark_unexpected_destroyed_transaction();
                         let cleanup_token = WindowCleanupToken {
                             handle_key: identity.handle_key,
@@ -6524,6 +6681,9 @@ pub fn run() {
         .run(|app_handle: &AppHandle, event| {
             match event {
                 tauri::RunEvent::Reopen { .. } => {
+                    app_handle
+                        .state::<NativeAppState>()
+                        .record_performance_probe(PerformanceMarker::DockReopenReceived);
                     let app = app_handle.clone();
                     let worker_app = app.clone();
                     tauri::async_runtime::spawn(async move {
@@ -6532,13 +6692,22 @@ pub fn run() {
                         })
                         .await;
                         match result {
-                            Ok(Ok(())) => {}
+                            Ok(Ok(())) => {
+                                app.state::<NativeAppState>().record_performance_probe(
+                                    PerformanceMarker::DockReopenSucceeded,
+                                );
+                            }
                             Ok(Err(error)) => {
+                                app.state::<NativeAppState>()
+                                    .record_performance_probe(PerformanceMarker::DockReopenFailed);
                                 app.state::<NativeAppState>().record_native_error(error)
                             }
-                            Err(_) => app
-                                .state::<NativeAppState>()
-                                .record_native_error(AppErrorWire::native_unavailable()),
+                            Err(_) => {
+                                app.state::<NativeAppState>()
+                                    .record_performance_probe(PerformanceMarker::DockReopenFailed);
+                                app.state::<NativeAppState>()
+                                    .record_native_error(AppErrorWire::native_unavailable())
+                            }
                         }
                     });
                 }
@@ -7945,6 +8114,86 @@ mod tests {
     }
 
     #[test]
+    fn guarded_destroyed_uses_captured_identity_without_raw_handle() {
+        let identity = NativeWindowIdentity { handle_key: 77, lifecycle_generation: 4 };
+        let token = WindowCleanupToken {
+            handle_key: identity.handle_key,
+            lifecycle_generation: identity.lifecycle_generation,
+        };
+        assert_eq!(
+            guarded_destroyed_identity(
+                Phase::Closing,
+                identity.lifecycle_generation,
+                Some(identity),
+                Some(identity),
+                Some(identity),
+                Some(token),
+            ),
+            Some(identity),
+            "guarded Destroyed must resolve from stored identity after raw handle teardown"
+        );
+    }
+
+    #[test]
+    fn guarded_destroyed_rejects_stale_identity_or_cleanup_reservation() {
+        let identity = NativeWindowIdentity { handle_key: 77, lifecycle_generation: 4 };
+        let replacement = NativeWindowIdentity { handle_key: 88, lifecycle_generation: 5 };
+        let token = WindowCleanupToken {
+            handle_key: identity.handle_key,
+            lifecycle_generation: identity.lifecycle_generation,
+        };
+        let invalid = [
+            (
+                Phase::Open,
+                identity.lifecycle_generation,
+                Some(identity),
+                Some(identity),
+                Some(identity),
+                Some(token),
+            ),
+            (
+                Phase::Closing,
+                replacement.lifecycle_generation,
+                Some(identity),
+                Some(identity),
+                Some(identity),
+                Some(token),
+            ),
+            (
+                Phase::Closing,
+                identity.lifecycle_generation,
+                Some(replacement),
+                Some(identity),
+                Some(identity),
+                Some(token),
+            ),
+            (
+                Phase::Closing,
+                identity.lifecycle_generation,
+                Some(identity),
+                Some(identity),
+                Some(replacement),
+                Some(token),
+            ),
+            (
+                Phase::Closing,
+                identity.lifecycle_generation,
+                Some(identity),
+                Some(identity),
+                Some(identity),
+                None,
+            ),
+        ];
+        for (phase, generation, current, closing, allowance, cleanup) in invalid {
+            assert_eq!(
+                guarded_destroyed_identity(phase, generation, current, closing, allowance, cleanup),
+                None,
+                "stale Destroyed state must not clear a current Window"
+            );
+        }
+    }
+
+    #[test]
     fn stale_frame_worker_cannot_clear_reopened_window_flags() {
         assert!(!frame_persist_owner_matches(2, 21, 1, 20));
         assert!(!frame_persist_owner_matches(2, 21, 2, 20));
@@ -7969,6 +8218,11 @@ mod tests {
             lifecycle_generation: state.lifecycle.generation(),
         };
         assert!(state.begin_window_cleanup(token));
+        assert!(!state.wait_for_window_cleanup(Instant::now() + Duration::from_millis(5)));
+        state.finish_window_cleanup(WindowCleanupToken {
+            handle_key: token.handle_key + 1,
+            lifecycle_generation: token.lifecycle_generation,
+        });
         assert!(!state.wait_for_window_cleanup(Instant::now() + Duration::from_millis(5)));
         state.finish_window_cleanup(token);
         assert!(state.wait_for_window_cleanup(Instant::now() + Duration::from_millis(50)));

@@ -253,6 +253,101 @@ describe("TerminalSurface lifecycle", () => {
     );
   });
 
+  it("proves interactive only after accepted input and a later rendered response", async () => {
+    const harness = clientHarness();
+    const onInteractive = vi.fn();
+    render(
+      <TerminalSurface
+        surfaceKey="global-terminal"
+        surfaceLabel="Scratch"
+        client={harness.client}
+        onInteractive={onInteractive}
+      />,
+    );
+    await waitFor(() => expect(harness.client.resize).toHaveBeenCalledTimes(1));
+    expect(onInteractive).not.toHaveBeenCalled();
+
+    act(() => {
+      fireEvent.keyDown(screen.getByRole("textbox"), {
+        key: "Enter",
+        code: "Enter",
+      });
+      mocks.terminals[0].emitData("\r");
+    });
+    await waitFor(() => expect(harness.client.input).toHaveBeenCalledTimes(1));
+    expect(onInteractive).not.toHaveBeenCalled();
+
+    act(() =>
+      harness.handlers[0](
+        output(
+          harness.receipts[0].attachmentId,
+          1,
+          new TextEncoder().encode("response"),
+        ),
+      ),
+    );
+    await waitFor(() => expect(onInteractive).toHaveBeenCalledTimes(1));
+  });
+
+  it("ignores pre-key Channel traffic and consumes one real key gesture", async () => {
+    const harness = clientHarness();
+    const onInteractive = vi.fn();
+    render(
+      <TerminalSurface
+        surfaceKey="global-terminal"
+        surfaceLabel="Scratch"
+        client={harness.client}
+        onInteractive={onInteractive}
+      />,
+    );
+    await waitFor(() => expect(harness.client.resize).toHaveBeenCalledTimes(1));
+
+    // Focus/DEC-report traffic is still forwarded to the real terminal, but
+    // cannot arm the performance-only interactive attribution.
+    act(() => mocks.terminals[0].emitData("\u001b[I"));
+    await waitFor(() => expect(harness.client.input).toHaveBeenCalledTimes(1));
+    act(() =>
+      harness.handlers[0](
+        output(
+          harness.receipts[0].attachmentId,
+          1,
+          new TextEncoder().encode("focus response"),
+        ),
+      ),
+    );
+    expect(onInteractive).not.toHaveBeenCalled();
+
+    act(() => {
+      fireEvent.keyDown(screen.getByRole("textbox"), {
+        key: "Enter",
+        code: "Enter",
+      });
+      mocks.terminals[0].emitData("\r");
+    });
+    await waitFor(() => expect(harness.client.input).toHaveBeenCalledTimes(2));
+    act(() =>
+      harness.handlers[0](
+        output(
+          harness.receipts[0].attachmentId,
+          2,
+          new TextEncoder().encode("sentinel response"),
+        ),
+      ),
+    );
+    await waitFor(() => expect(onInteractive).toHaveBeenCalledTimes(1));
+
+    act(() =>
+      harness.handlers[0](
+        output(
+          harness.receipts[0].attachmentId,
+          3,
+          new TextEncoder().encode("later response"),
+        ),
+      ),
+    );
+    expect(onInteractive).toHaveBeenCalledTimes(1);
+  });
+
   it("reports an invoke rejection without exposing terminal payloads", async () => {
     const harness = clientHarness();
     harness.client.attach = vi.fn(async () => {
