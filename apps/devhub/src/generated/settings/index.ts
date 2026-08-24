@@ -77,7 +77,9 @@ export type SettingsErrorCodeWire =
   | "invalid_file"
   | "runtime_unavailable"
   | "native_unavailable"
-  | "permission_denied";
+  | "permission_denied"
+  | "native_busy"
+  | "native_timed_out";
 export interface SettingsErrorWire {
   readonly code: SettingsErrorCodeWire;
   readonly currentRevision?: string | null;
@@ -366,6 +368,8 @@ const SETTINGS_SCHEMA = {
         "runtime_unavailable",
         "native_unavailable",
         "permission_denied",
+        "native_busy",
+        "native_timed_out",
       ],
       type: "string",
     },
@@ -422,6 +426,8 @@ const SETTINGS_SCHEMA = {
             "runtime_unavailable",
             "native_unavailable",
             "permission_denied",
+            "native_busy",
+            "native_timed_out",
           ],
           type: "string",
         },

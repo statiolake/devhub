@@ -4,21 +4,32 @@
 //! deliberately non-blocking: callers enqueue an owned record and a single
 //! writer thread performs all filesystem work, rotation, and fsync.
 
+#[cfg(target_os = "macos")]
+use objc2_app_kit::NSWorkspace;
+#[cfg(target_os = "macos")]
+use objc2_foundation::{NSString, NSURL};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
-use std::fs::{self, File, OpenOptions};
+#[cfg(any(not(unix), test))]
+use std::fs;
+use std::fs::File;
+#[cfg(not(unix))]
+use std::fs::OpenOptions;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command as ProcessCommand, Stdio};
 use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender, TrySendError};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+#[cfg(unix)]
 use nix::unistd::geteuid;
 #[cfg(unix)]
-use std::os::unix::fs::{MetadataExt, PermissionsExt};
+use rustix::fs::{fchmod, mkdirat, open, openat, renameat, Mode, OFlags};
+#[cfg(unix)]
+use std::os::unix::fs::MetadataExt;
 
 pub const LOG_LIMIT_BYTES: u64 = 10 * 1024 * 1024;
 pub const MAX_GENERATIONS: usize = 5;
@@ -28,10 +39,16 @@ const MAX_RECENT_CODES: usize = 16;
 const QUEUE_CAPACITY: usize = 256;
 const LOG_FILE: &str = "devhub.jsonl";
 const MARKER_FILE: &str = "session.json";
+#[cfg(not(target_os = "macos"))]
 const OPEN_COMMAND: &str = "/usr/bin/open";
 const PBCOPY_COMMAND: &str = "/usr/bin/pbcopy";
 const FLUSH_TIMEOUT: Duration = Duration::from_secs(2);
+const OWNER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
 static FALLBACK_COUNTER: AtomicU64 = AtomicU64::new(1);
+static FINDER_OPERATION_COUNTER: AtomicU64 = AtomicU64::new(1);
+
+#[cfg(test)]
+static TEST_DIAGNOSTICS: std::sync::OnceLock<Mutex<Vec<Weak<Inner>>>> = std::sync::OnceLock::new();
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -175,13 +192,38 @@ struct Marker {
 
 #[derive(Debug)]
 struct Writer {
-    directory: PathBuf,
+    directory: Option<SecureDirectory>,
     file: Option<File>,
+}
+
+/// A directory opened once and then used as the authority for all diagnostics
+/// filesystem operations.  Entries are opened with openat(O_NOFOLLOW), so a
+/// path validation cannot be separated from the descriptor that is used.
+#[cfg(unix)]
+#[derive(Debug)]
+struct SecureDirectory {
+    path: PathBuf,
+    fd: File,
+}
+
+#[cfg(not(unix))]
+#[derive(Debug)]
+struct SecureDirectory {
+    path: PathBuf,
+}
+
+type FinderOpener = Box<dyn FnOnce(SecureDirectory) -> Result<(), ActionError> + Send + 'static>;
+
+struct FinderRequest {
+    operation_id: u64,
+    directory: SecureDirectory,
+    opener: FinderOpener,
+    response: SyncSender<Result<(), ActionError>>,
 }
 
 enum Command {
     Record { bytes: Vec<u8> },
-    Marker { clean: bool },
+    Marker { clean: bool, ack: Option<SyncSender<bool>> },
     Flush(SyncSender<bool>),
     Stop(SyncSender<bool>),
 }
@@ -191,11 +233,38 @@ pub struct Diagnostics {
     inner: Arc<Inner>,
 }
 
+/// The process-owned last reference. Short-lived command clones remain cheap
+/// `Diagnostics` handles; only this owner performs bounded best-effort
+/// teardown when the native state is dropped without going through Quit.
+pub struct DiagnosticsOwner {
+    diagnostics: Diagnostics,
+}
+
+impl DiagnosticsOwner {
+    pub fn new(diagnostics: Diagnostics) -> Self {
+        Self { diagnostics }
+    }
+}
+
+impl Drop for DiagnosticsOwner {
+    fn drop(&mut self) {
+        let _ = self.diagnostics.shutdown(OWNER_SHUTDOWN_TIMEOUT);
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ActionError {
     Unavailable,
     PermissionDenied,
+    Busy,
     TimedOut,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShutdownOutcome {
+    Complete,
+    TimedOut,
+    Failed,
 }
 
 #[derive(Debug)]
@@ -205,9 +274,27 @@ struct Inner {
     version: String,
     level: LogLevel,
     directory: PathBuf,
-    marker_path: PathBuf,
     previous_exit: PreviousExit,
     sender: SyncSender<Command>,
+    /// The writer is explicitly owned so test and process teardown can stop
+    /// it before its HOME/log directory is removed. The worker only keeps a
+    /// Weak reference back to this value; otherwise the handle and worker
+    /// would form an Arc cycle and a dropped Diagnostics could never reclaim
+    /// its thread.
+    worker: Mutex<Option<thread::JoinHandle<()>>>,
+    worker_done: Arc<std::sync::atomic::AtomicBool>,
+    /// 0=running, 1=stop sent, 2=stop acknowledged, 3=joined, 4=terminal
+    /// stop failure. A failed send/ack is never retried with a duplicate Stop.
+    shutdown_state: AtomicU8,
+    stop_receiver: Mutex<Option<Receiver<bool>>>,
+    stop_result: AtomicU8,
+    shutdown_lock: Mutex<()>,
+    /// A single actor is created for the native runtime owner.  Its operation
+    /// may remain blocked until AppKit returns, but no second actor or
+    /// per-request reaper can be created while that happens.
+    finder_sender: Mutex<Option<SyncSender<FinderRequest>>>,
+    finder_worker: Mutex<Option<thread::JoinHandle<()>>>,
+    finder_operation: Arc<Mutex<Option<u64>>>,
     health: AtomicU8,
     recent_codes: Mutex<BTreeSet<Code>>,
 }
@@ -227,33 +314,80 @@ impl Diagnostics {
     /// Unsafe log state degrades diagnostics but never prevents startup.
     pub fn open(home: &Path, version: impl Into<String>, state_clean: Option<bool>) -> Self {
         let directory = home.join("Library").join("Logs").join("DevHub");
-        let marker_path = directory.join(MARKER_FILE);
-        let marker_exit =
-            ensure_log_directory(home).ok().and_then(|_| read_previous_marker(&directory));
+        let secure_directory = open_secure_directory(&directory).ok();
+        let marker_exit = secure_directory.as_ref().and_then(read_previous_marker);
         let previous_exit = reconcile_previous_exit(state_clean, marker_exit);
         let session_id = new_session_id();
         let version = version.into();
-        let file = open_log(&directory).ok();
+        let file = secure_directory.as_ref().and_then(|directory| open_log(directory).ok());
         let initial_health = if file.is_some() { 1 } else { 2 };
         let (sender, receiver) = sync_channel(QUEUE_CAPACITY);
+        let (finder_sender, finder_receiver) = sync_channel(1);
+        let finder_operation = Arc::new(Mutex::new(None));
         let inner = Arc::new(Inner {
             home: home.to_path_buf(),
             session_id,
             version,
             level: LogLevel::Info,
             directory: directory.clone(),
-            marker_path,
             previous_exit,
             sender,
+            worker: Mutex::new(None),
+            worker_done: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            shutdown_state: AtomicU8::new(0),
+            stop_receiver: Mutex::new(None),
+            stop_result: AtomicU8::new(0),
+            shutdown_lock: Mutex::new(()),
+            finder_sender: Mutex::new(Some(finder_sender)),
+            finder_worker: Mutex::new(None),
+            finder_operation: finder_operation.clone(),
             health: AtomicU8::new(initial_health),
             recent_codes: Mutex::new(BTreeSet::new()),
         });
-        let worker_inner = inner.clone();
-        let _ = thread::Builder::new().name("devhub-diagnostics".to_owned()).spawn(move || {
-            writer_loop(receiver, Writer { directory, file }, worker_inner);
-        });
+        let worker_inner = Arc::downgrade(&inner);
+        let worker_done = inner.worker_done.clone();
+        if let Ok(worker) =
+            thread::Builder::new().name("devhub-diagnostics".to_owned()).spawn(move || {
+                writer_loop(
+                    receiver,
+                    Writer { directory: secure_directory, file },
+                    worker_inner,
+                    worker_done,
+                );
+            })
+        {
+            if let Ok(mut slot) = inner.worker.lock() {
+                *slot = Some(worker);
+            }
+        } else {
+            inner.health.store(2, Ordering::Release);
+        }
+        match thread::Builder::new()
+            .name("devhub-finder".to_owned())
+            .spawn(move || finder_loop(finder_receiver, finder_operation))
+        {
+            Ok(worker) => {
+                if let Ok(mut slot) = inner.finder_worker.lock() {
+                    *slot = Some(worker);
+                }
+            }
+            Err(_) => {
+                if let Ok(mut sender) = inner.finder_sender.lock() {
+                    *sender = None;
+                }
+            }
+        }
+        #[cfg(test)]
+        TEST_DIAGNOSTICS
+            .get_or_init(|| Mutex::new(Vec::new()))
+            .lock()
+            .expect("diagnostics test registry")
+            .push(Arc::downgrade(&inner));
         let diagnostics = Self { inner };
-        diagnostics.enqueue_control(Command::Marker { clean: false }, FLUSH_TIMEOUT);
+        diagnostics.enqueue_control_until(
+            Command::Marker { clean: false, ack: None },
+            std::time::Instant::now() + FLUSH_TIMEOUT,
+        );
         diagnostics.emit(DiagnosticEvent::Launch { previous_exit });
         if matches!(previous_exit, PreviousExit::Unclean) {
             diagnostics.emit(DiagnosticEvent::Error {
@@ -304,35 +438,263 @@ impl Diagnostics {
 
     /// Queues the clean marker and flushes with a bounded deadline. No caller
     /// mutex is held while the writer performs filesystem I/O.
-    pub fn mark_clean_shutdown(&self) {
-        if self.enqueue_control(Command::Marker { clean: true }, FLUSH_TIMEOUT) {
-            let _ = self.flush(FLUSH_TIMEOUT);
-        }
-    }
-
     pub fn flush(&self, timeout: Duration) -> bool {
-        let (ack, receiver) = sync_channel(0);
-        if !self.enqueue_control(Command::Flush(ack), timeout) {
-            return false;
-        }
-        receiver.recv_timeout(timeout).unwrap_or(false)
+        let deadline = std::time::Instant::now() + timeout;
+        self.flush_until(deadline)
     }
 
-    pub fn shutdown(&self, timeout: Duration) -> bool {
+    fn flush_until(&self, deadline: std::time::Instant) -> bool {
         let (ack, receiver) = sync_channel(0);
-        if !self.enqueue_control(Command::Stop(ack), timeout) {
+        if !self.enqueue_control_until(Command::Flush(ack), deadline) {
             return false;
         }
-        receiver.recv_timeout(timeout).unwrap_or(false)
+        let Some(remaining) = remaining(deadline) else { return false };
+        receiver.recv_timeout(remaining).unwrap_or(false)
     }
 
+    /// Queue the clean marker and stop the writer under one absolute
+    /// deadline. The caller may commit clean state only after Complete.
+    #[cfg(test)]
+    pub fn clean_shutdown(&self, timeout: Duration) -> ShutdownOutcome {
+        self.clean_shutdown_until(std::time::Instant::now() + timeout)
+    }
+
+    pub fn clean_shutdown_until(&self, deadline: std::time::Instant) -> ShutdownOutcome {
+        let Some(_shutdown) = self.lock_until(deadline) else { return ShutdownOutcome::Failed };
+        if self.inner.shutdown_state.load(Ordering::Acquire) != 0 {
+            return ShutdownOutcome::Failed;
+        }
+        if !self.mark_clean_until(deadline) {
+            return match self.stop_until(deadline) {
+                ShutdownOutcome::TimedOut => ShutdownOutcome::TimedOut,
+                ShutdownOutcome::Complete | ShutdownOutcome::Failed => ShutdownOutcome::Failed,
+            };
+        }
+        self.stop_until(deadline)
+    }
+
+    pub fn shutdown(&self, timeout: Duration) -> ShutdownOutcome {
+        let deadline = std::time::Instant::now() + timeout;
+        let Some(_shutdown) = self.lock_until(deadline) else { return ShutdownOutcome::Failed };
+        self.stop_until(deadline)
+    }
+
+    fn mark_clean_until(&self, deadline: std::time::Instant) -> bool {
+        if self.inner.shutdown_state.load(Ordering::Acquire) != 0 {
+            return false;
+        }
+        let (ack, receiver) = sync_channel(0);
+        if !self.enqueue_control_until(Command::Marker { clean: true, ack: Some(ack) }, deadline) {
+            return false;
+        }
+        let Some(remaining) = remaining(deadline) else { return false };
+        if !receiver.recv_timeout(remaining).unwrap_or(false) {
+            return false;
+        }
+        self.flush_until(deadline)
+    }
+
+    fn stop_until(&self, deadline: std::time::Instant) -> ShutdownOutcome {
+        const RUNNING: u8 = 0;
+        const STOP_SENT: u8 = 1;
+        const STOP_ACKED: u8 = 2;
+        const JOINED: u8 = 3;
+        const FAILED: u8 = 4;
+        let state = self.inner.shutdown_state.load(Ordering::Acquire);
+        if state == JOINED {
+            return if self.inner.stop_result.load(Ordering::Acquire) == 1 {
+                ShutdownOutcome::Complete
+            } else {
+                ShutdownOutcome::Failed
+            };
+        }
+        if state == RUNNING {
+            let (ack, receiver) = sync_channel(0);
+            if !self.enqueue_control_until(Command::Stop(ack), deadline) {
+                self.inner.shutdown_state.store(FAILED, Ordering::Release);
+                return ShutdownOutcome::Failed;
+            }
+            if let Ok(mut current) = self.inner.stop_receiver.lock() {
+                *current = Some(receiver);
+            } else {
+                self.inner.shutdown_state.store(FAILED, Ordering::Release);
+                return ShutdownOutcome::Failed;
+            }
+            self.inner.shutdown_state.store(STOP_SENT, Ordering::Release);
+        }
+
+        if self.inner.shutdown_state.load(Ordering::Acquire) == STOP_SENT {
+            let Some(remaining) = remaining(deadline) else { return ShutdownOutcome::TimedOut };
+            let result = self.inner.stop_receiver.lock().ok().and_then(|mut receiver| {
+                receiver.as_mut().map(|receiver| receiver.recv_timeout(remaining))
+            });
+            match result {
+                Some(Ok(true)) => self.inner.stop_result.store(1, Ordering::Release),
+                Some(Ok(false)) => self.inner.stop_result.store(2, Ordering::Release),
+                Some(Err(std::sync::mpsc::RecvTimeoutError::Timeout)) => {
+                    return ShutdownOutcome::TimedOut
+                }
+                Some(Err(std::sync::mpsc::RecvTimeoutError::Disconnected)) | None => {
+                    self.inner.shutdown_state.store(FAILED, Ordering::Release);
+                    return ShutdownOutcome::Failed;
+                }
+            }
+            if let Ok(mut receiver) = self.inner.stop_receiver.lock() {
+                receiver.take();
+            }
+            self.inner.shutdown_state.store(STOP_ACKED, Ordering::Release);
+        }
+
+        if self.inner.shutdown_state.load(Ordering::Acquire) == FAILED {
+            if !self.inner.worker_done.load(Ordering::Acquire) {
+                return ShutdownOutcome::TimedOut;
+            }
+            self.join_worker();
+            return ShutdownOutcome::Failed;
+        }
+
+        while !self.inner.worker_done.load(Ordering::Acquire) {
+            if remaining(deadline).is_none() {
+                return ShutdownOutcome::TimedOut;
+            }
+            thread::yield_now();
+        }
+        self.join_worker();
+        if self.inner.stop_result.load(Ordering::Acquire) == 1 {
+            ShutdownOutcome::Complete
+        } else {
+            ShutdownOutcome::Failed
+        }
+    }
+
+    fn join_worker(&self) {
+        if let Some(worker) = self.inner.worker.lock().ok().and_then(|mut slot| slot.take()) {
+            let _ = worker.join();
+        }
+        self.inner.shutdown_state.store(3, Ordering::Release);
+    }
+
+    fn lock_until(&self, deadline: std::time::Instant) -> Option<std::sync::MutexGuard<'_, ()>> {
+        loop {
+            match self.inner.shutdown_lock.try_lock() {
+                Ok(lock) => return Some(lock),
+                Err(std::sync::TryLockError::Poisoned(_)) => return None,
+                Err(std::sync::TryLockError::WouldBlock) if remaining(deadline).is_some() => {
+                    thread::yield_now();
+                }
+                Err(std::sync::TryLockError::WouldBlock) => return None,
+            }
+        }
+    }
+
+    /// Test-only teardown for NativeAppState fixtures. Tests intentionally
+    /// keep state alive until their assertions finish, so cleanup cannot rely
+    /// on Rust drop order alone; this closes every writer rooted at the
+    /// fixture HOME before its directory is removed.
+    #[cfg(test)]
+    pub(crate) fn shutdown_for_test_home(home: &Path, timeout: Duration) -> bool {
+        let Some(registry) = TEST_DIAGNOSTICS.get() else { return true };
+        let inners = {
+            let Ok(mut entries) = registry.lock() else { return false };
+            let mut live = Vec::new();
+            entries.retain(|entry| {
+                let Some(inner) = entry.upgrade() else { return false };
+                if inner.home == home {
+                    live.push(inner);
+                }
+                true
+            });
+            live
+        };
+        inners.into_iter().all(|inner| {
+            let diagnostics = Diagnostics { inner };
+            // A live worker drains queued records in FIFO order before Stop;
+            // if production quit already joined it, shutdown is the
+            // idempotent acknowledgement that no further writes are owned.
+            matches!(diagnostics.shutdown(timeout), ShutdownOutcome::Complete)
+        })
+    }
+
+    #[cfg(not(target_os = "macos"))]
     pub fn safe_directory(&self) -> io::Result<PathBuf> {
         ensure_log_directory(&self.inner.home)
     }
 
     pub fn open_log_folder(&self, timeout: Duration) -> Result<(), ActionError> {
-        let directory = self.safe_directory().map_err(|_| ActionError::PermissionDenied)?;
-        run_bounded(ProcessCommand::new(OPEN_COMMAND).arg(directory), timeout)
+        let deadline = std::time::Instant::now() + timeout;
+        let directory = open_secure_directory(&self.inner.directory)
+            .map_err(|_| ActionError::PermissionDenied)?;
+        self.open_log_folder_until(directory, deadline, move |directory| {
+            Self::open_directory_native(directory)
+        })
+    }
+
+    #[cfg(test)]
+    fn open_log_folder_with<F>(
+        &self,
+        directory: SecureDirectory,
+        timeout: Duration,
+        opener: F,
+    ) -> Result<(), ActionError>
+    where
+        F: FnOnce(SecureDirectory) -> Result<(), ActionError> + Send + 'static,
+    {
+        let deadline = std::time::Instant::now() + timeout;
+        self.open_log_folder_until(directory, deadline, opener)
+    }
+
+    fn open_log_folder_until<F>(
+        &self,
+        directory: SecureDirectory,
+        deadline: std::time::Instant,
+        opener: F,
+    ) -> Result<(), ActionError>
+    where
+        F: FnOnce(SecureDirectory) -> Result<(), ActionError> + Send + 'static,
+    {
+        if remaining(deadline).is_none() {
+            return Err(ActionError::TimedOut);
+        }
+        let finder_sender = self
+            .inner
+            .finder_sender
+            .lock()
+            .map_err(|_| ActionError::Unavailable)?
+            .clone()
+            .ok_or(ActionError::Unavailable)?;
+        let operation_id = FINDER_OPERATION_COUNTER.fetch_add(1, Ordering::Relaxed);
+        {
+            let mut operation =
+                self.inner.finder_operation.lock().map_err(|_| ActionError::Unavailable)?;
+            if operation.is_some() {
+                return Err(ActionError::Busy);
+            }
+            *operation = Some(operation_id);
+        }
+        let (sender, receiver) = sync_channel(0);
+        let request =
+            FinderRequest { operation_id, directory, opener: Box::new(opener), response: sender };
+        if finder_sender.send(request).is_err() {
+            clear_finder_operation(&self.inner.finder_operation, operation_id);
+            return Err(ActionError::Unavailable);
+        }
+        let Some(remaining) = remaining(deadline) else { return Err(ActionError::TimedOut) };
+        receiver.recv_timeout(remaining).unwrap_or(Err(ActionError::TimedOut))
+    }
+
+    #[cfg(test)]
+    fn finder_busy(&self) -> bool {
+        self.inner.finder_operation.lock().ok().and_then(|value| *value).is_some()
+    }
+
+    #[cfg(target_os = "macos")]
+    fn open_directory_native(directory: SecureDirectory) -> Result<(), ActionError> {
+        open_directory_in_finder(&directory)
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn open_directory_native(directory: SecureDirectory) -> Result<(), ActionError> {
+        run_bounded(ProcessCommand::new(OPEN_COMMAND).arg(directory.path), Duration::from_secs(30))
     }
 
     pub fn copy_summary(
@@ -470,8 +832,7 @@ impl Diagnostics {
         }
     }
 
-    fn enqueue_control(&self, mut command: Command, timeout: Duration) -> bool {
-        let deadline = std::time::Instant::now() + timeout;
+    fn enqueue_control_until(&self, mut command: Command, deadline: std::time::Instant) -> bool {
         loop {
             match self.inner.sender.try_send(command) {
                 Ok(()) => return true,
@@ -507,10 +868,40 @@ impl Diagnostics {
     }
 }
 
-fn writer_loop(receiver: Receiver<Command>, mut writer: Writer, diagnostics: Arc<Inner>) {
+fn remaining(deadline: std::time::Instant) -> Option<Duration> {
+    deadline.checked_duration_since(std::time::Instant::now())
+}
+
+fn clear_finder_operation(operation_state: &Arc<Mutex<Option<u64>>>, operation_id: u64) {
+    if let Ok(mut operation) = operation_state.lock() {
+        if *operation == Some(operation_id) {
+            *operation = None;
+        }
+    }
+}
+
+fn finder_loop(receiver: Receiver<FinderRequest>, operation_state: Arc<Mutex<Option<u64>>>) {
+    while let Ok(request) = receiver.recv() {
+        let FinderRequest { operation_id, directory, opener, response } = request;
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| opener(directory)))
+            .unwrap_or(Err(ActionError::Unavailable));
+        // Clear before responding so a successful completion can be followed
+        // immediately by another request without observing a stale Busy state.
+        clear_finder_operation(&operation_state, operation_id);
+        let _ = response.send(result);
+    }
+}
+
+fn writer_loop(
+    receiver: Receiver<Command>,
+    mut writer: Writer,
+    diagnostics: Weak<Inner>,
+    worker_done: Arc<std::sync::atomic::AtomicBool>,
+) {
     while let Ok(command) = receiver.recv() {
         match command {
             Command::Record { bytes } => {
+                let Some(diagnostics) = diagnostics.upgrade() else { break };
                 if write_record(&mut writer, &bytes).is_err() {
                     diagnostics.health.store(2, Ordering::Release);
                     if let Ok(mut recent) = diagnostics.recent_codes.lock() {
@@ -519,33 +910,36 @@ fn writer_loop(receiver: Receiver<Command>, mut writer: Writer, diagnostics: Arc
                     writer.file = None;
                 }
             }
-            Command::Marker { clean } => {
-                if write_marker(
-                    &writer.directory,
-                    &diagnostics.marker_path,
-                    clean,
-                    &diagnostics.session_id,
-                )
-                .is_err()
-                {
+            Command::Marker { clean, ack } => {
+                let Some(diagnostics) = diagnostics.upgrade() else { break };
+                let result = writer
+                    .directory
+                    .as_ref()
+                    .map_or(Err(io::ErrorKind::NotFound.into()), |directory| {
+                        write_marker(directory, clean, &diagnostics.session_id)
+                    })
+                    .is_ok();
+                if !result {
                     diagnostics.health.store(2, Ordering::Release);
+                }
+                if let Some(ack) = ack {
+                    let _ = ack.send(result);
                 }
             }
             Command::Flush(ack) => {
-                let _ = ack.send(
-                    writer.file.as_mut().map(|file| file.sync_data().is_ok()).unwrap_or(false),
-                );
+                let _ = ack.send(flush_writer(&mut writer, false));
             }
             Command::Stop(ack) => {
-                let result =
-                    writer.file.as_mut().map(|file| file.sync_all().is_ok()).unwrap_or(false);
+                let result = flush_writer(&mut writer, true);
                 let _ = ack.send(result);
                 break;
             }
         }
     }
+    worker_done.store(true, Ordering::Release);
 }
 
+#[cfg(not(target_os = "macos"))]
 fn run_bounded(command: &mut std::process::Command, timeout: Duration) -> Result<(), ActionError> {
     let mut child = command.spawn().map_err(|_| ActionError::Unavailable)?;
     wait_bounded(&mut child, timeout)
@@ -579,163 +973,335 @@ fn write_record(writer: &mut Writer, bytes: &[u8]) -> io::Result<()> {
     let Some(file) = writer.file.as_ref() else {
         return Err(io::ErrorKind::NotFound.into());
     };
+    validate_open_file(file)?;
     if file.metadata()?.len().saturating_add(bytes.len() as u64) > LOG_LIMIT_BYTES {
         rotate(writer)?;
     }
-    writer.file.as_mut().ok_or(io::ErrorKind::NotFound)?.write_all(bytes)?;
-    writer.file.as_mut().ok_or(io::ErrorKind::NotFound)?.sync_data()
+    let file = writer.file.as_mut().ok_or(io::ErrorKind::NotFound)?;
+    validate_open_file(file)?;
+    file.write_all(bytes)?;
+    file.sync_data()
 }
 
 fn rotate(writer: &mut Writer) -> io::Result<()> {
-    validate_rotation_entries(&writer.directory)?;
+    let directory = writer.directory.as_ref().ok_or(io::ErrorKind::NotFound)?;
+    validate_rotation_entries(directory)?;
     writer.file.take();
     for generation in (1..MAX_GENERATIONS).rev() {
-        let source = writer.directory.join(if generation == 1 {
+        let source = if generation == 1 {
             LOG_FILE.to_owned()
         } else {
             format!("{LOG_FILE}.{}", generation - 1)
-        });
-        let target = writer.directory.join(format!("{LOG_FILE}.{generation}"));
-        if path_exists(&source) {
-            fs::rename(source, target)?;
-        }
-    }
-    writer.file = Some(open_log(&writer.directory)?);
-    Ok(())
-}
-
-fn ensure_log_directory(home: &Path) -> io::Result<PathBuf> {
-    validate_directory_component(home)?;
-    let library = ensure_directory_component(home, Some("Library"))?;
-    let logs = ensure_directory_component(&library, Some("Logs"))?;
-    ensure_directory_component(&logs, Some("DevHub"))
-}
-
-fn validate_directory_component(path: &Path) -> io::Result<()> {
-    let metadata = fs::symlink_metadata(path)?;
-    if metadata.file_type().is_symlink() || !metadata.is_dir() {
-        return Err(io::ErrorKind::PermissionDenied.into());
-    }
-    Ok(())
-}
-
-fn ensure_directory_component(parent: &Path, name: Option<&str>) -> io::Result<PathBuf> {
-    let path = name.map_or_else(|| parent.to_path_buf(), |name| parent.join(name));
-    let metadata = match fs::symlink_metadata(&path) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            fs::create_dir(&path)?;
-            fs::symlink_metadata(&path)?
-        }
-        Err(error) => return Err(error),
-    };
-    if metadata.file_type().is_symlink() || !metadata.is_dir() {
-        return Err(io::ErrorKind::PermissionDenied.into());
-    }
-    set_private_directory(&path)?;
-    Ok(path)
-}
-
-fn open_log(directory: &Path) -> io::Result<File> {
-    let directory = match fs::symlink_metadata(directory) {
-        Ok(_) => ensure_directory_component(directory, None)?,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            let home = directory
-                .parent()
-                .and_then(Path::parent)
-                .and_then(Path::parent)
-                .ok_or(io::ErrorKind::PermissionDenied)?;
-            ensure_log_directory(home)?
-        }
-        Err(error) => return Err(error),
-    };
-    let path = directory.join(LOG_FILE);
-    if path_exists(&path) {
-        validate_private_regular(&path)?;
-    }
-    let file = OpenOptions::new().create(true).append(true).read(true).open(&path)?;
-    set_private_file(&path)?;
-    Ok(file)
-}
-
-fn validate_rotation_entries(directory: &Path) -> io::Result<()> {
-    for generation in 0..=MAX_GENERATIONS {
-        let path = if generation == 0 {
-            directory.join(LOG_FILE)
-        } else {
-            directory.join(format!("{LOG_FILE}.{generation}"))
         };
-        if path_exists(&path) {
-            validate_private_regular(&path)?;
+        let target = format!("{LOG_FILE}.{generation}");
+        if relative_file_exists(directory, &source)? {
+            renameat(&directory.fd, source.as_str(), &directory.fd, target.as_str())
+                .map_err(io::Error::from)?;
         }
     }
+    writer.file = Some(open_log(directory)?);
     Ok(())
 }
 
-fn validate_private_regular(path: &Path) -> io::Result<()> {
-    let metadata = fs::symlink_metadata(path)?;
-    if metadata.file_type().is_symlink() || !metadata.is_file() {
+#[cfg(not(target_os = "macos"))]
+fn ensure_log_directory(home: &Path) -> io::Result<PathBuf> {
+    let directory = home.join("Library").join("Logs").join("DevHub");
+    let _ = open_secure_directory(&directory)?;
+    Ok(directory)
+}
+
+#[cfg(unix)]
+fn open_secure_directory(path: &Path) -> io::Result<SecureDirectory> {
+    use std::path::Component;
+
+    if !path.is_absolute() {
         return Err(io::ErrorKind::PermissionDenied.into());
     }
-    #[cfg(unix)]
+    // macOS exposes a few system directories (notably /var) as aliases. Resolve
+    // only the already-existing prefix, then perform the actual traversal and
+    // creation descriptor-relatively with O_NOFOLLOW.
+    let existing = path
+        .ancestors()
+        .find(|candidate| {
+            std::fs::symlink_metadata(candidate)
+                .map(|metadata| metadata.is_dir() && !metadata.file_type().is_symlink())
+                .unwrap_or(false)
+        })
+        .ok_or(io::ErrorKind::NotFound)?;
+    let canonical_existing = std::fs::canonicalize(existing)?;
+    let resolved_path = canonical_existing
+        .join(path.strip_prefix(existing).map_err(|_| io::ErrorKind::PermissionDenied)?);
+    let mut current = File::from(
+        open(
+            "/",
+            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC | OFlags::NOFOLLOW,
+            Mode::empty(),
+        )
+        .map_err(io::Error::from)?,
+    );
+    for component in resolved_path.components() {
+        let Component::Normal(name) = component else {
+            if matches!(component, Component::RootDir) {
+                continue;
+            }
+            return Err(io::ErrorKind::PermissionDenied.into());
+        };
+        let child = match openat(
+            &current,
+            name,
+            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC | OFlags::NOFOLLOW,
+            Mode::empty(),
+        ) {
+            Ok(fd) => File::from(fd),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                mkdirat(&current, name, Mode::from_raw_mode(0o700)).map_err(io::Error::from)?;
+                File::from(
+                    openat(
+                        &current,
+                        name,
+                        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC | OFlags::NOFOLLOW,
+                        Mode::empty(),
+                    )
+                    .map_err(io::Error::from)?,
+                )
+            }
+            Err(error) => return Err(error.into()),
+        };
+        validate_directory_fd(&child)?;
+        current = child;
+    }
+    let metadata = current.metadata()?;
     if metadata.uid() != geteuid().as_raw() {
         return Err(io::ErrorKind::PermissionDenied.into());
     }
-    Ok(())
-}
-
-fn set_private_directory(path: &Path) -> io::Result<()> {
-    #[cfg(unix)]
-    fs::set_permissions(path, fs::Permissions::from_mode(0o700))?;
-    Ok(())
-}
-fn set_private_file(path: &Path) -> io::Result<()> {
-    #[cfg(unix)]
-    fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
-    Ok(())
-}
-
-fn write_marker(
-    directory: &Path,
-    marker_path: &Path,
-    clean: bool,
-    session_id: &str,
-) -> io::Result<()> {
-    ensure_directory_component(directory, None)?;
-    if path_exists(marker_path) {
-        validate_private_regular(marker_path)?;
+    if (metadata.mode() & 0o077) != 0 {
+        fchmod(&current, Mode::from_raw_mode(0o700)).map_err(io::Error::from)?;
     }
-    let temp = directory
-        .join(format!(".{MARKER_FILE}.tmp-{}", FALLBACK_COUNTER.fetch_add(1, Ordering::Relaxed)));
+    Ok(SecureDirectory { path: path.to_owned(), fd: current })
+}
+
+#[cfg(not(unix))]
+fn open_secure_directory(path: &Path) -> io::Result<SecureDirectory> {
+    fs::create_dir_all(path)?;
+    Ok(SecureDirectory { path: path.to_owned() })
+}
+
+#[cfg(unix)]
+fn validate_directory_fd(directory: &File) -> io::Result<()> {
+    let metadata = directory.metadata()?;
+    if !metadata.is_dir() || (metadata.mode() & 0o022) != 0 {
+        return Err(io::ErrorKind::PermissionDenied.into());
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn validate_open_file(file: &File) -> io::Result<()> {
+    let metadata = file.metadata()?;
+    if !metadata.is_file() || metadata.uid() != geteuid().as_raw() || (metadata.mode() & 0o077) != 0
+    {
+        return Err(io::ErrorKind::PermissionDenied.into());
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn validate_open_file(file: &File) -> io::Result<()> {
+    if !file.metadata()?.is_file() {
+        return Err(io::ErrorKind::PermissionDenied.into());
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn open_relative_file(directory: &SecureDirectory, name: &str, flags: OFlags) -> io::Result<File> {
+    let file = File::from(
+        openat(
+            &directory.fd,
+            name,
+            flags | OFlags::CLOEXEC | OFlags::NOFOLLOW,
+            Mode::from_raw_mode(0o600),
+        )
+        .map_err(io::Error::from)?,
+    );
+    validate_open_file(&file)?;
+    fchmod(&file, Mode::from_raw_mode(0o600)).map_err(io::Error::from)?;
+    Ok(file)
+}
+
+#[cfg(not(unix))]
+fn open_relative_file(directory: &SecureDirectory, name: &str, _flags: ()) -> io::Result<File> {
+    let path = directory.path.join(name);
+    let file = OpenOptions::new().read(true).write(true).create(true).open(path)?;
+    validate_open_file(&file)?;
+    Ok(file)
+}
+
+fn open_log(directory: &SecureDirectory) -> io::Result<File> {
+    #[cfg(unix)]
+    let file =
+        open_relative_file(directory, LOG_FILE, OFlags::RDWR | OFlags::APPEND | OFlags::CREATE)?;
+    #[cfg(not(unix))]
+    let file = open_relative_file(directory, LOG_FILE, ())?;
+    Ok(file)
+}
+
+#[cfg(target_os = "macos")]
+fn open_directory_in_finder(directory: &SecureDirectory) -> Result<(), ActionError> {
+    if !verified_directory_is_current(directory) {
+        return Err(ActionError::PermissionDenied);
+    }
+    let path = directory.path.to_str().ok_or(ActionError::PermissionDenied)?;
+    let path = NSString::from_str(path);
+    let path_url = NSURL::fileURLWithPath_isDirectory(&path, true);
+    // A file-reference URL identifies the already-resolved filesystem object,
+    // so Finder does not re-resolve a swapped directory name after this seam.
+    let reference = path_url.fileReferenceURL().ok_or(ActionError::PermissionDenied)?;
+    // Close the path-to-URL race: if replacement happened before URL creation,
+    // the second fd identity check rejects it; replacement after this point is
+    // harmless because `reference` is already object-backed.
+    if !verified_directory_is_current(directory) {
+        return Err(ActionError::PermissionDenied);
+    }
+    if NSWorkspace::sharedWorkspace().openURL(&reference) {
+        Ok(())
+    } else {
+        Err(ActionError::Unavailable)
+    }
+}
+
+#[cfg(unix)]
+fn verified_directory_is_current(directory: &SecureDirectory) -> bool {
+    let Ok(expected) = directory.fd.metadata() else { return false };
+    let Ok(current) = open_secure_directory(&directory.path) else { return false };
+    let Ok(current) = current.fd.metadata() else { return false };
+    expected.dev() == current.dev() && expected.ino() == current.ino()
+}
+
+fn validate_rotation_entries(directory: &SecureDirectory) -> io::Result<()> {
+    for generation in 0..=MAX_GENERATIONS {
+        let name =
+            if generation == 0 { LOG_FILE.to_owned() } else { format!("{LOG_FILE}.{generation}") };
+        if relative_file_exists(directory, &name)? {
+            #[cfg(unix)]
+            let _ = open_relative_file(directory, &name, OFlags::RDONLY)?;
+        }
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn relative_file_exists(directory: &SecureDirectory, name: &str) -> io::Result<bool> {
+    match open_relative_file(directory, name, OFlags::RDONLY) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
+#[cfg(not(unix))]
+fn relative_file_exists(directory: &SecureDirectory, name: &str) -> io::Result<bool> {
+    Ok(directory.path.join(name).exists())
+}
+
+fn write_marker(directory: &SecureDirectory, clean: bool, session_id: &str) -> io::Result<()> {
+    let temp = format!(".{MARKER_FILE}.tmp-{}", FALLBACK_COUNTER.fetch_add(1, Ordering::Relaxed));
     let bytes = serde_json::to_vec(&Marker { clean, session_id: session_id.to_owned() })
         .map_err(|_| io::ErrorKind::InvalidData)?;
-    let mut file = OpenOptions::new().write(true).create_new(true).open(&temp)?;
-    set_private_file(&temp)?;
+    #[cfg(unix)]
+    let mut file = File::from(
+        openat(
+            &directory.fd,
+            temp.as_str(),
+            OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::CLOEXEC | OFlags::NOFOLLOW,
+            Mode::from_raw_mode(0o600),
+        )
+        .map_err(io::Error::from)?,
+    );
+    #[cfg(not(unix))]
+    let mut file =
+        OpenOptions::new().write(true).create_new(true).open(directory.path.join(&temp))?;
+    validate_open_file(&file)?;
     file.write_all(&bytes)?;
     file.sync_all()?;
-    if path_exists(marker_path) {
-        validate_private_regular(marker_path)?;
+    // Validate the destination through the same directory fd immediately
+    // before the atomic replacement. Symlinks, non-regular entries, foreign
+    // owners, and permissive modes are rejected and never overwritten.
+    #[cfg(unix)]
+    if let Err(error) = validate_marker_destination(directory) {
+        let _ = rustix::fs::unlinkat(&directory.fd, temp.as_str(), rustix::fs::AtFlags::empty());
+        return Err(error);
     }
-    fs::rename(&temp, marker_path)?;
+    #[cfg(unix)]
+    renameat(&directory.fd, temp.as_str(), &directory.fd, MARKER_FILE).map_err(io::Error::from)?;
+    #[cfg(not(unix))]
+    fs::rename(directory.path.join(&temp), directory.path.join(MARKER_FILE))?;
+    directory_sync(directory)?;
     Ok(())
 }
 
-fn read_previous_marker(directory: &Path) -> Option<PreviousExit> {
-    let path = directory.join(MARKER_FILE);
-    if !path_exists(&path) {
-        return None;
+#[cfg(unix)]
+fn validate_marker_destination(directory: &SecureDirectory) -> io::Result<()> {
+    match open_relative_file(directory, MARKER_FILE, OFlags::RDONLY) {
+        Ok(_) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
     }
-    if validate_private_regular(&path).is_err() {
-        return Some(PreviousExit::Unknown);
-    }
+}
+
+fn read_previous_marker(directory: &SecureDirectory) -> Option<PreviousExit> {
+    #[cfg(unix)]
+    let file = match open_relative_file(directory, MARKER_FILE, OFlags::RDONLY) {
+        Ok(file) => file,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return None,
+        Err(_) => return Some(PreviousExit::Unknown),
+    };
+    #[cfg(not(unix))]
+    let mut file = match File::open(directory.path.join(MARKER_FILE)) {
+        Ok(file) => file,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return None,
+        Err(_) => return Some(PreviousExit::Unknown),
+    };
     let mut bytes = Vec::new();
-    File::open(path).ok()?.take(4096).read_to_end(&mut bytes).ok()?;
+    file.take(4096).read_to_end(&mut bytes).ok()?;
     let marker = serde_json::from_slice::<Marker>(&bytes).ok()?;
     Some(if marker.clean { PreviousExit::Clean } else { PreviousExit::Unclean })
 }
 
-fn path_exists(path: &Path) -> bool {
-    fs::symlink_metadata(path).is_ok()
+fn flush_writer(writer: &mut Writer, all: bool) -> bool {
+    let Some(file) = writer.file.as_mut() else { return false };
+    if validate_open_file(file).is_err() {
+        return false;
+    }
+    let synced = if all { file.sync_all() } else { file.sync_data() };
+    if synced.is_err() {
+        return false;
+    }
+    let Some(directory) = writer.directory.as_ref() else { return false };
+    #[cfg(unix)]
+    let current = match open_relative_file(directory, LOG_FILE, OFlags::RDONLY) {
+        Ok(file) => file,
+        Err(_) => return false,
+    };
+    #[cfg(unix)]
+    {
+        let Ok(opened) = file.metadata() else { return false };
+        let Ok(named) = current.metadata() else { return false };
+        if opened.dev() != named.dev() || opened.ino() != named.ino() {
+            return false;
+        }
+    }
+    directory_sync(directory).is_ok()
+}
+
+#[cfg(unix)]
+fn directory_sync(directory: &SecureDirectory) -> io::Result<()> {
+    directory.fd.sync_all()
+}
+
+#[cfg(not(unix))]
+fn directory_sync(_directory: &SecureDirectory) -> io::Result<()> {
+    Ok(())
 }
 
 fn reconcile_previous_exit(
@@ -835,7 +1401,7 @@ mod tests {
         );
         #[cfg(unix)]
         assert_eq!(fs::metadata(&home).unwrap().permissions().mode() & 0o777, 0o755);
-        assert!(diagnostics.shutdown(Duration::from_secs(2)));
+        assert!(matches!(diagnostics.shutdown(Duration::from_secs(2)), ShutdownOutcome::Complete));
         let _ = fs::remove_dir_all(home);
     }
     #[test]
@@ -846,7 +1412,7 @@ mod tests {
         fs::write(directory.join(MARKER_FILE), b"not-json").unwrap();
         let diagnostics = Diagnostics::open(&home, "0.1.0", Some(true));
         assert_eq!(diagnostics.previous_exit(), PreviousExit::Unknown);
-        assert!(diagnostics.shutdown(Duration::from_secs(2)));
+        assert!(matches!(diagnostics.shutdown(Duration::from_secs(2)), ShutdownOutcome::Complete));
         let _ = fs::remove_dir_all(home);
     }
 
@@ -854,11 +1420,13 @@ mod tests {
     fn clean_marker_and_state_must_agree_for_clean_start() {
         let home = temp_home();
         let diagnostics = Diagnostics::open(&home, "0.1.0", Some(true));
-        diagnostics.mark_clean_shutdown();
-        assert!(diagnostics.shutdown(Duration::from_secs(2)));
+        assert!(matches!(
+            diagnostics.clean_shutdown(Duration::from_secs(2)),
+            ShutdownOutcome::Complete
+        ));
         let next = Diagnostics::open(&home, "0.1.0", Some(true));
         assert_eq!(next.previous_exit(), PreviousExit::Clean);
-        assert!(next.shutdown(Duration::from_secs(2)));
+        assert!(matches!(next.shutdown(Duration::from_secs(2)), ShutdownOutcome::Complete));
         let _ = fs::remove_dir_all(home);
     }
     #[test]
@@ -869,8 +1437,149 @@ mod tests {
         std::os::unix::fs::symlink("/tmp", diagnostics.directory().join(format!("{LOG_FILE}.5")))
             .unwrap();
         #[cfg(unix)]
-        assert!(validate_rotation_entries(diagnostics.directory()).is_err());
-        assert!(diagnostics.shutdown(Duration::from_secs(2)));
+        let secure = open_secure_directory(diagnostics.directory()).unwrap();
+        #[cfg(unix)]
+        assert!(validate_rotation_entries(&secure).is_err());
+        assert!(matches!(diagnostics.shutdown(Duration::from_secs(2)), ShutdownOutcome::Complete));
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn descriptor_seam_rejects_symlink_marker_and_replaced_log_entry() {
+        let home = temp_home();
+        let directory = home.join("Library/Logs/DevHub");
+        fs::create_dir_all(&directory).unwrap();
+        std::os::unix::fs::symlink("/etc/passwd", directory.join(MARKER_FILE)).unwrap();
+        let diagnostics = Diagnostics::open(&home, "0.1.0", Some(true));
+        assert_eq!(diagnostics.previous_exit(), PreviousExit::Unknown);
+        assert!(fs::symlink_metadata(directory.join(MARKER_FILE))
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert!(diagnostics.emit(DiagnosticEvent::Lifecycle { phase: LifecyclePhase::Ready }));
+        assert!(diagnostics.flush(Duration::from_secs(2)));
+
+        let log = directory.join(LOG_FILE);
+        let moved = directory.join("devhub.jsonl.moved");
+        fs::rename(&log, &moved).unwrap();
+        std::os::unix::fs::symlink("/etc/passwd", &log).unwrap();
+        assert!(!diagnostics.flush(Duration::from_secs(2)));
+        assert!(!fs::read_to_string(&moved).unwrap().contains("passwd"));
+        let _ = diagnostics.shutdown(Duration::from_secs(2));
+        let _ = fs::remove_file(&log);
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn marker_destination_rejects_permissive_existing_file() {
+        let home = temp_home();
+        let diagnostics = Diagnostics::open(&home, "0.1.0", Some(true));
+        let marker = diagnostics.directory().join(MARKER_FILE);
+        fs::write(&marker, b"keep").unwrap();
+        fs::set_permissions(&marker, fs::Permissions::from_mode(0o644)).unwrap();
+        let directory = open_secure_directory(diagnostics.directory()).unwrap();
+        assert!(write_marker(&directory, true, "test").is_err());
+        assert_eq!(fs::read(&marker).unwrap(), b"keep");
+        let _ = diagnostics.shutdown(Duration::from_secs(2));
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn finder_open_is_single_flight_and_timeout_does_not_spawn_duplicates() {
+        let home = temp_home();
+        let diagnostics = Diagnostics::open(&home, "0.1.0", Some(true));
+        let started = Arc::new(std::sync::Barrier::new(2));
+        let release = Arc::new(std::sync::Barrier::new(2));
+        let invocations = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let (finished_sender, finished_receiver) = sync_channel(0);
+        let first = {
+            let diagnostics = diagnostics.clone();
+            let directory = open_secure_directory(diagnostics.directory()).unwrap();
+            let started = started.clone();
+            let release = release.clone();
+            let invocations = invocations.clone();
+            thread::spawn(move || {
+                diagnostics.open_log_folder_with(directory, Duration::from_millis(20), move |_| {
+                    invocations.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    started.wait();
+                    release.wait();
+                    let _ = finished_sender.send(());
+                    Ok(())
+                })
+            })
+        };
+        started.wait();
+        assert!(diagnostics.finder_busy());
+        assert_eq!(invocations.load(std::sync::atomic::Ordering::SeqCst), 1);
+        for _ in 0..100 {
+            let second_directory = open_secure_directory(diagnostics.directory()).unwrap();
+            assert_eq!(
+                diagnostics.open_log_folder_with(second_directory, Duration::from_secs(1), |_| {
+                    panic!("a busy request must not reach the finder actor")
+                }),
+                Err(ActionError::Busy)
+            );
+        }
+        assert_eq!(first.join().unwrap(), Err(ActionError::TimedOut));
+        release.wait();
+        finished_receiver.recv_timeout(Duration::from_secs(1)).unwrap();
+        // The worker clears the ledger after the native operation returns.
+        let clear_deadline = std::time::Instant::now() + Duration::from_secs(1);
+        while diagnostics.finder_busy() && std::time::Instant::now() < clear_deadline {
+            thread::yield_now();
+        }
+        assert!(!diagnostics.finder_busy());
+        assert_eq!(invocations.load(std::sync::atomic::Ordering::SeqCst), 1);
+        let third_directory = open_secure_directory(diagnostics.directory()).unwrap();
+        assert_eq!(
+            diagnostics.open_log_folder_with(third_directory, Duration::from_secs(1), |_| Ok(())),
+            Ok(())
+        );
+        // The actor clears its ledger before delivering the result, so an
+        // immediate successful retry does not observe a stale Busy state.
+        let fourth_directory = open_secure_directory(diagnostics.directory()).unwrap();
+        assert_eq!(
+            diagnostics.open_log_folder_with(fourth_directory, Duration::from_secs(1), |_| Ok(())),
+            Ok(())
+        );
+        let _ = diagnostics.shutdown(Duration::from_secs(2));
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn descriptor_seam_rejects_symlink_log_directory() {
+        let home = temp_home();
+        let logs = home.join("Library/Logs");
+        let target = home.join("outside");
+        fs::create_dir_all(&logs).unwrap();
+        fs::create_dir(&target).unwrap();
+        std::os::unix::fs::symlink(&target, logs.join("DevHub")).unwrap();
+        let diagnostics = Diagnostics::open(&home, "0.1.0", Some(true));
+        assert_eq!(diagnostics.health(), Health::Degraded);
+        assert!(!target.join(LOG_FILE).exists());
+        let _ = diagnostics.shutdown(Duration::from_secs(2));
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn finder_action_rejects_directory_replacement_before_native_open() {
+        let home = temp_home();
+        let diagnostics = Diagnostics::open(&home, "0.1.0", Some(true));
+        let directory = open_secure_directory(diagnostics.directory()).unwrap();
+        let original = diagnostics.directory().to_owned();
+        let moved = home.join("DevHub-moved");
+        let replacement = home.join("DevHub-replacement");
+        fs::create_dir(&replacement).unwrap();
+        fs::rename(&original, &moved).unwrap();
+        std::os::unix::fs::symlink(&replacement, &original).unwrap();
+        assert!(!verified_directory_is_current(&directory));
+        assert_eq!(open_directory_in_finder(&directory), Err(ActionError::PermissionDenied));
+        let _ = diagnostics.shutdown(Duration::from_secs(2));
+        let _ = fs::remove_file(&original);
         let _ = fs::remove_dir_all(home);
     }
     #[test]
@@ -898,7 +1607,7 @@ mod tests {
         assert!(contents
             .lines()
             .all(|line| serde_json::from_str::<serde_json::Value>(line).is_ok()));
-        assert!(diagnostics.shutdown(Duration::from_secs(2)));
+        assert!(matches!(diagnostics.shutdown(Duration::from_secs(2)), ShutdownOutcome::Complete));
         let _ = fs::remove_dir_all(home);
     }
 
@@ -912,7 +1621,10 @@ mod tests {
             assert!(diagnostics.flush(Duration::from_secs(2)));
             let contents = fs::read_to_string(diagnostics.directory().join(LOG_FILE)).unwrap();
             assert!(contents.contains("\"phase\":\"ready\""));
-            assert!(diagnostics.shutdown(Duration::from_secs(2)));
+            assert!(matches!(
+                diagnostics.shutdown(Duration::from_secs(2)),
+                ShutdownOutcome::Complete
+            ));
             let _ = fs::remove_dir_all(home);
         }
     }
@@ -943,11 +1655,69 @@ mod tests {
         assert!(contents.contains("migration"));
         assert!(!contents.contains("provider-id"));
         assert!(!contents.contains("/Users/"));
-        assert!(diagnostics.shutdown(Duration::from_secs(2)));
+        assert!(matches!(diagnostics.shutdown(Duration::from_secs(2)), ShutdownOutcome::Complete));
         let _ = fs::remove_dir_all(home);
     }
 
     #[test]
+    fn clean_shutdown_rejects_marker_failure_without_claiming_clean_state() {
+        let home = temp_home();
+        let diagnostics = Diagnostics::open(&home, "0.1.0", Some(false));
+        fs::create_dir(diagnostics.directory().join(MARKER_FILE)).unwrap();
+        assert!(matches!(
+            diagnostics.clean_shutdown(Duration::from_secs(2)),
+            ShutdownOutcome::Failed
+        ));
+        assert!(matches!(
+            diagnostics.shutdown(Duration::from_secs(2)),
+            ShutdownOutcome::Complete | ShutdownOutcome::Failed
+        ));
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn repeated_concurrent_shutdown_is_single_flight_and_idempotent() {
+        let home = temp_home();
+        let diagnostics = Diagnostics::open(&home, "0.1.0", Some(false));
+        let callers = (0..8)
+            .map(|_| {
+                let diagnostics = diagnostics.clone();
+                std::thread::spawn(move || diagnostics.shutdown(Duration::from_secs(2)))
+            })
+            .collect::<Vec<_>>();
+        let outcomes = callers.into_iter().map(|caller| caller.join().unwrap()).collect::<Vec<_>>();
+        assert!(outcomes
+            .iter()
+            .all(|outcome| matches!(outcome, ShutdownOutcome::Complete | ShutdownOutcome::Failed)));
+        assert!(matches!(
+            diagnostics.shutdown(Duration::from_secs(2)),
+            ShutdownOutcome::Complete | ShutdownOutcome::Failed
+        ));
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn shutdown_zero_deadline_does_not_extend_or_resend_stop() {
+        let home = temp_home();
+        let diagnostics = Diagnostics::open(&home, "0.1.0", Some(false));
+        let first = diagnostics.shutdown(Duration::ZERO);
+        let second = diagnostics.shutdown(Duration::ZERO);
+        assert!(matches!(first, ShutdownOutcome::TimedOut | ShutdownOutcome::Failed));
+        assert!(matches!(second, ShutdownOutcome::TimedOut | ShutdownOutcome::Failed));
+        let _ = diagnostics.shutdown(Duration::from_secs(2));
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn owner_drop_stops_writer_before_home_cleanup() {
+        let home = temp_home();
+        let owner = DiagnosticsOwner::new(Diagnostics::open(&home, "0.1.0", Some(false)));
+        drop(owner);
+        fs::remove_dir_all(home).expect("owner must join diagnostics writer");
+    }
+
+    #[test]
+    #[cfg(not(target_os = "macos"))]
     fn native_action_commands_are_absolute_and_not_path_resolved() {
         assert_eq!(OPEN_COMMAND, "/usr/bin/open");
         assert_eq!(PBCOPY_COMMAND, "/usr/bin/pbcopy");

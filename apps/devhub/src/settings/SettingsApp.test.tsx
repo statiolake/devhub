@@ -63,6 +63,13 @@ describe("SettingsApp", () => {
     closeWindow.mockClear();
     fireEvent.keyDown(document, { key: "w", metaKey: true, ctrlKey: true });
     expect(closeWindow).not.toHaveBeenCalled();
+    fireEvent.keyDown(document, {
+      key: "w",
+      keyCode: 229,
+      metaKey: true,
+      isComposing: true,
+    });
+    expect(closeWindow).not.toHaveBeenCalled();
   });
 
   it("renders the five native Settings sections and keeps a local dirty draft", async () => {

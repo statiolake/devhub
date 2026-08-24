@@ -6,6 +6,7 @@ import { Sidebar } from "../components/sidebar/Sidebar";
 import { TitlebarActivities } from "../components/shell/TitlebarActivities";
 import { SurfaceViewport } from "../components/shell/SurfaceViewport";
 import type { AppError, CloseResourceWire } from "../generated/app-shell";
+import { isImeComposing } from "../accessibility/ime";
 
 function closeResourceStatus(resource: CloseResourceWire): string {
   switch (resource.kind) {
@@ -141,6 +142,7 @@ function Workbench() {
   );
   const confirmationRef = useRef<HTMLElement | null>(null);
   const previousFocus = useRef<HTMLElement | null>(null);
+  const focusRestoreGeneration = useRef(0);
   const closePurpose = pendingConfirmation?.purpose;
   const pendingAgent =
     pendingConfirmation?.purpose.kind === "agent_stop"
@@ -158,13 +160,58 @@ function Workbench() {
       !target?.isConnected ||
       target.hasAttribute("disabled") ||
       target.getAttribute("aria-hidden") === "true" ||
-      target.tabIndex < 0
+      target.tabIndex < 0 ||
+      (target.closest<HTMLElement>("[inert]")?.inert ?? false)
     ) {
       return false;
     }
     target.focus();
     return document.activeElement === target;
   }, []);
+
+  const scheduleFocusRestore = useCallback(
+    (
+      target: HTMLElement | null | undefined,
+      workspaceId: string | undefined,
+    ) => {
+      const generation = ++focusRestoreGeneration.current;
+      window.requestAnimationFrame(() =>
+        window.requestAnimationFrame(() => {
+          if (generation !== focusRestoreGeneration.current) return;
+          const active = document.activeElement as HTMLElement | null;
+          if (
+            active &&
+            active !== document.body &&
+            !active.closest("[role='dialog']")
+          ) {
+            return;
+          }
+          if (document.querySelector("[role='dialog'][aria-modal='true']")) {
+            return;
+          }
+          const inertContent =
+            target?.closest<HTMLElement>(".app-shell-content");
+          if (inertContent?.inert) inertContent.inert = false;
+          const workspaceButton = workspaceId
+            ? [
+                ...document.querySelectorAll<HTMLElement>(
+                  "[data-workspace-id]",
+                ),
+              ].find((element) => element.dataset.workspaceId === workspaceId)
+            : undefined;
+          const fallback =
+            workspaceButton ??
+            document.querySelector<HTMLElement>(
+              '[aria-label="Workspace navigation"] .section-action-button:not([disabled]), [aria-label="Workspace navigation"] [data-tree-item-id]:not([disabled])[tabindex="0"], [aria-label="Workspace navigation"] button:not([disabled]), .activity-nav button:not([disabled])',
+            );
+          if (!restoreFocus(target) && !restoreFocus(fallback)) {
+            focusRestoreGeneration.current += 1;
+          }
+        }),
+      );
+    },
+    [restoreFocus],
+  );
 
   useEffect(() => {
     if (pendingConfirmationId === undefined) return;
@@ -173,7 +220,7 @@ function Workbench() {
     const first = dialog?.querySelector<HTMLElement>("button:not([disabled])");
     first?.focus();
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !event.isComposing) {
+      if (event.key === "Escape" && !isImeComposing(event)) {
         event.preventDefault();
         dismissCloseConfirmation();
         return;
@@ -195,32 +242,14 @@ function Workbench() {
     document.addEventListener("keydown", onKeyDown);
     return () => {
       document.removeEventListener("keydown", onKeyDown);
-      const restored = restoreFocus(previousFocus.current);
-      if (!restored && pendingWorkspaceId) {
-        const workspaceButton = [
-          ...document.querySelectorAll<HTMLElement>("[data-workspace-id]"),
-        ].find((element) => element.dataset.workspaceId === pendingWorkspaceId);
-        if (!restoreFocus(workspaceButton)) {
-          restoreFocus(
-            document.querySelector<HTMLElement>(
-              '[aria-label="Workspace navigation"] button:not([disabled])',
-            ),
-          );
-        }
-      } else if (!restored) {
-        restoreFocus(
-          document.querySelector<HTMLElement>(
-            '[aria-label="Workspace navigation"] button:not([disabled])',
-          ),
-        );
-      }
+      scheduleFocusRestore(previousFocus.current, pendingWorkspaceId);
       previousFocus.current = null;
     };
   }, [
     dismissCloseConfirmation,
     pendingConfirmationId,
     pendingWorkspaceId,
-    restoreFocus,
+    scheduleFocusRestore,
   ]);
   useEffect(() => {
     if (pendingConfirmation?.purpose.kind === "agent_stop" && !pendingAgent) {
@@ -291,14 +320,19 @@ function Workbench() {
       data-readiness={state.snapshot.readiness}
       data-sidebar-density={appearance?.sidebarDensity ?? "compact"}
     >
-      <TitlebarActivities snapshot={state.snapshot} onDispatch={onDispatch} />
-      <div className="workbench">
-        <Sidebar snapshot={state.snapshot} />
-        <SurfaceViewport
-          snapshot={state.snapshot}
-          intentError={intentError?.summary}
-          appearance={appearance}
-        />
+      <div
+        className="app-shell-content"
+        inert={pendingConfirmation ? true : undefined}
+      >
+        <TitlebarActivities snapshot={state.snapshot} onDispatch={onDispatch} />
+        <div className="workbench">
+          <Sidebar snapshot={state.snapshot} />
+          <SurfaceViewport
+            snapshot={state.snapshot}
+            intentError={intentError?.summary}
+            appearance={appearance}
+          />
+        </div>
       </div>
       {pendingConfirmation &&
         (pendingConfirmation.purpose.kind !== "agent_stop" || pendingAgent) && (
@@ -310,6 +344,15 @@ function Workbench() {
               aria-modal="true"
               aria-labelledby="confirmation-title"
               aria-describedby="confirmation-description"
+              onKeyDown={(event) => {
+                if (
+                  event.key === "Escape" &&
+                  !isImeComposing(event.nativeEvent)
+                ) {
+                  event.preventDefault();
+                  dismissCloseConfirmation();
+                }
+              }}
             >
               <h2 id="confirmation-title">
                 {closeInspection

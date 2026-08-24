@@ -56,8 +56,9 @@ mod terminal;
 mod workspace_resolver;
 use agent::{AgentSurfaceManager, HerdrAgentRuntime};
 use diagnostics::{
-    Code as LogCode, DiagnosticEvent, Diagnostics, Health as DiagnosticHealth, LifecyclePhase,
-    Module as DiagnosticModule, PreviousExit as DiagnosticPreviousExit,
+    Code as LogCode, DiagnosticEvent, Diagnostics, DiagnosticsOwner, Health as DiagnosticHealth,
+    LifecyclePhase, Module as DiagnosticModule, PreviousExit as DiagnosticPreviousExit,
+    ShutdownOutcome,
 };
 use discovery::DiscoveryEngine;
 use editor::{
@@ -579,6 +580,7 @@ struct NativeAppState {
     settings: Mutex<SettingsProjection>,
     runtime_health_probe: Mutex<Option<RuntimeHealthProbe>>,
     diagnostics: Diagnostics,
+    _diagnostics_owner: DiagnosticsOwner,
     config_watcher: Mutex<Option<devhub_app_core::config::ConfigWatcher>>,
     /// A valid external config edit observed during a confirmed transition.
     /// It is intentionally kept outside `settings.loaded` until the durable
@@ -1368,6 +1370,7 @@ impl NativeAppState {
                 diagnostic: None,
             }),
             runtime_health_probe: Mutex::new(None),
+            _diagnostics_owner: DiagnosticsOwner::new(diagnostics.clone()),
             diagnostics,
             config_watcher: Mutex::new(None),
             deferred_config: Mutex::new(None),
@@ -2086,7 +2089,19 @@ impl NativeAppState {
         Ok(())
     }
 
-    fn persist_clean_snapshot(&self, snapshot: &AppSnapshot) -> Result<(), AppErrorWire> {
+    fn persist_clean_snapshot(
+        &self,
+        snapshot: &AppSnapshot,
+        deadline: Instant,
+    ) -> Result<(), AppErrorWire> {
+        self.diagnostics.emit(DiagnosticEvent::Lifecycle { phase: LifecyclePhase::Quit });
+        // The clean marker is part of the same commit boundary as the state
+        // clean bit. If diagnostics cannot durably mark and stop, leave the
+        // state unclean so the next launch reports crash recovery honestly.
+        if !matches!(self.diagnostics.clean_shutdown_until(deadline), ShutdownOutcome::Complete) {
+            return Err(AppErrorWire::native_unavailable()
+                .with_summary("diagnostics clean marker was not durable"));
+        }
         {
             let _commit = self.state_commit.lock().map_err(state_error)?;
             let mut state = self.store.load_or_default().map_err(persistence_error)?;
@@ -2095,9 +2110,6 @@ impl NativeAppState {
             state.mark_clean_shutdown();
             self.store.save_state(&state).map_err(persistence_error)?;
         }
-        self.diagnostics.emit(DiagnosticEvent::Lifecycle { phase: LifecyclePhase::Quit });
-        self.diagnostics.mark_clean_shutdown();
-        let _ = self.diagnostics.shutdown(Duration::from_secs(2));
         let mut persistence = self.persistence.lock().map_err(state_error)?;
         persistence.persisted_revision = persistence.persisted_revision.max(snapshot.revision());
         Ok(())
@@ -3623,7 +3635,7 @@ impl NativeAppState {
                 return Err(AppErrorWire::native_unavailable()
                     .with_summary("quit deadline exceeded before durable clean shutdown"));
             }
-            self.persist_clean_snapshot(&execution.snapshot)
+            self.persist_clean_snapshot(&execution.snapshot, deadline)
         })();
         self.finish_quit_transaction();
         result
@@ -5666,6 +5678,15 @@ async fn recheck_settings(
     state.settings_snapshot_with_lifecycle(token)
 }
 
+fn diagnostics_settings_error(error: diagnostics::ActionError) -> SettingsErrorWire {
+    match error {
+        diagnostics::ActionError::PermissionDenied => SettingsErrorWire::permission_denied(),
+        diagnostics::ActionError::Unavailable => SettingsErrorWire::native_unavailable(),
+        diagnostics::ActionError::Busy => SettingsErrorWire::native_busy(),
+        diagnostics::ActionError::TimedOut => SettingsErrorWire::native_timed_out(),
+    }
+}
+
 #[tauri::command]
 async fn open_log_folder(
     state: State<'_, NativeAppState>,
@@ -5679,12 +5700,7 @@ async fn open_log_folder(
     })
     .await
     .map_err(|_| SettingsErrorWire::native_unavailable())?
-    .map_err(|error| match error {
-        diagnostics::ActionError::PermissionDenied => SettingsErrorWire::permission_denied(),
-        diagnostics::ActionError::Unavailable | diagnostics::ActionError::TimedOut => {
-            SettingsErrorWire::native_unavailable()
-        }
-    })?;
+    .map_err(diagnostics_settings_error)?;
     state.validate_settings_lifecycle_token(token)
 }
 
@@ -5712,12 +5728,7 @@ async fn copy_diagnostics(
     })
     .await
     .map_err(|_| SettingsErrorWire::native_unavailable())?
-    .map_err(|error| match error {
-        diagnostics::ActionError::PermissionDenied => SettingsErrorWire::permission_denied(),
-        diagnostics::ActionError::Unavailable | diagnostics::ActionError::TimedOut => {
-            SettingsErrorWire::native_unavailable()
-        }
-    })?;
+    .map_err(diagnostics_settings_error)?;
     state.validate_settings_lifecycle_token(token)
 }
 
@@ -6439,6 +6450,26 @@ mod tests {
     use std::sync::{Arc, Barrier};
 
     #[test]
+    fn diagnostics_action_errors_keep_distinct_settings_codes() {
+        assert_eq!(
+            diagnostics_settings_error(diagnostics::ActionError::Unavailable).code,
+            devhub_app_core::SettingsErrorCodeWire::NativeUnavailable
+        );
+        assert_eq!(
+            diagnostics_settings_error(diagnostics::ActionError::Busy).code,
+            devhub_app_core::SettingsErrorCodeWire::NativeBusy
+        );
+        assert_eq!(
+            diagnostics_settings_error(diagnostics::ActionError::TimedOut).code,
+            devhub_app_core::SettingsErrorCodeWire::NativeTimedOut
+        );
+        assert_eq!(
+            diagnostics_settings_error(diagnostics::ActionError::PermissionDenied).code,
+            devhub_app_core::SettingsErrorCodeWire::PermissionDenied
+        );
+    }
+
+    #[test]
     fn folder_chooser_only_treats_explicit_apple_cancel_as_normal() {
         let success = ProcessCommand::new("true").status().expect("true status");
         assert!(folder_chooser_status(success, &[]).expect("success status"));
@@ -6575,6 +6606,7 @@ mod tests {
     }
 
     fn remove_temp_home(path: &Path) {
+        assert!(Diagnostics::shutdown_for_test_home(path, Duration::from_secs(2)));
         std::fs::remove_dir_all(path).expect("remove native shell test home");
     }
 
@@ -6666,6 +6698,12 @@ mod tests {
             snapshot.runtime.health.inspection_available,
             state._terminal_runtime.adapter_available()
         );
+        assert!(state.diagnostics.flush(Duration::from_secs(2)));
+        assert!(matches!(
+            state.diagnostics.shutdown(Duration::from_secs(2)),
+            ShutdownOutcome::Complete
+        ));
+        drop(state);
         remove_temp_home(&home);
     }
 
@@ -7839,6 +7877,20 @@ mod tests {
             start + Duration::from_millis(10)
         ));
         assert!(start.elapsed() < Duration::from_millis(90));
+    }
+
+    #[test]
+    fn near_expired_quit_budget_does_not_claim_clean_state() {
+        let home = temp_home();
+        let state = NativeAppState::bootstrap(&home).expect("bootstrap native app");
+        let snapshot = state.current_snapshot().expect("current snapshot");
+        let start = Instant::now();
+        let result = state.persist_clean_snapshot(&snapshot, start + Duration::from_millis(1));
+        assert!(result.is_err());
+        assert!(start.elapsed() < Duration::from_millis(200));
+        let persisted = state.store.load_or_default().expect("load unchanged state");
+        assert!(!persisted.shutdown.clean);
+        remove_temp_home(&home);
     }
 
     #[test]

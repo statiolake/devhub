@@ -1,5 +1,6 @@
 import {
   act,
+  createEvent,
   fireEvent,
   render,
   screen,
@@ -173,6 +174,47 @@ describe("App Shell navigation matrix", () => {
         context: { kind: "workspace", workspaceId: "workspace-1" },
       }),
     );
+  });
+
+  it("provides roving tree navigation without hijacking row actions", async () => {
+    render(<AppShell client={client(agentSnapshot)} />);
+    const workspace = await screen.findByRole("button", {
+      name: /devhub workspace/,
+    });
+    const agents = screen.getAllByRole("button", { name: /agent,/i });
+    expect(agents).toHaveLength(2);
+
+    workspace.focus();
+    fireEvent.keyDown(workspace, { key: "ArrowRight" });
+    expect(document.activeElement).toBe(agents[0]);
+    fireEvent.keyDown(agents[0], { key: "ArrowDown" });
+    expect(document.activeElement).toBe(agents[1]);
+    fireEvent.keyDown(agents[1], { key: "Home" });
+    expect(document.activeElement).toBe(workspace);
+    fireEvent.keyDown(workspace, { key: "End" });
+    expect(document.activeElement).toBe(agents[1]);
+    fireEvent.keyDown(agents[1], { key: "ArrowLeft" });
+    expect(document.activeElement).toBe(workspace);
+  });
+
+  it("prevents rename submission while Japanese IME is composing", async () => {
+    render(<AppShell client={client(agentSnapshot)} />);
+    const renameButtons = await screen.findAllByRole("button", {
+      name: "Rename agent",
+    });
+    fireEvent.click(renameButtons[0]);
+    const input = await screen.findByRole("textbox", { name: "Display name" });
+    fireEvent.compositionStart(input);
+    const enter = createEvent.keyDown(input, {
+      key: "Enter",
+      isComposing: true,
+    });
+    fireEvent(input, enter);
+    expect(enter.defaultPrevented).toBe(true);
+    expect(
+      screen.getByRole("dialog", { name: "Rename Agent" }),
+    ).toBeInTheDocument();
+    fireEvent.compositionEnd(input);
   });
 
   it("keeps Workspace and Agent order stable while status remains semantic", async () => {
@@ -540,6 +582,18 @@ describe("App Shell states and accessibility", () => {
     const trigger = await screen.findByRole("button", {
       name: "Open workspace picker",
     });
+    const nativeFocus = HTMLElement.prototype.focus;
+    const focusInertStates: boolean[] = [];
+    const focusSpy = vi
+      .spyOn(HTMLElement.prototype, "focus")
+      .mockImplementation(function (this: HTMLElement) {
+        if (this.matches('[aria-label="Open workspace picker"]')) {
+          focusInertStates.push(
+            this.closest<HTMLElement>(".app-shell-content")?.inert ?? false,
+          );
+        }
+        nativeFocus.call(this);
+      });
     fireEvent.click(trigger);
     await waitFor(() =>
       expect(appClient.startWorkspacePicker).toHaveBeenCalledWith(""),
@@ -577,6 +631,8 @@ describe("App Shell states and accessibility", () => {
       vi.mocked(appClient.selectWorkspacePicker).mock.invocationCallOrder[0],
     );
     expect(document.activeElement).toBe(trigger);
+    expect(focusInertStates).toContain(false);
+    focusSpy.mockRestore();
   });
 
   it("cancels discovery before native folder selection", async () => {
@@ -620,6 +676,61 @@ describe("App Shell states and accessibility", () => {
       ),
     );
     expect(document.activeElement).toBe(trigger);
+  });
+
+  it("does not commit a workspace picker selection during Japanese IME composition", async () => {
+    const appClient = client(globalSnapshot);
+    let pickerListener: ((event: WorkspacePickerEvent) => void) | undefined;
+    appClient.startWorkspacePicker = vi.fn().mockResolvedValue("picker-ime");
+    appClient.cancelWorkspacePicker = vi.fn().mockResolvedValue(undefined);
+    appClient.selectWorkspacePicker = vi.fn().mockResolvedValue({
+      kind: "noop",
+      snapshot: globalSnapshot,
+    });
+    appClient.subscribeWorkspacePicker = vi
+      .fn()
+      .mockImplementation(async (listener) => {
+        pickerListener = listener;
+        return () => undefined;
+      });
+    render(<AppShell client={appClient} />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Open workspace picker" }),
+    );
+    await waitFor(() =>
+      expect(appClient.startWorkspacePicker).toHaveBeenCalledWith(""),
+    );
+    act(() =>
+      pickerListener?.({
+        kind: "started",
+        operationId: "picker-ime",
+        sequence: 0,
+      }),
+    );
+    act(() =>
+      pickerListener?.({
+        kind: "candidate",
+        operationId: "picker-ime",
+        sequence: 1,
+        label: "日本語 DevHub",
+        searchText: "日本語 DevHub /tmp/devhub",
+        path: "/tmp/devhub",
+        score: 100,
+      }),
+    );
+    const input = await screen.findByRole("textbox", {
+      name: "Filter workspaces",
+    });
+    fireEvent.compositionStart(input);
+    fireEvent.keyDown(input, { key: "Enter", isComposing: true });
+    expect(appClient.selectWorkspacePicker).not.toHaveBeenCalled();
+    fireEvent.compositionEnd(input);
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() =>
+      expect(appClient.selectWorkspacePicker).toHaveBeenCalledWith(
+        "/tmp/devhub",
+      ),
+    );
   });
 
   it("does not regress when an event wins the subscribe-before-query race", async () => {

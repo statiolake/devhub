@@ -8,6 +8,13 @@
   background: var(--paper);
 }
 
+.app-shell-content {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+}
+
 .titlebar {
   display: flex;
   min-height: var(--titlebar-height);
@@ -70,6 +77,7 @@
 
 .workbench {
   display: flex;
+  min-width: 0;
   min-height: 0;
   flex: 1;
 }
@@ -134,7 +142,7 @@
 .sidebar-context-button,
 .agent-row {
   flex: 1;
-  min-height: 38px;
+  min-height: 40px;
   align-items: center;
   border: 0;
   background: transparent;
@@ -152,8 +160,8 @@
 }
 
 .agent-row-action {
-  width: 30px;
-  flex-basis: 30px;
+  width: 40px;
+  flex-basis: 40px;
   font-size: 15px;
 }
 
@@ -174,11 +182,21 @@
 }
 
 .workspace-picker {
-  margin: var(--space-2) 0 var(--space-3);
+  position: fixed;
+  z-index: 20;
+  top: max(16px, calc(var(--titlebar-height, 40px) + 16px));
+  left: max(16px, var(--native-leading-inset, 16px));
+  width: min(560px, calc(100vw - 32px));
+  max-height: calc(100vh - var(--titlebar-height, 40px) - 32px);
+  margin: 0;
+  overflow: auto;
   padding: var(--space-2);
   border: 1px solid var(--selection-line);
   border-radius: var(--radius-small);
   background: var(--surface);
+  box-shadow:
+    0 18px 50px rgba(44, 54, 60, 0.22),
+    0 0 0 100vmax color-mix(in srgb, var(--graphite) 18%, transparent);
 }
 
 .workspace-picker-header,
@@ -190,8 +208,14 @@
 
 .workspace-picker-header input {
   min-width: 0;
+  min-height: 40px;
   flex: 1;
   padding: 6px 8px;
+}
+
+.workspace-picker-header button,
+.workspace-picker-result {
+  min-height: 40px;
 }
 
 .workspace-picker-header h2 {
@@ -308,9 +332,9 @@
 
 .disclosure-button {
   display: grid;
-  width: 32px;
+  width: 40px;
   height: 40px;
-  flex: 0 0 32px;
+  flex: 0 0 40px;
   place-items: center;
   border: 0;
   background: transparent;
@@ -330,9 +354,9 @@
 .row-action-button,
 .section-action-button {
   display: grid;
-  width: 36px;
-  height: 36px;
-  flex: 0 0 36px;
+  width: 40px;
+  height: 40px;
+  flex: 0 0 40px;
   place-items: center;
   border: 0;
   border-radius: var(--radius-small);
@@ -384,6 +408,10 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.sidebar-row-label {
+  min-width: 0;
 }
 
 .sidebar-row-label {
@@ -588,7 +616,7 @@ body.is-resizing-sidebar {
 }
 
 .terminal-retry-button {
-  min-height: 28px;
+  min-height: 40px;
   border: 1px solid color-mix(in srgb, #f4f4ed 48%, transparent);
   border-radius: var(--radius-small);
   background: transparent;
@@ -679,6 +707,7 @@ body.is-resizing-sidebar {
   font-size: 14px;
   line-height: 1.55;
   text-wrap: pretty;
+  overflow-wrap: anywhere;
 }
 
 .surface-loading-state .surface-mark {
@@ -802,12 +831,36 @@ body.is-resizing-sidebar {
     scroll-behavior: auto !important;
     transition-duration: 0.01ms !important;
   }
+
+  .activity-button:active:not(:disabled),
+  .primary-button:active {
+    transform: none;
+  }
 }
 
 @media (prefers-reduced-transparency: reduce) {
   .titlebar,
   .sidebar {
     background: var(--chrome);
+  }
+
+  .confirmation-backdrop,
+  .agent-profile-picker {
+    background: var(--chrome);
+  }
+}
+
+@media (prefers-contrast: more) {
+  .activity-button,
+  .sidebar-row,
+  .row-action-button,
+  .section-action-button,
+  .disclosure-button {
+    border-color: var(--graphite);
+  }
+
+  .status-mark > span:first-child {
+    color: var(--graphite);
   }
 }
 
@@ -820,5 +873,18 @@ body.is-resizing-sidebar {
 
   .status-mark > span:first-child {
     color: CanvasText;
+  }
+
+  button,
+  input,
+  select,
+  textarea,
+  [role="dialog"] {
+    border-color: ButtonText;
+  }
+
+  .confirmation-backdrop,
+  .agent-profile-picker {
+    background: Canvas;
   }
 }

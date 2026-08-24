@@ -54,6 +54,7 @@
   align-items: center;
   gap: 7px;
   margin-left: auto;
+  flex-wrap: wrap;
 }
 
 .settings-revision {
@@ -88,7 +89,7 @@
 
 .settings-body {
   display: grid;
-  grid-template-columns: 188px minmax(0, 1fr);
+  grid-template-columns: minmax(148px, 188px) minmax(0, 1fr);
   min-height: 0;
 }
 
@@ -102,6 +103,7 @@
 }
 
 .settings-sidebar button {
+  min-height: 40px;
   border: 0;
   border-radius: var(--radius-small);
   padding: 8px 12px;
@@ -125,6 +127,7 @@
   min-width: 0;
   overflow: auto;
   padding: 28px 34px 48px;
+  overflow-wrap: anywhere;
 }
 
 .settings-section {
@@ -176,7 +179,7 @@
 .settings-source-heading select,
 .settings-env-row input {
   width: 100%;
-  min-height: 31px;
+  min-height: 40px;
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-control);
   padding: 5px 8px;
@@ -194,7 +197,7 @@
 }
 
 .settings-button {
-  min-height: 30px;
+  min-height: 40px;
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-control);
   padding: 5px 11px;
@@ -298,8 +301,9 @@
 }
 .settings-env-row {
   display: grid;
-  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr) 30px;
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr) 40px;
   gap: 7px;
+  min-width: 0;
 }
 .settings-argv {
   display: grid;
@@ -308,10 +312,13 @@
 }
 .settings-argv-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 30px 30px 30px;
+  grid-template-columns: minmax(0, 1fr) 40px 40px 40px;
   gap: 5px;
+  min-width: 0;
 }
 .settings-icon-button {
+  min-width: 40px;
+  min-height: 40px;
   border: 0;
   background: transparent;
   color: var(--clay);
@@ -336,7 +343,7 @@
   overflow: hidden;
   color: var(--secondary);
   text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 .settings-runtime-values {
   display: grid;
@@ -356,7 +363,7 @@
 .settings-runtime-value code {
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 .settings-code,
 .settings-runtime-value code {
@@ -463,6 +470,18 @@
   gap: 8px;
 }
 
+.settings-sidebar button:focus-visible,
+.settings-button:focus-visible,
+.settings-icon-button:focus-visible,
+.settings-field input:focus-visible,
+.settings-field select:focus-visible,
+.settings-source-heading input:focus-visible,
+.settings-source-heading select:focus-visible,
+.settings-env-row input:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
 @media (max-width: 760px) {
   .settings-body {
     grid-template-columns: 148px minmax(0, 1fr);
@@ -483,6 +502,34 @@
   }
 }
 
+@media (max-width: 560px) {
+  .settings-body {
+    grid-template-columns: 1fr;
+  }
+
+  .settings-sidebar {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .settings-sidebar button {
+    min-height: 40px;
+  }
+
+  .settings-content {
+    padding: 20px 16px 32px;
+  }
+
+  .settings-source-heading,
+  .settings-inline-fields,
+  .settings-runtime-grid,
+  .settings-runtime-values {
+    grid-template-columns: 1fr;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -490,6 +537,20 @@
     scroll-behavior: auto !important;
     transition-duration: 0.01ms !important;
     animation-duration: 0.01ms !important;
+  }
+
+  .settings-button:active {
+    transform: none;
+  }
+}
+
+@media (prefers-contrast: more) {
+  .settings-sidebar button,
+  .settings-button,
+  .settings-icon-button,
+  .settings-field input,
+  .settings-field select {
+    border-color: var(--graphite);
   }
 }
 
@@ -500,5 +561,12 @@
     border: 1px solid CanvasText;
     background: Highlight;
     color: HighlightText;
+  }
+
+  .settings-field input,
+  .settings-field select,
+  .settings-icon-button,
+  .settings-button {
+    border-color: ButtonText;
   }
 }

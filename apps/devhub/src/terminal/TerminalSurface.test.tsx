@@ -48,6 +48,7 @@ vi.mock("@xterm/xterm", () => {
     open(host: HTMLElement) {
       const element = document.createElement("div");
       element.className = "xterm";
+      element.append(document.createElement("textarea"));
       host.append(element);
     }
 
@@ -201,6 +202,20 @@ afterEach(() => {
 });
 
 describe("TerminalSurface lifecycle", () => {
+  it("labels xterm's hidden native input for VoiceOver", async () => {
+    const harness = clientHarness();
+    render(
+      <TerminalSurface
+        surfaceKey="global-terminal"
+        surfaceLabel="Scratch"
+        client={harness.client}
+      />,
+    );
+    expect(
+      await screen.findByRole("textbox", { name: "Scratch terminal input" }),
+    ).toHaveAttribute("aria-label", "Scratch terminal input");
+  });
+
   it("attaches with target zero, accepts Started, writes output, and ACKs after write", async () => {
     const harness = clientHarness();
     render(

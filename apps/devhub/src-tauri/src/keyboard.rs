@@ -150,6 +150,11 @@ impl KeyRouter {
     }
 
     pub fn route(&mut self, stroke: KeyStroke, now: Instant) -> RouteDecision {
+        // IME composition remains AppKit/WebKit-owned. This router only
+        // consumes the exact native Command-Q prefix (or Command-comma for
+        // Settings); every non-command key event, including composition and
+        // marked-text commits, is returned to the original responder. It
+        // never synthesizes a key event or inspects text input.
         if stroke.is_repeat && stroke.exact_command_q() {
             self.armed_until = None;
             return RouteDecision::Consume;

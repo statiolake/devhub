@@ -1,11 +1,13 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
   type PointerEvent as ReactPointerEvent,
 } from "react";
+import { createPortal } from "react-dom";
 import {
   type AgentProfile,
   type AgentProfilesAvailabilityWire,
@@ -16,6 +18,7 @@ import {
 } from "../../generated/app-shell";
 import { clampSidebarWidth } from "../../app/client";
 import { useAppShell } from "../../app/useAppShell";
+import { isImeComposing } from "../../accessibility/ime";
 import { StatusMark } from "./StatusMark";
 import { statusLabel } from "./status";
 
@@ -54,7 +57,7 @@ function trapDialogKey(
   if (event.key === "Escape") {
     // Escape during IME composition belongs to the text composition, not the
     // modal lifecycle.
-    if (event.isComposing) return;
+    if (isImeComposing(event)) return;
     event.preventDefault();
     onEscape();
     return;
@@ -70,6 +73,23 @@ function trapDialogKey(
     : (index + 1) % focusables.length;
   event.preventDefault();
   focusables[next]?.focus();
+}
+
+function treeContextButtons(tree: HTMLElement): HTMLButtonElement[] {
+  return [
+    ...tree.querySelectorAll<HTMLButtonElement>(
+      "[data-tree-item-id]:not([disabled])",
+    ),
+  ];
+}
+
+function setTreeTabStop(
+  tree: HTMLElement,
+  button: HTMLButtonElement | undefined,
+): void {
+  for (const item of treeContextButtons(tree)) {
+    item.tabIndex = item === button ? 0 : -1;
+  }
 }
 
 function WorkspaceRow({
@@ -106,7 +126,13 @@ function WorkspaceRow({
   );
 
   return (
-    <li className="sidebar-tree-item">
+    <li
+      className="sidebar-tree-item"
+      role="treeitem"
+      aria-level={1}
+      aria-selected={selected}
+      aria-expanded={workspace.agents.length > 0 ? expanded : undefined}
+    >
       <div
         className={`sidebar-row workspace-row${selected ? " is-selected" : ""}`}
         data-state={workspace.state}
@@ -132,8 +158,11 @@ function WorkspaceRow({
           className="sidebar-context-button"
           type="button"
           data-workspace-id={workspace.id}
+          data-tree-item-id={`workspace:${workspace.id}`}
+          tabIndex={selected ? 0 : -1}
           aria-current={selected ? "page" : undefined}
-          aria-label={`${workspace.label} workspace, ${statusLabel(workspace.aggregateStatus)} aggregate status`}
+          aria-label={`${workspace.label} workspace, path ${workspace.root}, ${statusLabel(workspace.aggregateStatus)} aggregate status`}
+          title={workspace.root}
           onClick={() =>
             dispatch({
               type: "select_context",
@@ -240,11 +269,20 @@ function WorkspaceRow({
         )}
       </div>
       {workspace.agents.length > 0 && expanded && (
-        <ul className="agent-tree" aria-label={`${workspace.label} agents`}>
+        <ul
+          className="agent-tree"
+          role="group"
+          aria-label={`${workspace.label} agents`}
+        >
           {workspace.agents.map((agent) => {
             const agentSelected = selectedAgentId === agent.id;
             return (
-              <li key={agent.id}>
+              <li
+                key={agent.id}
+                role="treeitem"
+                aria-level={2}
+                aria-selected={agentSelected}
+              >
                 <div
                   className={`sidebar-row agent-row${agentSelected ? " is-selected" : ""}`}
                   data-control-state={agent.controlState}
@@ -252,6 +290,8 @@ function WorkspaceRow({
                   <button
                     className="sidebar-context-button"
                     type="button"
+                    data-tree-item-id={`agent:${agent.id}`}
+                    tabIndex={agentSelected ? 0 : -1}
                     aria-current={agentSelected ? "page" : undefined}
                     aria-label={`${agent.displayName}, ${statusLabel(agent.status)} agent, ${agent.controlState === "stopping" ? "Stopping" : agent.controlState === "stop-failed" ? "Stop failed" : runtimeHealthLabel(agent.runtimeHealth)}`}
                     disabled={agent.controlState === "stopping"}
@@ -477,16 +517,128 @@ export function Sidebar({ snapshot }: SidebarProps) {
   const [renameValue, setRenameValue] = useState("");
   const [renameBusy, setRenameBusy] = useState(false);
   const [renameError, setRenameError] = useState(false);
+  const pickerCompositionActive = useRef(false);
+  const renameCompositionActive = useRef(false);
   const pickerTriggerRef = useRef<HTMLButtonElement>(null);
   const workspacePickerRef = useRef<HTMLElement>(null);
   const agentPickerRef = useRef<HTMLElement>(null);
   const renameDialogRef = useRef<HTMLElement>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
+  const workspaceTreeRef = useRef<HTMLUListElement>(null);
+  const treeFocusId = useRef<string | undefined>(undefined);
+  const pendingTreeChildFocus = useRef<string | undefined>(undefined);
+  const focusRestoreGeneration = useRef(0);
+  const pendingFocusRestore = useRef<HTMLElement | null>(null);
   const agentPickerPreviousFocus = useRef<HTMLElement | null>(null);
   const renamePreviousFocus = useRef<HTMLElement | null>(null);
   const rankedCandidates = useMemo(
     () => [...pickerCandidates].sort((left, right) => right.score - left.score),
     [pickerCandidates],
+  );
+
+  useLayoutEffect(() => {
+    const tree = workspaceTreeRef.current;
+    if (!tree) return;
+    const items = treeContextButtons(tree);
+    if (pendingTreeChildFocus.current) {
+      const workspaceButton = items.find(
+        (item) => item.dataset.treeItemId === pendingTreeChildFocus.current,
+      );
+      const child = workspaceButton
+        ?.closest<HTMLElement>("[role=treeitem]")
+        ?.querySelector<HTMLButtonElement>(
+          ".agent-tree [data-tree-item-id]:not([disabled])",
+        );
+      if (child) {
+        pendingTreeChildFocus.current = undefined;
+        treeFocusId.current = child.dataset.treeItemId;
+        setTreeTabStop(tree, child);
+        child.focus();
+        return;
+      }
+    }
+    const previousId = treeFocusId.current;
+    const requested = previousId
+      ? items.find((item) => item.dataset.treeItemId === previousId)
+      : undefined;
+    const selected = items.find(
+      (item) =>
+        item
+          .closest<HTMLElement>("[role=treeitem]")
+          ?.getAttribute("aria-selected") === "true",
+    );
+    const target = requested ?? selected ?? items[0];
+    setTreeTabStop(tree, target);
+    if (!target) {
+      treeFocusId.current = undefined;
+      return;
+    }
+    const active = document.activeElement;
+    const activeWasRemoved =
+      Boolean(previousId) &&
+      !requested &&
+      (active === document.body || active === tree || tree.contains(active));
+    treeFocusId.current = target.dataset.treeItemId;
+    if (activeWasRemoved) target.focus();
+  }, [
+    snapshot.selection.context,
+    snapshot.sidebar.expandedWorkspaceIds,
+    snapshot.workspaces,
+  ]);
+
+  const modalOpen =
+    pickerOpen || Boolean(agentPickerWorkspaceId) || Boolean(renameTarget);
+
+  useEffect(() => {
+    const content = document.querySelector<HTMLElement>(".app-shell-content");
+    if (!content) return undefined;
+    content.inert = modalOpen;
+    return () => {
+      content.inert = false;
+    };
+  }, [modalOpen]);
+
+  useEffect(() => {
+    if (modalOpen || !pendingFocusRestore.current) return;
+    const generation = focusRestoreGeneration.current;
+    const target = pendingFocusRestore.current;
+    pendingFocusRestore.current = null;
+    const restore = () => {
+      if (generation !== focusRestoreGeneration.current) return;
+      const active = document.activeElement as HTMLElement | null;
+      if (
+        active &&
+        active !== document.body &&
+        !active.closest("[role='dialog']")
+      ) {
+        return;
+      }
+      const inertContent =
+        target?.closest<HTMLElement>(".app-shell-content") ??
+        document.querySelector<HTMLElement>(".app-shell-content");
+      // This effect only runs after modalOpen became false. Clear a stale
+      // property left by browsers that do not reflect inert removal promptly.
+      if (inertContent?.inert) inertContent.inert = false;
+      const candidate =
+        target &&
+        target.isConnected &&
+        !target.hasAttribute("disabled") &&
+        !(target.closest<HTMLElement>("[inert]")?.inert ?? false)
+          ? target
+          : document.querySelector<HTMLElement>(
+              '[aria-label="Workspace navigation"] .section-action-button:not([disabled]), [aria-label="Workspace navigation"] [data-tree-item-id]:not([disabled])[tabindex="0"], [aria-label="Workspace navigation"] button:not([disabled]), .activity-nav button:not([disabled])',
+            );
+      candidate?.focus();
+    };
+    queueMicrotask(restore);
+  }, [modalOpen]);
+
+  const scheduleFocusRestore = useCallback(
+    (target: HTMLElement | null | undefined) => {
+      focusRestoreGeneration.current += 1;
+      pendingFocusRestore.current = target ?? null;
+    },
+    [],
   );
 
   useEffect(() => {
@@ -503,22 +655,27 @@ export function Sidebar({ snapshot }: SidebarProps) {
 
   const closePicker = useCallback(() => {
     setPickerOpen(false);
-    pickerTriggerRef.current?.focus();
-  }, []);
+    pickerCompositionActive.current = false;
+    scheduleFocusRestore(pickerTriggerRef.current);
+  }, [scheduleFocusRestore]);
 
   const closeAgentPicker = useCallback(() => {
     setAgentPickerWorkspaceId(undefined);
-    agentPickerPreviousFocus.current?.focus();
+    pickerCompositionActive.current = false;
+    const previous = agentPickerPreviousFocus.current;
+    scheduleFocusRestore(previous);
     agentPickerPreviousFocus.current = null;
-  }, []);
+  }, [scheduleFocusRestore]);
 
   const closeRename = useCallback(() => {
     setRenameBusy(false);
     setRenameError(false);
+    renameCompositionActive.current = false;
     setRenameTarget(undefined);
-    renamePreviousFocus.current?.focus();
+    const previous = renamePreviousFocus.current;
+    scheduleFocusRestore(previous);
     renamePreviousFocus.current = null;
-  }, []);
+  }, [scheduleFocusRestore]);
 
   useEffect(() => {
     if (!renameTarget) return;
@@ -653,77 +810,200 @@ export function Sidebar({ snapshot }: SidebarProps) {
             <span aria-hidden="true">＋</span>
           </button>
         </div>
-        {pickerOpen && (
-          <section
-            ref={workspacePickerRef}
-            className="workspace-picker"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="workspace-picker-title"
-          >
-            <div className="workspace-picker-header">
-              <h2 id="workspace-picker-title">Open workspace</h2>
-              <input
-                aria-label="Filter workspaces"
-                placeholder="Filter workspaces"
-                value={pickerQuery}
-                onChange={(event) => setPickerQuery(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" && rankedCandidates[0]) {
-                    finishPickerAction(() =>
-                      selectWorkspacePicker(rankedCandidates[0].path),
-                    );
-                  }
-                  if (
-                    event.key === "Escape" &&
-                    !event.nativeEvent.isComposing
-                  ) {
-                    finishPickerAction();
-                  }
-                }}
-              />
-              <button type="button" onClick={() => finishPickerAction()}>
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={() =>
-                  finishPickerAction(async () => {
-                    const path = await chooseWorkspaceFolder();
-                    if (path) await selectWorkspacePicker(path);
-                  })
-                }
+        {pickerOpen && typeof document !== "undefined"
+          ? createPortal(
+              <section
+                ref={workspacePickerRef}
+                className="workspace-picker"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="workspace-picker-title"
               >
-                Open Folder…
-              </button>
-            </div>
-            <div className="workspace-picker-results" aria-live="polite">
-              {rankedCandidates.map((candidate) => (
-                <button
-                  type="button"
-                  className="workspace-picker-result"
-                  key={`${candidate.operationId}:${candidate.path}`}
-                  onClick={() =>
-                    finishPickerAction(() =>
-                      selectWorkspacePicker(candidate.path),
-                    )
-                  }
-                >
-                  <span>{candidate.label}</span>
-                  <small>{candidate.path}</small>
-                </button>
-              ))}
-              {!pickerBusy && pickerCandidates.length === 0 && (
-                <p>No workspaces found.</p>
-              )}
-              {pickerBusy && (
-                <p role="status">Searching configured locations…</p>
-              )}
-            </div>
-          </section>
-        )}
+                <div className="workspace-picker-header">
+                  <h2 id="workspace-picker-title">Open workspace</h2>
+                  <input
+                    aria-label="Filter workspaces"
+                    placeholder="Filter workspaces"
+                    value={pickerQuery}
+                    onCompositionStart={() => {
+                      pickerCompositionActive.current = true;
+                    }}
+                    onCompositionEnd={() => {
+                      pickerCompositionActive.current = false;
+                    }}
+                    onChange={(event) => setPickerQuery(event.target.value)}
+                    onKeyDown={(event) => {
+                      const composing = isImeComposing(
+                        event.nativeEvent,
+                        pickerCompositionActive.current,
+                      );
+                      if (
+                        composing &&
+                        (event.key === "Enter" || event.key === "Escape")
+                      ) {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        return;
+                      }
+                      if (
+                        !composing &&
+                        event.key === "Enter" &&
+                        rankedCandidates[0]
+                      ) {
+                        finishPickerAction(() =>
+                          selectWorkspacePicker(rankedCandidates[0].path),
+                        );
+                      }
+                      if (event.key === "Escape" && !composing) {
+                        finishPickerAction();
+                      }
+                    }}
+                  />
+                  <button type="button" onClick={() => finishPickerAction()}>
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      finishPickerAction(async () => {
+                        const path = await chooseWorkspaceFolder();
+                        if (path) await selectWorkspacePicker(path);
+                      })
+                    }
+                  >
+                    Open Folder…
+                  </button>
+                </div>
+                <div className="workspace-picker-results" aria-live="polite">
+                  {rankedCandidates.map((candidate) => (
+                    <button
+                      type="button"
+                      className="workspace-picker-result"
+                      key={`${candidate.operationId}:${candidate.path}`}
+                      onClick={() =>
+                        finishPickerAction(() =>
+                          selectWorkspacePicker(candidate.path),
+                        )
+                      }
+                    >
+                      <span>{candidate.label}</span>
+                      <small>{candidate.path}</small>
+                    </button>
+                  ))}
+                  {!pickerBusy && pickerCandidates.length === 0 && (
+                    <p>No workspaces found.</p>
+                  )}
+                  {pickerBusy && (
+                    <p role="status">Searching configured locations…</p>
+                  )}
+                </div>
+              </section>,
+              document.body,
+            )
+          : null}
         {snapshot.workspaces.length > 0 ? (
-          <ul className="workspace-tree" aria-label="Open workspaces">
+          <ul
+            ref={workspaceTreeRef}
+            className="workspace-tree"
+            role="tree"
+            aria-label="Open workspaces"
+            onFocusCapture={(event) => {
+              const button = (
+                event.target as HTMLElement
+              ).closest<HTMLButtonElement>("[data-tree-item-id]");
+              if (!button) return;
+              const treeItemId = button.dataset.treeItemId;
+              if (!treeItemId) return;
+              treeFocusId.current = treeItemId;
+              setTreeTabStop(event.currentTarget, button);
+            }}
+            onKeyDown={(event) => {
+              if (
+                isImeComposing(event.nativeEvent) ||
+                event.target instanceof HTMLInputElement
+              ) {
+                return;
+              }
+              const active = event.currentTarget.ownerDocument
+                .activeElement as HTMLElement | null;
+              const activeItem = active?.closest<HTMLButtonElement>(
+                "[data-tree-item-id]",
+              );
+              if (
+                !activeItem ||
+                activeItem.parentElement?.closest("[role=dialog]")
+              ) {
+                return;
+              }
+              const items = treeContextButtons(event.currentTarget);
+              const index = items.indexOf(activeItem);
+              if (index < 0) return;
+              const focusItem = (
+                item: HTMLButtonElement | null | undefined,
+              ) => {
+                if (!item) return;
+                const treeItemId = item.dataset.treeItemId;
+                if (!treeItemId) return;
+                treeFocusId.current = treeItemId;
+                setTreeTabStop(event.currentTarget, item);
+                item.focus();
+              };
+              if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                event.preventDefault();
+                const delta = event.key === "ArrowDown" ? 1 : -1;
+                focusItem(items[(index + delta + items.length) % items.length]);
+                return;
+              }
+              if (event.key === "Home" || event.key === "End") {
+                event.preventDefault();
+                focusItem(event.key === "Home" ? items[0] : items.at(-1));
+                return;
+              }
+              const item = activeItem.closest<HTMLElement>("[role=treeitem]");
+              if (!item) return;
+              if (event.key === "ArrowRight") {
+                const disclosure =
+                  item.querySelector<HTMLButtonElement>(".disclosure-button");
+                const child = item.querySelector<HTMLButtonElement>(
+                  ".agent-tree [data-tree-item-id]",
+                );
+                if (!disclosure) return;
+                event.preventDefault();
+                if (disclosure.getAttribute("aria-expanded") !== "true") {
+                  pendingTreeChildFocus.current = activeItem.dataset.treeItemId;
+                  disclosure.click();
+                  window.requestAnimationFrame(() => {
+                    const next = item.querySelector<HTMLButtonElement>(
+                      ".agent-tree [data-tree-item-id]",
+                    );
+                    focusItem(next);
+                  });
+                } else if (child) {
+                  focusItem(child);
+                }
+                return;
+              }
+              if (event.key === "ArrowLeft") {
+                const parent =
+                  item.parentElement?.closest<HTMLElement>("[role=treeitem]");
+                if (parent) {
+                  event.preventDefault();
+                  focusItem(
+                    parent.querySelector<HTMLButtonElement>(
+                      ":scope > .sidebar-row [data-tree-item-id]",
+                    ),
+                  );
+                  return;
+                }
+                const disclosure =
+                  item.querySelector<HTMLButtonElement>(".disclosure-button");
+                if (disclosure?.getAttribute("aria-expanded") === "true") {
+                  event.preventDefault();
+                  disclosure.click();
+                }
+              }
+            }}
+          >
             {snapshot.workspaces.map((workspace) => (
               <WorkspaceRow
                 key={workspace.id}
@@ -742,109 +1022,146 @@ export function Sidebar({ snapshot }: SidebarProps) {
           <p className="sidebar-empty">No workspaces open</p>
         )}
       </div>
-      {agentPickerWorkspaceId && (
-        <section
-          ref={agentPickerRef}
-          className="agent-profile-picker"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="agent-profile-picker-title"
-        >
-          <div className="agent-profile-picker-card">
-            <h2 id="agent-profile-picker-title">New Agent</h2>
-            <p>Select an enabled profile to launch at the workspace root.</p>
-            {agentProfiles.profiles.length > 0 ? (
-              <div className="agent-profile-options">
-                {agentProfiles.profiles.map((profile) => (
-                  <button
-                    key={profile.id}
-                    type="button"
-                    onClick={() => {
-                      onDispatch({
-                        type: "request_create_agent",
-                        workspaceId: agentPickerWorkspaceId,
-                        profileId: profile.id,
-                      });
-                      closeAgentPicker();
-                    }}
-                  >
-                    <span>{profile.displayName}</span>
-                    <small>
-                      {profile.kind === "codex" ? "Codex" : "Claude"}
-                    </small>
-                  </button>
-                ))}
+      {agentPickerWorkspaceId && typeof document !== "undefined"
+        ? createPortal(
+            <section
+              ref={agentPickerRef}
+              className="agent-profile-picker"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="agent-profile-picker-title"
+            >
+              <div className="agent-profile-picker-card">
+                <h2 id="agent-profile-picker-title">New Agent</h2>
+                <p>
+                  Select an enabled profile to launch at the workspace root.
+                </p>
+                {agentProfiles.profiles.length > 0 ? (
+                  <div className="agent-profile-options">
+                    {agentProfiles.profiles.map((profile) => (
+                      <button
+                        key={profile.id}
+                        type="button"
+                        onClick={() => {
+                          onDispatch({
+                            type: "request_create_agent",
+                            workspaceId: agentPickerWorkspaceId,
+                            profileId: profile.id,
+                          });
+                          closeAgentPicker();
+                        }}
+                      >
+                        <span>{profile.displayName}</span>
+                        <small>
+                          {profile.kind === "codex" ? "Codex" : "Claude"}
+                        </small>
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <p role="status">
+                    {agentProfiles.availability === "unavailable"
+                      ? "Agent profiles are unavailable. Try again after configuration is restored."
+                      : "No enabled Agent profiles are available."}
+                  </p>
+                )}
+                {agentProfiles.availability === "degraded" && (
+                  <p role="status">
+                    Profile configuration needs attention; these are the last
+                    confirmed choices.
+                  </p>
+                )}
+                <button type="button" onClick={closeAgentPicker}>
+                  Cancel
+                </button>
               </div>
-            ) : (
-              <p role="status">
-                {agentProfiles.availability === "unavailable"
-                  ? "Agent profiles are unavailable. Try again after configuration is restored."
-                  : "No enabled Agent profiles are available."}
-              </p>
-            )}
-            {agentProfiles.availability === "degraded" && (
-              <p role="status">
-                Profile configuration needs attention; these are the last
-                confirmed choices.
-              </p>
-            )}
-            <button type="button" onClick={closeAgentPicker}>
-              Cancel
-            </button>
-          </div>
-        </section>
-      )}
-      {renameTarget && (
-        <section
-          ref={renameDialogRef}
-          className="agent-profile-picker"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="rename-agent-title"
-        >
-          <form
-            className="agent-profile-picker-card"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void submitRename();
-            }}
-          >
-            <h2 id="rename-agent-title">Rename Agent</h2>
-            <label>
-              Display name
-              <input
-                ref={renameInputRef}
-                value={renameValue}
-                maxLength={256}
-                aria-invalid={renameError}
-                disabled={renameBusy}
-                onChange={(event) => setRenameValue(event.target.value)}
-              />
-            </label>
-            {renameError && (
-              <p className="surface-inline-alert" role="alert">
-                Rename could not be completed. Try again.
-              </p>
-            )}
-            <div className="confirmation-actions">
-              <button type="button" onClick={closeRename} disabled={renameBusy}>
-                Cancel
-              </button>
-              <button
-                className="primary-button"
-                type="submit"
-                disabled={
-                  renameBusy ||
-                  renameValue.trim().length === 0 ||
-                  renameTarget.controlState !== "running"
-                }
+            </section>,
+            document.body,
+          )
+        : null}
+      {renameTarget && typeof document !== "undefined"
+        ? createPortal(
+            <section
+              ref={renameDialogRef}
+              className="agent-profile-picker"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="rename-agent-title"
+            >
+              <form
+                className="agent-profile-picker-card"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  if (renameCompositionActive.current) return;
+                  void submitRename();
+                }}
               >
-                {renameBusy ? "Renaming…" : "Rename"}
-              </button>
-            </div>
-          </form>
-        </section>
-      )}
+                <h2 id="rename-agent-title">Rename Agent</h2>
+                <label>
+                  Display name
+                  <input
+                    ref={renameInputRef}
+                    value={renameValue}
+                    maxLength={256}
+                    aria-invalid={renameError}
+                    disabled={renameBusy}
+                    onCompositionStart={() => {
+                      renameCompositionActive.current = true;
+                    }}
+                    onCompositionEnd={() => {
+                      renameCompositionActive.current = false;
+                    }}
+                    onKeyDown={(event) => {
+                      if (
+                        isImeComposing(
+                          event.nativeEvent,
+                          renameCompositionActive.current,
+                        )
+                      ) {
+                        if (
+                          event.key === "Enter" ||
+                          event.key === "NumpadEnter" ||
+                          event.key === "Escape"
+                        ) {
+                          event.preventDefault();
+                          event.stopPropagation();
+                        }
+                        return;
+                      }
+                    }}
+                    onChange={(event) => setRenameValue(event.target.value)}
+                  />
+                </label>
+                {renameError && (
+                  <p className="surface-inline-alert" role="alert">
+                    Rename could not be completed. Try again.
+                  </p>
+                )}
+                <div className="confirmation-actions">
+                  <button
+                    type="button"
+                    onClick={closeRename}
+                    disabled={renameBusy}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    className="primary-button"
+                    type="submit"
+                    disabled={
+                      renameBusy ||
+                      renameValue.trim().length === 0 ||
+                      renameTarget.controlState !== "running"
+                    }
+                  >
+                    {renameBusy ? "Renaming…" : "Rename"}
+                  </button>
+                </div>
+              </form>
+            </section>,
+            document.body,
+          )
+        : null}
       <SidebarResizeHandle
         width={renderedWidth}
         onPreview={previewResize}

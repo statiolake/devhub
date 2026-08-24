@@ -194,6 +194,19 @@ export function TerminalSurface({
       fit = new FitAddon();
       terminal.loadAddon(fit);
       terminal.open(host);
+      // xterm owns a hidden native textarea for keyboard and IME input. Keep
+      // that responder discoverable to VoiceOver without adding a second
+      // visible control or intercepting composition events in React.
+      const input = host.querySelector<HTMLTextAreaElement>("textarea");
+      if (input) {
+        input.setAttribute("aria-label", `${surfaceLabel} terminal input`);
+        if (!hideTitle) {
+          input.setAttribute(
+            "aria-describedby",
+            `${surfaceKey}-terminal-title`,
+          );
+        }
+      }
       terminal.attachCustomKeyEventHandler(() => true);
     } catch {
       terminalRef.current?.dispose();
@@ -554,7 +567,14 @@ export function TerminalSurface({
 
   return (
     <div className="terminal-surface-shell">
-      {!hideTitle && <h1 className="terminal-surface-title">{surfaceLabel}</h1>}
+      {!hideTitle && (
+        <h1
+          id={`${surfaceKey}-terminal-title`}
+          className="terminal-surface-title"
+        >
+          {surfaceLabel}
+        </h1>
+      )}
       <div
         ref={hostRef}
         className="terminal-surface"

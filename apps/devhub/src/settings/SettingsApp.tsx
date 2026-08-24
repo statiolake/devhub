@@ -15,6 +15,7 @@ import {
   parseSettingsTransportError,
   type SettingsClient,
 } from "./client";
+import { isImeComposing } from "../accessibility/ime";
 import "./settings.css";
 
 const defaultSettingsClient = createTauriSettingsClient();
@@ -28,6 +29,14 @@ const SETTINGS_SECTIONS = [
 ] as const;
 
 type Section = (typeof SETTINGS_SECTIONS)[number];
+
+function modalFocusables(dialog: HTMLElement): HTMLElement[] {
+  return [
+    ...dialog.querySelectorAll<HTMLElement>(
+      "button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [href], [tabindex]:not([tabindex='-1'])",
+    ),
+  ];
+}
 
 const cloneConfig = (config: SettingsConfig): SettingsConfig =>
   JSON.parse(JSON.stringify(config)) as SettingsConfig;
@@ -48,6 +57,10 @@ function errorMessage(error: SettingsError): string {
       return "DevHub does not have permission to complete that native action.";
     case "native_unavailable":
       return "The native Settings window is unavailable.";
+    case "native_busy":
+      return "Another native diagnostics action is still in progress. Try again when it finishes.";
+    case "native_timed_out":
+      return "The native diagnostics action timed out. It may still be finishing; try again shortly.";
   }
 }
 
@@ -1009,6 +1022,7 @@ export function SettingsApp({
     useState<string>();
   const socketTriggerRef = useRef<HTMLButtonElement>(null);
   const socketCancelRef = useRef<HTMLButtonElement>(null);
+  const socketDialogRef = useRef<HTMLElement>(null);
   const socketWasOpen = useRef(false);
   const [dirty, setDirty] = useState(false);
   const dirtyRef = useRef(false);
@@ -1029,7 +1043,8 @@ export function SettingsApp({
         !event.metaKey ||
         event.ctrlKey ||
         event.altKey ||
-        event.key.toLowerCase() !== "w"
+        event.key.toLowerCase() !== "w" ||
+        isImeComposing(event)
       ) {
         return;
       }
@@ -1335,20 +1350,41 @@ export function SettingsApp({
         <div className="settings-sheet-backdrop">
           <section
             className="settings-sheet"
+            ref={socketDialogRef}
             role="dialog"
             aria-modal="true"
             aria-labelledby="socket-confirmation-heading"
+            aria-describedby="socket-confirmation-description"
             onKeyDown={(event) => {
-              if (event.key === "Escape") {
+              if (
+                event.key === "Escape" &&
+                !isImeComposing(event.nativeEvent)
+              ) {
                 event.preventDefault();
                 setSocketConfirmation(undefined);
                 setSocketConfirmationSequence(undefined);
                 setSocketConfirmationRevision(undefined);
+                return;
               }
+              if (event.key !== "Tab") return;
+              const dialog = socketDialogRef.current;
+              if (!dialog) return;
+              const focusables = modalFocusables(dialog);
+              if (focusables.length === 0) return;
+              const index = focusables.indexOf(
+                document.activeElement as HTMLElement,
+              );
+              const next = event.shiftKey
+                ? index <= 0
+                  ? focusables.length - 1
+                  : index - 1
+                : (index + 1) % focusables.length;
+              event.preventDefault();
+              focusables[next]?.focus();
             }}
           >
             <h2 id="socket-confirmation-heading">Apply tmux socket change?</h2>
-            <p>
+            <p id="socket-confirmation-description">
               Target{" "}
               <code className="settings-code">
                 {socketConfirmation.requestedSocketName ?? "—"}

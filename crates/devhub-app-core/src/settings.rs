@@ -309,6 +309,8 @@ pub enum SettingsErrorCodeWire {
     RuntimeUnavailable,
     NativeUnavailable,
     PermissionDenied,
+    NativeBusy,
+    NativeTimedOut,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -955,6 +957,18 @@ impl SettingsErrorWire {
     pub const fn permission_denied() -> Self {
         Self {
             code: SettingsErrorCodeWire::PermissionDenied,
+            diagnostic: None,
+            current_revision: None,
+        }
+    }
+
+    pub const fn native_busy() -> Self {
+        Self { code: SettingsErrorCodeWire::NativeBusy, diagnostic: None, current_revision: None }
+    }
+
+    pub const fn native_timed_out() -> Self {
+        Self {
+            code: SettingsErrorCodeWire::NativeTimedOut,
             diagnostic: None,
             current_revision: None,
         }
