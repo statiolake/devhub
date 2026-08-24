@@ -7,6 +7,11 @@ guard CommandLine.arguments.count == 2 else {
 }
 
 let bundleURL = URL(fileURLWithPath: CommandLine.arguments[1], isDirectory: true)
+let expectedBundleIdentifier = "io.github.statiolake.devhub"
+guard Bundle(url: bundleURL)?.bundleIdentifier == expectedBundleIdentifier else {
+    fputs("bundle identity mismatch\n", stderr)
+    exit(1)
+}
 let configuration = NSWorkspace.OpenConfiguration()
 configuration.environment = ProcessInfo.processInfo.environment
 
@@ -20,13 +25,24 @@ NSWorkspace.shared.openApplication(at: bundleURL, configuration: configuration) 
 }
 
 if semaphore.wait(timeout: .now() + 15) == .timedOut {
-    fputs("LaunchServices timed out\n", stderr)
+    fputs("launch_callback_timeout\n", stderr)
     exit(1)
 }
-if launchedPID <= 0 {
-    if let launchError {
-        fputs("LaunchServices failed: \(launchError.localizedDescription)\n", stderr)
-    }
+if let launchError {
+    fputs("launch_callback_error: \(launchError.localizedDescription)\n", stderr)
+    exit(1)
+}
+guard launchedPID > 0 else {
+    fputs("invalid_pid\n", stderr)
+    exit(1)
+}
+guard let application = NSRunningApplication(processIdentifier: launchedPID) else {
+    fputs("launched_process_exited\n", stderr)
+    exit(1)
+}
+guard application.bundleIdentifier == expectedBundleIdentifier,
+      application.bundleURL?.standardizedFileURL == bundleURL.standardizedFileURL else {
+    fputs("bundle_identity_mismatch\n", stderr)
     exit(1)
 }
 print(launchedPID)

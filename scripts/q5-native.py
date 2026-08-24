@@ -898,13 +898,14 @@ class _NativeBundleLauncher:
             env=dict(environment),
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
             check=False,
             text=True,
             timeout=20,
         )
         if result.returncode != 0:
-            raise OSError("LaunchServices bundle launch failed")
+            reason = result.stderr.strip() if result.stderr else ""
+            raise OSError(reason or "LaunchServices bundle launch failed")
         try:
             pid = int(result.stdout.strip())
         except (TypeError, ValueError):
@@ -915,6 +916,76 @@ class _NativeBundleLauncher:
 
 
 _NATIVE_BUNDLE_LAUNCHER: _NativeBundleLauncher | None = None
+
+_NATIVE_LAUNCH_FAILURES = {
+    "bundle_quiescer_unavailable",
+    "bundle_instance_registered",
+    "prior_bundle_instance_registered",
+    "owned_cleanup_incomplete",
+    "owned_bundle_quiescence_timeout",
+    "native bundle launcher unavailable",
+    "LaunchServices bundle launch failed",
+    "LaunchServices bundle PID unavailable",
+    "LaunchServices bundle PID invalid",
+    "launch_callback_timeout",
+    "launch_callback_error",
+    "invalid_pid",
+    "bundle_identity_mismatch",
+    "launched_process_exited",
+}
+
+
+class _NativeBundleQuiescer:
+    """Wait until one bundle has no registered native instance."""
+
+    def __init__(self, executable: Path):
+        self.executable = executable
+
+    @classmethod
+    def build(cls) -> "_NativeBundleQuiescer | None":
+        if platform.system() != "Darwin" or shutil.which("swiftc") is None:
+            return None
+        source = ROOT / "scripts" / "q5-native-quiesce.swift"
+        if not source.is_file():
+            return None
+        output = Path(tempfile.gettempdir()) / f"devhub-q52-native-quiesce-{os.getpid()}"
+        module_cache = Path(tempfile.gettempdir()) / f"devhub-q52-swift-quiesce-cache-{os.getpid()}"
+        module_cache.mkdir(mode=0o700, exist_ok=True)
+        try:
+            result = subprocess.run(
+                ["swiftc", "-module-cache-path", str(module_cache), str(source), "-o", str(output)],
+                cwd=ROOT,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+                timeout=30,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return None
+        if result.returncode != 0 or not _regular_executable(output):
+            return None
+        return cls(output)
+
+    def wait(self, bundle: Path, pid: int) -> bool:
+        try:
+            result = subprocess.run(
+                [str(self.executable), str(bundle), str(pid)],
+                cwd=ROOT,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                check=False,
+                text=True,
+                timeout=12,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return False
+        return result.returncode == 0 and result.stdout.strip() == "quiescent"
+
+
+_NATIVE_BUNDLE_QUIESCER: _NativeBundleQuiescer | None = None
+_LAST_BUNDLE_PID: dict[str, int] = {}
 
 
 class _NativeBundleReopener:
@@ -1141,7 +1212,11 @@ def _cleanup_owned_processes(home: Path, app_pid: int) -> bool:
     this run's canonical temporary HOME before TemporaryDirectory removes it.
     """
 
-    deadline = time.monotonic() + 3.0
+    # Provider children can be reparented to launchd after the app leader
+    # exits.  Keep reconciling the exact isolated HOME long enough for that
+    # handoff to settle; a shorter sweep turned an otherwise valid final
+    # lifecycle sample into a generic launch-unavailable result.
+    deadline = time.monotonic() + 10.0
     empty_scans = 0
     while time.monotonic() < deadline:
         owned = _owned_processes(home, app_pid)
@@ -1173,7 +1248,14 @@ def _cleanup_owned_processes(home: Path, app_pid: int) -> bool:
 
 
 def _owned_openvscode_pids(home: Path, app_pid: int) -> list[int]:
-    """Find only this run's managed OpenVSCode processes by isolated HOME."""
+    """Find this run's managed server and descendants by owned root PID.
+
+    The pinned OpenVSCode entry point is a shell wrapper on macOS.  Killing
+    that wrapper alone leaves its Node server alive, so ownership is first
+    established from the exact isolated HOME-bearing root and then extended
+    only through its observed parent-child process tree.  The caller kills
+    the deepest owned server PID, never a name-matched unrelated process.
+    """
 
     try:
         result = subprocess.run(
@@ -1187,7 +1269,7 @@ def _owned_openvscode_pids(home: Path, app_pid: int) -> list[int]:
         )
     except (OSError, subprocess.SubprocessError):
         return []
-    owned: list[int] = []
+    records: dict[int, tuple[int, str]] = {}
     home_text = str(home)
     for line in result.stdout.splitlines():
         fields = line.strip().split(None, 1)
@@ -1198,8 +1280,49 @@ def _owned_openvscode_pids(home: Path, app_pid: int) -> list[int]:
         except ValueError:
             continue
         if pid not in {os.getpid(), app_pid}:
-            owned.append(pid)
-    return owned
+            command = fields[1]
+            records[pid] = (0, command)
+
+    # Read the parent relation separately because descendants do not repeat
+    # the HOME-bearing argv.  This remains an internal ownership fact and is
+    # never retained in evidence.
+    try:
+        relation = subprocess.run(
+            ["ps", "-axo", "pid=,ppid=,command="],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            text=True,
+            timeout=3,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return list(records)
+    all_records: dict[int, tuple[int, str]] = {}
+    for line in relation.stdout.splitlines():
+        fields = line.strip().split(None, 2)
+        if len(fields) != 3:
+            continue
+        try:
+            all_records[int(fields[0])] = (int(fields[1]), fields[2])
+        except ValueError:
+            continue
+    roots = set(records)
+    children: dict[int, list[int]] = {}
+    for pid, (parent, _command) in all_records.items():
+        children.setdefault(parent, []).append(pid)
+    depths: dict[int, int] = {}
+    pending = [(root, 0) for root in roots]
+    while pending:
+        pid, depth = pending.pop()
+        if pid in depths and depths[pid] >= depth:
+            continue
+        depths[pid] = depth
+        pending.extend((child, depth + 1) for child in children.get(pid, ()))
+    # The direct child of the owned wrapper is the managed server.  Prefer it
+    # over worker descendants so the crash probe kills the provider identity
+    # itself while retaining exact parent-tree ownership.
+    return sorted(depths, key=lambda pid: (depths[pid] == 0, depths[pid], pid))
 
 
 def _kill_owned_openvscode(home: Path, app_pid: int) -> int:
@@ -1289,11 +1412,24 @@ def _running_app(
             bundle = _bundle_for_executable(executable)
             if bundle is not None:
                 global _NATIVE_BUNDLE_LAUNCHER
+                global _NATIVE_BUNDLE_QUIESCER
+                previous_pid = _LAST_BUNDLE_PID.get(str(bundle), 0)
+                if _NATIVE_BUNDLE_QUIESCER is None:
+                    _NATIVE_BUNDLE_QUIESCER = _NativeBundleQuiescer.build()
+                if _NATIVE_BUNDLE_QUIESCER is None:
+                    raise OSError("bundle_quiescer_unavailable")
+                if not _NATIVE_BUNDLE_QUIESCER.wait(bundle, previous_pid):
+                    raise OSError(
+                        "prior_bundle_instance_registered"
+                        if previous_pid > 0
+                        else "bundle_instance_registered"
+                    )
                 if _NATIVE_BUNDLE_LAUNCHER is None:
                     _NATIVE_BUNDLE_LAUNCHER = _NativeBundleLauncher.build()
                 if _NATIVE_BUNDLE_LAUNCHER is None:
                     raise OSError("native bundle launcher unavailable")
                 process = _NATIVE_BUNDLE_LAUNCHER.launch(bundle, environment)
+                _LAST_BUNDLE_PID[str(bundle)] = process.pid
             else:
                 child = subprocess.Popen(
                     [str(executable)],
@@ -1314,6 +1450,10 @@ def _running_app(
             _cleanup_owned_tmux(tmux_tmpdir)
             if not cleaned:
                 raise OSError("owned_cleanup_incomplete")
+            if bundle is not None:
+                quiescer = _NATIVE_BUNDLE_QUIESCER
+                if quiescer is None or not quiescer.wait(bundle, process.pid):
+                    raise OSError("owned_bundle_quiescence_timeout")
 
 
 def _cleanup_owned_tmux(tmux_tmpdir: Path) -> None:
@@ -1507,12 +1647,15 @@ def _marker_attempt(
                 "ordered_markers": markers,
                 "terminal_error_codes": _terminal_error_codes(markers),
             }
-    except OSError:
+    except OSError as error:
+        reason = str(error)
+        if reason not in _NATIVE_LAUNCH_FAILURES and not reason.startswith("launch_callback_error:"):
+            reason = "devhub_launch_unavailable"
         return {
             "status": "unavailable",
             "elapsed_ms": None,
             "marker": marker,
-            "reason": "devhub_launch_unavailable",
+            "reason": reason,
         }
 
 
@@ -1559,7 +1702,6 @@ def _scratch_attempt(
                     "ordered_markers": markers,
                     "terminal_error_codes": _terminal_error_codes(markers),
                 }
-            marker_offset = max(attach_offset, _log_end(log_file))
             origin = _wait_for_window_origin(process.pid)
             if origin is None:
                 return {
@@ -1569,17 +1711,49 @@ def _scratch_attempt(
                     "reason": "native_window_geometry_unavailable",
                     "ordered_markers": _performance_markers(log_file),
                 }
-            # Focus the exact launched app's xterm viewport before posting the
-            # harmless empty Enter sentinel. The focus event is setup only;
-            # the measured interval begins at the sentinel's final CGEvent.
+            # Direct no-bundle launches are not always registered as an
+            # NSRunningApplication. Try exact-PID activation when available,
+            # then retain the explicit xterm focus fallback below.
+            input_driver.invoke("activate-pid", str(process.pid))
             if input_driver.invoke("click", str(origin[0] + 500), str(origin[1] + 200)) is None:
                 return {
                     "status": "blocked",
                     "elapsed_ms": None,
                     "marker": marker,
-                    "reason": "native_input_event_failed",
+                    "reason": "native_focus_event_failed",
                     "ordered_markers": _performance_markers(log_file),
                 }
+            precondition_offset = attach_offset
+            for precondition in (
+                "terminal_started_frame_validated",
+                "terminal_output_rendered",
+                "terminal_resize_succeeded",
+            ):
+                ready, precondition_offset, _ = _wait_for_marker(
+                    log_file, precondition, precondition_offset
+                )
+                if not ready:
+                    markers = _performance_markers(log_file)
+                    return {
+                        "status": "blocked",
+                        "elapsed_ms": None,
+                        "marker": marker,
+                        "reason": "initial_terminal_not_ready",
+                        "missing_precondition": precondition,
+                        "ordered_markers": markers,
+                        "terminal_error_codes": _terminal_error_codes(markers),
+                    }
+            # The click is setup-only focus. Drain its possible xterm control
+            # traffic before arming the measured key gesture.
+            quiet_since = time.monotonic()
+            quiet_offset = _log_end(log_file)
+            while time.monotonic() - quiet_since < 0.2:
+                next_offset = _log_end(log_file)
+                if next_offset != quiet_offset:
+                    quiet_offset = next_offset
+                    quiet_since = time.monotonic()
+                time.sleep(0.025)
+            marker_offset = _log_end(log_file)
             event_timestamp_ns = input_driver.invoke("press-enter")
             if event_timestamp_ns is None:
                 markers = _performance_markers(log_file)
@@ -1653,12 +1827,15 @@ def _scratch_attempt(
                 "ordered_markers": markers,
                 "terminal_error_codes": _terminal_error_codes(markers),
             }
-    except OSError:
+    except OSError as error:
+        reason = str(error)
+        if reason not in _NATIVE_LAUNCH_FAILURES and not reason.startswith("launch_callback_error:"):
+            reason = "devhub_launch_unavailable"
         return {
             "status": "unavailable",
             "elapsed_ms": None,
             "marker": marker,
-            "reason": "devhub_launch_unavailable",
+            "reason": reason,
         }
 
 
@@ -1844,12 +2021,15 @@ def _warm_reconstruction_attempt(
                 "marker": marker,
                 "reason": "marker_observed",
             }
-    except OSError:
+    except OSError as error:
+        reason = str(error)
+        if reason not in _NATIVE_LAUNCH_FAILURES and not reason.startswith("launch_callback_error:"):
+            reason = "devhub_launch_unavailable"
         return {
             "status": "unavailable",
             "elapsed_ms": None,
             "marker": marker,
-            "reason": "devhub_launch_unavailable",
+            "reason": reason,
         }
 
 
@@ -1949,13 +2129,16 @@ def _window_reconstruction_matrix(
                 "identity_verified": True,
                 "reason": "ten exact-PID close/reopen cycles completed",
             }
-    except OSError:
+    except OSError as error:
+        reason = str(error)
+        if reason not in _NATIVE_LAUNCH_FAILURES and not reason.startswith("launch_callback_error:"):
+            reason = "devhub_launch_unavailable"
         return {
             "status": "blocked",
             "cycles_required": cycles,
             "cycles_completed": 0,
             "identity_verified": False,
-            "reason": "devhub_launch_unavailable",
+            "reason": reason,
         }
 
 
@@ -2494,7 +2677,10 @@ def execute(
                 "hidden_continuity": "not_executed",
             },
         ]
-        lifecycle_matrix = _window_reconstruction_matrix(binary, openvscode)
+        lifecycle_matrix = _window_reconstruction_matrix(
+            reconstruction_binary or binary,
+            openvscode,
+        )
         lifecycle = [
             {
                 "id": "window-reconstruction-10x",

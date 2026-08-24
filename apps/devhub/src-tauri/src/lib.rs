@@ -123,6 +123,7 @@ struct NativeBridgeSink {
     performance_diagnostics: Mutex<Option<Diagnostics>>,
     performance_ready_surfaces: Mutex<BTreeSet<String>>,
     performance_provider_degraded: AtomicBool,
+    editor_recovery: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
 }
 
 type BridgeRouter = Arc<dyn Fn(BridgeRequest) + Send + Sync>;
@@ -145,6 +146,7 @@ impl Default for NativeBridgeSink {
             performance_diagnostics: Mutex::new(None),
             performance_ready_surfaces: Mutex::new(BTreeSet::new()),
             performance_provider_degraded: AtomicBool::new(false),
+            editor_recovery: Mutex::new(None),
         }
     }
 }
@@ -185,6 +187,15 @@ impl NativeBridgeSink {
                 request.handle().request_message_id().as_str().to_owned(),
             )
         })
+    }
+
+    /// Install the one native recovery action for the shared EditorHost.
+    /// Bridge observations remain a projection; process ownership and restart
+    /// stay inside EditorHost's supervisor.
+    fn install_editor_recovery(&self, recovery: Arc<dyn Fn() + Send + Sync>) {
+        if let Ok(mut slot) = self.editor_recovery.lock() {
+            *slot = Some(recovery);
+        }
     }
 }
 
@@ -307,6 +318,10 @@ impl BridgeEventSink for NativeBridgeSink {
                         marker: PerformanceMarker::EditorProviderDegraded,
                     });
                 }
+            }
+            let recovery = self.editor_recovery.lock().ok().and_then(|slot| slot.clone());
+            if let Some(recovery) = recovery {
+                recovery();
             }
         }
     }
@@ -6360,6 +6375,23 @@ pub fn run() {
             let state = NativeAppState::bootstrap_with_resource_dir(&home, resource_dir)
                 .map_err(|_| std::io::Error::other("DevHub native bootstrap failed"))?;
             app.manage(state);
+            let recovery_app = app.handle().clone();
+            app.state::<NativeAppState>().bridge_sink.install_editor_recovery(Arc::new(
+                move || {
+                    let recovery_app = recovery_app.clone();
+                    tauri::async_runtime::spawn_blocking(move || {
+                        let Some(state) = recovery_app.try_state::<NativeAppState>() else {
+                            return;
+                        };
+                        if state.lifecycle.phase() != Phase::Open {
+                            return;
+                        }
+                        if let Err(error) = state.editor_host.recover_after_provider_disconnect() {
+                            state.record_native_error(state_error(error));
+                        }
+                    });
+                },
+            ));
             #[cfg(target_os = "macos")]
             if let Err(error) = app.state::<NativeAppState>().install_keyboard_monitor(app.handle())
             {

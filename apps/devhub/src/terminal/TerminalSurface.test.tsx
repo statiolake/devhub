@@ -348,6 +348,158 @@ describe("TerminalSurface lifecycle", () => {
     expect(onInteractive).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps the gesture target when later control traffic is interleaved", async () => {
+    const harness = clientHarness();
+    const onInteractive = vi.fn();
+    render(
+      <TerminalSurface
+        surfaceKey="global-terminal"
+        surfaceLabel="Scratch"
+        client={harness.client}
+        onInteractive={onInteractive}
+      />,
+    );
+    await waitFor(() => expect(harness.client.resize).toHaveBeenCalledTimes(1));
+
+    act(() => {
+      fireEvent.keyDown(screen.getByRole("textbox"), {
+        key: "Enter",
+        code: "Enter",
+      });
+      mocks.terminals[0].emitData("\r");
+      mocks.terminals[0].emitData("\u001b[I");
+    });
+    await waitFor(() => expect(harness.client.input).toHaveBeenCalledTimes(2));
+    act(() =>
+      harness.handlers[0](
+        output(
+          harness.receipts[0].attachmentId,
+          1,
+          new TextEncoder().encode("target response"),
+        ),
+      ),
+    );
+    await waitFor(() => expect(onInteractive).toHaveBeenCalledTimes(1));
+  });
+
+  it("retains output-before-ack for the gesture target", async () => {
+    let releaseInput: (() => void) | undefined;
+    const harness = clientHarness(
+      () => new Promise<void>((resolve) => (releaseInput = resolve)),
+    );
+    const onInteractive = vi.fn();
+    render(
+      <TerminalSurface
+        surfaceKey="global-terminal"
+        surfaceLabel="Scratch"
+        client={harness.client}
+        onInteractive={onInteractive}
+      />,
+    );
+    await waitFor(() => expect(harness.client.resize).toHaveBeenCalledTimes(1));
+    act(() => {
+      fireEvent.keyDown(screen.getByRole("textbox"), {
+        key: "Enter",
+        code: "Enter",
+      });
+      mocks.terminals[0].emitData("\r");
+    });
+    await waitFor(() => expect(harness.client.input).toHaveBeenCalledTimes(1));
+    act(() =>
+      harness.handlers[0](
+        output(
+          harness.receipts[0].attachmentId,
+          1,
+          new TextEncoder().encode("early response"),
+        ),
+      ),
+    );
+    expect(onInteractive).not.toHaveBeenCalled();
+    act(() => releaseInput?.());
+    await waitFor(() => expect(onInteractive).toHaveBeenCalledTimes(1));
+  });
+
+  it("discards a stale gesture when the attachment is replaced", async () => {
+    const harness = clientHarness(async () => {
+      throw new Error("input rejected");
+    });
+    const onInteractive = vi.fn();
+    render(
+      <TerminalSurface
+        surfaceKey="global-terminal"
+        surfaceLabel="Scratch"
+        client={harness.client}
+        onInteractive={onInteractive}
+      />,
+    );
+    await waitFor(() => expect(harness.client.resize).toHaveBeenCalledTimes(1));
+    act(() => {
+      fireEvent.keyDown(screen.getByRole("textbox"), {
+        key: "Enter",
+        code: "Enter",
+      });
+      mocks.terminals[0].emitData("\r");
+    });
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Retry" })).toBeVisible(),
+    );
+    const staleHandler = harness.handlers[0];
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(harness.client.attach).toHaveBeenCalledTimes(2));
+    act(() =>
+      staleHandler(
+        output(
+          harness.receipts[0].attachmentId,
+          1,
+          new TextEncoder().encode("stale response"),
+        ),
+      ),
+    );
+    expect(onInteractive).not.toHaveBeenCalled();
+  });
+
+  it("reports one interactive result for one target only", async () => {
+    const harness = clientHarness();
+    const onInteractive = vi.fn();
+    render(
+      <TerminalSurface
+        surfaceKey="global-terminal"
+        surfaceLabel="Scratch"
+        client={harness.client}
+        onInteractive={onInteractive}
+      />,
+    );
+    await waitFor(() => expect(harness.client.resize).toHaveBeenCalledTimes(1));
+    act(() => {
+      fireEvent.keyDown(screen.getByRole("textbox"), {
+        key: "Enter",
+        code: "Enter",
+      });
+      mocks.terminals[0].emitData("\r");
+    });
+    await waitFor(() => expect(harness.client.input).toHaveBeenCalledTimes(1));
+    act(() =>
+      harness.handlers[0](
+        output(
+          harness.receipts[0].attachmentId,
+          1,
+          new TextEncoder().encode("response"),
+        ),
+      ),
+    );
+    await waitFor(() => expect(onInteractive).toHaveBeenCalledTimes(1));
+    act(() =>
+      harness.handlers[0](
+        output(
+          harness.receipts[0].attachmentId,
+          2,
+          new TextEncoder().encode("later response"),
+        ),
+      ),
+    );
+    expect(onInteractive).toHaveBeenCalledTimes(1);
+  });
+
   it("reports an invoke rejection without exposing terminal payloads", async () => {
     const harness = clientHarness();
     harness.client.attach = vi.fn(async () => {

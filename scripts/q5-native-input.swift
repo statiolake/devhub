@@ -1,4 +1,5 @@
 import CoreGraphics
+import AppKit
 import Foundation
 
 enum InputError: Error {
@@ -75,6 +76,13 @@ func run(_ fields: [Substring]) throws -> Int64 {
         // The acceptance sentinel is an empty command line. It is fixed,
         // harmless, and its content is never emitted to diagnostics.
         return key(36)
+    case "activate-pid":
+        guard fields.count == 2, let pid = Int32(fields[1]), pid > 0,
+              let application = NSRunningApplication(processIdentifier: pid),
+              application.activate(options: [.activateIgnoringOtherApps]) else {
+            throw InputError.invalidCommand
+        }
+        return wallClockNanoseconds()
     case "key":
         guard fields.count == 2, let code = UInt16(fields[1]) else {
             throw InputError.invalidCommand

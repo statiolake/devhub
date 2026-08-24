@@ -53,6 +53,17 @@ const HANDSHAKE_TIMEOUT_MS = 5_000;
 const MAX_HANDSHAKE_BUFFER_FRAMES = 8;
 const MAX_HANDSHAKE_BUFFER_BYTES = 256 * 1024;
 
+type InteractiveInputProbe = {
+  readonly serial: number;
+  readonly attachmentId: string;
+  readonly gestureEpoch: number;
+  readonly inputSequence: number;
+  accepted: boolean;
+  outputRendered: boolean;
+  failed: boolean;
+  reported: boolean;
+};
+
 function terminalSize(fit: FitAddon): TerminalSize {
   try {
     fit.fit();
@@ -213,26 +224,24 @@ export function TerminalSurface({
     let resizeTimer: ReturnType<typeof setTimeout> | undefined;
     let pendingResize: TerminalSize | undefined;
     let currentSize = FALLBACK_SIZE;
-    let inputAccepted = false;
-    let outputAfterInput = false;
-    let inputResponsePending = false;
-    let interactiveReported = false;
     let firstOutputRendered = false;
-    let outputAfterInputRendered = false;
     let inputGestureEpoch = 0;
     let armedInputGestureEpoch: number | undefined;
     let consumedInputGestureEpoch: number | undefined;
+    let interactiveProbe: InteractiveInputProbe | undefined;
 
-    const reportInteractiveIfReady = () => {
+    const reportInteractiveIfReady = (probe: InteractiveInputProbe) => {
       if (
-        !inputResponsePending ||
-        !inputAccepted ||
-        !outputAfterInput ||
-        interactiveReported
+        probe.serial !== attachSerial ||
+        probe.attachmentId !== receipt?.attachmentId ||
+        probe.failed ||
+        probe.reported ||
+        !probe.accepted ||
+        !probe.outputRendered
       ) {
         return;
       }
-      interactiveReported = true;
+      probe.reported = true;
       interactiveRef.current?.();
     };
 
@@ -240,6 +249,7 @@ export function TerminalSurface({
       inputGestureEpoch += 1;
       armedInputGestureEpoch = undefined;
       consumedInputGestureEpoch = undefined;
+      interactiveProbe = undefined;
     };
 
     const armInputGesture = () => {
@@ -368,12 +378,8 @@ export function TerminalSurface({
       receipt = undefined;
       receiptDetached = false;
       inputQueue = undefined;
-      inputAccepted = false;
-      outputAfterInput = false;
-      inputResponsePending = false;
-      interactiveReported = false;
       firstOutputRendered = false;
-      outputAfterInputRendered = false;
+      interactiveProbe = undefined;
       const decoder = new TerminalFrameDecoder();
       let started: StartedFrame | undefined;
       let returnedReceipt: TerminalReceipt | undefined;
@@ -438,17 +444,20 @@ export function TerminalSurface({
               firstOutputRendered = true;
               outputRenderedRef.current?.();
             }
-            if (inputResponsePending) {
-              outputAfterInput = true;
-              if (!outputAfterInputRendered) {
-                outputAfterInputRendered = true;
-                try {
-                  outputAfterInputRenderedRef.current?.();
-                } catch {
-                  // Diagnostics must never alter terminal rendering.
-                }
+            const probe = interactiveProbe;
+            if (
+              probe &&
+              probe.serial === serial &&
+              probe.attachmentId === frameReceipt.attachmentId &&
+              !probe.failed
+            ) {
+              probe.outputRendered = true;
+              try {
+                if (!probe.reported) outputAfterInputRenderedRef.current?.();
+              } catch {
+                // Diagnostics must never alter terminal rendering.
               }
-              reportInteractiveIfReady();
+              reportInteractiveIfReady(probe);
             }
             void clientRef.current
               .acknowledge({
@@ -643,8 +652,26 @@ export function TerminalSurface({
       if (qualifiedGesture) consumedInputGestureEpoch = gestureEpoch;
       for (const [chunkIndex, bytes] of chunks.entries()) {
         if (bytes.length === 0 || queue.failed) continue;
-        const qualifiesInteractive = qualifiedGesture && chunkIndex === 0;
+        const qualifiesInteractive =
+          qualifiedGesture &&
+          chunkIndex === 0 &&
+          (!interactiveProbe ||
+            interactiveProbe.reported ||
+            interactiveProbe.failed);
         const sequence = ++queue.nextSequence;
+        const probe = qualifiesInteractive
+          ? {
+              serial: queue.serial,
+              attachmentId: currentReceipt.attachmentId,
+              gestureEpoch: gestureEpoch!,
+              inputSequence: sequence,
+              accepted: false,
+              outputRendered: false,
+              failed: false,
+              reported: false,
+            }
+          : undefined;
+        if (probe) interactiveProbe = probe;
         queue.tail = queue.tail
           .then(async () => {
             if (
@@ -656,10 +683,6 @@ export function TerminalSurface({
             ) {
               return;
             }
-            inputResponsePending =
-              qualifiesInteractive && Boolean(interactiveRef.current);
-            inputAccepted = false;
-            outputAfterInput = false;
             try {
               inputInvokeEnteredRef.current?.();
               await clientRef.current.input({
@@ -678,13 +701,13 @@ export function TerminalSurface({
               }
               throw inputError;
             }
-            inputAccepted = true;
-            reportInteractiveIfReady();
+            if (probe) {
+              probe.accepted = true;
+              reportInteractiveIfReady(probe);
+            }
           })
           .catch((inputError: unknown) => {
-            inputResponsePending = false;
-            inputAccepted = false;
-            outputAfterInput = false;
+            if (probe) probe.failed = true;
             fail(queue.serial, inputError);
           });
       }

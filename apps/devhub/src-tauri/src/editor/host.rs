@@ -223,6 +223,55 @@ impl EditorHost {
         self.window_attached()
     }
 
+    /// Reconcile the managed provider after its Bridge connection disappears.
+    /// The stable port, token, registry, and mounted WebViews remain owned by
+    /// this host; only the supervisor decides whether the child is still
+    /// usable and, when needed, restarts that exact process identity.
+    pub fn recover_after_provider_disconnect(&self) -> EditorResult<()> {
+        self.ensure_server()?;
+        let (surfaces, active) = {
+            let state = self
+                .state
+                .lock()
+                .map_err(|_| EditorError::new(EditorErrorCode::LifecycleConflict))?;
+            (
+                state
+                    .surfaces
+                    .values()
+                    .map(|record| (record.key.clone(), record.root.clone(), record.bounds))
+                    .collect::<Vec<_>>(),
+                state.active.clone(),
+            )
+        };
+        if surfaces.is_empty() {
+            return Ok(());
+        }
+        // A dead server leaves existing WKWebViews on a network-error page;
+        // the extension cannot reconnect from that document. Recreate the
+        // already-owned child views through this host's registry instead of
+        // introducing a second UI/provider projection.
+        self.close_window()?;
+        for (key, root, bounds) in surfaces {
+            self.ensure_surface(key, root, bounds)?;
+        }
+        self.hide_surfaces()?;
+        if let Some(active) = active {
+            let (root, bounds) = {
+                let state = self
+                    .state
+                    .lock()
+                    .map_err(|_| EditorError::new(EditorErrorCode::LifecycleConflict))?;
+                let record = state
+                    .surfaces
+                    .get(&active)
+                    .ok_or_else(|| EditorError::new(EditorErrorCode::InvalidSurface))?;
+                (record.root.clone(), record.bounds)
+            };
+            self.ensure_surface(active, root, bounds)?;
+        }
+        Ok(())
+    }
+
     pub fn navigation_decision(
         &self,
         key: &EditorSurfaceKey,
