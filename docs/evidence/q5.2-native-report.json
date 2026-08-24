@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "gate": "Q5.2",
-  "recorded_at_utc": "2026-08-24T04:02:29+00:00",
+  "recorded_at_utc": "2026-08-24T04:20:51+00:00",
   "sample_policy": {
     "setup_runs": 1,
     "measured_runs": 10,
@@ -36,105 +36,120 @@
       "accessibility": "available",
       "interactive_session": true
     },
+    "execution_boundary": {
+      "status": "available",
+      "reason": "native_execution_boundary_available"
+    },
     "reference_context": "not_proven",
     "machine_identifiers": "omitted",
     "ambient_paths": "omitted"
   },
   "timing_runs": {
     "process_cold_shell": {
-      "status": "blocked",
+      "status": "measured",
       "setup_runs": 1,
       "measured_runs": 10,
-      "samples_ms": [],
-      "p95_ms": null,
-      "reason": "Real DevHub was launched for one setup and ten measured attempts, but the Rust-owned App Shell marker was not observed before timeout; the missing pinned OpenVSCode bundle prevents a usable interactive surface.",
+      "samples_ms": [
+        454.14,
+        455.065,
+        467.646,
+        443.634,
+        455.546,
+        459.543,
+        447.295,
+        467.149,
+        462.416,
+        456.408
+      ],
+      "p95_ms": 467.646,
+      "reason": "Real DevHub launches; AppShell DOM marker observed after one setup run.",
       "attempts": [
         {
           "role": "setup",
-          "status": "blocked",
-          "elapsed_ms": null,
+          "status": "pass",
+          "elapsed_ms": 514.898,
           "marker": "app_shell_interactive",
-          "reason": "marker_timeout"
+          "reason": "marker_observed"
         },
         {
           "role": "measured",
           "run": 1,
-          "status": "blocked",
-          "elapsed_ms": null,
+          "status": "pass",
+          "elapsed_ms": 454.14,
           "marker": "app_shell_interactive",
-          "reason": "marker_timeout"
+          "reason": "marker_observed"
         },
         {
           "role": "measured",
           "run": 2,
-          "status": "blocked",
-          "elapsed_ms": null,
+          "status": "pass",
+          "elapsed_ms": 455.065,
           "marker": "app_shell_interactive",
-          "reason": "marker_timeout"
+          "reason": "marker_observed"
         },
         {
           "role": "measured",
           "run": 3,
-          "status": "blocked",
-          "elapsed_ms": null,
+          "status": "pass",
+          "elapsed_ms": 467.646,
           "marker": "app_shell_interactive",
-          "reason": "marker_timeout"
+          "reason": "marker_observed"
         },
         {
           "role": "measured",
           "run": 4,
-          "status": "blocked",
-          "elapsed_ms": null,
+          "status": "pass",
+          "elapsed_ms": 443.634,
           "marker": "app_shell_interactive",
-          "reason": "marker_timeout"
+          "reason": "marker_observed"
         },
         {
           "role": "measured",
           "run": 5,
-          "status": "blocked",
-          "elapsed_ms": null,
+          "status": "pass",
+          "elapsed_ms": 455.546,
           "marker": "app_shell_interactive",
-          "reason": "marker_timeout"
+          "reason": "marker_observed"
         },
         {
           "role": "measured",
           "run": 6,
-          "status": "blocked",
-          "elapsed_ms": null,
+          "status": "pass",
+          "elapsed_ms": 459.543,
           "marker": "app_shell_interactive",
-          "reason": "marker_timeout"
+          "reason": "marker_observed"
         },
         {
           "role": "measured",
           "run": 7,
-          "status": "blocked",
-          "elapsed_ms": null,
+          "status": "pass",
+          "elapsed_ms": 447.295,
           "marker": "app_shell_interactive",
-          "reason": "marker_timeout"
+          "reason": "marker_observed"
         },
         {
           "role": "measured",
           "run": 8,
-          "status": "blocked",
-          "elapsed_ms": null,
+          "status": "pass",
+          "elapsed_ms": 467.149,
           "marker": "app_shell_interactive",
-          "reason": "marker_timeout"
+          "reason": "marker_observed"
         },
         {
           "role": "measured",
           "run": 9,
-          "status": "blocked",
-          "elapsed_ms": null,
+          "status": "pass",
+          "elapsed_ms": 462.416,
           "marker": "app_shell_interactive",
-          "reason": "marker_timeout"
+          "reason": "marker_observed"
         },
         {
           "role": "measured",
           "run": 10,
-          "status": "blocked",
-          "elapsed_ms": null,
+          "status": "pass",
+          "elapsed_ms": 456.408,
           "marker": "app_shell_interactive",
-          "reason": "marker_timeout"
+          "reason": "marker_observed"
         }
       ]
     },
@@ -189,13 +204,13 @@
       "id": "scale-eight-workspaces-sixteen-agents-nine-editors",
       "status": "blocked",
       "requirement": "8 Workspaces; 16 live Agents across >=4 Workspaces; 9 Editor WebViews",
-      "reason": "GUI, pinned bundle, and reference context are required for this native matrix."
+      "reason": "pinned_openvscode_bundle_missing;reference_context_not_proven"
     },
     {
       "id": "hidden-editor-continuity",
       "status": "blocked",
       "requirement": "Hide >=5 Editor WebViews for 10 minutes; verify identity, Bridge, dirty state, input",
-      "reason": "GUI, pinned bundle, and reference context are required for this native matrix."
+      "reason": "pinned_openvscode_bundle_missing;reference_context_not_proven"
     }
   ],
   "lifecycle": [
@@ -203,13 +218,13 @@
       "id": "window-reconstruction-10x",
       "status": "blocked",
       "requirement": "Window reconstruction x10",
-      "reason": "GUI, pinned bundle, and reference context are required for this native matrix."
+      "reason": "pinned_openvscode_bundle_missing;reference_context_not_proven"
     },
     {
       "id": "quit-relaunch-5x",
       "status": "blocked",
       "requirement": "Quit/relaunch x5 with >=2 Agents and >=2 live Workspace tmux sessions",
-      "reason": "GUI, pinned bundle, and reference context are required for this native matrix."
+      "reason": "pinned_openvscode_bundle_missing;reference_context_not_proven"
     }
   ],
   "crash_matrix": [
@@ -242,35 +257,35 @@
       "status": "pass",
       "exit_code": 0,
       "timed_out": false,
-      "elapsed_ms": 18105.247
+      "elapsed_ms": 22915.982
     },
     "tmux_transition_matrix": {
       "command": "cargo test real tmux transition",
       "status": "pass",
       "exit_code": 0,
       "timed_out": false,
-      "elapsed_ms": 2047.05
+      "elapsed_ms": 19680.644
     },
     "tmux_pty_continuity": {
       "command": "cargo test real tmux pty roundtrip",
       "status": "pass",
       "exit_code": 0,
       "timed_out": false,
-      "elapsed_ms": 3198.337
+      "elapsed_ms": 3106.964
     },
     "lifecycle_gate": {
       "command": "cargo test integration lifecycle gate",
       "status": "pass",
       "exit_code": 0,
       "timed_out": false,
-      "elapsed_ms": 254.858
+      "elapsed_ms": 242.676
     },
     "scale_identity_reconciliation": {
       "command": "cargo test eight workspaces sixteen agents identity",
       "status": "pass",
       "exit_code": 0,
       "timed_out": false,
-      "elapsed_ms": 357.925
+      "elapsed_ms": 361.003
     }
   },
   "blockers": [

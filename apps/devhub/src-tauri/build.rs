@@ -2,6 +2,7 @@ fn main() {
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(
         tauri_build::AppManifest::new().commands(&[
             "get_app_snapshot",
+            "record_performance_marker",
             "start_workspace_picker",
             "cancel_workspace_picker",
             "select_workspace_picker",

@@ -3,11 +3,15 @@
 
 The driver is deliberately conservative.  It discovers the built DevHub
 binary and the pinned OpenVSCode executable, checks whether this process has a
-WindowServer/Accessibility session, and writes a bounded redacted report.  If
-those prerequisites are available, ``--execute`` launches the real DevHub
-binary once for setup and ten measured cold-shell attempts.  The app emits
-the readiness marker from the Rust diagnostics seam after the App Shell has
-committed its ready DOM.  Missing markers never become timing samples.
+WindowServer/Accessibility session and whether it is running inside the
+Codex sandbox boundary, and writes a bounded redacted report.  If those
+prerequisites are available, ``--execute`` launches the real DevHub binary
+once for setup and ten measured cold-shell attempts.  The app emits the
+readiness marker from the Rust diagnostics seam after the App Shell has
+committed its ready DOM.  Missing markers never become timing samples.  A
+sandboxed invocation records ``native_execution_boundary_unavailable`` and
+does not launch a GUI process, so an execution-boundary restriction cannot be
+misreported as a product marker timeout.
 
 The remaining interactive scenarios require user input in the real WebViews;
 the report records them as blocked/manual rather than substituting unit or
@@ -68,6 +72,21 @@ FORBIDDEN_KEYS = {
 
 class NativeReportError(ValueError):
     """Raised when the native report violates its redaction contract."""
+
+
+def _execution_boundary(environment: Mapping[str, str] | None = None) -> dict[str, str]:
+    """Report whether this process can launch native GUI applications.
+
+    The Codex sandbox exports ``CODEX_SANDBOX`` (currently ``seatbelt``). The
+    approved native execution boundary does not export it. Keep the value
+    itself out of reports: the boundary fact is the only actionable,
+    non-identifying fact needed by the acceptance harness.
+    """
+
+    values = os.environ if environment is None else environment
+    if values.get("CODEX_SANDBOX"):
+        return {"status": "unavailable", "reason": "native_execution_boundary_unavailable"}
+    return {"status": "available", "reason": "native_execution_boundary_available"}
 
 
 def nearest_rank_p95(samples: Sequence[float]) -> float:
@@ -268,6 +287,7 @@ def probe_host() -> tuple[dict[str, Any], Path | None]:
             "openvscode": openvscode,
         },
         "gui": gui,
+        "execution_boundary": _execution_boundary(),
         "reference_context": "not_proven",
         "machine_identifiers": "omitted",
         "ambient_paths": "omitted",
@@ -389,10 +409,14 @@ def _matrix_entry(identifier: str, requirement: str, reason: str) -> dict[str, A
 def execute(host: Mapping[str, Any], openvscode: Path | None, *, run_providers: bool) -> dict[str, Any]:
     artifacts = host["artifacts"]
     gui = host["gui"]
+    execution_boundary = host["execution_boundary"]
     binary_available = artifacts["devhub_debug_binary"] == "available"
     gui_available = bool(gui["interactive_session"])
+    native_boundary_available = execution_boundary["status"] == "available"
     bundle_available = artifacts["openvscode"]["status"] == "available"
     blockers: list[str] = []
+    if not native_boundary_available:
+        blockers.append("native_execution_boundary_unavailable")
     if not binary_available:
         blockers.append("devhub_debug_binary_missing")
     if not bundle_available:
@@ -406,7 +430,7 @@ def execute(host: Mapping[str, Any], openvscode: Path | None, *, run_providers: 
     # app and GUI session exist, even if the managed editor bundle is missing;
     # the resulting marker timeout is useful blocker evidence and is never
     # promoted to an editor or reference-context timing claim.
-    if binary_available and gui_available:
+    if binary_available and gui_available and native_boundary_available:
         binary = ROOT / "target" / "debug" / "devhub-app"
         shell_attempts.append({"role": "setup", **_launch_shell_attempt(binary, openvscode)})
         for index in range(MEASURED_RUNS):
@@ -427,11 +451,12 @@ def execute(host: Mapping[str, Any], openvscode: Path | None, *, run_providers: 
             ],
         ]
 
+    shell_block_reason = ";".join(blockers) or "AppShell marker run is blocked by host prerequisites."
     timing_runs = {
         timing_id: _timing_entry(
             "Native marker-driven run is unavailable; no synthetic timing is recorded."
             if timing_id != "process_cold_shell"
-            else "AppShell marker run is blocked by the host prerequisites.",
+            else shell_block_reason,
             shell_attempts if timing_id == "process_cold_shell" else [],
         )
         for timing_id in TIMING_IDS
@@ -538,7 +563,7 @@ def execute(host: Mapping[str, Any], openvscode: Path | None, *, run_providers: 
             ),
         }
 
-    native_reason = "GUI, pinned bundle, and reference context are required for this native matrix."
+    native_reason = ";".join(blockers) or "GUI, pinned bundle, and reference context are required for this native matrix."
     scale = [
         _matrix_entry(
             "scale-eight-workspaces-sixteen-agents-nine-editors",
@@ -667,6 +692,10 @@ def write_report(path: Path, report: Mapping[str, Any]) -> None:
 
 
 def self_test() -> None:
+    if _execution_boundary({"CODEX_SANDBOX": "seatbelt"})["reason"] != "native_execution_boundary_unavailable":
+        raise NativeReportError("sandbox boundary preflight failed")
+    if _execution_boundary({})["reason"] != "native_execution_boundary_available":
+        raise NativeReportError("native boundary preflight failed")
     host = {
         "platform": {"os": "Darwin", "os_release": "local", "architecture": "arm64"},
         "toolchain": {},
@@ -675,6 +704,7 @@ def self_test() -> None:
             "openvscode": {"status": "missing", "source": "not_found", "pinned_identity": "not_verified"},
         },
         "gui": {"window_server": "unavailable", "accessibility": "unavailable", "interactive_session": False},
+        "execution_boundary": {"status": "available", "reason": "native_execution_boundary_available"},
         "reference_context": "not_proven",
         "machine_identifiers": "omitted",
         "ambient_paths": "omitted",

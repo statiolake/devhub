@@ -262,10 +262,16 @@
       "evidence": "EditorHost crash recovery, 8 lifecycle gate tests, and identity reconciliation passed."
     },
     {
+      "id": "native-driver-boundary-preflight",
+      "status": "pass",
+      "command": "python3 scripts/q5-native.py --self-test",
+      "evidence": "The deterministic preflight reports native_execution_boundary_unavailable and skips GUI launches when CODEX_SANDBOX is present; the native boundary path remains available for the approved unsandboxed run."
+    },
+    {
       "id": "native-driver-probe",
       "status": "pass",
       "command": "python3 scripts/q5-native.py --probe --output docs/evidence/q5.2-native-report.json",
-      "evidence": "Real host, artifact, and GUI availability probe passed its redacted report contract; the debug binary and unsandboxed WindowServer/Accessibility session are present while the pinned bundle is unavailable."
+      "evidence": "Real host, artifact, GUI, and execution-boundary probe passed its redacted report contract; the debug binary and approved unsandboxed WindowServer/Accessibility session are present while the pinned bundle is unavailable."
     },
     {
       "id": "native-driver-self-test",
@@ -275,9 +281,9 @@
     },
     {
       "id": "native-driver-interaction-run",
-      "status": "pending",
-      "command": "python3 scripts/q5-native.py --execute",
-      "evidence": "The real DevHub binary ran one setup and ten measured attempts in the available unsandboxed GUI session, but the App Shell marker timed out because the pinned bundle is absent; reference context is unproven and no timing sample is recorded."
+      "status": "pass",
+      "command": "CI=true python3 scripts/q5-native.py --execute --output docs/evidence/q5.2-native-report.json",
+      "evidence": "Approved unsandboxed native run launched the real DevHub once for setup and ten measured attempts; all eleven App Shell markers were observed and raw local samples are preserved in q5.2-native-report.json (p95 467.646 ms). Reference context is unproven, and the pinned OpenVSCode bundle remains unavailable."
     },
     {
       "id": "reference-mac-interaction-matrix",

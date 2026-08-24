@@ -6,6 +6,7 @@
   "permissions": [
     "core:default",
     "allow-get-app-snapshot",
+    "allow-record-performance-marker",
     "allow-start-workspace-picker",
     "allow-cancel-workspace-picker",
     "allow-select-workspace-picker",

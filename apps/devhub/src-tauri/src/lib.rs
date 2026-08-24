@@ -7656,6 +7656,7 @@ mod tests {
             serde_json::json!([
                 "core:default",
                 "allow-get-app-snapshot",
+                "allow-record-performance-marker",
                 "allow-start-workspace-picker",
                 "allow-cancel-workspace-picker",
                 "allow-select-workspace-picker",
@@ -7680,6 +7681,7 @@ mod tests {
         assert!(app_shell.get("windows").is_none());
         let app_manifest = include_str!("../build.rs");
         for command in [
+            "\"record_performance_marker\"",
             "\"get_agent_profiles\"",
             "\"agent_surface_attach\"",
             "\"agent_surface_input\"",
