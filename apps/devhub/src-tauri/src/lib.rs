@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs::File;
 use std::io::Read;
 use std::path::Path;
@@ -57,8 +57,8 @@ mod workspace_resolver;
 use agent::{AgentSurfaceManager, HerdrAgentRuntime};
 use diagnostics::{
     Code as LogCode, DiagnosticEvent, Diagnostics, DiagnosticsOwner, Health as DiagnosticHealth,
-    LifecyclePhase, Module as DiagnosticModule, PreviousExit as DiagnosticPreviousExit,
-    ShutdownOutcome,
+    LifecyclePhase, Module as DiagnosticModule, PerformanceMarker,
+    PreviousExit as DiagnosticPreviousExit, ShutdownOutcome,
 };
 use discovery::DiscoveryEngine;
 use editor::{
@@ -120,6 +120,8 @@ struct NativeBridgeSink {
     router: Mutex<Option<BridgeRouter>>,
     observations: Mutex<BTreeMap<String, BridgeObservation>>,
     failed_requests: Mutex<VecDeque<(String, u64, String)>>,
+    performance_diagnostics: Mutex<Option<Diagnostics>>,
+    performance_ready_surfaces: Mutex<BTreeSet<String>>,
 }
 
 type BridgeRouter = Arc<dyn Fn(BridgeRequest) + Send + Sync>;
@@ -139,11 +141,19 @@ impl Default for NativeBridgeSink {
             router: Mutex::new(None),
             observations: Mutex::new(BTreeMap::new()),
             failed_requests: Mutex::new(VecDeque::new()),
+            performance_diagnostics: Mutex::new(None),
+            performance_ready_surfaces: Mutex::new(BTreeSet::new()),
         }
     }
 }
 
 impl NativeBridgeSink {
+    fn enable_performance_markers(&self, diagnostics: Diagnostics) {
+        if let Ok(mut slot) = self.performance_diagnostics.lock() {
+            *slot = Some(diagnostics);
+        }
+    }
+
     fn recheck_health(&self) -> bool {
         self.observations.lock().ok().is_some_and(|observations| {
             observations.values().any(|observation| observation.connected)
@@ -198,6 +208,19 @@ impl NativeBridgeSink {
 
 impl BridgeEventSink for NativeBridgeSink {
     fn on_event(&self, event: BridgeEvent) {
+        let ready_surface = match &event {
+            BridgeEvent::Snapshot { surface_id, readiness, .. }
+                if *readiness == devhub_app_core::bridge::Readiness::Ready =>
+            {
+                Some(surface_id.as_str().to_owned())
+            }
+            BridgeEvent::ReadinessChanged { surface_id, readiness, .. }
+                if *readiness == devhub_app_core::bridge::Readiness::Ready =>
+            {
+                Some(surface_id.as_str().to_owned())
+            }
+            _ => None,
+        };
         let (surface_id, generation) = match &event {
             BridgeEvent::Connected { surface_id, generation }
             | BridgeEvent::Disconnected { surface_id, generation }
@@ -250,6 +273,23 @@ impl BridgeEventSink for NativeBridgeSink {
             BridgeEvent::IdentityChanged { context, .. } => entry.context = Some(context),
             BridgeEvent::DirtyChanged { dirty, .. } => entry.dirty = dirty,
             BridgeEvent::RequestFailed { .. } => {}
+        }
+        drop(observations);
+        if let Some(surface_id) = ready_surface {
+            let first_ready = self
+                .performance_ready_surfaces
+                .lock()
+                .map(|mut surfaces| surfaces.insert(surface_id))
+                .unwrap_or(false);
+            if first_ready {
+                if let Ok(diagnostics) = self.performance_diagnostics.lock() {
+                    if let Some(diagnostics) = diagnostics.as_ref() {
+                        let _ = diagnostics.emit(DiagnosticEvent::Performance {
+                            marker: PerformanceMarker::EditorBridgeReady,
+                        });
+                    }
+                }
+            }
         }
     }
 
@@ -581,6 +621,7 @@ struct NativeAppState {
     runtime_health_probe: Mutex<Option<RuntimeHealthProbe>>,
     diagnostics: Diagnostics,
     _diagnostics_owner: DiagnosticsOwner,
+    performance_markers_enabled: bool,
     config_watcher: Mutex<Option<devhub_app_core::config::ConfigWatcher>>,
     /// A valid external config edit observed during a confirmed transition.
     /// It is intentionally kept outside `settings.loaded` until the durable
@@ -811,6 +852,17 @@ fn emit_agent_profiles(app: &AppHandle, state: &NativeAppState) {
 }
 
 impl NativeAppState {
+    fn record_performance_marker(&self, marker: PerformanceMarker) -> Result<(), AppErrorWire> {
+        self.capture_open_lifecycle_token()?;
+        if self.performance_markers_enabled
+            && !self.diagnostics.emit(DiagnosticEvent::Performance { marker })
+        {
+            return Err(AppErrorWire::native_unavailable()
+                .with_summary("performance marker could not be recorded"));
+        }
+        Ok(())
+    }
+
     fn bind_native_window(&self, window: &tauri::Window<tauri::Wry>) {
         let identity = native_window_handle_key(window).map(|handle_key| NativeWindowIdentity {
             handle_key,
@@ -1271,6 +1323,7 @@ impl NativeAppState {
                 DiagnosticPreviousExit::Unknown => None,
             },
         );
+        let performance_markers_enabled = std::env::var_os("DEVHUB_Q5_PERFORMANCE").is_some();
         // Schema-version facts are typed even when no migration is needed;
         // this makes startup provenance observable without exposing config or
         // state contents.
@@ -1351,6 +1404,9 @@ impl NativeAppState {
         )
         .map_err(|_| AppErrorWire::native_unavailable())?;
         let bridge_sink = Arc::new(NativeBridgeSink::default());
+        if performance_markers_enabled {
+            bridge_sink.enable_performance_markers(diagnostics.clone());
+        }
         let editor_host = EditorHost::new(
             EditorHostConfig::new(home, None).with_bridge_event_sink(bridge_sink.clone()),
         );
@@ -1372,6 +1428,7 @@ impl NativeAppState {
             runtime_health_probe: Mutex::new(None),
             _diagnostics_owner: DiagnosticsOwner::new(diagnostics.clone()),
             diagnostics,
+            performance_markers_enabled,
             config_watcher: Mutex::new(None),
             deferred_config: Mutex::new(None),
             startup_runtime_config,
@@ -1573,6 +1630,11 @@ impl NativeAppState {
         }
         if result.is_ok() {
             self.diagnostics.emit(DiagnosticEvent::Lifecycle { phase: LifecyclePhase::Ready });
+            if self.performance_markers_enabled {
+                let _ = self.diagnostics.emit(DiagnosticEvent::Performance {
+                    marker: PerformanceMarker::WindowReconstructionReady,
+                });
+            }
         }
         result
     }
@@ -5401,6 +5463,23 @@ fn get_app_snapshot(state: State<'_, NativeAppState>) -> Result<AppSnapshotWire,
     state.app_snapshot_with_lifecycle(token)
 }
 
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct PerformanceMarkerRequest {
+    marker: PerformanceMarker,
+}
+
+/// Records one of the closed, content-free Q5.2 readiness markers.  The
+/// command is a no-op in ordinary launches; the native driver opts in with
+/// `DEVHUB_Q5_PERFORMANCE=1` so production diagnostics stay unchanged.
+#[tauri::command]
+fn record_performance_marker(
+    state: State<'_, NativeAppState>,
+    payload: PerformanceMarkerRequest,
+) -> Result<(), AppErrorWire> {
+    state.record_performance_marker(payload.marker)
+}
+
 #[tauri::command]
 fn get_agent_profiles(state: State<'_, NativeAppState>) -> Result<AgentProfilesWire, AppErrorWire> {
     let token = state.capture_open_lifecycle_token()?;
@@ -6343,6 +6422,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             get_app_snapshot,
+            record_performance_marker,
             start_workspace_picker,
             cancel_workspace_picker,
             select_workspace_picker,

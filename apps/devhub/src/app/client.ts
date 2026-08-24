@@ -40,6 +40,13 @@ export const CHOOSE_WORKSPACE_FOLDER_COMMAND =
   "choose_workspace_folder" as const;
 export const APP_WORKSPACE_PICKER_EVENT = "app://workspace-picker" as const;
 export const OPEN_SETTINGS_WINDOW_COMMAND = "open_settings_window" as const;
+export const RECORD_PERFORMANCE_MARKER_COMMAND =
+  "record_performance_marker" as const;
+
+export type AppPerformanceMarker =
+  | "app_shell_interactive"
+  | "activity_interactive"
+  | "picker_first_result";
 
 export interface WorkspacePickerCandidate {
   readonly operationId: string;
@@ -76,6 +83,7 @@ export interface AppShellClient {
   selectWorkspacePicker?(path: string): Promise<AppOutcome>;
   chooseWorkspaceFolder?(): Promise<string | undefined>;
   openSettings?(): Promise<void>;
+  recordPerformanceMarker?(marker: AppPerformanceMarker): Promise<void>;
   subscribeWorkspacePicker?(
     listener: (event: WorkspacePickerEvent) => void,
   ): Promise<UnlistenFn>;
@@ -168,6 +176,11 @@ export function createTauriAppShellClient(
     },
     openSettings() {
       return transport.invoke<void>(OPEN_SETTINGS_WINDOW_COMMAND);
+    },
+    recordPerformanceMarker(marker) {
+      return transport.invoke<void>(RECORD_PERFORMANCE_MARKER_COMMAND, {
+        marker,
+      });
     },
     subscribeWorkspacePicker(listener) {
       return transport.listen<WorkspacePickerEvent>(

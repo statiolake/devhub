@@ -75,11 +75,28 @@ pub enum Health {
 pub enum DiagnosticEvent {
     Launch { previous_exit: PreviousExit },
     Lifecycle { phase: LifecyclePhase },
+    Performance { marker: PerformanceMarker },
     Health { component: Component, health: Health, code: Option<Code> },
     Error { module: Module, code: Code },
     ProviderExit { component: Component, code: Code },
     Retry { module: Module, code: Code, attempt: u32 },
     Migration { module: Module, from: u32, to: u32 },
+}
+
+/// Content-free readiness markers used by the opt-in Q5.2 native driver.
+///
+/// These are deliberately a closed vocabulary.  The driver can measure the
+/// time between real native events without allowing arbitrary user content,
+/// URLs, paths, or identifiers into the diagnostics stream.  The markers are
+/// emitted only when `DEVHUB_Q5_PERFORMANCE` is set by the driver.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PerformanceMarker {
+    AppShellInteractive,
+    ActivityInteractive,
+    PickerFirstResult,
+    EditorBridgeReady,
+    WindowReconstructionReady,
 }
 
 #[allow(dead_code)]
@@ -166,6 +183,8 @@ struct Record<'a> {
     version: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     phase: Option<LifecyclePhase>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    marker: Option<PerformanceMarker>,
     #[serde(skip_serializing_if = "Option::is_none")]
     component: Option<Component>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -765,6 +784,7 @@ impl Diagnostics {
             event: "event",
             version: None,
             phase: None,
+            marker: None,
             component: None,
             module: None,
             code: None,
@@ -783,6 +803,10 @@ impl Diagnostics {
             DiagnosticEvent::Lifecycle { phase } => {
                 record.event = "lifecycle";
                 record.phase = Some(phase);
+            }
+            DiagnosticEvent::Performance { marker } => {
+                record.event = "performance";
+                record.marker = Some(marker);
             }
             DiagnosticEvent::Health { component, health, code } => {
                 record.event = "health";
@@ -1638,6 +1662,7 @@ mod tests {
             DiagnosticEvent::Lifecycle { phase: LifecyclePhase::WindowClose },
             DiagnosticEvent::Lifecycle { phase: LifecyclePhase::WindowReopen },
             DiagnosticEvent::Lifecycle { phase: LifecyclePhase::Quit },
+            DiagnosticEvent::Performance { marker: PerformanceMarker::AppShellInteractive },
             DiagnosticEvent::ProviderExit {
                 component: Component::Bridge,
                 code: Code::BridgeDisconnected,
@@ -1651,6 +1676,7 @@ mod tests {
         assert!(diagnostics.flush(Duration::from_secs(2)));
         let contents = fs::read_to_string(diagnostics.directory().join(LOG_FILE)).unwrap();
         assert!(contents.contains("window_close"));
+        assert!(contents.contains("\"marker\":\"app_shell_interactive\""));
         assert!(contents.contains("provider_exit"));
         assert!(contents.contains("migration"));
         assert!(!contents.contains("provider-id"));

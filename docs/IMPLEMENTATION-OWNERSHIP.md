@@ -20,7 +20,7 @@ Production tasks use non-overlapping file ownership. Paths below are the intende
 | A3.6 AgentRuntime | `src-tauri/src/agent/**`, `src/agent/**` |
 | I4.x integration | `src-tauri/src/integration/**`, task-specific integration tests only |
 | I4.5 Diagnostics | `src-tauri/src/diagnostics/**`, `src/components/errors/**` |
-| Q5.2 Performance and endurance | `scripts/q5-performance.py`, `scripts/check-performance.sh`, `docs/Q5.2-PERFORMANCE.md`, `docs/evidence/q5.2-local-report.json` |
+| Q5.2 Performance and endurance | `scripts/q5-performance.py`, `scripts/q5-native.py`, `scripts/check-performance.sh`, `docs/Q5.2-PERFORMANCE.md`, `docs/evidence/q5.2-local-report.json`, `docs/evidence/q5.2-native-report.json` |
 | Q5.3 Brand | `assets/icon-master.svg`, `src-tauri/icons/**` |
 | L6.1 Packaging | `.github/workflows/release.yml`, packaging scripts, notices |
 

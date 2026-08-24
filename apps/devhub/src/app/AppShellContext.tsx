@@ -9,6 +9,7 @@ import {
 import {
   createTauriAppShellClient,
   parseTransportError,
+  type AppPerformanceMarker,
   type AppShellClient,
   type WorkspacePickerCandidate,
   type WorkspacePickerEvent,
@@ -107,6 +108,7 @@ export function AppShellProvider({
   const pickerSequence = useRef(-1);
   const pickerStartGeneration = useRef(0);
   const pickerBufferedEvents = useRef<WorkspacePickerEvent[]>([]);
+  const pickerFirstResultMarkerOperation = useRef<string | null>(null);
   const pickerEventProcessor = useRef<
     ((event: WorkspacePickerEvent) => void) | null
   >(null);
@@ -121,6 +123,42 @@ export function AppShellProvider({
     // newer projection or a new user dispatch replaces it.
     if (revisionAdvanced) setIntentError(null);
   }, []);
+
+  const emitPerformanceMarker = useCallback(
+    (marker: AppPerformanceMarker) => {
+      const result = client.recordPerformanceMarker?.(marker);
+      if (result) void result.catch(() => undefined);
+    },
+    [client],
+  );
+
+  // These markers are intentionally emitted after React commits the native
+  // App Shell projection. The command is a no-op outside the opt-in native
+  // performance driver, so the production transport has no extra log work.
+  useEffect(() => {
+    if (state.status !== "ready") return;
+    emitPerformanceMarker("app_shell_interactive");
+  }, [emitPerformanceMarker, state.status]);
+
+  const activeActivity =
+    state.status === "ready" ? state.snapshot.selection.activity : undefined;
+
+  useEffect(() => {
+    if (state.status !== "ready") return;
+    emitPerformanceMarker("activity_interactive");
+  }, [activeActivity, emitPerformanceMarker, state.status]);
+
+  useEffect(() => {
+    if (
+      pickerCandidates.length === 0 ||
+      !pickerOperation.current ||
+      pickerFirstResultMarkerOperation.current === pickerOperation.current
+    ) {
+      return;
+    }
+    pickerFirstResultMarkerOperation.current = pickerOperation.current;
+    emitPerformanceMarker("picker_first_result");
+  }, [emitPerformanceMarker, pickerCandidates.length]);
 
   useEffect(() => {
     const currentGeneration = ++generation.current;
@@ -357,6 +395,7 @@ export function AppShellProvider({
       pickerOperation.current = null;
       pickerSequence.current = -1;
       pickerBufferedEvents.current = [];
+      pickerFirstResultMarkerOperation.current = null;
       let operationId: string;
       try {
         operationId = await client.startWorkspacePicker(query);

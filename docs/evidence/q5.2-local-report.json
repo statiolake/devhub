@@ -262,6 +262,24 @@
       "evidence": "EditorHost crash recovery, 8 lifecycle gate tests, and identity reconciliation passed."
     },
     {
+      "id": "native-driver-probe",
+      "status": "pass",
+      "command": "python3 scripts/q5-native.py --probe --output docs/evidence/q5.2-native-report.json",
+      "evidence": "Real host, artifact, and GUI availability probe passed its redacted report contract; the debug binary and unsandboxed WindowServer/Accessibility session are present while the pinned bundle is unavailable."
+    },
+    {
+      "id": "native-driver-self-test",
+      "status": "pass",
+      "command": "python3 scripts/q5-native.py --self-test",
+      "evidence": "Native driver rejects nine measured samples and validates bounded setup/measured attempt slots."
+    },
+    {
+      "id": "native-driver-interaction-run",
+      "status": "pending",
+      "command": "python3 scripts/q5-native.py --execute",
+      "evidence": "The real DevHub binary ran one setup and ten measured attempts in the available unsandboxed GUI session, but the App Shell marker timed out because the pinned bundle is absent; reference context is unproven and no timing sample is recorded."
+    },
+    {
       "id": "reference-mac-interaction-matrix",
       "status": "pending",
       "command": "reference-Mac manual/native acceptance procedure in docs/Q5.2-PERFORMANCE.md",

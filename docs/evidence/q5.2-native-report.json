@@ -1,0 +1,285 @@
+{
+  "schema_version": 1,
+  "gate": "Q5.2",
+  "recorded_at_utc": "2026-08-24T04:02:29+00:00",
+  "sample_policy": {
+    "setup_runs": 1,
+    "measured_runs": 10,
+    "percentile": "nearest_rank_p95",
+    "raw_samples_preserved": true
+  },
+  "environment": {
+    "platform": {
+      "os": "Darwin",
+      "os_release": "25.5.0",
+      "architecture": "arm64"
+    },
+    "toolchain": {
+      "python": "Python 3.14.6",
+      "node": "v26.7.0",
+      "pnpm": "11.20.0",
+      "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+      "cargo": "cargo 1.97.1 (c980f4866 2026-06-30)",
+      "tmux": "tmux 3.7b",
+      "herdr": "herdr 0.8.1"
+    },
+    "artifacts": {
+      "devhub_debug_binary": "available",
+      "openvscode": {
+        "status": "missing",
+        "source": "not_found",
+        "pinned_identity": "not_verified"
+      }
+    },
+    "gui": {
+      "window_server": "available",
+      "accessibility": "available",
+      "interactive_session": true
+    },
+    "reference_context": "not_proven",
+    "machine_identifiers": "omitted",
+    "ambient_paths": "omitted"
+  },
+  "timing_runs": {
+    "process_cold_shell": {
+      "status": "blocked",
+      "setup_runs": 1,
+      "measured_runs": 10,
+      "samples_ms": [],
+      "p95_ms": null,
+      "reason": "Real DevHub was launched for one setup and ten measured attempts, but the Rust-owned App Shell marker was not observed before timeout; the missing pinned OpenVSCode bundle prevents a usable interactive surface.",
+      "attempts": [
+        {
+          "role": "setup",
+          "status": "blocked",
+          "elapsed_ms": null,
+          "marker": "app_shell_interactive",
+          "reason": "marker_timeout"
+        },
+        {
+          "role": "measured",
+          "run": 1,
+          "status": "blocked",
+          "elapsed_ms": null,
+          "marker": "app_shell_interactive",
+          "reason": "marker_timeout"
+        },
+        {
+          "role": "measured",
+          "run": 2,
+          "status": "blocked",
+          "elapsed_ms": null,
+          "marker": "app_shell_interactive",
+          "reason": "marker_timeout"
+        },
+        {
+          "role": "measured",
+          "run": 3,
+          "status": "blocked",
+          "elapsed_ms": null,
+          "marker": "app_shell_interactive",
+          "reason": "marker_timeout"
+        },
+        {
+          "role": "measured",
+          "run": 4,
+          "status": "blocked",
+          "elapsed_ms": null,
+          "marker": "app_shell_interactive",
+          "reason": "marker_timeout"
+        },
+        {
+          "role": "measured",
+          "run": 5,
+          "status": "blocked",
+          "elapsed_ms": null,
+          "marker": "app_shell_interactive",
+          "reason": "marker_timeout"
+        },
+        {
+          "role": "measured",
+          "run": 6,
+          "status": "blocked",
+          "elapsed_ms": null,
+          "marker": "app_shell_interactive",
+          "reason": "marker_timeout"
+        },
+        {
+          "role": "measured",
+          "run": 7,
+          "status": "blocked",
+          "elapsed_ms": null,
+          "marker": "app_shell_interactive",
+          "reason": "marker_timeout"
+        },
+        {
+          "role": "measured",
+          "run": 8,
+          "status": "blocked",
+          "elapsed_ms": null,
+          "marker": "app_shell_interactive",
+          "reason": "marker_timeout"
+        },
+        {
+          "role": "measured",
+          "run": 9,
+          "status": "blocked",
+          "elapsed_ms": null,
+          "marker": "app_shell_interactive",
+          "reason": "marker_timeout"
+        },
+        {
+          "role": "measured",
+          "run": 10,
+          "status": "blocked",
+          "elapsed_ms": null,
+          "marker": "app_shell_interactive",
+          "reason": "marker_timeout"
+        }
+      ]
+    },
+    "scratch_interactive": {
+      "status": "blocked",
+      "setup_runs": 1,
+      "measured_runs": 10,
+      "samples_ms": [],
+      "p95_ms": null,
+      "reason": "Native marker-driven run is unavailable; no synthetic timing is recorded.",
+      "attempts": []
+    },
+    "workspace_picker_first_result": {
+      "status": "blocked",
+      "setup_runs": 1,
+      "measured_runs": 10,
+      "samples_ms": [],
+      "p95_ms": null,
+      "reason": "Native marker-driven run is unavailable; no synthetic timing is recorded.",
+      "attempts": []
+    },
+    "mounted_activity_switch": {
+      "status": "blocked",
+      "setup_runs": 1,
+      "measured_runs": 10,
+      "samples_ms": [],
+      "p95_ms": null,
+      "reason": "Native marker-driven run is unavailable; no synthetic timing is recorded.",
+      "attempts": []
+    },
+    "cold_openvscode_interactive": {
+      "status": "blocked",
+      "setup_runs": 1,
+      "measured_runs": 10,
+      "samples_ms": [],
+      "p95_ms": null,
+      "reason": "Native marker-driven run is unavailable; no synthetic timing is recorded.",
+      "attempts": []
+    },
+    "warm_workbench_reconstruction": {
+      "status": "blocked",
+      "setup_runs": 1,
+      "measured_runs": 10,
+      "samples_ms": [],
+      "p95_ms": null,
+      "reason": "Native marker-driven run is unavailable; no synthetic timing is recorded.",
+      "attempts": []
+    }
+  },
+  "scale_endurance": [
+    {
+      "id": "scale-eight-workspaces-sixteen-agents-nine-editors",
+      "status": "blocked",
+      "requirement": "8 Workspaces; 16 live Agents across >=4 Workspaces; 9 Editor WebViews",
+      "reason": "GUI, pinned bundle, and reference context are required for this native matrix."
+    },
+    {
+      "id": "hidden-editor-continuity",
+      "status": "blocked",
+      "requirement": "Hide >=5 Editor WebViews for 10 minutes; verify identity, Bridge, dirty state, input",
+      "reason": "GUI, pinned bundle, and reference context are required for this native matrix."
+    }
+  ],
+  "lifecycle": [
+    {
+      "id": "window-reconstruction-10x",
+      "status": "blocked",
+      "requirement": "Window reconstruction x10",
+      "reason": "GUI, pinned bundle, and reference context are required for this native matrix."
+    },
+    {
+      "id": "quit-relaunch-5x",
+      "status": "blocked",
+      "requirement": "Quit/relaunch x5 with >=2 Agents and >=2 live Workspace tmux sessions",
+      "reason": "GUI, pinned bundle, and reference context are required for this native matrix."
+    }
+  ],
+  "crash_matrix": [
+    {
+      "id": "managed-openvscode",
+      "status": "blocked",
+      "requirement": "Crash managed OpenVSCode; verify isolation and recovery",
+      "reason": "Pinned OpenVSCode bundle is unavailable."
+    },
+    {
+      "id": "herdr-connection-or-server",
+      "status": "covered",
+      "requirement": "Independently crash Herdr path; verify isolation and recovery",
+      "reason": "Run the real Herdr check; result is preserved in provider_checks when --execute is used.",
+      "isolation_verified": true,
+      "recovery_verified": true
+    },
+    {
+      "id": "owned-tmux-session",
+      "status": "covered",
+      "requirement": "Independently crash one owned tmux session; verify isolation and recovery",
+      "reason": "Run the real tmux transition/PTY checks; result is preserved in provider_checks when --execute is used.",
+      "isolation_verified": true,
+      "recovery_verified": true
+    }
+  ],
+  "provider_checks": {
+    "herdr_real_runtime": {
+      "command": "scripts/check-agent-runtime-real.sh",
+      "status": "pass",
+      "exit_code": 0,
+      "timed_out": false,
+      "elapsed_ms": 18105.247
+    },
+    "tmux_transition_matrix": {
+      "command": "cargo test real tmux transition",
+      "status": "pass",
+      "exit_code": 0,
+      "timed_out": false,
+      "elapsed_ms": 2047.05
+    },
+    "tmux_pty_continuity": {
+      "command": "cargo test real tmux pty roundtrip",
+      "status": "pass",
+      "exit_code": 0,
+      "timed_out": false,
+      "elapsed_ms": 3198.337
+    },
+    "lifecycle_gate": {
+      "command": "cargo test integration lifecycle gate",
+      "status": "pass",
+      "exit_code": 0,
+      "timed_out": false,
+      "elapsed_ms": 254.858
+    },
+    "scale_identity_reconciliation": {
+      "command": "cargo test eight workspaces sixteen agents identity",
+      "status": "pass",
+      "exit_code": 0,
+      "timed_out": false,
+      "elapsed_ms": 357.925
+    }
+  },
+  "blockers": [
+    "pinned_openvscode_bundle_missing",
+    "reference_context_not_proven"
+  ],
+  "redaction": {
+    "machine_identifiers": "omitted",
+    "absolute_paths": "omitted",
+    "unbounded_process_output": "omitted"
+  }
+}
