@@ -2,20 +2,20 @@
 
 ## Pinned development baseline
 
-| Dependency | MVP baseline | Contract |
-| --- | --- | --- |
-| OpenVSCode Server | `openvscode-server-v1.109.5`, commit `4ffe2270acdf711bbefecc3e8c79f4b3631640e5` | bundled, unmodified upstream source |
-| OpenVSCode build Node | `22.21.1` from the pinned `.nvmrc` | exact build runtime |
-| Herdr | CLI `0.8.1`, protocol `20`; integration reference commit `5203a5dc0f39a082938ea0f9836d6257ea7e155f` | external runtime with capability check |
-| tmux | minimum `3.3`, reference `3.7b` | external runtime with marker/capability smoke |
-| Git | system/configured Git; reference `2.55.0` | external optional metadata provider |
-| zsh | `/bin/zsh`; reference `5.9` | default login shell |
-| Rust | `1.97.1` | exact value in `rust-toolchain.toml`; matches host prototype evidence |
-| pnpm | `11.20.0` baseline | exact Corepack packageManager value |
-| Tauri | `2.11.5` feasibility baseline | exact production pin after Wave 0 |
-| WRY | `0.55.1` feasibility baseline | exact upstream or narrow host fork pin after Wave 0 |
+| Dependency            | MVP baseline                                                                                        | Contract                                                                                                                                                                                  |
+| --------------------- | --------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| OpenVSCode Server     | `openvscode-server-v1.109.5`, commit `4ffe2270acdf711bbefecc3e8c79f4b3631640e5`                     | bundled, unmodified upstream source                                                                                                                                                       |
+| OpenVSCode build Node | `22.21.1` from the pinned `.nvmrc`                                                                  | exact build runtime                                                                                                                                                                       |
+| Herdr                 | CLI `0.8.1`, protocol `20`; integration reference commit `5203a5dc0f39a082938ea0f9836d6257ea7e155f` | external runtime with capability check                                                                                                                                                    |
+| tmux                  | minimum `3.3`, reference `3.7b`                                                                     | external runtime with marker/capability smoke                                                                                                                                             |
+| Git                   | system/configured Git; reference `2.55.0`                                                           | external optional metadata provider                                                                                                                                                       |
+| zsh                   | `/bin/zsh`; reference `5.9`                                                                         | default login shell                                                                                                                                                                       |
+| Rust                  | `1.97.1`                                                                                            | exact value in `rust-toolchain.toml`; matches host prototype evidence                                                                                                                     |
+| pnpm                  | `11.20.0` baseline                                                                                  | exact Corepack packageManager value                                                                                                                                                       |
+| Tauri                 | `2.11.5`                                                                                            | exact locked production pin                                                                                                                                                               |
+| WRY                   | `0.55.1`                                                                                            | exact vendored upstream baseline with the narrow local host patch documented in [`apps/devhub/src-tauri/vendor/wry/DEVHUB-PATCH.md`](../apps/devhub/src-tauri/vendor/wry/DEVHUB-PATCH.md) |
 
-F0.1 records the complete Darwin build command, lockfile hashes, produced bundle hash, Node binary provenance, and licenses before R1.1 begins. A different dependency version requires rerunning its affected feasibility gates, not an informal upgrade.
+F0.1 records the complete Darwin build command, lockfile hashes, produced bundle hash, Node binary provenance, and licenses before R1.1 begins. A different dependency version requires rerunning its affected feasibility gates, not an informal upgrade. The WRY patch is local to DevHub, is rebased only from the exact `0.55.1` source, and has no upstream publication claim; its IPC isolation and native keyboard/responder invariants are part of the tracked vendor boundary.
 
 ## OpenVSCode contract
 

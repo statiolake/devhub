@@ -47,6 +47,7 @@ pub mod agent;
 pub mod discovery;
 pub mod editor;
 mod integration;
+mod keyboard;
 mod repository;
 mod runtime;
 mod terminal;
@@ -57,8 +58,9 @@ use editor::{
     BridgeEvent, BridgeEventSink, BridgeRequest, BridgeRequestDisposition, BridgeRequestResult,
 };
 use editor::{EditorHost, EditorHostConfig};
-use editor::{NavigationRequest, NavigationRouter, WryWebViewHost};
+use editor::{NativeFocusIdentity, NavigationRequest, NavigationRouter, WryWebViewHost};
 use integration::lifecycle::{safe_restore_frame, DisplayWorkArea, LifecycleGate, Phase};
+use keyboard::{HostCommand, KeyStroke, KeyboardController, RouteDecision, SurfaceFocus};
 use repository::{GitRepositoryResolver, GitRepositoryResolverConfig};
 use runtime::{LoginEnvironmentStatus, RuntimeLaunchContext};
 use terminal::{
@@ -614,6 +616,11 @@ struct NativeAppState {
     /// remove the replacement's fresh terminal/Agent channels.
     window_cleanup: Mutex<Option<WindowCleanupToken>>,
     window_cleanup_wake: Condvar,
+    keyboard: KeyboardController,
+    /// Native identity of the App Shell WKWebView. Agent, Terminal, and
+    /// Global Terminal activities share this responder; their semantic
+    /// SurfaceKey remains distinct in `SurfaceFocus`.
+    app_shell_focus: Mutex<Option<NativeFocusIdentity>>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -763,6 +770,40 @@ impl NativeAppState {
         if let Ok(mut current) = self.native_window_identity.lock() {
             *current = identity;
         }
+        if let Ok(mut focus) = self.app_shell_focus.lock() {
+            *focus = None;
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn capture_app_shell_focus(
+        &self,
+        app: &AppHandle,
+        window: &tauri::WebviewWindow<tauri::Wry>,
+        identity: NativeWindowIdentity,
+    ) {
+        let callback_app = app.clone();
+        let _ = window.with_webview(move |webview| {
+            let native_id = webview.inner() as usize;
+            let native_window = webview.ns_window() as usize;
+            let Some(state) = callback_app.try_state::<NativeAppState>() else { return };
+            let current = state.native_window_identity.lock().ok().and_then(|value| *value);
+            if current != Some(identity)
+                || state.lifecycle.generation() != identity.lifecycle_generation
+            {
+                return;
+            }
+            if let Ok(mut focus) = state.app_shell_focus.lock() {
+                *focus = Some(NativeFocusIdentity {
+                    responder_root: native_id,
+                    window: native_window,
+                    // Tauri exposes the native NSWindow identity but not a
+                    // safe windowNumber accessor. The AppKit monitor supplies
+                    // the number on each event after this identity matches.
+                    window_number: 0,
+                });
+            };
+        });
     }
 
     fn native_window_identity(
@@ -1018,6 +1059,9 @@ impl NativeAppState {
         if let Ok(mut current) = self.native_window_identity.lock() {
             if current.as_ref().is_some_and(|current| *current == identity) {
                 *current = None;
+                if let Ok(mut focus) = self.app_shell_focus.lock() {
+                    *focus = None;
+                }
             }
         }
     }
@@ -1288,6 +1332,130 @@ impl NativeAppState {
             close_rollback_snapshot: Mutex::new(None),
             window_cleanup: Mutex::new(None),
             window_cleanup_wake: Condvar::new(),
+            keyboard: KeyboardController::default(),
+            app_shell_focus: Mutex::new(None),
+        })
+    }
+
+    #[cfg(target_os = "macos")]
+    fn install_keyboard_monitor(&self, app: &AppHandle) -> Result<(), &'static str> {
+        let callback_app = app.clone();
+        self.keyboard.install(move |event| {
+            let Some(state) = callback_app.try_state::<NativeAppState>() else {
+                return wry::NativeKeyEventResult::Pass;
+            };
+            state.route_native_key(&callback_app, event)
+        })
+    }
+
+    #[cfg(target_os = "macos")]
+    fn route_native_key(
+        &self,
+        app: &AppHandle,
+        event: wry::NativeKeyEvent,
+    ) -> wry::NativeKeyEventResult {
+        // Hold the same transaction gate as close/reopen and coordinator
+        // replacement through the routing decision. A lifecycle transition
+        // cannot swap the active surface between the generation read and the
+        // original native event being returned to AppKit.
+        let Ok(_transaction) = self.coordinator_transaction.lock() else {
+            return wry::NativeKeyEventResult::Pass;
+        };
+        if self.lifecycle.phase() != Phase::Open {
+            return wry::NativeKeyEventResult::Pass;
+        }
+        let Some(main) = app.get_webview_window(APP_SHELL_WINDOW_LABEL) else {
+            return wry::NativeKeyEventResult::Pass;
+        };
+        if !main.is_focused().unwrap_or(false) {
+            // Settings retains its own native menu policy, including Cmd-W.
+            return wry::NativeKeyEventResult::Pass;
+        }
+        let generation = self.lifecycle.generation();
+        let focus = self.current_keyboard_focus(event.window_identity(), event.window_number());
+        let decision = self.keyboard.route(
+            focus,
+            KeyStroke {
+                key_code: event.key_code(),
+                command: event.command(),
+                shift: event.shift(),
+                option: event.option(),
+                control: event.control(),
+                is_repeat: event.is_repeat(),
+            },
+            Instant::now(),
+        );
+        match decision {
+            RouteDecision::PrefixArmed { .. } => wry::NativeKeyEventResult::Consume,
+            RouteDecision::Consume => wry::NativeKeyEventResult::Consume,
+            RouteDecision::ForwardNativeQ { target, focus } => {
+                // The router's target is meaningful here: it is the semantic
+                // destination captured with the first prefix. Forward only
+                // when the same destination still owns the same AppKit
+                // responder and lifecycle generation. Returning the original
+                // NSEvent is safe only after all three identities match.
+                let current =
+                    self.current_keyboard_focus(event.window_identity(), event.window_number());
+                if target == focus.semantic
+                    && focus.generation == generation
+                    && focus.matches_native(
+                        event.responder_belongs_to(focus.native_id),
+                        event.window_identity(),
+                        event.window_number(),
+                        generation,
+                    )
+                    && current.as_ref() == Some(&focus)
+                {
+                    wry::NativeKeyEventResult::Forward
+                } else {
+                    wry::NativeKeyEventResult::Consume
+                }
+            }
+            RouteDecision::Route(HostCommand::OpenSettings) => {
+                if show_settings_window(app).is_err() {
+                    self.record_native_error(AppErrorWire::native_unavailable());
+                }
+                wry::NativeKeyEventResult::Consume
+            }
+            RouteDecision::Pass { .. } => wry::NativeKeyEventResult::Pass,
+        }
+    }
+
+    fn current_keyboard_focus(
+        &self,
+        event_window_identity: usize,
+        event_window_number: isize,
+    ) -> Option<SurfaceFocus> {
+        let snapshot = self.coordinator.lock().ok()?.snapshot().clone();
+        let SurfaceResolution::Enabled(key) =
+            snapshot.activity(snapshot.active_activity()).resolution()
+        else {
+            return None;
+        };
+        let generation = self.lifecycle.generation();
+        let identity = match key {
+            SurfaceKey::GlobalEditor | SurfaceKey::WorkspaceEditor(_) => {
+                self.editor_host.active_native_focus_identity()?
+            }
+            SurfaceKey::GlobalTerminal
+            | SurfaceKey::WorkspaceTerminal(_)
+            | SurfaceKey::Agent(_) => {
+                let binding = self.app_shell_focus.lock().ok()?.as_ref().copied()?;
+                if binding.window == 0
+                    || binding.window != event_window_identity
+                    || event_window_number == 0
+                {
+                    return None;
+                }
+                NativeFocusIdentity { window_number: event_window_number, ..binding }
+            }
+        };
+        Some(SurfaceFocus {
+            semantic: key.clone(),
+            native_id: identity.responder_root,
+            window_identity: identity.window,
+            window_number: identity.window_number,
+            generation,
         })
     }
 
@@ -1355,6 +1523,7 @@ impl NativeAppState {
         self.bind_native_window(&parent);
         let window_identity =
             self.native_window_identity(&parent).ok_or_else(AppErrorWire::native_unavailable)?;
+        self.capture_app_shell_focus(app, &window, window_identity);
         self.restore_window_frame(&parent)?;
         // A failed Dock reconstruction is retryable, but a successful retry
         // must never stack a second raw WRY host or child-WebView registry on
@@ -5370,7 +5539,7 @@ async fn apply_socket_change(
     result
 }
 
-fn show_settings_window(app: &AppHandle) -> Result<(), String> {
+pub(crate) fn show_settings_window(app: &AppHandle) -> Result<(), String> {
     if let Some(window) = app.get_webview_window(SETTINGS_WINDOW_LABEL) {
         window
             .set_menu(build_settings_menu(app).map_err(|error| error.to_string())?)
@@ -5512,6 +5681,11 @@ pub fn run() {
             let state = NativeAppState::bootstrap(&home)
                 .map_err(|_| std::io::Error::other("DevHub native bootstrap failed"))?;
             app.manage(state);
+            #[cfg(target_os = "macos")]
+            if let Err(error) = app.state::<NativeAppState>().install_keyboard_monitor(app.handle())
+            {
+                eprintln!("DevHub native keyboard monitor unavailable: {error}");
+            }
             app.state::<NativeAppState>().install_bridge_router(app.handle());
             app.state::<NativeAppState>()
                 .install_config_watcher(app.handle())

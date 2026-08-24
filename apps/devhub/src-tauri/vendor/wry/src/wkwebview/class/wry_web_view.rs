@@ -43,16 +43,13 @@ define_class!(
   impl WryWebView {
     #[unsafe(method(performKeyEquivalent:))]
     fn perform_key_equivalent(&self, event: &NSEvent) -> Bool {
-      // This is a temporary workaround for https://github.com/tauri-apps/tauri/issues/9426
-      // FIXME: When the webview is a child webview, performKeyEquivalent always return YES
-      // and stop propagating the event to the window, hence the menu shortcut won't be
-      // triggered. However, overriding this method also means the cmd+key event won't be
-      // handled in webview, which means the key cannot be listened by JavaScript.
-      if self.ivars().is_child {
-        Bool::NO
-      } else {
-        unsafe { objc2::msg_send![super(self), performKeyEquivalent: event] }
-      }
+      // DevHub's host monitor consumes only its first exact Command-Q. Every
+      // event reaching this responder must retain WKWebView's native handling,
+      // including ordinary Command shortcuts, text editing, and the one
+      // forwarded native Command-Q. Returning NO for every child event (the
+      // upstream menu workaround) would silently drop those shortcuts.
+      let _ = self.ivars().is_child;
+      unsafe { objc2::msg_send![super(self), performKeyEquivalent: event] }
     }
 
     #[cfg(target_os = "macos")]

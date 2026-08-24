@@ -31,8 +31,13 @@ define_class!(
       let mtm = MainThreadMarker::new().unwrap();
       let app = NSApplication::sharedApplication(mtm);
       unsafe {
-        if let Some(menu) = app.mainMenu() {
-          menu.performKeyEquivalent(event);
+        let handled = app.mainMenu().is_some_and(|menu| menu.performKeyEquivalent(event));
+        if !handled {
+          // Command-W and ordinary unclaimed Command shortcuts belong to the
+          // active WKWebView. Preserve the same native event/responder chain;
+          // DevHub's AppKit monitor has already consumed only its reserved
+          // first Command-Q.
+          let _: () = objc2::msg_send![super(self), keyDown: event];
         }
       }
     }

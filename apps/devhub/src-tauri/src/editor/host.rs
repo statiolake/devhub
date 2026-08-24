@@ -506,6 +506,14 @@ impl EditorHost {
             .focus()
     }
 
+    /// Returns the transient native responder token of the currently visible
+    /// raw Editor child. This is consumed only by the host key router.
+    pub fn active_native_focus_identity(&self) -> Option<super::webview::NativeFocusIdentity> {
+        let state = self.state.lock().ok()?;
+        let key = state.active.as_ref()?;
+        state.surfaces.get(key)?.webview.as_ref()?.native_focus_identity()
+    }
+
     /// Hides every mounted child while retaining each semantic surface
     /// record. This is used when the restored Activity is Agent or Terminal:
     /// Editor WebViews are reconstructed once, but no editor child is allowed

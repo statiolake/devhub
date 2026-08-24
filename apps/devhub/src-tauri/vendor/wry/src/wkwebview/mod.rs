@@ -38,7 +38,10 @@ use objc2::{
   AllocAnyThread, DeclaredClass, MainThreadOnly, Message,
 };
 #[cfg(target_os = "macos")]
-use objc2_app_kit::{NSApplication, NSAutoresizingMaskOptions, NSTitlebarSeparatorStyle, NSView};
+use objc2_app_kit::{
+  NSApplication, NSAutoresizingMaskOptions, NSEvent, NSEventMask, NSEventModifierFlags,
+  NSResponder, NSTitlebarSeparatorStyle, NSView,
+};
 #[cfg(target_os = "macos")]
 use objc2_core_foundation::CGSize;
 use objc2_core_foundation::{CGPoint, CGRect};
@@ -75,8 +78,8 @@ use objc2_web_kit::{
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
 use std::{
-  cell::RefCell,
-  collections::HashMap,
+    cell::RefCell,
+    collections::HashMap,
   ffi::CString,
   net::Ipv4Addr,
   os::raw::c_char,
@@ -107,6 +110,135 @@ use crate::util::Counter;
 static COUNTER: Counter = Counter::new();
 
 static WEBVIEW_STATE: Lazy<RwLock<HashMap<String, WebViewState>>> = Lazy::new(Default::default);
+
+/// Scalar fields copied from one AppKit key-down. The callback never receives
+/// the borrowed `NSEvent`; WRY retains ownership of the original event and
+/// either returns it unchanged or consumes it after the host decision.
+#[cfg(target_os = "macos")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NativeKeyEvent {
+  key_code: u16,
+  command: bool,
+  shift: bool,
+  option: bool,
+  control: bool,
+  window_number: isize,
+  window_identity: usize,
+  first_responder_identity: usize,
+  responder_ancestry: [usize; 16],
+  responder_ancestry_len: u8,
+  is_repeat: bool,
+}
+
+#[cfg(target_os = "macos")]
+impl NativeKeyEvent {
+  pub const fn key_code(self) -> u16 { self.key_code }
+  pub const fn command(self) -> bool { self.command }
+  pub const fn shift(self) -> bool { self.shift }
+  pub const fn option(self) -> bool { self.option }
+  pub const fn control(self) -> bool { self.control }
+  pub const fn window_number(self) -> isize { self.window_number }
+  pub const fn window_identity(self) -> usize { self.window_identity }
+  pub const fn first_responder_identity(self) -> usize { self.first_responder_identity }
+  pub const fn responder_belongs_to(self, root: usize) -> bool {
+    if root == 0 { return false; }
+    let mut index = 0;
+    while index < self.responder_ancestry_len as usize {
+      if self.responder_ancestry[index] == root { return true; }
+      index += 1;
+    }
+    false
+  }
+  pub const fn is_repeat(self) -> bool { self.is_repeat }
+}
+
+#[cfg(target_os = "macos")]
+fn responder_ancestry(responder: &NSResponder) -> ([usize; 16], u8) {
+  let mut ancestry = [0; 16];
+  let mut length = 0u8;
+  let mut owned: Option<Retained<NSResponder>> = None;
+  loop {
+    let current = owned.as_deref().unwrap_or(responder);
+    if length as usize >= ancestry.len() { break; }
+    ancestry[length as usize] = current as *const NSResponder as usize;
+    length += 1;
+    let next = if let Some(view) = current.downcast_ref::<NSView>() {
+      // `superview` is a non-retaining AppKit relationship; objc2 returns a
+      // retained value for the duration of this classification.
+      unsafe { view.superview().map(|view| view.into_super()) }
+    } else {
+      unsafe { current.nextResponder() }
+    };
+    let Some(next) = next else { break };
+    owned = Some(next);
+  }
+  (ancestry, length)
+}
+
+/// Result of the host router. `Forward` and `Pass` deliberately have the same
+/// AppKit return behavior: they return the original event pointer. Keeping a
+/// separate variant makes the product contract explicit at the adapter seam.
+#[cfg(target_os = "macos")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NativeKeyEventResult {
+  Consume,
+  Forward,
+  Pass,
+}
+
+/// Installs one process-local AppKit key monitor. The monitor is intentionally
+/// a small WRY adapter so the application crate can remain `forbid(unsafe_code)`.
+/// Returning the original pointer preserves the trusted native event and its
+/// responder/IME path; returning null consumes the event before menu handling.
+#[cfg(target_os = "macos")]
+pub fn install_local_key_monitor<F>(handler: F) -> bool
+where
+  F: Fn(NativeKeyEvent) -> NativeKeyEventResult + Send + Sync + 'static,
+{
+  let handler = Arc::new(handler);
+  let block = block2::RcBlock::new(move |event: NonNull<NSEvent>| -> *mut NSEvent {
+    let event_ref = unsafe { event.as_ref() };
+    let flags = event_ref.modifierFlags();
+    let (window_identity, first_responder_identity, responder_ancestry, responder_ancestry_len) = MainThreadMarker::new()
+      .and_then(|mtm| event_ref.window(mtm))
+      .map_or((0, 0, [0; 16], 0), |window| {
+        let window_identity = window.as_ref() as *const NSWindow as usize;
+        let Some(responder) = window.firstResponder() else {
+          return (window_identity, 0, [0; 16], 0);
+        };
+        let first_responder_identity = responder.as_ref() as *const NSResponder as usize;
+        let (ancestry, length) = responder_ancestry(responder.as_ref());
+        (window_identity, first_responder_identity, ancestry, length)
+      });
+    let key = NativeKeyEvent {
+      key_code: event_ref.keyCode(),
+      command: flags.contains(NSEventModifierFlags::Command),
+      shift: flags.contains(NSEventModifierFlags::Shift),
+      option: flags.contains(NSEventModifierFlags::Option),
+      control: flags.contains(NSEventModifierFlags::Control),
+      window_number: event_ref.windowNumber(),
+      window_identity,
+      first_responder_identity,
+      responder_ancestry,
+      responder_ancestry_len,
+      is_repeat: event_ref.isARepeat(),
+    };
+    match handler(key) {
+      NativeKeyEventResult::Consume => std::ptr::null_mut(),
+      NativeKeyEventResult::Forward | NativeKeyEventResult::Pass => event.as_ptr(),
+    }
+  });
+  let monitor = unsafe {
+    NSEvent::addLocalMonitorForEventsMatchingMask_handler(NSEventMask::KeyDown, &block)
+  };
+  let installed = monitor.is_some();
+  if let Some(monitor) = monitor {
+    // AppKit owns and invokes the monitor for process lifetime. The product
+    // lifecycle ends with this process, so no monitor can outlive DevHub.
+    std::mem::forget(monitor);
+  }
+  installed
+}
 
 struct WebViewState {
   pub protocol_ptrs: Vec<Rc<dyn Fn(crate::WebViewId, Request<Vec<u8>>, RequestAsyncResponder)>>,
@@ -156,6 +288,23 @@ pub(crate) struct InnerWebView {
   #[cfg(target_os = "macos")]
   // We need this to update the traffic light inset
   parent_view: Option<Retained<WryWebViewParent>>,
+}
+
+#[cfg(target_os = "macos")]
+impl InnerWebView {
+  /// Stable only for the lifetime of this native WKWebView instance. DevHub
+  /// uses it as a focus-routing token, never as a product or provider ID.
+  pub fn native_focus_identity(&self) -> usize {
+    self.webview.as_ref() as *const WryWebView as usize
+  }
+
+  pub fn native_window_identity(&self) -> usize {
+    self.webview.window().map_or(0, |window| window.as_ref() as *const NSWindow as usize)
+  }
+
+  pub fn native_window_number(&self) -> isize {
+    self.webview.window().map_or(0, |window| window.windowNumber() as isize)
+  }
 }
 
 impl InnerWebView {

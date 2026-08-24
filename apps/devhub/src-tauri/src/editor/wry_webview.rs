@@ -8,7 +8,9 @@ use super::super::error::{EditorError, EditorErrorCode, EditorResult};
 use super::super::url::{
     navigation_decision, navigation_request, AuthenticatedUrl, EditorOrigin, NavigationDecision,
 };
-use super::{EditorBounds, EditorWebView, NavigationRouter, WebViewHost, WebViewSpec};
+use super::{
+    EditorBounds, EditorWebView, NativeFocusIdentity, NavigationRouter, WebViewHost, WebViewSpec,
+};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -54,7 +56,7 @@ impl WebViewHost for WryWebViewHost {
             return Err(EditorError::new(EditorErrorCode::WebViewUnavailable));
         }
 
-        let id = create_on_main_thread(
+        let (id, native_focus_identity) = create_on_main_thread(
             &self.window,
             PendingWebView {
                 label: spec.label.clone(),
@@ -69,6 +71,7 @@ impl WebViewHost for WryWebViewHost {
         Ok(Box::new(RawWryEditorWebView {
             window: self.window.clone(),
             id,
+            native_focus_identity,
             closed: std::sync::atomic::AtomicBool::new(false),
         }))
     }
@@ -77,9 +80,9 @@ impl WebViewHost for WryWebViewHost {
 fn create_on_main_thread(
     window: &tauri::Window<tauri::Wry>,
     pending: PendingWebView,
-) -> EditorResult<u64> {
+) -> EditorResult<(u64, NativeFocusIdentity)> {
     let (sender, receiver) = mpsc::sync_channel(1);
-    let state = Arc::new(DispatchState::<u64>::default());
+    let state = Arc::new(DispatchState::<(u64, NativeFocusIdentity)>::default());
     let callback_state = Arc::clone(&state);
     let parent = window.clone();
     window
@@ -103,7 +106,7 @@ fn create_on_main_thread(
 fn build_native_child(
     parent: &tauri::Window<tauri::Wry>,
     pending: PendingWebView,
-) -> EditorResult<u64> {
+) -> EditorResult<(u64, NativeFocusIdentity)> {
     let PendingWebView { label, url, origin, bounds, data_store_identifier, focused, router } =
         pending;
     let _ = data_store_identifier;
@@ -184,10 +187,15 @@ fn build_native_child(
             (current != u64::MAX).then_some(current + 1)
         })
         .map_err(|_| EditorError::new(EditorErrorCode::WebViewUnavailable))?;
+    let native_focus_identity = NativeFocusIdentity {
+        responder_root: child.native_focus_identity(),
+        window: child.native_window_identity(),
+        window_number: child.native_window_number(),
+    };
     CHILDREN.with(|children| {
         children.borrow_mut().insert(id, child);
     });
-    Ok(id)
+    Ok((id, native_focus_identity))
 }
 
 enum NativeCommand {
@@ -268,9 +276,14 @@ fn dispatch_until(
     )
 }
 
-#[derive(Default)]
 struct DispatchState<T> {
     state: Mutex<DispatchResult<T>>,
+}
+
+impl<T> Default for DispatchState<T> {
+    fn default() -> Self {
+        Self { state: Mutex::new(DispatchResult::default()) }
+    }
 }
 
 struct DispatchResult<T> {
@@ -317,10 +330,15 @@ fn wait_for_dispatch_with_timeout<T: Clone>(
 struct RawWryEditorWebView {
     window: tauri::Window<tauri::Wry>,
     id: u64,
+    native_focus_identity: NativeFocusIdentity,
     closed: std::sync::atomic::AtomicBool,
 }
 
 impl EditorWebView for RawWryEditorWebView {
+    fn native_focus_identity(&self) -> Option<NativeFocusIdentity> {
+        Some(self.native_focus_identity)
+    }
+
     fn hide(&self) -> EditorResult<()> {
         dispatch(&self.window, self.id, NativeCommand::Hide)
     }

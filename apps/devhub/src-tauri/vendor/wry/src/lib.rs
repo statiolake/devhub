@@ -391,6 +391,8 @@ pub(crate) mod wkwebview;
 use wkwebview::*;
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 pub use wkwebview::{PrintMargin, PrintOptions, WryWebView};
+#[cfg(target_os = "macos")]
+pub use wkwebview::{install_local_key_monitor, NativeKeyEvent, NativeKeyEventResult};
 
 #[cfg(target_os = "windows")]
 pub(crate) mod webview2;
@@ -1991,6 +1993,25 @@ pub struct WebView {
 }
 
 impl WebView {
+  /// Returns a process-local identity for the native WKWebView responder.
+  /// This is intentionally not exposed as a product or provider identifier.
+  #[cfg(target_os = "macos")]
+  pub fn native_focus_identity(&self) -> usize {
+    self.webview.native_focus_identity()
+  }
+
+  /// Returns the owning AppKit window identity for native focus routing.
+  #[cfg(target_os = "macos")]
+  pub fn native_window_identity(&self) -> usize {
+    self.webview.native_window_identity()
+  }
+
+  /// Returns the owning AppKit window number for native focus routing.
+  #[cfg(target_os = "macos")]
+  pub fn native_window_number(&self) -> isize {
+    self.webview.native_window_number()
+  }
+
   /// Returns the id of this webview.
   pub fn id(&self) -> WebViewId<'_> {
     self.webview.id()

@@ -47,6 +47,15 @@ pub struct WebViewSpec {
     pub focused: bool,
 }
 
+/// Main-thread native ownership proof for one concrete WRY child view. The
+/// pointers are process-local and never cross the App Shell wire.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NativeFocusIdentity {
+    pub responder_root: usize,
+    pub window: usize,
+    pub window_number: isize,
+}
+
 impl std::fmt::Debug for WebViewSpec {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
@@ -67,6 +76,12 @@ pub trait EditorWebView: Send {
     fn set_bounds(&self, bounds: EditorBounds) -> EditorResult<()>;
     fn focus(&self) -> EditorResult<()>;
     fn close(&self) -> EditorResult<()>;
+
+    /// Transient native responder identity used only by host keyboard focus
+    /// routing. Provider-free test adapters intentionally return `None`.
+    fn native_focus_identity(&self) -> Option<NativeFocusIdentity> {
+        None
+    }
 
     /// Deadline-aware close used by process quit. Test/in-memory adapters can
     /// use the ordinary close path; native WRY adapters override this to
@@ -169,6 +184,18 @@ pub(crate) mod tests {
         assert!(!source_contains_editor_global_api(mac));
         assert!(!source_contains_editor_global_api(gtk));
         assert!(!source_contains_editor_global_api(windows));
+    }
+
+    #[test]
+    fn vendored_wry_preserves_native_command_responder_paths() {
+        let child = include_str!("../../vendor/wry/src/wkwebview/class/wry_web_view.rs");
+        let parent = include_str!("../../vendor/wry/src/wkwebview/class/wry_web_view_parent.rs");
+        assert!(child.contains("performKeyEquivalent"));
+        assert!(child.contains("super(self), performKeyEquivalent: event"));
+        assert!(parent.contains("super(self), keyDown: event"));
+        assert!(parent.contains("if !handled"));
+        assert!(!child.contains("KeyboardEvent"));
+        assert!(!parent.contains("eval"));
     }
 
     fn source_contains_editor_global_api(source: &str) -> bool {

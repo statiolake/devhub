@@ -24,5 +24,5 @@ pub use bridge_transport::{
 pub use error::{EditorError, EditorErrorCode, EditorResult};
 pub use host::{EditorHost, EditorHostConfig, EditorSurfaceKey, EditorSurfaceSnapshot};
 pub use url::{ExternalUrl, NavigationDecision, NavigationRequest};
-pub use webview::EditorBounds;
+pub use webview::{EditorBounds, NativeFocusIdentity};
 pub use webview::{NavigationRouter, WryWebViewHost};
