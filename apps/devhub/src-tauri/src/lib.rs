@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs::File;
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{sync_channel, SyncSender, TrySendError};
@@ -863,6 +863,15 @@ impl NativeAppState {
         Ok(())
     }
 
+    /// Emit the terminal attach probe without making diagnostics part of the
+    /// terminal command's error path. This is intentionally opt-in and only
+    /// accepts the closed PerformanceMarker vocabulary.
+    fn record_terminal_attach_probe(&self, marker: PerformanceMarker) {
+        if self.performance_markers_enabled {
+            let _ = self.diagnostics.emit(DiagnosticEvent::Performance { marker });
+        }
+    }
+
     fn bind_native_window(&self, window: &tauri::Window<tauri::Wry>) {
         let identity = native_window_handle_key(window).map(|handle_key| NativeWindowIdentity {
             handle_key,
@@ -1300,7 +1309,15 @@ impl NativeAppState {
         });
     }
 
+    #[cfg(test)]
     fn bootstrap(home: &Path) -> Result<Self, AppErrorWire> {
+        Self::bootstrap_with_resource_dir(home, None)
+    }
+
+    fn bootstrap_with_resource_dir(
+        home: &Path,
+        resource_dir: Option<PathBuf>,
+    ) -> Result<Self, AppErrorWire> {
         let store = JsonStateStore::for_home(home);
         let previous_exit = store
             .load_or_default()
@@ -1408,7 +1425,7 @@ impl NativeAppState {
             bridge_sink.enable_performance_markers(diagnostics.clone());
         }
         let editor_host = EditorHost::new(
-            EditorHostConfig::new(home, None).with_bridge_event_sink(bridge_sink.clone()),
+            EditorHostConfig::new(home, resource_dir).with_bridge_event_sink(bridge_sink.clone()),
         );
         let model = persisted.hydrate_model(&profiles).map_err(persistence_error)?;
         let mut coordinator = AppCoordinator::with_model(model);
@@ -5430,6 +5447,35 @@ impl NativeAppState {
     }
 }
 
+fn terminal_attach_failure_marker(code: TerminalErrorCode) -> PerformanceMarker {
+    match code {
+        TerminalErrorCode::InvalidRequest => PerformanceMarker::TerminalAttachFailedInvalidRequest,
+        TerminalErrorCode::InvalidSurface => PerformanceMarker::TerminalAttachFailedInvalidSurface,
+        TerminalErrorCode::SurfaceUnavailable => {
+            PerformanceMarker::TerminalAttachFailedSurfaceUnavailable
+        }
+        TerminalErrorCode::StaleTarget => PerformanceMarker::TerminalAttachFailedStaleTarget,
+        TerminalErrorCode::WrongAttachment => {
+            PerformanceMarker::TerminalAttachFailedWrongAttachment
+        }
+        TerminalErrorCode::AttachmentLimit => {
+            PerformanceMarker::TerminalAttachFailedAttachmentLimit
+        }
+        TerminalErrorCode::SessionUnavailable => {
+            PerformanceMarker::TerminalAttachFailedSessionUnavailable
+        }
+        TerminalErrorCode::PtyUnavailable => PerformanceMarker::TerminalAttachFailedPtyUnavailable,
+        TerminalErrorCode::InputTooLarge => PerformanceMarker::TerminalAttachFailedInputTooLarge,
+        TerminalErrorCode::InvalidResize => PerformanceMarker::TerminalAttachFailedInvalidResize,
+        TerminalErrorCode::ChannelClosed => PerformanceMarker::TerminalAttachFailedChannelClosed,
+        TerminalErrorCode::Backpressure => PerformanceMarker::TerminalAttachFailedBackpressure,
+        TerminalErrorCode::RuntimeUnavailable => {
+            PerformanceMarker::TerminalAttachFailedRuntimeUnavailable
+        }
+        TerminalErrorCode::Internal => PerformanceMarker::TerminalAttachFailedInternal,
+    }
+}
+
 fn load_config_profiles(
     config: &devhub_app_core::config::Config,
 ) -> Result<Vec<DomainAgentProfile>, AppErrorWire> {
@@ -5838,9 +5884,11 @@ async fn terminal_attach(
     payload: AttachRequest,
     channel: tauri::ipc::Channel<tauri::ipc::InvokeResponseBody>,
 ) -> Result<AttachReceipt, TerminalError> {
+    let state = app.state::<NativeAppState>();
+    state.record_terminal_attach_probe(PerformanceMarker::TerminalAttachEntered);
     let webview_label = webview.label().to_owned();
     let surface_key = payload.surface_key.clone();
-    terminal_worker(app, move |state, token| {
+    let result = terminal_worker(app.clone(), move |state, token| {
         let receipt = state.terminal_attach(&webview_label, payload, channel, token)?;
         if state.validate_terminal_lifecycle_token(token).is_err() {
             let _ = state._terminal_runtime.detach_surface(
@@ -5853,7 +5901,14 @@ async fn terminal_attach(
         }
         Ok(receipt)
     })
-    .await
+    .await;
+    match &result {
+        Ok(_) => state.record_terminal_attach_probe(PerformanceMarker::TerminalAttachSucceeded),
+        Err(error) => {
+            state.record_terminal_attach_probe(terminal_attach_failure_marker(error.code()))
+        }
+    }
+    result
 }
 
 #[tauri::command]
@@ -6099,6 +6154,19 @@ fn build_settings_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     build_window_menu(app, Some("CmdOrCtrl+W"))
 }
 
+/// Resolve the app-owned resource root used by the bundled OpenVSCode
+/// executable and Bridge VSIX. Packaged builds use Tauri's resource directory;
+/// debug builds may point at an isolated, locally verified bundle while the
+/// release resources are being assembled. The override is intentionally
+/// debug-only, matching the executable override in `editor::paths`.
+fn editor_resource_dir(app: &AppHandle) -> Option<PathBuf> {
+    #[cfg(debug_assertions)]
+    if let Some(path) = std::env::var_os("DEVHUB_RESOURCE_DIR") {
+        return Some(PathBuf::from(path));
+    }
+    app.path().resource_dir().ok()
+}
+
 pub fn run() {
     tauri::Builder::default()
         .menu(build_app_menu)
@@ -6141,7 +6209,8 @@ pub fn run() {
         .setup(|app| {
             let home =
                 app.path().home_dir().map_err(|error| std::io::Error::other(error.to_string()))?;
-            let state = NativeAppState::bootstrap(&home)
+            let resource_dir = editor_resource_dir(app.handle());
+            let state = NativeAppState::bootstrap_with_resource_dir(&home, resource_dir)
                 .map_err(|_| std::io::Error::other("DevHub native bootstrap failed"))?;
             app.manage(state);
             #[cfg(target_os = "macos")]

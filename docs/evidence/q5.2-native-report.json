@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "gate": "Q5.2",
-  "recorded_at_utc": "2026-08-24T04:20:51+00:00",
+  "recorded_at_utc": "2026-08-24T06:22:14+00:00",
   "sample_policy": {
     "setup_runs": 1,
     "measured_runs": 10,
@@ -25,10 +25,11 @@
     },
     "artifacts": {
       "devhub_debug_binary": "available",
+      "devhub_debug_app_bundle": "available",
       "openvscode": {
-        "status": "missing",
-        "source": "not_found",
-        "pinned_identity": "not_verified"
+        "status": "available",
+        "source": "resource_override",
+        "pinned_identity": "verified"
       }
     },
     "gui": {
@@ -50,24 +51,24 @@
       "setup_runs": 1,
       "measured_runs": 10,
       "samples_ms": [
-        454.14,
-        455.065,
-        467.646,
-        443.634,
-        455.546,
-        459.543,
-        447.295,
-        467.149,
-        462.416,
-        456.408
+        483.122,
+        485.907,
+        482.881,
+        480.329,
+        485.729,
+        483.022,
+        483.609,
+        482.119,
+        473.303,
+        429.0
       ],
-      "p95_ms": 467.646,
+      "p95_ms": 485.907,
       "reason": "Real DevHub launches; AppShell DOM marker observed after one setup run.",
       "attempts": [
         {
           "role": "setup",
           "status": "pass",
-          "elapsed_ms": 514.898,
+          "elapsed_ms": 535.483,
           "marker": "app_shell_interactive",
           "reason": "marker_observed"
         },
@@ -75,7 +76,7 @@
           "role": "measured",
           "run": 1,
           "status": "pass",
-          "elapsed_ms": 454.14,
+          "elapsed_ms": 483.122,
           "marker": "app_shell_interactive",
           "reason": "marker_observed"
         },
@@ -83,7 +84,7 @@
           "role": "measured",
           "run": 2,
           "status": "pass",
-          "elapsed_ms": 455.065,
+          "elapsed_ms": 485.907,
           "marker": "app_shell_interactive",
           "reason": "marker_observed"
         },
@@ -91,7 +92,7 @@
           "role": "measured",
           "run": 3,
           "status": "pass",
-          "elapsed_ms": 467.646,
+          "elapsed_ms": 482.881,
           "marker": "app_shell_interactive",
           "reason": "marker_observed"
         },
@@ -99,7 +100,7 @@
           "role": "measured",
           "run": 4,
           "status": "pass",
-          "elapsed_ms": 443.634,
+          "elapsed_ms": 480.329,
           "marker": "app_shell_interactive",
           "reason": "marker_observed"
         },
@@ -107,7 +108,7 @@
           "role": "measured",
           "run": 5,
           "status": "pass",
-          "elapsed_ms": 455.546,
+          "elapsed_ms": 485.729,
           "marker": "app_shell_interactive",
           "reason": "marker_observed"
         },
@@ -115,7 +116,7 @@
           "role": "measured",
           "run": 6,
           "status": "pass",
-          "elapsed_ms": 459.543,
+          "elapsed_ms": 483.022,
           "marker": "app_shell_interactive",
           "reason": "marker_observed"
         },
@@ -123,7 +124,7 @@
           "role": "measured",
           "run": 7,
           "status": "pass",
-          "elapsed_ms": 447.295,
+          "elapsed_ms": 483.609,
           "marker": "app_shell_interactive",
           "reason": "marker_observed"
         },
@@ -131,7 +132,7 @@
           "role": "measured",
           "run": 8,
           "status": "pass",
-          "elapsed_ms": 467.149,
+          "elapsed_ms": 482.119,
           "marker": "app_shell_interactive",
           "reason": "marker_observed"
         },
@@ -139,7 +140,7 @@
           "role": "measured",
           "run": 9,
           "status": "pass",
-          "elapsed_ms": 462.416,
+          "elapsed_ms": 473.303,
           "marker": "app_shell_interactive",
           "reason": "marker_observed"
         },
@@ -147,7 +148,7 @@
           "role": "measured",
           "run": 10,
           "status": "pass",
-          "elapsed_ms": 456.408,
+          "elapsed_ms": 429.0,
           "marker": "app_shell_interactive",
           "reason": "marker_observed"
         }
@@ -159,35 +160,717 @@
       "measured_runs": 10,
       "samples_ms": [],
       "p95_ms": null,
-      "reason": "Native marker-driven run is unavailable; no synthetic timing is recorded.",
-      "attempts": []
+      "reason": "post_attach_marker_missing",
+      "attempts": [
+        {
+          "role": "setup",
+          "status": "blocked",
+          "elapsed_ms": null,
+          "marker": "scratch_interactive",
+          "reason": "post_attach_marker_missing",
+          "ordered_markers": [
+            "terminal_attach_entered",
+            "app_shell_interactive",
+            "activity_interactive",
+            "terminal_attach_succeeded",
+            "window_reconstruction_ready",
+            "editor_bridge_ready"
+          ],
+          "terminal_error_codes": []
+        },
+        {
+          "role": "measured",
+          "run": 1,
+          "status": "blocked",
+          "elapsed_ms": null,
+          "marker": "scratch_interactive",
+          "reason": "post_attach_marker_missing",
+          "ordered_markers": [
+            "terminal_attach_entered",
+            "app_shell_interactive",
+            "activity_interactive",
+            "terminal_attach_succeeded",
+            "window_reconstruction_ready",
+            "editor_bridge_ready"
+          ],
+          "terminal_error_codes": []
+        },
+        {
+          "role": "measured",
+          "run": 2,
+          "status": "blocked",
+          "elapsed_ms": null,
+          "marker": "scratch_interactive",
+          "reason": "post_attach_marker_missing",
+          "ordered_markers": [
+            "terminal_attach_entered",
+            "app_shell_interactive",
+            "activity_interactive",
+            "terminal_attach_succeeded",
+            "window_reconstruction_ready",
+            "editor_bridge_ready"
+          ],
+          "terminal_error_codes": []
+        },
+        {
+          "role": "measured",
+          "run": 3,
+          "status": "blocked",
+          "elapsed_ms": null,
+          "marker": "scratch_interactive",
+          "reason": "post_attach_marker_missing",
+          "ordered_markers": [
+            "terminal_attach_entered",
+            "app_shell_interactive",
+            "activity_interactive",
+            "terminal_attach_succeeded",
+            "window_reconstruction_ready",
+            "editor_bridge_ready"
+          ],
+          "terminal_error_codes": []
+        },
+        {
+          "role": "measured",
+          "run": 4,
+          "status": "blocked",
+          "elapsed_ms": null,
+          "marker": "scratch_interactive",
+          "reason": "post_attach_marker_missing",
+          "ordered_markers": [
+            "terminal_attach_entered",
+            "app_shell_interactive",
+            "activity_interactive",
+            "terminal_attach_succeeded",
+            "window_reconstruction_ready",
+            "editor_bridge_ready"
+          ],
+          "terminal_error_codes": []
+        },
+        {
+          "role": "measured",
+          "run": 5,
+          "status": "blocked",
+          "elapsed_ms": null,
+          "marker": "scratch_interactive",
+          "reason": "post_attach_marker_missing",
+          "ordered_markers": [
+            "terminal_attach_entered",
+            "app_shell_interactive",
+            "activity_interactive",
+            "terminal_attach_succeeded",
+            "window_reconstruction_ready",
+            "editor_bridge_ready"
+          ],
+          "terminal_error_codes": []
+        },
+        {
+          "role": "measured",
+          "run": 6,
+          "status": "blocked",
+          "elapsed_ms": null,
+          "marker": "scratch_interactive",
+          "reason": "post_attach_marker_missing",
+          "ordered_markers": [
+            "terminal_attach_entered",
+            "app_shell_interactive",
+            "activity_interactive",
+            "terminal_attach_succeeded",
+            "window_reconstruction_ready",
+            "editor_bridge_ready"
+          ],
+          "terminal_error_codes": []
+        },
+        {
+          "role": "measured",
+          "run": 7,
+          "status": "blocked",
+          "elapsed_ms": null,
+          "marker": "scratch_interactive",
+          "reason": "post_attach_marker_missing",
+          "ordered_markers": [
+            "terminal_attach_entered",
+            "app_shell_interactive",
+            "activity_interactive",
+            "window_reconstruction_ready",
+            "terminal_attach_succeeded",
+            "editor_bridge_ready"
+          ],
+          "terminal_error_codes": []
+        },
+        {
+          "role": "measured",
+          "run": 8,
+          "status": "blocked",
+          "elapsed_ms": null,
+          "marker": "scratch_interactive",
+          "reason": "post_attach_marker_missing",
+          "ordered_markers": [
+            "terminal_attach_entered",
+            "app_shell_interactive",
+            "activity_interactive",
+            "terminal_attach_succeeded",
+            "window_reconstruction_ready",
+            "editor_bridge_ready"
+          ],
+          "terminal_error_codes": []
+        },
+        {
+          "role": "measured",
+          "run": 9,
+          "status": "blocked",
+          "elapsed_ms": null,
+          "marker": "scratch_interactive",
+          "reason": "post_attach_marker_missing",
+          "ordered_markers": [
+            "terminal_attach_entered",
+            "app_shell_interactive",
+            "activity_interactive",
+            "terminal_attach_succeeded",
+            "window_reconstruction_ready",
+            "editor_bridge_ready"
+          ],
+          "terminal_error_codes": []
+        },
+        {
+          "role": "measured",
+          "run": 10,
+          "status": "blocked",
+          "elapsed_ms": null,
+          "marker": "scratch_interactive",
+          "reason": "post_attach_marker_missing",
+          "ordered_markers": [
+            "terminal_attach_entered",
+            "app_shell_interactive",
+            "activity_interactive",
+            "terminal_attach_succeeded",
+            "window_reconstruction_ready",
+            "editor_bridge_ready"
+          ],
+          "terminal_error_codes": []
+        }
+      ]
     },
     "workspace_picker_first_result": {
-      "status": "blocked",
+      "status": "measured",
       "setup_runs": 1,
       "measured_runs": 10,
-      "samples_ms": [],
-      "p95_ms": null,
-      "reason": "Native marker-driven run is unavailable; no synthetic timing is recorded.",
-      "attempts": []
+      "samples_ms": [
+        480.72,
+        483.425,
+        474.693,
+        484.155,
+        481.71,
+        459.408,
+        491.38,
+        482.287,
+        476.946,
+        481.471
+      ],
+      "p95_ms": 491.38,
+      "reason": "Real native marker observed after one setup and ten measured runs.",
+      "attempts": [
+        {
+          "role": "setup",
+          "status": "pass",
+          "elapsed_ms": 955.385,
+          "marker": "picker_first_result",
+          "reason": "marker_observed",
+          "ordered_markers": [
+            "terminal_attach_entered",
+            "app_shell_interactive",
+            "activity_interactive",
+            "terminal_attach_succeeded",
+            "window_reconstruction_ready",
+            "picker_first_result"
+          ],
+          "terminal_error_codes": []
+        },
+        {
+          "role": "measured",
+          "run": 1,
+          "status": "pass",
+          "elapsed_ms": 480.72,
+          "marker": "picker_first_result",
+          "reason": "marker_observed",
+          "ordered_markers": [
+            "terminal_attach_entered",
+            "app_shell_interactive",
+            "activity_interactive",
+            "terminal_attach_succeeded",
+            "window_reconstruction_ready",
+            "picker_first_result"
+          ],
+          "terminal_error_codes": []
+        },
+        {
+          "role": "measured",
+          "run": 2,
+          "status": "pass",
+          "elapsed_ms": 483.425,
+          "marker": "picker_first_result",
+          "reason": "marker_observed",
+          "ordered_markers": [
+            "terminal_attach_entered",
+            "app_shell_interactive",
+            "activity_interactive",
+            "terminal_attach_succeeded",
+            "window_reconstruction_ready",
+            "picker_first_result"
+          ],
+          "terminal_error_codes": []
+        },
+        {
+          "role": "measured",
+          "run": 3,
+          "status": "pass",
+          "elapsed_ms": 474.693,
+          "marker": "picker_first_result",
+          "reason": "marker_observed",
+          "ordered_markers": [
+            "terminal_attach_entered",
+            "app_shell_interactive",
+            "activity_interactive",
+            "terminal_attach_succeeded",
+            "window_reconstruction_ready",
+            "picker_first_result"
+          ],
+          "terminal_error_codes": []
+        },
+        {
+          "role": "measured",
+          "run": 4,
+          "status": "pass",
+          "elapsed_ms": 484.155,
+          "marker": "picker_first_result",
+          "reason": "marker_observed",
+          "ordered_markers": [
+            "terminal_attach_entered",
+            "app_shell_interactive",
+            "activity_interactive",
+            "window_reconstruction_ready",
+            "terminal_attach_succeeded",
+            "picker_first_result"
+          ],
+          "terminal_error_codes": []
+        },
+        {
+          "role": "measured",
+          "run": 5,
+          "status": "pass",
+          "elapsed_ms": 481.71,
+          "marker": "picker_first_result",
+          "reason": "marker_observed",
+          "ordered_markers": [
+            "terminal_attach_entered",
+            "app_shell_interactive",
+            "activity_interactive",
+            "terminal_attach_succeeded",
+            "window_reconstruction_ready",
+            "picker_first_result"
+          ],
+          "terminal_error_codes": []
+        },
+        {
+          "role": "measured",
+          "run": 6,
+          "status": "pass",
+          "elapsed_ms": 459.408,
+          "marker": "picker_first_result",
+          "reason": "marker_observed",
+          "ordered_markers": [
+            "terminal_attach_entered",
+            "app_shell_interactive",
+            "activity_interactive",
+            "terminal_attach_succeeded",
+            "window_reconstruction_ready",
+            "picker_first_result"
+          ],
+          "terminal_error_codes": []
+        },
+        {
+          "role": "measured",
+          "run": 7,
+          "status": "pass",
+          "elapsed_ms": 491.38,
+          "marker": "picker_first_result",
+          "reason": "marker_observed",
+          "ordered_markers": [
+            "terminal_attach_entered",
+            "app_shell_interactive",
+            "activity_interactive",
+            "terminal_attach_succeeded",
+            "window_reconstruction_ready",
+            "picker_first_result"
+          ],
+          "terminal_error_codes": []
+        },
+        {
+          "role": "measured",
+          "run": 8,
+          "status": "pass",
+          "elapsed_ms": 482.287,
+          "marker": "picker_first_result",
+          "reason": "marker_observed",
+          "ordered_markers": [
+            "terminal_attach_entered",
+            "app_shell_interactive",
+            "activity_interactive",
+            "terminal_attach_succeeded",
+            "window_reconstruction_ready",
+            "picker_first_result"
+          ],
+          "terminal_error_codes": []
+        },
+        {
+          "role": "measured",
+          "run": 9,
+          "status": "pass",
+          "elapsed_ms": 476.946,
+          "marker": "picker_first_result",
+          "reason": "marker_observed",
+          "ordered_markers": [
+            "terminal_attach_entered",
+            "app_shell_interactive",
+            "activity_interactive",
+            "terminal_attach_succeeded",
+            "window_reconstruction_ready",
+            "picker_first_result"
+          ],
+          "terminal_error_codes": []
+        },
+        {
+          "role": "measured",
+          "run": 10,
+          "status": "pass",
+          "elapsed_ms": 481.471,
+          "marker": "picker_first_result",
+          "reason": "marker_observed",
+          "ordered_markers": [
+            "terminal_attach_entered",
+            "app_shell_interactive",
+            "activity_interactive",
+            "terminal_attach_succeeded",
+            "window_reconstruction_ready",
+            "picker_first_result"
+          ],
+          "terminal_error_codes": []
+        }
+      ]
     },
     "mounted_activity_switch": {
-      "status": "blocked",
+      "status": "measured",
       "setup_runs": 1,
       "measured_runs": 10,
-      "samples_ms": [],
-      "p95_ms": null,
-      "reason": "Native marker-driven run is unavailable; no synthetic timing is recorded.",
-      "attempts": []
+      "samples_ms": [
+        402.021,
+        397.314,
+        395.032,
+        397.876,
+        396.426,
+        388.814,
+        394.122,
+        395.561,
+        394.6,
+        444.76
+      ],
+      "p95_ms": 444.76,
+      "reason": "Real native marker observed after one setup and ten measured runs.",
+      "attempts": [
+        {
+          "role": "setup",
+          "status": "pass",
+          "elapsed_ms": 392.328,
+          "marker": "activity_interactive",
+          "reason": "marker_observed"
+        },
+        {
+          "role": "measured",
+          "run": 1,
+          "status": "pass",
+          "elapsed_ms": 402.021,
+          "marker": "activity_interactive",
+          "reason": "marker_observed"
+        },
+        {
+          "role": "measured",
+          "run": 2,
+          "status": "pass",
+          "elapsed_ms": 397.314,
+          "marker": "activity_interactive",
+          "reason": "marker_observed"
+        },
+        {
+          "role": "measured",
+          "run": 3,
+          "status": "pass",
+          "elapsed_ms": 395.032,
+          "marker": "activity_interactive",
+          "reason": "marker_observed"
+        },
+        {
+          "role": "measured",
+          "run": 4,
+          "status": "pass",
+          "elapsed_ms": 397.876,
+          "marker": "activity_interactive",
+          "reason": "marker_observed"
+        },
+        {
+          "role": "measured",
+          "run": 5,
+          "status": "pass",
+          "elapsed_ms": 396.426,
+          "marker": "activity_interactive",
+          "reason": "marker_observed"
+        },
+        {
+          "role": "measured",
+          "run": 6,
+          "status": "pass",
+          "elapsed_ms": 388.814,
+          "marker": "activity_interactive",
+          "reason": "marker_observed"
+        },
+        {
+          "role": "measured",
+          "run": 7,
+          "status": "pass",
+          "elapsed_ms": 394.122,
+          "marker": "activity_interactive",
+          "reason": "marker_observed"
+        },
+        {
+          "role": "measured",
+          "run": 8,
+          "status": "pass",
+          "elapsed_ms": 395.561,
+          "marker": "activity_interactive",
+          "reason": "marker_observed"
+        },
+        {
+          "role": "measured",
+          "run": 9,
+          "status": "pass",
+          "elapsed_ms": 394.6,
+          "marker": "activity_interactive",
+          "reason": "marker_observed"
+        },
+        {
+          "role": "measured",
+          "run": 10,
+          "status": "pass",
+          "elapsed_ms": 444.76,
+          "marker": "activity_interactive",
+          "reason": "marker_observed"
+        }
+      ]
     },
     "cold_openvscode_interactive": {
-      "status": "blocked",
+      "status": "measured",
       "setup_runs": 1,
       "measured_runs": 10,
-      "samples_ms": [],
-      "p95_ms": null,
-      "reason": "Native marker-driven run is unavailable; no synthetic timing is recorded.",
-      "attempts": []
+      "samples_ms": [
+        2166.953,
+        2059.878,
+        2063.33,
+        2167.665,
+        2128.0,
+        2160.752,
+        2112.231,
+        2177.703,
+        2127.857,
+        2175.392
+      ],
+      "p95_ms": 2177.703,
+      "reason": "Real native marker observed after one setup and ten measured runs.",
+      "attempts": [
+        {
+          "role": "setup",
+          "status": "pass",
+          "elapsed_ms": 2050.507,
+          "marker": "editor_bridge_ready",
+          "reason": "marker_observed",
+          "ordered_markers": [
+            "terminal_attach_entered",
+            "app_shell_interactive",
+            "activity_interactive",
+            "terminal_attach_succeeded",
+            "window_reconstruction_ready",
+            "editor_bridge_ready"
+          ],
+          "terminal_error_codes": []
+        },
+        {
+          "role": "measured",
+          "run": 1,
+          "status": "pass",
+          "elapsed_ms": 2166.953,
+          "marker": "editor_bridge_ready",
+          "reason": "marker_observed",
+          "ordered_markers": [
+            "terminal_attach_entered",
+            "app_shell_interactive",
+            "activity_interactive",
+            "terminal_attach_succeeded",
+            "window_reconstruction_ready",
+            "editor_bridge_ready"
+          ],
+          "terminal_error_codes": []
+        },
+        {
+          "role": "measured",
+          "run": 2,
+          "status": "pass",
+          "elapsed_ms": 2059.878,
+          "marker": "editor_bridge_ready",
+          "reason": "marker_observed",
+          "ordered_markers": [
+            "terminal_attach_entered",
+            "app_shell_interactive",
+            "activity_interactive",
+            "terminal_attach_succeeded",
+            "window_reconstruction_ready",
+            "editor_bridge_ready"
+          ],
+          "terminal_error_codes": []
+        },
+        {
+          "role": "measured",
+          "run": 3,
+          "status": "pass",
+          "elapsed_ms": 2063.33,
+          "marker": "editor_bridge_ready",
+          "reason": "marker_observed",
+          "ordered_markers": [
+            "terminal_attach_entered",
+            "app_shell_interactive",
+            "activity_interactive",
+            "terminal_attach_succeeded",
+            "window_reconstruction_ready",
+            "editor_bridge_ready"
+          ],
+          "terminal_error_codes": []
+        },
+        {
+          "role": "measured",
+          "run": 4,
+          "status": "pass",
+          "elapsed_ms": 2167.665,
+          "marker": "editor_bridge_ready",
+          "reason": "marker_observed",
+          "ordered_markers": [
+            "terminal_attach_entered",
+            "app_shell_interactive",
+            "activity_interactive",
+            "terminal_attach_succeeded",
+            "window_reconstruction_ready",
+            "editor_bridge_ready"
+          ],
+          "terminal_error_codes": []
+        },
+        {
+          "role": "measured",
+          "run": 5,
+          "status": "pass",
+          "elapsed_ms": 2128.0,
+          "marker": "editor_bridge_ready",
+          "reason": "marker_observed",
+          "ordered_markers": [
+            "terminal_attach_entered",
+            "app_shell_interactive",
+            "activity_interactive",
+            "terminal_attach_succeeded",
+            "window_reconstruction_ready",
+            "editor_bridge_ready"
+          ],
+          "terminal_error_codes": []
+        },
+        {
+          "role": "measured",
+          "run": 6,
+          "status": "pass",
+          "elapsed_ms": 2160.752,
+          "marker": "editor_bridge_ready",
+          "reason": "marker_observed",
+          "ordered_markers": [
+            "terminal_attach_entered",
+            "app_shell_interactive",
+            "activity_interactive",
+            "terminal_attach_succeeded",
+            "window_reconstruction_ready",
+            "editor_bridge_ready"
+          ],
+          "terminal_error_codes": []
+        },
+        {
+          "role": "measured",
+          "run": 7,
+          "status": "pass",
+          "elapsed_ms": 2112.231,
+          "marker": "editor_bridge_ready",
+          "reason": "marker_observed",
+          "ordered_markers": [
+            "terminal_attach_entered",
+            "app_shell_interactive",
+            "activity_interactive",
+            "terminal_attach_succeeded",
+            "window_reconstruction_ready",
+            "editor_bridge_ready"
+          ],
+          "terminal_error_codes": []
+        },
+        {
+          "role": "measured",
+          "run": 8,
+          "status": "pass",
+          "elapsed_ms": 2177.703,
+          "marker": "editor_bridge_ready",
+          "reason": "marker_observed",
+          "ordered_markers": [
+            "terminal_attach_entered",
+            "app_shell_interactive",
+            "activity_interactive",
+            "terminal_attach_succeeded",
+            "window_reconstruction_ready",
+            "editor_bridge_ready"
+          ],
+          "terminal_error_codes": []
+        },
+        {
+          "role": "measured",
+          "run": 9,
+          "status": "pass",
+          "elapsed_ms": 2127.857,
+          "marker": "editor_bridge_ready",
+          "reason": "marker_observed",
+          "ordered_markers": [
+            "terminal_attach_entered",
+            "app_shell_interactive",
+            "activity_interactive",
+            "terminal_attach_succeeded",
+            "window_reconstruction_ready",
+            "editor_bridge_ready"
+          ],
+          "terminal_error_codes": []
+        },
+        {
+          "role": "measured",
+          "run": 10,
+          "status": "pass",
+          "elapsed_ms": 2175.392,
+          "marker": "editor_bridge_ready",
+          "reason": "marker_observed",
+          "ordered_markers": [
+            "terminal_attach_entered",
+            "app_shell_interactive",
+            "activity_interactive",
+            "terminal_attach_succeeded",
+            "window_reconstruction_ready",
+            "editor_bridge_ready"
+          ],
+          "terminal_error_codes": []
+        }
+      ]
     },
     "warm_workbench_reconstruction": {
       "status": "blocked",
@@ -195,8 +878,96 @@
       "measured_runs": 10,
       "samples_ms": [],
       "p95_ms": null,
-      "reason": "Native marker-driven run is unavailable; no synthetic timing is recorded.",
-      "attempts": []
+      "reason": "reopened_window_not_bound_to_pid",
+      "attempts": [
+        {
+          "role": "setup",
+          "status": "blocked",
+          "elapsed_ms": null,
+          "marker": "window_reconstruction_ready",
+          "reason": "reopened_window_not_bound_to_pid"
+        },
+        {
+          "role": "measured",
+          "run": 1,
+          "status": "blocked",
+          "elapsed_ms": null,
+          "marker": "window_reconstruction_ready",
+          "reason": "reopened_window_not_bound_to_pid"
+        },
+        {
+          "role": "measured",
+          "run": 2,
+          "status": "blocked",
+          "elapsed_ms": null,
+          "marker": "window_reconstruction_ready",
+          "reason": "reopened_window_not_bound_to_pid"
+        },
+        {
+          "role": "measured",
+          "run": 3,
+          "status": "blocked",
+          "elapsed_ms": null,
+          "marker": "window_reconstruction_ready",
+          "reason": "reopened_window_not_bound_to_pid"
+        },
+        {
+          "role": "measured",
+          "run": 4,
+          "status": "blocked",
+          "elapsed_ms": null,
+          "marker": "window_reconstruction_ready",
+          "reason": "reopened_window_not_bound_to_pid"
+        },
+        {
+          "role": "measured",
+          "run": 5,
+          "status": "blocked",
+          "elapsed_ms": null,
+          "marker": "window_reconstruction_ready",
+          "reason": "reopened_window_not_bound_to_pid"
+        },
+        {
+          "role": "measured",
+          "run": 6,
+          "status": "blocked",
+          "elapsed_ms": null,
+          "marker": "window_reconstruction_ready",
+          "reason": "reopened_window_not_bound_to_pid"
+        },
+        {
+          "role": "measured",
+          "run": 7,
+          "status": "blocked",
+          "elapsed_ms": null,
+          "marker": "window_reconstruction_ready",
+          "reason": "reopened_window_not_bound_to_pid"
+        },
+        {
+          "role": "measured",
+          "run": 8,
+          "status": "blocked",
+          "elapsed_ms": null,
+          "marker": "window_reconstruction_ready",
+          "reason": "reopened_window_not_bound_to_pid"
+        },
+        {
+          "role": "measured",
+          "run": 9,
+          "status": "blocked",
+          "elapsed_ms": null,
+          "marker": "window_reconstruction_ready",
+          "reason": "reopened_window_not_bound_to_pid"
+        },
+        {
+          "role": "measured",
+          "run": 10,
+          "status": "blocked",
+          "elapsed_ms": null,
+          "marker": "window_reconstruction_ready",
+          "reason": "reopened_window_not_bound_to_pid"
+        }
+      ]
     }
   },
   "scale_endurance": [
@@ -204,13 +975,13 @@
       "id": "scale-eight-workspaces-sixteen-agents-nine-editors",
       "status": "blocked",
       "requirement": "8 Workspaces; 16 live Agents across >=4 Workspaces; 9 Editor WebViews",
-      "reason": "pinned_openvscode_bundle_missing;reference_context_not_proven"
+      "reason": "reference_context_not_proven"
     },
     {
       "id": "hidden-editor-continuity",
       "status": "blocked",
       "requirement": "Hide >=5 Editor WebViews for 10 minutes; verify identity, Bridge, dirty state, input",
-      "reason": "pinned_openvscode_bundle_missing;reference_context_not_proven"
+      "reason": "reference_context_not_proven"
     }
   ],
   "lifecycle": [
@@ -218,13 +989,13 @@
       "id": "window-reconstruction-10x",
       "status": "blocked",
       "requirement": "Window reconstruction x10",
-      "reason": "pinned_openvscode_bundle_missing;reference_context_not_proven"
+      "reason": "reference_context_not_proven"
     },
     {
       "id": "quit-relaunch-5x",
       "status": "blocked",
       "requirement": "Quit/relaunch x5 with >=2 Agents and >=2 live Workspace tmux sessions",
-      "reason": "pinned_openvscode_bundle_missing;reference_context_not_proven"
+      "reason": "reference_context_not_proven"
     }
   ],
   "crash_matrix": [
@@ -232,7 +1003,9 @@
       "id": "managed-openvscode",
       "status": "blocked",
       "requirement": "Crash managed OpenVSCode; verify isolation and recovery",
-      "reason": "Pinned OpenVSCode bundle is unavailable."
+      "reason": "editor_bridge_marker_timeout_after_crash",
+      "isolation_verified": true,
+      "recovery_verified": false
     },
     {
       "id": "herdr-connection-or-server",
@@ -257,44 +1030,75 @@
       "status": "pass",
       "exit_code": 0,
       "timed_out": false,
-      "elapsed_ms": 22915.982
+      "elapsed_ms": 14403.003
     },
     "tmux_transition_matrix": {
       "command": "cargo test real tmux transition",
       "status": "pass",
       "exit_code": 0,
       "timed_out": false,
-      "elapsed_ms": 19680.644
+      "elapsed_ms": 2188.714
     },
     "tmux_pty_continuity": {
       "command": "cargo test real tmux pty roundtrip",
       "status": "pass",
       "exit_code": 0,
       "timed_out": false,
-      "elapsed_ms": 3106.964
+      "elapsed_ms": 2942.908
     },
     "lifecycle_gate": {
       "command": "cargo test integration lifecycle gate",
       "status": "pass",
       "exit_code": 0,
       "timed_out": false,
-      "elapsed_ms": 242.676
+      "elapsed_ms": 243.831
     },
     "scale_identity_reconciliation": {
       "command": "cargo test eight workspaces sixteen agents identity",
       "status": "pass",
       "exit_code": 0,
       "timed_out": false,
-      "elapsed_ms": 361.003
+      "elapsed_ms": 365.679
     }
   },
   "blockers": [
-    "pinned_openvscode_bundle_missing",
     "reference_context_not_proven"
   ],
   "redaction": {
     "machine_identifiers": "omitted",
     "absolute_paths": "omitted",
     "unbounded_process_output": "omitted"
+  },
+  "native_quick_probes": {
+    "picker_first_result": {
+      "status": "pass",
+      "sample_kind": "quick",
+      "elapsed_ms": 956.802,
+      "ordered_markers": [
+        "terminal_attach_entered",
+        "app_shell_interactive",
+        "activity_interactive",
+        "terminal_attach_succeeded",
+        "window_reconstruction_ready",
+        "picker_first_result"
+      ],
+      "terminal_error_codes": []
+    },
+    "mounted_activity_switch": {
+      "status": "pass",
+      "sample_kind": "quick",
+      "elapsed_ms": 452.317
+    },
+    "warm_workbench_reconstruction": {
+      "status": "blocked",
+      "sample_kind": "quick",
+      "reason": "reopened_window_not_bound_to_pid"
+    },
+    "managed_openvscode_crash": {
+      "status": "blocked",
+      "isolation_verified": true,
+      "recovery_verified": false,
+      "reason": "editor_bridge_marker_timeout_after_crash"
+    }
   }
 }

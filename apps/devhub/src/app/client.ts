@@ -46,7 +46,9 @@ export const RECORD_PERFORMANCE_MARKER_COMMAND =
 export type AppPerformanceMarker =
   | "app_shell_interactive"
   | "activity_interactive"
-  | "picker_first_result";
+  | "scratch_interactive"
+  | "picker_first_result"
+  | "terminal_attach_invoke_rejected";
 
 export interface WorkspacePickerCandidate {
   readonly operationId: string;

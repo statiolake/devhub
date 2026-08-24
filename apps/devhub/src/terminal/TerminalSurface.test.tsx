@@ -253,6 +253,26 @@ describe("TerminalSurface lifecycle", () => {
     );
   });
 
+  it("reports an invoke rejection without exposing terminal payloads", async () => {
+    const harness = clientHarness();
+    harness.client.attach = vi.fn(async () => {
+      throw { code: "surface_unavailable", summary: "redacted" };
+    });
+    const onAttachInvokeRejected = vi.fn();
+    render(
+      <TerminalSurface
+        surfaceKey="global-terminal"
+        surfaceLabel="Scratch"
+        client={harness.client}
+        onAttachInvokeRejected={onAttachInvokeRejected}
+      />,
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument(),
+    );
+    expect(onAttachInvokeRejected).toHaveBeenCalledTimes(1);
+  });
+
   it("accepts a Started frame delivered after the invoke receipt", async () => {
     let onFrame: ((value: unknown) => void) | undefined;
     const harness = clientHarness();

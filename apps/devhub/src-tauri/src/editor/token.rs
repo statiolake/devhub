@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use super::error::{EditorError, EditorErrorCode, EditorResult};
 
 pub const TOKEN_BYTES: usize = 32;
+const TOKEN_TEXT_BYTES: usize = TOKEN_BYTES * 2;
 
 /// The token is intentionally not printable.  It is only borrowed by the
 /// process launcher and URL builder while the server is alive.
@@ -55,7 +56,11 @@ impl SecretToken {
                 EditorErrorCode::TokenUnavailable
             })
         })?;
-        if let Err(error) = file.write_all(&bytes).and_then(|_| file.sync_all()) {
+        // OpenVSCode reads this file as UTF-8 text and compares it with the
+        // token supplied in the authenticated URL. Keep the secret as bytes
+        // in memory, but persist its stable lowercase hex representation.
+        let encoded = hex_encode(&bytes);
+        if let Err(error) = file.write_all(encoded.as_bytes()).and_then(|_| file.sync_all()) {
             let _ = fs::remove_file(&temporary);
             return Err(EditorError::new(
                 if error.kind() == std::io::ErrorKind::PermissionDenied {
@@ -91,7 +96,7 @@ impl SecretToken {
         let path = path.as_ref();
         reject_symlink(path)?;
         harden_file(path)?;
-        let mut bytes = [0_u8; TOKEN_BYTES];
+        let mut encoded = [0_u8; TOKEN_TEXT_BYTES];
         let mut options = OpenOptions::new();
         options.read(true);
         #[cfg(unix)]
@@ -101,7 +106,7 @@ impl SecretToken {
         }
         let mut file =
             options.open(path).map_err(|_| EditorError::new(EditorErrorCode::TokenUnavailable))?;
-        file.read_exact(&mut bytes)
+        file.read_exact(&mut encoded)
             .map_err(|_| EditorError::new(EditorErrorCode::TokenUnavailable))?;
         let mut extra = [0_u8; 1];
         if file.read(&mut extra).map_err(|_| EditorError::new(EditorErrorCode::TokenUnavailable))?
@@ -109,15 +114,37 @@ impl SecretToken {
         {
             return Err(EditorError::new(EditorErrorCode::TokenUnavailable));
         }
+        let encoded = std::str::from_utf8(&encoded)
+            .map_err(|_| EditorError::new(EditorErrorCode::TokenUnavailable))?;
+        let mut bytes = [0_u8; TOKEN_BYTES];
+        for (index, byte) in bytes.iter_mut().enumerate() {
+            let high = hex_value(encoded.as_bytes()[index * 2])?;
+            let low = hex_value(encoded.as_bytes()[index * 2 + 1])?;
+            *byte = (high << 4) | low;
+        }
         Ok(Self(bytes))
     }
 
     pub(crate) fn hex(&self) -> String {
-        let mut output = String::with_capacity(TOKEN_BYTES * 2);
-        for byte in self.0 {
-            output.push_str(&format!("{byte:02x}"));
-        }
-        output
+        hex_encode(&self.0)
+    }
+}
+
+fn hex_encode(bytes: &[u8; TOKEN_BYTES]) -> String {
+    let mut output = String::with_capacity(TOKEN_TEXT_BYTES);
+    for byte in bytes {
+        output.push_str(&format!("{byte:02x}"));
+    }
+    output
+}
+
+#[cfg(test)]
+fn hex_value(byte: u8) -> EditorResult<u8> {
+    match byte {
+        b'0'..=b'9' => Ok(byte - b'0'),
+        b'a'..=b'f' => Ok(byte - b'a' + 10),
+        b'A'..=b'F' => Ok(byte - b'A' + 10),
+        _ => Err(EditorError::new(EditorErrorCode::TokenUnavailable)),
     }
 }
 
@@ -215,7 +242,7 @@ mod tests {
         let first = SecretToken::issue(&first_path).expect("first token");
         let second = SecretToken::issue(&second_path).expect("second token");
         assert_ne!(first, second);
-        assert_eq!(fs::metadata(&first_path).expect("metadata").len(), 32);
+        assert_eq!(fs::metadata(&first_path).expect("metadata").len(), TOKEN_TEXT_BYTES as u64);
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -224,6 +251,16 @@ mod tests {
                 0o600
             );
         }
+    }
+
+    #[test]
+    fn file_round_trip_preserves_secret_and_text_contract() {
+        let path = temp_path();
+        let token = SecretToken::issue(&path).expect("token");
+        let contents = fs::read_to_string(&path).expect("text token");
+        assert_eq!(contents.len(), TOKEN_TEXT_BYTES);
+        assert!(contents.bytes().all(|byte| byte.is_ascii_hexdigit()));
+        assert_eq!(SecretToken::from_file(&path).expect("read token"), token);
     }
 
     #[test]

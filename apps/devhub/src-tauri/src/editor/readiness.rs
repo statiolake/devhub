@@ -46,7 +46,7 @@ impl ReadinessProbe for SystemReadinessProbe {
 fn authenticated_http(origin: EditorOrigin, token: &SecretToken) -> EditorResult<()> {
     let mut stream = connect(origin)?;
     write_request(&mut stream, origin, token, false)?;
-    expect_status(&mut stream, 200)
+    expect_http_ready(&mut stream)
 }
 
 fn authenticated_websocket(origin: EditorOrigin, token: &SecretToken) -> EditorResult<()> {
@@ -87,7 +87,7 @@ fn write_request(
     stream.write_all(request.as_bytes()).map_err(EditorError::from)
 }
 
-fn expect_status<R: Read>(stream: &mut R, expected: u16) -> EditorResult<()> {
+fn expect_http_ready<R: Read>(stream: &mut R) -> EditorResult<()> {
     let response = read_headers(stream)?;
     let mut lines = response.split("\r\n");
     let status_line = lines.next().ok_or_else(probe_failed)?;
@@ -97,10 +97,18 @@ fn expect_status<R: Read>(stream: &mut R, expected: u16) -> EditorResult<()> {
     }
     let status =
         fields.next().and_then(|value| value.parse::<u16>().ok()).ok_or_else(probe_failed)?;
-    if status != expected {
-        return Err(probe_failed());
+    if status == 200 {
+        return Ok(());
     }
-    Ok(())
+    // OpenVSCode 1.109.5 authenticates the initial query-string request by
+    // setting its cookie and redirecting to the root document. The redirect
+    // is a successful authenticated HTTP readiness response; constrain it to
+    // the provider-owned root so an arbitrary redirect cannot pass readiness.
+    if status == 302 && lines.any(|line| line.strip_prefix("Location:").map(str::trim) == Some("/"))
+    {
+        return Ok(());
+    }
+    Err(probe_failed())
 }
 
 fn expect_websocket_upgrade<R: Read>(stream: &mut R) -> EditorResult<()> {
@@ -202,7 +210,24 @@ mod tests {
     #[test]
     fn status_parser_rejects_partial_or_wrong_status() {
         let mut stream = std::io::Cursor::new(b"HTTP/1.1 2000 OK\r\n\r\n".to_vec());
-        assert!(expect_status(&mut stream, 200).is_err());
+        assert!(expect_http_ready(&mut stream).is_err());
+    }
+
+    #[test]
+    fn http_readiness_accepts_pinned_provider_root_redirect() {
+        let mut stream = std::io::Cursor::new(
+            b"HTTP/1.1 302 Found\r\nLocation: /\r\nSet-Cookie: vscode-tkn=redacted\r\n\r\n"
+                .to_vec(),
+        );
+        expect_http_ready(&mut stream).expect("provider root redirect is ready");
+    }
+
+    #[test]
+    fn http_readiness_rejects_external_redirect() {
+        let mut stream = std::io::Cursor::new(
+            b"HTTP/1.1 302 Found\r\nLocation: https://example.invalid\r\n\r\n".to_vec(),
+        );
+        assert!(expect_http_ready(&mut stream).is_err());
     }
 
     #[test]

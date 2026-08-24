@@ -8,12 +8,13 @@ import type {
   AgentProfiles,
   ConfirmationPurposeWire,
 } from "../generated/app-shell";
-import type { WorkspacePickerCandidate } from "./client";
+import type { AppPerformanceMarker, WorkspacePickerCandidate } from "./client";
 
 export interface AppShellContextValue {
   readonly state: AppLoadState;
   readonly appearance: AppAppearance | undefined;
   readonly intentError: AppError | null;
+  readonly recordPerformanceMarker: (marker: AppPerformanceMarker) => void;
   readonly dispatch: (intent: AppIntent) => Promise<AppOutcome | undefined>;
   readonly retry: () => void;
   readonly openSettings: () => Promise<void>;

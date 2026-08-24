@@ -27,6 +27,8 @@ export interface TerminalSurfaceProps {
   readonly appearance?: AppAppearance;
   readonly client?: TerminalClient;
   readonly hideTitle?: boolean;
+  readonly onInteractive?: () => void;
+  readonly onAttachInvokeRejected?: () => void;
 }
 
 type ConnectionState = "connecting" | "connected" | "disconnected";
@@ -144,16 +146,22 @@ export function TerminalSurface({
   appearance,
   client = defaultTerminalClient,
   hideTitle = false,
+  onInteractive,
+  onAttachInvokeRejected,
 }: TerminalSurfaceProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const clientRef = useRef(client);
   const terminalRef = useRef<Terminal | null>(null);
   const resizeRef = useRef<(() => void) | null>(null);
   const controllerRef = useRef<{ retry: () => void } | null>(null);
+  const interactiveRef = useRef(onInteractive);
+  const attachInvokeRejectedRef = useRef(onAttachInvokeRejected);
   const [connection, setConnection] = useState<ConnectionState>("connecting");
   const [error, setError] = useState<string>();
 
   clientRef.current = client;
+  interactiveRef.current = onInteractive;
+  attachInvokeRejectedRef.current = onAttachInvokeRejected;
 
   useEffect(() => {
     const host = hostRef.current;
@@ -407,15 +415,28 @@ export function TerminalSurface({
       }, HANDSHAKE_TIMEOUT_MS);
 
       try {
-        returnedReceipt = await clientRef.current.attach(
-          {
-            schemaVersion: TERMINAL_PROTOCOL_VERSION,
-            surfaceKey,
-            targetGeneration: 0,
-            ...currentSize,
-          },
-          onFrame,
-        );
+        try {
+          returnedReceipt = await clientRef.current.attach(
+            {
+              schemaVersion: TERMINAL_PROTOCOL_VERSION,
+              surfaceKey,
+              targetGeneration: 0,
+              ...currentSize,
+            },
+            onFrame,
+          );
+        } catch (invokeError: unknown) {
+          // A rejection here is the only frontend-observable indication that
+          // the command response crossed the invoke boundary unsuccessfully.
+          // Keep the marker content-free; Rust emits the entered/typed result
+          // markers when the command itself was admitted.
+          try {
+            attachInvokeRejectedRef.current?.();
+          } catch {
+            // Diagnostics must never alter terminal attach behavior.
+          }
+          throw invokeError;
+        }
         if (disposed || serial !== attachSerial) {
           detachExact(returnedReceipt);
           return;
@@ -448,6 +469,7 @@ export function TerminalSurface({
         };
         setConnection("connected");
         await sendResize(returnedReceipt, currentSize, serial);
+        interactiveRef.current?.();
       } catch (attachError: unknown) {
         if (handshakeTimer !== undefined) {
           clearTimeout(handshakeTimer);

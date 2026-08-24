@@ -10,6 +10,7 @@ import {
 import { TerminalSurface } from "../../terminal/TerminalSurface";
 import { defaultAgentSurfaceClient } from "../../agent/client";
 import { disabledReasonLabel } from "./activityPresentation";
+import { useAppShell } from "../../app/useAppShell";
 
 export interface SurfaceViewportProps {
   readonly snapshot: AppSnapshot;
@@ -168,6 +169,7 @@ export function SurfaceViewport({
   intentError,
   appearance,
 }: SurfaceViewportProps) {
+  const { recordPerformanceMarker } = useAppShell();
   const activity = snapshot.selection.activity;
   const activitySnapshot = activeActivitySnapshot(snapshot);
   const workspace = workspaceForContext(snapshot, snapshot.selection.context);
@@ -246,6 +248,16 @@ export function SurfaceViewport({
               : (workspace?.label ?? "Workspace")
           }
           appearance={appearance}
+          onInteractive={
+            snapshot.selection.context.kind === "global"
+              ? () => recordPerformanceMarker("scratch_interactive")
+              : undefined
+          }
+          onAttachInvokeRejected={
+            snapshot.selection.context.kind === "global"
+              ? () => recordPerformanceMarker("terminal_attach_invoke_rejected")
+              : undefined
+          }
         />
       ) : activity === "agent" ? (
         <SurfaceAgent

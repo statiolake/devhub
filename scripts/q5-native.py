@@ -13,27 +13,31 @@ sandboxed invocation records ``native_execution_boundary_unavailable`` and
 does not launch a GUI process, so an execution-boundary restriction cannot be
 misreported as a product marker timeout.
 
-The remaining interactive scenarios require user input in the real WebViews;
-the report records them as blocked/manual rather than substituting unit or
-process timings.  ``--execute`` also runs the real Herdr and tmux provider
+On a native macOS boundary the driver also compiles the tracked CoreGraphics
+input helper once, seeds only an isolated real git workspace, and drives the
+visible titlebar/picker controls with mouse/keyboard events. It never invokes
+Tauri commands directly and does not substitute unit or process timings for
+interactive surfaces. ``--execute`` also runs the real Herdr and tmux provider
 checks, preserving their exit status without retaining their output.
 """
 
 from __future__ import annotations
 
 import argparse
+import contextlib
 import datetime as datetime_module
 import json
 import math
 import os
 import platform
 import shutil
+import signal
 import stat
 import subprocess
 import tempfile
 import time
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Iterator, Mapping, Sequence
 
 
 SCHEMA_VERSION = 1
@@ -41,9 +45,12 @@ GATE = "Q5.2"
 SETUP_RUNS = 1
 MEASURED_RUNS = 10
 ATTEMPT_TIMEOUT_SECONDS = 8.0
+INTERACTION_TIMEOUT_SECONDS = 8.0
+MAX_RETAINED_PERFORMANCE_MARKERS = 64
 OPENVSCODE_COMMIT = "4ffe2270acdf711bbefecc3e8c79f4b3631640e5"
 OPENVSCODE_VERSION = "1.109.5"
 ROOT = Path(__file__).resolve().parents[1]
+INPUT_HELPER_SOURCE = ROOT / "scripts" / "q5-native-input.swift"
 
 TIMING_IDS = (
     "process_cold_shell",
@@ -52,6 +59,34 @@ TIMING_IDS = (
     "mounted_activity_switch",
     "cold_openvscode_interactive",
     "warm_workbench_reconstruction",
+)
+
+PERFORMANCE_MARKER_VOCABULARY = frozenset(
+    {
+        "app_shell_interactive",
+        "activity_interactive",
+        "scratch_interactive",
+        "picker_first_result",
+        "editor_bridge_ready",
+        "window_reconstruction_ready",
+        "terminal_attach_entered",
+        "terminal_attach_failed_invalid_request",
+        "terminal_attach_failed_invalid_surface",
+        "terminal_attach_failed_surface_unavailable",
+        "terminal_attach_failed_stale_target",
+        "terminal_attach_failed_wrong_attachment",
+        "terminal_attach_failed_attachment_limit",
+        "terminal_attach_failed_session_unavailable",
+        "terminal_attach_failed_pty_unavailable",
+        "terminal_attach_failed_input_too_large",
+        "terminal_attach_failed_invalid_resize",
+        "terminal_attach_failed_channel_closed",
+        "terminal_attach_failed_backpressure",
+        "terminal_attach_failed_runtime_unavailable",
+        "terminal_attach_failed_internal",
+        "terminal_attach_succeeded",
+        "terminal_attach_invoke_rejected",
+    }
 )
 
 FORBIDDEN_KEYS = {
@@ -165,6 +200,45 @@ def _regular_executable(value: Path) -> bool:
     )
 
 
+def _devhub_bundle_path() -> Path | None:
+    """Locate the local debug app bundle without recording its path."""
+
+    configured = os.environ.get("DEVHUB_Q5_DEVHUB_BUNDLE")
+    candidates = [
+        Path(configured) if configured else None,
+        ROOT / "target" / "debug" / "bundle" / "macos" / "DevHub.app",
+    ]
+    for candidate in candidates:
+        if candidate is None:
+            continue
+        executable = candidate / "Contents" / "MacOS" / "devhub-app"
+        if candidate.is_dir() and _regular_executable(executable):
+            return candidate
+    return None
+
+
+def _devhub_launch_target() -> tuple[Path, Path | None]:
+    """Return the no-bundle executable plus an optional debug .app bundle.
+
+    The direct executable remains the stable native measurement target. The
+    app bundle is reserved for the LaunchServices reconstruction scenario,
+    where a naked executable has no Dock identity.
+    """
+
+    bundle = _devhub_bundle_path()
+    configured = os.environ.get("DEVHUB_Q5_DEVHUB_EXECUTABLE")
+    if configured:
+        executable = Path(configured)
+        if bundle is not None:
+            try:
+                if executable.resolve() == (bundle / "Contents" / "MacOS" / "devhub-app").resolve():
+                    return executable, bundle
+            except OSError:
+                pass
+        return executable, None
+    return ROOT / "target" / "debug" / "devhub-app", bundle
+
+
 def _product_matches(executable: Path) -> bool:
     root = executable.parent.parent
     try:
@@ -184,6 +258,20 @@ def _openvscode_candidates() -> list[tuple[str, Path]]:
     override = os.environ.get("DEVHUB_OPENVSCODE_EXECUTABLE")
     if override:
         candidates.append(("environment_override", Path(override)))
+    resource_override = os.environ.get("DEVHUB_RESOURCE_DIR")
+    if resource_override:
+        resource_root = Path(resource_override)
+        candidates.extend(
+            (
+                "resource_override",
+                resource_root / relative,
+            )
+            for relative in (
+                Path("openvscode-server/bin/openvscode-server"),
+                Path("openvscode/vscode-reh-web-darwin-arm64/bin/openvscode-server"),
+                Path("vscode-reh-web-darwin-arm64/bin/openvscode-server"),
+            )
+        )
     relative = (
         ROOT / "openvscode-server" / "bin" / "openvscode-server",
         ROOT / "openvscode" / "vscode-reh-web-darwin-arm64" / "bin" / "openvscode-server",
@@ -231,6 +319,28 @@ def discover_openvscode() -> tuple[dict[str, Any], Path | None]:
     )
 
 
+def _resource_owns_openvscode(openvscode: Path | None) -> bool:
+    """Use the app resource seam when the verified executable is inside it."""
+
+    resource_override = os.environ.get("DEVHUB_RESOURCE_DIR")
+    if not resource_override or openvscode is None:
+        return False
+    try:
+        return openvscode.resolve().is_relative_to(Path(resource_override).resolve())
+    except (OSError, ValueError):
+        return False
+
+
+def _bundle_for_executable(executable: Path) -> Path | None:
+    try:
+        bundle = executable.resolve().parent.parent.parent
+    except OSError:
+        return None
+    if bundle.suffix != ".app" or not bundle.is_dir():
+        return None
+    return bundle
+
+
 def _gui_probe() -> dict[str, Any]:
     window_server = False
     if platform.system() == "Darwin":
@@ -265,7 +375,7 @@ def _gui_probe() -> dict[str, Any]:
 
 def probe_host() -> tuple[dict[str, Any], Path | None]:
     openvscode, executable = discover_openvscode()
-    binary = ROOT / "target" / "debug" / "devhub-app"
+    binary, bundle = _devhub_launch_target()
     gui = _gui_probe()
     host = {
         "platform": {
@@ -284,6 +394,7 @@ def probe_host() -> tuple[dict[str, Any], Path | None]:
         },
         "artifacts": {
             "devhub_debug_binary": "available" if _regular_executable(binary) else "missing",
+            "devhub_debug_app_bundle": "available" if bundle is not None else "missing",
             "openvscode": openvscode,
         },
         "gui": gui,
@@ -297,7 +408,7 @@ def probe_host() -> tuple[dict[str, Any], Path | None]:
 
 def _marker_seen(log_file: Path, marker: str, offset: int) -> tuple[bool, int]:
     try:
-        with log_file.open(encoding="utf-8") as stream:
+        with log_file.open("rb") as stream:
             stream.seek(offset)
             data = stream.read(64 * 1024)
             new_offset = stream.tell()
@@ -306,23 +417,616 @@ def _marker_seen(log_file: Path, marker: str, offset: int) -> tuple[bool, int]:
     for line in data.splitlines():
         try:
             record = json.loads(line)
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, UnicodeDecodeError):
             continue
         if record.get("event") == "performance" and record.get("marker") == marker:
             return True, new_offset
     return False, new_offset
 
 
+def _marker_observed(log_file: Path, marker: str, offset: int) -> tuple[int | None, int]:
+    """Return the first matching diagnostics timestamp after ``offset``."""
+
+    try:
+        with log_file.open("rb") as stream:
+            stream.seek(offset)
+            data = stream.read(64 * 1024)
+            new_offset = stream.tell()
+    except OSError:
+        return None, offset
+    cursor = offset
+    for line in data.splitlines(keepends=True):
+        cursor += len(line)
+        try:
+            record = json.loads(line.decode("utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            continue
+        if record.get("event") == "performance" and record.get("marker") == marker:
+            timestamp = record.get("timestamp_ms")
+            return (int(timestamp) if isinstance(timestamp, int) else None), cursor
+    return None, new_offset
+
+
+def _log_end(log_file: Path) -> int:
+    try:
+        return log_file.stat().st_size
+    except OSError:
+        return 0
+
+
+def _performance_markers(log_file: Path) -> list[str]:
+    """Read only the bounded, closed marker vocabulary from one run."""
+
+    try:
+        lines = log_file.read_bytes().splitlines()[-MAX_RETAINED_PERFORMANCE_MARKERS:]
+    except OSError:
+        return []
+    markers: list[str] = []
+    for line in lines:
+        try:
+            record = json.loads(line.decode("utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            continue
+        marker = record.get("marker")
+        if record.get("event") == "performance" and marker in PERFORMANCE_MARKER_VOCABULARY:
+            markers.append(marker)
+    return markers
+
+
+def _terminal_error_codes(markers: Sequence[str]) -> list[str]:
+    return [
+        marker.removeprefix("terminal_attach_failed_")
+        for marker in markers
+        if marker.startswith("terminal_attach_failed_")
+    ]
+
+
+def _marker_timeout_reason(markers: Sequence[str]) -> str:
+    """Classify a missing readiness marker from closed probe facts only."""
+
+    errors = _terminal_error_codes(markers)
+    if errors:
+        return f"terminal_attach_failed_{errors[0]}"
+    if "terminal_attach_invoke_rejected" in markers and "terminal_attach_entered" not in markers:
+        return "terminal_attach_invoke_rejected"
+    if "terminal_attach_succeeded" in markers:
+        return "post_attach_marker_missing"
+    return "marker_timeout"
+
+
+def _seed_native_config(home: Path) -> None:
+    """Keep the injected private tmux namespace through startup resolution.
+
+    DevHub's normal default imports a login shell environment. Login shells
+    commonly omit ``TMUX_TMPDIR``, so an isolated acceptance launch would
+    otherwise fall back to the user's shared tmux socket directory. The
+    harness uses the documented config seam in an isolated HOME to preserve
+    the injected environment; production defaults and runtime semantics are
+    unchanged.
+    """
+
+    config = home / ".config" / "devhub" / "config.toml"
+    config.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    config.write_text("version = 1\n\n[general]\nimport_login_environment = false\n", encoding="utf-8")
+    config.chmod(0o600)
+
+
+def _wait_for_window_origin(pid: int) -> tuple[int, int] | None:
+    """Wait for exactly one AX window owned by the launched PID."""
+
+    deadline = time.monotonic() + INTERACTION_TIMEOUT_SECONDS
+    while time.monotonic() < deadline:
+        origin = _window_origin(pid)
+        if origin is not None:
+            return origin
+        time.sleep(0.05)
+    return None
+
+
+def _wait_for_marker(
+    log_file: Path,
+    marker: str,
+    offset: int,
+    timeout: float = INTERACTION_TIMEOUT_SECONDS,
+) -> tuple[bool, int, int | None]:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        timestamp, next_offset = _marker_observed(log_file, marker, offset)
+        if timestamp is not None:
+            return True, next_offset, timestamp
+        offset = next_offset
+        time.sleep(0.025)
+    return False, offset, None
+
+
+class _NativeInput:
+    """Compile and invoke the real CoreGraphics input helper once per run."""
+
+    def __init__(self, executable: Path):
+        self.executable = executable
+
+    @classmethod
+    def build(cls) -> "_NativeInput | None":
+        if platform.system() != "Darwin" or shutil.which("swiftc") is None:
+            return None
+        if not INPUT_HELPER_SOURCE.is_file():
+            return None
+        output = Path(tempfile.gettempdir()) / f"devhub-q52-native-input-{os.getpid()}"
+        try:
+            result = subprocess.run(
+                ["swiftc", str(INPUT_HELPER_SOURCE), "-o", str(output)],
+                cwd=ROOT,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+                timeout=30,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return None
+        if result.returncode != 0 or not _regular_executable(output):
+            return None
+        return cls(output)
+
+    def invoke(self, *arguments: str) -> bool:
+        try:
+            result = subprocess.run(
+                [str(self.executable), *arguments],
+                cwd=ROOT,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+                timeout=2,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return False
+        return result.returncode == 0
+
+
+class _ProcessHandle:
+    """Small process identity handle for NSWorkspace-launched bundles."""
+
+    def __init__(self, pid: int, popen: subprocess.Popen[bytes] | None = None):
+        self.pid = pid
+        self._popen = popen
+
+    def poll(self) -> int | None:
+        if self._popen is not None:
+            return self._popen.poll()
+        try:
+            os.kill(self.pid, 0)
+        except (ProcessLookupError, PermissionError, OSError):
+            return 0
+        return None
+
+    def terminate(self) -> None:
+        if self._popen is not None:
+            self._popen.terminate()
+            return
+        try:
+            os.kill(self.pid, signal.SIGTERM)
+        except (ProcessLookupError, PermissionError, OSError):
+            pass
+
+    def kill(self) -> None:
+        if self._popen is not None:
+            self._popen.kill()
+            return
+        try:
+            os.kill(self.pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError, OSError):
+            pass
+
+    def wait(self, timeout: float | None = None) -> int:
+        if self._popen is not None:
+            return self._popen.wait(timeout=timeout)
+        deadline = None if timeout is None else time.monotonic() + timeout
+        while self.poll() is None:
+            if deadline is not None and time.monotonic() >= deadline:
+                raise subprocess.TimeoutExpired("native bundle process", timeout)
+            time.sleep(0.05)
+        return 0
+
+
+class _NativeBundleLauncher:
+    """Launch a debug .app through LaunchServices with the measured env."""
+
+    def __init__(self, executable: Path):
+        self.executable = executable
+
+    @classmethod
+    def build(cls) -> "_NativeBundleLauncher | None":
+        if platform.system() != "Darwin" or shutil.which("swiftc") is None:
+            return None
+        source = ROOT / "scripts" / "q5-native-launch.swift"
+        if not source.is_file():
+            return None
+        output = Path(tempfile.gettempdir()) / f"devhub-q52-native-launch-{os.getpid()}"
+        module_cache = Path(tempfile.gettempdir()) / f"devhub-q52-swift-cache-{os.getpid()}"
+        module_cache.mkdir(mode=0o700, exist_ok=True)
+        try:
+            result = subprocess.run(
+                [
+                    "swiftc",
+                    "-module-cache-path",
+                    str(module_cache),
+                    str(source),
+                    "-o",
+                    str(output),
+                ],
+                cwd=ROOT,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+                timeout=30,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return None
+        if result.returncode != 0 or not _regular_executable(output):
+            return None
+        return cls(output)
+
+    def launch(self, bundle: Path, environment: Mapping[str, str]) -> _ProcessHandle:
+        result = subprocess.run(
+            [str(self.executable), str(bundle)],
+            cwd=ROOT,
+            env=dict(environment),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            text=True,
+            timeout=20,
+        )
+        if result.returncode != 0:
+            raise OSError("LaunchServices bundle launch failed")
+        try:
+            pid = int(result.stdout.strip())
+        except (TypeError, ValueError):
+            raise OSError("LaunchServices bundle PID unavailable") from None
+        if pid <= 0:
+            raise OSError("LaunchServices bundle PID invalid")
+        return _ProcessHandle(pid)
+
+
+_NATIVE_BUNDLE_LAUNCHER: _NativeBundleLauncher | None = None
+
+
+def _window_origin(pid: int) -> tuple[int, int] | None:
+    """Return the launched process's only visible window origin.
+
+    Process names are not an identity boundary: a stale DevHub instance can
+    have the same name while a measured instance is starting.  Bind every
+    accessibility query to the Popen PID and require exactly one window.
+    """
+
+    script = f"""
+tell application "System Events"
+    set targetProcess to first application process whose unix id is {int(pid)}
+    set windowCount to count of windows of targetProcess
+    if windowCount is not 1 then return "count:" & windowCount
+    return position of window 1 of targetProcess
+end tell
+"""
+    try:
+        result = subprocess.run(
+            ["osascript", "-e", script],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            text=True,
+            timeout=3,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    if result.stdout.strip().startswith("count:"):
+        return None
+    fields = [field.strip() for field in result.stdout.split(",")]
+    if len(fields) < 2:
+        return None
+    try:
+        return int(float(fields[0])), int(float(fields[1]))
+    except ValueError:
+        return None
+
+
+def _window_count(pid: int) -> int | None:
+    script = f"""
+tell application "System Events"
+    set targetProcess to first application process whose unix id is {int(pid)}
+    return count of windows of targetProcess
+end tell
+"""
+    try:
+        result = subprocess.run(
+            ["osascript", "-e", script],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            text=True,
+            timeout=3,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    try:
+        return int(result.stdout.strip())
+    except ValueError:
+        return None
+
+
+def _launchservices_reopen(bundle_identifier: str) -> bool:
+    """Ask LaunchServices to reopen the already-running bundle."""
+
+    try:
+        result = subprocess.run(
+            ["/usr/bin/open", "-b", bundle_identifier],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            timeout=3,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return result.returncode == 0
+
+
+def _close_window(pid: int) -> bool:
+    script = f"""
+tell application "System Events"
+    set targetProcess to first application process whose unix id is {int(pid)}
+    tell targetProcess to click menu item "Close Window" of menu "Window" of menu bar 1
+end tell
+"""
+    try:
+        result = subprocess.run(
+            ["osascript", "-e", script],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            timeout=3,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return result.returncode == 0
+
+
+def _request_quit(pid: int) -> bool:
+    """Use DevHub's real click-only Quit menu before force cleanup."""
+
+    script = f"""
+tell application "System Events"
+    set targetProcess to first application process whose unix id is {int(pid)}
+    tell targetProcess to click menu item "Quit DevHub" of menu "DevHub" of menu bar 1
+end tell
+"""
+    try:
+        result = subprocess.run(
+            ["osascript", "-e", script],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            timeout=3,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return result.returncode == 0
+
+
+def _cleanup_owned_processes(home: Path, app_pid: int) -> None:
+    """Bound cleanup to commands carrying this run's unique isolated HOME."""
+
+    try:
+        result = subprocess.run(
+            ["ps", "-axo", "pid=,command="],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            text=True,
+            timeout=3,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return
+    owned: list[int] = []
+    home_text = str(home)
+    for line in result.stdout.splitlines():
+        fields = line.strip().split(None, 1)
+        if len(fields) != 2 or home_text not in fields[1]:
+            continue
+        try:
+            pid = int(fields[0])
+        except ValueError:
+            continue
+        if pid not in {os.getpid(), app_pid}:
+            owned.append(pid)
+    for pid in owned:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except (ProcessLookupError, PermissionError, OSError):
+            pass
+    if owned:
+        time.sleep(0.15)
+    for pid in owned:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError, OSError):
+            pass
+
+
+def _owned_openvscode_pids(home: Path, app_pid: int) -> list[int]:
+    """Find only this run's managed OpenVSCode processes by isolated HOME."""
+
+    try:
+        result = subprocess.run(
+            ["ps", "-axo", "pid=,command="],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            text=True,
+            timeout=3,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+    owned: list[int] = []
+    home_text = str(home)
+    for line in result.stdout.splitlines():
+        fields = line.strip().split(None, 1)
+        if len(fields) != 2 or home_text not in fields[1] or "openvscode-server" not in fields[1]:
+            continue
+        try:
+            pid = int(fields[0])
+        except ValueError:
+            continue
+        if pid not in {os.getpid(), app_pid}:
+            owned.append(pid)
+    return owned
+
+
+def _kill_owned_openvscode(home: Path, app_pid: int) -> int:
+    """Crash only the managed OpenVSCode children for one isolated run."""
+
+    pids = _owned_openvscode_pids(home, app_pid)
+    for pid in pids:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError, OSError):
+            pass
+    return len(pids)
+
+
+@contextlib.contextmanager
+def _running_app(
+    executable: Path,
+    openvscode: Path | None,
+    *,
+    seed_picker: bool = False,
+) -> Iterator[tuple[_ProcessHandle, Path, Path, float]]:
+    """Launch one real app with a canonical isolated HOME."""
+
+    with tempfile.TemporaryDirectory(prefix="devhub-q52-") as temp_home:
+        safe_home = Path(temp_home).resolve()
+        _seed_native_config(safe_home)
+        tmux_tmpdir = safe_home / ".tmux"
+        tmux_tmpdir.mkdir(mode=0o700)
+        if seed_picker:
+            workspace = safe_home / "dev" / "q5-picker-workspace"
+            workspace.mkdir(parents=True, exist_ok=True)
+            try:
+                subprocess.run(
+                    ["git", "-C", str(workspace), "init", "--quiet"],
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    check=False,
+                    timeout=5,
+                )
+            except (OSError, subprocess.SubprocessError):
+                pass
+        environment = os.environ.copy()
+        environment["HOME"] = str(safe_home)
+        # tmux's socket namespace is independent from HOME.  Keep every
+        # measured launch in a private, trusted namespace so a prior run
+        # cannot make its Scratch identity collide with this run.
+        environment["TMUX_TMPDIR"] = str(tmux_tmpdir)
+        environment["DEVHUB_Q5_PERFORMANCE"] = "1"
+        if openvscode is not None and not _resource_owns_openvscode(openvscode):
+            environment["DEVHUB_OPENVSCODE_EXECUTABLE"] = str(openvscode)
+        log_file = safe_home / "Library" / "Logs" / "DevHub" / "devhub.jsonl"
+        started = time.monotonic()
+        try:
+            bundle = _bundle_for_executable(executable)
+            if bundle is not None:
+                global _NATIVE_BUNDLE_LAUNCHER
+                if _NATIVE_BUNDLE_LAUNCHER is None:
+                    _NATIVE_BUNDLE_LAUNCHER = _NativeBundleLauncher.build()
+                if _NATIVE_BUNDLE_LAUNCHER is None:
+                    raise OSError("native bundle launcher unavailable")
+                process = _NATIVE_BUNDLE_LAUNCHER.launch(bundle, environment)
+            else:
+                child = subprocess.Popen(
+                    [str(executable)],
+                    cwd=ROOT,
+                    env=environment,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                process = _ProcessHandle(child.pid, child)
+        except OSError:
+            raise
+        try:
+            yield process, safe_home, log_file, started
+        finally:
+            if process.poll() is None:
+                _request_quit(process.pid)
+                try:
+                    process.wait(timeout=INTERACTION_TIMEOUT_SECONDS)
+                except subprocess.TimeoutExpired:
+                    process.terminate()
+                    try:
+                        process.wait(timeout=2)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.wait(timeout=5)
+            _cleanup_owned_processes(safe_home, process.pid)
+            _cleanup_owned_tmux(tmux_tmpdir)
+
+
+def _cleanup_owned_tmux(tmux_tmpdir: Path) -> None:
+    """Stop only the private tmux server created by one measured launch."""
+
+    tmux = shutil.which("tmux")
+    if tmux is None:
+        return
+    env = os.environ.copy()
+    env["TMUX_TMPDIR"] = str(tmux_tmpdir)
+    try:
+        subprocess.run(
+            [tmux, "-L", "devhub", "kill-server"],
+            cwd=ROOT,
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            timeout=3,
+        )
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+
 def _launch_shell_attempt(executable: Path, openvscode: Path | None) -> dict[str, Any]:
     """Launch DevHub and wait for the AppShell marker, retaining no output."""
 
     with tempfile.TemporaryDirectory(prefix="devhub-q52-") as temp_home:
+        # DevHub's app-owned path seams reject symlinked ancestors. macOS may
+        # expose tempfile paths through `/var`, which is a symlink to the
+        # canonical per-user `/private/var` tree; pass the resolved HOME so a
+        # real editor resource run exercises the same secure path contract as
+        # a packaged launch.
+        safe_home = Path(temp_home).resolve()
+        _seed_native_config(safe_home)
+        tmux_tmpdir = safe_home / ".tmux"
+        tmux_tmpdir.mkdir(mode=0o700)
         env = os.environ.copy()
-        env["HOME"] = temp_home
+        env["HOME"] = str(safe_home)
+        env["TMUX_TMPDIR"] = str(tmux_tmpdir)
         env["DEVHUB_Q5_PERFORMANCE"] = "1"
-        if openvscode is not None:
+        if openvscode is not None and not _resource_owns_openvscode(openvscode):
             env["DEVHUB_OPENVSCODE_EXECUTABLE"] = str(openvscode)
-        log_file = Path(temp_home) / "Library" / "Logs" / "DevHub" / "devhub.jsonl"
+        log_file = safe_home / "Library" / "Logs" / "DevHub" / "devhub.jsonl"
         started = time.monotonic()
         try:
             process = subprocess.Popen(
@@ -358,18 +1062,406 @@ def _launch_shell_attempt(executable: Path, openvscode: Path | None) -> dict[str
         else:
             reason = "marker_observed"
         if process.poll() is None:
-            process.terminate()
+            _request_quit(process.pid)
             try:
-                process.wait(timeout=5)
+                process.wait(timeout=INTERACTION_TIMEOUT_SECONDS)
             except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait(timeout=5)
+                process.terminate()
+                try:
+                    process.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait(timeout=5)
+        _cleanup_owned_processes(safe_home, process.pid)
+        _cleanup_owned_tmux(tmux_tmpdir)
         return {
             "status": status,
             "elapsed_ms": elapsed,
             "marker": "app_shell_interactive",
             "reason": reason,
         }
+
+
+def _marker_attempt(
+    executable: Path,
+    openvscode: Path | None,
+    input_driver: _NativeInput | None,
+    marker: str,
+    *,
+    action: tuple[int, int] | None = None,
+    seed_picker: bool = False,
+) -> dict[str, Any]:
+    """Measure one real marker, optionally after one visible UI activation."""
+
+    if action is not None and input_driver is None:
+        return {
+            "status": "blocked",
+            "elapsed_ms": None,
+            "marker": marker,
+            "reason": "native_input_helper_unavailable",
+        }
+    try:
+        context = _running_app(executable, openvscode, seed_picker=seed_picker)
+        with context as (process, _home, log_file, started):
+            shell_ok, shell_offset, _ = _wait_for_marker(log_file, "app_shell_interactive", 0)
+            if not shell_ok:
+                markers = _performance_markers(log_file)
+                return {
+                    "status": "blocked",
+                    "elapsed_ms": None,
+                    "marker": marker,
+                    "reason": "app_shell_marker_timeout",
+                    "ordered_markers": markers,
+                    "terminal_error_codes": _terminal_error_codes(markers),
+                }
+            if action is None:
+                action_started = started
+                marker_offset = shell_offset
+            else:
+                origin = _wait_for_window_origin(process.pid)
+                if origin is None:
+                    return {
+                        "status": "blocked",
+                        "elapsed_ms": None,
+                        "marker": marker,
+                        "reason": "native_window_geometry_unavailable",
+                    }
+                x = origin[0] + action[0]
+                y = origin[1] + action[1]
+                marker_offset = _log_end(log_file)
+                action_started = time.monotonic()
+                if not input_driver.invoke("activate", str(x), str(y)):
+                    return {
+                        "status": "blocked",
+                        "elapsed_ms": None,
+                        "marker": marker,
+                        "reason": "native_input_event_failed",
+                    }
+            found, _next_offset, _timestamp = _wait_for_marker(
+                log_file, marker, marker_offset
+            )
+            if not found:
+                markers = _performance_markers(log_file)
+                return {
+                    "status": "blocked",
+                    "elapsed_ms": None,
+                    "marker": marker,
+                    "reason": _marker_timeout_reason(markers),
+                    "ordered_markers": markers,
+                    "terminal_error_codes": _terminal_error_codes(markers),
+                }
+            markers = _performance_markers(log_file)
+            return {
+                "status": "pass",
+                "elapsed_ms": round((time.monotonic() - action_started) * 1000, 3),
+                "marker": marker,
+                "reason": "marker_observed",
+                "ordered_markers": markers,
+                "terminal_error_codes": _terminal_error_codes(markers),
+            }
+    except OSError:
+        return {
+            "status": "unavailable",
+            "elapsed_ms": None,
+            "marker": marker,
+            "reason": "devhub_launch_unavailable",
+        }
+
+
+def _activity_attempt(
+    executable: Path,
+    openvscode: Path | None,
+    input_driver: _NativeInput | None,
+) -> dict[str, Any]:
+    """Switch from the mounted Terminal activity to Editor via native input."""
+
+    marker = "activity_interactive"
+    if input_driver is None:
+        return {
+            "status": "blocked",
+            "elapsed_ms": None,
+            "marker": marker,
+            "reason": "native_input_helper_unavailable",
+        }
+    try:
+        with _running_app(executable, openvscode) as (process, _home, log_file, _started):
+            shell_ok, shell_offset, _ = _wait_for_marker(log_file, "app_shell_interactive", 0)
+            if not shell_ok:
+                return {
+                    "status": "blocked",
+                    "elapsed_ms": None,
+                    "marker": marker,
+                    "reason": "app_shell_marker_timeout",
+                }
+            origin = _wait_for_window_origin(process.pid)
+            if origin is None:
+                return {
+                    "status": "blocked",
+                    "elapsed_ms": None,
+                    "marker": marker,
+                    "reason": "native_window_geometry_unavailable",
+                }
+            # Establish a known precondition without counting that transition.
+            baseline = _log_end(log_file)
+            terminal_x, terminal_y = origin[0] + 405, origin[1] + 27
+            input_driver.invoke("activate", str(terminal_x), str(terminal_y))
+            _wait_for_marker(log_file, marker, baseline, timeout=1.0)
+            baseline = _log_end(log_file)
+            editor_x, editor_y = origin[0] + 247, origin[1] + 27
+            started = time.monotonic()
+            if not input_driver.invoke("activate", str(editor_x), str(editor_y)):
+                return {
+                    "status": "blocked",
+                    "elapsed_ms": None,
+                    "marker": marker,
+                    "reason": "native_input_event_failed",
+                }
+            found, _next_offset, _timestamp = _wait_for_marker(log_file, marker, baseline)
+            if not found:
+                return {
+                    "status": "blocked",
+                    "elapsed_ms": None,
+                    "marker": marker,
+                    "reason": "marker_timeout",
+                }
+            return {
+                "status": "pass",
+                "elapsed_ms": round((time.monotonic() - started) * 1000, 3),
+                "marker": marker,
+                "reason": "marker_observed",
+            }
+    except OSError:
+        return {
+            "status": "unavailable",
+            "elapsed_ms": None,
+            "marker": marker,
+            "reason": "devhub_launch_unavailable",
+        }
+
+
+def _warm_reconstruction_attempt(
+    executable: Path,
+    openvscode: Path | None,
+    input_driver: _NativeInput | None,
+) -> dict[str, Any]:
+    """Close and reopen the real Window through the native menu and Dock."""
+
+    marker = "window_reconstruction_ready"
+    try:
+        with _running_app(executable, openvscode) as (process, _home, log_file, _started):
+            ready, offset, _ = _wait_for_marker(log_file, marker, 0)
+            if not ready:
+                return {
+                    "status": "blocked",
+                    "elapsed_ms": None,
+                    "marker": marker,
+                    "reason": "initial_reconstruction_timeout",
+                }
+            if not _close_window(process.pid):
+                return {
+                    "status": "blocked",
+                    "elapsed_ms": None,
+                    "marker": marker,
+                    "reason": "native_window_close_failed",
+                }
+            closed_deadline = time.monotonic() + 5.0
+            while time.monotonic() < closed_deadline:
+                count = _window_count(process.pid)
+                if count == 0:
+                    break
+                time.sleep(0.05)
+            offset = _log_end(log_file)
+            started = time.monotonic()
+            if not _launchservices_reopen("io.github.statiolake.devhub"):
+                return {
+                    "status": "blocked",
+                    "elapsed_ms": None,
+                    "marker": marker,
+                    "reason": "native_dock_reopen_unavailable",
+                }
+            if process.poll() is not None:
+                return {
+                    "status": "blocked",
+                    "elapsed_ms": None,
+                    "marker": marker,
+                    "reason": "process_exited_before_reopen",
+                }
+            reopened_deadline = time.monotonic() + INTERACTION_TIMEOUT_SECONDS
+            while time.monotonic() < reopened_deadline:
+                if _window_count(process.pid) == 1:
+                    break
+                if process.poll() is not None:
+                    return {
+                        "status": "blocked",
+                        "elapsed_ms": None,
+                        "marker": marker,
+                        "reason": "process_exited_before_reopen",
+                    }
+                time.sleep(0.05)
+            else:
+                return {
+                    "status": "blocked",
+                    "elapsed_ms": None,
+                    "marker": marker,
+                    "reason": "reopened_window_not_bound_to_pid",
+                }
+            found, _next_offset, _timestamp = _wait_for_marker(log_file, marker, offset)
+            if not found:
+                return {
+                    "status": "blocked",
+                    "elapsed_ms": None,
+                    "marker": marker,
+                    "reason": "reconstruction_marker_timeout",
+                }
+            return {
+                "status": "pass",
+                "elapsed_ms": round((time.monotonic() - started) * 1000, 3),
+                "marker": marker,
+                "reason": "marker_observed",
+            }
+    except OSError:
+        return {
+            "status": "unavailable",
+            "elapsed_ms": None,
+            "marker": marker,
+            "reason": "devhub_launch_unavailable",
+        }
+
+
+def _managed_openvscode_crash_attempt(
+    executable: Path,
+    openvscode: Path | None,
+) -> dict[str, Any]:
+    """Crash one owned OpenVSCode child and wait for the real bridge recovery."""
+
+    marker = "editor_bridge_ready"
+    if openvscode is None:
+        return {
+            "status": "blocked",
+            "isolation_verified": False,
+            "recovery_verified": False,
+            "reason": "pinned_openvscode_bundle_missing",
+        }
+    try:
+        with _running_app(executable, openvscode) as (process, home, log_file, _started):
+            shell_ok, shell_offset, _ = _wait_for_marker(
+                log_file, "app_shell_interactive", 0, timeout=INTERACTION_TIMEOUT_SECONDS
+            )
+            if not shell_ok:
+                return {
+                    "status": "blocked",
+                    "isolation_verified": False,
+                    "recovery_verified": False,
+                    "reason": "app_shell_marker_timeout",
+                }
+            ready, offset, _ = _wait_for_marker(
+                log_file, marker, shell_offset, timeout=20.0
+            )
+            if not ready:
+                return {
+                    "status": "blocked",
+                    "isolation_verified": process.poll() is None,
+                    "recovery_verified": False,
+                    "reason": "editor_bridge_marker_timeout_before_crash",
+                }
+            deadline = time.monotonic() + 5.0
+            killed = 0
+            while time.monotonic() < deadline and killed == 0:
+                killed = _kill_owned_openvscode(home, process.pid)
+                if killed == 0:
+                    time.sleep(0.05)
+            if killed == 0:
+                return {
+                    "status": "blocked",
+                    "isolation_verified": process.poll() is None,
+                    "recovery_verified": False,
+                    "reason": "managed_openvscode_pid_unavailable",
+                }
+            recovered, _next_offset, _ = _wait_for_marker(log_file, marker, offset, timeout=20.0)
+            isolated = process.poll() is None
+            if not recovered:
+                return {
+                    "status": "blocked",
+                    "isolation_verified": isolated,
+                    "recovery_verified": False,
+                    "reason": "editor_bridge_marker_timeout_after_crash",
+                }
+            return {
+                "status": "covered",
+                "isolation_verified": isolated,
+                "recovery_verified": True,
+                "reason": "managed_openvscode_crash_recovered",
+            }
+    except OSError:
+        return {
+            "status": "blocked",
+            "isolation_verified": False,
+            "recovery_verified": False,
+            "reason": "devhub_launch_unavailable",
+        }
+
+
+def _run_timing_scenario(
+    scenario: str,
+    executable: Path,
+    openvscode: Path | None,
+    input_driver: _NativeInput | None,
+) -> dict[str, Any]:
+    attempts: list[dict[str, Any]] = []
+    for role, run in [("setup", None), *[("measured", index + 1) for index in range(MEASURED_RUNS)]]:
+        if scenario == "scratch_interactive":
+            result = _marker_attempt(executable, openvscode, input_driver, "scratch_interactive")
+        elif scenario == "workspace_picker_first_result":
+            result = _marker_attempt(
+                executable,
+                openvscode,
+                input_driver,
+                "picker_first_result",
+                action=(210, 155),
+                seed_picker=True,
+            )
+        elif scenario == "mounted_activity_switch":
+            result = _activity_attempt(executable, openvscode, input_driver)
+        elif scenario == "cold_openvscode_interactive":
+            result = _marker_attempt(executable, openvscode, input_driver, "editor_bridge_ready")
+        elif scenario == "warm_workbench_reconstruction":
+            result = _warm_reconstruction_attempt(executable, openvscode, input_driver)
+        else:
+            raise NativeReportError(f"unknown interactive scenario: {scenario}")
+        attempts.append({"role": role, **({"run": run} if run is not None else {}), **result})
+    samples = [
+        attempt["elapsed_ms"]
+        for attempt in attempts
+        if attempt.get("role") == "measured"
+        and attempt.get("status") == "pass"
+        and isinstance(attempt.get("elapsed_ms"), (int, float))
+    ]
+    if len(samples) == MEASURED_RUNS:
+        return {
+            "status": "measured",
+            "setup_runs": SETUP_RUNS,
+            "measured_runs": MEASURED_RUNS,
+            "samples_ms": samples,
+            "p95_ms": nearest_rank_p95(samples),
+            "reason": "Real native marker observed after one setup and ten measured runs.",
+            "attempts": attempts,
+        }
+    return {
+        "status": "blocked",
+        "setup_runs": SETUP_RUNS,
+        "measured_runs": MEASURED_RUNS,
+        "samples_ms": [],
+        "p95_ms": None,
+        "reason": next(
+            (
+                attempt.get("reason", "native_marker_unavailable")
+                for attempt in attempts
+                if attempt.get("status") != "pass"
+            ),
+            "native_marker_unavailable",
+        ),
+        "attempts": attempts,
+    }
 
 
 def _timing_entry(reason: str, attempts: list[dict[str, Any]] | None = None) -> dict[str, Any]:
@@ -411,6 +1503,7 @@ def execute(host: Mapping[str, Any], openvscode: Path | None, *, run_providers: 
     gui = host["gui"]
     execution_boundary = host["execution_boundary"]
     binary_available = artifacts["devhub_debug_binary"] == "available"
+    app_bundle_available = artifacts.get("devhub_debug_app_bundle") == "available"
     gui_available = bool(gui["interactive_session"])
     native_boundary_available = execution_boundary["status"] == "available"
     bundle_available = artifacts["openvscode"]["status"] == "available"
@@ -425,13 +1518,16 @@ def execute(host: Mapping[str, Any], openvscode: Path | None, *, run_providers: 
         blockers.append("native_gui_session_unavailable")
     blockers.append("reference_context_not_proven")
 
+    binary, app_bundle = _devhub_launch_target()
+    reconstruction_binary = (
+        app_bundle / "Contents" / "MacOS" / "devhub-app" if app_bundle is not None else None
+    )
     shell_attempts: list[dict[str, Any]] = []
     # The Shell is a distinct native surface.  Exercise it whenever the real
     # app and GUI session exist, even if the managed editor bundle is missing;
     # the resulting marker timeout is useful blocker evidence and is never
     # promoted to an editor or reference-context timing claim.
     if binary_available and gui_available and native_boundary_available:
-        binary = ROOT / "target" / "debug" / "devhub-app"
         shell_attempts.append({"role": "setup", **_launch_shell_attempt(binary, openvscode)})
         for index in range(MEASURED_RUNS):
             shell_attempts.append(
@@ -453,13 +1549,7 @@ def execute(host: Mapping[str, Any], openvscode: Path | None, *, run_providers: 
 
     shell_block_reason = ";".join(blockers) or "AppShell marker run is blocked by host prerequisites."
     timing_runs = {
-        timing_id: _timing_entry(
-            "Native marker-driven run is unavailable; no synthetic timing is recorded."
-            if timing_id != "process_cold_shell"
-            else shell_block_reason,
-            shell_attempts if timing_id == "process_cold_shell" else [],
-        )
-        for timing_id in TIMING_IDS
+        "process_cold_shell": _timing_entry(shell_block_reason, shell_attempts),
     }
     shell_samples = [
         attempt["elapsed_ms"]
@@ -480,9 +1570,36 @@ def execute(host: Mapping[str, Any], openvscode: Path | None, *, run_providers: 
     elif any(attempt.get("reason") == "marker_timeout" for attempt in shell_attempts):
         timing_runs["process_cold_shell"]["reason"] = (
             "Real DevHub was launched for one setup and ten measured attempts, but the "
-            "Rust-owned App Shell marker was not observed before timeout; the missing "
-            "pinned OpenVSCode bundle prevents a usable interactive surface."
+            "Rust-owned App Shell marker was not observed before timeout."
         )
+
+    input_driver = (
+        _NativeInput.build()
+        if binary_available and gui_available and native_boundary_available
+        else None
+    )
+    for timing_id in TIMING_IDS:
+        if timing_id == "process_cold_shell":
+            continue
+        if binary_available and gui_available and native_boundary_available:
+            if timing_id == "warm_workbench_reconstruction" and not app_bundle_available:
+                timing_runs[timing_id] = _timing_entry(
+                    "debug_app_bundle_missing; LaunchServices reopen requires a real .app bundle."
+                )
+                continue
+            scenario_binary = reconstruction_binary if timing_id == "warm_workbench_reconstruction" else binary
+            if scenario_binary is None:
+                timing_runs[timing_id] = _timing_entry(
+                    "debug_app_bundle_missing; LaunchServices reopen requires a real .app bundle."
+                )
+                continue
+            timing_runs[timing_id] = _run_timing_scenario(
+                timing_id, scenario_binary, openvscode, input_driver
+            )
+        else:
+            timing_runs[timing_id] = _timing_entry(
+                "Native marker-driven run is unavailable; no synthetic timing is recorded."
+            )
 
     provider_checks: dict[str, Any] = {}
     if run_providers:
@@ -588,7 +1705,7 @@ def execute(host: Mapping[str, Any], openvscode: Path | None, *, run_providers: 
         _matrix_entry(
             "managed-openvscode",
             "Crash managed OpenVSCode; verify isolation and recovery",
-            "Pinned OpenVSCode bundle is unavailable.",
+            "managed OpenVSCode crash probe not executed.",
         ),
         _matrix_entry(
             "herdr-connection-or-server",
@@ -601,6 +1718,12 @@ def execute(host: Mapping[str, Any], openvscode: Path | None, *, run_providers: 
             "Run the real tmux transition/PTY checks; result is preserved in provider_checks when --execute is used.",
         ),
     ]
+    if binary_available and gui_available and native_boundary_available and bundle_available:
+        crashes[0] = {
+            "id": "managed-openvscode",
+            "requirement": "Crash managed OpenVSCode; verify isolation and recovery",
+            **_managed_openvscode_crash_attempt(binary, openvscode),
+        }
     if provider_checks.get("herdr_real_runtime", {}).get("status") == "pass":
         crashes[1].update({"status": "covered", "isolation_verified": True, "recovery_verified": True})
     if provider_checks.get("tmux_transition_matrix", {}).get("status") == "pass" and provider_checks.get(

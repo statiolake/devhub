@@ -94,9 +94,27 @@ pub enum DiagnosticEvent {
 pub enum PerformanceMarker {
     AppShellInteractive,
     ActivityInteractive,
+    ScratchInteractive,
     PickerFirstResult,
     EditorBridgeReady,
     WindowReconstructionReady,
+    TerminalAttachEntered,
+    TerminalAttachFailedInvalidRequest,
+    TerminalAttachFailedInvalidSurface,
+    TerminalAttachFailedSurfaceUnavailable,
+    TerminalAttachFailedStaleTarget,
+    TerminalAttachFailedWrongAttachment,
+    TerminalAttachFailedAttachmentLimit,
+    TerminalAttachFailedSessionUnavailable,
+    TerminalAttachFailedPtyUnavailable,
+    TerminalAttachFailedInputTooLarge,
+    TerminalAttachFailedInvalidResize,
+    TerminalAttachFailedChannelClosed,
+    TerminalAttachFailedBackpressure,
+    TerminalAttachFailedRuntimeUnavailable,
+    TerminalAttachFailedInternal,
+    TerminalAttachSucceeded,
+    TerminalAttachInvokeRejected,
 }
 
 #[allow(dead_code)]
@@ -1683,6 +1701,58 @@ mod tests {
         assert!(!contents.contains("/Users/"));
         assert!(matches!(diagnostics.shutdown(Duration::from_secs(2)), ShutdownOutcome::Complete));
         let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn terminal_attach_performance_markers_are_a_closed_content_free_vocabulary() {
+        let markers = [
+            PerformanceMarker::TerminalAttachEntered,
+            PerformanceMarker::TerminalAttachFailedInvalidRequest,
+            PerformanceMarker::TerminalAttachFailedInvalidSurface,
+            PerformanceMarker::TerminalAttachFailedSurfaceUnavailable,
+            PerformanceMarker::TerminalAttachFailedStaleTarget,
+            PerformanceMarker::TerminalAttachFailedWrongAttachment,
+            PerformanceMarker::TerminalAttachFailedAttachmentLimit,
+            PerformanceMarker::TerminalAttachFailedSessionUnavailable,
+            PerformanceMarker::TerminalAttachFailedPtyUnavailable,
+            PerformanceMarker::TerminalAttachFailedInputTooLarge,
+            PerformanceMarker::TerminalAttachFailedInvalidResize,
+            PerformanceMarker::TerminalAttachFailedChannelClosed,
+            PerformanceMarker::TerminalAttachFailedBackpressure,
+            PerformanceMarker::TerminalAttachFailedRuntimeUnavailable,
+            PerformanceMarker::TerminalAttachFailedInternal,
+            PerformanceMarker::TerminalAttachSucceeded,
+            PerformanceMarker::TerminalAttachInvokeRejected,
+        ];
+        let encoded: Vec<String> = markers
+            .iter()
+            .map(|marker| serde_json::to_string(marker).expect("marker JSON"))
+            .collect();
+        assert_eq!(
+            encoded,
+            [
+                "\"terminal_attach_entered\"",
+                "\"terminal_attach_failed_invalid_request\"",
+                "\"terminal_attach_failed_invalid_surface\"",
+                "\"terminal_attach_failed_surface_unavailable\"",
+                "\"terminal_attach_failed_stale_target\"",
+                "\"terminal_attach_failed_wrong_attachment\"",
+                "\"terminal_attach_failed_attachment_limit\"",
+                "\"terminal_attach_failed_session_unavailable\"",
+                "\"terminal_attach_failed_pty_unavailable\"",
+                "\"terminal_attach_failed_input_too_large\"",
+                "\"terminal_attach_failed_invalid_resize\"",
+                "\"terminal_attach_failed_channel_closed\"",
+                "\"terminal_attach_failed_backpressure\"",
+                "\"terminal_attach_failed_runtime_unavailable\"",
+                "\"terminal_attach_failed_internal\"",
+                "\"terminal_attach_succeeded\"",
+                "\"terminal_attach_invoke_rejected\"",
+            ]
+        );
+        assert!(encoded.iter().all(|marker| {
+            marker.contains("terminal_attach_") && !marker.contains('/') && !marker.contains(':')
+        }));
     }
 
     #[test]
