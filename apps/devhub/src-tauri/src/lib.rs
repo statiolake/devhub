@@ -64,7 +64,7 @@ use discovery::DiscoveryEngine;
 use editor::{
     BridgeEvent, BridgeEventSink, BridgeRequest, BridgeRequestDisposition, BridgeRequestResult,
 };
-use editor::{EditorHost, EditorHostConfig};
+use editor::{EditorHost, EditorHostConfig, EditorProviderPreference};
 use editor::{NativeFocusIdentity, NavigationRequest, NavigationRouter, WryWebViewHost};
 use integration::lifecycle::{safe_restore_frame, DisplayWorkArea, LifecycleGate, Phase};
 use keyboard::{HostCommand, KeyStroke, KeyboardController, RouteDecision, SurfaceFocus};
@@ -1508,7 +1508,12 @@ impl NativeAppState {
             bridge_sink.enable_performance_markers(diagnostics.clone());
         }
         let editor_host = EditorHost::new(
-            EditorHostConfig::new(home, resource_dir).with_bridge_event_sink(bridge_sink.clone()),
+            EditorHostConfig::new(home, resource_dir)
+                .with_provider_preference(EditorProviderPreference::from_environment())
+                .with_official_vscode_license_accepted(
+                    std::env::var("DEVHUB_VSCODE_SERVER_LICENSE_ACCEPTED").as_deref() == Ok("1"),
+                )
+                .with_bridge_event_sink(bridge_sink.clone()),
         );
         let model = persisted.hydrate_model(&profiles).map_err(persistence_error)?;
         let mut coordinator = AppCoordinator::with_model(model);

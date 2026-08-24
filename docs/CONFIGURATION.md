@@ -112,7 +112,20 @@ ownership marker, so the final marker is written only after the exact setup.
 
 Changing `tmux_socket_name` cannot strand live terminals. On launch, DevHub probes the previous effective socket recorded in StateStore. If marked Scratch or Workspace sessions remain, the previous name stays effective and Settings reports a pending change rather than silently switching. The Runtimes section then offers `Apply socket change…`; it first verifies that the target socket is absent or correctly marked with no marked DevHub sessions, then shows one destructive confirmation with the exact old Scratch and Workspace session counts. A target conflict changes nothing. Accepting runs the persisted transition defined in `IDENTITY-AND-LIFECYCLE.md`: old cleanup failure keeps the old name effective, while failure to recreate fresh sessions after the new-name commit keeps the new name effective and retries only missing sessions. Unknown unmarked sessions are never destroyed. Agents and Editors are unaffected, and terminal processes are never migrated across servers.
 
-OpenVSCode is bundled and has no release-mode TOML path override. Development builds may use an undocumented process environment override that is excluded from Settings, examples, and release behavior.
+Editor provider selection is kept behind the native provider seam in this MVP.
+`DEVHUB_EDITOR_PROVIDER=auto|official-vscode|openvscode` selects the BYO
+official VS Code candidate, the explicit official provider, or the pinned
+legacy OpenVSCode fallback. `DEVHUB_VSCODE_CLI=/absolute/path/to/code`
+overrides discovery for a local setup. These are launch-time setup overrides,
+not arbitrary shell command strings and are not copied into runtime state.
+
+Official VS Code is never bundled or redistributed. A user must install it
+separately, and explicit Server license consent is required before DevHub can
+launch it; set `DEVHUB_VSCODE_SERVER_LICENSE_ACCEPTED=1` only after that
+acceptance. DevHub returns a typed setup failure when consent is absent rather
+than accepting terms implicitly. `auto` falls back to the pinned OpenVSCode
+provider only when no official CLI is discoverable; an incompatible discovered
+official CLI fails closed.
 
 ## Appearance
 

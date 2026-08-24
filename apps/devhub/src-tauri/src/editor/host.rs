@@ -26,11 +26,12 @@ use super::bridge_transport::{
     SystemBridgeTransportFactory,
 };
 use super::error::{EditorError, EditorErrorCode, EditorResult};
-use super::paths::{append_lifecycle_log, EditorPaths, LifecycleEvent, PinnedExecutable};
+use super::paths::{append_lifecycle_log, EditorPaths, LifecycleEvent};
 use super::port::{PortAllocator, StablePort, SystemPortAllocator};
 use super::process::{
     ProcessAdapter, ProcessSpec, ProcessSupervisor, SystemProcessAdapter, MAX_RESTARTS,
 };
+use super::provider::{EditorExecutable, EditorProviderPreference};
 use super::readiness::{ReadinessProbe, SystemReadinessProbe};
 use super::registry::{SurfaceRegistry, SurfaceRegistryEntry};
 use super::token::SecretToken;
@@ -46,15 +47,42 @@ pub struct EditorHostConfig {
     pub home: PathBuf,
     pub resource_dir: Option<PathBuf>,
     event_sink: Option<Arc<dyn BridgeEventSink>>,
+    provider_preference: EditorProviderPreference,
+    official_vscode_cli: Option<PathBuf>,
+    official_vscode_license_accepted: bool,
 }
 
 impl EditorHostConfig {
     pub fn new(home: impl Into<PathBuf>, resource_dir: Option<PathBuf>) -> Self {
-        Self { home: home.into(), resource_dir, event_sink: None }
+        Self {
+            home: home.into(),
+            resource_dir,
+            event_sink: None,
+            provider_preference: EditorProviderPreference::Auto,
+            official_vscode_cli: None,
+            official_vscode_license_accepted: false,
+        }
     }
 
     pub fn with_bridge_event_sink(mut self, sink: Arc<dyn BridgeEventSink>) -> Self {
         self.event_sink = Some(sink);
+        self
+    }
+
+    pub fn with_provider_preference(mut self, preference: EditorProviderPreference) -> Self {
+        self.provider_preference = preference;
+        self
+    }
+
+    pub fn with_official_vscode_cli(mut self, path: impl Into<PathBuf>) -> Self {
+        self.official_vscode_cli = Some(path.into());
+        self
+    }
+
+    /// Consent is deliberately an explicit setup decision.  It is never
+    /// inferred from the existence of the CLI and is not enabled by default.
+    pub fn with_official_vscode_license_accepted(mut self, accepted: bool) -> Self {
+        self.official_vscode_license_accepted = accepted;
         self
     }
 }
@@ -97,7 +125,7 @@ pub struct EditorSurfaceSnapshot {
 #[derive(Clone)]
 struct Runtime {
     paths: EditorPaths,
-    executable: PinnedExecutable,
+    executable: EditorExecutable,
     token: SecretToken,
     port: StablePort,
     origin: EditorOrigin,
@@ -329,10 +357,17 @@ impl EditorHost {
         let mut runtime = if let Some(runtime) = prior_runtime {
             runtime
         } else {
-            let paths = EditorPaths::for_home(&self.config.home);
+            let executable = EditorExecutable::resolve(
+                self.config.provider_preference,
+                self.config.resource_dir.as_deref(),
+                self.config.official_vscode_cli.as_deref(),
+            )?;
+            if executable.is_official() && !self.config.official_vscode_license_accepted {
+                return Err(EditorError::new(EditorErrorCode::LicenseConsentRequired));
+            }
+            let paths = EditorPaths::for_provider(&self.config.home, executable.provider());
             paths.ensure_directories()?;
             append_lifecycle_log(&paths, LifecycleEvent::RuntimePrepared)?;
-            let executable = PinnedExecutable::resolve(self.config.resource_dir.as_deref())?;
             let stable_port =
                 StablePort::load_or_select(paths.port_file(), self.port_allocator.as_ref())?;
             stable_port.ensure_available(self.port_allocator.as_ref())?;
@@ -802,7 +837,12 @@ impl EditorHost {
         let path = |value: &Path| {
             value.to_str().map(str::to_owned).ok_or_else(|| EditorError::new(EditorErrorCode::Io))
         };
-        let args = [
+        let mut args = if runtime.executable.is_official() {
+            vec!["serve-web".to_owned()]
+        } else {
+            Vec::new()
+        };
+        args.extend([
             "--host".to_owned(),
             super::paths::LOOPBACK_HOST.to_owned(),
             "--port".to_owned(),
@@ -811,13 +851,38 @@ impl EditorHost {
             path(runtime.paths.token_file())?,
             "--server-data-dir".to_owned(),
             path(runtime.paths.server_data())?,
-            "--user-data-dir".to_owned(),
-            path(runtime.paths.user_data())?,
-            "--extensions-dir".to_owned(),
-            path(runtime.paths.extensions())?,
             "--disable-telemetry".to_owned(),
-            "--accept-server-license-terms".to_owned(),
-        ];
+        ]);
+        if !runtime.executable.is_official() {
+            args.extend([
+                "--user-data-dir".to_owned(),
+                path(runtime.paths.user_data())?,
+                "--extensions-dir".to_owned(),
+                path(runtime.paths.extensions())?,
+            ]);
+        }
+        if runtime.executable.is_official() {
+            if self.config.official_vscode_license_accepted {
+                args.push("--accept-server-license-terms".to_owned());
+            }
+        } else {
+            // Keep the legacy bundled provider's existing non-interactive
+            // startup contract. Official VS Code is handled above and never
+            // receives this flag without explicit user consent.
+            args.push("--accept-server-license-terms".to_owned());
+        }
+        // The scale fixture uses generated, untrusted folders. OpenVSCode's
+        // APPLICATION-scoped trust prompt is browser-profile state, so a
+        // server-side settings.json cannot provision it before a WebView
+        // exists. The pinned CLI provides the narrow, session-scoped test
+        // switch; keep it strictly behind the opt-in Q5 fixture environment
+        // and never add it to ordinary product launches.
+        #[cfg(debug_assertions)]
+        if !runtime.executable.is_official()
+            && q5_workspace_trust_flag(std::env::var_os("DEVHUB_Q5_SCALE_FIXTURE").as_deref())
+        {
+            args.push("--disable-workspace-trust".to_owned());
+        }
         let registry = path(&runtime.paths.root().join("surface-registry.json"))?;
         let env = vec![
             ("DEVHUB_BRIDGE_SURFACE_REGISTRY".to_owned(), registry),
@@ -826,6 +891,11 @@ impl EditorHost {
         ];
         Ok(ProcessSpec::new(runtime.executable.path().to_path_buf(), args).with_env(env))
     }
+}
+
+#[cfg(debug_assertions)]
+fn q5_workspace_trust_flag(value: Option<&std::ffi::OsStr>) -> bool {
+    value == Some(std::ffi::OsStr::new("1"))
 }
 
 impl EditorHostPort for EditorHost {
@@ -1068,6 +1138,27 @@ mod tests {
         resource
     }
 
+    fn fake_official_cli(root: &Path) -> PathBuf {
+        let path = root.join("code");
+        fs::write(
+            &path,
+            b"#!/bin/sh
+if [ \"$1\" = \"--version\" ]; then
+  printf '1.134.0\\n110a328ea54b42367b803ec53ee0bf52ef26b419\\narm64\\n'
+else
+  printf '%s\\n' 'serve-web --connection-token-file --server-data-dir --disable-telemetry --default-folder'
+fi
+",
+        )
+        .expect("official cli");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).expect("cli mode");
+        }
+        path
+    }
+
     fn test_host(
         ready: bool,
     ) -> (EditorHost, Arc<AtomicUsize>, Arc<AtomicUsize>, EditorPaths, PathBuf, Arc<AtomicBool>)
@@ -1081,7 +1172,8 @@ mod tests {
         let terminated = Arc::new(AtomicUsize::new(0));
         let readiness_calls = Arc::new(AtomicUsize::new(0));
         let host = EditorHost::with_adapters(
-            EditorHostConfig::new(&home, Some(resource)),
+            EditorHostConfig::new(&home, Some(resource))
+                .with_provider_preference(EditorProviderPreference::OpenVscode),
             Arc::new(FakeProcessAdapter {
                 spawns: spawns.clone(),
                 alive: alive.clone(),
@@ -1090,7 +1182,71 @@ mod tests {
             Arc::new(FakeReadiness { ready, calls: readiness_calls }),
             Arc::new(FakePorts),
         );
-        (host, spawns, terminated, EditorPaths::for_home(&home), root, alive)
+        (
+            host,
+            spawns,
+            terminated,
+            EditorPaths::for_provider(&home, super::super::paths::EditorProviderKind::OpenVscode),
+            root,
+            alive,
+        )
+    }
+
+    #[test]
+    fn official_provider_requires_explicit_license_consent() {
+        let root = test_root("official-license");
+        let resource = fake_resource_dir(&root);
+        let home = root.join("home");
+        fs::create_dir_all(&home).expect("home");
+        let host = EditorHost::with_adapters(
+            EditorHostConfig::new(&home, Some(resource))
+                .with_provider_preference(EditorProviderPreference::OfficialVscode)
+                .with_official_vscode_cli(fake_official_cli(&root)),
+            Arc::new(FakeProcessAdapter {
+                spawns: Arc::new(AtomicUsize::new(0)),
+                alive: Arc::new(AtomicBool::new(true)),
+                terminated: Arc::new(AtomicUsize::new(0)),
+            }),
+            Arc::new(FakeReadiness { ready: true, calls: Arc::new(AtomicUsize::new(0)) }),
+            Arc::new(FakePorts),
+        );
+        let error = host.ensure_server().expect_err("consent required");
+        assert_eq!(error.code(), EditorErrorCode::LicenseConsentRequired);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn official_provider_uses_an_app_owned_server_profile_after_consent() {
+        let root = test_root("official-consented");
+        let resource = fake_resource_dir(&root);
+        let home = root.join("home");
+        fs::create_dir_all(&home).expect("home");
+        let host = EditorHost::with_adapters(
+            EditorHostConfig::new(&home, Some(resource))
+                .with_provider_preference(EditorProviderPreference::OfficialVscode)
+                .with_official_vscode_cli(fake_official_cli(&root))
+                .with_official_vscode_license_accepted(true),
+            Arc::new(FakeProcessAdapter {
+                spawns: Arc::new(AtomicUsize::new(0)),
+                alive: Arc::new(AtomicBool::new(true)),
+                terminated: Arc::new(AtomicUsize::new(0)),
+            }),
+            Arc::new(FakeReadiness { ready: true, calls: Arc::new(AtomicUsize::new(0)) }),
+            Arc::new(FakePorts),
+        );
+        host.ensure_server().expect("official provider");
+        let runtime = host.state.lock().expect("state").runtime.clone().expect("runtime");
+        assert!(runtime.executable.is_official());
+        assert!(runtime.paths.root().ends_with("VisualStudioCode"));
+        assert!(runtime.paths.server_data().starts_with(runtime.paths.root()));
+        assert!(runtime.paths.extensions().starts_with(runtime.paths.server_data()));
+        let spec = host.server_spec(&runtime).expect("official spec");
+        assert_eq!(spec.args().first().map(String::as_str), Some("serve-web"));
+        assert!(spec.args().contains(&"--server-data-dir".to_owned()));
+        assert!(spec.args().contains(&"--accept-server-license-terms".to_owned()));
+        assert!(!spec.args().contains(&"--extensions-dir".to_owned()));
+        assert!(!spec.args().contains(&"--user-data-dir".to_owned()));
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -1164,7 +1320,8 @@ mod tests {
         fs::create_dir_all(&home).expect("home");
         let terminated = Arc::new(AtomicBool::new(false));
         let host = EditorHost::with_adapters(
-            EditorHostConfig::new(&home, None),
+            EditorHostConfig::new(&home, None)
+                .with_provider_preference(EditorProviderPreference::OpenVscode),
             Arc::new(ExpiredDeadlineAdapter { terminated: terminated.clone() }),
             Arc::new(FakeReadiness { ready: true, calls: Arc::new(AtomicUsize::new(0)) }),
             Arc::new(FakePorts),
@@ -1194,6 +1351,14 @@ mod tests {
         let error = host.ensure_server().expect_err("readiness failure");
         assert_eq!(error.code(), EditorErrorCode::ReadinessTimeout);
         assert_eq!(spawns.load(Ordering::Acquire), usize::from(MAX_RESTARTS) + 1);
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn workspace_trust_disable_is_q5_fixture_only() {
+        assert!(!q5_workspace_trust_flag(None));
+        assert!(!q5_workspace_trust_flag(Some(std::ffi::OsStr::new("0"))));
+        assert!(q5_workspace_trust_flag(Some(std::ffi::OsStr::new("1"))));
     }
 
     #[test]

@@ -18,6 +18,7 @@ const required = [
   [extension, "public folder command", "devhub.bridge.openFolder"],
   [extension, "public new-window command", "devhub.bridge.newWindow"],
   [extension, "public URI handler", "registerUriHandler"],
+  [extension, "remote workspace URI support", "vscode-remote"],
   [extension, "dirty observer", "onDidChangeTextDocument"],
   [session, "generated validator consumption", "parseEnvelope"],
   [session, "generated encoder consumption", "encodeEnvelope"],
@@ -41,7 +42,10 @@ if (transport.includes("console.log") || transport.includes("console.error")) {
   throw new Error("transport must not log connection secrets");
 }
 if (manifest.engines?.vscode !== "^1.109.0") {
-  throw new Error("Bridge must target the pinned OpenVSCode API");
+  throw new Error("Bridge must target the supported VS Code 1.x API range");
+}
+if (manifest.capabilities?.untrustedWorkspaces?.supported !== true) {
+  throw new Error("Bridge must explicitly support safe untrusted workspaces");
 }
 const commands = manifest.contributes?.commands ?? [];
 for (const command of ["devhub.bridge.openFolder", "devhub.bridge.newWindow"]) {

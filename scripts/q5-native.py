@@ -391,6 +391,10 @@ def _provider_environment(
     """Propagate the complete verified provider resource boundary."""
 
     environment = dict(base)
+    # Q5 is the pinned legacy OpenVSCode lane. Keep the endurance driver
+    # deterministic now that the product's normal `auto` mode prefers a
+    # separately installed official VS Code CLI when one is present.
+    environment["DEVHUB_EDITOR_PROVIDER"] = "openvscode"
     if artifact is None:
         return environment
     if artifact.resource_root is not None:

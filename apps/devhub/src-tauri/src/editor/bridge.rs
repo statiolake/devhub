@@ -1,8 +1,8 @@
 //! Verification and installation seam for the bundled Bridge VSIX.
 //!
-//! The OpenVSCode executable is unmodified.  The host installs the exact
+//! The selected editor executable is not modified. The host installs the exact
 //! app-owned VSIX into the app-owned extensions directory before starting the
-//! long-lived server.  Tests inject a no-op installer so process and WebView
+//! long-lived server. Tests inject a no-op installer so process and WebView
 //! lifecycle tests never depend on a bundle being present.
 
 use std::fs;
@@ -15,7 +15,8 @@ use flate2::read::DeflateDecoder;
 use sha2::{Digest, Sha256};
 
 use super::error::{EditorError, EditorErrorCode, EditorResult};
-use super::paths::{EditorPaths, PinnedExecutable};
+use super::paths::EditorPaths;
+use super::provider::EditorExecutable;
 
 const MAX_VSIX_BYTES: u64 = 32 * 1024 * 1024;
 const PACKAGE_ENTRY: &str = "extension/package.json";
@@ -26,9 +27,9 @@ const EXPECTED_BRIDGE_MAIN: &str = "./extension.js";
 // The reproducible VSIX emitted by extensions/devhub-bridge is the release
 // artifact, not an arbitrary file whose name happens to end in `.vsix`.
 const EXPECTED_BRIDGE_VSIX_SHA256: &str =
-    "5d9b31ed0547c8bf1d8dccd42927f674c9579b593d9ca6c7d6ea4a5891ae0088";
+    "8cd65bed3ac2b999d128781dde37541cc46e3968e724094b1ef27ea71aac552c";
 const EXPECTED_BRIDGE_MANIFEST_SHA256: &str =
-    "b9e5d74e60f350373d067793f7259c6e56b7adaaea548593d9559834fbc14148";
+    "1dd072c27b940bc2f7574c48f1fbda09a8ddec9d891431f684015624044662eb";
 const MAX_MANIFEST_BYTES: usize = 64 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -235,7 +236,7 @@ pub trait BridgeInstaller: Send + Sync {
     fn install(
         &self,
         package: &BridgePackage,
-        executable: &PinnedExecutable,
+        executable: &EditorExecutable,
         paths: &EditorPaths,
     ) -> EditorResult<()>;
 }
@@ -249,7 +250,7 @@ impl BridgeInstaller for NoopBridgeInstaller {
     fn install(
         &self,
         _package: &BridgePackage,
-        _executable: &PinnedExecutable,
+        _executable: &EditorExecutable,
         _paths: &EditorPaths,
     ) -> EditorResult<()> {
         Ok(())
@@ -263,7 +264,7 @@ impl BridgeInstaller for SystemBridgeInstaller {
     fn install(
         &self,
         package: &BridgePackage,
-        executable: &PinnedExecutable,
+        executable: &EditorExecutable,
         paths: &EditorPaths,
     ) -> EditorResult<()> {
         let mut command = Command::new(executable.path());
@@ -272,14 +273,15 @@ impl BridgeInstaller for SystemBridgeInstaller {
             .arg(package.path())
             .arg("--force")
             .arg("--extensions-dir")
-            .arg(paths.extensions())
-            .arg("--user-data-dir")
-            .arg(paths.user_data())
-            .arg("--server-data-dir")
-            .arg(paths.server_data())
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
+            .arg(paths.extensions());
+        if !executable.is_official() {
+            command
+                .arg("--user-data-dir")
+                .arg(paths.user_data())
+                .arg("--server-data-dir")
+                .arg(paths.server_data());
+        }
+        command.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
         #[cfg(unix)]
         {
             use std::os::unix::process::CommandExt;

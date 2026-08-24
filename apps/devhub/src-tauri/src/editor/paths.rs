@@ -1,4 +1,4 @@
-//! Application-owned paths and the pinned OpenVSCode executable identity.
+//! Application-owned paths and the pinned legacy provider identity.
 
 use std::fs::{self, OpenOptions};
 use std::io::Write;
@@ -11,12 +11,17 @@ pub const OPENVSCODE_TAG: &str = "openvscode-server-v1.109.5";
 pub const OPENVSCODE_COMMIT: &str = "4ffe2270acdf711bbefecc3e8c79f4b3631640e5";
 pub const LOOPBACK_HOST: &str = "127.0.0.1";
 pub const WEBKIT_DATA_STORE_ID: [u8; 16] = *b"DEVHUB-WB-STORE1";
-
 const OPENVSCODE_ROOT: &str = "OpenVSCode";
 
-/// Every path used by the provider is owned by DevHub.  The token and port
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EditorProviderKind {
+    OpenVscode,
+    OfficialVscode,
+}
+
+/// Every path used by the provider is owned by DevHub. The token and port
 /// files are deliberately siblings of the provider data so a future runtime
-/// migration can move the complete OpenVSCode profile as one unit.
+/// migration can move a complete provider profile as one unit.
 #[derive(Clone)]
 pub struct EditorPaths {
     root: PathBuf,
@@ -30,12 +35,23 @@ pub struct EditorPaths {
 }
 
 impl EditorPaths {
-    pub fn for_home(home: impl AsRef<Path>) -> Self {
-        let root = home.as_ref().join("Library/Application Support/DevHub").join(OPENVSCODE_ROOT);
+    pub fn for_provider(home: impl AsRef<Path>, provider: EditorProviderKind) -> Self {
+        let root_name = match provider {
+            EditorProviderKind::OpenVscode => OPENVSCODE_ROOT,
+            EditorProviderKind::OfficialVscode => "VisualStudioCode",
+        };
+        let root = home.as_ref().join("Library/Application Support/DevHub").join(root_name);
+        let extensions = match provider {
+            EditorProviderKind::OpenVscode => root.join("extensions"),
+            // `code serve-web` loads workspace extensions from this official
+            // server-data-owned directory. It is still DevHub-owned and does
+            // not reuse the user's consumer VS Code profile.
+            EditorProviderKind::OfficialVscode => root.join("server-data/extensions"),
+        };
         Self {
             server_data: root.join("server-data"),
             user_data: root.join("user-data"),
-            extensions: root.join("extensions"),
+            extensions,
             logs: home.as_ref().join("Library/Logs/DevHub"),
             webkit_data: root.join("webkit-data"),
             token: root.join("connection-token"),

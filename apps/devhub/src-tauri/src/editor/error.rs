@@ -15,6 +15,9 @@ pub enum EditorErrorCode {
     TokenUnavailable,
     ExecutableUnavailable,
     ExecutableIdentityMismatch,
+    OfficialVscodeUnavailable,
+    ProviderCapabilityMismatch,
+    LicenseConsentRequired,
     BridgeUnavailable,
     BridgeInstallFailed,
     ProcessUnavailable,
@@ -38,6 +41,9 @@ impl EditorErrorCode {
             Self::TokenUnavailable => "token_unavailable",
             Self::ExecutableUnavailable => "executable_unavailable",
             Self::ExecutableIdentityMismatch => "executable_identity_mismatch",
+            Self::OfficialVscodeUnavailable => "official_vscode_unavailable",
+            Self::ProviderCapabilityMismatch => "provider_capability_mismatch",
+            Self::LicenseConsentRequired => "license_consent_required",
             Self::BridgeUnavailable => "bridge_unavailable",
             Self::BridgeInstallFailed => "bridge_install_failed",
             Self::ProcessUnavailable => "process_unavailable",
@@ -82,36 +88,45 @@ const fn summary_for(code: EditorErrorCode) -> &'static str {
     match code {
         EditorErrorCode::InvalidSurface => "The editor surface identity is invalid.",
         EditorErrorCode::InvalidWorkspaceRoot => "The editor workspace root is unavailable.",
-        EditorErrorCode::InvalidPort => "The OpenVSCode port configuration is invalid.",
-        EditorErrorCode::PortConflict => "The stable OpenVSCode port is occupied.",
-        EditorErrorCode::PermissionDenied => "DevHub cannot access its OpenVSCode runtime files.",
+        EditorErrorCode::InvalidPort => "The editor provider port configuration is invalid.",
+        EditorErrorCode::PortConflict => "The stable editor provider port is occupied.",
+        EditorErrorCode::PermissionDenied => "DevHub cannot access its editor runtime files.",
         EditorErrorCode::TokenUnavailable => {
-            "DevHub cannot create its OpenVSCode authentication token."
+            "DevHub cannot create its editor authentication token."
         }
         EditorErrorCode::ExecutableUnavailable => {
-            "The pinned OpenVSCode executable is unavailable."
+            "The selected editor provider executable is unavailable."
         }
         EditorErrorCode::ExecutableIdentityMismatch => {
-            "The OpenVSCode executable does not match the pinned release."
+            "The editor provider executable identity is not accepted."
+        }
+        EditorErrorCode::OfficialVscodeUnavailable => {
+            "The locally installed official VS Code CLI is unavailable."
+        }
+        EditorErrorCode::ProviderCapabilityMismatch => {
+            "The selected editor provider does not support DevHub's required Web Workbench contract."
+        }
+        EditorErrorCode::LicenseConsentRequired => {
+            "DevHub needs explicit consent for the official VS Code Server license before starting it."
         }
         EditorErrorCode::BridgeUnavailable => "The bundled DevHub Bridge extension is unavailable.",
         EditorErrorCode::BridgeInstallFailed => {
             "The DevHub Bridge extension could not be installed."
         }
-        EditorErrorCode::ProcessUnavailable => "The OpenVSCode process is unavailable.",
+        EditorErrorCode::ProcessUnavailable => "The editor provider process is unavailable.",
         EditorErrorCode::ProcessIdentityMismatch => {
-            "The OpenVSCode process identity could not be verified."
+            "The editor provider process identity could not be verified."
         }
-        EditorErrorCode::ProcessExited => "The OpenVSCode process exited unexpectedly.",
+        EditorErrorCode::ProcessExited => "The editor provider process exited unexpectedly.",
         EditorErrorCode::ReadinessTimeout => {
-            "OpenVSCode did not become ready within the restart budget."
+            "The editor provider did not become ready within the restart budget."
         }
         EditorErrorCode::WebViewUnavailable => "The editor WebView is unavailable.",
         EditorErrorCode::NavigationDenied => "Editor navigation was denied.",
         EditorErrorCode::LifecycleConflict => {
             "The editor lifecycle operation conflicts with current state."
         }
-        EditorErrorCode::Io => "The OpenVSCode runtime operation failed.",
+        EditorErrorCode::Io => "The editor provider runtime operation failed.",
     }
 }
 

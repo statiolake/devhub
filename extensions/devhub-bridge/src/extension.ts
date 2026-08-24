@@ -118,7 +118,12 @@ async function resolveConfiguration(): Promise<BridgeConfiguration | null> {
 }
 
 function filePath(uri: vscode.Uri): string | null {
-  if (!uri || uri.scheme !== "file") return null;
+  // Browser Workbench sessions expose workspace folders through the remote
+  // authority even though the underlying filesystem is local. The official
+  // `code serve-web` provider uses `vscode-remote`; OpenVSCode may expose
+  // `file` in its embedded configuration. Both are public URI schemes for
+  // this provider, and both still pass through the owner-canonical registry.
+  if (!uri || !["file", "vscode-remote"].includes(uri.scheme)) return null;
   return normalizedAbsolutePath(uri.fsPath);
 }
 

@@ -1025,7 +1025,9 @@ fn handle_hello(
             });
             match host.receive_at(hello, inner.clock.now()) {
                 HostReceiveOutcome::HelloAccepted(accepted) => accepted,
-                _ => return Err(EditorError::new(EditorErrorCode::BridgeUnavailable)),
+                _ => {
+                    return Err(EditorError::new(EditorErrorCode::BridgeUnavailable));
+                }
             }
         };
         let connection_id = accepted

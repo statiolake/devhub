@@ -15,7 +15,57 @@
 | Tauri                 | `2.11.5`                                                                                            | exact locked production pin                                                                                                                                                               |
 | WRY                   | `0.55.1`                                                                                            | exact vendored upstream baseline with the narrow local host patch documented in [`apps/devhub/src-tauri/vendor/wry/DEVHUB-PATCH.md`](../apps/devhub/src-tauri/vendor/wry/DEVHUB-PATCH.md) |
 
+The official VS Code Web CLI is the BYO primary candidate: the local proof used
+version `1.134.0`, commit `110a328ea54b42367b803ec53ee0bf52ef26b419`, on arm64.
+It is discovered and probed at launch, never pinned as a redistributed
+artifact. The pinned OpenVSCode row remains the explicit legacy fallback.
+
 F0.1 records the complete Darwin build command, lockfile hashes, produced bundle hash, Node binary provenance, and licenses before R1.1 begins. A different dependency version requires rerunning its affected feasibility gates, not an informal upgrade. The WRY patch is local to DevHub, is rebased only from the exact `0.55.1` source, and has no upstream publication claim; its IPC isolation and native keyboard/responder invariants are part of the tracked vendor boundary.
+
+## Official VS Code Web contract (BYO)
+
+Official VS Code is a user-installed dependency, not a DevHub artifact. DevHub
+does not bundle, download, patch, or redistribute the Microsoft application or
+its Server. On macOS the provider discovers an explicit CLI override, then the
+`code` command on `PATH`, then the standard Visual Studio Code application
+location. It probes `code --version` and `code serve-web --help` at startup,
+records version/commit/architecture, and fails closed on an unsupported CLI.
+
+The provider launches one loopback-only `code serve-web` process with a
+DevHub-owned connection-token file, app-owned `--server-data-dir`, and
+telemetry disabled. The Bridge VSIX is installed through the public command:
+
+```sh
+code --install-extension <DevHub Bridge VSIX> --force \
+  --extensions-dir <DevHub server-data>/extensions
+```
+
+The Bridge accepts both `file` and the official Workbench's `vscode-remote`
+URI scheme only after validating the canonical root against the Rust-owned
+surface registry. The observed official VS Code 1.134.0 arm64 proof (commit
+`110a328ea54b42367b803ec53ee0bf52ef26b419`) activated the Bridge in a
+restricted workspace and completed the authenticated hello/state-snapshot
+handshake with the expected workspace identity. Folderless Global Editor and
+additional server-data profiles use the same provider-neutral protocol and
+distinct app-owned identity ledgers; the user's consumer profile is not reused.
+
+Workspace Trust remains Workbench-owned. The Bridge declares
+`capabilities.untrustedWorkspaces.supported = true`, so it can report identity
+and readiness in Restricted Mode; DevHub does not silently trust arbitrary
+folders or suppress the Workbench's own consent UX.
+
+The official Server license is an explicit setup boundary. DevHub never adds
+`--accept-server-license-terms` unless the user has accepted the terms and
+enabled the local consent setting (`DEVHUB_VSCODE_SERVER_LICENSE_ACCEPTED=1`).
+Without consent the host returns `license_consent_required`; it does not
+auto-accept on the user's behalf. Settings Sync is not assumed: official
+server-data profiles are isolated per DevHub provider profile, while DevHub's
+own TOML/state sync remains the user's responsibility.
+
+If no compatible official CLI is available, `auto` may use the pinned
+OpenVSCode fallback. Selecting `official-vscode` makes an unavailable or
+incompatible installation an actionable failure rather than silently changing
+the provider.
 
 ## OpenVSCode contract
 

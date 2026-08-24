@@ -9,7 +9,7 @@ the final implementation wave.
 - macOS is the supported development host for R1.1.
 - Rust `1.97.1`, including `rustfmt` and `clippy`, is selected by
   [`rust-toolchain.toml`](../rust-toolchain.toml).
-- Node `22.21.1` is the pinned OpenVSCode/build baseline from
+- Node `22.21.1` is the pinned Bridge/OpenVSCode build baseline from
   [`docs/PROVIDER-CONTRACTS.md`](PROVIDER-CONTRACTS.md).
 - pnpm `11.20.0` is required by the root `packageManager` field.
 - The JavaScript Tauri packages follow their current independent release
@@ -35,6 +35,30 @@ CI=true pnpm --filter @devhub/app exec tauri build --debug --no-bundle
 The first command must report `tauri-cli 2.11.4`; the second runs the pinned
 Rust Tauri `2.11.5` and WRY `0.55.1` host together with the frontend build.
 Hosted macOS artifact validation remains a later release gate.
+
+### Official VS Code Web (BYO) proof
+
+DevHub can use a separately installed macOS VS Code CLI without bundling it.
+Keep server data, CLI data, token, and browser data outside the user's normal
+profile during proof:
+
+```sh
+code --version
+code serve-web --help
+DEVHUB_EDITOR_PROVIDER=official-vscode \
+DEVHUB_VSCODE_CLI=/absolute/path/to/code \
+DEVHUB_VSCODE_SERVER_LICENSE_ACCEPTED=1 \
+CI=true pnpm --filter @devhub/app exec tauri dev
+```
+
+The native provider probes the CLI version and `serve-web` capabilities before
+launch. It requires authenticated HTTP and Workbench WebSocket readiness and
+installs the app-owned Bridge VSIX through the public `code
+--install-extension` command. Do not add `--accept-server-license-terms`
+unless the user has already accepted the official terms and enabled the
+explicit consent setting. A Restricted Mode workspace is an expected proof
+case: the Bridge manifest advertises untrusted-workspace support, while the
+Workbench's own Trust UI remains upstream-owned.
 
 ## Deterministic checks
 
@@ -107,9 +131,12 @@ The native Tauri development command is available through the app package:
 CI=true pnpm --filter @devhub/app tauri dev
 ```
 
-R1.1 does not yet bundle OpenVSCode, Workspaces, Agents, or persistent
-terminals. Their provider adapters and runtime checks are introduced in later
-waves; do not substitute prototype behavior for the production shell.
+The production shell owns the EditorHost/provider boundary. A packaged build
+uses the pinned OpenVSCode fallback when its resources are present; a local
+macOS setup may select the separately installed official VS Code Web provider
+as documented above. Workspaces, Agents, and persistent terminals still
+require their respective runtime setup; do not substitute prototype behavior
+for the production shell.
 
 ## CI, provenance, and release boundaries
 

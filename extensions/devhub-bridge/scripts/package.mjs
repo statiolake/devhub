@@ -8,6 +8,9 @@ const root = resolve(import.meta.dirname, "..");
 const packageJson = JSON.parse(
   await readFile(resolve(root, "package.json"), "utf8"),
 );
+if (packageJson.capabilities?.untrustedWorkspaces?.supported !== true) {
+  throw new Error("VSIX manifest must preserve untrusted workspace support");
+}
 const staging = await mkdtemp(resolve(tmpdir(), "devhub-bridge-vsix-"));
 const extensionDir = resolve(staging, "extension");
 const timestamp = new Date("2000-01-01T00:00:00.000Z");
@@ -30,6 +33,7 @@ const manifest = {
   engines: packageJson.engines,
   main: "./extension.js",
   extensionKind: packageJson.extensionKind,
+  capabilities: packageJson.capabilities,
   activationEvents: packageJson.activationEvents,
   contributes: packageJson.contributes,
 };
@@ -43,7 +47,7 @@ await writeFile(
 );
 await writeFile(
   resolve(staging, "extension.vsixmanifest"),
-  `<?xml version="1.0" encoding="utf-8"?>\n<PackageManifest Version="2.0.0" xmlns="http://schemas.microsoft.com/developer/vsx-schema/2011" xmlns:d="http://schemas.microsoft.com/developer/vsx-schema/2011/d"><Metadata><Identity Language="en" Id="devhub.bridge" Version="${packageJson.version}" Publisher="${packageJson.publisher}"/><DisplayName>${packageJson.displayName}</DisplayName><Description xml:space="preserve">${packageJson.description}</Description><Tags>devhub,bridge,openvscode</Tags><Categories>Other</Categories><GalleryFlags>Public</GalleryFlags><Properties><Property Id="Microsoft.VisualStudio.Code.Engine" Value="${packageJson.engines.vscode}"/></Properties></Metadata><Installation><InstallationTarget Id="Microsoft.VisualStudio.Code" Version="[1.109.0,2.0.0)"/></Installation><Dependencies/><Assets><Asset Type="Microsoft.VisualStudio.Code.Manifest" Path="extension/package.json"/><Asset Type="Microsoft.VisualStudio.Services.Content.Details" Path="extension/README.md"/></Assets></PackageManifest>\n`,
+  `<?xml version="1.0" encoding="utf-8"?>\n<PackageManifest Version="2.0.0" xmlns="http://schemas.microsoft.com/developer/vsx-schema/2011" xmlns:d="http://schemas.microsoft.com/developer/vsx-schema/2011/d"><Metadata><Identity Language="en" Id="devhub.bridge" Version="${packageJson.version}" Publisher="${packageJson.publisher}"/><DisplayName>${packageJson.displayName}</DisplayName><Description xml:space="preserve">${packageJson.description}</Description><Tags>devhub,bridge,vscode-web</Tags><Categories>Other</Categories><GalleryFlags>Public</GalleryFlags><Properties><Property Id="Microsoft.VisualStudio.Code.Engine" Value="${packageJson.engines.vscode}"/></Properties></Metadata><Installation><InstallationTarget Id="Microsoft.VisualStudio.Code" Version="[1.109.0,2.0.0)"/></Installation><Dependencies/><Assets><Asset Type="Microsoft.VisualStudio.Code.Manifest" Path="extension/package.json"/><Asset Type="Microsoft.VisualStudio.Services.Content.Details" Path="extension/README.md"/></Assets></PackageManifest>\n`,
 );
 
 async function normalize(path) {

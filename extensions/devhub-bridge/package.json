@@ -1,7 +1,7 @@
 {
   "name": "@devhub/bridge",
   "displayName": "DevHub Bridge",
-  "description": "The narrow public-API Bridge between DevHub and OpenVSCode.",
+  "description": "The narrow public-API Bridge between DevHub and a supported VS Code Web Workbench.",
   "version": "0.1.0",
   "publisher": "devhub",
   "license": "MIT",
@@ -13,6 +13,11 @@
   "extensionKind": [
     "workspace"
   ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": true
+    }
+  },
   "activationEvents": [
     "*"
   ],
