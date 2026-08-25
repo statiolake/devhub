@@ -1,7 +1,7 @@
 //! Narrow provider seams owned by the domain crate.
 //!
 //! These traits mention only DevHub values.  Tauri, WRY, Herdr, tmux, Git,
-//! OpenVSCode, process handles and provider IDs belong in later adapters.
+//! VS Code Server, process handles and provider IDs belong in later adapters.
 
 use std::fmt;
 use std::future::Future;

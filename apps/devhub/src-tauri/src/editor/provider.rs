@@ -1,11 +1,10 @@
-//! Provider-neutral executable discovery and capability probing.
+//! Executable discovery and capability probing for the local Web Workbench.
 //!
-//! `EditorHost` owns one lifecycle regardless of which local Web Workbench is
-//! selected.  This module is the only place that knows how an executable is
-//! discovered and which CLI shape it supports.  The bundled OpenVSCode build
-//! remains a pinned fallback; a user-installed official VS Code is the
-//! preferred `Auto` candidate and is never downloaded or redistributed by
-//! DevHub.
+//! `EditorHost` owns one lifecycle; this module is the only place that knows
+//! how an executable is discovered and which CLI shape it supports. DevHub
+//! uses the user's separately installed official VS Code and never downloads
+//! or redistributes a Workbench of its own. A future self-built Code-OSS
+//! provider slots in here beside `OfficialVscodeExecutable`.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -13,34 +12,11 @@ use std::process::{Command, Stdio};
 use std::time::Duration;
 
 use super::error::{EditorError, EditorErrorCode, EditorResult};
-use super::paths::{EditorProviderKind, PinnedExecutable};
 
 const OFFICIAL_CLI_ENV: &str = "DEVHUB_VSCODE_CLI";
-const OPENVSCODE_READINESS_TIMEOUT: Duration = Duration::from_secs(8);
 const OFFICIAL_VSCODE_PROVISIONING_TIMEOUT: Duration = Duration::from_secs(120);
 const REQUIRED_HELP_FLAGS: [&str; 4] =
     ["--connection-token-file", "--server-data-dir", "--disable-telemetry", "--default-folder"];
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum EditorProviderPreference {
-    #[default]
-    Auto,
-    OfficialVscode,
-    OpenVscode,
-}
-
-impl EditorProviderPreference {
-    /// Read only the provider selector.  Executable paths and consent are
-    /// supplied separately so this value cannot smuggle a command line into
-    /// the lifecycle seam.
-    pub fn from_environment() -> Self {
-        match std::env::var("DEVHUB_EDITOR_PROVIDER").ok().as_deref() {
-            Some("official-vscode") => Self::OfficialVscode,
-            Some("openvscode") => Self::OpenVscode,
-            _ => Self::Auto,
-        }
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct OfficialVscodeCapabilities {
@@ -147,70 +123,16 @@ impl OfficialVscodeExecutable {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum EditorExecutable {
-    OfficialVscode(OfficialVscodeExecutable),
-    OpenVscode(PinnedExecutable),
-}
+/// The single provider DevHub currently supports. Kept as a named alias so a
+/// second provider can be introduced as an enum here without re-plumbing the
+/// lifecycle in `EditorHost`.
+pub type EditorExecutable = OfficialVscodeExecutable;
 
-impl EditorExecutable {
-    pub fn resolve(
-        preference: EditorProviderPreference,
-        resource_dir: Option<&Path>,
-        official_path: Option<&Path>,
-    ) -> EditorResult<Self> {
-        match preference {
-            EditorProviderPreference::OfficialVscode => {
-                OfficialVscodeExecutable::resolve(official_path).map(Self::OfficialVscode)
-            }
-            EditorProviderPreference::OpenVscode => {
-                PinnedExecutable::resolve(resource_dir).map(Self::OpenVscode)
-            }
-            EditorProviderPreference::Auto => OfficialVscodeExecutable::resolve(official_path)
-                .map(Self::OfficialVscode)
-                .or_else(|error| {
-                    if error.code() == EditorErrorCode::OfficialVscodeUnavailable {
-                        PinnedExecutable::resolve(resource_dir).map(Self::OpenVscode)
-                    } else {
-                        Err(error)
-                    }
-                }),
-        }
-    }
-
-    pub fn provider(&self) -> EditorProviderKind {
-        match self {
-            Self::OfficialVscode(_) => EditorProviderKind::OfficialVscode,
-            Self::OpenVscode(_) => EditorProviderKind::OpenVscode,
-        }
-    }
-
-    pub fn path(&self) -> &Path {
-        match self {
-            Self::OfficialVscode(executable) => executable.path(),
-            Self::OpenVscode(executable) => executable.path(),
-        }
-    }
-
-    pub fn is_official(&self) -> bool {
-        matches!(self, Self::OfficialVscode(_))
-    }
-
-    pub fn official(&self) -> Option<&OfficialVscodeExecutable> {
-        match self {
-            Self::OfficialVscode(executable) => Some(executable),
-            Self::OpenVscode(_) => None,
-        }
-    }
-
-    /// Provider-owned startup budget. Official VS Code may provision the
-    /// matching Server commit on its first launch; OpenVSCode is already
-    /// bundled and keeps the short readiness bound.
+impl OfficialVscodeExecutable {
+    /// Startup budget. Official VS Code may provision the matching Server
+    /// commit on its first launch.
     pub const fn readiness_timeout(&self) -> Duration {
-        match self {
-            Self::OfficialVscode(_) => OFFICIAL_VSCODE_PROVISIONING_TIMEOUT,
-            Self::OpenVscode(_) => OPENVSCODE_READINESS_TIMEOUT,
-        }
+        OFFICIAL_VSCODE_PROVISIONING_TIMEOUT
     }
 }
 
@@ -311,10 +233,7 @@ mod tests {
             std::env::temp_dir().join(format!("devhub-provider-timeout-{}", std::process::id()));
         fs::create_dir_all(&root).expect("temp");
         let executable = OfficialVscodeExecutable::from_path(fake_cli(&root, true)).expect("probe");
-        assert_eq!(
-            EditorExecutable::OfficialVscode(executable).readiness_timeout(),
-            Duration::from_secs(120)
-        );
+        assert_eq!(executable.readiness_timeout(), Duration::from_secs(120));
         let _ = fs::remove_dir_all(root);
     }
 

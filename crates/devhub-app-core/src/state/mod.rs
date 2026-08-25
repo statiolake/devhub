@@ -2,7 +2,7 @@
 //!
 //! [`JsonStateStore`] owns the machine-local `state.json` contract.  The
 //! state is deliberately a projection of the application, not a cache of
-//! tmux, Herdr, or OpenVSCode.  Provider adapters can use the persisted
+//! tmux, Herdr, or VS Code Server.  Provider adapters can use the persisted
 //! workspace and agent identities to reattach after a relaunch, but runtime
 //! lifetimes remain outside this module.
 

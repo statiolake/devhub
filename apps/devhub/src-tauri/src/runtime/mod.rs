@@ -778,7 +778,7 @@ fn terminate_process_group(process_id: u32) {
 #[cfg(unix)]
 fn terminate_process_group_until(process_id: u32, deadline: Instant, termination_grace: Duration) {
     // Signal synchronously before checking the deadline. A quit deadline can
-    // be exhausted by an unrelated local worker, but the owned OpenVSCode
+    // be exhausted by an unrelated local worker, but the owned VS Code Server
     // process group must still receive termination before its Child is handed
     // to the bounded reaper. If time remains, allow TERM a short grace period
     // before escalating; with no time left, KILL is issued immediately.
@@ -793,7 +793,7 @@ fn terminate_process_group_until(process_id: u32, deadline: Instant, termination
 fn send_process_group_signal(process_id: u32, signal: Signal) {
     let Ok(process_id) = i32::try_from(process_id) else { return };
     // The adapter creates the child in its own process group, so the negative
-    // PID targets only DevHub-owned OpenVSCode descendants. ESRCH is expected
+    // PID targets only DevHub-owned VS Code Server descendants. ESRCH is expected
     // when the group exited between the bounded identity check and this call.
     let _ = kill(Pid::from_raw(-process_id), signal);
 }

@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { parseNavigationUri } from "../src/navigation";
 
-const scheme = "openvscode-server";
+const scheme = "vscode";
 
 test("navigation accepts the product URI scheme and strictly decodes roots", () => {
   assert.deepEqual(
@@ -61,7 +61,7 @@ test("navigation rejects scheme mismatch, malformed paths, and unknown query fie
   );
   assert.equal(
     parseNavigationUri(
-      { scheme: "vscode", path: "/new-window", query: "" },
+      { scheme: "vscode-insiders", path: "/new-window", query: "" },
       scheme,
     ),
     null,

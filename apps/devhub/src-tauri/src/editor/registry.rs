@@ -1,6 +1,6 @@
 //! Rust-owned mapping from canonical Workspace roots to stable editor IDs.
 //!
-//! The Bridge extension runs once per Workbench context, while one OpenVSCode
+//! The Bridge extension runs once per Workbench context, while one VS Code Server
 //! process serves every child WebView. This registry is the narrow native
 //! lookup seam that lets a Bridge hello resolve the exact Workspace identity
 //! without putting provider IDs or content into the core snapshot.

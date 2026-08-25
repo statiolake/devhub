@@ -1,4 +1,4 @@
-//! Authenticated OpenVSCode readiness probing.
+//! Authenticated VS Code Server readiness probing.
 
 use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
@@ -115,7 +115,7 @@ fn expect_http_ready<R: Read>(stream: &mut R) -> EditorResult<()> {
     if status == 200 {
         return Ok(());
     }
-    // OpenVSCode 1.109.5 authenticates the initial query-string request by
+    // VS Code Server 1.109.5 authenticates the initial query-string request by
     // setting its cookie and redirecting to the root document. The redirect
     // is a successful authenticated HTTP readiness response; constrain it to
     // the provider-owned root so an arbitrary redirect cannot pass readiness.

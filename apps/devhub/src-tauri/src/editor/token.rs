@@ -1,4 +1,4 @@
-//! Ephemeral owner-only OpenVSCode connection tokens.
+//! Ephemeral owner-only VS Code Server connection tokens.
 
 use std::fmt;
 use std::fs::{self, File, OpenOptions};
@@ -56,7 +56,7 @@ impl SecretToken {
                 EditorErrorCode::TokenUnavailable
             })
         })?;
-        // OpenVSCode reads this file as UTF-8 text and compares it with the
+        // VS Code Server reads this file as UTF-8 text and compares it with the
         // token supplied in the authenticated URL. Keep the secret as bytes
         // in memory, but persist its stable lowercase hex representation.
         let encoded = hex_encode(&bytes);
@@ -86,7 +86,7 @@ impl SecretToken {
     }
 
     /// Issues a bearer secret for an in-memory trust boundary. Unlike the
-    /// OpenVSCode connection token, this value is never written to disk.
+    /// VS Code Server connection token, this value is never written to disk.
     pub(crate) fn issue_ephemeral() -> EditorResult<Self> {
         Ok(Self(random_bytes()?))
     }

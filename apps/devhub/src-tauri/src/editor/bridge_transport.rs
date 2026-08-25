@@ -343,7 +343,7 @@ impl Write for HeaderLimitedStream {
 }
 
 /// The host-owned loopback Bridge endpoint. It is created before the
-/// OpenVSCode child process and remains alive across child crash/restart.
+/// VS Code Server child process and remains alive across child crash/restart.
 pub(crate) struct BridgeTransport {
     inner: Arc<BridgeTransportInner>,
     owner: Arc<BridgeTransportOwner>,

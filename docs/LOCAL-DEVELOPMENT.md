@@ -36,29 +36,35 @@ The first command must report `tauri-cli 2.11.4`; the second runs the pinned
 Rust Tauri `2.11.5` and WRY `0.55.1` host together with the frontend build.
 Hosted macOS artifact validation remains a later release gate.
 
-### Official VS Code Web (BYO) proof
+### Editor provider
 
-DevHub can use a separately installed macOS VS Code CLI without bundling it.
-Keep server data, CLI data, token, and browser data outside the user's normal
-profile during proof:
+DevHub uses the separately installed macOS VS Code CLI and never bundles or
+redistributes a Workbench. The CLI is discovered from `DEVHUB_VSCODE_CLI`,
+then `PATH`, then the canonical Homebrew and application-bundle locations, so
+an ordinary `code` installation needs no configuration:
 
 ```sh
 code --version
 code serve-web --help
-DEVHUB_EDITOR_PROVIDER=official-vscode \
-DEVHUB_VSCODE_CLI=/absolute/path/to/code \
-DEVHUB_VSCODE_SERVER_LICENSE_ACCEPTED=1 \
-CI=true pnpm --filter @devhub/app exec tauri dev
+CI=true pnpm --filter @devhub/app tauri dev
 ```
 
 The native provider probes the CLI version and `serve-web` capabilities before
-launch. It requires authenticated HTTP and Workbench WebSocket readiness and
+launch. It requires authenticated HTTP and Workbench WebSocket readiness, and
 installs the app-owned Bridge VSIX through the public `code
---install-extension` command. Do not add `--accept-server-license-terms`
-unless the user has already accepted the official terms and enabled the
-explicit consent setting. A Restricted Mode workspace is an expected proof
-case: the Bridge manifest advertises untrusted-workspace support, while the
-Workbench's own Trust UI remains upstream-owned.
+--install-extension` command. Server data, CLI data, token, and extension data
+live under `Application Support/DevHub/VisualStudioCode` and never reuse the
+user's own VS Code profile.
+
+DevHub does not pass `--accept-server-license-terms`. With no controlling
+terminal the CLI prints its own license notice and starts without prompting,
+and forwards the flag to the server itself, so DevHub never records a license
+acceptance on the user's behalf. The Editor Surface shows the same notice and
+links the [VS Code Server License Terms](https://aka.ms/vscode-server-license).
+
+A Restricted Mode workspace is an expected case: the Bridge manifest
+advertises untrusted-workspace support, while the Workbench's own Trust UI
+remains upstream-owned.
 
 ## Deterministic checks
 

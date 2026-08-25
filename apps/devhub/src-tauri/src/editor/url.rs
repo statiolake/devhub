@@ -1,4 +1,4 @@
-//! Authenticated, loopback-only OpenVSCode URLs.
+//! Authenticated, loopback-only VS Code Server URLs.
 
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -174,7 +174,7 @@ pub fn navigation_decision(
 }
 
 /// Convert a classified transition into a sanitized request. The raw
-/// OpenVSCode query, including `tkn`, never crosses the WebView router seam.
+/// VS Code Server query, including `tkn`, never crosses the WebView router seam.
 pub fn navigation_request(origin: EditorOrigin, candidate: &str) -> Option<NavigationRequest> {
     if candidate.starts_with("http://") || candidate.starts_with("https://") {
         if !candidate.starts_with(&origin.prefix()) {

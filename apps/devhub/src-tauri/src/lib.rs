@@ -66,7 +66,7 @@ use discovery::DiscoveryEngine;
 use editor::{
     BridgeEvent, BridgeEventSink, BridgeRequest, BridgeRequestDisposition, BridgeRequestResult,
 };
-use editor::{EditorHost, EditorHostConfig, EditorProviderPreference};
+use editor::{EditorHost, EditorHostConfig};
 use editor::{NativeFocusIdentity, NavigationRequest, NavigationRouter, WryWebViewHost};
 use integration::lifecycle::{safe_restore_frame, DisplayWorkArea, LifecycleGate, Phase};
 use keyboard::{HostCommand, KeyStroke, KeyboardController, RouteDecision, SurfaceFocus};
@@ -1961,13 +1961,12 @@ impl NativeAppState {
 
     #[cfg(test)]
     fn bootstrap(home: &Path) -> Result<Self, AppErrorWire> {
-        Self::bootstrap_with_resource_dirs(home, None, None)
+        Self::bootstrap_with_resource_dir(home, None)
     }
 
-    fn bootstrap_with_resource_dirs(
+    fn bootstrap_with_resource_dir(
         home: &Path,
         resource_dir: Option<PathBuf>,
-        openvscode_resource_dir: Option<PathBuf>,
     ) -> Result<Self, AppErrorWire> {
         let store = JsonStateStore::for_home(home);
         let previous_exit = store
@@ -2076,13 +2075,7 @@ impl NativeAppState {
             bridge_sink.enable_performance_markers(diagnostics.clone());
         }
         let editor_host = EditorHost::new(
-            EditorHostConfig::new(home, resource_dir)
-                .with_openvscode_resource_dir(openvscode_resource_dir)
-                .with_provider_preference(EditorProviderPreference::from_environment())
-                .with_official_vscode_license_accepted(
-                    std::env::var("DEVHUB_VSCODE_SERVER_LICENSE_ACCEPTED").as_deref() == Ok("1"),
-                )
-                .with_bridge_event_sink(bridge_sink.clone()),
+            EditorHostConfig::new(home, resource_dir).with_bridge_event_sink(bridge_sink.clone()),
         );
         let model = persisted.hydrate_model(&profiles).map_err(persistence_error)?;
         let mut coordinator = AppCoordinator::with_model(model);
@@ -2298,7 +2291,7 @@ impl NativeAppState {
             // A failed mount must leave the host detached. Otherwise a
             // partially mounted WRY host would make the next Dock activation
             // look like a successful reconstruction and suppress the retry.
-            // Keep OpenVSCode running: only its child surfaces are rolled
+            // Keep VS Code Server running: only its child surfaces are rolled
             // back, and the next attempt can reuse its hot-exit state.
             if let Err(error) = self.editor_host.detach_webview_host() {
                 self.record_native_error(state_error(error));
@@ -2536,7 +2529,7 @@ impl NativeAppState {
 
     /// Keeps raw Editor child visibility in lockstep with the Rust-owned
     /// Activity/Context selection. The App Shell still renders typed
-    /// unavailable states underneath a missing OpenVSCode host; a provider
+    /// unavailable states underneath a missing VS Code Server host; a provider
     /// failure never deletes the durable projection.
     fn sync_editor_surface_with_lifecycle(
         &self,
@@ -2624,7 +2617,7 @@ impl NativeAppState {
                 self.set_startup_reconstruction_state(StartupReconstructionState::Ready);
             }
             Err(error) => {
-                // Missing OpenVSCode resources are a typed degraded Activity,
+                // Missing VS Code Server resources are a typed degraded Activity,
                 // not a reason to discard the durable shell snapshot or stop
                 // Agents. Keep the startup shell hidden until a Dock retry
                 // reconstructs its child surfaces successfully.
@@ -2958,7 +2951,7 @@ impl NativeAppState {
         // need their Rust-owned EditorHost surfaces mounted. Warm each child
         // sequentially: ensure_surface selects the new child and hides the
         // previous one, so rapidly mounting all children would hide them
-        // before an async OpenVSCode/Bridge handshake can complete. This is
+        // before an async VS Code Server/Bridge handshake can complete. This is
         // the Q5-only continuation of the same lifecycle owner; the workspace
         // roots and records above were created through typed intents.
         let bounds = self
@@ -3896,7 +3889,7 @@ impl NativeAppState {
                         self._terminal_runtime.detach_webview(APP_SHELL_WINDOW_LABEL);
                         self.agent_surfaces.detach_webview(APP_SHELL_WINDOW_LABEL);
                         // A child WebView belongs to the Window, not to the
-                        // OpenVSCode process. Drop the native host as well so
+                        // VS Code Server process. Drop the native host as well so
                         // a later Dock reconstruction cannot retain a parent
                         // handle from the destroyed Window.
                         if let Err(error) = self.editor_host.detach_webview_host() {
@@ -3931,7 +3924,7 @@ impl NativeAppState {
                                 ));
                         }
                         // NativeAppState::quit_with_window explicitly owns
-                        // the bounded OpenVSCode shutdown before dispatching
+                        // the bounded VS Code Server shutdown before dispatching
                         // this coordinator detach. Keep this effect limited
                         // to surface detachment so quit-after-Window-Close
                         // cannot rely on a detached coordinator and so the
@@ -5016,7 +5009,7 @@ impl NativeAppState {
     }
 
     /// A process quit detaches the coordinator, stops only DevHub-owned
-    /// listeners and OpenVSCode, persists the exact final projection, and
+    /// listeners and VS Code Server, persists the exact final projection, and
     /// then marks the durable lifecycle clean. This method is idempotent so a
     /// native ExitRequested re-entry cannot recurse into shutdown.
     #[cfg(test)]
@@ -5126,7 +5119,7 @@ impl NativeAppState {
         }
         // Drain frame persistence only after owned shutdown has been
         // initiated. A blocked state-store writer therefore cannot postpone
-        // OpenVSCode termination; it simply keeps clean shutdown false.
+        // VS Code Server termination; it simply keeps clean shutdown false.
         if !self.wait_for_frame_persist(deadline) {
             first_error.get_or_insert_with(|| {
                 AppErrorWire::native_unavailable()
@@ -7681,7 +7674,7 @@ fn editor_app_resource_dir(app: &AppHandle) -> Option<PathBuf> {
         return Some(PathBuf::from(path));
     }
     // Retain the old debug override as an app-resource fallback for local
-    // launches, but never use it as the OpenVSCode provider seam.
+    // launches, but never use it as the VS Code Server provider seam.
     #[cfg(debug_assertions)]
     if let Some(path) = std::env::var_os("DEVHUB_RESOURCE_DIR") {
         return Some(PathBuf::from(path));
@@ -7707,21 +7700,6 @@ fn debug_source_resource_dir() -> Option<PathBuf> {
 fn debug_source_resource_dir_from(repository: &Path) -> Option<PathBuf> {
     let bridge = repository.join("extensions/devhub-bridge/build/devhub-bridge-0.1.0.vsix");
     bridge.is_file().then_some(repository.to_path_buf())
-}
-
-fn editor_openvscode_resource_dir(
-    app: &AppHandle,
-    app_resource_dir: Option<&Path>,
-) -> Option<PathBuf> {
-    #[cfg(debug_assertions)]
-    if let Some(path) = std::env::var_os("DEVHUB_OPENVSCODE_RESOURCE_DIR") {
-        return Some(PathBuf::from(path));
-    }
-    #[cfg(debug_assertions)]
-    if let Some(path) = std::env::var_os("DEVHUB_RESOURCE_DIR") {
-        return Some(PathBuf::from(path));
-    }
-    app_resource_dir.map(Path::to_path_buf).or_else(|| app.path().resource_dir().ok())
 }
 
 pub fn run() {
@@ -7771,14 +7749,8 @@ pub fn run() {
             let home =
                 app.path().home_dir().map_err(|error| std::io::Error::other(error.to_string()))?;
             let app_resource_dir = editor_app_resource_dir(app.handle());
-            let openvscode_resource_dir =
-                editor_openvscode_resource_dir(app.handle(), app_resource_dir.as_deref());
-            let state = NativeAppState::bootstrap_with_resource_dirs(
-                &home,
-                app_resource_dir,
-                openvscode_resource_dir,
-            )
-            .map_err(|_| std::io::Error::other("DevHub native bootstrap failed"))?;
+            let state = NativeAppState::bootstrap_with_resource_dir(&home, app_resource_dir)
+                .map_err(|_| std::io::Error::other("DevHub native bootstrap failed"))?;
             app.manage(state);
             let recovery_app = app.handle().clone();
             app.state::<NativeAppState>().bridge_sink.install_editor_recovery(Arc::new(
@@ -9608,7 +9580,7 @@ mod tests {
         assert!(!state.reopen().expect("duplicate reopen is harmless"));
 
         // A coordinator detached by WindowClosed emits no second Quit effect;
-        // native quit still owns OpenVSCode/app-local cleanup and persists a
+        // native quit still owns VS Code Server/app-local cleanup and persists a
         // clean final state without terminating Herdr or tmux providers.
         state.close_window().expect("close before quit");
         state.quit().expect("quit after close");

@@ -68,6 +68,20 @@ function SurfaceEmpty({
             ? "The agent control stream will appear here when the runtime is ready."
             : "The persistent terminal surface will appear here when the session is ready."}
       </p>
+      {activity === "editor" ? (
+        <p className="surface-note">
+          DevHub runs your own installed Visual Studio Code. Starting it means
+          you accept the{" "}
+          <a
+            href="https://aka.ms/vscode-server-license"
+            target="_blank"
+            rel="noreferrer"
+          >
+            VS Code Server License Terms
+          </a>
+          .
+        </p>
+      ) : null}
     </div>
   );
 }

@@ -710,6 +710,19 @@ body.is-resizing-sidebar {
   overflow-wrap: anywhere;
 }
 
+.surface-note {
+  max-width: 420px;
+  margin: var(--space-3) 0 0;
+  color: var(--tertiary, var(--secondary));
+  font-size: 12px;
+  line-height: 1.5;
+  text-wrap: pretty;
+}
+
+.surface-note a {
+  color: inherit;
+}
+
 .surface-loading-state .surface-mark {
   animation: surface-pulse 1.8s ease-in-out infinite;
 }

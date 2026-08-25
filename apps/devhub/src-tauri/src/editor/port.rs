@@ -263,8 +263,8 @@ mod tests {
 
     #[test]
     fn system_allocator_rejects_an_active_listener() {
-        let listener = TcpListener::bind((super::super::paths::LOOPBACK_HOST, 0))
-            .expect("active listener");
+        let listener =
+            TcpListener::bind((super::super::paths::LOOPBACK_HOST, 0)).expect("active listener");
         let port = listener.local_addr().expect("listener address").port();
         assert!(!SystemPortAllocator.is_available(port));
     }
@@ -272,8 +272,8 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn system_allocator_accepts_a_reusable_time_wait_origin() {
-        let listener = TcpListener::bind((super::super::paths::LOOPBACK_HOST, 0))
-            .expect("TIME_WAIT listener");
+        let listener =
+            TcpListener::bind((super::super::paths::LOOPBACK_HOST, 0)).expect("TIME_WAIT listener");
         let port = listener.local_addr().expect("listener address").port();
         let mut client = TcpStream::connect((super::super::paths::LOOPBACK_HOST, port))
             .expect("client connection");

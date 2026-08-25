@@ -1,4 +1,4 @@
-//! OpenVSCode process identity and bounded supervision.
+//! VS Code Server process identity and bounded supervision.
 
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -231,11 +231,10 @@ impl ManagedProcess for SystemManagedProcess {
             // The process group has already received termination signals. Move
             // the owned Child to an app-local reaper so this bounded lifecycle
             // path never calls Child::wait after its deadline.
-            let _ = thread::Builder::new().name("devhub-openvscode-reaper".to_owned()).spawn(
-                move || {
+            let _ =
+                thread::Builder::new().name("devhub-editor-reaper".to_owned()).spawn(move || {
                     let _ = child.wait();
-                },
-            );
+                });
         } else {
             self.cleanup.mark_reaped();
         }
@@ -399,7 +398,7 @@ mod tests {
 
     impl ManagedProcess for DeadlineProcess {
         fn identity(&self) -> ProcessIdentity {
-            ProcessIdentity::new(43, "/pinned/openvscode-server")
+            ProcessIdentity::new(43, "/pinned/code")
         }
 
         fn identity_verified(&self) -> bool {
@@ -431,7 +430,7 @@ mod tests {
         let terminated = Arc::new(Mutex::new(false));
         let adapter = FakeAdapter { verified: true, terminated: terminated.clone() };
         let mut supervisor = ProcessSupervisor::new(3);
-        let spec = ProcessSpec::new("/pinned/openvscode-server", []);
+        let spec = ProcessSpec::new("/pinned/code", []);
         supervisor.spawn(&adapter, &spec).expect("spawn");
         supervisor.stop().expect("stop");
         assert!(*terminated.lock().expect("terminated"));
@@ -446,9 +445,7 @@ mod tests {
     #[test]
     fn stop_until_does_not_fall_back_to_an_unbounded_terminate() {
         let mut supervisor = ProcessSupervisor::new(1);
-        supervisor
-            .spawn(&DeadlineAdapter, &ProcessSpec::new("/pinned/openvscode-server", []))
-            .expect("spawn");
+        supervisor.spawn(&DeadlineAdapter, &ProcessSpec::new("/pinned/code", [])).expect("spawn");
         let started = Instant::now();
         assert!(!supervisor.stop_until(started + Duration::from_millis(25)).expect("bounded stop"));
         assert!(started.elapsed() < Duration::from_millis(250));

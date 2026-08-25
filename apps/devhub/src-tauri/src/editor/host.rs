@@ -32,7 +32,7 @@ use super::port::{PortAllocator, StablePort, SystemPortAllocator};
 use super::process::{
     ProcessAdapter, ProcessSpec, ProcessSupervisor, SystemProcessAdapter, MAX_RESTARTS,
 };
-use super::provider::{EditorExecutable, EditorProviderPreference};
+use super::provider::EditorExecutable;
 use super::readiness::{ReadinessProbe, SystemReadinessProbe};
 use super::registry::{SurfaceRegistry, SurfaceRegistryEntry};
 use super::token::SecretToken;
@@ -46,27 +46,13 @@ pub struct EditorHostConfig {
     pub home: PathBuf,
     /// DevHub-owned resources, including the verified Bridge VSIX.
     pub resource_dir: Option<PathBuf>,
-    /// Provider-specific resources used only to discover the legacy
-    /// OpenVSCode executable. Official VS Code is always resolved from its
-    /// explicit CLI seam and never needs this path.
-    pub openvscode_resource_dir: Option<PathBuf>,
     event_sink: Option<Arc<dyn BridgeEventSink>>,
-    provider_preference: EditorProviderPreference,
     official_vscode_cli: Option<PathBuf>,
-    official_vscode_license_accepted: bool,
 }
 
 impl EditorHostConfig {
     pub fn new(home: impl Into<PathBuf>, resource_dir: Option<PathBuf>) -> Self {
-        Self {
-            home: home.into(),
-            openvscode_resource_dir: resource_dir.clone(),
-            resource_dir,
-            event_sink: None,
-            provider_preference: EditorProviderPreference::Auto,
-            official_vscode_cli: None,
-            official_vscode_license_accepted: false,
-        }
+        Self { home: home.into(), resource_dir, event_sink: None, official_vscode_cli: None }
     }
 
     pub fn with_bridge_event_sink(mut self, sink: Arc<dyn BridgeEventSink>) -> Self {
@@ -74,25 +60,8 @@ impl EditorHostConfig {
         self
     }
 
-    pub fn with_provider_preference(mut self, preference: EditorProviderPreference) -> Self {
-        self.provider_preference = preference;
-        self
-    }
-
     pub fn with_official_vscode_cli(mut self, path: impl Into<PathBuf>) -> Self {
         self.official_vscode_cli = Some(path.into());
-        self
-    }
-
-    /// Consent is deliberately an explicit setup decision.  It is never
-    /// inferred from the existence of the CLI and is not enabled by default.
-    pub fn with_official_vscode_license_accepted(mut self, accepted: bool) -> Self {
-        self.official_vscode_license_accepted = accepted;
-        self
-    }
-
-    pub fn with_openvscode_resource_dir(mut self, resource_dir: Option<PathBuf>) -> Self {
-        self.openvscode_resource_dir = resource_dir;
         self
     }
 }
@@ -248,13 +217,13 @@ impl EditorHost {
 
     /// Reports whether a live native Window host is attached. The native
     /// shell uses this to retry a startup/Dock reconstruction after a missing
-    /// WRY/OpenVSCode resource becomes available, without rebuilding an
+    /// WRY/Workbench resource becomes available, without rebuilding an
     /// already-attached host or duplicating child WebViews.
     pub fn window_attached(&self) -> bool {
         self.state.lock().map(|state| state.window_attached).unwrap_or(false)
     }
 
-    /// A read-only host health fact for the Settings recheck seam. OpenVSCode
+    /// A read-only host health fact for the Settings recheck seam. VS Code Server
     /// readiness itself is reported by the Bridge sink; this verifies that
     /// the native host is still attached without mutating editor state.
     pub fn recheck_health(&self) -> bool {
@@ -371,15 +340,8 @@ impl EditorHost {
         let mut runtime = if let Some(runtime) = prior_runtime {
             runtime
         } else {
-            let executable = EditorExecutable::resolve(
-                self.config.provider_preference,
-                self.config.openvscode_resource_dir.as_deref(),
-                self.config.official_vscode_cli.as_deref(),
-            )?;
-            if executable.is_official() && !self.config.official_vscode_license_accepted {
-                return Err(EditorError::new(EditorErrorCode::LicenseConsentRequired));
-            }
-            let paths = EditorPaths::for_provider(&self.config.home, executable.provider());
+            let executable = EditorExecutable::resolve(self.config.official_vscode_cli.as_deref())?;
+            let paths = EditorPaths::new(&self.config.home);
             paths.ensure_directories()?;
             append_lifecycle_log(&paths, LifecycleEvent::RuntimePrepared)?;
             let stable_port =
@@ -781,7 +743,7 @@ impl EditorHost {
     /// attempt. A timeout is returned so the caller cannot mark clean state.
     pub fn shutdown_until(&self, deadline: Instant) -> EditorResult<()> {
         // Cleanup is best-effort as one bounded transaction: a child-WebView
-        // or Bridge worker failure must not prevent the owned OpenVSCode
+        // or Bridge worker failure must not prevent the owned VS Code Server
         // process from receiving its shutdown request. The first error is
         // returned after every independent local resource has been attempted;
         // callers then refuse to mark clean shutdown.
@@ -801,13 +763,11 @@ impl EditorHost {
         if Instant::now() >= deadline && first_error.is_none() {
             first_error = Some(EditorError::new(EditorErrorCode::BridgeUnavailable));
         }
-        let official_port = self.state.lock().ok().and_then(|state| {
-            state
-                .runtime
-                .as_ref()
-                .filter(|runtime| runtime.executable.is_official())
-                .map(|runtime| runtime.port)
-        });
+        let official_port = self
+            .state
+            .lock()
+            .ok()
+            .and_then(|state| state.runtime.as_ref().map(|runtime| runtime.port));
         let mut process = self
             .process
             .lock()
@@ -924,17 +884,20 @@ impl EditorHost {
         let path = |value: &Path| {
             value.to_str().map(str::to_owned).ok_or_else(|| EditorError::new(EditorErrorCode::Io))
         };
-        let mut args = if runtime.executable.is_official() {
-            // Official VS Code backgrounds `serve-web` unless `--verbose`
-            // is present; its CLI contract documents that verbose implies
-            // wait. Keep the foreground CLI as the process-group owner so a
-            // DevHub Quit cannot reap the launcher while leaving its server
-            // listening on the stable origin.
-            vec!["serve-web".to_owned(), "--verbose".to_owned()]
-        } else {
-            Vec::new()
-        };
-        args.extend([
+        // Official VS Code backgrounds `serve-web` unless `--verbose` is
+        // present; its CLI contract documents that verbose implies wait. Keep
+        // the foreground CLI as the process-group owner so a DevHub Quit
+        // cannot reap the launcher while leaving its server listening on the
+        // stable origin.
+        //
+        // `--accept-server-license-terms` is deliberately not passed. The CLI
+        // prints its own license notice and starts without prompting when it
+        // has no controlling terminal, and it forwards the flag to the server
+        // itself. DevHub therefore never records a license acceptance on the
+        // user's behalf.
+        let args = vec![
+            "serve-web".to_owned(),
+            "--verbose".to_owned(),
             "--host".to_owned(),
             super::paths::LOOPBACK_HOST.to_owned(),
             "--port".to_owned(),
@@ -944,41 +907,18 @@ impl EditorHost {
             "--server-data-dir".to_owned(),
             path(runtime.paths.server_data())?,
             "--disable-telemetry".to_owned(),
-        ]);
-        if !runtime.executable.is_official() {
-            args.extend([
-                "--user-data-dir".to_owned(),
-                path(runtime.paths.user_data())?,
-                "--extensions-dir".to_owned(),
-                path(runtime.paths.extensions())?,
-            ]);
-        }
-        if runtime.executable.is_official() {
-            if self.config.official_vscode_license_accepted {
-                args.push("--accept-server-license-terms".to_owned());
-            }
-        } else {
-            // Keep the legacy bundled provider's existing non-interactive
-            // startup contract. Official VS Code is handled above and never
-            // receives this flag without explicit user consent.
-            args.push("--accept-server-license-terms".to_owned());
-        }
+        ];
         let registry = path(&runtime.paths.root().join("surface-registry.json"))?;
-        let mut env = vec![
+        let env = vec![
             ("DEVHUB_BRIDGE_SURFACE_REGISTRY".to_owned(), registry),
             ("DEVHUB_BRIDGE_ENDPOINT".to_owned(), runtime.bridge.endpoint().to_owned()),
             ("DEVHUB_BRIDGE_TOKEN".to_owned(), runtime.bridge.token_hex()),
+            ("VSCODE_CLI_DATA_DIR".to_owned(), path(runtime.paths.cli_data())?),
         ];
-        if runtime.executable.is_official() {
-            env.push(("VSCODE_CLI_DATA_DIR".to_owned(), path(runtime.paths.cli_data())?));
-        }
-        let spec = ProcessSpec::new(runtime.executable.path().to_path_buf(), args).with_env(env);
-        Ok(if runtime.executable.is_official() {
-            spec.with_termination_grace(Duration::from_secs(2))
-                .with_shutdown_signal(ShutdownSignal::Interrupt)
-        } else {
-            spec
-        })
+        Ok(ProcessSpec::new(runtime.executable.path().to_path_buf(), args)
+            .with_env(env)
+            .with_termination_grace(Duration::from_secs(2))
+            .with_shutdown_signal(ShutdownSignal::Interrupt))
     }
 }
 
@@ -1118,7 +1058,7 @@ mod tests {
 
     impl ManagedProcess for ExpiredDeadlineProcess {
         fn identity(&self) -> super::super::process::ProcessIdentity {
-            super::super::process::ProcessIdentity::new(101, "/pinned/openvscode-server")
+            super::super::process::ProcessIdentity::new(101, "/pinned/code")
         }
 
         fn identity_verified(&self) -> bool {
@@ -1201,38 +1141,6 @@ mod tests {
         resource
     }
 
-    fn fake_resource_dir(root: &Path) -> PathBuf {
-        let resource = root.join("resources");
-        let executable_root = resource.join("openvscode-server");
-        fs::create_dir_all(executable_root.join("bin")).expect("executable dirs");
-        fs::create_dir_all(executable_root.join("out")).expect("runtime dirs");
-        fs::write(
-            executable_root.join("product.json"),
-            format!(
-                r#"{{"version":"{}","commit":"{}"}}"#,
-                super::super::paths::OPENVSCODE_VERSION,
-                super::super::paths::OPENVSCODE_COMMIT
-            ),
-        )
-        .expect("product");
-        fs::write(executable_root.join("out/server-main.js"), b"pinned").expect("server main");
-        fs::write(executable_root.join("node"), b"pinned").expect("node");
-        let executable = executable_root.join("bin/openvscode-server");
-        fs::write(&executable, b"#!/bin/sh\nexit 0\n").expect("executable");
-        let bridge = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../../extensions/devhub-bridge/build/devhub-bridge-0.1.0.vsix");
-        if bridge.is_file() {
-            fs::copy(bridge, resource.join("devhub-bridge.vsix")).expect("bridge package");
-        }
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(&executable, fs::Permissions::from_mode(0o700))
-                .expect("executable mode");
-        }
-        resource
-    }
-
     fn fake_official_cli(root: &Path) -> PathBuf {
         let path = root.join("code");
         fs::write(
@@ -1259,7 +1167,7 @@ fi
     ) -> (EditorHost, Arc<AtomicUsize>, Arc<AtomicUsize>, EditorPaths, PathBuf, Arc<AtomicBool>)
     {
         let root = test_root(if ready { "lifecycle" } else { "failure" });
-        let resource = fake_resource_dir(&root);
+        let resource = fake_bridge_resource_dir(&root);
         let home = root.join("home");
         fs::create_dir_all(&home).expect("home");
         let spawns = Arc::new(AtomicUsize::new(0));
@@ -1268,7 +1176,7 @@ fi
         let readiness_calls = Arc::new(AtomicUsize::new(0));
         let host = EditorHost::with_adapters(
             EditorHostConfig::new(&home, Some(resource))
-                .with_provider_preference(EditorProviderPreference::OpenVscode),
+                .with_official_vscode_cli(fake_official_cli(&root)),
             Arc::new(FakeProcessAdapter {
                 spawns: spawns.clone(),
                 alive: alive.clone(),
@@ -1277,51 +1185,18 @@ fi
             Arc::new(FakeReadiness { ready, calls: readiness_calls }),
             Arc::new(FakePorts),
         );
-        (
-            host,
-            spawns,
-            terminated,
-            EditorPaths::for_provider(&home, super::super::paths::EditorProviderKind::OpenVscode),
-            root,
-            alive,
-        )
+        (host, spawns, terminated, EditorPaths::new(&home), root, alive)
     }
 
     #[test]
-    fn official_provider_requires_explicit_license_consent() {
-        let root = test_root("official-license");
-        let resource = fake_resource_dir(&root);
-        let home = root.join("home");
-        fs::create_dir_all(&home).expect("home");
-        let host = EditorHost::with_adapters(
-            EditorHostConfig::new(&home, Some(resource))
-                .with_provider_preference(EditorProviderPreference::OfficialVscode)
-                .with_official_vscode_cli(fake_official_cli(&root)),
-            Arc::new(FakeProcessAdapter {
-                spawns: Arc::new(AtomicUsize::new(0)),
-                alive: Arc::new(AtomicBool::new(true)),
-                terminated: Arc::new(AtomicUsize::new(0)),
-            }),
-            Arc::new(FakeReadiness { ready: true, calls: Arc::new(AtomicUsize::new(0)) }),
-            Arc::new(FakePorts),
-        );
-        let error = host.ensure_server().expect_err("consent required");
-        assert_eq!(error.code(), EditorErrorCode::LicenseConsentRequired);
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn official_provider_uses_bridge_resource_without_openvscode_resource() {
+    fn official_provider_resolves_without_a_provider_resource_dir() {
         let root = test_root("official-bridge-resource");
         let bridge_resource = fake_bridge_resource_dir(&root);
         let home = root.join("home");
         fs::create_dir_all(&home).expect("home");
         let host = EditorHost::with_adapters(
             EditorHostConfig::new(&home, Some(bridge_resource))
-                .with_openvscode_resource_dir(None)
-                .with_provider_preference(EditorProviderPreference::OfficialVscode)
-                .with_official_vscode_cli(fake_official_cli(&root))
-                .with_official_vscode_license_accepted(true),
+                .with_official_vscode_cli(fake_official_cli(&root)),
             Arc::new(FakeProcessAdapter {
                 spawns: Arc::new(AtomicUsize::new(0)),
                 alive: Arc::new(AtomicBool::new(true)),
@@ -1332,47 +1207,19 @@ fi
         );
         host.ensure_server().expect("official provider with app Bridge resource");
         let runtime = host.state.lock().expect("state").runtime.clone().expect("runtime");
-        assert!(runtime.executable.is_official());
+        assert!(runtime.executable.path().ends_with("code"));
         let _ = fs::remove_dir_all(root);
     }
 
     #[test]
-    fn openvscode_provider_uses_its_own_resource_seam() {
-        let root = test_root("openvscode-resource-seam");
-        let bridge_resource = fake_bridge_resource_dir(&root);
-        let provider_resource = fake_resource_dir(&root);
-        let home = root.join("home");
-        fs::create_dir_all(&home).expect("home");
-        let host = EditorHost::with_adapters(
-            EditorHostConfig::new(&home, Some(bridge_resource))
-                .with_openvscode_resource_dir(Some(provider_resource.clone()))
-                .with_provider_preference(EditorProviderPreference::OpenVscode),
-            Arc::new(FakeProcessAdapter {
-                spawns: Arc::new(AtomicUsize::new(0)),
-                alive: Arc::new(AtomicBool::new(true)),
-                terminated: Arc::new(AtomicUsize::new(0)),
-            }),
-            Arc::new(FakeReadiness { ready: true, calls: Arc::new(AtomicUsize::new(0)) }),
-            Arc::new(FakePorts),
-        );
-        host.ensure_server().expect("OpenVSCode provider with separate resource");
-        let runtime = host.state.lock().expect("state").runtime.clone().expect("runtime");
-        assert!(!runtime.executable.is_official());
-        assert!(runtime.executable.path().starts_with(provider_resource));
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn official_provider_uses_an_app_owned_server_profile_after_consent() {
-        let root = test_root("official-consented");
-        let resource = fake_resource_dir(&root);
+    fn official_provider_uses_an_app_owned_server_profile() {
+        let root = test_root("official-profile");
+        let resource = fake_bridge_resource_dir(&root);
         let home = root.join("home");
         fs::create_dir_all(&home).expect("home");
         let host = EditorHost::with_adapters(
             EditorHostConfig::new(&home, Some(resource))
-                .with_provider_preference(EditorProviderPreference::OfficialVscode)
-                .with_official_vscode_cli(fake_official_cli(&root))
-                .with_official_vscode_license_accepted(true),
+                .with_official_vscode_cli(fake_official_cli(&root)),
             Arc::new(FakeProcessAdapter {
                 spawns: Arc::new(AtomicUsize::new(0)),
                 alive: Arc::new(AtomicBool::new(true)),
@@ -1383,7 +1230,6 @@ fi
         );
         host.ensure_server().expect("official provider");
         let runtime = host.state.lock().expect("state").runtime.clone().expect("runtime");
-        assert!(runtime.executable.is_official());
         assert!(runtime.paths.root().ends_with("VisualStudioCode"));
         assert!(runtime.paths.server_data().starts_with(runtime.paths.root()));
         assert!(runtime.paths.extensions().starts_with(runtime.paths.server_data()));
@@ -1393,7 +1239,7 @@ fi
         assert_eq!(spec.termination_grace(), Duration::from_secs(2));
         assert_eq!(spec.shutdown_signal(), ShutdownSignal::Interrupt);
         assert!(spec.args().contains(&"--server-data-dir".to_owned()));
-        assert!(spec.args().contains(&"--accept-server-license-terms".to_owned()));
+        assert!(!spec.args().contains(&"--accept-server-license-terms".to_owned()));
         assert!(!spec.args().contains(&"--extensions-dir".to_owned()));
         assert!(!spec.args().contains(&"--user-data-dir".to_owned()));
         assert_eq!(
@@ -1463,7 +1309,11 @@ fi
             2
         );
         assert!(!host.snapshot(&global).expect("global snapshot").mounted);
-        assert_eq!(terminated.load(Ordering::Acquire), 0, "Window Close must not stop OpenVSCode");
+        assert_eq!(
+            terminated.load(Ordering::Acquire),
+            0,
+            "Window Close must not stop VS Code Server"
+        );
         host.attach_webview_host(webviews.clone()).expect("reattach");
         host.ensure_surface(global.clone(), None, bounds).expect("reconstruct global");
         assert_eq!(webviews.created.lock().expect("created").len(), 3);
@@ -1489,8 +1339,7 @@ fi
         fs::create_dir_all(&home).expect("home");
         let terminated = Arc::new(AtomicBool::new(false));
         let host = EditorHost::with_adapters(
-            EditorHostConfig::new(&home, None)
-                .with_provider_preference(EditorProviderPreference::OpenVscode),
+            EditorHostConfig::new(&home, None),
             Arc::new(ExpiredDeadlineAdapter { terminated: terminated.clone() }),
             Arc::new(FakeReadiness { ready: true, calls: Arc::new(AtomicUsize::new(0)) }),
             Arc::new(FakePorts),
@@ -1500,7 +1349,7 @@ fi
             .expect("process")
             .spawn(
                 &ExpiredDeadlineAdapter { terminated: terminated.clone() },
-                &ProcessSpec::new("/pinned/openvscode-server", []),
+                &ProcessSpec::new("/pinned/code", []),
             )
             .expect("owned process");
 

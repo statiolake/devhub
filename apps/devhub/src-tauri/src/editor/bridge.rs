@@ -96,7 +96,7 @@ impl BridgePackage {
 }
 
 /// Read the bounded ZIP central directory without treating arbitrary payload
-/// bytes as archive entries.  VSIX is ZIP-based, and OpenVSCode performs the
+/// bytes as archive entries.  VSIX is ZIP-based, and VS Code performs the
 /// actual extraction; this parser only establishes that the exact bundled
 /// manifest and extension main entries exist before invoking that installer.
 #[derive(Debug, Clone)]
@@ -274,16 +274,7 @@ impl BridgeInstaller for SystemBridgeInstaller {
             .arg("--force")
             .arg("--extensions-dir")
             .arg(paths.extensions());
-        if !executable.is_official() {
-            command
-                .arg("--user-data-dir")
-                .arg(paths.user_data())
-                .arg("--server-data-dir")
-                .arg(paths.server_data());
-        }
-        if executable.is_official() {
-            command.env("VSCODE_CLI_DATA_DIR", paths.cli_data());
-        }
+        command.env("VSCODE_CLI_DATA_DIR", paths.cli_data());
         command.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
         #[cfg(unix)]
         {

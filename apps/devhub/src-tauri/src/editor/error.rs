@@ -17,7 +17,6 @@ pub enum EditorErrorCode {
     ExecutableIdentityMismatch,
     OfficialVscodeUnavailable,
     ProviderCapabilityMismatch,
-    LicenseConsentRequired,
     BridgeUnavailable,
     BridgeInstallFailed,
     ProcessUnavailable,
@@ -43,7 +42,6 @@ impl EditorErrorCode {
             Self::ExecutableIdentityMismatch => "executable_identity_mismatch",
             Self::OfficialVscodeUnavailable => "official_vscode_unavailable",
             Self::ProviderCapabilityMismatch => "provider_capability_mismatch",
-            Self::LicenseConsentRequired => "license_consent_required",
             Self::BridgeUnavailable => "bridge_unavailable",
             Self::BridgeInstallFailed => "bridge_install_failed",
             Self::ProcessUnavailable => "process_unavailable",
@@ -101,13 +99,10 @@ const fn summary_for(code: EditorErrorCode) -> &'static str {
             "The editor provider executable identity is not accepted."
         }
         EditorErrorCode::OfficialVscodeUnavailable => {
-            "The locally installed official VS Code CLI is unavailable."
+            "DevHub could not find the VS Code `code` command. Install Visual Studio Code, or run its Shell Command: Install 'code' command in PATH."
         }
         EditorErrorCode::ProviderCapabilityMismatch => {
             "The selected editor provider does not support DevHub's required Web Workbench contract."
-        }
-        EditorErrorCode::LicenseConsentRequired => {
-            "DevHub needs explicit consent for the official VS Code Server license before starting it."
         }
         EditorErrorCode::BridgeUnavailable => "The bundled DevHub Bridge extension is unavailable.",
         EditorErrorCode::BridgeInstallFailed => {
