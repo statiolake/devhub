@@ -1,0 +1,57 @@
+DevHub 0.1.0 — third-party notices
+===================================
+
+This notice accompanies the DevHub macOS application bundle. The application
+bundle includes the DevHub MIT license at `licenses/DevHub-MIT.txt` and the
+license texts named below under `licenses/`. The local release archive also
+contains a top-level copy of this notice and the DevHub license.
+
+Shipped application components
+------------------------------
+
+* DevHub App Shell and the DevHub Bridge extension — MIT. The Bridge is the
+  small public-API VS Code extension packaged as `devhub-bridge.vsix`.
+* `@tauri-apps/api` 2.11.1 — MIT.
+* Tauri 2.11.5 — Apache-2.0 OR MIT (native application framework).
+* vendored WRY 0.55.1 — Apache-2.0 OR MIT. This copy contains the narrow
+  DevHub host patch documented in `apps/devhub/src-tauri/vendor/wry/DEVHUB-PATCH.md`.
+* React 19.1.1 and React DOM 19.1.1 — MIT.
+* `@xterm/xterm` 6.0.0 and `@xterm/addon-fit` 0.11.0 — MIT.
+
+The Tauri, React, React DOM, and xterm JavaScript packages are used to produce
+the application frontend. Build-only tools (for example Vite, TypeScript,
+ESLint, Prettier, and the Tauri CLI) are not shipped in the application
+bundle and are not represented as runtime components here.
+
+Provider boundary
+-----------------
+
+The official Microsoft Visual Studio Code application and its `code serve-web`
+server are BYO dependencies. They are not bundled, downloaded, patched, or
+redistributed by DevHub, so their terms and notices are not part of this
+distribution. A user must install a supported official VS Code application
+separately when selecting that provider; the corresponding CLI must expose
+`code --version` and `code serve-web --help`. DevHub does not accept the
+official Server license on the user's behalf.
+
+The legacy OpenVSCode/Node payload and its notices are also absent from this
+local App Shell bundle. They must not be inferred from this notice or from the
+Bridge VSIX. A future bundle that ships either provider needs a separate,
+provider-specific provenance and license inventory before distribution.
+
+License files
+-------------
+
+* `licenses/DevHub-MIT.txt` — this repository's MIT license.
+* `licenses/Apache-2.0.txt` — Apache License 2.0 text used by Tauri and WRY.
+* `licenses/Tauri-API-MIT.txt` — Tauri API MIT notice.
+* `licenses/React-MIT.txt` — Meta React and React DOM MIT notice.
+* `licenses/Xterm-MIT.txt` — xterm.js and addon-fit MIT notices.
+* `licenses/WRY-MIT.txt` — vendored WRY MIT notice.
+
+Upstream source references:
+
+* https://github.com/tauri-apps/tauri
+* https://github.com/tauri-apps/wry
+* https://github.com/facebook/react
+* https://github.com/xtermjs/xterm.js

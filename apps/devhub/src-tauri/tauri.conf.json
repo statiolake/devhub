@@ -40,7 +40,13 @@
     "active": true,
     "targets": ["app"],
     "resources": {
-      "../../../extensions/devhub-bridge/build/devhub-bridge-0.1.0.vsix": "devhub-bridge.vsix"
+      "../../../extensions/devhub-bridge/build/devhub-bridge-0.1.0.vsix": "devhub-bridge.vsix",
+      "../../../LICENSE": "licenses/DevHub-MIT.txt",
+      "../../../distribution/THIRD-PARTY-NOTICES.txt": "THIRD-PARTY-NOTICES.txt",
+      "../../../docs/INSTALL.md": "INSTALL.md",
+      "../../../distribution/licenses": "licenses",
+      "vendor/wry/LICENSE-APACHE": "licenses/Apache-2.0.txt",
+      "vendor/wry/LICENSE-MIT": "licenses/WRY-MIT.txt"
     },
     "icon": ["icons/icon.icns"],
     "macOS": {

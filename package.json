@@ -12,6 +12,7 @@
     "settings:capability-check": "scripts/check-settings-capability.sh",
     "bridge:generate": "scripts/generate-bridge-contract.sh",
     "bridge:check": "scripts/check-bridge-contract.sh && pnpm --filter @devhub/bridge check",
+    "package:local-release": "python3 scripts/package-local-release.py",
     "terminal:generate": "node scripts/generate-terminal-contract.mjs",
     "terminal:check": "node scripts/check-terminal-contract.mjs",
     "lint": "pnpm --filter @devhub/app lint && pnpm --filter @devhub/bridge lint && cargo clippy --workspace --all-targets --all-features --locked -- -D warnings",
