@@ -1,6 +1,6 @@
 # Use a Zenbones-derived product palette
 
-DevHub uses a restrained fixed-light palette derived from the approved navigation prototype and the user's Zenbones terminal environment. Stone canvas and chrome colors support a charcoal text hierarchy, a narrow blue accent, and accessible semantic Agent states.
+DevHub uses a restrained palette derived from the approved navigation prototype and the user's Zenbones terminal environment. Every role is defined once and resolved for the viewer's system appearance, so light and dark are the same design rather than two. Stone canvas and chrome colors support a charcoal text hierarchy, a narrow blue accent, and accessible semantic Agent states.
 
 The App Icon represents Editor, Agent, and Terminal as three simple panes converging into one hub. It uses the same stone, charcoal, and blue vocabulary without letters, code glyphs, terminal prompts, robots, or third-party marks.
 

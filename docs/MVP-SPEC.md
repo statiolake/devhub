@@ -191,7 +191,7 @@ Structured logs rotate under `~/Library/Logs/DevHub`. Logs include versions, lif
 
 ## Visual and accessibility direction
 
-The UI is an English-only, fixed-light, quiet macOS professional tool using the approved Zenbones-derived palette. VS Code and xterm themes remain provider settings. The App Icon depicts three panes converging into one hub and is generated from one vector master.
+The UI is an English-only, quiet macOS professional tool using the approved Zenbones-derived palette. It follows the system appearance: every palette role resolves for light and dark, and no surface is painted outside that palette. VS Code and xterm themes remain provider settings. The App Icon depicts three panes converging into one hub and is generated from one vector master.
 
 All actions have keyboard focus, VoiceOver labels, visible focus rings, non-color-only state, reduced-motion behavior, and usable text zoom. UTF-8 paths and Japanese IME are mandatory.
 

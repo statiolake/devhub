@@ -27,8 +27,10 @@ describe("accessibility layout invariants", () => {
     expect(shellCss).toMatch(
       /\.workspace-picker\s*\{[\s\S]*?position:\s*fixed;/,
     );
+    // Native macOS control height, not a touch target: the shell is a desktop
+    // app, and the padding keeps the hit area comfortable under text zoom.
     expect(shellCss).toMatch(
-      /\.terminal-retry-button\s*\{[\s\S]*?min-height:\s*40px;/,
+      /\.terminal-retry-button\s*\{[\s\S]*?min-height:\s*28px;/,
     );
     expect(settingsCss).toMatch(
       /\.settings-argv-row\s*\{[\s\S]*?grid-template-columns:\s*minmax\(0, 1fr\) 40px 40px 40px;/,
@@ -39,8 +41,8 @@ describe("accessibility layout invariants", () => {
   });
 
   it("defines every semantic token used by provider shell surfaces", () => {
-    expect(tokensCss).toMatch(/--surface:\s*var\(--paper\)/);
-    expect(tokensCss).toMatch(/--radius-medium:\s*9px/);
+    expect(tokensCss).toMatch(/--surface:\s*light-dark\(/);
+    expect(tokensCss).toMatch(/--radius-panel:\s*10px/);
     expect(tokensCss).toMatch(/--font-mono:/);
   });
 });

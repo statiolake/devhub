@@ -237,7 +237,7 @@ function Workbench() {
           const fallback =
             workspaceButton ??
             document.querySelector<HTMLElement>(
-              '[aria-label="Workspace navigation"] .section-action-button:not([disabled]), [aria-label="Workspace navigation"] [data-tree-item-id]:not([disabled])[tabindex="0"], [aria-label="Workspace navigation"] button:not([disabled]), .activity-nav button:not([disabled])',
+              '[aria-label="Workspace navigation"] .section-action-button:not([disabled]), [aria-label="Workspace navigation"] [data-tree-item-id]:not([disabled])[tabindex="0"], [aria-label="Workspace navigation"] button:not([disabled]), .activity-segments button:not([disabled])',
             );
           if (!restoreFocus(target) && !restoreFocus(fallback)) {
             focusRestoreGeneration.current += 1;

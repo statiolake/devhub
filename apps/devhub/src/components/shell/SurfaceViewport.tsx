@@ -31,10 +31,20 @@ function InlineIntentError({ message }: { readonly message: string }) {
   );
 }
 
-function SurfaceMark({ activity }: { readonly activity: Activity }) {
+/**
+ * A quiet activity glyph. It is decorative: every state also names itself in
+ * text so nothing depends on the symbol being understood.
+ */
+function SurfaceMark({
+  activity,
+  tone,
+}: {
+  readonly activity: Activity;
+  readonly tone?: "danger";
+}) {
   const mark = activity === "editor" ? "⌘" : activity === "agent" ? "◇" : "⌁";
   return (
-    <span className="surface-mark" aria-hidden="true">
+    <span className="surface-mark" data-tone={tone} aria-hidden="true">
       {mark}
     </span>
   );
@@ -63,10 +73,10 @@ function SurfaceEmpty({
       <h1>{contextText}</h1>
       <p className="surface-copy">
         {activity === "editor"
-          ? "The editor surface will appear here when the local host is ready."
+          ? "The editor appears here once the local Workbench is ready."
           : activity === "agent"
-            ? "The agent control stream will appear here when the runtime is ready."
-            : "The persistent terminal surface will appear here when the session is ready."}
+            ? "The agent control stream appears here once its runtime is ready."
+            : "The persistent terminal appears here once its session is ready."}
       </p>
       {activity === "editor" ? (
         <p className="surface-note">
@@ -90,21 +100,39 @@ function SurfaceUnavailable({
   activity,
   reason,
   workspace,
+  actions,
 }: {
   readonly activity: Activity;
   readonly reason: string;
   readonly workspace?: WorkspaceSnapshot;
+  readonly actions?: readonly {
+    readonly label: string;
+    readonly primary?: boolean;
+    readonly run: () => void;
+  }[];
 }) {
-  const title =
-    workspace?.state === "unavailable"
-      ? "Workspace unavailable"
-      : "Surface unavailable";
+  const missingRoot = workspace?.state === "unavailable";
   return (
     <div className="surface-state surface-unavailable-state" role="status">
-      <SurfaceMark activity={activity} />
+      <SurfaceMark activity={activity} tone="danger" />
       <p className="surface-kicker">Unavailable</p>
-      <h1>{title}</h1>
+      <h1>{missingRoot ? workspace.label : "Surface unavailable"}</h1>
       <p className="surface-copy">{reason}</p>
+      {missingRoot ? <p className="surface-note">{workspace.root}</p> : null}
+      {actions && actions.length > 0 ? (
+        <div className="surface-actions">
+          {actions.map((action) => (
+            <button
+              key={action.label}
+              className={action.primary ? "primary-button" : "secondary-button"}
+              type="button"
+              onClick={action.run}
+            >
+              {action.label}
+            </button>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -186,10 +214,48 @@ export function SurfaceViewport({
   appearance,
   surfaceRef,
 }: SurfaceViewportProps) {
-  const { recordPerformanceMarker } = useAppShell();
+  const { recordPerformanceMarker, dispatch, chooseWorkspaceFolder } =
+    useAppShell();
   const activity = snapshot.selection.activity;
   const activitySnapshot = activeActivitySnapshot(snapshot);
   const workspace = workspaceForContext(snapshot, snapshot.selection.context);
+
+  // A missing Workspace Root keeps its identity, so recovery belongs on the
+  // Surface the user is already looking at rather than only in the Sidebar.
+  const unavailableActions =
+    workspace?.state === "unavailable"
+      ? ([
+          {
+            label: "Retry",
+            primary: true,
+            run: () =>
+              void dispatch({
+                type: "retry_workspace",
+                workspaceId: workspace.id,
+              }),
+          },
+          {
+            label: "Locate…",
+            run: () =>
+              void chooseWorkspaceFolder().then((path) => {
+                if (path)
+                  void dispatch({
+                    type: "locate_workspace",
+                    workspaceId: workspace.id,
+                    path,
+                  });
+              }),
+          },
+          {
+            label: "Close",
+            run: () =>
+              void dispatch({
+                type: "request_close_workspace",
+                workspaceId: workspace.id,
+              }),
+          },
+        ] as const)
+      : undefined;
 
   if (snapshot.readiness !== "ready") {
     return (
@@ -245,6 +311,7 @@ export function SurfaceViewport({
           activity={activity}
           workspace={workspace}
           reason={disabledReasonLabel(activitySnapshot.resolution.reason)}
+          actions={unavailableActions}
         />
       </section>
     );

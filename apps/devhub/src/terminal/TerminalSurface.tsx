@@ -773,7 +773,7 @@ export function TerminalSurface({
   }, [appearance]);
 
   return (
-    <div className="terminal-surface-shell">
+    <div className="terminal-surface-shell" data-connection={connection}>
       {!hideTitle && (
         <h1
           id={`${surfaceKey}-terminal-title`}

@@ -222,16 +222,19 @@ describe("App Shell navigation matrix", () => {
     expect(
       await screen.findByRole("button", { name: /Codex 1/ }),
     ).toBeInTheDocument();
+    // A healthy row shows only its name; runtime state stays in the
+    // accessible name and in the status mark, and surfaces as visible text
+    // only when it needs attention.
     expect(
       screen.getByRole("button", {
         name: "Codex 1, Working agent, Connected",
       }),
-    ).toHaveTextContent("Codex 1Connected");
+    ).toHaveTextContent("Codex 1");
     expect(
       screen.getByRole("button", {
         name: "Claude 1, Waiting agent, Connected",
       }),
-    ).toHaveTextContent("Claude 1Connected");
+    ).toHaveTextContent("Claude 1");
     expect(screen.getAllByLabelText("Working")).not.toHaveLength(0);
     expect(screen.getAllByLabelText("Waiting")).not.toHaveLength(0);
   });
@@ -435,8 +438,10 @@ describe("App Shell states and accessibility", () => {
       <AppShell client={client(unavailableSnapshot)} />,
     );
     expect(
-      await screen.findByRole("heading", { name: "Workspace unavailable" }),
+      await screen.findByRole("heading", { name: "missing" }),
     ).toBeInTheDocument();
+    expect(screen.getByText("Unavailable")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Locate…" })).toBeInTheDocument();
     unavailable.unmount();
 
     render(<AppShell client={client(closingFailedSnapshot)} />);

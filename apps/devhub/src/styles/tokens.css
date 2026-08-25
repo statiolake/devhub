@@ -1,33 +1,57 @@
+/*
+ * DevHub design tokens.
+ *
+ * The palette is the Zenbones-derived product palette from ADR 0019, expressed
+ * once per role and resolved for the viewer's system appearance. Provider
+ * surfaces (the VS Code Workbench, xterm) keep their own themes; nothing here
+ * reaches into them.
+ */
+
 :root {
-  color-scheme: light;
+  color-scheme: light dark;
   font-family:
     -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display",
     sans-serif;
+  font-size: 13px;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
 
-  /* Zenbones-derived DevHub primitives. Provider surfaces keep their themes. */
-  --bone: #f3f1ef;
-  --paper: #fbfaf9;
-  --surface: var(--paper);
-  --chrome: #e9e5e2;
-  --aluminum: #d8d4d0;
-  --graphite: #2c363c;
-  --secondary: #6f6864;
-  --muted: #8e8782;
-  --pine: #286486;
-  --selection: #cbd9e3;
-  --working: #4f6c31;
-  --waiting: #9a6700;
-  --clay: #a8334c;
+  /* Materials, back to front. */
+  --canvas: light-dark(#f3f1ef, #171717);
+  --chrome: light-dark(#e9e5e2, #1f1f1f);
+  --surface: light-dark(#fbfaf9, #232323);
+  --raised: light-dark(#ffffff, #2b2b2b);
+  --sunken: light-dark(#e5e0dd, #141414);
 
-  --line: rgba(44, 54, 60, 0.14);
-  --line-soft: rgba(44, 54, 60, 0.09);
-  --line-strong: rgba(44, 54, 60, 0.24);
-  --selection-line: rgba(40, 100, 134, 0.36);
-  --focus-ring: #286486;
-  --disabled-ink: rgba(44, 54, 60, 0.42);
+  /* Ink. */
+  --primary: light-dark(#2c363c, #d7d4d1);
+  --secondary: light-dark(#6f6864, #a49c97);
+  --tertiary: light-dark(#8e8782, #7d7671);
+  --disabled-ink: light-dark(rgba(44, 54, 60, 0.38), rgba(215, 212, 209, 0.34));
+
+  /* Accent and state. */
+  --accent: light-dark(#286486, #82aeca);
+  --accent-ink: light-dark(#ffffff, #12222c);
+  --selection: light-dark(#cbd9e3, #2f4351);
+  --selection-inactive: light-dark(#e0dcd8, #2c2c2c);
+  --working: light-dark(#4f6c31, #8eac70);
+  --waiting: light-dark(#9a6700, #d0a215);
+  --danger: light-dark(#a8334c, #dc8191);
+
+  /* Separators. */
+  --line: light-dark(rgba(44, 54, 60, 0.14), rgba(255, 255, 255, 0.1));
+  --line-soft: light-dark(rgba(44, 54, 60, 0.08), rgba(255, 255, 255, 0.06));
+  --line-strong: light-dark(rgba(44, 54, 60, 0.26), rgba(255, 255, 255, 0.18));
+  --focus-ring: var(--accent);
+
+  /* Hover/pressed washes that work on any material. */
+  --wash: light-dark(rgba(44, 54, 60, 0.06), rgba(255, 255, 255, 0.07));
+  --wash-strong: light-dark(rgba(44, 54, 60, 0.11), rgba(255, 255, 255, 0.12));
+
+  --shadow-raised: 0 1px 2px light-dark(rgba(0, 0, 0, 0.12), rgba(0, 0, 0, 0.5));
+  --shadow-dialog: 0 12px 38px
+    light-dark(rgba(0, 0, 0, 0.22), rgba(0, 0, 0, 0.62));
 
   --space-1: 4px;
   --space-2: 8px;
@@ -35,16 +59,19 @@
   --space-4: 16px;
   --space-5: 20px;
   --space-6: 24px;
-  --space-7: 28px;
   --space-8: 32px;
-  --space-10: 40px;
 
-  --radius-small: 5px;
-  --radius-control: 7px;
-  --radius-medium: 9px;
+  --radius-row: 6px;
+  --radius-control: 6px;
+  --radius-panel: 10px;
+
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  --titlebar-height: 56px;
-  --native-leading-inset: 80px;
+
+  /* Native chrome geometry. */
+  --titlebar-height: 52px;
+  --traffic-light-inset: 78px;
+  --row-height: 28px;
+  --sidebar-width: 248px;
 }
 
 * {
@@ -56,14 +83,13 @@ body,
 #root {
   width: 100%;
   height: 100%;
-  min-height: 100%;
   margin: 0;
 }
 
 body {
-  min-width: 0;
-  background: var(--bone);
-  color: var(--graphite);
+  overflow: hidden;
+  background: var(--canvas);
+  color: var(--primary);
 }
 
 button,
@@ -71,22 +97,34 @@ input,
 textarea,
 select {
   font: inherit;
-}
-
-button {
   color: inherit;
 }
 
-button:focus-visible,
-[role="separator"]:focus-visible,
-input:focus-visible,
-select:focus-visible,
-textarea:focus-visible,
-[tabindex]:focus-visible {
+button {
+  margin: 0;
+  cursor: default;
+}
+
+button:disabled {
+  cursor: default;
+}
+
+a {
+  color: var(--accent);
+  text-underline-offset: 2px;
+}
+
+:focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
 
-button:disabled {
-  cursor: not-allowed;
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
 }

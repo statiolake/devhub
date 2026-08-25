@@ -151,9 +151,13 @@ function WorkspaceRow({
               })
             }
           >
-            <span aria-hidden="true">{expanded ? "⌄" : "›"}</span>
+            <svg viewBox="0 0 10 10" aria-hidden="true" focusable="false">
+              <path d="M3.5 1.5 L7 5 L3.5 8.5" />
+            </svg>
           </button>
-        ) : null}
+        ) : (
+          <span className="disclosure-spacer" aria-hidden="true" />
+        )}
         <button
           className="sidebar-context-button"
           type="button"
@@ -170,13 +174,12 @@ function WorkspaceRow({
             })
           }
         >
-          <span className="workspace-glyph" aria-hidden="true">
-            ▫
+          <span className="row-glyph" aria-hidden="true">
+            <svg viewBox="0 0 14 14" focusable="false">
+              <path d="M1.5 3.5a1 1 0 0 1 1-1h3l1.4 1.6h4.6a1 1 0 0 1 1 1v5.4a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1z" />
+            </svg>
           </span>
-          <span className="sidebar-row-copy">
-            <span className="sidebar-row-label">{workspace.label}</span>
-            <span className="sidebar-row-detail">{workspace.root}</span>
-          </span>
+          <span className="row-label">{workspace.label}</span>
           {workspace.agents.length > 0 && (
             <StatusMark status={workspace.aggregateStatus} compact />
           )}
@@ -199,7 +202,9 @@ function WorkspaceRow({
             }
             onClick={() => onCreateAgent(workspace.id)}
           >
-            <span aria-hidden="true">＋</span>
+            <svg viewBox="0 0 14 14" aria-hidden="true" focusable="false">
+              <path d="M7 3.25v7.5M3.25 7h7.5" />
+            </svg>
           </button>
         )}
         {workspace.state === "unavailable" && (
@@ -213,7 +218,9 @@ function WorkspaceRow({
                 dispatch({ type: "retry_workspace", workspaceId: workspace.id })
               }
             >
-              ↻
+              <svg viewBox="0 0 14 14" aria-hidden="true" focusable="false">
+                <path d="M11 7a4 4 0 1 1-1.2-2.85M11 2.5V5H8.5" />
+              </svg>
             </button>
             <button
               className="row-action-button"
@@ -231,7 +238,10 @@ function WorkspaceRow({
                 });
               }}
             >
-              ⌕
+              <svg viewBox="0 0 14 14" aria-hidden="true" focusable="false">
+                <circle cx="6.4" cy="6.4" r="3.4" />
+                <path d="M9 9l2.4 2.4" />
+              </svg>
             </button>
           </>
         )}
@@ -248,7 +258,9 @@ function WorkspaceRow({
               })
             }
           >
-            ↻
+            <svg viewBox="0 0 14 14" aria-hidden="true" focusable="false">
+              <path d="M11 7a4 4 0 1 1-1.2-2.85M11 2.5V5H8.5" />
+            </svg>
           </button>
         )}
         {workspace.state !== "closing" && (
@@ -264,7 +276,9 @@ function WorkspaceRow({
               })
             }
           >
-            ×
+            <svg viewBox="0 0 14 14" aria-hidden="true" focusable="false">
+              <path d="M4 4l6 6M10 4l-6 6" />
+            </svg>
           </button>
         )}
       </div>
@@ -302,24 +316,22 @@ function WorkspaceRow({
                       })
                     }
                   >
-                    <span className="agent-branch" aria-hidden="true">
-                      └
+                    <span className="row-glyph" aria-hidden="true">
+                      <svg viewBox="0 0 14 14" focusable="false">
+                        <circle cx="7" cy="7" r="4.25" />
+                      </svg>
                     </span>
-                    <span className="agent-glyph" aria-hidden="true">
-                      ◇
-                    </span>
-                    <span className="sidebar-row-copy">
-                      <span className="sidebar-row-label">
-                        {agent.displayName}
-                      </span>
-                      <span className="sidebar-row-detail">
+                    <span className="row-label">{agent.displayName}</span>
+                    {agent.controlState !== "running" ||
+                    agent.runtimeHealth !== "healthy" ? (
+                      <span className="row-note">
                         {agent.controlState === "stopping"
                           ? "Stopping"
                           : agent.controlState === "stop-failed"
                             ? "Stop failed"
                             : runtimeHealthLabel(agent.runtimeHealth)}
                       </span>
-                    </span>
+                    ) : null}
                     <StatusMark status={agent.status} compact />
                   </button>
                   <button
@@ -330,7 +342,13 @@ function WorkspaceRow({
                     disabled={agent.controlState === "stopping"}
                     onClick={() => onRenameAgent(agent)}
                   >
-                    <span aria-hidden="true">✎</span>
+                    <svg
+                      viewBox="0 0 14 14"
+                      aria-hidden="true"
+                      focusable="false"
+                    >
+                      <path d="M9.4 2.9 11.1 4.6 5 10.7 2.9 11.1 3.3 9z" />
+                    </svg>
                   </button>
                   {agent.runtimeHealth !== "healthy" &&
                   agent.controlState !== "stopping" ? (
@@ -346,7 +364,13 @@ function WorkspaceRow({
                         })
                       }
                     >
-                      <span aria-hidden="true">↻</span>
+                      <svg
+                        viewBox="0 0 14 14"
+                        aria-hidden="true"
+                        focusable="false"
+                      >
+                        <path d="M11 7a4 4 0 1 1-1.2-2.85M11 2.5V5H8.5" />
+                      </svg>
                     </button>
                   ) : null}
                   {agent.controlState === "stop-failed" ? (
@@ -362,7 +386,13 @@ function WorkspaceRow({
                         })
                       }
                     >
-                      <span aria-hidden="true">↻</span>
+                      <svg
+                        viewBox="0 0 14 14"
+                        aria-hidden="true"
+                        focusable="false"
+                      >
+                        <path d="M11 7a4 4 0 1 1-1.2-2.85M11 2.5V5H8.5" />
+                      </svg>
                     </button>
                   ) : agent.controlState === "stopping" ? null : (
                     <button
@@ -374,7 +404,13 @@ function WorkspaceRow({
                         dispatch({ type: "stop_agent", agentId: agent.id })
                       }
                     >
-                      <span aria-hidden="true">×</span>
+                      <svg
+                        viewBox="0 0 14 14"
+                        aria-hidden="true"
+                        focusable="false"
+                      >
+                        <path d="M4 4l6 6M10 4l-6 6" />
+                      </svg>
                     </button>
                   )}
                 </div>
@@ -405,13 +441,13 @@ function ScratchRow({
         onDispatch({ type: "select_context", context: { kind: "global" } })
       }
     >
-      <span className="scratch-glyph" aria-hidden="true">
-        ⌁
+      <span className="disclosure-spacer" aria-hidden="true" />
+      <span className="row-glyph" aria-hidden="true">
+        <svg viewBox="0 0 14 14" focusable="false">
+          <path d="M3 4.5 L6 7 L3 9.5 M7.5 9.75 H11" />
+        </svg>
       </span>
-      <span className="sidebar-row-copy">
-        <span className="sidebar-row-label">Scratch</span>
-        <span className="sidebar-row-detail">Global terminal</span>
-      </span>
+      <span className="row-label">Scratch</span>
     </button>
   );
 }
@@ -626,7 +662,7 @@ export function Sidebar({ snapshot }: SidebarProps) {
         !(target.closest<HTMLElement>("[inert]")?.inert ?? false)
           ? target
           : document.querySelector<HTMLElement>(
-              '[aria-label="Workspace navigation"] .section-action-button:not([disabled]), [aria-label="Workspace navigation"] [data-tree-item-id]:not([disabled])[tabindex="0"], [aria-label="Workspace navigation"] button:not([disabled]), .activity-nav button:not([disabled])',
+              '[aria-label="Workspace navigation"] .section-action-button:not([disabled]), [aria-label="Workspace navigation"] [data-tree-item-id]:not([disabled])[tabindex="0"], [aria-label="Workspace navigation"] button:not([disabled]), .activity-segments button:not([disabled])',
             );
       candidate?.focus();
     };
@@ -807,7 +843,9 @@ export function Sidebar({ snapshot }: SidebarProps) {
               setPickerOpen(true);
             }}
           >
-            <span aria-hidden="true">＋</span>
+            <svg viewBox="0 0 14 14" aria-hidden="true" focusable="false">
+              <path d="M7 3.25v7.5M3.25 7h7.5" />
+            </svg>
           </button>
         </div>
         {pickerOpen && typeof document !== "undefined"
