@@ -8,7 +8,11 @@ import type {
   AgentProfiles,
   ConfirmationPurposeWire,
 } from "../generated/app-shell";
-import type { AppPerformanceMarker, WorkspacePickerCandidate } from "./client";
+import type {
+  AppPerformanceMarker,
+  EditorLayout,
+  WorkspacePickerCandidate,
+} from "./client";
 
 export interface AppShellContextValue {
   readonly state: AppLoadState;
@@ -18,6 +22,7 @@ export interface AppShellContextValue {
   readonly dispatch: (intent: AppIntent) => Promise<AppOutcome | undefined>;
   readonly retry: () => void;
   readonly openSettings: () => Promise<void>;
+  readonly setEditorLayout: (layout: EditorLayout) => void;
   readonly pickerCandidates: readonly WorkspacePickerCandidate[];
   readonly pickerBusy: boolean;
   readonly startWorkspacePicker: (query?: string) => Promise<void>;

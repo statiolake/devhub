@@ -1,5 +1,9 @@
-import { describe, expect, it } from "vitest";
-import { parseWorkspacePickerEvent } from "./client";
+import { describe, expect, it, vi } from "vitest";
+import {
+  createTauriAppShellClient,
+  parseWorkspacePickerEvent,
+  SET_EDITOR_LAYOUT_COMMAND,
+} from "./client";
 
 describe("workspace picker event boundary", () => {
   it("accepts bounded safe candidate events", () => {
@@ -102,5 +106,24 @@ describe("workspace picker event boundary", () => {
         sourceId: 7,
       }),
     ).toThrow();
+  });
+});
+
+describe("native Editor layout boundary", () => {
+  it("forwards the measured Surface rectangle without reshaping it", async () => {
+    const invoke = vi.fn().mockResolvedValue(undefined);
+    const client = createTauriAppShellClient({
+      invoke,
+      listen: vi.fn(),
+    });
+
+    await client.setEditorLayout?.({ x: 288, y: 56, width: 912, height: 640 });
+
+    expect(invoke).toHaveBeenCalledWith(SET_EDITOR_LAYOUT_COMMAND, {
+      x: 288,
+      y: 56,
+      width: 912,
+      height: 640,
+    });
   });
 });

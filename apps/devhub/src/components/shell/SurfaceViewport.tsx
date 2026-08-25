@@ -7,6 +7,7 @@ import {
   type WorkspaceSnapshot,
   workspaceForContext,
 } from "../../generated/app-shell";
+import type { Ref } from "react";
 import { TerminalSurface } from "../../terminal/TerminalSurface";
 import { defaultAgentSurfaceClient } from "../../agent/client";
 import { disabledReasonLabel } from "./activityPresentation";
@@ -16,6 +17,7 @@ export interface SurfaceViewportProps {
   readonly snapshot: AppSnapshot;
   readonly intentError?: string;
   readonly appearance?: AppAppearance;
+  readonly surfaceRef?: Ref<HTMLElement>;
 }
 
 function InlineIntentError({ message }: { readonly message: string }) {
@@ -168,6 +170,7 @@ export function SurfaceViewport({
   snapshot,
   intentError,
   appearance,
+  surfaceRef,
 }: SurfaceViewportProps) {
   const { recordPerformanceMarker } = useAppShell();
   const activity = snapshot.selection.activity;
@@ -177,6 +180,7 @@ export function SurfaceViewport({
   if (snapshot.readiness !== "ready") {
     return (
       <section
+        ref={surfaceRef}
         className="surface"
         aria-label="Surface"
         aria-busy="true"
@@ -198,6 +202,7 @@ export function SurfaceViewport({
   if (workspace?.state === "closing" || workspace?.state === "closing-failed") {
     return (
       <section
+        ref={surfaceRef}
         className="surface"
         aria-label="Surface"
         aria-live="polite"
@@ -233,6 +238,7 @@ export function SurfaceViewport({
 
   return (
     <section
+      ref={surfaceRef}
       className="surface"
       aria-label="Surface"
       data-surface-key={activitySnapshot.resolution.surfaceKey}

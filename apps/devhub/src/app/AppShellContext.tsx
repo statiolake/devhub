@@ -11,6 +11,7 @@ import {
   parseTransportError,
   type AppPerformanceMarker,
   type AppShellClient,
+  type EditorLayout,
   type WorkspacePickerCandidate,
   type WorkspacePickerEvent,
 } from "./client";
@@ -386,6 +387,17 @@ export function AppShellProvider({
     await client.openSettings?.();
   }, [client]);
 
+  const setEditorLayout = useCallback(
+    (layout: EditorLayout) => {
+      const result = client.setEditorLayout?.(layout);
+      // Layout is a native projection side effect. A stale or unavailable
+      // child must not turn a valid App Shell snapshot into an error state;
+      // the next committed geometry retries it.
+      if (result) void result.catch(() => undefined);
+    },
+    [client],
+  );
+
   const startWorkspacePicker = useCallback(
     async (query = "") => {
       if (!client.startWorkspacePicker) return;
@@ -501,6 +513,7 @@ export function AppShellProvider({
       dispatch,
       retry,
       openSettings,
+      setEditorLayout,
       pickerCandidates,
       pickerBusy,
       startWorkspacePicker,
@@ -520,6 +533,7 @@ export function AppShellProvider({
       emitPerformanceMarker,
       intentError,
       openSettings,
+      setEditorLayout,
       pickerBusy,
       pickerCandidates,
       retry,

@@ -95,6 +95,17 @@ const MAX_EFFECT_STEPS: usize = 1_024;
 const FOLDER_CHOOSER_SCRIPT: &str =
     "POSIX path of (choose folder with prompt \"Open Workspace Folder\")";
 const MIN_PROCESS_NOFILE: u64 = 8_192;
+const APP_SHELL_TITLEBAR_HEIGHT: f64 = 56.0;
+
+fn initial_editor_bounds(
+    window_width: f64,
+    window_height: f64,
+    sidebar_width: u16,
+) -> editor::EditorBounds {
+    let x = f64::from(sidebar_width);
+    let y = APP_SHELL_TITLEBAR_HEIGHT;
+    editor::EditorBounds::new(x, y, (window_width - x).max(1.0), (window_height - y).max(1.0))
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ProcessFileLimitError {
@@ -2395,16 +2406,15 @@ impl NativeAppState {
             AppErrorWire::native_unavailable()
         })?;
         let logical_size = size.to_logical::<f64>(scale_factor);
-        let bounds = editor::EditorBounds::new(
-            0.0,
-            0.0,
-            logical_size.width.max(1.0),
-            logical_size.height.max(1.0),
-        );
-        *self.editor_bounds.lock().map_err(state_error)? = bounds;
         let snapshot = self.current_snapshot_with_lifecycle(lifecycle).inspect_err(|_error| {
             write_q5_reconstruction_failure(Q5ReconstructionStage::Snapshot, "native_unavailable");
         })?;
+        let bounds = initial_editor_bounds(
+            logical_size.width,
+            logical_size.height,
+            snapshot.sidebar().width(),
+        );
+        *self.editor_bounds.lock().map_err(state_error)? = bounds;
         let workspace_first = std::env::var_os("DEVHUB_Q5_MINIMAL_WORKSPACE_FIRST").is_some();
         // Global Editor is a fixed singleton. Available Workspace Editors are
         // keyed by persisted Workspace ID; an unavailable root remains a
@@ -2535,6 +2545,23 @@ impl NativeAppState {
         let snapshot = self.current_snapshot_with_lifecycle(lifecycle)?;
         self.sync_editor_surface_for_snapshot(&snapshot);
         Ok(())
+    }
+
+    /// Accept the actual App Shell Surface rectangle after React has laid out
+    /// the titlebar and Sidebar. Raw WRY children are siblings of the shell
+    /// WebView, so a Window-sized default would cover navigation controls.
+    fn set_editor_layout_with_lifecycle(
+        &self,
+        bounds: editor::EditorBounds,
+        lifecycle: NativeLifecycleToken,
+    ) -> Result<(), AppErrorWire> {
+        self.validate_app_lifecycle_token(lifecycle)?;
+        if !bounds.is_valid() {
+            return Err(AppErrorWire::native_unavailable()
+                .with_summary("Editor Surface layout is outside the Window bounds"));
+        }
+        *self.editor_bounds.lock().map_err(state_error)? = bounds;
+        self.editor_host.set_layout(bounds).map_err(state_error)
     }
 
     fn sync_editor_surface_for_snapshot(&self, snapshot: &AppSnapshot) {
@@ -6992,6 +7019,15 @@ fn record_performance_marker(
 }
 
 #[tauri::command]
+fn set_editor_layout(
+    state: State<'_, NativeAppState>,
+    payload: editor::EditorBounds,
+) -> Result<(), AppErrorWire> {
+    let token = state.capture_open_lifecycle_token()?;
+    state.set_editor_layout_with_lifecycle(payload, token)
+}
+
+#[tauri::command]
 fn get_agent_profiles(state: State<'_, NativeAppState>) -> Result<AgentProfilesWire, AppErrorWire> {
     let token = state.capture_open_lifecycle_token()?;
     state.agent_profiles_with_lifecycle(token)
@@ -8061,6 +8097,7 @@ pub fn run() {
             select_workspace_picker,
             choose_workspace_folder,
             get_app_appearance,
+            set_editor_layout,
             get_agent_profiles,
             dispatch_app_intent,
             replay_app_events,
@@ -8201,6 +8238,14 @@ mod tests {
 
     #[cfg(debug_assertions)]
     static TEMP_DEBUG_RESOURCE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+    #[test]
+    fn initial_editor_bounds_reserve_titlebar_and_sidebar() {
+        assert_eq!(
+            initial_editor_bounds(1_200.0, 760.0, 288),
+            editor::EditorBounds::new(288.0, 56.0, 912.0, 704.0)
+        );
+    }
 
     #[cfg(debug_assertions)]
     #[test]

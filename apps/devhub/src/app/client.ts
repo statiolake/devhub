@@ -42,6 +42,15 @@ export const APP_WORKSPACE_PICKER_EVENT = "app://workspace-picker" as const;
 export const OPEN_SETTINGS_WINDOW_COMMAND = "open_settings_window" as const;
 export const RECORD_PERFORMANCE_MARKER_COMMAND =
   "record_performance_marker" as const;
+export const SET_EDITOR_LAYOUT_COMMAND = "set_editor_layout" as const;
+
+/** Logical App Shell coordinates occupied by the active native Editor child. */
+export interface EditorLayout {
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+}
 
 export type AppPerformanceMarker =
   | "app_shell_interactive"
@@ -110,6 +119,7 @@ export interface AppShellClient {
   selectWorkspacePicker?(path: string): Promise<AppOutcome>;
   chooseWorkspaceFolder?(): Promise<string | undefined>;
   openSettings?(): Promise<void>;
+  setEditorLayout?(layout: EditorLayout): Promise<void>;
   recordPerformanceMarker?(marker: AppPerformanceMarker): Promise<void>;
   subscribeWorkspacePicker?(
     listener: (event: WorkspacePickerEvent) => void,
@@ -203,6 +213,9 @@ export function createTauriAppShellClient(
     },
     openSettings() {
       return transport.invoke<void>(OPEN_SETTINGS_WINDOW_COMMAND);
+    },
+    setEditorLayout(layout) {
+      return transport.invoke<void>(SET_EDITOR_LAYOUT_COMMAND, layout);
     },
     recordPerformanceMarker(marker) {
       return transport.invoke<void>(RECORD_PERFORMANCE_MARKER_COMMAND, {
