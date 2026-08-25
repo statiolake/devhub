@@ -42,7 +42,11 @@
     "resources": {
       "../../../extensions/devhub-bridge/build/devhub-bridge-0.1.0.vsix": "devhub-bridge.vsix"
     },
-    "icon": [],
+    "icon": ["icons/icon.icns"],
+    "macOS": {
+      "minimumSystemVersion": "15.0",
+      "hardenedRuntime": true
+    },
     "createUpdaterArtifacts": false
   }
 }

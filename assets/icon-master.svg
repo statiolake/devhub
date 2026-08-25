@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  DevHub App Icon master.
+
+  The three panes represent Editor, Agent, and Terminal. Their blue seams
+  converge on one charcoal-edged hub. Keep this source free of text and
+  provider marks so it remains legible at macOS's 16 px rendering size.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-labelledby="title">
+  <title id="title">DevHub</title>
+
+  <rect width="1024" height="1024" rx="224" fill="#f3f1ef"/>
+  <rect x="28" y="28" width="968" height="968" rx="204" fill="none" stroke="#2c363c" stroke-width="24"/>
+
+  <!-- The three pane-to-hub seams sit behind the pane cards and hub. -->
+  <path d="M420 392 L512 512 L604 392" fill="none" stroke="#286486" stroke-width="34" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M512 622 L512 512" fill="none" stroke="#286486" stroke-width="34" stroke-linecap="round"/>
+
+  <!-- Editor pane. -->
+  <rect x="132" y="152" width="344" height="268" rx="58" fill="#fbfaf9" stroke="#2c363c" stroke-width="22"/>
+  <rect x="180" y="207" width="104" height="24" rx="12" fill="#286486"/>
+  <rect x="180" y="273" width="206" height="20" rx="10" fill="#e9e5e2"/>
+  <rect x="180" y="325" width="150" height="20" rx="10" fill="#e9e5e2"/>
+
+  <!-- Agent pane. -->
+  <rect x="548" y="152" width="344" height="268" rx="58" fill="#fbfaf9" stroke="#2c363c" stroke-width="22"/>
+  <rect x="596" y="207" width="104" height="24" rx="12" fill="#286486"/>
+  <rect x="596" y="273" width="206" height="20" rx="10" fill="#e9e5e2"/>
+  <rect x="596" y="325" width="150" height="20" rx="10" fill="#e9e5e2"/>
+
+  <!-- Terminal pane. -->
+  <rect x="286" y="604" width="452" height="268" rx="58" fill="#fbfaf9" stroke="#2c363c" stroke-width="22"/>
+  <rect x="340" y="659" width="104" height="24" rx="12" fill="#286486"/>
+  <rect x="340" y="725" width="280" height="20" rx="10" fill="#e9e5e2"/>
+  <rect x="340" y="777" width="204" height="20" rx="10" fill="#e9e5e2"/>
+
+  <!-- One shared hub keeps the three provider-neutral surfaces together. -->
+  <circle cx="512" cy="512" r="88" fill="#286486" stroke="#2c363c" stroke-width="24"/>
+  <circle cx="512" cy="512" r="24" fill="#fbfaf9"/>
+</svg>
