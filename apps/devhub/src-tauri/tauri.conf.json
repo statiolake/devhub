@@ -5,7 +5,7 @@
   "identifier": "io.github.statiolake.devhub",
   "build": {
     "beforeDevCommand": "pnpm --dir ../.. --filter @devhub/app dev",
-    "beforeBuildCommand": "pnpm --dir ../.. --filter @devhub/app build",
+    "beforeBuildCommand": "pnpm --dir ../.. --filter @devhub/bridge build && pnpm --dir ../.. --filter @devhub/bridge package && pnpm --dir ../.. --filter @devhub/app build",
     "devUrl": "http://localhost:1420",
     "frontendDist": "../dist"
   },
@@ -37,8 +37,11 @@
     }
   },
   "bundle": {
-    "active": false,
-    "targets": "all",
+    "active": true,
+    "targets": ["app"],
+    "resources": {
+      "../../../extensions/devhub-bridge/build/devhub-bridge-0.1.0.vsix": "devhub-bridge.vsix"
+    },
     "icon": [],
     "createUpdaterArtifacts": false
   }

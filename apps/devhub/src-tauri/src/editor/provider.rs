@@ -223,6 +223,10 @@ fn discovery_candidates() -> Vec<PathBuf> {
         candidates.extend(std::env::split_paths(&path).map(|dir| dir.join("code")));
     }
     candidates.extend([
+        // The official VS Code shell command is commonly installed here.
+        // GUI launches do not reliably inherit the user's shell PATH, so
+        // keep this canonical CLI location explicit.
+        PathBuf::from("/usr/local/bin/code"),
         PathBuf::from("/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code"),
         PathBuf::from(
             "/Applications/Visual Studio Code - Insiders.app/Contents/Resources/app/bin/code",
