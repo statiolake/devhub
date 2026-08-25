@@ -1,0 +1,18 @@
+[package]
+name = "real-workbench-host-throwaway"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[build-dependencies]
+tauri-build = "=2.6.3"
+
+[dependencies]
+tauri = { version = "=2.11.5", features = ["unstable", "devtools"] }
+# THROWAWAY lifecycle audit: AppKit key-window/first-responder observation.
+objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["NSResponder", "NSView", "NSWindow"] }
+
+# THROWAWAY: reuse the already-pinned host-only WRY patch without modifying
+# the earlier prototype. OpenVSCode itself remains an untouched upstream input.
+[patch.crates-io]
+wry = { path = "../tauri-openvscode-feasibility/vendor/wry" }

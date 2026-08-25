@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Wayfinder child test</title>
+    <style>
+      :root { color-scheme: dark; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+      * { box-sizing: border-box; }
+      body { margin: 0; min-width: 320px; padding: 20px; background: #20262e; color: #e7edf3; }
+      h1 { margin: 0 0 8px; font-size: 18px; color: #7ee7c7; }
+      p { margin: 4px 0; color: #aab5c1; font-size: 12px; }
+      .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 18px; margin: 18px 0; }
+      .label { color: #8392a2; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; }
+      .value { color: #f5c978; font-size: 13px; word-break: break-word; }
+      textarea { width: 100%; min-height: 86px; resize: vertical; margin-top: 14px; padding: 10px; color: #ecf3f8; background: #171b21; border: 1px solid #3a4653; border-radius: 5px; font: inherit; }
+      textarea:focus { outline: 2px solid #7ee7c7; outline-offset: 1px; }
+      .log { margin-top: 14px; max-height: 300px; overflow: auto; padding: 10px; background: #171b21; border: 1px solid #313b47; border-radius: 5px; font-size: 11px; line-height: 1.55; }
+      .log div { border-bottom: 1px solid rgba(255, 255, 255, .06); padding: 2px 0; }
+      .ok { color: #7ee7c7; } .warn { color: #f5c978; } .bad { color: #ff8f8f; }
+    </style>
+  </head>
+  <body>
+    <h1>Child client <span id="client"></span></h1>
+    <p>This page is a local external-origin test surface. It has no Tauri API or injected globals.</p>
+    <div class="grid">
+      <div><div class="label">page load token</div><div id="load-token" class="value"></div></div>
+      <div><div class="label">visibility</div><div id="visibility" class="value"></div></div>
+      <div><div class="label">event stream</div><div id="stream" class="value"></div></div>
+      <div><div class="label">heartbeat ticks</div><div id="ticks" class="value">0</div></div>
+    </div>
+    <textarea id="editor" spellcheck="false" aria-label="Shortcut test editor">Type here, then exercise ⌘P ⌘⇧P ⌘S ⌘Z ⌘C ⌘V. Keydown records appear below.</textarea>
+    <div id="log" class="log" aria-live="polite"></div>
+    <script>
+      (() => {
+        const params = new URLSearchParams(location.search);
+        const client = params.get('client') || 'external';
+        const key = `wayfinder-throwaway-${client}`;
+        const loadToken = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+        const previousLoads = Number(localStorage.getItem(`${key}-loads`) || '0') + 1;
+        localStorage.setItem(`${key}-loads`, String(previousLoads));
+        const log = document.querySelector('#log');
+        const clientNode = document.querySelector('#client');
+        const loadNode = document.querySelector('#load-token');
+        const visibilityNode = document.querySelector('#visibility');
+        const streamNode = document.querySelector('#stream');
+        const ticksNode = document.querySelector('#ticks');
+        clientNode.textContent = client;
+        loadNode.textContent = `${loadToken} · loads in this data store: ${previousLoads}`;
+
+        const write = (message, kind = '') => {
+          const row = document.createElement('div');
+          row.className = kind;
+          row.textContent = `${new Date().toLocaleTimeString()}  ${message}`;
+          log.prepend(row);
+        };
+        const updateVisibility = () => {
+          visibilityNode.textContent = document.visibilityState;
+          write(`visibility=${document.visibilityState}`);
+        };
+        document.addEventListener('visibilitychange', updateVisibility);
+        window.addEventListener('pagehide', () => write('pagehide', 'warn'));
+        window.addEventListener('pageshow', () => write('pageshow', 'ok'));
+        updateVisibility();
+
+        document.addEventListener('keydown', (event) => {
+          const mods = [event.metaKey && '⌘', event.ctrlKey && '⌃', event.shiftKey && '⇧', event.altKey && '⌥'].filter(Boolean).join('');
+          write(`keydown ${mods}${event.key} code=${event.code} repeat=${event.repeat} trusted=${event.isTrusted}`, event.metaKey ? 'ok' : '');
+        }, true);
+
+        let ticks = 0;
+        const heartbeat = () => fetch('/heartbeat', { cache: 'no-store' }).then(() => {
+          ticks += 1;
+          ticksNode.textContent = String(ticks);
+        }).catch(() => write('heartbeat failed', 'bad'));
+        heartbeat();
+        setInterval(heartbeat, 2000);
+
+        const source = new EventSource('/events');
+        source.onopen = () => { streamNode.textContent = 'open'; write('EventSource open', 'ok'); };
+        source.onmessage = (event) => { streamNode.textContent = `open · ${event.data}`; };
+        source.onerror = () => { streamNode.textContent = 'error / reconnecting'; write('EventSource error', 'bad'); };
+
+        window.__wayfinderForwardedQ = () => {
+          const target = document.activeElement || document.body;
+          const event = new KeyboardEvent('keydown', { key: 'q', code: 'KeyQ', metaKey: true, bubbles: true, cancelable: true });
+          target.dispatchEvent(event);
+          write('FORWARDED synthetic ⌘Q from native prefix bridge', 'warn');
+        };
+        write(`ready origin=${location.origin} loads=${previousLoads}`, 'ok');
+      })();
+    </script>
+  </body>
+</html>

@@ -1,0 +1,43 @@
+[package]
+name = "devhub-native-key-router"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "Throwaway F0.3 native keyboard and IME feasibility harness"
+
+[build-dependencies]
+tauri-build = "=2.6.3"
+
+[dependencies]
+block2 = "=0.6.2"
+tauri = { version = "=2.11.5", features = ["unstable", "devtools"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-app-kit = { version = "=0.3.2", default-features = false, features = [
+  "std",
+  "NSEvent",
+  "NSGraphicsContext",
+  "NSResponder",
+  "NSWindow",
+  "NSView",
+] }
+objc2-core-graphics = { version = "=0.3.2", default-features = false, features = [
+  "std",
+  "CGEvent",
+  "CGEventTypes",
+  "CGRemoteOperation",
+  "libc",
+] }
+objc2-foundation = { version = "=0.3.2", default-features = false, features = [
+  "std",
+  "NSGeometry",
+  "NSObject",
+  "NSString",
+] }
+objc2-web-kit = { version = "=0.3.2", default-features = false, features = [
+  "objc2-app-kit",
+  "WKWebView",
+] }
+
+[patch.crates-io]
+wry = { path = "vendor" }

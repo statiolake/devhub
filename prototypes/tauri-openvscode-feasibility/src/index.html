@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Wayfinder THROWAWAY feasibility shell</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        background: #101317;
+        color: #e7edf3;
+      }
+      * { box-sizing: border-box; }
+      body { margin: 0; min-width: 720px; background: #101317; }
+      header {
+        height: 64px;
+        display: flex;
+        align-items: center;
+        gap: 22px;
+        padding: 0 22px;
+        background: #171c22;
+        border-bottom: 1px solid rgba(255, 255, 255, .12);
+        user-select: none;
+      }
+      .mark { color: #7ee7c7; font-weight: 700; letter-spacing: .04em; }
+      .title { font-size: 13px; color: #d7dee7; }
+      .hint { margin-left: auto; font-size: 11px; line-height: 1.4; color: #8f9cab; text-align: right; }
+      code { color: #f5c978; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <span class="mark">WAYFINDER / THROWAWAY</span>
+      <span class="title">Tauri shell · two child WKWebViews</span>
+      <span class="hint">⌘1 / ⌘2 focus · menu toggles hide/show<br />⌘Q arms prefix · ⌘Q twice forwards Q</span>
+    </header>
+  </body>
+</html>

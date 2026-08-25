@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>F0.3 child keyboard / IME observer</title>
+    <style>
+      :root { color-scheme: light; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+      * { box-sizing: border-box; }
+      body { margin: 0; min-width: 320px; padding: 20px; background: #fffefa; color: #292a2f; }
+      h1 { margin: 0 0 8px; font-size: 18px; color: #386e5e; }
+      p { margin: 4px 0; color: #66686d; font-size: 12px; line-height: 1.45; }
+      .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 18px; margin: 18px 0; }
+      .label { color: #777a80; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; }
+      .value { color: #8d5f20; font-size: 13px; word-break: break-word; }
+      textarea { width: 100%; min-height: 104px; resize: vertical; margin-top: 14px; padding: 10px; color: #292a2f; background: #fff; border: 1px solid #b7b7b2; border-radius: 5px; font: inherit; line-height: 1.5; }
+      textarea:focus { outline: 2px solid #6aa18e; outline-offset: 1px; }
+      .log { margin-top: 14px; max-height: 310px; overflow: auto; padding: 10px; background: #f7f5ef; border: 1px solid #d7d3c9; border-radius: 5px; font-size: 11px; line-height: 1.55; }
+      .log div { border-bottom: 1px solid rgba(0, 0, 0, .07); padding: 2px 0; }
+      .ok { color: #386e5e; } .warn { color: #8d5f20; } .bad { color: #9b3b3b; }
+    </style>
+  </head>
+  <body>
+    <h1>Child surface <span id="client"></span></h1>
+    <p>This is an external-origin observer. It has no Tauri API, no injected forwarding hook, and never dispatches synthetic keyboard events.</p>
+    <p>Native smoke: focus this editor, then exercise ⌘P, ⌘⇧P, ⌘S, ⌘Z, ⌘C, ⌘V. Japanese IME: switch to Hiragana, type <code>nihongo</code>, convert, and commit.</p>
+    <div class="grid">
+      <div><div class="label">page load token</div><div id="load-token" class="value"></div></div>
+      <div><div class="label">visibility</div><div id="visibility" class="value"></div></div>
+      <div><div class="label">event stream</div><div id="stream" class="value"></div></div>
+      <div><div class="label">heartbeat ticks</div><div id="ticks" class="value">0</div></div>
+      <div><div class="label">composition state</div><div id="composition" class="value">idle</div></div>
+      <div><div class="label">last trusted key</div><div id="last-key" class="value">none</div></div>
+    </div>
+    <textarea id="editor" autofocus spellcheck="false" lang="ja" inputmode="kana" aria-label="Native keyboard and Japanese IME test editor">Type here. Native keydown and composition records appear below.</textarea>
+    <div id="log" class="log" aria-live="polite"></div>
+    <script>
+      (() => {
+        const params = new URLSearchParams(location.search);
+        const client = params.get('client') || 'external';
+        const storageKey = `devhub-f03-${client}`;
+        const loadToken = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+        const previousLoads = Number(localStorage.getItem(`${storageKey}-loads`) || '0') + 1;
+        localStorage.setItem(`${storageKey}-loads`, String(previousLoads));
+        const log = document.querySelector('#log');
+        const clientNode = document.querySelector('#client');
+        const loadNode = document.querySelector('#load-token');
+        const visibilityNode = document.querySelector('#visibility');
+        const streamNode = document.querySelector('#stream');
+        const ticksNode = document.querySelector('#ticks');
+        const compositionNode = document.querySelector('#composition');
+        const lastKeyNode = document.querySelector('#last-key');
+        const editor = document.querySelector('#editor');
+
+        clientNode.textContent = client;
+        loadNode.textContent = `${loadToken} · loads in this data store: ${previousLoads}`;
+
+        const write = (message, kind = '') => {
+          const row = document.createElement('div');
+          row.className = kind;
+          row.textContent = `${new Date().toLocaleTimeString()}  ${message}`;
+          log.prepend(row);
+        };
+        const report = (kind, fields = {}) => {
+          const record = { source: 'child', client, kind, at: performance.now(), ...fields };
+          fetch('/observe', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(record),
+            keepalive: true,
+          }).catch(() => write('observation POST failed', 'bad'));
+          return record;
+        };
+        const updateVisibility = () => {
+          visibilityNode.textContent = document.visibilityState;
+          write(`visibility=${document.visibilityState}`);
+          report('visibility', { state: document.visibilityState });
+        };
+        document.addEventListener('visibilitychange', updateVisibility);
+        window.addEventListener('pagehide', () => { write('pagehide', 'warn'); report('pagehide'); });
+        window.addEventListener('pageshow', () => { write('pageshow', 'ok'); report('pageshow'); });
+        updateVisibility();
+
+        document.addEventListener('focusin', (event) => {
+          write(`focusin target=${event.target?.id || event.target?.tagName || 'unknown'}`, 'ok');
+          report('focusin', { target: event.target?.id || event.target?.tagName || 'unknown' });
+        }, true);
+        document.addEventListener('focusout', (event) => {
+          report('focusout', { target: event.target?.id || event.target?.tagName || 'unknown' });
+        }, true);
+
+        document.addEventListener('keydown', (event) => {
+          const mods = [event.metaKey && '⌘', event.ctrlKey && '⌃', event.shiftKey && '⇧', event.altKey && '⌥'].filter(Boolean).join('');
+          const fields = {
+            key: event.key,
+            code: event.code,
+            meta: event.metaKey,
+            shift: event.shiftKey,
+            alt: event.altKey,
+            control: event.ctrlKey,
+            repeat: event.repeat,
+            trusted: event.isTrusted,
+            composing: event.isComposing,
+            target: event.target?.id || event.target?.tagName || 'unknown',
+          };
+          lastKeyNode.textContent = `${mods}${event.key} trusted=${event.isTrusted}`;
+          write(`keydown ${mods}${event.key} code=${event.code} composing=${event.isComposing} trusted=${event.isTrusted}`, event.isTrusted ? 'ok' : 'bad');
+          report('keydown', fields);
+        }, true);
+
+        for (const type of ['compositionstart', 'compositionupdate', 'compositionend']) {
+          document.addEventListener(type, (event) => {
+            const text = event.data || '';
+            compositionNode.textContent = type === 'compositionend' ? 'idle' : type.replace('composition', '');
+            write(`${type} data=${JSON.stringify(text)}`, type === 'compositionend' ? 'ok' : 'warn');
+            report(type, { data: text, value: editor.value });
+          }, true);
+        }
+        for (const type of ['beforeinput', 'input']) {
+          editor.addEventListener(type, (event) => {
+            report(type, {
+              inputType: event.inputType,
+              data: event.data || '',
+              composing: event.isComposing,
+              value: editor.value,
+            });
+          }, true);
+        }
+
+        let ticks = 0;
+        const heartbeat = () => fetch('/heartbeat', { cache: 'no-store' }).then(() => {
+          ticks += 1;
+          ticksNode.textContent = String(ticks);
+        }).catch(() => write('heartbeat failed', 'bad'));
+        heartbeat();
+        setInterval(heartbeat, 2000);
+
+        const source = new EventSource('/events');
+        source.onopen = () => { streamNode.textContent = 'open'; write('EventSource open', 'ok'); report('eventsource-open'); };
+        source.onmessage = (event) => { streamNode.textContent = `open · ${event.data}`; };
+        source.onerror = () => { streamNode.textContent = 'error / reconnecting'; write('EventSource error', 'bad'); report('eventsource-error'); };
+
+        report('ready', { origin: location.origin, loadToken, loads: previousLoads });
+        write(`ready origin=${location.origin} loads=${previousLoads}`, 'ok');
+      })();
+    </script>
+  </body>
+</html>

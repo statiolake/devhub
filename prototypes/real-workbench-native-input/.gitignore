@@ -1,0 +1,7 @@
+/target/
+/build/*.vsix
+/evidence/native-workbench-*.ndjson
+/evidence/native-workbench-*.host.log
+/evidence/native-workbench-*.server.log
+/evidence/native-workbench-*.bridge.ndjson
+/evidence/native-workbench-*-screenshots/
