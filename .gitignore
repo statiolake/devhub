@@ -25,6 +25,9 @@ extensions/devhub-bridge/build/
 .pnpm-store/
 .pnpm-debug.log*
 
+# Reproducible local release output (regenerate with package:local-release)
+dist/
+
 # Throwaway prototype output and evidence
 prototypes/**/build/
 prototypes/**/evidence/
