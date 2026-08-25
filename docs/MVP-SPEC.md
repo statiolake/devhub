@@ -2,7 +2,7 @@
 
 ## Product outcome
 
-DevHub `0.1.0` is a daily-usable, personal, macOS-first development hub that presents one stable place to switch among local Workspaces, autonomous Agents, persistent terminals, and embedded OpenVSCode editors. It is a greenfield product, not a wrapper around the VS Code desktop app and not a visual shell for Herdr.
+DevHub `0.1.0` is a daily-usable, personal, macOS-first development hub that presents one stable place to switch among local Workspaces, autonomous Agents, persistent terminals, and an embedded VS Code Workbench. It is a greenfield product, not a wrapper around the VS Code desktop app and not a visual shell for Herdr.
 
 The MVP is complete only when an Apple Silicon app can be downloaded from a public GitHub Release, installed locally, opened repeatedly without terminating background work, and used for the full Workspace, Editor, Agent, and Terminal lifecycle defined below.
 
@@ -19,7 +19,7 @@ The MVP is complete only when an Apple Silicon app can be downloaded from a publ
 
 ## Domain invariants
 
-The canonical vocabulary and ownership rules are defined in [CONTEXT.md](../CONTEXT.md). Canonical path, label, Repository, tmux ownership, and busy-inspection algorithms are normative in [IDENTITY-AND-LIFECYCLE.md](IDENTITY-AND-LIFECYCLE.md). The complete TOML schema is normative in [CONFIGURATION.md](CONFIGURATION.md).
+The canonical vocabulary and ownership rules are defined in [CONTEXT.md](../CONTEXT.md). The decisions behind this specification, with their rationale and consequences, are recorded in [adr/](adr/). Canonical path, label, Repository, tmux ownership, and busy-inspection algorithms are normative in [IDENTITY-AND-LIFECYCLE.md](IDENTITY-AND-LIFECYCLE.md). The complete TOML schema is normative in [CONFIGURATION.md](CONFIGURATION.md).
 
 - A Workspace is a currently open folder-root context with a persisted opaque Workspace ID. Its canonical Workspace Root is the duplicate-prevention key: the same root cannot be open twice, but relocating an `Unavailable` Workspace preserves its ID while changing its root.
 - A Repository is a Git remote identity and may have multiple Workspace Roots, including linked worktrees.
@@ -81,23 +81,33 @@ Missing roots remain as `Unavailable` with Retry, Locate, and Close actions.
 
 ## Editor Activity
 
-DevHub bundles one pinned, unmodified OpenVSCode Server and required Node runtime. One loopback server process serves all Editor Surfaces.
+DevHub runs the user's separately installed official VS Code through
+`code serve-web`. It never bundles, downloads, patches, or redistributes a
+Workbench. One loopback server process serves all Editor Surfaces.
 
+- CLI discovery: `DEVHUB_VSCODE_CLI`, then `PATH`, then the canonical Homebrew and application-bundle locations
+- Capability probe: version, commit, architecture, and the required `serve-web` flags are validated before every launch; a missing flag fails closed
 - Bind: `127.0.0.1` only
 - Port: selected once, persisted, and stable
 - Authentication: generated 32-byte token in an owner-readable token file
-- Data: application-owned OpenVSCode server data and extension directories
-- Marketplace: Open VSX and manual VSIX
-- Telemetry and experiments: disabled
+- Data: application-owned server-data, CLI-data, and extension directories, isolated from the user's own VS Code profile
+- Marketplace: whatever the installed VS Code provides
+- Telemetry: disabled
 - Workspace Trust and Integrated Terminal: upstream behavior retained
 
-All Editor child WebViews share one persistent OpenVSCode WebKit data store that is isolated from the Tauri App Shell. Child WebViews receive no Tauri IPC capability. Activity changes hide and show mounted WebViews with background throttling disabled.
+The VS Code Server carries Microsoft's own license terms. DevHub does not pass
+`--accept-server-license-terms`: with no controlling terminal the CLI prints
+its license notice, starts without prompting, and forwards the flag to the
+server itself. The Editor Surface shows the same notice and links the terms, so
+DevHub never records an acceptance on the user's behalf.
+
+All Editor child WebViews share one persistent Workbench WebKit data store that is isolated from the Tauri App Shell. Child WebViews receive no Tauri IPC capability. Activity changes hide and show mounted WebViews with background throttling disabled.
 
 Global Editor is a folderless singleton. An Open Folder or new-Workbench request opens or focuses a DevHub Workspace and never converts Global Editor.
 
-A narrow bundled Bridge extension reports Workbench identity/readiness, dirty state, folder/new-window requests, and extension-host reconnection over a loopback endpoint with an ephemeral token. It uses public VS Code APIs and never reads content, controls Integrated Terminal/Tasks/Debugger, or owns navigation.
+A narrow bundled Bridge extension reports Workbench identity/readiness, dirty state, folder/new-window requests, and extension-host reconnection over a loopback endpoint with an ephemeral token. It is installed through the public `code --install-extension` command, uses public VS Code APIs, and never reads content, controls Integrated Terminal/Tasks/Debugger, or owns navigation.
 
-OpenVSCode itself is never forked. A narrowly pinned Tauri/WRY host fork is allowed only for embedding or native macOS key routing.
+The Workbench is never forked. A narrowly pinned Tauri/WRY host fork is allowed only for embedding or native macOS key routing.
 
 ## Agent Activity
 
@@ -131,7 +141,7 @@ DevHub uses a dedicated tmux socket server selected by the effective socket name
 - Explicit Workspace Close terminates its session after the consolidated busy check.
 - tmux panes and windows remain internal to the single owning Terminal Surface and never become DevHub navigation entries.
 
-VS Code Integrated Terminal remains available independently inside OpenVSCode.
+VS Code Integrated Terminal remains available independently inside the Workbench.
 
 ## Keyboard routing
 
@@ -159,7 +169,7 @@ User configuration lives at `~/.config/devhub/config.toml`. Runtime state lives 
 - executable paths apply on next DevHub launch.
 - runtime state is schema-versioned, atomic, backed up, and never synced through dotfiles.
 
-DevHub bundles OpenVSCode and Node. It resolves the configured shell, Git, tmux, and Herdr from absolute paths or the imported login-shell PATH. Herdr resolves Codex and Claude in the same environment. Missing dependencies degrade only related features and remain diagnosable in Settings > Runtimes.
+DevHub resolves the official VS Code CLI, and the configured shell, Git, tmux, and Herdr from absolute paths or the imported login-shell PATH. Herdr resolves Codex and Claude in the same environment. Missing dependencies degrade only related features and remain diagnosable in Settings > Runtimes.
 
 Settings sections are General, Workspaces, Agents, Runtimes, and Appearance. No first-run wizard is required.
 
@@ -167,21 +177,21 @@ Runtimes shows configured, resolved, and effective runtime values. If a tmux soc
 
 ## App lifecycle and recovery
 
-Window Close destroys the Window and Editor WebViews but leaves the DevHub process, OpenVSCode server, Herdr, Agents, and tmux running. Dock activation reconstructs the single Window.
+Window Close destroys the Window and Editor WebViews but leaves the DevHub process, Workbench server, Herdr, Agents, and tmux running. Dock activation reconstructs the single Window.
 
-Quit stops DevHub and its OpenVSCode server but leaves Herdr, Agents, and tmux running. Relaunch restores open Workspaces with their persisted Workspace IDs and selected/canonical paths, order, disclosure, selected context, Activity, Agent identity, temporary Agent names, Sidebar size, and Window frame. Provider-owned terminal/editor state is restored by the provider.
+Quit stops DevHub and its Workbench server but leaves Herdr, Agents, and tmux running. Relaunch restores open Workspaces with their persisted Workspace IDs and selected/canonical paths, order, disclosure, selected context, Activity, Agent identity, temporary Agent names, Sidebar size, and Window frame. Provider-owned terminal/editor state is restored by the provider.
 
-OpenVSCode, Herdr, and tmux failures are isolated. Unrelated Activities remain usable. Runtime failure never silently deletes durable state. Corrupt state restores its backup or starts safely with Global Context and Scratch.
+Workbench, Herdr, and tmux failures are isolated. Unrelated Activities remain usable. Runtime failure never silently deletes durable state. Corrupt state restores its backup or starts safely with Global Context and Scratch.
 
 ## Security, diagnostics, and privacy
 
-DevHub is a single-user local application. It binds local services to loopback, authenticates OpenVSCode and Bridge connections, scopes Tauri capabilities to the App Shell, and exposes no cloud account or remote listener in the MVP.
+DevHub is a single-user local application. It binds local services to loopback, authenticates Workbench and Bridge connections, scopes Tauri capabilities to the App Shell, and exposes no cloud account or remote listener in the MVP.
 
 Structured logs rotate under `~/Library/Logs/DevHub`. Logs include versions, lifecycle, error codes, provider exits, retries, and migrations. They never include terminal frames/input, editor content, Agent prompts/conversations, clipboard, credentials, tokens, environment values, URL queries, or full external command output. No telemetry or automatic upload exists.
 
 ## Visual and accessibility direction
 
-The UI is an English-only, fixed-light, quiet macOS professional tool using the approved Zenbones-derived palette. OpenVSCode and xterm themes remain provider settings. The App Icon depicts three panes converging into one hub and is generated from one vector master.
+The UI is an English-only, fixed-light, quiet macOS professional tool using the approved Zenbones-derived palette. VS Code and xterm themes remain provider settings. The App Icon depicts three panes converging into one hub and is generated from one vector master.
 
 All actions have keyboard focus, VoiceOver labels, visible focus rings, non-color-only state, reduced-motion behavior, and usable text zoom. UTF-8 paths and Japanese IME are mandatory.
 
@@ -189,7 +199,7 @@ All actions have keyboard focus, VoiceOver labels, visible focus rings, non-colo
 
 The MVP cannot release until all of the following pass on Apple Silicon:
 
-- reproducible, unmodified Darwin arm64 OpenVSCode build and loopback launch;
+- official VS Code CLI discovery, capability probe, and authenticated loopback launch;
 - two real Workbench WebViews with independent folder identity;
 - ordinary native Command shortcuts and Japanese IME;
 - native double-`Command+Q` forwarding;
@@ -202,7 +212,7 @@ The MVP cannot release until all of the following pass on Apple Silicon:
 - repeated Window Close/reopen and Quit/relaunch while work continues;
 - downloadable ad-hoc-signed app from the public `v0.1.0` GitHub Release.
 
-Failure of a feasibility gate blocks the release with evidence. It does not authorize an OpenVSCode fork, a silent product-model change, or removal of an accepted MVP requirement.
+Failure of a feasibility gate blocks the release with evidence. It does not authorize a Workbench fork, a silent product-model change, or removal of an accepted MVP requirement.
 
 ## Explicitly deferred
 

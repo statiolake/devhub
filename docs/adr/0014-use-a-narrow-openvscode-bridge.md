@@ -1,12 +1,12 @@
-# Use a narrow OpenVSCode Bridge
+# Use a narrow Workbench Bridge
 
-DevHub bundles a narrow OpenVSCode extension that reports Workbench identity, readiness, dirty state, folder or new-Workbench requests, and extension-host reconnection. It communicates with a loopback-only DevHub endpoint using a per-process token and a versioned message schema.
+DevHub bundles a narrow VS Code extension that reports Workbench identity, readiness, dirty state, folder or new-Workbench requests, and extension-host reconnection. It communicates with a loopback-only DevHub endpoint using a per-process token and a versioned message schema.
 
-The Bridge uses only public VS Code extension APIs. It does not read or modify editor content, process keystrokes, govern Integrated Terminal, Tasks, or Debugger, own navigation, or expose OpenVSCode implementation types.
+The Bridge uses only public VS Code extension APIs. It does not read or modify editor content, process keystrokes, govern Integrated Terminal, Tasks, or Debugger, own navigation, or expose Workbench implementation types.
 
 ## Consequences
 
-- The Bridge receives its endpoint and ephemeral token through the OpenVSCode process environment. The token is not durable.
+- The Bridge receives its endpoint and ephemeral token through the Workbench process environment. The token is not durable.
 - A missing DevHub endpoint leaves the extension quietly inactive.
 - DevHub validates Bridge protocol version and Workbench identity before accepting state.
 - Folder and new-Workbench requests are observed through public extension APIs where possible and through host URL or new-window interception as a second boundary.

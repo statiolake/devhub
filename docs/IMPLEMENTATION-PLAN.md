@@ -1,6 +1,6 @@
 # DevHub MVP Implementation Plan
 
-The completed decision map is [Make the DevHub MVP implementation-ready](wayfinder/maps/devhub-mvp.md). This plan is the normative execution graph produced by that map.
+The product decisions this plan executes are recorded in [adr/](adr/) and specified in [MVP-SPEC.md](MVP-SPEC.md).
 
 ## Execution policy
 
