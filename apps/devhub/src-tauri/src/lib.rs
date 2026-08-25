@@ -7650,7 +7650,27 @@ fn editor_app_resource_dir(app: &AppHandle) -> Option<PathBuf> {
     if let Some(path) = std::env::var_os("DEVHUB_RESOURCE_DIR") {
         return Some(PathBuf::from(path));
     }
+    // `tauri dev` does not populate a bundle Resources directory. Keep the
+    // source checkout as the debug resource root so the Bridge VSIX produced
+    // by beforeDevCommand is available to the same EditorHost path used by a
+    // packaged app. This branch is compiled out of release builds and never
+    // changes the production resource boundary.
+    #[cfg(debug_assertions)]
+    if let Some(path) = debug_source_resource_dir() {
+        return Some(path);
+    }
     app.path().resource_dir().ok()
+}
+
+#[cfg(debug_assertions)]
+fn debug_source_resource_dir() -> Option<PathBuf> {
+    debug_source_resource_dir_from(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").as_path())
+}
+
+#[cfg(debug_assertions)]
+fn debug_source_resource_dir_from(repository: &Path) -> Option<PathBuf> {
+    let bridge = repository.join("extensions/devhub-bridge/build/devhub-bridge-0.1.0.vsix");
+    bridge.is_file().then_some(repository.to_path_buf())
 }
 
 fn editor_openvscode_resource_dir(
@@ -8178,6 +8198,25 @@ mod tests {
     use devhub_app_core::{CancellationToken, SettingsRuntimeHealthValueWire, WorkspaceRoot};
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::{Arc, Barrier};
+
+    #[cfg(debug_assertions)]
+    static TEMP_DEBUG_RESOURCE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn debug_source_resource_dir_requires_the_built_bridge_package() {
+        let root = std::env::temp_dir().join(format!(
+            "devhub-debug-resources-{}-{}",
+            std::process::id(),
+            TEMP_DEBUG_RESOURCE_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
+        let package = root.join("extensions/devhub-bridge/build/devhub-bridge-0.1.0.vsix");
+        std::fs::create_dir_all(package.parent().expect("package parent")).expect("directories");
+        assert_eq!(debug_source_resource_dir_from(&root), None);
+        std::fs::write(&package, b"fixture").expect("package");
+        assert_eq!(debug_source_resource_dir_from(&root), Some(root.clone()));
+        std::fs::remove_dir_all(root).expect("cleanup");
+    }
 
     #[test]
     fn q5_hidden_failures_always_have_a_closed_owner_fact() {

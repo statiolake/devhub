@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "identifier": "io.github.statiolake.devhub",
   "build": {
-    "beforeDevCommand": "pnpm --dir ../.. --filter @devhub/app dev",
+    "beforeDevCommand": "pnpm --dir ../.. --filter @devhub/bridge build && pnpm --dir ../.. --filter @devhub/bridge package && pnpm --dir ../.. --filter @devhub/app dev",
     "beforeBuildCommand": "pnpm --dir ../.. --filter @devhub/bridge build && pnpm --dir ../.. --filter @devhub/bridge package && pnpm --dir ../.. --filter @devhub/app build",
     "devUrl": "http://localhost:1420",
     "frontendDist": "../dist"

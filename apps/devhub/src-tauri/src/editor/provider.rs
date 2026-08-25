@@ -227,6 +227,7 @@ fn discovery_candidates() -> Vec<PathBuf> {
         // GUI launches do not reliably inherit the user's shell PATH, so
         // keep this canonical CLI location explicit.
         PathBuf::from("/usr/local/bin/code"),
+        PathBuf::from("/opt/homebrew/bin/code"),
         PathBuf::from("/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code"),
         PathBuf::from(
             "/Applications/Visual Studio Code - Insiders.app/Contents/Resources/app/bin/code",
@@ -315,5 +316,15 @@ mod tests {
             Duration::from_secs(120)
         );
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn gui_discovery_includes_macos_homebrew_and_app_bundle_locations() {
+        let candidates = discovery_candidates();
+        assert!(candidates.contains(&PathBuf::from("/usr/local/bin/code")));
+        assert!(candidates.contains(&PathBuf::from("/opt/homebrew/bin/code")));
+        assert!(candidates.contains(&PathBuf::from(
+            "/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code"
+        )));
     }
 }
