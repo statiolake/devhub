@@ -1,8 +1,9 @@
 #![forbid(unsafe_code)]
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
-use std::fs::File;
-use std::io::Read;
+use std::fmt;
+use std::fs::{self, File, OpenOptions};
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -29,16 +30,17 @@ use devhub_app_core::{
     Activity, AgentControlState, AgentLaunchResult, AgentObservation,
     AgentProfile as DomainAgentProfile, AgentProfileId, AgentProfileKind,
     AgentProfilesDiagnosticWire, AgentProfilesWire, AgentStopResult, AppAppearanceWire,
-    AppCoordinator, AppErrorWire, AppIntentWire, AppOutcomeWire, AppReadiness, AppSnapshot,
-    AppSnapshotWire, CancellationToken, CleanupStep, CloseInspectionInputs, ConfirmationId,
-    CoordinatorEvent, DiagnosticCode, Effect, IdGenerator, IntentEnvelope, IntentId, IntentOutcome,
-    JsonStateStore, OpaqueProviderMapping, OperationId, OperationToken, PortError, PortErrorCode,
-    ProviderEvent, ProviderEventEnvelope, ProviderEventId, ReplayWire, ResourceInspection,
-    RuntimeHealth, SettingsDiagnosticsWire, SettingsErrorWire, SettingsLogLevelWire,
-    SettingsPreviousExitWire, SettingsRuntimeHealthValueWire, SettingsRuntimeHealthWire,
-    SettingsSaveRequestWire, SettingsSnapshotWire, SettingsSocketChangeRequestWire, SurfaceKey,
-    SurfaceResolution, TerminalTarget, UserIntent, WorkspaceCleanupResult, WorkspaceId,
-    WorkspacePickerEventWire, SETTINGS_SEQUENCE_MAX,
+    AppCoordinator, AppErrorCodeWire, AppErrorWire, AppIntentWire, AppOutcomeWire, AppReadiness,
+    AppSnapshot, AppSnapshotWire, CancellationToken, CleanupStep, CloseInspectionInputs,
+    ConfirmationId, CoordinatorEvent, DiagnosticCode, Effect, IdGenerator, IntentEnvelope,
+    IntentId, IntentOutcome, JsonStateStore, NavigationContext, OpaqueProviderMapping, OperationId,
+    OperationToken, PortError, PortErrorCode, ProviderEvent, ProviderEventEnvelope,
+    ProviderEventId, ReplayWire, RequestedPath, ResourceInspection, RuntimeHealth,
+    SettingsDiagnosticsWire, SettingsErrorWire, SettingsLogLevelWire, SettingsPreviousExitWire,
+    SettingsRuntimeHealthValueWire, SettingsRuntimeHealthWire, SettingsSaveRequestWire,
+    SettingsSnapshotWire, SettingsSocketChangeRequestWire, SurfaceKey, SurfaceResolution,
+    TerminalTarget, UserIntent, WorkspaceCleanupResult, WorkspaceId, WorkspacePickerEventWire,
+    SETTINGS_SEQUENCE_MAX,
 };
 use raw_window_handle::HasWindowHandle;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
@@ -54,7 +56,7 @@ mod repository;
 mod runtime;
 mod terminal;
 mod workspace_resolver;
-use agent::{AgentSurfaceManager, HerdrAgentRuntime};
+use agent::{AgentRuntimeErrorCode, AgentSurfaceManager, HerdrAgentRuntime, ProviderErrorCategory};
 use diagnostics::{
     Code as LogCode, DiagnosticEvent, Diagnostics, DiagnosticsOwner, Health as DiagnosticHealth,
     LifecyclePhase, Module as DiagnosticModule, PerformanceMarker,
@@ -92,6 +94,60 @@ const QUIT_MENU_ID: &str = "quit-devhub";
 const MAX_EFFECT_STEPS: usize = 1_024;
 const FOLDER_CHOOSER_SCRIPT: &str =
     "POSIX path of (choose folder with prompt \"Open Workspace Folder\")";
+const MIN_PROCESS_NOFILE: u64 = 8_192;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProcessFileLimitError {
+    HardLimitTooLow { hard: u64, minimum: u64 },
+}
+
+fn process_file_limit_target(
+    soft: u64,
+    hard: u64,
+    minimum: u64,
+) -> Result<Option<u64>, ProcessFileLimitError> {
+    if hard < minimum {
+        return Err(ProcessFileLimitError::HardLimitTooLow { hard, minimum });
+    }
+    Ok((soft < minimum).then_some(minimum))
+}
+
+#[cfg(target_os = "macos")]
+fn raise_process_file_limit() -> Result<(), String> {
+    use nix::sys::resource::{getrlimit, setrlimit, Resource};
+
+    let (soft, hard) = getrlimit(Resource::RLIMIT_NOFILE)
+        .map_err(|error| format!("getrlimit(RLIMIT_NOFILE): {error}"))?;
+    let target = process_file_limit_target(soft, hard, MIN_PROCESS_NOFILE)
+        .map_err(|error| format!("process file limit is insufficient: {error:?}"))?;
+    if let Some(target) = target {
+        setrlimit(Resource::RLIMIT_NOFILE, target, hard)
+            .map_err(|error| format!("setrlimit(RLIMIT_NOFILE): {error}"))?;
+    }
+    let (effective_soft, _) = getrlimit(Resource::RLIMIT_NOFILE)
+        .map_err(|error| format!("getrlimit(RLIMIT_NOFILE) after update: {error}"))?;
+    if effective_soft < MIN_PROCESS_NOFILE {
+        return Err(format!(
+            "effective RLIMIT_NOFILE {effective_soft} is below required {MIN_PROCESS_NOFILE}"
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn raise_process_file_limit() -> Result<(), String> {
+    Ok(())
+}
+
+impl fmt::Display for ProcessFileLimitError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::HardLimitTooLow { hard, minimum } => {
+                write!(formatter, "hard limit {hard} is below required {minimum}")
+            }
+        }
+    }
+}
 
 fn bridge_request_failed_result() -> BridgeRequestResult {
     BridgeRequestResult::Error {
@@ -127,6 +183,206 @@ struct NativeBridgeSink {
 }
 
 type BridgeRouter = Arc<dyn Fn(BridgeRequest) + Send + Sync>;
+
+fn append_q5_fact(line: &str) {
+    let Some(path) = std::env::var_os("DEVHUB_Q5_MARKER_FILE") else { return };
+    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
+        let _ = writeln!(file, "{line}");
+    }
+}
+
+fn write_q5_marker_file(marker: PerformanceMarker) {
+    let Some(name) =
+        serde_json::to_value(marker).ok().and_then(|value| value.as_str().map(str::to_owned))
+    else {
+        return;
+    };
+    append_q5_fact(&name);
+}
+
+/// Q5 evidence facts contain only bounded counters. They deliberately omit
+/// surface IDs, paths, tokens, and provider output.
+fn write_q5_counter_fact(name: &str, value: usize) {
+    append_q5_fact(&format!("fact={name} value={value}"));
+}
+
+fn write_q5_indexed_counter_fact(name: &str, index: usize, value: usize) {
+    append_q5_fact(&format!("fact={name} index={index} value={value}"));
+}
+
+#[derive(Clone, Copy)]
+enum Q5ReconstructionStage {
+    CaptureLifecycle,
+    AppShellWindow,
+    WindowIdentity,
+    RestoreFrame,
+    DetachHost,
+    AttachHost,
+    WindowMetrics,
+    Snapshot,
+    GlobalSurface,
+    WorkspaceSurface,
+    HideSurfaces,
+    ActiveSurface,
+}
+
+impl Q5ReconstructionStage {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::CaptureLifecycle => "capture_lifecycle",
+            Self::AppShellWindow => "app_shell_window",
+            Self::WindowIdentity => "window_identity",
+            Self::RestoreFrame => "restore_frame",
+            Self::DetachHost => "detach_host",
+            Self::AttachHost => "attach_host",
+            Self::WindowMetrics => "window_metrics",
+            Self::Snapshot => "snapshot",
+            Self::GlobalSurface => "global_surface",
+            Self::WorkspaceSurface => "workspace_surface",
+            Self::HideSurfaces => "hide_surfaces",
+            Self::ActiveSurface => "active_surface",
+        }
+    }
+}
+
+/// Emits only a closed reconstruction stage and closed EditorHost error code.
+/// No Window identity, Workspace identity, provider output, or path crosses
+/// this Q5-only diagnostic seam.
+fn write_q5_reconstruction_failure(stage: Q5ReconstructionStage, code: &str) {
+    append_q5_fact(&format!(
+        "fact=q5_startup_reconstruction stage={} status=failed error_code={code}",
+        stage.as_str(),
+    ));
+}
+
+struct Q5HiddenContinuityFact {
+    baseline_count: usize,
+    current_count: usize,
+    hidden_count: usize,
+    duration_ms: u64,
+    missing_count: usize,
+    disconnected_count: usize,
+    generation_mismatch_count: usize,
+    context_mismatch_count: usize,
+    dirty_mismatch_count: usize,
+    owner_missing_count: usize,
+    owner_lookup_result: &'static str,
+    owner_lookup_error_code: &'static str,
+    active_editor: &'static str,
+    continuity: bool,
+}
+
+impl Q5HiddenContinuityFact {
+    fn failure(
+        error_code: &'static str,
+        duration_ms: u64,
+        baseline_count: usize,
+        hidden_count: usize,
+    ) -> Self {
+        Self {
+            baseline_count,
+            current_count: 0,
+            hidden_count,
+            duration_ms,
+            missing_count: baseline_count,
+            disconnected_count: 0,
+            generation_mismatch_count: 0,
+            context_mismatch_count: 0,
+            dirty_mismatch_count: 0,
+            owner_missing_count: baseline_count,
+            owner_lookup_result: "error",
+            owner_lookup_error_code: error_code,
+            active_editor: "none",
+            continuity: false,
+        }
+    }
+}
+
+fn q5_hidden_continuity_fact_line(fact: &Q5HiddenContinuityFact) -> String {
+    format!(
+        "fact=q5_hidden_continuity baseline_count={} current_count={} hidden_count={} duration_ms={} missing_count={} disconnected_count={} generation_mismatch_count={} context_mismatch_count={} dirty_mismatch_count={} owner_missing_count={} owner_lookup_result={} owner_lookup_error_code={} active_editor={} continuity={}",
+        fact.baseline_count,
+        fact.current_count,
+        fact.hidden_count,
+        fact.duration_ms,
+        fact.missing_count,
+        fact.disconnected_count,
+        fact.generation_mismatch_count,
+        fact.context_mismatch_count,
+        fact.dirty_mismatch_count,
+        fact.owner_missing_count,
+        fact.owner_lookup_result,
+        fact.owner_lookup_error_code,
+        fact.active_editor,
+        if fact.continuity { "pass" } else { "fail" },
+    )
+}
+
+fn write_q5_hidden_continuity_fact(fact: &Q5HiddenContinuityFact) {
+    append_q5_fact(&q5_hidden_continuity_fact_line(fact));
+}
+
+struct Q5RelaunchStateFact<'a> {
+    workspace_count: usize,
+    agent_count: usize,
+    mapping_count: usize,
+    surface_count: usize,
+    missing_identity_count: usize,
+    duplicate_identity_count: usize,
+    disconnected_count: usize,
+    not_ready_count: usize,
+    generation_zero_count: usize,
+    context_mismatch_count: usize,
+    active_editor: &'a str,
+    status: &'a str,
+}
+
+fn write_q5_relaunch_state_fact(fact: Q5RelaunchStateFact<'_>) {
+    append_q5_fact(&format!(
+        "fact=q5_relaunch_state workspace_count={} agent_count={} mapping_count={} surface_count={} missing_identity_count={} duplicate_identity_count={} disconnected_count={} not_ready_count={} generation_zero_count={} context_mismatch_count={} active_editor={} status={}",
+        fact.workspace_count,
+        fact.agent_count,
+        fact.mapping_count,
+        fact.surface_count,
+        fact.missing_identity_count,
+        fact.duplicate_identity_count,
+        fact.disconnected_count,
+        fact.not_ready_count,
+        fact.generation_zero_count,
+        fact.context_mismatch_count,
+        fact.active_editor,
+        fact.status,
+    ));
+}
+
+const Q5_HIDDEN_HOLD_SECONDS: u64 = 600;
+
+#[cfg(debug_assertions)]
+fn q5_hidden_hold_seconds() -> u64 {
+    if std::env::var_os("DEVHUB_Q5_SHORT_REPRO").is_some() {
+        return std::env::var("DEVHUB_Q5_HIDDEN_HOLD_SECONDS")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .filter(|seconds| (1..=Q5_HIDDEN_HOLD_SECONDS).contains(seconds))
+            .unwrap_or(Q5_HIDDEN_HOLD_SECONDS);
+    }
+    Q5_HIDDEN_HOLD_SECONDS
+}
+
+#[cfg(not(debug_assertions))]
+fn q5_hidden_hold_seconds() -> u64 {
+    Q5_HIDDEN_HOLD_SECONDS
+}
+
+fn q5_active_editor_key(snapshot: &AppSnapshot) -> &'static str {
+    if snapshot.active_activity() != Activity::Editor {
+        return "none";
+    }
+    match snapshot.selected_context() {
+        NavigationContext::Global => "global",
+        NavigationContext::Workspace(_) | NavigationContext::Agent(_) => "workspace",
+    }
+}
 
 #[derive(Clone)]
 struct BridgeObservation {
@@ -169,6 +425,31 @@ impl NativeBridgeSink {
         observations.values().find(|observation| {
             matches!(observation.context.as_ref(), Some(devhub_app_core::bridge::Context::Workspace { workspace_id: id, .. }) if id.as_str() == workspace_id.as_str())
         }).cloned()
+    }
+
+    fn q5_observations(&self) -> BTreeMap<String, BridgeObservation> {
+        self.observations.lock().map(|value| value.clone()).unwrap_or_default()
+    }
+
+    fn q5_editor_surface_connected(&self, key: &editor::EditorSurfaceKey) -> bool {
+        self.observations.lock().ok().is_some_and(|observations| {
+            observations.values().any(|observation| {
+                observation.connected
+                    && match (key, observation.context.as_ref()) {
+                        (
+                            editor::EditorSurfaceKey::Global,
+                            Some(devhub_app_core::bridge::Context::Global),
+                        ) => true,
+                        (
+                            editor::EditorSurfaceKey::Workspace(expected),
+                            Some(devhub_app_core::bridge::Context::Workspace {
+                                workspace_id, ..
+                            }),
+                        ) => workspace_id.as_str() == expected,
+                        _ => false,
+                    }
+            })
+        })
     }
 
     fn request_is_live(&self, request: &BridgeRequest) -> bool {
@@ -274,6 +555,9 @@ impl BridgeEventSink for NativeBridgeSink {
             return;
         }
         entry.generation = generation;
+        if matches!(&event, BridgeEvent::DirtyChanged { dirty: true, .. }) {
+            write_q5_counter_fact("dirty_state", 1);
+        }
         match event {
             BridgeEvent::Connected { .. } => entry.connected = true,
             BridgeEvent::Disconnected { .. } => entry.connected = false,
@@ -290,6 +574,7 @@ impl BridgeEventSink for NativeBridgeSink {
         }
         drop(observations);
         if let Some(surface_id) = ready_surface {
+            write_q5_counter_fact("bridge_generation", generation as usize);
             let recovering = self.performance_provider_degraded.swap(false, Ordering::AcqRel);
             if let Ok(diagnostics) = self.performance_diagnostics.lock() {
                 if let Some(diagnostics) = diagnostics.as_ref() {
@@ -306,6 +591,7 @@ impl BridgeEventSink for NativeBridgeSink {
                         }
                         PerformanceMarker::EditorBridgeReady
                     };
+                    write_q5_marker_file(marker);
                     let _ = diagnostics.emit(DiagnosticEvent::Performance { marker });
                 }
             }
@@ -637,6 +923,13 @@ impl RuntimeHealthProbe {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StartupReconstructionState {
+    Pending,
+    Ready,
+    Failed,
+}
+
 struct NativeAppState {
     coordinator: Mutex<AppCoordinator>,
     /// Serializes lifecycle generation changes/coordinator replacement with
@@ -666,6 +959,9 @@ struct NativeAppState {
     persistence: Mutex<PersistenceState>,
     state_commit: Mutex<()>,
     pending_native_error: Mutex<Option<AppErrorWire>>,
+    /// Stores only the first closed failure context for the opt-in Q5
+    /// fixture. The fixture consumes it at the indexed dispatch boundary.
+    q5_dispatch_failure: Mutex<Option<Q5DispatchFailureContext>>,
     socket_transition_busy: AtomicBool,
     id_generator: NativeIdGenerator,
     _runtime_context: RuntimeLaunchContext,
@@ -686,6 +982,10 @@ struct NativeAppState {
     picker_cancel: Mutex<Option<CancellationToken>>,
     bridge_router_handle: Mutex<Option<ManagedThread>>,
     agent_reconciler_handle: Mutex<Option<ManagedThread>>,
+    /// Typed startup barrier. Q5 must be able to distinguish a reconstruction
+    /// failure from a reconstruction that is still pending; a boolean would
+    /// turn the former into an unbounded-looking wait.
+    startup_reconstruction: Mutex<StartupReconstructionState>,
     /// Suppresses geometry events generated by applying the persisted frame;
     /// otherwise the native default frame can race the restore and overwrite
     /// the durable position before reconstruction has finished.
@@ -713,8 +1013,9 @@ struct NativeAppState {
     dock_reopen_running: AtomicBool,
     dock_reopen_result: Mutex<Option<Result<(), AppErrorWire>>>,
     /// ExitRequested is delivered again by `app.exit` on some Tauri/Wry
-    /// versions. These flags make that allowance explicit and single-flight.
-    quit_requested: AtomicBool,
+    /// versions, while Tao may also deliver Exit before the async owner has
+    /// finished. The completion barrier makes both paths one lifecycle.
+    quit_completion: QuitCompletion,
     exit_allowed: AtomicBool,
     close_allowance: Mutex<Option<NativeWindowIdentity>>,
     closing_window: Mutex<Option<NativeWindowIdentity>>,
@@ -764,10 +1065,195 @@ struct EffectExecution {
     outcome: Option<IntentOutcome>,
     error: Option<AppErrorWire>,
     persistence_degraded: bool,
+    /// Q5-only context for the first failed effect. This never crosses the
+    /// product wire; it is persisted only by the opt-in native fixture.
+    q5_failure: Option<Q5DispatchFailureContext>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct Q5DispatchFailureContext {
+    effect: &'static str,
+    stage: &'static str,
+    app_error_code: AppErrorCodeWire,
+    port_error_code: Option<PortErrorCode>,
+    agent_runtime_error_code: Option<AgentRuntimeErrorCode>,
+    provider_error_category: Option<ProviderErrorCategory>,
+}
+
+fn q5_effect_kind(effect: &Effect) -> &'static str {
+    match effect {
+        Effect::Noop => "noop",
+        Effect::Detach(_) => "detach",
+        Effect::ResolveWorkspacePath { .. } => "resolve_workspace_path",
+        Effect::GenerateWorkspaceId { .. } => "generate_workspace_id",
+        Effect::ResolveAgentProfile { .. } => "resolve_agent_profile",
+        Effect::GenerateConfirmationId { .. } => "generate_confirmation_id",
+        Effect::GenerateAgentId { .. } => "generate_agent_id",
+        Effect::LaunchAgent { .. } => "launch_agent",
+        Effect::InspectWorkspace { .. } => "inspect_workspace",
+        Effect::StopAgent { .. } => "stop_agent",
+        Effect::TerminateAgent { .. } => "terminate_agent",
+        Effect::ReconcileAgents { .. } => "reconcile_agents",
+        Effect::ReconcileAgent { .. } => "reconcile_agent",
+        Effect::CleanupWorkspace { .. } => "cleanup_workspace",
+        Effect::PersistState { .. } => "persist_state",
+    }
+}
+
+fn q5_port_error_code(code: PortErrorCode) -> &'static str {
+    match code {
+        PortErrorCode::Unavailable => "unavailable",
+        PortErrorCode::Incompatible => "incompatible",
+        PortErrorCode::Cancelled => "cancelled",
+        PortErrorCode::TimedOut => "timed_out",
+        PortErrorCode::Conflict => "conflict",
+        PortErrorCode::Failed => "failed",
+    }
+}
+
+fn q5_app_error_code(code: AppErrorCodeWire) -> &'static str {
+    match code {
+        AppErrorCodeWire::InvalidIntent => "invalid_intent",
+        AppErrorCodeWire::ActivityDisabled => "activity_disabled",
+        AppErrorCodeWire::UnknownContext => "unknown_context",
+        AppErrorCodeWire::WorkspaceUnavailable => "workspace_unavailable",
+        AppErrorCodeWire::WorkspaceClosing => "workspace_closing",
+        AppErrorCodeWire::WorkspaceCloseFailed => "workspace_close_failed",
+        AppErrorCodeWire::OperationPending => "operation_pending",
+        AppErrorCodeWire::PersistenceDegraded => "persistence_degraded",
+        AppErrorCodeWire::NativeUnavailable => "native_unavailable",
+    }
+}
+
+fn q5_agent_runtime_error_code(code: AgentRuntimeErrorCode) -> &'static str {
+    match code {
+        AgentRuntimeErrorCode::InvalidProfile => "invalid_profile",
+        AgentRuntimeErrorCode::MissingExecutable => "missing_executable",
+        AgentRuntimeErrorCode::BootstrapFailed => "bootstrap_failed",
+        AgentRuntimeErrorCode::ProtocolMismatch => "protocol_mismatch",
+        AgentRuntimeErrorCode::CapabilityMismatch => "capability_mismatch",
+        AgentRuntimeErrorCode::Unavailable => "unavailable",
+        AgentRuntimeErrorCode::Disconnected => "disconnected",
+        AgentRuntimeErrorCode::Timeout => "timeout",
+        AgentRuntimeErrorCode::Cancelled => "cancelled",
+        AgentRuntimeErrorCode::Conflict => "conflict",
+        AgentRuntimeErrorCode::ProviderRejected => "provider_rejected",
+        AgentRuntimeErrorCode::ProviderNotFound => "provider_not_found",
+        AgentRuntimeErrorCode::CleanupPending => "cleanup_pending",
+        AgentRuntimeErrorCode::BoundedInput => "bounded_input",
+        AgentRuntimeErrorCode::Internal => "internal",
+    }
+}
+
+fn q5_dispatch_failure_fact(
+    index: usize,
+    completed_agents: usize,
+    workspace_count: usize,
+    context: Q5DispatchFailureContext,
+) -> String {
+    let port_code = context.port_error_code.map(q5_port_error_code).unwrap_or("none");
+    let runtime_code =
+        context.agent_runtime_error_code.map(q5_agent_runtime_error_code).unwrap_or("none");
+    let provider_category =
+        context.provider_error_category.map(ProviderErrorCategory::as_str).unwrap_or("other");
+    format!(
+        "fact=q5_dispatch_failure index={index} stage={} effect={} app_error_code={} port_error_code={port_code} agent_runtime_error_code={runtime_code} provider_error_category={provider_category} workspace_count={workspace_count} completed_agents={completed_agents}",
+        context.stage,
+        context.effect,
+        q5_app_error_code(context.app_error_code),
+    )
 }
 
 struct SocketTransitionGate<'a> {
     busy: &'a AtomicBool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum QuitCompletionState {
+    Idle,
+    Running,
+    Complete(Result<(), AppErrorWire>),
+}
+
+/// Owns the native Quit single-flight and its completion barrier.
+///
+/// macOS can deliver `RunEvent::Exit` while the async `ExitRequested` worker
+/// is still draining providers. A second call to the idempotent coordinator
+/// is not a completion signal, so the event-loop fallback must wait for the
+/// original owner instead of letting native teardown overtake it.
+struct QuitCompletion {
+    state: Mutex<(QuitCompletionState, usize)>,
+    wake: Condvar,
+}
+
+impl QuitCompletion {
+    fn new() -> Self {
+        Self { state: Mutex::new((QuitCompletionState::Idle, 0)), wake: Condvar::new() }
+    }
+
+    fn begin(&self) -> bool {
+        let mut state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if state.0 != QuitCompletionState::Idle {
+            return false;
+        }
+        state.0 = QuitCompletionState::Running;
+        true
+    }
+
+    fn complete(&self, result: Result<(), AppErrorWire>) {
+        let mut state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if state.0 == QuitCompletionState::Running {
+            state.0 = QuitCompletionState::Complete(result);
+            self.wake.notify_all();
+        }
+    }
+
+    fn wait_until(&self, deadline: Instant) -> Option<Result<(), AppErrorWire>> {
+        let mut state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        state.1 = state.1.saturating_add(1);
+        self.wake.notify_all();
+        loop {
+            if let QuitCompletionState::Complete(result) = &state.0 {
+                let result = result.clone();
+                state.1 = state.1.saturating_sub(1);
+                return Some(result);
+            }
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                state.1 = state.1.saturating_sub(1);
+                return None;
+            }
+            let (next, timeout) = self
+                .wake
+                .wait_timeout(state, remaining)
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            state = next;
+            if timeout.timed_out() && !matches!(state.0, QuitCompletionState::Complete(_)) {
+                state.1 = state.1.saturating_sub(1);
+                return None;
+            }
+        }
+    }
+
+    #[cfg(test)]
+    fn wait_for_waiter(&self, deadline: Instant) -> bool {
+        let mut state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        while state.1 == 0 {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return false;
+            }
+            let (next, timeout) = self
+                .wake
+                .wait_timeout(state, remaining)
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            state = next;
+            if timeout.timed_out() && state.1 == 0 {
+                return false;
+            }
+        }
+        true
+    }
 }
 
 impl Drop for SocketTransitionGate<'_> {
@@ -793,13 +1279,12 @@ fn claim_single_flight(flag: &AtomicBool) -> bool {
     flag.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire).is_ok()
 }
 
-/// Tauri emits `ExitRequested { code: None }` when the last native Window is
-/// closed on macOS. That is a Window-surface transition, not an explicit app
-/// quit: keep the process alive so Dock activation can reconstruct it. Only a
-/// concrete exit code (menu/app exit or an OS quit request) may enter the
-/// process-owned shutdown path.
-fn is_explicit_exit_request(code: Option<i32>) -> bool {
-    code.is_some()
+/// `WindowEvent::CloseRequested` owns the native-window lifecycle and prevents
+/// AppKit from turning a close into process termination. Once Tauri delivers a
+/// process-level `ExitRequested`, it is therefore always a Quit request. On
+/// macOS, AppKit termination can legitimately carry no numeric exit code.
+fn exit_request_is_quit(_code: Option<i32>) -> bool {
+    true
 }
 
 fn settings_error(error: devhub_app_core::config::ConfigError) -> SettingsErrorWire {
@@ -913,11 +1398,13 @@ fn emit_agent_profiles(app: &AppHandle, state: &NativeAppState) {
 impl NativeAppState {
     fn record_performance_marker(&self, marker: PerformanceMarker) -> Result<(), AppErrorWire> {
         self.capture_open_lifecycle_token()?;
-        if self.performance_markers_enabled
-            && !self.diagnostics.emit(DiagnosticEvent::Performance { marker })
-        {
-            return Err(AppErrorWire::native_unavailable()
-                .with_summary("performance marker could not be recorded"));
+        if self.performance_markers_enabled {
+            let diagnostics_ok = self.diagnostics.emit(DiagnosticEvent::Performance { marker });
+            write_q5_marker_file(marker);
+            if !diagnostics_ok {
+                return Err(AppErrorWire::native_unavailable()
+                    .with_summary("performance marker could not be recorded"));
+            }
         }
         Ok(())
     }
@@ -928,6 +1415,75 @@ impl NativeAppState {
     fn record_performance_probe(&self, marker: PerformanceMarker) {
         if self.performance_markers_enabled {
             let _ = self.diagnostics.emit(DiagnosticEvent::Performance { marker });
+            // Q5 native runs may use a short HOME whose secure diagnostics
+            // directory is unavailable on macOS. Keep a second, closed,
+            // content-free marker channel inside the same owned HOME.
+            write_q5_marker_file(marker);
+        }
+    }
+
+    fn q5_clear_dispatch_failure(&self) {
+        if self.performance_markers_enabled {
+            if let Ok(mut failure) = self.q5_dispatch_failure.lock() {
+                *failure = None;
+            }
+        }
+    }
+
+    fn q5_record_dispatch_failure_context(&self, context: Q5DispatchFailureContext) {
+        if self.performance_markers_enabled {
+            if let Ok(mut failure) = self.q5_dispatch_failure.lock() {
+                if failure.is_none() {
+                    *failure = Some(context);
+                }
+            }
+        }
+    }
+
+    fn q5_take_dispatch_failure_context(&self) -> Option<Q5DispatchFailureContext> {
+        self.q5_dispatch_failure.lock().ok().and_then(|mut failure| failure.take())
+    }
+
+    /// Persist one bounded diagnostic for the indexed Q5 CreateAgent dispatch
+    /// that failed. Every value is a closed category or a bounded counter;
+    /// provider text, identifiers, paths, prompts, and user content never
+    /// enter this fact channel.
+    fn q5_record_dispatch_failure(
+        &self,
+        index: usize,
+        completed_agents: usize,
+        workspace_count: usize,
+        error: &AppErrorWire,
+    ) {
+        if !self.performance_markers_enabled {
+            return;
+        }
+        let context = self.q5_take_dispatch_failure_context().unwrap_or(Q5DispatchFailureContext {
+            effect: "unknown",
+            stage: "dispatch_intent",
+            app_error_code: error.code(),
+            port_error_code: None,
+            agent_runtime_error_code: None,
+            provider_error_category: None,
+        });
+        append_q5_fact(&q5_dispatch_failure_fact(
+            index,
+            completed_agents,
+            workspace_count,
+            context,
+        ));
+    }
+
+    fn startup_reconstruction_state(&self) -> StartupReconstructionState {
+        self.startup_reconstruction
+            .lock()
+            .map(|state| *state)
+            .unwrap_or(StartupReconstructionState::Failed)
+    }
+
+    fn set_startup_reconstruction_state(&self, next: StartupReconstructionState) {
+        if let Ok(mut state) = self.startup_reconstruction.lock() {
+            *state = next;
         }
     }
 
@@ -1394,12 +1950,13 @@ impl NativeAppState {
 
     #[cfg(test)]
     fn bootstrap(home: &Path) -> Result<Self, AppErrorWire> {
-        Self::bootstrap_with_resource_dir(home, None)
+        Self::bootstrap_with_resource_dirs(home, None, None)
     }
 
-    fn bootstrap_with_resource_dir(
+    fn bootstrap_with_resource_dirs(
         home: &Path,
         resource_dir: Option<PathBuf>,
+        openvscode_resource_dir: Option<PathBuf>,
     ) -> Result<Self, AppErrorWire> {
         let store = JsonStateStore::for_home(home);
         let previous_exit = store
@@ -1509,6 +2066,7 @@ impl NativeAppState {
         }
         let editor_host = EditorHost::new(
             EditorHostConfig::new(home, resource_dir)
+                .with_openvscode_resource_dir(openvscode_resource_dir)
                 .with_provider_preference(EditorProviderPreference::from_environment())
                 .with_official_vscode_license_accepted(
                     std::env::var("DEVHUB_VSCODE_SERVER_LICENSE_ACCEPTED").as_deref() == Ok("1"),
@@ -1541,6 +2099,7 @@ impl NativeAppState {
             persistence: Mutex::new(PersistenceState { persisted_revision }),
             state_commit: Mutex::new(()),
             pending_native_error: Mutex::new(None),
+            q5_dispatch_failure: Mutex::new(None),
             socket_transition_busy: AtomicBool::new(false),
             id_generator: NativeIdGenerator,
             _runtime_context: runtime_context,
@@ -1559,6 +2118,7 @@ impl NativeAppState {
             picker_cancel: Mutex::new(None),
             bridge_router_handle: Mutex::new(None),
             agent_reconciler_handle: Mutex::new(None),
+            startup_reconstruction: Mutex::new(StartupReconstructionState::Pending),
             frame_restore_running: AtomicBool::new(false),
             frame_persist_generation: AtomicU64::new(0),
             frame_persist_ticket: AtomicU64::new(0),
@@ -1571,7 +2131,7 @@ impl NativeAppState {
             reconstruction_result: Mutex::new(None),
             dock_reopen_running: AtomicBool::new(false),
             dock_reopen_result: Mutex::new(None),
-            quit_requested: AtomicBool::new(false),
+            quit_completion: QuitCompletion::new(),
             exit_allowed: AtomicBool::new(false),
             close_allowance: Mutex::new(None),
             closing_window: Mutex::new(None),
@@ -1769,52 +2329,110 @@ impl NativeAppState {
     }
 
     fn reconstruct_window_inner(&self, app: &AppHandle) -> Result<(), AppErrorWire> {
-        let lifecycle = self.capture_open_lifecycle_token()?;
-        let window = app
-            .get_webview_window(APP_SHELL_WINDOW_LABEL)
-            .ok_or_else(AppErrorWire::native_unavailable)?;
+        let lifecycle = self.capture_open_lifecycle_token().inspect_err(|_error| {
+            write_q5_reconstruction_failure(
+                Q5ReconstructionStage::CaptureLifecycle,
+                "native_unavailable",
+            );
+        })?;
+        let window = app.get_webview_window(APP_SHELL_WINDOW_LABEL).ok_or_else(|| {
+            write_q5_reconstruction_failure(
+                Q5ReconstructionStage::AppShellWindow,
+                "native_unavailable",
+            );
+            AppErrorWire::native_unavailable()
+        })?;
         let parent = window.as_ref().window();
         self.bind_native_window(&parent);
-        let window_identity =
-            self.native_window_identity(&parent).ok_or_else(AppErrorWire::native_unavailable)?;
+        let window_identity = self.native_window_identity(&parent).ok_or_else(|| {
+            write_q5_reconstruction_failure(
+                Q5ReconstructionStage::WindowIdentity,
+                "native_unavailable",
+            );
+            AppErrorWire::native_unavailable()
+        })?;
         self.capture_app_shell_focus(app, &window, window_identity);
-        self.restore_window_frame(&parent)?;
+        self.restore_window_frame(&parent).inspect_err(|_error| {
+            write_q5_reconstruction_failure(
+                Q5ReconstructionStage::RestoreFrame,
+                "native_unavailable",
+            );
+        })?;
         // A failed Dock reconstruction is retryable, but a successful retry
         // must never stack a second raw WRY host or child-WebView registry on
         // top of the first one.
-        self.editor_host.detach_webview_host().map_err(state_error)?;
+        self.editor_host.detach_webview_host().map_err(|error| {
+            write_q5_reconstruction_failure(
+                Q5ReconstructionStage::DetachHost,
+                error.code().as_str(),
+            );
+            state_error(error)
+        })?;
         let router: Arc<dyn NavigationRouter> =
             Arc::new(NativeNavigationRouter { app: app.clone(), window_identity });
         self.editor_host
             .attach_webview_host(Arc::new(WryWebViewHost::new(parent.clone(), router)))
-            .map_err(state_error)?;
+            .map_err(|error| {
+                write_q5_reconstruction_failure(
+                    Q5ReconstructionStage::AttachHost,
+                    error.code().as_str(),
+                );
+                state_error(error)
+            })?;
 
-        let size = parent.inner_size().map_err(|_| AppErrorWire::native_unavailable())?;
+        let size = parent.inner_size().map_err(|_| {
+            write_q5_reconstruction_failure(
+                Q5ReconstructionStage::WindowMetrics,
+                "native_unavailable",
+            );
+            AppErrorWire::native_unavailable()
+        })?;
+        let scale_factor = parent.scale_factor().map_err(|_| {
+            write_q5_reconstruction_failure(
+                Q5ReconstructionStage::WindowMetrics,
+                "native_unavailable",
+            );
+            AppErrorWire::native_unavailable()
+        })?;
+        let logical_size = size.to_logical::<f64>(scale_factor);
         let bounds = editor::EditorBounds::new(
             0.0,
             0.0,
-            f64::from(size.width.max(1)),
-            f64::from(size.height.max(1)),
+            logical_size.width.max(1.0),
+            logical_size.height.max(1.0),
         );
         *self.editor_bounds.lock().map_err(state_error)? = bounds;
-        let snapshot = self.current_snapshot_with_lifecycle(lifecycle)?;
+        let snapshot = self.current_snapshot_with_lifecycle(lifecycle).inspect_err(|_error| {
+            write_q5_reconstruction_failure(Q5ReconstructionStage::Snapshot, "native_unavailable");
+        })?;
+        let workspace_first = std::env::var_os("DEVHUB_Q5_MINIMAL_WORKSPACE_FIRST").is_some();
         // Global Editor is a fixed singleton. Available Workspace Editors are
         // keyed by persisted Workspace ID; an unavailable root remains a
         // durable sidebar row but has no child WebView to mount.
-        let mut mount_error =
-            self.editor_host.ensure_surface(editor::EditorSurfaceKey::Global, None, bounds).err();
+        let mut mount_error = if workspace_first {
+            None
+        } else {
+            self.editor_host
+                .ensure_surface(editor::EditorSurfaceKey::Global, None, bounds)
+                .err()
+                .map(|error| (Q5ReconstructionStage::GlobalSurface, error))
+        };
         for workspace in snapshot.workspaces() {
+            if workspace_first {
+                continue;
+            }
             if workspace.state().is_available() {
                 if let Err(error) = self.editor_host.ensure_surface(
                     editor::EditorSurfaceKey::Workspace(workspace.id().to_string()),
                     Some(workspace.root().as_path().to_path_buf()),
                     bounds,
                 ) {
-                    mount_error.get_or_insert(error);
+                    mount_error.get_or_insert((Q5ReconstructionStage::WorkspaceSurface, error));
                 }
             }
         }
-        if let Some(error) = mount_error {
+        if let Some((stage, error)) = mount_error {
+            write_q5_reconstruction_failure(stage, error.code().as_str());
             return Err(state_error(error));
         }
 
@@ -1822,8 +2440,14 @@ impl NativeAppState {
         // records above therefore ends with the last workspace visible; apply
         // the Rust-owned Activity/Context selection as the final visibility
         // decision.
-        self.editor_host.hide_surfaces().map_err(state_error)?;
-        if snapshot.active_activity() == Activity::Editor {
+        self.editor_host.hide_surfaces().map_err(|error| {
+            write_q5_reconstruction_failure(
+                Q5ReconstructionStage::HideSurfaces,
+                error.code().as_str(),
+            );
+            state_error(error)
+        })?;
+        if snapshot.active_activity() == Activity::Editor && !workspace_first {
             let selected = match snapshot.selected_context() {
                 devhub_app_core::NavigationContext::Global => {
                     Some(editor::EditorSurfaceKey::Global)
@@ -1852,7 +2476,13 @@ impl NativeAppState {
                         .map(|workspace| workspace.root().as_path().to_path_buf()),
                 };
                 if matches!(&selected, editor::EditorSurfaceKey::Global) || root.is_some() {
-                    self.editor_host.ensure_surface(selected, root, bounds).map_err(state_error)?;
+                    self.editor_host.ensure_surface(selected, root, bounds).map_err(|error| {
+                        write_q5_reconstruction_failure(
+                            Q5ReconstructionStage::ActiveSurface,
+                            error.code().as_str(),
+                        );
+                        state_error(error)
+                    })?;
                 }
             }
         }
@@ -1962,12 +2592,17 @@ impl NativeAppState {
                         self.record_native_error(state_error(error));
                     }
                 }
+                // The explicit startup barrier is consumed by the Q5 worker
+                // after settings/profile startup has completed.
+                self.set_startup_reconstruction_state(StartupReconstructionState::Ready);
             }
             Err(error) => {
                 // Missing OpenVSCode resources are a typed degraded Activity,
                 // not a reason to discard the durable shell snapshot or stop
                 // Agents. Keep the startup shell hidden until a Dock retry
                 // reconstructs its child surfaces successfully.
+                self.set_startup_reconstruction_state(StartupReconstructionState::Failed);
+                self.record_performance_probe(PerformanceMarker::Q5FixtureStartFailed);
                 self.record_native_error(error);
             }
         }
@@ -2027,6 +2662,645 @@ impl NativeAppState {
         let _ = tauri::async_runtime::block_on(
             self.agent_runtime.bootstrap(CancellationToken::new(operation_id)),
         );
+    }
+
+    fn q5_agent_evidence_count(&self) -> usize {
+        let trace_count = std::env::var_os("DEVHUB_HERDR_TRACE_FILE")
+            .and_then(|path| fs::read_to_string(path).ok())
+            .map(|trace| trace.lines().filter(|line| line.starts_with("kind=")).count())
+            .unwrap_or(0);
+        let pid_count = std::env::var_os("DEVHUB_HERDR_PID_DIR")
+            .and_then(|path| fs::read_dir(path).ok())
+            .map(|entries| {
+                entries
+                    .filter_map(Result::ok)
+                    .filter(|entry| {
+                        entry.path().extension().is_some_and(|extension| extension == "pid")
+                    })
+                    .count()
+            })
+            .unwrap_or(0);
+        trace_count.min(pid_count)
+    }
+
+    fn q5_reconcile_live_agent_count(&self) -> Option<usize> {
+        let operation = self.id_generator.next_operation_id().ok()?;
+        tauri::async_runtime::block_on(
+            self.agent_runtime.reconcile(CancellationToken::new(operation)),
+        )
+        .ok()
+        .map(|reconciliation| reconciliation.observations().len())
+    }
+
+    fn q5_wait_for_agent_evidence(&self, expected_evidence: usize, deadline: Instant) -> bool {
+        while Instant::now() < deadline && self.lifecycle.phase() == Phase::Open {
+            let evidence = self.q5_agent_evidence_count();
+            if evidence >= expected_evidence {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        false
+    }
+
+    fn q5_wait_for_final_agent_reconcile(
+        &self,
+        expected_live: usize,
+        deadline: Instant,
+    ) -> Option<usize> {
+        while Instant::now() < deadline && self.lifecycle.phase() == Phase::Open {
+            let live = self.q5_reconcile_live_agent_count()?;
+            if live == expected_live {
+                return Some(live);
+            }
+            // Match the normal reconciler cadence. This final authoritative
+            // phase is deliberately coalesced after all dispatches so the
+            // fixture does not add a provider snapshot storm to every launch.
+            std::thread::sleep(Duration::from_millis(300));
+        }
+        self.q5_reconcile_live_agent_count().filter(|live| *live == expected_live)
+    }
+
+    /// Build the Q5.2 scale fixture through the same typed intent and provider
+    /// effects used by the App Shell. This path is unreachable in ordinary
+    /// launches and is enabled only by the native acceptance driver.
+    fn run_q5_scale_fixture(&self) {
+        if !self.performance_markers_enabled
+            || std::env::var_os("DEVHUB_Q5_SCALE_FIXTURE").is_none()
+        {
+            return;
+        }
+        let Ok(lifecycle) = self.capture_open_lifecycle_token() else { return };
+        // Setup is an acceptance-fixture bound, not a performance budget.
+        // Sixteen real interactive Herdr starts may each consume their
+        // bounded readiness window on a cold host.
+        let minimal = std::env::var_os("DEVHUB_Q5_MINIMAL_SCALE").is_some();
+        let deadline = Instant::now() + Duration::from_secs(if minimal { 45 } else { 900 });
+        let workspace_target = if minimal { 1 } else { 8 };
+        let agent_target = if minimal { 0 } else { 16 };
+        let home = self._runtime_context.home().to_path_buf();
+        let fixture_root = home.join(".q5-fixture");
+        if fs::create_dir_all(&fixture_root).is_err() {
+            self.record_performance_probe(PerformanceMarker::Q5FixtureWorkspaceFailed);
+            return;
+        }
+
+        let mut snapshot = match self.current_snapshot_with_lifecycle(lifecycle) {
+            Ok(snapshot) => snapshot,
+            Err(_) => {
+                self.record_performance_probe(PerformanceMarker::Q5FixtureSnapshotFailed);
+                return;
+            }
+        };
+        let existing_workspace_count = snapshot.workspaces().len();
+        if snapshot.workspaces().len() < workspace_target {
+            for index in snapshot.workspaces().len()..workspace_target {
+                if Instant::now() >= deadline {
+                    self.record_performance_probe(PerformanceMarker::Q5FixtureScaleSetupDeadline);
+                    return;
+                }
+                let root = fixture_root.join(format!("workspace-{:02}", index + 1));
+                if fs::create_dir_all(&root).is_err() {
+                    self.record_performance_probe(PerformanceMarker::Q5FixtureWorkspaceFailed);
+                    return;
+                }
+                let _ = fs::write(root.join("q5-input.txt"), "Q5 fixture input\n");
+                let _ = ProcessCommand::new("git")
+                    .args(["-C", root.to_string_lossy().as_ref(), "init", "--quiet"])
+                    .output();
+                let Ok((outcome, _)) = self.dispatch_intent_with_lifecycle(
+                    UserIntent::OpenFolder {
+                        path: match RequestedPath::new(root.to_string_lossy()) {
+                            Ok(path) => path,
+                            Err(_) => {
+                                self.record_performance_probe(
+                                    PerformanceMarker::Q5FixtureWorkspaceFailed,
+                                );
+                                return;
+                            }
+                        },
+                    },
+                    lifecycle,
+                ) else {
+                    self.record_performance_probe(PerformanceMarker::Q5FixtureWorkspaceFailed);
+                    return;
+                };
+                let _ = outcome;
+                self.record_performance_probe(PerformanceMarker::Q5FixtureWorkspaceReady);
+            }
+        }
+        snapshot = match self.current_snapshot_with_lifecycle(lifecycle) {
+            Ok(snapshot) => snapshot,
+            Err(_) => {
+                self.record_performance_probe(PerformanceMarker::Q5FixtureSnapshotFailed);
+                return;
+            }
+        };
+        if snapshot.workspaces().len() != workspace_target {
+            self.record_performance_probe(PerformanceMarker::Q5FixtureWorkspaceFailed);
+            return;
+        }
+        for _ in 0..existing_workspace_count {
+            self.record_performance_probe(PerformanceMarker::Q5FixtureWorkspaceReady);
+        }
+
+        let profile_ids = self
+            .profiles
+            .lock()
+            .ok()
+            .map(|profiles| profiles.iter().map(|profile| profile.id().clone()).collect::<Vec<_>>())
+            .unwrap_or_default();
+        if !minimal && profile_ids.is_empty() {
+            self.record_performance_probe(PerformanceMarker::Q5FixtureProfilesUnavailable);
+            return;
+        }
+        let agent_count =
+            snapshot.workspaces().iter().map(|workspace| workspace.agents().len()).sum::<usize>();
+        for _ in 0..agent_count {
+            self.record_performance_probe(PerformanceMarker::Q5FixtureAgentReady);
+        }
+        let initial_agent_evidence = self.q5_agent_evidence_count();
+        let mut launched_agents = 0_usize;
+        if agent_count < agent_target {
+            let initial_agent_count = agent_count;
+            for offset in 0..agent_target.saturating_sub(initial_agent_count) {
+                let index = initial_agent_count + offset;
+                if Instant::now() >= deadline {
+                    self.record_performance_probe(PerformanceMarker::Q5FixtureScaleSetupDeadline);
+                    return;
+                }
+                let workspace = &snapshot.workspaces()[index % workspace_target];
+                self.q5_clear_dispatch_failure();
+                let dispatch = self.dispatch_intent_with_lifecycle(
+                    UserIntent::CreateAgent {
+                        workspace_id: workspace.id().clone(),
+                        profile_id: profile_ids[index % profile_ids.len()].clone(),
+                    },
+                    lifecycle,
+                );
+                if let Err(error) = dispatch {
+                    self.q5_record_dispatch_failure(
+                        index,
+                        agent_count.saturating_add(launched_agents),
+                        snapshot.workspaces().len(),
+                        &error,
+                    );
+                    self.record_performance_probe(PerformanceMarker::Q5FixtureAgentDispatchFailed);
+                    return;
+                }
+                launched_agents += 1;
+                // Herdr's successful start receipt already proves provider
+                // interactive readiness. Only wait for the deterministic
+                // executable/pid evidence here; authoritative reconciliation
+                // is coalesced once after all sixteen dispatches.
+                let evidence_deadline = (Instant::now() + Duration::from_secs(36)).min(deadline);
+                if !self.q5_wait_for_agent_evidence(
+                    initial_agent_evidence.saturating_add(launched_agents),
+                    evidence_deadline,
+                ) {
+                    self.record_performance_probe(
+                        PerformanceMarker::Q5FixtureAgentProcessEvidenceTimeout,
+                    );
+                    return;
+                }
+                self.record_performance_probe(PerformanceMarker::Q5FixtureAgentReady);
+            }
+        }
+        if agent_count.saturating_add(launched_agents) != agent_target {
+            self.record_performance_probe(PerformanceMarker::Q5FixtureAgentFailed);
+            return;
+        }
+        // Keep two ordinary DevHub Workspace tmux sessions alive across the
+        // quit/relaunch matrix. This calls the terminal owner directly, but
+        // still uses its typed ownership marker and reconciliation path.
+        for workspace in snapshot.workspaces().iter().take(if minimal { 0 } else { 2 }) {
+            let target =
+                WorkspaceTerminalTarget::new(workspace.id().clone(), workspace.root().clone());
+            let _ = self._terminal_runtime.ensure_workspace_for_q5(
+                &target,
+                &CancellationToken::new(self.id_generator.next_operation_id().unwrap_or_else(
+                    |_| {
+                        OperationId::from_uuid("00000000-0000-4000-8000-000000000001")
+                            .expect("static operation id")
+                    },
+                )),
+            );
+        }
+        if Instant::now() >= deadline {
+            self.record_performance_probe(PerformanceMarker::Q5FixtureScaleDeadlineExceeded);
+            return;
+        }
+        let live_agents = if minimal {
+            0
+        } else {
+            let Some(live_agents) = self.q5_wait_for_final_agent_reconcile(
+                agent_target,
+                (Instant::now() + Duration::from_secs(90)).min(deadline),
+            ) else {
+                self.record_performance_probe(PerformanceMarker::Q5FixtureHerdrReconcileFailed);
+                return;
+            };
+            live_agents
+        };
+        if live_agents != agent_target {
+            self.record_performance_probe(PerformanceMarker::Q5FixtureAgentFinalReconcileTimeout);
+            return;
+        }
+        let final_snapshot = match self.current_snapshot_with_lifecycle(lifecycle) {
+            Ok(snapshot) => snapshot,
+            Err(_) => {
+                self.record_performance_probe(PerformanceMarker::Q5FixtureSnapshotFailed);
+                return;
+            }
+        };
+        let exact_agent_count = final_snapshot
+            .workspaces()
+            .iter()
+            .map(|workspace| workspace.agents().len())
+            .sum::<usize>();
+        if final_snapshot.workspaces().len() != workspace_target
+            || exact_agent_count != agent_target
+        {
+            self.record_performance_probe(PerformanceMarker::Q5FixtureAgentFailed);
+            return;
+        }
+        for (index, workspace) in final_snapshot.workspaces().iter().enumerate() {
+            write_q5_indexed_counter_fact("workspace_agent_count", index, workspace.agents().len());
+        }
+        // Workspaces created after the one-shot startup reconstruction still
+        // need their Rust-owned EditorHost surfaces mounted. Warm each child
+        // sequentially: ensure_surface selects the new child and hides the
+        // previous one, so rapidly mounting all children would hide them
+        // before an async OpenVSCode/Bridge handshake can complete. This is
+        // the Q5-only continuation of the same lifecycle owner; the workspace
+        // roots and records above were created through typed intents.
+        let bounds = self
+            .editor_bounds
+            .lock()
+            .map(|bounds| *bounds)
+            .unwrap_or_else(|_| editor::EditorBounds::new(0.0, 0.0, 900.0, 560.0));
+        let warm_surface = |state: &Self,
+                            key: editor::EditorSurfaceKey,
+                            root: Option<std::path::PathBuf>,
+                            deadline: Instant|
+         -> bool {
+            if state.editor_host.ensure_surface(key.clone(), root, bounds).is_err() {
+                state.record_performance_probe(
+                    PerformanceMarker::Q5FixtureSurfaceWarmDispatchFailed,
+                );
+                return false;
+            }
+            while Instant::now() < deadline {
+                if state.bridge_sink.q5_editor_surface_connected(&key) {
+                    state.record_performance_probe(PerformanceMarker::Q5FixtureSurfaceWarmReady);
+                    return true;
+                }
+                if state.lifecycle.phase() != Phase::Open {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            state.record_performance_probe(PerformanceMarker::Q5FixtureSurfaceWarmWaitTimeout);
+            false
+        };
+
+        if !std::env::var_os("DEVHUB_Q5_MINIMAL_WORKSPACE_FIRST").is_some()
+            && !warm_surface(self, editor::EditorSurfaceKey::Global, None, deadline)
+        {
+            return;
+        }
+        for workspace in snapshot.workspaces() {
+            if !warm_surface(
+                self,
+                editor::EditorSurfaceKey::Workspace(workspace.id().to_string()),
+                Some(workspace.root().as_path().to_path_buf()),
+                deadline,
+            ) {
+                return;
+            }
+        }
+        if !minimal {
+            let workspace_id = snapshot.workspaces()[0].id().clone();
+            if self
+                .dispatch_intent_with_lifecycle(
+                    UserIntent::SelectActivity(Activity::Editor),
+                    lifecycle,
+                )
+                .is_err()
+                || self
+                    .dispatch_intent_with_lifecycle(
+                        UserIntent::SelectContext(NavigationContext::Workspace(workspace_id)),
+                        lifecycle,
+                    )
+                    .is_err()
+            {
+                self.record_performance_probe(
+                    PerformanceMarker::Q5FixtureSurfaceWarmDispatchFailed,
+                );
+                return;
+            }
+        }
+        let relaunch_snapshot = match self.current_snapshot_with_lifecycle(lifecycle) {
+            Ok(snapshot) => snapshot,
+            Err(_) => {
+                self.record_performance_probe(PerformanceMarker::Q5FixtureSnapshotFailed);
+                return;
+            }
+        };
+        let observations = self.bridge_sink.q5_observations();
+        let mut identities = BTreeSet::new();
+        let mut duplicate_identity_count = 0_usize;
+        let mut disconnected_count = 0_usize;
+        let mut not_ready_count = 0_usize;
+        let mut generation_zero_count = 0_usize;
+        let mut context_mismatch_count = 0_usize;
+        for observation in observations.values() {
+            if !observation.connected {
+                disconnected_count = disconnected_count.saturating_add(1);
+            }
+            if observation.readiness != devhub_app_core::bridge::Readiness::Ready {
+                not_ready_count = not_ready_count.saturating_add(1);
+            }
+            if observation.generation == 0 {
+                generation_zero_count = generation_zero_count.saturating_add(1);
+            }
+            let identity = match observation.context.as_ref() {
+                Some(devhub_app_core::bridge::Context::Global) => Some("global".to_owned()),
+                Some(devhub_app_core::bridge::Context::Workspace {
+                    workspace_id,
+                    canonical_root,
+                }) => relaunch_snapshot
+                    .workspaces()
+                    .iter()
+                    .find(|workspace| {
+                        workspace.id().as_str() == workspace_id.as_str()
+                            && workspace.root().as_path().to_str() == Some(canonical_root.as_str())
+                    })
+                    .map(|workspace| workspace.id().to_string()),
+                None => None,
+            };
+            if let Some(identity) = identity {
+                if !identities.insert(identity) {
+                    duplicate_identity_count = duplicate_identity_count.saturating_add(1);
+                }
+            } else {
+                context_mismatch_count = context_mismatch_count.saturating_add(1);
+            }
+        }
+        let workspace_count = relaunch_snapshot.workspaces().len();
+        let agent_count = relaunch_snapshot
+            .workspaces()
+            .iter()
+            .map(|workspace| workspace.agents().len())
+            .sum::<usize>();
+        let mapping_count = self.agent_mappings.lock().map(|value| value.len()).unwrap_or(0);
+        let expected_surface_count = workspace_count.saturating_add(1);
+        let missing_identity_count = expected_surface_count.saturating_sub(identities.len());
+        let active_editor = q5_active_editor_key(&relaunch_snapshot);
+        let relaunch_ready = workspace_count == workspace_target
+            && agent_count == agent_target
+            && mapping_count == agent_target
+            && observations.len() == expected_surface_count
+            && missing_identity_count == 0
+            && duplicate_identity_count == 0
+            && disconnected_count == 0
+            && not_ready_count == 0
+            && generation_zero_count == 0
+            && context_mismatch_count == 0
+            && active_editor == "workspace";
+        write_q5_relaunch_state_fact(Q5RelaunchStateFact {
+            workspace_count,
+            agent_count,
+            mapping_count,
+            surface_count: observations.len(),
+            missing_identity_count,
+            duplicate_identity_count,
+            disconnected_count,
+            not_ready_count,
+            generation_zero_count,
+            context_mismatch_count,
+            active_editor,
+            status: if relaunch_ready { "pass" } else { "fail" },
+        });
+        self.record_performance_probe(PerformanceMarker::Q5FixtureScaleReady);
+    }
+
+    /// Measure hidden Editor continuity without mutating a WebView after the
+    /// hold. The returned fact is total: every lifecycle/error path produces
+    /// one closed outcome that the fixture thread writes before it exits.
+    fn run_q5_hidden_continuity(&self) -> Q5HiddenContinuityFact {
+        let observation_started = Instant::now();
+        let wait_deadline = observation_started + Duration::from_secs(60);
+        let baseline = loop {
+            if self.lifecycle.phase() != Phase::Open {
+                return Q5HiddenContinuityFact::failure(
+                    "lifecycle_changed",
+                    u64::try_from(observation_started.elapsed().as_millis()).unwrap_or(u64::MAX),
+                    0,
+                    0,
+                );
+            }
+            let observations = self.bridge_sink.q5_observations();
+            if observations.len() >= 9 {
+                break observations;
+            }
+            if Instant::now() >= wait_deadline {
+                return Q5HiddenContinuityFact::failure(
+                    "bridge_observation_timeout",
+                    u64::try_from(observation_started.elapsed().as_millis()).unwrap_or(u64::MAX),
+                    observations.len(),
+                    0,
+                );
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        };
+
+        self.record_performance_probe(PerformanceMarker::Q5HiddenPrepare);
+        std::thread::sleep(Duration::from_secs(2));
+        if self.lifecycle.phase() != Phase::Open {
+            return Q5HiddenContinuityFact::failure(
+                "lifecycle_changed",
+                u64::try_from(observation_started.elapsed().as_millis()).unwrap_or(u64::MAX),
+                baseline.len(),
+                0,
+            );
+        }
+        let hidden = match self.editor_host.hide_workspace_surfaces_for_q5() {
+            Ok(hidden) => usize::from(hidden),
+            Err(_) => {
+                return Q5HiddenContinuityFact::failure(
+                    "hide_surfaces_failed",
+                    u64::try_from(observation_started.elapsed().as_millis()).unwrap_or(u64::MAX),
+                    baseline.len(),
+                    0,
+                );
+            }
+        };
+        if hidden < 5 {
+            return Q5HiddenContinuityFact::failure(
+                "hidden_surface_count_insufficient",
+                u64::try_from(observation_started.elapsed().as_millis()).unwrap_or(u64::MAX),
+                baseline.len(),
+                hidden,
+            );
+        }
+
+        let hidden_started = Instant::now();
+        self.record_performance_probe(PerformanceMarker::Q5HiddenHoldStarted);
+        let deadline = hidden_started + Duration::from_secs(q5_hidden_hold_seconds());
+        while Instant::now() < deadline && self.lifecycle.phase() == Phase::Open {
+            std::thread::sleep(Duration::from_millis(200));
+        }
+        let duration_ms = u64::try_from(hidden_started.elapsed().as_millis()).unwrap_or(u64::MAX);
+        if self.lifecycle.phase() != Phase::Open {
+            return Q5HiddenContinuityFact::failure(
+                "lifecycle_changed",
+                duration_ms,
+                baseline.len(),
+                hidden,
+            );
+        }
+
+        // Post-hold acceptance is observation-only. AppSnapshot, EditorHost
+        // inventory, and Bridge observations are all immutable owner
+        // projections and do not dispatch show/focus/hide or main-thread UI.
+        let snapshot = match self.current_snapshot() {
+            Ok(snapshot) => snapshot,
+            Err(_) => {
+                return Q5HiddenContinuityFact::failure(
+                    "snapshot_unavailable",
+                    duration_ms,
+                    baseline.len(),
+                    hidden,
+                );
+            }
+        };
+        let inventory = match self.editor_host.surface_inventory() {
+            Ok(inventory) => inventory,
+            Err(_) => {
+                return Q5HiddenContinuityFact::failure(
+                    "surface_inventory_unavailable",
+                    duration_ms,
+                    baseline.len(),
+                    hidden,
+                );
+            }
+        };
+        let mut expected_surface_keys = BTreeSet::from(["global-editor".to_owned()]);
+        expected_surface_keys.extend(snapshot.workspaces().iter().map(|workspace| {
+            editor::EditorSurfaceKey::Workspace(workspace.id().to_string()).wire_name()
+        }));
+        let observed_surface_keys = inventory
+            .iter()
+            .filter(|surface| surface.mounted)
+            .map(|surface| surface.key.clone())
+            .collect::<BTreeSet<_>>();
+        let owner_missing_count = expected_surface_keys.difference(&observed_surface_keys).count();
+        let owner_lookup_ok = owner_missing_count == 0
+            && observed_surface_keys.len() == expected_surface_keys.len()
+            && inventory.len() == expected_surface_keys.len();
+
+        let active_editor = q5_active_editor_key(&snapshot);
+        let current = self.bridge_sink.q5_observations();
+        let mut missing_count = 0_usize;
+        let mut disconnected_count = 0_usize;
+        let mut generation_mismatch_count = 0_usize;
+        let mut context_mismatch_count = 0_usize;
+        let mut dirty_mismatch_count = 0_usize;
+        for (surface, before) in &baseline {
+            let Some(after) = current.get(surface) else {
+                missing_count = missing_count.saturating_add(1);
+                continue;
+            };
+            if !after.connected {
+                disconnected_count = disconnected_count.saturating_add(1);
+            }
+            if after.generation != before.generation {
+                generation_mismatch_count = generation_mismatch_count.saturating_add(1);
+            }
+            if after.context != before.context {
+                context_mismatch_count = context_mismatch_count.saturating_add(1);
+            }
+            if after.dirty != before.dirty {
+                dirty_mismatch_count = dirty_mismatch_count.saturating_add(1);
+            }
+        }
+        let continuity = baseline.len() >= 9
+            && current.len() == baseline.len()
+            && missing_count == 0
+            && disconnected_count == 0
+            && generation_mismatch_count == 0
+            && context_mismatch_count == 0
+            && dirty_mismatch_count == 0
+            && owner_lookup_ok;
+        Q5HiddenContinuityFact {
+            baseline_count: baseline.len(),
+            current_count: current.len(),
+            hidden_count: hidden,
+            duration_ms,
+            missing_count,
+            disconnected_count,
+            generation_mismatch_count,
+            context_mismatch_count,
+            dirty_mismatch_count,
+            owner_missing_count,
+            owner_lookup_result: if owner_lookup_ok { "ok" } else { "error" },
+            owner_lookup_error_code: if owner_lookup_ok {
+                "none"
+            } else {
+                "surface_inventory_mismatch"
+            },
+            active_editor,
+            continuity,
+        }
+    }
+
+    fn start_q5_fixture(&self, app: &AppHandle) {
+        if !self.performance_markers_enabled
+            || std::env::var_os("DEVHUB_Q5_SCALE_FIXTURE").is_none()
+        {
+            return;
+        }
+        self.record_performance_probe(PerformanceMarker::Q5FixtureStarted);
+        let app = app.clone();
+        std::thread::Builder::new()
+            .name("devhub-q5-scale-fixture".to_owned())
+            .spawn(move || {
+                let Some(state) = app.try_state::<NativeAppState>() else { return };
+                let barrier_deadline = Instant::now() + Duration::from_secs(300);
+                while state.lifecycle.phase() == Phase::Open
+                    && state.startup_reconstruction_state() == StartupReconstructionState::Pending
+                    && Instant::now() < barrier_deadline
+                {
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+                if state.lifecycle.phase() != Phase::Open {
+                    state.record_performance_probe(PerformanceMarker::Q5FixtureStartSkipped);
+                    return;
+                }
+                match state.startup_reconstruction_state() {
+                    StartupReconstructionState::Ready => {}
+                    StartupReconstructionState::Failed => {
+                        state.record_performance_probe(PerformanceMarker::Q5FixtureStartFailed);
+                        return;
+                    }
+                    StartupReconstructionState::Pending => {
+                        state.record_performance_probe(PerformanceMarker::Q5FixtureStartSkipped);
+                        return;
+                    }
+                }
+                state.run_q5_scale_fixture();
+                if std::env::var_os("DEVHUB_Q5_SKIP_HIDDEN").is_some() {
+                    return;
+                }
+                let fact = state.run_q5_hidden_continuity();
+                let continuity = fact.continuity;
+                write_q5_hidden_continuity_fact(&fact);
+                if continuity {
+                    state.record_performance_probe(PerformanceMarker::Q5HiddenContinuityVerified);
+                }
+            })
+            .ok();
     }
 
     fn restore_agents_for_runtime(&self, app: &AppHandle) {
@@ -2569,6 +3843,7 @@ impl NativeAppState {
         let mut first_error = None;
         let mut last_outcome = None;
         let mut persistence_degraded = false;
+        let mut q5_failure = None;
         let mut steps = 0_usize;
         while let Some(effect) = pending.pop_front() {
             steps = steps.saturating_add(1);
@@ -2578,6 +3853,12 @@ impl NativeAppState {
             if let Some(lifecycle) = lifecycle {
                 self.require_app_lifecycle_token(lifecycle)?;
             }
+            let effect_kind = q5_effect_kind(&effect);
+            let had_error = first_error.is_some();
+            let mut effect_failure_stage = "effect_execution";
+            let mut effect_port_error_code = None;
+            let mut effect_agent_runtime_error_code = None;
+            let mut effect_provider_error_category = None;
             match effect {
                 Effect::Noop => {}
                 Effect::Detach(reason) => match reason {
@@ -2764,13 +4045,32 @@ impl NativeAppState {
                                     workspace_id.clone(),
                                     root.clone(),
                                 )
-                                .map_err(Self::provider_failure)?;
-                            tauri::async_runtime::block_on(self.agent_runtime.launch(
+                                .map_err(|error| {
+                                    effect_port_error_code = Some(error.code());
+                                    Self::provider_failure(error)
+                                })?;
+                            match tauri::async_runtime::block_on(self.agent_runtime.launch(
                                 agent_id.clone(),
                                 profile,
                                 Self::effect_cancel(&token),
-                            ))
-                            .map_err(Self::provider_failure)
+                            )) {
+                                Ok(receipt) => Ok(receipt),
+                                Err(error) => {
+                                    effect_port_error_code = Some(error.code());
+                                    if let Some(failure) =
+                                        self.agent_runtime.take_last_launch_failure()
+                                    {
+                                        effect_failure_stage = failure.stage.as_str();
+                                        effect_port_error_code =
+                                            failure.port_error_code.or(effect_port_error_code);
+                                        effect_agent_runtime_error_code =
+                                            failure.agent_runtime_error_code;
+                                        effect_provider_error_category =
+                                            failure.provider_error_category;
+                                    }
+                                    Err(Self::provider_failure(error))
+                                }
+                            }
                         });
                     let result = launch.and_then(|receipt| {
                         self.agent_mappings
@@ -3213,6 +4513,18 @@ impl NativeAppState {
                     }
                 }
             }
+            if !had_error && q5_failure.is_none() {
+                if let Some(error) = first_error.as_ref() {
+                    q5_failure = Some(Q5DispatchFailureContext {
+                        effect: effect_kind,
+                        stage: effect_failure_stage,
+                        app_error_code: error.code(),
+                        port_error_code: effect_port_error_code,
+                        agent_runtime_error_code: effect_agent_runtime_error_code,
+                        provider_error_category: effect_provider_error_category,
+                    });
+                }
+            }
             // A cleanup completion can synchronously emit the next effect
             // (for example Editor after Terminal). Drain it into this same
             // bounded worklist so no coordinator effect is silently lost.
@@ -3223,6 +4535,7 @@ impl NativeAppState {
             outcome: last_outcome,
             error: first_error,
             persistence_degraded,
+            q5_failure,
         })
     }
 
@@ -3718,6 +5031,15 @@ impl NativeAppState {
                     .with_summary("window reconstruction did not stop before quit deadline")
             });
         }
+        // Stop the owned Editor provider before joining unrelated local
+        // workers. Official VS Code needs its bounded SIGINT grace to drain
+        // the serve-web accept loops; placing this after every listener join
+        // let those joins consume the shared quit deadline and converted the
+        // graceful request into an immediate exact-leader escalation, leaving
+        // detached server descendants on the stable port.
+        if let Err(error) = self.editor_host.shutdown_until(deadline) {
+            first_error.get_or_insert_with(|| state_error(error));
+        }
         self.agent_reconciler_running.store(false, Ordering::Release);
         if let Ok(mut picker) = self.picker_cancel.lock() {
             if let Some(token) = picker.take() {
@@ -3774,17 +5096,6 @@ impl NativeAppState {
                 AppErrorWire::native_unavailable()
                     .with_summary("Agent event reader did not stop before quit deadline")
             });
-        }
-        // Do this explicitly even when the coordinator previously received a
-        // WindowClosed detach. A detached coordinator intentionally emits no
-        // second Quit effect, but OpenVSCode is still DevHub-owned and must be
-        // stopped exactly once on process quit.
-        // Always enter EditorHost shutdown, even when earlier app-local joins
-        // exhausted the deadline. Its process supervisor still sends the
-        // termination request and hands an unreaped Child to the bounded
-        // app-local reaper, so OpenVSCode cannot survive this quit path.
-        if let Err(error) = self.editor_host.shutdown_until(deadline) {
-            first_error.get_or_insert_with(|| state_error(error));
         }
         // Drain frame persistence only after owned shutdown has been
         // initiated. A blocked state-store writer therefore cannot postpone
@@ -3851,6 +5162,9 @@ impl NativeAppState {
         let final_outcome = execution.outcome.as_ref().unwrap_or(&outcome);
         let mut wire =
             AppOutcomeWire::from_outcome(final_outcome, readiness).map_err(state_error)?;
+        if let Some(failure) = execution.q5_failure {
+            self.q5_record_dispatch_failure_context(failure);
+        }
         if let Some(error) = execution.error {
             if !execution.persistence_degraded {
                 return Err(error);
@@ -6321,12 +7635,17 @@ fn build_settings_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     build_window_menu(app, Some("CmdOrCtrl+W"))
 }
 
-/// Resolve the app-owned resource root used by the bundled OpenVSCode
-/// executable and Bridge VSIX. Packaged builds use Tauri's resource directory;
-/// debug builds may point at an isolated, locally verified bundle while the
-/// release resources are being assembled. The override is intentionally
-/// debug-only, matching the executable override in `editor::paths`.
-fn editor_resource_dir(app: &AppHandle) -> Option<PathBuf> {
+/// Resolve the app-owned resource root used by the verified Bridge VSIX.
+/// Packaged builds use Tauri's resource directory; debug Q5 runs may point at
+/// the checked-out application resources while provider resources are kept in
+/// a separate seam below.
+fn editor_app_resource_dir(app: &AppHandle) -> Option<PathBuf> {
+    #[cfg(debug_assertions)]
+    if let Some(path) = std::env::var_os("DEVHUB_APP_RESOURCE_DIR") {
+        return Some(PathBuf::from(path));
+    }
+    // Retain the old debug override as an app-resource fallback for local
+    // launches, but never use it as the OpenVSCode provider seam.
     #[cfg(debug_assertions)]
     if let Some(path) = std::env::var_os("DEVHUB_RESOURCE_DIR") {
         return Some(PathBuf::from(path));
@@ -6334,7 +7653,26 @@ fn editor_resource_dir(app: &AppHandle) -> Option<PathBuf> {
     app.path().resource_dir().ok()
 }
 
+fn editor_openvscode_resource_dir(
+    app: &AppHandle,
+    app_resource_dir: Option<&Path>,
+) -> Option<PathBuf> {
+    #[cfg(debug_assertions)]
+    if let Some(path) = std::env::var_os("DEVHUB_OPENVSCODE_RESOURCE_DIR") {
+        return Some(PathBuf::from(path));
+    }
+    #[cfg(debug_assertions)]
+    if let Some(path) = std::env::var_os("DEVHUB_RESOURCE_DIR") {
+        return Some(PathBuf::from(path));
+    }
+    app_resource_dir.map(Path::to_path_buf).or_else(|| app.path().resource_dir().ok())
+}
+
 pub fn run() {
+    if let Err(error) = raise_process_file_limit() {
+        eprintln!("DevHub cannot start: {error}");
+        return;
+    }
     tauri::Builder::default()
         .menu(build_app_menu)
         .on_menu_event(|app, event| {
@@ -6376,9 +7714,15 @@ pub fn run() {
         .setup(|app| {
             let home =
                 app.path().home_dir().map_err(|error| std::io::Error::other(error.to_string()))?;
-            let resource_dir = editor_resource_dir(app.handle());
-            let state = NativeAppState::bootstrap_with_resource_dir(&home, resource_dir)
-                .map_err(|_| std::io::Error::other("DevHub native bootstrap failed"))?;
+            let app_resource_dir = editor_app_resource_dir(app.handle());
+            let openvscode_resource_dir =
+                editor_openvscode_resource_dir(app.handle(), app_resource_dir.as_deref());
+            let state = NativeAppState::bootstrap_with_resource_dirs(
+                &home,
+                app_resource_dir,
+                openvscode_resource_dir,
+            )
+            .map_err(|_| std::io::Error::other("DevHub native bootstrap failed"))?;
             app.manage(state);
             let recovery_app = app.handle().clone();
             app.state::<NativeAppState>().bridge_sink.install_editor_recovery(Arc::new(
@@ -6428,6 +7772,10 @@ pub fn run() {
                         state.record_native_error(AppErrorWire::native_unavailable());
                     }
                 }
+                // A degraded startup socket transition must not suppress Q5
+                // when the explicit EditorHost reconstruction barrier is
+                // already complete. The fixture worker checks that barrier.
+                state.start_q5_fixture(&handle);
                 let resume_handle = handle.clone();
                 let resume_result = tauri::async_runtime::spawn_blocking(move || {
                     resume_handle.state::<NativeAppState>().resume_persisted_closing()
@@ -6650,11 +7998,13 @@ pub fn run() {
                     if !state.is_current_native_window(window) {
                         return;
                     }
+                    let scale_factor = window.scale_factor().unwrap_or(1.0);
+                    let logical_size = size.to_logical::<f64>(scale_factor);
                     let bounds = editor::EditorBounds::new(
                         0.0,
                         0.0,
-                        f64::from(size.width.max(1)),
-                        f64::from(size.height.max(1)),
+                        logical_size.width.max(1.0),
+                        logical_size.height.max(1.0),
                     );
                     if let Ok(mut current) = state.editor_bounds.lock() {
                         *current = bounds;
@@ -6755,12 +8105,9 @@ pub fn run() {
                     if state.exit_allowed.load(Ordering::Acquire) {
                         return;
                     }
-                    if !is_explicit_exit_request(code) {
-                        api.prevent_exit();
-                        return;
-                    }
+                    debug_assert!(exit_request_is_quit(code));
                     api.prevent_exit();
-                    if !claim_single_flight(&state.quit_requested) {
+                    if !state.quit_completion.begin() {
                         return;
                     }
                     let app = app_handle.clone();
@@ -6774,19 +8121,47 @@ pub fn run() {
                         })
                         .await;
                         let state = app.state::<NativeAppState>();
-                        state.exit_allowed.store(true, Ordering::Release);
-                        match result {
-                            Ok(Ok(())) => app.exit(0),
-                            Ok(Err(error)) => {
-                                state.record_native_error(error);
-                                app.exit(1);
-                            }
-                            Err(_) => {
-                                state.record_native_error(AppErrorWire::native_unavailable());
-                                app.exit(1);
-                            }
+                        let result = match result {
+                            Ok(result) => result,
+                            Err(_) => Err(AppErrorWire::native_unavailable()),
+                        };
+                        if let Err(error) = &result {
+                            state.record_native_error(error.clone());
                         }
+                        state.quit_completion.complete(result.clone());
+                        state.exit_allowed.store(true, Ordering::Release);
+                        app.exit(if result.is_ok() { 0 } else { 1 });
                     });
+                }
+                tauri::RunEvent::Exit => {
+                    let state = app_handle.state::<NativeAppState>();
+                    if state.exit_allowed.load(Ordering::Acquire) {
+                        return;
+                    }
+                    // Tao's macOS delegate reports an AppKit termination as
+                    // event-loop Exit without first emitting ExitRequested.
+                    // This is the last synchronous boundary at which DevHub
+                    // can stop its owned provider while leaving tmux/Agent
+                    // sessions detached. Window Close is handled separately
+                    // by WindowEvent::CloseRequested and never reaches here.
+                    let result = if state.quit_completion.begin() {
+                        // The event loop is already exiting, so no main-thread
+                        // frame-persist callback can be scheduled from here.
+                        // Geometry was continuously persisted by window events;
+                        // run only the synchronous owned-process cleanup fallback.
+                        let result = state.quit_with_window(None);
+                        state.quit_completion.complete(result.clone());
+                        result
+                    } else {
+                        state
+                            .quit_completion
+                            .wait_until(Instant::now() + Duration::from_secs(12))
+                            .unwrap_or_else(|| Err(AppErrorWire::native_unavailable()))
+                    };
+                    if let Err(error) = result {
+                        state.record_native_error(error);
+                    }
+                    state.exit_allowed.store(true, Ordering::Release);
                 }
                 _ => {}
             }
@@ -6803,6 +8178,39 @@ mod tests {
     use devhub_app_core::{CancellationToken, SettingsRuntimeHealthValueWire, WorkspaceRoot};
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::{Arc, Barrier};
+
+    #[test]
+    fn q5_hidden_failures_always_have_a_closed_owner_fact() {
+        let fact = Q5HiddenContinuityFact::failure("lifecycle_changed", 601_000, 9, 5);
+        assert_eq!(fact.owner_lookup_result, "error");
+        assert_eq!(fact.owner_lookup_error_code, "lifecycle_changed");
+        assert!(!fact.continuity);
+        assert_eq!(
+            q5_hidden_continuity_fact_line(&fact),
+            "fact=q5_hidden_continuity baseline_count=9 current_count=0 hidden_count=5 duration_ms=601000 missing_count=9 disconnected_count=0 generation_mismatch_count=0 context_mismatch_count=0 dirty_mismatch_count=0 owner_missing_count=9 owner_lookup_result=error owner_lookup_error_code=lifecycle_changed active_editor=none continuity=fail"
+        );
+    }
+
+    #[test]
+    fn q5_dispatch_failure_fact_exposes_only_the_closed_provider_category() {
+        let fact = q5_dispatch_failure_fact(
+            14,
+            14,
+            8,
+            Q5DispatchFailureContext {
+                effect: "launch_agent",
+                stage: "agent_start",
+                app_error_code: AppErrorCodeWire::NativeUnavailable,
+                port_error_code: Some(PortErrorCode::Failed),
+                agent_runtime_error_code: Some(AgentRuntimeErrorCode::ProviderRejected),
+                provider_error_category: Some(ProviderErrorCategory::AgentPaneBusy),
+            },
+        );
+        assert_eq!(
+            fact,
+            "fact=q5_dispatch_failure index=14 stage=agent_start effect=launch_agent app_error_code=native_unavailable port_error_code=failed agent_runtime_error_code=provider_rejected provider_error_category=agent_pane_busy workspace_count=8 completed_agents=14"
+        );
+    }
 
     #[test]
     fn diagnostics_action_errors_keep_distinct_settings_codes() {
@@ -6836,10 +8244,10 @@ mod tests {
     }
 
     #[test]
-    fn implicit_last_window_exit_request_keeps_process_dock_reopenable() {
-        assert!(!is_explicit_exit_request(None));
-        assert!(is_explicit_exit_request(Some(0)));
-        assert!(is_explicit_exit_request(Some(1)));
+    fn every_exit_request_enters_quit_after_window_close_is_intercepted() {
+        assert!(exit_request_is_quit(None));
+        assert!(exit_request_is_quit(Some(0)));
+        assert!(exit_request_is_quit(Some(1)));
     }
 
     #[test]
@@ -6869,6 +8277,10 @@ mod tests {
                 .expect("domain workspace id");
         let observation = sink.editor_observation(&workspace_id).expect("observation");
         assert!(observation.connected && !observation.dirty);
+        assert!(sink.q5_editor_surface_connected(&editor::EditorSurfaceKey::Workspace(
+            workspace_id.to_string()
+        )));
+        assert!(!sink.q5_editor_surface_connected(&editor::EditorSurfaceKey::Global));
         sink.on_event(BridgeEvent::DirtyChanged {
             surface_id: surface.clone(),
             generation: 1,
@@ -6995,6 +8407,28 @@ mod tests {
         assert!(!persisted.shutdown.clean);
         assert_eq!(persisted.shutdown.launch_generation, 1);
         remove_temp_home(&home);
+    }
+
+    #[test]
+    fn startup_reconstruction_failure_is_observable_without_waiting_for_timeout() {
+        let home = temp_home();
+        let state = NativeAppState::bootstrap(&home).expect("bootstrap native app");
+        assert_eq!(state.startup_reconstruction_state(), StartupReconstructionState::Pending);
+        let started = Instant::now();
+        state.set_startup_reconstruction_state(StartupReconstructionState::Failed);
+        assert_eq!(state.startup_reconstruction_state(), StartupReconstructionState::Failed);
+        assert!(started.elapsed() < Duration::from_secs(1));
+        remove_temp_home(&home);
+    }
+
+    #[test]
+    fn process_file_limit_target_is_bounded_and_never_lowers_soft_limit() {
+        assert_eq!(process_file_limit_target(256, 8_192, 8_192), Ok(Some(8_192)));
+        assert_eq!(process_file_limit_target(16_384, 32_768, 8_192), Ok(None));
+        assert_eq!(
+            process_file_limit_target(256, 4_096, 8_192),
+            Err(ProcessFileLimitError::HardLimitTooLow { hard: 4_096, minimum: 8_192 })
+        );
     }
 
     #[test]
@@ -8139,6 +9573,40 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[test]
+    fn native_exit_waits_for_the_in_flight_quit_owner() {
+        let completion = Arc::new(QuitCompletion::new());
+        assert!(completion.begin());
+        assert!(!completion.begin(), "duplicate ExitRequested is a follower");
+
+        let owner_started = Arc::new(Barrier::new(2));
+        let owner_release = Arc::new(Barrier::new(2));
+        let worker = {
+            let completion = Arc::clone(&completion);
+            let owner_started = Arc::clone(&owner_started);
+            let owner_release = Arc::clone(&owner_release);
+            std::thread::spawn(move || {
+                owner_started.wait();
+                owner_release.wait();
+                completion.complete(Ok(()));
+            })
+        };
+        owner_started.wait();
+
+        let waiter = {
+            let completion = Arc::clone(&completion);
+            std::thread::spawn(move || {
+                completion.wait_until(Instant::now() + Duration::from_secs(1))
+            })
+        };
+        assert!(completion.wait_for_waiter(Instant::now() + Duration::from_secs(1)));
+        assert!(!waiter.is_finished(), "native Exit must wait, not run a fallback quit");
+        owner_release.wait();
+        worker.join().expect("owner");
+        assert_eq!(waiter.join().expect("waiter"), Some(Ok(())));
+        assert!(!completion.begin(), "completion remains idempotent");
     }
 
     #[test]

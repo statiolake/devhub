@@ -25,6 +25,35 @@ pub enum AgentRuntimeErrorCode {
     Internal,
 }
 
+/// Provider-private, bounded classification for Q5 launch diagnosis.
+///
+/// Raw provider codes and messages are discarded at the transport boundary.
+/// This enum never crosses the AgentRuntime/core port seam.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum ProviderErrorCategory {
+    AgentNameTaken,
+    AgentPaneBusy,
+    AgentPaneNotFound,
+    AgentPaneUnavailable,
+    AgentStartInputFailed,
+    InvalidRequest,
+    Other,
+}
+
+impl ProviderErrorCategory {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::AgentNameTaken => "agent_name_taken",
+            Self::AgentPaneBusy => "agent_pane_busy",
+            Self::AgentPaneNotFound => "agent_pane_not_found",
+            Self::AgentPaneUnavailable => "agent_pane_unavailable",
+            Self::AgentStartInputFailed => "agent_start_input_failed",
+            Self::InvalidRequest => "invalid_request",
+            Self::Other => "other",
+        }
+    }
+}
+
 impl AgentRuntimeErrorCode {
     pub(crate) const fn as_str(self) -> &'static str {
         match self {
@@ -50,15 +79,27 @@ impl AgentRuntimeErrorCode {
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct AgentRuntimeError {
     code: AgentRuntimeErrorCode,
+    provider_category: Option<ProviderErrorCategory>,
 }
 
 impl AgentRuntimeError {
     pub(crate) const fn new(code: AgentRuntimeErrorCode) -> Self {
-        Self { code }
+        Self { code, provider_category: None }
+    }
+
+    pub(crate) const fn with_provider_category(
+        code: AgentRuntimeErrorCode,
+        provider_category: ProviderErrorCategory,
+    ) -> Self {
+        Self { code, provider_category: Some(provider_category) }
     }
 
     pub(crate) const fn code(self) -> AgentRuntimeErrorCode {
         self.code
+    }
+
+    pub(crate) const fn provider_category(self) -> Option<ProviderErrorCategory> {
+        self.provider_category
     }
 
     pub(crate) const fn port_code(self) -> PortErrorCode {

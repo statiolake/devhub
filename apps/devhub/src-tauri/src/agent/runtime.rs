@@ -24,7 +24,7 @@ use super::api::{
     session_socket_path, HerdrTransport, Invalidation, ProviderTransport, SubscriptionHandle,
 };
 use super::contract::{expected_protocol, expected_version, HERDR_SESSION_NAME};
-use super::error::{AgentRuntimeError, AgentRuntimeErrorCode};
+use super::error::{AgentRuntimeError, AgentRuntimeErrorCode, ProviderErrorCategory};
 use super::model::{
     cleanup_mapping_from_created, decode_provider_mapping, encode_provider_mapping,
     load_cleanup_journal, marker_label, pane_for, parse_created_mapping, parse_session_snapshot,
@@ -37,6 +37,17 @@ const BOOTSTRAP_TIMEOUT: Duration = Duration::from_secs(8);
 const BOOTSTRAP_POLL: Duration = Duration::from_millis(50);
 const CLEANUP_TIMEOUT: Duration = Duration::from_secs(5);
 const CLEANUP_POLL: Duration = Duration::from_millis(50);
+/// Bound Herdr's interactive command readiness explicitly. Keeping this in
+/// the adapter avoids depending on a provider-side default that can change
+/// between pinned Herdr releases.
+const AGENT_START_TIMEOUT_MS: u64 = 30_000;
+const AGENT_START_TRANSPORT_TIMEOUT: Duration = Duration::from_secs(31);
+/// Herdr acknowledges `workspace.create` before the new pane's interactive
+/// shell has necessarily completed startup. Match the pinned provider's
+/// observable readiness window without retrying a mutating request blindly.
+const PANE_SHELL_READINESS_TIMEOUT: Duration = Duration::from_secs(2);
+const PANE_SHELL_READINESS_POLL: Duration = Duration::from_millis(100);
+
 const MAX_VERSION_OUTPUT_BYTES: usize = 16 * 1024;
 
 #[derive(Default)]
@@ -100,6 +111,50 @@ struct RuntimeInner {
     journal_path: PathBuf,
     journal_loaded: Mutex<bool>,
     verify_executable: bool,
+    last_launch_failure: Mutex<Option<AgentLaunchFailure>>,
+}
+
+/// Closed, provider-private context for the first failed Agent launch.
+///
+/// This is intentionally separate from runtime health: health describes the
+/// adapter's ability to serve future operations, while this record describes
+/// one launch transaction's first failed stage. It contains only stable enum
+/// values and is consumed by the opt-in Q5 diagnostics seam.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AgentLaunchFailureStage {
+    ValidateProfile,
+    EnsureReady,
+    OperationGate,
+    WorkspaceCreate,
+    MappingParse,
+    AgentStart,
+    TerminalParse,
+    MappingEncode,
+    StateCommit,
+}
+
+impl AgentLaunchFailureStage {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::ValidateProfile => "validate_profile",
+            Self::EnsureReady => "ensure_ready",
+            Self::OperationGate => "operation_gate",
+            Self::WorkspaceCreate => "workspace_create",
+            Self::MappingParse => "mapping_parse",
+            Self::AgentStart => "agent_start",
+            Self::TerminalParse => "terminal_parse",
+            Self::MappingEncode => "mapping_encode",
+            Self::StateCommit => "state_commit",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct AgentLaunchFailure {
+    pub(crate) stage: AgentLaunchFailureStage,
+    pub(crate) agent_runtime_error_code: Option<AgentRuntimeErrorCode>,
+    pub(crate) port_error_code: Option<PortErrorCode>,
+    pub(crate) provider_error_category: Option<ProviderErrorCategory>,
 }
 
 /// The sole native AgentRuntime implementation. All provider identity fields
@@ -175,6 +230,7 @@ impl HerdrAgentRuntime {
                 journal_path,
                 journal_loaded: Mutex::new(false),
                 verify_executable: true,
+                last_launch_failure: Mutex::new(None),
             }),
         }
     }
@@ -211,6 +267,7 @@ impl HerdrAgentRuntime {
                 journal_path,
                 journal_loaded: Mutex::new(false),
                 verify_executable: false,
+                last_launch_failure: Mutex::new(None),
             }),
         }
     }
@@ -221,6 +278,46 @@ impl HerdrAgentRuntime {
             .lock()
             .map(|health| *health)
             .unwrap_or_else(|_| AgentRuntimeHealth::failed(AgentRuntimeErrorCode::Internal))
+    }
+
+    pub(crate) fn take_last_launch_failure(&self) -> Option<AgentLaunchFailure> {
+        self.inner.last_launch_failure.lock().ok().and_then(|mut failure| failure.take())
+    }
+
+    fn clear_last_launch_failure(&self) {
+        if let Ok(mut failure) = self.inner.last_launch_failure.lock() {
+            *failure = None;
+        }
+    }
+
+    fn record_last_launch_failure(&self, failure: AgentLaunchFailure) {
+        if let Ok(mut current) = self.inner.last_launch_failure.lock() {
+            if current.is_none() {
+                *current = Some(failure);
+            }
+        }
+    }
+
+    fn record_launch_runtime_failure(
+        &self,
+        stage: AgentLaunchFailureStage,
+        error: AgentRuntimeError,
+    ) {
+        self.record_last_launch_failure(AgentLaunchFailure {
+            stage,
+            agent_runtime_error_code: Some(error.code()),
+            port_error_code: Some(error.port_code()),
+            provider_error_category: error.provider_category(),
+        });
+    }
+
+    fn record_launch_port_failure(&self, stage: AgentLaunchFailureStage, error: PortError) {
+        self.record_last_launch_failure(AgentLaunchFailure {
+            stage,
+            agent_runtime_error_code: None,
+            port_error_code: Some(error.code()),
+            provider_error_category: None,
+        });
     }
 
     /// Performs a fresh bounded provider handshake for Settings recheck. The
@@ -246,11 +343,7 @@ impl HerdrAgentRuntime {
     pub fn shutdown_until(&self, deadline: Instant) -> bool {
         let subscription =
             self.inner.subscription.lock().ok().and_then(|mut current| current.take());
-        if let Some(subscription) = subscription {
-            subscription.stop_until(deadline)
-        } else {
-            true
-        }
+        subscription.is_none_or(|subscription| subscription.stop_until(deadline))
     }
 
     pub fn bootstrap(&self, cancel: CancellationToken) -> PortFuture<AgentRuntimeHealth> {
@@ -286,7 +379,18 @@ impl HerdrAgentRuntime {
     ) -> PortFuture<AgentLaunchReceipt> {
         let runtime = self.clone();
         spawn_operation(cancel.clone(), "devhub-agent-launch", move || {
-            runtime.launch_sync(&workspace_id, &root, agent_id, profile, &cancel)
+            runtime.clear_last_launch_failure();
+            let result = runtime.launch_sync(&workspace_id, &root, agent_id, profile, &cancel);
+            match result {
+                Err(error) => {
+                    // Every bounded launch stage records a more specific fact.
+                    // The fallback keeps the diagnostic closed even if a
+                    // future early return is added without a stage wrapper.
+                    runtime.record_launch_port_failure(AgentLaunchFailureStage::StateCommit, error);
+                    Err(error)
+                }
+                Ok(receipt) => Ok(receipt),
+            }
         })
     }
 
@@ -391,6 +495,13 @@ impl HerdrAgentRuntime {
                     PortError::from(error)
                 },
             )?;
+        if !subscription.wait_ready(Instant::now() + BOOTSTRAP_TIMEOUT) {
+            subscription.stop();
+            self.set_health(AgentRuntimeHealth::failed(AgentRuntimeErrorCode::Disconnected));
+            return Err(PortError::from(AgentRuntimeError::new(
+                AgentRuntimeErrorCode::Disconnected,
+            )));
+        }
         if let Ok(mut current) = self.inner.subscription.lock() {
             if let Some(old) = current.take() {
                 old.stop();
@@ -467,20 +578,51 @@ impl HerdrAgentRuntime {
         profile: AgentProfile,
         cancel: &CancellationToken,
     ) -> Result<AgentLaunchReceipt, PortError> {
-        let provider_profile = validate_profile(&profile).map_err(PortError::from)?;
+        let provider_profile = match validate_profile(&profile) {
+            Ok(profile) => profile,
+            Err(error) => {
+                self.record_launch_runtime_failure(AgentLaunchFailureStage::ValidateProfile, error);
+                return Err(error.into());
+            }
+        };
         // Reject malformed or oversized profiles before health checks or any
         // provider request. This keeps validation a pure local seam and
         // guarantees workspace.create cannot be the first failure point.
-        self.ensure_ready(cancel)?;
-        let _operation = self.inner.operation_gate.acquire(cancel)?;
+        if let Err(error) = self.ensure_ready(cancel) {
+            self.record_launch_port_failure(AgentLaunchFailureStage::EnsureReady, error);
+            return Err(error);
+        }
+        let _operation = match self.inner.operation_gate.acquire(cancel) {
+            Ok(operation) => operation,
+            Err(error) => {
+                self.record_launch_port_failure(AgentLaunchFailureStage::OperationGate, error);
+                return Err(error);
+            }
+        };
         let generation = {
-            let mut state = self.inner.state.lock().map_err(|_| failed_port())?;
+            let mut state = match self.inner.state.lock() {
+                Ok(state) => state,
+                Err(_) => {
+                    let error = failed_port();
+                    self.record_launch_port_failure(AgentLaunchFailureStage::StateCommit, error);
+                    return Err(error);
+                }
+            };
             if state.mappings.contains_key(&agent_id) || state.tombstones.contains_key(&agent_id) {
-                return Err(conflict_port());
+                let error = conflict_port();
+                self.record_launch_port_failure(AgentLaunchFailureStage::StateCommit, error);
+                return Err(error);
             }
             state.next_generation()
         };
-        let created = self.create_workspace(workspace_id, root, &agent_id, &provider_profile)?;
+        let created = match self.create_workspace(workspace_id, root, &agent_id, &provider_profile)
+        {
+            Ok(created) => created,
+            Err(error) => {
+                self.record_launch_runtime_failure(AgentLaunchFailureStage::WorkspaceCreate, error);
+                return Err(error.into());
+            }
+        };
         let mut mapping = match parse_created_mapping(
             &created,
             root.as_path().to_path_buf(),
@@ -498,43 +640,52 @@ impl HerdrAgentRuntime {
                 ) {
                     self.set_health(AgentRuntimeHealth::degraded(cleanup_health_code(cleanup)));
                 }
+                self.record_launch_runtime_failure(AgentLaunchFailureStage::MappingParse, error);
                 return Err(error.into());
             }
         };
-        let started = self.start_agent(&agent_id, &mapping, &provider_profile);
+        let started = self.start_agent(&agent_id, &mapping, &provider_profile, cancel);
         let started = match started {
             Ok(started) => started,
             Err(error) => {
                 if let Err(cleanup) = self.compensate_provider_mapping(&agent_id, &mapping) {
                     self.set_health(AgentRuntimeHealth::degraded(cleanup_health_code(cleanup)));
                 }
+                self.record_launch_runtime_failure(AgentLaunchFailureStage::AgentStart, error);
                 return Err(error.into());
             }
         };
-        mapping.terminal_id = terminal_id_from_started(&started).map_err(|error| {
-            if let Err(cleanup) = self.compensate_provider_mapping(&agent_id, &mapping) {
-                self.set_health(AgentRuntimeHealth::degraded(cleanup_health_code(cleanup)));
+        mapping.terminal_id = match terminal_id_from_started(&started) {
+            Ok(terminal_id) => terminal_id,
+            Err(error) => {
+                if let Err(cleanup) = self.compensate_provider_mapping(&agent_id, &mapping) {
+                    self.set_health(AgentRuntimeHealth::degraded(cleanup_health_code(cleanup)));
+                }
+                self.record_launch_runtime_failure(AgentLaunchFailureStage::TerminalParse, error);
+                return Err(error.into());
             }
-            PortError::from(error)
-        })?;
-        let provider_mapping = encode_provider_mapping(&mapping).map_err(|error| {
-            if let Err(cleanup) = self.compensate_provider_mapping(&agent_id, &mapping) {
-                self.set_health(AgentRuntimeHealth::degraded(cleanup_health_code(cleanup)));
+        };
+        let provider_mapping = match encode_provider_mapping(&mapping) {
+            Ok(provider_mapping) => provider_mapping,
+            Err(error) => {
+                if let Err(cleanup) = self.compensate_provider_mapping(&agent_id, &mapping) {
+                    self.set_health(AgentRuntimeHealth::degraded(cleanup_health_code(cleanup)));
+                }
+                self.record_launch_runtime_failure(AgentLaunchFailureStage::MappingEncode, error);
+                return Err(error.into());
             }
-            PortError::from(error)
-        })?;
-        let mut state = self.inner.state.lock().map_err(|_| failed_port())?;
+        };
+        let mut state = match self.inner.state.lock() {
+            Ok(state) => state,
+            Err(_) => {
+                let error = failed_port();
+                self.record_launch_port_failure(AgentLaunchFailureStage::StateCommit, error);
+                return Err(error);
+            }
+        };
         state.confirmed_agents.remove(&agent_id);
         state.mappings.insert(agent_id.clone(), mapping);
         state.workspace_roots.insert(agent_id.clone(), (workspace_id.clone(), root.clone()));
-        let pane_id = state
-            .mappings
-            .get(&agent_id)
-            .map(|mapping| mapping.pane_id.clone())
-            .ok_or_else(failed_port)?;
-        drop(state);
-        self.inner.transport.register_pane_for_status(&pane_id);
-        self.refresh_subscription();
         Ok(AgentLaunchReceipt { agent_id, provider_mapping })
     }
 
@@ -544,21 +695,20 @@ impl HerdrAgentRuntime {
         root: &WorkspaceRoot,
         agent_id: &AgentId,
         profile: &ProviderProfile,
-    ) -> Result<Value, PortError> {
-        let cwd = root.as_path().to_str().ok_or_else(failed_port)?;
-        let value = self
-            .inner
-            .transport
-            .request(
-                "workspace.create",
-                json!({
-                    "cwd": cwd,
-                    "focus": false,
-                    "label": marker_label(agent_id),
-                    "env": profile.env,
-                }),
-            )
-            .map_err(PortError::from)?;
+    ) -> Result<Value, AgentRuntimeError> {
+        let cwd = root
+            .as_path()
+            .to_str()
+            .ok_or_else(|| AgentRuntimeError::new(AgentRuntimeErrorCode::ProviderRejected))?;
+        let value = self.inner.transport.request(
+            "workspace.create",
+            json!({
+                "cwd": cwd,
+                "focus": false,
+                "label": marker_label(agent_id),
+                "env": profile.env,
+            }),
+        )?;
         let _ = workspace_id;
         Ok(value)
     }
@@ -568,16 +718,75 @@ impl HerdrAgentRuntime {
         agent_id: &AgentId,
         mapping: &ProviderMapping,
         provider_profile: &ProviderProfile,
+        cancel: &CancellationToken,
     ) -> Result<Value, AgentRuntimeError> {
-        self.inner.transport.request(
-            "agent.start",
-            json!({
-                "name": provider_agent_name(agent_id),
-                "kind": provider_profile.kind,
-                "pane_id": mapping.pane_id,
-                "args": provider_profile.args,
-            }),
-        )
+        let start = || {
+            self.inner.transport.request_with_timeout(
+                "agent.start",
+                json!({
+                    "name": provider_agent_name(agent_id),
+                    "kind": provider_profile.kind,
+                    "pane_id": mapping.pane_id,
+                    "args": provider_profile.args,
+                    "timeout_ms": AGENT_START_TIMEOUT_MS,
+                }),
+                AGENT_START_TRANSPORT_TIMEOUT,
+            )
+        };
+        let busy = match start() {
+            Ok(started) => return Ok(started),
+            Err(error)
+                if error.provider_category() == Some(ProviderErrorCategory::AgentPaneBusy) =>
+            {
+                error
+            }
+            Err(error) => return Err(error),
+        };
+
+        // `agent.start` is a mutating request, so it is never placed in a
+        // generic retry loop. A single retry is permitted only after the
+        // provider proves both that this logical pane still owns the exact
+        // terminal returned by `workspace.create` and that its foreground
+        // job has transitioned from shell initialization to one idle shell.
+        if !self.wait_for_owned_shell(mapping, cancel)? {
+            return Err(busy);
+        }
+        start()
+    }
+
+    fn wait_for_owned_shell(
+        &self,
+        mapping: &ProviderMapping,
+        cancel: &CancellationToken,
+    ) -> Result<bool, AgentRuntimeError> {
+        let deadline = Instant::now() + PANE_SHELL_READINESS_TIMEOUT;
+        loop {
+            if cancel.is_cancelled() {
+                return Err(AgentRuntimeError::new(AgentRuntimeErrorCode::Cancelled));
+            }
+            let pane =
+                self.inner.transport.request("pane.get", json!({ "pane_id": mapping.pane_id }))?;
+            if pane.get("pane").and_then(|pane| pane.get("terminal_id")).and_then(Value::as_str)
+                != Some(mapping.terminal_id.as_str())
+            {
+                return Ok(false);
+            }
+            let process_info = self
+                .inner
+                .transport
+                .request("pane.process_info", json!({ "pane_id": mapping.pane_id }))?;
+            match classify_pane_shell_state(
+                process_info.get("process_info").unwrap_or(&Value::Null),
+            ) {
+                PaneShellState::Ready => return Ok(true),
+                PaneShellState::BusyOrUnknown => return Ok(false),
+                PaneShellState::Initializing if Instant::now() >= deadline => return Ok(false),
+                PaneShellState::Initializing => {
+                    let remaining = deadline.saturating_duration_since(Instant::now());
+                    thread::sleep(PANE_SHELL_READINESS_POLL.min(remaining));
+                }
+            }
+        }
     }
 
     fn compensate_mapping(
@@ -722,42 +931,23 @@ impl HerdrAgentRuntime {
             // authoritative absence into a natural-exit observation; dropping
             // the mapping here would leave the durable Agent row orphaned
             // forever because `reconcile_sync` only projects owned mappings.
-            let pane_id = mapping.pane_id.clone();
             let mut state = self.inner.state.lock().map_err(|_| failed_port())?;
             state.confirmed_agents.remove(&agent_id);
             state.mappings.insert(agent_id.clone(), mapping);
-            drop(state);
-            self.inner.transport.register_pane_for_status(&pane_id);
-            self.refresh_subscription();
             return Err(unavailable_port());
         };
         let (status, runtime_health) = pane.status.project();
         let pane_confirms_active = pane.agent.is_some() && !pane.status.is_exited();
-        let replaced_pane_id = {
+        {
             let mut state = self.inner.state.lock().map_err(|_| failed_port())?;
-            let replaced_pane_id = state
-                .mappings
-                .get(&agent_id)
-                .filter(|current| *current != &mapping)
-                .map(|current| current.pane_id.clone());
-            if replaced_pane_id.is_some() {
+            if state.mappings.get(&agent_id).is_some_and(|current| current != &mapping) {
                 state.confirmed_agents.remove(&agent_id);
             }
             if pane_confirms_active {
                 state.confirmed_agents.insert(agent_id.clone());
             }
             state.mappings.insert(agent_id.clone(), mapping);
-            replaced_pane_id
-        };
-        if let Some(pane_id) = replaced_pane_id {
-            self.inner.transport.unregister_pane_for_status(&pane_id);
         }
-        if let Ok(state) = self.inner.state.lock() {
-            if let Some(mapping) = state.mappings.get(&agent_id) {
-                self.inner.transport.register_pane_for_status(&mapping.pane_id);
-            }
-        }
-        self.refresh_subscription();
         Ok(AgentObservation::new(agent_id, status, runtime_health))
     }
 
@@ -787,7 +977,6 @@ impl HerdrAgentRuntime {
     fn recover_owned_mappings(&self, snapshot: &ProviderSnapshot) -> Result<(), PortError> {
         let mut state = self.inner.state.lock().map_err(|_| failed_port())?;
         let registrations = state.workspace_roots.clone();
-        let mut pane_ids = Vec::new();
         for workspace in &snapshot.workspaces {
             let Some(raw_agent_id) =
                 workspace.label.as_deref().and_then(|label| label.strip_prefix("devhub-agent-"))
@@ -815,16 +1004,8 @@ impl HerdrAgentRuntime {
             ) else {
                 continue;
             };
-            pane_ids.push(mapping.pane_id.clone());
             state.confirmed_agents.remove(&agent_id);
             state.mappings.insert(agent_id, mapping);
-        }
-        drop(state);
-        for pane_id in &pane_ids {
-            self.inner.transport.register_pane_for_status(pane_id);
-        }
-        if !pane_ids.is_empty() {
-            self.refresh_subscription();
         }
         Ok(())
     }
@@ -840,11 +1021,9 @@ impl HerdrAgentRuntime {
         let mappings = state.mappings.clone();
         for (agent_id, mapping) in mappings {
             let Some(pane) = pane_for(snapshot, &mapping) else {
-                let pane_id = mapping.pane_id.clone();
                 state
                     .add_tombstone(agent_id.clone(), mapping, TombstoneReason::NaturalExit)
                     .map_err(PortError::from)?;
-                self.inner.transport.unregister_pane_for_status(&pane_id);
                 journal_changed = true;
                 exited.push(agent_id);
                 continue;
@@ -860,11 +1039,9 @@ impl HerdrAgentRuntime {
                 state.confirmed_agents.insert(agent_id.clone());
             }
             if pane.status.is_exited() || (pane.agent.is_none() && agent_was_confirmed) {
-                let pane_id = mapping.pane_id.clone();
                 state
                     .add_tombstone(agent_id.clone(), mapping, TombstoneReason::NaturalExit)
                     .map_err(PortError::from)?;
-                self.inner.transport.unregister_pane_for_status(&pane_id);
                 journal_changed = true;
                 exited.push(agent_id);
                 continue;
@@ -933,13 +1110,11 @@ impl HerdrAgentRuntime {
             if matches!(error.code(), PortErrorCode::Unavailable | PortErrorCode::TimedOut) {
                 let mut state = self.inner.state.lock().map_err(|_| failed_port())?;
                 if let Some(mapping) = state.mappings.get(&agent_id).cloned() {
-                    let pane_id = mapping.pane_id.clone();
                     state
                         .add_tombstone(agent_id.clone(), mapping, TombstoneReason::ExplicitStop)
                         .map_err(PortError::from)?;
                     state.stopping.insert(agent_id.clone());
                     drop(state);
-                    self.inner.transport.unregister_pane_for_status(&pane_id);
                     self.persist_journal()?;
                 }
             }
@@ -972,7 +1147,6 @@ impl HerdrAgentRuntime {
         if journal_changed {
             self.persist_journal()?;
         }
-        self.inner.transport.unregister_pane_for_status(&tombstone.mapping.pane_id);
         match self.cleanup_mapping(&tombstone.mapping, cancel) {
             Ok(()) => {
                 self.finish_cleanup_success(&agent_id, None)?;
@@ -1100,23 +1274,6 @@ impl HerdrAgentRuntime {
         self.bootstrap_sync(cancel).map(|_| ())
     }
 
-    fn refresh_subscription(&self) {
-        let Ok(subscription) = self.inner.transport.subscribe(Arc::clone(&self.inner.invalidation))
-        else {
-            self.set_health(AgentRuntimeHealth::degraded(AgentRuntimeErrorCode::Disconnected));
-            return;
-        };
-        let old = self
-            .inner
-            .subscription
-            .lock()
-            .ok()
-            .and_then(|mut current| current.replace(subscription));
-        if let Some(old) = old {
-            old.stop();
-        }
-    }
-
     fn load_journal(&self) -> Result<(), PortError> {
         let mut loaded = self.inner.journal_loaded.lock().map_err(|_| failed_port())?;
         if *loaded {
@@ -1141,13 +1298,11 @@ impl HerdrAgentRuntime {
         agent_id: &AgentId,
         mapping: ProviderMapping,
     ) -> Result<(), PortError> {
-        let pane_id = mapping.pane_id.clone();
         let mut state = self.inner.state.lock().map_err(|_| failed_port())?;
         state
             .add_tombstone(agent_id.clone(), mapping, TombstoneReason::ExplicitStop)
             .map_err(PortError::from)?;
         drop(state);
-        self.inner.transport.unregister_pane_for_status(&pane_id);
         self.persist_journal()
     }
 
@@ -1176,11 +1331,6 @@ impl HerdrAgentRuntime {
             let was_stopping = state.stopping.remove(agent_id);
             (removed_mapping, removed_tombstone, was_stopping)
         };
-        let removed_pane_id =
-            removed_mapping.as_ref().map(|mapping| mapping.pane_id.clone()).or_else(|| {
-                removed_tombstone.as_ref().map(|tombstone| tombstone.mapping.pane_id.clone())
-            });
-
         if let Err(error) = self.persist_journal() {
             let mut state = self.inner.state.lock().map_err(|_| failed_port())?;
             if let Some(mapping) = removed_mapping {
@@ -1195,10 +1345,6 @@ impl HerdrAgentRuntime {
             drop(state);
             self.set_health(AgentRuntimeHealth::degraded(cleanup_health_code(error)));
             return Err(error);
-        }
-
-        if let Some(pane_id) = removed_pane_id {
-            self.inner.transport.unregister_pane_for_status(&pane_id);
         }
 
         let controls = self.inner.state.lock().map_err(|_| failed_port())?.take_surfaces(agent_id);
@@ -1307,6 +1453,7 @@ impl AgentRuntime for HerdrAgentRuntime {
         profile: AgentProfile,
         cancel: CancellationToken,
     ) -> PortFuture<AgentLaunchReceipt> {
+        self.clear_last_launch_failure();
         let registration = self
             .inner
             .state
@@ -1314,6 +1461,10 @@ impl AgentRuntime for HerdrAgentRuntime {
             .ok()
             .and_then(|state| state.workspace_roots.get(&agent_id).cloned());
         let Some((workspace_id, root)) = registration else {
+            self.record_launch_port_failure(
+                AgentLaunchFailureStage::StateCommit,
+                unavailable_port(),
+            );
             return Box::pin(async { Err(unavailable_port()) });
         };
         self.launch_for_workspace(workspace_id, root, agent_id, profile, cancel)
@@ -1344,6 +1495,79 @@ impl AgentRuntime for HerdrAgentRuntime {
             runtime.reconcile_sync(&cancel)
         })
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PaneShellState {
+    Initializing,
+    Ready,
+    BusyOrUnknown,
+}
+
+fn classify_pane_shell_state(process_info: &Value) -> PaneShellState {
+    let Some(shell_pid) = process_info.get("shell_pid").and_then(Value::as_u64) else {
+        return PaneShellState::BusyOrUnknown;
+    };
+    if process_info.get("foreground_process_group_id").and_then(Value::as_u64) != Some(shell_pid) {
+        return PaneShellState::BusyOrUnknown;
+    }
+    let Some(processes) = process_info.get("foreground_processes").and_then(Value::as_array) else {
+        return PaneShellState::BusyOrUnknown;
+    };
+    let shell_is_foreground = processes.iter().any(|process| {
+        process.get("pid").and_then(Value::as_u64) == Some(shell_pid)
+            && provider_process_name(process).is_some_and(is_pane_shell_process_name)
+    });
+    if !shell_is_foreground {
+        return PaneShellState::BusyOrUnknown;
+    }
+    if processes.iter().all(|process| process.get("pid").and_then(Value::as_u64) == Some(shell_pid))
+    {
+        PaneShellState::Ready
+    } else {
+        PaneShellState::Initializing
+    }
+}
+
+fn provider_process_name(process: &Value) -> Option<&str> {
+    process
+        .get("name")
+        .and_then(Value::as_str)
+        .or_else(|| process.get("argv0").and_then(Value::as_str))
+        .or_else(|| {
+            process
+                .get("argv")
+                .and_then(Value::as_array)
+                .and_then(|argv| argv.first())
+                .and_then(Value::as_str)
+        })
+}
+
+fn is_pane_shell_process_name(name: &str) -> bool {
+    let normalized = name
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(name)
+        .trim_start_matches('-')
+        .trim_end_matches(".exe")
+        .to_ascii_lowercase();
+    matches!(
+        normalized.as_str(),
+        "sh" | "bash"
+            | "dash"
+            | "zsh"
+            | "fish"
+            | "ksh"
+            | "mksh"
+            | "csh"
+            | "tcsh"
+            | "elvish"
+            | "xonsh"
+            | "nu"
+            | "pwsh"
+            | "powershell"
+            | "cmd"
+    )
 }
 
 fn verify_cli_version(
@@ -1571,6 +1795,7 @@ mod tests {
 
     struct FakeTransport {
         responses: Mutex<VecDeque<(String, Result<Value, AgentRuntimeError>)>>,
+        requests: Mutex<Vec<(String, Value)>>,
         subscriptions: std::sync::atomic::AtomicUsize,
     }
 
@@ -1580,8 +1805,13 @@ mod tests {
         ) -> Self {
             Self {
                 responses: Mutex::new(responses.into_iter().collect()),
+                requests: Mutex::new(Vec::new()),
                 subscriptions: std::sync::atomic::AtomicUsize::new(0),
             }
+        }
+
+        fn requests(&self) -> Vec<(String, Value)> {
+            self.requests.lock().expect("requests").clone()
         }
 
         fn remaining(&self) -> usize {
@@ -1594,7 +1824,8 @@ mod tests {
     }
 
     impl ProviderTransport for FakeTransport {
-        fn request(&self, method: &str, _params: Value) -> Result<Value, AgentRuntimeError> {
+        fn request(&self, method: &str, params: Value) -> Result<Value, AgentRuntimeError> {
+            self.requests.lock().expect("requests").push((method.to_owned(), params));
             let mut responses = self.responses.lock().expect("responses");
             let Some((expected, response)) = responses.pop_front() else {
                 return Err(AgentRuntimeError::new(AgentRuntimeErrorCode::ProviderRejected));
@@ -1697,6 +1928,145 @@ mod tests {
     }
 
     #[test]
+    fn sixteen_agent_lifecycle_keeps_one_long_lived_subscription() {
+        let mut responses = vec![(
+            "ping".to_owned(),
+            Ok(json!({
+                "type":"pong", "version":"0.8.1", "protocol":20,
+                "capabilities":{"live_handoff":true}
+            })),
+        )];
+        for index in 0..16 {
+            responses.push((
+                "workspace.create".to_owned(),
+                Ok(json!({
+                    "workspace": { "workspace_id": format!("provider-workspace-{index}") },
+                    "tab": { "tab_id": format!("provider-tab-{index}") },
+                    "root_pane": {
+                        "pane_id": format!("provider-pane-{index}"),
+                        "terminal_id": format!("provider-terminal-{index}")
+                    }
+                })),
+            ));
+            responses.push((
+                "agent.start".to_owned(),
+                Ok(json!({
+                    "agent": { "terminal_id": format!("provider-terminal-{index}") }
+                })),
+            ));
+        }
+        let transport = Arc::new(FakeTransport::new(responses));
+        let runtime = HerdrAgentRuntime::with_transport(
+            context(),
+            Arc::clone(&transport) as Arc<dyn ProviderTransport>,
+        );
+
+        for index in 0..16 {
+            let agent_id = AgentId::from_uuid(format!("aaaaaaaa-aaaa-4aaa-8aaa-{index:012x}"))
+                .expect("agent id");
+            let workspace_id =
+                WorkspaceId::from_uuid(format!("bbbbbbbb-bbbb-4bbb-8bbb-{index:012x}"))
+                    .expect("workspace id");
+            let profile = AgentProfile::new(
+                devhub_app_core::AgentProfileId::from_slug("codex").unwrap(),
+                "Codex",
+                devhub_app_core::AgentProfileKind::Codex,
+                vec!["--deterministic".to_owned()],
+                BTreeMap::new(),
+            )
+            .unwrap();
+            drive(
+                runtime.launch_for_workspace(
+                    workspace_id,
+                    WorkspaceRoot::new(format!("/tmp/devhub-scale-{index:02}"))
+                        .expect("workspace root"),
+                    agent_id,
+                    profile,
+                    CancellationToken::new(
+                        devhub_app_core::OperationId::from_uuid(format!(
+                            "cccccccc-cccc-4ccc-8ccc-{index:012x}"
+                        ))
+                        .expect("operation id"),
+                    ),
+                ),
+            )
+            .expect("agent launch");
+        }
+        assert_eq!(
+            transport.subscription_count(),
+            1,
+            "agent scale must not create one long-lived status subscription per pane"
+        );
+        runtime.shutdown();
+    }
+
+    #[test]
+    fn launch_failure_ledger_preserves_first_provider_stage_and_codes() {
+        let transport = Arc::new(FakeTransport::new([
+            (
+                "ping".to_owned(),
+                Ok(json!({
+                    "type":"pong", "version":"0.8.1", "protocol":20,
+                    "capabilities":{"live_handoff":true}
+                })),
+            ),
+            (
+                "workspace.create".to_owned(),
+                Err(AgentRuntimeError::with_provider_category(
+                    AgentRuntimeErrorCode::ProviderRejected,
+                    super::super::error::ProviderErrorCategory::AgentPaneBusy,
+                )),
+            ),
+        ]));
+        let runtime = HerdrAgentRuntime::with_transport(
+            context(),
+            Arc::clone(&transport) as Arc<dyn ProviderTransport>,
+        );
+        let agent_id = AgentId::from_uuid("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa").unwrap();
+        let workspace_id = WorkspaceId::from_uuid("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb").unwrap();
+        let root = WorkspaceRoot::new("/tmp/devhub-launch-failure").unwrap();
+        runtime
+            .register_agent_workspace(agent_id.clone(), workspace_id.clone(), root.clone())
+            .unwrap();
+        let profile = AgentProfile::new(
+            devhub_app_core::AgentProfileId::from_slug("codex").unwrap(),
+            "Codex",
+            devhub_app_core::AgentProfileKind::Codex,
+            vec!["--deterministic".to_owned()],
+            BTreeMap::new(),
+        )
+        .unwrap();
+        let error = drive(
+            runtime.launch_for_workspace(
+                workspace_id,
+                root,
+                agent_id,
+                profile,
+                CancellationToken::new(
+                    devhub_app_core::OperationId::from_uuid(
+                        "cccccccc-cccc-4ccc-8ccc-cccccccccccc".to_owned(),
+                    )
+                    .unwrap(),
+                ),
+            ),
+        )
+        .expect_err("workspace.create failure");
+        assert_eq!(error.code(), PortErrorCode::Failed);
+        assert_eq!(
+            runtime.take_last_launch_failure(),
+            Some(AgentLaunchFailure {
+                stage: AgentLaunchFailureStage::WorkspaceCreate,
+                agent_runtime_error_code: Some(AgentRuntimeErrorCode::ProviderRejected),
+                port_error_code: Some(PortErrorCode::Failed),
+                provider_error_category: Some(
+                    super::super::error::ProviderErrorCategory::AgentPaneBusy,
+                ),
+            })
+        );
+        assert!(runtime.take_last_launch_failure().is_none(), "take must clear the one-shot fact");
+    }
+
+    #[test]
     fn oversized_profile_is_rejected_before_provider_request() {
         let transport = Arc::new(FakeTransport::new([("sentinel".to_owned(), Ok(json!({})))]));
         let runtime = HerdrAgentRuntime::with_transport(
@@ -1734,6 +2104,218 @@ mod tests {
         .expect_err("oversized profile must fail locally");
         assert_eq!(error.code(), PortErrorCode::Failed);
         assert_eq!(transport.remaining(), 1, "provider must not receive validation failures");
+    }
+
+    #[test]
+    fn agent_start_request_has_explicit_interactive_timeout() {
+        let transport = Arc::new(FakeTransport::new([
+            (
+                "ping".to_owned(),
+                Ok(json!({
+                    "type":"pong", "version":"0.8.1", "protocol":20,
+                    "capabilities":{"live_handoff":true}
+                })),
+            ),
+            (
+                "workspace.create".to_owned(),
+                Ok(json!({
+                    "workspace": { "workspace_id": "provider-workspace" },
+                    "tab": { "tab_id": "provider-tab" },
+                    "root_pane": {
+                        "pane_id": "provider-pane",
+                        "terminal_id": "provider-terminal"
+                    }
+                })),
+            ),
+            (
+                "agent.start".to_owned(),
+                Ok(json!({
+                    "agent": { "terminal_id": "provider-terminal" }
+                })),
+            ),
+        ]));
+        let runtime = HerdrAgentRuntime::with_transport(
+            context(),
+            Arc::clone(&transport) as Arc<dyn ProviderTransport>,
+        );
+        let agent_id = AgentId::from_uuid("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa").unwrap();
+        let workspace_id = WorkspaceId::from_uuid("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb").unwrap();
+        let root = WorkspaceRoot::new("/tmp/devhub-agent-start-timeout").unwrap();
+        let profile = AgentProfile::new(
+            devhub_app_core::AgentProfileId::from_slug("codex").unwrap(),
+            "Codex",
+            devhub_app_core::AgentProfileKind::Codex,
+            vec!["--deterministic".to_owned()],
+            BTreeMap::new(),
+        )
+        .unwrap();
+        drive(
+            runtime.launch_for_workspace(
+                workspace_id,
+                root,
+                agent_id,
+                profile,
+                CancellationToken::new(
+                    devhub_app_core::OperationId::from_uuid(
+                        "cccccccc-cccc-4ccc-8ccc-cccccccccccc".to_owned(),
+                    )
+                    .unwrap(),
+                ),
+            ),
+        )
+        .expect("launch");
+        let request = transport
+            .requests()
+            .into_iter()
+            .find(|(method, _)| method == "agent.start")
+            .map(|(_, params)| params)
+            .expect("agent.start request");
+        assert_eq!(request.get("timeout_ms"), Some(&json!(30_000)));
+        assert_eq!(request.get("kind"), Some(&json!("codex")));
+        assert_eq!(request.get("args"), Some(&json!(["--deterministic"])));
+    }
+
+    #[test]
+    fn agent_start_waits_for_the_owned_workspace_shell_before_one_retry() {
+        let transport = Arc::new(FakeTransport::new([
+            (
+                "agent.start".to_owned(),
+                Err(AgentRuntimeError::with_provider_category(
+                    AgentRuntimeErrorCode::ProviderRejected,
+                    super::super::error::ProviderErrorCategory::AgentPaneBusy,
+                )),
+            ),
+            ("pane.get".to_owned(), Ok(json!({ "pane": { "terminal_id": "provider-terminal" } }))),
+            (
+                "pane.process_info".to_owned(),
+                Ok(json!({
+                    "process_info": {
+                        "shell_pid": 10,
+                        "foreground_process_group_id": 10,
+                        "foreground_processes": [
+                            { "pid": 10, "name": "zsh" },
+                            { "pid": 11, "name": "workspace-init" }
+                        ]
+                    }
+                })),
+            ),
+            ("pane.get".to_owned(), Ok(json!({ "pane": { "terminal_id": "provider-terminal" } }))),
+            (
+                "pane.process_info".to_owned(),
+                Ok(json!({
+                    "process_info": {
+                        "shell_pid": 10,
+                        "foreground_process_group_id": 10,
+                        "foreground_processes": [{ "pid": 10, "name": "zsh" }]
+                    }
+                })),
+            ),
+            (
+                "agent.start".to_owned(),
+                Ok(json!({ "agent": { "terminal_id": "provider-terminal" } })),
+            ),
+        ]));
+        let runtime = HerdrAgentRuntime::with_transport(
+            context(),
+            Arc::clone(&transport) as Arc<dyn ProviderTransport>,
+        );
+        let mapping = ProviderMapping {
+            workspace_id: "provider-workspace".to_owned(),
+            tab_id: "provider-tab".to_owned(),
+            pane_id: "provider-pane".to_owned(),
+            terminal_id: "provider-terminal".to_owned(),
+            workspace_root: PathBuf::from("/tmp/devhub-agent-ready"),
+            workspace_domain_id: None,
+            generation: 1,
+        };
+        let profile = ProviderProfile {
+            kind: "codex",
+            args: vec!["--deterministic".to_owned()],
+            env: BTreeMap::new(),
+        };
+        let agent_id = AgentId::from_uuid("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa").unwrap();
+
+        let started = runtime
+            .start_agent(
+                &agent_id,
+                &mapping,
+                &profile,
+                &CancellationToken::new(
+                    devhub_app_core::OperationId::from_uuid(
+                        "cccccccc-cccc-4ccc-8ccc-cccccccccccc".to_owned(),
+                    )
+                    .unwrap(),
+                ),
+            )
+            .expect("ready shell");
+
+        assert_eq!(
+            started.get("agent").and_then(|agent| agent.get("terminal_id")),
+            Some(&json!("provider-terminal"))
+        );
+        assert_eq!(transport.remaining(), 0);
+        assert_eq!(
+            transport.requests().into_iter().map(|(method, _)| method).collect::<Vec<_>>(),
+            [
+                "agent.start",
+                "pane.get",
+                "pane.process_info",
+                "pane.get",
+                "pane.process_info",
+                "agent.start"
+            ]
+        );
+    }
+
+    #[test]
+    fn agent_start_never_retries_after_the_target_terminal_changes() {
+        let busy = AgentRuntimeError::with_provider_category(
+            AgentRuntimeErrorCode::ProviderRejected,
+            super::super::error::ProviderErrorCategory::AgentPaneBusy,
+        );
+        let transport = Arc::new(FakeTransport::new([
+            ("agent.start".to_owned(), Err(busy)),
+            (
+                "pane.get".to_owned(),
+                Ok(json!({ "pane": { "terminal_id": "replacement-terminal" } })),
+            ),
+        ]));
+        let runtime = HerdrAgentRuntime::with_transport(
+            context(),
+            Arc::clone(&transport) as Arc<dyn ProviderTransport>,
+        );
+        let mapping = ProviderMapping {
+            workspace_id: "provider-workspace".to_owned(),
+            tab_id: "provider-tab".to_owned(),
+            pane_id: "provider-pane".to_owned(),
+            terminal_id: "provider-terminal".to_owned(),
+            workspace_root: PathBuf::from("/tmp/devhub-agent-replaced"),
+            workspace_domain_id: None,
+            generation: 1,
+        };
+        let profile = ProviderProfile { kind: "codex", args: Vec::new(), env: BTreeMap::new() };
+        let agent_id = AgentId::from_uuid("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa").unwrap();
+
+        let error = runtime
+            .start_agent(
+                &agent_id,
+                &mapping,
+                &profile,
+                &CancellationToken::new(
+                    devhub_app_core::OperationId::from_uuid(
+                        "cccccccc-cccc-4ccc-8ccc-cccccccccccc".to_owned(),
+                    )
+                    .unwrap(),
+                ),
+            )
+            .expect_err("changed terminal must fail closed");
+
+        assert_eq!(error, busy);
+        assert_eq!(transport.remaining(), 0);
+        assert_eq!(
+            transport.requests().into_iter().map(|(method, _)| method).collect::<Vec<_>>(),
+            ["agent.start", "pane.get"]
+        );
     }
 
     #[test]

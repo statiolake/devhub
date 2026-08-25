@@ -161,7 +161,15 @@ Audit keyboard traversal, focus restoration, VoiceOver, text zoom, reduced motio
 
 ### Q5.2 Performance and endurance
 
-Measure the agreed startup and switching budgets. Run eight-Workspace, sixteen-Agent, nine-Editor, ten-minute-hidden, lifecycle repetition, and independent-provider-crash matrices. Fix regressions at their owning module.
+Measure the agreed startup and switching budgets. First run the noninteractive
+process matrix: eight Workspaces, sixteen live Agents, nine Editor WebViews,
+ten-minute hidden identity/Bridge/dirty continuity, owned cleanup, five
+process-targeted Quit/relaunch cycles, and independent provider checks. Fix
+regressions at their owning module. Native focus/click/keyboard, Window
+close/reconstruction, screenshots, VoiceOver, and other screen-driven checks
+are not automated blockers: defer them to one final user-attended phase after
+MVP implementation, all noninteractive checks, all commits, and the final
+completion audit.
 
 ### Q5.3 Brand assets
 
@@ -186,6 +194,10 @@ Create public `statiolake/devhub`, push reviewed `main`, and verify branch CI. D
 Create and push `v0.1.0`, wait for GitHub Actions, inspect logs and checksums, download the published artifact, install and launch it, execute the critical smoke path, and confirm the final Release URL.
 
 ## Critical smoke path
+
+This is the final user-attended phase. Do not run it during implementation or
+automated acceptance; begin only after the implementation, noninteractive
+verification, implementation commits, and completion audit are finished.
 
 1. Launch from Applications into Global Scratch Terminal.
 2. Open Workspace Picker and open a normal Git checkout.

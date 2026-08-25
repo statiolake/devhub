@@ -480,6 +480,18 @@ impl TmuxTerminalRuntime {
         self.ensure_sync_on_socket(&socket, target, cancel)
     }
 
+    pub(crate) fn ensure_workspace_for_q5(
+        &self,
+        target: &WorkspaceTerminalTarget,
+        cancel: &CancellationToken,
+    ) -> Result<(), PortError> {
+        self.ensure_sync(
+            &TerminalTarget::workspace(target.workspace_id().clone(), target.root().clone()),
+            cancel,
+        )
+        .map(|_| ())
+    }
+
     fn ensure_sync_on_socket(
         &self,
         socket: &SocketName,

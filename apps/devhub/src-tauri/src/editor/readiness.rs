@@ -97,6 +97,21 @@ fn expect_http_ready<R: Read>(stream: &mut R) -> EditorResult<()> {
     }
     let status =
         fields.next().and_then(|value| value.parse::<u16>().ok()).ok_or_else(probe_failed)?;
+    let mut root_redirect = false;
+    for line in lines {
+        if line.is_empty() {
+            break;
+        }
+        let Some((name, value)) = line.split_once(':') else {
+            return Err(probe_failed());
+        };
+        if name.trim().is_empty() {
+            return Err(probe_failed());
+        }
+        if name.eq_ignore_ascii_case("location") && value.trim() == "/" {
+            root_redirect = true;
+        }
+    }
     if status == 200 {
         return Ok(());
     }
@@ -104,8 +119,7 @@ fn expect_http_ready<R: Read>(stream: &mut R) -> EditorResult<()> {
     // setting its cookie and redirecting to the root document. The redirect
     // is a successful authenticated HTTP readiness response; constrain it to
     // the provider-owned root so an arbitrary redirect cannot pass readiness.
-    if status == 302 && lines.any(|line| line.strip_prefix("Location:").map(str::trim) == Some("/"))
-    {
+    if status == 302 && root_redirect {
         return Ok(());
     }
     Err(probe_failed())
@@ -214,6 +228,14 @@ mod tests {
     }
 
     #[test]
+    fn http_readiness_keeps_official_provisioning_response_pending() {
+        let mut stream = std::io::Cursor::new(
+            b"HTTP/1.1 202 Accepted\r\nContent-Type: text/html\r\n\r\n".to_vec(),
+        );
+        assert!(expect_http_ready(&mut stream).is_err());
+    }
+
+    #[test]
     fn http_readiness_accepts_pinned_provider_root_redirect() {
         let mut stream = std::io::Cursor::new(
             b"HTTP/1.1 302 Found\r\nLocation: /\r\nSet-Cookie: vscode-tkn=redacted\r\n\r\n"
@@ -223,10 +245,25 @@ mod tests {
     }
 
     #[test]
+    fn http_readiness_accepts_case_insensitive_location_header() {
+        for header in ["location: /", "LoCaTiOn: /"] {
+            let response = format!("HTTP/1.1 302 Found\r\n{header}\r\n\r\n");
+            let mut stream = std::io::Cursor::new(response.into_bytes());
+            expect_http_ready(&mut stream).expect("root redirect header is case insensitive");
+        }
+    }
+
+    #[test]
     fn http_readiness_rejects_external_redirect() {
         let mut stream = std::io::Cursor::new(
             b"HTTP/1.1 302 Found\r\nLocation: https://example.invalid\r\n\r\n".to_vec(),
         );
+        assert!(expect_http_ready(&mut stream).is_err());
+    }
+
+    #[test]
+    fn http_readiness_rejects_malformed_header() {
+        let mut stream = std::io::Cursor::new(b"HTTP/1.1 302 Found\r\nLocation /\r\n\r\n".to_vec());
         assert!(expect_http_ready(&mut stream).is_err());
     }
 

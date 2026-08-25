@@ -12,6 +12,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use crate::runtime::ShutdownSignal;
 use devhub_app_core::ports::{
     CancellationToken, EditorHost as EditorHostPort, EditorHostResult, PortError, PortErrorCode,
     PortFuture,
@@ -41,11 +42,14 @@ use super::url::{
 };
 use super::webview::{EditorBounds, EditorWebView, WebViewHost};
 
-const SERVER_READY_TIMEOUT: Duration = Duration::from_secs(8);
-
 pub struct EditorHostConfig {
     pub home: PathBuf,
+    /// DevHub-owned resources, including the verified Bridge VSIX.
     pub resource_dir: Option<PathBuf>,
+    /// Provider-specific resources used only to discover the legacy
+    /// OpenVSCode executable. Official VS Code is always resolved from its
+    /// explicit CLI seam and never needs this path.
+    pub openvscode_resource_dir: Option<PathBuf>,
     event_sink: Option<Arc<dyn BridgeEventSink>>,
     provider_preference: EditorProviderPreference,
     official_vscode_cli: Option<PathBuf>,
@@ -56,6 +60,7 @@ impl EditorHostConfig {
     pub fn new(home: impl Into<PathBuf>, resource_dir: Option<PathBuf>) -> Self {
         Self {
             home: home.into(),
+            openvscode_resource_dir: resource_dir.clone(),
             resource_dir,
             event_sink: None,
             provider_preference: EditorProviderPreference::Auto,
@@ -83,6 +88,11 @@ impl EditorHostConfig {
     /// inferred from the existence of the CLI and is not enabled by default.
     pub fn with_official_vscode_license_accepted(mut self, accepted: bool) -> Self {
         self.official_vscode_license_accepted = accepted;
+        self
+    }
+
+    pub fn with_openvscode_resource_dir(mut self, resource_dir: Option<PathBuf>) -> Self {
+        self.openvscode_resource_dir = resource_dir;
         self
     }
 }
@@ -343,7 +353,11 @@ impl EditorHost {
             let runtime = prior_runtime
                 .as_ref()
                 .ok_or_else(|| EditorError::new(EditorErrorCode::ProcessUnavailable))?;
-            match self.readiness.wait_ready(runtime.origin, &runtime.token, SERVER_READY_TIMEOUT) {
+            match self.readiness.wait_ready(
+                runtime.origin,
+                &runtime.token,
+                runtime.executable.readiness_timeout(),
+            ) {
                 Ok(()) => return Ok(EditorHostResult { ready: true }),
                 Err(_) => {
                     self.process
@@ -359,7 +373,7 @@ impl EditorHost {
         } else {
             let executable = EditorExecutable::resolve(
                 self.config.provider_preference,
-                self.config.resource_dir.as_deref(),
+                self.config.openvscode_resource_dir.as_deref(),
                 self.config.official_vscode_cli.as_deref(),
             )?;
             if executable.is_official() && !self.config.official_vscode_license_accepted {
@@ -423,7 +437,11 @@ impl EditorHost {
                     LifecycleEvent::ServerStarted { pid: identity.pid() },
                 )?;
             }
-            match self.readiness.wait_ready(runtime.origin, &runtime.token, SERVER_READY_TIMEOUT) {
+            match self.readiness.wait_ready(
+                runtime.origin,
+                &runtime.token,
+                runtime.executable.readiness_timeout(),
+            ) {
                 Ok(()) => {
                     process.mark_ready();
                     append_lifecycle_log(&runtime.paths, LifecycleEvent::ServerReady)?;
@@ -622,6 +640,38 @@ impl EditorHost {
         Ok(())
     }
 
+    /// Q5.2-only visibility probe: retain every WebView and the global editor
+    /// while hiding all Workspace editors. This deliberately lives on the
+    /// EditorHost owner so the endurance driver cannot fake hidden state by
+    /// editing a report or a UI projection.
+    pub fn hide_workspace_surfaces_for_q5(&self) -> EditorResult<u16> {
+        let mut state =
+            self.state.lock().map_err(|_| EditorError::new(EditorErrorCode::LifecycleConflict))?;
+        let mut hidden = 0_u16;
+        for (key, record) in &mut state.surfaces {
+            if matches!(key, EditorSurfaceKey::Workspace(_)) {
+                if let Some(webview) = record.webview.as_ref() {
+                    webview.hide()?;
+                    hidden = hidden.saturating_add(1);
+                }
+                record.visible = false;
+            }
+        }
+        let mut global_visible = false;
+        if let Some(global) = state.surfaces.get_mut(&EditorSurfaceKey::Global) {
+            if let Some(webview) = global.webview.as_ref() {
+                webview.show()?;
+                webview.focus()?;
+                global.visible = true;
+                global_visible = true;
+            }
+        }
+        if global_visible {
+            state.active = Some(EditorSurfaceKey::Global);
+        }
+        Ok(hidden)
+    }
+
     /// Ask the Bridge extension to reconcile its full Workbench projection.
     /// The request carries only the stable native surface identity.
     pub fn request_bridge_snapshot(&self, key: &EditorSurfaceKey) -> EditorResult<()> {
@@ -735,7 +785,8 @@ impl EditorHost {
         // process from receiving its shutdown request. The first error is
         // returned after every independent local resource has been attempted;
         // callers then refuse to mark clean shutdown.
-        let mut first_error = self.close_window_until(deadline).err();
+        let close_result = self.close_window_until(deadline);
+        let mut first_error = close_result.err();
         if let Ok(state) = self.state.lock() {
             if let Some(runtime) = state.runtime.as_ref() {
                 if let Err(error) = runtime.bridge.stop_until(deadline) {
@@ -750,11 +801,18 @@ impl EditorHost {
         if Instant::now() >= deadline && first_error.is_none() {
             first_error = Some(EditorError::new(EditorErrorCode::BridgeUnavailable));
         }
+        let official_port = self.state.lock().ok().and_then(|state| {
+            state
+                .runtime
+                .as_ref()
+                .filter(|runtime| runtime.executable.is_official())
+                .map(|runtime| runtime.port)
+        });
         let mut process = self
             .process
             .lock()
             .map_err(|_| EditorError::new(EditorErrorCode::LifecycleConflict))?;
-        let process_stopped = match process.stop_until(deadline) {
+        let mut process_stopped = match process.stop_until(deadline) {
             Ok(true) => true,
             Ok(false) => {
                 if first_error.is_none() {
@@ -770,6 +828,21 @@ impl EditorHost {
             }
         };
         drop(process);
+        if process_stopped {
+            if let Some(port) = official_port {
+                while Instant::now() < deadline
+                    && port.ensure_available(self.port_allocator.as_ref()).is_err()
+                {
+                    thread::sleep(Duration::from_millis(10));
+                }
+                if port.ensure_available(self.port_allocator.as_ref()).is_err() {
+                    process_stopped = false;
+                    if first_error.is_none() {
+                        first_error = Some(EditorError::new(EditorErrorCode::ProcessUnavailable));
+                    }
+                }
+            }
+        }
         let mut state =
             self.state.lock().map_err(|_| EditorError::new(EditorErrorCode::LifecycleConflict))?;
         if process_stopped {
@@ -833,12 +906,31 @@ impl EditorHost {
         self.state.lock().ok()?.surfaces.get(key).map(snapshot_for)
     }
 
+    /// Return one immutable projection of every host-owned Editor Surface.
+    ///
+    /// This observation seam deliberately does not call into WebView
+    /// implementations. Process-only continuity checks can therefore verify
+    /// mounted identity from a background thread without show/focus/hide or
+    /// main-thread dispatch.
+    pub(crate) fn surface_inventory(&self) -> EditorResult<Vec<EditorSurfaceSnapshot>> {
+        let state =
+            self.state.lock().map_err(|_| EditorError::new(EditorErrorCode::LifecycleConflict))?;
+        let mut inventory = state.surfaces.values().map(snapshot_for).collect::<Vec<_>>();
+        inventory.sort_by(|left, right| left.key.cmp(&right.key));
+        Ok(inventory)
+    }
+
     fn server_spec(&self, runtime: &Runtime) -> EditorResult<ProcessSpec> {
         let path = |value: &Path| {
             value.to_str().map(str::to_owned).ok_or_else(|| EditorError::new(EditorErrorCode::Io))
         };
         let mut args = if runtime.executable.is_official() {
-            vec!["serve-web".to_owned()]
+            // Official VS Code backgrounds `serve-web` unless `--verbose`
+            // is present; its CLI contract documents that verbose implies
+            // wait. Keep the foreground CLI as the process-group owner so a
+            // DevHub Quit cannot reap the launcher while leaving its server
+            // listening on the stable origin.
+            vec!["serve-web".to_owned(), "--verbose".to_owned()]
         } else {
             Vec::new()
         };
@@ -871,31 +963,23 @@ impl EditorHost {
             // receives this flag without explicit user consent.
             args.push("--accept-server-license-terms".to_owned());
         }
-        // The scale fixture uses generated, untrusted folders. OpenVSCode's
-        // APPLICATION-scoped trust prompt is browser-profile state, so a
-        // server-side settings.json cannot provision it before a WebView
-        // exists. The pinned CLI provides the narrow, session-scoped test
-        // switch; keep it strictly behind the opt-in Q5 fixture environment
-        // and never add it to ordinary product launches.
-        #[cfg(debug_assertions)]
-        if !runtime.executable.is_official()
-            && q5_workspace_trust_flag(std::env::var_os("DEVHUB_Q5_SCALE_FIXTURE").as_deref())
-        {
-            args.push("--disable-workspace-trust".to_owned());
-        }
         let registry = path(&runtime.paths.root().join("surface-registry.json"))?;
-        let env = vec![
+        let mut env = vec![
             ("DEVHUB_BRIDGE_SURFACE_REGISTRY".to_owned(), registry),
             ("DEVHUB_BRIDGE_ENDPOINT".to_owned(), runtime.bridge.endpoint().to_owned()),
             ("DEVHUB_BRIDGE_TOKEN".to_owned(), runtime.bridge.token_hex()),
         ];
-        Ok(ProcessSpec::new(runtime.executable.path().to_path_buf(), args).with_env(env))
+        if runtime.executable.is_official() {
+            env.push(("VSCODE_CLI_DATA_DIR".to_owned(), path(runtime.paths.cli_data())?));
+        }
+        let spec = ProcessSpec::new(runtime.executable.path().to_path_buf(), args).with_env(env);
+        Ok(if runtime.executable.is_official() {
+            spec.with_termination_grace(Duration::from_secs(2))
+                .with_shutdown_signal(ShutdownSignal::Interrupt)
+        } else {
+            spec
+        })
     }
-}
-
-#[cfg(debug_assertions)]
-fn q5_workspace_trust_flag(value: Option<&std::ffi::OsStr>) -> bool {
-    value == Some(std::ffi::OsStr::new("1"))
 }
 
 impl EditorHostPort for EditorHost {
@@ -1106,6 +1190,17 @@ mod tests {
         root
     }
 
+    fn fake_bridge_resource_dir(root: &Path) -> PathBuf {
+        let resource = root.join("bridge-resources");
+        fs::create_dir_all(&resource).expect("bridge resource dir");
+        let bridge = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../extensions/devhub-bridge/build/devhub-bridge-0.1.0.vsix");
+        if bridge.is_file() {
+            fs::copy(bridge, resource.join("devhub-bridge.vsix")).expect("bridge package");
+        }
+        resource
+    }
+
     fn fake_resource_dir(root: &Path) -> PathBuf {
         let resource = root.join("resources");
         let executable_root = resource.join("openvscode-server");
@@ -1216,6 +1311,58 @@ fi
     }
 
     #[test]
+    fn official_provider_uses_bridge_resource_without_openvscode_resource() {
+        let root = test_root("official-bridge-resource");
+        let bridge_resource = fake_bridge_resource_dir(&root);
+        let home = root.join("home");
+        fs::create_dir_all(&home).expect("home");
+        let host = EditorHost::with_adapters(
+            EditorHostConfig::new(&home, Some(bridge_resource))
+                .with_openvscode_resource_dir(None)
+                .with_provider_preference(EditorProviderPreference::OfficialVscode)
+                .with_official_vscode_cli(fake_official_cli(&root))
+                .with_official_vscode_license_accepted(true),
+            Arc::new(FakeProcessAdapter {
+                spawns: Arc::new(AtomicUsize::new(0)),
+                alive: Arc::new(AtomicBool::new(true)),
+                terminated: Arc::new(AtomicUsize::new(0)),
+            }),
+            Arc::new(FakeReadiness { ready: true, calls: Arc::new(AtomicUsize::new(0)) }),
+            Arc::new(FakePorts),
+        );
+        host.ensure_server().expect("official provider with app Bridge resource");
+        let runtime = host.state.lock().expect("state").runtime.clone().expect("runtime");
+        assert!(runtime.executable.is_official());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn openvscode_provider_uses_its_own_resource_seam() {
+        let root = test_root("openvscode-resource-seam");
+        let bridge_resource = fake_bridge_resource_dir(&root);
+        let provider_resource = fake_resource_dir(&root);
+        let home = root.join("home");
+        fs::create_dir_all(&home).expect("home");
+        let host = EditorHost::with_adapters(
+            EditorHostConfig::new(&home, Some(bridge_resource))
+                .with_openvscode_resource_dir(Some(provider_resource.clone()))
+                .with_provider_preference(EditorProviderPreference::OpenVscode),
+            Arc::new(FakeProcessAdapter {
+                spawns: Arc::new(AtomicUsize::new(0)),
+                alive: Arc::new(AtomicBool::new(true)),
+                terminated: Arc::new(AtomicUsize::new(0)),
+            }),
+            Arc::new(FakeReadiness { ready: true, calls: Arc::new(AtomicUsize::new(0)) }),
+            Arc::new(FakePorts),
+        );
+        host.ensure_server().expect("OpenVSCode provider with separate resource");
+        let runtime = host.state.lock().expect("state").runtime.clone().expect("runtime");
+        assert!(!runtime.executable.is_official());
+        assert!(runtime.executable.path().starts_with(provider_resource));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn official_provider_uses_an_app_owned_server_profile_after_consent() {
         let root = test_root("official-consented");
         let resource = fake_resource_dir(&root);
@@ -1242,10 +1389,20 @@ fi
         assert!(runtime.paths.extensions().starts_with(runtime.paths.server_data()));
         let spec = host.server_spec(&runtime).expect("official spec");
         assert_eq!(spec.args().first().map(String::as_str), Some("serve-web"));
+        assert!(spec.args().contains(&"--verbose".to_owned()));
+        assert_eq!(spec.termination_grace(), Duration::from_secs(2));
+        assert_eq!(spec.shutdown_signal(), ShutdownSignal::Interrupt);
         assert!(spec.args().contains(&"--server-data-dir".to_owned()));
         assert!(spec.args().contains(&"--accept-server-license-terms".to_owned()));
         assert!(!spec.args().contains(&"--extensions-dir".to_owned()));
         assert!(!spec.args().contains(&"--user-data-dir".to_owned()));
+        assert_eq!(
+            spec.env()
+                .iter()
+                .find(|(key, _)| key == "VSCODE_CLI_DATA_DIR")
+                .map(|(_, value)| value.as_str()),
+            runtime.paths.cli_data().to_str()
+        );
         let _ = fs::remove_dir_all(root);
     }
 
@@ -1270,6 +1427,18 @@ fi
         assert_eq!(created[0].data_directory, created[1].data_directory);
         assert_eq!(created[0].data_store_identifier, created[1].data_store_identifier);
         drop(created);
+
+        let action_count = webviews.actions.lock().expect("actions").len();
+        let inventory = host.surface_inventory().expect("read-only inventory");
+        assert_eq!(inventory.len(), 2);
+        assert_eq!(inventory[0].key, "global-editor");
+        assert_eq!(inventory[1].key, format!("workspace-editor:{workspace_id}"));
+        assert!(inventory.iter().all(|surface| surface.mounted));
+        assert_eq!(
+            webviews.actions.lock().expect("actions").len(),
+            action_count,
+            "read-only inventory must not show, focus, hide, or resize a WebView"
+        );
 
         host.ensure_surface(global.clone(), None, bounds).expect("switch global");
         assert_eq!(webviews.created.lock().expect("created").len(), 2);
@@ -1351,14 +1520,6 @@ fi
         let error = host.ensure_server().expect_err("readiness failure");
         assert_eq!(error.code(), EditorErrorCode::ReadinessTimeout);
         assert_eq!(spawns.load(Ordering::Acquire), usize::from(MAX_RESTARTS) + 1);
-    }
-
-    #[cfg(debug_assertions)]
-    #[test]
-    fn workspace_trust_disable_is_q5_fixture_only() {
-        assert!(!q5_workspace_trust_flag(None));
-        assert!(!q5_workspace_trust_flag(Some(std::ffi::OsStr::new("0"))));
-        assert!(q5_workspace_trust_flag(Some(std::ffi::OsStr::new("1"))));
     }
 
     #[test]

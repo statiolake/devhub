@@ -7,8 +7,10 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use super::error::{EditorError, EditorErrorCode, EditorResult};
+use crate::runtime::ShutdownSignal;
 
 pub const MAX_RESTARTS: u8 = 3;
+const DEFAULT_TERMINATION_GRACE: Duration = Duration::from_millis(25);
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct ProcessSpec {
@@ -17,15 +19,33 @@ pub struct ProcessSpec {
     /// Environment values are kept out of `Debug` and diagnostics. The
     /// process adapter is the only consumer of this field.
     env: Vec<(String, String)>,
+    termination_grace: Duration,
+    shutdown_signal: ShutdownSignal,
 }
 
 impl ProcessSpec {
     pub fn new(executable: impl Into<PathBuf>, args: impl IntoIterator<Item = String>) -> Self {
-        Self { executable: executable.into(), args: args.into_iter().collect(), env: Vec::new() }
+        Self {
+            executable: executable.into(),
+            args: args.into_iter().collect(),
+            env: Vec::new(),
+            termination_grace: DEFAULT_TERMINATION_GRACE,
+            shutdown_signal: ShutdownSignal::Terminate,
+        }
     }
 
     pub fn with_env(mut self, env: impl IntoIterator<Item = (String, String)>) -> Self {
         self.env = env.into_iter().collect();
+        self
+    }
+
+    pub fn with_termination_grace(mut self, termination_grace: Duration) -> Self {
+        self.termination_grace = termination_grace;
+        self
+    }
+
+    pub fn with_shutdown_signal(mut self, shutdown_signal: ShutdownSignal) -> Self {
+        self.shutdown_signal = shutdown_signal;
         self
     }
 
@@ -39,6 +59,14 @@ impl ProcessSpec {
 
     pub(crate) fn env(&self) -> &[(String, String)] {
         &self.env
+    }
+
+    pub(crate) const fn termination_grace(&self) -> Duration {
+        self.termination_grace
+    }
+
+    pub(crate) const fn shutdown_signal(&self) -> ShutdownSignal {
+        self.shutdown_signal
     }
 }
 
@@ -129,6 +157,9 @@ impl ProcessAdapter for SystemProcessAdapter {
             child: Some(child),
             identity: ProcessIdentity::new(pid, spec.executable().to_path_buf()),
             cleanup: crate::runtime::ChildCleanup::new(pid),
+            termination_grace: spec.termination_grace(),
+            shutdown_signal: spec.shutdown_signal(),
+            leader_exit: None,
             reaped: false,
         };
         Ok(Box::new(process))
@@ -139,6 +170,9 @@ struct SystemManagedProcess {
     child: Option<Child>,
     identity: ProcessIdentity,
     cleanup: crate::runtime::ChildCleanup,
+    termination_grace: Duration,
+    shutdown_signal: ShutdownSignal,
+    leader_exit: Option<ProcessExit>,
     reaped: bool,
 }
 
@@ -156,6 +190,14 @@ impl ManagedProcess for SystemManagedProcess {
     }
 
     fn try_wait(&mut self) -> EditorResult<Option<ProcessExit>> {
+        if let Some(exit) = self.leader_exit {
+            if self.cleanup.owned_group_is_alive() {
+                return Ok(None);
+            }
+            self.reaped = true;
+            self.cleanup.mark_reaped();
+            return Ok(Some(exit));
+        }
         let Some(child) = self.child.as_mut() else {
             return Ok(Some(ProcessExit { code: None }));
         };
@@ -163,16 +205,13 @@ impl ManagedProcess for SystemManagedProcess {
             .try_wait()
             .map(|status| status.map(ProcessExit::from))
             .map_err(|_| EditorError::new(EditorErrorCode::ProcessUnavailable))?;
-        if status.is_some() {
+        if let Some(exit) = status {
+            self.leader_exit = Some(exit);
+            if self.cleanup.owned_group_is_alive() {
+                return Ok(None);
+            }
             self.reaped = true;
-            // Once wait(2) has reaped the leader, the numeric PID/PGID may be
-            // reused. Mark the cleanup guard before any later drop/timeout
-            // path can attempt a group signal.
             self.cleanup.mark_reaped();
-            // The OpenVSCode entry point is a shell wrapper. Reap the whole
-            // private group while the leader is still owned by this guard.
-            // A naturally exited wrapper has no safe group identity to signal;
-            // explicit shutdown uses `terminate` before `try_wait` instead.
         }
         Ok(status)
     }
@@ -182,7 +221,12 @@ impl ManagedProcess for SystemManagedProcess {
             return Err(EditorError::new(EditorErrorCode::ProcessIdentityMismatch));
         }
         let Some(mut child) = self.child.take() else { return Ok(true) };
-        let stopped = self.cleanup.terminate_until(&mut child, deadline);
+        let stopped = self.cleanup.terminate_until_with_grace(
+            &mut child,
+            deadline,
+            self.termination_grace,
+            self.shutdown_signal,
+        );
         if !stopped {
             // The process group has already received termination signals. Move
             // the owned Child to an app-local reaper so this bounded lifecycle
@@ -278,9 +322,13 @@ impl ProcessSupervisor {
     /// callers must treat that as a failed clean shutdown.
     pub fn stop_until(&mut self, deadline: Instant) -> EditorResult<bool> {
         let Some(process) = self.process.as_mut() else { return Ok(true) };
-        if process.try_wait()?.is_some() {
-            self.process = None;
-            return Ok(true);
+        match process.try_wait() {
+            Ok(Some(_)) => {
+                self.process = None;
+                return Ok(true);
+            }
+            Ok(None) => {}
+            Err(error) => return Err(error),
         }
         if !process.identity_verified() {
             return Err(EditorError::new(EditorErrorCode::ProcessIdentityMismatch));
@@ -422,19 +470,30 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn natural_exit_marks_cleanup_reaped_before_supervisor_forgets_identity() {
+    fn natural_wrapper_exit_keeps_ownership_until_its_group_is_gone() {
         let adapter = SystemProcessAdapter;
-        let spec = ProcessSpec::new("/bin/sh", ["-c".to_owned(), "exit 0".to_owned()]);
+        let marker =
+            std::env::temp_dir().join(format!("devhub-wrapper-exit-{}", std::process::id()));
+        let _ = std::fs::remove_file(&marker);
+        let spec = ProcessSpec::new(
+            "/bin/sh",
+            ["-c".to_owned(), format!("sleep 30 & touch '{}'", marker.display())],
+        );
         let mut child = adapter.spawn(&spec).expect("spawn");
-        let mut exited = false;
-        for _ in 0..100 {
-            if child.try_wait().expect("wait").is_some() {
-                exited = true;
+        for _ in 0..500 {
+            if marker.is_file() {
                 break;
             }
             std::thread::sleep(Duration::from_millis(2));
         }
-        assert!(exited, "child should exit");
+        assert!(marker.is_file(), "wrapper reached its natural exit");
+        std::thread::sleep(Duration::from_millis(10));
+        assert!(child.try_wait().expect("wait").is_none());
+        assert!(child.identity_verified(), "descendant keeps ownership live");
+        assert!(child
+            .terminate_until(Instant::now() + Duration::from_secs(1))
+            .expect("stop exact group"));
         assert!(!child.identity_verified());
+        let _ = std::fs::remove_file(marker);
     }
 }

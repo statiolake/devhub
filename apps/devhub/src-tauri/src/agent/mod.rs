@@ -22,6 +22,7 @@ mod real_harness;
 pub(crate) use channel::AgentSurfaceManager;
 pub(crate) use contract::HERDR_SESSION_NAME;
 pub use error::AgentRuntimeErrorCode;
+pub(crate) use error::ProviderErrorCategory;
 pub use model::{AgentRuntimeHealth, AgentRuntimeHealthState};
 pub use runtime::HerdrAgentRuntime;
 pub use surface::AgentSurface;

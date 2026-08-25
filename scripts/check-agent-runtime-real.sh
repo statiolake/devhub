@@ -21,12 +21,38 @@ BUILD_CARGO_HOME=${CARGO_HOME:-${BUILD_HOME:+$BUILD_HOME/.cargo}}
     echo "CARGO_HOME could not be derived from HOME" >&2
     exit 2
 }
-# Herdr's Unix socket is capped by sockaddr_un.sun_path (~104 bytes on
-# macOS). Keep the isolated root short even when TMPDIR is a long per-process
-# path, while still using mktemp for uniqueness.
-ROOT=$(mktemp -d /tmp/dh-real.XXXXXX)
-# Runtime journal paths reject symlink components; retain the short /tmp
-# allocation but pass its canonical spelling to Herdr and Rust.
+# HOME/config/socket/PID-ledger state must live below an owner-only short Q5
+# root. q5-native passes an exact per-check parent; standalone runs use the
+# same ~/.dhq5 policy. Never fall back to TMPDIR or the system /tmp.
+Q5_SECURE_PARENT=${DEVHUB_Q5_SECURE_RUN_ROOT:-$BUILD_HOME/.dhq5}
+case "$Q5_SECURE_PARENT" in
+    /*) ;;
+    *)
+        echo "Q5 secure run root must be absolute" >&2
+        exit 2
+        ;;
+esac
+[ ! -L "$Q5_SECURE_PARENT" ] || {
+    echo "Q5 secure run root must not be a symlink" >&2
+    exit 2
+}
+mkdir -m 700 -p "$Q5_SECURE_PARENT"
+[ -d "$Q5_SECURE_PARENT" ] && [ -O "$Q5_SECURE_PARENT" ] || {
+    echo "Q5 secure run root must be an owner directory" >&2
+    exit 2
+}
+if mode=$(stat -f '%Lp' "$Q5_SECURE_PARENT" 2>/dev/null); then
+    :
+else
+    mode=$(stat -c '%a' "$Q5_SECURE_PARENT" 2>/dev/null || true)
+fi
+[ "$mode" = 700 ] || {
+    echo "Q5 secure run root must have mode 0700" >&2
+    exit 2
+}
+Q5_SECURE_PARENT=$(cd "$Q5_SECURE_PARENT" && pwd -P)
+ROOT=$(mktemp -d "$Q5_SECURE_PARENT/r.XXXXXX")
+chmod 700 "$ROOT"
 ROOT=$(cd "$ROOT" && pwd -P)
 BIN_DIR=$ROOT/bin
 HOME_DIR=$ROOT/home
@@ -36,6 +62,12 @@ XDG_DATA_HOME=$ROOT/data
 HERDR_CONFIG_PATH=$XDG_CONFIG_HOME/herdr/config.toml
 API_SOCKET=$XDG_CONFIG_HOME/herdr/sessions/$SESSION_NAME/herdr.sock
 CLIENT_SOCKET=$XDG_CONFIG_HOME/herdr/sessions/$SESSION_NAME/herdr-client.sock
+api_socket_bytes=$(LC_ALL=C printf '%s' "$API_SOCKET" | wc -c | tr -d '[:space:]')
+client_socket_bytes=$(LC_ALL=C printf '%s' "$CLIENT_SOCKET" | wc -c | tr -d '[:space:]')
+if [ "$api_socket_bytes" -ge 104 ] || [ "$client_socket_bytes" -ge 104 ]; then
+    echo "socket_path_too_long" >&2
+    exit 2
+fi
 WORKSPACE_ROOT=$ROOT/workspace
 TRACE_FILE=$ROOT/agent-trace.log
 PID_DIR=$ROOT/agent-pids
@@ -73,7 +105,13 @@ cleanup() {
         [ -f "$pid_file" ] || continue
         stop_pid "$(sed -n '1p' "$pid_file")"
     done
-    rm -rf "$ROOT"
+    case "$ROOT" in
+        "$Q5_SECURE_PARENT"/r.*) rm -rf "$ROOT" ;;
+        *)
+            echo "refusing to remove an unowned Q5 run root" >&2
+            status=1
+            ;;
+    esac
     exit "$status"
 }
 trap cleanup EXIT HUP INT TERM

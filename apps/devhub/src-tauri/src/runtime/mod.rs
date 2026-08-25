@@ -579,6 +579,12 @@ pub(crate) struct ChildCleanup {
     state: CleanupState,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ShutdownSignal {
+    Interrupt,
+    Terminate,
+}
+
 impl ChildCleanup {
     pub(crate) fn new(process_id: u32) -> Self {
         Self { process_id, state: CleanupState::default() }
@@ -594,10 +600,62 @@ impl ChildCleanup {
     /// supplied lifecycle deadline. A caller that receives `false` may move
     /// the Child to a bounded app-local reaper instead of blocking quit on
     /// `Child::wait`.
-    pub(crate) fn terminate_until(&mut self, child: &mut Child, deadline: Instant) -> bool {
+    /// Lets a foreground provider owner forward TERM to detached workers
+    /// before the owned process group is escalated.
+    pub(crate) fn terminate_until_with_grace(
+        &mut self,
+        child: &mut Child,
+        deadline: Instant,
+        termination_grace: Duration,
+        shutdown_signal: ShutdownSignal,
+    ) -> bool {
         if self.state.begin() {
             #[cfg(unix)]
-            terminate_process_group_until(self.process_id, deadline);
+            match shutdown_signal {
+                ShutdownSignal::Interrupt => {
+                    // Ctrl+C is a foreground-process-group contract. The
+                    // official `code` entry point can be a shell wrapper whose
+                    // child Rust CLI owns the signal receiver, so signalling
+                    // only the wrapper PID or treating wrapper exit as success
+                    // orphans the actual serve-web runtime.
+                    send_process_group_signal(self.process_id, Signal::SIGINT);
+                    let now = Instant::now();
+                    let grace_deadline =
+                        now + termination_grace.min(deadline.saturating_duration_since(now));
+                    loop {
+                        let leader = child.try_wait();
+                        let leader_reaped = matches!(leader, Ok(Some(_)));
+                        if leader_reaped && !process_group_is_alive(self.process_id) {
+                            return true;
+                        }
+                        if Instant::now() >= grace_deadline {
+                            break;
+                        }
+                        thread::sleep(POLL_INTERVAL);
+                    }
+                    // The PGID is the exact private group created at spawn,
+                    // not a process-name match. Escalating this same owned
+                    // boundary reaches a wrapper child without touching any
+                    // ambient VS Code or user process.
+                    if process_group_is_alive(self.process_id) {
+                        send_process_group_signal(self.process_id, Signal::SIGKILL);
+                    }
+                    loop {
+                        let leader_reaped = matches!(child.try_wait(), Ok(Some(_)));
+                        if leader_reaped && !process_group_is_alive(self.process_id) {
+                            return true;
+                        }
+                        if Instant::now() >= deadline {
+                            return false;
+                        }
+                        thread::sleep(POLL_INTERVAL);
+                    }
+                }
+                ShutdownSignal::Terminate => {
+                    terminate_process_group_until(self.process_id, deadline, termination_grace);
+                }
+            }
+            #[cfg(not(unix))]
             let _ = child.kill();
         }
         loop {
@@ -617,6 +675,21 @@ impl ChildCleanup {
     /// process-group identifier.
     pub(crate) fn mark_reaped(&mut self) {
         self.state.terminated = true;
+    }
+
+    /// Returns whether any process still belongs to the exact private process
+    /// group created for this child.  A shell wrapper may exit before the
+    /// provider process it launched, so leader exit alone is not a completed
+    /// lifecycle transition.
+    pub(crate) fn owned_group_is_alive(&self) -> bool {
+        #[cfg(unix)]
+        {
+            process_group_is_alive(self.process_id)
+        }
+        #[cfg(not(unix))]
+        {
+            false
+        }
     }
 }
 
@@ -703,7 +776,7 @@ fn terminate_process_group(process_id: u32) {
 }
 
 #[cfg(unix)]
-fn terminate_process_group_until(process_id: u32, deadline: Instant) {
+fn terminate_process_group_until(process_id: u32, deadline: Instant, termination_grace: Duration) {
     // Signal synchronously before checking the deadline. A quit deadline can
     // be exhausted by an unrelated local worker, but the owned OpenVSCode
     // process group must still receive termination before its Child is handed
@@ -711,9 +784,7 @@ fn terminate_process_group_until(process_id: u32, deadline: Instant) {
     // before escalating; with no time left, KILL is issued immediately.
     send_process_group_signal(process_id, Signal::SIGTERM);
     if Instant::now() < deadline {
-        thread::sleep(
-            Duration::from_millis(25).min(deadline.saturating_duration_since(Instant::now())),
-        );
+        thread::sleep(termination_grace.min(deadline.saturating_duration_since(Instant::now())));
     }
     send_process_group_signal(process_id, Signal::SIGKILL);
 }
@@ -725,6 +796,16 @@ fn send_process_group_signal(process_id: u32, signal: Signal) {
     // PID targets only DevHub-owned OpenVSCode descendants. ESRCH is expected
     // when the group exited between the bounded identity check and this call.
     let _ = kill(Pid::from_raw(-process_id), signal);
+}
+
+#[cfg(unix)]
+fn process_group_is_alive(process_id: u32) -> bool {
+    let Ok(process_id) = i32::try_from(process_id) else { return false };
+    match kill(Pid::from_raw(-process_id), None) {
+        Ok(()) | Err(nix::errno::Errno::EPERM) => true,
+        Err(nix::errno::Errno::ESRCH) => false,
+        Err(_) => true,
+    }
 }
 
 #[cfg(not(unix))]
@@ -1155,5 +1236,111 @@ sys.stdout.flush()
         assert!(state.begin());
         assert!(!state.begin());
         assert!(!state.begin());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn interrupt_shutdown_reaches_a_signal_receiver_beneath_a_shell_wrapper() {
+        let temp = TempDir::new();
+        let marker = temp.child("child-received-interrupt");
+        let ready = temp.child("child-ready");
+        let receiver = temp.child("receiver.py");
+        write_python_executable(
+            &receiver,
+            &format!(
+                "import pathlib, signal, time\nmarker = pathlib.Path({:?})\nready = pathlib.Path({:?})\ndef interrupted(_signal, _frame):\n    marker.write_text('handled')\n    raise SystemExit(42)\nsignal.signal(signal.SIGINT, interrupted)\nready.write_text('ready')\nwhile True:\n    time.sleep(0.01)",
+                marker.to_string_lossy(),
+                ready.to_string_lossy(),
+            ),
+        );
+        let script = format!("{} & wait", receiver.display());
+        let mut child = Command::new("/bin/sh")
+            .args(["-c", &script])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .process_group(0)
+            .spawn()
+            .expect("interrupt fixture");
+        let ready_deadline = Instant::now() + Duration::from_secs(1);
+        while !ready.is_file() && Instant::now() < ready_deadline {
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert!(ready.is_file(), "child fixture must install its signal handler");
+        let mut cleanup = ChildCleanup::new(child.id());
+        assert!(cleanup.terminate_until_with_grace(
+            &mut child,
+            Instant::now() + Duration::from_secs(1),
+            Duration::from_millis(500),
+            ShutdownSignal::Interrupt,
+        ));
+        assert!(marker.is_file(), "the wrapper's child must receive group Ctrl+C");
+        assert!(!process_group_is_alive(child.id()));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn interrupt_shutdown_does_not_accept_wrapper_exit_while_its_child_remains() {
+        let mut child = Command::new("/bin/sh")
+            .args([
+                "-c",
+                "trap 'exit 0' INT; /bin/sh -c 'trap \"\" INT; while :; do :; done' & wait",
+            ])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .process_group(0)
+            .spawn()
+            .expect("wrapper fixture");
+        thread::sleep(Duration::from_millis(30));
+        let group = child.id();
+        let started = Instant::now();
+        let mut cleanup = ChildCleanup::new(group);
+        assert!(cleanup.terminate_until_with_grace(
+            &mut child,
+            Instant::now() + Duration::from_secs(1),
+            Duration::from_millis(40),
+            ShutdownSignal::Interrupt,
+        ));
+        assert!(started.elapsed() >= Duration::from_millis(35));
+        assert!(!process_group_is_alive(group));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn interrupt_shutdown_escalates_only_the_exact_owned_process_group() {
+        use std::os::unix::process::ExitStatusExt;
+
+        let mut child = Command::new("/bin/sh")
+            .args(["-c", "trap '' INT; while :; do :; done"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .process_group(0)
+            .spawn()
+            .expect("interrupt escalation fixture");
+        let mut unrelated = Command::new("/bin/sh")
+            .args(["-c", "trap '' INT; while :; do :; done"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .process_group(0)
+            .spawn()
+            .expect("unrelated fixture");
+        thread::sleep(Duration::from_millis(30));
+        let mut cleanup = ChildCleanup::new(child.id());
+        assert!(cleanup.terminate_until_with_grace(
+            &mut child,
+            Instant::now() + Duration::from_secs(1),
+            Duration::from_millis(40),
+            ShutdownSignal::Interrupt,
+        ));
+        assert_eq!(
+            child.try_wait().expect("status").and_then(|status| status.signal()),
+            Some(nix::libc::SIGKILL),
+        );
+        assert!(unrelated.try_wait().expect("unrelated status").is_none());
+        let mut unrelated_cleanup = ChildCleanup::new(unrelated.id());
+        unrelated_cleanup.terminate(&mut unrelated);
     }
 }

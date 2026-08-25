@@ -281,6 +281,9 @@ impl BridgeInstaller for SystemBridgeInstaller {
                 .arg("--server-data-dir")
                 .arg(paths.server_data());
         }
+        if executable.is_official() {
+            command.env("VSCODE_CLI_DATA_DIR", paths.cli_data());
+        }
         command.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
         #[cfg(unix)]
         {

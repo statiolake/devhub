@@ -18,8 +18,9 @@ sha2 = "=0.10.9"
 flate2 = "=1.1.9"
 tungstenite = { version = "=0.30.0", default-features = false, features = ["handshake"] }
 portable-pty = "=0.9.0"
-nix = { version = "=0.28.0", features = ["fs", "signal", "user"] }
+nix = { version = "=0.28.0", features = ["fs", "resource", "signal", "user"] }
 rustix = { version = "=0.38.44", features = ["fs"] }
+socket2 = "=0.6.5"
 raw-window-handle = "=0.6.2"
 tauri = { version = "=2.11.5", features = [] }
 wry = "=0.55.1"

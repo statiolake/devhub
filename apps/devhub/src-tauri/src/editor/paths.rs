@@ -27,6 +27,7 @@ pub struct EditorPaths {
     root: PathBuf,
     server_data: PathBuf,
     user_data: PathBuf,
+    cli_data: PathBuf,
     extensions: PathBuf,
     logs: PathBuf,
     webkit_data: PathBuf,
@@ -51,6 +52,7 @@ impl EditorPaths {
         Self {
             server_data: root.join("server-data"),
             user_data: root.join("user-data"),
+            cli_data: root.join("cli-data"),
             extensions,
             logs: home.as_ref().join("Library/Logs/DevHub"),
             webkit_data: root.join("webkit-data"),
@@ -70,6 +72,10 @@ impl EditorPaths {
 
     pub fn user_data(&self) -> &Path {
         &self.user_data
+    }
+
+    pub fn cli_data(&self) -> &Path {
+        &self.cli_data
     }
 
     pub fn extensions(&self) -> &Path {
@@ -105,6 +111,7 @@ impl EditorPaths {
             &self.root,
             &self.server_data,
             &self.user_data,
+            &self.cli_data,
             &self.extensions,
             &self.logs,
             &self.webkit_data,

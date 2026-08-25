@@ -10,11 +10,14 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::time::Duration;
 
 use super::error::{EditorError, EditorErrorCode, EditorResult};
 use super::paths::{EditorProviderKind, PinnedExecutable};
 
 const OFFICIAL_CLI_ENV: &str = "DEVHUB_VSCODE_CLI";
+const OPENVSCODE_READINESS_TIMEOUT: Duration = Duration::from_secs(8);
+const OFFICIAL_VSCODE_PROVISIONING_TIMEOUT: Duration = Duration::from_secs(120);
 const REQUIRED_HELP_FLAGS: [&str; 4] =
     ["--connection-token-file", "--server-data-dir", "--disable-telemetry", "--default-folder"];
 
@@ -199,6 +202,16 @@ impl EditorExecutable {
             Self::OpenVscode(_) => None,
         }
     }
+
+    /// Provider-owned startup budget. Official VS Code may provision the
+    /// matching Server commit on its first launch; OpenVSCode is already
+    /// bundled and keeps the short readiness bound.
+    pub const fn readiness_timeout(&self) -> Duration {
+        match self {
+            Self::OfficialVscode(_) => OFFICIAL_VSCODE_PROVISIONING_TIMEOUT,
+            Self::OpenVscode(_) => OPENVSCODE_READINESS_TIMEOUT,
+        }
+    }
 }
 
 fn discovery_candidates() -> Vec<PathBuf> {
@@ -284,6 +297,19 @@ mod tests {
         let error = OfficialVscodeExecutable::from_path(fake_cli(&root, false))
             .expect_err("missing capability");
         assert_eq!(error.code(), EditorErrorCode::ProviderCapabilityMismatch);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn official_provider_owns_a_longer_first_provisioning_budget() {
+        let root =
+            std::env::temp_dir().join(format!("devhub-provider-timeout-{}", std::process::id()));
+        fs::create_dir_all(&root).expect("temp");
+        let executable = OfficialVscodeExecutable::from_path(fake_cli(&root, true)).expect("probe");
+        assert_eq!(
+            EditorExecutable::OfficialVscode(executable).readiness_timeout(),
+            Duration::from_secs(120)
+        );
         let _ = fs::remove_dir_all(root);
     }
 }

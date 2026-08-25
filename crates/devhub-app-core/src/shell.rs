@@ -935,6 +935,11 @@ impl AppOutcomeWire {
 }
 
 impl AppErrorWire {
+    /// Returns the stable, content-free error category for native diagnostics.
+    pub const fn code(&self) -> AppErrorCodeWire {
+        self.code
+    }
+
     pub fn native_unavailable() -> Self {
         Self::at(AppErrorCodeWire::NativeUnavailable, 0)
     }

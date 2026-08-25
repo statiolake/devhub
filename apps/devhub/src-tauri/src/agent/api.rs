@@ -6,6 +6,8 @@
 
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
+#[cfg(test)]
+use std::io::Read;
 use std::io::{self, BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -18,7 +20,7 @@ use serde_json::{json, Value};
 
 use super::contract::required_capabilities;
 use super::control::{HerdrTerminalControl, NoopTerminalControl, TerminalControl};
-use super::error::{AgentRuntimeError, AgentRuntimeErrorCode};
+use super::error::{AgentRuntimeError, AgentRuntimeErrorCode, ProviderErrorCategory};
 
 pub(crate) const API_TIMEOUT: Duration = Duration::from_secs(5);
 pub(crate) const SUBSCRIPTION_RETRY: Duration = Duration::from_millis(100);
@@ -97,12 +99,32 @@ impl Invalidation {
 /// recovery and test teardown.
 pub(crate) struct SubscriptionHandle {
     stop: Arc<AtomicBool>,
+    ready: Arc<AtomicBool>,
     thread: Mutex<Option<thread::JoinHandle<()>>>,
 }
 
 impl SubscriptionHandle {
+    #[cfg(test)]
     pub(crate) fn new(stop: Arc<AtomicBool>, thread: thread::JoinHandle<()>) -> Self {
-        Self { stop, thread: Mutex::new(Some(thread)) }
+        Self { stop, ready: Arc::new(AtomicBool::new(true)), thread: Mutex::new(Some(thread)) }
+    }
+
+    fn with_readiness(
+        stop: Arc<AtomicBool>,
+        ready: Arc<AtomicBool>,
+        thread: thread::JoinHandle<()>,
+    ) -> Self {
+        Self { stop, ready, thread: Mutex::new(Some(thread)) }
+    }
+
+    pub(crate) fn wait_ready(&self, deadline: Instant) -> bool {
+        while !self.ready.load(Ordering::Acquire) && Instant::now() < deadline {
+            if self.stop.load(Ordering::Acquire) {
+                return false;
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+        self.ready.load(Ordering::Acquire)
     }
 
     pub(crate) fn stop(&self) {
@@ -153,11 +175,20 @@ impl Drop for SubscriptionHandle {
 /// exposing provider IDs outside this module.
 pub(crate) trait ProviderTransport: Send + Sync {
     fn request(&self, method: &str, params: Value) -> Result<Value, AgentRuntimeError>;
+    /// Bounded operation-specific request seam. Implementations may widen a
+    /// transport deadline for a provider operation whose server-side
+    /// readiness timeout is explicitly larger than the ordinary API budget.
+    fn request_with_timeout(
+        &self,
+        method: &str,
+        params: Value,
+        _timeout: Duration,
+    ) -> Result<Value, AgentRuntimeError> {
+        self.request(method, params)
+    }
     fn check_capabilities(&self) -> Result<(), AgentRuntimeError> {
         Ok(())
     }
-    fn register_pane_for_status(&self, _pane_id: &str) {}
-    fn unregister_pane_for_status(&self, _pane_id: &str) {}
     fn open_control(
         &self,
         _terminal_id: &str,
@@ -175,16 +206,11 @@ pub(crate) trait ProviderTransport: Send + Sync {
 pub(crate) struct HerdrTransport {
     socket_path: PathBuf,
     timeout: Duration,
-    status_panes: Arc<Mutex<BTreeSet<String>>>,
 }
 
 impl HerdrTransport {
     pub(crate) fn new(socket_path: impl Into<PathBuf>) -> Self {
-        Self {
-            socket_path: socket_path.into(),
-            timeout: API_TIMEOUT,
-            status_panes: Arc::new(Mutex::new(BTreeSet::new())),
-        }
+        Self { socket_path: socket_path.into(), timeout: API_TIMEOUT }
     }
 
     #[cfg(unix)]
@@ -198,6 +224,15 @@ impl HerdrTransport {
     }
 
     fn request_value(&self, method: &str, params: Value) -> Result<Value, AgentRuntimeError> {
+        self.request_value_with_timeout(method, params, self.timeout)
+    }
+
+    fn request_value_with_timeout(
+        &self,
+        method: &str,
+        params: Value,
+        timeout: Duration,
+    ) -> Result<Value, AgentRuntimeError> {
         let request_id = format!("devhub-agent-{method}");
         let request = json!({ "id": request_id, "method": method, "params": params });
         let encoded = serde_json::to_vec(&request)
@@ -209,8 +244,8 @@ impl HerdrTransport {
         #[cfg(unix)]
         {
             let mut stream = self.connect()?;
-            stream.set_read_timeout(Some(self.timeout)).map_err(classify_io)?;
-            stream.set_write_timeout(Some(self.timeout)).map_err(classify_io)?;
+            stream.set_read_timeout(Some(timeout)).map_err(classify_io)?;
+            stream.set_write_timeout(Some(timeout)).map_err(classify_io)?;
             stream.write_all(&encoded).map_err(classify_io)?;
             stream.write_all(b"\n").map_err(classify_io)?;
             stream.flush().map_err(classify_io)?;
@@ -229,11 +264,13 @@ impl HerdrTransport {
         &self,
         invalidation: Arc<Invalidation>,
         stop: Arc<AtomicBool>,
+        ready: Arc<AtomicBool>,
+        subscriptions: Value,
     ) -> Result<(), AgentRuntimeError> {
         let request = json!({
             "id": "devhub-agent-subscribe",
             "method": "events.subscribe",
-            "params": { "subscriptions": subscription_kinds(&self.status_panes) },
+            "params": { "subscriptions": subscriptions },
         });
         let encoded = serde_json::to_vec(&request)
             .map_err(|_| AgentRuntimeError::new(AgentRuntimeErrorCode::Internal))?;
@@ -258,6 +295,7 @@ impl HerdrTransport {
                 }));
             }
             invalidation.mark_connected();
+            ready.store(true, Ordering::Release);
             loop {
                 if stop.load(Ordering::Acquire) {
                     return Ok(());
@@ -276,7 +314,7 @@ impl HerdrTransport {
 
         #[cfg(not(unix))]
         {
-            let _ = (invalidation, stop);
+            let _ = (invalidation, stop, ready);
             Err(AgentRuntimeError::new(AgentRuntimeErrorCode::Unavailable))
         }
     }
@@ -285,6 +323,15 @@ impl HerdrTransport {
 impl ProviderTransport for HerdrTransport {
     fn request(&self, method: &str, params: Value) -> Result<Value, AgentRuntimeError> {
         self.request_value(method, params)
+    }
+
+    fn request_with_timeout(
+        &self,
+        method: &str,
+        params: Value,
+        timeout: Duration,
+    ) -> Result<Value, AgentRuntimeError> {
+        self.request_value_with_timeout(method, params, timeout)
     }
 
     fn check_capabilities(&self) -> Result<(), AgentRuntimeError> {
@@ -324,18 +371,6 @@ impl ProviderTransport for HerdrTransport {
         self.probe_terminal_control()
     }
 
-    fn register_pane_for_status(&self, pane_id: &str) {
-        if let Ok(mut panes) = self.status_panes.lock() {
-            panes.insert(pane_id.to_owned());
-        }
-    }
-
-    fn unregister_pane_for_status(&self, pane_id: &str) {
-        if let Ok(mut panes) = self.status_panes.lock() {
-            panes.remove(pane_id);
-        }
-    }
-
     fn open_control(
         &self,
         terminal_id: &str,
@@ -348,24 +383,43 @@ impl ProviderTransport for HerdrTransport {
         &self,
         invalidation: Arc<Invalidation>,
     ) -> Result<SubscriptionHandle, AgentRuntimeError> {
+        self.subscribe_with_kinds(invalidation, base_subscription_kinds())
+    }
+}
+
+impl HerdrTransport {
+    fn subscribe_with_kinds(
+        &self,
+        invalidation: Arc<Invalidation>,
+        subscriptions: Value,
+    ) -> Result<SubscriptionHandle, AgentRuntimeError> {
         let stop = Arc::new(AtomicBool::new(false));
+        let ready = Arc::new(AtomicBool::new(false));
         let worker_stop = Arc::clone(&stop);
+        let worker_ready = Arc::clone(&ready);
         let transport = self.clone();
         let worker = thread::Builder::new()
-            .name("devhub-herdr-subscription".to_owned())
+            .name("devhub-herdr-subscription-base".to_owned())
             .spawn(move || {
                 while !worker_stop.load(Ordering::Acquire) {
+                    worker_ready.store(false, Ordering::Release);
                     if transport
-                        .subscribe_impl(Arc::clone(&invalidation), Arc::clone(&worker_stop))
+                        .subscribe_impl(
+                            Arc::clone(&invalidation),
+                            Arc::clone(&worker_stop),
+                            Arc::clone(&worker_ready),
+                            subscriptions.clone(),
+                        )
                         .is_err()
                     {
+                        worker_ready.store(false, Ordering::Release);
                         invalidation.mark_disconnected();
                         thread::sleep(SUBSCRIPTION_RETRY);
                     }
                 }
             })
             .map_err(|_| AgentRuntimeError::new(AgentRuntimeErrorCode::Unavailable))?;
-        Ok(SubscriptionHandle::new(stop, worker))
+        Ok(SubscriptionHandle::with_readiness(stop, ready, worker))
     }
 }
 
@@ -469,7 +523,7 @@ impl HerdrTransport {
         let request = json!({
             "id": "devhub-agent-capability-subscribe",
             "method": "events.subscribe",
-            "params": { "subscriptions": subscription_kinds(&self.status_panes) },
+            "params": { "subscriptions": base_subscription_kinds() },
         });
         let encoded = serde_json::to_vec(&request)
             .map_err(|_| AgentRuntimeError::new(AgentRuntimeErrorCode::Internal))?;
@@ -504,8 +558,8 @@ fn client_socket_path(api_socket: &Path) -> PathBuf {
     api_socket.parent().unwrap_or_else(|| Path::new("")).join(format!("{stem}-client.sock"))
 }
 
-fn subscription_kinds(status_panes: &Mutex<BTreeSet<String>>) -> Value {
-    let mut subscriptions = vec![
+fn base_subscription_kinds() -> Value {
+    Value::Array(vec![
         json!({ "type": "workspace.created" }),
         json!({ "type": "workspace.updated" }),
         json!({ "type": "workspace.closed" }),
@@ -516,15 +570,7 @@ fn subscription_kinds(status_panes: &Mutex<BTreeSet<String>>) -> Value {
         json!({ "type": "pane.closed" }),
         json!({ "type": "pane.exited" }),
         json!({ "type": "pane.agent_detected" }),
-    ];
-    if let Ok(panes) = status_panes.lock() {
-        subscriptions.extend(
-            panes
-                .iter()
-                .map(|pane_id| json!({ "type": "pane.agent_status_changed", "pane_id": pane_id })),
-        );
-    }
-    Value::Array(subscriptions)
+    ])
 }
 
 fn parse_subscription_started(line: &[u8]) -> Result<(), AgentRuntimeError> {
@@ -557,13 +603,28 @@ fn parse_response(line: &[u8]) -> Result<Value, AgentRuntimeError> {
 }
 
 fn classify_provider_code(code: &str) -> AgentRuntimeError {
-    if code.contains("not_found") || code.contains("not-found") {
-        AgentRuntimeError::new(AgentRuntimeErrorCode::ProviderNotFound)
+    let category = match code {
+        "agent_name_taken" => ProviderErrorCategory::AgentNameTaken,
+        "agent_pane_busy" | "pane_busy" => ProviderErrorCategory::AgentPaneBusy,
+        "agent_pane_not_found" | "pane_not_found" => ProviderErrorCategory::AgentPaneNotFound,
+        "agent_pane_unavailable" | "pane_unavailable" => {
+            ProviderErrorCategory::AgentPaneUnavailable
+        }
+        "agent_start_input_failed" | "input_failed" => ProviderErrorCategory::AgentStartInputFailed,
+        "invalid_request" | "invalid_params" => ProviderErrorCategory::InvalidRequest,
+        _ => ProviderErrorCategory::Other,
+    };
+    let runtime_code = if category == ProviderErrorCategory::AgentPaneNotFound
+        || code.contains("not_found")
+        || code.contains("not-found")
+    {
+        AgentRuntimeErrorCode::ProviderNotFound
     } else if code.contains("timeout") {
-        AgentRuntimeError::new(AgentRuntimeErrorCode::Timeout)
+        AgentRuntimeErrorCode::Timeout
     } else {
-        AgentRuntimeError::new(AgentRuntimeErrorCode::ProviderRejected)
-    }
+        AgentRuntimeErrorCode::ProviderRejected
+    };
+    AgentRuntimeError::with_provider_category(runtime_code, category)
 }
 
 fn classify_io(error: io::Error) -> AgentRuntimeError {
@@ -660,13 +721,66 @@ mod tests {
     }
 
     #[test]
-    fn cleaned_pane_is_removed_from_status_subscription_contract() {
-        let transport = HerdrTransport::new("/tmp/devhub-herdr.sock");
-        transport.register_pane_for_status("pane-live");
-        assert!(subscription_kinds(&transport.status_panes).to_string().contains("pane-live"));
+    fn provider_agent_start_codes_are_classified_without_retaining_provider_text() {
+        use super::super::error::ProviderErrorCategory;
 
-        transport.unregister_pane_for_status("pane-live");
-        assert!(!subscription_kinds(&transport.status_panes).to_string().contains("pane-live"));
+        for (provider_code, expected) in [
+            ("agent_name_taken", ProviderErrorCategory::AgentNameTaken),
+            ("agent_pane_busy", ProviderErrorCategory::AgentPaneBusy),
+            ("agent_pane_not_found", ProviderErrorCategory::AgentPaneNotFound),
+            ("agent_pane_unavailable", ProviderErrorCategory::AgentPaneUnavailable),
+            ("agent_start_input_failed", ProviderErrorCategory::AgentStartInputFailed),
+            ("invalid_request", ProviderErrorCategory::InvalidRequest),
+            ("future_private_code", ProviderErrorCategory::Other),
+        ] {
+            let line = format!(
+                r#"{{"id":"x","error":{{"code":"{provider_code}","message":"private secret"}}}}"#
+            );
+            let error = parse_response(line.as_bytes()).expect_err("provider error");
+            assert_eq!(error.provider_category(), Some(expected));
+            assert!(!format!("{error:?}").contains(provider_code));
+            assert!(!format!("{error:?}").contains("private secret"));
+        }
+    }
+
+    #[test]
+    fn lifecycle_subscription_covers_structural_and_agent_events() {
+        let subscriptions = base_subscription_kinds();
+        assert!(subscriptions.to_string().contains("pane.agent_detected"));
+        assert!(subscriptions.to_string().contains("pane.updated"));
+        assert!(!subscriptions.to_string().contains("pane-live"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn operation_timeout_keeps_default_requests_bounded_but_allows_agent_start_margin() {
+        let socket_path = PathBuf::from(format!("/tmp/dh-to-{}.sock", std::process::id()));
+        let _ = std::fs::remove_file(&socket_path);
+        let listener = std::os::unix::net::UnixListener::bind(&socket_path).expect("bind");
+        let worker = std::thread::spawn(move || {
+            for _ in 0..2 {
+                let (mut stream, _) = listener.accept().expect("accept");
+                let mut request = Vec::new();
+                let mut byte = [0_u8; 1];
+                while stream.read_exact(&mut byte).is_ok() {
+                    request.push(byte[0]);
+                    if byte[0] == b'\n' {
+                        break;
+                    }
+                }
+                std::thread::sleep(Duration::from_millis(5_500));
+                let _ = stream.write_all(b"{\"result\":{\"ok\":true}}\n");
+            }
+        });
+        let transport = HerdrTransport::new(&socket_path);
+        let ordinary = transport.request("ordinary", json!({})).expect_err("default timeout");
+        assert_eq!(ordinary.code(), AgentRuntimeErrorCode::Timeout);
+        let started = transport
+            .request_with_timeout("agent.start", json!({}), Duration::from_secs(7))
+            .expect("operation margin");
+        assert_eq!(started.get("ok"), Some(&Value::Bool(true)));
+        worker.join().expect("server");
+        let _ = std::fs::remove_file(socket_path);
     }
 
     #[test]
