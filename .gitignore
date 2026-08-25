@@ -31,14 +31,6 @@ dist/
 # Python caches
 __pycache__/
 
-# Generated OpenVSCode/provenance payloads. The ledger and scripts are tracked;
-# the source clone, bundle, logs, and archives are never repository content.
-openvscode-darwin-arm64-*.tgz
-openvscode-darwin-arm64-*.tar.gz
-provenance/*.tgz
-provenance/*.tar.gz
-provenance/*.log
-
 # Runtime and test leftovers
 *.log
 *.tmp
