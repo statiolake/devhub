@@ -475,7 +475,7 @@ impl ContentRevision {
             return None;
         }
         let mut bytes = [0_u8; 32];
-        for (index, pair) in raw.as_bytes().chunks_exact(2).enumerate() {
+        for (index, pair) in raw.as_bytes().as_chunks::<2>().0.iter().enumerate() {
             bytes[index] = hex_nibble(pair[0])? << 4 | hex_nibble(pair[1])?;
         }
         Some(Self(bytes))
