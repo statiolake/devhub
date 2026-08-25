@@ -28,12 +28,7 @@ extensions/devhub-bridge/build/
 # Reproducible local release output (regenerate with package:local-release)
 dist/
 
-# Throwaway prototype output and evidence
-prototypes/**/build/
-prototypes/**/evidence/
-prototypes/**/gen/
-prototypes/**/vendor/
-prototypes/**/__pycache__/
+# Python caches
 __pycache__/
 
 # Generated OpenVSCode/provenance payloads. The ledger and scripts are tracked;
