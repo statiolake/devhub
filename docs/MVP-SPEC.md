@@ -48,7 +48,7 @@ Sidebar order is stable:
 2. Workspaces in open order;
 3. Agent children in creation order.
 
-A Workspace without Agents has no disclosure, placeholder, or child tree. Runtime status never changes ordering. Workspace and disclosure clicks are separate targets. Workspace order, disclosure state, Sidebar width, and navigation are restored. Workspace labels use the root basename and the shortest unique parent suffix when basenames collide; they are not user-renamable in the MVP.
+A Workspace without Agents has no disclosure, placeholder, or child tree. Runtime status never changes ordering. Workspace and disclosure clicks are separate targets. Workspace order, disclosure state, Sidebar width, and navigation are restored. The Sidebar defaults to 248 points and resizes between 200 and 400. Below the minimum main-Window width the Surface may shrink, but Sidebar controls never overlap or disappear. Workspace labels use the root basename and the shortest unique parent suffix when basenames collide; they are not user-renamable in the MVP.
 
 ### Navigation matrix
 

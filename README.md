@@ -4,14 +4,15 @@ DevHub is a personal, macOS-first development workbench. Its long-term model
 organizes Workspaces, Agents, Editors, and persistent tmux Terminals in one
 native window while keeping provider implementations behind Rust-owned seams.
 
-The repository has completed its contract foundation and the ConfigStore and
-StateStore persistence gates. The checked-in shell remains deliberately small:
-a Tauri App Shell owns the immutable native snapshot, and a React consumer
-renders the fixed Activity chrome. UI and provider implementation continues in
-the later waves described in
-[`docs/IMPLEMENTATION-PLAN.md`](docs/IMPLEMENTATION-PLAN.md). Current local
-execution status is tracked in
-[`docs/IMPLEMENTATION-STATUS.md`](docs/IMPLEMENTATION-STATUS.md).
+A Tauri App Shell owns the immutable native snapshot and a React consumer
+renders the fixed Activity chrome. The Editor Activity runs the user's own
+installed VS Code through `code serve-web`; DevHub bundles no Workbench of its
+own. The product contract is [`docs/MVP-SPEC.md`](docs/MVP-SPEC.md).
+
+The implementation is complete and locally verifiable. What remains before a
+release is user-attended acceptance on Apple Silicon: the interactive keyboard,
+IME, VoiceOver, scale, and lifecycle gates listed under Release gates in the
+spec.
 
 ## Local development
 
@@ -57,9 +58,9 @@ and must not be inferred from a local green check.
 - [`docs/MVP-SPEC.md`](docs/MVP-SPEC.md) is the product contract.
 - [`docs/PROVIDER-CONTRACTS.md`](docs/PROVIDER-CONTRACTS.md) freezes external
   provider and toolchain baselines.
-- [`docs/IMPLEMENTATION-OWNERSHIP.md`](docs/IMPLEMENTATION-OWNERSHIP.md)
-  assigns production seams and review gates.
-- [`docs/IMPLEMENTATION-STATUS.md`](docs/IMPLEMENTATION-STATUS.md) records
-  locally completed gates and the next implementation wave.
+- [`docs/adr/`](docs/adr/) records the decisions behind the product, with
+  their rationale and consequences.
+- [`docs/LOCAL-DEVELOPMENT.md`](docs/LOCAL-DEVELOPMENT.md) describes the
+  development loop and the reproducible checks.
 
 DevHub is distributed under the [MIT License](LICENSE).

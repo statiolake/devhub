@@ -6,16 +6,12 @@ adding convenience code around an existing implementation.
 
 ## Before changing code
 
-Read the relevant sections of [`CONTEXT.md`](CONTEXT.md),
-[`docs/MVP-SPEC.md`](docs/MVP-SPEC.md), and
-[`docs/IMPLEMENTATION-OWNERSHIP.md`](docs/IMPLEMENTATION-OWNERSHIP.md).
+Read the relevant sections of [`CONTEXT.md`](CONTEXT.md) and
+[`docs/MVP-SPEC.md`](docs/MVP-SPEC.md), and check [`docs/adr/`](docs/adr/) for
+the decision a change would touch.
 Rust owns application state and decisions; frontend code consumes immutable
 snapshots and sends narrow intents through adapters. Provider details do not
 cross into product-domain types.
-
-Throwaway experiments belong under `prototypes/`. Prototype outputs,
-credentials, build caches, and generated binaries must remain ignored and must
-never be imported by production manifests or scripts.
 
 ## Local checks
 
@@ -41,5 +37,5 @@ also final-wave actions and are intentionally absent during local work.
 ## Change boundaries
 
 Keep one coherent change per local commit and include its tests and design
-record updates. Do not commit `prototypes/`, build output, Cargo targets,
-package-manager stores, generated Tauri caches, or release artifacts.
+record updates. Do not commit build output, Cargo targets, package-manager
+stores, generated Tauri caches, or release artifacts.
