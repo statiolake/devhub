@@ -2642,6 +2642,7 @@ impl NativeAppState {
     /// Surface are usable while the Editor reports why it is unavailable.
     fn attach_startup_window(&self, app: &AppHandle) {
         if let Some(window) = app.get_webview_window(APP_SHELL_WINDOW_LABEL) {
+            apply_sidebar_material(&window);
             if let Err(error) = window.show().and_then(|_| window.set_focus()) {
                 self.record_native_error(state_error(error));
             }
@@ -7682,6 +7683,25 @@ fn ensure_app_shell_window(
         .build()
         .map_err(|_| AppErrorWire::native_unavailable())
 }
+
+/// Put the window on a source-list material so the Sidebar and titlebar are
+/// vibrant the way every other Mac app's are. The shell paints its content
+/// surfaces opaquely on top; only the chrome lets the material through.
+#[cfg(target_os = "macos")]
+fn apply_sidebar_material(window: &tauri::WebviewWindow) {
+    use window_vibrancy::{apply_vibrancy, NSVisualEffectMaterial, NSVisualEffectState};
+
+    // A window that cannot take the material still works; it is simply opaque.
+    let _ = apply_vibrancy(
+        window,
+        NSVisualEffectMaterial::Sidebar,
+        Some(NSVisualEffectState::FollowsWindowActiveState),
+        None,
+    );
+}
+
+#[cfg(not(target_os = "macos"))]
+fn apply_sidebar_material(_window: &tauri::WebviewWindow) {}
 
 fn build_window_menu(
     app: &AppHandle,

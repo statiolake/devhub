@@ -22,8 +22,11 @@ nix = { version = "=0.28.0", features = ["fs", "resource", "signal", "user"] }
 rustix = { version = "=0.38.44", features = ["fs"] }
 socket2 = "=0.6.5"
 raw-window-handle = "=0.6.2"
-tauri = { version = "=2.11.5", features = [] }
+tauri = { version = "=2.11.5", features = ["macos-private-api"] }
 wry = "=0.55.1"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+window-vibrancy = "=0.6.0"
 
 [target.'cfg(target_os = "macos")'.dependencies.objc2-app-kit]
 version = "=0.3.2"

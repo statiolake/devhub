@@ -644,6 +644,7 @@ dependencies = [
  "tauri",
  "tauri-build",
  "tungstenite",
+ "window-vibrancy",
  "wry",
 ]
 

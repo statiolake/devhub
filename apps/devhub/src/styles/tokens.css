@@ -17,37 +17,50 @@
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
 
-  /* Materials, back to front. */
-  --canvas: light-dark(#f3f1ef, #171717);
-  --chrome: light-dark(#e9e5e2, #1f1f1f);
-  --surface: light-dark(#fbfaf9, #232323);
-  --raised: light-dark(#ffffff, #2b2b2b);
-  --sunken: light-dark(#e5e0dd, #141414);
+  /* Materials, back to front.
+   *
+   * These track the macOS system colours rather than a brand palette: window
+   * chrome sits behind bright content, and content is white in Light. A warm
+   * tint here reads as a web app dropped onto the desktop.
+   */
+  --canvas: light-dark(#ececec, #1e1e1e);
+  --chrome: light-dark(#ececec, #262626);
+  --surface: light-dark(#ffffff, #1e1e1e);
+  --raised: light-dark(#ffffff, #2d2d2d);
+  --sunken: light-dark(#e3e3e3, #161616);
 
-  /* Ink. */
-  --primary: light-dark(#2c363c, #d7d4d1);
-  --secondary: light-dark(#6f6864, #a49c97);
-  --tertiary: light-dark(#8e8782, #7d7671);
-  --disabled-ink: light-dark(rgba(44, 54, 60, 0.38), rgba(215, 212, 209, 0.34));
+  /* Ink. macOS label colours are alpha over the surface, not fixed greys, so
+     they stay legible on any material. */
+  --primary: light-dark(rgba(0, 0, 0, 0.85), rgba(255, 255, 255, 0.85));
+  --secondary: light-dark(rgba(0, 0, 0, 0.5), rgba(255, 255, 255, 0.55));
+  --tertiary: light-dark(rgba(0, 0, 0, 0.26), rgba(255, 255, 255, 0.25));
+  --disabled-ink: light-dark(rgba(0, 0, 0, 0.25), rgba(255, 255, 255, 0.25));
 
-  /* Accent and state. */
+  /* Accent and state.
+   *
+   * The accent is the user's system accent colour, not a brand colour: on a
+   * Mac, selection and emphasis are expected to match whatever the person set
+   * in System Settings. The literals below are the fallback for engines that
+   * do not resolve the system keyword, and they stay in the product palette.
+   */
   --accent: light-dark(#286486, #82aeca);
   --accent-ink: light-dark(#ffffff, #12222c);
   --selection: light-dark(#cbd9e3, #2f4351);
-  --selection-inactive: light-dark(#e0dcd8, #2c2c2c);
-  --working: light-dark(#4f6c31, #8eac70);
-  --waiting: light-dark(#9a6700, #d0a215);
-  --danger: light-dark(#a8334c, #dc8191);
+  --selection-inactive: light-dark(#dcdcdc, #3a3a3a);
+  /* System-adjacent semantics: green, orange, red as macOS renders them. */
+  --working: light-dark(#1d7f36, #30d158);
+  --waiting: light-dark(#b25000, #ff9f0a);
+  --danger: light-dark(#c0392f, #ff6961);
 
   /* Separators. */
-  --line: light-dark(rgba(44, 54, 60, 0.14), rgba(255, 255, 255, 0.1));
-  --line-soft: light-dark(rgba(44, 54, 60, 0.08), rgba(255, 255, 255, 0.06));
-  --line-strong: light-dark(rgba(44, 54, 60, 0.26), rgba(255, 255, 255, 0.18));
+  --line: light-dark(rgba(0, 0, 0, 0.12), rgba(255, 255, 255, 0.12));
+  --line-soft: light-dark(rgba(0, 0, 0, 0.07), rgba(255, 255, 255, 0.07));
+  --line-strong: light-dark(rgba(0, 0, 0, 0.24), rgba(255, 255, 255, 0.2));
   --focus-ring: var(--accent);
 
   /* Hover/pressed washes that work on any material. */
-  --wash: light-dark(rgba(44, 54, 60, 0.06), rgba(255, 255, 255, 0.07));
-  --wash-strong: light-dark(rgba(44, 54, 60, 0.11), rgba(255, 255, 255, 0.12));
+  --wash: light-dark(rgba(0, 0, 0, 0.05), rgba(255, 255, 255, 0.06));
+  --wash-strong: light-dark(rgba(0, 0, 0, 0.09), rgba(255, 255, 255, 0.11));
 
   --shadow-raised: 0 1px 2px light-dark(rgba(0, 0, 0, 0.12), rgba(0, 0, 0, 0.5));
   --shadow-dialog: 0 12px 38px
@@ -74,6 +87,28 @@
   --sidebar-width: 248px;
 }
 
+@supports (color: AccentColor) {
+  :root {
+    --accent: AccentColor;
+    --accent-ink: AccentColorText;
+    /* Selection is the accent at the weight macOS uses for an inactive-window
+       source list: present, but never competing with the content. */
+    --selection: color-mix(in srgb, AccentColor 26%, var(--chrome));
+    --selection-strong: AccentColor;
+  }
+}
+
+/* Increase Contrast asks for firmer edges and darker secondary ink. */
+@media (prefers-contrast: more) {
+  :root {
+    --secondary: light-dark(rgba(0, 0, 0, 0.72), rgba(255, 255, 255, 0.78));
+    --tertiary: light-dark(rgba(0, 0, 0, 0.55), rgba(255, 255, 255, 0.6));
+    --line: light-dark(rgba(0, 0, 0, 0.34), rgba(255, 255, 255, 0.3));
+    --line-soft: light-dark(rgba(0, 0, 0, 0.22), rgba(255, 255, 255, 0.2));
+    --line-strong: light-dark(rgba(0, 0, 0, 0.55), rgba(255, 255, 255, 0.48));
+  }
+}
+
 * {
   box-sizing: border-box;
 }
@@ -86,10 +121,19 @@ body,
   margin: 0;
 }
 
+/* The window carries an NSVisualEffectView; the shell lets it through in the
+   chrome and paints content surfaces opaquely on top of it. */
 body {
   overflow: hidden;
-  background: var(--canvas);
+  background: transparent;
   color: var(--primary);
+}
+
+/* Reduce Transparency asks for a solid window instead of the material. */
+@media (prefers-reduced-transparency: reduce) {
+  body {
+    background: var(--canvas);
+  }
 }
 
 button,
