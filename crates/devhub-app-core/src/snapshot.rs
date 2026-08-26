@@ -214,6 +214,23 @@ impl WorkspaceSnapshot {
     }
 }
 
+/// What the shared editor host is doing right now.
+///
+/// The Editor is the one Surface whose content is mounted natively rather than
+/// rendered by the shell, so without this the frontend had nothing to show but
+/// a placeholder that claimed the editor was on its way even when it had
+/// already failed.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum EditorHostState {
+    /// No editor has been asked for yet, or one is starting.
+    #[default]
+    Starting,
+    /// The host is serving; its child WebViews are the visible content.
+    Ready,
+    /// The host could not start. The strings are shown to the user.
+    Failed { summary: String, detail: Option<String> },
+}
+
 /// The sole UI projection owned by Rust. It is intentionally not a wire type;
 /// R1.3 freezes the IPC representation at the coordinator seam.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -224,6 +241,7 @@ pub struct AppSnapshot {
     activities: [ActivitySnapshot; 3],
     workspaces: Vec<WorkspaceSnapshot>,
     sidebar: SidebarSnapshot,
+    editor_host: EditorHostState,
 }
 
 impl AppSnapshot {
@@ -265,6 +283,10 @@ impl AppSnapshot {
     pub const fn sidebar(&self) -> &SidebarSnapshot {
         &self.sidebar
     }
+
+    pub const fn editor_host(&self) -> &EditorHostState {
+        &self.editor_host
+    }
 }
 
 /// Pure application model. Runtime adapters and persistence are deliberately
@@ -277,6 +299,7 @@ pub struct AppModel {
     next_agent_ordinals: BTreeMap<(WorkspaceId, AgentProfileId), u32>,
     sidebar_width: u16,
     expanded_workspace_ids: BTreeSet<WorkspaceId>,
+    editor_host: EditorHostState,
     revision: u64,
 }
 
@@ -315,6 +338,7 @@ impl AppModel {
             next_agent_ordinals: BTreeMap::new(),
             sidebar_width: SIDEBAR_DEFAULT_WIDTH,
             expanded_workspace_ids: BTreeSet::new(),
+            editor_host: EditorHostState::Starting,
             revision: 0,
         }
     }
@@ -334,7 +358,22 @@ impl AppModel {
                 width: self.sidebar_width,
                 expanded_workspace_ids: self.expanded_workspace_ids.iter().cloned().collect(),
             },
+            editor_host: self.editor_host.clone(),
         }
+    }
+
+    /// Record what the editor host is doing. Returns whether it changed, so
+    /// the caller can skip a revision bump for a repeated report.
+    pub fn set_editor_host_state(&mut self, state: EditorHostState) -> bool {
+        if self.editor_host == state {
+            return false;
+        }
+        self.editor_host = state;
+        true
+    }
+
+    pub const fn editor_host_state(&self) -> &EditorHostState {
+        &self.editor_host
     }
 
     pub fn selection(&self) -> &NavigationSelection {

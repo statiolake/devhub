@@ -23,6 +23,9 @@
         }
       }
     ],
+    "editorHost": {
+      "status": "starting"
+    },
     "readiness": "ready",
     "revision": 0,
     "schemaVersion": 1,
@@ -133,6 +136,9 @@
           }
         }
       ],
+      "editorHost": {
+        "status": "starting"
+      },
       "readiness": "ready",
       "revision": 0,
       "schemaVersion": 1,
@@ -177,6 +183,9 @@
           }
         }
       ],
+      "editorHost": {
+        "status": "starting"
+      },
       "readiness": "ready",
       "revision": 0,
       "schemaVersion": 1,

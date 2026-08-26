@@ -1,6 +1,5 @@
 import {
   activeActivitySnapshot,
-  activityLabel,
   type Activity,
   type AppAppearance,
   type AppSnapshot,
@@ -50,48 +49,61 @@ function SurfaceMark({
   );
 }
 
-function SurfaceEmpty({
-  activity,
+/**
+ * The Editor's content is a native child WebView, so the shell only ever draws
+ * the states around it: waiting for the host, or the reason it never came.
+ * There is no placeholder in between -- a page that always said the editor was
+ * on its way said it just as confidently when the host had already failed.
+ */
+function SurfaceEditor({
+  host,
   context,
   workspace,
 }: {
-  readonly activity: Activity;
+  readonly host: AppSnapshot["editorHost"];
   readonly context: AppSnapshot["selection"]["context"];
   readonly workspace?: WorkspaceSnapshot;
 }) {
-  const label = activityLabel(activity);
   const contextText =
-    context.kind === "global"
-      ? "Scratch"
-      : context.kind === "workspace"
-        ? (workspace?.label ?? "Workspace")
-        : (workspace?.label ?? "Agent workspace");
+    context.kind === "global" ? "Scratch" : (workspace?.label ?? "Workspace");
+
+  if (host.status === "failed") {
+    return (
+      <div className="surface-state surface-error-state" role="alert">
+        <SurfaceMark activity="editor" tone="danger" />
+        <p className="surface-kicker">Editor unavailable</p>
+        <h1>{contextText}</h1>
+        <p className="surface-copy">{host.summary}</p>
+        {host.detail ? (
+          <details className="surface-error-details" open>
+            <summary>Details</summary>
+            <pre>{host.detail}</pre>
+          </details>
+        ) : null}
+      </div>
+    );
+  }
+
   return (
-    <div className="surface-state surface-empty-state">
-      <SurfaceMark activity={activity} />
-      <p className="surface-kicker">{label} Surface</p>
+    <div className="surface-state surface-loading-state" role="status">
+      <SurfaceMark activity="editor" />
+      <p className="surface-kicker">Starting</p>
       <h1>{contextText}</h1>
       <p className="surface-copy">
-        {activity === "editor"
-          ? "The editor appears here once the local Workbench is ready."
-          : activity === "agent"
-            ? "The agent control stream appears here once its runtime is ready."
-            : "The persistent terminal appears here once its session is ready."}
+        Waiting for the local VS Code workbench to accept connections.
       </p>
-      {activity === "editor" ? (
-        <p className="surface-note">
-          DevHub runs your own installed Visual Studio Code. Starting it means
-          you accept the{" "}
-          <a
-            href="https://aka.ms/vscode-server-license"
-            target="_blank"
-            rel="noreferrer"
-          >
-            VS Code Server License Terms
-          </a>
-          .
-        </p>
-      ) : null}
+      <p className="surface-note">
+        DevHub runs your own installed Visual Studio Code. Starting it means you
+        accept the{" "}
+        <a
+          href="https://aka.ms/vscode-server-license"
+          target="_blank"
+          rel="noreferrer"
+        >
+          VS Code Server License Terms
+        </a>
+        .
+      </p>
     </div>
   );
 }
@@ -392,8 +404,8 @@ export function SurfaceViewport({
           appearance={appearance}
         />
       ) : (
-        <SurfaceEmpty
-          activity={activity}
+        <SurfaceEditor
+          host={snapshot.editorHost}
           context={snapshot.selection.context}
           workspace={workspace}
         />

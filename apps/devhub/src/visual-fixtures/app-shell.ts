@@ -101,6 +101,7 @@ function snapshot(
   workspaces: readonly WorkspaceSnapshot[],
   expandedWorkspaceIds: readonly string[] = [],
   revision = 1,
+  editorHost: AppSnapshot["editorHost"] = { status: "ready" },
 ): AppSnapshot {
   return {
     schemaVersion: 1,
@@ -110,6 +111,7 @@ function snapshot(
     activities,
     workspaces,
     sidebar: { width: 248, expandedWorkspaceIds },
+    editorHost,
   };
 }
 
@@ -125,6 +127,22 @@ export const workspaceSnapshot = snapshot(
   "editor",
   workspaceActivities("workspace-1"),
   [workspace("workspace-1", "devhub")],
+);
+
+/** The editor host refused to start; the Surface must say why. */
+export const editorFailedSnapshot = snapshot(
+  { kind: "workspace", workspaceId: "workspace-1" },
+  "editor",
+  workspaceActivities("workspace-1"),
+  [workspace("workspace-1", "devhub")],
+  [],
+  1,
+  {
+    status: "failed",
+    summary: "The editor's saved local port is being used by another process.",
+    detail:
+      "127.0.0.1:55971 is already in use by another process. Quit whatever holds it and retry.",
+  },
 );
 
 export const agentSnapshot = snapshot(

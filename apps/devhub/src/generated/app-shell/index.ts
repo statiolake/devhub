@@ -187,6 +187,7 @@ export type AppReadiness = "starting" | "ready" | "unavailable";
 export type AppSidebarDensityWire = "compact" | "comfortable";
 export interface AppSnapshotWire {
   readonly activities: readonly ActivityWire[];
+  readonly editorHost: EditorHostWire;
   readonly readiness: AppReadiness;
   readonly revision: number;
   readonly schemaVersion: 1;
@@ -249,6 +250,18 @@ export type DisabledReasonWire =
   | "workspace-unavailable"
   | "workspace-closing"
   | "workspace-closing-failed";
+export type EditorHostWire =
+  | {
+      readonly status: "starting";
+    }
+  | {
+      readonly status: "ready";
+    }
+  | {
+      readonly detail?: string | null;
+      readonly status: "failed";
+      readonly summary: string;
+    };
 export type ReplayEventKindWire =
   | "snapshot"
   | "noop"
@@ -998,6 +1011,7 @@ const APP_SHELL_SCHEMA = {
               minItems: 3,
               type: "array",
             },
+            editorHost: { $ref: "#/$defs/EditorHostWire" },
             readiness: { $ref: "#/$defs/AppReadiness" },
             revision: {
               format: "uint64",
@@ -1021,6 +1035,7 @@ const APP_SHELL_SCHEMA = {
             "activities",
             "workspaces",
             "sidebar",
+            "editorHost",
           ],
           type: "object",
         },
@@ -1142,6 +1157,34 @@ const APP_SHELL_SCHEMA = {
             "workspace-closing-failed",
           ],
           type: "string",
+        },
+        EditorHostWire: {
+          description:
+            "The shared editor host's state, so the Editor Surface can show a loading\nstate or the actual failure instead of a placeholder.",
+          oneOf: [
+            {
+              additionalProperties: false,
+              properties: { status: { const: "starting", type: "string" } },
+              required: ["status"],
+              type: "object",
+            },
+            {
+              additionalProperties: false,
+              properties: { status: { const: "ready", type: "string" } },
+              required: ["status"],
+              type: "object",
+            },
+            {
+              additionalProperties: false,
+              properties: {
+                detail: { maxLength: 4096, type: ["string", "null"] },
+                status: { const: "failed", type: "string" },
+                summary: { maxLength: 400, minLength: 1, type: "string" },
+              },
+              required: ["status", "summary"],
+              type: "object",
+            },
+          ],
         },
         ResolutionWire: {
           oneOf: [
@@ -1299,6 +1342,7 @@ const APP_SHELL_SCHEMA = {
           minItems: 3,
           type: "array",
         },
+        editorHost: { $ref: "#/$defs/EditorHostWire" },
         readiness: { $ref: "#/$defs/AppReadiness" },
         revision: {
           format: "uint64",
@@ -1319,6 +1363,7 @@ const APP_SHELL_SCHEMA = {
         "activities",
         "workspaces",
         "sidebar",
+        "editorHost",
       ],
       type: "object",
     },
@@ -1441,6 +1486,34 @@ const APP_SHELL_SCHEMA = {
       ],
       type: "string",
     },
+    EditorHostWire: {
+      description:
+        "The shared editor host's state, so the Editor Surface can show a loading\nstate or the actual failure instead of a placeholder.",
+      oneOf: [
+        {
+          additionalProperties: false,
+          properties: { status: { const: "starting", type: "string" } },
+          required: ["status"],
+          type: "object",
+        },
+        {
+          additionalProperties: false,
+          properties: { status: { const: "ready", type: "string" } },
+          required: ["status"],
+          type: "object",
+        },
+        {
+          additionalProperties: false,
+          properties: {
+            detail: { maxLength: 4096, type: ["string", "null"] },
+            status: { const: "failed", type: "string" },
+            summary: { maxLength: 400, minLength: 1, type: "string" },
+          },
+          required: ["status", "summary"],
+          type: "object",
+        },
+      ],
+    },
     ReplayEventKindWire: {
       enum: ["snapshot", "noop", "error", "operation_completed"],
       type: "string",
@@ -1518,6 +1591,7 @@ const APP_SHELL_SCHEMA = {
               minItems: 3,
               type: "array",
             },
+            editorHost: { $ref: "#/$defs/EditorHostWire" },
             readiness: { $ref: "#/$defs/AppReadiness" },
             revision: {
               format: "uint64",
@@ -1541,6 +1615,7 @@ const APP_SHELL_SCHEMA = {
             "activities",
             "workspaces",
             "sidebar",
+            "editorHost",
           ],
           type: "object",
         },
@@ -1581,6 +1656,34 @@ const APP_SHELL_SCHEMA = {
             "workspace-closing-failed",
           ],
           type: "string",
+        },
+        EditorHostWire: {
+          description:
+            "The shared editor host's state, so the Editor Surface can show a loading\nstate or the actual failure instead of a placeholder.",
+          oneOf: [
+            {
+              additionalProperties: false,
+              properties: { status: { const: "starting", type: "string" } },
+              required: ["status"],
+              type: "object",
+            },
+            {
+              additionalProperties: false,
+              properties: { status: { const: "ready", type: "string" } },
+              required: ["status"],
+              type: "object",
+            },
+            {
+              additionalProperties: false,
+              properties: {
+                detail: { maxLength: 4096, type: ["string", "null"] },
+                status: { const: "failed", type: "string" },
+                summary: { maxLength: 400, minLength: 1, type: "string" },
+              },
+              required: ["status", "summary"],
+              type: "object",
+            },
+          ],
         },
         ReplayEventKindWire: {
           enum: ["snapshot", "noop", "error", "operation_completed"],

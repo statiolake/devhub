@@ -17,9 +17,9 @@ use crate::config::AppearanceConfig;
 use crate::{
     Activity, AgentControlState, AgentId, AgentProfile, AgentProfileKind, AgentStatus, AppError,
     AppErrorCode, AppSnapshot, CloseInspectionProjection, DiagnosticCode, DisabledReason,
-    DomainErrorCode, NavigationContext, ResourceInspection, RuntimeHealth, SurfaceKey,
-    SurfaceResolution, UserIntent, WorkspaceAggregateStatus, WorkspaceId, WorkspaceState,
-    SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH,
+    DomainErrorCode, EditorHostState, NavigationContext, ResourceInspection, RuntimeHealth,
+    SurfaceKey, SurfaceResolution, UserIntent, WorkspaceAggregateStatus, WorkspaceId,
+    WorkspaceState, SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH,
 };
 
 pub const APP_SHELL_SCHEMA_VERSION: u16 = 1;
@@ -125,6 +125,24 @@ pub struct AppSnapshotWire {
     activities: [ActivityWire; 3],
     workspaces: Vec<WorkspaceWire>,
     sidebar: SidebarWire,
+    editor_host: EditorHostWire,
+}
+
+/// The shared editor host's state, so the Editor Surface can show a loading
+/// state or the actual failure instead of a placeholder.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields, tag = "status")]
+#[schemars(rename_all = "camelCase", deny_unknown_fields, tag = "status")]
+pub enum EditorHostWire {
+    Starting,
+    Ready,
+    Failed {
+        #[schemars(length(min = 1, max = 400))]
+        summary: String,
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        #[schemars(length(max = 4096))]
+        detail: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -987,6 +1005,10 @@ impl AppErrorWire {
         self.detail.as_deref()
     }
 
+    pub fn summary(&self) -> &str {
+        &self.summary
+    }
+
     pub fn with_module(mut self, module: AppErrorModuleWire) -> Self {
         self.module = module;
         self
@@ -1203,10 +1225,18 @@ impl AppSnapshotWire {
             activity: activity_name(activity.activity()),
             resolution: resolution_wire(activity.resolution()),
         });
+        let editor_host = match snapshot.editor_host() {
+            EditorHostState::Starting => EditorHostWire::Starting,
+            EditorHostState::Ready => EditorHostWire::Ready,
+            EditorHostState::Failed { summary, detail } => {
+                EditorHostWire::Failed { summary: summary.clone(), detail: detail.clone() }
+            }
+        };
         let wire = Self {
             schema_version: APP_SHELL_SCHEMA_VERSION,
             revision: snapshot.revision(),
             readiness,
+            editor_host,
             selection: SelectionWire {
                 context: context_wire(snapshot.selected_context()),
                 activity: activity_name(snapshot.active_activity()),

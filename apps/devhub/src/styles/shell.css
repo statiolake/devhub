@@ -582,6 +582,23 @@ body.is-resizing-sidebar {
   cursor: default;
 }
 
+/* The provider's own words, wrapped rather than clipped: this is the text the
+   user needs to read in full. */
+.surface-error-details pre {
+  overflow-x: auto;
+  max-height: 220px;
+  padding: var(--space-3);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-control);
+  margin: var(--space-2) 0 0;
+  background: var(--sunken);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .surface-error-details dl {
   display: grid;
   margin: var(--space-2) 0 0;

@@ -21,6 +21,7 @@ import type { AppShellClient, WorkspacePickerEvent } from "./client";
 import {
   agentSnapshot,
   closingFailedSnapshot,
+  editorFailedSnapshot,
   globalSnapshot,
   unavailableSnapshot,
   workspaceSnapshot,
@@ -449,6 +450,30 @@ describe("App Shell states and accessibility", () => {
       await screen.findByRole("heading", { name: "closing" }),
     ).toBeInTheDocument();
     expect(screen.getByText(/could not be closed/i)).toBeInTheDocument();
+  });
+
+  it("shows the editor host's own failure instead of a placeholder", async () => {
+    render(<AppShell client={client(editorFailedSnapshot)} />);
+    expect(await screen.findByText("Editor unavailable")).toBeInTheDocument();
+    // The summary says what to do; the detail says exactly what happened.
+    expect(
+      screen.getByText(/saved local port is being used/i),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/127\.0\.0\.1:55971/)).toBeInTheDocument();
+    // The placeholder that always claimed the editor was on its way is gone.
+    expect(screen.queryByText(/appears here once/i)).not.toBeInTheDocument();
+  });
+
+  it("shows a starting state while the editor host is coming up", async () => {
+    const starting = {
+      ...workspaceSnapshot,
+      editorHost: { status: "starting" },
+    } as typeof workspaceSnapshot;
+    render(<AppShell client={client(starting)} />);
+    expect(await screen.findByText("Starting")).toBeInTheDocument();
+    expect(
+      screen.getByText(/waiting for the local vs code workbench/i),
+    ).toBeInTheDocument();
   });
 
   it.each(Object.keys(disabledReasonCopy) as DisabledReasonWire[])(

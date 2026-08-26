@@ -32,15 +32,15 @@ use devhub_app_core::{
     AgentProfilesDiagnosticWire, AgentProfilesWire, AgentStopResult, AppAppearanceWire,
     AppCoordinator, AppErrorCodeWire, AppErrorWire, AppIntentWire, AppOutcomeWire, AppReadiness,
     AppSnapshot, AppSnapshotWire, CancellationToken, CleanupStep, CloseInspectionInputs,
-    ConfirmationId, CoordinatorEvent, DiagnosticCode, Effect, IdGenerator, IntentEnvelope,
-    IntentId, IntentOutcome, JsonStateStore, NavigationContext, OpaqueProviderMapping, OperationId,
-    OperationToken, PortError, PortErrorCode, ProviderEvent, ProviderEventEnvelope,
-    ProviderEventId, ReplayWire, RequestedPath, ResourceInspection, RuntimeHealth,
-    SettingsDiagnosticsWire, SettingsErrorWire, SettingsLogLevelWire, SettingsPreviousExitWire,
-    SettingsRuntimeHealthValueWire, SettingsRuntimeHealthWire, SettingsSaveRequestWire,
-    SettingsSnapshotWire, SettingsSocketChangeRequestWire, SurfaceKey, SurfaceResolution,
-    TerminalTarget, UserIntent, WorkspaceCleanupResult, WorkspaceId, WorkspacePickerEventWire,
-    SETTINGS_SEQUENCE_MAX,
+    ConfirmationId, CoordinatorEvent, DiagnosticCode, EditorHostState as CoreEditorHostState,
+    Effect, IdGenerator, IntentEnvelope, IntentId, IntentOutcome, JsonStateStore,
+    NavigationContext, OpaqueProviderMapping, OperationId, OperationToken, PortError,
+    PortErrorCode, ProviderEvent, ProviderEventEnvelope, ProviderEventId, ReplayWire,
+    RequestedPath, ResourceInspection, RuntimeHealth, SettingsDiagnosticsWire, SettingsErrorWire,
+    SettingsLogLevelWire, SettingsPreviousExitWire, SettingsRuntimeHealthValueWire,
+    SettingsRuntimeHealthWire, SettingsSaveRequestWire, SettingsSnapshotWire,
+    SettingsSocketChangeRequestWire, SurfaceKey, SurfaceResolution, TerminalTarget, UserIntent,
+    WorkspaceCleanupResult, WorkspaceId, WorkspacePickerEventWire, SETTINGS_SEQUENCE_MAX,
 };
 use raw_window_handle::HasWindowHandle;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
@@ -2648,6 +2648,7 @@ impl NativeAppState {
         }
         match self.reconstruct_window_once(app) {
             Ok(()) => {
+                self.report_editor_host_state(app, CoreEditorHostState::Ready);
                 // The explicit startup barrier is consumed by the Q5 worker
                 // after settings/profile startup has completed.
                 self.set_startup_reconstruction_state(StartupReconstructionState::Ready);
@@ -2661,6 +2662,13 @@ impl NativeAppState {
                 // The shell has already pulled its first snapshot by now, so a
                 // pending error would sit unread until the next command. Push
                 // it instead.
+                self.report_editor_host_state(
+                    app,
+                    CoreEditorHostState::Failed {
+                        summary: error.summary().to_owned(),
+                        detail: error.detail().map(str::to_owned),
+                    },
+                );
                 let _ = app.emit_to(APP_SHELL_WINDOW_LABEL, APP_NATIVE_ERROR_EVENT, error.clone());
                 self.record_native_error(error);
             }
@@ -3551,6 +3559,22 @@ impl NativeAppState {
                 state.record_native_error(AppErrorWire::native_unavailable());
             }
         });
+    }
+
+    /// Project the shared editor host's state and push the new snapshot, so
+    /// the Editor Surface shows a loading state or the real failure rather
+    /// than a placeholder that always claims the editor is on its way.
+    fn report_editor_host_state(&self, app: &AppHandle, state: CoreEditorHostState) {
+        let Ok(mut coordinator) = self.coordinator.lock() else { return };
+        if !coordinator.set_editor_host_state(state) {
+            return;
+        }
+        let snapshot = coordinator.snapshot();
+        let readiness = coordinator.readiness();
+        drop(coordinator);
+        if let Ok(wire) = AppSnapshotWire::from_snapshot(&snapshot, readiness) {
+            let _ = app.emit_to(APP_SHELL_WINDOW_LABEL, APP_SNAPSHOT_CHANGED_EVENT, wire);
+        }
     }
 
     fn record_native_error(&self, error: AppErrorWire) {

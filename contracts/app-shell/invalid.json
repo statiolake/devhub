@@ -23,6 +23,9 @@
         }
       }
     ],
+    "editorHost": {
+      "status": "starting"
+    },
     "readiness": "ready",
     "revision": 0,
     "schemaVersion": 1,
@@ -63,6 +66,9 @@
         }
       }
     ],
+    "editorHost": {
+      "status": "starting"
+    },
     "readiness": "ready",
     "revision": 0,
     "schemaVersion": 2,
@@ -102,6 +108,9 @@
         }
       }
     ],
+    "editorHost": {
+      "status": "starting"
+    },
     "readiness": "ready",
     "revision": 0,
     "schemaVersion": 1,
@@ -141,6 +150,9 @@
         }
       }
     ],
+    "editorHost": {
+      "status": "starting"
+    },
     "readiness": "ready",
     "revision": 9007199254740992,
     "schemaVersion": 1,
@@ -220,6 +232,9 @@
           }
         }
       ],
+      "editorHost": {
+        "status": "starting"
+      },
       "readiness": "ready",
       "revision": 0,
       "schemaVersion": 1,

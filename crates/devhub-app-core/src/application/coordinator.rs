@@ -508,6 +508,18 @@ impl AppCoordinator {
         self.readiness = super::types::AppReadiness::Ready;
     }
 
+    /// Report what the shared editor host is doing. The shell owns that
+    /// lifecycle; the coordinator only projects it so the Editor Surface can
+    /// render a loading state or the actual failure.
+    pub fn set_editor_host_state(&mut self, state: crate::EditorHostState) -> bool {
+        let changed = self.model.set_editor_host_state(state);
+        if changed {
+            let snapshot = self.snapshot();
+            self.emit(CoordinatorEvent::Snapshot(snapshot));
+        }
+        changed
+    }
+
     /// Starts a provider reconciliation for one domain Agent. The caller
     /// supplies the operation identity so the coordinator never fabricates a
     /// production identifier behind the port seam.

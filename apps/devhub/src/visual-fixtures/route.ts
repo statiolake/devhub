@@ -2,6 +2,7 @@ import type { AppSnapshot } from "../generated/app-shell";
 import {
   agentSnapshot,
   closingFailedSnapshot,
+  editorFailedSnapshot,
   globalSnapshot,
   unavailableSnapshot,
   workspaceSnapshot,
@@ -13,6 +14,7 @@ export const FIXTURE_NAMES = [
   "agent",
   "unavailable",
   "closing-failed",
+  "editor-failed",
 ] as const;
 
 export type FixtureName = (typeof FIXTURE_NAMES)[number];
@@ -23,6 +25,7 @@ export const fixtureSnapshots: Readonly<Record<FixtureName, AppSnapshot>> = {
   agent: agentSnapshot,
   unavailable: unavailableSnapshot,
   "closing-failed": closingFailedSnapshot,
+  "editor-failed": editorFailedSnapshot,
 };
 
 /**
