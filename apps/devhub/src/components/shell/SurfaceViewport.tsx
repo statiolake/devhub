@@ -59,8 +59,19 @@ function Failure({
 }) {
   return (
     <div className="surface-state surface-failure" role="alert">
-      <p className="surface-line">{summary}</p>
-      {detail ? <pre className="surface-detail">{detail}</pre> : null}
+      <p className="failure-title">
+        <svg
+          className="failure-icon"
+          viewBox="0 0 16 16"
+          aria-hidden="true"
+          focusable="false"
+        >
+          <circle cx="8" cy="8" r="7" />
+          <path d="M8 4.6v4.2M8 11.1v.6" />
+        </svg>
+        {summary}
+      </p>
+      {detail ? <p className="failure-detail">{detail}</p> : null}
       {actions && actions.length > 0 ? (
         <div className="surface-actions">
           {actions.map((action) => (

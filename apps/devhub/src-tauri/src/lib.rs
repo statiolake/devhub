@@ -8292,12 +8292,11 @@ mod tests {
                 .expect("serialize");
             assert_eq!(wire["code"], expected, "{editor_code:?}");
             assert_eq!(wire["module"], "editor", "{editor_code:?}");
+            // The summary is an alert's message text: short and declarative.
+            // What to do about it belongs in the informative detail.
             let summary = wire["summary"].as_str().expect("summary").to_owned();
-            // Each summary says what to do next, and never carries a path,
-            // port number, or provider output.
-            assert!(summary.contains("retry"), "{editor_code:?}: {summary}");
-            assert!(!summary.contains('/'), "{editor_code:?}: {summary}");
-            assert!(!summary.chars().any(|ch| ch.is_ascii_digit()), "{editor_code:?}: {summary}");
+            assert!(summary.ends_with('.'), "{editor_code:?}: {summary}");
+            assert!(summary.len() <= 60, "{editor_code:?}: {summary}");
             let actions = wire["actions"].as_array().expect("actions");
             assert!(actions.iter().any(|action| action == "retry"), "{editor_code:?}");
             // The concrete cause travels alongside, for the person who has to

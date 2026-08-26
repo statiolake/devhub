@@ -139,9 +139,9 @@ export const editorFailedSnapshot = snapshot(
   1,
   {
     status: "failed",
-    summary: "The editor's saved local port is being used by another process.",
+    summary: "The editor's port is already in use.",
     detail:
-      "127.0.0.1:55971 is already in use by another process. Quit whatever holds it and retry.",
+      "127.0.0.1:55971 is already in use by another process. This is the port DevHub persisted for its editor origin, so it is not replaced automatically. Quit whatever holds it — a leftover code serve-web is the usual cause — and retry.",
   },
 );
 

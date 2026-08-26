@@ -455,7 +455,7 @@ describe("App Shell states and accessibility", () => {
     render(<AppShell client={client(editorFailedSnapshot)} />);
     // The summary says what to do; the detail says exactly what happened.
     expect(
-      await screen.findByText(/saved local port is being used/i),
+      await screen.findByText(/port is already in use/i),
     ).toBeInTheDocument();
     expect(screen.getByText(/127\.0\.0\.1:55971/)).toBeInTheDocument();
     // The placeholder that always claimed the editor was on its way is gone.

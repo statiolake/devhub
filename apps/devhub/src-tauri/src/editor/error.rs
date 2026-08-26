@@ -115,7 +115,7 @@ const fn summary_for(code: EditorErrorCode) -> &'static str {
             "The editor provider executable identity is not accepted."
         }
         EditorErrorCode::OfficialVscodeUnavailable => {
-            "DevHub could not find the VS Code `code` command. Install Visual Studio Code, or run its Shell Command: Install 'code' command in PATH."
+            "DevHub looks for the `code` command on your PATH and in the usual application locations. Install Visual Studio Code, or open its Command Palette and run \"Shell Command: Install 'code' command in PATH\", then retry."
         }
         EditorErrorCode::ProviderCapabilityMismatch => {
             "The selected editor provider does not support DevHub's required Web Workbench contract."

@@ -1117,21 +1117,11 @@ fn safe_error_summary(code: AppErrorCodeWire) -> &'static str {
         AppErrorCodeWire::OperationPending => "Another operation is still in progress.",
         AppErrorCodeWire::PersistenceDegraded => "Changes could not be saved.",
         AppErrorCodeWire::NativeUnavailable => "The native app shell is unavailable.",
-        // These name the failure and the next step. The concrete cause rides
-        // along in `detail` rather than being folded into the sentence.
-        AppErrorCodeWire::EditorProviderMissing => {
-            "DevHub could not find the Visual Studio Code `code` command. \
-             Install VS Code, or run its \"Shell Command: Install 'code' command in PATH\" \
-             from the Command Palette, then retry."
-        }
-        AppErrorCodeWire::EditorPortUnavailable => {
-            "The editor's saved local port is being used by another process. \
-             Quit any leftover VS Code server, then retry. Settings shows the port DevHub uses."
-        }
-        AppErrorCodeWire::EditorUnavailable => {
-            "The editor could not start. Other activities keep working; \
-             open Settings to check the editor runtime, then retry."
-        }
+        // Short and declarative, like an alert's message text. What to do
+        // about it belongs in `detail`, which is the informative text.
+        AppErrorCodeWire::EditorProviderMissing => "Visual Studio Code was not found.",
+        AppErrorCodeWire::EditorPortUnavailable => "The editor's port is already in use.",
+        AppErrorCodeWire::EditorUnavailable => "The editor could not start.",
     }
 }
 

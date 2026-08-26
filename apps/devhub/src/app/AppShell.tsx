@@ -67,10 +67,19 @@ function ErrorSurface({
   return (
     <section className="surface" aria-label="Error surface" aria-live="polite">
       <div className="surface-state surface-failure" role="alert">
-        <p className="surface-line">{error.summary}</p>
-        {error.detail ? (
-          <pre className="surface-detail">{error.detail}</pre>
-        ) : null}
+        <p className="failure-title">
+          <svg
+            className="failure-icon"
+            viewBox="0 0 16 16"
+            aria-hidden="true"
+            focusable="false"
+          >
+            <circle cx="8" cy="8" r="7" />
+            <path d="M8 4.6v4.2M8 11.1v.6" />
+          </svg>
+          {error.summary}
+        </p>
+        {error.detail ? <p className="failure-detail">{error.detail}</p> : null}
         <div className="surface-actions">
           {error.actions.includes("retry") && (
             <button
