@@ -5,6 +5,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { AppShell } from "./AppShell";
@@ -114,8 +115,10 @@ describe("App Shell navigation matrix", () => {
     "resolves %s context without adding a second navigation surface",
     async (snapshot, heading, activity, surfaceKey) => {
       render(<AppShell client={client(snapshot)} />);
+      // The Surface no longer repeats the context; the titlebar names it.
+      const titlebar = await screen.findByRole("banner");
       expect(
-        await screen.findByRole("heading", { name: heading }),
+        within(titlebar).getByTitle(new RegExp(heading)),
       ).toBeInTheDocument();
       expect(screen.getByRole("button", { name: activity })).toHaveAttribute(
         "aria-pressed",
@@ -439,25 +442,20 @@ describe("App Shell states and accessibility", () => {
       <AppShell client={client(unavailableSnapshot)} />,
     );
     expect(
-      await screen.findByRole("heading", { name: "missing" }),
+      await screen.findByText(/workspace is unavailable/i),
     ).toBeInTheDocument();
-    expect(screen.getByText("Unavailable")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Locate…" })).toBeInTheDocument();
     unavailable.unmount();
 
     render(<AppShell client={client(closingFailedSnapshot)} />);
-    expect(
-      await screen.findByRole("heading", { name: "closing" }),
-    ).toBeInTheDocument();
-    expect(screen.getByText(/could not be closed/i)).toBeInTheDocument();
+    expect(await screen.findByText(/could not be closed/i)).toBeInTheDocument();
   });
 
   it("shows the editor host's own failure instead of a placeholder", async () => {
     render(<AppShell client={client(editorFailedSnapshot)} />);
-    expect(await screen.findByText("Editor unavailable")).toBeInTheDocument();
     // The summary says what to do; the detail says exactly what happened.
     expect(
-      screen.getByText(/saved local port is being used/i),
+      await screen.findByText(/saved local port is being used/i),
     ).toBeInTheDocument();
     expect(screen.getByText(/127\.0\.0\.1:55971/)).toBeInTheDocument();
     // The placeholder that always claimed the editor was on its way is gone.
@@ -470,10 +468,7 @@ describe("App Shell states and accessibility", () => {
       editorHost: { status: "starting" },
     } as typeof workspaceSnapshot;
     render(<AppShell client={client(starting)} />);
-    expect(await screen.findByText("Starting")).toBeInTheDocument();
-    expect(
-      screen.getByText(/waiting for the local vs code workbench/i),
-    ).toBeInTheDocument();
+    expect(await screen.findByText("Starting the editor…")).toBeInTheDocument();
   });
 
   it.each(Object.keys(disabledReasonCopy) as DisabledReasonWire[])(
@@ -542,9 +537,7 @@ describe("App Shell states and accessibility", () => {
       () => new Promise((resolve) => (resolveSnapshot = resolve)),
     );
     render(<AppShell client={appClient} />);
-    expect(screen.getByRole("status")).toHaveTextContent(
-      "Waking the local workbench",
-    );
+    expect(screen.getByRole("status")).toHaveTextContent("Connecting…");
     await waitFor(() => expect(appClient.getSnapshot).toHaveBeenCalled());
     resolveSnapshot(globalSnapshot);
     await waitFor(() =>
@@ -866,7 +859,7 @@ describe("App Shell states and accessibility", () => {
       actions: ["retry"],
     });
     render(<AppShell client={appClient} />);
-    await screen.findByRole("heading", { name: "devhub" });
+    await within(await screen.findByRole("banner")).findByTitle(/devhub/);
     fireEvent.keyDown(
       screen.getByRole("separator", { name: "Resize sidebar" }),
       {
@@ -878,7 +871,10 @@ describe("App Shell states and accessibility", () => {
       "The requested action is not available.",
     );
     expect(screen.getByRole("region", { name: "Surface" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "devhub" })).toBeInTheDocument();
+    // The rejected intent did not change context.
+    expect(
+      within(screen.getByRole("banner")).getByTitle(/devhub/),
+    ).toBeInTheDocument();
   });
 
   it("renders persistence degradation as an inline intent alert", async () => {
@@ -893,7 +889,7 @@ describe("App Shell states and accessibility", () => {
       snapshot: workspaceSnapshot,
     });
     render(<AppShell client={appClient} />);
-    await screen.findByRole("heading", { name: "devhub" });
+    await within(await screen.findByRole("banner")).findByTitle(/devhub/);
 
     fireEvent.keyDown(
       screen.getByRole("separator", { name: "Resize sidebar" }),

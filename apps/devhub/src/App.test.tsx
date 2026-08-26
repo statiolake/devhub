@@ -44,12 +44,7 @@ describe("DevHub app shell", () => {
     render(<App client={appClient} />);
 
     expect(
-      await screen.findByRole("heading", {
-        name: "The workbench is unavailable",
-      }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText("The native app shell is unavailable."),
+      await screen.findByText("The native app shell is unavailable."),
     ).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Try again" }),
@@ -57,7 +52,8 @@ describe("DevHub app shell", () => {
     expect(
       screen.getByRole("button", { name: "Open Settings" }),
     ).toBeInTheDocument();
-    expect(screen.getByText("Technical details")).toBeInTheDocument();
+    // Identifiers for a bug report, shown plainly rather than behind a toggle.
+    expect(screen.getByText(/native_unavailable/)).toBeInTheDocument();
     expect(document.activeElement).toBe(
       screen.getByRole("button", { name: "Try again" }),
     );

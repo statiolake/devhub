@@ -455,89 +455,76 @@ body.is-resizing-sidebar {
   background: var(--surface);
 }
 
-/* Every non-provider state is one centred column, so states never look like
-   they landed somewhere by accident. */
+/* Surface states are information, not a layout showcase: one line, and the
+   text needed to act on it. The Workspace and Activity are already named by
+   the Sidebar and the titlebar, so nothing here repeats them. */
 .surface-state {
   display: flex;
-  width: min(420px, 100%);
+  overflow: auto;
+  width: min(560px, 100%);
   height: 100%;
   flex-direction: column;
   align-items: flex-start;
   justify-content: center;
   padding: var(--space-8);
   margin: 0 auto;
-  text-align: left;
+  gap: var(--space-3);
 }
 
-.surface-mark {
-  display: flex;
-  width: 34px;
-  height: 34px;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  margin-bottom: var(--space-4);
-  background: var(--raised);
-  color: var(--secondary);
-  font-size: 15px;
-}
-
-.surface-mark[data-tone="danger"] {
-  border-color: color-mix(in srgb, var(--danger) 42%, transparent);
-  color: var(--danger);
-}
-
-.surface-kicker {
-  margin: 0 0 var(--space-1);
-  color: var(--tertiary);
-  font-size: 11px;
-  font-weight: 590;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-}
-
-.surface-state h1 {
-  margin: 0 0 var(--space-2);
-  font-size: 20px;
-  font-weight: 620;
-  letter-spacing: -0.01em;
-}
-
-.surface-copy {
+.surface-line {
   margin: 0;
   color: var(--secondary);
-  line-height: 1.5;
-  text-wrap: pretty;
 }
 
-.surface-note {
-  margin: var(--space-3) 0 0;
-  color: var(--tertiary);
-  font-size: 12px;
-  line-height: 1.5;
+.surface-failure .surface-line {
+  color: var(--primary);
+}
+
+/* The provider's own words, wrapped rather than clipped. */
+.surface-detail {
+  overflow: auto;
+  width: 100%;
+  max-height: 260px;
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  margin: 0;
+  background: var(--sunken);
+  color: var(--secondary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.55;
+  white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+.surface-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--line-strong);
+  border-radius: 50%;
+  animation: surface-spin 700ms linear infinite;
+  border-top-color: var(--accent);
+}
+
+@keyframes surface-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .surface-actions {
   display: flex;
   flex-wrap: wrap;
-  margin-top: var(--space-5);
   gap: var(--space-2);
 }
 
-.surface-loading-state .surface-mark {
-  animation: surface-pulse 1.8s ease-in-out infinite;
-}
-
-@keyframes surface-pulse {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.45;
-  }
+/* Identifiers for a bug report, not something to read every time. */
+.surface-meta {
+  margin: 0;
+  color: var(--tertiary);
+  font-family: var(--font-mono);
+  font-size: 11px;
 }
 
 .surface-inline-alert {
@@ -569,56 +556,6 @@ body.is-resizing-sidebar {
   color: var(--raised);
   font-size: 11px;
   font-weight: 700;
-}
-
-.surface-error-details {
-  width: 100%;
-  margin-top: var(--space-4);
-  color: var(--secondary);
-  font-size: 12px;
-}
-
-.surface-error-details summary {
-  cursor: default;
-}
-
-/* The provider's own words, wrapped rather than clipped: this is the text the
-   user needs to read in full. */
-.surface-error-details pre {
-  overflow-x: auto;
-  max-height: 220px;
-  padding: var(--space-3);
-  border: 1px solid var(--line-soft);
-  border-radius: var(--radius-control);
-  margin: var(--space-2) 0 0;
-  background: var(--sunken);
-  font-family: var(--font-mono);
-  font-size: 11px;
-  line-height: 1.5;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
-.surface-error-details dl {
-  display: grid;
-  margin: var(--space-2) 0 0;
-  gap: var(--space-1);
-}
-
-.surface-error-details dl div {
-  display: flex;
-  gap: var(--space-2);
-}
-
-.surface-error-details dt {
-  min-width: 92px;
-  color: var(--tertiary);
-}
-
-.surface-error-details dd {
-  margin: 0;
-  font-family: var(--font-mono);
-  overflow-wrap: anywhere;
 }
 
 /* The terminal owns its own background; give it the whole viewport. */

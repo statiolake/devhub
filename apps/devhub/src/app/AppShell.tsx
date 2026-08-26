@@ -58,7 +58,7 @@ function ErrorSurface({
 }) {
   const showSettings = error.actions.includes("open_settings");
   const primaryActionRef = useRef<HTMLButtonElement | null>(null);
-  const detailsRef = useRef<HTMLElement | null>(null);
+  const detailsRef = useRef<HTMLParagraphElement | null>(null);
 
   useEffect(() => {
     (primaryActionRef.current ?? detailsRef.current)?.focus();
@@ -66,13 +66,11 @@ function ErrorSurface({
 
   return (
     <section className="surface" aria-label="Error surface" aria-live="polite">
-      <div className="surface-state surface-error-state" role="alert">
-        <span className="surface-mark" aria-hidden="true">
-          !
-        </span>
-        <p className="surface-kicker">{error.module} error</p>
-        <h1>The workbench is unavailable</h1>
-        <p className="surface-copy">{error.summary}</p>
+      <div className="surface-state surface-failure" role="alert">
+        <p className="surface-line">{error.summary}</p>
+        {error.detail ? (
+          <pre className="surface-detail">{error.detail}</pre>
+        ) : null}
         <div className="surface-actions">
           {error.actions.includes("retry") && (
             <button
@@ -97,25 +95,9 @@ function ErrorSurface({
             </button>
           )}
         </div>
-        <details className="surface-error-details">
-          <summary ref={detailsRef} tabIndex={0}>
-            Technical details
-          </summary>
-          <dl>
-            <div>
-              <dt>Code</dt>
-              <dd>{error.code}</dd>
-            </div>
-            <div>
-              <dt>Runtime</dt>
-              <dd>{error.runtimeVersion}</dd>
-            </div>
-            <div>
-              <dt>Timestamp</dt>
-              <dd>{error.timestampMs}</dd>
-            </div>
-          </dl>
-        </details>
+        <p className="surface-meta" ref={detailsRef} tabIndex={-1}>
+          {error.module} · {error.code} · {error.runtimeVersion}
+        </p>
       </div>
     </section>
   );
@@ -321,15 +303,9 @@ function Workbench() {
           aria-busy="true"
           aria-live="polite"
         >
-          <div className="surface-state surface-loading-state" role="status">
-            <span className="surface-mark" aria-hidden="true">
-              ⌁
-            </span>
-            <p className="surface-kicker">Connecting</p>
-            <h1>Waking the local workbench</h1>
-            <p className="surface-copy">
-              Restoring the immutable application snapshot from the native host.
-            </p>
+          <div className="surface-state" role="status">
+            <span className="surface-spinner" aria-hidden="true" />
+            <p className="surface-line">Connecting…</p>
           </div>
         </section>
       </main>

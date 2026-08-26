@@ -1,6 +1,5 @@
 import {
   activeActivitySnapshot,
-  type Activity,
   type AppAppearance,
   type AppSnapshot,
   type WorkspaceSnapshot,
@@ -31,106 +30,37 @@ function InlineIntentError({ message }: { readonly message: string }) {
 }
 
 /**
- * A quiet activity glyph. It is decorative: every state also names itself in
- * text so nothing depends on the symbol being understood.
+ * Every non-provider state is the same shape: one line saying what is
+ * happening, and — when something went wrong — the text needed to fix it.
+ * Nothing restates the Workspace or the Activity, because the Sidebar and the
+ * titlebar already show both.
  */
-function SurfaceMark({
-  activity,
-  tone,
-}: {
-  readonly activity: Activity;
-  readonly tone?: "danger";
-}) {
-  const mark = activity === "editor" ? "⌘" : activity === "agent" ? "◇" : "⌁";
+function Waiting({ label }: { readonly label: string }) {
   return (
-    <span className="surface-mark" data-tone={tone} aria-hidden="true">
-      {mark}
-    </span>
-  );
-}
-
-/**
- * The Editor's content is a native child WebView, so the shell only ever draws
- * the states around it: waiting for the host, or the reason it never came.
- * There is no placeholder in between -- a page that always said the editor was
- * on its way said it just as confidently when the host had already failed.
- */
-function SurfaceEditor({
-  host,
-  context,
-  workspace,
-}: {
-  readonly host: AppSnapshot["editorHost"];
-  readonly context: AppSnapshot["selection"]["context"];
-  readonly workspace?: WorkspaceSnapshot;
-}) {
-  const contextText =
-    context.kind === "global" ? "Scratch" : (workspace?.label ?? "Workspace");
-
-  if (host.status === "failed") {
-    return (
-      <div className="surface-state surface-error-state" role="alert">
-        <SurfaceMark activity="editor" tone="danger" />
-        <p className="surface-kicker">Editor unavailable</p>
-        <h1>{contextText}</h1>
-        <p className="surface-copy">{host.summary}</p>
-        {host.detail ? (
-          <details className="surface-error-details" open>
-            <summary>Details</summary>
-            <pre>{host.detail}</pre>
-          </details>
-        ) : null}
-      </div>
-    );
-  }
-
-  return (
-    <div className="surface-state surface-loading-state" role="status">
-      <SurfaceMark activity="editor" />
-      <p className="surface-kicker">Starting</p>
-      <h1>{contextText}</h1>
-      <p className="surface-copy">
-        Waiting for the local VS Code workbench to accept connections.
-      </p>
-      <p className="surface-note">
-        DevHub runs your own installed Visual Studio Code. Starting it means you
-        accept the{" "}
-        <a
-          href="https://aka.ms/vscode-server-license"
-          target="_blank"
-          rel="noreferrer"
-        >
-          VS Code Server License Terms
-        </a>
-        .
-      </p>
+    <div className="surface-state" role="status">
+      <span className="surface-spinner" aria-hidden="true" />
+      <p className="surface-line">{label}</p>
     </div>
   );
 }
 
-function SurfaceUnavailable({
-  activity,
-  reason,
-  workspace,
+function Failure({
+  summary,
+  detail,
   actions,
 }: {
-  readonly activity: Activity;
-  readonly reason: string;
-  readonly workspace?: WorkspaceSnapshot;
+  readonly summary: string;
+  readonly detail?: string;
   readonly actions?: readonly {
     readonly label: string;
     readonly primary?: boolean;
     readonly run: () => void;
   }[];
 }) {
-  const missingRoot = workspace?.state === "unavailable";
   return (
-    <div className="surface-state surface-unavailable-state" role="status">
-      <SurfaceMark activity={activity} tone="danger" />
-      <p className="surface-kicker">Unavailable</p>
-      <h1>{missingRoot ? workspace.label : "Surface unavailable"}</h1>
-      <p className="surface-copy">{reason}</p>
-      {missingRoot ? <p className="surface-note">{workspace.root}</p> : null}
+    <div className="surface-state surface-failure" role="alert">
+      <p className="surface-line">{summary}</p>
+      {detail ? <pre className="surface-detail">{detail}</pre> : null}
       {actions && actions.length > 0 ? (
         <div className="surface-actions">
           {actions.map((action) => (
@@ -149,27 +79,13 @@ function SurfaceUnavailable({
   );
 }
 
-function SurfaceClosing({
-  activity,
-  failed,
-  workspace,
-}: {
-  readonly activity: Activity;
-  readonly failed: boolean;
-  readonly workspace: WorkspaceSnapshot;
-}) {
-  return (
-    <div className="surface-state surface-closing-state" role="status">
-      <SurfaceMark activity={activity} />
-      <p className="surface-kicker">{failed ? "Close failed" : "Closing"}</p>
-      <h1>{workspace.label}</h1>
-      <p className="surface-copy">
-        {failed
-          ? "Some resources could not be closed. The workspace remains available for retry."
-          : "The workspace is closing its editor, agents, and terminal resources."}
-      </p>
-    </div>
-  );
+/** The Editor's content is a native child WebView; the shell draws only the
+ * states around it. */
+function SurfaceEditor({ host }: { readonly host: AppSnapshot["editorHost"] }) {
+  if (host.status === "failed") {
+    return <Failure summary={host.summary} detail={host.detail ?? undefined} />;
+  }
+  return <Waiting label="Starting the editor…" />;
 }
 
 function SurfaceAgent({
@@ -189,25 +105,13 @@ function SurfaceAgent({
       : undefined;
   const agent = workspace?.agents.find((candidate) => candidate.id === agentId);
   if (!agent) {
-    return (
-      <SurfaceUnavailable
-        activity="agent"
-        reason="The selected Agent is no longer available."
-        workspace={workspace}
-      />
-    );
+    return <Failure summary="This Agent is no longer available." />;
   }
   if (agent.controlState !== "running") {
-    return (
-      <SurfaceUnavailable
-        activity="agent"
-        reason={
-          agent.controlState === "stopping"
-            ? "This Agent is stopping. Its control surface is read-only until cleanup completes."
-            : "This Agent could not be stopped cleanly. Retry stop before reconnecting its control surface."
-        }
-        workspace={workspace}
-      />
+    return agent.controlState === "stopping" ? (
+      <Waiting label="Stopping the agent…" />
+    ) : (
+      <Failure summary="This Agent could not be stopped. Retry stop from the Sidebar." />
     );
   }
   return (
@@ -279,14 +183,7 @@ export function SurfaceViewport({
         aria-live="polite"
         data-surface-state="loading"
       >
-        <div className="surface-state surface-loading-state" role="status">
-          <SurfaceMark activity={activity} />
-          <p className="surface-kicker">Connecting</p>
-          <h1>Waking the local workbench</h1>
-          <p className="surface-copy">
-            Restoring the immutable application snapshot from the native host.
-          </p>
-        </div>
+        <Waiting label="Connecting…" />
       </section>
     );
   }
@@ -301,11 +198,11 @@ export function SurfaceViewport({
         data-surface-state={workspace.state}
       >
         {intentError && <InlineIntentError message={intentError} />}
-        <SurfaceClosing
-          activity={activity}
-          failed={workspace.state === "closing-failed"}
-          workspace={workspace}
-        />
+        {workspace.state === "closing-failed" ? (
+          <Failure summary="This Workspace could not be closed. Retry close from the Sidebar." />
+        ) : (
+          <Waiting label="Closing the workspace…" />
+        )}
       </section>
     );
   }
@@ -319,10 +216,11 @@ export function SurfaceViewport({
         data-surface-state="unavailable"
       >
         {intentError && <InlineIntentError message={intentError} />}
-        <SurfaceUnavailable
-          activity={activity}
-          workspace={workspace}
-          reason={disabledReasonLabel(activitySnapshot.resolution.reason)}
+        <Failure
+          summary={disabledReasonLabel(activitySnapshot.resolution.reason)}
+          detail={
+            workspace?.state === "unavailable" ? workspace.root : undefined
+          }
           actions={unavailableActions}
         />
       </section>
@@ -404,11 +302,7 @@ export function SurfaceViewport({
           appearance={appearance}
         />
       ) : (
-        <SurfaceEditor
-          host={snapshot.editorHost}
-          context={snapshot.selection.context}
-          workspace={workspace}
-        />
+        <SurfaceEditor host={snapshot.editorHost} />
       )}
     </section>
   );
