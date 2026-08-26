@@ -710,6 +710,12 @@ pub enum AppErrorCodeWire {
     OperationPending,
     PersistenceDegraded,
     NativeUnavailable,
+    /// The editor provider CLI could not be found on this machine.
+    EditorProviderMissing,
+    /// The editor provider's saved loopback port is held by something else.
+    EditorPortUnavailable,
+    /// The editor provider was found but could not be started.
+    EditorUnavailable,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -969,7 +975,11 @@ impl AppErrorWire {
         let module = default_error_module(code);
         let actions = if matches!(
             code,
-            AppErrorCodeWire::NativeUnavailable | AppErrorCodeWire::PersistenceDegraded
+            AppErrorCodeWire::NativeUnavailable
+                | AppErrorCodeWire::PersistenceDegraded
+                | AppErrorCodeWire::EditorProviderMissing
+                | AppErrorCodeWire::EditorPortUnavailable
+                | AppErrorCodeWire::EditorUnavailable
         ) {
             vec![AppErrorActionWire::Retry, AppErrorActionWire::OpenSettings]
         } else {
@@ -1028,6 +1038,9 @@ fn default_error_module(code: AppErrorCodeWire) -> AppErrorModuleWire {
     match code {
         AppErrorCodeWire::PersistenceDegraded => AppErrorModuleWire::State,
         AppErrorCodeWire::NativeUnavailable => AppErrorModuleWire::App,
+        AppErrorCodeWire::EditorProviderMissing
+        | AppErrorCodeWire::EditorPortUnavailable
+        | AppErrorCodeWire::EditorUnavailable => AppErrorModuleWire::Editor,
         _ => AppErrorModuleWire::App,
     }
 }
@@ -1045,6 +1058,21 @@ fn safe_error_summary(code: AppErrorCodeWire) -> &'static str {
         AppErrorCodeWire::OperationPending => "Another operation is still in progress.",
         AppErrorCodeWire::PersistenceDegraded => "Changes could not be saved.",
         AppErrorCodeWire::NativeUnavailable => "The native app shell is unavailable.",
+        // These name the failure and the next step. They stay content-free:
+        // no path, port number, command line, or provider output appears here.
+        AppErrorCodeWire::EditorProviderMissing => {
+            "DevHub could not find the Visual Studio Code `code` command. \
+             Install VS Code, or run its \"Shell Command: Install 'code' command in PATH\" \
+             from the Command Palette, then retry."
+        }
+        AppErrorCodeWire::EditorPortUnavailable => {
+            "The editor's saved local port is being used by another process. \
+             Quit any leftover VS Code server, then retry. Settings shows the port DevHub uses."
+        }
+        AppErrorCodeWire::EditorUnavailable => {
+            "The editor could not start. Other activities keep working; \
+             open Settings to check the editor runtime, then retry."
+        }
     }
 }
 

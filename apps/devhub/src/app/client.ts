@@ -39,6 +39,7 @@ export const SELECT_WORKSPACE_PICKER_COMMAND =
 export const CHOOSE_WORKSPACE_FOLDER_COMMAND =
   "choose_workspace_folder" as const;
 export const APP_WORKSPACE_PICKER_EVENT = "app://workspace-picker" as const;
+export const APP_NATIVE_ERROR_EVENT = "app://native-error" as const;
 export const OPEN_SETTINGS_WINDOW_COMMAND = "open_settings_window" as const;
 export const RECORD_PERFORMANCE_MARKER_COMMAND =
   "record_performance_marker" as const;
@@ -124,6 +125,10 @@ export interface AppShellClient {
   subscribeWorkspacePicker?(
     listener: (event: WorkspacePickerEvent) => void,
   ): Promise<UnlistenFn>;
+  /** Native failures that happen between pulls, such as a startup mount. */
+  subscribeNativeError?(
+    listener: (error: AppError) => void,
+  ): Promise<UnlistenFn>;
 }
 
 export interface AppShellTransport {
@@ -172,6 +177,11 @@ export function createTauriAppShellClient(
     subscribe(listener) {
       return transport.listen<unknown>(APP_SNAPSHOT_CHANGED_EVENT, (event) =>
         listener(parseAppSnapshot(event.payload)),
+      );
+    },
+    subscribeNativeError(listener) {
+      return transport.listen<unknown>(APP_NATIVE_ERROR_EVENT, (event) =>
+        listener(parseAppError(event.payload)),
       );
     },
     subscribeAppearance(listener) {

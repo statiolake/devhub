@@ -4,6 +4,8 @@
   "packageManager": "pnpm@11.20.0",
   "scripts": {
     "fmt": "pnpm --filter @devhub/app fmt:check && pnpm --filter @devhub/bridge fmt:check && cargo fmt --all -- --check",
+    "tauri": "pnpm --filter @devhub/app exec tauri",
+    "dev": "pnpm --filter @devhub/app exec tauri dev",
     "app-shell:generate": "scripts/generate-app-shell-contract.sh",
     "app-shell:check": "scripts/check-app-shell-contract.sh",
     "app-shell:production-check": "scripts/check-app-shell-production.sh",

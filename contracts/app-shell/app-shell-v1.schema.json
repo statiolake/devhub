@@ -234,18 +234,37 @@
       "type": "string"
     },
     "AppErrorCodeWire": {
-      "enum": [
-        "invalid_intent",
-        "activity_disabled",
-        "unknown_context",
-        "workspace_unavailable",
-        "workspace_closing",
-        "workspace_close_failed",
-        "operation_pending",
-        "persistence_degraded",
-        "native_unavailable"
-      ],
-      "type": "string"
+      "oneOf": [
+        {
+          "enum": [
+            "invalid_intent",
+            "activity_disabled",
+            "unknown_context",
+            "workspace_unavailable",
+            "workspace_closing",
+            "workspace_close_failed",
+            "operation_pending",
+            "persistence_degraded",
+            "native_unavailable"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "editor_provider_missing",
+          "description": "The editor provider CLI could not be found on this machine.",
+          "type": "string"
+        },
+        {
+          "const": "editor_port_unavailable",
+          "description": "The editor provider's saved loopback port is held by something else.",
+          "type": "string"
+        },
+        {
+          "const": "editor_unavailable",
+          "description": "The editor provider was found but could not be started.",
+          "type": "string"
+        }
+      ]
     },
     "AppErrorModuleWire": {
       "enum": [
@@ -268,18 +287,37 @@
           "type": "string"
         },
         "AppErrorCodeWire": {
-          "enum": [
-            "invalid_intent",
-            "activity_disabled",
-            "unknown_context",
-            "workspace_unavailable",
-            "workspace_closing",
-            "workspace_close_failed",
-            "operation_pending",
-            "persistence_degraded",
-            "native_unavailable"
-          ],
-          "type": "string"
+          "oneOf": [
+            {
+              "enum": [
+                "invalid_intent",
+                "activity_disabled",
+                "unknown_context",
+                "workspace_unavailable",
+                "workspace_closing",
+                "workspace_close_failed",
+                "operation_pending",
+                "persistence_degraded",
+                "native_unavailable"
+              ],
+              "type": "string"
+            },
+            {
+              "const": "editor_provider_missing",
+              "description": "The editor provider CLI could not be found on this machine.",
+              "type": "string"
+            },
+            {
+              "const": "editor_port_unavailable",
+              "description": "The editor provider's saved loopback port is held by something else.",
+              "type": "string"
+            },
+            {
+              "const": "editor_unavailable",
+              "description": "The editor provider was found but could not be started.",
+              "type": "string"
+            }
+          ]
         },
         "AppErrorModuleWire": {
           "enum": [

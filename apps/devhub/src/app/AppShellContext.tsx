@@ -168,6 +168,7 @@ export function AppShellProvider({
     let unsubscribeAppearance: (() => void) | undefined;
     let unsubscribeProfiles: (() => void) | undefined;
     let unsubscribePicker: (() => void) | undefined;
+    let unsubscribeNativeError: (() => void) | undefined;
     lastRevision.current = -1;
     lastAppearanceSequence.current = -1;
     lastProfileSequence.current = 0;
@@ -267,6 +268,16 @@ export function AppShellProvider({
           if (!active) cleanupPicker();
           else unsubscribePicker = cleanupPicker;
         }
+        if (client.subscribeNativeError) {
+          const cleanupNativeError = await client.subscribeNativeError(
+            (error) => {
+              if (active && generation.current === currentGeneration)
+                setIntentError(error);
+            },
+          );
+          if (!active) cleanupNativeError();
+          else unsubscribeNativeError = cleanupNativeError;
+        }
         if (client.subscribeAppearance) {
           const cleanupAppearance = await client.subscribeAppearance(
             applyAppearanceIfActive,
@@ -336,6 +347,7 @@ export function AppShellProvider({
       unsubscribeAppearance?.();
       unsubscribeProfiles?.();
       unsubscribePicker?.();
+      unsubscribeNativeError?.();
     };
   }, [applySnapshot, attempt, client]);
 

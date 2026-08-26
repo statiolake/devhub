@@ -84,6 +84,8 @@ pub const APP_SNAPSHOT_CHANGED_EVENT: &str = "app://snapshot-changed";
 pub const APP_APPEARANCE_CHANGED_EVENT: &str = "app://appearance-changed";
 pub const APP_AGENT_PROFILES_CHANGED_EVENT: &str = "app://agent-profiles-changed";
 pub const APP_WORKSPACE_PICKER_EVENT: &str = "app://workspace-picker";
+/// A native failure the shell must show without waiting for the next pull.
+pub const APP_NATIVE_ERROR_EVENT: &str = "app://native-error";
 pub const APP_SHELL_WINDOW_LABEL: &str = "app-shell";
 pub const SETTINGS_CHANGED_EVENT: &str = "settings://changed";
 pub const SETTINGS_WINDOW_LABEL: &str = "settings";
@@ -1133,6 +1135,9 @@ fn q5_app_error_code(code: AppErrorCodeWire) -> &'static str {
         AppErrorCodeWire::OperationPending => "operation_pending",
         AppErrorCodeWire::PersistenceDegraded => "persistence_degraded",
         AppErrorCodeWire::NativeUnavailable => "native_unavailable",
+        AppErrorCodeWire::EditorProviderMissing => "editor_provider_missing",
+        AppErrorCodeWire::EditorPortUnavailable => "editor_port_unavailable",
+        AppErrorCodeWire::EditorUnavailable => "editor_unavailable",
     }
 }
 
@@ -1276,6 +1281,26 @@ impl Drop for SocketTransitionGate<'_> {
 fn state_error(error: impl std::fmt::Display) -> AppErrorWire {
     let _ = error;
     AppErrorWire::native_unavailable()
+}
+
+/// Carry an editor failure across as a typed, actionable shell error.
+///
+/// `state_error` flattens everything to `native_unavailable`, which tells the
+/// user only that something went wrong. The provider knows the difference
+/// between "VS Code is not installed", "the saved port is taken", and "the
+/// server refused to start", and each of those has a different next step.
+/// The mapping stays content-free: the code selects a fixed summary, and no
+/// path, port, or provider output crosses this seam.
+fn editor_error(error: &editor::EditorError) -> AppErrorWire {
+    use editor::EditorErrorCode;
+    let code = match error.code() {
+        EditorErrorCode::OfficialVscodeUnavailable | EditorErrorCode::ExecutableUnavailable => {
+            AppErrorCodeWire::EditorProviderMissing
+        }
+        EditorErrorCode::PortConflict => AppErrorCodeWire::EditorPortUnavailable,
+        _ => AppErrorCodeWire::EditorUnavailable,
+    };
+    AppErrorWire::at(code, 0)
 }
 
 fn persistence_error(error: impl std::fmt::Display) -> AppErrorWire {
@@ -2436,7 +2461,7 @@ impl NativeAppState {
         }
         if let Some((stage, error)) = mount_error {
             write_q5_reconstruction_failure(stage, error.code().as_str());
-            return Err(state_error(error));
+            return Err(editor_error(&error));
         }
 
         // `ensure_surface` selects its argument for visibility. Mounting all
@@ -2448,7 +2473,7 @@ impl NativeAppState {
                 Q5ReconstructionStage::HideSurfaces,
                 error.code().as_str(),
             );
-            state_error(error)
+            editor_error(&error)
         })?;
         if snapshot.active_activity() == Activity::Editor && !workspace_first {
             let selected = match snapshot.selected_context() {
@@ -2604,25 +2629,35 @@ impl NativeAppState {
 
     /// The existing startup Window is already constructed by Tauri's config.
     /// Reuse it and run the same reconstruction path used by Dock activation.
+    ///
+    /// The Window is shown before that reconstruction, not after it. Editor
+    /// child surfaces are one Activity among three; a provider that cannot
+    /// mount is a typed degraded Activity, and holding the whole shell back
+    /// for it left the user with a running process and no window at all.
+    /// Showing first means the Sidebar, the Scratch Terminal, and the Error
+    /// Surface are usable while the Editor reports why it is unavailable.
     fn attach_startup_window(&self, app: &AppHandle) {
+        if let Some(window) = app.get_webview_window(APP_SHELL_WINDOW_LABEL) {
+            if let Err(error) = window.show().and_then(|_| window.set_focus()) {
+                self.record_native_error(state_error(error));
+            }
+        }
         match self.reconstruct_window_once(app) {
             Ok(()) => {
-                if let Some(window) = app.get_webview_window(APP_SHELL_WINDOW_LABEL) {
-                    if let Err(error) = window.show().and_then(|_| window.set_focus()) {
-                        self.record_native_error(state_error(error));
-                    }
-                }
                 // The explicit startup barrier is consumed by the Q5 worker
                 // after settings/profile startup has completed.
                 self.set_startup_reconstruction_state(StartupReconstructionState::Ready);
             }
             Err(error) => {
-                // Missing VS Code Server resources are a typed degraded Activity,
-                // not a reason to discard the durable shell snapshot or stop
-                // Agents. Keep the startup shell hidden until a Dock retry
-                // reconstructs its child surfaces successfully.
+                // A Dock activation still retries the reconstruction; the
+                // difference is that the user can see and act on the failure
+                // in the meantime instead of facing a window that never came.
                 self.set_startup_reconstruction_state(StartupReconstructionState::Failed);
                 self.record_performance_probe(PerformanceMarker::Q5FixtureStartFailed);
+                // The shell has already pulled its first snapshot by now, so a
+                // pending error would sit unread until the next command. Push
+                // it instead.
+                let _ = app.emit_to(APP_SHELL_WINDOW_LABEL, APP_NATIVE_ERROR_EVENT, error.clone());
                 self.record_native_error(error);
             }
         }
@@ -8207,6 +8242,36 @@ mod tests {
     use devhub_app_core::{CancellationToken, SettingsRuntimeHealthValueWire, WorkspaceRoot};
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::{Arc, Barrier};
+
+    /// An editor failure must reach the shell as the thing that actually
+    /// happened. Flattening every provider fault to `native_unavailable` left
+    /// the user with one sentence and no next step. Assert on the serialized
+    /// form, because that is exactly what the shell receives.
+    #[test]
+    fn editor_failures_keep_their_actionable_shell_code() {
+        use editor::{EditorError, EditorErrorCode};
+
+        let cases = [
+            (EditorErrorCode::PortConflict, "editor_port_unavailable"),
+            (EditorErrorCode::OfficialVscodeUnavailable, "editor_provider_missing"),
+            (EditorErrorCode::ExecutableUnavailable, "editor_provider_missing"),
+            (EditorErrorCode::BridgeInstallFailed, "editor_unavailable"),
+        ];
+        for (editor_code, expected) in cases {
+            let wire = serde_json::to_value(editor_error(&EditorError::new(editor_code)))
+                .expect("serialize");
+            assert_eq!(wire["code"], expected, "{editor_code:?}");
+            assert_eq!(wire["module"], "editor", "{editor_code:?}");
+            let summary = wire["summary"].as_str().expect("summary").to_owned();
+            // Each summary says what to do next, and never carries a path,
+            // port number, or provider output.
+            assert!(summary.contains("retry"), "{editor_code:?}: {summary}");
+            assert!(!summary.contains('/'), "{editor_code:?}: {summary}");
+            assert!(!summary.chars().any(|ch| ch.is_ascii_digit()), "{editor_code:?}: {summary}");
+            let actions = wire["actions"].as_array().expect("actions");
+            assert!(actions.iter().any(|action| action == "retry"), "{editor_code:?}");
+        }
+    }
 
     #[cfg(debug_assertions)]
     static TEMP_DEBUG_RESOURCE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
