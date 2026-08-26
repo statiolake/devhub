@@ -91,7 +91,13 @@ impl StablePort {
         if allocator.is_available(self.port) {
             Ok(())
         } else {
-            Err(EditorError::new(EditorErrorCode::PortConflict))
+            Err(EditorError::new(EditorErrorCode::PortConflict).with_detail(format!(
+                "127.0.0.1:{} is already in use by another process. This is the \
+                 port DevHub persisted for its editor origin, so it is not \
+                 replaced automatically. Quit whatever holds it (a leftover \
+                 `code serve-web` is the usual cause) and retry.",
+                self.port
+            )))
         }
     }
 }

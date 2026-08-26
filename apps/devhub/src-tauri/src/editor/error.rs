@@ -1,4 +1,7 @@
-//! Content-free errors emitted by the native EditorHost.
+//! Errors emitted by the native EditorHost.
+//!
+//! The code is the actionable classification; `detail` carries what actually
+//! went wrong for the local user who has to fix it.
 
 use std::fmt;
 
@@ -62,6 +65,7 @@ impl EditorErrorCode {
 pub struct EditorError {
     code: EditorErrorCode,
     summary: String,
+    detail: Option<String>,
 }
 
 impl EditorError {
@@ -70,7 +74,19 @@ impl EditorError {
     }
 
     pub fn from_code(code: EditorErrorCode) -> Self {
-        Self { code, summary: summary_for(code).to_owned() }
+        Self { code, summary: summary_for(code).to_owned(), detail: None }
+    }
+
+    /// Record the concrete cause: the provider's message, the port that was
+    /// taken, the path that could not be read.
+    pub fn with_detail(mut self, detail: impl Into<String>) -> Self {
+        let detail = detail.into();
+        self.detail = (!detail.is_empty()).then_some(detail);
+        self
+    }
+
+    pub fn detail(&self) -> Option<&str> {
+        self.detail.as_deref()
     }
 
     pub const fn code(&self) -> EditorErrorCode {

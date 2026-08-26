@@ -1,66 +1,128 @@
 # DevHub
 
-DevHub is a personal, macOS-first development workbench. Its long-term model
-organizes Workspaces, Agents, Editors, and persistent tmux Terminals in one
-native window while keeping provider implementations behind Rust-owned seams.
+DevHub is not VS Code wrapped in Tauri. It is a workspace- and agent-centred
+development environment, closer to the Codex App or the Cursor agent window,
+in which a real VS Code editor is one surface among several rather than the
+centre of the product.
 
-A Tauri App Shell owns the immutable native snapshot and a React consumer
-renders the fixed Activity chrome. The Editor Activity runs the user's own
-installed VS Code through `code serve-web`; DevHub bundles no Workbench of its
-own. The product contract is [`docs/MVP-SPEC.md`](docs/MVP-SPEC.md).
+```text
+DevHub
+  ├─ Workspace management
+  ├─ Agent orchestration
+  ├─ Editor
+  ├─ Terminal
+  ├─ Issue          (later)
+  └─ Pull Request   (later)
+```
 
-The implementation is complete and locally verifiable. What remains before a
-release is user-attended acceptance on Apple Silicon: the interactive keyboard,
-IME, VoiceOver, scale, and lifecycle gates listed under Release gates in the
-spec.
+macOS first, Apple Silicon. This is a personal tool built for one workflow,
+so it optimises for that workflow rather than for configurability.
 
-## Local development
+## Shape
 
-The reproducible local toolchain is Rust `1.97.1`, Node `22.21.1` for the
-documented build baseline, and pnpm `11.20.0`. The repository's
-`rust-toolchain.toml` and root `package.json` pin the Rust and pnpm values;
-Corepack or an equivalent pnpm installation must provide the pinned package
-manager.
+One window. A left pane of Workspaces, each with its Agents nested under it,
+and one main surface on the right.
 
-From the repository root:
+```text
+┌──────────────────────────────────────────────────────┐
+│              [Editor] [Agent] [Terminal]             │
+├───────────────┬──────────────────────────────────────┤
+│ Scratch       │                                      │
+│               │                                      │
+│ ▼ foo         │            Active Surface            │
+│    Claude 1 ● │                                      │
+│    Codex  2 ○ │                                      │
+│ ▼ bar         │                                      │
+│    Claude 1 ● │                                      │
+└───────────────┴──────────────────────────────────────┘
+```
+
+The top strip is a fixed set of **Activities**, not tabs: Editor, Agent,
+Terminal. There is no subtitle strip and no status bar.
+
+The left pane selects **what** you are working on; the Activity selects
+**which view** of it you see:
+
+- select a Workspace → its Editor
+- select an Agent → that Agent
+- Editor is per Workspace; Terminal is per Workspace; Agent is per Agent
+
+A Workspace with no Agents shows no disclosure and no child tree at all.
+
+Editor never appears in the left pane, because every Workspace has exactly one
+and the Workspace node is its entry point.
+
+## Domain
+
+Workspace is the top concept, and it is deliberately none of the things it
+resembles:
+
+```text
+DevHub Workspace != Herdr Space != VS Code window != Git repository
+```
+
+A Workspace is a folder root — the same granularity as a VS Code window. A
+normal clone and each linked worktree are separate Workspaces. Workspaces are
+transient: they are what you have open now, discovered by fuzzy-finding
+configured source directories rather than kept in a registry.
+
+Internally a Workspace knows its Git remote, so that a future "paste an issue
+URL and start working" flow can resolve which checkout to open.
+
+## Subsystems
+
+**Editor** — a browser VS Code workbench embedded in a child WebView. One
+server process serves every Workspace's editor. The workbench is upstream and
+unforked. DevHub uses the VS Code you already installed rather than shipping
+one, which also means it rides your own updates.
+
+**Agents** — Herdr runs them, behind an `AgentRuntime` seam that exposes only
+list/start/stop/status/read/attach. Herdr's own Space, Workspace, and Tab
+concepts never reach the DevHub UI. DevHub uses a fixed `devhub-session` so a
+bare `herdr` lands in your default session and cannot disturb DevHub's agents.
+Herdr is expected to be replaceable later by a Claude SDK or Codex Server
+runtime.
+
+**Terminal** — tmux, not the VS Code integrated terminal and not Herdr. One
+persistent session per Workspace, plus a global Scratch session. The VS Code
+integrated terminal stays available inside the workbench; DevHub does not
+police it.
+
+## Lifecycle
+
+Window Close leaves the process, the agents, and the tmux sessions running.
+Quit stops DevHub and its editor server but still leaves agents and tmux
+alive. Closing an Agent destroys its session; an Agent that exits on its own
+disappears from the tree immediately.
+
+`Command+Q` is the only key DevHub takes from the workbench, as a prefix:
+press it twice to quit. Everything else is forwarded to VS Code.
+
+## Configuration
+
+One `~/.config/devhub/config.toml`, safe to symlink from dotfiles. Native
+Settings edits the same file. Runtime state lives separately under
+Application Support.
+
+## Not now
+
+Issue and Pull Request surfaces, task composer, clone/worktree provisioning,
+Dev Containers, SSH, multiple windows, Windows and Linux. They are second and
+third development; the seams exist, the features do not.
+
+## Development
+
+Rust `1.97.1`, Node `22.21.1`, pnpm `11.20.0`.
 
 ```sh
 CI=true pnpm install --frozen-lockfile
-CI=true pnpm run check
-CI=true pnpm run build
+pnpm dev          # run the app
+pnpm run check    # format, lint, types, tests
+pnpm run build
 ```
 
-`check` runs frontend formatting, linting, type checking, unit tests, and
-locked Rust checks. `build` creates the frontend output and performs a locked
-workspace Cargo build. More detailed prerequisites, troubleshooting, and
-manual smoke checks are in [`docs/LOCAL-DEVELOPMENT.md`](docs/LOCAL-DEVELOPMENT.md).
-
-The Rust-owned App Shell v1 contract is generated from the native wire types:
-[`contracts/app-shell/app-shell-v1.schema.json`](contracts/app-shell/app-shell-v1.schema.json).
-Run `pnpm run app-shell:generate` after changing the Rust seam; `pnpm run check`
-detects generated-artifact drift.
-
-## CI and release status
-
-The committed [CI definition](.github/workflows/ci.yml) is a non-release
-verification recipe. It pins the macOS runner and toolchain versions and uses
-frozen/locked local checks. Hosted Actions execution is intentionally deferred
-until the final release wave; a checked-in workflow is not hosted evidence.
-
-Git remains local-only during foundation and product implementation. No remote
-or publication is required to build DevHub locally. Public repository setup,
-hosted provenance, signing, packaging, and release upload are final-wave gates
-and must not be inferred from a local green check.
-
-## Design records
-
-- [`CONTEXT.md`](CONTEXT.md) defines the domain vocabulary.
-- [`docs/MVP-SPEC.md`](docs/MVP-SPEC.md) is the product contract.
-- [`docs/PROVIDER-CONTRACTS.md`](docs/PROVIDER-CONTRACTS.md) freezes external
-  provider and toolchain baselines.
-- [`docs/adr/`](docs/adr/) records the decisions behind the product, with
-  their rationale and consequences.
-- [`docs/LOCAL-DEVELOPMENT.md`](docs/LOCAL-DEVELOPMENT.md) describes the
-  development loop and the reproducible checks.
+The Rust-owned App Shell contract is generated from the native wire types in
+[`contracts/app-shell/`](contracts/app-shell/). Run `pnpm run app-shell:generate`
+after changing that seam; `pnpm run check` detects drift.
 
 DevHub is distributed under the [MIT License](LICENSE).

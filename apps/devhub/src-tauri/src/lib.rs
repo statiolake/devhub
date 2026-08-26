@@ -1288,9 +1288,9 @@ fn state_error(error: impl std::fmt::Display) -> AppErrorWire {
 /// `state_error` flattens everything to `native_unavailable`, which tells the
 /// user only that something went wrong. The provider knows the difference
 /// between "VS Code is not installed", "the saved port is taken", and "the
-/// server refused to start", and each of those has a different next step.
-/// The mapping stays content-free: the code selects a fixed summary, and no
-/// path, port, or provider output crosses this seam.
+/// server refused to start", and each of those has a different next step. The
+/// code chooses that next step; the detail carries the concrete cause so the
+/// user can act on it without reading the source.
 fn editor_error(error: &editor::EditorError) -> AppErrorWire {
     use editor::EditorErrorCode;
     let code = match error.code() {
@@ -1300,7 +1300,11 @@ fn editor_error(error: &editor::EditorError) -> AppErrorWire {
         EditorErrorCode::PortConflict => AppErrorCodeWire::EditorPortUnavailable,
         _ => AppErrorCodeWire::EditorUnavailable,
     };
-    AppErrorWire::at(code, 0)
+    let wire = AppErrorWire::at(code, 0);
+    match error.detail() {
+        Some(detail) => wire.with_detail(detail),
+        None => wire.with_detail(error.summary()),
+    }
 }
 
 fn persistence_error(error: impl std::fmt::Display) -> AppErrorWire {
@@ -3556,6 +3560,7 @@ impl NativeAppState {
         self.diagnostics.emit(DiagnosticEvent::Error {
             module: DiagnosticModule::App,
             code: LogCode::NativeUnavailable,
+            detail: error.detail().map(str::to_owned),
         });
     }
 
@@ -6839,6 +6844,7 @@ impl NativeAppState {
                 self.diagnostics.emit(DiagnosticEvent::Error {
                     module: DiagnosticModule::Config,
                     code: LogCode::ConfigInvalid,
+                    detail: Some(error.to_string()),
                 });
                 return Err(settings_error(error));
             }
@@ -8270,7 +8276,24 @@ mod tests {
             assert!(!summary.chars().any(|ch| ch.is_ascii_digit()), "{editor_code:?}: {summary}");
             let actions = wire["actions"].as_array().expect("actions");
             assert!(actions.iter().any(|action| action == "retry"), "{editor_code:?}");
+            // The concrete cause travels alongside, for the person who has to
+            // fix it.
+            assert!(wire["detail"].is_string(), "{editor_code:?}");
         }
+    }
+
+    /// The detail is the whole point: it must survive the hop from the
+    /// provider to the shell, including the values the user needs to act on.
+    #[test]
+    fn editor_error_detail_reaches_the_shell() {
+        use editor::{EditorError, EditorErrorCode};
+
+        let error = EditorError::new(EditorErrorCode::PortConflict)
+            .with_detail("127.0.0.1:55971 is already in use by another process.");
+        let wire = serde_json::to_value(editor_error(&error)).expect("serialize");
+        let detail = wire["detail"].as_str().expect("detail");
+        assert!(detail.contains("55971"), "{detail}");
+        assert!(detail.contains("127.0.0.1"), "{detail}");
     }
 
     #[cfg(debug_assertions)]

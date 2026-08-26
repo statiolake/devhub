@@ -346,6 +346,11 @@
         "code": {
           "$ref": "#/$defs/AppErrorCodeWire"
         },
+        "detail": {
+          "description": "Everything the local user needs to diagnose this failure themselves:\nthe provider's own message, the port or path involved, an exit code, a\nbacktrace. It is shown in the UI and written to the local log. DevHub\nis a single-user local application and this data never leaves the\nmachine, so withholding it only hurt the person trying to fix it.",
+          "maxLength": 4096,
+          "type": ["string", "null"]
+        },
         "module": {
           "$ref": "#/$defs/AppErrorModuleWire"
         },

@@ -6,9 +6,7 @@ adding convenience code around an existing implementation.
 
 ## Before changing code
 
-Read the relevant sections of [`CONTEXT.md`](CONTEXT.md) and
-[`docs/MVP-SPEC.md`](docs/MVP-SPEC.md), and check [`docs/adr/`](docs/adr/) for
-the decision a change would touch.
+Read [`README.md`](README.md) for the product shape.
 Rust owns application state and decisions; frontend code consumes immutable
 snapshots and sends narrow intents through adapters. Provider details do not
 cross into product-domain types.

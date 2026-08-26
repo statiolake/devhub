@@ -77,13 +77,13 @@ pub enum DiagnosticEvent {
     Lifecycle { phase: LifecyclePhase },
     Performance { marker: PerformanceMarker },
     Health { component: Component, health: Health, code: Option<Code> },
-    Error { module: Module, code: Code },
+    Error { module: Module, code: Code, detail: Option<String> },
     ProviderExit { component: Component, code: Code },
     Retry { module: Module, code: Code, attempt: u32 },
     Migration { module: Module, from: u32, to: u32 },
 }
 
-/// Content-free readiness markers used by the opt-in Q5.2 native driver.
+/// Readiness markers used by the opt-in native performance driver.
 ///
 /// These are deliberately a closed vocabulary.  The driver can measure the
 /// time between real native events without allowing arbitrary user content,
@@ -283,6 +283,10 @@ struct Record<'a> {
     session_id: &'a str,
     level: LogLevel,
     event: &'a str,
+    /// The concrete cause, when the emitter had one. This log is local to the
+    /// machine and to the single user who runs DevHub.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    detail: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     version: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -516,6 +520,7 @@ impl Diagnostics {
             diagnostics.emit(DiagnosticEvent::Error {
                 module: Module::Diagnostics,
                 code: Code::CrashRecovered,
+                detail: None,
             });
         }
         diagnostics
@@ -879,6 +884,7 @@ impl Diagnostics {
 
     fn serialize_record(&self, event: DiagnosticEvent) -> io::Result<(Vec<u8>, Option<Code>)> {
         let mut record = Record {
+            detail: None,
             timestamp_ms: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .map(|d| d.as_millis())
@@ -918,10 +924,11 @@ impl Diagnostics {
                 record.health = Some(health);
                 record.code = code;
             }
-            DiagnosticEvent::Error { module, code } => {
+            DiagnosticEvent::Error { module, code, detail } => {
                 record.event = "error";
                 record.module = Some(module);
                 record.code = Some(code);
+                record.detail = detail;
             }
             DiagnosticEvent::ProviderExit { component, code } => {
                 record.event = "provider_exit";
@@ -1511,8 +1518,11 @@ mod tests {
         #[cfg(unix)]
         fs::set_permissions(&home, fs::Permissions::from_mode(0o755)).unwrap();
         let diagnostics = Diagnostics::open(&home, "0.1.0", Some(false));
-        diagnostics
-            .emit(DiagnosticEvent::Error { module: Module::Config, code: Code::ConfigInvalid });
+        diagnostics.emit(DiagnosticEvent::Error {
+            module: Module::Config,
+            code: Code::ConfigInvalid,
+            detail: Some("invalid syntax at line 3".to_owned()),
+        });
         assert!(diagnostics.flush(Duration::from_secs(2)));
         let summary = diagnostics.redacted_summary(Health::Degraded, PreviousExit::Unclean);
         assert!(summary.len() <= MAX_SUMMARY_BYTES);

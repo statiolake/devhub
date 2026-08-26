@@ -751,6 +751,14 @@ pub struct AppErrorWire {
     #[schemars(length(min = 1, max = 64))]
     runtime_version: String,
     actions: Vec<AppErrorActionWire>,
+    /// Everything the local user needs to diagnose this failure themselves:
+    /// the provider's own message, the port or path involved, an exit code, a
+    /// backtrace. It is shown in the UI and written to the local log. DevHub
+    /// is a single-user local application and this data never leaves the
+    /// machine, so withholding it only hurt the person trying to fix it.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    #[schemars(length(max = 4096))]
+    detail: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -941,7 +949,7 @@ impl AppOutcomeWire {
 }
 
 impl AppErrorWire {
-    /// Returns the stable, content-free error category for native diagnostics.
+    /// Returns the stable error category used by native diagnostics.
     pub const fn code(&self) -> AppErrorCodeWire {
         self.code
     }
@@ -958,11 +966,25 @@ impl AppErrorWire {
         Self::at(AppErrorCodeWire::PersistenceDegraded, 0)
     }
 
-    /// Keeps the old call-site shape while making the boundary content-free.
+    /// Keeps the old call-site shape.
     /// Native/provider error text is never allowed to become product data.
-    pub fn with_summary(mut self, _summary: impl Into<String>) -> Self {
-        self.summary = safe_error_summary(self.code).to_owned();
+    /// Replace the code's default sentence with a more specific one.
+    pub fn with_summary(mut self, summary: impl Into<String>) -> Self {
+        let summary = summary.into();
+        self.summary =
+            if summary.is_empty() { safe_error_summary(self.code).to_owned() } else { summary };
         self
+    }
+
+    /// Attach the diagnosable detail behind this error.
+    pub fn with_detail(mut self, detail: impl Into<String>) -> Self {
+        let detail = detail.into();
+        self.detail = (!detail.is_empty()).then(|| truncate_detail(&detail));
+        self
+    }
+
+    pub fn detail(&self) -> Option<&str> {
+        self.detail.as_deref()
     }
 
     pub fn with_module(mut self, module: AppErrorModuleWire) -> Self {
@@ -992,6 +1014,7 @@ impl AppErrorWire {
             timestamp_ms,
             runtime_version: env!("CARGO_PKG_VERSION").to_owned(),
             actions,
+            detail: None,
         }
     }
 
@@ -1045,6 +1068,20 @@ fn default_error_module(code: AppErrorCodeWire) -> AppErrorModuleWire {
     }
 }
 
+/// Keep one failure from filling the log or the Error Surface. The schema
+/// caps this field, and a backtrace can be arbitrarily long.
+fn truncate_detail(detail: &str) -> String {
+    const MAX: usize = 4096;
+    if detail.len() <= MAX {
+        return detail.to_owned();
+    }
+    let mut end = MAX;
+    while end > 0 && !detail.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}…", &detail[..end])
+}
+
 fn safe_error_summary(code: AppErrorCodeWire) -> &'static str {
     match code {
         AppErrorCodeWire::InvalidIntent => "The requested action is not available.",
@@ -1058,8 +1095,8 @@ fn safe_error_summary(code: AppErrorCodeWire) -> &'static str {
         AppErrorCodeWire::OperationPending => "Another operation is still in progress.",
         AppErrorCodeWire::PersistenceDegraded => "Changes could not be saved.",
         AppErrorCodeWire::NativeUnavailable => "The native app shell is unavailable.",
-        // These name the failure and the next step. They stay content-free:
-        // no path, port number, command line, or provider output appears here.
+        // These name the failure and the next step. The concrete cause rides
+        // along in `detail` rather than being folded into the sentence.
         AppErrorCodeWire::EditorProviderMissing => {
             "DevHub could not find the Visual Studio Code `code` command. \
              Install VS Code, or run its \"Shell Command: Install 'code' command in PATH\" \
@@ -1390,16 +1427,37 @@ mod tests {
     }
 
     #[test]
-    fn error_surface_is_stable_timestamped_and_content_free() {
+    fn error_surface_is_stable_timestamped_and_diagnosable() {
         let error = AppErrorWire::at(AppErrorCodeWire::NativeUnavailable, 7)
-            .with_summary("provider secret and raw failure text");
+            .with_summary("The editor server could not start.")
+            .with_detail("127.0.0.1:55971 is already in use by another process.");
         let value = serde_json::to_value(error).expect("error surface serializes");
         assert_eq!(value["code"], "native_unavailable");
         assert_eq!(value["module"], "app");
         assert_eq!(value["timestampMs"], 7);
         assert_eq!(value["actions"], serde_json::json!(["retry", "open_settings"]));
-        assert!(!value.to_string().contains("provider secret"));
-        assert!(!value.to_string().contains("raw failure"));
+        // Both the caller's sentence and the concrete cause survive. DevHub is
+        // a single-user local application: the person reading this error is
+        // the person who has to fix it, and withholding the port number only
+        // made that harder.
+        assert_eq!(value["summary"], "The editor server could not start.");
+        assert!(value["detail"].as_str().expect("detail").contains("55971"));
+    }
+
+    #[test]
+    fn error_detail_is_bounded_so_one_failure_cannot_flood_the_log() {
+        let error = AppErrorWire::at(AppErrorCodeWire::NativeUnavailable, 7)
+            .with_detail("あ".repeat(8_000));
+        let detail = error.detail().expect("detail");
+        assert!(detail.len() <= 4_100, "{}", detail.len());
+        assert!(detail.ends_with('…'));
+    }
+
+    #[test]
+    fn empty_summary_falls_back_to_the_code_sentence() {
+        let error = AppErrorWire::at(AppErrorCodeWire::NativeUnavailable, 7).with_summary("");
+        let value = serde_json::to_value(error).expect("serializes");
+        assert_eq!(value["summary"], "The native app shell is unavailable.");
     }
 
     #[test]
