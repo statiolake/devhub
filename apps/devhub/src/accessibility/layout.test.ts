@@ -58,6 +58,18 @@ describe("accessibility layout invariants", () => {
     expect(Number(inset?.[1])).toBeGreaterThanOrEqual(20 + 20 * 2 + 14);
   });
 
+  it("reads as an application rather than a document", () => {
+    // An I-beam wandering over labels and a drag that selects the chrome are
+    // the two things that give a web shell away on the desktop.
+    const body = /\bbody\s*\{([^}]*)\}/.exec(tokensCss);
+    expect(body?.[1]).toMatch(/cursor:\s*default;/);
+    expect(body?.[1]).toMatch(/user-select:\s*none;/);
+    // Errors are meant to be pasted somewhere, so they keep selection.
+    expect(tokensCss).toMatch(
+      /\.failure-detail,[\s\S]*?\{[^}]*user-select:\s*text;/,
+    );
+  });
+
   it("uses responsive fixed-size controls without a narrow grid track", () => {
     expect(shellCss).toMatch(
       /\.workspace-picker\s*\{[\s\S]*?position:\s*fixed;/,

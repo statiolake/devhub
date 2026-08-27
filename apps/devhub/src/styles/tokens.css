@@ -125,10 +125,27 @@ body,
 
 /* The window carries an NSVisualEffectView; the shell lets it through in the
    chrome and paints content surfaces opaquely on top of it. */
+/* A native app is not a document: the pointer is an arrow, labels are not
+   draggable text, and nothing turns into an I-beam on the way past. Selection
+   is granted back explicitly, to the places where copying is the point. */
 body {
   overflow: hidden;
   background: transparent;
   color: var(--primary);
+  cursor: default;
+  user-select: none;
+}
+
+/* Diagnostics exist to be pasted somewhere, and the provider surfaces own
+   their own selection model. */
+.failure-title,
+.failure-detail,
+.surface-line,
+.terminal-surface,
+input,
+textarea {
+  cursor: auto;
+  user-select: text;
 }
 
 /* Reduce Transparency asks for a solid window instead of the material. */
@@ -161,6 +178,7 @@ button:disabled {
 
 a {
   color: var(--accent);
+  cursor: pointer;
   text-underline-offset: 2px;
 }
 
