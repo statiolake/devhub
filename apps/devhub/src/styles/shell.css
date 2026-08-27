@@ -185,7 +185,12 @@
 }
 
 /* Rows are a single line with fixed leading columns, so no row can push the
-   Sidebar into horizontal overflow regardless of label or path length. */
+   Sidebar into horizontal overflow regardless of label or path length.
+ *
+ * A row is a `div` when it has children to disclose and a `button` when it
+ * does not, and the user agent pads a button by `1px 6px` while leaving a div
+ * alone. Left unstated, that inset shifts a whole row — glyph and label
+ * together — off the rail the other rows sit on. */
 .sidebar-row {
   position: relative;
   display: flex;
@@ -193,6 +198,7 @@
   width: 100%;
   height: var(--row-height);
   align-items: center;
+  padding: 0;
   border: 0;
   border-radius: var(--radius-row);
   background: transparent;
@@ -249,6 +255,7 @@
   flex: 0 0 var(--sidebar-disclosure-width);
   align-items: center;
   justify-content: center;
+  padding: 0;
   border: 0;
   background: transparent;
 }
@@ -353,6 +360,7 @@
   flex: 0 0 20px;
   align-items: center;
   justify-content: center;
+  padding: 0;
   border: 0;
   border-radius: 4px;
   margin-right: 2px;
@@ -399,6 +407,7 @@
   height: 20px;
   align-items: center;
   justify-content: center;
+  padding: 0;
   border: 0;
   border-radius: 4px;
   background: transparent;

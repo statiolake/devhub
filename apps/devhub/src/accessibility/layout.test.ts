@@ -102,6 +102,17 @@ describe("accessibility layout invariants", () => {
     expect(shellCss).toMatch(
       /\.sidebar-section-heading\s*\{[^}]*height:\s*var\(--row-height\);/,
     );
+    // A row is a `div` when it discloses children and a `button` when it does
+    // not, and the user agent pads only the button. Unstated, that inset takes
+    // a whole row off the rail — which is what the Scratch row did.
+    for (const rule of [
+      /\.sidebar-row\s*\{[^}]*padding:\s*0;/,
+      /\.disclosure-button,\n\.disclosure-spacer\s*\{[^}]*padding:\s*0;/,
+      /\.row-action-button\s*\{[^}]*padding:\s*0;/,
+      /\.section-action-button\s*\{[^}]*padding:\s*0;/,
+    ]) {
+      expect(shellCss).toMatch(rule);
+    }
   });
 
   it("dims the selection on window key state, not on DOM focus", () => {
