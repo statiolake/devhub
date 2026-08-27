@@ -42,7 +42,15 @@ const DEFAULT_GIT: &str = "git";
 const DEFAULT_TMUX: &str = "tmux";
 const DEFAULT_HERDR: &str = "herdr";
 const DEFAULT_TMUX_SOCKET: &str = "devhub";
-const DEFAULT_FONT_FAMILY: &str = "SF Mono";
+/// The family the Terminal asks for first. It is a CSS generic rather than a
+/// named face so the request always resolves: WebKit maps it to the system
+/// monospace, and a name that resolves to nothing falls back to the *default*
+/// font, not to a monospace one, which is how a terminal ends up rendered in a
+/// proportional or CJK face with visibly uneven columns.
+/// Past this the "margin" is a layout of its own, not a breathing gap.
+const MAX_TERMINAL_MARGIN: u8 = 64;
+
+const DEFAULT_FONT_FAMILY: &str = "ui-monospace";
 
 /// A source kind understood by the Workspace Picker.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -240,6 +248,103 @@ impl fmt::Debug for RuntimeConfig {
     }
 }
 
+/// One terminal colour scheme: the surface colours plus the ANSI palette.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TerminalPalette {
+    pub background: String,
+    pub foreground: String,
+    pub cursor: String,
+    pub cursor_text: String,
+    pub selection_background: String,
+    pub selection_foreground: String,
+    /// The 16 ANSI colours in their canonical order: black, red, green,
+    /// yellow, blue, magenta, cyan, white, then the eight bright variants.
+    pub ansi: Vec<String>,
+}
+
+impl TerminalPalette {
+    pub const ANSI_LEN: usize = 16;
+
+    fn is_valid(&self) -> bool {
+        self.ansi.len() == Self::ANSI_LEN && self.colors().all(is_hex_color)
+    }
+
+    fn colors(&self) -> impl Iterator<Item = &str> {
+        [
+            self.background.as_str(),
+            self.foreground.as_str(),
+            self.cursor.as_str(),
+            self.cursor_text.as_str(),
+            self.selection_background.as_str(),
+            self.selection_foreground.as_str(),
+        ]
+        .into_iter()
+        .chain(self.ansi.iter().map(String::as_str))
+    }
+}
+
+/// Both terminal colour schemes. The active one follows the system
+/// appearance, the same way the rest of the shell does.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TerminalThemeConfig {
+    #[serde(default = "default_terminal_light")]
+    pub light: TerminalPalette,
+    #[serde(default = "default_terminal_dark")]
+    pub dark: TerminalPalette,
+}
+
+impl Default for TerminalThemeConfig {
+    fn default() -> Self {
+        Self { light: default_terminal_light(), dark: default_terminal_dark() }
+    }
+}
+
+/// `#RRGGBB`, and nothing else. The value reaches a terminal emulator's theme
+/// verbatim, so anything looser is a way for a typo to become a broken render.
+fn is_hex_color(value: &str) -> bool {
+    value.len() == 7
+        && value.starts_with('#')
+        && value[1..].chars().all(|character| character.is_ascii_hexdigit())
+}
+
+/// Derived from VS Code's "2026 Light" theme (microsoft/vscode, MIT).
+fn default_terminal_light() -> TerminalPalette {
+    TerminalPalette {
+        background: "#FFFFFF".to_owned(),
+        foreground: "#202020".to_owned(),
+        cursor: "#202020".to_owned(),
+        cursor_text: "#FFFFFF".to_owned(),
+        selection_background: "#BFD9F2".to_owned(),
+        selection_foreground: "#202020".to_owned(),
+        ansi: [
+            "#202020", "#cf222e", "#116329", "#B69500", "#0550ae", "#8250df", "#0069CC", "#606060",
+            "#606060", "#ad0707", "#1a7f37", "#9a6700", "#0969da", "#6639ba", "#1f6feb", "#1f2328",
+        ]
+        .map(str::to_owned)
+        .to_vec(),
+    }
+}
+
+/// Derived from VS Code's "2026 Dark" theme (microsoft/vscode, MIT).
+fn default_terminal_dark() -> TerminalPalette {
+    TerminalPalette {
+        background: "#121314".to_owned(),
+        foreground: "#BBBEBF".to_owned(),
+        cursor: "#BBBEBF".to_owned(),
+        cursor_text: "#121314".to_owned(),
+        selection_background: "#245C73".to_owned(),
+        selection_foreground: "#BBBEBF".to_owned(),
+        ansi: [
+            "#555555", "#ff7b72", "#7ee787", "#e5ba7d", "#79c0ff", "#d2a8ff", "#3994BC", "#BBBEBF",
+            "#8C8C8C", "#f48771", "#72C892", "#ffa657", "#48A0C7", "#B267E6", "#53A5CA", "#ededed",
+        ]
+        .map(str::to_owned)
+        .to_vec(),
+    }
+}
+
 /// Native presentation settings.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -254,6 +359,13 @@ pub struct AppearanceConfig {
     pub terminal_line_height: f64,
     #[serde(default = "default_sidebar_density")]
     pub sidebar_density: String,
+    /// The smallest gap kept between the cell grid and the pane's edges. The
+    /// grid is centred in whatever is left over, so this is a floor, not the
+    /// gap you will actually see.
+    #[serde(default = "default_terminal_margin")]
+    pub terminal_margin: u8,
+    #[serde(default)]
+    pub terminal_theme: TerminalThemeConfig,
 }
 
 impl Default for AppearanceConfig {
@@ -264,6 +376,8 @@ impl Default for AppearanceConfig {
             terminal_font_size: default_font_size(),
             terminal_line_height: default_line_height(),
             sidebar_density: default_sidebar_density(),
+            terminal_margin: default_terminal_margin(),
+            terminal_theme: TerminalThemeConfig::default(),
         }
     }
 }
@@ -277,6 +391,8 @@ impl fmt::Debug for AppearanceConfig {
             .field("terminal_font_size", &self.terminal_font_size)
             .field("terminal_line_height", &self.terminal_line_height)
             .field("sidebar_density", &self.sidebar_density)
+            .field("terminal_margin", &self.terminal_margin)
+            .field("terminal_theme", &self.terminal_theme)
             .finish()
     }
 }
@@ -1054,9 +1170,50 @@ fn validate_known_keys(document: &DocumentMut, input: &str) -> Result<(), Config
             "terminal_font_size",
             "terminal_line_height",
             "sidebar_density",
+            "terminal_margin",
+            "terminal_theme",
         ],
         input,
     )?;
+    if let Some(theme) = document
+        .get("appearance")
+        .and_then(Item::as_table_like)
+        .and_then(|appearance| appearance.get("terminal_theme"))
+    {
+        let table = theme.as_table_like().ok_or_else(|| {
+            ConfigError::validation(
+                ValidationCode::InvalidType,
+                "appearance.terminal_theme",
+                theme.span().and_then(|span| locate(input, span.start)),
+            )
+        })?;
+        check_table_keys(table, &["light", "dark"], "appearance.terminal_theme", input)?;
+        for scheme in ["light", "dark"] {
+            let Some(item) = table.get(scheme) else { continue };
+            let path = format!("appearance.terminal_theme.{scheme}");
+            let palette = item.as_table_like().ok_or_else(|| {
+                ConfigError::validation(
+                    ValidationCode::InvalidType,
+                    &path,
+                    item.span().and_then(|span| locate(input, span.start)),
+                )
+            })?;
+            check_table_keys(
+                palette,
+                &[
+                    "background",
+                    "foreground",
+                    "cursor",
+                    "cursor_text",
+                    "selection_background",
+                    "selection_foreground",
+                    "ansi",
+                ],
+                &path,
+                input,
+            )?;
+        }
+    }
 
     if let Some(item) = document.get("workspace_sources") {
         let sources = array_of_tables(item).ok_or_else(|| {
@@ -1230,6 +1387,9 @@ fn validate_appearance(
         || !appearance.terminal_line_height.is_finite()
         || !(1.0..=2.0).contains(&appearance.terminal_line_height)
         || !matches!(appearance.sidebar_density.as_str(), "compact" | "comfortable")
+        || appearance.terminal_margin > MAX_TERMINAL_MARGIN
+        || !appearance.terminal_theme.light.is_valid()
+        || !appearance.terminal_theme.dark.is_valid()
     {
         return Err(ConfigError::validation(
             ValidationCode::InvalidAppearance,
@@ -1775,6 +1935,10 @@ fn default_line_height() -> f64 {
     1.2
 }
 
+fn default_terminal_margin() -> u8 {
+    4
+}
+
 fn default_sidebar_density() -> String {
     "compact".to_owned()
 }
@@ -1886,6 +2050,36 @@ mod tests {
     use std::fs;
     use std::sync::atomic::AtomicUsize;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn the_default_terminal_palettes_are_complete_and_well_formed() {
+        let theme = TerminalThemeConfig::default();
+        for palette in [&theme.light, &theme.dark] {
+            assert_eq!(palette.ansi.len(), TerminalPalette::ANSI_LEN);
+            assert!(palette.is_valid());
+        }
+        // The two schemes must actually differ, or a viewer in Dark reads
+        // black text on black.
+        assert_ne!(theme.light.background, theme.dark.background);
+        assert_ne!(theme.light.foreground, theme.dark.foreground);
+    }
+
+    #[test]
+    fn a_malformed_colour_is_rejected_rather_than_reaching_the_emulator() {
+        let mut appearance = AppearanceConfig::default();
+        appearance.terminal_theme.light.ansi[3] = "red".to_owned();
+        assert!(!appearance.terminal_theme.light.is_valid());
+        appearance.terminal_theme.light.ansi[3] = "#GGGGGG".to_owned();
+        assert!(!appearance.terminal_theme.light.is_valid());
+        appearance.terminal_theme.light.ansi.pop();
+        assert!(!appearance.terminal_theme.light.is_valid());
+    }
+
+    #[test]
+    fn the_terminal_margin_defaults_low_and_is_bounded() {
+        assert_eq!(default_terminal_margin(), 4);
+        assert!(default_terminal_margin() <= MAX_TERMINAL_MARGIN);
+    }
 
     fn drive<T>(mut future: crate::ports::PortFuture<T>) -> Result<T, crate::ports::PortError> {
         let waker = std::task::Waker::noop();

@@ -172,9 +172,64 @@
     "colorScheme": "light",
     "sequence": 9007199254740992,
     "sidebarDensity": "compact",
-    "terminalFontFamily": "SF Mono",
+    "terminalFontFamily": "ui-monospace",
     "terminalFontSize": 13,
-    "terminalLineHeight": 1.2
+    "terminalLineHeight": 1.2,
+    "terminalMargin": 4,
+    "terminalTheme": {
+      "dark": {
+        "ansi": [
+          "#555555",
+          "#ff7b72",
+          "#7ee787",
+          "#e5ba7d",
+          "#79c0ff",
+          "#d2a8ff",
+          "#3994BC",
+          "#BBBEBF",
+          "#8C8C8C",
+          "#f48771",
+          "#72C892",
+          "#ffa657",
+          "#48A0C7",
+          "#B267E6",
+          "#53A5CA",
+          "#ededed"
+        ],
+        "background": "#121314",
+        "cursor": "#BBBEBF",
+        "cursorText": "#121314",
+        "foreground": "#BBBEBF",
+        "selectionBackground": "#245C73",
+        "selectionForeground": "#BBBEBF"
+      },
+      "light": {
+        "ansi": [
+          "#202020",
+          "#cf222e",
+          "#116329",
+          "#B69500",
+          "#0550ae",
+          "#8250df",
+          "#0069CC",
+          "#606060",
+          "#606060",
+          "#ad0707",
+          "#1a7f37",
+          "#9a6700",
+          "#0969da",
+          "#6639ba",
+          "#1f6feb",
+          "#1f2328"
+        ],
+        "background": "#FFFFFF",
+        "cursor": "#202020",
+        "cursorText": "#FFFFFF",
+        "foreground": "#202020",
+        "selectionBackground": "#BFD9F2",
+        "selectionForeground": "#202020"
+      }
+    }
   },
   {
     "availability": "available",

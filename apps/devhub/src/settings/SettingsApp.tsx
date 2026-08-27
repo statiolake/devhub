@@ -956,6 +956,24 @@ function AppearanceSection({
             }
           />
         </Field>
+        <Field label="Terminal margin">
+          <input
+            type="number"
+            min={0}
+            max={64}
+            step={1}
+            value={appearance.terminalMargin}
+            onChange={(event) =>
+              update({
+                ...config,
+                appearance: {
+                  ...appearance,
+                  terminalMargin: Number(event.target.value),
+                },
+              })
+            }
+          />
+        </Field>
       </div>
       <Field label="Sidebar density">
         <select

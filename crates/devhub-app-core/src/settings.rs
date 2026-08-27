@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use crate::config::{
     AgentProfile, AgentProfileKind, AppearanceConfig, Config, ConfigError, ContentRevision,
     GeneralConfig, ResolvedRuntime, ResolvedRuntimeConfig, RuntimeConfig, RuntimeView,
-    ValidationCode, WorkspaceKind, WorkspaceSource,
+    TerminalPalette, TerminalThemeConfig, ValidationCode, WorkspaceKind, WorkspaceSource,
 };
 use crate::state::{
     CleanupSessionStatus, RecreationSessionStatus, SocketTargetPreflightState,
@@ -112,6 +112,61 @@ pub struct SettingsAppearanceWire {
     pub terminal_font_size: u8,
     pub terminal_line_height: f64,
     pub sidebar_density: String,
+    /// Carried verbatim rather than edited here. `into_config` rebuilds the
+    /// whole `AppearanceConfig`, so a field the Settings surface does not
+    /// round-trip is a field every save silently resets.
+    pub terminal_margin: u8,
+    pub terminal_theme: SettingsTerminalThemeWire,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SettingsTerminalThemeWire {
+    pub light: SettingsTerminalPaletteWire,
+    pub dark: SettingsTerminalPaletteWire,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SettingsTerminalPaletteWire {
+    pub background: String,
+    pub foreground: String,
+    pub cursor: String,
+    pub cursor_text: String,
+    pub selection_background: String,
+    pub selection_foreground: String,
+    #[schemars(length(min = 16, max = 16))]
+    pub ansi: Vec<String>,
+}
+
+impl From<&TerminalPalette> for SettingsTerminalPaletteWire {
+    fn from(palette: &TerminalPalette) -> Self {
+        Self {
+            background: palette.background.clone(),
+            foreground: palette.foreground.clone(),
+            cursor: palette.cursor.clone(),
+            cursor_text: palette.cursor_text.clone(),
+            selection_background: palette.selection_background.clone(),
+            selection_foreground: palette.selection_foreground.clone(),
+            ansi: palette.ansi.clone(),
+        }
+    }
+}
+
+impl From<SettingsTerminalPaletteWire> for TerminalPalette {
+    fn from(wire: SettingsTerminalPaletteWire) -> Self {
+        Self {
+            background: wire.background,
+            foreground: wire.foreground,
+            cursor: wire.cursor,
+            cursor_text: wire.cursor_text,
+            selection_background: wire.selection_background,
+            selection_foreground: wire.selection_foreground,
+            ansi: wire.ansi,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -400,6 +455,11 @@ impl SettingsConfigWire {
                 terminal_font_size: self.appearance.terminal_font_size,
                 terminal_line_height: self.appearance.terminal_line_height,
                 sidebar_density: self.appearance.sidebar_density,
+                terminal_margin: self.appearance.terminal_margin,
+                terminal_theme: TerminalThemeConfig {
+                    light: self.appearance.terminal_theme.light.into(),
+                    dark: self.appearance.terminal_theme.dark.into(),
+                },
             },
             workspace_sources: self
                 .workspace_sources
@@ -444,6 +504,11 @@ impl From<&AppearanceConfig> for SettingsAppearanceWire {
             terminal_font_size: config.terminal_font_size,
             terminal_line_height: config.terminal_line_height,
             sidebar_density: config.sidebar_density.clone(),
+            terminal_margin: config.terminal_margin,
+            terminal_theme: SettingsTerminalThemeWire {
+                light: (&config.terminal_theme.light).into(),
+                dark: (&config.terminal_theme.dark).into(),
+            },
         }
     }
 }

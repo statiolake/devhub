@@ -836,7 +836,6 @@ body.is-resizing-sidebar {
 
 /* -------------------------------------------------------------- terminal */
 
-.terminal-surface,
 .terminal-surface-shell {
   position: relative;
   display: flex;
@@ -846,6 +845,36 @@ body.is-resizing-sidebar {
   flex: 1;
   flex-direction: column;
   min-height: 0;
+  background: var(--terminal-background, var(--surface));
+}
+
+/* The emulator can only draw whole cells, so the grid almost never divides the
+   pane exactly. `.xterm` has no size of its own — its one in-flow child is the
+   cell grid — so as a flex item it shrinks to exactly what was drawn and
+   centres, leaving the remainder split evenly around it. The addon still
+   measures this host, which keeps its full size, so nothing feeds back. */
+.terminal-surface {
+  position: relative;
+  display: flex;
+  overflow: hidden;
+  width: 100%;
+  height: 100%;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+  /* A floor, not the gap you see: the addon subtracts this host's padding
+     before it decides how many cells fit, so the centred remainder is added
+     on top of it. */
+  padding: var(--terminal-margin, 4px);
+  background: var(--terminal-background, var(--surface));
+}
+
+/* That remainder has to read as part of the terminal, so the emulator's own
+   layers stay transparent and the host carries the background. */
+.terminal-surface .xterm,
+.terminal-surface .xterm-viewport {
+  background: transparent;
 }
 
 .terminal-surface-title {

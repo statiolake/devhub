@@ -7,7 +7,7 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import fixture from "../../../../contracts/terminal/terminal-v1.fixture.json";
-import type { AppAppearance } from "../generated/app-shell";
+import { appearanceFixture } from "../test/appearance";
 import type { TerminalClient, TerminalInputRequest } from "./client";
 import { TerminalSurface } from "./TerminalSurface";
 
@@ -39,7 +39,10 @@ vi.mock("@xterm/xterm", () => {
     readonly dispose = vi.fn();
     readonly options: Record<string, unknown> = {};
 
-    constructor() {
+    constructor(options: Record<string, unknown> = {}) {
+      // The real Terminal takes its font and theme at construction, so a mock
+      // that drops them cannot tell a missing projection from a working one.
+      Object.assign(this.options, options);
       mocks.terminals.push(this as unknown as MockTerminalInstance);
     }
 
@@ -728,14 +731,7 @@ describe("TerminalSurface lifecycle", () => {
 
   it("projects terminal appearance without remounting the PTY view", async () => {
     const harness = clientHarness();
-    const firstAppearance: AppAppearance = {
-      colorScheme: "light",
-      sequence: 1,
-      sidebarDensity: "comfortable",
-      terminalFontFamily: "SF Mono",
-      terminalFontSize: 13,
-      terminalLineHeight: 1.2,
-    };
+    const firstAppearance = appearanceFixture();
     const rendered = render(
       <TerminalSurface
         surfaceKey="global-terminal"
@@ -745,8 +741,12 @@ describe("TerminalSurface lifecycle", () => {
       />,
     );
     await waitFor(() => expect(harness.client.resize).toHaveBeenCalledTimes(1));
+    // The chosen family leads a stack that ends in the monospace generic, so
+    // an unresolvable name can never fall through to a proportional face.
+    expect(mocks.terminals[0].options.fontFamily).toBe(
+      '"SF Mono", ui-monospace, SFMono-Regular, Menlo, monospace',
+    );
     expect(mocks.terminals[0].options).toMatchObject({
-      fontFamily: "SF Mono",
       fontSize: 13,
       lineHeight: 1.2,
     });
@@ -767,7 +767,7 @@ describe("TerminalSurface lifecycle", () => {
     expect(harness.client.attach).toHaveBeenCalledTimes(1);
     await waitFor(() => expect(harness.client.resize).toHaveBeenCalledTimes(2));
     expect(mocks.terminals[0].options.theme).toMatchObject({
-      background: "#101513",
+      background: "#ffffff",
     });
   });
 

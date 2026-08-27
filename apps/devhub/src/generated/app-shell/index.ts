@@ -52,6 +52,8 @@ export interface AppAppearanceWire {
   readonly terminalFontFamily: string;
   readonly terminalFontSize: number;
   readonly terminalLineHeight: number;
+  readonly terminalMargin: number;
+  readonly terminalTheme: TerminalThemeWire;
 }
 export type AppColorSchemeWire = "light";
 export type AppErrorActionWire = "retry" | "open_settings";
@@ -299,6 +301,19 @@ export interface SelectionWire {
 export interface SidebarWire {
   readonly expandedWorkspaceIds: readonly string[];
   readonly width: number;
+}
+export interface TerminalPaletteWire {
+  readonly ansi: readonly string[];
+  readonly background: string;
+  readonly cursor: string;
+  readonly cursorText: string;
+  readonly foreground: string;
+  readonly selectionBackground: string;
+  readonly selectionForeground: string;
+}
+export interface TerminalThemeWire {
+  readonly dark: TerminalPaletteWire;
+  readonly light: TerminalPaletteWire;
 }
 export type WorkspacePickerEventWire =
   | {
@@ -578,6 +593,44 @@ const APP_SHELL_SCHEMA = {
           enum: ["compact", "comfortable"],
           type: "string",
         },
+        TerminalPaletteWire: {
+          additionalProperties: false,
+          properties: {
+            ansi: {
+              description:
+                "Canonical ANSI order: black, red, green, yellow, blue, magenta, cyan,\nwhite, then the eight bright variants.",
+              items: { type: "string" },
+              maxItems: 16,
+              minItems: 16,
+              type: "array",
+            },
+            background: { type: "string" },
+            cursor: { type: "string" },
+            cursorText: { type: "string" },
+            foreground: { type: "string" },
+            selectionBackground: { type: "string" },
+            selectionForeground: { type: "string" },
+          },
+          required: [
+            "background",
+            "foreground",
+            "cursor",
+            "cursorText",
+            "selectionBackground",
+            "selectionForeground",
+            "ansi",
+          ],
+          type: "object",
+        },
+        TerminalThemeWire: {
+          additionalProperties: false,
+          properties: {
+            dark: { $ref: "#/$defs/TerminalPaletteWire" },
+            light: { $ref: "#/$defs/TerminalPaletteWire" },
+          },
+          required: ["light", "dark"],
+          type: "object",
+        },
       },
       $schema: "https://json-schema.org/draft/2020-12/schema",
       additionalProperties: false,
@@ -605,6 +658,18 @@ const APP_SHELL_SCHEMA = {
           minimum: 1.0,
           type: "number",
         },
+        terminalMargin: {
+          description: "The smallest gap kept around the cell grid, in points.",
+          format: "uint8",
+          maximum: 64,
+          minimum: 0,
+          type: "integer",
+        },
+        terminalTheme: {
+          $ref: "#/$defs/TerminalThemeWire",
+          description:
+            "Both schemes travel together. The shell follows the system appearance\nfor everything else, and the Terminal is not an exception; sending only\nthe resolved one would mean a round trip to the native side every time\nthe viewer switched Light and Dark.",
+        },
       },
       required: [
         "sequence",
@@ -613,6 +678,8 @@ const APP_SHELL_SCHEMA = {
         "terminalFontFamily",
         "terminalFontSize",
         "terminalLineHeight",
+        "terminalTheme",
+        "terminalMargin",
       ],
       title: "AppAppearanceWire",
       type: "object",
@@ -1845,6 +1912,44 @@ const APP_SHELL_SCHEMA = {
         },
       },
       required: ["width", "expandedWorkspaceIds"],
+      type: "object",
+    },
+    TerminalPaletteWire: {
+      additionalProperties: false,
+      properties: {
+        ansi: {
+          description:
+            "Canonical ANSI order: black, red, green, yellow, blue, magenta, cyan,\nwhite, then the eight bright variants.",
+          items: { type: "string" },
+          maxItems: 16,
+          minItems: 16,
+          type: "array",
+        },
+        background: { type: "string" },
+        cursor: { type: "string" },
+        cursorText: { type: "string" },
+        foreground: { type: "string" },
+        selectionBackground: { type: "string" },
+        selectionForeground: { type: "string" },
+      },
+      required: [
+        "background",
+        "foreground",
+        "cursor",
+        "cursorText",
+        "selectionBackground",
+        "selectionForeground",
+        "ansi",
+      ],
+      type: "object",
+    },
+    TerminalThemeWire: {
+      additionalProperties: false,
+      properties: {
+        dark: { $ref: "#/$defs/TerminalPaletteWire" },
+        light: { $ref: "#/$defs/TerminalPaletteWire" },
+      },
+      required: ["light", "dark"],
       type: "object",
     },
     WorkspacePickerEventWire: {

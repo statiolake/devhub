@@ -13,7 +13,7 @@ use crate::application::{
     AppReadiness, ConfirmationId, ConfirmationOutcomePurpose, CoordinatorEvent, CoordinatorReplay,
     IntentOutcome, RequestedPath,
 };
-use crate::config::AppearanceConfig;
+use crate::config::{AppearanceConfig, TerminalPalette};
 use crate::{
     Activity, AgentControlState, AgentId, AgentProfile, AgentProfileKind, AgentStatus, AppError,
     AppErrorCode, AppSnapshot, CloseInspectionProjection, DiagnosticCode, DisabledReason,
@@ -45,6 +45,71 @@ pub struct AppAppearanceWire {
     pub terminal_font_size: u8,
     #[schemars(range(min = 1.0, max = 2.0))]
     pub terminal_line_height: f64,
+    /// Both schemes travel together. The shell follows the system appearance
+    /// for everything else, and the Terminal is not an exception; sending only
+    /// the resolved one would mean a round trip to the native side every time
+    /// the viewer switched Light and Dark.
+    pub terminal_theme: TerminalThemeWire,
+    /// The smallest gap kept around the cell grid, in points.
+    #[schemars(range(min = 0, max = 64))]
+    pub terminal_margin: u8,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TerminalThemeWire {
+    pub light: TerminalPaletteWire,
+    pub dark: TerminalPaletteWire,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TerminalPaletteWire {
+    pub background: String,
+    pub foreground: String,
+    pub cursor: String,
+    pub cursor_text: String,
+    pub selection_background: String,
+    pub selection_foreground: String,
+    /// Canonical ANSI order: black, red, green, yellow, blue, magenta, cyan,
+    /// white, then the eight bright variants.
+    #[schemars(length(min = 16, max = 16))]
+    pub ansi: Vec<String>,
+}
+
+impl TerminalPaletteWire {
+    fn from_palette(palette: &TerminalPalette) -> Self {
+        Self {
+            background: palette.background.clone(),
+            foreground: palette.foreground.clone(),
+            cursor: palette.cursor.clone(),
+            cursor_text: palette.cursor_text.clone(),
+            selection_background: palette.selection_background.clone(),
+            selection_foreground: palette.selection_foreground.clone(),
+            ansi: palette.ansi.clone(),
+        }
+    }
+
+    fn is_valid(&self) -> bool {
+        self.ansi.len() == TerminalPalette::ANSI_LEN
+            && [
+                &self.background,
+                &self.foreground,
+                &self.cursor,
+                &self.cursor_text,
+                &self.selection_background,
+                &self.selection_foreground,
+            ]
+            .into_iter()
+            .chain(self.ansi.iter())
+            .all(|color| {
+                color.len() == 7
+                    && color.starts_with('#')
+                    && color[1..].chars().all(|c| c.is_ascii_hexdigit())
+            })
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -72,6 +137,11 @@ impl AppAppearanceWire {
             terminal_font_family: config.terminal_font_family.clone(),
             terminal_font_size: config.terminal_font_size,
             terminal_line_height: config.terminal_line_height,
+            terminal_theme: TerminalThemeWire {
+                light: TerminalPaletteWire::from_palette(&config.terminal_theme.light),
+                dark: TerminalPaletteWire::from_palette(&config.terminal_theme.dark),
+            },
+            terminal_margin: config.terminal_margin,
         }
     }
 
@@ -84,6 +154,9 @@ impl AppAppearanceWire {
             || !(9..=24).contains(&self.terminal_font_size)
             || !self.terminal_line_height.is_finite()
             || !(1.0..=2.0).contains(&self.terminal_line_height)
+            || self.terminal_margin > 64
+            || !self.terminal_theme.light.is_valid()
+            || !self.terminal_theme.dark.is_valid()
         {
             return Err(SnapshotWireError::InvalidContract(
                 "appearance projection is outside the supported range",

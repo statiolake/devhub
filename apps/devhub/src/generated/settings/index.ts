@@ -17,6 +17,8 @@ export interface SettingsAppearanceWire {
   readonly terminalFontFamily: string;
   readonly terminalFontSize: number;
   readonly terminalLineHeight: number;
+  readonly terminalMargin: number;
+  readonly terminalTheme: SettingsTerminalThemeWire;
 }
 export interface SettingsCommandRequestWire {
   readonly schemaVersion: number;
@@ -184,6 +186,19 @@ export type SettingsSocketTransitionWire =
   | "cleaning_old"
   | "old_cleaned"
   | "recreation_pending";
+export interface SettingsTerminalPaletteWire {
+  readonly ansi: readonly string[];
+  readonly background: string;
+  readonly cursor: string;
+  readonly cursorText: string;
+  readonly foreground: string;
+  readonly selectionBackground: string;
+  readonly selectionForeground: string;
+}
+export interface SettingsTerminalThemeWire {
+  readonly dark: SettingsTerminalPaletteWire;
+  readonly light: SettingsTerminalPaletteWire;
+}
 export type SettingsWorkspaceKindWire =
   | "directory"
   | "git_repository"
@@ -237,6 +252,15 @@ const SETTINGS_SCHEMA = {
           type: "integer",
         },
         terminalLineHeight: { format: "double", type: "number" },
+        terminalMargin: {
+          description:
+            "Carried verbatim rather than edited here. `into_config` rebuilds the\nwhole `AppearanceConfig`, so a field the Settings surface does not\nround-trip is a field every save silently resets.",
+          format: "uint8",
+          maximum: 255,
+          minimum: 0,
+          type: "integer",
+        },
+        terminalTheme: { $ref: "#/$defs/SettingsTerminalThemeWire" },
       },
       required: [
         "colorScheme",
@@ -244,6 +268,8 @@ const SETTINGS_SCHEMA = {
         "terminalFontSize",
         "terminalLineHeight",
         "sidebarDensity",
+        "terminalMargin",
+        "terminalTheme",
       ],
       type: "object",
     },
@@ -575,6 +601,15 @@ const SETTINGS_SCHEMA = {
               type: "integer",
             },
             terminalLineHeight: { format: "double", type: "number" },
+            terminalMargin: {
+              description:
+                "Carried verbatim rather than edited here. `into_config` rebuilds the\nwhole `AppearanceConfig`, so a field the Settings surface does not\nround-trip is a field every save silently resets.",
+              format: "uint8",
+              maximum: 255,
+              minimum: 0,
+              type: "integer",
+            },
+            terminalTheme: { $ref: "#/$defs/SettingsTerminalThemeWire" },
           },
           required: [
             "colorScheme",
@@ -582,6 +617,8 @@ const SETTINGS_SCHEMA = {
             "terminalFontSize",
             "terminalLineHeight",
             "sidebarDensity",
+            "terminalMargin",
+            "terminalTheme",
           ],
           type: "object",
         },
@@ -640,6 +677,42 @@ const SETTINGS_SCHEMA = {
             "tmuxSocketName",
             "tmuxArgs",
           ],
+          type: "object",
+        },
+        SettingsTerminalPaletteWire: {
+          additionalProperties: false,
+          properties: {
+            ansi: {
+              items: { type: "string" },
+              maxItems: 16,
+              minItems: 16,
+              type: "array",
+            },
+            background: { type: "string" },
+            cursor: { type: "string" },
+            cursorText: { type: "string" },
+            foreground: { type: "string" },
+            selectionBackground: { type: "string" },
+            selectionForeground: { type: "string" },
+          },
+          required: [
+            "background",
+            "foreground",
+            "cursor",
+            "cursorText",
+            "selectionBackground",
+            "selectionForeground",
+            "ansi",
+          ],
+          type: "object",
+        },
+        SettingsTerminalThemeWire: {
+          additionalProperties: false,
+          properties: {
+            dark: { $ref: "#/$defs/SettingsTerminalPaletteWire" },
+            light: { $ref: "#/$defs/SettingsTerminalPaletteWire" },
+          },
+          required: ["light", "dark"],
           type: "object",
         },
         SettingsWorkspaceKindWire: {
@@ -745,6 +818,15 @@ const SETTINGS_SCHEMA = {
               type: "integer",
             },
             terminalLineHeight: { format: "double", type: "number" },
+            terminalMargin: {
+              description:
+                "Carried verbatim rather than edited here. `into_config` rebuilds the\nwhole `AppearanceConfig`, so a field the Settings surface does not\nround-trip is a field every save silently resets.",
+              format: "uint8",
+              maximum: 255,
+              minimum: 0,
+              type: "integer",
+            },
+            terminalTheme: { $ref: "#/$defs/SettingsTerminalThemeWire" },
           },
           required: [
             "colorScheme",
@@ -752,6 +834,8 @@ const SETTINGS_SCHEMA = {
             "terminalFontSize",
             "terminalLineHeight",
             "sidebarDensity",
+            "terminalMargin",
+            "terminalTheme",
           ],
           type: "object",
         },
@@ -1036,6 +1120,42 @@ const SETTINGS_SCHEMA = {
           ],
           type: "string",
         },
+        SettingsTerminalPaletteWire: {
+          additionalProperties: false,
+          properties: {
+            ansi: {
+              items: { type: "string" },
+              maxItems: 16,
+              minItems: 16,
+              type: "array",
+            },
+            background: { type: "string" },
+            cursor: { type: "string" },
+            cursorText: { type: "string" },
+            foreground: { type: "string" },
+            selectionBackground: { type: "string" },
+            selectionForeground: { type: "string" },
+          },
+          required: [
+            "background",
+            "foreground",
+            "cursor",
+            "cursorText",
+            "selectionBackground",
+            "selectionForeground",
+            "ansi",
+          ],
+          type: "object",
+        },
+        SettingsTerminalThemeWire: {
+          additionalProperties: false,
+          properties: {
+            dark: { $ref: "#/$defs/SettingsTerminalPaletteWire" },
+            light: { $ref: "#/$defs/SettingsTerminalPaletteWire" },
+          },
+          required: ["light", "dark"],
+          type: "object",
+        },
         SettingsWorkspaceKindWire: {
           enum: ["directory", "git_repository", "git_worktree"],
           type: "string",
@@ -1212,6 +1332,42 @@ const SETTINGS_SCHEMA = {
         "recreation_pending",
       ],
       type: "string",
+    },
+    SettingsTerminalPaletteWire: {
+      additionalProperties: false,
+      properties: {
+        ansi: {
+          items: { type: "string" },
+          maxItems: 16,
+          minItems: 16,
+          type: "array",
+        },
+        background: { type: "string" },
+        cursor: { type: "string" },
+        cursorText: { type: "string" },
+        foreground: { type: "string" },
+        selectionBackground: { type: "string" },
+        selectionForeground: { type: "string" },
+      },
+      required: [
+        "background",
+        "foreground",
+        "cursor",
+        "cursorText",
+        "selectionBackground",
+        "selectionForeground",
+        "ansi",
+      ],
+      type: "object",
+    },
+    SettingsTerminalThemeWire: {
+      additionalProperties: false,
+      properties: {
+        dark: { $ref: "#/$defs/SettingsTerminalPaletteWire" },
+        light: { $ref: "#/$defs/SettingsTerminalPaletteWire" },
+      },
+      required: ["light", "dark"],
+      type: "object",
     },
     SettingsWorkspaceKindWire: {
       enum: ["directory", "git_repository", "git_worktree"],

@@ -9,6 +9,7 @@ import {
 } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { AppShell } from "./AppShell";
+import { appearanceFixture } from "../test/appearance";
 import type {
   AppAppearance,
   AppEventCursor,
@@ -1033,14 +1034,7 @@ describe("App Shell states and accessibility", () => {
   it("queries appearance after subscribing and ignores an older live appearance event", async () => {
     const appClient = client(globalSnapshot);
     let appearanceListener: ((appearance: AppAppearance) => void) | undefined;
-    const initialAppearance: AppAppearance = {
-      colorScheme: "light",
-      sequence: 2,
-      sidebarDensity: "comfortable",
-      terminalFontFamily: "SF Mono",
-      terminalFontSize: 13,
-      terminalLineHeight: 1.2,
-    };
+    const initialAppearance = appearanceFixture({ sequence: 2 });
     appClient.subscribeAppearance = vi.fn(async (listener) => {
       appearanceListener = listener;
       return () => undefined;

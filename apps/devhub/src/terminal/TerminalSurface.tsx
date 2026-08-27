@@ -2,6 +2,12 @@ import { useEffect, useRef, useState } from "react";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
+import {
+  activePalette,
+  prefersDark,
+  terminalFontStack,
+  xtermTheme,
+} from "./theme";
 import type { TerminalChannelDiagnostic } from "../app/client";
 import type { AppAppearance } from "../generated/app-shell";
 import {
@@ -101,26 +107,6 @@ function isTerminalFrame(value: TerminalFrame): value is TerminalFrame {
   return value.type.length > 0;
 }
 
-function terminalTheme(colorScheme: AppAppearance["colorScheme"]) {
-  // App Shell v1 currently exposes the light product appearance only. Keep
-  // this as an xterm theme projection so adding a native dark scheme later
-  // does not require reconnecting the PTY surface.
-  if (colorScheme === "light") {
-    return {
-      background: "#101513",
-      foreground: "#f4f4ed",
-      cursor: "#c7e6c2",
-      selectionBackground: "#3c594a",
-    };
-  }
-  return {
-    background: "#101513",
-    foreground: "#f4f4ed",
-    cursor: "#c7e6c2",
-    selectionBackground: "#3c594a",
-  };
-}
-
 function detachRequest(
   surfaceKey: string,
   receipt: TerminalReceipt,
@@ -203,6 +189,26 @@ export function TerminalSurface({
   outputAfterInputRenderedRef.current = onOutputAfterInputRendered;
   channelDiagnosticRef.current = onChannelDiagnostic;
 
+  // The palette follows the system appearance rather than a saved choice, so
+  // it changes without the snapshot changing. Both schemes are already here.
+  const [dark, setDark] = useState(() => prefersDark());
+  useEffect(() => {
+    const query = window.matchMedia?.("(prefers-color-scheme: dark)");
+    if (!query) return undefined;
+    const onChange = (event: MediaQueryListEvent) => setDark(event.matches);
+    query.addEventListener("change", onChange);
+    setDark(query.matches);
+    return () => query.removeEventListener("change", onChange);
+  }, []);
+
+  const palette = activePalette(appearance, dark);
+  const paletteRef = useRef(palette);
+  paletteRef.current = palette;
+  useEffect(() => {
+    const terminal = terminalRef.current;
+    if (terminal && palette) terminal.options.theme = xtermTheme(palette);
+  }, [palette]);
+
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return undefined;
@@ -263,12 +269,11 @@ export function TerminalSurface({
       terminal = new Terminal({
         cursorBlink: true,
         convertEol: false,
-        fontFamily:
-          appearance?.terminalFontFamily ?? "SF Mono, Menlo, monospace",
+        fontFamily: terminalFontStack(appearance?.terminalFontFamily),
         fontSize: appearance?.terminalFontSize ?? 13,
-        lineHeight: appearance?.terminalLineHeight ?? 1.35,
+        lineHeight: appearance?.terminalLineHeight ?? 1.2,
         scrollback: 10_000,
-        theme: terminalTheme(appearance?.colorScheme ?? "light"),
+        theme: paletteRef.current ? xtermTheme(paletteRef.current) : undefined,
       });
       terminalRef.current = terminal;
       fit = new FitAddon();
@@ -764,16 +769,28 @@ export function TerminalSurface({
     // xterm options and geometry without tearing down the PTY attachment.
     const terminal = terminalRef.current;
     if (terminal && appearance) {
-      terminal.options.fontFamily = appearance.terminalFontFamily;
+      terminal.options.fontFamily = terminalFontStack(
+        appearance.terminalFontFamily,
+      );
       terminal.options.fontSize = appearance.terminalFontSize;
       terminal.options.lineHeight = appearance.terminalLineHeight;
-      terminal.options.theme = terminalTheme(appearance.colorScheme);
       resizeRef.current?.();
     }
   }, [appearance]);
 
   return (
-    <div className="terminal-surface-shell" data-connection={connection}>
+    <div
+      className="terminal-surface-shell"
+      data-connection={connection}
+      style={
+        {
+          ...(palette ? { "--terminal-background": palette.background } : {}),
+          ...(appearance
+            ? { "--terminal-margin": `${appearance.terminalMargin}px` }
+            : {}),
+        } as React.CSSProperties
+      }
+    >
       {!hideTitle && (
         <h1
           id={`${surfaceKey}-terminal-title`}
