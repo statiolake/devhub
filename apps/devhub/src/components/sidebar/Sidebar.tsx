@@ -442,12 +442,18 @@ function ScratchRow({
       }
     >
       <span className="disclosure-spacer" aria-hidden="true" />
-      <span className="row-glyph" aria-hidden="true">
-        <svg viewBox="0 0 14 14" focusable="false">
-          <path d="M3 4.5 L6 7 L3 9.5 M7.5 9.75 H11" />
-        </svg>
+      {/* Mirrors a Workspace row's context button so the glyph, the label and
+          the trailing inset land on the same columns. */}
+      <span className="sidebar-context-button">
+        <span className="row-glyph" aria-hidden="true">
+          <svg viewBox="0 0 14 14" focusable="false">
+            {/* Drawn to the same 1.5–12.5 ink box as the Workspace folder, so
+                the two glyphs sit on one leading edge. */}
+            <path d="M1.5 4 L4.8 7 L1.5 10 M6.6 10 H12.5" />
+          </svg>
+        </span>
+        <span className="row-label">Scratch</span>
       </span>
-      <span className="row-label">Scratch</span>
     </button>
   );
 }

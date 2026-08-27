@@ -60,19 +60,44 @@ describe("accessibility layout invariants", () => {
 
   it("selects a source-list row the way macOS does, not a table row", () => {
     // A saturated accent fill with inverted text is a table row. Navigation
-    // gets a tint of the accent and keeps its own label colour.
+    // gets a neutral fill, keeps its own label colour, and sets the label
+    // semibold; the accent shows on the glyph alone.
     const selected =
       /\.sidebar-row\.is-selected,\s*\n\.sidebar-row\.is-selected:hover\s*\{([^}]*)\}/.exec(
         shellCss,
       );
     expect(selected?.[1]).toMatch(/background:\s*var\(--selection\);/);
     expect(selected?.[1]).toMatch(/color:\s*var\(--primary\);/);
+    expect(selected?.[1]).toMatch(/font-weight:\s*590;/);
     expect(selected?.[1]).not.toMatch(/accent-ink/);
     expect(tokensCss).not.toMatch(/--selection-strong/);
-    // The tint has to be translucent, or it would hide the window material
-    // the Sidebar exists to show.
+    // The fill is neutral and translucent: neutral so it does not compete with
+    // the glyph for the accent, translucent so the window material the Sidebar
+    // exists to show still comes through it.
     expect(tokensCss).toMatch(
-      /--selection:\s*color-mix\(in srgb, AccentColor \d+%, transparent\)/,
+      /--selection:\s*light-dark\(rgba\(0, 0, 0, [\d.]+\), rgba\(255, 255, 255, [\d.]+\)\);/,
+    );
+    expect(shellCss).toMatch(
+      /\.sidebar-row\.is-selected\s\.row-glyph\ssvg\s*\{[^}]*stroke:\s*var\(--accent\);/,
+    );
+  });
+
+  it("hangs the Sidebar's headings and glyphs off one leading rail", () => {
+    // A section heading that starts left of the icons under it, or an icon
+    // whose ink starts further in than its neighbour's, reads as three
+    // different left edges rather than one list.
+    expect(shellCss).toMatch(
+      /\.sidebar-section-heading\s*\{[^}]*padding:\s*0 2px 0\s*calc\(\s*var\(--sidebar-disclosure-width\)/,
+    );
+    // The user agent's own `h2` metrics — 1.5em bold, 0.83em margins — would
+    // both oversize the label and swallow the gap before the first row.
+    expect(shellCss).toMatch(
+      /\.sidebar-section-heading h2\s*\{[^}]*margin:\s*0;/,
+    );
+    // Heading band and row are the same height, so the step from the heading
+    // to the first row is the step from one row to the next.
+    expect(shellCss).toMatch(
+      /\.sidebar-section-heading\s*\{[^}]*height:\s*var\(--row-height\);/,
     );
   });
 

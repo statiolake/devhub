@@ -24,8 +24,9 @@ browser tabs → stable context tree plus Activities; decorative cards/status ba
 
 - Palette: `--canvas`, `--chrome`, `--surface`, and all label/state roles use
   `light-dark()` with `AccentColor` where supported. The fallback stays quiet
-  and system-adjacent: graphite text, system accent selection, green working,
-  orange waiting, and red error.
+  and system-adjacent: graphite text, green working, orange waiting, and red
+  error. A selected source-list row takes a neutral fill and a semibold label;
+  the accent shows on the row's glyph alone, never as the fill.
 - Depth: one native system material layer sits behind transparent chrome. The
   Sidebar and titlebar may reveal it; the provider Surface stays opaque.
   Panes are separated by hairlines rather than shadows, with no CSS

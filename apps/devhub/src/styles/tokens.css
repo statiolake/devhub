@@ -45,10 +45,13 @@
    */
   --accent: light-dark(#286486, #82aeca);
   --accent-ink: light-dark(#ffffff, #12222c);
-  --selection: light-dark(#cbd9e3, #2f4351);
+  /* A source list selection is a neutral fill, not a tinted one: the accent
+     appears on the row's glyph and the label goes semibold, which is what
+     carries "this one" — the fill only marks the extent of the row. */
+  --selection: light-dark(rgba(0, 0, 0, 0.11), rgba(255, 255, 255, 0.14));
   --selection-inactive: light-dark(
-    rgba(0, 0, 0, 0.09),
-    rgba(255, 255, 255, 0.11)
+    rgba(0, 0, 0, 0.06),
+    rgba(255, 255, 255, 0.07)
   );
   /* System-adjacent semantics: green, orange, red as macOS renders them. */
   --working: light-dark(#1d7f36, #30d158);
@@ -90,17 +93,18 @@
   --traffic-light-inset: 88px;
   --row-height: 28px;
   --sidebar-width: 248px;
+  /* The Sidebar's leading rail. Every row reserves the disclosure column
+     first, then the glyph column; a section heading aligns to the glyph so
+     the headings and the icons beneath them share one left edge. */
+  --sidebar-disclosure-width: 18px;
+  --sidebar-glyph-width: 16px;
+  --sidebar-glyph-ink: 14px;
 }
 
 @supports (color: AccentColor) {
   :root {
     --accent: AccentColor;
     --accent-ink: AccentColorText;
-    /* A source list is not a table: macOS fills a selected Finder sidebar row
-       with a light tint of the accent and leaves the label its normal colour,
-       rather than the saturated accent and white text a table row gets. The
-       tint is translucent so the window's material still shows through it. */
-    --selection: color-mix(in srgb, AccentColor 20%, transparent);
   }
 }
 
@@ -113,11 +117,11 @@
     --line-soft: light-dark(rgba(0, 0, 0, 0.22), rgba(255, 255, 255, 0.2));
     --line-strong: light-dark(rgba(0, 0, 0, 0.55), rgba(255, 255, 255, 0.48));
     /* Increase Contrast wants the selected row to be unmistakable, so the
-       tint firms up rather than staying a whisper. */
-    --selection: color-mix(in srgb, AccentColor 42%, transparent);
+       fill firms up rather than staying a whisper. */
+    --selection: light-dark(rgba(0, 0, 0, 0.24), rgba(255, 255, 255, 0.28));
     --selection-inactive: light-dark(
-      rgba(0, 0, 0, 0.18),
-      rgba(255, 255, 255, 0.22)
+      rgba(0, 0, 0, 0.14),
+      rgba(255, 255, 255, 0.16)
     );
   }
 }

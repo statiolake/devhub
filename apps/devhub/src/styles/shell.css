@@ -149,14 +149,28 @@
   padding: var(--space-2) var(--space-2) var(--space-4);
 }
 
+/* The heading is a band of the same height as a row, so the run of text down
+   the Sidebar keeps one rhythm: heading to first row is the same step as row
+   to row. Its leading edge is the glyph column, not the row edge. */
 .sidebar-section-heading {
   display: flex;
-  height: 26px;
+  height: var(--row-height);
   align-items: center;
   justify-content: space-between;
-  padding: 0 var(--space-2) 0 var(--space-3);
+  padding: 0 2px 0
+    calc(
+      var(--sidebar-disclosure-width) +
+        (var(--sidebar-glyph-width) - var(--sidebar-glyph-ink)) / 2
+    );
   margin-top: var(--space-3);
   color: var(--tertiary);
+}
+
+/* The band owns the layout; the heading element owns only the text. Left to
+   the user agent an `h2` arrives at 1.5em bold with 0.83em of vertical margin,
+   which both oversizes the label and eats the gap before the first row. */
+.sidebar-section-heading h2 {
+  margin: 0;
   font-size: 11px;
   font-weight: 590;
   letter-spacing: 0.04em;
@@ -190,21 +204,15 @@
   background: var(--wash);
 }
 
-/* A macOS source list tints the selected row with the accent and keeps the
-   label in its normal colour — the saturated fill with white text belongs to a
-   table row, not to navigation. The fill drops to neutral when the window is
-   not key, which is the only cue that the selection is no longer live. */
+/* A selected source-list row is a neutral fill with a semibold label — the
+   saturated accent fill with inverted text belongs to a table row, not to
+   navigation. The accent appears on the glyph alone. The fill weakens when the
+   window is not key, which is the only cue that the selection is not live. */
 .sidebar-row.is-selected,
 .sidebar-row.is-selected:hover {
   background: var(--selection);
   color: var(--primary);
-  font-weight: 510;
-}
-
-/* The glyph is the one thing that takes the accent outright, the way a
-   Finder sidebar icon does; the inactive rule below returns it to neutral. */
-.sidebar-row.is-selected .row-glyph svg {
-  stroke: var(--accent);
+  font-weight: 590;
 }
 
 /* Keyed to whether the *window* is key, which is what AppKit dims a selection
@@ -244,9 +252,9 @@
 .disclosure-button,
 .disclosure-spacer {
   display: flex;
-  width: 18px;
+  width: var(--sidebar-disclosure-width);
   height: 100%;
-  flex: 0 0 18px;
+  flex: 0 0 var(--sidebar-disclosure-width);
   align-items: center;
   justify-content: center;
   border: 0;
@@ -274,15 +282,15 @@
 
 .row-glyph {
   display: flex;
-  width: 16px;
-  flex: 0 0 16px;
+  width: var(--sidebar-glyph-width);
+  flex: 0 0 var(--sidebar-glyph-width);
   align-items: center;
   justify-content: center;
 }
 
 .row-glyph svg {
-  width: 14px;
-  height: 14px;
+  width: var(--sidebar-glyph-ink);
+  height: var(--sidebar-glyph-ink);
   fill: none;
   stroke: var(--secondary);
   stroke-linecap: round;
@@ -298,8 +306,14 @@
   fill: none;
 }
 
+/* The glyph is the one thing that takes the accent outright, the way a Finder
+   sidebar icon does; the inactive rule above returns it to neutral. */
 .sidebar-row.is-selected .row-glyph svg {
-  stroke: var(--primary);
+  stroke: var(--accent);
+}
+
+.sidebar-row.is-selected.workspace-row .row-glyph svg {
+  fill: color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
 .row-label {
@@ -312,6 +326,10 @@
 
 .workspace-row .row-label {
   font-weight: 510;
+}
+
+.sidebar-row.is-selected .row-label {
+  font-weight: 590;
 }
 
 .row-note {
@@ -389,10 +407,11 @@
   opacity: 0.35;
 }
 
+/* Sized and inset like a trailing row action so the two share a right edge. */
 .section-action-button {
   display: flex;
-  width: 22px;
-  height: 22px;
+  width: 20px;
+  height: 20px;
   align-items: center;
   justify-content: center;
   border: 0;
