@@ -789,6 +789,59 @@ fn terminate_process_group_until(process_id: u32, deadline: Instant, termination
     send_process_group_signal(process_id, Signal::SIGKILL);
 }
 
+/// Stop a process group DevHub started but holds no `Child` handle for: a
+/// server left behind by a run that was killed before it could stop its own.
+///
+/// The identifier is a process-group leader created by the process adapter, so
+/// the negative PID reaches exactly that tree. Nothing is reaped here — the
+/// orphan is not this process's child — and a group that is already gone is
+/// reported as reclaimed without a signal being sent.
+#[cfg(unix)]
+pub(crate) fn reclaim_orphaned_process_group(process_id: u32, deadline: Instant) -> bool {
+    if !process_group_is_alive(process_id) {
+        return true;
+    }
+    terminate_process_group_until(process_id, deadline, Duration::from_millis(250));
+    !process_group_is_alive(process_id)
+}
+
+#[cfg(not(unix))]
+pub(crate) fn reclaim_orphaned_process_group(_process_id: u32, _deadline: Instant) -> bool {
+    false
+}
+
+/// Whether the command lines in a process group look like the VS Code Server
+/// DevHub runs out of its own provider directory.
+///
+/// A recorded process id can be reused by anything once its owner is gone, so
+/// liveness alone is not identity — signalling on that basis would let a stale
+/// record take out an unrelated process group. `serve-web` running against
+/// DevHub's own `--server-data-dir` is a claim nothing but DevHub's server can
+/// make.
+#[cfg(unix)]
+pub(crate) fn process_group_runs_editor_server(process_id: u32, server_data: &Path) -> bool {
+    let Some(server_data) = server_data.to_str() else { return false };
+    let Ok(output) = Command::new("/bin/ps")
+        .args(["-o", "command=", "-g", &process_id.to_string()])
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+    else {
+        return false;
+    };
+    if !output.status.success() {
+        return false;
+    }
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .any(|line| line.contains("serve-web") && line.contains(server_data))
+}
+
+#[cfg(not(unix))]
+pub(crate) fn process_group_runs_editor_server(_process_id: u32, _server_data: &Path) -> bool {
+    false
+}
+
 #[cfg(unix)]
 fn send_process_group_signal(process_id: u32, signal: Signal) {
     let Ok(process_id) = i32::try_from(process_id) else { return };
@@ -919,6 +972,20 @@ mod tests {
 
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
+
+    #[cfg(unix)]
+    #[test]
+    fn a_live_process_group_that_is_not_our_server_is_not_claimed() {
+        // This is the guard that stands between a stale process-id record and
+        // somebody else's process group. The test runner is as live a group as
+        // there is, and it is emphatically not `serve-web`.
+        let own_group = u32::try_from(nix::unistd::getpgrp().as_raw()).expect("own group");
+        assert!(process_group_is_alive(own_group));
+        assert!(!process_group_runs_editor_server(
+            own_group,
+            Path::new("/nonexistent/server-data")
+        ));
+    }
 
     struct TempDir {
         path: PathBuf,

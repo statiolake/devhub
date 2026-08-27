@@ -27,10 +27,14 @@ use super::bridge_transport::{
     SystemBridgeTransportFactory,
 };
 use super::error::{EditorError, EditorErrorCode, EditorResult};
-use super::paths::{append_lifecycle_log, EditorPaths, LifecycleEvent};
+use super::paths::{
+    append_lifecycle_log, clear_server_pid, read_server_pid, record_server_pid, EditorPaths,
+    LifecycleEvent,
+};
 use super::port::{PortAllocator, StablePort, SystemPortAllocator};
 use super::process::{
-    ProcessAdapter, ProcessSpec, ProcessSupervisor, SystemProcessAdapter, MAX_RESTARTS,
+    OrphanReclaimer, ProcessAdapter, ProcessSpec, ProcessSupervisor, SystemOrphanReclaimer,
+    SystemProcessAdapter, MAX_RESTARTS,
 };
 use super::provider::EditorExecutable;
 use super::readiness::{ReadinessProbe, SystemReadinessProbe};
@@ -150,6 +154,7 @@ pub struct EditorHost {
     webviews: Mutex<Option<Arc<dyn WebViewHost>>>,
     bridge_installer: Option<Arc<dyn BridgeInstaller>>,
     bridge_factory: Arc<dyn BridgeTransportFactory>,
+    reclaimer: Arc<dyn OrphanReclaimer>,
 }
 
 impl EditorHost {
@@ -199,7 +204,14 @@ impl EditorHost {
             webviews: Mutex::new(None),
             bridge_installer: Some(bridge_installer),
             bridge_factory,
+            reclaimer: Arc::new(SystemOrphanReclaimer),
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_orphan_reclaimer(mut self, reclaimer: Arc<dyn OrphanReclaimer>) -> Self {
+        self.reclaimer = reclaimer;
+        self
     }
 
     pub fn attach_webview_host(&self, host: Arc<dyn WebViewHost>) -> EditorResult<()> {
@@ -354,7 +366,9 @@ impl EditorHost {
             append_lifecycle_log(&paths, LifecycleEvent::RuntimePrepared)?;
             let stable_port =
                 StablePort::load_or_select(paths.port_file(), self.port_allocator.as_ref())?;
-            stable_port.ensure_available(self.port_allocator.as_ref())?;
+            // Preparing a runtime is the one moment the origin may still move,
+            // because nothing is mounted against it yet.
+            let stable_port = self.resolve_port_conflict(stable_port, &paths, true)?;
             let origin = EditorOrigin::new(stable_port.port())?;
             let token = SecretToken::issue(paths.token_file())?;
             let bridge_token = SecretToken::issue_ephemeral()?;
@@ -374,7 +388,9 @@ impl EditorHost {
                 bridge_installed: false,
             }
         };
-        runtime.port.ensure_available(self.port_allocator.as_ref())?;
+        // A runtime that is already prepared has surfaces addressed at its
+        // origin, so this pass may reclaim the port but never move it.
+        runtime.port = self.resolve_port_conflict(runtime.port, &runtime.paths, false)?;
         if !runtime.bridge_installed {
             let bridge_installer = self
                 .bridge_installer
@@ -402,6 +418,7 @@ impl EditorHost {
             }
             process.spawn(self.process_adapter.as_ref(), &spec)?;
             if let Some(identity) = process.process() {
+                record_server_pid(&runtime.paths, identity.pid(), runtime.port.port());
                 append_lifecycle_log(
                     &runtime.paths,
                     LifecycleEvent::ServerStarted { pid: identity.pid() },
@@ -886,6 +903,7 @@ impl EditorHost {
                         first_error = Some(error);
                     }
                 }
+                clear_server_pid(&runtime.paths);
                 if let Err(error) =
                     append_lifecycle_log(&runtime.paths, LifecycleEvent::ServerStopped)
                 {
@@ -952,6 +970,58 @@ impl EditorHost {
         let mut inventory = state.surfaces.values().map(snapshot_for).collect::<Vec<_>>();
         inventory.sort_by(|left, right| left.key.cmp(&right.key));
         Ok(inventory)
+    }
+
+    /// Make the persisted origin usable again, or give it up.
+    ///
+    /// The stable port is an identity, not a preference, so an occupied one is
+    /// worth some effort before it is either reported or replaced. In order:
+    /// take it back from a server of DevHub's own that outlived the run that
+    /// started it; failing that, and only while nothing is mounted against the
+    /// origin yet, move to a port the OS does not hand out on its own.
+    fn resolve_port_conflict(
+        &self,
+        port: StablePort,
+        paths: &EditorPaths,
+        may_migrate: bool,
+    ) -> EditorResult<StablePort> {
+        if port.is_free(self.port_allocator.as_ref()) {
+            return Ok(port);
+        }
+        if self.reclaim_orphaned_server(paths, port.port())
+            && port.is_free(self.port_allocator.as_ref())
+        {
+            return Ok(port);
+        }
+        if !may_migrate {
+            port.ensure_available(self.port_allocator.as_ref())?;
+            return Ok(port);
+        }
+        let moved = port.migrate(paths.port_file(), self.port_allocator.as_ref())?;
+        moved.ensure_available(self.port_allocator.as_ref())?;
+        Ok(moved)
+    }
+
+    /// Stop a VS Code Server this app started and never got to stop.
+    ///
+    /// A run that is force-quit or crashes leaves its server holding the
+    /// origin with no `Child` handle left to stop it by, which is the usual
+    /// reason the port is occupied at all. The recorded process group is only
+    /// signalled once it still claims to be running `serve-web` against
+    /// DevHub's own provider directory: a process id outlives its owner, and a
+    /// stale record must not be allowed to reach whatever inherited it.
+    fn reclaim_orphaned_server(&self, paths: &EditorPaths, port: u16) -> bool {
+        let Some(record) = read_server_pid(paths) else {
+            return false;
+        };
+        if record.port != port {
+            return false;
+        }
+        let reclaimed = self.reclaimer.reclaim(record.pid, paths.server_data());
+        if reclaimed {
+            clear_server_pid(paths);
+        }
+        reclaimed
     }
 
     fn server_spec(&self, runtime: &Runtime) -> EditorResult<ProcessSpec> {
@@ -1190,6 +1260,140 @@ mod tests {
         fn is_available(&self, _port: u16) -> bool {
             true
         }
+    }
+
+    /// A port that is occupied until something takes it back, and a fixed
+    /// replacement for whatever asks for a new origin.
+    struct ScriptedPorts {
+        occupied: Arc<Mutex<Option<u16>>>,
+        replacement: u16,
+    }
+
+    impl PortAllocator for ScriptedPorts {
+        fn choose(&self) -> EditorResult<u16> {
+            Ok(self.replacement)
+        }
+
+        fn is_available(&self, port: u16) -> bool {
+            *self.occupied.lock().expect("occupied") != Some(port)
+        }
+    }
+
+    /// Frees the port it was asked to reclaim, and records what it was asked
+    /// about so the identity guard can be observed.
+    struct ScriptedReclaimer {
+        occupied: Arc<Mutex<Option<u16>>>,
+        asked: Arc<Mutex<Vec<u32>>>,
+        succeeds: bool,
+    }
+
+    impl OrphanReclaimer for ScriptedReclaimer {
+        fn reclaim(&self, process_id: u32, _server_data: &Path) -> bool {
+            self.asked.lock().expect("asked").push(process_id);
+            if !self.succeeds {
+                return false;
+            }
+            *self.occupied.lock().expect("occupied") = None;
+            true
+        }
+    }
+
+    struct ConflictedHost {
+        host: EditorHost,
+        paths: EditorPaths,
+        asked: Arc<Mutex<Vec<u32>>>,
+        held: Arc<Mutex<Option<u16>>>,
+        _root: PathBuf,
+    }
+
+    fn conflicted_host(occupied: u16, replacement: u16, reclaim_succeeds: bool) -> ConflictedHost {
+        let root = test_root("port-conflict");
+        let resource = fake_bridge_resource_dir(&root);
+        let home = root.join("home");
+        fs::create_dir_all(&home).expect("home");
+        let held = Arc::new(Mutex::new(Some(occupied)));
+        let asked = Arc::new(Mutex::new(Vec::new()));
+        let host = EditorHost::with_adapters(
+            EditorHostConfig::new(&home, Some(resource))
+                .with_official_vscode_cli(fake_official_cli(&root)),
+            Arc::new(FakeProcessAdapter {
+                spawns: Arc::new(AtomicUsize::new(0)),
+                alive: Arc::new(AtomicBool::new(true)),
+                terminated: Arc::new(AtomicUsize::new(0)),
+            }),
+            Arc::new(FakeReadiness { ready: true, calls: Arc::new(AtomicUsize::new(0)) }),
+            Arc::new(ScriptedPorts { occupied: held.clone(), replacement }),
+        )
+        .with_orphan_reclaimer(Arc::new(ScriptedReclaimer {
+            occupied: held.clone(),
+            asked: asked.clone(),
+            succeeds: reclaim_succeeds,
+        }));
+        ConflictedHost { host, paths: EditorPaths::new(&home), asked, held, _root: root }
+    }
+
+    #[test]
+    fn a_leftover_server_of_our_own_gives_the_origin_back() {
+        // The usual reason the origin is occupied: a run that was killed
+        // outright left its own server listening on it. Taking that back keeps
+        // the origin, and with it everything the Workbench stored against it.
+        let ConflictedHost { host, paths, asked, held, .. } = conflicted_host(54945, 39152, true);
+        paths.ensure_directories().expect("directories");
+        fs::write(paths.port_file(), "54945\n").expect("persisted port");
+        super::super::paths::record_server_pid(&paths, 4321, 54945);
+
+        host.ensure_server().expect("server");
+        assert_eq!(*asked.lock().expect("asked"), vec![4321]);
+        assert_eq!(*held.lock().expect("held"), None);
+        assert_eq!(
+            fs::read_to_string(paths.port_file()).expect("port file").trim(),
+            "54945",
+            "a reclaimed origin must not move"
+        );
+        // The record now names the server that took the origin over, still on
+        // the port it was reclaimed for.
+        let record = super::super::paths::read_server_pid(&paths).expect("record");
+        assert_eq!(record.port, 54945);
+        assert_ne!(record.pid, 4321);
+
+        host.shutdown().expect("shutdown");
+    }
+
+    #[test]
+    fn a_stranger_on_the_origin_moves_it_instead_of_failing() {
+        // Nothing of ours holds the port, so the origin is unusable for as long
+        // as its holder runs. Moving costs the Workbench its per-origin storage;
+        // refusing to start costs the user the Editor entirely.
+        let ConflictedHost { host, paths, asked, .. } = conflicted_host(54945, 39152, false);
+        paths.ensure_directories().expect("directories");
+        fs::write(paths.port_file(), "54945\n").expect("persisted port");
+
+        host.ensure_server().expect("server");
+        assert!(asked.lock().expect("asked").is_empty(), "no record, nothing to reclaim");
+        assert_eq!(
+            fs::read_to_string(paths.port_file()).expect("port file").trim(),
+            "39152",
+            "the moved origin has to be the one a relaunch reads back"
+        );
+
+        host.shutdown().expect("shutdown");
+    }
+
+    #[test]
+    fn a_record_naming_a_different_port_is_not_reclaimed() {
+        // The recorded process group is only evidence about the port it was
+        // recorded against. Anything else is a stale record, and acting on it
+        // would signal a group that has nothing to do with this conflict.
+        let ConflictedHost { host, paths, asked, .. } = conflicted_host(54945, 39152, true);
+        paths.ensure_directories().expect("directories");
+        fs::write(paths.port_file(), "54945\n").expect("persisted port");
+        super::super::paths::record_server_pid(&paths, 4321, 40000);
+
+        host.ensure_server().expect("server");
+        assert!(asked.lock().expect("asked").is_empty());
+        assert_eq!(fs::read_to_string(paths.port_file()).expect("port file").trim(), "39152");
+
+        host.shutdown().expect("shutdown");
     }
 
     fn test_root(name: &str) -> PathBuf {

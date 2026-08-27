@@ -122,6 +122,35 @@ pub trait ProcessAdapter: Send + Sync {
     fn spawn(&self, spec: &ProcessSpec) -> EditorResult<Box<dyn ManagedProcess>>;
 }
 
+/// Stops a VS Code Server that a previous run started and never got to stop.
+///
+/// Separate from `ProcessAdapter` because there is no `Child` to work with:
+/// the orphan belongs to a process that is already gone, and all this side of
+/// the app has left of it is a recorded process group.
+pub trait OrphanReclaimer: Send + Sync {
+    /// `server_data` is DevHub's own provider directory, and the only way to
+    /// tell an orphan of ours from whatever inherited a reused process id.
+    fn reclaim(&self, process_id: u32, server_data: &Path) -> bool;
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct SystemOrphanReclaimer;
+
+impl OrphanReclaimer for SystemOrphanReclaimer {
+    fn reclaim(&self, process_id: u32, server_data: &Path) -> bool {
+        // A process id outlives its owner. Signalling one that no longer runs
+        // `serve-web` out of DevHub's own directory would reach a stranger's
+        // process group, so identity is checked before anything is sent.
+        if !crate::runtime::process_group_runs_editor_server(process_id, server_data) {
+            return false;
+        }
+        crate::runtime::reclaim_orphaned_process_group(
+            process_id,
+            Instant::now() + Duration::from_secs(3),
+        )
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ProcessExit {
     pub code: Option<i32>,

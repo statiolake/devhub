@@ -22,6 +22,7 @@ pub struct EditorPaths {
     webkit_data: PathBuf,
     token: PathBuf,
     port: PathBuf,
+    server_pid: PathBuf,
 }
 
 impl EditorPaths {
@@ -39,6 +40,7 @@ impl EditorPaths {
             webkit_data: root.join("webkit-data"),
             token: root.join("connection-token"),
             port: root.join("port"),
+            server_pid: root.join("server-pid"),
             root,
         }
     }
@@ -73,6 +75,16 @@ impl EditorPaths {
 
     pub fn port_file(&self) -> &Path {
         &self.port
+    }
+
+    /// Where the running server's process group is recorded.
+    ///
+    /// A run that is killed outright leaves its server listening on the stable
+    /// origin, and the next launch has no `Child` handle to stop it with. This
+    /// is what lets that launch recognise its own leftovers instead of
+    /// reporting the origin as taken by a stranger.
+    pub fn server_pid_file(&self) -> &Path {
+        &self.server_pid
     }
 
     /// Create and harden all provider directories. Existing directories are
@@ -111,6 +123,72 @@ impl EditorPaths {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
             Err(error) => Err(error.into()),
         }
+    }
+}
+
+/// What the previous run left behind: which process group its server ran in,
+/// and which origin that server was holding.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ServerPidRecord {
+    pub pid: u32,
+    pub port: u16,
+}
+
+/// Record the running server so a later launch can recognise it as its own.
+///
+/// Written best-effort: a run whose record never lands still works, it just
+/// cannot reclaim its own origin if it is killed outright.
+pub fn record_server_pid(paths: &EditorPaths, pid: u32, port: u16) {
+    let path = paths.server_pid_file();
+    if reject_symlink(path).is_err() {
+        return;
+    }
+    let _ = fs::remove_file(path);
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    if let Ok(mut file) = options.open(path) {
+        let _ = writeln!(file, "pid={pid} port={port}");
+    }
+}
+
+pub fn read_server_pid(paths: &EditorPaths) -> Option<ServerPidRecord> {
+    let path = paths.server_pid_file();
+    reject_symlink(path).ok()?;
+    let metadata = fs::symlink_metadata(path).ok()?;
+    if !metadata.is_file() || metadata.len() > 64 {
+        return None;
+    }
+    let value = fs::read_to_string(path).ok()?;
+    let mut pid = None;
+    let mut port = None;
+    for field in value.split_whitespace() {
+        match field.split_once('=') {
+            Some(("pid", raw)) => pid = raw.parse::<u32>().ok(),
+            Some(("port", raw)) => port = raw.parse::<u16>().ok(),
+            _ => return None,
+        }
+    }
+    Some(ServerPidRecord { pid: pid?, port: port? })
+}
+
+pub fn clear_server_pid(paths: &EditorPaths) {
+    let path = paths.server_pid_file();
+    if reject_symlink(path).is_ok() {
+        let _ = fs::remove_file(path);
+    }
+}
+
+fn reject_symlink(path: &Path) -> EditorResult<()> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            Err(EditorError::new(EditorErrorCode::PermissionDenied))
+        }
+        _ => Ok(()),
     }
 }
 

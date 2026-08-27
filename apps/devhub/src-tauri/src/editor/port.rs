@@ -9,6 +9,16 @@ use super::error::{EditorError, EditorErrorCode, EditorResult};
 
 pub const MIN_EDITOR_PORT: u16 = 1024;
 
+/// macOS hands out 49152-65535 for ephemeral client sockets. A port taken from
+/// that range by binding zero is a port the OS is free to give to any other
+/// program the moment DevHub is not holding it, which is what turns a stable
+/// origin into a recurring conflict. The origin is drawn from below that floor
+/// instead, where nothing is assigned without asking for it by number.
+const EPHEMERAL_PORT_FLOOR: u16 = 49_152;
+const STABLE_PORT_FIRST: u16 = 39_152;
+const STABLE_PORT_LAST: u16 = 39_651;
+const _: () = assert!(STABLE_PORT_LAST < EPHEMERAL_PORT_FLOOR);
+
 pub trait PortAllocator: Send + Sync {
     fn choose(&self) -> EditorResult<u16>;
     fn is_available(&self, port: u16) -> bool;
@@ -19,6 +29,14 @@ pub struct SystemPortAllocator;
 
 impl PortAllocator for SystemPortAllocator {
     fn choose(&self) -> EditorResult<u16> {
+        for port in STABLE_PORT_FIRST..=STABLE_PORT_LAST {
+            if reusable_origin_bind(port).is_ok() {
+                return Ok(port);
+            }
+        }
+        // Five hundred occupied candidates is not a machine where holding out
+        // for a durable origin helps anyone. Fall back to whatever the OS will
+        // give, and let the conflict path move the origin again if it has to.
         TcpListener::bind((super::paths::LOOPBACK_HOST, 0))
             .and_then(|listener| listener.local_addr())
             .map(|address| address.port())
@@ -85,6 +103,35 @@ impl StablePort {
         self.persisted
     }
 
+    /// Whether the persisted origin can be listened on right now.
+    pub fn is_free(self, allocator: &dyn PortAllocator) -> bool {
+        allocator.is_available(self.port)
+    }
+
+    /// Give up this origin and persist a new one.
+    ///
+    /// The last resort, and it is not free: WebKit partitions storage by
+    /// origin, so the Workbench that comes back on a moved port has none of
+    /// the layout or open editors the old one accumulated. It is still the
+    /// better outcome than an Editor that cannot start at all for as long as
+    /// some other program holds the port.
+    pub fn migrate(
+        self,
+        path: impl AsRef<Path>,
+        allocator: &dyn PortAllocator,
+    ) -> EditorResult<Self> {
+        let port = allocator.choose()?;
+        validate_port(port)?;
+        if port == self.port {
+            return Err(EditorError::new(EditorErrorCode::PortConflict));
+        }
+        let path = path.as_ref();
+        reject_symlink(path)?;
+        let _ = fs::remove_file(path);
+        write_port(path, port)?;
+        Ok(Self { port, persisted: true })
+    }
+
     /// A persisted port is an origin identity. Occupancy is a visible
     /// conflict, never a reason to select a replacement port.
     pub fn ensure_available(self, allocator: &dyn PortAllocator) -> EditorResult<()> {
@@ -92,10 +139,11 @@ impl StablePort {
             Ok(())
         } else {
             Err(EditorError::new(EditorErrorCode::PortConflict).with_detail(format!(
-                "127.0.0.1:{} is already in use by another process. This is the \
-                 port DevHub persisted for its editor origin, so it is not \
-                 replaced automatically. Quit whatever holds it (a leftover \
-                 `code serve-web` is the usual cause) and retry.",
+                "127.0.0.1:{} is already in use by another process. DevHub \
+                 stops a leftover editor server of its own automatically, and \
+                 moves the origin when it is starting fresh, so this is a port \
+                 held by something else while the editor is already running \
+                 against it. Quit whatever holds it and retry.",
                 self.port
             )))
         }
@@ -265,6 +313,53 @@ mod tests {
             .expect_err("occupied port");
         assert_eq!(error.code(), EditorErrorCode::PortConflict);
         assert_eq!(fs::read_to_string(path).expect("stable file").trim(), "54945");
+    }
+
+    #[test]
+    fn a_migrated_origin_replaces_the_persisted_one() {
+        // Giving up the origin costs the Workbench its per-origin storage, so
+        // it is the last resort — but an Editor that cannot start at all for as
+        // long as a stranger holds the port is the worse outcome.
+        let path = temp_path();
+        let held =
+            StablePort::load_or_select(&path, &FakeAllocator { selected: 54945, available: true })
+                .expect("port");
+        assert!(!held.is_free(&FakeAllocator { selected: 39152, available: false }));
+        let moved = held
+            .migrate(&path, &FakeAllocator { selected: 39152, available: true })
+            .expect("migrated");
+        assert_eq!(moved.port(), 39152);
+        assert_eq!(fs::read_to_string(&path).expect("stable file").trim(), "39152");
+        // The moved origin is the one a relaunch reads back.
+        let relaunch =
+            StablePort::load_or_select(&path, &FakeAllocator { selected: 40000, available: true })
+                .expect("relaunch");
+        assert_eq!(relaunch.port(), 39152);
+    }
+
+    #[test]
+    fn migration_refuses_to_hand_back_the_port_it_is_leaving() {
+        let path = temp_path();
+        let held =
+            StablePort::load_or_select(&path, &FakeAllocator { selected: 54945, available: true })
+                .expect("port");
+        let error = held
+            .migrate(&path, &FakeAllocator { selected: 54945, available: true })
+            .expect_err("same port is not a migration");
+        assert_eq!(error.code(), EditorErrorCode::PortConflict);
+    }
+
+    #[test]
+    fn a_selected_origin_is_below_the_range_the_os_hands_out() {
+        // Binding zero returns a port from the ephemeral range, which is the
+        // range the OS is free to give to any other program the moment DevHub
+        // is not holding it. That is what made the stable origin unstable.
+        let port = SystemPortAllocator.choose().expect("chosen port");
+        assert!(
+            port < EPHEMERAL_PORT_FLOOR,
+            "a stable origin must not be drawn from the ephemeral range: {port}"
+        );
+        assert!((STABLE_PORT_FIRST..=STABLE_PORT_LAST).contains(&port));
     }
 
     #[test]
