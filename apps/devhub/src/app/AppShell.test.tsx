@@ -918,6 +918,16 @@ describe("App Shell states and accessibility", () => {
     act(() => onSnapshot?.(workspaceSnapshot));
     expect(screen.getByRole("alert")).toHaveTextContent(/could not be saved/i);
     expect(screen.getByRole("region", { name: "Surface" })).toBeInTheDocument();
+
+    // A same-revision projection cannot retire the alert, so without a control
+    // of its own it would cover the top of the Surface for the rest of the run.
+    fireEvent.click(
+      within(screen.getByRole("alert")).getByRole("button", {
+        name: "Dismiss",
+      }),
+    );
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Surface" })).toBeInTheDocument();
   });
 
   it("ignores a dispatch response from a previous client generation", async () => {

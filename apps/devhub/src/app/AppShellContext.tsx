@@ -512,6 +512,14 @@ export function AppShellProvider({
     }
   }, [dispatch, pendingConfirmation]);
 
+  // A dispatch failure stays on screen until something replaces it, which for a
+  // failure that needs no further action means it never leaves on its own. The
+  // user gets to put it away; the next dispatch or projection re-raises it if
+  // the problem is still there.
+  const dismissIntentError = useCallback(() => {
+    setIntentError(null);
+  }, []);
+
   const dismissCloseConfirmation = useCallback(() => {
     setPendingConfirmation(null);
   }, []);
@@ -521,6 +529,7 @@ export function AppShellProvider({
       state,
       appearance,
       intentError,
+      dismissIntentError,
       recordPerformanceMarker: emitPerformanceMarker,
       dispatch,
       retry,
@@ -544,6 +553,7 @@ export function AppShellProvider({
       dispatch,
       emitPerformanceMarker,
       intentError,
+      dismissIntentError,
       openSettings,
       setEditorLayout,
       pickerBusy,

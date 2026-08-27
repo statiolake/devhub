@@ -18,6 +18,7 @@ export interface AppShellContextValue {
   readonly state: AppLoadState;
   readonly appearance: AppAppearance | undefined;
   readonly intentError: AppError | null;
+  readonly dismissIntentError: () => void;
   readonly recordPerformanceMarker: (marker: AppPerformanceMarker) => void;
   readonly dispatch: (intent: AppIntent) => Promise<AppOutcome | undefined>;
   readonly retry: () => void;

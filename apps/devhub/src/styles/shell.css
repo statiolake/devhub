@@ -640,6 +640,43 @@ body.is-resizing-sidebar {
   gap: var(--space-2);
 }
 
+.surface-inline-alert-message {
+  flex: 1;
+}
+
+/* The alert has no owner but the reader, so the dismiss control sits at its
+   trailing edge, quiet until the pointer or the keyboard finds it. */
+.surface-inline-alert-close {
+  display: flex;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  margin-right: -2px;
+  background: transparent;
+}
+
+.surface-inline-alert-close svg {
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: var(--secondary);
+  stroke-linecap: round;
+  stroke-width: 1.5;
+}
+
+.surface-inline-alert-close:hover {
+  background: var(--wash-strong);
+}
+
+.surface-inline-alert-close:hover svg {
+  stroke: var(--primary);
+}
+
 .surface-inline-alert-mark {
   display: flex;
   width: 16px;

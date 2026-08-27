@@ -18,13 +18,31 @@ export interface SurfaceViewportProps {
   readonly surfaceRef?: Ref<HTMLElement>;
 }
 
-function InlineIntentError({ message }: { readonly message: string }) {
+function InlineIntentError({
+  message,
+  onDismiss,
+}: {
+  readonly message: string;
+  readonly onDismiss: () => void;
+}) {
   return (
     <div className="surface-inline-alert" role="alert">
       <span className="surface-inline-alert-mark" aria-hidden="true">
         !
       </span>
-      <span>{message}</span>
+      <span className="surface-inline-alert-message">{message}</span>
+      {/* The alert covers the top of the Surface and nothing else retires it,
+          so the user needs a way to put it away once they have read it. */}
+      <button
+        className="surface-inline-alert-close"
+        type="button"
+        aria-label="Dismiss"
+        onClick={onDismiss}
+      >
+        <svg viewBox="0 0 12 12" aria-hidden="true" focusable="false">
+          <path d="M3 3l6 6M9 3l-6 6" />
+        </svg>
+      </button>
     </div>
   );
 }
@@ -135,8 +153,12 @@ export function SurfaceViewport({
   appearance,
   surfaceRef,
 }: SurfaceViewportProps) {
-  const { recordPerformanceMarker, dispatch, chooseWorkspaceFolder } =
-    useAppShell();
+  const {
+    recordPerformanceMarker,
+    dispatch,
+    chooseWorkspaceFolder,
+    dismissIntentError,
+  } = useAppShell();
   const activity = snapshot.selection.activity;
   const activitySnapshot = activeActivitySnapshot(snapshot);
   const workspace = workspaceForContext(snapshot, snapshot.selection.context);
@@ -257,7 +279,12 @@ export function SurfaceViewport({
       data-surface-key={surfaceKeyAttr}
       data-surface-state={surfaceState}
     >
-      {intentError && <InlineIntentError message={intentError} />}
+      {intentError && (
+        <InlineIntentError
+          message={intentError}
+          onDismiss={dismissIntentError}
+        />
+      )}
       {body}
       {pool.map((surface) => (
         <div
