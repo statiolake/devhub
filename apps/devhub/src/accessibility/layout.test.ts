@@ -23,6 +23,19 @@ describe("accessibility layout invariants", () => {
     expect(shellCss).toMatch(/\.workbench\s*\{[\s\S]*?min-height:\s*0;/);
   });
 
+  it("keeps the navigation and content islands on one geometry contract", () => {
+    expect(shellCss).toMatch(
+      /\.workbench\s*\{[\s\S]*?padding:\s*var\(--space-2\);[\s\S]*?gap:\s*var\(--space-2\);/,
+    );
+    expect(shellCss).toMatch(
+      /\.sidebar\s*\{[\s\S]*?border-radius:\s*var\(--radius-shell\);/,
+    );
+    expect(shellCss).toMatch(
+      /\.surface\s*\{[\s\S]*?overflow:\s*hidden;[\s\S]*?border-radius:\s*var\(--radius-shell\);/,
+    );
+    expect(tokensCss).toMatch(/--radius-shell:\s*12px/);
+  });
+
   it("uses responsive fixed-size controls without a narrow grid track", () => {
     expect(shellCss).toMatch(
       /\.workspace-picker\s*\{[\s\S]*?position:\s*fixed;/,
@@ -30,7 +43,7 @@ describe("accessibility layout invariants", () => {
     // Native macOS control height, not a touch target: the shell is a desktop
     // app, and the padding keeps the hit area comfortable under text zoom.
     expect(shellCss).toMatch(
-      /\.terminal-retry-button\s*\{[\s\S]*?min-height:\s*28px;/,
+      /\.primary-button,\s*\n\.secondary-button\s*\{[\s\S]*?min-height:\s*28px;/,
     );
     expect(settingsCss).toMatch(
       /\.settings-argv-row\s*\{[\s\S]*?grid-template-columns:\s*minmax\(0, 1fr\) 40px 40px 40px;/,

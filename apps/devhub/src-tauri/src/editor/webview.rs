@@ -172,6 +172,17 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn production_host_clips_native_editor_children_to_the_surface_island() {
+        let adapter = include_str!("wry_webview.rs");
+        let wry = include_str!("../../vendor/wry/src/lib.rs");
+        let webview = include_str!("../../vendor/wry/src/wkwebview/class/wry_web_view.rs");
+        assert!(adapter.contains("EDITOR_SURFACE_CORNER_RADIUS"));
+        assert!(adapter.contains("set_corner_radius"));
+        assert!(wry.contains("pub fn set_corner_radius"));
+        assert!(webview.contains("setMasksToBounds"));
+    }
+
+    #[test]
     fn vendored_wry_only_installs_ipc_for_explicit_handlers() {
         let mac = include_str!("../../vendor/wry/src/wkwebview/mod.rs");
         let gtk = include_str!("../../vendor/wry/src/webkitgtk/mod.rs");

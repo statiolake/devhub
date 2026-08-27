@@ -789,26 +789,40 @@ export function TerminalSurface({
         aria-label={`${surfaceLabel} terminal`}
         tabIndex={0}
       />
-      {connection !== "connected" && (
+      {connection === "connecting" && (
+        <div className="surface-state" role="status" aria-live="polite">
+          <span className="surface-spinner" aria-hidden="true" />
+          <p className="surface-line">Connecting…</p>
+        </div>
+      )}
+      {connection === "disconnected" && (
         <div
-          className="terminal-surface-overlay"
-          role="status"
+          className="surface-state surface-failure"
+          role="alert"
           aria-live="polite"
         >
-          <span>
-            {connection === "connecting"
-              ? "Connecting…"
-              : (error ?? DETACHABLE_ERROR)}
-          </span>
-          {connection === "disconnected" && (
+          <p className="failure-title">
+            <svg
+              className="failure-icon"
+              viewBox="0 0 16 16"
+              aria-hidden="true"
+              focusable="false"
+            >
+              <circle cx="8" cy="8" r="7" />
+              <path d="M8 4.6v4.2M8 11.1v.6" />
+            </svg>
+            The terminal session is not connected.
+          </p>
+          <p className="failure-detail">{error ?? DETACHABLE_ERROR}</p>
+          <div className="surface-actions">
             <button
               type="button"
-              className="terminal-retry-button"
+              className="primary-button"
               onClick={() => controllerRef.current?.retry()}
             >
               Retry
             </button>
-          )}
+          </div>
         </div>
       )}
     </div>

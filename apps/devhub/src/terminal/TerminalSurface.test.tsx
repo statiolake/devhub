@@ -564,7 +564,11 @@ describe("TerminalSurface lifecycle", () => {
       await Promise.resolve();
     });
     act(() => vi.advanceTimersByTime(5_001));
-    expect(screen.getByRole("status")).toHaveTextContent(
+    // A dead session is an alert, not a status line, and it names the cause.
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      /terminal session is not connected/i,
+    );
+    expect(screen.getByRole("alert")).toHaveTextContent(
       /terminal connection is unavailable/i,
     );
 

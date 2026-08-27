@@ -2012,6 +2012,18 @@ impl WebView {
     self.webview.native_window_number()
   }
 
+  /// Sets the corner clipping radius of a child WebView.
+  ///
+  /// macOS applies this to the native WKWebView layer. Other platforms keep
+  /// the method as a no-op so a host can express one cross-platform surface
+  /// geometry contract.
+  pub fn set_corner_radius(&self, radius: f64) {
+    #[cfg(target_os = "macos")]
+    self.webview.set_corner_radius(radius);
+    #[cfg(not(target_os = "macos"))]
+    let _ = radius;
+  }
+
   /// Returns the id of this webview.
   pub fn id(&self) -> WebViewId<'_> {
     self.webview.id()

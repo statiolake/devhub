@@ -97,16 +97,26 @@ const MAX_EFFECT_STEPS: usize = 1_024;
 const FOLDER_CHOOSER_SCRIPT: &str =
     "POSIX path of (choose folder with prompt \"Open Workspace Folder\")";
 const MIN_PROCESS_NOFILE: u64 = 8_192;
-const APP_SHELL_TITLEBAR_HEIGHT: f64 = 56.0;
+const APP_SHELL_TITLEBAR_HEIGHT: f64 = 52.0;
+const APP_SHELL_INSET: f64 = 8.0;
+const APP_SHELL_GAP: f64 = 8.0;
 
 fn initial_editor_bounds(
     window_width: f64,
     window_height: f64,
     sidebar_width: u16,
 ) -> editor::EditorBounds {
-    let x = f64::from(sidebar_width);
-    let y = APP_SHELL_TITLEBAR_HEIGHT;
-    editor::EditorBounds::new(x, y, (window_width - x).max(1.0), (window_height - y).max(1.0))
+    // Keep the startup placement aligned with the CSS workbench before the
+    // first ResizeObserver report arrives: an inset canvas, a Sidebar island,
+    // an island gap, and the content island's trailing inset.
+    let x = f64::from(sidebar_width) + APP_SHELL_INSET + APP_SHELL_GAP;
+    let y = APP_SHELL_TITLEBAR_HEIGHT + APP_SHELL_INSET;
+    editor::EditorBounds::new(
+        x,
+        y,
+        (window_width - x - APP_SHELL_INSET).max(1.0),
+        (window_height - y - APP_SHELL_INSET).max(1.0),
+    )
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2642,7 +2652,6 @@ impl NativeAppState {
     /// Surface are usable while the Editor reports why it is unavailable.
     fn attach_startup_window(&self, app: &AppHandle) {
         if let Some(window) = app.get_webview_window(APP_SHELL_WINDOW_LABEL) {
-            apply_sidebar_material(&window);
             if let Err(error) = window.show().and_then(|_| window.set_focus()) {
                 self.record_native_error(state_error(error));
             }
@@ -7668,40 +7677,57 @@ fn ensure_app_shell_window(
     }
     let persisted = state.store.load_or_default().map_err(persistence_error)?;
     let frame = safe_restore_frame(persisted.window.frame, &[]);
-    WebviewWindowBuilder::new(app, APP_SHELL_WINDOW_LABEL, WebviewUrl::App("index.html".into()))
-        .title("DevHub")
-        .inner_size(f64::from(frame.width), f64::from(frame.height))
-        .min_inner_size(900.0, 560.0)
-        .position(f64::from(frame.x), f64::from(frame.y))
-        .resizable(true)
-        .decorations(true)
-        .title_bar_style(tauri::TitleBarStyle::Overlay)
-        .hidden_title(true)
-        .traffic_light_position(tauri::LogicalPosition::new(16.0, 16.0))
-        .visible(false)
-        .maximized(frame.maximized)
-        .build()
-        .map_err(|_| AppErrorWire::native_unavailable())
+    let window = WebviewWindowBuilder::new(
+        app,
+        APP_SHELL_WINDOW_LABEL,
+        WebviewUrl::App("index.html".into()),
+    )
+    .title("DevHub")
+    .inner_size(f64::from(frame.width), f64::from(frame.height))
+    .min_inner_size(900.0, 560.0)
+    .position(f64::from(frame.x), f64::from(frame.y))
+    .resizable(true)
+    .decorations(true)
+    .title_bar_style(tauri::TitleBarStyle::Overlay)
+    .hidden_title(true)
+    .traffic_light_position(tauri::LogicalPosition::new(16.0, 16.0))
+    .visible(false)
+    .maximized(frame.maximized)
+    .build()
+    .map_err(|_| AppErrorWire::native_unavailable())?;
+    // Dock reconstruction runs on a worker; keep the system material on the
+    // AppKit thread and enqueue it before that worker queues child WebViews.
+    window
+        .run_on_main_thread({
+            let window = window.clone();
+            move || apply_window_material(&window)
+        })
+        .map_err(|_| AppErrorWire::native_unavailable())?;
+    Ok(window)
 }
 
-/// Put the window on a source-list material so the Sidebar and titlebar are
-/// vibrant the way every other Mac app's are. The shell paints its content
-/// surfaces opaquely on top; only the chrome lets the material through.
+/// Put one system material behind the transparent shell. The titlebar and the
+/// Sidebar island reveal it; the workbench canvas and content Surface cover it
+/// everywhere else so the app does not stack blur layers.
 #[cfg(target_os = "macos")]
-fn apply_sidebar_material(window: &tauri::WebviewWindow) {
+fn apply_window_material(window: &tauri::WebviewWindow) {
     use window_vibrancy::{apply_vibrancy, NSVisualEffectMaterial, NSVisualEffectState};
 
-    // A window that cannot take the material still works; it is simply opaque.
-    let _ = apply_vibrancy(
+    if let Err(error) = apply_vibrancy(
         window,
         NSVisualEffectMaterial::Sidebar,
         Some(NSVisualEffectState::FollowsWindowActiveState),
         None,
-    );
+    ) {
+        // Without the material the window would be transparent rather than
+        // merely opaque, so mark the shell so CSS can paint a solid chrome.
+        eprintln!("DevHub: window material unavailable: {error}");
+        let _ = window.eval("document.documentElement.setAttribute('data-window-material','none')");
+    }
 }
 
 #[cfg(not(target_os = "macos"))]
-fn apply_sidebar_material(_window: &tauri::WebviewWindow) {}
+fn apply_window_material(_window: &tauri::WebviewWindow) {}
 
 fn build_window_menu(
     app: &AppHandle,
@@ -7837,6 +7863,11 @@ pub fn run() {
             let state = NativeAppState::bootstrap_with_resource_dir(&home, app_resource_dir)
                 .map_err(|_| std::io::Error::other("DevHub native bootstrap failed"))?;
             app.manage(state);
+            // AppKit requires the main thread for this, and `setup` is the
+            // only place that is guaranteed to be on it.
+            if let Some(window) = app.get_webview_window(APP_SHELL_WINDOW_LABEL) {
+                apply_window_material(&window);
+            }
             let recovery_app = app.handle().clone();
             app.state::<NativeAppState>().bridge_sink.install_editor_recovery(Arc::new(
                 move || {
@@ -8346,7 +8377,7 @@ mod tests {
     fn initial_editor_bounds_reserve_titlebar_and_sidebar() {
         assert_eq!(
             initial_editor_bounds(1_200.0, 760.0, 288),
-            editor::EditorBounds::new(288.0, 56.0, 912.0, 704.0)
+            editor::EditorBounds::new(304.0, 60.0, 888.0, 692.0)
         );
     }
 

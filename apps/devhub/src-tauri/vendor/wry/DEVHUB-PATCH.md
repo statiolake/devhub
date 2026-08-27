@@ -23,6 +23,11 @@ host validates semantic SurfaceKey, lifecycle generation, window identity and
 responder ancestry before returning the original NSEvent for forwarding. No
 synthetic DOM event is created.
 
+The raw Editor child path also exposes a host-only corner-clipping hook. DevHub
+uses it to keep a native WKWebView inside the rounded Surface island; the CSS
+shell and native child therefore share one explicit clipping contract rather
+than relying on the sibling shell WebView's `overflow`.
+
 The only changed backend sites are:
 
 - `src/wkwebview/mod.rs`
