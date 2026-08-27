@@ -1,6 +1,7 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { ShellApp } from "./App";
+import { installSelectionGuard } from "./app/selection";
 import { SettingsApp } from "./settings/SettingsApp";
 import "./styles.css";
 
@@ -11,6 +12,10 @@ if (!root) {
 }
 
 const mountNode = root;
+
+// Installed outside React so no remount can drop it, and so both the shell
+// and the Settings window get it from the one entry point they share.
+installSelectionGuard(document);
 
 async function mount() {
   if (import.meta.env.DEV) {
