@@ -5,9 +5,9 @@ import {
   type WorkspaceSnapshot,
   workspaceForContext,
 } from "../../generated/app-shell";
-import type { Ref } from "react";
+import { type ReactNode, type Ref, useMemo, useRef } from "react";
 import { TerminalSurface } from "../../terminal/TerminalSurface";
-import { defaultAgentSurfaceClient } from "../../agent/client";
+import { attachableSurfaces } from "./surfacePool";
 import { disabledReasonLabel } from "./activityPresentation";
 import { useAppShell } from "../../app/useAppShell";
 
@@ -99,16 +99,14 @@ function SurfaceEditor({ host }: { readonly host: AppSnapshot["editorHost"] }) {
   return <Waiting label="Starting the editor…" />;
 }
 
+/** The states around a running Agent. The Agent itself is drawn by the pool,
+ * so a running one contributes nothing here. */
 function SurfaceAgent({
   snapshot,
   workspace,
-  surfaceKey,
-  appearance,
 }: {
   readonly snapshot: AppSnapshot;
   readonly workspace?: WorkspaceSnapshot;
-  readonly surfaceKey: string;
-  readonly appearance?: AppAppearance;
 }) {
   const agentId =
     snapshot.selection.context.kind === "agent"
@@ -125,14 +123,7 @@ function SurfaceAgent({
       <Failure summary="This Agent could not be stopped. Retry stop from the Sidebar." />
     );
   }
-  return (
-    <TerminalSurface
-      surfaceKey={surfaceKey}
-      surfaceLabel={agent.displayName}
-      appearance={appearance}
-      client={defaultAgentSurfaceClient}
-    />
-  );
+  return null;
 }
 
 export function SurfaceViewport({
@@ -146,6 +137,7 @@ export function SurfaceViewport({
   const activity = snapshot.selection.activity;
   const activitySnapshot = activeActivitySnapshot(snapshot);
   const workspace = workspaceForContext(snapshot, snapshot.selection.context);
+  const attachable = useMemo(() => attachableSurfaces(snapshot), [snapshot]);
 
   // A missing Workspace Root keeps its identity, so recovery belongs on the
   // Surface the user is already looking at rather than only in the Sidebar.
@@ -184,137 +176,144 @@ export function SurfaceViewport({
         ] as const)
       : undefined;
 
+  let surfaceState: string;
+  let body: ReactNode = null;
+  let activeKey: string | undefined;
+  let surfaceKeyAttr: string | undefined;
+  // Only the transient states announce themselves; a provider Surface speaks
+  // for itself, and `aria-live` on it would narrate every frame of output.
+  let announce = true;
+  let live = true;
+
   if (snapshot.readiness !== "ready") {
-    return (
-      <section
-        ref={surfaceRef}
-        className="surface"
-        aria-label="Surface"
-        aria-busy="true"
-        aria-live="polite"
-        data-surface-state="loading"
-      >
-        <Waiting label="Connecting…" />
-      </section>
+    surfaceState = "loading";
+    body = <Waiting label="Connecting…" />;
+  } else if (
+    workspace?.state === "closing" ||
+    workspace?.state === "closing-failed"
+  ) {
+    surfaceState = workspace.state;
+    body =
+      workspace.state === "closing-failed" ? (
+        <Failure summary="This Workspace could not be closed. Retry close from the Sidebar." />
+      ) : (
+        <Waiting label="Closing the workspace…" />
+      );
+  } else if (activitySnapshot.resolution.kind === "disabled") {
+    surfaceState = "unavailable";
+    live = false;
+    body = (
+      <Failure
+        summary={disabledReasonLabel(activitySnapshot.resolution.reason)}
+        detail={workspace?.state === "unavailable" ? workspace.root : undefined}
+        actions={unavailableActions}
+      />
     );
+  } else {
+    const surfaceKey = activitySnapshot.resolution.surfaceKey;
+    surfaceState = activity === "terminal" ? "terminal" : activity;
+    surfaceKeyAttr = surfaceKey;
+    announce = false;
+    if (activity === "terminal") {
+      activeKey = attachable.has(surfaceKey) ? surfaceKey : undefined;
+    } else if (activity === "agent") {
+      body = <SurfaceAgent snapshot={snapshot} workspace={workspace} />;
+      activeKey = attachable.has(surfaceKey) ? surfaceKey : undefined;
+    } else {
+      body = <SurfaceEditor host={snapshot.editorHost} />;
+    }
   }
 
-  if (workspace?.state === "closing" || workspace?.state === "closing-failed") {
-    return (
-      <section
-        ref={surfaceRef}
-        className="surface"
-        aria-label="Surface"
-        aria-live="polite"
-        data-surface-state={workspace.state}
-      >
-        {intentError && <InlineIntentError message={intentError} />}
-        {workspace.state === "closing-failed" ? (
-          <Failure summary="This Workspace could not be closed. Retry close from the Sidebar." />
-        ) : (
-          <Waiting label="Closing the workspace…" />
-        )}
-      </section>
-    );
+  // Visitation order, not snapshot order: a Surface joins the pool the first
+  // time it is selected, so nothing attaches a PTY the user never asked for.
+  const visited = useRef<readonly string[]>([]);
+  if (activeKey && !visited.current.includes(activeKey)) {
+    visited.current = [...visited.current, activeKey];
   }
+  visited.current = visited.current.filter((key) => attachable.has(key));
+  const pool = visited.current.map((key) => attachable.get(key)!);
 
-  if (activitySnapshot.resolution.kind === "disabled") {
-    return (
-      <section
-        className="surface"
-        aria-label="Surface"
-        aria-live="polite"
-        data-surface-state="unavailable"
-      >
-        {intentError && <InlineIntentError message={intentError} />}
-        <Failure
-          summary={disabledReasonLabel(activitySnapshot.resolution.reason)}
-          detail={
-            workspace?.state === "unavailable" ? workspace.root : undefined
-          }
-          actions={unavailableActions}
-        />
-      </section>
-    );
-  }
+  const isScratch = (key: string) => key === "global-terminal";
 
   return (
     <section
-      ref={surfaceRef}
+      ref={live ? surfaceRef : undefined}
       className="surface"
       aria-label="Surface"
-      data-surface-key={activitySnapshot.resolution.surfaceKey}
-      data-surface-state={activity === "terminal" ? "terminal" : activity}
+      aria-busy={snapshot.readiness !== "ready" ? "true" : undefined}
+      aria-live={announce ? "polite" : undefined}
+      data-surface-key={surfaceKeyAttr}
+      data-surface-state={surfaceState}
     >
       {intentError && <InlineIntentError message={intentError} />}
-      {activity === "terminal" ? (
-        <TerminalSurface
-          surfaceKey={activitySnapshot.resolution.surfaceKey}
-          surfaceLabel={
-            snapshot.selection.context.kind === "global"
-              ? "Scratch"
-              : (workspace?.label ?? "Workspace")
-          }
-          appearance={appearance}
-          onInteractive={
-            snapshot.selection.context.kind === "global"
-              ? () => recordPerformanceMarker("scratch_interactive")
-              : undefined
-          }
-          onAttachInvokeRejected={
-            snapshot.selection.context.kind === "global"
-              ? () => recordPerformanceMarker("terminal_attach_invoke_rejected")
-              : undefined
-          }
-          onResizeInvokeEntered={
-            snapshot.selection.context.kind === "global"
-              ? () => recordPerformanceMarker("terminal_resize_invoke_entered")
-              : undefined
-          }
-          onResizeInvokeRejected={
-            snapshot.selection.context.kind === "global"
-              ? () => recordPerformanceMarker("terminal_resize_invoke_rejected")
-              : undefined
-          }
-          onInputInvokeEntered={
-            snapshot.selection.context.kind === "global"
-              ? () => recordPerformanceMarker("terminal_input_invoke_entered")
-              : undefined
-          }
-          onInputInvokeRejected={
-            snapshot.selection.context.kind === "global"
-              ? () => recordPerformanceMarker("terminal_input_invoke_rejected")
-              : undefined
-          }
-          onOutputRendered={
-            snapshot.selection.context.kind === "global"
-              ? () => recordPerformanceMarker("terminal_output_rendered")
-              : undefined
-          }
-          onOutputAfterInputRendered={
-            snapshot.selection.context.kind === "global"
-              ? () =>
-                  recordPerformanceMarker(
-                    "terminal_output_after_input_rendered",
-                  )
-              : undefined
-          }
-          onChannelDiagnostic={
-            snapshot.selection.context.kind === "global"
-              ? (marker) => recordPerformanceMarker(marker)
-              : undefined
-          }
-        />
-      ) : activity === "agent" ? (
-        <SurfaceAgent
-          snapshot={snapshot}
-          workspace={workspace}
-          surfaceKey={activitySnapshot.resolution.surfaceKey}
-          appearance={appearance}
-        />
-      ) : (
-        <SurfaceEditor host={snapshot.editorHost} />
-      )}
+      {body}
+      {pool.map((surface) => (
+        <div
+          key={surface.key}
+          className="surface-pool-entry"
+          hidden={surface.key !== activeKey}
+        >
+          <TerminalSurface
+            surfaceKey={surface.key}
+            surfaceLabel={surface.label}
+            appearance={appearance}
+            client={surface.client}
+            hidden={surface.key !== activeKey}
+            onInteractive={
+              isScratch(surface.key)
+                ? () => recordPerformanceMarker("scratch_interactive")
+                : undefined
+            }
+            onAttachInvokeRejected={
+              isScratch(surface.key)
+                ? () =>
+                    recordPerformanceMarker("terminal_attach_invoke_rejected")
+                : undefined
+            }
+            onResizeInvokeEntered={
+              isScratch(surface.key)
+                ? () =>
+                    recordPerformanceMarker("terminal_resize_invoke_entered")
+                : undefined
+            }
+            onResizeInvokeRejected={
+              isScratch(surface.key)
+                ? () =>
+                    recordPerformanceMarker("terminal_resize_invoke_rejected")
+                : undefined
+            }
+            onInputInvokeEntered={
+              isScratch(surface.key)
+                ? () => recordPerformanceMarker("terminal_input_invoke_entered")
+                : undefined
+            }
+            onInputInvokeRejected={
+              isScratch(surface.key)
+                ? () =>
+                    recordPerformanceMarker("terminal_input_invoke_rejected")
+                : undefined
+            }
+            onOutputRendered={
+              isScratch(surface.key)
+                ? () => recordPerformanceMarker("terminal_output_rendered")
+                : undefined
+            }
+            onOutputAfterInputRendered={
+              isScratch(surface.key)
+                ? () =>
+                    recordPerformanceMarker(
+                      "terminal_output_after_input_rendered",
+                    )
+                : undefined
+            }
+            onChannelDiagnostic={
+              isScratch(surface.key)
+                ? (marker) => recordPerformanceMarker(marker)
+                : undefined
+            }
+          />
+        </div>
+      ))}
     </section>
   );
 }

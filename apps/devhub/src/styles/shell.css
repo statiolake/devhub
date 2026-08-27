@@ -654,6 +654,21 @@ body.is-resizing-sidebar {
   font-weight: 700;
 }
 
+/* A Surface the user has already visited stays mounted while another one is on
+   screen, so coming back to it costs no PTY handshake and loses no scrollback.
+   Only the active entry is in flow; the rest are `display: none`, which also
+   takes them out of the accessibility tree. */
+.surface-pool-entry {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+}
+
+.surface-pool-entry[hidden] {
+  display: none;
+}
+
 /* The terminal owns its own background; give it the whole viewport. */
 .surface[data-surface-state="terminal"],
 .surface[data-surface-state="agent"] {

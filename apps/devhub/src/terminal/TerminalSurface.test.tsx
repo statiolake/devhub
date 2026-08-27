@@ -219,6 +219,48 @@ describe("TerminalSurface lifecycle", () => {
     ).toHaveAttribute("aria-label", "Scratch terminal input");
   });
 
+  it("keeps a pooled surface off the resize path until it is on screen", async () => {
+    // A pooled surface sits under `display: none`, where the fit addon has no
+    // box to measure and would fall back to 80x24. Sending that would resize
+    // the pane the user is not looking at, so nothing leaves while hidden.
+    const harness = clientHarness();
+    const view = render(
+      <TerminalSurface
+        surfaceKey="global-terminal"
+        surfaceLabel="Scratch"
+        client={harness.client}
+        hidden
+      />,
+    );
+    await waitFor(() => expect(harness.client.attach).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(harness.client.resize).toHaveBeenCalledTimes(1));
+    const attachResizes = (harness.client.resize as ReturnType<typeof vi.fn>)
+      .mock.calls.length;
+    act(() => mocks.observers[0]?.trigger());
+    // Resize is coalesced onto a frame timer, so the gate has to be observed
+    // after that timer would have fired, not merely on the next microtask.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+    expect(harness.client.resize).toHaveBeenCalledTimes(attachResizes);
+
+    // Coming back on screen is the first moment there is a real box to report.
+    view.rerender(
+      <TerminalSurface
+        surfaceKey="global-terminal"
+        surfaceLabel="Scratch"
+        client={harness.client}
+      />,
+    );
+    await waitFor(() =>
+      expect(harness.client.resize).toHaveBeenCalledTimes(attachResizes + 1),
+    );
+    // The attachment was never torn down, so the pooled PTY is still the one
+    // on screen.
+    expect(harness.client.attach).toHaveBeenCalledTimes(1);
+    expect(harness.client.detach).not.toHaveBeenCalled();
+  });
+
   it("attaches with target zero, accepts Started, writes output, and ACKs after write", async () => {
     const harness = clientHarness();
     render(

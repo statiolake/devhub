@@ -35,6 +35,13 @@ export interface TerminalSurfaceProps {
   readonly appearance?: AppAppearance;
   readonly client?: TerminalClient;
   readonly hideTitle?: boolean;
+  /**
+   * The surface is mounted but not on screen. A pooled surface keeps its PTY
+   * attachment and its scrollback while it waits its turn; it must not report
+   * geometry, because a `display: none` host measures as nothing and the
+   * fallback size would resize the pane behind the user's back.
+   */
+  readonly hidden?: boolean;
   readonly onInteractive?: () => void;
   readonly onAttachInvokeRejected?: () => void;
   readonly onResizeInvokeEntered?: () => void;
@@ -152,6 +159,7 @@ export function TerminalSurface({
   appearance,
   client = defaultTerminalClient,
   hideTitle = false,
+  hidden = false,
   onInteractive,
   onAttachInvokeRejected,
   onResizeInvokeEntered,
@@ -167,6 +175,7 @@ export function TerminalSurface({
   const terminalRef = useRef<Terminal | null>(null);
   const resizeRef = useRef<(() => void) | null>(null);
   const controllerRef = useRef<{ retry: () => void } | null>(null);
+  const hiddenRef = useRef(hidden);
   const interactiveRef = useRef(onInteractive);
   const attachInvokeRejectedRef = useRef(onAttachInvokeRejected);
   const resizeInvokeEnteredRef = useRef(onResizeInvokeEntered);
@@ -180,6 +189,7 @@ export function TerminalSurface({
   const [error, setError] = useState<string>();
 
   clientRef.current = client;
+  hiddenRef.current = hidden;
   interactiveRef.current = onInteractive;
   attachInvokeRejectedRef.current = onAttachInvokeRejected;
   resizeInvokeEnteredRef.current = onResizeInvokeEntered;
@@ -372,6 +382,7 @@ export function TerminalSurface({
     };
 
     resizeRef.current = () => {
+      if (hiddenRef.current) return;
       currentSize = terminalSize(fit);
       queueResize(currentSize, attachSerial);
     };
@@ -720,6 +731,7 @@ export function TerminalSurface({
     });
 
     const resize = () => {
+      if (hiddenRef.current) return;
       currentSize = terminalSize(fit);
       queueResize(currentSize, attachSerial);
     };
@@ -731,7 +743,7 @@ export function TerminalSurface({
     host.addEventListener("click", focusTerminal);
     host.addEventListener("keydown", armInputGesture, true);
     void attach();
-    terminal.focus();
+    if (!hiddenRef.current) terminal.focus();
 
     controllerRef.current = {
       retry() {
@@ -764,6 +776,16 @@ export function TerminalSurface({
     // never remount the xterm or reconnect its PTY client.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [surfaceKey]);
+
+  useEffect(() => {
+    // Coming back on screen is the first moment the host has a real box, so
+    // the size the pane missed while it was pooled is sent now.
+    if (hidden) return;
+    resizeRef.current?.();
+    // Selecting a Surface is a request to type into it, whether it is being
+    // attached for the first time or coming back out of the pool.
+    terminalRef.current?.focus();
+  }, [hidden]);
 
   useEffect(() => {
     // Appearance is a projection, not a surface identity. Update the live

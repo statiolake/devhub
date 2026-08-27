@@ -115,6 +115,17 @@ describe("accessibility layout invariants", () => {
     }
   });
 
+  it("takes a pooled Surface out of flow and out of the accessibility tree", () => {
+    // A visited Surface stays mounted so returning to it costs no PTY
+    // handshake. `display: none` is what makes that invisible to both layout
+    // and assistive technology; `visibility` or an offscreen inset would leave
+    // several Surfaces reachable at once.
+    expect(shellCss).toMatch(
+      /\.surface-pool-entry\[hidden\]\s*\{[^}]*display:\s*none;/,
+    );
+    expect(shellCss).toMatch(/\.surface-pool-entry\s*\{[^}]*flex:\s*1;/);
+  });
+
   it("dims the selection on window key state, not on DOM focus", () => {
     // `:focus-within` is the wrong fact: the Editor is a sibling native
     // WebView, so working in it empties the shell's focus while the window
