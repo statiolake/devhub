@@ -46,7 +46,9 @@ browser tabs → stable context tree plus Activities; decorative cards/status ba
 - Titlebar Activities — native overlay, one compact 38px band spanning the
   content column only, exactly Editor/Agent/Terminal. The window buttons are
   centred on that band over the Sidebar's own matching strip, which reserves
-  their leading inset. Disabled choices remain visible and
+  their leading inset. The band names nothing: the Sidebar's selected row is
+  the only place the current context is stated. Disabled choices remain
+  visible and
   use text plus an accessible reason.
 - Sidebar row — 28px compact source-list rhythm, separate disclosure button,
   context row, and optional semantic action. Scratch is fixed first; Workspaces

@@ -3,7 +3,6 @@ import {
   type Activity,
   type AppIntent,
   type AppSnapshot,
-  workspaceForContext,
 } from "../../generated/app-shell";
 import { disabledReasonLabel } from "./activityPresentation";
 
@@ -12,24 +11,10 @@ export interface TitlebarActivitiesProps {
   readonly onDispatch: (intent: AppIntent) => void;
 }
 
-/** The trailing chip names the Navigation Context the Activities resolve against. */
-function contextLabel(snapshot: AppSnapshot): string {
-  const context = snapshot.selection.context;
-  if (context.kind === "global") return "Scratch";
-  const workspace = workspaceForContext(snapshot, context);
-  if (!workspace) return "";
-  if (context.kind === "workspace") return workspace.label;
-  const agent = workspace.agents.find(
-    (candidate) => candidate.id === context.agentId,
-  );
-  return agent ? `${agent.displayName} — ${workspace.label}` : workspace.label;
-}
-
 export function TitlebarActivities({
   snapshot,
   onDispatch,
 }: TitlebarActivitiesProps) {
-  const context = contextLabel(snapshot);
   return (
     <header className="titlebar" data-tauri-drag-region>
       <div className="titlebar-leading" data-tauri-drag-region />
@@ -57,13 +42,9 @@ export function TitlebarActivities({
           );
         })}
       </nav>
-      <div className="titlebar-trailing" data-tauri-drag-region>
-        {context ? (
-          <span className="titlebar-context" title={context}>
-            {context}
-          </span>
-        ) : null}
-      </div>
+      {/* Balances the leading cell so the Activities stay centred; the
+          Sidebar already names the context they resolve against. */}
+      <div className="titlebar-trailing" data-tauri-drag-region />
     </header>
   );
 }

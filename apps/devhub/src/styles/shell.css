@@ -72,15 +72,6 @@
   justify-content: flex-end;
 }
 
-.titlebar-context {
-  overflow: hidden;
-  max-width: 260px;
-  color: var(--secondary);
-  font-size: 12px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 /* A segmented control, not a row of pills: one track, one selected segment. */
 .activity-segments {
   display: flex;

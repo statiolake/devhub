@@ -115,11 +115,14 @@ describe("App Shell navigation matrix", () => {
     "resolves %s context without adding a second navigation surface",
     async (snapshot, heading, activity, surfaceKey) => {
       render(<AppShell client={client(snapshot)} />);
-      // The Surface no longer repeats the context; the titlebar names it.
-      const titlebar = await screen.findByRole("banner");
+      // The Sidebar is the only place that names the context; neither the
+      // titlebar nor the Surface repeats it.
+      const navigation = await screen.findByRole("complementary", {
+        name: "Workspace navigation",
+      });
       expect(
-        within(titlebar).getByTitle(new RegExp(heading)),
-      ).toBeInTheDocument();
+        within(navigation).getByRole("button", { current: "page" }),
+      ).toHaveAccessibleName(new RegExp(heading));
       expect(screen.getByRole("button", { name: activity })).toHaveAttribute(
         "aria-pressed",
         "true",
@@ -859,7 +862,11 @@ describe("App Shell states and accessibility", () => {
       actions: ["retry"],
     });
     render(<AppShell client={appClient} />);
-    await within(await screen.findByRole("banner")).findByTitle(/devhub/);
+    await within(
+      await screen.findByRole("complementary", {
+        name: "Workspace navigation",
+      }),
+    ).findByRole("button", { current: "page", name: /devhub/ });
     fireEvent.keyDown(
       screen.getByRole("separator", { name: "Resize sidebar" }),
       {
@@ -873,8 +880,10 @@ describe("App Shell states and accessibility", () => {
     expect(screen.getByRole("region", { name: "Surface" })).toBeInTheDocument();
     // The rejected intent did not change context.
     expect(
-      within(screen.getByRole("banner")).getByTitle(/devhub/),
-    ).toBeInTheDocument();
+      within(
+        screen.getByRole("complementary", { name: "Workspace navigation" }),
+      ).getByRole("button", { current: "page" }),
+    ).toHaveAccessibleName(/devhub/);
   });
 
   it("renders persistence degradation as an inline intent alert", async () => {
@@ -889,7 +898,11 @@ describe("App Shell states and accessibility", () => {
       snapshot: workspaceSnapshot,
     });
     render(<AppShell client={appClient} />);
-    await within(await screen.findByRole("banner")).findByTitle(/devhub/);
+    await within(
+      await screen.findByRole("complementary", {
+        name: "Workspace navigation",
+      }),
+    ).findByRole("button", { current: "page", name: /devhub/ });
 
     fireEvent.keyDown(
       screen.getByRole("separator", { name: "Resize sidebar" }),
