@@ -61,9 +61,14 @@ describe("accessibility layout invariants", () => {
   it("reads as an application rather than a document", () => {
     // An I-beam wandering over labels and a drag that selects the chrome are
     // the two things that give a web shell away on the desktop.
-    const body = /\bbody\s*\{([^}]*)\}/.exec(tokensCss);
-    expect(body?.[1]).toMatch(/cursor:\s*default;/);
-    expect(body?.[1]).toMatch(/user-select:\s*none;/);
+    // Declared on every element, not inherited from the root: a UA rule on a
+    // form control beats an inherited value, so the switcher's own labels
+    // would stay selectable if this were set on `:root` alone.
+    const universal = /\*,\s*\n\*::before,\s*\n\*::after\s*\{([^}]*)\}/.exec(
+      tokensCss,
+    );
+    expect(universal?.[1]).toMatch(/user-select:\s*none;/);
+    expect(tokensCss).toMatch(/:root\s*\{[^}]*cursor:\s*default;/);
     // Errors are meant to be pasted somewhere, so they keep selection.
     expect(tokensCss).toMatch(
       /\.failure-detail,[\s\S]*?\{[^}]*user-select:\s*text;/,
