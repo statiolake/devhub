@@ -46,7 +46,10 @@
   --accent: light-dark(#286486, #82aeca);
   --accent-ink: light-dark(#ffffff, #12222c);
   --selection: light-dark(#cbd9e3, #2f4351);
-  --selection-inactive: light-dark(#dcdcdc, #3a3a3a);
+  --selection-inactive: light-dark(
+    rgba(0, 0, 0, 0.09),
+    rgba(255, 255, 255, 0.11)
+  );
   /* System-adjacent semantics: green, orange, red as macOS renders them. */
   --working: light-dark(#1d7f36, #30d158);
   --waiting: light-dark(#b25000, #ff9f0a);
@@ -93,10 +96,11 @@
   :root {
     --accent: AccentColor;
     --accent-ink: AccentColorText;
-    /* Selection is the accent at the weight macOS uses for an inactive-window
-       source list: present, but never competing with the content. */
-    --selection: color-mix(in srgb, AccentColor 26%, var(--chrome));
-    --selection-strong: AccentColor;
+    /* A source list is not a table: macOS fills a selected Finder sidebar row
+       with a light tint of the accent and leaves the label its normal colour,
+       rather than the saturated accent and white text a table row gets. The
+       tint is translucent so the window's material still shows through it. */
+    --selection: color-mix(in srgb, AccentColor 20%, transparent);
   }
 }
 
@@ -108,6 +112,13 @@
     --line: light-dark(rgba(0, 0, 0, 0.34), rgba(255, 255, 255, 0.3));
     --line-soft: light-dark(rgba(0, 0, 0, 0.22), rgba(255, 255, 255, 0.2));
     --line-strong: light-dark(rgba(0, 0, 0, 0.55), rgba(255, 255, 255, 0.48));
+    /* Increase Contrast wants the selected row to be unmistakable, so the
+       tint firms up rather than staying a whisper. */
+    --selection: color-mix(in srgb, AccentColor 42%, transparent);
+    --selection-inactive: light-dark(
+      rgba(0, 0, 0, 0.18),
+      rgba(255, 255, 255, 0.22)
+    );
   }
 }
 

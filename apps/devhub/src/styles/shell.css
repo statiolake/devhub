@@ -190,25 +190,21 @@
   background: var(--wash);
 }
 
-/* A macOS source list fills the selected row with the accent while the window
-   is key, and drops to a neutral fill when it is not. */
+/* A macOS source list tints the selected row with the accent and keeps the
+   label in its normal colour — the saturated fill with white text belongs to a
+   table row, not to navigation. The fill drops to neutral when the window is
+   not key, which is the only cue that the selection is no longer live. */
 .sidebar-row.is-selected,
 .sidebar-row.is-selected:hover {
-  background: var(--selection-strong, var(--selection));
-  color: var(--accent-ink);
+  background: var(--selection);
+  color: var(--primary);
+  font-weight: 510;
 }
 
-.sidebar-row.is-selected .row-glyph svg,
-.sidebar-row.is-selected .disclosure-button svg {
-  stroke: currentColor;
-}
-
-.sidebar-row.is-selected .row-note {
-  color: color-mix(in srgb, currentColor 75%, transparent);
-}
-
-.sidebar-row.is-selected .row-action-button svg {
-  stroke: currentColor;
+/* The glyph is the one thing that takes the accent outright, the way a
+   Finder sidebar icon does; the inactive rule below returns it to neutral. */
+.sidebar-row.is-selected .row-glyph svg {
+  stroke: var(--accent);
 }
 
 .app-shell:not(:focus-within) .sidebar-row.is-selected {

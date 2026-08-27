@@ -58,6 +58,24 @@ describe("accessibility layout invariants", () => {
     expect(Number(inset?.[1])).toBeGreaterThanOrEqual(20 + 20 * 2 + 14);
   });
 
+  it("selects a source-list row the way macOS does, not a table row", () => {
+    // A saturated accent fill with inverted text is a table row. Navigation
+    // gets a tint of the accent and keeps its own label colour.
+    const selected =
+      /\.sidebar-row\.is-selected,\s*\n\.sidebar-row\.is-selected:hover\s*\{([^}]*)\}/.exec(
+        shellCss,
+      );
+    expect(selected?.[1]).toMatch(/background:\s*var\(--selection\);/);
+    expect(selected?.[1]).toMatch(/color:\s*var\(--primary\);/);
+    expect(selected?.[1]).not.toMatch(/accent-ink/);
+    expect(tokensCss).not.toMatch(/--selection-strong/);
+    // The tint has to be translucent, or it would hide the window material
+    // the Sidebar exists to show.
+    expect(tokensCss).toMatch(
+      /--selection:\s*color-mix\(in srgb, AccentColor \d+%, transparent\)/,
+    );
+  });
+
   it("reads as an application rather than a document", () => {
     // An I-beam wandering over labels and a drag that selects the chrome are
     // the two things that give a web shell away on the desktop.
