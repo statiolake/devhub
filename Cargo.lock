@@ -630,6 +630,7 @@ name = "devhub-app"
 version = "0.1.0"
 dependencies = [
  "devhub-app-core",
+ "devhub-macos-chrome",
  "flate2",
  "nix",
  "objc2-app-kit",
@@ -656,6 +657,14 @@ dependencies = [
  "serde",
  "serde_json",
  "toml_edit 0.22.20",
+]
+
+[[package]]
+name = "devhub-macos-chrome"
+version = "0.1.0"
+dependencies = [
+ "objc2-app-kit",
+ "objc2-foundation",
 ]
 
 [[package]]

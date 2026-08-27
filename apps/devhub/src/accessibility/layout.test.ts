@@ -23,21 +23,34 @@ describe("accessibility layout invariants", () => {
     expect(shellCss).toMatch(/\.workbench\s*\{[\s\S]*?min-height:\s*0;/);
   });
 
-  it("runs the navigation and content panes to the window edges", () => {
+  it("runs the navigation pane the full height of the window", () => {
     expect(shellCss).not.toMatch(/--radius-shell/);
+    // The Sidebar is a peer of the content column, not a child of a row
+    // below the titlebar, so the window buttons sit on the navigation pane.
+    const content = /\.app-shell-content\s*\{([^}]*)\}/.exec(shellCss);
+    expect(content?.[1]).toMatch(/display:\s*flex;/);
+    expect(content?.[1]).not.toMatch(/flex-direction/);
     expect(shellCss).toMatch(
-      /\.sidebar\s*\{[\s\S]*?border-right:\s*1px solid var\(--line\);/,
-    );
-    expect(shellCss).toMatch(
-      /\.titlebar\s*\{[\s\S]*?border-bottom:\s*1px solid var\(--line\);/,
+      /\.workbench\s*\{[\s\S]*?flex-direction:\s*column;/,
     );
   });
 
-  it("reserves the titlebar's leading edge for the traffic lights", () => {
-    // The shell must never place a control under the window buttons, whose
-    // own geometry lives in the native window configuration.
+  it("divides the titlebar band from the panes it sits between", () => {
     expect(shellCss).toMatch(
-      /\.titlebar-leading\s*\{[\s\S]*?min-width:\s*calc\(var\(--traffic-light-inset\) - var\(--space-3\)\);/,
+      /\.titlebar\s*\{[\s\S]*?border-bottom:\s*1px solid var\(--line-strong\);/,
+    );
+    expect(shellCss).toMatch(
+      /\.sidebar\s*\{[\s\S]*?border-right:\s*1px solid var\(--line-strong\);/,
+    );
+    // Both strips have to be the same height or the band reads as a step.
+    expect(shellCss).toMatch(
+      /\.sidebar-titlebar\s*\{[\s\S]*?height:\s*var\(--titlebar-height\);/,
+    );
+  });
+
+  it("reserves the Sidebar's leading edge for the traffic lights", () => {
+    expect(shellCss).toMatch(
+      /\.sidebar-titlebar\s*\{[\s\S]*?min-width:\s*var\(--traffic-light-inset\);/,
     );
     const inset = /--traffic-light-inset:\s*(\d+)px/.exec(tokensCss);
     expect(inset).not.toBeNull();

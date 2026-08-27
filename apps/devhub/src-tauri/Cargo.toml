@@ -12,6 +12,7 @@ tauri-build = { version = "=2.6.3", features = [] }
 
 [dependencies]
 devhub-app-core = { path = "../../../crates/devhub-app-core" }
+devhub-macos-chrome = { path = "../../../crates/devhub-macos-chrome" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sha2 = "=0.10.9"

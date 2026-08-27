@@ -81,7 +81,9 @@
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 
   /* Native chrome geometry. */
-  --titlebar-height: 52px;
+  /* A compact band, not a macOS document titlebar: DevHub has no document
+     title to carry, so the row is only as tall as the Activity control needs. */
+  --titlebar-height: 38px;
   --traffic-light-inset: 88px;
   --row-height: 28px;
   --sidebar-width: 248px;

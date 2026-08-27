@@ -97,19 +97,11 @@ const MAX_EFFECT_STEPS: usize = 1_024;
 const FOLDER_CHOOSER_SCRIPT: &str =
     "POSIX path of (choose folder with prompt \"Open Workspace Folder\")";
 const MIN_PROCESS_NOFILE: u64 = 8_192;
-const APP_SHELL_TITLEBAR_HEIGHT: f64 = 52.0;
-/// AppKit's standard window buttons are 14pt tall and sit 20pt from the
-/// leading edge. DevHub's titlebar is taller than the system default, so the
-/// buttons have to be centred on it explicitly or they cling to the top left.
-const TRAFFIC_LIGHT_DIAMETER: f64 = 14.0;
+/// Must match `--titlebar-height`.
+const APP_SHELL_TITLEBAR_HEIGHT: f64 = 38.0;
+/// AppKit places the window buttons 20pt from the leading edge; only their
+/// vertical placement has to follow DevHub's own titlebar band.
 const TRAFFIC_LIGHT_LEADING: f64 = 20.0;
-
-fn traffic_light_position() -> tauri::LogicalPosition<f64> {
-    tauri::LogicalPosition::new(
-        TRAFFIC_LIGHT_LEADING,
-        (APP_SHELL_TITLEBAR_HEIGHT - TRAFFIC_LIGHT_DIAMETER) / 2.0,
-    )
-}
 
 fn initial_editor_bounds(
     window_width: f64,
@@ -7695,7 +7687,6 @@ fn ensure_app_shell_window(
     .decorations(true)
     .title_bar_style(tauri::TitleBarStyle::Overlay)
     .hidden_title(true)
-    .traffic_light_position(traffic_light_position())
     .visible(false)
     .maximized(frame.maximized)
     .build()
@@ -7705,7 +7696,15 @@ fn ensure_app_shell_window(
     window
         .run_on_main_thread({
             let window = window.clone();
-            move || apply_window_material(&window)
+            move || {
+                apply_window_material(&window);
+                if let Ok(handle) = window.ns_window() {
+                    centre_traffic_lights(handle);
+                }
+                if let Ok(handle) = window.ns_window() {
+                    centre_traffic_lights(handle);
+                }
+            }
         })
         .map_err(|_| AppErrorWire::native_unavailable())?;
     Ok(window)
@@ -7733,6 +7732,20 @@ fn apply_window_material(window: &tauri::WebviewWindow) {
 
 #[cfg(not(target_os = "macos"))]
 fn apply_window_material(_window: &tauri::WebviewWindow) {}
+
+/// Sit the window buttons on the centre line of DevHub's titlebar band.
+///
+/// The AppKit call itself lives in `devhub-macos-chrome`, because this crate
+/// forbids unsafe code and there is no safe binding for window-button
+/// geometry. AppKit relays out the button container whenever the window
+/// resizes, so this runs again on every resize rather than only at startup.
+fn centre_traffic_lights(handle: *mut std::ffi::c_void) {
+    devhub_macos_chrome::centre_window_buttons(
+        handle,
+        APP_SHELL_TITLEBAR_HEIGHT,
+        TRAFFIC_LIGHT_LEADING,
+    );
+}
 
 fn build_window_menu(
     app: &AppHandle,
@@ -8147,6 +8160,11 @@ pub fn run() {
                     if !state.is_current_native_window(window) {
                         return;
                     }
+                    // AppKit rebuilds the window-button container on resize,
+                    // which drops them back onto the system centre line.
+                    if let Ok(handle) = window.ns_window() {
+                        centre_traffic_lights(handle);
+                    }
                     let scale_factor = window.scale_factor().unwrap_or(1.0);
                     let logical_size = size.to_logical::<f64>(scale_factor);
                     let bounds = editor::EditorBounds::new(
@@ -8380,26 +8398,31 @@ mod tests {
 
     #[test]
     fn traffic_lights_sit_on_the_titlebar_centre_line() {
-        let position = traffic_light_position();
-        assert_eq!(position.x, TRAFFIC_LIGHT_LEADING);
-        assert_eq!(position.y + TRAFFIC_LIGHT_DIAMETER / 2.0, APP_SHELL_TITLEBAR_HEIGHT / 2.0);
+        for button_height in [12.0, 14.0, 16.0] {
+            let (x, y) = devhub_macos_chrome::button_origin(
+                APP_SHELL_TITLEBAR_HEIGHT,
+                button_height,
+                TRAFFIC_LIGHT_LEADING,
+            );
+            assert_eq!(x, TRAFFIC_LIGHT_LEADING);
+            assert_eq!(y + button_height / 2.0, APP_SHELL_TITLEBAR_HEIGHT / 2.0);
+        }
     }
 
     #[test]
-    fn the_window_config_matches_the_computed_traffic_light_position() {
+    fn the_window_config_leaves_the_traffic_lights_to_the_shell() {
+        // Tao's own inset measures from a different origin, so a configured
+        // position would silently compete with `centre_traffic_lights`.
         let config: serde_json::Value =
             serde_json::from_str(include_str!("../tauri.conf.json")).expect("config parses");
-        let configured = &config["app"]["windows"][0]["trafficLightPosition"];
-        let expected = traffic_light_position();
-        assert_eq!(configured["x"].as_f64(), Some(expected.x));
-        assert_eq!(configured["y"].as_f64(), Some(expected.y));
+        assert!(config["app"]["windows"][0].get("trafficLightPosition").is_none());
     }
 
     #[test]
     fn initial_editor_bounds_reserve_titlebar_and_sidebar() {
         assert_eq!(
             initial_editor_bounds(1_200.0, 760.0, 288),
-            editor::EditorBounds::new(288.0, 52.0, 912.0, 708.0)
+            editor::EditorBounds::new(288.0, 38.0, 912.0, 722.0)
         );
     }
 

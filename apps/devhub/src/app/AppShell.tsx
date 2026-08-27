@@ -344,9 +344,12 @@ function Workbench() {
         className="app-shell-content"
         inert={pendingConfirmation ? true : undefined}
       >
-        <TitlebarActivities snapshot={state.snapshot} onDispatch={onDispatch} />
+        <Sidebar snapshot={state.snapshot} />
         <div className="workbench">
-          <Sidebar snapshot={state.snapshot} />
+          <TitlebarActivities
+            snapshot={state.snapshot}
+            onDispatch={onDispatch}
+          />
           <SurfaceViewport
             snapshot={state.snapshot}
             intentError={intentError?.summary}

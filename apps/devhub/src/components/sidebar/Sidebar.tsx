@@ -829,6 +829,9 @@ export function Sidebar({ snapshot }: SidebarProps) {
       aria-label="Workspace navigation"
       style={{ "--sidebar-width": `${renderedWidth}px` } as React.CSSProperties}
     >
+      {/* The Sidebar runs the full height of the window, so its own top strip
+          is where the window buttons live and where the window is dragged. */}
+      <div className="sidebar-titlebar" data-tauri-drag-region />
       <div className="sidebar-scroll-region">
         <ScratchRow snapshot={snapshot} onDispatch={onDispatch} />
         <div className="sidebar-section-heading">

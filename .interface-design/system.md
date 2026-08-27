@@ -6,13 +6,15 @@ DevHub is a quiet, dense, precise native macOS workbench for a developer
 switching long-lived contexts rapidly. The primary verb is “locate active
 context, then switch surface instantly.” The shell follows the viewer's
 system appearance and its material hierarchy: a translucent navigation pane
-flush to the window edge, and an opaque provider Surface beside it.
+running the full height of the window, and an opaque provider Surface beside
+it under one compact titlebar band.
 
 The signature is a stable `Workspace → Agent` sidebar coupled to one titlebar
 Activity switcher and one uninterrupted Surface viewport. Activities are fixed
-choices, not tabs. Selection never changes context implicitly. The Sidebar and
-Surface meet on a single hairline and run to the window's edges, so the native
-Editor child needs no clipping of its own.
+choices, not tabs. Selection never changes context implicitly. The Sidebar is
+a peer of the content column rather than something the titlebar sits above, so
+the window buttons rest on the navigation pane and the titlebar band belongs to
+the content it labels.
 
 Rejected defaults: dark developer dashboard → system-adaptive native workbench;
 browser tabs → stable context tree plus Activities; decorative cards/status bar
@@ -41,9 +43,10 @@ browser tabs → stable context tree plus Activities; decorative cards/status ba
 
 ## Component patterns
 
-- Titlebar Activities — native overlay, 52px height, traffic-light leading
-  inset that clears the window buttons on the titlebar's centre line, exactly
-  Editor/Agent/Terminal. Disabled choices remain visible and
+- Titlebar Activities — native overlay, one compact 38px band spanning the
+  content column only, exactly Editor/Agent/Terminal. The window buttons are
+  centred on that band over the Sidebar's own matching strip, which reserves
+  their leading inset. Disabled choices remain visible and
   use text plus an accessible reason.
 - Sidebar row — 28px compact source-list rhythm, separate disclosure button,
   context row, and optional semantic action. Scratch is fixed first; Workspaces

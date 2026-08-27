@@ -1,0 +1,22 @@
+[package]
+name = "devhub-macos-chrome"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+# The one place in DevHub allowed to talk to AppKit directly. Everything the
+# app itself compiles keeps `#![forbid(unsafe_code)]`, so the window-chrome
+# geometry that has no safe binding is quarantined here instead of loosening
+# that boundary for the whole application crate.
+
+[target.'cfg(target_os = "macos")'.dependencies.objc2-app-kit]
+version = "=0.3.2"
+default-features = false
+features = ["std", "NSWindow", "NSView", "NSResponder", "NSButton", "NSControl"]
+
+[target.'cfg(target_os = "macos")'.dependencies.objc2-foundation]
+version = "=0.3.2"
+default-features = false
+features = ["std"]

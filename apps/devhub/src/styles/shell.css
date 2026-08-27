@@ -17,11 +17,13 @@
   background: transparent;
 }
 
+/* The Sidebar spans the full height of the window and the titlebar belongs to
+   the content column beside it, the way Finder and Mail are laid out: the
+   window buttons sit on the navigation pane, not above it. */
 .app-shell-content {
   display: flex;
   overflow: hidden;
   flex: 1;
-  flex-direction: column;
   min-height: 0;
 }
 
@@ -29,6 +31,8 @@
   display: flex;
   overflow: hidden;
   flex: 1;
+  flex-direction: column;
+  min-width: 0;
   min-height: 0;
 }
 
@@ -40,15 +44,24 @@
   align-items: center;
   height: var(--titlebar-height);
   padding: 0 var(--space-3);
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid var(--line-strong);
   background: transparent;
   grid-template-columns: 1fr auto 1fr;
 }
 
-/* Reserve the traffic lights so the segmented control is never underneath. */
+/* The window buttons are over the Sidebar now, so the content titlebar has
+   nothing to reserve; the leading cell only balances the centred control. */
 .titlebar-leading {
-  min-width: calc(var(--traffic-light-inset) - var(--space-3));
+  min-width: 0;
   height: 100%;
+}
+
+/* The Sidebar's own titlebar strip: same height as the content titlebar so
+   the two read as one band, and wide enough to clear the window buttons. */
+.sidebar-titlebar {
+  flex: 0 0 var(--titlebar-height);
+  min-width: var(--traffic-light-inset);
+  height: var(--titlebar-height);
 }
 
 .titlebar-trailing {
@@ -118,7 +131,7 @@
   width: var(--sidebar-width);
   flex: 0 0 var(--sidebar-width);
   flex-direction: column;
-  border-right: 1px solid var(--line);
+  border-right: 1px solid var(--line-strong);
   background: transparent;
 }
 

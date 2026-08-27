@@ -2,6 +2,7 @@
 members = [
     "apps/devhub/src-tauri",
     "crates/devhub-app-core",
+    "crates/devhub-macos-chrome",
 ]
 resolver = "2"
 
