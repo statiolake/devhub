@@ -2594,9 +2594,9 @@ impl NativeAppState {
     }
 
     fn sync_editor_surface_for_snapshot(&self, snapshot: &AppSnapshot) {
-        if snapshot.active_activity() != Activity::Editor {
+        let editing = snapshot.active_activity() == Activity::Editor;
+        if !editing {
             let _ = self.editor_host.hide_surfaces();
-            return;
         }
         let selected = match snapshot.selected_context() {
             devhub_app_core::NavigationContext::Global => {
@@ -2627,7 +2627,9 @@ impl NativeAppState {
                 }),
         };
         let Some((key, root)) = selected else {
-            let _ = self.editor_host.hide_surfaces();
+            if editing {
+                let _ = self.editor_host.hide_surfaces();
+            }
             return;
         };
         let bounds = self
@@ -2635,7 +2637,14 @@ impl NativeAppState {
             .lock()
             .map(|bounds| *bounds)
             .unwrap_or_else(|_| editor::EditorBounds::new(0.0, 0.0, 900.0, 560.0));
-        let _ = self.editor_host.ensure_surface(key, root, bounds);
+        if editing {
+            let _ = self.editor_host.ensure_surface(key, root, bounds);
+        } else {
+            // The Workspace is selected but the Editor is not on screen. Boot
+            // its Workbench now, hidden, so that switching to the Editor is a
+            // reveal rather than a mount. Every other surface stays hidden.
+            let _ = self.editor_host.warm_surface(key, root, bounds);
+        }
     }
 
     /// The existing startup Window is already constructed by Tauri's config.

@@ -1,4 +1,7 @@
-import type { AppSnapshot } from "../../generated/app-shell";
+import {
+  type AppSnapshot,
+  workspaceForContext,
+} from "../../generated/app-shell";
 import type { TerminalClient } from "../../terminal/client";
 import { defaultAgentSurfaceClient } from "../../agent/client";
 
@@ -38,4 +41,24 @@ export function attachableSurfaces(
     }
   }
   return surfaces;
+}
+
+/**
+ * The Surfaces worth mounting before they are asked for.
+ *
+ * A Surface the user has not visited costs an attachment to keep, so warming
+ * is bounded to the Workspace they are already in: its terminal and its
+ * running Agents. Those are the Surfaces one click away, and their processes
+ * are alive regardless — the only thing being bought early is the handshake.
+ * Scratch is warmed everywhere, because it is one click away from everywhere.
+ */
+export function warmSurfaces(snapshot: AppSnapshot): readonly string[] {
+  const warm = ["global-terminal"];
+  const workspace = workspaceForContext(snapshot, snapshot.selection.context);
+  if (!workspace || workspace.state !== "available") return warm;
+  warm.push(`workspace-terminal:${workspace.id}`);
+  for (const agent of workspace.agents) {
+    if (agent.controlState === "running") warm.push(`agent:${agent.id}`);
+  }
+  return warm;
 }

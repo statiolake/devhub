@@ -7,7 +7,7 @@ import {
 } from "../../generated/app-shell";
 import { type ReactNode, type Ref, useMemo, useRef } from "react";
 import { TerminalSurface } from "../../terminal/TerminalSurface";
-import { attachableSurfaces } from "./surfacePool";
+import { attachableSurfaces, warmSurfaces } from "./surfacePool";
 import { disabledReasonLabel } from "./activityPresentation";
 import { useAppShell } from "../../app/useAppShell";
 
@@ -91,12 +91,15 @@ function Failure({
 }
 
 /** The Editor's content is a native child WebView; the shell draws only the
- * states around it. */
+ * states around it. A ready host has a Workbench of its own covering this
+ * Surface, so drawing anything under it would be a spinner nobody can see. */
 function SurfaceEditor({ host }: { readonly host: AppSnapshot["editorHost"] }) {
   if (host.status === "failed") {
     return <Failure summary={host.summary} detail={host.detail ?? undefined} />;
   }
-  return <Waiting label="Starting the editor…" />;
+  return host.status === "ready" ? null : (
+    <Waiting label="Starting the editor…" />
+  );
 }
 
 /** The states around a running Agent. The Agent itself is drawn by the pool,
@@ -224,14 +227,23 @@ export function SurfaceViewport({
     }
   }
 
-  // Visitation order, not snapshot order: a Surface joins the pool the first
-  // time it is selected, so nothing attaches a PTY the user never asked for.
+  // The pool is what the user has visited plus what they are one click away
+  // from. Visitation is remembered in order so a Surface never leaves the pool
+  // just because the selection moved on; warming is recomputed each render, so
+  // leaving a Workspace lets its Surfaces fall back to whether they were
+  // visited. Both are intersected with what may legally hold an attachment.
   const visited = useRef<readonly string[]>([]);
   if (activeKey && !visited.current.includes(activeKey)) {
     visited.current = [...visited.current, activeKey];
   }
   visited.current = visited.current.filter((key) => attachable.has(key));
-  const pool = visited.current.map((key) => attachable.get(key)!);
+  const pooledKeys = [
+    ...visited.current,
+    ...warmSurfaces(snapshot).filter(
+      (key) => attachable.has(key) && !visited.current.includes(key),
+    ),
+  ];
+  const pool = pooledKeys.map((key) => attachable.get(key)!);
 
   const isScratch = (key: string) => key === "global-terminal";
 

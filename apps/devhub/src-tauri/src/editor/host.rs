@@ -123,6 +123,14 @@ struct SurfaceRecord {
     webview: Option<Box<dyn EditorWebView>>,
 }
 
+/// Whether a mount is the Surface the user is switching to, or one being
+/// prepared behind the Activity that is on screen.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Activation {
+    Select,
+    Warm,
+}
+
 #[derive(Default)]
 struct HostState {
     runtime: Option<Runtime>,
@@ -450,6 +458,33 @@ impl EditorHost {
         root: Option<PathBuf>,
         bounds: EditorBounds,
     ) -> EditorResult<EditorSurfaceSnapshot> {
+        self.mount_surface(key, root, bounds, Activation::Select)
+    }
+
+    /// Mount a surface without selecting it.
+    ///
+    /// A Workbench takes visibly longer to boot than it takes to reveal, so
+    /// the wait belongs where the user is not watching: selecting a Workspace
+    /// warms its Editor even while another Activity is on screen. Nothing is
+    /// shown, nothing takes focus, and no other surface's visibility moves —
+    /// switching to the Editor afterwards is the same `show` a second visit
+    /// already was.
+    pub fn warm_surface(
+        &self,
+        key: EditorSurfaceKey,
+        root: Option<PathBuf>,
+        bounds: EditorBounds,
+    ) -> EditorResult<EditorSurfaceSnapshot> {
+        self.mount_surface(key, root, bounds, Activation::Warm)
+    }
+
+    fn mount_surface(
+        &self,
+        key: EditorSurfaceKey,
+        root: Option<PathBuf>,
+        bounds: EditorBounds,
+        activation: Activation,
+    ) -> EditorResult<EditorSurfaceSnapshot> {
         if !bounds.is_valid() {
             return Err(EditorError::new(EditorErrorCode::WebViewUnavailable));
         }
@@ -504,7 +539,9 @@ impl EditorHost {
                 bounds,
                 data_directory: paths.webkit_data().to_path_buf(),
                 data_store_identifier: super::paths::WEBKIT_DATA_STORE_ID,
-                focused: true,
+                // A warmed child must not take the keyboard: the user is
+                // typing into whatever Activity is actually on screen.
+                focused: activation == Activation::Select,
             };
             let webview = webview_host.create(&spec)?;
             if let Some(record) = state.surfaces.get_mut(&key) {
@@ -530,21 +567,38 @@ impl EditorHost {
                 LifecycleEvent::WebViewsCreated { count: state.surfaces.len() as u16 },
             )?;
         }
-        for (candidate, record) in &mut state.surfaces {
-            let selected = candidate == &key;
-            if let Some(webview) = record.webview.as_ref() {
-                webview.set_bounds(bounds)?;
-                if selected {
-                    webview.show()?;
-                    webview.focus()?;
-                } else {
-                    webview.hide()?;
+        match activation {
+            Activation::Select => {
+                for (candidate, record) in &mut state.surfaces {
+                    let selected = candidate == &key;
+                    if let Some(webview) = record.webview.as_ref() {
+                        webview.set_bounds(bounds)?;
+                        if selected {
+                            webview.show()?;
+                            webview.focus()?;
+                        } else {
+                            webview.hide()?;
+                        }
+                    }
+                    record.visible = selected;
+                    record.bounds = bounds;
+                }
+                state.active = Some(key.clone());
+            }
+            Activation::Warm => {
+                // Only the warmed record moves. Touching the others would let
+                // a background mount steal the visible surface out from under
+                // whatever Activity the user is actually looking at.
+                if let Some(record) = state.surfaces.get_mut(&key) {
+                    if let Some(webview) = record.webview.as_ref() {
+                        webview.set_bounds(bounds)?;
+                        webview.hide()?;
+                    }
+                    record.visible = false;
+                    record.bounds = bounds;
                 }
             }
-            record.visible = selected;
-            record.bounds = bounds;
         }
-        state.active = Some(key.clone());
         Ok(snapshot_for(&state.surfaces[&key]))
     }
 
@@ -1330,6 +1384,55 @@ fi
         host.shutdown().expect("shutdown");
         assert_eq!(terminated.load(Ordering::Acquire), 1);
         assert!(!paths.token_file().exists());
+    }
+
+    #[test]
+    fn warming_a_surface_mounts_it_without_taking_the_visible_one() {
+        let (host, _spawns, _terminated, _paths, root, _alive) = test_host(true);
+        let webviews = Arc::new(FakeWebViewHost::default());
+        host.attach_webview_host(webviews.clone()).expect("attach");
+        let global = EditorSurfaceKey::Global;
+        let workspace_id = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+        let workspace_root = root.join("workspace");
+        fs::create_dir_all(&workspace_root).expect("workspace");
+        let workspace = EditorSurfaceKey::Workspace(workspace_id.to_owned());
+        let bounds = EditorBounds::new(24.0, 72.0, 800.0, 600.0);
+
+        host.ensure_surface(global.clone(), None, bounds).expect("global");
+        webviews.actions.lock().expect("actions").clear();
+
+        // A Workbench boots visibly slower than it reveals, so the wait is
+        // taken while another Activity is on screen.
+        host.warm_surface(workspace.clone(), Some(workspace_root.clone()), bounds).expect("warm");
+        assert_eq!(webviews.created.lock().expect("created").len(), 2);
+        assert!(host.snapshot(&workspace).expect("warmed snapshot").mounted);
+
+        let actions = webviews.actions.lock().expect("actions").clone();
+        assert!(
+            actions.iter().any(|action| action == &format!("hide:devhub-editor-{workspace_id}")),
+            "a warmed child must be hidden, not shown: {actions:?}"
+        );
+        assert!(
+            !actions.iter().any(|action| action.starts_with("show:")),
+            "warming must not reveal anything: {actions:?}"
+        );
+        assert!(
+            !actions.iter().any(|action| action.starts_with("focus:")),
+            "warming must not take the keyboard from the Activity on screen: {actions:?}"
+        );
+        assert!(
+            !actions.iter().any(|action| action == "hide:devhub-editor-global"),
+            "warming must leave every other surface's visibility alone: {actions:?}"
+        );
+        assert!(host.snapshot(&global).expect("global snapshot").mounted);
+
+        // Selecting it afterwards is the reveal the warm mount paid for.
+        webviews.actions.lock().expect("actions").clear();
+        host.ensure_surface(workspace.clone(), Some(workspace_root), bounds)
+            .expect("select warmed");
+        assert_eq!(webviews.created.lock().expect("created").len(), 2);
+
+        host.shutdown().expect("shutdown");
     }
 
     #[test]
