@@ -447,11 +447,10 @@ function ScratchRow({
       <span className="sidebar-context-button">
         <span className="row-glyph" aria-hidden="true">
           <svg viewBox="0 0 14 14" focusable="false">
-            {/* The folder's left edge is a full-height stroke over a fill; a
-                chevron's is two round caps, so matching it geometrically
-                still reads as inset. The apex hangs half a unit further out,
-                and the mark spans the folder's own height. */}
-            <path d="M1 3.6 L5.2 7 L1 10.4 M7.2 10.4 H12.5" />
+            {/* Drawn to the Workspace folder's own ink box — 1.5 to 12.5 of
+                the 14-unit viewBox — so the two glyphs share a leading edge
+                with no optical correction between them. */}
+            <path d="M1.5 3.6 L5.7 7 L1.5 10.4 M7.6 10.4 H12.5" />
           </svg>
         </span>
         <span className="row-label">Scratch</span>
