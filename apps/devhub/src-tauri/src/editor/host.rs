@@ -647,6 +647,14 @@ impl EditorHost {
         let mut state =
             self.state.lock().map_err(|_| EditorError::new(EditorErrorCode::LifecycleConflict))?;
         for record in state.surfaces.values_mut() {
+            // Every visibility call is a blocking round-trip to the main
+            // thread, and warming keeps one record per visited Workspace. This
+            // runs on every dispatch that is not about the Editor, so hiding
+            // what is already hidden would charge each of those dispatches for
+            // the Workspaces the user has collected.
+            if !record.visible {
+                continue;
+            }
             if let Some(webview) = record.webview.as_ref() {
                 webview.hide()?;
             }
@@ -654,6 +662,18 @@ impl EditorHost {
         }
         state.active = None;
         Ok(())
+    }
+
+    /// Whether this surface already holds a child WebView.
+    ///
+    /// Answered without waiting for the host lock: the only caller is the
+    /// decision to warm, warming is an optimization, and a host that is busy
+    /// mounting something is a host that should not be handed more work.
+    pub fn surface_is_mounted(&self, key: &EditorSurfaceKey) -> bool {
+        self.state
+            .try_lock()
+            .map(|state| state.surfaces.get(key).is_some_and(|record| record.webview.is_some()))
+            .unwrap_or(true)
     }
 
     /// Q5.2-only visibility probe: retain every WebView and the global editor
@@ -1431,6 +1451,63 @@ fi
         host.ensure_surface(workspace.clone(), Some(workspace_root), bounds)
             .expect("select warmed");
         assert_eq!(webviews.created.lock().expect("created").len(), 2);
+
+        host.shutdown().expect("shutdown");
+    }
+
+    #[test]
+    fn hiding_surfaces_touches_only_the_one_that_was_visible() {
+        // Every visibility call is a blocking round-trip to the main thread and
+        // this runs on each dispatch that is not about the Editor. Warming
+        // keeps one record per visited Workspace, so re-hiding what is already
+        // hidden would charge those dispatches for the whole collection.
+        let (host, _spawns, _terminated, _paths, root, _alive) = test_host(true);
+        let webviews = Arc::new(FakeWebViewHost::default());
+        host.attach_webview_host(webviews.clone()).expect("attach");
+        let workspace_id = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+        let workspace_root = root.join("workspace");
+        fs::create_dir_all(&workspace_root).expect("workspace");
+        let workspace = EditorSurfaceKey::Workspace(workspace_id.to_owned());
+        let bounds = EditorBounds::new(24.0, 72.0, 800.0, 600.0);
+
+        host.warm_surface(workspace, Some(workspace_root), bounds).expect("warm");
+        host.ensure_surface(EditorSurfaceKey::Global, None, bounds).expect("global");
+        webviews.actions.lock().expect("actions").clear();
+
+        host.hide_surfaces().expect("hide");
+        let actions = webviews.actions.lock().expect("actions").clone();
+        assert_eq!(
+            actions,
+            vec!["hide:devhub-editor-global".to_owned()],
+            "only the visible surface had anything to hide: {actions:?}"
+        );
+
+        // Nothing is visible now, so a second pass has no work at all.
+        webviews.actions.lock().expect("actions").clear();
+        host.hide_surfaces().expect("hide again");
+        assert!(
+            webviews.actions.lock().expect("actions").is_empty(),
+            "hiding an already hidden set must cost nothing"
+        );
+
+        host.shutdown().expect("shutdown");
+    }
+
+    #[test]
+    fn a_mounted_surface_reports_itself_so_warming_is_not_repeated() {
+        let (host, _spawns, _terminated, _paths, root, _alive) = test_host(true);
+        let webviews = Arc::new(FakeWebViewHost::default());
+        host.attach_webview_host(webviews.clone()).expect("attach");
+        let workspace_id = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+        let workspace_root = root.join("workspace");
+        fs::create_dir_all(&workspace_root).expect("workspace");
+        let workspace = EditorSurfaceKey::Workspace(workspace_id.to_owned());
+        let bounds = EditorBounds::new(24.0, 72.0, 800.0, 600.0);
+
+        assert!(!host.surface_is_mounted(&workspace));
+        host.warm_surface(workspace.clone(), Some(workspace_root), bounds).expect("warm");
+        assert!(host.surface_is_mounted(&workspace));
+        assert!(!host.surface_is_mounted(&EditorSurfaceKey::Global));
 
         host.shutdown().expect("shutdown");
     }

@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashSet, VecDeque};
 use std::fmt;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
@@ -991,7 +991,11 @@ struct NativeAppState {
     _workspace_resolver: MacWorkspacePathResolver,
     agent_runtime: HerdrAgentRuntime,
     agent_surfaces: AgentSurfaceManager,
-    editor_host: EditorHost,
+    editor_host: Arc<EditorHost>,
+    /// Surfaces with a warm mount in flight. Warming runs off the request
+    /// path, so this is what keeps one dispatch after another from stacking up
+    /// threads for a Workbench that is already on its way.
+    editor_warming: Arc<Mutex<HashSet<editor::EditorSurfaceKey>>>,
     editor_bounds: Mutex<editor::EditorBounds>,
     profiles: Mutex<Vec<DomainAgentProfile>>,
     /// Opaque mappings are kept in native memory until the StateStore/core
@@ -2110,9 +2114,9 @@ impl NativeAppState {
         if performance_markers_enabled {
             bridge_sink.enable_performance_markers(diagnostics.clone());
         }
-        let editor_host = EditorHost::new(
+        let editor_host = Arc::new(EditorHost::new(
             EditorHostConfig::new(home, resource_dir).with_bridge_event_sink(bridge_sink.clone()),
-        );
+        ));
         let model = persisted.hydrate_model(&profiles).map_err(persistence_error)?;
         let mut coordinator = AppCoordinator::with_model(model);
         coordinator.mark_ready();
@@ -2150,6 +2154,7 @@ impl NativeAppState {
             agent_runtime,
             agent_surfaces: AgentSurfaceManager::new(),
             editor_host,
+            editor_warming: Arc::new(Mutex::new(HashSet::new())),
             editor_bounds: Mutex::new(editor::EditorBounds::new(0.0, 0.0, 900.0, 560.0)),
             profiles: Mutex::new(profiles),
             agent_mappings: Mutex::new(restored_agent_mappings),
@@ -2640,11 +2645,43 @@ impl NativeAppState {
         if editing {
             let _ = self.editor_host.ensure_surface(key, root, bounds);
         } else {
-            // The Workspace is selected but the Editor is not on screen. Boot
-            // its Workbench now, hidden, so that switching to the Editor is a
-            // reveal rather than a mount. Every other surface stays hidden.
-            let _ = self.editor_host.warm_surface(key, root, bounds);
+            self.warm_editor_surface_off_the_request_path(key, root, bounds);
         }
+    }
+
+    /// Boot a selected Workspace's Workbench behind whatever Activity is on
+    /// screen, so that switching to the Editor is a reveal rather than a mount.
+    ///
+    /// The work never runs on the dispatch that triggered it. Mounting a child
+    /// WebView is a blocking round-trip to the main thread, and the first one
+    /// also boots the VS Code Server behind it; doing that inline made every
+    /// switch to the Terminal wait for the Editor it was switching away from.
+    /// The dispatch hands the mount to a thread and returns, and a surface that
+    /// is already mounted or already being warmed hands over nothing.
+    fn warm_editor_surface_off_the_request_path(
+        &self,
+        key: editor::EditorSurfaceKey,
+        root: Option<PathBuf>,
+        bounds: editor::EditorBounds,
+    ) {
+        if self.editor_host.surface_is_mounted(&key) {
+            return;
+        }
+        let Ok(mut warming) = self.editor_warming.lock() else {
+            return;
+        };
+        if !warming.insert(key.clone()) {
+            return;
+        }
+        drop(warming);
+        let host = Arc::clone(&self.editor_host);
+        let tracker = Arc::clone(&self.editor_warming);
+        std::thread::spawn(move || {
+            let _ = host.warm_surface(key.clone(), root, bounds);
+            if let Ok(mut warming) = tracker.lock() {
+                warming.remove(&key);
+            }
+        });
     }
 
     /// The existing startup Window is already constructed by Tauri's config.
