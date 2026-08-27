@@ -76,6 +76,19 @@ describe("accessibility layout invariants", () => {
     );
   });
 
+  it("dims the selection on window key state, not on DOM focus", () => {
+    // `:focus-within` is the wrong fact: the Editor is a sibling native
+    // WebView, so working in it empties the shell's focus while the window
+    // stays active, and the selection would grey out for no reason.
+    expect(shellCss).not.toMatch(/focus-within/);
+    expect(shellCss).toMatch(
+      /:root\[data-window-active="false"\]\s*\.sidebar-row\.is-selected\s*\{[^}]*background:\s*var\(--selection-inactive\);/,
+    );
+    // Absent means active, so a shell the native side has not reported on yet
+    // is not permanently dimmed.
+    expect(shellCss).not.toMatch(/data-window-active="true"/);
+  });
+
   it("reads as an application rather than a document", () => {
     // An I-beam wandering over labels and a drag that selects the chrome are
     // the two things that give a web shell away on the desktop.

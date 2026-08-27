@@ -7747,6 +7747,18 @@ fn centre_traffic_lights(handle: *mut std::ffi::c_void) {
     );
 }
 
+/// Tell the shell whether its window is key, so it can dim a selection the way
+/// AppKit dims one.
+fn report_window_activation(app: &AppHandle, active: bool) {
+    let Some(webview) = app.get_webview_window(APP_SHELL_WINDOW_LABEL) else {
+        return;
+    };
+    let _ = webview.eval(format!(
+        "document.documentElement.setAttribute('data-window-active','{}')",
+        if active { "true" } else { "false" }
+    ));
+}
+
 fn build_window_menu(
     app: &AppHandle,
     close_accelerator: Option<&str>,
@@ -8149,6 +8161,16 @@ pub fn run() {
                         }
                     }
                 }
+                tauri::WindowEvent::Focused(focused) => {
+                    // A source list dims its selection when the window stops
+                    // being key, not when DOM focus moves. Those are different
+                    // facts here: the Editor is a sibling native WebView, so
+                    // clicking into it takes DOM focus out of the shell while
+                    // the window is still perfectly active.
+                    if state.is_current_native_window(window) {
+                        report_window_activation(&app, *focused);
+                    }
+                }
                 tauri::WindowEvent::Moved(_) => {
                     if state.lifecycle.phase() == Phase::Open
                         && state.is_current_native_window(window)
@@ -8395,6 +8417,16 @@ mod tests {
 
     #[cfg(debug_assertions)]
     static TEMP_DEBUG_RESOURCE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+    #[test]
+    fn the_shell_dims_its_selection_on_the_attribute_the_native_side_writes() {
+        // The name is a contract between `report_window_activation` and the
+        // stylesheet; nothing else links them.
+        let shell_css = include_str!("../../src/styles/shell.css");
+        assert!(shell_css.contains("[data-window-active=\"false\"]"));
+        // Absent means active, so the shell is never dimmed by default.
+        assert!(!shell_css.contains("[data-window-active=\"true\"]"));
+    }
 
     #[test]
     fn traffic_lights_sit_on_the_titlebar_centre_line() {

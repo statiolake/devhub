@@ -207,13 +207,22 @@
   stroke: var(--accent);
 }
 
-.app-shell:not(:focus-within) .sidebar-row.is-selected {
+/* Keyed to whether the *window* is key, which is what AppKit dims a selection
+   on — not to where DOM focus sits. The two are different facts in DevHub:
+   the Editor is a sibling native WebView, so clicking into it takes focus out
+   of the shell's document entirely while the window stays perfectly active.
+   The attribute is absent until the native side reports otherwise, so a shell
+   rendered without it reads as active rather than permanently dimmed. */
+:root[data-window-active="false"] .sidebar-row.is-selected {
   background: var(--selection-inactive);
   color: var(--primary);
 }
 
-.app-shell:not(:focus-within) .sidebar-row.is-selected .row-glyph svg,
-.app-shell:not(:focus-within) .sidebar-row.is-selected .disclosure-button svg {
+:root[data-window-active="false"] .sidebar-row.is-selected .row-glyph svg,
+:root[data-window-active="false"]
+  .sidebar-row.is-selected
+  .disclosure-button
+  svg {
   stroke: var(--secondary);
 }
 
