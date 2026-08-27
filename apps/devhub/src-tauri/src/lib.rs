@@ -8235,11 +8235,24 @@ pub fn run() {
                     }
                     let scale_factor = window.scale_factor().unwrap_or(1.0);
                     let logical_size = size.to_logical::<f64>(scale_factor);
-                    let bounds = editor::EditorBounds::new(
-                        0.0,
-                        0.0,
+                    // The child holds whatever frame it was last given, so a
+                    // resize needs one immediately — the App Shell's own report
+                    // arrives a layout pass later. It has to be the Surface
+                    // rectangle, though: the window rectangle puts the Editor
+                    // over the Sidebar and the titlebar, and it stays there,
+                    // because a correction that agrees with the shell is
+                    // indistinguishable from one that never came.
+                    let sidebar_width = state
+                        .coordinator
+                        .lock()
+                        .ok()
+                        .map_or(devhub_app_core::SIDEBAR_DEFAULT_WIDTH, |coordinator| {
+                            coordinator.snapshot().sidebar().width()
+                        });
+                    let bounds = initial_editor_bounds(
                         logical_size.width.max(1.0),
                         logical_size.height.max(1.0),
+                        sidebar_width,
                     );
                     if let Ok(mut current) = state.editor_bounds.lock() {
                         *current = bounds;
@@ -8502,6 +8515,25 @@ mod tests {
             initial_editor_bounds(1_200.0, 760.0, 288),
             editor::EditorBounds::new(288.0, 38.0, 912.0, 722.0)
         );
+    }
+
+    #[test]
+    fn editor_bounds_never_cover_the_sidebar_or_the_titlebar() {
+        // A resize has to hand the child a frame immediately, because it keeps
+        // whatever it was last given. Handing it the window rectangle put the
+        // Editor over the Sidebar and the titlebar and left it there — the App
+        // Shell's own report agrees with a correct frame, so there was nothing
+        // to distinguish a correction that never came.
+        for (width, height, sidebar) in
+            [(1_200.0, 760.0, 288_u16), (680.0, 480.0, 200), (2_560.0, 1_440.0, 400)]
+        {
+            let bounds = initial_editor_bounds(width, height, sidebar);
+            assert!(bounds.is_valid());
+            assert!(bounds.x >= f64::from(sidebar), "the Sidebar keeps its column: {bounds:?}");
+            assert!(bounds.y >= APP_SHELL_TITLEBAR_HEIGHT, "the titlebar stays: {bounds:?}");
+            assert!(bounds.x + bounds.width <= width + f64::EPSILON);
+            assert!(bounds.y + bounds.height <= height + f64::EPSILON);
+        }
     }
 
     #[cfg(debug_assertions)]
