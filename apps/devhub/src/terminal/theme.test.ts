@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { AppAppearance } from "../generated/app-shell";
-import { activePalette, terminalFontStack, xtermTheme } from "./theme";
+import {
+  activePalette,
+  DEFAULT_TERMINAL_MARGIN,
+  terminalFontStack,
+  terminalSurfaceStyle,
+  xtermTheme,
+} from "./theme";
 
 const palette = (background: string) => ({
   ansi: [
@@ -75,5 +81,33 @@ describe("terminal palette projection", () => {
     expect(activePalette(appearance, true)?.background).toBe("#121314");
     expect(activePalette(appearance, false)?.background).toBe("#ffffff");
     expect(activePalette(undefined, false)).toBeUndefined();
+  });
+});
+
+describe("terminal surface custom properties", () => {
+  it("always declares a usable margin", () => {
+    expect(terminalSurfaceStyle(undefined, 12)["--terminal-margin"]).toBe(
+      "12px",
+    );
+    expect(terminalSurfaceStyle(undefined, 0)["--terminal-margin"]).toBe("0px");
+  });
+
+  it("falls back for a missing margin instead of writing an invalid value", () => {
+    // `--terminal-margin: undefinedpx` is set, not unset, so `var()` would not
+    // reach its fallback and the padding would compute to zero.
+    for (const missing of [undefined, Number.NaN]) {
+      expect(
+        terminalSurfaceStyle(undefined, missing)["--terminal-margin"],
+      ).toBe(`${DEFAULT_TERMINAL_MARGIN}px`);
+    }
+  });
+
+  it("omits the background until a palette exists, so CSS keeps its own", () => {
+    expect(terminalSurfaceStyle(undefined, 4)).not.toHaveProperty(
+      "--terminal-background",
+    );
+    expect(
+      terminalSurfaceStyle(palette("#123456"), 4)["--terminal-background"],
+    ).toBe("#123456");
   });
 });

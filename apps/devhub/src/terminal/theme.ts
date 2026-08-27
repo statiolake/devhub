@@ -119,3 +119,27 @@ export function activePalette(
   if (!theme) return undefined;
   return dark ? theme.dark : theme.light;
 }
+
+/** The margin the pane keeps around the grid, in CSS pixels. */
+export const DEFAULT_TERMINAL_MARGIN = 4;
+
+/**
+ * The custom properties the pane needs to paint itself.
+ *
+ * Built here rather than inline so a missing projection cannot produce an
+ * invalid declaration. `--terminal-margin: undefinedpx` is *not* an unset
+ * property: `var()` will not fall back to its default for it, and the padding
+ * silently computes to zero instead.
+ */
+export function terminalSurfaceStyle(
+  palette: TerminalPaletteWire | undefined,
+  margin: number | undefined,
+): Record<string, string> {
+  const size = Number.isFinite(margin)
+    ? Math.max(0, Number(margin))
+    : DEFAULT_TERMINAL_MARGIN;
+  return {
+    "--terminal-margin": `${size}px`,
+    ...(palette ? { "--terminal-background": palette.background } : {}),
+  };
+}

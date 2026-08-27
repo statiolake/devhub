@@ -836,6 +836,10 @@ body.is-resizing-sidebar {
 
 /* -------------------------------------------------------------- terminal */
 
+/* The margin lives here, on the parent of the box the fit addon measures, so
+   the grid is computed against an already-inset area rather than relying on
+   the addon to notice padding. An absolutely positioned state still covers the
+   whole pane, because its containing block is this element's padding box. */
 .terminal-surface-shell {
   position: relative;
   display: flex;
@@ -845,6 +849,7 @@ body.is-resizing-sidebar {
   flex: 1;
   flex-direction: column;
   min-height: 0;
+  padding: var(--terminal-margin, 4px);
   background: var(--terminal-background, var(--surface));
 }
 
@@ -863,10 +868,6 @@ body.is-resizing-sidebar {
   align-items: center;
   justify-content: center;
   min-height: 0;
-  /* A floor, not the gap you see: the addon subtracts this host's padding
-     before it decides how many cells fit, so the centred remainder is added
-     on top of it. */
-  padding: var(--terminal-margin, 4px);
   background: var(--terminal-background, var(--surface));
 }
 

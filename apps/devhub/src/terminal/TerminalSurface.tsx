@@ -6,6 +6,7 @@ import {
   activePalette,
   prefersDark,
   terminalFontStack,
+  terminalSurfaceStyle,
   xtermTheme,
 } from "./theme";
 import type { TerminalChannelDiagnostic } from "../app/client";
@@ -783,12 +784,10 @@ export function TerminalSurface({
       className="terminal-surface-shell"
       data-connection={connection}
       style={
-        {
-          ...(palette ? { "--terminal-background": palette.background } : {}),
-          ...(appearance
-            ? { "--terminal-margin": `${appearance.terminalMargin}px` }
-            : {}),
-        } as React.CSSProperties
+        terminalSurfaceStyle(
+          palette,
+          appearance?.terminalMargin,
+        ) as React.CSSProperties
       }
     >
       {!hideTitle && (
