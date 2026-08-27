@@ -1,8 +1,10 @@
 //! VS Code Server process identity and bounded supervision.
 
 use std::fmt;
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -112,6 +114,14 @@ pub trait ManagedProcess: Send {
     fn identity_verified(&self) -> bool;
     fn try_wait(&mut self) -> EditorResult<Option<ProcessExit>>;
 
+    /// The loopback port the server actually bound, as it announced it.
+    ///
+    /// DevHub asks for port zero and reads back what the server chose, so
+    /// there is no window between finding a free port and listening on it for
+    /// anything else to take it. `None` means the announcement did not arrive
+    /// before the deadline.
+    fn observed_origin_port(&self, deadline: Instant) -> Option<u16>;
+
     /// Implementations must provide a deadline-aware stop operation. The
     /// process adapter may need to reap a child and that wait is allowed to
     /// outlive a quit deadline only in an explicitly owned reaper.
@@ -162,6 +172,52 @@ impl From<ExitStatus> for ProcessExit {
     }
 }
 
+/// The port the server announced on its own stdout, published to whoever is
+/// waiting for it.
+#[derive(Default)]
+struct ObservedOrigin {
+    port: Mutex<Option<u16>>,
+    announced: Condvar,
+}
+
+impl ObservedOrigin {
+    fn publish(&self, port: u16) {
+        if let Ok(mut slot) = self.port.lock() {
+            if slot.is_none() {
+                *slot = Some(port);
+                self.announced.notify_all();
+            }
+        }
+    }
+
+    fn wait(&self, deadline: Instant) -> Option<u16> {
+        let mut slot = self.port.lock().ok()?;
+        loop {
+            if let Some(port) = *slot {
+                return Some(port);
+            }
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return None;
+            }
+            let (next, timeout) = self.announced.wait_timeout(slot, remaining).ok()?;
+            slot = next;
+            if timeout.timed_out() && slot.is_none() {
+                return None;
+            }
+        }
+    }
+}
+
+/// `Web UI available at http://127.0.0.1:60846`
+fn parse_origin_port(line: &str) -> Option<u16> {
+    let prefix = format!("http://{}:", super::paths::LOOPBACK_HOST);
+    let start = line.find(&prefix)? + prefix.len();
+    let digits: String =
+        line[start..].chars().take_while(|character| character.is_ascii_digit()).collect();
+    digits.parse().ok()
+}
+
 #[derive(Debug, Default, Clone, Copy)]
 pub struct SystemProcessAdapter;
 
@@ -172,18 +228,35 @@ impl ProcessAdapter for SystemProcessAdapter {
             .args(spec.args())
             .envs(spec.env().iter().map(|(key, value)| (key, value)))
             .stdin(Stdio::null())
-            .stdout(Stdio::null())
+            // The server announces its bound port here and nowhere else, so
+            // this pipe has to stay drained for the life of the process: a
+            // full one would stop `--verbose` output and with it the server.
+            .stdout(Stdio::piped())
             .stderr(Stdio::null());
         #[cfg(unix)]
         {
             use std::os::unix::process::CommandExt;
             command.process_group(0);
         }
-        let child =
+        let mut child =
             command.spawn().map_err(|_| EditorError::new(EditorErrorCode::ProcessUnavailable))?;
         let pid = child.id();
+        let observed = Arc::new(ObservedOrigin::default());
+        if let Some(stdout) = child.stdout.take() {
+            let observed = Arc::clone(&observed);
+            let _ =
+                thread::Builder::new().name("devhub-editor-stdout".to_owned()).spawn(move || {
+                    for line in BufReader::new(stdout).lines() {
+                        let Ok(line) = line else { break };
+                        if let Some(port) = parse_origin_port(&line) {
+                            observed.publish(port);
+                        }
+                    }
+                });
+        }
         let process = SystemManagedProcess {
             child: Some(child),
+            observed,
             identity: ProcessIdentity::new(pid, spec.executable().to_path_buf()),
             cleanup: crate::runtime::ChildCleanup::new(pid),
             termination_grace: spec.termination_grace(),
@@ -197,6 +270,7 @@ impl ProcessAdapter for SystemProcessAdapter {
 
 struct SystemManagedProcess {
     child: Option<Child>,
+    observed: Arc<ObservedOrigin>,
     identity: ProcessIdentity,
     cleanup: crate::runtime::ChildCleanup,
     termination_grace: Duration,
@@ -216,6 +290,10 @@ impl ManagedProcess for SystemManagedProcess {
         // cleanup guard is consumed and the supervisor drops this record
         // instead of rediscovering a PID that may have been reused.
         !self.reaped
+    }
+
+    fn observed_origin_port(&self, deadline: Instant) -> Option<u16> {
+        self.observed.wait(deadline)
     }
 
     fn try_wait(&mut self) -> EditorResult<Option<ProcessExit>> {
@@ -294,6 +372,10 @@ impl ProcessSupervisor {
 
     pub fn process(&self) -> Option<ProcessIdentity> {
         self.process.as_ref().map(|process| process.identity())
+    }
+
+    pub fn observed_origin_port(&self, deadline: Instant) -> Option<u16> {
+        self.process.as_ref()?.observed_origin_port(deadline)
     }
 
     #[cfg(test)]
@@ -388,6 +470,10 @@ mod tests {
             self.identity.clone()
         }
 
+        fn observed_origin_port(&self, _deadline: Instant) -> Option<u16> {
+            Some(54945)
+        }
+
         fn identity_verified(&self) -> bool {
             self.verified
         }
@@ -428,6 +514,10 @@ mod tests {
     impl ManagedProcess for DeadlineProcess {
         fn identity(&self) -> ProcessIdentity {
             ProcessIdentity::new(43, "/pinned/code")
+        }
+
+        fn observed_origin_port(&self, _deadline: Instant) -> Option<u16> {
+            Some(54945)
         }
 
         fn identity_verified(&self) -> bool {
@@ -492,6 +582,25 @@ mod tests {
         );
         supervisor.mark_ready();
         assert_eq!(supervisor.restart_count(), 0);
+    }
+
+    #[test]
+    fn the_announced_origin_line_is_the_one_the_server_actually_prints() {
+        // Verified against `code serve-web --verbose --host 127.0.0.1 --port 0`,
+        // which writes exactly this to stdout before any of its log lines.
+        assert_eq!(parse_origin_port("Web UI available at http://127.0.0.1:50629"), Some(50629));
+        assert_eq!(
+            parse_origin_port("Web UI available at http://127.0.0.1:50629/?tkn=abc"),
+            Some(50629)
+        );
+        // The license banner and every log line have to pass through silently.
+        assert_eq!(parse_origin_port("* Visual Studio Code Server"), None);
+        assert_eq!(
+            parse_origin_port("[2026-08-27 16:44:45] debug refreshed latest release: 1.135.0"),
+            None
+        );
+        // Another host is another origin, and not the one being waited for.
+        assert_eq!(parse_origin_port("Web UI available at http://192.168.0.4:50629"), None);
     }
 
     #[cfg(unix)]

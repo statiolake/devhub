@@ -21,7 +21,6 @@ pub struct EditorPaths {
     logs: PathBuf,
     webkit_data: PathBuf,
     token: PathBuf,
-    port: PathBuf,
     server_pid: PathBuf,
 }
 
@@ -39,7 +38,6 @@ impl EditorPaths {
             logs: home.as_ref().join("Library/Logs/DevHub"),
             webkit_data: root.join("webkit-data"),
             token: root.join("connection-token"),
-            port: root.join("port"),
             server_pid: root.join("server-pid"),
             root,
         }
@@ -71,10 +69,6 @@ impl EditorPaths {
 
     pub fn token_file(&self) -> &Path {
         &self.token
-    }
-
-    pub fn port_file(&self) -> &Path {
-        &self.port
     }
 
     /// Where the running server's process group is recorded.
