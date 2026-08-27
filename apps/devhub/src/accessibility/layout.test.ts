@@ -77,9 +77,12 @@ describe("accessibility layout invariants", () => {
     expect(tokensCss).toMatch(
       /--selection:\s*light-dark\(rgba\(0, 0, 0, [\d.]+\), rgba\(255, 255, 255, [\d.]+\)\);/,
     );
+    // The accent names the glyph column on every row, not only the selected
+    // one, so selection must not be what turns the icons on.
     expect(shellCss).toMatch(
-      /\.sidebar-row\.is-selected\s\.row-glyph\ssvg\s*\{[^}]*stroke:\s*var\(--accent\);/,
+      /\.row-glyph svg\s*\{[^}]*stroke:\s*var\(--accent\);/,
     );
+    expect(shellCss).not.toMatch(/\.is-selected[^{]*\.row-glyph svg/);
   });
 
   it("hangs the Sidebar's headings and glyphs off one leading rail", () => {

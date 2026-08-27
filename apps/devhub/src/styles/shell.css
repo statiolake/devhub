@@ -206,8 +206,8 @@
 
 /* A selected source-list row is a neutral fill with a semibold label — the
    saturated accent fill with inverted text belongs to a table row, not to
-   navigation. The accent appears on the glyph alone. The fill weakens when the
-   window is not key, which is the only cue that the selection is not live. */
+   navigation. The fill weakens when the window is not key, which is the only
+   cue that the selection is not live. */
 .sidebar-row.is-selected,
 .sidebar-row.is-selected:hover {
   background: var(--selection);
@@ -224,14 +224,6 @@
 :root[data-window-active="false"] .sidebar-row.is-selected {
   background: var(--selection-inactive);
   color: var(--primary);
-}
-
-:root[data-window-active="false"] .sidebar-row.is-selected .row-glyph svg,
-:root[data-window-active="false"]
-  .sidebar-row.is-selected
-  .disclosure-button
-  svg {
-  stroke: var(--secondary);
 }
 
 .sidebar-context-button {
@@ -292,28 +284,21 @@
   width: var(--sidebar-glyph-ink);
   height: var(--sidebar-glyph-ink);
   fill: none;
-  stroke: var(--secondary);
+  /* Finder's source-list icons are accented on every row, not only the
+     selected one — the accent names the column, and selection is carried by
+     the fill and the label weight. */
+  stroke: var(--accent);
   stroke-linecap: round;
   stroke-linejoin: round;
   stroke-width: 1.3;
 }
 
 .workspace-row .row-glyph svg {
-  fill: color-mix(in srgb, var(--secondary) 18%, transparent);
+  fill: color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
 .agent-row .row-glyph svg {
   fill: none;
-}
-
-/* The glyph is the one thing that takes the accent outright, the way a Finder
-   sidebar icon does; the inactive rule above returns it to neutral. */
-.sidebar-row.is-selected .row-glyph svg {
-  stroke: var(--accent);
-}
-
-.sidebar-row.is-selected.workspace-row .row-glyph svg {
-  fill: color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
 .row-label {

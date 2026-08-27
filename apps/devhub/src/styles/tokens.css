@@ -96,7 +96,7 @@
   /* The Sidebar's leading rail. Every row reserves the disclosure column
      first, then the glyph column; a section heading aligns to the glyph so
      the headings and the icons beneath them share one left edge. */
-  --sidebar-disclosure-width: 18px;
+  --sidebar-disclosure-width: 14px;
   --sidebar-glyph-width: 16px;
   --sidebar-glyph-ink: 14px;
 }
