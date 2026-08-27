@@ -23,17 +23,26 @@ describe("accessibility layout invariants", () => {
     expect(shellCss).toMatch(/\.workbench\s*\{[\s\S]*?min-height:\s*0;/);
   });
 
-  it("keeps the navigation and content islands on one geometry contract", () => {
+  it("runs the navigation and content panes to the window edges", () => {
+    expect(shellCss).not.toMatch(/--radius-shell/);
     expect(shellCss).toMatch(
-      /\.workbench\s*\{[\s\S]*?padding:\s*var\(--space-2\);[\s\S]*?gap:\s*var\(--space-2\);/,
+      /\.sidebar\s*\{[\s\S]*?border-right:\s*1px solid var\(--line\);/,
     );
     expect(shellCss).toMatch(
-      /\.sidebar\s*\{[\s\S]*?border-radius:\s*var\(--radius-shell\);/,
+      /\.titlebar\s*\{[\s\S]*?border-bottom:\s*1px solid var\(--line\);/,
     );
+  });
+
+  it("reserves the titlebar's leading edge for the traffic lights", () => {
+    // The shell must never place a control under the window buttons, whose
+    // own geometry lives in the native window configuration.
     expect(shellCss).toMatch(
-      /\.surface\s*\{[\s\S]*?overflow:\s*hidden;[\s\S]*?border-radius:\s*var\(--radius-shell\);/,
+      /\.titlebar-leading\s*\{[\s\S]*?min-width:\s*calc\(var\(--traffic-light-inset\) - var\(--space-3\)\);/,
     );
-    expect(tokensCss).toMatch(/--radius-shell:\s*12px/);
+    const inset = /--traffic-light-inset:\s*(\d+)px/.exec(tokensCss);
+    expect(inset).not.toBeNull();
+    // Three 14pt buttons on 20pt centres from a 20pt leading inset.
+    expect(Number(inset?.[1])).toBeGreaterThanOrEqual(20 + 20 * 2 + 14);
   });
 
   it("uses responsive fixed-size controls without a narrow grid track", () => {

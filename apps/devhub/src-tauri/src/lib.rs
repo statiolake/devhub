@@ -98,8 +98,18 @@ const FOLDER_CHOOSER_SCRIPT: &str =
     "POSIX path of (choose folder with prompt \"Open Workspace Folder\")";
 const MIN_PROCESS_NOFILE: u64 = 8_192;
 const APP_SHELL_TITLEBAR_HEIGHT: f64 = 52.0;
-const APP_SHELL_INSET: f64 = 8.0;
-const APP_SHELL_GAP: f64 = 8.0;
+/// AppKit's standard window buttons are 14pt tall and sit 20pt from the
+/// leading edge. DevHub's titlebar is taller than the system default, so the
+/// buttons have to be centred on it explicitly or they cling to the top left.
+const TRAFFIC_LIGHT_DIAMETER: f64 = 14.0;
+const TRAFFIC_LIGHT_LEADING: f64 = 20.0;
+
+fn traffic_light_position() -> tauri::LogicalPosition<f64> {
+    tauri::LogicalPosition::new(
+        TRAFFIC_LIGHT_LEADING,
+        (APP_SHELL_TITLEBAR_HEIGHT - TRAFFIC_LIGHT_DIAMETER) / 2.0,
+    )
+}
 
 fn initial_editor_bounds(
     window_width: f64,
@@ -107,16 +117,11 @@ fn initial_editor_bounds(
     sidebar_width: u16,
 ) -> editor::EditorBounds {
     // Keep the startup placement aligned with the CSS workbench before the
-    // first ResizeObserver report arrives: an inset canvas, a Sidebar island,
-    // an island gap, and the content island's trailing inset.
-    let x = f64::from(sidebar_width) + APP_SHELL_INSET + APP_SHELL_GAP;
-    let y = APP_SHELL_TITLEBAR_HEIGHT + APP_SHELL_INSET;
-    editor::EditorBounds::new(
-        x,
-        y,
-        (window_width - x - APP_SHELL_INSET).max(1.0),
-        (window_height - y - APP_SHELL_INSET).max(1.0),
-    )
+    // first ResizeObserver report arrives: the Sidebar is flush to the window
+    // edge and the Surface fills everything below the titlebar beside it.
+    let x = f64::from(sidebar_width);
+    let y = APP_SHELL_TITLEBAR_HEIGHT;
+    editor::EditorBounds::new(x, y, (window_width - x).max(1.0), (window_height - y).max(1.0))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -7690,7 +7695,7 @@ fn ensure_app_shell_window(
     .decorations(true)
     .title_bar_style(tauri::TitleBarStyle::Overlay)
     .hidden_title(true)
-    .traffic_light_position(tauri::LogicalPosition::new(16.0, 16.0))
+    .traffic_light_position(traffic_light_position())
     .visible(false)
     .maximized(frame.maximized)
     .build()
@@ -8374,10 +8379,27 @@ mod tests {
     static TEMP_DEBUG_RESOURCE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
     #[test]
+    fn traffic_lights_sit_on_the_titlebar_centre_line() {
+        let position = traffic_light_position();
+        assert_eq!(position.x, TRAFFIC_LIGHT_LEADING);
+        assert_eq!(position.y + TRAFFIC_LIGHT_DIAMETER / 2.0, APP_SHELL_TITLEBAR_HEIGHT / 2.0);
+    }
+
+    #[test]
+    fn the_window_config_matches_the_computed_traffic_light_position() {
+        let config: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).expect("config parses");
+        let configured = &config["app"]["windows"][0]["trafficLightPosition"];
+        let expected = traffic_light_position();
+        assert_eq!(configured["x"].as_f64(), Some(expected.x));
+        assert_eq!(configured["y"].as_f64(), Some(expected.y));
+    }
+
+    #[test]
     fn initial_editor_bounds_reserve_titlebar_and_sidebar() {
         assert_eq!(
             initial_editor_bounds(1_200.0, 760.0, 288),
-            editor::EditorBounds::new(304.0, 60.0, 888.0, 692.0)
+            editor::EditorBounds::new(288.0, 52.0, 912.0, 708.0)
         );
     }
 
@@ -9582,6 +9604,10 @@ mod tests {
             app_shell["permissions"],
             serde_json::json!([
                 "core:default",
+                // `core:window:default` is read-only, so the titlebar's
+                // `data-tauri-drag-region` cannot move the window without
+                // this one extra command.
+                "core:window:allow-start-dragging",
                 "allow-get-app-snapshot",
                 "allow-record-performance-marker",
                 "allow-start-workspace-picker",

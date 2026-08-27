@@ -30,9 +30,6 @@
   overflow: hidden;
   flex: 1;
   min-height: 0;
-  padding: var(--space-2);
-  background: var(--canvas);
-  gap: var(--space-2);
 }
 
 /* -------------------------------------------------------------- titlebar */
@@ -43,6 +40,7 @@
   align-items: center;
   height: var(--titlebar-height);
   padding: 0 var(--space-3);
+  border-bottom: 1px solid var(--line);
   background: transparent;
   grid-template-columns: 1fr auto 1fr;
 }
@@ -120,36 +118,24 @@
   width: var(--sidebar-width);
   flex: 0 0 var(--sidebar-width);
   flex-direction: column;
-  border: 1px solid var(--line-soft);
-  border-radius: var(--radius-shell);
-  background: color-mix(in srgb, var(--chrome) 76%, transparent);
-  box-shadow: var(--shadow-island);
+  border-right: 1px solid var(--line);
+  background: transparent;
 }
 
-/* The native window supplies one material layer behind the transparent shell.
-   Only the Sidebar island exposes it; the workbench canvas and Surface stay
-   opaque. The resize handle remains outside the island's paint box. */
-
-/* No native material means the transparent part of the window must be painted
-   by CSS. Reduced Transparency gets the same solid fallback. */
+/* The Sidebar and titlebar are the only panes that reveal the window's
+   material; the Surface paints itself opaquely over it. When there is no
+   material to reveal — Reduce Transparency, or a window that could not take
+   one — the same chrome has to be painted by CSS instead. */
 @media (prefers-reduced-transparency: reduce) {
-  .titlebar {
-    background: var(--chrome);
-  }
-
+  .titlebar,
   .sidebar {
     background: var(--chrome);
-    box-shadow: none;
   }
 }
 
-:root[data-window-material="none"] .titlebar {
-  background: var(--chrome);
-}
-
+:root[data-window-material="none"] .titlebar,
 :root[data-window-material="none"] .sidebar {
   background: var(--chrome);
-  box-shadow: none;
 }
 
 .sidebar-scroll-region {
@@ -157,7 +143,6 @@
   overflow-y: auto;
   flex: 1;
   padding: var(--space-2) var(--space-2) var(--space-4);
-  border-radius: calc(var(--radius-shell) - 1px);
 }
 
 .sidebar-section-heading {
@@ -509,9 +494,7 @@ body.is-resizing-sidebar {
   min-height: 0;
   flex: 1;
   flex-direction: column;
-  border-radius: var(--radius-shell);
   background: var(--surface);
-  box-shadow: var(--shadow-island);
 }
 
 /* Surface states follow the shape of a macOS alert: a short declarative

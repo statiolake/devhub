@@ -5,7 +5,7 @@
 use std::{collections::HashMap, sync::Mutex};
 
 #[cfg(target_os = "macos")]
-use objc2::runtime::{AnyObject, ProtocolObject};
+use objc2::runtime::ProtocolObject;
 use objc2::{define_class, rc::Retained, runtime::Bool, DeclaredClass};
 #[cfg(target_os = "macos")]
 use objc2_app_kit::{NSDraggingDestination, NSEvent};
@@ -117,25 +117,6 @@ define_class!(
     }
   }
 );
-
-/// Native layer helpers live outside `define_class!`; they are Rust methods on
-/// the registered Objective-C class, not additional Objective-C selectors.
-#[cfg(target_os = "macos")]
-impl WryWebView {
-  /// Clip a child WKWebView to the rounded content island supplied by its
-  /// host. The host and the native view are separate sibling layers, so CSS
-  /// overflow alone cannot clip the native child at the island corners.
-  pub(crate) fn set_corner_radius(&self, radius: f64) {
-    unsafe {
-      let _: () = objc2::msg_send![self, setWantsLayer: true];
-      let layer: Option<Retained<AnyObject>> = objc2::msg_send![self, layer];
-      if let Some(layer) = layer {
-        let _: () = objc2::msg_send![&*layer, setCornerRadius: radius];
-        let _: () = objc2::msg_send![&*layer, setMasksToBounds: true];
-      }
-    }
-  }
-}
 
 // Custom Protocol Task Checker
 impl WryWebView {

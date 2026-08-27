@@ -18,9 +18,6 @@ use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
 
 const MAIN_THREAD_CALL_TIMEOUT: Duration = Duration::from_secs(8);
-// Must match --radius-shell. This is a native child sibling of the shell
-// WebView, so the clipping contract cannot be expressed by CSS alone.
-const EDITOR_SURFACE_CORNER_RADIUS: f64 = 12.0;
 
 // WRY's WebView is explicitly main-thread-only on macOS. Keeping the native
 // object in a thread-local registry lets the public host seam remain Send while
@@ -180,7 +177,6 @@ fn build_native_child(
     let child = builder
         .build_as_child(parent)
         .map_err(|_| EditorError::new(EditorErrorCode::WebViewUnavailable))?;
-    child.set_corner_radius(EDITOR_SURFACE_CORNER_RADIUS);
     // WRY documents `with_focused` as unsupported on macOS. Apply the
     // semantic focus request after construction while still on the UI thread.
     if focused {

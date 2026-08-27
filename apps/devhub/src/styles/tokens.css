@@ -65,9 +65,6 @@
   --shadow-raised: 0 1px 2px light-dark(rgba(0, 0, 0, 0.12), rgba(0, 0, 0, 0.5));
   --shadow-dialog: 0 12px 38px
     light-dark(rgba(0, 0, 0, 0.22), rgba(0, 0, 0, 0.62));
-  --shadow-island:
-    0 1px 2px light-dark(rgba(0, 0, 0, 0.12), rgba(0, 0, 0, 0.42)),
-    0 0 0 1px var(--line-soft);
 
   --space-1: 4px;
   --space-2: 8px;
@@ -80,13 +77,12 @@
   --radius-row: 6px;
   --radius-control: 6px;
   --radius-panel: 10px;
-  --radius-shell: 12px;
 
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 
   /* Native chrome geometry. */
   --titlebar-height: 52px;
-  --traffic-light-inset: 78px;
+  --traffic-light-inset: 88px;
   --row-height: 28px;
   --sidebar-width: 248px;
 }

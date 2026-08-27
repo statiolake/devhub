@@ -305,11 +305,6 @@ impl InnerWebView {
   pub fn native_window_number(&self) -> isize {
     self.webview.window().map_or(0, |window| window.windowNumber() as isize)
   }
-
-  #[cfg(target_os = "macos")]
-  pub fn set_corner_radius(&self, radius: f64) {
-    self.webview.set_corner_radius(radius);
-  }
 }
 
 impl InnerWebView {

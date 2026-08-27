@@ -5,6 +5,7 @@
   "webviews": ["app-shell"],
   "permissions": [
     "core:default",
+    "core:window:allow-start-dragging",
     "allow-get-app-snapshot",
     "allow-record-performance-marker",
     "allow-start-workspace-picker",
