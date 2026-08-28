@@ -8,7 +8,7 @@ use std::{collections::HashMap, sync::Mutex};
 use objc2::runtime::ProtocolObject;
 use objc2::{define_class, rc::Retained, runtime::Bool, DeclaredClass};
 #[cfg(target_os = "macos")]
-use objc2_app_kit::{NSDraggingDestination, NSEvent};
+use objc2_app_kit::{NSDraggingDestination, NSEvent, NSView};
 use objc2_foundation::{NSObjectProtocol, NSUUID};
 
 #[cfg(target_os = "ios")]
@@ -115,8 +115,58 @@ define_class!(
     fn other_mouse_up(&self, event: &NSEvent) {
       synthetic_mouse_events::other_mouse_up(self, event)
     }
+
+    // A tracking area does not know about the siblings drawn over it, so a
+    // webview with a child webview on top still receives mouse-moved for the
+    // area the child covers, and still pushes its own cursor for it. Two
+    // views setting a cursor for the same point is a race, and it shows up as
+    // the pointer flickering between the two. The obscured view has nothing
+    // visible under that point, so it takes no cursor and runs no hover.
+    #[unsafe(method(mouseMoved:))]
+    fn mouse_moved(&self, event: &NSEvent) {
+      if is_covered_by_sibling(self, event) {
+        return;
+      }
+      unsafe {
+        let _: () = objc2::msg_send![super(self), mouseMoved: event];
+      }
+    }
   }
 );
+
+/// Whether the pointer is over a sibling stacked above this view.
+///
+/// Subviews are ordered back to front, so only the ones after this view can
+/// be drawn over it.
+#[cfg(target_os = "macos")]
+fn is_covered_by_sibling(view: &WryWebView, event: &NSEvent) -> bool {
+  unsafe {
+    let Some(parent) = view.superview() else {
+      return false;
+    };
+    let point = parent.convertPoint_fromView(event.locationInWindow(), None);
+    let subviews = parent.subviews();
+    let mut above = false;
+    for subview in subviews.iter() {
+      if &*subview as *const NSView == (view as *const WryWebView).cast::<NSView>() {
+        above = true;
+        continue;
+      }
+      if above && !subview.isHidden() && frame_contains(subview.frame(), point) {
+        return true;
+      }
+    }
+    false
+  }
+}
+
+#[cfg(target_os = "macos")]
+fn frame_contains(frame: objc2_foundation::NSRect, point: objc2_foundation::NSPoint) -> bool {
+  point.x >= frame.origin.x
+    && point.y >= frame.origin.y
+    && point.x < frame.origin.x + frame.size.width
+    && point.y < frame.origin.y + frame.size.height
+}
 
 // Custom Protocol Task Checker
 impl WryWebView {

@@ -16,5 +16,8 @@ license = "MIT"
 # ADR 0013 requires Editor child views to have no implicit WRY IPC global.
 # ADR 0011 also requires ordinary child Command shortcuts to remain native.
 # This exact 0.55.1 fork contains only those no-handler and macOS key-responder
-# hooks; the AppKit monitor returns the original NSEvent for forwarding.
+# hooks, plus one more: a webview obscured by a child webview takes no cursor
+# for the area the child covers, because a tracking area does not know about
+# the siblings drawn over it. The AppKit monitor returns the original NSEvent
+# for forwarding.
 wry = { path = "apps/devhub/src-tauri/vendor/wry" }
