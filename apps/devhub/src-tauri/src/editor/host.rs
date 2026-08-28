@@ -163,6 +163,9 @@ pub struct EditorHost {
     bridge_installer: Option<Arc<dyn BridgeInstaller>>,
     bridge_factory: Arc<dyn BridgeTransportFactory>,
     reclaimer: Arc<dyn OrphanReclaimer>,
+    /// Serves the fixed Editor origin. Every surface shares it, because they
+    /// are one origin and therefore one browser session.
+    proxy: Arc<super::proxy::EditorProxy>,
 }
 
 impl EditorHost {
@@ -213,6 +216,7 @@ impl EditorHost {
             bridge_installer: Some(bridge_installer),
             bridge_factory,
             reclaimer: Arc::new(SystemOrphanReclaimer),
+            proxy: Arc::new(super::proxy::EditorProxy::new()),
         }
     }
 
@@ -314,11 +318,7 @@ impl EditorHost {
     ) -> NavigationDecision {
         let Ok(state) = self.state.lock() else { return NavigationDecision::Reject };
         let Some(record) = state.surfaces.get(key) else { return NavigationDecision::Reject };
-        let Some(runtime) = state.runtime.as_ref() else { return NavigationDecision::Reject };
-        let Ok(origin) = runtime.origin() else {
-            return NavigationDecision::Reject;
-        };
-        navigation_decision(origin, &record.url, candidate)
+        navigation_decision(&record.url, candidate)
     }
 
     pub fn detach_webview_host(&self) -> EditorResult<()> {
@@ -353,6 +353,9 @@ impl EditorHost {
             let runtime = prior_runtime
                 .as_ref()
                 .ok_or_else(|| EditorError::new(EditorErrorCode::ProcessUnavailable))?;
+            if let Ok(origin) = runtime.origin() {
+                self.proxy.set_upstream(origin.port());
+            }
             match self.readiness.wait_ready(
                 runtime.origin()?,
                 &runtime.token,
@@ -434,6 +437,9 @@ impl EditorHost {
             let started = match process.observed_origin_port(budget) {
                 Some(port) => {
                     runtime.origin = Some(EditorOrigin::new(port)?);
+                    // The surfaces keep their origin; only what stands behind
+                    // it moves.
+                    self.proxy.set_upstream(port);
                     if let Some(identity) = process.process() {
                         record_server_pid(&runtime.paths, identity.pid(), port);
                     }
@@ -534,7 +540,7 @@ impl EditorHost {
             .ok_or_else(|| EditorError::new(EditorErrorCode::WebViewUnavailable))?;
         let mut state =
             self.state.lock().map_err(|_| EditorError::new(EditorErrorCode::LifecycleConflict))?;
-        let (registry_entry, url, root, paths, origin) = {
+        let (registry_entry, url, root, paths) = {
             let runtime = state
                 .runtime
                 .as_mut()
@@ -542,7 +548,7 @@ impl EditorHost {
             let value = match &key {
                 EditorSurfaceKey::Global => {
                     let entry = runtime.registry.global()?;
-                    let url = folderless_url(runtime.origin()?, &runtime.token);
+                    let url = folderless_url(&runtime.token);
                     (entry, url, None)
                 }
                 EditorSurfaceKey::Workspace(workspace_id) => {
@@ -551,12 +557,12 @@ impl EditorHost {
                     let root = std::fs::canonicalize(root)
                         .map_err(|_| EditorError::new(EditorErrorCode::InvalidWorkspaceRoot))?;
                     let entry = runtime.registry.workspace(workspace_id.clone(), &root)?;
-                    let url = folder_url(runtime.origin()?, &runtime.token, &root)?;
+                    let url = folder_url(&runtime.token, &root)?;
                     (entry, url, Some(root))
                 }
             };
             runtime.bridge.set_expected(runtime.registry.core_surface_ids()?);
-            (value.0, value.1, value.2, runtime.paths.clone(), runtime.origin()?)
+            (value.0, value.1, value.2, runtime.paths.clone())
         };
         let label = surface_label(&key);
         let needs_mount = match state.surfaces.get(&key) {
@@ -572,7 +578,7 @@ impl EditorHost {
             let spec = super::webview::WebViewSpec {
                 label: label.clone(),
                 url: url.clone(),
-                origin,
+                proxy: Arc::clone(&self.proxy),
                 bounds,
                 data_directory: paths.webkit_data().to_path_buf(),
                 data_store_identifier: super::paths::WEBKIT_DATA_STORE_ID,

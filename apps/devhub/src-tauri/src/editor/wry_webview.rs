@@ -5,8 +5,9 @@
 //! manager, IPC protocol, plugin store, or Tauri bootstrap pipeline.
 
 use super::super::error::{EditorError, EditorErrorCode, EditorResult};
+use super::super::proxy::EditorProxy;
 use super::super::url::{
-    navigation_decision, navigation_request, AuthenticatedUrl, EditorOrigin, NavigationDecision,
+    navigation_decision, navigation_request, AuthenticatedUrl, NavigationDecision, EDITOR_SCHEME,
 };
 use super::{
     EditorBounds, EditorWebView, NativeFocusIdentity, NavigationRouter, WebViewHost, WebViewSpec,
@@ -31,7 +32,7 @@ static NEXT_CHILD_ID: AtomicU64 = AtomicU64::new(1);
 struct PendingWebView {
     label: String,
     url: AuthenticatedUrl,
-    origin: EditorOrigin,
+    proxy: Arc<EditorProxy>,
     bounds: EditorBounds,
     data_store_identifier: [u8; 16],
     focused: bool,
@@ -61,7 +62,7 @@ impl WebViewHost for WryWebViewHost {
             PendingWebView {
                 label: spec.label.clone(),
                 url: spec.url.clone(),
-                origin: spec.origin,
+                proxy: Arc::clone(&spec.proxy),
                 bounds: spec.bounds,
                 data_store_identifier: spec.data_store_identifier,
                 focused: spec.focused,
@@ -103,11 +104,48 @@ fn create_on_main_thread(
     wait_for_dispatch(&state, receiver)
 }
 
+/// Replay one custom-scheme request against the loopback server.
+fn serve(
+    proxy: &EditorProxy,
+    request: wry::http::Request<Vec<u8>>,
+) -> wry::http::Response<std::borrow::Cow<'static, [u8]>> {
+    let target = request
+        .uri()
+        .path_and_query()
+        .map_or_else(|| "/".to_owned(), std::string::ToString::to_string);
+    let headers = request
+        .headers()
+        .iter()
+        .filter_map(|(name, value)| {
+            value.to_str().ok().map(|value| (name.as_str().to_owned(), value.to_owned()))
+        })
+        .collect::<Vec<_>>();
+    let method = request.method().as_str().to_owned();
+    let Some(response) = proxy.request(&method, &target, &headers, request.body()) else {
+        // The server is not answering. A status is the only thing that can be
+        // said here; the App Shell owns every message the user reads.
+        return wry::http::Response::builder()
+            .status(502)
+            .body(std::borrow::Cow::Owned(Vec::new()))
+            .expect("static response");
+    };
+    let mut builder = wry::http::Response::builder().status(response.status);
+    for (name, value) in &response.headers {
+        builder = builder.header(name, value);
+    }
+    builder.body(std::borrow::Cow::Owned(response.body)).unwrap_or_else(|_| {
+        wry::http::Response::builder()
+            .status(502)
+            .body(std::borrow::Cow::Owned(Vec::new()))
+            .expect("static response")
+    })
+}
+
 fn build_native_child(
     parent: &tauri::Window<tauri::Wry>,
     pending: PendingWebView,
 ) -> EditorResult<(u64, NativeFocusIdentity)> {
-    let PendingWebView { label, url, origin, bounds, data_store_identifier, focused, router } =
+    let PendingWebView { label, url, proxy, bounds, data_store_identifier, focused, router } =
         pending;
     let _ = data_store_identifier;
     let native_bounds = wry::Rect {
@@ -121,24 +159,32 @@ fn build_native_child(
     let initial_url_navigation = url.clone();
     let initial_url_window = url.clone();
 
+    // Everything the Workbench asks its own origin for is replayed against
+    // whatever port the server bound. The page never learns that port, so it
+    // can change underneath without the origin — and the browser storage keyed
+    // to it — changing at all.
+    let protocol_proxy = Arc::clone(&proxy);
     let mut builder = wry::WebViewBuilder::new()
         .with_id(label.as_str())
+        .with_custom_protocol(EDITOR_SCHEME.to_owned(), move |_id, request| {
+            serve(&protocol_proxy, request)
+        })
         .with_url(url.as_str())
         .with_bounds(native_bounds)
         .with_visible(true)
         .with_devtools(false)
         .with_background_throttling(wry::BackgroundThrottlingPolicy::Disabled)
         .with_navigation_handler(move |candidate| {
-            match navigation_decision(origin, &initial_url_navigation, &candidate) {
+            match navigation_decision(&initial_url_navigation, &candidate) {
                 NavigationDecision::AllowSameSurface => true,
                 NavigationDecision::RouteWorkspace => {
-                    if let Some(request) = navigation_request(origin, &candidate) {
+                    if let Some(request) = navigation_request(&candidate) {
                         let _ = router_navigation.route_workspace(&surface_navigation, &request);
                     }
                     false
                 }
                 NavigationDecision::OpenExternal => {
-                    if let Some(request) = navigation_request(origin, &candidate) {
+                    if let Some(request) = navigation_request(&candidate) {
                         let _ = router_navigation.open_external(&request);
                     }
                     false
@@ -147,14 +193,14 @@ fn build_native_child(
             }
         })
         .with_new_window_req_handler(move |candidate, _features| {
-            match navigation_decision(origin, &initial_url_window, &candidate) {
+            match navigation_decision(&initial_url_window, &candidate) {
                 NavigationDecision::OpenExternal => {
-                    if let Some(request) = navigation_request(origin, &candidate) {
+                    if let Some(request) = navigation_request(&candidate) {
                         let _ = router_window.open_external(&request);
                     }
                 }
                 NavigationDecision::RouteWorkspace => {
-                    if let Some(request) = navigation_request(origin, &candidate) {
+                    if let Some(request) = navigation_request(&candidate) {
                         let _ = router_window.route_workspace(&surface_window, &request);
                     }
                 }

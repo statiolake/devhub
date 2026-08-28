@@ -7,6 +7,18 @@ use super::error::{EditorError, EditorErrorCode, EditorResult};
 use super::paths::LOOPBACK_HOST;
 use super::token::SecretToken;
 
+/// The origin every Editor surface is served from.
+///
+/// A custom scheme rather than the loopback authority the server listens on,
+/// because the browser keys storage by origin and the server's port is not
+/// ours to keep: IndexedDB is where VS Code Web puts user settings and its
+/// Settings Sync session, and a port that moves takes all of it. This one
+/// never moves. Requests to it are proxied to whatever port the server bound.
+pub const EDITOR_SCHEME: &str = "devhub";
+pub const EDITOR_PAGE_PREFIX: &str = "devhub://editor/";
+
+/// The loopback authority the VS Code Server is listening on. Upstream only:
+/// nothing the WebView is navigated to is addressed here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EditorOrigin {
     port: u16,
@@ -26,10 +38,6 @@ impl EditorOrigin {
 
     pub fn authority(self) -> String {
         format!("{LOOPBACK_HOST}:{}", self.port)
-    }
-
-    pub fn prefix(self) -> String {
-        format!("http://{}/", self.authority())
     }
 }
 
@@ -56,23 +64,18 @@ impl AuthenticatedUrl {
     }
 }
 
-pub fn folderless_url(origin: EditorOrigin, token: &SecretToken) -> AuthenticatedUrl {
-    AuthenticatedUrl(format!("{}?ew=true&tkn={}", origin.prefix(), token.hex()))
+pub fn folderless_url(token: &SecretToken) -> AuthenticatedUrl {
+    AuthenticatedUrl(format!("{EDITOR_PAGE_PREFIX}?ew=true&tkn={}", token.hex()))
 }
 
-pub fn folder_url(
-    origin: EditorOrigin,
-    token: &SecretToken,
-    root: &Path,
-) -> EditorResult<AuthenticatedUrl> {
+pub fn folder_url(token: &SecretToken, root: &Path) -> EditorResult<AuthenticatedUrl> {
     let root =
         root.to_str().ok_or_else(|| EditorError::new(EditorErrorCode::InvalidWorkspaceRoot))?;
     if !root.starts_with('/') || root.contains('\0') {
         return Err(EditorError::new(EditorErrorCode::InvalidWorkspaceRoot));
     }
     Ok(AuthenticatedUrl(format!(
-        "{}?folder={}&tkn={}",
-        origin.prefix(),
+        "{EDITOR_PAGE_PREFIX}?folder={}&tkn={}",
         percent_encode(root),
         token.hex()
     )))
@@ -131,19 +134,15 @@ impl ExternalUrl {
 /// surface. A Workbench folder query is an ownership transition, not an
 /// ordinary same-origin navigation: the host must route it explicitly so a
 /// Global surface can never silently become a Workspace surface.
-pub fn navigation_decision(
-    origin: EditorOrigin,
-    surface_url: &AuthenticatedUrl,
-    candidate: &str,
-) -> NavigationDecision {
+pub fn navigation_decision(surface_url: &AuthenticatedUrl, candidate: &str) -> NavigationDecision {
     if candidate.contains('\0') {
         return NavigationDecision::Reject;
     }
-    let prefix = origin.prefix();
-    if candidate.starts_with(&prefix) && candidate[prefix.len()..].starts_with("//") {
+    let prefix = EDITOR_PAGE_PREFIX;
+    if candidate.starts_with(prefix) && candidate[prefix.len()..].starts_with("//") {
         return NavigationDecision::Reject;
     }
-    if !candidate.starts_with(&prefix) {
+    if !candidate.starts_with(prefix) {
         return if candidate.starts_with("http://") || candidate.starts_with("https://") {
             NavigationDecision::OpenExternal
         } else {
@@ -175,11 +174,8 @@ pub fn navigation_decision(
 
 /// Convert a classified transition into a sanitized request. The raw
 /// VS Code Server query, including `tkn`, never crosses the WebView router seam.
-pub fn navigation_request(origin: EditorOrigin, candidate: &str) -> Option<NavigationRequest> {
-    if candidate.starts_with("http://") || candidate.starts_with("https://") {
-        if !candidate.starts_with(&origin.prefix()) {
-            return sanitize_external(candidate).map(|url| NavigationRequest::External { url });
-        }
+pub fn navigation_request(candidate: &str) -> Option<NavigationRequest> {
+    if candidate.starts_with(EDITOR_PAGE_PREFIX) {
         let query = candidate.split_once('?').map(|(_, query)| query).unwrap_or_default();
         let folder = query_value(query, "folder")?;
         let decoded = percent_decode(folder)?;
@@ -187,6 +183,9 @@ pub fn navigation_request(origin: EditorOrigin, candidate: &str) -> Option<Navig
             return None;
         }
         return Some(NavigationRequest::Workspace { absolute_path: PathBuf::from(decoded) });
+    }
+    if candidate.starts_with("http://") || candidate.starts_with("https://") {
+        return sanitize_external(candidate).map(|url| NavigationRequest::External { url });
     }
     None
 }
@@ -272,65 +271,54 @@ mod tests {
     #[test]
     fn urls_are_authenticated_and_folder_paths_are_encoded() {
         let token = SecretToken::from_bytes_for_test([0xabu8; TOKEN_BYTES]);
-        let origin = EditorOrigin::new(54945).expect("origin");
-        let global = folderless_url(origin, &token);
-        assert!(global.as_str().starts_with("http://127.0.0.1:54945/?ew=true&tkn=abab"));
-        let folder = folder_url(origin, &token, &PathBuf::from("/Users/statiolake/dev hub"))
-            .expect("folder");
+        let global = folderless_url(&token);
+        assert!(global.as_str().starts_with("devhub://editor/?ew=true&tkn=abab"));
+        let folder =
+            folder_url(&token, &PathBuf::from("/Users/statiolake/dev hub")).expect("folder");
         assert!(folder.as_str().contains("folder=%2FUsers%2Fstatiolake%2Fdev%20hub"));
         assert!(!format!("{global:?}").contains("abab"));
     }
 
     #[test]
     fn navigation_is_surface_aware_and_same_origin_only() {
-        let origin = EditorOrigin::new(54945).expect("origin");
         let token = SecretToken::from_bytes_for_test([0xabu8; TOKEN_BYTES]);
-        let global = folderless_url(origin, &token);
+        let global = folderless_url(&token);
         assert_eq!(
-            navigation_decision(origin, &global, "http://127.0.0.1:54945/static/app.js"),
+            navigation_decision(&global, "devhub://editor/static/app.js"),
             NavigationDecision::AllowSameSurface
         );
-        let folder_candidate =
-            format!("http://127.0.0.1:54945/?folder=%2Fworkspace&tkn={}", token.hex());
+        let folder_candidate = format!("devhub://editor/?folder=%2Fworkspace&tkn={}", token.hex());
         assert_eq!(
-            navigation_decision(origin, &global, &folder_candidate),
+            navigation_decision(&global, &folder_candidate),
             NavigationDecision::RouteWorkspace
         );
         assert_eq!(
-            navigation_decision(origin, &global, "http://127.0.0.1:54946/"),
+            navigation_decision(&global, "http://127.0.0.1:54946/"),
             NavigationDecision::OpenExternal
         );
         assert_eq!(
-            navigation_decision(origin, &global, "https://example.invalid/"),
+            navigation_decision(&global, "https://example.invalid/"),
             NavigationDecision::OpenExternal
         );
-        assert_eq!(
-            navigation_decision(origin, &global, "javascript:alert(1)"),
-            NavigationDecision::Reject
-        );
+        assert_eq!(navigation_decision(&global, "javascript:alert(1)"), NavigationDecision::Reject);
     }
 
     #[test]
     fn workspace_to_workspace_navigation_is_routed() {
-        let origin = EditorOrigin::new(54945).expect("origin");
         let token = SecretToken::from_bytes_for_test([0xabu8; TOKEN_BYTES]);
-        let workspace = folder_url(origin, &token, Path::new("/workspace-a")).expect("workspace");
+        let workspace = folder_url(&token, Path::new("/workspace-a")).expect("workspace");
         let folder_candidate =
-            format!("http://127.0.0.1:54945/?folder=%2Fworkspace-b&tkn={}", token.hex());
+            format!("devhub://editor/?folder=%2Fworkspace-b&tkn={}", token.hex());
         assert_eq!(
-            navigation_decision(origin, &workspace, &folder_candidate),
+            navigation_decision(&workspace, &folder_candidate),
             NavigationDecision::RouteWorkspace
         );
     }
 
     #[test]
     fn navigation_request_strips_provider_query_and_token() {
-        let origin = EditorOrigin::new(54945).expect("origin");
-        let request = navigation_request(
-            origin,
-            "http://127.0.0.1:54945/?folder=%2Fworkspace-a&tkn=super-secret",
-        )
-        .expect("request");
+        let request = navigation_request("devhub://editor/?folder=%2Fworkspace-a&tkn=super-secret")
+            .expect("request");
         assert_eq!(
             request,
             NavigationRequest::Workspace { absolute_path: PathBuf::from("/workspace-a") }
@@ -338,7 +326,7 @@ mod tests {
         assert!(!format!("{request:?}").contains("super-secret"));
 
         let request =
-            navigation_request(origin, "https://example.invalid/editor?tkn=super-secret#fragment")
+            navigation_request("https://example.invalid/editor?tkn=super-secret#fragment")
                 .expect("external request");
         let NavigationRequest::External { url } = request else {
             panic!("expected external request")

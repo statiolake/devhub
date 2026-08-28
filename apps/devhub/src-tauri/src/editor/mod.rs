@@ -12,6 +12,7 @@ mod paths;
 mod port;
 mod process;
 mod provider;
+mod proxy;
 mod readiness;
 mod registry;
 mod token;

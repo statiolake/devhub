@@ -2,9 +2,11 @@
 //! use an in-memory adapter and never construct a native window.
 
 use super::error::EditorResult;
-use super::url::{AuthenticatedUrl, EditorOrigin, NavigationRequest};
+use super::proxy::EditorProxy;
+use super::url::{AuthenticatedUrl, NavigationRequest};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Instant;
 
 #[path = "wry_webview.rs"]
@@ -40,7 +42,9 @@ impl EditorBounds {
 pub struct WebViewSpec {
     pub label: String,
     pub url: AuthenticatedUrl,
-    pub(crate) origin: EditorOrigin,
+    /// Serves the Editor origin. Shared with every other surface, because
+    /// they are all one origin and one session.
+    pub(crate) proxy: Arc<EditorProxy>,
     pub bounds: EditorBounds,
     pub data_directory: PathBuf,
     pub data_store_identifier: [u8; 16],
