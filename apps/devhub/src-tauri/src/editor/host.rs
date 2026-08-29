@@ -354,7 +354,7 @@ impl EditorHost {
                 .as_ref()
                 .ok_or_else(|| EditorError::new(EditorErrorCode::ProcessUnavailable))?;
             if let Ok(origin) = runtime.origin() {
-                self.proxy.set_upstream(origin.port());
+                self.proxy.set_upstream(origin.port(), &runtime.token.hex());
             }
             match self.readiness.wait_ready(
                 runtime.origin()?,
@@ -439,7 +439,7 @@ impl EditorHost {
                     runtime.origin = Some(EditorOrigin::new(port)?);
                     // The surfaces keep their origin; only what stands behind
                     // it moves.
-                    self.proxy.set_upstream(port);
+                    self.proxy.set_upstream(port, &runtime.token.hex());
                     if let Some(identity) = process.process() {
                         record_server_pid(&runtime.paths, identity.pid(), port);
                     }

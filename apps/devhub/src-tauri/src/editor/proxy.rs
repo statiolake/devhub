@@ -40,6 +40,7 @@ pub struct ProxyResponse {
 pub struct EditorProxy {
     port: AtomicU16,
     cookies: Mutex<Vec<(String, String)>>,
+    token: Mutex<Option<String>>,
 }
 
 impl EditorProxy {
@@ -49,7 +50,10 @@ impl EditorProxy {
 
     /// Point the origin at a server, and forget the session that belonged to
     /// whatever was there before.
-    pub fn set_upstream(&self, port: u16) {
+    pub fn set_upstream(&self, port: u16, token: &str) {
+        if let Ok(mut current) = self.token.lock() {
+            *current = Some(token.to_owned());
+        }
         if self.port.swap(port, Ordering::AcqRel) != port {
             if let Ok(mut cookies) = self.cookies.lock() {
                 cookies.clear();
@@ -72,21 +76,64 @@ impl EditorProxy {
         body: &[u8],
     ) -> Option<ProxyResponse> {
         let mut target = target.to_owned();
+        // A redirect is followed here, so whatever it set on the way past has
+        // to be carried to the end of the chain. Dropping it would hand the
+        // page a document whose session it was never told about.
+        let mut carried = Vec::new();
         for _ in 0..=MAX_REDIRECTS {
-            let response = self.round_trip(method, &target, headers, body)?;
+            let mut response = self.round_trip(method, &target, headers, body)?;
             self.remember_cookies(&response);
             let redirect = matches!(response.status, 301 | 302 | 303 | 307 | 308);
-            let Some(location) = redirect.then(|| header(&response, "location")).flatten() else {
-                return Some(response);
-            };
+            let location = redirect.then(|| header(&response, "location")).flatten();
             // Only a redirect that stays on this server can be followed
             // silently; anything else is the page's business, not ours.
-            let Some(next) = same_origin_target(&location) else {
+            let next = location.as_deref().and_then(same_origin_target);
+            let Some(next) = next else {
+                response.headers.splice(0..0, carried);
+                self.authenticate_document(&mut response);
                 return Some(response);
             };
+            carried.extend(
+                response
+                    .headers
+                    .into_iter()
+                    .filter(|(name, _)| name.eq_ignore_ascii_case("set-cookie")),
+            );
             target = next;
         }
         None
+    }
+
+    /// Hand the Workbench the connection token directly.
+    ///
+    /// The client authenticates its WebSocket with a token it takes from its
+    /// injected configuration, falling back to the `vscode-tkn` cookie. The
+    /// server leaves the configuration key out and relies on the cookie, which
+    /// is a same-origin arrangement this proxy is not: the document is on the
+    /// Editor's own scheme and the WebSocket goes straight to the loopback
+    /// server, so nothing carries a cookie between them. Naming the key is the
+    /// one thing in here that knows what it is proxying.
+    fn authenticate_document(&self, response: &mut ProxyResponse) {
+        const ANCHOR: &str = "data-settings=\"{";
+        if !header(response, "content-type")
+            .is_some_and(|value| value.to_ascii_lowercase().contains("text/html"))
+        {
+            return;
+        }
+        let Ok(token) = self.token.lock() else { return };
+        let Some(token) = token.as_deref() else { return };
+        let Ok(document) = std::str::from_utf8(&response.body) else { return };
+        let Some(anchor) = document.find(ANCHOR) else { return };
+        if document.contains("connectionToken") {
+            return;
+        }
+        let insert = anchor + ANCHOR.len();
+        let injected = format!("&quot;connectionToken&quot;:&quot;{token}&quot;,");
+        let mut body = String::with_capacity(document.len() + injected.len());
+        body.push_str(&document[..insert]);
+        body.push_str(&injected);
+        body.push_str(&document[insert..]);
+        response.body = body.into_bytes();
     }
 
     fn round_trip(
@@ -325,13 +372,13 @@ mod tests {
         // The origin outlives the server. A session minted by the process that
         // used to be on that port is worth nothing to the one that replaced it.
         let proxy = EditorProxy::new();
-        proxy.set_upstream(40_000);
+        proxy.set_upstream(40_000, "abab");
         proxy
             .remember_cookies(&response("HTTP/1.1 200 OK\r\nset-cookie: vscode-tkn=first\r\n\r\n"));
         assert!(proxy.cookie_header().is_some());
-        proxy.set_upstream(40_000);
+        proxy.set_upstream(40_000, "abab");
         assert!(proxy.cookie_header().is_some(), "the same port is the same server");
-        proxy.set_upstream(40_001);
+        proxy.set_upstream(40_001, "abab");
         assert!(proxy.cookie_header().is_none());
     }
 
@@ -344,6 +391,42 @@ mod tests {
         assert_eq!(same_origin_target("http://127.0.0.1:40000/x"), Some("/x".to_owned()));
         assert_eq!(same_origin_target("https://example.invalid/"), None);
         assert_eq!(same_origin_target("http://example.invalid/"), None);
+    }
+
+    #[test]
+    fn the_workbench_document_is_given_the_token_its_socket_will_be_asked_for() {
+        // The client authenticates its WebSocket with the token from its
+        // injected configuration, or failing that the `vscode-tkn` cookie. The
+        // socket goes straight to the loopback server from a document on
+        // another scheme, so no cookie reaches it and the client would send the
+        // placeholder the server refuses as an auth mismatch.
+        let proxy = EditorProxy::new();
+        proxy.set_upstream(40_000, "abab");
+        let mut document = response(
+            "HTTP/1.1 200 OK\r\ncontent-type: text/html\r\n\r\n             <html><div data-settings=\"{&quot;remoteAuthority&quot;:&quot;127.0.0.1:40000&quot;}\"></div>",
+        );
+        proxy.authenticate_document(&mut document);
+        let body = String::from_utf8(document.body).expect("utf8");
+        assert!(
+            body.contains("data-settings=\"{&quot;connectionToken&quot;:&quot;abab&quot;,&quot;remoteAuthority&quot;"),
+            "the token belongs at the front of the settings object: {body}"
+        );
+
+        // A document that already carries one is left exactly as it is.
+        let mut already = response(
+            "HTTP/1.1 200 OK\r\ncontent-type: text/html\r\n\r\n             <div data-settings=\"{&quot;connectionToken&quot;:&quot;server&quot;}\"></div>",
+        );
+        let before = already.body.clone();
+        proxy.authenticate_document(&mut already);
+        assert_eq!(already.body, before);
+
+        // Everything that is not the document is passed through untouched.
+        let mut script = response(
+            "HTTP/1.1 200 OK\r\ncontent-type: text/javascript\r\n\r\ndata-settings=\"{x}\"",
+        );
+        let before = script.body.clone();
+        proxy.authenticate_document(&mut script);
+        assert_eq!(script.body, before);
     }
 
     #[test]
