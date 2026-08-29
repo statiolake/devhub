@@ -20,6 +20,7 @@ pub const KEY_W: u16 = 13;
 pub const KEY_M: u16 = 46;
 #[cfg(test)]
 pub const KEY_H: u16 = 4;
+#[cfg(test)]
 pub const KEY_COMMA: u16 = 43;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -67,11 +68,6 @@ impl KeyStroke {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum HostCommand {
-    OpenSettings,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RouteDecision {
     /// Consume an event that must never reach a Surface (for example a native
     /// autorepeat of Command-Q).
@@ -81,8 +77,6 @@ pub enum RouteDecision {
     /// Return the same native event to AppKit. The native surface then handles
     /// it through its normal responder chain exactly once.
     ForwardNativeQ { target: SurfaceKey, focus: SurfaceFocus },
-    /// A command owned by the DevHub host, currently only Settings.
-    Route(HostCommand),
     /// Preserve the original event, including IME and ordinary shortcuts.
     Pass { cleared_prefix: bool },
 }
@@ -151,10 +145,10 @@ impl KeyRouter {
 
     pub fn route(&mut self, stroke: KeyStroke, now: Instant) -> RouteDecision {
         // IME composition remains AppKit/WebKit-owned. This router only
-        // consumes the exact native Command-Q prefix (or Command-comma for
-        // Settings); every non-command key event, including composition and
-        // marked-text commits, is returned to the original responder. It
-        // never synthesizes a key event or inspects text input.
+        // consumes the exact native Command-Q prefix; every other key event,
+        // including composition and marked-text commits, is returned to the
+        // original responder. It never synthesizes a key event or inspects
+        // text input.
         if stroke.is_repeat && stroke.exact_command_q() {
             self.armed_until = None;
             return RouteDecision::Consume;
@@ -169,9 +163,6 @@ impl KeyRouter {
                 return RouteDecision::Consume;
             }
 
-            if now <= deadline && stroke.exact_command(KEY_COMMA) {
-                return RouteDecision::Route(HostCommand::OpenSettings);
-            }
             // Any other second key clears the prefix and continues through
             // AppKit. This is what preserves Command-W/M/H and IME behavior.
             if now <= deadline {
@@ -183,9 +174,6 @@ impl KeyRouter {
             let deadline = now + PREFIX_TIMEOUT;
             self.armed_until = Some(deadline);
             return RouteDecision::PrefixArmed { deadline };
-        }
-        if stroke.exact_command(KEY_COMMA) {
-            return RouteDecision::Route(HostCommand::OpenSettings);
         }
         RouteDecision::Pass { cleared_prefix: false }
     }
@@ -302,7 +290,7 @@ mod tests {
     }
 
     #[test]
-    fn settings_is_host_routed_and_standard_mac_commands_pass() {
+    fn every_command_but_the_reserved_prefix_passes_through() {
         let now = Instant::now();
         let mut router = KeyRouter::new();
         router.set_active_focus(Some(SurfaceFocus {
@@ -312,11 +300,9 @@ mod tests {
             window_number: 7,
             generation: 1,
         }));
-        assert_eq!(
-            router.route(KeyStroke::command(KEY_COMMA), now),
-            RouteDecision::Route(HostCommand::OpenSettings)
-        );
-        for key in [KEY_W, KEY_M, KEY_H] {
+        // Command-comma included: the Editor owns every shortcut the host has
+        // not reserved, and the host reserves exactly one.
+        for key in [KEY_COMMA, KEY_W, KEY_M, KEY_H] {
             assert_eq!(
                 router.route(KeyStroke::command(key), now),
                 RouteDecision::Pass { cleared_prefix: false }

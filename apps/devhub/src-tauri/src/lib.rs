@@ -69,7 +69,7 @@ use editor::{
 use editor::{EditorHost, EditorHostConfig};
 use editor::{NativeFocusIdentity, NavigationRequest, NavigationRouter, WryWebViewHost};
 use integration::lifecycle::{safe_restore_frame, DisplayWorkArea, LifecycleGate, Phase};
-use keyboard::{HostCommand, KeyStroke, KeyboardController, RouteDecision, SurfaceFocus};
+use keyboard::{KeyStroke, KeyboardController, RouteDecision, SurfaceFocus};
 use repository::{GitRepositoryResolver, GitRepositoryResolverConfig};
 use runtime::{LoginEnvironmentStatus, RuntimeLaunchContext};
 use terminal::{
@@ -1900,12 +1900,6 @@ impl NativeAppState {
                 } else {
                     wry::NativeKeyEventResult::Consume
                 }
-            }
-            RouteDecision::Route(HostCommand::OpenSettings) => {
-                if show_settings_window(app).is_err() {
-                    self.record_native_error(AppErrorWire::native_unavailable());
-                }
-                wry::NativeKeyEventResult::Consume
             }
             RouteDecision::Pass { .. } => wry::NativeKeyEventResult::Pass,
         }
@@ -6619,7 +6613,7 @@ fn build_window_menu(
 ) -> tauri::Result<Menu<tauri::Wry>> {
     let about = PredefinedMenuItem::about(app, Some("About DevHub"), None)?;
     let open_settings =
-        MenuItem::with_id(app, OPEN_SETTINGS_MENU_ID, "Settings…", true, Some("CmdOrCtrl+,"))?;
+        MenuItem::with_id(app, OPEN_SETTINGS_MENU_ID, "Settings…", true, None::<&str>)?;
     let hide = PredefinedMenuItem::hide(app, Some("Hide DevHub"))?;
     let hide_others = PredefinedMenuItem::hide_others(app, Some("Hide Others"))?;
     let show_all = PredefinedMenuItem::show_all(app, Some("Show All"))?;
