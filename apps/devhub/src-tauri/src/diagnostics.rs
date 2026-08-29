@@ -88,7 +88,7 @@ pub enum DiagnosticEvent {
 /// These are deliberately a closed vocabulary.  The driver can measure the
 /// time between real native events without allowing arbitrary user content,
 /// URLs, paths, or identifiers into the diagnostics stream.  The markers are
-/// emitted only when `DEVHUB_Q5_PERFORMANCE` is set by the driver.
+/// emitted only when the opt-in performance driver is enabled.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PerformanceMarker {
@@ -176,31 +176,6 @@ pub enum PerformanceMarker {
     TerminalOutputAfterInputRendered,
     EditorProviderDegraded,
     EditorProviderRecovered,
-    Q5FixtureWorkspaceReady,
-    Q5FixtureWorkspaceFailed,
-    Q5FixtureAgentReady,
-    Q5FixtureAgentFailed,
-    Q5FixtureProfilesUnavailable,
-    Q5FixtureAgentLaunchFailed,
-    Q5FixtureAgentDispatchFailed,
-    Q5FixtureAgentProcessEvidenceTimeout,
-    Q5FixtureAgentFinalReconcileTimeout,
-    Q5FixtureSnapshotFailed,
-    Q5FixtureHerdrReconcileFailed,
-    Q5FixtureScaleDeadlineExceeded,
-    Q5FixtureScaleSetupDeadline,
-    Q5FixtureSurfaceWarmReady,
-    Q5FixtureSurfaceWarmTimeout,
-    Q5FixtureSurfaceWarmDispatchFailed,
-    Q5FixtureSurfaceWarmWaitTimeout,
-    Q5FixtureStarted,
-    Q5FixtureStartSkipped,
-    Q5FixtureStartFailed,
-    Q5FixtureScaleReady,
-    Q5HiddenPrepare,
-    Q5HiddenHoldStarted,
-    Q5HiddenContinuityVerified,
-    Q5QuitRelaunchReady,
 }
 
 #[allow(dead_code)]

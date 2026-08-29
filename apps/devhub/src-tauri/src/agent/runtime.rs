@@ -119,7 +119,7 @@ struct RuntimeInner {
 /// This is intentionally separate from runtime health: health describes the
 /// adapter's ability to serve future operations, while this record describes
 /// one launch transaction's first failed stage. It contains only stable enum
-/// values and is consumed by the opt-in Q5 diagnostics seam.
+/// values and is consumed by the opt-in diagnostics seam.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum AgentLaunchFailureStage {
     ValidateProfile,

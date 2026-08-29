@@ -775,40 +775,6 @@ impl EditorHost {
             .unwrap_or(true)
     }
 
-    /// Q5.2-only visibility probe: retain every WebView and the global editor
-    /// while hiding all Workspace editors. This deliberately lives on the
-    /// EditorHost owner so the endurance driver cannot fake hidden state by
-    /// editing a report or a UI projection.
-    pub fn hide_workspace_surfaces_for_q5(&self) -> EditorResult<u16> {
-        let mut state =
-            self.state.lock().map_err(|_| EditorError::new(EditorErrorCode::LifecycleConflict))?;
-        let mut hidden = 0_u16;
-        for (key, record) in &mut state.surfaces {
-            if matches!(key, EditorSurfaceKey::Workspace(_)) {
-                if let Some(webview) = record.webview.as_ref() {
-                    webview.hide()?;
-                    hidden = hidden.saturating_add(1);
-                }
-                record.visible = false;
-            }
-        }
-        let mut global_visible = false;
-        if let Some(global) = state.surfaces.get_mut(&EditorSurfaceKey::Global) {
-            if let Some(webview) = global.webview.as_ref() {
-                webview.show()?;
-                webview.focus()?;
-                global.visible = true;
-                global_visible = true;
-            }
-        }
-        if global_visible {
-            state.active = Some(EditorSurfaceKey::Global);
-        }
-        Ok(hidden)
-    }
-
-    /// Ask the Bridge extension to reconcile its full Workbench projection.
-    /// The request carries only the stable native surface identity.
     pub fn request_bridge_snapshot(&self, key: &EditorSurfaceKey) -> EditorResult<()> {
         let state =
             self.state.lock().map_err(|_| EditorError::new(EditorErrorCode::LifecycleConflict))?;
@@ -1035,10 +1001,7 @@ impl EditorHost {
         Ok(())
     }
 
-    pub fn snapshot(&self, key: &EditorSurfaceKey) -> Option<EditorSurfaceSnapshot> {
-        self.state.lock().ok()?.surfaces.get(key).map(snapshot_for)
-    }
-
+    #[cfg(test)]
     /// Return one immutable projection of every host-owned Editor Surface.
     ///
     /// This observation seam deliberately does not call into WebView
@@ -1051,6 +1014,10 @@ impl EditorHost {
         let mut inventory = state.surfaces.values().map(snapshot_for).collect::<Vec<_>>();
         inventory.sort_by(|left, right| left.key.cmp(&right.key));
         Ok(inventory)
+    }
+
+    pub fn snapshot(&self, key: &EditorSurfaceKey) -> Option<EditorSurfaceSnapshot> {
+        self.state.lock().ok()?.surfaces.get(key).map(snapshot_for)
     }
 
     /// Stop a VS Code Server this app started and never got to stop.

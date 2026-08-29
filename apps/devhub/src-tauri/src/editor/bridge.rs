@@ -27,7 +27,7 @@ const EXPECTED_BRIDGE_MAIN: &str = "./extension.js";
 // The reproducible VSIX emitted by extensions/devhub-bridge is the release
 // artifact, not an arbitrary file whose name happens to end in `.vsix`.
 const EXPECTED_BRIDGE_VSIX_SHA256: &str =
-    "8cd65bed3ac2b999d128781dde37541cc46e3968e724094b1ef27ea71aac552c";
+    "af181b8aceb02dac0d230f505dfc38b9e45454650a5ca51dab6a200b8c028b5b";
 const EXPECTED_BRIDGE_MANIFEST_SHA256: &str =
     "1dd072c27b940bc2f7574c48f1fbda09a8ddec9d891431f684015624044662eb";
 const MAX_MANIFEST_BYTES: usize = 64 * 1024;

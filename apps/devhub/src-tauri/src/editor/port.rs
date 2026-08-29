@@ -59,7 +59,7 @@ mod tests {
         let mut client = TcpStream::connect((super::super::paths::LOOPBACK_HOST, port))
             .expect("client connection");
         let (mut accepted, _) = listener.accept().expect("accepted connection");
-        accepted.write_all(b"q5").expect("server write");
+        accepted.write_all(b"ok").expect("server write");
         drop(accepted);
         let mut payload = [0_u8; 2];
         client.read_exact(&mut payload).expect("client read");

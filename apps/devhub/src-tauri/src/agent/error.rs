@@ -25,7 +25,7 @@ pub enum AgentRuntimeErrorCode {
     Internal,
 }
 
-/// Provider-private, bounded classification for Q5 launch diagnosis.
+/// Provider-private, bounded classification for launch diagnosis.
 ///
 /// Raw provider codes and messages are discarded at the transport boundary.
 /// This enum never crosses the AgentRuntime/core port seam.
@@ -38,20 +38,6 @@ pub(crate) enum ProviderErrorCategory {
     AgentStartInputFailed,
     InvalidRequest,
     Other,
-}
-
-impl ProviderErrorCategory {
-    pub(crate) const fn as_str(self) -> &'static str {
-        match self {
-            Self::AgentNameTaken => "agent_name_taken",
-            Self::AgentPaneBusy => "agent_pane_busy",
-            Self::AgentPaneNotFound => "agent_pane_not_found",
-            Self::AgentPaneUnavailable => "agent_pane_unavailable",
-            Self::AgentStartInputFailed => "agent_start_input_failed",
-            Self::InvalidRequest => "invalid_request",
-            Self::Other => "other",
-        }
-    }
 }
 
 impl AgentRuntimeErrorCode {
