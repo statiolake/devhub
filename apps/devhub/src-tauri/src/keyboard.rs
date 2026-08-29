@@ -23,6 +23,18 @@ pub const KEY_H: u16 = 4;
 #[cfg(test)]
 pub const KEY_COMMA: u16 = 43;
 
+/// Main-thread native ownership proof for one WebView. The pointers are
+/// process-local and never cross the App Shell wire.
+///
+/// There is one of these, for the App Shell's own WebView: every Surface is
+/// drawn inside that document, so they all share its native responder.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NativeFocusIdentity {
+    pub responder_root: usize,
+    pub window: usize,
+    pub window_number: isize,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct KeyStroke {
     pub key_code: u16,

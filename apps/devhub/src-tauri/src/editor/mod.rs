@@ -12,12 +12,10 @@ mod paths;
 mod port;
 mod process;
 mod provider;
-mod proxy;
 mod readiness;
 mod registry;
 mod token;
 mod url;
-mod webview;
 
 pub use bridge_transport::{
     BridgeEvent, BridgeEventSink, BridgeRequest, BridgeRequestDisposition, BridgeRequestHandle,
@@ -25,8 +23,6 @@ pub use bridge_transport::{
 };
 pub use error::{EditorError, EditorErrorCode, EditorResult};
 pub use host::EditorRemote;
-pub use host::{EditorHost, EditorHostConfig, EditorSurfaceKey, EditorSurfaceSnapshot};
+pub use host::{EditorHost, EditorHostConfig, EditorSurfaceKey};
 pub use provider::{BundledServerExecutable, EditorExecutable};
-pub use url::{external_url, ExternalUrl, NavigationDecision, NavigationRequest};
-pub use webview::{EditorBounds, NativeFocusIdentity};
-pub use webview::{NavigationRouter, WryWebViewHost};
+pub use url::{external_url, ExternalUrl};

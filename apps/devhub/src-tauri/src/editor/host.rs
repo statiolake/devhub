@@ -3,10 +3,9 @@
 //! This is the deep module's public seam: callers ask it to ensure the shared
 //! server, mount one semantic surface, update its native bounds/focus, close a
 //! Workspace surface, or shut the provider down. Stable ports, tokens,
-//! process supervision, registry persistence, URL authentication, and child
-//! WebView policy stay inside this implementation.
+//! process supervision, registry persistence, and the server address stay
+//! inside this implementation.
 
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -38,13 +37,9 @@ use super::process::{
 };
 use super::provider::EditorExecutable;
 use super::readiness::{ReadinessProbe, SystemReadinessProbe};
-use super::registry::{SurfaceRegistry, SurfaceRegistryEntry};
+use super::registry::SurfaceRegistry;
 use super::token::SecretToken;
-use super::url::{
-    folder_url, folderless_url, navigation_decision, AuthenticatedUrl, EditorOrigin,
-    NavigationDecision,
-};
-use super::webview::{EditorBounds, EditorWebView, WebViewHost};
+use super::url::EditorOrigin;
 
 pub struct EditorHostConfig {
     pub home: PathBuf,
@@ -121,45 +116,17 @@ impl std::fmt::Debug for EditorRemote {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct EditorSurfaceSnapshot {
-    pub key: String,
-    pub visible: bool,
-    pub mounted: bool,
-    pub bounds: EditorBounds,
-}
-
 #[derive(Clone)]
 struct Runtime {
     paths: EditorPaths,
     executable: EditorExecutable,
     token: SecretToken,
-    /// Absent until the server announces the port it bound. It stays fixed for
-    /// the rest of the run, including across a crash restart, because mounted
-    /// surfaces are addressed at it.
+    /// Absent until the server announces the port it bound. It stays fixed
+    /// for the rest of the run, including across a crash restart, because
+    /// every Editor frame is already connected to it.
     origin: Option<EditorOrigin>,
-    registry: SurfaceRegistry,
     bridge: BridgeTransport,
     bridge_installed: bool,
-}
-
-struct SurfaceRecord {
-    key: EditorSurfaceKey,
-    registry: SurfaceRegistryEntry,
-    root: Option<PathBuf>,
-    url: AuthenticatedUrl,
-    bounds: EditorBounds,
-    visible: bool,
-    webview: Option<Box<dyn EditorWebView>>,
-}
-
-/// Whether a mount is the Surface the user is switching to, or one being
-/// prepared behind the Activity that is on screen.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Activation {
-    Select,
-    Warm,
 }
 
 impl Runtime {
@@ -171,9 +138,6 @@ impl Runtime {
 #[derive(Default)]
 struct HostState {
     runtime: Option<Runtime>,
-    surfaces: HashMap<EditorSurfaceKey, SurfaceRecord>,
-    active: Option<EditorSurfaceKey>,
-    window_attached: bool,
     failed: Option<EditorErrorCode>,
 }
 
@@ -184,13 +148,9 @@ pub struct EditorHost {
     process_adapter: Arc<dyn ProcessAdapter>,
     readiness: Arc<dyn ReadinessProbe>,
     port_allocator: Arc<dyn PortAllocator>,
-    webviews: Mutex<Option<Arc<dyn WebViewHost>>>,
     bridge_installer: Option<Arc<dyn BridgeInstaller>>,
     bridge_factory: Arc<dyn BridgeTransportFactory>,
     reclaimer: Arc<dyn OrphanReclaimer>,
-    /// Serves the fixed Editor origin. Every surface shares it, because they
-    /// are one origin and therefore one browser session.
-    proxy: Arc<super::proxy::EditorProxy>,
 }
 
 impl EditorHost {
@@ -237,11 +197,9 @@ impl EditorHost {
             process_adapter,
             readiness,
             port_allocator,
-            webviews: Mutex::new(None),
             bridge_installer: Some(bridge_installer),
             bridge_factory,
             reclaimer: Arc::new(SystemOrphanReclaimer),
-            proxy: Arc::new(super::proxy::EditorProxy::new()),
         }
     }
 
@@ -251,107 +209,22 @@ impl EditorHost {
         self
     }
 
-    pub fn attach_webview_host(&self, host: Arc<dyn WebViewHost>) -> EditorResult<()> {
-        let mut webviews = self
-            .webviews
-            .lock()
-            .map_err(|_| EditorError::new(EditorErrorCode::LifecycleConflict))?;
-        let already_attached = self
-            .state
-            .lock()
-            .map_err(|_| EditorError::new(EditorErrorCode::LifecycleConflict))?
-            .window_attached;
-        if webviews.is_some() && already_attached {
-            return Err(EditorError::new(EditorErrorCode::LifecycleConflict));
-        }
-        *webviews = Some(host);
-        self.state
-            .lock()
-            .map_err(|_| EditorError::new(EditorErrorCode::LifecycleConflict))?
-            .window_attached = true;
-        Ok(())
-    }
-
-    /// Reports whether a live native Window host is attached. The native
-    /// shell uses this to retry a startup/Dock reconstruction after a missing
-    /// WRY/Workbench resource becomes available, without rebuilding an
-    /// already-attached host or duplicating child WebViews.
-    pub fn window_attached(&self) -> bool {
-        self.state.lock().map(|state| state.window_attached).unwrap_or(false)
-    }
-
-    /// A read-only host health fact for the Settings recheck seam. VS Code Server
-    /// readiness itself is reported by the Bridge sink; this verifies that
-    /// the native host is still attached without mutating editor state.
+    /// A read-only host health fact for the Settings recheck seam.
+    ///
+    /// The server's own readiness is reported by the Bridge sink; this says
+    /// only whether the host is holding a server it believes is running.
     pub fn recheck_health(&self) -> bool {
-        self.window_attached()
+        self.state.lock().is_ok_and(|state| state.runtime.is_some())
     }
 
     /// Reconcile the managed provider after its Bridge connection disappears.
-    /// The stable port, token, registry, and mounted WebViews remain owned by
-    /// this host; only the supervisor decides whether the child is still
-    /// usable and, when needed, restarts that exact process identity.
+    ///
+    /// The server owns the state that matters — the open documents and their
+    /// hot-exit records — and each Editor frame reconnects to it on its own.
+    /// So this restarts the server if it needs restarting and stops there;
+    /// there are no native children to rebuild around it.
     pub fn recover_after_provider_disconnect(&self) -> EditorResult<()> {
         self.ensure_server()?;
-        let (surfaces, active) = {
-            let state = self
-                .state
-                .lock()
-                .map_err(|_| EditorError::new(EditorErrorCode::LifecycleConflict))?;
-            (
-                state
-                    .surfaces
-                    .values()
-                    .map(|record| (record.key.clone(), record.root.clone(), record.bounds))
-                    .collect::<Vec<_>>(),
-                state.active.clone(),
-            )
-        };
-        if surfaces.is_empty() {
-            return Ok(());
-        }
-        // A dead server leaves existing WKWebViews on a network-error page;
-        // the extension cannot reconnect from that document. Recreate the
-        // already-owned child views through this host's registry instead of
-        // introducing a second UI/provider projection.
-        self.close_window()?;
-        for (key, root, bounds) in surfaces {
-            self.ensure_surface(key, root, bounds)?;
-        }
-        self.hide_surfaces()?;
-        if let Some(active) = active {
-            let (root, bounds) = {
-                let state = self
-                    .state
-                    .lock()
-                    .map_err(|_| EditorError::new(EditorErrorCode::LifecycleConflict))?;
-                let record = state
-                    .surfaces
-                    .get(&active)
-                    .ok_or_else(|| EditorError::new(EditorErrorCode::InvalidSurface))?;
-                (record.root.clone(), record.bounds)
-            };
-            self.ensure_surface(active, root, bounds)?;
-        }
-        Ok(())
-    }
-
-    pub fn navigation_decision(
-        &self,
-        key: &EditorSurfaceKey,
-        candidate: &str,
-    ) -> NavigationDecision {
-        let Ok(state) = self.state.lock() else { return NavigationDecision::Reject };
-        let Some(record) = state.surfaces.get(key) else { return NavigationDecision::Reject };
-        navigation_decision(&record.url, candidate)
-    }
-
-    pub fn detach_webview_host(&self) -> EditorResult<()> {
-        self.close_window()?;
-        *self
-            .webviews
-            .lock()
-            .map_err(|_| EditorError::new(EditorErrorCode::LifecycleConflict))? = None;
         Ok(())
     }
 
@@ -398,9 +271,6 @@ impl EditorHost {
             let runtime = prior_runtime
                 .as_ref()
                 .ok_or_else(|| EditorError::new(EditorErrorCode::ProcessUnavailable))?;
-            if let Ok(origin) = runtime.origin() {
-                self.proxy.set_upstream(origin.port(), &runtime.token.hex());
-            }
             match self.readiness.wait_ready(
                 runtime.origin()?,
                 &runtime.token,
@@ -432,9 +302,10 @@ impl EditorHost {
             self.reclaim_orphaned_server(&paths);
             // The Editor origin outlives every server, and so does what the
             // Workbench stored against it.
-            self.proxy.restore(paths.web_session_file());
             let token = SecretToken::issue(paths.token_file())?;
             let bridge_token = SecretToken::issue_ephemeral()?;
+            // Opening it writes the file the Bridge extension is pointed at,
+            // and its ids are what the Bridge reports each Surface under.
             let registry = SurfaceRegistry::open(paths.root().join("surface-registry.json"))?;
             let expected = registry.core_surface_ids()?;
             let sink: Arc<dyn BridgeEventSink> =
@@ -445,7 +316,6 @@ impl EditorHost {
                 executable,
                 token,
                 origin: None,
-                registry,
                 bridge,
                 bridge_installed: false,
             }
@@ -490,7 +360,6 @@ impl EditorHost {
                     runtime.origin = Some(EditorOrigin::new(port)?);
                     // The surfaces keep their origin; only what stands behind
                     // it moves.
-                    self.proxy.set_upstream(port, &runtime.token.hex());
                     if let Some(identity) = process.process() {
                         record_server_pid(&runtime.paths, identity.pid(), port);
                     }
@@ -546,273 +415,6 @@ impl EditorHost {
         }
     }
 
-    pub fn ensure_surface(
-        &self,
-        key: EditorSurfaceKey,
-        root: Option<PathBuf>,
-        bounds: EditorBounds,
-    ) -> EditorResult<EditorSurfaceSnapshot> {
-        self.mount_surface(key, root, bounds, Activation::Select)
-    }
-
-    /// Mount a surface without selecting it.
-    ///
-    /// A Workbench takes visibly longer to boot than it takes to reveal, so
-    /// the wait belongs where the user is not watching: selecting a Workspace
-    /// warms its Editor even while another Activity is on screen. Nothing is
-    /// shown, nothing takes focus, and no other surface's visibility moves —
-    /// switching to the Editor afterwards is the same `show` a second visit
-    /// already was.
-    pub fn warm_surface(
-        &self,
-        key: EditorSurfaceKey,
-        root: Option<PathBuf>,
-        bounds: EditorBounds,
-    ) -> EditorResult<EditorSurfaceSnapshot> {
-        self.mount_surface(key, root, bounds, Activation::Warm)
-    }
-
-    fn mount_surface(
-        &self,
-        key: EditorSurfaceKey,
-        root: Option<PathBuf>,
-        bounds: EditorBounds,
-        activation: Activation,
-    ) -> EditorResult<EditorSurfaceSnapshot> {
-        if !bounds.is_valid() {
-            return Err(EditorError::new(EditorErrorCode::WebViewUnavailable));
-        }
-        // Asked for before the server, because without somewhere to mount a
-        // surface there is nothing worth starting one for. Booting first meant
-        // a mount that could never succeed still prepared the provider
-        // directory and spawned a server — which, now that warming happens on
-        // a thread of its own, could outlive whatever asked for it.
-        let webview_host = self
-            .webviews
-            .lock()
-            .map_err(|_| EditorError::new(EditorErrorCode::LifecycleConflict))?
-            .clone()
-            .ok_or_else(|| EditorError::new(EditorErrorCode::WebViewUnavailable))?;
-        self.ensure_server()?;
-        let mut state =
-            self.state.lock().map_err(|_| EditorError::new(EditorErrorCode::LifecycleConflict))?;
-        let (registry_entry, url, root, paths) = {
-            let runtime = state
-                .runtime
-                .as_mut()
-                .ok_or_else(|| EditorError::new(EditorErrorCode::ProcessUnavailable))?;
-            let value = match &key {
-                EditorSurfaceKey::Global => {
-                    let entry = runtime.registry.global()?;
-                    let url = folderless_url(&runtime.token);
-                    (entry, url, None)
-                }
-                EditorSurfaceKey::Workspace(workspace_id) => {
-                    let root = root
-                        .ok_or_else(|| EditorError::new(EditorErrorCode::InvalidWorkspaceRoot))?;
-                    let root = std::fs::canonicalize(root)
-                        .map_err(|_| EditorError::new(EditorErrorCode::InvalidWorkspaceRoot))?;
-                    let entry = runtime.registry.workspace(workspace_id.clone(), &root)?;
-                    let url = folder_url(&runtime.token, &root)?;
-                    (entry, url, Some(root))
-                }
-            };
-            runtime.bridge.set_expected(runtime.registry.core_surface_ids()?);
-            (value.0, value.1, value.2, runtime.paths.clone())
-        };
-        let label = surface_label(&key);
-        let needs_mount = match state.surfaces.get(&key) {
-            Some(record) => {
-                if record.registry.surface_id != registry_entry.surface_id || record.root != root {
-                    return Err(EditorError::new(EditorErrorCode::LifecycleConflict));
-                }
-                record.webview.is_none()
-            }
-            None => true,
-        };
-        if needs_mount {
-            let spec = super::webview::WebViewSpec {
-                label: label.clone(),
-                url: url.clone(),
-                proxy: Arc::clone(&self.proxy),
-                bounds,
-                data_directory: paths.webkit_data().to_path_buf(),
-                data_store_identifier: super::paths::WEBKIT_DATA_STORE_ID,
-                // A warmed child must not take the keyboard: the user is
-                // typing into whatever Activity is actually on screen.
-                focused: activation == Activation::Select,
-            };
-            let webview = webview_host.create(&spec)?;
-            if let Some(record) = state.surfaces.get_mut(&key) {
-                record.webview = Some(webview);
-                record.bounds = bounds;
-                record.visible = false;
-            } else {
-                state.surfaces.insert(
-                    key.clone(),
-                    SurfaceRecord {
-                        key: key.clone(),
-                        registry: registry_entry,
-                        root,
-                        url,
-                        bounds,
-                        visible: false,
-                        webview: Some(webview),
-                    },
-                );
-            }
-            append_lifecycle_log(
-                &paths,
-                LifecycleEvent::WebViewsCreated { count: state.surfaces.len() as u16 },
-            )?;
-        }
-        match activation {
-            Activation::Select => {
-                for (candidate, record) in &mut state.surfaces {
-                    let selected = candidate == &key;
-                    if let Some(webview) = record.webview.as_ref() {
-                        webview.set_bounds(bounds)?;
-                        if selected {
-                            webview.show()?;
-                            webview.focus()?;
-                        } else {
-                            webview.hide()?;
-                        }
-                    }
-                    record.visible = selected;
-                    record.bounds = bounds;
-                }
-                state.active = Some(key.clone());
-            }
-            Activation::Warm => {
-                // Only the warmed record moves. Touching the others would let
-                // a background mount steal the visible surface out from under
-                // whatever Activity the user is actually looking at.
-                if let Some(record) = state.surfaces.get_mut(&key) {
-                    if let Some(webview) = record.webview.as_ref() {
-                        webview.set_bounds(bounds)?;
-                        webview.hide()?;
-                    }
-                    record.visible = false;
-                    record.bounds = bounds;
-                }
-            }
-        }
-        Ok(snapshot_for(&state.surfaces[&key]))
-    }
-
-    pub fn set_layout(&self, bounds: EditorBounds) -> EditorResult<()> {
-        if !bounds.is_valid() {
-            return Err(EditorError::new(EditorErrorCode::WebViewUnavailable));
-        }
-        let mut state =
-            self.state.lock().map_err(|_| EditorError::new(EditorErrorCode::LifecycleConflict))?;
-        for record in state.surfaces.values_mut() {
-            if let Some(webview) = record.webview.as_ref() {
-                webview.set_bounds(bounds)?;
-            }
-            record.bounds = bounds;
-        }
-        Ok(())
-    }
-
-    pub fn focus_surface(&self, key: &EditorSurfaceKey) -> EditorResult<()> {
-        let state =
-            self.state.lock().map_err(|_| EditorError::new(EditorErrorCode::LifecycleConflict))?;
-        let record = state
-            .surfaces
-            .get(key)
-            .ok_or_else(|| EditorError::new(EditorErrorCode::WebViewUnavailable))?;
-        record
-            .webview
-            .as_ref()
-            .ok_or_else(|| EditorError::new(EditorErrorCode::WebViewUnavailable))?
-            .focus()
-    }
-
-    /// Returns the transient native responder token of the currently visible
-    /// raw Editor child. This is consumed only by the host key router.
-    pub fn active_native_focus_identity(&self) -> Option<super::webview::NativeFocusIdentity> {
-        let state = self.state.lock().ok()?;
-        let key = state.active.as_ref()?;
-        state.surfaces.get(key)?.webview.as_ref()?.native_focus_identity()
-    }
-
-    /// Hides every mounted child while retaining each semantic surface
-    /// record. This is used when the restored Activity is Agent or Terminal:
-    /// Editor WebViews are reconstructed once, but no editor child is allowed
-    /// to cover the active App Shell surface.
-    pub fn hide_surfaces(&self) -> EditorResult<()> {
-        let mut state =
-            self.state.lock().map_err(|_| EditorError::new(EditorErrorCode::LifecycleConflict))?;
-        for record in state.surfaces.values_mut() {
-            // Every visibility call is a blocking round-trip to the main
-            // thread, and warming keeps one record per visited Workspace. This
-            // runs on every dispatch that is not about the Editor, so hiding
-            // what is already hidden would charge each of those dispatches for
-            // the Workspaces the user has collected.
-            if !record.visible {
-                continue;
-            }
-            if let Some(webview) = record.webview.as_ref() {
-                webview.hide()?;
-            }
-            record.visible = false;
-        }
-        state.active = None;
-        Ok(())
-    }
-
-    /// Whether this surface already holds a child WebView.
-    ///
-    /// Answered without waiting for the host lock: the only caller is the
-    /// decision to warm, warming is an optimization, and a host that is busy
-    /// mounting something is a host that should not be handed more work.
-    pub fn surface_is_mounted(&self, key: &EditorSurfaceKey) -> bool {
-        self.state
-            .try_lock()
-            .map(|state| state.surfaces.get(key).is_some_and(|record| record.webview.is_some()))
-            .unwrap_or(true)
-    }
-
-    pub fn request_bridge_snapshot(&self, key: &EditorSurfaceKey) -> EditorResult<()> {
-        let state =
-            self.state.lock().map_err(|_| EditorError::new(EditorErrorCode::LifecycleConflict))?;
-        let runtime = state
-            .runtime
-            .as_ref()
-            .ok_or_else(|| EditorError::new(EditorErrorCode::BridgeUnavailable))?;
-        let record = state
-            .surfaces
-            .get(key)
-            .ok_or_else(|| EditorError::new(EditorErrorCode::InvalidSurface))?;
-        let surface_id = devhub_app_core::bridge::Uuid::parse(record.registry.surface_id.clone())
-            .map_err(|_| EditorError::new(EditorErrorCode::InvalidSurface))?;
-        runtime
-            .bridge
-            .request_snapshot(&super::bridge_transport::BridgeSurfaceId::from_uuid(surface_id))
-    }
-
-    /// Ask the Bridge extension to focus the Workbench represented by a
-    /// surface. The child WebView remains the owner of native focus.
-    pub fn request_bridge_focus(&self, key: &EditorSurfaceKey) -> EditorResult<()> {
-        let state =
-            self.state.lock().map_err(|_| EditorError::new(EditorErrorCode::LifecycleConflict))?;
-        let runtime = state
-            .runtime
-            .as_ref()
-            .ok_or_else(|| EditorError::new(EditorErrorCode::BridgeUnavailable))?;
-        let record = state
-            .surfaces
-            .get(key)
-            .ok_or_else(|| EditorError::new(EditorErrorCode::InvalidSurface))?;
-        let surface_id = devhub_app_core::bridge::Uuid::parse(record.registry.surface_id.clone())
-            .map_err(|_| EditorError::new(EditorErrorCode::InvalidSurface))?;
-        runtime
-            .bridge
-            .request_focus(&super::bridge_transport::BridgeSurfaceId::from_uuid(surface_id))
-    }
-
     /// Completes a previously deferred typed Bridge request. The transport
     /// rejects handles from an older connection generation.
     pub fn complete_bridge_request(
@@ -827,47 +429,6 @@ impl EditorHost {
             .as_ref()
             .ok_or_else(|| EditorError::new(EditorErrorCode::BridgeUnavailable))?;
         runtime.bridge.complete_bridge_request(handle, result)
-    }
-
-    /// Close the native child WebViews but deliberately retain the server,
-    /// token, registry, and provider profile for Dock reconstruction.
-    pub fn close_window(&self) -> EditorResult<()> {
-        self.close_window_until(Instant::now() + Duration::from_secs(5))
-    }
-
-    fn close_window_until(&self, deadline: Instant) -> EditorResult<()> {
-        let mut state =
-            self.state.lock().map_err(|_| EditorError::new(EditorErrorCode::LifecycleConflict))?;
-        let mut destroyed = 0_u16;
-        let mut first_error = None;
-        for record in state.surfaces.values_mut() {
-            if let Some(webview) = record.webview.take() {
-                let close_result = if Instant::now() < deadline {
-                    webview.close_until(deadline)
-                } else {
-                    Err(EditorError::new(EditorErrorCode::WebViewUnavailable))
-                };
-                match close_result {
-                    Ok(()) => destroyed = destroyed.saturating_add(1),
-                    Err(error) => {
-                        record.webview = Some(webview);
-                        if first_error.is_none() {
-                            first_error = Some(error);
-                        }
-                    }
-                }
-            }
-            record.visible = false;
-        }
-        state.active = None;
-        state.window_attached = false;
-        if let Some(runtime) = state.runtime.as_ref() {
-            append_lifecycle_log(
-                &runtime.paths,
-                LifecycleEvent::WebViewsDestroyed { count: destroyed },
-            )?;
-        }
-        first_error.map_or(Ok(()), Err)
     }
 
     /// Close children first, then stop only the verified process group and
@@ -886,8 +447,7 @@ impl EditorHost {
         // process from receiving its shutdown request. The first error is
         // returned after every independent local resource has been attempted;
         // callers then refuse to mark clean shutdown.
-        let close_result = self.close_window_until(deadline);
-        let mut first_error = close_result.err();
+        let mut first_error: Option<EditorError> = None;
         if let Ok(state) = self.state.lock() {
             if let Some(runtime) = state.runtime.as_ref() {
                 if let Err(error) = runtime.bridge.stop_until(deadline) {
@@ -961,63 +521,7 @@ impl EditorHost {
             }
         }
         state.failed = None;
-        state.window_attached = false;
-        drop(state);
-        *self
-            .webviews
-            .lock()
-            .map_err(|_| EditorError::new(EditorErrorCode::LifecycleConflict))? = None;
         first_error.map_or(Ok(()), Err)
-    }
-
-    pub fn close_workspace_surface(&self, workspace_id: &str) -> EditorResult<()> {
-        validate_uuid(workspace_id)?;
-        let key = EditorSurfaceKey::Workspace(workspace_id.to_owned());
-        let mut state =
-            self.state.lock().map_err(|_| EditorError::new(EditorErrorCode::LifecycleConflict))?;
-        if let Some(mut record) = state.surfaces.remove(&key) {
-            if let Some(webview) = record.webview.take() {
-                if let Err(error) = webview.close() {
-                    record.webview = Some(webview);
-                    state.surfaces.insert(key.clone(), record);
-                    return Err(error);
-                }
-            }
-            if let Some(runtime) = state.runtime.as_mut() {
-                if let Err(error) = runtime.registry.remove_workspace(workspace_id) {
-                    // The native child has already closed, but preserving the
-                    // record lets Dock reconstruction remount it if the
-                    // durable registry write failed.
-                    state.surfaces.insert(key.clone(), record);
-                    return Err(error);
-                }
-                runtime.bridge.set_expected(runtime.registry.core_surface_ids()?);
-                append_lifecycle_log(&runtime.paths, LifecycleEvent::WorkspaceClosed)?;
-            }
-            if state.active.as_ref() == Some(&key) {
-                state.active = None;
-            }
-        }
-        Ok(())
-    }
-
-    #[cfg(test)]
-    /// Return one immutable projection of every host-owned Editor Surface.
-    ///
-    /// This observation seam deliberately does not call into WebView
-    /// implementations. Process-only continuity checks can therefore verify
-    /// mounted identity from a background thread without show/focus/hide or
-    /// main-thread dispatch.
-    pub(crate) fn surface_inventory(&self) -> EditorResult<Vec<EditorSurfaceSnapshot>> {
-        let state =
-            self.state.lock().map_err(|_| EditorError::new(EditorErrorCode::LifecycleConflict))?;
-        let mut inventory = state.surfaces.values().map(snapshot_for).collect::<Vec<_>>();
-        inventory.sort_by(|left, right| left.key.cmp(&right.key));
-        Ok(inventory)
-    }
-
-    pub fn snapshot(&self, key: &EditorSurfaceKey) -> Option<EditorSurfaceSnapshot> {
-        self.state.lock().ok()?.surfaces.get(key).map(snapshot_for)
     }
 
     /// Stop a VS Code Server this app started and never got to stop.
@@ -1092,17 +596,18 @@ impl EditorHostPort for EditorHost {
         Box::pin(async move { result })
     }
 
+    /// A Workspace's Editor is a frame in the App Shell's document, and it
+    /// goes away with the Workspace that owns it. The server keeps running
+    /// for the Workspaces that remain, so there is nothing here to close.
     fn close_workspace(
         &self,
-        workspace_id: WorkspaceId,
+        _workspace_id: WorkspaceId,
         cancel: CancellationToken,
     ) -> PortFuture<()> {
-        let workspace_id = workspace_id.to_string();
         let result = if cancel.is_cancelled() {
             Err(PortError::new(PortErrorCode::Cancelled))
         } else {
-            self.close_workspace_surface(&workspace_id)
-                .map_err(|_| PortError::new(PortErrorCode::Unavailable))
+            Ok(())
         };
         Box::pin(async move { result })
     }
@@ -1114,22 +619,6 @@ impl EditorHostPort for EditorHost {
             self.shutdown().map_err(|_| PortError::new(PortErrorCode::Unavailable))
         };
         Box::pin(async move { result })
-    }
-}
-
-fn snapshot_for(record: &SurfaceRecord) -> EditorSurfaceSnapshot {
-    EditorSurfaceSnapshot {
-        key: record.key.wire_name(),
-        visible: record.visible,
-        mounted: record.webview.is_some(),
-        bounds: record.bounds,
-    }
-}
-
-fn surface_label(key: &EditorSurfaceKey) -> String {
-    match key {
-        EditorSurfaceKey::Global => "devhub-editor-global".to_owned(),
-        EditorSurfaceKey::Workspace(id) => format!("devhub-editor-{id}"),
     }
 }
 
@@ -1159,7 +648,6 @@ mod tests {
 
     use super::super::process::{ManagedProcess, ProcessExit};
     use super::super::readiness::ReadinessProbe;
-    use super::super::webview::tests::FakeWebViewHost;
 
     struct FakeProcess {
         identity: super::super::process::ProcessIdentity,
@@ -1451,213 +939,6 @@ mod tests {
     }
 
     #[test]
-    fn lifecycle_shares_store_switches_without_recreate_and_reconstructs_children() {
-        let (host, spawns, terminated, paths, root, _alive) = test_host(true);
-        let webviews = Arc::new(FakeWebViewHost::default());
-        host.attach_webview_host(webviews.clone()).expect("attach");
-        let global = EditorSurfaceKey::Global;
-        let workspace_id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
-        let workspace_root = root.join("workspace");
-        fs::create_dir_all(&workspace_root).expect("workspace");
-        let workspace = EditorSurfaceKey::Workspace(workspace_id.to_owned());
-        let bounds = EditorBounds::new(24.0, 72.0, 800.0, 600.0);
-
-        host.ensure_surface(global.clone(), None, bounds).expect("global");
-        host.ensure_surface(workspace.clone(), Some(workspace_root.clone()), bounds)
-            .expect("workspace");
-        assert_eq!(spawns.load(Ordering::Acquire), 1);
-        assert_eq!(webviews.created.lock().expect("created").len(), 2);
-        let created = webviews.created.lock().expect("created");
-        assert_eq!(created[0].data_directory, created[1].data_directory);
-        assert_eq!(created[0].data_store_identifier, created[1].data_store_identifier);
-        drop(created);
-
-        let action_count = webviews.actions.lock().expect("actions").len();
-        let inventory = host.surface_inventory().expect("read-only inventory");
-        assert_eq!(inventory.len(), 2);
-        assert_eq!(inventory[0].key, "global-editor");
-        assert_eq!(inventory[1].key, format!("workspace-editor:{workspace_id}"));
-        assert!(inventory.iter().all(|surface| surface.mounted));
-        assert_eq!(
-            webviews.actions.lock().expect("actions").len(),
-            action_count,
-            "read-only inventory must not show, focus, hide, or resize a WebView"
-        );
-
-        host.ensure_surface(global.clone(), None, bounds).expect("switch global");
-        assert_eq!(webviews.created.lock().expect("created").len(), 2);
-        assert!(webviews
-            .actions
-            .lock()
-            .expect("actions")
-            .iter()
-            .any(|action| action == "hide:devhub-editor-global"));
-
-        let registry_before =
-            fs::read_to_string(paths.root().join("surface-registry.json")).expect("registry");
-        host.close_window().expect("close window");
-        assert_eq!(
-            webviews
-                .actions
-                .lock()
-                .expect("actions")
-                .iter()
-                .filter(|action| action.starts_with("close:"))
-                .count(),
-            2
-        );
-        assert!(!host.snapshot(&global).expect("global snapshot").mounted);
-        assert_eq!(
-            terminated.load(Ordering::Acquire),
-            0,
-            "Window Close must not stop VS Code Server"
-        );
-        host.attach_webview_host(webviews.clone()).expect("reattach");
-        host.ensure_surface(global.clone(), None, bounds).expect("reconstruct global");
-        assert_eq!(webviews.created.lock().expect("created").len(), 3);
-        let registry_after =
-            fs::read_to_string(paths.root().join("surface-registry.json")).expect("registry");
-        let before: serde_json::Value =
-            serde_json::from_str(&registry_before).expect("before json");
-        let after: serde_json::Value = serde_json::from_str(&registry_after).expect("after json");
-        assert_eq!(before["surfaces"][0]["surface_id"], after["surfaces"][0]["surface_id"]);
-
-        host.close_workspace_surface(workspace_id).expect("close workspace");
-        assert!(host.snapshot(&workspace).is_none());
-        assert!(host.snapshot(&global).is_some());
-        host.shutdown().expect("shutdown");
-        assert_eq!(terminated.load(Ordering::Acquire), 1);
-        assert!(!paths.token_file().exists());
-    }
-
-    #[test]
-    fn a_surface_with_nowhere_to_mount_starts_no_server() {
-        // Warming runs on a thread of its own, so work it does after whatever
-        // asked for it has gone is work nobody is waiting on — and preparing
-        // the provider directory is work that touches the filesystem. A mount
-        // that cannot succeed should not reach that far.
-        let (host, spawns, _terminated, paths, _root, _alive) = test_host(true);
-        assert_eq!(
-            host.warm_surface(
-                EditorSurfaceKey::Global,
-                None,
-                EditorBounds::new(0.0, 0.0, 8.0, 8.0)
-            )
-            .expect_err("no webview host")
-            .code(),
-            EditorErrorCode::WebViewUnavailable
-        );
-        assert_eq!(spawns.load(Ordering::Acquire), 0, "no server for a surface with no window");
-        assert!(!paths.root().exists(), "no provider directory either");
-    }
-
-    #[test]
-    fn warming_a_surface_mounts_it_without_taking_the_visible_one() {
-        let (host, _spawns, _terminated, _paths, root, _alive) = test_host(true);
-        let webviews = Arc::new(FakeWebViewHost::default());
-        host.attach_webview_host(webviews.clone()).expect("attach");
-        let global = EditorSurfaceKey::Global;
-        let workspace_id = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
-        let workspace_root = root.join("workspace");
-        fs::create_dir_all(&workspace_root).expect("workspace");
-        let workspace = EditorSurfaceKey::Workspace(workspace_id.to_owned());
-        let bounds = EditorBounds::new(24.0, 72.0, 800.0, 600.0);
-
-        host.ensure_surface(global.clone(), None, bounds).expect("global");
-        webviews.actions.lock().expect("actions").clear();
-
-        // A Workbench boots visibly slower than it reveals, so the wait is
-        // taken while another Activity is on screen.
-        host.warm_surface(workspace.clone(), Some(workspace_root.clone()), bounds).expect("warm");
-        assert_eq!(webviews.created.lock().expect("created").len(), 2);
-        assert!(host.snapshot(&workspace).expect("warmed snapshot").mounted);
-
-        let actions = webviews.actions.lock().expect("actions").clone();
-        assert!(
-            actions.iter().any(|action| action == &format!("hide:devhub-editor-{workspace_id}")),
-            "a warmed child must be hidden, not shown: {actions:?}"
-        );
-        assert!(
-            !actions.iter().any(|action| action.starts_with("show:")),
-            "warming must not reveal anything: {actions:?}"
-        );
-        assert!(
-            !actions.iter().any(|action| action.starts_with("focus:")),
-            "warming must not take the keyboard from the Activity on screen: {actions:?}"
-        );
-        assert!(
-            !actions.iter().any(|action| action == "hide:devhub-editor-global"),
-            "warming must leave every other surface's visibility alone: {actions:?}"
-        );
-        assert!(host.snapshot(&global).expect("global snapshot").mounted);
-
-        // Selecting it afterwards is the reveal the warm mount paid for.
-        webviews.actions.lock().expect("actions").clear();
-        host.ensure_surface(workspace.clone(), Some(workspace_root), bounds)
-            .expect("select warmed");
-        assert_eq!(webviews.created.lock().expect("created").len(), 2);
-
-        host.shutdown().expect("shutdown");
-    }
-
-    #[test]
-    fn hiding_surfaces_touches_only_the_one_that_was_visible() {
-        // Every visibility call is a blocking round-trip to the main thread and
-        // this runs on each dispatch that is not about the Editor. Warming
-        // keeps one record per visited Workspace, so re-hiding what is already
-        // hidden would charge those dispatches for the whole collection.
-        let (host, _spawns, _terminated, _paths, root, _alive) = test_host(true);
-        let webviews = Arc::new(FakeWebViewHost::default());
-        host.attach_webview_host(webviews.clone()).expect("attach");
-        let workspace_id = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
-        let workspace_root = root.join("workspace");
-        fs::create_dir_all(&workspace_root).expect("workspace");
-        let workspace = EditorSurfaceKey::Workspace(workspace_id.to_owned());
-        let bounds = EditorBounds::new(24.0, 72.0, 800.0, 600.0);
-
-        host.warm_surface(workspace, Some(workspace_root), bounds).expect("warm");
-        host.ensure_surface(EditorSurfaceKey::Global, None, bounds).expect("global");
-        webviews.actions.lock().expect("actions").clear();
-
-        host.hide_surfaces().expect("hide");
-        let actions = webviews.actions.lock().expect("actions").clone();
-        assert_eq!(
-            actions,
-            vec!["hide:devhub-editor-global".to_owned()],
-            "only the visible surface had anything to hide: {actions:?}"
-        );
-
-        // Nothing is visible now, so a second pass has no work at all.
-        webviews.actions.lock().expect("actions").clear();
-        host.hide_surfaces().expect("hide again");
-        assert!(
-            webviews.actions.lock().expect("actions").is_empty(),
-            "hiding an already hidden set must cost nothing"
-        );
-
-        host.shutdown().expect("shutdown");
-    }
-
-    #[test]
-    fn a_mounted_surface_reports_itself_so_warming_is_not_repeated() {
-        let (host, _spawns, _terminated, _paths, root, _alive) = test_host(true);
-        let webviews = Arc::new(FakeWebViewHost::default());
-        host.attach_webview_host(webviews.clone()).expect("attach");
-        let workspace_id = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
-        let workspace_root = root.join("workspace");
-        fs::create_dir_all(&workspace_root).expect("workspace");
-        let workspace = EditorSurfaceKey::Workspace(workspace_id.to_owned());
-        let bounds = EditorBounds::new(24.0, 72.0, 800.0, 600.0);
-
-        assert!(!host.surface_is_mounted(&workspace));
-        host.warm_surface(workspace.clone(), Some(workspace_root), bounds).expect("warm");
-        assert!(host.surface_is_mounted(&workspace));
-        assert!(!host.surface_is_mounted(&EditorSurfaceKey::Global));
-
-        host.shutdown().expect("shutdown");
-    }
-
-    #[test]
     fn shutdown_attempts_owned_server_after_deadline_expired() {
         let root = test_root("expired-deadline");
         let home = root.join("home");
@@ -1822,30 +1103,4 @@ mod tests {
         assert_eq!(spawns.load(Ordering::Acquire), 2);
     }
 
-    #[test]
-    fn workspace_close_registry_failure_keeps_unmounted_identity_for_retry() {
-        let (host, _spawns, _terminated, paths, root, _alive) = test_host(true);
-        let webviews = Arc::new(FakeWebViewHost::default());
-        host.attach_webview_host(webviews).expect("attach");
-        let workspace_id = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
-        let workspace_root = root.join("retry-workspace");
-        fs::create_dir_all(&workspace_root).expect("workspace");
-        let key = EditorSurfaceKey::Workspace(workspace_id.to_owned());
-        let bounds = EditorBounds::new(0.0, 0.0, 320.0, 240.0);
-        host.ensure_surface(key.clone(), Some(workspace_root), bounds).expect("mount");
-
-        let registry_path = paths.root().join("surface-registry.json");
-        fs::remove_file(&registry_path).expect("remove registry file");
-        fs::create_dir(&registry_path).expect("block registry replacement");
-        assert_eq!(
-            host.close_workspace_surface(workspace_id).expect_err("registry failure").code(),
-            EditorErrorCode::Io
-        );
-        assert!(!host.snapshot(&key).expect("retained identity").mounted);
-
-        fs::remove_dir(&registry_path).expect("unblock registry replacement");
-        host.close_workspace_surface(workspace_id).expect("retry close");
-        assert!(host.snapshot(&key).is_none());
-        host.shutdown().expect("shutdown");
-    }
 }

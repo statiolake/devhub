@@ -67,9 +67,8 @@ use editor::{
     BridgeEvent, BridgeEventSink, BridgeRequest, BridgeRequestDisposition, BridgeRequestResult,
 };
 use editor::{EditorHost, EditorHostConfig};
-use editor::NativeFocusIdentity;
 use integration::lifecycle::{safe_restore_frame, DisplayWorkArea, LifecycleGate, Phase};
-use keyboard::{KeyStroke, KeyboardController, RouteDecision, SurfaceFocus};
+use keyboard::{KeyStroke, KeyboardController, NativeFocusIdentity, RouteDecision, SurfaceFocus};
 use repository::{GitRepositoryResolver, GitRepositoryResolverConfig};
 use runtime::{LoginEnvironmentStatus, RuntimeLaunchContext};
 use terminal::{
@@ -2969,37 +2968,29 @@ impl NativeAppState {
                                 ResourceInspection::unknown(DiagnosticCode::CloseAgentsUnknown)
                             }
                         };
-                        let editor = match self.editor_host.snapshot(
-                            &editor::EditorSurfaceKey::Workspace(workspace_id.to_string()),
-                        ) {
-                            None => ResourceInspection::clean(),
-                            Some(surface) if !surface.visible && !surface.mounted => {
-                                ResourceInspection::clean()
-                            }
-                            Some(_) => match self.bridge_sink.editor_observation(&workspace_id) {
-                                Some(observation)
-                                    if observation.connected
-                                        && observation.readiness
-                                            == devhub_app_core::bridge::Readiness::Ready
-                                        && observation.dirty =>
-                                {
+                        // Whether a Workspace's Editor is holding unsaved
+                        // work is the Bridge's answer. It used to be asked
+                        // only when a native child WebView was mounted for
+                        // that Workspace; none has been since the Workbench
+                        // moved into a frame, so every close reported the
+                        // Editor clean without asking anyone.
+                        let editor = match self.bridge_sink.editor_observation(&workspace_id) {
+                            Some(observation)
+                                if observation.connected
+                                    && observation.readiness
+                                        == devhub_app_core::bridge::Readiness::Ready =>
+                            {
+                                if observation.dirty {
                                     ResourceInspection::busy(1).unwrap_or_else(|_| {
                                         ResourceInspection::unknown(
                                             DiagnosticCode::CloseEditorUnknown,
                                         )
                                     })
-                                }
-                                Some(observation)
-                                    if observation.connected
-                                        && observation.readiness
-                                            == devhub_app_core::bridge::Readiness::Ready =>
-                                {
+                                } else {
                                     ResourceInspection::clean()
                                 }
-                                _ => {
-                                    ResourceInspection::unknown(DiagnosticCode::CloseEditorUnknown)
-                                }
-                            },
+                            }
+                            _ => ResourceInspection::unknown(DiagnosticCode::CloseEditorUnknown),
                         };
                         CloseInspectionInputs::new(
                             agents,
@@ -3678,7 +3669,7 @@ impl NativeAppState {
             }
             let window_was_missing = app.get_webview_window(APP_SHELL_WINDOW_LABEL).is_none();
             let claimed_reconstruction =
-                reopened || window_was_missing || !self.editor_host.window_attached();
+                reopened || window_was_missing;
             let result = (|| {
                 let window = ensure_app_shell_window(app, self)?;
                 self.record_performance_probe(PerformanceMarker::WindowBuilt);

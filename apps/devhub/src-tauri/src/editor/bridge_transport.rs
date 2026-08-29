@@ -528,119 +528,12 @@ impl BridgeTransport {
         self.token.hex()
     }
 
-    pub(crate) fn set_expected(&self, expected: impl IntoIterator<Item = Uuid>) {
-        let next: BTreeSet<Uuid> = expected.into_iter().collect();
-        let (stale, disconnected, failures) = self
-            .inner
-            .state
-            .lock()
-            .ok()
-            .map(|mut state| {
-                let stale_keys: Vec<Uuid> = state
-                    .connections
-                    .keys()
-                    .filter(|surface_id| !next.contains(*surface_id))
-                    .cloned()
-                    .collect();
-                let mut stale = Vec::with_capacity(stale_keys.len());
-                let mut disconnected = Vec::with_capacity(stale_keys.len());
-                let mut failures = Vec::new();
-                for surface_id in stale_keys {
-                    if let Some(connection) = state.connections.remove(&surface_id) {
-                        if connection.finish_once() {
-                            if let Some(host) = state.hosts.get_mut(&surface_id) {
-                                failures.extend(
-                                    host.connection_lost(
-                                        &connection.connection_id,
-                                        self.inner.clock.now(),
-                                    )
-                                    .into_iter()
-                                    .map(|failure| (connection.surface_id.clone(), failure)),
-                                );
-                            }
-                            disconnected.push((
-                                connection.surface_id.clone(),
-                                connection.connection_generation,
-                            ));
-                        }
-                        stale.push(connection);
-                    }
-                }
-                let retired_hosts: Vec<Uuid> = state
-                    .hosts
-                    .keys()
-                    .filter(|surface_id| !next.contains(*surface_id))
-                    .cloned()
-                    .collect();
-                for surface_id in retired_hosts {
-                    state.hosts.remove(&surface_id);
-                }
-                state.expected = next;
-                (stale, disconnected, failures)
-            })
-            .unwrap_or_default();
-        for connection in stale {
-            connection.close();
-        }
-        for (surface_id, failure) in failures {
-            self.inner.sink.on_event(request_failure_event(&surface_id, failure));
-        }
-        for (surface_id, generation) in disconnected {
-            self.inner.sink.on_event(BridgeEvent::Disconnected { surface_id, generation });
-        }
-    }
-
-    /// Requests a complete state snapshot from a connected Workbench.
-    pub(crate) fn request_snapshot(&self, surface_id: &BridgeSurfaceId) -> EditorResult<()> {
-        self.send_host_request(surface_id, true)
-    }
-
-    /// Requests focus from a connected Workbench.
-    pub(crate) fn request_focus(&self, surface_id: &BridgeSurfaceId) -> EditorResult<()> {
-        self.send_host_request(surface_id, false)
-    }
-
     pub(crate) fn complete_bridge_request(
         &self,
         handle: BridgeRequestHandle,
         result: BridgeRequestResult,
     ) -> EditorResult<()> {
         complete_request_inner(&self.inner, handle, result)
-    }
-
-    fn send_host_request(&self, surface_id: &BridgeSurfaceId, snapshot: bool) -> EditorResult<()> {
-        let connection = {
-            let mut state = self
-                .inner
-                .state
-                .lock()
-                .map_err(|_| EditorError::new(EditorErrorCode::LifecycleConflict))?;
-            let connection = state
-                .connections
-                .get(surface_id.as_uuid())
-                .cloned()
-                .ok_or_else(|| EditorError::new(EditorErrorCode::BridgeUnavailable))?;
-            let host = state
-                .hosts
-                .get_mut(surface_id.as_uuid())
-                .ok_or_else(|| EditorError::new(EditorErrorCode::BridgeUnavailable))?;
-            let envelope = if snapshot {
-                host.request_snapshot_at(
-                    &connection.connection_id,
-                    devhub_app_core::bridge::SnapshotRequestReason::HostReconcile,
-                    self.inner.clock.now(),
-                )
-            } else {
-                host.request_focus_at(
-                    &connection.connection_id,
-                    devhub_app_core::bridge::FocusReason::WindowRestore,
-                    self.inner.clock.now(),
-                )
-            }
-            .map_err(|_| EditorError::new(EditorErrorCode::BridgeUnavailable))?;
-            (connection, envelope)
-        };
-        queue_text_frame(&self.inner, &connection.0, &connection.1)
     }
 
     #[cfg(test)]
@@ -1328,7 +1221,7 @@ mod tests {
     use super::*;
     use devhub_app_core::bridge::{
         AbsolutePath, HelloPayload, OpenWorkspaceRequestedPayload, OpenWorkspaceSource,
-        RequestFailureReason, ResponseResult, SemVer, StateSnapshotPayload,
+        ResponseResult, SemVer, StateSnapshotPayload,
     };
     use std::io::{Cursor, Read, Write};
     use std::net::{SocketAddr, TcpStream};
@@ -1720,127 +1613,6 @@ mod tests {
         pinger.join().expect("pinger");
         assert!(timed_out, "pending request remained alive under continuous ping traffic");
         transport.stop().expect("stop");
-    }
-
-    #[test]
-    fn outbound_queue_overflow_disconnects_and_reconciles_pending_request_once() {
-        let surface = Uuid::parse("12121212-1212-4121-8121-121212121212").expect("surface");
-        let sink = Arc::new(RecordingSink::default());
-        let token = SecretToken::from_bytes_for_test([4; 32]);
-        let listener = match TcpListener::bind((super::super::paths::LOOPBACK_HOST, 0)) {
-            Ok(listener) => listener,
-            Err(error) if error.kind() == io::ErrorKind::PermissionDenied => return,
-            Err(error) => panic!("bind probe: {error}"),
-        };
-        let address = listener.local_addr().expect("address");
-        let abort = TcpStream::connect(address).expect("abort peer");
-        let (_abort_server, _) = listener.accept().expect("abort accept");
-
-        let mut host = BridgeHost::new([surface.clone()]);
-        let hello = Envelope::new(
-            None,
-            1,
-            Uuid::parse("13131313-1313-4131-8131-131313131313").expect("hello message"),
-            MessageKind::Hello,
-            Payload::Hello(HelloPayload {
-                extension_version: SemVer::parse("0.1.0").expect("version"),
-                surface_id: surface.clone(),
-                workbench_instance_id: Uuid::parse("14141414-1414-4141-8141-141414141414")
-                    .expect("instance"),
-            }),
-        )
-        .expect("hello");
-        let accepted = match host.receive_at(hello, SystemTime::UNIX_EPOCH) {
-            HostReceiveOutcome::HelloAccepted(accepted) => accepted,
-            other => panic!("hello was not accepted: {other:?}"),
-        };
-        let connection_id = accepted.connection_id().cloned().expect("connection");
-        let generation = match accepted.payload() {
-            Payload::HelloAccepted(payload) => payload.connection_generation,
-            _ => panic!("missing generation"),
-        };
-        let snapshot = Envelope::new(
-            Some(connection_id.clone()),
-            2,
-            Uuid::parse("15151515-1515-4151-8151-151515151515").expect("snapshot message"),
-            MessageKind::StateSnapshot,
-            Payload::StateSnapshot(StateSnapshotPayload {
-                surface_id: surface.clone(),
-                readiness: Readiness::Ready,
-                context: Context::Global,
-                dirty: false,
-            }),
-        )
-        .expect("snapshot");
-        assert_eq!(
-            host.receive_at(snapshot, SystemTime::UNIX_EPOCH),
-            HostReceiveOutcome::SnapshotApplied
-        );
-        let (outbound, _outbound_rx) =
-            std::sync::mpsc::sync_channel::<String>(OUTBOUND_QUEUE_CAPACITY);
-        let connection = Arc::new(BridgeConnection {
-            surface_id: BridgeSurfaceId::from_uuid(surface.clone()),
-            connection_id: connection_id.clone(),
-            connection_generation: generation,
-            outbound,
-            abort,
-            finished: AtomicBool::new(false),
-        });
-        let endpoint_token = bearer_token(token.hex()).expect("endpoint token");
-        let endpoint = Arc::new(
-            LoopbackEndpoint::new("ws://127.0.0.1:1/bridge".to_owned(), endpoint_token)
-                .expect("endpoint"),
-        );
-        let inner = Arc::new(BridgeTransportInner {
-            endpoint,
-            expected_host: "127.0.0.1:1".to_owned(),
-            stop: AtomicBool::new(false),
-            stop_claimed: AtomicBool::new(false),
-            pending_connections: std::sync::atomic::AtomicUsize::new(0),
-            next_worker_id: AtomicU64::new(1),
-            worker_panicked: AtomicBool::new(false),
-            workers: Mutex::new(BTreeMap::new()),
-            state: Mutex::new(TransportState {
-                expected: BTreeSet::from([surface.clone()]),
-                hosts: BTreeMap::from([(surface.clone(), host)]),
-                connections: BTreeMap::from([(surface.clone(), Arc::clone(&connection))]),
-            }),
-            sink: sink.clone(),
-            id_source: Arc::new(Mutex::new(devhub_app_core::bridge::SecureIdSource)),
-            clock: Arc::new(SystemClock),
-            listener_thread: Mutex::new(None),
-        });
-
-        for _ in 0..OUTBOUND_QUEUE_CAPACITY {
-            connection.outbound.try_send(String::new()).expect("fill outbound queue");
-        }
-        let transport = BridgeTransport {
-            inner: Arc::clone(&inner),
-            owner: Arc::new(BridgeTransportOwner { count: AtomicUsize::new(1) }),
-            token,
-            endpoint: "ws://127.0.0.1:1/bridge".to_owned(),
-        };
-        let surface_id = BridgeSurfaceId::from_uuid(surface.clone());
-        assert!(transport.request_focus(&surface_id).is_err());
-        assert!(connection.finished.load(Ordering::Acquire));
-        assert!(inner.state.lock().expect("state").connections.is_empty());
-
-        assert!(transport.request_focus(&surface_id).is_err());
-        let events = sink.events.lock().expect("events");
-        assert_eq!(
-            events
-                .iter()
-                .filter(|event| matches!(
-                    event,
-                    BridgeEvent::RequestFailed { reason: RequestFailureReason::ConnectionLost, .. }
-                ))
-                .count(),
-            1
-        );
-        assert_eq!(
-            events.iter().filter(|event| matches!(event, BridgeEvent::Disconnected { .. })).count(),
-            1
-        );
     }
 
     #[test]

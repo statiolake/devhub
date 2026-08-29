@@ -7,7 +7,6 @@ use std::path::{Path, PathBuf};
 use super::error::{EditorError, EditorErrorCode, EditorResult};
 
 pub const LOOPBACK_HOST: &str = "127.0.0.1";
-pub const WEBKIT_DATA_STORE_ID: [u8; 16] = *b"DEVHUB-WB-STORE1";
 
 /// Every path used by the provider is owned by DevHub. The token and port
 /// files are deliberately siblings of the provider data so a future runtime
@@ -19,10 +18,8 @@ pub struct EditorPaths {
     cli_data: PathBuf,
     extensions: PathBuf,
     logs: PathBuf,
-    webkit_data: PathBuf,
     token: PathBuf,
     server_pid: PathBuf,
-    web_session: PathBuf,
 }
 
 impl EditorPaths {
@@ -37,10 +34,8 @@ impl EditorPaths {
             server_data: root.join("server-data"),
             cli_data: root.join("cli-data"),
             logs: home.as_ref().join("Library/Logs/DevHub"),
-            webkit_data: root.join("webkit-data"),
             token: root.join("connection-token"),
             server_pid: root.join("server-pid"),
-            web_session: root.join("web-session"),
             root,
         }
     }
@@ -65,23 +60,8 @@ impl EditorPaths {
         &self.logs
     }
 
-    pub fn webkit_data(&self) -> &Path {
-        &self.webkit_data
-    }
-
     pub fn token_file(&self) -> &Path {
         &self.token
-    }
-
-    /// The durable cookies the Editor origin holds.
-    ///
-    /// VS Code Web encrypts stored secrets — an account session above all —
-    /// with a key it splits between the server and a cookie with a month-long
-    /// lifetime. That cookie normally lives in the browser; here it lives in
-    /// the proxy, which is a process, so without somewhere to put it the key
-    /// would be new on every launch and every stored secret unreadable.
-    pub fn web_session_file(&self) -> &Path {
-        &self.web_session
     }
 
     /// Where the running server's process group is recorded.
@@ -109,7 +89,6 @@ impl EditorPaths {
             &self.cli_data,
             &self.extensions,
             &self.logs,
-            &self.webkit_data,
         ] {
             ensure_directory(path)?;
         }
@@ -269,9 +248,6 @@ pub enum LifecycleEvent {
     ServerReady,
     ServerRestarted { attempt: u8 },
     ServerStopped,
-    WebViewsCreated { count: u16 },
-    WebViewsDestroyed { count: u16 },
-    WorkspaceClosed,
 }
 
 impl LifecycleEvent {
@@ -284,9 +260,6 @@ impl LifecycleEvent {
                 format!("event=server_restarted attempt={attempt}")
             }
             Self::ServerStopped => "event=server_stopped".to_owned(),
-            Self::WebViewsCreated { count } => format!("event=webviews_created count={count}"),
-            Self::WebViewsDestroyed { count } => format!("event=webviews_destroyed count={count}"),
-            Self::WorkspaceClosed => "event=workspace_closed".to_owned(),
         }
     }
 }

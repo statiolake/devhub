@@ -83,90 +83,6 @@ impl SurfaceRegistry {
         Ok(registry)
     }
 
-    pub fn global(&mut self) -> EditorResult<SurfaceRegistryEntry> {
-        if let Some(entry) = self
-            .document
-            .surfaces
-            .iter()
-            .find(|entry| entry.workspace_id.is_none() && entry.canonical_root.is_none())
-        {
-            return Ok(entry.clone());
-        }
-        let entry = SurfaceRegistryEntry {
-            workspace_id: None,
-            canonical_root: None,
-            surface_id: new_uuid()?,
-        };
-        self.document.surfaces.push(entry.clone());
-        if let Err(error) = self.commit() {
-            self.document.surfaces.pop();
-            return Err(error);
-        }
-        Ok(entry)
-    }
-
-    pub fn workspace(
-        &mut self,
-        workspace_id: impl Into<String>,
-        root: impl AsRef<Path>,
-    ) -> EditorResult<SurfaceRegistryEntry> {
-        let workspace_id = workspace_id.into();
-        validate_uuid(&workspace_id)?;
-        let root = fs::canonicalize(root.as_ref())
-            .map_err(|_| EditorError::new(EditorErrorCode::InvalidWorkspaceRoot))?;
-        if !fs::metadata(&root).is_ok_and(|metadata| metadata.is_dir()) {
-            return Err(EditorError::new(EditorErrorCode::InvalidWorkspaceRoot));
-        }
-        let root = root
-            .to_str()
-            .ok_or_else(|| EditorError::new(EditorErrorCode::InvalidWorkspaceRoot))?
-            .to_owned();
-
-        if let Some(entry) = self
-            .document
-            .surfaces
-            .iter()
-            .find(|entry| entry.workspace_id.as_deref() == Some(&workspace_id))
-        {
-            if entry.canonical_root.as_deref() != Some(&root) {
-                return Err(EditorError::new(EditorErrorCode::LifecycleConflict));
-            }
-            return Ok(entry.clone());
-        }
-        if self.document.surfaces.iter().any(|entry| entry.canonical_root.as_deref() == Some(&root))
-        {
-            return Err(EditorError::new(EditorErrorCode::LifecycleConflict));
-        }
-        let entry = SurfaceRegistryEntry {
-            workspace_id: Some(workspace_id),
-            canonical_root: Some(root.clone()),
-            surface_id: new_uuid()?,
-        };
-        self.document.surfaces.push(entry.clone());
-        if let Err(error) = self.commit() {
-            self.document.surfaces.pop();
-            return Err(error);
-        }
-        Ok(entry)
-    }
-
-    pub fn remove_workspace(&mut self, workspace_id: &str) -> EditorResult<bool> {
-        let Some(index) = self
-            .document
-            .surfaces
-            .iter()
-            .position(|entry| entry.workspace_id.as_deref() == Some(workspace_id))
-        else {
-            return Ok(false);
-        };
-        let entry = self.document.surfaces.remove(index);
-        if let Err(error) = self.commit() {
-            self.document.surfaces.insert(index, entry);
-            return Err(error);
-        }
-        Ok(true)
-    }
-
     pub(crate) fn core_surface_ids(&self) -> EditorResult<Vec<Uuid>> {
         self.document
             .surfaces
@@ -304,25 +220,6 @@ fn secure_parent(path: &Path) -> EditorResult<()> {
     Ok(())
 }
 
-fn new_uuid() -> EditorResult<String> {
-    let mut bytes = [0_u8; 16];
-    if File::open("/dev/urandom").and_then(|mut file| file.read_exact(&mut bytes)).is_err() {
-        return Err(EditorError::new(EditorErrorCode::Io));
-    }
-    bytes[6] = (bytes[6] & 0x0f) | 0x40;
-    bytes[8] = (bytes[8] & 0x3f) | 0x80;
-    Ok(format!(
-        "{:08x}-{:04x}-{:04x}-{:04x}-{:012x}",
-        u32::from_be_bytes(bytes[0..4].try_into().unwrap_or_default()),
-        u16::from_be_bytes(bytes[4..6].try_into().unwrap_or_default()),
-        u16::from_be_bytes(bytes[6..8].try_into().unwrap_or_default()),
-        u16::from_be_bytes(bytes[8..10].try_into().unwrap_or_default()),
-        u64::from_be_bytes([
-            0, 0, bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15]
-        ])
-    ))
-}
-
 fn reject_symlink(path: &Path) -> EditorResult<()> {
     match fs::symlink_metadata(path) {
         Ok(metadata) if metadata.file_type().is_symlink() => {
@@ -370,61 +267,6 @@ mod tests {
         );
         fs::create_dir_all(&root).expect("temp root");
         root
-    }
-
-    #[test]
-    fn registry_is_atomic_owner_only_and_preserves_surface_ids() {
-        let root = temp_root();
-        let path = root.join("surface-registry.json");
-        let workspace = root.join("workspace");
-        fs::create_dir(&workspace).expect("workspace");
-        let mut registry = SurfaceRegistry::open(&path).expect("open");
-        let global = registry.global().expect("global");
-        let first = registry
-            .workspace("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", &workspace)
-            .expect("workspace");
-        drop(registry);
-        let mut restored = SurfaceRegistry::open(&path).expect("restore");
-        assert_eq!(restored.global().expect("global").surface_id, global.surface_id);
-        assert_eq!(
-            restored
-                .workspace("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", &workspace)
-                .expect("workspace")
-                .surface_id,
-            first.surface_id
-        );
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            assert_eq!(fs::metadata(path).expect("metadata").permissions().mode() & 0o777, 0o600);
-        }
-    }
-
-    #[test]
-    fn registry_rejects_identity_and_root_collisions() {
-        let root = temp_root();
-        let first_root = root.join("first");
-        let second_root = root.join("second");
-        fs::create_dir(&first_root).expect("first");
-        fs::create_dir(&second_root).expect("second");
-        let mut registry = SurfaceRegistry::open(root.join("registry.json")).expect("registry");
-        registry
-            .workspace("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", &first_root)
-            .expect("first entry");
-        assert_eq!(
-            registry
-                .workspace("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", &second_root)
-                .expect_err("identity collision")
-                .code(),
-            EditorErrorCode::LifecycleConflict
-        );
-        assert_eq!(
-            registry
-                .workspace("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", &first_root)
-                .expect_err("root collision")
-                .code(),
-            EditorErrorCode::LifecycleConflict
-        );
     }
 
     #[test]
