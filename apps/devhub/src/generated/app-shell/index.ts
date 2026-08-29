@@ -21,13 +21,9 @@ export interface AgentProfileWire {
   readonly kind: AgentProfileKindWire;
 }
 export type AgentProfilesAvailabilityWire =
-  | "available"
-  | "degraded"
-  | "unavailable";
+  "available" | "degraded" | "unavailable";
 export type AgentProfilesDiagnosticWire =
-  | "configuration_invalid"
-  | "configuration_conflict"
-  | "projection_unavailable";
+  "configuration_invalid" | "configuration_conflict" | "projection_unavailable";
 export interface AgentProfilesWire {
   readonly availability: AgentProfilesAvailabilityWire;
   readonly diagnostic?: AgentProfilesDiagnosticWire | null;
@@ -265,10 +261,7 @@ export type EditorHostWire =
       readonly summary: string;
     };
 export type ReplayEventKindWire =
-  | "snapshot"
-  | "noop"
-  | "error"
-  | "operation_completed";
+  "snapshot" | "noop" | "error" | "operation_completed";
 export interface ReplayEventWire {
   readonly kind: ReplayEventKindWire;
   readonly sequence: number;
@@ -289,11 +282,7 @@ export type ResolutionWire =
       readonly reason: DisabledReasonWire;
     };
 export type RuntimeHealthWire =
-  | "starting"
-  | "healthy"
-  | "degraded"
-  | "unavailable"
-  | "failed";
+  "starting" | "healthy" | "degraded" | "unavailable" | "failed";
 export interface SelectionWire {
   readonly activity: ActivityName;
   readonly context: ContextWire;
@@ -365,10 +354,7 @@ export type WorkspacePickerEventWire =
       readonly truncated: boolean;
     };
 export type WorkspaceStateWire =
-  | "available"
-  | "unavailable"
-  | "closing"
-  | "closing-failed";
+  "available" | "unavailable" | "closing" | "closing-failed";
 export interface WorkspaceWire {
   readonly agents: readonly AgentWire[];
   readonly aggregateStatus: AgentStatusWire;

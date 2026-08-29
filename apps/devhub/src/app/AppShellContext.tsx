@@ -99,9 +99,12 @@ export function AppShellProvider({
    * Callers that cannot recover do not catch to explain themselves; they hand
    * the failure here, and it appears where every other failure appears.
    */
-  const reportFailure = useCallback((error: unknown) => {
-    setIntentError(toAppError(error));
-  }, []);
+  const reportFailure = useCallback(
+    (error: unknown) => {
+      setIntentError(toAppError(error));
+    },
+    [setIntentError],
+  );
 
   const applySnapshot = useCallback((snapshot: AppSnapshot) => {
     if (snapshot.revision < lastRevision.current) return;
@@ -511,6 +514,15 @@ export function AppShellProvider({
   // The Editor's server is started on demand and outlives every Surface, so
   // the connection to it is asked for once and shared.
   const [editorRemote, setEditorRemote] = useState<EditorRemote | null>(null);
+  /**
+   * Why the Editor has no server, when it has none.
+   *
+   * A failure that belongs to a Surface is drawn in that Surface, the same way
+   * every other Surface draws one. The alert is for failures that belong to an
+   * action the user just took, and this is not one — nobody asked for it, and
+   * it does not go away because the next thing succeeded.
+   */
+  const [editorFailure, setEditorFailure] = useState<AppError | null>(null);
   const editorRequested = useRef(false);
   const ensureEditorRemote = useCallback(() => {
     if (editorRequested.current) {
@@ -525,10 +537,12 @@ export function AppShellProvider({
       // Returning quietly here is how a Surface ends up on a spinner that
       // nothing will ever replace.
       editorRequested.current = false;
-      reportFailure(
-        new UserFacingFailure(
-          "The editor is unavailable in this build.",
-          "The app shell has no way to start an editor server.",
+      setEditorFailure(
+        toAppError(
+          new UserFacingFailure(
+            "The editor is unavailable in this build.",
+            "The app shell has no way to start an editor server.",
+          ),
         ),
       );
       return;
@@ -543,10 +557,10 @@ export function AppShellProvider({
         // Allow another attempt: a server that would not start can be fixed
         // without restarting the app.
         editorRequested.current = false;
-        reportFailure(error);
+        setEditorFailure(toAppError(error));
       },
     );
-  }, [client, reportFailure]);
+  }, [client]);
 
   const dismissCloseConfirmation = useCallback(() => {
     setPendingConfirmation(null);
@@ -571,6 +585,7 @@ export function AppShellProvider({
       intentError,
       dismissIntentError,
       editorRemote,
+      editorFailure,
       ensureEditorRemote,
       reportFailure,
       recordPerformanceMarker: emitPerformanceMarker,
@@ -598,6 +613,7 @@ export function AppShellProvider({
       intentError,
       dismissIntentError,
       editorRemote,
+      editorFailure,
       ensureEditorRemote,
       reportFailure,
       openSettings,

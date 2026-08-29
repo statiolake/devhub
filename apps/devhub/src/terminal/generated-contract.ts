@@ -134,7 +134,4 @@ export interface ErrorFrame {
 }
 
 export type TerminalFrame =
-  | StartedFrame
-  | OutputFrame
-  | ExitedFrame
-  | ErrorFrame;
+  StartedFrame | OutputFrame | ExitedFrame | ErrorFrame;

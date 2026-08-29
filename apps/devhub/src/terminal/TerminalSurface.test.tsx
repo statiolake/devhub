@@ -590,8 +590,7 @@ describe("TerminalSurface lifecycle", () => {
     vi.useFakeTimers();
     const harness = clientHarness();
     let resolveAttach:
-      | ((value: ReturnType<typeof receipt>) => void)
-      | undefined;
+      ((value: ReturnType<typeof receipt>) => void) | undefined;
     harness.client.attach = vi.fn(async (_request, callback) => {
       callback(started(harness.receipts[0].attachmentId, 42));
       return new Promise<ReturnType<typeof receipt>>((resolve) => {

@@ -21,6 +21,7 @@ export interface AppShellContextValue {
   readonly intentError: AppError | null;
   readonly dismissIntentError: () => void;
   readonly editorRemote: EditorRemote | null;
+  readonly editorFailure: AppError | null;
   readonly ensureEditorRemote: () => void;
   /** Hand a failure to the shell rather than explaining it locally. */
   readonly reportFailure: (error: unknown) => void;

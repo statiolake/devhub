@@ -11,6 +11,7 @@ import { EditorSurface } from "../../editor/EditorSurface";
 import { TerminalSurface } from "../../terminal/TerminalSurface";
 import { attachableSurfaces, warmSurfaces } from "./surfacePool";
 import { disabledReasonLabel } from "./activityPresentation";
+import { Failure, Waiting } from "./SurfaceState";
 import { useAppShell } from "../../app/useAppShell";
 
 export interface SurfaceViewportProps {
@@ -53,67 +54,6 @@ function InlineIntentError({
           <path d="M3 3l6 6M9 3l-6 6" />
         </svg>
       </button>
-    </div>
-  );
-}
-
-/**
- * Every non-provider state is the same shape: one line saying what is
- * happening, and — when something went wrong — the text needed to fix it.
- * Nothing restates the Workspace or the Activity, because the Sidebar and the
- * titlebar already show both.
- */
-function Waiting({ label }: { readonly label: string }) {
-  return (
-    <div className="surface-state" role="status">
-      <span className="surface-spinner" aria-hidden="true" />
-      <p className="surface-line">{label}</p>
-    </div>
-  );
-}
-
-function Failure({
-  summary,
-  detail,
-  actions,
-}: {
-  readonly summary: string;
-  readonly detail?: string;
-  readonly actions?: readonly {
-    readonly label: string;
-    readonly primary?: boolean;
-    readonly run: () => void;
-  }[];
-}) {
-  return (
-    <div className="surface-state surface-failure" role="alert">
-      <p className="failure-title">
-        <svg
-          className="failure-icon"
-          viewBox="0 0 16 16"
-          aria-hidden="true"
-          focusable="false"
-        >
-          <circle cx="8" cy="8" r="7" />
-          <path d="M8 4.6v4.2M8 11.1v.6" />
-        </svg>
-        {summary}
-      </p>
-      {detail ? <p className="failure-detail">{detail}</p> : null}
-      {actions && actions.length > 0 ? (
-        <div className="surface-actions">
-          {actions.map((action) => (
-            <button
-              key={action.label}
-              className={action.primary ? "primary-button" : "secondary-button"}
-              type="button"
-              onClick={action.run}
-            >
-              {action.label}
-            </button>
-          ))}
-        </div>
-      ) : null}
     </div>
   );
 }

@@ -19,14 +19,12 @@ installSelectionGuard(document);
 
 async function mount() {
   if (import.meta.env.DEV) {
-    const { parseSettingsFixtureQuery } = await import(
-      "./visual-fixtures/settings-route"
-    );
+    const { parseSettingsFixtureQuery } =
+      await import("./visual-fixtures/settings-route");
     const settingsFixture = parseSettingsFixtureQuery(window.location.search);
     if (settingsFixture) {
-      const { renderSettingsFixture } = await import(
-        "./visual-fixtures/settings-harness"
-      );
+      const { renderSettingsFixture } =
+        await import("./visual-fixtures/settings-harness");
       createRoot(mountNode).render(
         <StrictMode>{renderSettingsFixture(settingsFixture)}</StrictMode>,
       );
@@ -46,14 +44,12 @@ async function mount() {
   }
 
   if (import.meta.env.DEV) {
-    const { parseFixtureQuery, fixtureSnapshots } = await import(
-      "./visual-fixtures/route"
-    );
+    const { parseFixtureQuery, fixtureSnapshots } =
+      await import("./visual-fixtures/route");
     const fixture = parseFixtureQuery(window.location.search);
     if (fixture) {
-      const { renderAppShellFixture } = await import(
-        "./visual-fixtures/harness"
-      );
+      const { renderAppShellFixture } =
+        await import("./visual-fixtures/harness");
       createRoot(mountNode).render(
         <StrictMode>
           {renderAppShellFixture(fixtureSnapshots[fixture])}

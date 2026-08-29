@@ -12,6 +12,7 @@ import { describe, expect, it, vi } from "vitest";
 import { AppShell } from "./AppShell";
 import { appearanceFixture } from "../test/appearance";
 import type {
+  AppError,
   AppAppearance,
   AppEventCursor,
   AppIntent,
@@ -32,6 +33,14 @@ import {
 } from "../visual-fixtures/app-shell";
 import { disabledReasonCopy } from "../components/shell/activityPresentation";
 
+// The Workbench is a browser bundle and cannot be raised in jsdom. The Editor
+// Surface reports that, correctly and visibly, which is noise in every test
+// that is not about the Editor — so here it comes up.
+vi.mock("../editor/workbench", () => ({
+  startWorkbench: vi.fn().mockResolvedValue(undefined),
+  workbenchHost: vi.fn(() => document.createElement("div")),
+}));
+
 function client(snapshot: AppSnapshot): AppShellClient {
   return {
     getSnapshot: vi.fn().mockResolvedValue(snapshot),
@@ -48,6 +57,14 @@ function client(snapshot: AppSnapshot): AppShellClient {
         };
       }
       return { kind: "noop", snapshot };
+    }),
+    // A shell that cannot start an editor is a shell with a broken Editor
+    // Surface, and it says so. Tests that are not about the Editor get one
+    // that works, so the Surface they are looking at is the one they meant.
+    ensureEditorRemote: vi.fn().mockResolvedValue({
+      authority: "127.0.0.1:1",
+      connectionToken: "token",
+      commit: "commit",
     }),
   };
 }
@@ -1093,28 +1110,38 @@ describe("App Shell states and accessibility", () => {
 });
 
 describe("Editor across Workspaces", () => {
-  it("keeps a reported failure on screen when the next projection arrives", async () => {
-    // The failure that made this necessary: the Editor's command was refused,
-    // the refusal was reported, and the alert was wiped by the next snapshot
-    // before anyone could read it. A dispatch failure is a statement about a
-    // projection that has since been replaced; a provider that would not start
-    // is not answered by a snapshot arriving.
+  it("keeps a failure on screen when the next projection arrives", async () => {
+    // The failure that made this necessary: a refusal was reported and the
+    // alert was wiped by the next snapshot before anyone could read it.
+    // Projections arrive on their own and none of them is evidence that
+    // anything was fixed, so none of them retires an alert.
     const appClient = client(workspaceSnapshot);
     let onSnapshot: ((snapshot: AppSnapshot) => void) | undefined;
+    let pushNativeError: ((error: AppError) => void) | undefined;
     vi.mocked(appClient.subscribe).mockImplementation(async (listener) => {
       onSnapshot = listener;
       return () => undefined;
     });
-    appClient.ensureEditorRemote = vi
-      .fn()
-      .mockRejectedValue(new Error("ensure_editor_remote not allowed"));
+    appClient.subscribeNativeError = vi.fn(async (listener) => {
+      pushNativeError = listener;
+      return () => undefined;
+    });
 
     render(<AppShell client={appClient} />);
+    await waitFor(() => expect(pushNativeError).toBeDefined());
+    act(() =>
+      pushNativeError?.({
+        code: "native_unavailable",
+        summary: "The native app shell is unavailable.",
+        module: "app",
+        timestampMs: 0,
+        runtimeVersion: "test",
+        actions: ["retry"],
+      }),
+    );
     const alert = await screen.findByRole("alert");
-    expect(alert).toBeInTheDocument();
+    expect(alert).toHaveTextContent(/native app shell is unavailable/i);
 
-    // Projections keep arriving on their own. None of them is evidence that
-    // anything was fixed, so none of them retires the alert.
     for (let step = 1; step <= 3; step += 1) {
       act(() =>
         onSnapshot?.({
@@ -1123,10 +1150,12 @@ describe("Editor across Workspaces", () => {
         }),
       );
     }
-    expect(screen.getByRole("alert")).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      /native app shell is unavailable/i,
+    );
 
-    // What retires it is the user: starting another action, or putting it
-    // away. One rule, and it does not depend on what raised the failure.
+    // What retires it is the user: putting it away, or starting another
+    // action. One rule, and it does not depend on what raised the failure.
     fireEvent.click(
       within(screen.getByRole("alert")).getByRole("button", {
         name: "Dismiss",

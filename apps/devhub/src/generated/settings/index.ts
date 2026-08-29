@@ -119,11 +119,7 @@ export interface SettingsRuntimeConfigWire {
   readonly tmuxSocketName: string;
 }
 export type SettingsRuntimeHealthValueWire =
-  | "starting"
-  | "healthy"
-  | "degraded"
-  | "unavailable"
-  | "failed";
+  "starting" | "healthy" | "degraded" | "unavailable" | "failed";
 export interface SettingsRuntimeHealthWire {
   readonly git: SettingsRuntimeHealthValueWire;
   readonly herdr: SettingsRuntimeHealthValueWire;
@@ -181,11 +177,7 @@ export type SettingsSocketPreflightWire =
   | "wrong_marker"
   | "marked_sessions";
 export type SettingsSocketTransitionWire =
-  | "stable"
-  | "pending"
-  | "cleaning_old"
-  | "old_cleaned"
-  | "recreation_pending";
+  "stable" | "pending" | "cleaning_old" | "old_cleaned" | "recreation_pending";
 export interface SettingsTerminalPaletteWire {
   readonly ansi: readonly string[];
   readonly background: string;
@@ -200,9 +192,7 @@ export interface SettingsTerminalThemeWire {
   readonly light: SettingsTerminalPaletteWire;
 }
 export type SettingsWorkspaceKindWire =
-  | "directory"
-  | "git_repository"
-  | "git_worktree";
+  "directory" | "git_repository" | "git_worktree";
 export type SettingsWorkspaceSourceWire =
   | {
       readonly excludeNames: readonly string[];

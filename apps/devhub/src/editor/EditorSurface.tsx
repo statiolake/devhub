@@ -12,6 +12,9 @@
  */
 import { useEffect, useRef, useState } from "react";
 import type { EditorRemote } from "../app/client";
+import { Failure, Waiting } from "../components/shell/SurfaceState";
+import type { AppError } from "../generated/app-shell";
+import { toAppError } from "../app/failure";
 import { useAppShell } from "../app/useAppShell";
 import { trace } from "./trace";
 
@@ -26,7 +29,7 @@ type Phase =
   | { readonly kind: "awaiting-server" }
   | { readonly kind: "opening" }
   | { readonly kind: "ready"; readonly host: HTMLElement }
-  | { readonly kind: "stopped" };
+  | { readonly kind: "failed"; readonly error: AppError };
 
 const WAITING_LINE: Record<"awaiting-server" | "opening", string> = {
   "awaiting-server": "Starting the editor server…",
@@ -49,7 +52,7 @@ export interface EditorSurfaceProps {
 }
 
 export function EditorSurface({ remote, folder }: EditorSurfaceProps) {
-  const { reportFailure } = useAppShell();
+  const { editorFailure } = useAppShell();
   const slot = useRef<HTMLDivElement | null>(null);
   const [phase, setPhase] = useState<Phase>({ kind: "awaiting-server" });
 
@@ -76,7 +79,16 @@ export function EditorSurface({ remote, folder }: EditorSurfaceProps) {
             return;
           }
           trace("surface: ready", { adopted: host != null });
-          setPhase(host ? { kind: "ready", host } : { kind: "stopped" });
+          setPhase(
+            host
+              ? { kind: "ready", host }
+              : {
+                  kind: "failed",
+                  error: toAppError(
+                    new Error("The editor started without a workbench."),
+                  ),
+                },
+          );
         },
         (error: unknown) => {
           if (cancelled) {
@@ -84,14 +96,13 @@ export function EditorSurface({ remote, folder }: EditorSurfaceProps) {
             return;
           }
           trace("surface: failed", error);
-          setPhase({ kind: "stopped" });
-          reportFailure(error);
+          setPhase({ kind: "failed", error: toAppError(error) });
         },
       );
     return () => {
       cancelled = true;
     };
-  }, [remote, folder, reportFailure]);
+  }, [remote, folder]);
 
   // Adopting the element rather than rendering it: React must not own a tree
   // VS Code writes into, and the Workbench survives being moved between
@@ -110,13 +121,19 @@ export function EditorSurface({ remote, folder }: EditorSurfaceProps) {
     };
   }, [phase]);
 
+  // The server's failure and the Workbench's are the same thing to a reader:
+  // the Editor is not here, and this is why.
+  const failure =
+    editorFailure ?? (phase.kind === "failed" ? phase.error : null);
   return (
     <div className="editor-surface" ref={slot}>
-      {phase.kind === "awaiting-server" || phase.kind === "opening" ? (
-        <div className="surface-state" role="status">
-          <span className="surface-spinner" aria-hidden="true" />
-          <p className="surface-line">{WAITING_LINE[phase.kind]}</p>
-        </div>
+      {failure ? (
+        <Failure
+          summary={failure.summary}
+          detail={failure.detail ?? undefined}
+        />
+      ) : phase.kind === "awaiting-server" || phase.kind === "opening" ? (
+        <Waiting label={WAITING_LINE[phase.kind]} />
       ) : null}
     </div>
   );
