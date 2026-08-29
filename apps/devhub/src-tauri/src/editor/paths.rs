@@ -22,6 +22,7 @@ pub struct EditorPaths {
     webkit_data: PathBuf,
     token: PathBuf,
     server_pid: PathBuf,
+    web_session: PathBuf,
 }
 
 impl EditorPaths {
@@ -39,6 +40,7 @@ impl EditorPaths {
             webkit_data: root.join("webkit-data"),
             token: root.join("connection-token"),
             server_pid: root.join("server-pid"),
+            web_session: root.join("web-session"),
             root,
         }
     }
@@ -69,6 +71,17 @@ impl EditorPaths {
 
     pub fn token_file(&self) -> &Path {
         &self.token
+    }
+
+    /// The durable cookies the Editor origin holds.
+    ///
+    /// VS Code Web encrypts stored secrets — an account session above all —
+    /// with a key it splits between the server and a cookie with a month-long
+    /// lifetime. That cookie normally lives in the browser; here it lives in
+    /// the proxy, which is a process, so without somewhere to put it the key
+    /// would be new on every launch and every stored secret unreadable.
+    pub fn web_session_file(&self) -> &Path {
+        &self.web_session
     }
 
     /// Where the running server's process group is recorded.

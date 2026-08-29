@@ -382,6 +382,9 @@ impl EditorHost {
             // is holding nothing DevHub needs any more, but it is a whole VS
             // Code Server per lost run, so it is stopped rather than collected.
             self.reclaim_orphaned_server(&paths);
+            // The Editor origin outlives every server, and so does what the
+            // Workbench stored against it.
+            self.proxy.restore(paths.web_session_file());
             let token = SecretToken::issue(paths.token_file())?;
             let bridge_token = SecretToken::issue_ephemeral()?;
             let registry = SurfaceRegistry::open(paths.root().join("surface-registry.json"))?;

@@ -7,8 +7,10 @@
 //! came. The one piece of state is the session cookie the server issues in
 //! exchange for the connection token, which later requests have to carry.
 
+use std::fs;
 use std::io::{Read, Write};
 use std::net::TcpStream;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
@@ -36,11 +38,23 @@ pub struct ProxyResponse {
 /// The port is not fixed for the life of the process: a server that crashes is
 /// restarted and may land somewhere else, and every surface has to follow it
 /// without its origin changing.
+/// One cookie the origin holds, and whether the server asked for it to outlive
+/// the session that set it.
+#[derive(Clone, PartialEq, Eq)]
+struct Cookie {
+    name: String,
+    value: String,
+    durable: bool,
+}
+
 #[derive(Default)]
 pub struct EditorProxy {
     port: AtomicU16,
-    cookies: Mutex<Vec<(String, String)>>,
+    cookies: Mutex<Vec<Cookie>>,
     token: Mutex<Option<String>>,
+    /// Where the durable cookies are kept between runs. Absent in tests that
+    /// have no provider directory to write into.
+    session_file: Mutex<Option<PathBuf>>,
 }
 
 impl EditorProxy {
@@ -48,17 +62,41 @@ impl EditorProxy {
         Self::default()
     }
 
-    /// Point the origin at a server, and forget the session that belonged to
-    /// whatever was there before.
+    /// Read back the cookies a previous run left behind.
+    ///
+    /// Called once the provider directory is known. A jar that starts empty
+    /// every launch is a new encryption key every launch, and every secret the
+    /// Workbench stored under the old one — the signed-in account included —
+    /// becomes unreadable.
+    pub fn restore(&self, path: &Path) {
+        if let Ok(mut file) = self.session_file.lock() {
+            *file = Some(path.to_path_buf());
+        }
+        let Ok(contents) = fs::read_to_string(path) else { return };
+        let Ok(mut cookies) = self.cookies.lock() else { return };
+        for line in contents.lines() {
+            if let Some((name, value)) = line.split_once('=') {
+                cookies.push(Cookie {
+                    name: name.to_owned(),
+                    value: value.to_owned(),
+                    durable: true,
+                });
+            }
+        }
+    }
+
+    /// Point the origin at a server.
+    ///
+    /// The cookies are not dropped with the server that issued them. The one
+    /// that is only good for a single server — the connection token — is
+    /// replaced on the first request, because the document's own URL carries
+    /// the current token and the server answers it with a fresh cookie before
+    /// anything else is fetched.
     pub fn set_upstream(&self, port: u16, token: &str) {
         if let Ok(mut current) = self.token.lock() {
             *current = Some(token.to_owned());
         }
-        if self.port.swap(port, Ordering::AcqRel) != port {
-            if let Ok(mut cookies) = self.cookies.lock() {
-                cookies.clear();
-            }
-        }
+        self.port.store(port, Ordering::Release);
     }
 
     pub fn upstream(&self) -> Option<u16> {
@@ -200,7 +238,7 @@ impl EditorProxy {
         Some(
             cookies
                 .iter()
-                .map(|(name, value)| format!("{name}={value}"))
+                .map(|cookie| format!("{}={}", cookie.name, cookie.value))
                 .collect::<Vec<_>>()
                 .join("; "),
         )
@@ -208,22 +246,74 @@ impl EditorProxy {
 
     fn remember_cookies(&self, response: &ProxyResponse) {
         let Ok(mut cookies) = self.cookies.lock() else { return };
+        let mut changed = false;
         for (name, value) in &response.headers {
             if !name.eq_ignore_ascii_case("set-cookie") {
                 continue;
             }
-            let Some((pair, _)) = value.split_once(';').or(Some((value.as_str(), ""))) else {
-                continue;
-            };
+            let (pair, attributes) = value.split_once(';').unwrap_or((value.as_str(), ""));
             let Some((key, cookie)) = pair.trim().split_once('=') else { continue };
-            let key = key.trim().to_owned();
-            let cookie = cookie.trim().to_owned();
-            match cookies.iter_mut().find(|(existing, _)| existing == &key) {
-                Some(slot) => slot.1 = cookie,
-                None => cookies.push((key, cookie)),
+            let next = Cookie {
+                name: key.trim().to_owned(),
+                value: cookie.trim().to_owned(),
+                durable: has_lifetime(attributes),
+            };
+            match cookies.iter_mut().find(|existing| existing.name == next.name) {
+                Some(slot) => {
+                    if *slot != next {
+                        changed |= slot.durable || next.durable;
+                        *slot = next;
+                    }
+                }
+                None => {
+                    changed |= next.durable;
+                    cookies.push(next);
+                }
             }
         }
+        if changed {
+            self.persist(&cookies);
+        }
     }
+
+    /// Write the cookies the server asked to outlive this run. A session
+    /// cookie is not one of them, by its own definition.
+    fn persist(&self, cookies: &[Cookie]) {
+        let Ok(path) = self.session_file.lock() else { return };
+        let Some(path) = path.as_ref() else { return };
+        let mut contents = String::new();
+        for cookie in cookies.iter().filter(|cookie| cookie.durable) {
+            if cookie.name.contains('=') || cookie.value.contains('\n') {
+                continue;
+            }
+            contents.push_str(&format!("{}={}\n", cookie.name, cookie.value));
+        }
+        let temporary = path.with_extension("tmp");
+        let mut options = fs::OpenOptions::new();
+        options.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let written = options
+            .open(&temporary)
+            .and_then(|mut file| file.write_all(contents.as_bytes()).map(|()| file))
+            .and_then(|file| file.sync_all());
+        if written.is_ok() {
+            let _ = fs::rename(&temporary, path);
+        } else {
+            let _ = fs::remove_file(&temporary);
+        }
+    }
+}
+
+/// Whether a `Set-Cookie` asked to survive the session that set it.
+fn has_lifetime(attributes: &str) -> bool {
+    attributes.split(';').any(|attribute| {
+        let name = attribute.split('=').next().unwrap_or_default().trim();
+        name.eq_ignore_ascii_case("max-age") || name.eq_ignore_ascii_case("expires")
+    })
 }
 
 fn header(response: &ProxyResponse, name: &str) -> Option<String> {
@@ -368,18 +458,48 @@ mod tests {
     }
 
     #[test]
-    fn a_server_that_moves_takes_its_session_with_it() {
-        // The origin outlives the server. A session minted by the process that
-        // used to be on that port is worth nothing to the one that replaced it.
+    fn a_server_that_moves_does_not_take_the_stored_session_with_it() {
+        // VS Code Web encrypts its stored secrets with a key it splits between
+        // the server and a month-long cookie. Dropping that cookie because the
+        // server moved would mean a new key every launch, and a signed-in
+        // account that cannot be read back.
         let proxy = EditorProxy::new();
         proxy.set_upstream(40_000, "abab");
-        proxy
-            .remember_cookies(&response("HTTP/1.1 200 OK\r\nset-cookie: vscode-tkn=first\r\n\r\n"));
-        assert!(proxy.cookie_header().is_some());
-        proxy.set_upstream(40_000, "abab");
-        assert!(proxy.cookie_header().is_some(), "the same port is the same server");
-        proxy.set_upstream(40_001, "abab");
-        assert!(proxy.cookie_header().is_none());
+        proxy.remember_cookies(&response(
+            "HTTP/1.1 200 OK\r\nset-cookie: vscode-cli-secret-half=half; Max-Age=2592000\r\n\r\n",
+        ));
+        proxy.set_upstream(40_001, "cdcd");
+        assert_eq!(proxy.cookie_header().expect("cookies"), "vscode-cli-secret-half=half");
+    }
+
+    #[test]
+    fn only_the_cookies_asked_to_outlive_the_run_are_written_down() {
+        let directory = std::env::temp_dir().join(format!(
+            "devhub-editor-session-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        fs::create_dir_all(&directory).expect("directory");
+        let path = directory.join("web-session");
+
+        let proxy = EditorProxy::new();
+        proxy.restore(&path);
+        proxy.remember_cookies(&response(
+            "HTTP/1.1 200 OK\r\nset-cookie: vscode-cli-secret-half=half; Max-Age=2592000\r\n\
+             set-cookie: vscode-secret-key-path=/mint; SameSite=Strict\r\n\r\n",
+        ));
+        let written = fs::read_to_string(&path).expect("session file");
+        assert_eq!(written, "vscode-cli-secret-half=half\n", "a session cookie is not durable");
+
+        // A later run reads it back and speaks for the same stored secrets.
+        let relaunched = EditorProxy::new();
+        relaunched.restore(&path);
+        assert_eq!(relaunched.cookie_header().expect("cookies"), "vscode-cli-secret-half=half");
+
+        fs::remove_dir_all(&directory).expect("cleanup");
     }
 
     #[test]
