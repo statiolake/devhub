@@ -9,6 +9,10 @@ target/
 node_modules/
 **/node_modules/
 
+# The VS Code Server the Editor runs against: ~290MB, fetched and verified by
+# scripts/provision-editor-server.sh rather than committed.
+apps/devhub/src-tauri/resources/editor-server/
+
 # DevHub frontend/build caches and local credentials
 apps/devhub/dist/
 apps/devhub/.vite/
