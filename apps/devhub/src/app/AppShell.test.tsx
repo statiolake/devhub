@@ -458,9 +458,16 @@ describe("App Shell states and accessibility", () => {
     // The failure is the server refusing to come up, which is known only to
     // the call that asked it to — not to a projection assembled beforehand.
     const appClient = client(workspaceSnapshot);
-    appClient.ensureEditorRemote = vi
-      .fn()
-      .mockRejectedValue(new Error("127.0.0.1:55971 is already in use"));
+    // A rejected invoke arrives as the native error wire, never as an `Error`.
+    appClient.ensureEditorRemote = vi.fn().mockRejectedValue({
+      code: "editor_port_unavailable",
+      summary: "The editor could not start.",
+      detail: "127.0.0.1:55971 is already in use",
+      module: "editor",
+      timestampMs: 0,
+      runtimeVersion: "test",
+      actions: ["retry"],
+    });
     render(<AppShell client={appClient} />);
     expect(await screen.findByText(/already in use/i)).toBeInTheDocument();
     // The placeholder that always claimed the editor was on its way is gone.

@@ -8,6 +8,7 @@
  * editor state, terminals, and extension host alive across an Activity switch.
  */
 import { useEffect, useRef, useState } from "react";
+import type { AppError } from "../generated/app-shell";
 import type { EditorRemote } from "../app/client";
 
 type Phase =
@@ -28,7 +29,7 @@ export interface EditorSurfaceProps {
   readonly remote?: EditorRemote;
   /** The Workspace root this Surface is for; absent for the global Editor. */
   readonly folder?: string;
-  readonly failure?: string;
+  readonly failure?: AppError;
 }
 
 export function EditorSurface({ remote, folder, failure }: EditorSurfaceProps) {
@@ -83,7 +84,13 @@ export function EditorSurface({ remote, folder, failure }: EditorSurfaceProps) {
   }, [phase]);
 
   if (failure) {
-    return <EditorNotice role="alert" line={failure} />;
+    return (
+      <EditorNotice
+        role="alert"
+        line={failure.summary}
+        detail={failure.detail ?? undefined}
+      />
+    );
   }
   if (phase.kind === "failed") {
     return <EditorNotice role="alert" line={phase.detail} />;
@@ -99,10 +106,12 @@ export function EditorSurface({ remote, folder, failure }: EditorSurfaceProps) {
 
 function EditorNotice({
   line,
+  detail,
   role,
   busy,
 }: {
   readonly line: string;
+  readonly detail?: string;
   readonly role: "status" | "alert";
   readonly busy?: boolean;
 }) {
@@ -110,6 +119,8 @@ function EditorNotice({
     <div className="surface-state" role={role}>
       {busy ? <span className="surface-spinner" aria-hidden="true" /> : null}
       <p className="surface-line">{line}</p>
+      {/* The summary says what to do; the detail says what happened. */}
+      {detail ? <p className="failure-detail">{detail}</p> : null}
     </div>
   );
 }

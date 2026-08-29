@@ -21,7 +21,7 @@ export interface AppShellContextValue {
   readonly intentError: AppError | null;
   readonly dismissIntentError: () => void;
   readonly editorRemote: EditorRemote | null;
-  readonly editorFailure: string | null;
+  readonly editorFailure: AppError | null;
   readonly ensureEditorRemote: () => void;
   readonly recordPerformanceMarker: (marker: AppPerformanceMarker) => void;
   readonly dispatch: (intent: AppIntent) => Promise<AppOutcome | undefined>;

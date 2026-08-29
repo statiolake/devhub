@@ -44,6 +44,7 @@ export interface WorkbenchTarget {
 
 let started: Promise<void> | undefined;
 let host: HTMLElement | undefined;
+let openedFolder: string | undefined;
 
 /** The element the Workbench was raised into, once it has been. */
 export function workbenchHost(): HTMLElement | undefined {
@@ -57,7 +58,20 @@ export function workbenchHost(): HTMLElement | undefined {
  * part of coming up, and changing it later is a reload, not a call.
  */
 export function startWorkbench(target: WorkbenchTarget): Promise<void> {
-  if (started) return started;
+  if (started) {
+    // A Workbench holds one workspace, and which one is settled while it comes
+    // up. Asking a raised Workbench for a different folder is not a call it
+    // has; saying so is better than quietly showing the folder it does have.
+    if (openedFolder !== target.folder) {
+      return Promise.reject(
+        new Error(
+          "The editor is already open on another Workspace. Reopening it for a different one is not supported yet.",
+        ),
+      );
+    }
+    return started;
+  }
+  openedFolder = target.folder;
   const container = document.createElement("div");
   container.className = "workbench-host";
   host = container;
@@ -66,6 +80,7 @@ export function startWorkbench(target: WorkbenchTarget): Promise<void> {
     // and half-raised. Forget the container so the shell can say so rather
     // than hand out a blank one.
     host = undefined;
+    openedFolder = undefined;
     throw error;
   });
   return started;

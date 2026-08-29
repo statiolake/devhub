@@ -524,21 +524,30 @@ export function AppShellProvider({
   // The Editor's server is started on demand and outlives every Surface, so
   // the connection to it is asked for once and shared.
   const [editorRemote, setEditorRemote] = useState<EditorRemote | null>(null);
-  const [editorFailure, setEditorFailure] = useState<string | null>(null);
+  const [editorFailure, setEditorFailure] = useState<AppError | null>(null);
   const editorRequested = useRef(false);
   const ensureEditorRemote = useCallback(() => {
     if (editorRequested.current) return;
     editorRequested.current = true;
     const result = client.ensureEditorRemote?.();
     if (!result) return;
-    void result.then(setEditorRemote, (error: unknown) => {
-      // Allow another attempt: a provider that was missing can be provisioned
-      // without restarting the app.
-      editorRequested.current = false;
-      setEditorFailure(
-        error instanceof Error ? error.message : "The editor could not start.",
-      );
-    });
+    void result.then(
+      (remote) => {
+        // A previous attempt's failure is not news about this one.
+        setEditorFailure(null);
+        setEditorRemote(remote);
+      },
+      (error: unknown) => {
+        // Allow another attempt: a server that would not start can be fixed
+        // without restarting the app.
+        editorRequested.current = false;
+        // The native side says which of "no provider", "the port is taken",
+        // and "it refused to start" happened, and each has a different next
+        // step. A rejected invoke is a wire error, never an `Error`, so
+        // reaching for `.message` loses all of that.
+        setEditorFailure(parseTransportError(error));
+      },
+    );
   }, [client]);
 
   const dismissCloseConfirmation = useCallback(() => {
