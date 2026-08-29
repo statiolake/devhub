@@ -730,7 +730,7 @@ impl NavigationRouter for NativeNavigationRouter {
         }
         let app = self.app.clone();
         let window_identity = self.window_identity;
-        let url = url.to_string();
+        let url = url.as_str().to_owned();
         tauri::async_runtime::spawn_blocking(move || {
             let Some(state) = app.try_state::<NativeAppState>() else { return };
             if !state.is_current_native_identity(window_identity)

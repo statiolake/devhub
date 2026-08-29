@@ -117,14 +117,15 @@ impl fmt::Debug for ExternalUrl {
     }
 }
 
-impl fmt::Display for ExternalUrl {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("<redacted-external-url>")
-    }
-}
-
 impl ExternalUrl {
-    #[allow(dead_code)]
+    /// The destination itself, for the one caller that has to hand it to the
+    /// operating system.
+    ///
+    /// There is deliberately no `Display`. The redacted `Debug` above is the
+    /// only formatting this type has, so `to_string()` does not compile and
+    /// cannot quietly produce the placeholder where the URL was meant — which
+    /// is exactly what the external opener used to do, handing macOS a
+    /// relative path named after the redaction.
     pub(crate) fn as_str(&self) -> &str {
         &self.0
     }
@@ -313,6 +314,19 @@ mod tests {
             navigation_decision(&workspace, &folder_candidate),
             NavigationDecision::RouteWorkspace
         );
+    }
+
+    #[test]
+    fn an_external_destination_is_readable_only_where_it_is_used() {
+        // The redaction is for logs. The opener needs the real thing, and the
+        // absence of `Display` is what keeps the two from being confused.
+        let NavigationRequest::External { url } =
+            navigation_request("https://example.invalid/docs?token=super-secret").expect("request")
+        else {
+            panic!("an external destination");
+        };
+        assert_eq!(url.as_str(), "https://example.invalid/docs");
+        assert_eq!(format!("{url:?}"), "<redacted-external-url>");
     }
 
     #[test]
