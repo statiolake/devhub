@@ -23,14 +23,48 @@ host validates semantic SurfaceKey, lifecycle generation, window identity and
 responder ancestry before returning the original NSEvent for forwarding. No
 synthetic DOM event is created.
 
+Two further macOS hooks were added while building the Editor origin.
+
+A webview obscured by a child webview takes no cursor, and runs no hover, for
+the area the child covers. A tracking area does not know about the siblings
+drawn over it, so the App Shell's own webview kept pushing its cursor for the
+region the Editor covers; two views setting a cursor for the same point is a
+race, and it showed as the pointer flickering between them. The obscured view
+has nothing visible under that point, so it declines the event.
+
+The navigation policy is consulted only for top-level navigations. It decides
+where the user is going — same surface, another Workspace, or out to the
+browser — and a subframe is not that; it is content the page is composing. Read
+as departures, the Editor's own webviews were being opened in the desktop
+browser. What a document may frame is already its own `frame-src` policy's
+decision. A navigation with no target frame is a new window, not a subframe,
+and still reaches the policy.
+
 The only changed backend sites are:
 
 - `src/wkwebview/mod.rs`
+- `src/wkwebview/navigation.rs`
 - `src/webkitgtk/mod.rs`
 - `src/webview2/mod.rs`
 - `src/lib.rs`
 - `src/wkwebview/class/wry_web_view.rs`
 - `src/wkwebview/class/wry_web_view_parent.rs`
+
+## Rebasing onto a new release
+
+The changes are kept as a patch series against the pinned crates.io release,
+in `../wry-devhub.patch`, so that an upgrade is a rebase rather than a
+re-derivation from a tree that has drifted:
+
+```sh
+WRY_VERSION=0.56.0 scripts/revendor-wry.sh   # unpack pristine, apply the series
+scripts/revendor-wry.sh --record             # re-record after editing the fork
+```
+
+`--record` regenerates the series from the working tree; run it after any
+change to this directory, so the patch and the fork never disagree. The file
+list in that script is written out rather than derived, so a hook that stops
+applying fails loudly instead of disappearing.
 
 The macOS hooks are deliberately host-only: the first Command-Q is consumed,
 the second is returned as the same trusted NSEvent at most once, and ordinary

@@ -1,0 +1,430 @@
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -391,6 +391,8 @@
+ use wkwebview::*;
+ #[cfg(any(target_os = "macos", target_os = "ios"))]
+ pub use wkwebview::{PrintMargin, PrintOptions, WryWebView};
++#[cfg(target_os = "macos")]
++pub use wkwebview::{install_local_key_monitor, NativeKeyEvent, NativeKeyEventResult};
+ 
+ #[cfg(target_os = "windows")]
+ pub(crate) mod webview2;
+@@ -1991,6 +1993,25 @@
+ }
+ 
+ impl WebView {
++  /// Returns a process-local identity for the native WKWebView responder.
++  /// This is intentionally not exposed as a product or provider identifier.
++  #[cfg(target_os = "macos")]
++  pub fn native_focus_identity(&self) -> usize {
++    self.webview.native_focus_identity()
++  }
++
++  /// Returns the owning AppKit window identity for native focus routing.
++  #[cfg(target_os = "macos")]
++  pub fn native_window_identity(&self) -> usize {
++    self.webview.native_window_identity()
++  }
++
++  /// Returns the owning AppKit window number for native focus routing.
++  #[cfg(target_os = "macos")]
++  pub fn native_window_number(&self) -> isize {
++    self.webview.native_window_number()
++  }
++
+   /// Returns the id of this webview.
+   pub fn id(&self) -> WebViewId<'_> {
+     self.webview.id()
+--- a/src/webkitgtk/mod.rs
++++ b/src/webkitgtk/mod.rs
+@@ -307,6 +307,7 @@
+     Self::attach_handlers(&webview, web_context, &mut attributes);
+ 
+     // IPC handler
++    let has_ipc_handler = attributes.ipc_handler.is_some();
+     Self::attach_ipc_handler(webview.clone(), &mut attributes);
+ 
+     // Drag drop handler
+@@ -340,8 +341,11 @@
+       is_inspector_open,
+     };
+ 
+-    // Initialize message handler
+-    w.init("Object.defineProperty(window, 'ipc', { value: Object.freeze({ postMessage: function(x) { window.webkit.messageHandlers['ipc'].postMessage(x) } }) })", true)?;
++    // Keep WRY's historical IPC global only for callers that explicitly
++    // provide an IPC handler. Editor child views provide none by design.
++    if has_ipc_handler {
++      w.init("Object.defineProperty(window, 'ipc', { value: Object.freeze({ postMessage: function(x) { window.webkit.messageHandlers['ipc'].postMessage(x) } }) })", true)?;
++    }
+ 
+     // Initialize scripts
+     for init_script in attributes.initialization_scripts {
+@@ -628,6 +632,10 @@
+   }
+ 
+   fn attach_ipc_handler(webview: WebView, attributes: &mut WebViewAttributes) {
++    if attributes.ipc_handler.is_none() {
++      return;
++    }
++
+     // Message handler
+     let ipc_handler = attributes.ipc_handler.take();
+     let manager = webview
+--- a/src/webview2/mod.rs
++++ b/src/webview2/mod.rs
+@@ -879,6 +879,10 @@
+     attributes: &mut WebViewAttributes,
+     token: &mut EventRegistrationToken,
+   ) -> Result<()> {
++    if attributes.ipc_handler.is_none() {
++      return Ok(());
++    }
++
+     Self::add_script_to_execute_on_document_created(
+       webview,
+       String::from(
+--- a/src/wkwebview/mod.rs
++++ b/src/wkwebview/mod.rs
+@@ -38,7 +38,10 @@
+   AllocAnyThread, DeclaredClass, MainThreadOnly, Message,
+ };
+ #[cfg(target_os = "macos")]
+-use objc2_app_kit::{NSApplication, NSAutoresizingMaskOptions, NSTitlebarSeparatorStyle, NSView};
++use objc2_app_kit::{
++  NSApplication, NSAutoresizingMaskOptions, NSEvent, NSEventMask, NSEventModifierFlags,
++  NSResponder, NSTitlebarSeparatorStyle, NSView,
++};
+ #[cfg(target_os = "macos")]
+ use objc2_core_foundation::CGSize;
+ use objc2_core_foundation::{CGPoint, CGRect};
+@@ -75,8 +78,8 @@
+ use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+ 
+ use std::{
+-  cell::RefCell,
+-  collections::HashMap,
++    cell::RefCell,
++    collections::HashMap,
+   ffi::CString,
+   net::Ipv4Addr,
+   os::raw::c_char,
+@@ -108,6 +111,135 @@
+ 
+ static WEBVIEW_STATE: Lazy<RwLock<HashMap<String, WebViewState>>> = Lazy::new(Default::default);
+ 
++/// Scalar fields copied from one AppKit key-down. The callback never receives
++/// the borrowed `NSEvent`; WRY retains ownership of the original event and
++/// either returns it unchanged or consumes it after the host decision.
++#[cfg(target_os = "macos")]
++#[derive(Clone, Copy, Debug, Eq, PartialEq)]
++pub struct NativeKeyEvent {
++  key_code: u16,
++  command: bool,
++  shift: bool,
++  option: bool,
++  control: bool,
++  window_number: isize,
++  window_identity: usize,
++  first_responder_identity: usize,
++  responder_ancestry: [usize; 16],
++  responder_ancestry_len: u8,
++  is_repeat: bool,
++}
++
++#[cfg(target_os = "macos")]
++impl NativeKeyEvent {
++  pub const fn key_code(self) -> u16 { self.key_code }
++  pub const fn command(self) -> bool { self.command }
++  pub const fn shift(self) -> bool { self.shift }
++  pub const fn option(self) -> bool { self.option }
++  pub const fn control(self) -> bool { self.control }
++  pub const fn window_number(self) -> isize { self.window_number }
++  pub const fn window_identity(self) -> usize { self.window_identity }
++  pub const fn first_responder_identity(self) -> usize { self.first_responder_identity }
++  pub const fn responder_belongs_to(self, root: usize) -> bool {
++    if root == 0 { return false; }
++    let mut index = 0;
++    while index < self.responder_ancestry_len as usize {
++      if self.responder_ancestry[index] == root { return true; }
++      index += 1;
++    }
++    false
++  }
++  pub const fn is_repeat(self) -> bool { self.is_repeat }
++}
++
++#[cfg(target_os = "macos")]
++fn responder_ancestry(responder: &NSResponder) -> ([usize; 16], u8) {
++  let mut ancestry = [0; 16];
++  let mut length = 0u8;
++  let mut owned: Option<Retained<NSResponder>> = None;
++  loop {
++    let current = owned.as_deref().unwrap_or(responder);
++    if length as usize >= ancestry.len() { break; }
++    ancestry[length as usize] = current as *const NSResponder as usize;
++    length += 1;
++    let next = if let Some(view) = current.downcast_ref::<NSView>() {
++      // `superview` is a non-retaining AppKit relationship; objc2 returns a
++      // retained value for the duration of this classification.
++      unsafe { view.superview().map(|view| view.into_super()) }
++    } else {
++      unsafe { current.nextResponder() }
++    };
++    let Some(next) = next else { break };
++    owned = Some(next);
++  }
++  (ancestry, length)
++}
++
++/// Result of the host router. `Forward` and `Pass` deliberately have the same
++/// AppKit return behavior: they return the original event pointer. Keeping a
++/// separate variant makes the product contract explicit at the adapter seam.
++#[cfg(target_os = "macos")]
++#[derive(Clone, Copy, Debug, Eq, PartialEq)]
++pub enum NativeKeyEventResult {
++  Consume,
++  Forward,
++  Pass,
++}
++
++/// Installs one process-local AppKit key monitor. The monitor is intentionally
++/// a small WRY adapter so the application crate can remain `forbid(unsafe_code)`.
++/// Returning the original pointer preserves the trusted native event and its
++/// responder/IME path; returning null consumes the event before menu handling.
++#[cfg(target_os = "macos")]
++pub fn install_local_key_monitor<F>(handler: F) -> bool
++where
++  F: Fn(NativeKeyEvent) -> NativeKeyEventResult + Send + Sync + 'static,
++{
++  let handler = Arc::new(handler);
++  let block = block2::RcBlock::new(move |event: NonNull<NSEvent>| -> *mut NSEvent {
++    let event_ref = unsafe { event.as_ref() };
++    let flags = event_ref.modifierFlags();
++    let (window_identity, first_responder_identity, responder_ancestry, responder_ancestry_len) = MainThreadMarker::new()
++      .and_then(|mtm| event_ref.window(mtm))
++      .map_or((0, 0, [0; 16], 0), |window| {
++        let window_identity = window.as_ref() as *const NSWindow as usize;
++        let Some(responder) = window.firstResponder() else {
++          return (window_identity, 0, [0; 16], 0);
++        };
++        let first_responder_identity = responder.as_ref() as *const NSResponder as usize;
++        let (ancestry, length) = responder_ancestry(responder.as_ref());
++        (window_identity, first_responder_identity, ancestry, length)
++      });
++    let key = NativeKeyEvent {
++      key_code: event_ref.keyCode(),
++      command: flags.contains(NSEventModifierFlags::Command),
++      shift: flags.contains(NSEventModifierFlags::Shift),
++      option: flags.contains(NSEventModifierFlags::Option),
++      control: flags.contains(NSEventModifierFlags::Control),
++      window_number: event_ref.windowNumber(),
++      window_identity,
++      first_responder_identity,
++      responder_ancestry,
++      responder_ancestry_len,
++      is_repeat: event_ref.isARepeat(),
++    };
++    match handler(key) {
++      NativeKeyEventResult::Consume => std::ptr::null_mut(),
++      NativeKeyEventResult::Forward | NativeKeyEventResult::Pass => event.as_ptr(),
++    }
++  });
++  let monitor = unsafe {
++    NSEvent::addLocalMonitorForEventsMatchingMask_handler(NSEventMask::KeyDown, &block)
++  };
++  let installed = monitor.is_some();
++  if let Some(monitor) = monitor {
++    // AppKit owns and invokes the monitor for process lifetime. The product
++    // lifecycle ends with this process, so no monitor can outlive DevHub.
++    std::mem::forget(monitor);
++  }
++  installed
++}
++
+ struct WebViewState {
+   pub protocol_ptrs: Vec<Rc<dyn Fn(crate::WebViewId, Request<Vec<u8>>, RequestAsyncResponder)>>,
+ }
+@@ -158,7 +290,24 @@
+   parent_view: Option<Retained<WryWebViewParent>>,
+ }
+ 
++#[cfg(target_os = "macos")]
+ impl InnerWebView {
++  /// Stable only for the lifetime of this native WKWebView instance. DevHub
++  /// uses it as a focus-routing token, never as a product or provider ID.
++  pub fn native_focus_identity(&self) -> usize {
++    self.webview.as_ref() as *const WryWebView as usize
++  }
++
++  pub fn native_window_identity(&self) -> usize {
++    self.webview.window().map_or(0, |window| window.as_ref() as *const NSWindow as usize)
++  }
++
++  pub fn native_window_number(&self) -> isize {
++    self.webview.window().map_or(0, |window| window.windowNumber() as isize)
++  }
++}
++
++impl InnerWebView {
+   pub fn new(
+     window: &impl HasWindowHandle,
+     attributes: WebViewAttributes,
+@@ -550,6 +699,7 @@
+       }
+ 
+       // Message handler
++      let has_ipc_handler = attributes.ipc_handler.is_some();
+       let ipc_handler_delegate = if let Some(ipc_handler) = attributes.ipc_handler {
+         let delegate = WryWebViewDelegate::new(manager.clone(), ipc_handler, mtm);
+         Some(delegate)
+@@ -633,13 +783,16 @@
+         parent_view: None,
+       };
+ 
+-      // Initialize scripts
+-      w.init(
++      // Keep WRY's historical IPC global only for callers that explicitly
++      // provide an IPC handler. Editor child views provide none by design.
++      if has_ipc_handler {
++        w.init(
+ r#"Object.defineProperty(window, 'ipc', {
+   value: Object.freeze({postMessage: function(s) {window.webkit.messageHandlers.ipc.postMessage(s);}})
+ });"#,
+-      true
+-      );
++        true,
++        );
++      }
+       for init_script in attributes.initialization_scripts {
+         w.init(&init_script.script, init_script.for_main_frame_only);
+       }
+--- a/src/wkwebview/navigation.rs
++++ b/src/wkwebview/navigation.rs
+@@ -72,6 +72,14 @@
+       } else {
+         (*handler).call((WKNavigationActionPolicy::Cancel,));
+       }
++    } else if action.targetFrame().is_some_and(|frame| !frame.isMainFrame()) {
++      // A subframe is content the page is composing, not somewhere the user
++      // is going. Handing it to a policy written for top-level navigation
++      // classifies every cross-origin iframe as a departure — which, for a
++      // host that opens departures in the browser, sends the page's own
++      // embedded content to the desktop. What a document may frame is already
++      // decided by its own `frame-src` policy.
++      (*handler).call((WKNavigationActionPolicy::Allow,));
+     } else {
+       let function = &this.ivars().navigation_policy_function;
+       match function(url.to_string()) {
+--- a/src/wkwebview/class/wry_web_view.rs
++++ b/src/wkwebview/class/wry_web_view.rs
+@@ -8,7 +8,7 @@
+ use objc2::runtime::ProtocolObject;
+ use objc2::{define_class, rc::Retained, runtime::Bool, DeclaredClass};
+ #[cfg(target_os = "macos")]
+-use objc2_app_kit::{NSDraggingDestination, NSEvent};
++use objc2_app_kit::{NSDraggingDestination, NSEvent, NSView};
+ use objc2_foundation::{NSObjectProtocol, NSUUID};
+ 
+ #[cfg(target_os = "ios")]
+@@ -43,16 +43,13 @@
+   impl WryWebView {
+     #[unsafe(method(performKeyEquivalent:))]
+     fn perform_key_equivalent(&self, event: &NSEvent) -> Bool {
+-      // This is a temporary workaround for https://github.com/tauri-apps/tauri/issues/9426
+-      // FIXME: When the webview is a child webview, performKeyEquivalent always return YES
+-      // and stop propagating the event to the window, hence the menu shortcut won't be
+-      // triggered. However, overriding this method also means the cmd+key event won't be
+-      // handled in webview, which means the key cannot be listened by JavaScript.
+-      if self.ivars().is_child {
+-        Bool::NO
+-      } else {
+-        unsafe { objc2::msg_send![super(self), performKeyEquivalent: event] }
+-      }
++      // DevHub's host monitor consumes only its first exact Command-Q. Every
++      // event reaching this responder must retain WKWebView's native handling,
++      // including ordinary Command shortcuts, text editing, and the one
++      // forwarded native Command-Q. Returning NO for every child event (the
++      // upstream menu workaround) would silently drop those shortcuts.
++      let _ = self.ivars().is_child;
++      unsafe { objc2::msg_send![super(self), performKeyEquivalent: event] }
+     }
+ 
+     #[cfg(target_os = "macos")]
+@@ -118,9 +115,59 @@
+     fn other_mouse_up(&self, event: &NSEvent) {
+       synthetic_mouse_events::other_mouse_up(self, event)
+     }
++
++    // A tracking area does not know about the siblings drawn over it, so a
++    // webview with a child webview on top still receives mouse-moved for the
++    // area the child covers, and still pushes its own cursor for it. Two
++    // views setting a cursor for the same point is a race, and it shows up as
++    // the pointer flickering between the two. The obscured view has nothing
++    // visible under that point, so it takes no cursor and runs no hover.
++    #[unsafe(method(mouseMoved:))]
++    fn mouse_moved(&self, event: &NSEvent) {
++      if is_covered_by_sibling(self, event) {
++        return;
++      }
++      unsafe {
++        let _: () = objc2::msg_send![super(self), mouseMoved: event];
++      }
++    }
+   }
+ );
+ 
++/// Whether the pointer is over a sibling stacked above this view.
++///
++/// Subviews are ordered back to front, so only the ones after this view can
++/// be drawn over it.
++#[cfg(target_os = "macos")]
++fn is_covered_by_sibling(view: &WryWebView, event: &NSEvent) -> bool {
++  unsafe {
++    let Some(parent) = view.superview() else {
++      return false;
++    };
++    let point = parent.convertPoint_fromView(event.locationInWindow(), None);
++    let subviews = parent.subviews();
++    let mut above = false;
++    for subview in subviews.iter() {
++      if &*subview as *const NSView == (view as *const WryWebView).cast::<NSView>() {
++        above = true;
++        continue;
++      }
++      if above && !subview.isHidden() && frame_contains(subview.frame(), point) {
++        return true;
++      }
++    }
++    false
++  }
++}
++
++#[cfg(target_os = "macos")]
++fn frame_contains(frame: objc2_foundation::NSRect, point: objc2_foundation::NSPoint) -> bool {
++  point.x >= frame.origin.x
++    && point.y >= frame.origin.y
++    && point.x < frame.origin.x + frame.size.width
++    && point.y < frame.origin.y + frame.size.height
++}
++
+ // Custom Protocol Task Checker
+ impl WryWebView {
+   pub(crate) fn add_custom_task_key(&self, task_id: usize) -> Retained<NSUUID> {
+--- a/src/wkwebview/class/wry_web_view_parent.rs
++++ b/src/wkwebview/class/wry_web_view_parent.rs
+@@ -31,8 +31,13 @@
+       let mtm = MainThreadMarker::new().unwrap();
+       let app = NSApplication::sharedApplication(mtm);
+       unsafe {
+-        if let Some(menu) = app.mainMenu() {
+-          menu.performKeyEquivalent(event);
++        let handled = app.mainMenu().is_some_and(|menu| menu.performKeyEquivalent(event));
++        if !handled {
++          // Command-W and ordinary unclaimed Command shortcuts belong to the
++          // active WKWebView. Preserve the same native event/responder chain;
++          // DevHub's AppKit monitor has already consumed only its reserved
++          // first Command-Q.
++          let _: () = objc2::msg_send![super(self), keyDown: event];
+         }
+       }
+     }
