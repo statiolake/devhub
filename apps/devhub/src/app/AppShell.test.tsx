@@ -482,7 +482,9 @@ describe("App Shell states and accessibility", () => {
       .fn()
       .mockReturnValue(new Promise(() => {}));
     render(<AppShell client={appClient} />);
-    expect(await screen.findByText("Starting the editor…")).toBeInTheDocument();
+    expect(
+      await screen.findByText("Starting the editor server…"),
+    ).toBeInTheDocument();
   });
 
   it.each(Object.keys(disabledReasonCopy) as DisabledReasonWire[])(

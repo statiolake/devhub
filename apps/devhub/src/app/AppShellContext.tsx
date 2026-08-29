@@ -82,6 +82,16 @@ export function AppShellProvider({
     ((event: WorkspacePickerEvent) => void) | null
   >(null);
 
+  /**
+   * Route a failure to the one place the shell shows them.
+   *
+   * Callers that cannot recover do not catch to explain themselves; they hand
+   * the failure here, and it appears where every other failure appears.
+   */
+  const reportFailure = useCallback((error: unknown) => {
+    setIntentError(toAppError(error));
+  }, []);
+
   const applySnapshot = useCallback((snapshot: AppSnapshot) => {
     if (snapshot.revision < lastRevision.current) return;
     const revisionAdvanced = snapshot.revision > lastRevision.current;
@@ -273,12 +283,14 @@ export function AppShellProvider({
           }
         }
         if (client.getAppearance) {
+          // Appearance is a non-blocking projection — the shell is usable with
+          // its native defaults — but "usable with defaults" is a different
+          // thing from "the settings you chose are being ignored", and only
+          // one of those is worth not saying.
           try {
             applyAppearanceIfActive(await client.getAppearance());
-          } catch {
-            // Appearance is a non-blocking projection. The Workbench remains
-            // usable with its compact native default if the optional query is
-            // unavailable during startup.
+          } catch (error: unknown) {
+            reportFailure(error);
           }
         }
         if (client.getAgentProfiles) {
@@ -317,7 +329,7 @@ export function AppShellProvider({
       unsubscribePicker?.();
       unsubscribeNativeError?.();
     };
-  }, [applySnapshot, attempt, client]);
+  }, [applySnapshot, attempt, client, reportFailure]);
 
   const dispatch = useCallback(
     async (intent: AppIntent): Promise<AppOutcome | undefined> => {
@@ -391,10 +403,12 @@ export function AppShellProvider({
       let operationId: string;
       try {
         operationId = await client.startWorkspacePicker(query);
-      } catch (error) {
+      } catch (error: unknown) {
+        // Recovers in place: the picker stops claiming to be searching. The
+        // failure itself is not explained here.
         if (requestGeneration === pickerStartGeneration.current) {
           setPickerBusy(false);
-          setIntentError(toAppError(error));
+          reportFailure(error);
         }
         return;
       }
@@ -409,7 +423,7 @@ export function AppShellProvider({
         }
       }
     },
-    [client],
+    [client, reportFailure],
   );
 
   const cancelWorkspacePicker = useCallback(async () => {
@@ -421,10 +435,10 @@ export function AppShellProvider({
     setPickerBusy(false);
     try {
       await client.cancelWorkspacePicker?.();
-    } catch (error) {
-      setIntentError(toAppError(error));
+    } catch (error: unknown) {
+      reportFailure(error);
     }
-  }, [client]);
+  }, [client, reportFailure]);
 
   const selectWorkspacePicker = useCallback(
     async (path: string) => {
@@ -486,16 +500,6 @@ export function AppShellProvider({
   // the problem is still there.
   const dismissIntentError = useCallback(() => {
     setIntentError(null);
-  }, []);
-
-  /**
-   * Route a failure to the one place the shell shows them.
-   *
-   * Callers that cannot recover do not catch to explain themselves; they hand
-   * the failure here, and it appears where every other failure appears.
-   */
-  const reportFailure = useCallback((error: unknown) => {
-    setIntentError(toAppError(error));
   }, []);
 
   // The Editor's server is started on demand and outlives every Surface, so

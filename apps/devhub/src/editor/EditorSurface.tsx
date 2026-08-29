@@ -14,10 +14,23 @@ import { useEffect, useRef, useState } from "react";
 import type { EditorRemote } from "../app/client";
 import { useAppShell } from "../app/useAppShell";
 
+/**
+ * Two different waits were sharing one sentence.
+ *
+ * Waiting for a server and waiting for the Workbench to come up on it fail for
+ * unrelated reasons and are fixed in unrelated places, so a Surface that says
+ * only "starting" tells nobody which of them has stopped.
+ */
 type Phase =
-  | { readonly kind: "starting" }
+  | { readonly kind: "awaiting-server" }
+  | { readonly kind: "opening" }
   | { readonly kind: "ready"; readonly host: HTMLElement }
   | { readonly kind: "stopped" };
+
+const WAITING_LINE: Record<"awaiting-server" | "opening", string> = {
+  "awaiting-server": "Starting the editor server…",
+  opening: "Opening the workbench…",
+};
 
 /**
  * The Workbench is most of a copy of VS Code, and the shell is useful without
@@ -37,12 +50,15 @@ export interface EditorSurfaceProps {
 export function EditorSurface({ remote, folder }: EditorSurfaceProps) {
   const { reportFailure } = useAppShell();
   const slot = useRef<HTMLDivElement | null>(null);
-  const [phase, setPhase] = useState<Phase>({ kind: "starting" });
+  const [phase, setPhase] = useState<Phase>({ kind: "awaiting-server" });
 
   useEffect(() => {
-    if (!remote) return undefined;
+    if (!remote) {
+      setPhase({ kind: "awaiting-server" });
+      return undefined;
+    }
     let cancelled = false;
-    setPhase({ kind: "starting" });
+    setPhase({ kind: "opening" });
     loadWorkbench()
       .then(async (workbench) => {
         await workbench.startWorkbench({ remote, folder });
@@ -82,10 +98,10 @@ export function EditorSurface({ remote, folder }: EditorSurfaceProps) {
 
   return (
     <div className="editor-surface" ref={slot}>
-      {phase.kind === "starting" ? (
+      {phase.kind === "awaiting-server" || phase.kind === "opening" ? (
         <div className="surface-state" role="status">
           <span className="surface-spinner" aria-hidden="true" />
-          <p className="surface-line">Starting the editor…</p>
+          <p className="surface-line">{WAITING_LINE[phase.kind]}</p>
         </div>
       ) : null}
     </div>

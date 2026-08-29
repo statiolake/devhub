@@ -35,14 +35,12 @@ describe("EditorSurface", () => {
     workbenchHost.mockReturnValue(host);
 
     render(<EditorSurface remote={remote} folder="/workspace" />);
-    expect(screen.getByText("Starting the editor…")).toBeInTheDocument();
+    expect(screen.getByText("Opening the workbench…")).toBeInTheDocument();
 
-    await waitFor(() =>
-      expect(
-        screen.queryByText("Starting the editor…"),
-      ).not.toBeInTheDocument(),
-    );
-    expect(host.parentElement).not.toBeNull();
+    await waitFor(() => expect(host.parentElement).not.toBeNull());
+    expect(
+      screen.queryByText("Opening the workbench…"),
+    ).not.toBeInTheDocument();
   });
 
   it("hands a start that failed to the shell rather than explaining it", async () => {
@@ -55,8 +53,11 @@ describe("EditorSurface", () => {
     expect(screen.queryByText(/failed|error/i)).not.toBeInTheDocument();
   });
 
-  it("waits without claiming to be starting when there is no server yet", () => {
+  it("distinguishes waiting for a server from waiting for the Workbench", () => {
+    // The two fail for unrelated reasons. A Surface that says only "starting"
+    // cannot tell anyone which one has stopped.
     render(<EditorSurface />);
     expect(startWorkbench).not.toHaveBeenCalled();
+    expect(screen.getByText("Starting the editor server…")).toBeInTheDocument();
   });
 });
