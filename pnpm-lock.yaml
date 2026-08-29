@@ -16,6 +16,9 @@ importers:
       '@codingame/monaco-vscode-configuration-service-override':
         specifier: 33.0.9
         version: 33.0.9
+      '@codingame/monaco-vscode-dialogs-service-override':
+        specifier: 33.0.9
+        version: 33.0.9
       '@codingame/monaco-vscode-environment-service-override':
         specifier: 33.0.9
         version: 33.0.9
@@ -274,6 +277,9 @@ packages:
 
   '@codingame/monaco-vscode-configuration-service-override@33.0.9':
     resolution: {integrity: sha512-4VaAiq/GuITiLC5EYBO6XDW9axlA5ujOZFQo4R+lvIO72a9uebExkENJ4Do9tVr74eWSCYKz19CwdDn3vTbNWw==}
+
+  '@codingame/monaco-vscode-dialogs-service-override@33.0.9':
+    resolution: {integrity: sha512-SSCvQIucaugzupbijypTo4tbf2h2BQhndXgTUR/I9AW6NmcoYWttVD0GOsLKBlhA9xMvZolFhNZTH8Sw+vJnrQ==}
 
   '@codingame/monaco-vscode-environment-service-override@33.0.9':
     resolution: {integrity: sha512-ol20jRZxAJ1dAEAC3VejLBo/7T3IgQ+Kd6eiCA4Axt7nt94yivphwBk9Akg/tLovFpL1uOwVgogvGpg0hYcYPA==}
@@ -2103,6 +2109,10 @@ snapshots:
     dependencies:
       '@codingame/monaco-vscode-api': 33.0.9
       '@codingame/monaco-vscode-files-service-override': 33.0.9
+
+  '@codingame/monaco-vscode-dialogs-service-override@33.0.9':
+    dependencies:
+      '@codingame/monaco-vscode-api': 33.0.9
 
   '@codingame/monaco-vscode-environment-service-override@33.0.9':
     dependencies:

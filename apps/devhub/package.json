@@ -18,6 +18,7 @@
   "dependencies": {
     "@codingame/monaco-vscode-api": "33.0.9",
     "@codingame/monaco-vscode-configuration-service-override": "33.0.9",
+    "@codingame/monaco-vscode-dialogs-service-override": "33.0.9",
     "@codingame/monaco-vscode-environment-service-override": "33.0.9",
     "@codingame/monaco-vscode-explorer-service-override": "33.0.9",
     "@codingame/monaco-vscode-extensions-service-override": "33.0.9",

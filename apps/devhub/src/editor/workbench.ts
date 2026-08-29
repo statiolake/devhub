@@ -15,6 +15,7 @@
  */
 import { initialize as initializeVscodeServices } from "@codingame/monaco-vscode-api";
 import getConfigurationServiceOverride from "@codingame/monaco-vscode-configuration-service-override";
+import getDialogsServiceOverride from "@codingame/monaco-vscode-dialogs-service-override";
 import getEnvironmentServiceOverride from "@codingame/monaco-vscode-environment-service-override";
 import getExplorerServiceOverride from "@codingame/monaco-vscode-explorer-service-override";
 import getExtensionServiceOverride from "@codingame/monaco-vscode-extensions-service-override";
@@ -46,13 +47,12 @@ export interface WorkbenchTarget {
 /**
  * How long the Workbench is given to come up.
  *
- * Generous, because it is starting an editor: extensions are scanned, a remote
- * connection is made, a theme is resolved. Bounded, because a start that never
- * finishes is indistinguishable from one still going, and the shell would show
- * a spinner nothing will ever replace. Whatever went wrong is worth saying
- * even when the only honest thing to say is that it did not finish.
+ * A start that never finishes is indistinguishable from one still going, and
+ * the shell would show a spinner nothing will ever replace. The server is
+ * already running by the time this begins, so ten seconds is the difference
+ * between slow and stuck, not between working and not.
  */
-const START_BUDGET_MS = 60_000;
+const START_BUDGET_MS = 10_000;
 
 let started: Promise<void> | undefined;
 let host: HTMLElement | undefined;
@@ -128,6 +128,11 @@ async function raise(
       ...getLifecycleServiceOverride(),
       ...getStorageServiceOverride(),
       ...getConfigurationServiceOverride(),
+      // Without this the Workbench falls back to `window.confirm`, which
+      // blocks the event loop of the whole App Shell — including the timers
+      // that would otherwise notice something had stopped making progress.
+      // A dialog the editor draws for itself blocks only the editor.
+      ...getDialogsServiceOverride(),
       ...getFilesServiceOverride(),
       // The one that matters: everything below is drawn here, and everything
       // it operates on lives on the other side of this.
@@ -147,11 +152,15 @@ async function raise(
     {
       remoteAuthority: authority,
       connectionToken,
-      // DevHub decides what to open; the Workbench is never asked to trust a
-      // folder the user did not choose in the Sidebar.
-      enableWorkspaceTrust: false,
+      // Workspace trust stays on. Choosing to open a folder in the Sidebar is
+      // not the same as agreeing to run what is inside it, which is the whole
+      // question trust asks. What had to be fixed was the prompt blocking the
+      // App Shell, not the prompt existing.
+      enableWorkspaceTrust: true,
       workspaceProvider: {
-        trusted: true,
+        // Whether the workspace is trusted is the user's answer to give, not
+        // an assertion this side gets to make on their behalf.
+        trusted: false,
         // Opening a second window is the App Shell's decision, not the
         // Workbench's, and there is no second window to open into.
         async open() {
