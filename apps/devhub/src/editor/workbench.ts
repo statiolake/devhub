@@ -73,6 +73,7 @@ import getExtensionServiceOverride from "@codingame/monaco-vscode-extensions-ser
 import getFilesServiceOverride from "@codingame/monaco-vscode-files-service-override";
 import getLanguagesServiceOverride from "@codingame/monaco-vscode-languages-service-override";
 import getLifecycleServiceOverride from "@codingame/monaco-vscode-lifecycle-service-override";
+import getLocalizationServiceOverride from "@codingame/monaco-vscode-localization-service-override";
 import getLogServiceOverride from "@codingame/monaco-vscode-log-service-override";
 import getModelServiceOverride from "@codingame/monaco-vscode-model-service-override";
 import getQuickAccessServiceOverride from "@codingame/monaco-vscode-quickaccess-service-override";
@@ -88,6 +89,7 @@ import "@codingame/monaco-vscode-theme-defaults-default-extension";
 import * as monaco from "monaco-editor";
 import type { EditorRemote } from "../app/client";
 import { UserFacingFailure } from "../app/failure";
+import { setDisplayLanguage } from "./frameProtocol";
 import { trace } from "./trace";
 
 /** The folder a surface opens, addressed on the server rather than locally. */
@@ -122,6 +124,19 @@ function withBudget(work: Promise<void>): Promise<void> {
   });
 }
 
+/**
+ * Apply a display language to the frame the user is looking at.
+ *
+ * A language pack is chosen while the Workbench comes up, so changing it is a
+ * reload — which is what VS Code does for the same reason.
+ */
+function reloadWithLocale(locale: string | null): void {
+  const url = new URL(window.location.href);
+  if (locale == null) url.searchParams.delete("locale");
+  else url.searchParams.set("locale", locale);
+  window.location.replace(url.toString());
+}
+
 /** Raise the Workbench into this document. Once, and only once. */
 export function raiseWorkbench(
   container: HTMLElement,
@@ -140,6 +155,40 @@ async function raise(
     {
       ...getWorkbenchServiceOverride(),
       ...getLogServiceOverride(),
+      // The display language decides which language pack loads, so it is
+      // settled before the Workbench boots — chosen here, remembered by the
+      // shell, and carried in the next frame's address.
+      ...getLocalizationServiceOverride({
+        // What the display-language picker offers, which is exactly the set
+        // of language packs bundled with the app. Offering one that is not
+        // bundled would leave the reader with a Workbench that changed
+        // nothing and said nothing about why.
+        availableLanguages: [
+          { locale: "en", languageName: "English" },
+          { locale: "cs", languageName: "Čeština" },
+          { locale: "de", languageName: "Deutsch" },
+          { locale: "es", languageName: "Español" },
+          { locale: "fr", languageName: "Français" },
+          { locale: "it", languageName: "Italiano" },
+          { locale: "ja", languageName: "日本語" },
+          { locale: "ko", languageName: "한국어" },
+          { locale: "pl", languageName: "Polski" },
+          { locale: "pt-br", languageName: "Português (Brasil)" },
+          { locale: "ru", languageName: "Русский" },
+          { locale: "tr", languageName: "Türkçe" },
+          { locale: "zh-hans", languageName: "简体中文" },
+          { locale: "zh-hant", languageName: "繁體中文" },
+          { locale: "qps-ploc", languageName: "Pseudo Language" },
+        ],
+        async setLocale(id: string) {
+          setDisplayLanguage(id);
+          reloadWithLocale(id);
+        },
+        async clearLocale() {
+          setDisplayLanguage(null);
+          reloadWithLocale(null);
+        },
+      }),
       ...getEnvironmentServiceOverride(),
       ...getLifecycleServiceOverride(),
       ...getStorageServiceOverride(),

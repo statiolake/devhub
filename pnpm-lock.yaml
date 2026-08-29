@@ -79,6 +79,48 @@ importers:
       '@codingame/monaco-vscode-language-detection-worker-service-override':
         specifier: 33.0.9
         version: 33.0.9
+      '@codingame/monaco-vscode-language-pack-cs':
+        specifier: 33.0.9
+        version: 33.0.9
+      '@codingame/monaco-vscode-language-pack-de':
+        specifier: 33.0.9
+        version: 33.0.9
+      '@codingame/monaco-vscode-language-pack-es':
+        specifier: 33.0.9
+        version: 33.0.9
+      '@codingame/monaco-vscode-language-pack-fr':
+        specifier: 33.0.9
+        version: 33.0.9
+      '@codingame/monaco-vscode-language-pack-it':
+        specifier: 33.0.9
+        version: 33.0.9
+      '@codingame/monaco-vscode-language-pack-ja':
+        specifier: 33.0.9
+        version: 33.0.9
+      '@codingame/monaco-vscode-language-pack-ko':
+        specifier: 33.0.9
+        version: 33.0.9
+      '@codingame/monaco-vscode-language-pack-pl':
+        specifier: 33.0.9
+        version: 33.0.9
+      '@codingame/monaco-vscode-language-pack-pt-br':
+        specifier: 33.0.9
+        version: 33.0.9
+      '@codingame/monaco-vscode-language-pack-qps-ploc':
+        specifier: 33.0.9
+        version: 33.0.9
+      '@codingame/monaco-vscode-language-pack-ru':
+        specifier: 33.0.9
+        version: 33.0.9
+      '@codingame/monaco-vscode-language-pack-tr':
+        specifier: 33.0.9
+        version: 33.0.9
+      '@codingame/monaco-vscode-language-pack-zh-hans':
+        specifier: 33.0.9
+        version: 33.0.9
+      '@codingame/monaco-vscode-language-pack-zh-hant':
+        specifier: 33.0.9
+        version: 33.0.9
       '@codingame/monaco-vscode-languages-service-override':
         specifier: 33.0.9
         version: 33.0.9
@@ -496,6 +538,48 @@ packages:
 
   '@codingame/monaco-vscode-language-detection-worker-service-override@33.0.9':
     resolution: {integrity: sha512-mjPa/akbvme+5S+tTnUKr44BdhS2E/Wn9PnTLRAdC+FqvgCj05wVzqKnOVPmI1jIRRJSu7opy7MN5iCO4W3Sdg==}
+
+  '@codingame/monaco-vscode-language-pack-cs@33.0.9':
+    resolution: {integrity: sha512-BYU4h6mlZvGSzFfgac/2Y2ooDg1BcMroebpRHpHx8yy40WYOwVaRdgNsf2JhiCUot/1FgIFywjzW9zDogdnrsg==}
+
+  '@codingame/monaco-vscode-language-pack-de@33.0.9':
+    resolution: {integrity: sha512-t2jQ5rsDfvo9+VLvAsdJyaxaqmkF16KPYpAfPwwwlNVu+iDNgWLBu4LP8+MS2QNU3I8kn4L3b674nsnlPU4lNA==}
+
+  '@codingame/monaco-vscode-language-pack-es@33.0.9':
+    resolution: {integrity: sha512-3a0TI75dlFPUHRAkwaGIuBLEFaaq2BQPEdk5hmThWVnsiTsao/5EsUlT+Kl7HoHUJ8Sww5lhYVUygZigLN9PqA==}
+
+  '@codingame/monaco-vscode-language-pack-fr@33.0.9':
+    resolution: {integrity: sha512-Cwr1XD+VobLP8AW5Y3DpoNEZm6cd61saIuVCuLi9dtk5opyz+BJ6LqHh7QKZxjJ3hIkCmIjztE0KPPLuYtEHig==}
+
+  '@codingame/monaco-vscode-language-pack-it@33.0.9':
+    resolution: {integrity: sha512-vt7337/MbhO0iFv8W+HlpHDhTMzZrKPxh8l/WVQfkrJ8cytgdZwYGm5/izoVvDBF5Zqqf+Vr661S+kN/l8l6PQ==}
+
+  '@codingame/monaco-vscode-language-pack-ja@33.0.9':
+    resolution: {integrity: sha512-792rEriQoLF2sRXd378xyyU6UWdTBOaTt+2xHN/KLzYbbG0y5uJgP0Zu4HpbwUBxF9Vslrw8qGHi08uV8edEew==}
+
+  '@codingame/monaco-vscode-language-pack-ko@33.0.9':
+    resolution: {integrity: sha512-y4irUmdRo9xQzxNfw/eShmAgw/peYRQs1aL9Dlan3H9dBgDEUiTlzYNFJstYBJpXju312o8iLgyIFWWkeABhvQ==}
+
+  '@codingame/monaco-vscode-language-pack-pl@33.0.9':
+    resolution: {integrity: sha512-mm9Ril/QleJewK/zNrfk0X7VFRBMp02O5AMohfRfTUJPxRfBwz+UzOdLy38H7hqxUZh5DTrE3im3UkoEzRE5iA==}
+
+  '@codingame/monaco-vscode-language-pack-pt-br@33.0.9':
+    resolution: {integrity: sha512-aoqFnjVsFw48CmKjGx2Cuxxs4KQZbq+fRfsOt/H4Nr/MhXQaN9NFX2PK8v8JJXhcQymUEFoXQjf7IRqJ0ROibA==}
+
+  '@codingame/monaco-vscode-language-pack-qps-ploc@33.0.9':
+    resolution: {integrity: sha512-63GhQxVRi0hnMvQAArs/LeRVzZHqIPzufOs04tKVq7B6gXShaiCelIDl9YcX8IwkHWIwKHvNV01vQIoSPK0/Cw==}
+
+  '@codingame/monaco-vscode-language-pack-ru@33.0.9':
+    resolution: {integrity: sha512-8ErP51Cjkde57jNnS0gR08CKIMP0sVMCjW2LY71K9KahoLxYAZy6Kf437hLsTlBEFKFpM6eP6gVDuUXl4NBnUQ==}
+
+  '@codingame/monaco-vscode-language-pack-tr@33.0.9':
+    resolution: {integrity: sha512-BSZ+0EDG0hD/1RbuVhswlSg7NnDqY+ONxyOLWLtcbihYNzLajL2ep5GTFK2Qr2e4XtUE2Spnm1EXmaAW9k0sFg==}
+
+  '@codingame/monaco-vscode-language-pack-zh-hans@33.0.9':
+    resolution: {integrity: sha512-tcZfUpp7MXMA1or32kvJRa4hw+M/uyv0A13If3HmrjWJ+88eWlqw/SL+XNK/9wjrOK7OMEO/DaWDSi8zwMXvtQ==}
+
+  '@codingame/monaco-vscode-language-pack-zh-hant@33.0.9':
+    resolution: {integrity: sha512-TXWEE73Qbx8g6RfeJ2s/gwYPp4Fl17gtdmTLOa2wTBI86snw3cfl14sN7ct8XhkQg3aOS+XvIUdwSiMPDgGqig==}
 
   '@codingame/monaco-vscode-languages-service-override@33.0.9':
     resolution: {integrity: sha512-i8zHsEhPOXquOM86ROqIFsWflahFglHYYSnLokVXPiwmQGZAyOVFs2eH2ptmiNjoxu1ciLWLilDag1QNXcVaaA==}
@@ -2538,6 +2622,62 @@ snapshots:
     dependencies:
       '@codingame/monaco-vscode-api': 33.0.9
       '@vscode/vscode-languagedetection': '@codingame/vscode-languagedetection@1.0.23'
+
+  '@codingame/monaco-vscode-language-pack-cs@33.0.9':
+    dependencies:
+      '@codingame/monaco-vscode-api': 33.0.9
+
+  '@codingame/monaco-vscode-language-pack-de@33.0.9':
+    dependencies:
+      '@codingame/monaco-vscode-api': 33.0.9
+
+  '@codingame/monaco-vscode-language-pack-es@33.0.9':
+    dependencies:
+      '@codingame/monaco-vscode-api': 33.0.9
+
+  '@codingame/monaco-vscode-language-pack-fr@33.0.9':
+    dependencies:
+      '@codingame/monaco-vscode-api': 33.0.9
+
+  '@codingame/monaco-vscode-language-pack-it@33.0.9':
+    dependencies:
+      '@codingame/monaco-vscode-api': 33.0.9
+
+  '@codingame/monaco-vscode-language-pack-ja@33.0.9':
+    dependencies:
+      '@codingame/monaco-vscode-api': 33.0.9
+
+  '@codingame/monaco-vscode-language-pack-ko@33.0.9':
+    dependencies:
+      '@codingame/monaco-vscode-api': 33.0.9
+
+  '@codingame/monaco-vscode-language-pack-pl@33.0.9':
+    dependencies:
+      '@codingame/monaco-vscode-api': 33.0.9
+
+  '@codingame/monaco-vscode-language-pack-pt-br@33.0.9':
+    dependencies:
+      '@codingame/monaco-vscode-api': 33.0.9
+
+  '@codingame/monaco-vscode-language-pack-qps-ploc@33.0.9':
+    dependencies:
+      '@codingame/monaco-vscode-api': 33.0.9
+
+  '@codingame/monaco-vscode-language-pack-ru@33.0.9':
+    dependencies:
+      '@codingame/monaco-vscode-api': 33.0.9
+
+  '@codingame/monaco-vscode-language-pack-tr@33.0.9':
+    dependencies:
+      '@codingame/monaco-vscode-api': 33.0.9
+
+  '@codingame/monaco-vscode-language-pack-zh-hans@33.0.9':
+    dependencies:
+      '@codingame/monaco-vscode-api': 33.0.9
+
+  '@codingame/monaco-vscode-language-pack-zh-hant@33.0.9':
+    dependencies:
+      '@codingame/monaco-vscode-api': 33.0.9
 
   '@codingame/monaco-vscode-languages-service-override@33.0.9':
     dependencies:

@@ -28,7 +28,40 @@ export function workbenchFrameSource(
 ): string {
   const query = new URLSearchParams({ authority, connectionToken });
   if (folder != null) query.set("folder", folder);
+  // The display language is chosen before the Workbench boots — it decides
+  // which language pack to load — so it travels in the address rather than
+  // being set afterwards.
+  const locale = displayLanguage();
+  if (locale != null) query.set("locale", locale);
   return `${WORKBENCH_FRAME_PATH}?${query.toString()}`;
+}
+
+const DISPLAY_LANGUAGE_KEY = "devhub.editor.displayLanguage";
+
+/**
+ * The display language the user chose, if they chose one.
+ *
+ * Kept in storage the shell and its frames share, because the choice is made
+ * inside a frame and has to be honoured by every frame opened afterwards.
+ * Reading it can throw where site data is blocked, and a reader who cannot
+ * find a choice has the same answer as one who finds none: the default.
+ */
+export function displayLanguage(): string | null {
+  try {
+    return window.localStorage.getItem(DISPLAY_LANGUAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function setDisplayLanguage(locale: string | null): void {
+  try {
+    if (locale == null) window.localStorage.removeItem(DISPLAY_LANGUAGE_KEY);
+    else window.localStorage.setItem(DISPLAY_LANGUAGE_KEY, locale);
+  } catch {
+    // Storage is unavailable, so the choice cannot outlive this frame. The
+    // reload below still applies it to the frame the user is looking at.
+  }
 }
 
 /** Narrow an arriving message, which is untrusted until it is one of ours. */
