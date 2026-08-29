@@ -51,12 +51,14 @@ pub struct EditorHostConfig {
     /// DevHub-owned resources, including the verified Bridge VSIX.
     pub resource_dir: Option<PathBuf>,
     event_sink: Option<Arc<dyn BridgeEventSink>>,
-    official_vscode_cli: Option<PathBuf>,
+    /// Overrides the staged server. Tests point this at a fixture; production
+    /// resolves from the app's resources.
+    server_executable: Option<PathBuf>,
 }
 
 impl EditorHostConfig {
     pub fn new(home: impl Into<PathBuf>, resource_dir: Option<PathBuf>) -> Self {
-        Self { home: home.into(), resource_dir, event_sink: None, official_vscode_cli: None }
+        Self { home: home.into(), resource_dir, event_sink: None, server_executable: None }
     }
 
     pub fn with_bridge_event_sink(mut self, sink: Arc<dyn BridgeEventSink>) -> Self {
@@ -64,8 +66,8 @@ impl EditorHostConfig {
         self
     }
 
-    pub fn with_official_vscode_cli(mut self, path: impl Into<PathBuf>) -> Self {
-        self.official_vscode_cli = Some(path.into());
+    pub fn with_server_executable(mut self, path: impl Into<PathBuf>) -> Self {
+        self.server_executable = Some(path.into());
         self
     }
 }
@@ -93,6 +95,29 @@ impl EditorSurfaceKey {
             Self::Global => "global-editor".to_owned(),
             Self::Workspace(id) => format!("workspace-editor:{id}"),
         }
+    }
+}
+
+/// How the App Shell reaches the running server.
+#[derive(Clone, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EditorRemote {
+    pub authority: String,
+    /// Authenticates the Workbench's socket. Redacted from `Debug` for the
+    /// same reason every other provider secret is.
+    pub connection_token: String,
+    /// The VS Code release identity the Workbench must agree with.
+    pub commit: String,
+}
+
+impl std::fmt::Debug for EditorRemote {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("EditorRemote")
+            .field("authority", &self.authority)
+            .field("connection_token", &"<redacted>")
+            .field("commit", &self.commit)
+            .finish()
     }
 }
 
@@ -330,6 +355,26 @@ impl EditorHost {
         Ok(())
     }
 
+    /// Start the server if it is not running, and say how to reach it.
+    ///
+    /// The Workbench runs in the App Shell's own document and speaks to the
+    /// server directly, so this is the whole seam: an authority to open a
+    /// socket to, and the token that authenticates it.
+    pub fn ensure_remote(&self) -> EditorResult<EditorRemote> {
+        self.ensure_server()?;
+        let state =
+            self.state.lock().map_err(|_| EditorError::new(EditorErrorCode::LifecycleConflict))?;
+        let runtime = state
+            .runtime
+            .as_ref()
+            .ok_or_else(|| EditorError::new(EditorErrorCode::ProcessUnavailable))?;
+        Ok(EditorRemote {
+            authority: runtime.origin()?.authority(),
+            connection_token: runtime.token.hex(),
+            commit: runtime.executable.commit.clone(),
+        })
+    }
+
     pub fn ensure_server(&self) -> EditorResult<EditorHostResult> {
         let prior_runtime = self
             .state
@@ -374,7 +419,10 @@ impl EditorHost {
         let mut runtime = if let Some(runtime) = prior_runtime {
             runtime
         } else {
-            let executable = EditorExecutable::resolve(self.config.official_vscode_cli.as_deref())?;
+            let executable = EditorExecutable::resolve(
+                self.config.server_executable.as_deref(),
+                self.config.resource_dir.as_deref(),
+            )?;
             let paths = EditorPaths::new(&self.config.home);
             paths.ensure_directories()?;
             append_lifecycle_log(&paths, LifecycleEvent::RuntimePrepared)?;
@@ -1028,31 +1076,29 @@ impl EditorHost {
         let path = |value: &Path| {
             value.to_str().map(str::to_owned).ok_or_else(|| EditorError::new(EditorErrorCode::Io))
         };
-        // Official VS Code backgrounds `serve-web` unless `--verbose` is
-        // present; its CLI contract documents that verbose implies wait. Keep
-        // the foreground CLI as the process-group owner so a DevHub Quit
-        // cannot reap the launcher while leaving its server listening on the
-        // stable origin.
-        //
-        // `--accept-server-license-terms` is deliberately not passed. The CLI
-        // prints its own license notice and starts without prompting when it
-        // has no controlling terminal, and it forwards the flag to the server
-        // itself. DevHub therefore never records a license acceptance on the
-        // user's behalf.
+        // The staged server is run directly. There is no CLI in front of it to
+        // ask which build is current, download one, and only then start —
+        // which is what made a launch without a network stall rather than fail.
         let args = vec![
-            "serve-web".to_owned(),
-            "--verbose".to_owned(),
             "--host".to_owned(),
             super::paths::LOOPBACK_HOST.to_owned(),
             "--port".to_owned(),
-            // Zero asks the server to find a free port and bind it itself,
-            // which is why nothing can take the origin between choosing it and
-            // holding it. The announced port is read back off its stdout.
+            // Zero asks the server to find a free port and bind it itself, so
+            // nothing can take it between choosing and holding. The port it
+            // announces on stdout is read back.
             runtime.origin.map_or(0, EditorOrigin::port).to_string(),
             "--connection-token-file".to_owned(),
             path(runtime.paths.token_file())?,
             "--server-data-dir".to_owned(),
             path(runtime.paths.server_data())?,
+            "--extensions-dir".to_owned(),
+            // Scoped by the server's release. An extension is built against a
+            // VS Code version, so a directory shared across versions is a
+            // directory the server rejects most of on every scan — which is
+            // what a staged tree inherited from a differently versioned
+            // provider actually looks like.
+            path(&runtime.paths.extensions().join(&runtime.executable.version))?,
+            "--accept-server-license-terms".to_owned(),
             "--disable-telemetry".to_owned(),
         ];
         let registry = path(&runtime.paths.root().join("surface-registry.json"))?;
@@ -1065,7 +1111,7 @@ impl EditorHost {
         Ok(ProcessSpec::new(runtime.executable.path().to_path_buf(), args)
             .with_env(env)
             .with_termination_grace(Duration::from_secs(2))
-            .with_shutdown_signal(ShutdownSignal::Interrupt))
+            .with_shutdown_signal(ShutdownSignal::Terminate))
     }
 }
 
@@ -1332,25 +1378,11 @@ mod tests {
         resource
     }
 
+    /// The staged server, as a shape rather than a server: the provider only
+    /// reads the product configuration beside the binary, and the process
+    /// adapter under test never runs it.
     fn fake_official_cli(root: &Path) -> PathBuf {
-        let path = root.join("code");
-        fs::write(
-            &path,
-            b"#!/bin/sh
-if [ \"$1\" = \"--version\" ]; then
-  printf '1.134.0\\n110a328ea54b42367b803ec53ee0bf52ef26b419\\narm64\\n'
-else
-  printf '%s\\n' 'serve-web --connection-token-file --server-data-dir --disable-telemetry --default-folder'
-fi
-",
-        )
-        .expect("official cli");
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).expect("cli mode");
-        }
-        path
+        super::super::provider::tests::fake_server(root, "987c9597516278c9fcf10d963a0592ce1384ab93")
     }
 
     fn test_host(
@@ -1367,7 +1399,7 @@ fi
         let readiness_calls = Arc::new(AtomicUsize::new(0));
         let host = EditorHost::with_adapters(
             EditorHostConfig::new(&home, Some(resource))
-                .with_official_vscode_cli(fake_official_cli(&root)),
+                .with_server_executable(fake_official_cli(&root)),
             Arc::new(FakeProcessAdapter::new(spawns.clone(), alive.clone(), terminated.clone())),
             Arc::new(FakeReadiness { ready, calls: readiness_calls }),
             Arc::new(FakePorts),
@@ -1383,7 +1415,7 @@ fi
         fs::create_dir_all(&home).expect("home");
         let host = EditorHost::with_adapters(
             EditorHostConfig::new(&home, Some(bridge_resource))
-                .with_official_vscode_cli(fake_official_cli(&root)),
+                .with_server_executable(fake_official_cli(&root)),
             Arc::new(FakeProcessAdapter::new(
                 Arc::new(AtomicUsize::new(0)),
                 Arc::new(AtomicBool::new(true)),
@@ -1394,7 +1426,7 @@ fi
         );
         host.ensure_server().expect("official provider with app Bridge resource");
         let runtime = host.state.lock().expect("state").runtime.clone().expect("runtime");
-        assert!(runtime.executable.path().ends_with("code"));
+        assert!(runtime.executable.path().ends_with("bin/codium-server"));
         let _ = fs::remove_dir_all(root);
     }
 
@@ -1406,7 +1438,7 @@ fi
         fs::create_dir_all(&home).expect("home");
         let host = EditorHost::with_adapters(
             EditorHostConfig::new(&home, Some(resource))
-                .with_official_vscode_cli(fake_official_cli(&root)),
+                .with_server_executable(fake_official_cli(&root)),
             Arc::new(FakeProcessAdapter::new(
                 Arc::new(AtomicUsize::new(0)),
                 Arc::new(AtomicBool::new(true)),
@@ -1421,13 +1453,25 @@ fi
         assert!(runtime.paths.server_data().starts_with(runtime.paths.root()));
         assert!(runtime.paths.extensions().starts_with(runtime.paths.server_data()));
         let spec = host.server_spec(&runtime).expect("official spec");
-        assert_eq!(spec.args().first().map(String::as_str), Some("serve-web"));
-        assert!(spec.args().contains(&"--verbose".to_owned()));
         assert_eq!(spec.termination_grace(), Duration::from_secs(2));
-        assert_eq!(spec.shutdown_signal(), ShutdownSignal::Interrupt);
+        assert_eq!(spec.shutdown_signal(), ShutdownSignal::Terminate);
         assert!(spec.args().contains(&"--server-data-dir".to_owned()));
-        assert!(!spec.args().contains(&"--accept-server-license-terms".to_owned()));
-        assert!(!spec.args().contains(&"--extensions-dir".to_owned()));
+        assert!(spec.args().contains(&"--extensions-dir".to_owned()));
+        // Extensions are kept per server release; one built for another
+        // version is not an extension this server can load, and a shared
+        // directory is one the server rejects most of on every scan.
+        assert!(spec
+            .args()
+            .iter()
+            .any(|argument| argument
+                .ends_with(&format!("extensions/{}", runtime.executable.version))));
+        assert!(spec.args().contains(&"--disable-telemetry".to_owned()));
+        // The server is DevHub's to run, so the licence it ships under is
+        // accepted by the app that bundled it rather than left to a prompt
+        // nobody is there to answer.
+        assert!(spec.args().contains(&"--accept-server-license-terms".to_owned()));
+        // Every provider path is app-owned: nothing writes into the user's
+        // own VS Code profile.
         assert!(!spec.args().contains(&"--user-data-dir".to_owned()));
         assert_eq!(
             spec.env()
@@ -1697,7 +1741,7 @@ fi
         ));
         let host = EditorHost::with_adapters(
             EditorHostConfig::new(&home, Some(resource))
-                .with_official_vscode_cli(fake_official_cli(&root)),
+                .with_server_executable(fake_official_cli(&root)),
             adapter.clone(),
             Arc::new(FakeReadiness { ready: true, calls: Arc::new(AtomicUsize::new(0)) }),
             Arc::new(FakePorts),
@@ -1752,7 +1796,7 @@ fi
         fs::create_dir_all(&home).expect("home");
         let host = EditorHost::with_adapters(
             EditorHostConfig::new(&home, Some(resource))
-                .with_official_vscode_cli(fake_official_cli(&root)),
+                .with_server_executable(fake_official_cli(&root)),
             Arc::new(FakeProcessAdapter::new(
                 Arc::new(AtomicUsize::new(0)),
                 Arc::new(AtomicBool::new(true)),

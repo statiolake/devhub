@@ -77,21 +77,24 @@ if [ ! -x "$DESTINATION/bin/codium-server" ] && [ ! -x "$DESTINATION/bin/code-se
   exit 1
 fi
 
-# The client refuses a server whose commit is not the one it was generated
-# from. VSCodium records its own build commit, which is a different string for
-# the same VS Code sources, so the identity is restated here. This is a
-# handshake value, not a version: if the releases above ever stop naming the
-# same VS Code, changing this would hide that rather than fix it.
-python3 - "$DESTINATION/product.json" "$VSCODE_COMMIT" <<'PYTHON'
-import json, sys
-
-path, commit = sys.argv[1], sys.argv[2]
-with open(path) as handle:
-    product = json.load(handle)
-product["commit"] = commit
-with open(path, "w") as handle:
-    json.dump(product, handle, indent=2)
-PYTHON
+# Restate the release identity.
+#
+# VSCodium stamps its own build commit onto sources that are otherwise VS Code
+# 1.121.0, and that identity is not decoration: the Workbench addresses the
+# server at /stable-<commit> and refuses one whose commit is not the one it was
+# generated from. Two builds of the same release cannot agree on that string
+# unless one of them is told to. The substitution is mechanical and
+# length-preserving — one forty-character identity for another naming the same
+# sources — and it is the whole reason both releases are pinned above.
+BUILD_COMMIT="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["commit"])' \
+  "$DESTINATION/product.json")"
+if [ "$BUILD_COMMIT" != "$VSCODE_COMMIT" ]; then
+  echo "restating $BUILD_COMMIT as $VSCODE_COMMIT"
+  grep -rl "$BUILD_COMMIT" "$DESTINATION" 2>/dev/null |
+    while IFS= read -r file; do
+      LC_ALL=C sed -i '' "s/$BUILD_COMMIT/$VSCODE_COMMIT/g" "$file"
+    done
+fi
 
 printf '%s/%s' "$VSCODIUM_RELEASE" "$PLATFORM" > "$STAMP"
 echo "editor server $VSCODIUM_RELEASE ($PLATFORM) staged for VS Code $VSCODE_RELEASE"

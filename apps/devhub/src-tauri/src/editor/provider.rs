@@ -1,72 +1,65 @@
-//! Executable discovery and capability probing for the local Web Workbench.
+//! The VS Code Server the Editor runs against.
 //!
-//! `EditorHost` owns one lifecycle; this module is the only place that knows
-//! how an executable is discovered and which CLI shape it supports. DevHub
-//! uses the user's separately installed official VS Code and never downloads
-//! or redistributes a Workbench of its own. A future self-built Code-OSS
-//! provider slots in here beside `OfficialVscodeExecutable`.
+//! DevHub ships its own rather than driving the user's installed VS Code. The
+//! bundled build is VSCodium — Microsoft's `vscode` sources built without the
+//! proprietary product configuration, so it is MIT, carries no telemetry, and
+//! resolves extensions against Open VSX. `scripts/provision-editor-server.sh`
+//! stages it; nothing here downloads anything.
+//!
+//! The version matters more than it looks. The Workbench is supplied by
+//! monaco-vscode-api and generated from one VS Code release; the server has to
+//! be that release, because the protocol between them is only promised to
+//! match within one. The commit recorded in `product.json` is the identity the
+//! client checks, and the provisioning script restates it for exactly that
+//! reason.
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
 use std::time::Duration;
 
 use super::error::{EditorError, EditorErrorCode, EditorResult};
 
-const OFFICIAL_CLI_ENV: &str = "DEVHUB_VSCODE_CLI";
-const OFFICIAL_VSCODE_PROVISIONING_TIMEOUT: Duration = Duration::from_secs(120);
-const REQUIRED_HELP_FLAGS: [&str; 4] =
-    ["--connection-token-file", "--server-data-dir", "--disable-telemetry", "--default-folder"];
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct OfficialVscodeCapabilities {
-    pub connection_token_file: bool,
-    pub server_data_dir: bool,
-    pub disable_telemetry: bool,
-    pub default_folder: bool,
-}
-
-impl OfficialVscodeCapabilities {
-    fn from_help(help: &str) -> Option<Self> {
-        let [connection_token_file, server_data_dir, disable_telemetry, default_folder] =
-            REQUIRED_HELP_FLAGS.map(|flag| help.contains(flag));
-        let capabilities =
-            Self { connection_token_file, server_data_dir, disable_telemetry, default_folder };
-        capabilities.supported().then_some(capabilities)
-    }
-
-    pub const fn supported(self) -> bool {
-        self.connection_token_file
-            && self.server_data_dir
-            && self.disable_telemetry
-            && self.default_folder
-    }
-}
+/// Where the staged server sits under the app's resource directory.
+const BUNDLED_SERVER_DIRECTORY: &str = "editor-server";
+const SERVER_BINARY: &str = "bin/codium-server";
+/// Unpacking extensions and starting an extension host on a cold machine is
+/// slower than the steady state by a wide margin, and this is the whole budget
+/// before a start is called failed.
+const SERVER_STARTUP_TIMEOUT: Duration = Duration::from_secs(120);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct OfficialVscodeExecutable {
+pub struct BundledServerExecutable {
     path: PathBuf,
+    /// The VS Code release this server was built from, as its own product
+    /// configuration records it.
     pub version: String,
+    /// The identity the Workbench checks against its own. Not a build stamp:
+    /// a mismatch here is a protocol mismatch, and the connection is refused.
     pub commit: String,
-    pub architecture: String,
-    pub capabilities: OfficialVscodeCapabilities,
 }
 
-impl OfficialVscodeExecutable {
+pub type EditorExecutable = BundledServerExecutable;
+
+impl BundledServerExecutable {
     pub fn path(&self) -> &Path {
         &self.path
     }
 
-    pub fn resolve(explicit_path: Option<&Path>) -> EditorResult<Self> {
-        if let Some(path) = explicit_path {
-            return Self::from_path(path.to_path_buf());
-        }
-        for path in discovery_candidates() {
-            if fs::metadata(&path).is_ok() {
-                return Self::from_path(path);
-            }
-        }
-        Err(EditorError::new(EditorErrorCode::OfficialVscodeUnavailable))
+    pub const fn readiness_timeout(&self) -> Duration {
+        SERVER_STARTUP_TIMEOUT
+    }
+
+    /// Locate the staged server. `explicit` overrides the resource directory,
+    /// which is how tests point at a fixture.
+    pub fn resolve(explicit: Option<&Path>, resource_dir: Option<&Path>) -> EditorResult<Self> {
+        let binary = match explicit {
+            Some(path) => path.to_path_buf(),
+            None => resource_dir
+                .ok_or_else(|| EditorError::new(EditorErrorCode::OfficialVscodeUnavailable))?
+                .join(BUNDLED_SERVER_DIRECTORY)
+                .join(SERVER_BINARY),
+        };
+        Self::from_path(binary)
     }
 
     pub fn from_path(path: PathBuf) -> EditorResult<Self> {
@@ -77,85 +70,29 @@ impl OfficialVscodeExecutable {
         }
         let path = fs::canonicalize(path)
             .map_err(|_| EditorError::new(EditorErrorCode::OfficialVscodeUnavailable))?;
-        let version_output = Command::new(&path)
-            .arg("--version")
-            .stdin(Stdio::null())
-            .output()
-            .map_err(|_| EditorError::new(EditorErrorCode::OfficialVscodeUnavailable))?;
-        if !version_output.status.success() {
-            return Err(EditorError::new(EditorErrorCode::OfficialVscodeUnavailable));
-        }
-        let version_text = String::from_utf8(version_output.stdout)
-            .map_err(|_| EditorError::new(EditorErrorCode::OfficialVscodeUnavailable))?;
-        let mut lines = version_text.lines().filter(|line| !line.trim().is_empty());
-        let version = lines
-            .next()
-            .map(str::trim)
-            .filter(|value| is_semver(value))
-            .ok_or_else(|| EditorError::new(EditorErrorCode::ProviderCapabilityMismatch))?
-            .to_owned();
-        let commit = lines
-            .next()
-            .map(str::trim)
-            .filter(|value| value.len() == 40 && value.bytes().all(|byte| byte.is_ascii_hexdigit()))
-            .ok_or_else(|| EditorError::new(EditorErrorCode::ProviderCapabilityMismatch))?
-            .to_owned();
-        let architecture = lines
-            .next()
-            .map(str::trim)
+        // The identity is read from the staged tree, not from running the
+        // binary: `--version` on a server costs a process start, and the
+        // answer is already on disk beside it.
+        let root = path
+            .parent()
+            .and_then(Path::parent)
+            .ok_or_else(|| EditorError::new(EditorErrorCode::OfficialVscodeUnavailable))?;
+        let product = fs::read_to_string(root.join("product.json"))
+            .map_err(|_| EditorError::new(EditorErrorCode::ProviderCapabilityMismatch))?;
+        let product: serde_json::Value = serde_json::from_str(&product)
+            .map_err(|_| EditorError::new(EditorErrorCode::ProviderCapabilityMismatch))?;
+        let version = product["version"]
+            .as_str()
             .filter(|value| !value.is_empty() && value.len() <= 32)
             .ok_or_else(|| EditorError::new(EditorErrorCode::ProviderCapabilityMismatch))?
             .to_owned();
-
-        let help_output = Command::new(&path)
-            .args(["serve-web", "--help"])
-            .stdin(Stdio::null())
-            .output()
-            .map_err(|_| EditorError::new(EditorErrorCode::OfficialVscodeUnavailable))?;
-        let help = format!(
-            "{}\n{}",
-            String::from_utf8_lossy(&help_output.stdout),
-            String::from_utf8_lossy(&help_output.stderr)
-        );
-        let capabilities = OfficialVscodeCapabilities::from_help(&help)
-            .ok_or_else(|| EditorError::new(EditorErrorCode::ProviderCapabilityMismatch))?;
-        Ok(Self { path, version, commit, architecture, capabilities })
+        let commit = product["commit"]
+            .as_str()
+            .filter(|value| value.len() == 40 && value.bytes().all(|byte| byte.is_ascii_hexdigit()))
+            .ok_or_else(|| EditorError::new(EditorErrorCode::ProviderCapabilityMismatch))?
+            .to_owned();
+        Ok(Self { path, version, commit })
     }
-}
-
-/// The single provider DevHub currently supports. Kept as a named alias so a
-/// second provider can be introduced as an enum here without re-plumbing the
-/// lifecycle in `EditorHost`.
-pub type EditorExecutable = OfficialVscodeExecutable;
-
-impl OfficialVscodeExecutable {
-    /// Startup budget. Official VS Code may provision the matching Server
-    /// commit on its first launch.
-    pub const fn readiness_timeout(&self) -> Duration {
-        OFFICIAL_VSCODE_PROVISIONING_TIMEOUT
-    }
-}
-
-fn discovery_candidates() -> Vec<PathBuf> {
-    let mut candidates = Vec::new();
-    if let Some(path) = std::env::var_os(OFFICIAL_CLI_ENV) {
-        candidates.push(PathBuf::from(path));
-    }
-    if let Some(path) = std::env::var_os("PATH") {
-        candidates.extend(std::env::split_paths(&path).map(|dir| dir.join("code")));
-    }
-    candidates.extend([
-        // The official VS Code shell command is commonly installed here.
-        // GUI launches do not reliably inherit the user's shell PATH, so
-        // keep this canonical CLI location explicit.
-        PathBuf::from("/usr/local/bin/code"),
-        PathBuf::from("/opt/homebrew/bin/code"),
-        PathBuf::from("/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code"),
-        PathBuf::from(
-            "/Applications/Visual Studio Code - Insiders.app/Contents/Resources/app/bin/code",
-        ),
-    ]);
-    candidates
 }
 
 #[cfg(unix)]
@@ -169,81 +106,88 @@ fn is_executable(_metadata: &fs::Metadata) -> bool {
     true
 }
 
-fn is_semver(value: &str) -> bool {
-    let mut components = value.split('.');
-    let Some(major) = components.next() else { return false };
-    let Some(minor) = components.next() else { return false };
-    let Some(patch) = components.next() else { return false };
-    components.next().is_none()
-        && [major, minor, patch].into_iter().all(|component| {
-            !component.is_empty() && component.chars().all(|ch| ch.is_ascii_digit())
-        })
-}
-
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
-    use std::os::unix::fs::PermissionsExt;
 
-    fn fake_cli(root: &Path, good: bool) -> PathBuf {
-        let path = root.join("code");
-        let help = if good {
-            "serve-web --connection-token-file --server-data-dir --disable-telemetry --default-folder"
-        } else {
-            "serve-web --server-data-dir"
-        };
+    /// A staged server that is only a shape: an executable and the product
+    /// configuration beside it.
+    pub(crate) fn fake_server(root: &Path, commit: &str) -> PathBuf {
+        let server = root.join(BUNDLED_SERVER_DIRECTORY);
+        let binary = server.join(SERVER_BINARY);
+        fs::create_dir_all(binary.parent().expect("bin")).expect("server directories");
+        fs::write(&binary, "#!/bin/sh\nexit 0\n").expect("server binary");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&binary, fs::Permissions::from_mode(0o755))
+                .expect("executable bit");
+        }
         fs::write(
-            &path,
-            format!(
-                "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then printf '1.134.0\\n110a328ea54b42367b803ec53ee0bf52ef26b419\\narm64\\n'; else printf '%s\\n' '{help}'; fi\n"
-            ),
+            server.join("product.json"),
+            format!("{{\"version\":\"1.121.03429\",\"commit\":\"{commit}\"}}"),
         )
-        .expect("fake cli");
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).expect("mode");
-        path
+        .expect("product.json");
+        binary
+    }
+
+    fn test_root(name: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "devhub-provider-{}-{}-{name}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).expect("test root");
+        root
     }
 
     #[test]
-    fn official_probe_records_version_commit_arch_and_capabilities() {
-        let root =
-            std::env::temp_dir().join(format!("devhub-provider-test-{}", std::process::id()));
-        fs::create_dir_all(&root).expect("temp");
-        let executable = OfficialVscodeExecutable::from_path(fake_cli(&root, true)).expect("probe");
-        assert_eq!(executable.version, "1.134.0");
-        assert_eq!(executable.commit, "110a328ea54b42367b803ec53ee0bf52ef26b419");
-        assert_eq!(executable.architecture, "arm64");
-        assert!(executable.capabilities.supported());
-        let _ = fs::remove_dir_all(root);
+    fn the_staged_server_is_identified_by_the_product_beside_it() {
+        let root = test_root("staged");
+        let commit = "987c9597516278c9fcf10d963a0592ce1384ab93";
+        fake_server(&root, commit);
+        let executable = BundledServerExecutable::resolve(None, Some(&root)).expect("resolve");
+        assert_eq!(executable.commit, commit);
+        assert_eq!(executable.version, "1.121.03429");
+        assert!(executable.path().ends_with("bin/codium-server"));
+        fs::remove_dir_all(&root).expect("cleanup");
     }
 
     #[test]
-    fn official_probe_fails_closed_when_capability_is_missing() {
-        let root =
-            std::env::temp_dir().join(format!("devhub-provider-test-bad-{}", std::process::id()));
-        fs::create_dir_all(&root).expect("temp");
-        let error = OfficialVscodeExecutable::from_path(fake_cli(&root, false))
-            .expect_err("missing capability");
-        assert_eq!(error.code(), EditorErrorCode::ProviderCapabilityMismatch);
-        let _ = fs::remove_dir_all(root);
+    fn a_server_without_a_usable_commit_is_refused() {
+        // The commit is what the Workbench checks before it will talk to the
+        // server at all, so a staged tree that cannot state one is not a
+        // provider — it is a failure waiting to happen at connection time.
+        let root = test_root("no-commit");
+        fake_server(&root, "987c9597516278c9fcf10d963a0592ce1384ab93");
+        fs::write(
+            root.join(BUNDLED_SERVER_DIRECTORY).join("product.json"),
+            "{\"version\":\"1.121.03429\",\"commit\":\"not-a-commit\"}",
+        )
+        .expect("product.json");
+        assert_eq!(
+            BundledServerExecutable::resolve(None, Some(&root)).expect_err("refused").code(),
+            EditorErrorCode::ProviderCapabilityMismatch
+        );
+        fs::remove_dir_all(&root).expect("cleanup");
     }
 
     #[test]
-    fn official_provider_owns_a_longer_first_provisioning_budget() {
-        let root =
-            std::env::temp_dir().join(format!("devhub-provider-timeout-{}", std::process::id()));
-        fs::create_dir_all(&root).expect("temp");
-        let executable = OfficialVscodeExecutable::from_path(fake_cli(&root, true)).expect("probe");
-        assert_eq!(executable.readiness_timeout(), Duration::from_secs(120));
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn gui_discovery_includes_macos_homebrew_and_app_bundle_locations() {
-        let candidates = discovery_candidates();
-        assert!(candidates.contains(&PathBuf::from("/usr/local/bin/code")));
-        assert!(candidates.contains(&PathBuf::from("/opt/homebrew/bin/code")));
-        assert!(candidates.contains(&PathBuf::from(
-            "/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code"
-        )));
+    fn a_missing_staged_server_is_reported_rather_than_searched_for() {
+        // There is nowhere else to look. The server is shipped with the app,
+        // and its absence is a broken install, not a machine without VS Code.
+        let root = test_root("missing");
+        assert_eq!(
+            BundledServerExecutable::resolve(None, Some(&root)).expect_err("missing").code(),
+            EditorErrorCode::OfficialVscodeUnavailable
+        );
+        assert_eq!(
+            BundledServerExecutable::resolve(None, None).expect_err("no resources").code(),
+            EditorErrorCode::OfficialVscodeUnavailable
+        );
+        fs::remove_dir_all(&root).expect("cleanup");
     }
 }

@@ -6,7 +6,8 @@ import tseslint from "typescript-eslint";
 
 export default tseslint.config(
   {
-    ignores: ["dist", "coverage"],
+    // The staged VS Code Server is ~290MB of somebody else's build output.
+    ignores: ["dist", "coverage", "src-tauri/resources", "src-tauri/target"],
   },
   eslint.configs.recommended,
   ...tseslint.configs.recommended,

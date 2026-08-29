@@ -209,9 +209,14 @@ impl ObservedOrigin {
     }
 }
 
-/// `Web UI available at http://127.0.0.1:60846`
+/// The line the server prints once it is listening:
+/// `Server bound to 127.0.0.1:56645 (IPv4)`
+///
+/// Its `Web UI available at …` line names `localhost`, which is a different
+/// string for the same address and would need resolving to compare; the bound
+/// address is stated exactly.
 fn parse_origin_port(line: &str) -> Option<u16> {
-    let prefix = format!("http://{}:", super::paths::LOOPBACK_HOST);
+    let prefix = format!("Server bound to {}:", super::paths::LOOPBACK_HOST);
     let start = line.find(&prefix)? + prefix.len();
     let digits: String =
         line[start..].chars().take_while(|character| character.is_ascii_digit()).collect();
@@ -586,21 +591,20 @@ mod tests {
 
     #[test]
     fn the_announced_origin_line_is_the_one_the_server_actually_prints() {
-        // Verified against `code serve-web --verbose --host 127.0.0.1 --port 0`,
-        // which writes exactly this to stdout before any of its log lines.
-        assert_eq!(parse_origin_port("Web UI available at http://127.0.0.1:50629"), Some(50629));
-        assert_eq!(
-            parse_origin_port("Web UI available at http://127.0.0.1:50629/?tkn=abc"),
-            Some(50629)
-        );
+        // Verified against the staged server started with `--host 127.0.0.1
+        // --port 0`, which writes exactly this before its own log lines.
+        assert_eq!(parse_origin_port("Server bound to 127.0.0.1:56645 (IPv4)"), Some(56645));
+        // The other line naming a port says `localhost`, which is a different
+        // string for the same address and is not the one being waited for.
+        assert_eq!(parse_origin_port("Web UI available at http://localhost:56645"), None);
         // The license banner and every log line have to pass through silently.
         assert_eq!(parse_origin_port("* Visual Studio Code Server"), None);
         assert_eq!(
             parse_origin_port("[2026-08-27 16:44:45] debug refreshed latest release: 1.135.0"),
             None
         );
-        // Another host is another origin, and not the one being waited for.
-        assert_eq!(parse_origin_port("Web UI available at http://192.168.0.4:50629"), None);
+        // The other line naming a port says `localhost`, and is not this one.
+        assert_eq!(parse_origin_port("Web UI available at http://localhost:56645"), None);
     }
 
     #[cfg(unix)]

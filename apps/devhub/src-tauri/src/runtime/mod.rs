@@ -581,6 +581,11 @@ pub(crate) struct ChildCleanup {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ShutdownSignal {
+    /// Ctrl+C semantics, for a provider owner that is a shell wrapper and
+    /// forwards the signal to the process actually doing the work. Nothing
+    /// spawns one now that the Editor runs a server binary directly; the path
+    /// is kept, and tested, because a provider that needs it may return.
+    #[allow(dead_code)]
     Interrupt,
     Terminate,
 }

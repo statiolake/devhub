@@ -691,6 +691,26 @@ body.is-resizing-sidebar {
   font-weight: 700;
 }
 
+/* The Editor Activity's Surface. The Workbench draws its own chrome — activity
+   bar, sidebar, panel, status bar — so the shell gives it the whole pane and
+   nothing else. */
+.editor-surface {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+}
+
+/* The element the Workbench is raised into. It is moved between Surfaces
+   rather than recreated, because VS Code's services are raised once per
+   document and a second start is not available. */
+.workbench-host {
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+}
+
 /* A Surface the user has already visited stays mounted while another one is on
    screen, so coming back to it costs no PTY handshake and loses no scrollback.
    Only the active entry is in flow; the rest are `display: none`, which also

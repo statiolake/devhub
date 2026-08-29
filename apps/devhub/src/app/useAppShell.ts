@@ -11,6 +11,7 @@ import type {
 import type {
   AppPerformanceMarker,
   EditorLayout,
+  EditorRemote,
   WorkspacePickerCandidate,
 } from "./client";
 
@@ -19,6 +20,9 @@ export interface AppShellContextValue {
   readonly appearance: AppAppearance | undefined;
   readonly intentError: AppError | null;
   readonly dismissIntentError: () => void;
+  readonly editorRemote: EditorRemote | null;
+  readonly editorFailure: string | null;
+  readonly ensureEditorRemote: () => void;
   readonly recordPerformanceMarker: (marker: AppPerformanceMarker) => void;
   readonly dispatch: (intent: AppIntent) => Promise<AppOutcome | undefined>;
   readonly retry: () => void;

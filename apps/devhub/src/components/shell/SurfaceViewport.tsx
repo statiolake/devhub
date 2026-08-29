@@ -5,7 +5,8 @@ import {
   type WorkspaceSnapshot,
   workspaceForContext,
 } from "../../generated/app-shell";
-import { type ReactNode, type Ref, useMemo, useRef } from "react";
+import { type ReactNode, type Ref, useEffect, useMemo, useRef } from "react";
+import { EditorSurface } from "../../editor/EditorSurface";
 import { TerminalSurface } from "../../terminal/TerminalSurface";
 import { attachableSurfaces, warmSurfaces } from "./surfacePool";
 import { disabledReasonLabel } from "./activityPresentation";
@@ -108,15 +109,29 @@ function Failure({
   );
 }
 
-/** The Editor's content is a native child WebView; the shell draws only the
- * states around it. A ready host has a Workbench of its own covering this
- * Surface, so drawing anything under it would be a spinner nobody can see. */
-function SurfaceEditor({ host }: { readonly host: AppSnapshot["editorHost"] }) {
-  if (host.status === "failed") {
-    return <Failure summary={host.summary} detail={host.detail ?? undefined} />;
-  }
-  return host.status === "ready" ? null : (
-    <Waiting label="Starting the editor…" />
+/**
+ * The Editor Activity's content.
+ *
+ * The Workbench lives in this document now, so the shell draws it rather than
+ * drawing the states around a native child that covered them anyway. The
+ * server is asked for the first time the Editor is visited: nothing starts a
+ * VS Code Server for a user who never opens one.
+ */
+function SurfaceEditor({
+  workspace,
+}: {
+  readonly workspace?: WorkspaceSnapshot;
+}) {
+  const { editorRemote, editorFailure, ensureEditorRemote } = useAppShell();
+  useEffect(() => {
+    ensureEditorRemote();
+  }, [ensureEditorRemote]);
+  return (
+    <EditorSurface
+      remote={editorRemote ?? undefined}
+      folder={workspace?.root}
+      failure={editorFailure ?? undefined}
+    />
   );
 }
 
@@ -245,7 +260,7 @@ export function SurfaceViewport({
       body = <SurfaceAgent snapshot={snapshot} workspace={workspace} />;
       activeKey = attachable.has(surfaceKey) ? surfaceKey : undefined;
     } else {
-      body = <SurfaceEditor host={snapshot.editorHost} />;
+      body = <SurfaceEditor workspace={workspace} />;
     }
   }
 

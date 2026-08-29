@@ -24,8 +24,9 @@ pub use bridge_transport::{
     BridgeRequestResult, BridgeSurfaceId,
 };
 pub use error::{EditorError, EditorErrorCode, EditorResult};
+pub use host::EditorRemote;
 pub use host::{EditorHost, EditorHostConfig, EditorSurfaceKey, EditorSurfaceSnapshot};
-pub use provider::{EditorExecutable, OfficialVscodeCapabilities, OfficialVscodeExecutable};
+pub use provider::{BundledServerExecutable, EditorExecutable};
 pub use url::{ExternalUrl, NavigationDecision, NavigationRequest};
 pub use webview::{EditorBounds, NativeFocusIdentity};
 pub use webview::{NavigationRouter, WryWebViewHost};

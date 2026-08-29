@@ -23,7 +23,6 @@ import type { AppShellClient, WorkspacePickerEvent } from "./client";
 import {
   agentSnapshot,
   closingFailedSnapshot,
-  editorFailedSnapshot,
   globalSnapshot,
   unavailableSnapshot,
   workspaceSnapshot,
@@ -455,23 +454,27 @@ describe("App Shell states and accessibility", () => {
     expect(await screen.findByText(/could not be closed/i)).toBeInTheDocument();
   });
 
-  it("shows the editor host's own failure instead of a placeholder", async () => {
-    render(<AppShell client={client(editorFailedSnapshot)} />);
-    // The summary says what to do; the detail says exactly what happened.
-    expect(
-      await screen.findByText(/port is already in use/i),
-    ).toBeInTheDocument();
-    expect(screen.getByText(/127\.0\.0\.1:55971/)).toBeInTheDocument();
+  it("shows why the editor could not start, from the attempt that failed", async () => {
+    // The failure is the server refusing to come up, which is known only to
+    // the call that asked it to — not to a projection assembled beforehand.
+    const appClient = client(workspaceSnapshot);
+    appClient.ensureEditorRemote = vi
+      .fn()
+      .mockRejectedValue(new Error("127.0.0.1:55971 is already in use"));
+    render(<AppShell client={appClient} />);
+    expect(await screen.findByText(/already in use/i)).toBeInTheDocument();
     // The placeholder that always claimed the editor was on its way is gone.
     expect(screen.queryByText(/appears here once/i)).not.toBeInTheDocument();
   });
 
-  it("shows a starting state while the editor host is coming up", async () => {
-    const starting = {
-      ...workspaceSnapshot,
-      editorHost: { status: "starting" },
-    } as typeof workspaceSnapshot;
-    render(<AppShell client={client(starting)} />);
+  it("shows a starting state while the editor is coming up", async () => {
+    // Nothing resolves until the server is running, and the Workbench cannot
+    // be drawn before it does.
+    const appClient = client(workspaceSnapshot);
+    appClient.ensureEditorRemote = vi
+      .fn()
+      .mockReturnValue(new Promise(() => {}));
+    render(<AppShell client={appClient} />);
     expect(await screen.findByText("Starting the editor…")).toBeInTheDocument();
   });
 

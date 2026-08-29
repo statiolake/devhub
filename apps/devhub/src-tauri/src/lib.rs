@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 
-use std::collections::{BTreeMap, BTreeSet, HashSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
@@ -992,10 +992,6 @@ struct NativeAppState {
     agent_runtime: HerdrAgentRuntime,
     agent_surfaces: AgentSurfaceManager,
     editor_host: Arc<EditorHost>,
-    /// Surfaces with a warm mount in flight. Warming runs off the request
-    /// path, so this is what keeps one dispatch after another from stacking up
-    /// threads for a Workbench that is already on its way.
-    editor_warming: Arc<Mutex<HashSet<editor::EditorSurfaceKey>>>,
     editor_bounds: Mutex<editor::EditorBounds>,
     profiles: Mutex<Vec<DomainAgentProfile>>,
     /// Opaque mappings are kept in native memory until the StateStore/core
@@ -2114,9 +2110,16 @@ impl NativeAppState {
         if performance_markers_enabled {
             bridge_sink.enable_performance_markers(diagnostics.clone());
         }
-        let editor_host = Arc::new(EditorHost::new(
-            EditorHostConfig::new(home, resource_dir).with_bridge_event_sink(bridge_sink.clone()),
-        ));
+        let mut editor_config =
+            EditorHostConfig::new(home, resource_dir).with_bridge_event_sink(bridge_sink.clone());
+        // `tauri dev` populates no bundle Resources directory, so the server
+        // staged next to the crate is named directly. Compiled out of release
+        // builds, where the bundle carries it.
+        #[cfg(debug_assertions)]
+        if let Some(path) = debug_staged_server() {
+            editor_config = editor_config.with_server_executable(path);
+        }
+        let editor_host = Arc::new(EditorHost::new(editor_config));
         let model = persisted.hydrate_model(&profiles).map_err(persistence_error)?;
         let mut coordinator = AppCoordinator::with_model(model);
         coordinator.mark_ready();
@@ -2154,7 +2157,6 @@ impl NativeAppState {
             agent_runtime,
             agent_surfaces: AgentSurfaceManager::new(),
             editor_host,
-            editor_warming: Arc::new(Mutex::new(HashSet::new())),
             editor_bounds: Mutex::new(editor::EditorBounds::new(0.0, 0.0, 900.0, 560.0)),
             profiles: Mutex::new(profiles),
             agent_mappings: Mutex::new(restored_agent_mappings),
@@ -2598,90 +2600,14 @@ impl NativeAppState {
         self.editor_host.set_layout(bounds).map_err(state_error)
     }
 
-    fn sync_editor_surface_for_snapshot(&self, snapshot: &AppSnapshot) {
-        let editing = snapshot.active_activity() == Activity::Editor;
-        if !editing {
-            let _ = self.editor_host.hide_surfaces();
-        }
-        let selected = match snapshot.selected_context() {
-            devhub_app_core::NavigationContext::Global => {
-                Some((editor::EditorSurfaceKey::Global, None))
-            }
-            devhub_app_core::NavigationContext::Workspace(id) => snapshot
-                .workspaces()
-                .iter()
-                .find(|workspace| workspace.id() == id && workspace.state().is_available())
-                .map(|workspace| {
-                    (
-                        editor::EditorSurfaceKey::Workspace(id.to_string()),
-                        Some(workspace.root().as_path().to_path_buf()),
-                    )
-                }),
-            devhub_app_core::NavigationContext::Agent(agent_id) => snapshot
-                .workspaces()
-                .iter()
-                .find(|workspace| {
-                    workspace.state().is_available()
-                        && workspace.agents().iter().any(|agent| agent.id() == agent_id)
-                })
-                .map(|workspace| {
-                    (
-                        editor::EditorSurfaceKey::Workspace(workspace.id().to_string()),
-                        Some(workspace.root().as_path().to_path_buf()),
-                    )
-                }),
-        };
-        let Some((key, root)) = selected else {
-            if editing {
-                let _ = self.editor_host.hide_surfaces();
-            }
-            return;
-        };
-        let bounds = self
-            .editor_bounds
-            .lock()
-            .map(|bounds| *bounds)
-            .unwrap_or_else(|_| editor::EditorBounds::new(0.0, 0.0, 900.0, 560.0));
-        if editing {
-            let _ = self.editor_host.ensure_surface(key, root, bounds);
-        } else {
-            self.warm_editor_surface_off_the_request_path(key, root, bounds);
-        }
-    }
-
-    /// Boot a selected Workspace's Workbench behind whatever Activity is on
-    /// screen, so that switching to the Editor is a reveal rather than a mount.
+    /// Keep the native Editor children out of the way.
     ///
-    /// The work never runs on the dispatch that triggered it. Mounting a child
-    /// WebView is a blocking round-trip to the main thread, and the first one
-    /// also boots the VS Code Server behind it; doing that inline made every
-    /// switch to the Terminal wait for the Editor it was switching away from.
-    /// The dispatch hands the mount to a thread and returns, and a surface that
-    /// is already mounted or already being warmed hands over nothing.
-    fn warm_editor_surface_off_the_request_path(
-        &self,
-        key: editor::EditorSurfaceKey,
-        root: Option<PathBuf>,
-        bounds: editor::EditorBounds,
-    ) {
-        if self.editor_host.surface_is_mounted(&key) {
-            return;
-        }
-        let Ok(mut warming) = self.editor_warming.lock() else {
-            return;
-        };
-        if !warming.insert(key.clone()) {
-            return;
-        }
-        drop(warming);
-        let host = Arc::clone(&self.editor_host);
-        let tracker = Arc::clone(&self.editor_warming);
-        std::thread::spawn(move || {
-            let _ = host.warm_surface(key.clone(), root, bounds);
-            if let Ok(mut warming) = tracker.lock() {
-                warming.remove(&key);
-            }
-        });
+    /// The Workbench is drawn by the App Shell itself now, so there is no
+    /// child WebView to mount, reveal, or size. Any child left over from an
+    /// earlier run of this process is hidden rather than shown; the machinery
+    /// that creates them is on its way out and nothing calls into it.
+    fn sync_editor_surface_for_snapshot(&self, _snapshot: &AppSnapshot) {
+        let _ = self.editor_host.hide_surfaces();
     }
 
     /// The existing startup Window is already constructed by Tauri's config.
@@ -7285,6 +7211,28 @@ async fn select_workspace_picker(
     Ok(result.0)
 }
 
+/// Start the Editor's server and hand back how to reach it.
+///
+/// The Workbench is part of the App Shell's own bundle now, so this replaces
+/// mounting a child WebView: the shell opens the connection itself.
+#[tauri::command]
+async fn ensure_editor_remote(
+    app: AppHandle,
+    state: State<'_, NativeAppState>,
+) -> Result<editor::EditorRemote, AppErrorWire> {
+    let token = state.capture_open_lifecycle_token()?;
+    // Starting a server is a blocking wait on readiness, and the shell awaits
+    // this before it can draw the Editor at all.
+    tauri::async_runtime::spawn_blocking(move || {
+        let state =
+            app.try_state::<NativeAppState>().ok_or_else(AppErrorWire::native_unavailable)?;
+        state.validate_app_lifecycle_token(token)?;
+        state.editor_host.ensure_remote().map_err(|error| editor_error(&error))
+    })
+    .await
+    .map_err(|_| AppErrorWire::native_unavailable())?
+}
+
 #[tauri::command]
 fn get_app_appearance(
     state: State<'_, NativeAppState>,
@@ -7878,6 +7826,14 @@ fn editor_app_resource_dir(app: &AppHandle) -> Option<PathBuf> {
     app.path().resource_dir().ok()
 }
 
+/// The server `scripts/provision-editor-server.sh` staged for a source build.
+#[cfg(debug_assertions)]
+fn debug_staged_server() -> Option<PathBuf> {
+    let path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("resources/editor-server/bin/codium-server");
+    path.is_file().then_some(path)
+}
+
 #[cfg(debug_assertions)]
 fn debug_source_resource_dir() -> Option<PathBuf> {
     debug_source_resource_dir_from(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").as_path())
@@ -8290,6 +8246,7 @@ pub fn run() {
             choose_workspace_folder,
             get_app_appearance,
             set_editor_layout,
+            ensure_editor_remote,
             get_agent_profiles,
             dispatch_app_intent,
             replay_app_events,

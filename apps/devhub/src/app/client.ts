@@ -44,6 +44,20 @@ export const OPEN_SETTINGS_WINDOW_COMMAND = "open_settings_window" as const;
 export const RECORD_PERFORMANCE_MARKER_COMMAND =
   "record_performance_marker" as const;
 export const SET_EDITOR_LAYOUT_COMMAND = "set_editor_layout" as const;
+export const ENSURE_EDITOR_REMOTE_COMMAND = "ensure_editor_remote" as const;
+
+/**
+ * How the Workbench reaches the Editor's server.
+ *
+ * The Workbench runs inside the App Shell's own document, so this is the whole
+ * seam: an authority to open a socket to, the token that authenticates it, and
+ * the VS Code release identity the two sides have to agree on.
+ */
+export interface EditorRemote {
+  readonly authority: string;
+  readonly connectionToken: string;
+  readonly commit: string;
+}
 
 /** Logical App Shell coordinates occupied by the active native Editor child. */
 export interface EditorLayout {
@@ -121,6 +135,7 @@ export interface AppShellClient {
   chooseWorkspaceFolder?(): Promise<string | undefined>;
   openSettings?(): Promise<void>;
   setEditorLayout?(layout: EditorLayout): Promise<void>;
+  ensureEditorRemote?(): Promise<EditorRemote>;
   recordPerformanceMarker?(marker: AppPerformanceMarker): Promise<void>;
   subscribeWorkspacePicker?(
     listener: (event: WorkspacePickerEvent) => void,
@@ -226,6 +241,9 @@ export function createTauriAppShellClient(
     },
     setEditorLayout(layout) {
       return transport.invoke<void>(SET_EDITOR_LAYOUT_COMMAND, layout);
+    },
+    ensureEditorRemote() {
+      return transport.invoke<EditorRemote>(ENSURE_EDITOR_REMOTE_COMMAND);
     },
     recordPerformanceMarker(marker) {
       return transport.invoke<void>(RECORD_PERFORMANCE_MARKER_COMMAND, {
