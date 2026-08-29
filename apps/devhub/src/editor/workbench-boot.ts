@@ -17,6 +17,9 @@ import {
   IKeybindingService,
 } from "@codingame/monaco-vscode-api";
 import * as monaco from "monaco-editor";
+// Side effect, and it has to happen before the services start: the first
+// worker is asked for while they come up.
+import "./workers";
 import { UserFacingFailure } from "../app/failure";
 import type { WorkbenchFrameMessage } from "./frameProtocol";
 import { raiseWorkbench } from "./workbench";
