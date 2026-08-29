@@ -2,7 +2,9 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "app-shell",
   "description": "Permissions for the native DevHub application shell only.",
-  "webviews": ["app-shell"],
+  "webviews": [
+    "app-shell"
+  ],
   "permissions": [
     "core:default",
     "core:window:allow-start-dragging",
@@ -26,6 +28,7 @@
     "allow-agent-surface-resize",
     "allow-agent-surface-acknowledge",
     "allow-agent-surface-detach",
-    "allow-open-settings-window"
+    "allow-open-settings-window",
+    "allow-ensure-editor-remote"
   ]
 }

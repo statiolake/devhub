@@ -57,7 +57,25 @@ export function AppShellProvider({
     diagnostic: "projection_unavailable",
     profiles: [],
   });
-  const [intentError, setIntentError] = useState<AppError | null>(null);
+  /**
+   * The failure on screen, and whether a new projection invalidates it.
+   *
+   * A dispatch failure is a statement about a projection that has since been
+   * replaced, so the next one retires it. A failure that had nothing to do
+   * with the projection — a provider that would not start, a query that was
+   * refused — is not answered by a snapshot arriving, and clearing it on one
+   * is how a reported failure reaches the screen and vanishes before it can
+   * be read. Which of the two it is belongs to whoever raised it.
+   */
+  const [intentError, setIntentErrorState] = useState<{
+    readonly error: AppError;
+    readonly retiredByProjection: boolean;
+  } | null>(null);
+  const setIntentError = useCallback((error: AppError | null) => {
+    setIntentErrorState(
+      error === null ? null : { error, retiredByProjection: true },
+    );
+  }, []);
   const [pickerCandidates, setPickerCandidates] = useState<
     WorkspacePickerCandidate[]
   >([]);
@@ -90,7 +108,10 @@ export function AppShellProvider({
    * the failure here, and it appears where every other failure appears.
    */
   const reportFailure = useCallback((error: unknown) => {
-    setIntentError(toAppError(error));
+    setIntentErrorState({
+      error: toAppError(error),
+      retiredByProjection: false,
+    });
   }, []);
 
   const applySnapshot = useCallback((snapshot: AppSnapshot) => {
@@ -101,7 +122,11 @@ export function AppShellProvider({
     // A same-revision notification can be the native acknowledgement for a
     // persistence-degraded dispatch. Keep that diagnostic visible until a
     // newer projection or a new user dispatch replaces it.
-    if (revisionAdvanced) setIntentError(null);
+    if (revisionAdvanced) {
+      setIntentErrorState((current) =>
+        current?.retiredByProjection === true ? null : current,
+      );
+    }
   }, []);
 
   const emitPerformanceMarker = useCallback(
@@ -330,7 +355,7 @@ export function AppShellProvider({
       unsubscribePicker?.();
       unsubscribeNativeError?.();
     };
-  }, [applySnapshot, attempt, client, reportFailure]);
+  }, [applySnapshot, attempt, client, reportFailure, setIntentError]);
 
   const dispatch = useCallback(
     async (intent: AppIntent): Promise<AppOutcome | undefined> => {
@@ -366,7 +391,7 @@ export function AppShellProvider({
         return undefined;
       }
     },
-    [applySnapshot, client, pendingConfirmation],
+    [applySnapshot, client, pendingConfirmation, setIntentError],
   );
 
   const retry = useCallback(() => {
@@ -374,7 +399,7 @@ export function AppShellProvider({
     setIntentError(null);
     setState({ status: "loading" });
     setAttempt((current) => current + 1);
-  }, []);
+  }, [setIntentError]);
 
   const openSettings = useCallback(async () => {
     await client.openSettings?.();
@@ -500,7 +525,7 @@ export function AppShellProvider({
   // user gets to put it away; the next dispatch or projection re-raises it if
   // the problem is still there.
   const dismissIntentError = useCallback(() => {
-    setIntentError(null);
+    setIntentErrorState(null);
   }, []);
 
   // The Editor's server is started on demand and outlives every Surface, so
@@ -563,7 +588,7 @@ export function AppShellProvider({
     () => ({
       state,
       appearance,
-      intentError,
+      intentError: intentError?.error ?? null,
       dismissIntentError,
       editorRemote,
       ensureEditorRemote,

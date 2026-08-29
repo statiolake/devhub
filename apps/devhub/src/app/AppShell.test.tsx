@@ -1093,6 +1093,35 @@ describe("App Shell states and accessibility", () => {
 });
 
 describe("Editor across Workspaces", () => {
+  it("keeps a reported failure on screen when the next projection arrives", async () => {
+    // The failure that made this necessary: the Editor's command was refused,
+    // the refusal was reported, and the alert was wiped by the next snapshot
+    // before anyone could read it. A dispatch failure is a statement about a
+    // projection that has since been replaced; a provider that would not start
+    // is not answered by a snapshot arriving.
+    const appClient = client(workspaceSnapshot);
+    let onSnapshot: ((snapshot: AppSnapshot) => void) | undefined;
+    vi.mocked(appClient.subscribe).mockImplementation(async (listener) => {
+      onSnapshot = listener;
+      return () => undefined;
+    });
+    appClient.ensureEditorRemote = vi
+      .fn()
+      .mockRejectedValue(new Error("ensure_editor_remote not allowed"));
+
+    render(<AppShell client={appClient} />);
+    const alert = await screen.findByRole("alert");
+    expect(alert).toBeInTheDocument();
+
+    act(() =>
+      onSnapshot?.({
+        ...workspaceSnapshot,
+        revision: workspaceSnapshot.revision + 1,
+      }),
+    );
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+  });
+
   it("keeps the editor server once it is running when the Workspace changes", async () => {
     // Reported: the first Workspace opens its editor, and switching to another
     // leaves every Surface saying it is still starting the server — including

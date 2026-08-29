@@ -29,6 +29,7 @@ fn main() {
             "copy_diagnostics",
             "apply_socket_change",
             "open_settings_window",
+            "ensure_editor_remote",
         ]),
     ))
     .expect("failed to generate Tauri application ACL");
