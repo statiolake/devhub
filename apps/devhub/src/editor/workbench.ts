@@ -201,7 +201,11 @@ async function raise(
       ...getFilesServiceOverride(),
       // The one that matters: everything below is drawn here, and everything
       // it operates on lives on the other side of this.
-      ...getRemoteAgentServiceOverride(),
+      // Off by default, and with it off the scan returns an empty list. The
+      // server this connects to is bundled with the app, and its built-in
+      // extensions — the grammars, the language configurations, the file
+      // icon theme — are the reason it is bundled at all.
+      ...getRemoteAgentServiceOverride({ scanRemoteExtensions: true }),
       ...getExtensionServiceOverride(),
       ...getExplorerServiceOverride(),
       ...getSearchServiceOverride(),
@@ -210,7 +214,14 @@ async function raise(
       ...getTextmateServiceOverride(),
       ...getThemeServiceOverride(),
       ...getTerminalServiceOverride(),
-      ...getQuickAccessServiceOverride(),
+      // Two defaults written for a Workbench embedded beside standalone
+      // Monaco editors. There are none here: every editor in this frame is a
+      // Workbench editor, so the picker is always the Workbench's own, and
+      // the command palette keeps the buttons that lead to a keybinding.
+      ...getQuickAccessServiceOverride({
+        shouldUseGlobalPicker: () => true,
+        isKeybindingConfigurationVisible: () => true,
+      }),
       ...getWorkspaceTrustOverride(),
       ...getBulkEditServiceOverride(),
       ...getMonarchServiceOverride(),
