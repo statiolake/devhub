@@ -43,6 +43,17 @@ export interface WorkbenchTarget {
   readonly folder?: string;
 }
 
+/**
+ * How long the Workbench is given to come up.
+ *
+ * Generous, because it is starting an editor: extensions are scanned, a remote
+ * connection is made, a theme is resolved. Bounded, because a start that never
+ * finishes is indistinguishable from one still going, and the shell would show
+ * a spinner nothing will ever replace. Whatever went wrong is worth saying
+ * even when the only honest thing to say is that it did not finish.
+ */
+const START_BUDGET_MS = 60_000;
+
 let started: Promise<void> | undefined;
 let host: HTMLElement | undefined;
 let openedFolder: string | undefined;
@@ -77,7 +88,7 @@ export function startWorkbench(target: WorkbenchTarget): Promise<void> {
   const container = document.createElement("div");
   container.className = "workbench-host";
   host = container;
-  started = raise(container, target).catch((error: unknown) => {
+  started = withBudget(raise(container, target)).catch((error: unknown) => {
     // A failed start is permanent for this process — the services are global
     // and half-raised. Forget the container so the shell can say so rather
     // than hand out a blank one.
@@ -86,6 +97,22 @@ export function startWorkbench(target: WorkbenchTarget): Promise<void> {
     throw error;
   });
   return started;
+}
+
+function withBudget(work: Promise<void>): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(
+        new UserFacingFailure(
+          "The editor did not finish starting.",
+          `It was given ${Math.round(START_BUDGET_MS / 1000)} seconds and did not report a result.`,
+        ),
+      );
+    }, START_BUDGET_MS);
+    work.then(resolve, reject).finally(() => {
+      clearTimeout(timer);
+    });
+  });
 }
 
 async function raise(

@@ -25,7 +25,11 @@ import type {
   AgentProfiles,
   ConfirmationPurposeWire,
 } from "../generated/app-shell";
-import { PERSISTENCE_DEGRADED_ERROR, toAppError } from "./failure";
+import {
+  PERSISTENCE_DEGRADED_ERROR,
+  toAppError,
+  UserFacingFailure,
+} from "./failure";
 import { AppShellContext, type AppShellContextValue } from "./useAppShell";
 
 const defaultClient = createTauriAppShellClient();
@@ -502,7 +506,19 @@ export function AppShellProvider({
     if (editorRequested.current) return;
     editorRequested.current = true;
     const result = client.ensureEditorRemote?.();
-    if (!result) return;
+    if (!result) {
+      // A transport that cannot start the Editor is a failure, not a wait.
+      // Returning quietly here is how a Surface ends up on a spinner that
+      // nothing will ever replace.
+      editorRequested.current = false;
+      reportFailure(
+        new UserFacingFailure(
+          "The editor is unavailable in this build.",
+          "The app shell has no way to start an editor server.",
+        ),
+      );
+      return;
+    }
     void result.then(setEditorRemote, (error: unknown) => {
       // Allow another attempt: a server that would not start can be fixed
       // without restarting the app.
