@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { AppShellProvider } from "./AppShellContext";
 import { type AppShellClient } from "./client";
 import { useAppShell } from "./useAppShell";
@@ -124,7 +124,6 @@ function Workbench() {
     confirmationBusy,
     confirmPending,
     dismissCloseConfirmation,
-    setEditorLayout,
   } = useAppShell();
   const onDispatch = useCallback(
     (intent: Parameters<typeof dispatch>[0]) => {
@@ -133,43 +132,10 @@ function Workbench() {
     [dispatch],
   );
   const confirmationRef = useRef<HTMLElement | null>(null);
-  const surfaceRef = useRef<HTMLElement | null>(null);
-  const lastEditorLayout = useRef<string | undefined>(undefined);
   const previousFocus = useRef<HTMLElement | null>(null);
   const focusRestoreGeneration = useRef(0);
   const closePurpose = pendingConfirmation?.purpose;
 
-  const reportEditorLayout = useCallback(() => {
-    if (
-      state.status !== "ready" ||
-      state.snapshot.selection.activity !== "editor"
-    ) {
-      return;
-    }
-    const surface = surfaceRef.current;
-    if (!surface) return;
-    const rect = surface.getBoundingClientRect();
-    if (rect.width < 1 || rect.height < 1) return;
-    const layout = {
-      x: rect.left,
-      y: rect.top,
-      width: rect.width,
-      height: rect.height,
-    };
-    const key = `${layout.x}:${layout.y}:${layout.width}:${layout.height}`;
-    if (lastEditorLayout.current === key) return;
-    lastEditorLayout.current = key;
-    setEditorLayout(layout);
-  }, [setEditorLayout, state]);
-
-  useLayoutEffect(() => {
-    reportEditorLayout();
-    const surface = surfaceRef.current;
-    if (!surface || typeof ResizeObserver === "undefined") return undefined;
-    const observer = new ResizeObserver(reportEditorLayout);
-    observer.observe(surface);
-    return () => observer.disconnect();
-  }, [reportEditorLayout]);
   const pendingAgent =
     pendingConfirmation?.purpose.kind === "agent_stop"
       ? state.status === "ready"
@@ -354,7 +320,6 @@ function Workbench() {
             snapshot={state.snapshot}
             intentError={intentError ?? undefined}
             appearance={appearance}
-            surfaceRef={surfaceRef}
           />
         </div>
       </div>

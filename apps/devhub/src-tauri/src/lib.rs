@@ -67,7 +67,7 @@ use editor::{
     BridgeEvent, BridgeEventSink, BridgeRequest, BridgeRequestDisposition, BridgeRequestResult,
 };
 use editor::{EditorHost, EditorHostConfig};
-use editor::{NativeFocusIdentity, NavigationRequest, NavigationRouter, WryWebViewHost};
+use editor::NativeFocusIdentity;
 use integration::lifecycle::{safe_restore_frame, DisplayWorkArea, LifecycleGate, Phase};
 use keyboard::{KeyStroke, KeyboardController, RouteDecision, SurfaceFocus};
 use repository::{GitRepositoryResolver, GitRepositoryResolverConfig};
@@ -102,19 +102,6 @@ const APP_SHELL_TITLEBAR_HEIGHT: f64 = 38.0;
 /// AppKit places the window buttons 20pt from the leading edge; only their
 /// vertical placement has to follow DevHub's own titlebar band.
 const TRAFFIC_LIGHT_LEADING: f64 = 20.0;
-
-fn initial_editor_bounds(
-    window_width: f64,
-    window_height: f64,
-    sidebar_width: u16,
-) -> editor::EditorBounds {
-    // Keep the startup placement aligned with the CSS workbench before the
-    // first ResizeObserver report arrives: the Sidebar is flush to the window
-    // edge and the Surface fills everything below the titlebar beside it.
-    let x = f64::from(sidebar_width);
-    let y = APP_SHELL_TITLEBAR_HEIGHT;
-    editor::EditorBounds::new(x, y, (window_width - x).max(1.0), (window_height - y).max(1.0))
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ProcessFileLimitError {
@@ -450,96 +437,6 @@ impl BridgeEventSink for NativeBridgeSink {
     }
 }
 
-/// Navigation adapter for raw Editor child WebViews. It is deliberately
-/// App-Shell-only: folder requests become Rust-owned intents and external
-/// links are handed to the user's default browser without exposing Tauri IPC
-/// to the child WebView.
-#[derive(Clone)]
-struct NativeNavigationRouter {
-    app: AppHandle,
-    window_identity: NativeWindowIdentity,
-}
-
-impl NativeNavigationRouter {
-    fn is_current_open(&self, state: &NativeAppState) -> bool {
-        state.lifecycle.phase() == Phase::Open
-            && state.is_current_native_identity(self.window_identity)
-    }
-}
-
-impl NavigationRouter for NativeNavigationRouter {
-    fn route_workspace(
-        &self,
-        _surface: &str,
-        request: &NavigationRequest,
-    ) -> editor::EditorResult<()> {
-        let NavigationRequest::Workspace { absolute_path } = request else {
-            return Err(editor::EditorError::new(editor::EditorErrorCode::NavigationDenied));
-        };
-        let Some(state) = self.app.try_state::<NativeAppState>() else {
-            return Err(editor::EditorError::new(editor::EditorErrorCode::LifecycleConflict));
-        };
-        let lifecycle = state
-            .capture_open_lifecycle_token()
-            .map_err(|_| editor::EditorError::new(editor::EditorErrorCode::LifecycleConflict))?;
-        let path = devhub_app_core::RequestedPath::new(absolute_path.to_string_lossy().to_string())
-            .map_err(|_| editor::EditorError::new(editor::EditorErrorCode::NavigationDenied))?;
-        let app = self.app.clone();
-        let window_identity = self.window_identity;
-        // WRY invokes navigation handlers on the AppKit thread. Dispatch the
-        // Rust intent away from that thread because an Editor surface switch
-        // may synchronously create/hide another raw child WebView.
-        tauri::async_runtime::spawn_blocking(move || {
-            let Some(state) = app.try_state::<NativeAppState>() else { return };
-            if !state.is_current_native_identity(window_identity)
-                || state.lifecycle.phase() != Phase::Open
-            {
-                return;
-            }
-            match state.dispatch_intent_with_lifecycle(UserIntent::OpenFolder { path }, lifecycle) {
-                Ok((outcome, changed)) if changed => {
-                    let _ = app.emit_to(
-                        APP_SHELL_WINDOW_LABEL,
-                        APP_SNAPSHOT_CHANGED_EVENT,
-                        outcome.snapshot(),
-                    );
-                }
-                Ok(_) => {}
-                Err(error) => state.record_native_error(error),
-            }
-        });
-        Ok(())
-    }
-
-    fn open_external(&self, request: &NavigationRequest) -> editor::EditorResult<()> {
-        let NavigationRequest::External { url } = request else {
-            return Err(editor::EditorError::new(editor::EditorErrorCode::NavigationDenied));
-        };
-        let Some(state) = self.app.try_state::<NativeAppState>() else {
-            return Err(editor::EditorError::new(editor::EditorErrorCode::LifecycleConflict));
-        };
-        if !self.is_current_open(&state) {
-            return Err(editor::EditorError::new(editor::EditorErrorCode::LifecycleConflict));
-        }
-        let app = self.app.clone();
-        let window_identity = self.window_identity;
-        let url = url.as_str().to_owned();
-        tauri::async_runtime::spawn_blocking(move || {
-            let Some(state) = app.try_state::<NativeAppState>() else { return };
-            if !state.is_current_native_identity(window_identity)
-                || state.lifecycle.phase() != Phase::Open
-            {
-                return;
-            }
-            let status = ProcessCommand::new("open").arg(url).status();
-            if status.as_ref().is_err() || !status.map(|status| status.success()).unwrap_or(false) {
-                state.record_native_error(AppErrorWire::native_unavailable());
-            }
-        });
-        Ok(())
-    }
-}
-
 struct PickerSink {
     app: AppHandle,
     query: String,
@@ -783,7 +680,6 @@ struct NativeAppState {
     agent_runtime: HerdrAgentRuntime,
     agent_surfaces: AgentSurfaceManager,
     editor_host: Arc<EditorHost>,
-    editor_bounds: Mutex<editor::EditorBounds>,
     profiles: Mutex<Vec<DomainAgentProfile>>,
     /// Opaque mappings are kept in native memory until the StateStore/core
     /// projection commits them. They never enter the App Shell wire DTO.
@@ -1605,11 +1501,6 @@ impl NativeAppState {
             if let Some(state) = worker_app.try_state::<NativeAppState>() {
                 let deadline = Instant::now() + Duration::from_secs(5);
                 if state.window_cleanup_is_current(token) {
-                    if let Err(error) = state.editor_host.detach_webview_host() {
-                        state.record_native_error(state_error(error));
-                    } else {
-                        state.record_performance_probe(PerformanceMarker::EditorHostDetached);
-                    }
                     if state._terminal_runtime.detach_all_surfaces_until(deadline) {
                         state.record_performance_probe(PerformanceMarker::TerminalSurfacesDetached);
                     } else {
@@ -1794,7 +1685,6 @@ impl NativeAppState {
             agent_runtime,
             agent_surfaces: AgentSurfaceManager::new(),
             editor_host,
-            editor_bounds: Mutex::new(editor::EditorBounds::new(0.0, 0.0, 900.0, 560.0)),
             profiles: Mutex::new(profiles),
             agent_mappings: Mutex::new(restored_agent_mappings),
             agent_reconciler_running: AtomicBool::new(true),
@@ -1917,23 +1807,19 @@ impl NativeAppState {
             return None;
         };
         let generation = self.lifecycle.generation();
-        let identity = match key {
-            SurfaceKey::GlobalEditor | SurfaceKey::WorkspaceEditor(_) => {
-                self.editor_host.active_native_focus_identity()?
-            }
-            SurfaceKey::GlobalTerminal
-            | SurfaceKey::WorkspaceTerminal(_)
-            | SurfaceKey::Agent(_) => {
-                let binding = self.app_shell_focus.lock().ok()?.as_ref().copied()?;
-                if binding.window == 0
-                    || binding.window != event_window_identity
-                    || event_window_number == 0
-                {
-                    return None;
-                }
-                NativeFocusIdentity { window_number: event_window_number, ..binding }
-            }
-        };
+        // Every Surface — Editor included — is drawn by the App Shell's own
+        // WebView, so they all share one native responder. The Editor used to
+        // answer from a child WebView of its own; asking a host that no longer
+        // mounts one returned nothing, and a Surface with no focus silently
+        // swallowed the second Command-Q instead of forwarding it.
+        let binding = self.app_shell_focus.lock().ok()?.as_ref().copied()?;
+        if binding.window == 0
+            || binding.window != event_window_identity
+            || event_window_number == 0
+        {
+            return None;
+        }
+        let identity = NativeFocusIdentity { window_number: event_window_number, ..binding };
         Some(SurfaceFocus {
             semantic: key.clone(),
             native_id: identity.responder_root,
@@ -1960,16 +1846,6 @@ impl NativeAppState {
         {
             result = Err(AppErrorWire::native_unavailable()
                 .with_summary("window reconstruction became stale"));
-        }
-        if result.is_err() {
-            // A failed mount must leave the host detached. Otherwise a
-            // partially mounted WRY host would make the next Dock activation
-            // look like a successful reconstruction and suppress the retry.
-            // Keep VS Code Server running: only its child surfaces are rolled
-            // back, and the next attempt can reuse its hot-exit state.
-            if let Err(error) = self.editor_host.detach_webview_host() {
-                self.record_native_error(state_error(error));
-            }
         }
         if result.is_ok() {
             self.diagnostics.emit(DiagnosticEvent::Lifecycle { phase: LifecyclePhase::Ready });
@@ -2018,32 +1894,11 @@ impl NativeAppState {
             .ok_or_else(|| AppErrorWire::native_unavailable())?;
         self.capture_app_shell_focus(app, &window, window_identity);
         self.restore_window_frame(&parent).inspect_err(|_error| {})?;
-        // A failed Dock reconstruction is retryable, but a successful retry
-        // must never stack a second raw WRY host or child-WebView registry on
-        // top of the first one.
-        self.editor_host.detach_webview_host().map_err(|error| state_error(error))?;
-        let router: Arc<dyn NavigationRouter> =
-            Arc::new(NativeNavigationRouter { app: app.clone(), window_identity });
-        self.editor_host
-            .attach_webview_host(Arc::new(WryWebViewHost::new(parent.clone(), router)))
-            .map_err(|error| state_error(error))?;
-
-        let size = parent.inner_size().map_err(|_| AppErrorWire::native_unavailable())?;
-        let scale_factor = parent.scale_factor().map_err(|_| AppErrorWire::native_unavailable())?;
-        let logical_size = size.to_logical::<f64>(scale_factor);
-        let snapshot = self.current_snapshot_with_lifecycle(lifecycle).inspect_err(|_error| {})?;
-        let bounds = initial_editor_bounds(
-            logical_size.width,
-            logical_size.height,
-            snapshot.sidebar().width(),
-        );
-        *self.editor_bounds.lock().map_err(state_error)? = bounds;
-        // No Editor children are mounted here. The Workbench is part of the
-        // App Shell's own document, so there is nothing native to raise — and
-        // raising it here made an Editor that could not start into a window
-        // that could not be reconstructed, which the shell showed as a fatal
-        // error with no Sidebar and no titlebar behind it. A provider that
-        // fails is one Surface's problem.
+        // Nothing native is mounted here. Every Surface is drawn by the App
+        // Shell's own document, so reconstruction restores a window and stops
+        // — a provider that fails is one Surface's problem, not a window that
+        // cannot be rebuilt.
+        let _ = lifecycle;
         Ok(())
     }
 
@@ -2080,46 +1935,6 @@ impl NativeAppState {
         }
         self.reconstruction_running.store(false, Ordering::Release);
         result
-    }
-
-    /// Keeps raw Editor child visibility in lockstep with the Rust-owned
-    /// Activity/Context selection. The App Shell still renders typed
-    /// unavailable states underneath a missing VS Code Server host; a provider
-    /// failure never deletes the durable projection.
-    fn sync_editor_surface_with_lifecycle(
-        &self,
-        lifecycle: NativeLifecycleToken,
-    ) -> Result<(), AppErrorWire> {
-        let snapshot = self.current_snapshot_with_lifecycle(lifecycle)?;
-        self.sync_editor_surface_for_snapshot(&snapshot);
-        Ok(())
-    }
-
-    /// Accept the actual App Shell Surface rectangle after React has laid out
-    /// the titlebar and Sidebar. Raw WRY children are siblings of the shell
-    /// WebView, so a Window-sized default would cover navigation controls.
-    fn set_editor_layout_with_lifecycle(
-        &self,
-        bounds: editor::EditorBounds,
-        lifecycle: NativeLifecycleToken,
-    ) -> Result<(), AppErrorWire> {
-        self.validate_app_lifecycle_token(lifecycle)?;
-        if !bounds.is_valid() {
-            return Err(AppErrorWire::native_unavailable()
-                .with_summary("Editor Surface layout is outside the Window bounds"));
-        }
-        *self.editor_bounds.lock().map_err(state_error)? = bounds;
-        self.editor_host.set_layout(bounds).map_err(state_error)
-    }
-
-    /// Keep the native Editor children out of the way.
-    ///
-    /// The Workbench is drawn by the App Shell itself now, so there is no
-    /// child WebView to mount, reveal, or size. Any child left over from an
-    /// earlier run of this process is hidden rather than shown; the machinery
-    /// that creates them is on its way out and nothing calls into it.
-    fn sync_editor_surface_for_snapshot(&self, _snapshot: &AppSnapshot) {
-        let _ = self.editor_host.hide_surfaces();
     }
 
     /// The existing startup Window is already constructed by Tauri's config.
@@ -2801,15 +2616,6 @@ impl NativeAppState {
                         }
                         self._terminal_runtime.detach_webview(APP_SHELL_WINDOW_LABEL);
                         self.agent_surfaces.detach_webview(APP_SHELL_WINDOW_LABEL);
-                        // A child WebView belongs to the Window, not to the
-                        // VS Code Server process. Drop the native host as well so
-                        // a later Dock reconstruction cannot retain a parent
-                        // handle from the destroyed Window.
-                        if let Err(error) = self.editor_host.detach_webview_host() {
-                            if first_error.is_none() {
-                                first_error = Some(state_error(error));
-                            }
-                        }
                     }
                     devhub_app_core::DetachReason::Quit => {
                         let terminal_stopped = if let Some(deadline) = deadline {
@@ -4077,7 +3883,6 @@ impl NativeAppState {
         };
         let execution = self.execute_effects_for_lifecycle(effects, lifecycle)?;
         self.validate_app_lifecycle_token(lifecycle)?;
-        self.sync_editor_surface_with_lifecycle(lifecycle)?;
         let changed = execution.snapshot.revision() != before;
         let final_outcome = execution.outcome.as_ref().unwrap_or(&outcome);
         let mut wire =
@@ -5910,15 +5715,6 @@ fn record_performance_marker(
 }
 
 #[tauri::command]
-fn set_editor_layout(
-    state: State<'_, NativeAppState>,
-    payload: editor::EditorBounds,
-) -> Result<(), AppErrorWire> {
-    let token = state.capture_open_lifecycle_token()?;
-    state.set_editor_layout_with_lifecycle(payload, token)
-}
-
-#[tauri::command]
 fn get_agent_profiles(state: State<'_, NativeAppState>) -> Result<AgentProfilesWire, AppErrorWire> {
     let token = state.capture_open_lifecycle_token()?;
     state.agent_profiles_with_lifecycle(token)
@@ -7063,49 +6859,9 @@ pub fn run() {
                     if let Ok(handle) = window.ns_window() {
                         centre_traffic_lights(handle);
                     }
-                    let scale_factor = window.scale_factor().unwrap_or(1.0);
-                    let logical_size = size.to_logical::<f64>(scale_factor);
-                    // The child holds whatever frame it was last given, so a
-                    // resize needs one immediately — the App Shell's own report
-                    // arrives a layout pass later. It has to be the Surface
-                    // rectangle, though: the window rectangle puts the Editor
-                    // over the Sidebar and the titlebar, and it stays there,
-                    // because a correction that agrees with the shell is
-                    // indistinguishable from one that never came.
-                    let sidebar_width = state
-                        .coordinator
-                        .lock()
-                        .ok()
-                        .map_or(devhub_app_core::SIDEBAR_DEFAULT_WIDTH, |coordinator| {
-                            coordinator.snapshot().sidebar().width()
-                        });
-                    let bounds = initial_editor_bounds(
-                        logical_size.width.max(1.0),
-                        logical_size.height.max(1.0),
-                        sidebar_width,
-                    );
-                    if let Ok(mut current) = state.editor_bounds.lock() {
-                        *current = bounds;
-                    }
-                    // WRY marshals child-WebView operations onto the AppKit
-                    // thread. Window events already arrive there, so perform
-                    // the synchronous host call on a blocking worker to avoid
-                    // recursively waiting for the same main-thread queue.
-                    let layout_generation = state.lifecycle.generation();
-                    let layout_identity = state.native_window_identity(window);
-                    let layout_app = app.clone();
-                    tauri::async_runtime::spawn_blocking(move || {
-                        if let Some(state) = layout_app.try_state::<NativeAppState>() {
-                            if state.lifecycle.phase() == Phase::Open
-                                && state.lifecycle.generation() == layout_generation
-                                && layout_identity.is_some_and(|identity| {
-                                    state.is_current_native_identity(identity)
-                                })
-                            {
-                                let _ = state.editor_host.set_layout(bounds);
-                            }
-                        }
-                    });
+                    // Every Surface is laid out by CSS inside the App Shell's
+                    // own document, so a resize has nothing native to place.
+                    let _ = size;
                     state.schedule_window_frame_persist(window);
                 }
                 _ => {}
@@ -7119,7 +6875,6 @@ pub fn run() {
             select_workspace_picker,
             choose_workspace_folder,
             get_app_appearance,
-            set_editor_layout,
             ensure_editor_remote,
             open_external_url,
             get_agent_profiles,
@@ -7339,33 +7094,6 @@ mod tests {
         let config: serde_json::Value =
             serde_json::from_str(include_str!("../tauri.conf.json")).expect("config parses");
         assert!(config["app"]["windows"][0].get("trafficLightPosition").is_none());
-    }
-
-    #[test]
-    fn initial_editor_bounds_reserve_titlebar_and_sidebar() {
-        assert_eq!(
-            initial_editor_bounds(1_200.0, 760.0, 288),
-            editor::EditorBounds::new(288.0, 38.0, 912.0, 722.0)
-        );
-    }
-
-    #[test]
-    fn editor_bounds_never_cover_the_sidebar_or_the_titlebar() {
-        // A resize has to hand the child a frame immediately, because it keeps
-        // whatever it was last given. Handing it the window rectangle put the
-        // Editor over the Sidebar and the titlebar and left it there — the App
-        // Shell's own report agrees with a correct frame, so there was nothing
-        // to distinguish a correction that never came.
-        for (width, height, sidebar) in
-            [(1_200.0, 760.0, 288_u16), (680.0, 480.0, 200), (2_560.0, 1_440.0, 400)]
-        {
-            let bounds = initial_editor_bounds(width, height, sidebar);
-            assert!(bounds.is_valid());
-            assert!(bounds.x >= f64::from(sidebar), "the Sidebar keeps its column: {bounds:?}");
-            assert!(bounds.y >= APP_SHELL_TITLEBAR_HEIGHT, "the titlebar stays: {bounds:?}");
-            assert!(bounds.x + bounds.width <= width + f64::EPSILON);
-            assert!(bounds.y + bounds.height <= height + f64::EPSILON);
-        }
     }
 
     #[cfg(debug_assertions)]

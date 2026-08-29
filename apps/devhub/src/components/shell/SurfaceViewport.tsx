@@ -6,7 +6,7 @@ import {
   type WorkspaceSnapshot,
   workspaceForContext,
 } from "../../generated/app-shell";
-import { type ReactNode, type Ref, useEffect, useMemo } from "react";
+import { type ReactNode, useEffect, useMemo } from "react";
 import { EditorFrame } from "../../editor/EditorFrame";
 import { TerminalSurface } from "../../terminal/TerminalSurface";
 import { attachableSurfaces, editorSurfaces } from "./surfacePool";
@@ -18,7 +18,6 @@ export interface SurfaceViewportProps {
   readonly snapshot: AppSnapshot;
   readonly intentError?: AppError;
   readonly appearance?: AppAppearance;
-  readonly surfaceRef?: Ref<HTMLElement>;
 }
 
 function InlineIntentError({
@@ -113,7 +112,6 @@ export function SurfaceViewport({
   snapshot,
   intentError,
   appearance,
-  surfaceRef,
 }: SurfaceViewportProps) {
   const {
     recordPerformanceMarker,
@@ -173,7 +171,6 @@ export function SurfaceViewport({
   // Only the transient states announce themselves; a provider Surface speaks
   // for itself, and `aria-live` on it would narrate every frame of output.
   let announce = true;
-  let live = true;
 
   if (snapshot.readiness !== "ready") {
     surfaceState = "loading";
@@ -191,7 +188,6 @@ export function SurfaceViewport({
       );
   } else if (activitySnapshot.resolution.kind === "disabled") {
     surfaceState = "unavailable";
-    live = false;
     body = (
       <Failure
         summary={disabledReasonLabel(activitySnapshot.resolution.reason)}
@@ -225,7 +221,6 @@ export function SurfaceViewport({
 
   return (
     <section
-      ref={live ? surfaceRef : undefined}
       className="surface"
       aria-label="Surface"
       aria-busy={snapshot.readiness !== "ready" ? "true" : undefined}

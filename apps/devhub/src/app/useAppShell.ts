@@ -10,7 +10,6 @@ import type {
 } from "../generated/app-shell";
 import type {
   AppPerformanceMarker,
-  EditorLayout,
   EditorRemote,
   WorkspacePickerCandidate,
 } from "./client";
@@ -31,7 +30,6 @@ export interface AppShellContextValue {
   /** Hand a destination the Editor asked for to the user's browser. */
   readonly openExternalUrl: (url: string) => void;
   readonly openSettings: () => Promise<void>;
-  readonly setEditorLayout: (layout: EditorLayout) => void;
   readonly pickerCandidates: readonly WorkspacePickerCandidate[];
   readonly pickerBusy: boolean;
   readonly startWorkspacePicker: (query?: string) => Promise<void>;
