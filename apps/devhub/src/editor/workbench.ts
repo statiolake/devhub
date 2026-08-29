@@ -289,6 +289,17 @@ async function raise(
     {
       remoteAuthority: authority,
       connectionToken,
+      // Left unset, VS Code rewrites every `vscode-remote:` resource into an
+      // HTTP address on the server's own origin and fetches it. The server
+      // answers, and the browser throws the answer away: it only sends
+      // `Access-Control-Allow-Origin` for the origin its `product.json`
+      // names, which is never this one. That cost the file icon theme, the
+      // grammars, and the language configurations.
+      //
+      // Returning the URI unchanged keeps it off HTTP entirely — the loader
+      // then reads it through the file service, over the connection that is
+      // already open. One origin, and nothing to authorise.
+      resourceUriProvider: (uri) => uri,
       // Workspace trust stays on. Choosing to open a folder in the Sidebar is
       // not the same as agreeing to run what is inside it, which is the whole
       // question trust asks. What had to be fixed was the prompt blocking the
