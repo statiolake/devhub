@@ -5,6 +5,8 @@
  * true only here. What leaves the frame is one message saying whether it came
  * up; the App Shell decides what to show for either answer.
  */
+import { getService, IFileService } from "@codingame/monaco-vscode-api";
+import * as monaco from "monaco-editor";
 import { UserFacingFailure } from "../app/failure";
 import type { WorkbenchFrameMessage } from "./frameProtocol";
 import { raiseWorkbench } from "./workbench";
@@ -32,7 +34,26 @@ if (!container || !authority || !connectionToken) {
     remote: { authority, connectionToken, commit: "" },
     folder,
   }).then(
-    () => report({ kind: "workbench-ready" }),
+    () => {
+      // A source build gets one way to ask the Workbench what it can see.
+      // "The tree is empty" and "the filesystem is unreachable" look identical
+      // from outside, and only one of them is a bug in the shell.
+      if (import.meta.env.DEV) {
+        (window as unknown as Record<string, unknown>).__devhubWorkbench = {
+          async read(path: string) {
+            const files = await getService(IFileService);
+            const uri = monaco.Uri.from({
+              scheme: "vscode-remote",
+              authority,
+              path,
+            });
+            const stat = await files.resolve(uri);
+            return (stat.children ?? []).map((child) => child.name);
+          },
+        };
+      }
+      report({ kind: "workbench-ready" });
+    },
     (error: unknown) => {
       report({
         kind: "workbench-failed",

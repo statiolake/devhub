@@ -16,6 +16,55 @@
  * "the window" covers its own frame and nothing else.
  */
 import { initialize as initializeVscodeServices } from "@codingame/monaco-vscode-api";
+import getAccessibilityServiceOverride from "@codingame/monaco-vscode-accessibility-service-override";
+import getAiServiceOverride from "@codingame/monaco-vscode-ai-service-override";
+import getAssignmentServiceOverride from "@codingame/monaco-vscode-assignment-service-override";
+import getAuthenticationServiceOverride from "@codingame/monaco-vscode-authentication-service-override";
+import getChatServiceOverride from "@codingame/monaco-vscode-chat-service-override";
+import getCommentsServiceOverride from "@codingame/monaco-vscode-comments-service-override";
+import getDebugServiceOverride from "@codingame/monaco-vscode-debug-service-override";
+import getEditSessionsServiceOverride from "@codingame/monaco-vscode-edit-sessions-service-override";
+import getEmmetServiceOverride from "@codingame/monaco-vscode-emmet-service-override";
+import getExtensionGalleryServiceOverride from "@codingame/monaco-vscode-extension-gallery-service-override";
+import getImageResizeServiceOverride from "@codingame/monaco-vscode-image-resize-service-override";
+import getInteractiveServiceOverride from "@codingame/monaco-vscode-interactive-service-override";
+import getIssueServiceOverride from "@codingame/monaco-vscode-issue-service-override";
+import getKeybindingsServiceOverride from "@codingame/monaco-vscode-keybindings-service-override";
+import getLanguageDetectionWorkerServiceOverride from "@codingame/monaco-vscode-language-detection-worker-service-override";
+import getMarkersServiceOverride from "@codingame/monaco-vscode-markers-service-override";
+import getMcpServiceOverride from "@codingame/monaco-vscode-mcp-service-override";
+import getMultiDiffEditorServiceOverride from "@codingame/monaco-vscode-multi-diff-editor-service-override";
+import getNotebookServiceOverride from "@codingame/monaco-vscode-notebook-service-override";
+import getNotificationsServiceOverride from "@codingame/monaco-vscode-notifications-service-override";
+import getOutlineServiceOverride from "@codingame/monaco-vscode-outline-service-override";
+import getOutputServiceOverride from "@codingame/monaco-vscode-output-service-override";
+import getPerformanceServiceOverride from "@codingame/monaco-vscode-performance-service-override";
+import getPreferencesServiceOverride from "@codingame/monaco-vscode-preferences-service-override";
+import getProcessExplorerServiceOverride from "@codingame/monaco-vscode-process-explorer-service-override";
+import getRelauncherServiceOverride from "@codingame/monaco-vscode-relauncher-service-override";
+import getScmServiceOverride from "@codingame/monaco-vscode-scm-service-override";
+import getSecretStorageServiceOverride from "@codingame/monaco-vscode-secret-storage-service-override";
+import getShareServiceOverride from "@codingame/monaco-vscode-share-service-override";
+import getSnippetsServiceOverride from "@codingame/monaco-vscode-snippets-service-override";
+import getSpeechServiceOverride from "@codingame/monaco-vscode-speech-service-override";
+import getSurveyServiceOverride from "@codingame/monaco-vscode-survey-service-override";
+import getTaskServiceOverride from "@codingame/monaco-vscode-task-service-override";
+import getTelemetryServiceOverride from "@codingame/monaco-vscode-telemetry-service-override";
+import getTestingServiceOverride from "@codingame/monaco-vscode-testing-service-override";
+import getTimelineServiceOverride from "@codingame/monaco-vscode-timeline-service-override";
+import getTreesitterServiceOverride from "@codingame/monaco-vscode-treesitter-service-override";
+import getUpdateServiceOverride from "@codingame/monaco-vscode-update-service-override";
+import getUserDataProfileServiceOverride from "@codingame/monaco-vscode-user-data-profile-service-override";
+import getUserDataSyncServiceOverride from "@codingame/monaco-vscode-user-data-sync-service-override";
+import getViewBannerServiceOverride from "@codingame/monaco-vscode-view-banner-service-override";
+import getViewStatusBarServiceOverride from "@codingame/monaco-vscode-view-status-bar-service-override";
+import getViewTitleBarServiceOverride from "@codingame/monaco-vscode-view-title-bar-service-override";
+import getWalkthroughServiceOverride from "@codingame/monaco-vscode-walkthrough-service-override";
+import getWelcomeServiceOverride from "@codingame/monaco-vscode-welcome-service-override";
+import getWorkingCopyServiceOverride from "@codingame/monaco-vscode-working-copy-service-override";
+import getBulkEditServiceOverride from "@codingame/monaco-vscode-bulk-edit-service-override";
+import getMonarchServiceOverride from "@codingame/monaco-vscode-monarch-service-override";
+import getPolicyServiceOverride from "@codingame/monaco-vscode-policy-service-override";
 import getConfigurationServiceOverride from "@codingame/monaco-vscode-configuration-service-override";
 import getDialogsServiceOverride from "@codingame/monaco-vscode-dialogs-service-override";
 import getEnvironmentServiceOverride from "@codingame/monaco-vscode-environment-service-override";
@@ -114,6 +163,58 @@ async function raise(
       ...getTerminalServiceOverride(),
       ...getQuickAccessServiceOverride(),
       ...getWorkspaceTrustOverride(),
+      ...getBulkEditServiceOverride(),
+      ...getMonarchServiceOverride(),
+      // Policies are how an administrator locks settings down. DevHub sets
+      // none, and an empty map is the honest way to say so — the service is
+      // present, and it reports that nothing is enforced.
+      ...getPolicyServiceOverride(new Map()),
+      ...getAccessibilityServiceOverride(),
+      ...getAiServiceOverride(),
+      ...getAssignmentServiceOverride(),
+      ...getAuthenticationServiceOverride(),
+      ...getChatServiceOverride(),
+      ...getCommentsServiceOverride(),
+      ...getDebugServiceOverride(),
+      ...getEditSessionsServiceOverride(),
+      ...getEmmetServiceOverride(),
+      ...getExtensionGalleryServiceOverride(),
+      ...getImageResizeServiceOverride(),
+      ...getInteractiveServiceOverride(),
+      ...getIssueServiceOverride(),
+      ...getKeybindingsServiceOverride(),
+      ...getLanguageDetectionWorkerServiceOverride(),
+      ...getMarkersServiceOverride(),
+      ...getMcpServiceOverride(),
+      ...getMultiDiffEditorServiceOverride(),
+      ...getNotebookServiceOverride(),
+      ...getNotificationsServiceOverride(),
+      ...getOutlineServiceOverride(),
+      ...getOutputServiceOverride(),
+      ...getPerformanceServiceOverride(),
+      ...getPreferencesServiceOverride(),
+      ...getProcessExplorerServiceOverride(),
+      ...getRelauncherServiceOverride(),
+      ...getScmServiceOverride(),
+      ...getSecretStorageServiceOverride(),
+      ...getShareServiceOverride(),
+      ...getSnippetsServiceOverride(),
+      ...getSpeechServiceOverride(),
+      ...getSurveyServiceOverride(),
+      ...getTaskServiceOverride(),
+      ...getTelemetryServiceOverride(),
+      ...getTestingServiceOverride(),
+      ...getTimelineServiceOverride(),
+      ...getTreesitterServiceOverride(),
+      ...getUpdateServiceOverride(),
+      ...getUserDataProfileServiceOverride(),
+      ...getUserDataSyncServiceOverride(),
+      ...getViewBannerServiceOverride(),
+      ...getViewStatusBarServiceOverride(),
+      ...getViewTitleBarServiceOverride(),
+      ...getWalkthroughServiceOverride(),
+      ...getWelcomeServiceOverride(),
+      ...getWorkingCopyServiceOverride(),
     },
     container,
     {
