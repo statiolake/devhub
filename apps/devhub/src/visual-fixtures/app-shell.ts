@@ -24,7 +24,7 @@ const globalActivities: AppSnapshot["activities"] = [
   },
 ];
 
-function workspaceActivities(
+export function workspaceActivities(
   workspaceId: string,
   agent?: string,
 ): AppSnapshot["activities"] {
@@ -72,7 +72,7 @@ const agent = (
   controlState: "running",
 });
 
-const workspace = (
+export const workspace = (
   id: string,
   label: string,
   agents: readonly AgentSnapshot[] = [],

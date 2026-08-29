@@ -7,6 +7,7 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
+import { StrictMode } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { AppShell } from "./AppShell";
 import { appearanceFixture } from "../test/appearance";
@@ -25,6 +26,8 @@ import {
   closingFailedSnapshot,
   globalSnapshot,
   unavailableSnapshot,
+  workspace,
+  workspaceActivities,
   workspaceSnapshot,
 } from "../visual-fixtures/app-shell";
 import { disabledReasonCopy } from "../components/shell/activityPresentation";
@@ -1086,5 +1089,64 @@ describe("App Shell states and accessibility", () => {
     );
     expect(appClient.subscribeAppearance).toHaveBeenCalled();
     expect(appClient.getAppearance).toHaveBeenCalled();
+  });
+});
+
+describe("Editor across Workspaces", () => {
+  it("keeps the editor server once it is running when the Workspace changes", async () => {
+    // Reported: the first Workspace opens its editor, and switching to another
+    // leaves every Surface saying it is still starting the server — including
+    // the one that had just been working. A server that is already running is
+    // not something a Workspace switch can un-start.
+    const second = {
+      ...workspaceSnapshot,
+      revision: workspaceSnapshot.revision + 1,
+      selection: {
+        context: { kind: "workspace", workspaceId: "workspace-2" },
+        activity: "editor",
+      },
+      activities: workspaceActivities("workspace-2"),
+      workspaces: [
+        ...workspaceSnapshot.workspaces,
+        workspace("workspace-2", "other"),
+      ],
+    } as unknown as AppSnapshot;
+
+    const appClient = client(workspaceSnapshot);
+    let onSnapshot: ((snapshot: AppSnapshot) => void) | undefined;
+    vi.mocked(appClient.subscribe).mockImplementation(async (listener) => {
+      onSnapshot = listener;
+      return () => undefined;
+    });
+    const ensure = vi.fn().mockResolvedValue({
+      authority: "127.0.0.1:1",
+      connectionToken: "t",
+      commit: "c",
+    });
+    appClient.ensureEditorRemote = ensure;
+
+    // StrictMode is how the real app runs, and it is the one difference
+    // between this and the window the report came from.
+    render(
+      <StrictMode>
+        <AppShell client={appClient} />
+      </StrictMode>,
+    );
+    await waitFor(() => expect(ensure).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(
+        screen.queryByText("Starting the editor server…"),
+      ).not.toBeInTheDocument(),
+    );
+
+    act(() => onSnapshot?.(second));
+
+    // The server is still running; nothing here has to wait for it again.
+    await waitFor(() =>
+      expect(
+        screen.queryByText("Starting the editor server…"),
+      ).not.toBeInTheDocument(),
+    );
+    expect(ensure).toHaveBeenCalledTimes(1);
   });
 });

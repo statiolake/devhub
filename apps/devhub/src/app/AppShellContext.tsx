@@ -535,6 +535,18 @@ export function AppShellProvider({
     setPendingConfirmation(null);
   }, []);
 
+  // A source build gets one place to look when the Editor will not start.
+  // The two states that produce the same waiting notice — no server yet, and
+  // a request that never came back — are indistinguishable from the outside,
+  // and this is the only thing that tells them apart.
+  if (import.meta.env.DEV) {
+    (window as unknown as Record<string, unknown>).__devhubEditor = {
+      remote: editorRemote,
+      requestInFlight: editorRequested.current && editorRemote == null,
+      canRequest: client.ensureEditorRemote != null,
+    };
+  }
+
   const value = useMemo<AppShellContextValue>(
     () => ({
       state,
