@@ -1,7 +1,4 @@
-import {
-  type AppSnapshot,
-  workspaceForContext,
-} from "../../generated/app-shell";
+import type { AppSnapshot } from "../../generated/app-shell";
 import type { TerminalClient } from "../../terminal/client";
 import { defaultAgentSurfaceClient } from "../../agent/client";
 
@@ -14,12 +11,17 @@ export interface PooledSurface {
 }
 
 /**
- * The Surfaces that are legal to hold an attachment right now.
+ * Every Surface that exists right now.
  *
- * A pooled Surface outlives the selection but not its subject: a Workspace
- * that is closing or whose Root went missing, and an Agent that is no longer
- * running, drop out of this map and so out of the pool, which releases their
- * attachments instead of parking them.
+ * All of them are mounted, and the selection decides which one is on screen.
+ * There is no cheaper set to keep: these are the Workspaces the user has open,
+ * and a Workspace is open because they intend to work in it. Editors and
+ * terminals for open Workspaces are what the app is.
+ *
+ * A Surface outlives the selection but not its subject: a Workspace that is
+ * closing or whose Root went missing, and an Agent that is no longer running,
+ * drop out of this map and so out of the pool, which releases what they held
+ * instead of parking it.
  */
 export function attachableSurfaces(
   snapshot: AppSnapshot,
@@ -43,22 +45,30 @@ export function attachableSurfaces(
   return surfaces;
 }
 
+/** One Editor: the Workspace it opens, and the key the selection names it by. */
+export interface PooledEditor {
+  readonly key: string;
+  readonly folder?: string;
+}
+
 /**
- * The Surfaces worth mounting before they are asked for.
+ * Every Editor that exists right now — one per available Workspace, plus the
+ * folderless one.
  *
- * A Surface the user has not visited costs an attachment to keep, so warming
- * is bounded to the Workspace they are already in: its terminal and its
- * running Agents. Those are the Surfaces one click away, and their processes
- * are alive regardless — the only thing being bought early is the handshake.
- * Scratch is warmed everywhere, because it is one click away from everywhere.
+ * A Workbench holds the workspace it was raised with and cannot be given
+ * another, so there is one document per Workspace and the selection decides
+ * which is on screen. That is what DevHub replaced: several VS Code windows,
+ * open at once, switched between.
  */
-export function warmSurfaces(snapshot: AppSnapshot): readonly string[] {
-  const warm = ["global-terminal"];
-  const workspace = workspaceForContext(snapshot, snapshot.selection.context);
-  if (!workspace || workspace.state !== "available") return warm;
-  warm.push(`workspace-terminal:${workspace.id}`);
-  for (const agent of workspace.agents) {
-    if (agent.controlState === "running") warm.push(`agent:${agent.id}`);
+export function editorSurfaces(
+  snapshot: AppSnapshot,
+): ReadonlyMap<string, PooledEditor> {
+  const editors = new Map<string, PooledEditor>();
+  editors.set("global-editor", { key: "global-editor" });
+  for (const workspace of snapshot.workspaces) {
+    if (workspace.state !== "available") continue;
+    const key = `workspace-editor:${workspace.id}`;
+    editors.set(key, { key, folder: workspace.root });
   }
-  return warm;
+  return editors;
 }

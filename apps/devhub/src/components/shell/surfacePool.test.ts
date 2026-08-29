@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { attachableSurfaces, warmSurfaces } from "./surfacePool";
+import { attachableSurfaces, editorSurfaces } from "./surfacePool";
 import {
   agentSnapshot,
   globalSnapshot,
@@ -50,23 +50,24 @@ describe("the pool of attachable Surfaces", () => {
   });
 });
 
-describe("the Surfaces warmed before they are asked for", () => {
-  it("warms Scratch from everywhere", () => {
-    expect(warmSurfaces(globalSnapshot)).toEqual(["global-terminal"]);
-  });
-
-  it("warms the selected Workspace's terminal and its running Agents", () => {
-    // These are the Surfaces one click away in the Sidebar, and their
-    // processes are alive either way — warming buys only the handshake.
-    expect(warmSurfaces(agentSnapshot)).toEqual([
-      "global-terminal",
-      "workspace-terminal:workspace-1",
-      "agent:agent-1",
-      "agent:agent-2",
+describe("the Editors, one per Workspace", () => {
+  it("gives every available Workspace an Editor of its own", () => {
+    // A Workbench holds the workspace it was raised with and cannot be given
+    // another, so one per Workspace is not a number to be tuned — it is the
+    // only arrangement that works.
+    const editors = editorSurfaces(agentSnapshot);
+    expect([...editors.keys()]).toEqual([
+      "global-editor",
+      "workspace-editor:workspace-1",
     ]);
+    expect(editors.get("workspace-editor:workspace-1")?.folder).toBe(
+      agentSnapshot.workspaces[0]?.root,
+    );
   });
 
-  it("warms nothing belonging to a Workspace that is not there", () => {
-    expect(warmSurfaces(unavailableSnapshot)).toEqual(["global-terminal"]);
+  it("drops a Workspace whose Root is gone, keeping the folderless one", () => {
+    expect([...editorSurfaces(unavailableSnapshot).keys()]).toEqual([
+      "global-editor",
+    ]);
   });
 });

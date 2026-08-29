@@ -1,17 +1,19 @@
 /**
- * The VS Code Workbench, running in the App Shell's own document.
+ * The VS Code Workbench, raised in the document of one Editor frame.
  *
  * It used to be a page fetched from the Editor's server into a native child
- * WebView, which is what made its origin the server's — and the server's port
- * is not ours to keep, so everything the browser stored against that origin
- * was lost whenever it moved. Supplied as a bundle instead, the Workbench
- * inherits this document's origin, which never moves, and the server is left
- * with the work only it can do: the extension host, the filesystem, and
- * terminals, reached over one socket.
+ * WebView, which made its origin the server's — and a server's port is not
+ * ours to keep, so everything the browser stored against that origin was lost
+ * whenever it moved. Supplied as a bundle instead, the Workbench inherits the
+ * app's own origin, which never moves, and the server is left with the work
+ * only it can do: the extension host, the filesystem, and terminals, reached
+ * over one socket.
  *
- * Initialisation happens once per process. VS Code's services are global and
- * cannot be torn down and raised again, so the Workbench is started on the
- * first Editor visit and afterwards only moved between containers.
+ * One document holds one Workbench and one workspace. VS Code's services are
+ * global to a document and cannot be raised twice or torn down, and a
+ * workspace is settled while it comes up. That is why each Editor gets a frame
+ * of its own rather than a slot in this one — and why a modal it draws over
+ * "the window" covers its own frame and nothing else.
  */
 import { initialize as initializeVscodeServices } from "@codingame/monaco-vscode-api";
 import getConfigurationServiceOverride from "@codingame/monaco-vscode-configuration-service-override";
@@ -55,56 +57,6 @@ export interface WorkbenchTarget {
  */
 const START_BUDGET_MS = 10_000;
 
-let started: Promise<void> | undefined;
-let host: HTMLElement | undefined;
-let openedFolder: string | undefined;
-
-/** The element the Workbench was raised into, once it has been. */
-export function workbenchHost(): HTMLElement | undefined {
-  return host;
-}
-
-/**
- * Raise the Workbench, or return the promise of the raising already underway.
- *
- * The folder is settled here and not afterwards: VS Code opens a workspace as
- * part of coming up, and changing it later is a reload, not a call.
- */
-export function startWorkbench(target: WorkbenchTarget): Promise<void> {
-  if (started) {
-    trace("workbench: already raised", {
-      openedFolder,
-      requested: target.folder,
-    });
-    // A Workbench holds one workspace, and which one is settled while it comes
-    // up. Asking a raised Workbench for a different folder is not a call it
-    // has; saying so is better than quietly showing the folder it does have.
-    if (openedFolder !== target.folder) {
-      return Promise.reject(
-        new UserFacingFailure(
-          "The editor is already open on another Workspace.",
-          "One Workbench holds one workspace, and which one is settled while it starts. Opening a second Workspace in the same editor is not supported yet.",
-        ),
-      );
-    }
-    return started;
-  }
-  trace("workbench: raising", { folder: target.folder });
-  openedFolder = target.folder;
-  const container = document.createElement("div");
-  container.className = "workbench-host";
-  host = container;
-  started = withBudget(raise(container, target)).catch((error: unknown) => {
-    // A failed start is permanent for this process — the services are global
-    // and half-raised. Forget the container so the shell can say so rather
-    // than hand out a blank one.
-    host = undefined;
-    openedFolder = undefined;
-    throw error;
-  });
-  return started;
-}
-
 function withBudget(work: Promise<void>): Promise<void> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
@@ -119,6 +71,14 @@ function withBudget(work: Promise<void>): Promise<void> {
       clearTimeout(timer);
     });
   });
+}
+
+/** Raise the Workbench into this document. Once, and only once. */
+export function raiseWorkbench(
+  container: HTMLElement,
+  target: WorkbenchTarget,
+): Promise<void> {
+  return withBudget(raise(container, target));
 }
 
 async function raise(

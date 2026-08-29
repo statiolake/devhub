@@ -6,10 +6,10 @@ import {
   type WorkspaceSnapshot,
   workspaceForContext,
 } from "../../generated/app-shell";
-import { type ReactNode, type Ref, useEffect, useMemo, useRef } from "react";
-import { EditorSurface } from "../../editor/EditorSurface";
+import { type ReactNode, type Ref, useEffect, useMemo } from "react";
+import { EditorFrame } from "../../editor/EditorFrame";
 import { TerminalSurface } from "../../terminal/TerminalSurface";
-import { attachableSurfaces, warmSurfaces } from "./surfacePool";
+import { attachableSurfaces, editorSurfaces } from "./surfacePool";
 import { disabledReasonLabel } from "./activityPresentation";
 import { Failure, Waiting } from "./SurfaceState";
 import { useAppShell } from "../../app/useAppShell";
@@ -59,28 +59,27 @@ function InlineIntentError({
 }
 
 /**
- * The Editor Activity's content.
+ * The states around the Editor: everything before there is a server to draw
+ * against. The Editors themselves are drawn by the pool, one per Workspace, so
+ * a working one contributes nothing here.
  *
- * The Workbench lives in this document now, so the shell draws it rather than
- * drawing the states around a native child that covered them anyway. The
- * server is asked for the first time the Editor is visited: nothing starts a
- * VS Code Server for a user who never opens one.
+ * The server is asked for the first time the Editor is visited — nothing
+ * starts a VS Code Server for a user who never opens one.
  */
-function SurfaceEditor({
-  workspace,
-}: {
-  readonly workspace?: WorkspaceSnapshot;
-}) {
-  const { editorRemote, ensureEditorRemote } = useAppShell();
+function SurfaceEditorState() {
+  const { editorRemote, editorFailure, ensureEditorRemote } = useAppShell();
   useEffect(() => {
     ensureEditorRemote();
   }, [ensureEditorRemote]);
-  return (
-    <EditorSurface
-      remote={editorRemote ?? undefined}
-      folder={workspace?.root}
-    />
-  );
+  if (editorFailure) {
+    return (
+      <Failure
+        summary={editorFailure.summary}
+        detail={editorFailure.detail ?? undefined}
+      />
+    );
+  }
+  return editorRemote ? null : <Waiting label="Starting the editor server…" />;
 }
 
 /** The states around a running Agent. The Agent itself is drawn by the pool,
@@ -121,11 +120,13 @@ export function SurfaceViewport({
     dispatch,
     chooseWorkspaceFolder,
     dismissIntentError,
+    editorRemote,
   } = useAppShell();
   const activity = snapshot.selection.activity;
   const activitySnapshot = activeActivitySnapshot(snapshot);
   const workspace = workspaceForContext(snapshot, snapshot.selection.context);
   const attachable = useMemo(() => attachableSurfaces(snapshot), [snapshot]);
+  const editors = useMemo(() => editorSurfaces(snapshot), [snapshot]);
 
   // A missing Workspace Root keeps its identity, so recovery belongs on the
   // Surface the user is already looking at rather than only in the Sidebar.
@@ -167,6 +168,7 @@ export function SurfaceViewport({
   let surfaceState: string;
   let body: ReactNode = null;
   let activeKey: string | undefined;
+  let activeEditorKey: string | undefined;
   let surfaceKeyAttr: string | undefined;
   // Only the transient states announce themselves; a provider Surface speaks
   // for itself, and `aria-live` on it would narrate every frame of output.
@@ -208,27 +210,16 @@ export function SurfaceViewport({
       body = <SurfaceAgent snapshot={snapshot} workspace={workspace} />;
       activeKey = attachable.has(surfaceKey) ? surfaceKey : undefined;
     } else {
-      body = <SurfaceEditor workspace={workspace} />;
+      body = <SurfaceEditorState />;
+      activeEditorKey = editors.has(surfaceKey) ? surfaceKey : undefined;
     }
   }
 
-  // The pool is what the user has visited plus what they are one click away
-  // from. Visitation is remembered in order so a Surface never leaves the pool
-  // just because the selection moved on; warming is recomputed each render, so
-  // leaving a Workspace lets its Surfaces fall back to whether they were
-  // visited. Both are intersected with what may legally hold an attachment.
-  const visited = useRef<readonly string[]>([]);
-  if (activeKey && !visited.current.includes(activeKey)) {
-    visited.current = [...visited.current, activeKey];
-  }
-  visited.current = visited.current.filter((key) => attachable.has(key));
-  const pooledKeys = [
-    ...visited.current,
-    ...warmSurfaces(snapshot).filter(
-      (key) => attachable.has(key) && !visited.current.includes(key),
-    ),
-  ];
-  const pool = pooledKeys.map((key) => attachable.get(key)!);
+  // Everything is mounted; the selection decides what is on screen. There is
+  // no cheaper set to keep than the Workspaces the user has open, and a
+  // Surface they have not been to yet is one they are about to go to.
+  const pool = [...attachable.values()];
+  const editorPool = [...editors.values()];
 
   const isScratch = (key: string) => key === "global-terminal";
 
@@ -250,6 +241,17 @@ export function SurfaceViewport({
         />
       )}
       {body}
+      {editorRemote
+        ? editorPool.map((editor) => (
+            <div
+              key={editor.key}
+              className="surface-pool-entry"
+              hidden={editor.key !== activeEditorKey}
+            >
+              <EditorFrame remote={editorRemote} folder={editor.folder} />
+            </div>
+          ))
+        : null}
       {pool.map((surface) => (
         <div
           key={surface.key}
