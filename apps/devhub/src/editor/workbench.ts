@@ -231,7 +231,16 @@ async function raise(
       ...getImageResizeServiceOverride(),
       ...getInteractiveServiceOverride(),
       ...getIssueServiceOverride(),
-      ...getKeybindingsServiceOverride(),
+      // Without this, a shortcut only fires while focus sits inside the
+      // Workbench container: the service checks `container.contains(target)`
+      // and returns before it resolves anything. That guard is for a
+      // Workbench embedded in a larger page. A frame holds nothing else, so
+      // the document is the Workbench, and focus resting on its body — an
+      // empty editor group, a click that landed on no widget — is still
+      // focus inside the Editor.
+      ...getKeybindingsServiceOverride({
+        shouldUseGlobalKeybindings: () => true,
+      }),
       ...getLanguageDetectionWorkerServiceOverride(),
       ...getMarkersServiceOverride(),
       ...getMcpServiceOverride(),

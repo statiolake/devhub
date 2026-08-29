@@ -10,7 +10,12 @@
  * true only here. What leaves the frame is one message saying whether it came
  * up; the App Shell decides what to show for either answer.
  */
-import { getService, IFileService } from "@codingame/monaco-vscode-api";
+import {
+  getService,
+  IContextKeyService,
+  IFileService,
+  IKeybindingService,
+} from "@codingame/monaco-vscode-api";
 import * as monaco from "monaco-editor";
 import { UserFacingFailure } from "../app/failure";
 import type { WorkbenchFrameMessage } from "./frameProtocol";
@@ -45,6 +50,13 @@ if (!container || !authority || !connectionToken) {
       // from outside, and only one of them is a bug in the shell.
       if (import.meta.env.DEV) {
         (window as unknown as Record<string, unknown>).__devhubWorkbench = {
+          // A shortcut that does nothing and a shortcut that was never
+          // delivered look identical from outside the frame, and only one of
+          // them is the shell's doing. These hand the two services that decide
+          // it, so the question can be asked of the Workbench instead of
+          // inferred from a beep.
+          keybindings: () => getService(IKeybindingService),
+          contextKeys: () => getService(IContextKeyService),
           async read(path: string) {
             const files = await getService(IFileService);
             const uri = monaco.Uri.from({
