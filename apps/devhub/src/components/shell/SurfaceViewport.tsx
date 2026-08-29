@@ -1,6 +1,7 @@
 import {
   activeActivitySnapshot,
   type AppAppearance,
+  type AppError,
   type AppSnapshot,
   type WorkspaceSnapshot,
   workspaceForContext,
@@ -14,16 +15,18 @@ import { useAppShell } from "../../app/useAppShell";
 
 export interface SurfaceViewportProps {
   readonly snapshot: AppSnapshot;
-  readonly intentError?: string;
+  readonly intentError?: AppError;
   readonly appearance?: AppAppearance;
   readonly surfaceRef?: Ref<HTMLElement>;
 }
 
 function InlineIntentError({
   message,
+  detail,
   onDismiss,
 }: {
   readonly message: string;
+  readonly detail?: string;
   readonly onDismiss: () => void;
 }) {
   return (
@@ -31,7 +34,13 @@ function InlineIntentError({
       <span className="surface-inline-alert-mark" aria-hidden="true">
         !
       </span>
-      <span className="surface-inline-alert-message">{message}</span>
+      <span className="surface-inline-alert-message">
+        {message}
+        {/* The summary says what to do; the detail says what happened. */}
+        {detail ? (
+          <span className="surface-inline-alert-detail">{detail}</span>
+        ) : null}
+      </span>
       {/* The alert covers the top of the Surface and nothing else retires it,
           so the user needs a way to put it away once they have read it. */}
       <button
@@ -122,7 +131,7 @@ function SurfaceEditor({
 }: {
   readonly workspace?: WorkspaceSnapshot;
 }) {
-  const { editorRemote, editorFailure, ensureEditorRemote } = useAppShell();
+  const { editorRemote, ensureEditorRemote } = useAppShell();
   useEffect(() => {
     ensureEditorRemote();
   }, [ensureEditorRemote]);
@@ -130,7 +139,6 @@ function SurfaceEditor({
     <EditorSurface
       remote={editorRemote ?? undefined}
       folder={workspace?.root}
-      failure={editorFailure ?? undefined}
     />
   );
 }
@@ -296,7 +304,8 @@ export function SurfaceViewport({
     >
       {intentError && (
         <InlineIntentError
-          message={intentError}
+          message={intentError.summary}
+          detail={intentError.detail ?? undefined}
           onDismiss={dismissIntentError}
         />
       )}

@@ -8,7 +8,6 @@ import {
 } from "react";
 import {
   createTauriAppShellClient,
-  parseTransportError,
   type AppPerformanceMarker,
   type AppShellClient,
   type EditorLayout,
@@ -26,46 +25,10 @@ import type {
   AgentProfiles,
   ConfirmationPurposeWire,
 } from "../generated/app-shell";
-import { parseAppError } from "../generated/app-shell";
+import { PERSISTENCE_DEGRADED_ERROR, toAppError } from "./failure";
 import { AppShellContext, type AppShellContextValue } from "./useAppShell";
 
 const defaultClient = createTauriAppShellClient();
-const FALLBACK_ERROR: AppError = {
-  code: "native_unavailable",
-  summary: "The native app shell is unavailable.",
-  module: "app",
-  timestampMs: 0,
-  runtimeVersion: "unknown",
-  actions: ["retry", "open_settings"],
-};
-const PERSISTENCE_DEGRADED_ERROR: AppError = {
-  code: "persistence_degraded",
-  summary: "Changes could not be saved.",
-  module: "state",
-  timestampMs: 0,
-  runtimeVersion: "unknown",
-  actions: ["retry", "open_settings"],
-};
-
-function toAppError(error: unknown): AppError {
-  try {
-    return parseAppError(error);
-  } catch {
-    // Tauri may reject with the structured DTO itself or wrap it in Error.
-  }
-  if (error instanceof Error && error.message.length > 0) {
-    try {
-      const decoded = JSON.parse(error.message) as unknown;
-      return parseTransportError(decoded);
-    } catch {
-      // Tauri may wrap a structured command error in a plain message. Keep
-      // the transport failure visible when it is not our strict error DTO.
-    }
-    return FALLBACK_ERROR;
-  }
-  return FALLBACK_ERROR;
-}
-
 export interface AppShellProviderProps {
   readonly client?: AppShellClient;
   readonly children: ReactNode;
@@ -521,34 +484,32 @@ export function AppShellProvider({
     setIntentError(null);
   }, []);
 
+  /**
+   * Route a failure to the one place the shell shows them.
+   *
+   * Callers that cannot recover do not catch to explain themselves; they hand
+   * the failure here, and it appears where every other failure appears.
+   */
+  const reportFailure = useCallback((error: unknown) => {
+    setIntentError(toAppError(error));
+  }, []);
+
   // The Editor's server is started on demand and outlives every Surface, so
   // the connection to it is asked for once and shared.
   const [editorRemote, setEditorRemote] = useState<EditorRemote | null>(null);
-  const [editorFailure, setEditorFailure] = useState<AppError | null>(null);
   const editorRequested = useRef(false);
   const ensureEditorRemote = useCallback(() => {
     if (editorRequested.current) return;
     editorRequested.current = true;
     const result = client.ensureEditorRemote?.();
     if (!result) return;
-    void result.then(
-      (remote) => {
-        // A previous attempt's failure is not news about this one.
-        setEditorFailure(null);
-        setEditorRemote(remote);
-      },
-      (error: unknown) => {
-        // Allow another attempt: a server that would not start can be fixed
-        // without restarting the app.
-        editorRequested.current = false;
-        // The native side says which of "no provider", "the port is taken",
-        // and "it refused to start" happened, and each has a different next
-        // step. A rejected invoke is a wire error, never an `Error`, so
-        // reaching for `.message` loses all of that.
-        setEditorFailure(parseTransportError(error));
-      },
-    );
-  }, [client]);
+    void result.then(setEditorRemote, (error: unknown) => {
+      // Allow another attempt: a server that would not start can be fixed
+      // without restarting the app.
+      editorRequested.current = false;
+      reportFailure(error);
+    });
+  }, [client, reportFailure]);
 
   const dismissCloseConfirmation = useCallback(() => {
     setPendingConfirmation(null);
@@ -561,8 +522,8 @@ export function AppShellProvider({
       intentError,
       dismissIntentError,
       editorRemote,
-      editorFailure,
       ensureEditorRemote,
+      reportFailure,
       recordPerformanceMarker: emitPerformanceMarker,
       dispatch,
       retry,
@@ -588,8 +549,8 @@ export function AppShellProvider({
       intentError,
       dismissIntentError,
       editorRemote,
-      editorFailure,
       ensureEditorRemote,
+      reportFailure,
       openSettings,
       setEditorLayout,
       pickerBusy,

@@ -644,6 +644,14 @@ body.is-resizing-sidebar {
   flex: 1;
 }
 
+/* The detail is the concrete cause under the summary's instruction. It is
+   secondary in weight because it is secondary in what the reader needs. */
+.surface-inline-alert-detail {
+  display: block;
+  margin-top: 2px;
+  color: var(--secondary);
+}
+
 /* The alert has no owner but the reader, so the dismiss control sits at its
    trailing edge, quiet until the pointer or the keyboard finds it. */
 .surface-inline-alert-close {

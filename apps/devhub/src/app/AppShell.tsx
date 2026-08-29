@@ -352,7 +352,7 @@ function Workbench() {
           />
           <SurfaceViewport
             snapshot={state.snapshot}
-            intentError={intentError?.summary}
+            intentError={intentError ?? undefined}
             appearance={appearance}
             surfaceRef={surfaceRef}
           />

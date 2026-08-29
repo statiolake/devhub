@@ -35,6 +35,7 @@ import getWorkspaceTrustOverride from "@codingame/monaco-vscode-workspace-trust-
 import "@codingame/monaco-vscode-theme-defaults-default-extension";
 import * as monaco from "monaco-editor";
 import type { EditorRemote } from "../app/client";
+import { UserFacingFailure } from "../app/failure";
 
 /** The folder a surface opens, addressed on the server rather than locally. */
 export interface WorkbenchTarget {
@@ -64,8 +65,9 @@ export function startWorkbench(target: WorkbenchTarget): Promise<void> {
     // has; saying so is better than quietly showing the folder it does have.
     if (openedFolder !== target.folder) {
       return Promise.reject(
-        new Error(
-          "The editor is already open on another Workspace. Reopening it for a different one is not supported yet.",
+        new UserFacingFailure(
+          "The editor is already open on another Workspace.",
+          "One Workbench holds one workspace, and which one is settled while it starts. Opening a second Workspace in the same editor is not supported yet.",
         ),
       );
     }

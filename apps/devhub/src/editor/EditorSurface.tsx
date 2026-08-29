@@ -6,15 +6,18 @@
  * Workbench on the first visit and afterwards only moves the element that
  * holds it into whatever Surface is on screen, which is also what keeps the
  * editor state, terminals, and extension host alive across an Activity switch.
+ *
+ * Nothing here explains a failure. A start that does not succeed is handed to
+ * the shell, which shows it where it shows every other failure.
  */
 import { useEffect, useRef, useState } from "react";
-import type { AppError } from "../generated/app-shell";
 import type { EditorRemote } from "../app/client";
+import { useAppShell } from "../app/useAppShell";
 
 type Phase =
   | { readonly kind: "starting" }
   | { readonly kind: "ready"; readonly host: HTMLElement }
-  | { readonly kind: "failed"; readonly detail: string };
+  | { readonly kind: "stopped" };
 
 /**
  * The Workbench is most of a copy of VS Code, and the shell is useful without
@@ -29,16 +32,17 @@ export interface EditorSurfaceProps {
   readonly remote?: EditorRemote;
   /** The Workspace root this Surface is for; absent for the global Editor. */
   readonly folder?: string;
-  readonly failure?: AppError;
 }
 
-export function EditorSurface({ remote, folder, failure }: EditorSurfaceProps) {
+export function EditorSurface({ remote, folder }: EditorSurfaceProps) {
+  const { reportFailure } = useAppShell();
   const slot = useRef<HTMLDivElement | null>(null);
   const [phase, setPhase] = useState<Phase>({ kind: "starting" });
 
   useEffect(() => {
-    if (!remote) return;
+    if (!remote) return undefined;
     let cancelled = false;
+    setPhase({ kind: "starting" });
     loadWorkbench()
       .then(async (workbench) => {
         await workbench.startWorkbench({ remote, folder });
@@ -47,25 +51,18 @@ export function EditorSurface({ remote, folder, failure }: EditorSurfaceProps) {
       .then(
         (host) => {
           if (cancelled) return;
-          setPhase(
-            host
-              ? { kind: "ready", host }
-              : { kind: "failed", detail: "The editor did not start." },
-          );
+          setPhase(host ? { kind: "ready", host } : { kind: "stopped" });
         },
         (error: unknown) => {
-          if (!cancelled) {
-            setPhase({
-              kind: "failed",
-              detail: error instanceof Error ? error.message : String(error),
-            });
-          }
+          if (cancelled) return;
+          setPhase({ kind: "stopped" });
+          reportFailure(error);
         },
       );
     return () => {
       cancelled = true;
     };
-  }, [remote, folder]);
+  }, [remote, folder, reportFailure]);
 
   // Adopting the element rather than rendering it: React must not own a tree
   // VS Code writes into, and the Workbench survives being moved between
@@ -83,44 +80,14 @@ export function EditorSurface({ remote, folder, failure }: EditorSurfaceProps) {
     };
   }, [phase]);
 
-  if (failure) {
-    return (
-      <EditorNotice
-        role="alert"
-        line={failure.summary}
-        detail={failure.detail ?? undefined}
-      />
-    );
-  }
-  if (phase.kind === "failed") {
-    return <EditorNotice role="alert" line={phase.detail} />;
-  }
   return (
     <div className="editor-surface" ref={slot}>
       {phase.kind === "starting" ? (
-        <EditorNotice role="status" line="Starting the editor…" busy />
+        <div className="surface-state" role="status">
+          <span className="surface-spinner" aria-hidden="true" />
+          <p className="surface-line">Starting the editor…</p>
+        </div>
       ) : null}
-    </div>
-  );
-}
-
-function EditorNotice({
-  line,
-  detail,
-  role,
-  busy,
-}: {
-  readonly line: string;
-  readonly detail?: string;
-  readonly role: "status" | "alert";
-  readonly busy?: boolean;
-}) {
-  return (
-    <div className="surface-state" role={role}>
-      {busy ? <span className="surface-spinner" aria-hidden="true" /> : null}
-      <p className="surface-line">{line}</p>
-      {/* The summary says what to do; the detail says what happened. */}
-      {detail ? <p className="failure-detail">{detail}</p> : null}
     </div>
   );
 }
