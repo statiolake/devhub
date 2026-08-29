@@ -31,6 +31,7 @@ import {
   UserFacingFailure,
 } from "./failure";
 import { AppShellContext, type AppShellContextValue } from "./useAppShell";
+import { trace } from "../editor/trace";
 
 const defaultClient = createTauriAppShellClient();
 export interface AppShellProviderProps {
@@ -507,8 +508,12 @@ export function AppShellProvider({
   const [editorRemote, setEditorRemote] = useState<EditorRemote | null>(null);
   const editorRequested = useRef(false);
   const ensureEditorRemote = useCallback(() => {
-    if (editorRequested.current) return;
+    if (editorRequested.current) {
+      trace("ensureEditorRemote: already asked, not asking again");
+      return;
+    }
     editorRequested.current = true;
+    trace("ensureEditorRemote: invoking");
     const result = client.ensureEditorRemote?.();
     if (!result) {
       // A transport that cannot start the Editor is a failure, not a wait.
@@ -523,12 +528,19 @@ export function AppShellProvider({
       );
       return;
     }
-    void result.then(setEditorRemote, (error: unknown) => {
-      // Allow another attempt: a server that would not start can be fixed
-      // without restarting the app.
-      editorRequested.current = false;
-      reportFailure(error);
-    });
+    void result.then(
+      (remote) => {
+        trace("ensureEditorRemote: resolved", remote.authority);
+        setEditorRemote(remote);
+      },
+      (error: unknown) => {
+        trace("ensureEditorRemote: rejected", error);
+        // Allow another attempt: a server that would not start can be fixed
+        // without restarting the app.
+        editorRequested.current = false;
+        reportFailure(error);
+      },
+    );
   }, [client, reportFailure]);
 
   const dismissCloseConfirmation = useCallback(() => {

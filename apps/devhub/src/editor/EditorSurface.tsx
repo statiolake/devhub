@@ -13,6 +13,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { EditorRemote } from "../app/client";
 import { useAppShell } from "../app/useAppShell";
+import { trace } from "./trace";
 
 /**
  * Two different waits were sharing one sentence.
@@ -54,23 +55,35 @@ export function EditorSurface({ remote, folder }: EditorSurfaceProps) {
 
   useEffect(() => {
     if (!remote) {
+      trace("surface: no server yet, waiting", { folder });
       setPhase({ kind: "awaiting-server" });
       return undefined;
     }
     let cancelled = false;
+    trace("surface: opening", { folder, authority: remote.authority });
     setPhase({ kind: "opening" });
     loadWorkbench()
       .then(async (workbench) => {
+        trace("surface: bundle loaded");
         await workbench.startWorkbench({ remote, folder });
+        trace("surface: startWorkbench returned");
         return workbench.workbenchHost();
       })
       .then(
         (host) => {
-          if (cancelled) return;
+          if (cancelled) {
+            trace("surface: resolved after cancel, ignoring");
+            return;
+          }
+          trace("surface: ready", { adopted: host != null });
           setPhase(host ? { kind: "ready", host } : { kind: "stopped" });
         },
         (error: unknown) => {
-          if (cancelled) return;
+          if (cancelled) {
+            trace("surface: rejected after cancel, ignoring", error);
+            return;
+          }
+          trace("surface: failed", error);
           setPhase({ kind: "stopped" });
           reportFailure(error);
         },
@@ -88,6 +101,7 @@ export function EditorSurface({ remote, folder }: EditorSurfaceProps) {
     const container = slot.current;
     const workbench = phase.host;
     if (!container) return undefined;
+    trace("surface: adopting the workbench element");
     container.appendChild(workbench);
     return () => {
       if (workbench.parentElement === container) {

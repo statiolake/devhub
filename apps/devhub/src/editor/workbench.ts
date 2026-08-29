@@ -37,6 +37,7 @@ import "@codingame/monaco-vscode-theme-defaults-default-extension";
 import * as monaco from "monaco-editor";
 import type { EditorRemote } from "../app/client";
 import { UserFacingFailure } from "../app/failure";
+import { trace } from "./trace";
 
 /** The folder a surface opens, addressed on the server rather than locally. */
 export interface WorkbenchTarget {
@@ -71,6 +72,10 @@ export function workbenchHost(): HTMLElement | undefined {
  */
 export function startWorkbench(target: WorkbenchTarget): Promise<void> {
   if (started) {
+    trace("workbench: already raised", {
+      openedFolder,
+      requested: target.folder,
+    });
     // A Workbench holds one workspace, and which one is settled while it comes
     // up. Asking a raised Workbench for a different folder is not a call it
     // has; saying so is better than quietly showing the folder it does have.
@@ -84,6 +89,7 @@ export function startWorkbench(target: WorkbenchTarget): Promise<void> {
     }
     return started;
   }
+  trace("workbench: raising", { folder: target.folder });
   openedFolder = target.folder;
   const container = document.createElement("div");
   container.className = "workbench-host";
@@ -120,6 +126,7 @@ async function raise(
   { remote, folder }: WorkbenchTarget,
 ): Promise<void> {
   const { authority, connectionToken } = remote;
+  trace("workbench: initialising services");
   await initializeVscodeServices(
     {
       ...getWorkbenchServiceOverride(),
@@ -181,4 +188,5 @@ async function raise(
       },
     },
   );
+  trace("workbench: services initialised");
 }
