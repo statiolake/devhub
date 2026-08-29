@@ -6069,6 +6069,27 @@ async fn select_workspace_picker(
 ///
 /// The Workbench is part of the App Shell's own bundle now, so this replaces
 /// mounting a child WebView: the shell opens the connection itself.
+/// Hand a destination the Editor asked for to the user's browser.
+///
+/// The Workbench runs in a frame with no way out of it, which is the point:
+/// a link it decides is external reaches the shell as a message, and only
+/// this command turns one into an `open`. What arrives is untrusted text,
+/// so it is narrowed to a plain web address before the OS sees it.
+#[tauri::command]
+async fn open_external_url(
+    url: String,
+    state: State<'_, NativeAppState>,
+) -> Result<(), AppErrorWire> {
+    state.capture_open_lifecycle_token()?;
+    let destination = editor::external_url(&url)
+        .ok_or_else(|| AppErrorWire::native_unavailable().with_summary("that link cannot be opened"))?;
+    let status = ProcessCommand::new("open").arg(destination.as_str()).status();
+    if status.as_ref().is_err() || !status.map(|status| status.success()).unwrap_or(false) {
+        return Err(AppErrorWire::native_unavailable().with_summary("the link could not be opened"));
+    }
+    Ok(())
+}
+
 #[tauri::command]
 async fn ensure_editor_remote(
     app: AppHandle,
@@ -7100,6 +7121,7 @@ pub fn run() {
             get_app_appearance,
             set_editor_layout,
             ensure_editor_remote,
+            open_external_url,
             get_agent_profiles,
             dispatch_app_intent,
             replay_app_events,
@@ -8527,6 +8549,7 @@ mod tests {
                 "allow-get-app-appearance",
                 "allow-get-agent-profiles",
                 "allow-dispatch-app-intent",
+                "allow-open-external-url",
                 "allow-replay-app-events",
                 "allow-terminal-attach",
                 "allow-terminal-input",

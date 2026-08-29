@@ -18,7 +18,21 @@ export interface WorkbenchFailed {
   readonly detail?: string;
 }
 
-export type WorkbenchFrameMessage = WorkbenchReady | WorkbenchFailed;
+/**
+ * A destination the Workbench decided belongs outside it.
+ *
+ * The frame cannot reach the operating system and should not: it says where
+ * the reader asked to go, and the shell decides what that means.
+ */
+export interface OpenExternal {
+  readonly kind: "open-external";
+  readonly url: string;
+}
+
+export type WorkbenchFrameMessage =
+  | WorkbenchReady
+  | WorkbenchFailed
+  | OpenExternal;
 
 /** The frame's own address, carrying what it needs to raise a Workbench. */
 export function workbenchFrameSource(
@@ -69,6 +83,9 @@ export function asFrameMessage(value: unknown): WorkbenchFrameMessage | null {
   if (typeof value !== "object" || value === null) return null;
   const candidate = value as Record<string, unknown>;
   if (candidate.kind === "workbench-ready") return { kind: "workbench-ready" };
+  if (candidate.kind === "open-external" && typeof candidate.url === "string") {
+    return { kind: "open-external", url: candidate.url };
+  }
   if (candidate.kind === "workbench-failed") {
     return {
       kind: "workbench-failed",

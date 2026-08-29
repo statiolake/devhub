@@ -186,12 +186,17 @@ pub fn navigation_request(candidate: &str) -> Option<NavigationRequest> {
         return Some(NavigationRequest::Workspace { absolute_path: PathBuf::from(decoded) });
     }
     if candidate.starts_with("http://") || candidate.starts_with("https://") {
-        return sanitize_external(candidate).map(|url| NavigationRequest::External { url });
+        return external_url(candidate).map(|url| NavigationRequest::External { url });
     }
     None
 }
 
-fn sanitize_external(candidate: &str) -> Option<ExternalUrl> {
+/// Narrow a candidate to a destination the operating system may be handed.
+///
+/// Anything that is not a plain `http`/`https` address with an authority and
+/// no credentials is refused, and the query and fragment are dropped: what
+/// reaches the OS opener is the smallest thing that still names the page.
+pub fn external_url(candidate: &str) -> Option<ExternalUrl> {
     if candidate.len() > 4096
         || candidate.bytes().any(|byte| byte.is_ascii_control() || byte.is_ascii_whitespace())
     {

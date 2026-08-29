@@ -28,6 +28,8 @@ export interface AppShellContextValue {
   readonly recordPerformanceMarker: (marker: AppPerformanceMarker) => void;
   readonly dispatch: (intent: AppIntent) => Promise<AppOutcome | undefined>;
   readonly retry: () => void;
+  /** Hand a destination the Editor asked for to the user's browser. */
+  readonly openExternalUrl: (url: string) => void;
   readonly openSettings: () => Promise<void>;
   readonly setEditorLayout: (layout: EditorLayout) => void;
   readonly pickerCandidates: readonly WorkspacePickerCandidate[];

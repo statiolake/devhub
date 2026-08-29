@@ -17,6 +17,7 @@
     "allow-get-app-appearance",
     "allow-get-agent-profiles",
     "allow-dispatch-app-intent",
+    "allow-open-external-url",
     "allow-replay-app-events",
     "allow-terminal-attach",
     "allow-terminal-input",

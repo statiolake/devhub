@@ -384,6 +384,14 @@ export function AppShellProvider({
     setAttempt((current) => current + 1);
   }, [setIntentError]);
 
+  const openExternalUrl = useCallback(
+    (url: string) => {
+      const result = client.openExternalUrl?.(url);
+      if (result) void result.catch(reportFailure);
+    },
+    [client, reportFailure],
+  );
+
   const openSettings = useCallback(async () => {
     await client.openSettings?.();
   }, [client]);
@@ -591,6 +599,7 @@ export function AppShellProvider({
       recordPerformanceMarker: emitPerformanceMarker,
       dispatch,
       retry,
+      openExternalUrl,
       openSettings,
       setEditorLayout,
       pickerCandidates,
@@ -616,6 +625,7 @@ export function AppShellProvider({
       editorFailure,
       ensureEditorRemote,
       reportFailure,
+      openExternalUrl,
       openSettings,
       setEditorLayout,
       pickerBusy,

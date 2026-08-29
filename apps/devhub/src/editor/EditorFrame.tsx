@@ -15,6 +15,7 @@ import { useEffect, useRef, useState } from "react";
 import type { EditorRemote } from "../app/client";
 import type { AppError } from "../generated/app-shell";
 import { Failure, Waiting } from "../components/shell/SurfaceState";
+import { useAppShell } from "../app/useAppShell";
 import { asFrameMessage, workbenchFrameSource } from "./frameProtocol";
 import { trace } from "./trace";
 
@@ -32,6 +33,7 @@ export interface EditorFrameProps {
 export function EditorFrame({ remote, folder }: EditorFrameProps) {
   const frame = useRef<HTMLIFrameElement | null>(null);
   const [phase, setPhase] = useState<Phase>({ kind: "opening" });
+  const { openExternalUrl } = useAppShell();
 
   useEffect(() => {
     const listen = (event: MessageEvent<unknown>) => {
@@ -42,6 +44,10 @@ export function EditorFrame({ remote, folder }: EditorFrameProps) {
       const message = asFrameMessage(event.data);
       if (!message) return;
       trace("frame: message", message.kind);
+      if (message.kind === "open-external") {
+        openExternalUrl(message.url);
+        return;
+      }
       setPhase(
         message.kind === "workbench-ready"
           ? { kind: "ready" }
@@ -61,7 +67,7 @@ export function EditorFrame({ remote, folder }: EditorFrameProps) {
     };
     window.addEventListener("message", listen);
     return () => window.removeEventListener("message", listen);
-  }, []);
+  }, [openExternalUrl]);
 
   const source = workbenchFrameSource(
     remote.authority,

@@ -45,6 +45,7 @@ export const RECORD_PERFORMANCE_MARKER_COMMAND =
   "record_performance_marker" as const;
 export const SET_EDITOR_LAYOUT_COMMAND = "set_editor_layout" as const;
 export const ENSURE_EDITOR_REMOTE_COMMAND = "ensure_editor_remote" as const;
+export const OPEN_EXTERNAL_URL_COMMAND = "open_external_url" as const;
 
 /**
  * How the Workbench reaches the Editor's server.
@@ -136,6 +137,7 @@ export interface AppShellClient {
   openSettings?(): Promise<void>;
   setEditorLayout?(layout: EditorLayout): Promise<void>;
   ensureEditorRemote?(): Promise<EditorRemote>;
+  openExternalUrl?(url: string): Promise<void>;
   recordPerformanceMarker?(marker: AppPerformanceMarker): Promise<void>;
   subscribeWorkspacePicker?(
     listener: (event: WorkspacePickerEvent) => void,
@@ -244,6 +246,9 @@ export function createTauriAppShellClient(
     },
     ensureEditorRemote() {
       return transport.invoke<EditorRemote>(ENSURE_EDITOR_REMOTE_COMMAND);
+    },
+    openExternalUrl(url) {
+      return transport.invoke<void>(OPEN_EXTERNAL_URL_COMMAND, { url });
     },
     recordPerformanceMarker(marker) {
       return transport.invoke<void>(RECORD_PERFORMANCE_MARKER_COMMAND, {

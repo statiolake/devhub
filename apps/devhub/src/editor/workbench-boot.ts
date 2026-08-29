@@ -15,6 +15,7 @@ import {
   IContextKeyService,
   IFileService,
   IKeybindingService,
+  IOpenerService,
 } from "@codingame/monaco-vscode-api";
 import * as monaco from "monaco-editor";
 // Side effect, and it has to happen before the services start: the first
@@ -47,7 +48,19 @@ if (!container || !authority || !connectionToken) {
     remote: { authority, connectionToken, commit: "" },
     folder,
   }).then(
-    () => {
+    async () => {
+      // The default opener calls `window.open`, which from inside a frame
+      // reaches nothing that can open a browser. The frame says where the
+      // reader asked to go and the shell takes it from there; returning true
+      // is the Workbench's answer that the link was handled.
+      const openers = await getService(IOpenerService);
+      openers.setDefaultExternalOpener({
+        async openExternal(href: string) {
+          report({ kind: "open-external", url: href });
+          return true;
+        },
+      });
+
       // A source build gets one way to ask the Workbench what it can see.
       // "The tree is empty" and "the filesystem is unreachable" look identical
       // from outside, and only one of them is a bug in the shell.
