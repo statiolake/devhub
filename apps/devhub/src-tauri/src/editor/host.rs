@@ -534,13 +534,18 @@ impl EditorHost {
         if !bounds.is_valid() {
             return Err(EditorError::new(EditorErrorCode::WebViewUnavailable));
         }
-        self.ensure_server()?;
+        // Asked for before the server, because without somewhere to mount a
+        // surface there is nothing worth starting one for. Booting first meant
+        // a mount that could never succeed still prepared the provider
+        // directory and spawned a server — which, now that warming happens on
+        // a thread of its own, could outlive whatever asked for it.
         let webview_host = self
             .webviews
             .lock()
             .map_err(|_| EditorError::new(EditorErrorCode::LifecycleConflict))?
             .clone()
             .ok_or_else(|| EditorError::new(EditorErrorCode::WebViewUnavailable))?;
+        self.ensure_server()?;
         let mut state =
             self.state.lock().map_err(|_| EditorError::new(EditorErrorCode::LifecycleConflict))?;
         let (registry_entry, url, root, paths) = {
@@ -1512,6 +1517,27 @@ fi
         host.shutdown().expect("shutdown");
         assert_eq!(terminated.load(Ordering::Acquire), 1);
         assert!(!paths.token_file().exists());
+    }
+
+    #[test]
+    fn a_surface_with_nowhere_to_mount_starts_no_server() {
+        // Warming runs on a thread of its own, so work it does after whatever
+        // asked for it has gone is work nobody is waiting on — and preparing
+        // the provider directory is work that touches the filesystem. A mount
+        // that cannot succeed should not reach that far.
+        let (host, spawns, _terminated, paths, _root, _alive) = test_host(true);
+        assert_eq!(
+            host.warm_surface(
+                EditorSurfaceKey::Global,
+                None,
+                EditorBounds::new(0.0, 0.0, 8.0, 8.0)
+            )
+            .expect_err("no webview host")
+            .code(),
+            EditorErrorCode::WebViewUnavailable
+        );
+        assert_eq!(spawns.load(Ordering::Acquire), 0, "no server for a surface with no window");
+        assert!(!paths.root().exists(), "no provider directory either");
     }
 
     #[test]
