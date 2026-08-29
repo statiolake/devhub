@@ -72,6 +72,14 @@ pub(crate) fn navigation_policy(
       } else {
         (*handler).call((WKNavigationActionPolicy::Cancel,));
       }
+    } else if action.targetFrame().is_some_and(|frame| !frame.isMainFrame()) {
+      // A subframe is content the page is composing, not somewhere the user
+      // is going. Handing it to a policy written for top-level navigation
+      // classifies every cross-origin iframe as a departure — which, for a
+      // host that opens departures in the browser, sends the page's own
+      // embedded content to the desktop. What a document may frame is already
+      // decided by its own `frame-src` policy.
+      (*handler).call((WKNavigationActionPolicy::Allow,));
     } else {
       let function = &this.ivars().navigation_policy_function;
       match function(url.to_string()) {
