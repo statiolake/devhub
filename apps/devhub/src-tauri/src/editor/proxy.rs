@@ -128,7 +128,7 @@ impl EditorProxy {
             let next = location.as_deref().and_then(same_origin_target);
             let Some(next) = next else {
                 response.headers.splice(0..0, carried);
-                self.authenticate_document(&mut response);
+                self.prepare_document(&mut response);
                 return Some(response);
             };
             carried.extend(
@@ -142,36 +142,72 @@ impl EditorProxy {
         None
     }
 
-    /// Hand the Workbench the connection token directly.
+    /// Give the document the two things a custom scheme takes away from it.
     ///
-    /// The client authenticates its WebSocket with a token it takes from its
-    /// injected configuration, falling back to the `vscode-tkn` cookie. The
-    /// server leaves the configuration key out and relies on the cookie, which
-    /// is a same-origin arrangement this proxy is not: the document is on the
-    /// Editor's own scheme and the WebSocket goes straight to the loopback
-    /// server, so nothing carries a cookie between them. Naming the key is the
-    /// one thing in here that knows what it is proxying.
-    fn authenticate_document(&self, response: &mut ProxyResponse) {
-        const ANCHOR: &str = "data-settings=\"{";
+    /// WebKit gives a page on a non-HTTP scheme no cookies at all: the ones
+    /// its own handler sets never arrive, and writes to `document.cookie` are
+    /// dropped without an error. The Workbench depends on cookies twice over —
+    /// for the token its WebSocket authenticates with, and for the key path
+    /// that decides whether stored secrets can be encrypted at all — so both
+    /// are put back here, from the jar this proxy keeps on its behalf.
+    fn prepare_document(&self, response: &mut ProxyResponse) {
         if !header(response, "content-type")
             .is_some_and(|value| value.to_ascii_lowercase().contains("text/html"))
         {
             return;
         }
-        let Ok(token) = self.token.lock() else { return };
-        let Some(token) = token.as_deref() else { return };
         let Ok(document) = std::str::from_utf8(&response.body) else { return };
-        let Some(anchor) = document.find(ANCHOR) else { return };
+        let mut document = document.to_owned();
+        self.inject_connection_token(&mut document);
+        self.inject_cookie_jar(&mut document, header(response, "content-security-policy"));
+        response.body = document.into_bytes();
+    }
+
+    /// The client authenticates its WebSocket with a token from its injected
+    /// configuration, falling back to a cookie. The server leaves the key out
+    /// and relies on the cookie, which is a same-origin arrangement this proxy
+    /// is not.
+    fn inject_connection_token(&self, document: &mut String) {
+        const ANCHOR: &str = "data-settings=\"{";
         if document.contains("connectionToken") {
             return;
         }
-        let insert = anchor + ANCHOR.len();
-        let injected = format!("&quot;connectionToken&quot;:&quot;{token}&quot;,");
-        let mut body = String::with_capacity(document.len() + injected.len());
-        body.push_str(&document[..insert]);
-        body.push_str(&injected);
-        body.push_str(&document[insert..]);
-        response.body = body.into_bytes();
+        let Ok(token) = self.token.lock() else { return };
+        let Some(token) = token.as_deref() else { return };
+        let Some(anchor) = document.find(ANCHOR) else { return };
+        document.insert_str(
+            anchor + ANCHOR.len(),
+            &format!("&quot;connectionToken&quot;:&quot;{token}&quot;,"),
+        );
+    }
+
+    /// Restore `document.cookie` from the jar.
+    ///
+    /// The accessor is replaced rather than supplemented, because there is
+    /// nothing to supplement: on this scheme the property is permanently
+    /// empty. The script is inline, so it needs the nonce the server put in
+    /// its own policy; without one there is nothing safe to do but leave the
+    /// document alone.
+    fn inject_cookie_jar(&self, document: &mut String, policy: Option<String>) {
+        let Some(nonce) = policy.as_deref().and_then(script_nonce) else { return };
+        let Some(jar) = self.cookie_header() else { return };
+        if jar.contains('\'') || jar.contains('\\') || jar.contains('<') {
+            return;
+        }
+        let script = format!(
+            "<script nonce=\"{nonce}\">(function(){{var j='{jar}';\
+             try{{Object.defineProperty(Document.prototype,'cookie',{{configurable:true,\
+             get:function(){{return j;}},set:function(v){{var p=String(v).split(';')[0];\
+             var n=p.split('=')[0];var k=j?j.split('; '):[];\
+             k=k.filter(function(c){{return c.split('=')[0]!==n;}});k.push(p);\
+             j=k.join('; ');}}}});}}catch(e){{}}}})();</script>"
+        );
+        let anchor = document
+            .find("<head>")
+            .map(|index| index + "<head>".len())
+            .or_else(|| document.find("<script"));
+        let Some(anchor) = anchor else { return };
+        document.insert_str(anchor, &script);
     }
 
     fn round_trip(
@@ -314,6 +350,20 @@ fn has_lifetime(attributes: &str) -> bool {
         let name = attribute.split('=').next().unwrap_or_default().trim();
         name.eq_ignore_ascii_case("max-age") || name.eq_ignore_ascii_case("expires")
     })
+}
+
+/// The nonce the server's own policy authorises inline scripts with.
+fn script_nonce(policy: &str) -> Option<&str> {
+    let start = policy.find("'nonce-")? + "'nonce-".len();
+    let rest = &policy[start..];
+    let end = rest.find('\'')?;
+    let nonce = &rest[..end];
+    nonce
+        .chars()
+        .all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '+' | '/' | '=')
+        })
+        .then_some(nonce)
 }
 
 fn header(response: &ProxyResponse, name: &str) -> Option<String> {
@@ -525,7 +575,7 @@ mod tests {
         let mut document = response(
             "HTTP/1.1 200 OK\r\ncontent-type: text/html\r\n\r\n             <html><div data-settings=\"{&quot;remoteAuthority&quot;:&quot;127.0.0.1:40000&quot;}\"></div>",
         );
-        proxy.authenticate_document(&mut document);
+        proxy.prepare_document(&mut document);
         let body = String::from_utf8(document.body).expect("utf8");
         assert!(
             body.contains("data-settings=\"{&quot;connectionToken&quot;:&quot;abab&quot;,&quot;remoteAuthority&quot;"),
@@ -537,7 +587,7 @@ mod tests {
             "HTTP/1.1 200 OK\r\ncontent-type: text/html\r\n\r\n             <div data-settings=\"{&quot;connectionToken&quot;:&quot;server&quot;}\"></div>",
         );
         let before = already.body.clone();
-        proxy.authenticate_document(&mut already);
+        proxy.prepare_document(&mut already);
         assert_eq!(already.body, before);
 
         // Everything that is not the document is passed through untouched.
@@ -545,8 +595,46 @@ mod tests {
             "HTTP/1.1 200 OK\r\ncontent-type: text/javascript\r\n\r\ndata-settings=\"{x}\"",
         );
         let before = script.body.clone();
-        proxy.authenticate_document(&mut script);
+        proxy.prepare_document(&mut script);
         assert_eq!(script.body, before);
+    }
+
+    #[test]
+    fn the_document_is_handed_a_cookie_jar_it_would_otherwise_never_have() {
+        // WebKit gives a page on a non-HTTP scheme no cookies at all — the
+        // handler's own `Set-Cookie` never arrives and writes are dropped
+        // silently. The Workbench reads `document.cookie` to find the key path
+        // that decides whether stored secrets can be encrypted, and without it
+        // falls back to keeping them in memory, which is a sign-in that does
+        // not survive a reload.
+        let proxy = EditorProxy::new();
+        proxy.set_upstream(40_000, "abab");
+        proxy.remember_cookies(&response(
+            "HTTP/1.1 200 OK\r\nset-cookie: vscode-secret-key-path=/mint; SameSite=Strict\r\n\r\n",
+        ));
+        let mut document = response(
+            "HTTP/1.1 200 OK\r\ncontent-type: text/html\r\n             content-security-policy: script-src 'self' 'nonce-1nline-m4p'\r\n\r\n             <html><head></head><body></body></html>",
+        );
+        proxy.prepare_document(&mut document);
+        let body = String::from_utf8(document.body).expect("utf8");
+        assert!(body.contains("<head><script nonce=\"1nline-m4p\">"), "{body}");
+        assert!(body.contains("vscode-secret-key-path=/mint"), "{body}");
+
+        // Without a nonce of the server's own there is nothing safe to inject,
+        // so the document is left exactly as it came.
+        let mut unpoliced = response(
+            "HTTP/1.1 200 OK\r\ncontent-type: text/html\r\n\r\n<html><head></head></html>",
+        );
+        let before = unpoliced.body.clone();
+        proxy.prepare_document(&mut unpoliced);
+        assert_eq!(unpoliced.body, before);
+    }
+
+    #[test]
+    fn a_policy_nonce_is_only_taken_when_it_is_one() {
+        assert_eq!(script_nonce("script-src 'self' 'nonce-abc123'"), Some("abc123"));
+        assert_eq!(script_nonce("script-src 'self'"), None);
+        assert_eq!(script_nonce("script-src 'nonce-\"><script>'"), None);
     }
 
     #[test]
