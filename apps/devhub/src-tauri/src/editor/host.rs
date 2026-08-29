@@ -311,14 +311,7 @@ impl EditorHost {
             let sink: Arc<dyn BridgeEventSink> =
                 self.config.event_sink.clone().unwrap_or_else(|| Arc::new(NoopBridgeEventSink));
             let bridge = self.bridge_factory.bind(bridge_token, expected, sink)?;
-            Runtime {
-                paths,
-                executable,
-                token,
-                origin: None,
-                bridge,
-                bridge_installed: false,
-            }
+            Runtime { paths, executable, token, origin: None, bridge, bridge_installed: false }
         };
         if !runtime.bridge_installed {
             let bridge_installer = self
@@ -1102,5 +1095,4 @@ mod tests {
         );
         assert_eq!(spawns.load(Ordering::Acquire), 2);
     }
-
 }

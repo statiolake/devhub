@@ -82,14 +82,9 @@ impl EditorPaths {
             .root
             .parent()
             .ok_or_else(|| EditorError::new(EditorErrorCode::PermissionDenied))?;
-        for path in [
-            app_data,
-            &self.root,
-            &self.server_data,
-            &self.cli_data,
-            &self.extensions,
-            &self.logs,
-        ] {
+        for path in
+            [app_data, &self.root, &self.server_data, &self.cli_data, &self.extensions, &self.logs]
+        {
             ensure_directory(path)?;
         }
         Ok(())
