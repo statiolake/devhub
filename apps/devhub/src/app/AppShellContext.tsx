@@ -58,24 +58,16 @@ export function AppShellProvider({
     profiles: [],
   });
   /**
-   * The failure on screen, and whether a new projection invalidates it.
+   * The failure on screen.
    *
-   * A dispatch failure is a statement about a projection that has since been
-   * replaced, so the next one retires it. A failure that had nothing to do
-   * with the projection — a provider that would not start, a query that was
-   * refused — is not answered by a snapshot arriving, and clearing it on one
-   * is how a reported failure reaches the screen and vanishes before it can
-   * be read. Which of the two it is belongs to whoever raised it.
+   * One rule decides when it goes, and it does not depend on what raised it:
+   * the user dismisses it, the user starts another action, or a newer failure
+   * replaces it. Nothing that merely arrives can retire it — a projection
+   * showing up is not evidence that anything was fixed, and letting one clear
+   * the alert is how a reported failure reaches the screen and vanishes before
+   * it can be read.
    */
-  const [intentError, setIntentErrorState] = useState<{
-    readonly error: AppError;
-    readonly retiredByProjection: boolean;
-  } | null>(null);
-  const setIntentError = useCallback((error: AppError | null) => {
-    setIntentErrorState(
-      error === null ? null : { error, retiredByProjection: true },
-    );
-  }, []);
+  const [intentError, setIntentError] = useState<AppError | null>(null);
   const [pickerCandidates, setPickerCandidates] = useState<
     WorkspacePickerCandidate[]
   >([]);
@@ -108,25 +100,13 @@ export function AppShellProvider({
    * the failure here, and it appears where every other failure appears.
    */
   const reportFailure = useCallback((error: unknown) => {
-    setIntentErrorState({
-      error: toAppError(error),
-      retiredByProjection: false,
-    });
+    setIntentError(toAppError(error));
   }, []);
 
   const applySnapshot = useCallback((snapshot: AppSnapshot) => {
     if (snapshot.revision < lastRevision.current) return;
-    const revisionAdvanced = snapshot.revision > lastRevision.current;
     lastRevision.current = snapshot.revision;
     setState({ status: "ready", snapshot });
-    // A same-revision notification can be the native acknowledgement for a
-    // persistence-degraded dispatch. Keep that diagnostic visible until a
-    // newer projection or a new user dispatch replaces it.
-    if (revisionAdvanced) {
-      setIntentErrorState((current) =>
-        current?.retiredByProjection === true ? null : current,
-      );
-    }
   }, []);
 
   const emitPerformanceMarker = useCallback(
@@ -525,7 +505,7 @@ export function AppShellProvider({
   // user gets to put it away; the next dispatch or projection re-raises it if
   // the problem is still there.
   const dismissIntentError = useCallback(() => {
-    setIntentErrorState(null);
+    setIntentError(null);
   }, []);
 
   // The Editor's server is started on demand and outlives every Surface, so
@@ -588,7 +568,7 @@ export function AppShellProvider({
     () => ({
       state,
       appearance,
-      intentError: intentError?.error ?? null,
+      intentError,
       dismissIntentError,
       editorRemote,
       ensureEditorRemote,

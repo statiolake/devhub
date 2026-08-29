@@ -1113,13 +1113,26 @@ describe("Editor across Workspaces", () => {
     const alert = await screen.findByRole("alert");
     expect(alert).toBeInTheDocument();
 
-    act(() =>
-      onSnapshot?.({
-        ...workspaceSnapshot,
-        revision: workspaceSnapshot.revision + 1,
+    // Projections keep arriving on their own. None of them is evidence that
+    // anything was fixed, so none of them retires the alert.
+    for (let step = 1; step <= 3; step += 1) {
+      act(() =>
+        onSnapshot?.({
+          ...workspaceSnapshot,
+          revision: workspaceSnapshot.revision + step,
+        }),
+      );
+    }
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+
+    // What retires it is the user: starting another action, or putting it
+    // away. One rule, and it does not depend on what raised the failure.
+    fireEvent.click(
+      within(screen.getByRole("alert")).getByRole("button", {
+        name: "Dismiss",
       }),
     );
-    expect(screen.getByRole("alert")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
   it("keeps the editor server once it is running when the Workspace changes", async () => {
