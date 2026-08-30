@@ -8,6 +8,14 @@ target/
 **/target/
 node_modules/
 **/node_modules/
+apps/desktop/out/
+apps/desktop/dist/
+
+# The Node version vscode/'s build pins, fetched by scripts/provision-vscode.sh
+vscode-toolchain/
+
+# Throwaway spike scratch (captures, logs, sample folders)
+.spike/
 
 # The VS Code Server the Editor runs against: ~290MB, fetched and verified by
 # scripts/provision-editor-server.sh rather than committed.
