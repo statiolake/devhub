@@ -22,6 +22,10 @@
     "*"
   ],
   "contributes": {
+    "configurationDefaults": {
+      "window.commandCenter": false,
+      "workbench.layoutControl.enabled": false
+    },
     "commands": [
       {
         "command": "devhub.bridge.openFolder",

@@ -31,6 +31,11 @@ if [ ! -f "$APP_DIR/out/main/main.js" ] || [ ! -f "$APP_DIR/dist/shell/index.htm
 	exit 1
 fi
 
+# The built-in set is staged on every run: it is only symlinks, and a stale one
+# would silently run yesterday's bridge — including yesterday's workbench
+# defaults.
+"$REPO_ROOT/scripts/stage-builtin-extensions.sh" >/dev/null
+
 # DevHub's own state, beside the user's real VS Code state and never inside it.
 DEVHUB_DATA="$HOME/Library/Application Support/DevHub"
 USER_DATA_DIR="$DEVHUB_DATA/user-data"
@@ -46,5 +51,6 @@ export ELECTRON_ENABLE_STACK_DUMPING=1
 exec "$ELECTRON" "$APP_DIR" \
 	--user-data-dir "$USER_DATA_DIR" \
 	--extensions-dir "$EXTENSIONS_DIR" \
+	--builtin-extensions-dir "$REPO_ROOT/vscode/.build/devhub-builtin-extensions" \
 	--disable-extension=vscode.vscode-api-tests \
 	"$@"

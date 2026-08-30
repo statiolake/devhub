@@ -112,4 +112,12 @@ if [ ! -d "$ELECTRON_APP" ]; then
 fi
 echo "Electron $(cat "$VSCODE_DIR/.build/electron/version" 2>/dev/null || echo '(version file missing)')"
 
+# --- 6. the built-in extension set DevHub starts with ---------------------
+# DevHub's own integration ships as a built-in so that its workbench defaults
+# (contributes.configurationDefaults) are in effect and cannot be uninstalled.
+# See the script for why the whole set has to be staged.
+step "built-in extensions"
+(cd "$REPO_ROOT/extensions/devhub-bridge" && node scripts/build.mjs)
+"$REPO_ROOT/scripts/stage-builtin-extensions.sh"
+
 printf '\nprovisioned.\n'

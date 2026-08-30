@@ -38,18 +38,22 @@ const APP_ROOT = join(
 );
 
 /**
+ * The two workbench settings DevHub cannot contribute as defaults.
+ *
  * A workbench view is chrome inside DevHub's own window, so it must not draw a
- * title bar of its own. These are written once, and only where the person has
- * not already said otherwise.
+ * title bar of its own. Everything else that takes goes through the bridge
+ * extension's `contributes.configurationDefaults`, which is the supported way
+ * for a product to move a default — but VS Code accepts extension-contributed
+ * defaults only for machine-overridable, window, resource and language-
+ * overridable scoped settings (see the `configurationDefaults` extension point
+ * in `vscode/src/vs/workbench/api/common/configurationExtensionPoint.ts`), and
+ * these two are `ConfigurationScope.APPLICATION`. Contributing them is refused
+ * with a warning, so they are written here instead — once, and only where the
+ * person has not already said otherwise, so a user override still wins.
  */
 const WORKBENCH_DEFAULTS: Readonly<Record<string, string | boolean>> = {
-	"window.titleBarStyle": "custom",
+	"window.titleBarStyle": "native",
 	"window.customTitleBarVisibility": "never",
-	// The workbench forces the title bar back to 'auto' whenever something that
-	// lives in it is enabled — the command centre and the layout controls both
-	// count — so asking for 'never' means turning those off as well.
-	"window.commandCenter": false,
-	"workbench.layoutControl.enabled": false,
 };
 
 function ensureWorkbenchDefaults(userDataPath: string): void {
