@@ -92,6 +92,14 @@ export class ShellWindow {
 		this.window.contentView.addChildView(view.view);
 		view.view.setBounds(this.currentRect());
 		view.view.setVisible(false);
+		// A view whose contents are gone is not a view. It leaves the table the
+		// instant that happens, before anything can be asked to lay it out or
+		// raise it — Electron answers that with "can't add a destroyed child
+		// view to a parent view", which is a true statement about a table that
+		// should never have still contained it.
+		view.webContents.once("destroyed", () => {
+			this.detach(view);
+		});
 	}
 
 	detach(view: WorkbenchView): void {
@@ -129,9 +137,14 @@ export class ShellWindow {
 	 * the wrong thing on screen.
 	 */
 	reveal(view: WorkbenchView): void {
-		if (!this.views.includes(view)) return;
+		if (!this.views.includes(view) || view.isDestroyed()) return;
 		this.revealed = view;
 		this.layout();
+	}
+
+	/** The view on screen, if there is one and it still exists. */
+	revealedView(): WorkbenchView | undefined {
+		return this.revealed?.isDestroyed() === false ? this.revealed : undefined;
 	}
 
 	isRevealed(view: WorkbenchView): boolean {
@@ -199,11 +212,16 @@ export class ShellWindow {
 			return;
 		}
 		const bounds = this.currentRect();
+		// A destroyed view is skipped rather than special-cased at each call:
+		// there is no arrangement in which touching one is right.
+		const live = this.views.filter((view) => !view.isDestroyed());
+		const revealed =
+			this.revealed && live.includes(this.revealed) ? this.revealed : undefined;
 		const onScreen =
-			this.nativeSurfaceVisible && !this.modalOpen ? this.revealed : undefined;
+			this.nativeSurfaceVisible && !this.modalOpen ? revealed : undefined;
 		// Bounds first, then visibility, and the shown one last of all: a view
 		// made visible before it is sized shows its previous size for a frame.
-		for (const view of this.views) {
+		for (const view of live) {
 			view.view.setBounds(bounds);
 			if (view !== onScreen) view.view.setVisible(false);
 		}
@@ -223,7 +241,9 @@ export class ShellWindow {
 	 * happen to establish it today.
 	 */
 	visibleViews(): readonly WorkbenchView[] {
-		return this.views.filter((view) => view.view.getVisible());
+		return this.views.filter(
+			(view) => !view.isDestroyed() && view.view.getVisible(),
+		);
 	}
 
 	topmostView(): WorkbenchView | undefined {

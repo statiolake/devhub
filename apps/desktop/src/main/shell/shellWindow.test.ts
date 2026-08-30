@@ -22,11 +22,24 @@ class FakeView {
 		return this.visible;
 	}
 	setBackgroundColor(): void {}
+	destroyed = false;
+	private readonly listeners = new Map<string, (() => void)[]>();
 	readonly webContents = {
 		id: nextId(),
-		isDestroyed: () => false,
-		close: () => undefined,
-		on: () => undefined,
+		isDestroyed: () => this.destroyed,
+		close: () => {
+			this.destroyed = true;
+			for (const listener of this.listeners.get("destroyed") ?? []) listener();
+		},
+		on: (event: string, listener: () => void) => {
+			this.listeners.set(event, [
+				...(this.listeners.get(event) ?? []),
+				listener,
+			]);
+		},
+		once: (event: string, listener: () => void) => {
+			this.webContents.on(event, listener);
+		},
 		removeListener: () => undefined,
 	};
 }
@@ -129,6 +142,27 @@ describe("the shell window's workbench views", () => {
 
 		shell.setNativeSurfaceVisible(true);
 		invariantHolds(a);
+	});
+
+	it("cannot reveal a view whose contents are gone", () => {
+		shell.reveal(a);
+		// Killed from underneath, the way a crashed renderer goes: no call to
+		// `destroy()`, so nothing tells the table on the way out except the
+		// contents themselves ending. The table must not still contain it a
+		// moment later — Electron answers a destroyed child with "can't add a
+		// destroyed child view to a parent view", which is a true statement
+		// about a table that should never have held it.
+		a.webContents.close();
+		expect(shell.visibleViews()).toEqual([]);
+
+		shell.reveal(a);
+		expect(shell.visibleViews()).toEqual([]);
+		expect(shell.topmostView()).not.toBe(a);
+		expect(shell.revealedView()).toBeUndefined();
+
+		// And the surviving views are still perfectly usable.
+		shell.reveal(b);
+		invariantHolds(b);
 	});
 
 	it("shows nothing when the revealed view goes away", () => {

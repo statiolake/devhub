@@ -171,15 +171,27 @@ export class WorkbenchView {
 	}
 
 	/**
-	 * Ask this window to close.
+	 * VS Code asking to close its window. DevHub declines.
 	 *
-	 * The listeners are VS Code's own: its lifecycle answers a close by
-	 * unloading the workbench, which is what runs "do you want to save?" and
-	 * what can veto. It is told, and then the view goes.
+	 * The window is not VS Code's. `workbench.action.closeWindow` — what
+	 * Command-W falls through to once the last editor tab is gone — reaches
+	 * `nativeHostMainService.closeWindow`, which is `window.win?.close()` and
+	 * nothing more: it does not wait for the window to go and has no
+	 * expectation that it did. So declining is a complete answer, and it costs
+	 * nothing upstream, because the lifecycle's own close bookkeeping hangs off
+	 * a `close` event that is simply never emitted.
+	 *
+	 * Restarting the workbench instead would be the wrong shape of correct:
+	 * seconds of rebuilding, for a keypress that meant "close a tab" in a
+	 * window that had no tabs left to close. Nothing happening is what happens
+	 * in VS Code itself when a window has nothing left to close.
+	 *
+	 * DevHub's own teardown does not come through here — it destroys the view
+	 * when its workspace goes — so declining takes nothing away from it.
 	 */
 	close(): void {
-		this.lifetime.emit("close", { preventDefault: () => undefined });
-		this.destroy();
+		// Deliberately empty, and deliberately not an error: a request that is
+		// refused by policy is not a failure to report.
 	}
 
 	destroy(): void {

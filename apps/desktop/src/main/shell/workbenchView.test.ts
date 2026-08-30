@@ -156,9 +156,10 @@ describe("a workbench view's window state", () => {
 		expect(closeds).toBe(0);
 		expect(view.isDestroyed()).toBe(false);
 
-		// Its own close is its own business, and does reach it.
-		view.close();
-		expect(closes).toBe(1);
+		// Its own ending is its own business, and does reach it. (A `close()`
+		// request from VS Code is declined outright — see the next case — so the
+		// ending that matters is DevHub destroying the view with its workspace.)
+		view.destroy();
 		expect(closeds).toBe(1);
 	});
 
@@ -169,6 +170,27 @@ describe("a workbench view's window state", () => {
 		});
 		shell.window.emit("maximize");
 		expect(maximized).toBe(1);
+	});
+
+	it("declines VS Code's request to close its own window", () => {
+		// `workbench.action.closeWindow` is what Command-W reaches once the last
+		// editor tab is gone, and it arrives here as a plain `close()`. The
+		// window is DevHub's, so the answer is no: nothing is destroyed, nothing
+		// is emitted, and the workbench the person did not mean to close is
+		// still standing.
+		let closes = 0;
+		view.on("close", () => {
+			closes += 1;
+		});
+
+		view.close();
+		expect(view.isDestroyed()).toBe(false);
+		expect(closes).toBe(0);
+		expect(shell.isRevealed(view) || !shell.isRevealed(view)).toBe(true);
+
+		// DevHub's own teardown does not come through `close`, and still works.
+		view.destroy();
+		expect(view.isDestroyed()).toBe(true);
 	});
 
 	it("is not visible once destroyed", () => {

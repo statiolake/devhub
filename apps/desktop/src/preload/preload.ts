@@ -19,6 +19,7 @@ import { contextBridge, ipcRenderer } from "electron";
 import {
 	CHANNELS,
 	type MenuCommand,
+	type EditorRestartingWire,
 	type WorkbenchDialogAnswer,
 	type WorkbenchDialogRequest,
 	type ContentRect,
@@ -76,6 +77,8 @@ const devhub: DevhubApi = {
 	onMenuCommand: (listener) => on<MenuCommand>(CHANNELS.menuCommand, listener),
 	onWorkbenchDialog: (listener) =>
 		on<WorkbenchDialogRequest>(CHANNELS.workbenchDialog, listener),
+	onEditorRestarting: (listener) =>
+		on<EditorRestartingWire>(CHANNELS.editorRestarting, listener),
 	answerWorkbenchDialog: (answer: WorkbenchDialogAnswer) =>
 		ipcRenderer.invoke(CHANNELS.workbenchDialogAnswer, answer) as Promise<void>,
 	setModalOpen: (open: boolean) =>

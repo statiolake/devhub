@@ -22,7 +22,11 @@ import {
   disabledReasonLabel,
 } from "./activityPresentation";
 import { Failure, Waiting } from "./SurfaceState";
-import { answerWorkbenchDialog, useWorkbenchDialogs } from "./workbenchDialogs";
+import {
+  answerWorkbenchDialog,
+  useRestartingEditors,
+  useWorkbenchDialogs,
+} from "./workbenchDialogs";
 import { ViewScopedAlert } from "./ViewScopedAlert";
 
 export interface SurfaceViewportProps {
@@ -152,6 +156,7 @@ export function SurfaceViewport({
   // Questions raised by workbenches, each waiting for the editor it belongs to
   // to be the one on screen.
   const workbenchDialogs = useWorkbenchDialogs();
+  const restartingEditors = useRestartingEditors();
   const viewportRef = useRef<HTMLElement | null>(null);
 
   // A missing Workspace Root keeps its identity, so recovery belongs on the
@@ -257,7 +262,16 @@ export function SurfaceViewport({
     surfaceKeyAttr = surfaceKey;
     announce = false;
     if (activity === "editor") {
-      editorOnScreen = true;
+      // The workbench is being rebuilt in this same slot. The selection has
+      // not moved and must not: what changed is that there is nothing to show
+      // yet, which is a state of this surface rather than a reason to leave it.
+      if (restartingEditors.has(surfaceKey)) {
+        surfaceState = "editor-restarting";
+        body = <Waiting label="Restarting the editor…" />;
+        announce = true;
+      } else {
+        editorOnScreen = true;
+      }
     } else {
       activeKey = attachable.has(surfaceKey) ? surfaceKey : undefined;
       if (activity === "agent") {

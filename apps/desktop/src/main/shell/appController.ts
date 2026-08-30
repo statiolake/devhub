@@ -1092,7 +1092,24 @@ export class AppController {
 					opened === undefined
 						? undefined
 						: shellWindow().getViewById(opened.id);
-				if (view) this.superviseEditorView(folder, view);
+				if (view) {
+					this.superviseEditorView(folder, view);
+					// A workbench that is up again is no longer restarting. Waiting
+					// for `did-finish-load` is not enough on its own: a fast
+					// workbench can have finished loading before this promise
+					// resolved, and a `once` on an event that already happened
+					// never fires — which would leave the page saying "restarting"
+					// for ever about a workbench that is right there.
+					const settled = () => {
+						this.editorRestarts.delete(folder);
+						this.announceRestarting(folder, false);
+					};
+					if (view.webContents.isLoading()) {
+						view.webContents.once("did-finish-load", settled);
+					} else {
+						settled();
+					}
+				}
 				// A view no longer puts itself on screen when it is created, so
 				// the arrival of one is a moment to ask the selection again what
 				// belongs there — otherwise the workbench being waited for opens
@@ -1123,12 +1140,33 @@ export class AppController {
 	 * After enough tries it stops and says so, with the count, rather than
 	 * pretending nothing happened.
 	 */
+	/**
+	 * Say that a folder's workbench is away, or back.
+	 *
+	 * The page needs this for two reasons that are really one: it must show
+	 * *what is true* in the editor area while the workbench is being rebuilt,
+	 * and it must stop telling main the native surface is on screen — because
+	 * it is not, and main now refuses to be told otherwise.
+	 */
+	private announceRestarting(folder: string, restarting: boolean): void {
+		const surfaceKey =
+			folder === SCRATCH_EDITOR
+				? "global-editor"
+				: this.coordinator.model.workspaces
+						.filter((workspace) => workspace.root === folder)
+						.map((workspace) => `workspace-editor:${workspace.id}`)
+						.at(0);
+		if (surfaceKey === undefined) return;
+		this.send(CHANNELS.editorRestarting, { surfaceKey, restarting });
+	}
+
 	private superviseEditorView(folder: string, view: WorkbenchView): void {
 		const died = (reason: string) => {
 			// A view DevHub destroyed on purpose is not a casualty: its folder is
 			// no longer in the table, because that is what destroying it means.
 			if (this.viewsByFolder.get(folder) !== view.id) return;
 			this.viewsByFolder.delete(folder);
+			this.announceRestarting(folder, true);
 			const failures = (this.editorRestarts.get(folder) ?? 0) + 1;
 			this.editorRestarts.set(folder, failures);
 
@@ -1179,6 +1217,7 @@ export class AppController {
 		});
 		view.webContents.once("did-finish-load", () => {
 			this.editorRestarts.delete(folder);
+			this.announceRestarting(folder, false);
 		});
 	}
 
@@ -1507,6 +1546,28 @@ export class AppController {
 			shellWindow().setContentRect(rect);
 		});
 		handle(CHANNELS.setSurfaceVisible, (_event, visible: boolean) => {
+			// Being asked to show a workbench that no longer exists is a broken
+			// invariant, not a state to accommodate: the page only says this when
+			// the Editor activity resolved to a surface, and every surface it can
+			// resolve to has a view. Answering it by quietly showing nothing —
+			// or by handing a destroyed view to Electron — turns a bug here into
+			// a blank pane over there.
+			if (visible && !shellWindow().revealedView()) {
+				const snapshot = this.coordinator.snapshot();
+				const editor = snapshot.activities.find(
+					(entry) => entry.activity === "editor",
+				);
+				const surface =
+					editor?.resolution.kind === "enabled"
+						? surfaceKeyName(editor.resolution.surfaceKey)
+						: "the editor surface";
+				throw asIpcError(
+					withDetail(
+						errorWireAt("editor_unavailable"),
+						`the page asked to show ${surface}, which has no live workbench view`,
+					),
+				);
+			}
 			shellWindow().setNativeSurfaceVisible(visible);
 		});
 		handle(CHANNELS.setModalOpen, (_event, open: boolean) => {

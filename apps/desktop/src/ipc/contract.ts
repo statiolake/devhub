@@ -105,6 +105,9 @@ export interface DevhubApi {
 	onWorkbenchDialog(
 		listener: (request: WorkbenchDialogRequest) => void,
 	): () => void;
+	onEditorRestarting(
+		listener: (event: EditorRestartingWire) => void,
+	): () => void;
 	answerWorkbenchDialog(answer: WorkbenchDialogAnswer): Promise<void>;
 	setModalOpen(open: boolean): Promise<void>;
 
@@ -169,7 +172,22 @@ export const CHANNELS = {
 	/** A workbench asked a question; the page draws it and answers. */
 	workbenchDialog: "devhub:workbench-dialog",
 	workbenchDialogAnswer: "devhub:workbench-dialog-answer",
+	/** A workbench died unasked and is being built again in the same slot. */
+	editorRestarting: "devhub:editor-restarting",
 } as const;
+
+/**
+ * A workbench that is coming back.
+ *
+ * The selection does not move when a workbench dies — the Editor activity
+ * stays selected and the workbench is rebuilt in its own slot — so the page
+ * has to be able to say *that*, rather than showing an empty pane or claiming
+ * a view is on screen that no longer exists.
+ */
+export interface EditorRestartingWire {
+	readonly surfaceKey: string;
+	readonly restarting: boolean;
+}
 
 /**
  * A question a workbench asked, for the page to draw.
