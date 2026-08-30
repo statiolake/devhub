@@ -327,7 +327,10 @@ function validateAgentRecord(record: AgentStateRecord): void {
 
 function validateLifecycle(lifecycle: WorkspaceLifecycleRecord): void {
   if (lifecycle.kind === "closing" || lifecycle.kind === "closing_failed") {
-    if (lifecycle.progress.editor_closed && !lifecycle.progress.terminal_closed) {
+    if (
+      lifecycle.progress.editor_closed &&
+      !lifecycle.progress.terminal_closed
+    ) {
       fail("STATE_INVALID");
     }
   }
@@ -369,7 +372,10 @@ export function validateState(state: PersistedAppState): void {
   for (const workspace of state.workspaces) {
     validateWorkspaceRecord(workspace);
     const canonical = normalizePathString(workspace.canonical_path);
-    if (workspaceIds.has(workspace.workspace_id) || canonicalPaths.has(canonical)) {
+    if (
+      workspaceIds.has(workspace.workspace_id) ||
+      canonicalPaths.has(canonical)
+    ) {
       fail("STATE_INVALID");
     }
     workspaceIds.add(workspace.workspace_id);
@@ -522,7 +528,10 @@ export function hydrateModel(
           model.markWorkspaceUnavailable(id, record.lifecycle.reason);
           break;
         case "closing":
-          model.markWorkspaceClosing(id, progressFrom(record.lifecycle.progress));
+          model.markWorkspaceClosing(
+            id,
+            progressFrom(record.lifecycle.progress),
+          );
           break;
         case "closing_failed":
           model.markWorkspaceClosingFailed(
@@ -884,7 +893,8 @@ function decodeState(
   const fresh = freshState();
   const state: PersistedAppState = {
     schema_version: STATE_SCHEMA_VERSION,
-    workspaces: (object["workspaces"] as WorkspaceStateRecord[] | undefined) ?? [],
+    workspaces:
+      (object["workspaces"] as WorkspaceStateRecord[] | undefined) ?? [],
     navigation:
       (object["navigation"] as NavigationState | undefined) ?? fresh.navigation,
     sidebar: (object["sidebar"] as SidebarState | undefined) ?? fresh.sidebar,

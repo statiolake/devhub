@@ -29,7 +29,11 @@ import type {
   WorkspaceId,
   WorkspaceRoot,
 } from "./domain.js";
-import { DomainError, DomainErrorCode as Code, isCanonicalUuid } from "./domain.js";
+import {
+  DomainError,
+  DomainErrorCode as Code,
+  isCanonicalUuid,
+} from "./domain.js";
 import type { AppSnapshot } from "./appModel.js";
 
 /** Native application lifecycle readiness owned by the coordinator. */
@@ -50,7 +54,8 @@ function canonicalUuid<T extends string>(raw: string): Brand<string, T> {
   return raw as Brand<string, T>;
 }
 
-export const intentId = (raw: string): IntentId => canonicalUuid<"IntentId">(raw);
+export const intentId = (raw: string): IntentId =>
+  canonicalUuid<"IntentId">(raw);
 export const operationId = (raw: string): OperationId =>
   canonicalUuid<"OperationId">(raw);
 export const confirmationId = (raw: string): ConfirmationId =>
@@ -75,7 +80,10 @@ export function operationToken(
   return { operationId: id, generation };
 }
 
-export function sameToken(left: OperationToken, right: OperationToken): boolean {
+export function sameToken(
+  left: OperationToken,
+  right: OperationToken,
+): boolean {
   return (
     left.operationId === right.operationId &&
     left.generation === right.generation
@@ -203,7 +211,10 @@ export type UserIntent =
       readonly type: "confirm_close_workspace";
       readonly confirmationId: ConfirmationId;
     }
-  | { readonly type: "retry_close_workspace"; readonly workspaceId: WorkspaceId }
+  | {
+      readonly type: "retry_close_workspace";
+      readonly workspaceId: WorkspaceId;
+    }
   | { readonly type: "window_closed" }
   | { readonly type: "quit" };
 
@@ -309,7 +320,10 @@ export type ProviderEvent =
       readonly agentId: AgentId;
     }
   | { readonly type: "state_persisted"; readonly token: OperationToken }
-  | { readonly type: "state_persistence_failed"; readonly token: OperationToken }
+  | {
+      readonly type: "state_persistence_failed";
+      readonly token: OperationToken;
+    }
   /**
    * The adapter could not complete an operation. This consumes the token, so a
    * failed call cannot strand the coordinator in an indefinitely pending state.

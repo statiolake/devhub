@@ -62,10 +62,7 @@ import {
   type WorkspaceStateWire,
   type WorkspaceWire,
 } from "../ipc/appShell.js";
-import type {
-  AppearanceConfig,
-  TerminalPalette,
-} from "./config.js";
+import type { AppearanceConfig, TerminalPalette } from "./config.js";
 import type { CoordinatorReplay } from "./coordinator.js";
 
 /** A projection that cannot be represented on the wire is a bug, not a state. */
@@ -132,7 +129,9 @@ function validateAppearanceWire(
   config: AppearanceConfig,
 ): void {
   if (wire.sequence === 0 || wire.sequence > MAX_SAFE_JS_INTEGER) {
-    throw new SnapshotWireError("appearance sequence is outside the safe range");
+    throw new SnapshotWireError(
+      "appearance sequence is outside the safe range",
+    );
   }
   if (
     wire.terminalFontFamily.trim().length === 0 ||
@@ -189,7 +188,9 @@ function resolutionWire(resolution: SurfaceResolution): ResolutionWire {
     : { kind: "disabled", reason: resolution.reason };
 }
 
-function contextWire(context: AppSnapshot["selection"]["context"]): ContextWire {
+function contextWire(
+  context: AppSnapshot["selection"]["context"],
+): ContextWire {
   switch (context.kind) {
     case "global":
       return { kind: "global" };
@@ -400,7 +401,8 @@ let runtimeVersion = RUNTIME_VERSION_FALLBACK;
 
 /** Stamped once at startup so every error carries the same build identity. */
 export function setRuntimeVersion(version: string): void {
-  runtimeVersion = version.length > 0 ? version.slice(0, 64) : RUNTIME_VERSION_FALLBACK;
+  runtimeVersion =
+    version.length > 0 ? version.slice(0, 64) : RUNTIME_VERSION_FALLBACK;
 }
 
 function truncateDetail(detail: string): string {
@@ -548,7 +550,9 @@ export function intentFromWire(wire: AppIntentWire): UserIntent {
             type: "select_context",
             context: {
               kind: "workspace",
-              workspaceId: tryParse(() => parseWorkspaceId(context.workspaceId)),
+              workspaceId: tryParse(() =>
+                parseWorkspaceId(context.workspaceId),
+              ),
             },
           };
         case "agent":

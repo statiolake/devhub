@@ -257,7 +257,11 @@ type CleanupPersistenceContinuation =
     };
 
 type ActiveReconcile =
-  | { readonly kind: "agents"; readonly token: OperationToken; readonly epoch: number }
+  | {
+      readonly kind: "agents";
+      readonly token: OperationToken;
+      readonly epoch: number;
+    }
   | {
       readonly kind: "agent";
       readonly token: OperationToken;
@@ -331,7 +335,10 @@ export class AppCoordinator {
   private subscriberCursor = 0;
   private readonly intentCache = new Map<IntentId, CachedDispatch>();
   private readonly intentOrder: IntentId[] = [];
-  private readonly providerEventCache = new Map<ProviderEventId, CachedDispatch>();
+  private readonly providerEventCache = new Map<
+    ProviderEventId,
+    CachedDispatch
+  >();
   private readonly providerEventOrder: ProviderEventId[] = [];
   private readonly confirmationIds = new Set<ConfirmationId>();
   private readonly confirmationIdOrder: ConfirmationId[] = [];
@@ -481,9 +488,9 @@ export class AppCoordinator {
         this.emit({ kind: "noop" });
         return this.replayCached(cached);
       }
-      const error = new AppError(AppErrorCode.DuplicateIntent).withProviderEvent(
-        eventId,
-      );
+      const error = new AppError(
+        AppErrorCode.DuplicateIntent,
+      ).withProviderEvent(eventId);
       this.emit({ kind: "error", error });
       throw error;
     }
@@ -634,7 +641,11 @@ export class AppCoordinator {
       id,
     );
     this.reconcileEpoch = nextEpoch;
-    this.activeReconcile = { kind: "agents", token, epoch: this.reconcileEpoch };
+    this.activeReconcile = {
+      kind: "agents",
+      token,
+      epoch: this.reconcileEpoch,
+    };
     this.emitEffect({ kind: "reconcile_agents", token });
     return { kind: "deferred", operationId: id, snapshot: this.snapshot() };
   }
@@ -864,36 +875,37 @@ export class AppCoordinator {
     });
   }
 
+  /**
+   * Retry a close that failed, in this run or a previous one.
+   *
+   * The progress comes from the live cleanup when there is one and from the
+   * Workspace's own persisted state otherwise, because a close interrupted by
+   * a quit is the same situation as one interrupted by a failure — and having
+   * two ways to say "retry" is how one of them ends up being the broken one.
+   */
   private retryWorkspaceClose(
     workspaceId: WorkspaceId,
     id: OperationId,
   ): IntentOutcome {
-    const cleanup = this.cleanup.get(workspaceId);
-    if (!cleanup) {
-      throw new AppError(AppErrorCode.UnknownOperation);
-    }
-    return this.beginWorkspaceInspection(workspaceId, id, {
-      kind: "retry",
-      progress: cleanup.progress,
-    });
-  }
-
-  /** Resume a close that a previous run persisted but never finished. */
-  resumePersistedClose(
-    workspaceId: WorkspaceId,
-    id: OperationId,
-  ): IntentOutcome {
     const state = this.model.workspace(workspaceId)?.state;
-    const progress = state ? workspaceCleanupProgress(state) : undefined;
+    const progress =
+      this.cleanup.get(workspaceId)?.progress ??
+      (state ? workspaceCleanupProgress(state) : undefined);
     if (!progress) {
-      throw new AppError(AppErrorCode.Domain).withDomain(
-        DomainErrorCode.UnknownWorkspace,
-      );
+      throw new AppError(AppErrorCode.UnknownOperation);
     }
     return this.beginWorkspaceInspection(workspaceId, id, {
       kind: "retry",
       progress,
     });
+  }
+
+  /** Resume a close a previous run persisted but never finished. */
+  resumePersistedClose(
+    workspaceId: WorkspaceId,
+    id: OperationId,
+  ): IntentOutcome {
+    return this.retryWorkspaceClose(workspaceId, id);
   }
 
   // ------------------------------------------------------------ completions
@@ -1085,7 +1097,8 @@ export class AppCoordinator {
     }
     const existing = this.model.workspaces.find(
       (workspace) =>
-        workspace.state.kind === "available" && workspace.root === resolved.root,
+        workspace.state.kind === "available" &&
+        workspace.root === resolved.root,
     );
     if (existing) {
       const beforeRevision = this.model.snapshot().revision;
@@ -1138,7 +1151,11 @@ export class AppCoordinator {
       id,
     );
     this.resolvedProfiles.set(nextToken.operationId, { workspaceId, profile });
-    this.emitEffect({ kind: "generate_agent_id", token: nextToken, workspaceId });
+    this.emitEffect({
+      kind: "generate_agent_id",
+      token: nextToken,
+      workspaceId,
+    });
     return {
       kind: "deferred",
       operationId: nextToken.operationId,
@@ -1246,7 +1263,11 @@ export class AppCoordinator {
         { kind: "agent", agentId },
         token.operationId,
       );
-      this.emitEffect({ kind: "terminate_agent", token: terminateToken, agentId });
+      this.emitEffect({
+        kind: "terminate_agent",
+        token: terminateToken,
+        agentId,
+      });
       throw error;
     }
     this.model.selectContext({ kind: "agent", agentId });
@@ -1436,7 +1457,9 @@ export class AppCoordinator {
       (target) =>
         target.kind === "workspace" && target.workspaceId === workspaceId,
     );
-    const continuation = this.inspectionContinuations.get(token.operationId) ?? {
+    const continuation = this.inspectionContinuations.get(
+      token.operationId,
+    ) ?? {
       kind: "begin" as const,
     };
     this.inspectionContinuations.delete(token.operationId);
@@ -1520,12 +1543,20 @@ export class AppCoordinator {
       existing !== undefined &&
       sameProgress(existing.progress, progress);
     const persistedProgress = workspaceCleanupProgress(workspace.state);
+    // A close this process was in the middle of when it stopped. A *failed*
+    // close is not one of these: it has to be moved back into Closing, which
+    // is what the normal path below does.
     const persistedResume =
+      workspace.state.kind === "closing" &&
       persistedProgress !== undefined &&
       sameProgress(persistedProgress, progress) &&
       !this.cleanup.has(workspaceId);
 
-    if (isWorkspaceClosing(workspace.state) && !continuing && !persistedResume) {
+    if (
+      isWorkspaceClosing(workspace.state) &&
+      !continuing &&
+      !persistedResume
+    ) {
       throw new AppError(AppErrorCode.Domain).withDomain(
         DomainErrorCode.WorkspaceClosing,
       );
@@ -1677,7 +1708,8 @@ export class AppCoordinator {
 
     if (step === "agents") {
       const ids =
-        this.model.workspace(workspaceId)?.agents.map((agent) => agent.id) ?? [];
+        this.model.workspace(workspaceId)?.agents.map((agent) => agent.id) ??
+        [];
       for (const agentId of ids) {
         this.model.agentExited(agentId);
       }
@@ -1916,9 +1948,7 @@ export class AppCoordinator {
     }
     this.emit({ kind: "operation_completed", token });
     this.queuePersist(token.operationId);
-    return removed
-      ? { kind: "updated", snapshot }
-      : { kind: "noop", snapshot };
+    return removed ? { kind: "updated", snapshot } : { kind: "noop", snapshot };
   }
 
   // ------------------------------------------------------------- bookkeeping

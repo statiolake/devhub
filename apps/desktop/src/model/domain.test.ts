@@ -69,7 +69,9 @@ describe("paths", () => {
     expect(codeOf(() => workspaceRoot("/../repo"))).toBe(
       DomainErrorCode.InvalidPath,
     );
-    expect(codeOf(() => workspaceRoot("/.."))).toBe(DomainErrorCode.InvalidPath);
+    expect(codeOf(() => workspaceRoot("/.."))).toBe(
+      DomainErrorCode.InvalidPath,
+    );
   });
 
   it("names the root by its last component", () => {
@@ -112,9 +114,9 @@ describe("remote identity", () => {
     expect(remoteIdentity("https://code.example/Owner/Repo.git")).toBe(
       "code.example/Owner/Repo",
     );
-    expect(codeOf(() => remoteIdentity("https://code.example/owner/../repo"))).toBe(
-      DomainErrorCode.InvalidRemote,
-    );
+    expect(
+      codeOf(() => remoteIdentity("https://code.example/owner/../repo")),
+    ).toBe(DomainErrorCode.InvalidRemote);
   });
 
   it("collapses duplicate aliases and matches any of them", () => {
@@ -123,9 +125,9 @@ describe("remote identity", () => {
       remoteIdentity("ssh://git@github.com/owner/repo"),
     ]);
     expect(repository.aliases).toHaveLength(1);
-    expect(repository.matchesRemote(remoteIdentity("git@github.com:owner/repo"))).toBe(
-      true,
-    );
+    expect(
+      repository.matchesRemote(remoteIdentity("git@github.com:owner/repo")),
+    ).toBe(true);
   });
 });
 
@@ -152,7 +154,12 @@ describe("agent naming", () => {
   });
 
   it("refuses a blank rename", () => {
-    const agent = Agent.create(agentId(UUID_A), workspaceId(UUID_B), profile, 1);
+    const agent = Agent.create(
+      agentId(UUID_A),
+      workspaceId(UUID_B),
+      profile,
+      1,
+    );
     expect(codeOf(() => agent.rename("   "))).toBe(
       DomainErrorCode.InvalidDisplayName,
     );
@@ -235,13 +242,17 @@ describe("close inspection", () => {
   });
 
   it("retains workspace identity and every resource state in the projection", () => {
-    const projection = closeInspectionProjection(workspaceId(UUID_A), "DevHub", {
-      agents: busy(2),
-      terminalProcesses: unknownResource("close_terminal_unknown"),
-      terminalPanes: CLEAN,
-      terminalWindows: CLEAN,
-      unsavedEditors: busy(1),
-    });
+    const projection = closeInspectionProjection(
+      workspaceId(UUID_A),
+      "DevHub",
+      {
+        agents: busy(2),
+        terminalProcesses: unknownResource("close_terminal_unknown"),
+        terminalPanes: CLEAN,
+        terminalWindows: CLEAN,
+        unsavedEditors: busy(1),
+      },
+    );
     expect(projection.workspaceId).toBe(UUID_A);
     expect(projection.workspaceLabel).toBe("DevHub");
     expect(projection.agents).toEqual({ kind: "busy", count: 2 });

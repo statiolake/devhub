@@ -138,7 +138,10 @@ export interface WorkspaceCloseRollback {
   readonly selectionAfter: NavigationSelection;
 }
 
-function sameEditorHost(left: EditorHostState, right: EditorHostState): boolean {
+function sameEditorHost(
+  left: EditorHostState,
+  right: EditorHostState,
+): boolean {
   if (left.kind !== right.kind) {
     return false;
   }
@@ -174,10 +177,13 @@ export class AppModel {
       schemaVersion: APP_SNAPSHOT_SCHEMA_VERSION,
       revision: this.revision,
       selection: this.selectionValue,
-      activities: [...["editor", "agent", "terminal"] as const].map(
+      activities: [...(["editor", "agent", "terminal"] as const)].map(
         (activity) => ({
           activity,
-          resolution: this.resolveSurface(this.selectionValue.context, activity),
+          resolution: this.resolveSurface(
+            this.selectionValue.context,
+            activity,
+          ),
         }),
       ),
       workspaces: this.workspaceSnapshots(),
@@ -270,7 +276,8 @@ export class AppModel {
       return false;
     }
     const changed = expanded
-      ? !this.expandedWorkspaces.has(id) && Boolean(this.expandedWorkspaces.add(id))
+      ? !this.expandedWorkspaces.has(id) &&
+        Boolean(this.expandedWorkspaces.add(id))
       : this.expandedWorkspaces.delete(id);
     if (changed) {
       this.bumpRevision();
@@ -287,7 +294,9 @@ export class AppModel {
       fail(DomainErrorCode.RepositoryIdentityConflict);
     }
     for (const candidate of this.repositoryMap.values()) {
-      if (repository.aliases.some((remote) => candidate.matchesRemote(remote))) {
+      if (
+        repository.aliases.some((remote) => candidate.matchesRemote(remote))
+      ) {
         fail(DomainErrorCode.RepositoryRemoteConflict);
       }
     }
@@ -341,11 +350,7 @@ export class AppModel {
     }
   }
 
-  addAgent(
-    owner: WorkspaceId,
-    id: AgentId,
-    profile: AgentProfile,
-  ): void {
+  addAgent(owner: WorkspaceId, id: AgentId, profile: AgentProfile): void {
     if (this.agent(id)) {
       fail(DomainErrorCode.DuplicateAgent);
     }
@@ -360,7 +365,10 @@ export class AppModel {
     }
     workspace.addAgent(Agent.create(id, owner, profile, ordinal));
     this.nextAgentOrdinals.set(key, ordinal + 1);
-    this.selectionValue = { context: { kind: "agent", agentId: id }, activity: "agent" };
+    this.selectionValue = {
+      context: { kind: "agent", agentId: id },
+      activity: "agent",
+    };
     this.bumpRevision();
   }
 
@@ -431,7 +439,10 @@ export class AppModel {
         continue;
       }
       this.setAgentStatus(observation.agentId, observation.status);
-      this.setAgentRuntimeHealth(observation.agentId, observation.runtimeHealth);
+      this.setAgentRuntimeHealth(
+        observation.agentId,
+        observation.runtimeHealth,
+      );
     }
     for (const id of [...exited].sort()) {
       this.agentExited(id);
@@ -533,7 +544,10 @@ export class AppModel {
             surfaceKey:
               activity === "editor"
                 ? { kind: "workspace-editor", workspaceId: context.workspaceId }
-                : { kind: "workspace-terminal", workspaceId: context.workspaceId },
+                : {
+                    kind: "workspace-terminal",
+                    workspaceId: context.workspaceId,
+                  },
           };
         case "unavailable":
           return { kind: "disabled", reason: "workspace-unavailable" };

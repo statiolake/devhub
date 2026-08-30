@@ -247,7 +247,8 @@ export function remoteIdentity(input: string): RemoteIdentity {
   const lowerHost = host.toLowerCase();
   const finalPath =
     lowerHost === "github.com" ? normalizedPath.toLowerCase() : normalizedPath;
-  const finalAuthority = port === undefined ? lowerHost : `${lowerHost}:${port}`;
+  const finalAuthority =
+    port === undefined ? lowerHost : `${lowerHost}:${port}`;
   return `${finalAuthority}/${finalPath}` as RemoteIdentity;
 }
 
@@ -260,7 +261,9 @@ export class Repository {
     readonly primaryRemote: RemoteIdentity,
     aliases: Iterable<RemoteIdentity> = [],
   ) {
-    this.aliases = [...new Set<RemoteIdentity>([primaryRemote, ...aliases])].sort();
+    this.aliases = [
+      ...new Set<RemoteIdentity>([primaryRemote, ...aliases]),
+    ].sort();
   }
 
   matchesRemote(remote: RemoteIdentity): boolean {
@@ -941,7 +944,9 @@ export function busy(count: number): ResourceInspection {
   return { kind: "busy", count };
 }
 
-export function unknownResource(diagnostic: DiagnosticCode): ResourceInspection {
+export function unknownResource(
+  diagnostic: DiagnosticCode,
+): ResourceInspection {
   return { kind: "unknown", diagnostic };
 }
 
@@ -996,7 +1001,10 @@ export function consolidateCloseInspection(
   const unknownDiagnostics: DiagnosticCode[] = [];
   for (const field of INSPECTION_FIELDS) {
     const check = inputs[field];
-    if (check.kind === "unknown" && !unknownDiagnostics.includes(check.diagnostic)) {
+    if (
+      check.kind === "unknown" &&
+      !unknownDiagnostics.includes(check.diagnostic)
+    ) {
       unknownDiagnostics.push(check.diagnostic);
     }
   }

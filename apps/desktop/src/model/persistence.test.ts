@@ -109,7 +109,11 @@ describe("navigation restore", () => {
       changed: true,
     });
 
-    const workspace = restoreNavigation(state, new Set([WS_A, WS_B]), new Set());
+    const workspace = restoreNavigation(
+      state,
+      new Set([WS_A, WS_B]),
+      new Set(),
+    );
     expect(workspace).toEqual({
       context: { kind: "workspace", workspace_id: WS_A },
       activity: "editor",
@@ -218,7 +222,9 @@ describe("store", () => {
     const first = stateFromSnapshot(populatedModel().snapshot());
     await store.saveState(first);
     await store.saveState(emptied(first));
-    const backup: unknown = JSON.parse(await readFile(store.backupPath, "utf8"));
+    const backup: unknown = JSON.parse(
+      await readFile(store.backupPath, "utf8"),
+    );
     expect(backup).toEqual(first);
   });
 

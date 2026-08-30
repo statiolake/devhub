@@ -189,8 +189,16 @@ describe("dispatch", () => {
     const id = intentId("550e8400-e29b-41d4-a716-4466554400f0");
     const op = operationId("550e8400-e29b-41d4-a716-4466554400f1");
     const intent: UserIntent = { type: "resize_sidebar", width: 300 };
-    const first = coordinator.dispatchUser({ intentId: id, operationId: op, intent });
-    const second = coordinator.dispatchUser({ intentId: id, operationId: op, intent });
+    const first = coordinator.dispatchUser({
+      intentId: id,
+      operationId: op,
+      intent,
+    });
+    const second = coordinator.dispatchUser({
+      intentId: id,
+      operationId: op,
+      intent,
+    });
     expect(second).toBe(first);
   });
 
@@ -491,7 +499,9 @@ describe("stopping an agent", () => {
       confirmationId: CONFIRM,
     });
     driver.dispatch({ type: "confirm_stop_agent", confirmationId: CONFIRM });
-    const stop = driver.drainEffects().find((effect) => effect.kind === "stop_agent");
+    const stop = driver
+      .drainEffects()
+      .find((effect) => effect.kind === "stop_agent");
     if (!stop || stop.kind !== "stop_agent") throw new Error("unexpected");
     driver.accept({
       type: "agent_stop_completed",
@@ -536,11 +546,51 @@ describe("detaching", () => {
   it("emits one detach effect and answers every later intent as detached", () => {
     const driver = new Driver();
     driver.dispatch({ type: "quit" });
-    expect(driver.drainEffects()).toEqual([
-      { kind: "detach", reason: "quit" },
-    ]);
+    expect(driver.drainEffects()).toEqual([{ kind: "detach", reason: "quit" }]);
     const outcome = driver.dispatch({ type: "resize_sidebar", width: 300 });
     expect(outcome.kind).toBe("detached");
     expect(driver.drainEffects()).toEqual([]);
+  });
+});
+
+describe("retrying a failed close", () => {
+  it("resumes from the progress the workspace itself carries", () => {
+    const driver = new Driver();
+    driver.openFolder("/dev/project");
+
+    // A close whose final inspection is still busy leaves the workspace in
+    // closing-failed, which is where the retry has to be able to start.
+    driver.dispatch({ type: "request_close_workspace", workspaceId: WS_A });
+    const inspect = driver.drainEffects()[0];
+    if (inspect.kind !== "inspect_workspace") throw new Error("unexpected");
+    driver.accept({
+      type: "workspace_inspection_completed",
+      token: inspect.token,
+      workspaceId: WS_A,
+      inspection: { ...CLEAN_INSPECTION, unsavedEditors: busy(1) },
+    });
+    const generate = driver.drainEffects()[0];
+    if (generate.kind !== "generate_confirmation_id") {
+      throw new Error("unexpected");
+    }
+    driver.accept({
+      type: "confirmation_id_generated",
+      token: generate.token,
+      confirmationId: CONFIRM,
+    });
+    driver.dispatch({
+      type: "confirm_close_workspace",
+      confirmationId: CONFIRM,
+    });
+    driver.settle({ ...CLEAN_INSPECTION, unsavedEditors: busy(1) });
+    expect(driver.coordinator.snapshot().workspaces[0].state.kind).toBe(
+      "closing-failed",
+    );
+
+    // Nothing is busy any more, and nothing is left of the in-flight cleanup
+    // either — the same position a restart leaves behind.
+    driver.dispatch({ type: "retry_close_workspace", workspaceId: WS_A });
+    driver.settle();
+    expect(driver.coordinator.snapshot().workspaces).toHaveLength(0);
   });
 });

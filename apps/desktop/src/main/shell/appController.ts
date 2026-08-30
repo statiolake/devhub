@@ -52,6 +52,7 @@ import {
 } from "../../model/domain.js";
 import {
 	operationId as parseOperationId,
+	type OperationId,
 	confirmationId as parseConfirmationId,
 	intentId as parseIntentId,
 	requestedPath,
@@ -109,6 +110,16 @@ export interface MainServices {
 /** The folder key a scratch (folderless) workbench view is filed under. */
 const SCRATCH_EDITOR = "";
 
+/** How long the page waits for a deferred operation before it is a failure. */
+const OPERATION_TIMEOUT_MS = 60_000;
+
+interface PendingRequest {
+	readonly promise: Promise<IntentOutcome>;
+	readonly settle: (outcome: IntentOutcome) => void;
+	readonly fail: (error: unknown) => void;
+	readonly timer: ReturnType<typeof setTimeout>;
+}
+
 export class AppController {
 	private readonly coordinator: AppCoordinator;
 	private cursor = 0;
@@ -123,6 +134,8 @@ export class AppController {
 	private appearanceSequence = 0;
 	private profileSequence = 0;
 	private cancelPicker: (() => void) | undefined;
+	/** Page requests still waiting on a deferred chain, by operation identity. */
+	private readonly pendingRequests = new Map<OperationId, PendingRequest>();
 	private stopWatchingConfig: (() => void) | undefined;
 
 	constructor(
@@ -278,18 +291,89 @@ export class AppController {
 	}
 
 	private accept(event: ProviderEvent): void {
+		const id = event.token.operationId;
 		try {
-			this.coordinator.acceptProviderEvent({
+			const outcome = this.coordinator.acceptProviderEvent({
 				eventId: parseOperationId(randomUUID()) as never,
 				event,
 			});
+			this.settle(id, outcome);
 		} catch (error) {
 			// A completion the coordinator refused is a real failure — a stale
 			// token, an operation that no longer exists — and it belongs on screen
 			// rather than in a log nobody reads.
 			this.publishError(errorWire(error));
+			this.reject(id, error);
 		}
 		this.drain();
+	}
+
+	/**
+	 * Wait for a deferred operation to reach an answer.
+	 *
+	 * A request from the page is one act — "close this workspace" — but the model
+	 * answers it with a chain: inspect, then maybe a confirmation, then cleanup,
+	 * then a save. Every link keeps the same operation identity, so the page's
+	 * call resolves to whatever that identity finally produced. Without this the
+	 * page would be told "deferred" and never hear the confirmation it has to
+	 * show, which is exactly a failure that never reaches anyone.
+	 */
+	private awaitOutcome(outcome: IntentOutcome): Promise<IntentOutcome> {
+		if (outcome.kind !== "deferred") {
+			return Promise.resolve(outcome);
+		}
+		const existing = this.pendingRequests.get(outcome.operationId);
+		if (existing) {
+			return existing.promise;
+		}
+		let settle: (value: IntentOutcome) => void = () => undefined;
+		let fail: (error: unknown) => void = () => undefined;
+		const promise = new Promise<IntentOutcome>((resolve, reject) => {
+			settle = resolve;
+			fail = reject;
+		});
+		// An operation nothing ever completes would leave the page waiting on a
+		// promise forever. A bounded wait turns that into a visible failure.
+		const timer = setTimeout(() => {
+			this.reject(
+				outcome.operationId,
+				new Error("the operation did not complete"),
+			);
+		}, OPERATION_TIMEOUT_MS);
+		// A pending page request must never be the reason the process stays alive.
+		(timer as unknown as { unref?: () => void }).unref?.();
+		this.pendingRequests.set(outcome.operationId, {
+			promise,
+			settle,
+			fail,
+			timer,
+		});
+		return promise;
+	}
+
+	private settle(id: OperationId, outcome: IntentOutcome): void {
+		const pending = this.pendingRequests.get(id);
+		if (!pending) return;
+		if (outcome.kind === "deferred") {
+			if (outcome.operationId === id) {
+				// Still the same operation, one link further along.
+				return;
+			}
+			this.pendingRequests.delete(id);
+			this.pendingRequests.set(outcome.operationId, pending);
+			return;
+		}
+		this.pendingRequests.delete(id);
+		clearTimeout(pending.timer);
+		pending.settle(outcome);
+	}
+
+	private reject(id: OperationId, error: unknown): void {
+		const pending = this.pendingRequests.get(id);
+		if (!pending) return;
+		this.pendingRequests.delete(id);
+		clearTimeout(pending.timer);
+		pending.fail(error);
 	}
 
 	/**
@@ -473,9 +557,18 @@ export class AppController {
 		workspaceId: WorkspaceId,
 	): Promise<void> {
 		const workspace = this.coordinator.model.workspace(workspaceId);
+		// What the shell itself knows about this Workspace's editors: a view it
+		// never opened, or already closed, holds nothing. A live view might hold
+		// unsaved work and nothing here can ask it, so that is `unknown` — and
+		// the close confirmation says exactly that rather than guessing "clean".
+		const hasView =
+			workspace !== undefined && this.viewsByFolder.has(workspace.root);
 		const inspection = await inspectWorkspaceResources(
 			workspaceId,
 			workspace?.agents.length ?? 0,
+			hasView
+				? { kind: "unknown", diagnostic: "close_editor_unknown" }
+				: { kind: "clean" },
 		);
 		this.accept({
 			type: "workspace_inspection_completed",
@@ -709,8 +802,18 @@ export class AppController {
 			throw asIpcError(errorWire(error));
 		}
 		this.drain();
+		const settled = await this.settled(outcome);
 		await this.syncEditorView();
-		return outcomeWire(outcome, this.coordinator.readiness);
+		return outcomeWire(settled, this.coordinator.readiness);
+	}
+
+	/** The page's answer: whatever the chain this intent started produced. */
+	private async settled(outcome: IntentOutcome): Promise<IntentOutcome> {
+		try {
+			return await this.awaitOutcome(outcome);
+		} catch (error) {
+			throw asIpcError(errorWire(error));
+		}
 	}
 
 	revealFolderView(folder: string): void {
@@ -783,12 +886,13 @@ export class AppController {
 			throw asIpcError(errorWire(error));
 		}
 		this.drain();
+		const settled = await this.settled(outcome);
 
 		// Selecting the Editor activity is the moment its view has to exist. It is
 		// done here rather than in the model because a view is an effect on the
 		// window, and the model does not have windows.
 		await this.syncEditorView();
-		return outcomeWire(outcome, this.coordinator.readiness);
+		return outcomeWire(settled, this.coordinator.readiness);
 	}
 
 	private async syncEditorView(): Promise<void> {

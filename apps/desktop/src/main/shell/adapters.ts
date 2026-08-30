@@ -17,9 +17,10 @@
  *   terminals" is already true and the step completes — that is a fact about
  *   the build, not an assumption about the world.
  * - **Close inspection.** Nobody can say whether an editor has unsaved work
- *   until something asks it. With no inspector the answer is `unknown`, which
- *   is what puts "Could not verify editor state" in front of the person instead
- *   of quietly reporting "clean".
+ *   until something asks the workbench. With no inspector the shell answers
+ *   from what it does know — whether a workbench view for that Workspace
+ *   exists at all — which is what puts "Could not verify editor state" in
+ *   front of the person instead of quietly reporting "clean".
  */
 
 import type {
@@ -105,6 +106,7 @@ const CLEAN: ResourceInspection = { kind: "clean" };
 export async function inspectWorkspaceResources(
 	workspaceId: WorkspaceId,
 	agentCount: number,
+	fallbackEditors: ResourceInspection,
 ): Promise<CloseInspectionInputs> {
 	const terminal = terminals();
 	const terminalInspection = terminal
@@ -118,6 +120,6 @@ export async function inspectWorkspaceResources(
 		terminalWindows: terminalInspection.windows,
 		unsavedEditors: inspector
 			? await inspector.inspect(workspaceId)
-			: { kind: "unknown", diagnostic: "close_editor_unknown" },
+			: fallbackEditors,
 	};
 }

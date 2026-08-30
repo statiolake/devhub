@@ -378,9 +378,7 @@ export type ReloadOutcome =
 // --------------------------------------------------------------- validation
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return (
-    typeof value === "object" && value !== null && !Array.isArray(value)
-  );
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function checkKeys(
@@ -395,10 +393,7 @@ function checkKeys(
   }
 }
 
-function requireTable(
-  value: unknown,
-  path: string,
-): Record<string, unknown> {
+function requireTable(value: unknown, path: string): Record<string, unknown> {
   if (!isPlainObject(value)) {
     fail("invalid_type", path);
   }
@@ -513,7 +508,9 @@ function paletteIsValid(palette: TerminalPalette): boolean {
 }
 
 export function isValidSocketName(value: string): boolean {
-  return value.length > 0 && value.length <= 64 && /^[A-Za-z0-9_.-]+$/.test(value);
+  return (
+    value.length > 0 && value.length <= 64 && /^[A-Za-z0-9_.-]+$/.test(value)
+  );
 }
 
 export function isSafeTmuxArgument(argument: string): boolean {
@@ -599,10 +596,7 @@ function validateWorkspaceSources(sources: readonly WorkspaceSource[]): void {
     const prefix = `workspace_sources[${String(index)}]`;
     const previous = seen.get(source.id);
     if (previous !== undefined) {
-      fail(
-        "duplicate_identity",
-        `${prefix}.id (also ${String(previous)})`,
-      );
+      fail("duplicate_identity", `${prefix}.id (also ${String(previous)})`);
     }
     seen.set(source.id, index);
     validateId(source.id, `${prefix}.id`);
@@ -836,10 +830,7 @@ export function parseConfig(input: string): Config {
     "runtimes",
   );
 
-  const appearanceTable = requireTable(
-    table["appearance"] ?? {},
-    "appearance",
-  );
+  const appearanceTable = requireTable(table["appearance"] ?? {}, "appearance");
   checkKeys(
     appearanceTable,
     [
@@ -889,7 +880,12 @@ export function parseConfig(input: string): Config {
         "runtimes",
         DEFAULT_TMUX_SOCKET,
       ),
-      tmux_args: optionalStringArray(runtimesTable, "tmux_args", "runtimes", []),
+      tmux_args: optionalStringArray(
+        runtimesTable,
+        "tmux_args",
+        "runtimes",
+        [],
+      ),
     },
     appearance: {
       colorScheme: optionalString(
@@ -960,7 +956,9 @@ export function configToToml(config: Config): string {
   validateConfig(config);
   const document = {
     version: config.version,
-    general: { import_login_environment: config.general.import_login_environment },
+    general: {
+      import_login_environment: config.general.import_login_environment,
+    },
     runtimes: {
       shell: config.runtimes.shell,
       git: config.runtimes.git,
@@ -1208,7 +1206,11 @@ export class ConfigStore {
       parent,
       `.${this.path.split("/").at(-1) ?? "config.toml"}.devhub-${String(process.pid)}-${String(Date.now())}.tmp`,
     );
-    const handle = await open(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600);
+    const handle = await open(
+      temporary,
+      constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL,
+      0o600,
+    );
     try {
       await handle.writeFile(text, "utf8");
       await handle.sync();

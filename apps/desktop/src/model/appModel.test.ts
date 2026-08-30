@@ -33,7 +33,9 @@ function codeOf(run: () => unknown): DomainErrorCode | undefined {
 function modelWith(...roots: [ReturnType<typeof workspaceId>, string][]) {
   const model = new AppModel();
   for (const [id, path] of roots) {
-    model.addWorkspace(new Workspace(id, workspaceRoot(path), displayPath(path)));
+    model.addWorkspace(
+      new Workspace(id, workspaceRoot(path), displayPath(path)),
+    );
   }
   return model;
 }
@@ -120,9 +122,11 @@ describe("activity resolution", () => {
 
   it("refuses to select a disabled activity", () => {
     const model = new AppModel();
-    expect(codeOf(() => {
-      model.selectActivity("agent");
-    })).toBe(DomainErrorCode.ActivityDisabled);
+    expect(
+      codeOf(() => {
+        model.selectActivity("agent");
+      }),
+    ).toBe(DomainErrorCode.ActivityDisabled);
   });
 });
 
@@ -171,7 +175,9 @@ describe("ordinals", () => {
 describe("labels", () => {
   it("uses the basename until two workspaces collide", () => {
     const model = modelWith([WS_A, "/dev/alpha/app"], [WS_B, "/dev/beta/app"]);
-    const labels = model.snapshot().workspaces.map((workspace) => workspace.label);
+    const labels = model
+      .snapshot()
+      .workspaces.map((workspace) => workspace.label);
     expect(labels).toEqual(["app — alpha", "app — beta"]);
   });
 
@@ -236,9 +242,11 @@ describe("closing", () => {
   it("refuses a workspace that still has agents", () => {
     const model = modelWith([WS_A, "/dev/a"]);
     model.addAgent(WS_A, AG_A, codex);
-    expect(codeOf(() => {
-      model.closeWorkspace(WS_A, CLEAN_CLOSE_INSPECTION);
-    })).toBe(DomainErrorCode.WorkspaceHasLiveAgents);
+    expect(
+      codeOf(() => {
+        model.closeWorkspace(WS_A, CLEAN_CLOSE_INSPECTION);
+      }),
+    ).toBe(DomainErrorCode.WorkspaceHasLiveAgents);
   });
 
   it("moves the selection to the next workspace, then to Global", () => {
@@ -279,9 +287,15 @@ describe("closing", () => {
 describe("relocation", () => {
   it("only relocates an unavailable workspace, and keeps its identity", () => {
     const model = modelWith([WS_A, "/dev/a"]);
-    expect(codeOf(() => {
-      model.relocateWorkspace(WS_A, workspaceRoot("/dev/moved"), displayPath("/dev/moved"));
-    })).toBe(DomainErrorCode.WorkspaceNotUnavailable);
+    expect(
+      codeOf(() => {
+        model.relocateWorkspace(
+          WS_A,
+          workspaceRoot("/dev/moved"),
+          displayPath("/dev/moved"),
+        );
+      }),
+    ).toBe(DomainErrorCode.WorkspaceNotUnavailable);
     model.markWorkspaceUnavailable(WS_A, "root_missing");
     model.relocateWorkspace(
       WS_A,

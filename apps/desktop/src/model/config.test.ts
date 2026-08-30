@@ -40,7 +40,9 @@ describe("parsing", () => {
     ).toBe("unknown_key");
     expect(
       codeOf(() =>
-        parseConfig("version = 1\n[appearance.terminal_theme.light]\nnope = 1\n"),
+        parseConfig(
+          "version = 1\n[appearance.terminal_theme.light]\nnope = 1\n",
+        ),
       ),
     ).toBe("unknown_key");
   });
@@ -90,7 +92,7 @@ describe("parsing", () => {
     ).toBe("invalid_appearance");
     expect(
       codeOf(() =>
-        parseConfig("version = 1\n[appearance]\nsidebar_density = \"roomy\"\n"),
+        parseConfig('version = 1\n[appearance]\nsidebar_density = "roomy"\n'),
       ),
     ).toBe("invalid_appearance");
   });
@@ -176,7 +178,10 @@ describe("store", () => {
   it("adopts an external edit and reports it applied", async () => {
     const store = new ConfigStore(path);
     await store.load();
-    await writeFile(path, "version = 1\n[appearance]\nterminal_font_size = 15\n");
+    await writeFile(
+      path,
+      "version = 1\n[appearance]\nterminal_font_size = 15\n",
+    );
     const outcome = await store.reload();
     expect(outcome.kind).toBe("applied");
     if (outcome.kind !== "applied") return;
@@ -195,10 +200,14 @@ describe("store", () => {
   it("refuses a save over a file that changed underneath it", async () => {
     const store = new ConfigStore(path);
     const loaded = await store.load();
-    await writeFile(path, "version = 1\n[appearance]\nterminal_font_size = 15\n");
-    const failure = await store
-      .save(loaded.revision, loaded.config)
-      .then(() => undefined, (error: unknown) => error);
+    await writeFile(
+      path,
+      "version = 1\n[appearance]\nterminal_font_size = 15\n",
+    );
+    const failure = await store.save(loaded.revision, loaded.config).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
     expect(failure).toBeInstanceOf(ConfigError);
     expect((failure as ConfigError).code).toBe("conflict");
   });
