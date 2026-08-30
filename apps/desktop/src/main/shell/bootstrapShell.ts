@@ -10,13 +10,14 @@ import { readFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { NativeParsedArgs } from "code-oss-dev/out/vs/platform/environment/common/argv.js";
-import { createShellController } from "./shellController.js";
+import { createAppController } from "./appController.js";
 import {
 	registerShellPageProtocol,
 	SHELL_ORIGIN,
 } from "./shellPageProtocol.js";
-import { createShellWindow } from "./shellWindow.js";
-import { WorkspaceStore } from "./workspaces.js";
+import { electron } from "../electron.js";
+import { createShellWindow, shellWindowIfCreated } from "./shellWindow.js";
+import { installSettingsWindow, logDirectoryFor } from "./settingsWindow.js";
 
 /** `apps/desktop/out/main/shell` -> `apps/desktop`. */
 const APP_ROOT = join(
@@ -74,19 +75,43 @@ function ensureWorkbenchDefaults(userDataPath: string): void {
 	);
 }
 
-export function bootstrapShell(
+export async function bootstrapShell(
 	userDataPath: string,
 	cliArgs: NativeParsedArgs,
-): void {
+): Promise<void> {
 	ensureWorkbenchDefaults(userDataPath);
 
+	const preloadPath = join(APP_ROOT, "out", "preload", "preload.js");
 	registerShellPageProtocol(join(APP_ROOT, "dist", "shell"));
-	createShellWindow(
-		join(APP_ROOT, "out", "preload", "preload.js"),
-		`${SHELL_ORIGIN}/index.html`,
-	);
-	createShellController(
-		new WorkspaceStore(join(userDataPath, "devhub", "workspaces.json")),
-		cliArgs,
-	);
+	createShellWindow(preloadPath, `${SHELL_ORIGIN}/index.html`);
+	const controller = await createAppController(userDataPath, cliArgs);
+
+	// macOS: the dock icon brings the shell back after its window was closed.
+	// DevHub is the app, not the window, so closing the window is not quitting.
+	electron.app.on("activate", () => {
+		if (shellWindowIfCreated()) {
+			shellWindowIfCreated()?.window.show();
+			return;
+		}
+		createShellWindow(preloadPath, `${SHELL_ORIGIN}/index.html`);
+	});
+
+	// The state file records that this run ended on purpose, which is what the
+	// next launch reads to tell a clean exit from a crash.
+	electron.app.on("will-quit", (event) => {
+		event.preventDefault();
+		void controller.shutdown().finally(() => {
+			electron.app.exit(0);
+		});
+	});
+
+	installSettingsWindow({
+		store: controller.configStore,
+		logDirectory: logDirectoryFor(userDataPath),
+		preloadPath,
+		previousExit: () => controller.previousExit(),
+		adopt: (config) => {
+			controller.adoptConfig(config);
+		},
+	});
 }

@@ -15,13 +15,15 @@ import { CodeApplication } from "code-oss-dev/out/vs/code/electron-main/app.js";
 import type { IProcessEnvironment } from "code-oss-dev/out/vs/base/common/platform.js";
 import type { IInstantiationService } from "code-oss-dev/out/vs/platform/instantiation/common/instantiation.js";
 import type { ServiceCollection } from "code-oss-dev/out/vs/platform/instantiation/common/serviceCollection.js";
+import type { ServicesAccessor } from "code-oss-dev/out/vs/platform/instantiation/common/instantiation.js";
+import { IAuxiliaryWindowsMainService } from "code-oss-dev/out/vs/platform/auxiliaryWindow/electron-main/auxiliaryWindows.js";
 import { SyncDescriptor } from "code-oss-dev/out/vs/platform/instantiation/common/descriptors.js";
 import { IWindowsMainService } from "code-oss-dev/out/vs/platform/windows/electron-main/windows.js";
 import { IDialogMainService } from "code-oss-dev/out/vs/platform/dialogs/electron-main/dialogMainService.js";
 import type { Client as MessagePortClient } from "code-oss-dev/out/vs/base/parts/ipc/electron-main/ipc.mp.js";
 import { DevHubWindowsMainService } from "./services/devhubWindowsMainService.js";
 import { DevHubDialogMainService } from "./services/devhubDialogMainService.js";
-import { shellController } from "./shell/shellController.js";
+import { appController } from "./shell/appController.js";
 
 /** The members of `CodeApplication` this file reaches for, by their real names. */
 interface CodeApplicationInternals {
@@ -32,6 +34,12 @@ interface CodeApplicationInternals {
 		devDeviceId: string,
 		sharedProcessReady: Promise<MessagePortClient>,
 	): Promise<IInstantiationService>;
+	windowsMainService: unknown;
+	auxiliaryWindowsMainService: unknown;
+	openFirstWindow(
+		accessor: ServicesAccessor,
+		initialProtocolUrls: unknown,
+	): Promise<unknown[]>;
 }
 
 /** `InstantiationService`'s own collection, so a registration can be replaced. */
@@ -40,6 +48,34 @@ interface InstantiationServiceInternals {
 }
 
 export class DevHubApplication extends CodeApplication {}
+
+/**
+ * DevHub starts with no workbench.
+ *
+ * This is the architectural rule, not a startup optimisation: DevHub is the
+ * thing *outside* VS Code, and VS Code is mounted inside it. Upstream's
+ * `openFirstWindow` decides what to restore or create before anything asks —
+ * it would open a window DevHub's own model never chose, so it opens nothing.
+ * The App Shell decides when a workbench view exists, and the "empty window"
+ * VS Code wants is exactly DevHub's scratch editor: the Global context's
+ * Editor activity, created on first selection and kept alive after.
+ *
+ * `startup()` discards the return value, so opening nothing costs nothing —
+ * but upstream also caches the two window services here, and the rest of the
+ * class reads them, so those assignments stay. They are the only part of
+ * upstream's body this keeps, and a VS Code bump has to re-check that.
+ */
+(
+	DevHubApplication.prototype as unknown as CodeApplicationInternals
+).openFirstWindow = async function (
+	this: CodeApplicationInternals,
+	accessor: ServicesAccessor,
+) {
+	this.windowsMainService = accessor.get(IWindowsMainService);
+	this.auxiliaryWindowsMainService = accessor.get(IAuxiliaryWindowsMainService);
+	console.log("[devhub] startup: no workbench window — the App Shell decides");
+	return [];
+};
 
 const upstreamInitServices = (
 	CodeApplication.prototype as unknown as CodeApplicationInternals
@@ -81,7 +117,7 @@ const upstreamInitServices = (
 		instantiationService.createInstance(DevHubDialogMainService),
 	);
 
-	shellController().setServices({
+	appController().setServices({
 		windows: () =>
 			instantiationService.invokeFunction((accessor) =>
 				accessor.get(IWindowsMainService),

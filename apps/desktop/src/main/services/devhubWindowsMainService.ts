@@ -17,7 +17,7 @@ import { WindowsMainService } from "code-oss-dev/out/vs/platform/windows/electro
 import type { ICodeWindow } from "code-oss-dev/out/vs/platform/window/electron-main/window.js";
 import { isSingleFolderWorkspaceIdentifier } from "code-oss-dev/out/vs/platform/workspace/common/workspace.js";
 import { Schemas } from "code-oss-dev/out/vs/base/common/network.js";
-import { shellController } from "../shell/shellController.js";
+import { appController } from "../shell/appController.js";
 
 /** The part of the upstream options DevHub reads, plus the method it replaces. */
 interface WindowsMainServiceInternals {
@@ -54,23 +54,25 @@ const upstreamOpenInBrowserWindow = (
 		return upstreamOpenInBrowserWindow.call(this, options);
 	}
 
-	const controller = shellController();
-	const entry = controller.noteWorkspace(folder);
-	const existingId = controller.windowIdFor(entry.id);
+	// The folder is the key, not the Workspace identity: a view and a Workspace
+	// are two objects with two lifetimes, and the folder is the only thing both
+	// agree about — which is what lets this path and a click in the Sidebar land
+	// on the same view without an ordering rule between them.
+	const controller = appController();
+	const existingId = controller.viewIdForFolder(folder);
 	const existing =
 		existingId === undefined ? undefined : this.getWindowById(existingId);
 	if (existing) {
-		console.log(
-			`[devhub] open: '${entry.name}' already has a view — showing it`,
-		);
-		await controller.select(entry.id);
+		console.log(`[devhub] open: '${folder}' already has a view — showing it`);
+		controller.revealFolderView(folder);
 		return existing;
 	}
 
 	console.log(
-		`[devhub] open: '${entry.name}' is new — a workbench view in the shell`,
+		`[devhub] open: '${folder}' is new — a workbench view in the shell`,
 	);
 	const window = await upstreamOpenInBrowserWindow.call(this, options);
-	controller.bind(entry.id, window.id);
+	controller.bindFolderView(folder, window.id);
+	controller.noteFolder(folder);
 	return window;
 };

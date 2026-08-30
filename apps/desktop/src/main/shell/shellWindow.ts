@@ -17,6 +17,15 @@ export class ShellWindow {
 	private readonly views: WorkbenchView[] = [];
 	private revealed: WorkbenchView | undefined;
 	private contentRect: ContentRect | undefined;
+	/**
+	 * Whether the native view is the thing on screen.
+	 *
+	 * The viewport hosts two kinds of Surface and only one mechanism can be on
+	 * top: a terminal or an Agent is DOM inside the page, and a native view over
+	 * the same rectangle would cover it. The page says which it is showing, and
+	 * this is that answer.
+	 */
+	private nativeSurfaceVisible = true;
 
 	constructor(preloadPath: string, pageUrl: string) {
 		this.window = new electron.BrowserWindow({
@@ -43,7 +52,12 @@ export class ShellWindow {
 		this.window.loadURL(pageUrl);
 		this.window.once("ready-to-show", () => this.window.show());
 		this.window.on("resize", () => this.layout());
-		this.window.on("closed", () => electron.app.quit());
+		// macOS convention: closing the shell window does not end the app. The
+		// dock icon reopens it, and Quit is what quits — which is also what lets
+		// DevHub exist with no window at all.
+		this.window.on("closed", () => {
+			current = undefined;
+		});
 	}
 
 	//#region the views
@@ -95,6 +109,15 @@ export class ShellWindow {
 		this.layout();
 	}
 
+	/** The page says whether the workbench view is the Surface on screen. */
+	setNativeSurfaceVisible(visible: boolean): void {
+		if (this.nativeSurfaceVisible === visible) {
+			return;
+		}
+		this.nativeSurfaceVisible = visible;
+		this.layout();
+	}
+
 	boundsOf(_view: WorkbenchView): Electron.Rectangle {
 		return this.currentRect();
 	}
@@ -123,7 +146,7 @@ export class ShellWindow {
 		const bounds = this.currentRect();
 		for (const view of this.views) {
 			view.view.setBounds(bounds);
-			view.view.setVisible(view === this.revealed);
+			view.view.setVisible(view === this.revealed && this.nativeSurfaceVisible);
 		}
 	}
 

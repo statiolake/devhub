@@ -5,7 +5,6 @@ import {
   agentId,
   agentProfileId,
   busy,
-  CLEAN,
   CLEAN_INSPECTION,
   displayPath,
   workspaceId,
@@ -59,16 +58,6 @@ class Driver {
     return subscription.events.flatMap((event) =>
       event.event.kind === "effect" ? [event.event.effect] : [],
     );
-  }
-
-  complete(event: ProviderEvent): IntentOutcome {
-    return this.coordinator.acceptProviderEvent({
-      eventId: {
-        ...({} as never),
-        ...(this.freshId() as never),
-      } as never,
-      event,
-    });
   }
 
   /** Answer one effect with the completion the coordinator is waiting for. */

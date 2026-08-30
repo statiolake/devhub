@@ -1,9 +1,10 @@
 /*
  * DevHub design tokens.
  *
- * Ported unchanged from the Tauri App Shell: one value per role, resolved for
- * the viewer's system appearance. The VS Code workbench keeps its own theme;
- * nothing here reaches into it.
+ * The palette is the Zenbones-derived product palette from ADR 0019, expressed
+ * once per role and resolved for the viewer's system appearance. Provider
+ * surfaces (the VS Code Workbench, xterm) keep their own themes; nothing here
+ * reaches into them.
  */
 
 :root {
@@ -169,6 +170,8 @@ body {
 .failure-title,
 .failure-detail,
 .surface-line,
+.terminal-surface,
+.terminal-surface *,
 input,
 textarea {
   cursor: auto;

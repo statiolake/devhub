@@ -1,10 +1,9 @@
 /*
  * DevHub App Shell.
  *
- * Ported from the Tauri App Shell (apps/devhub/src/styles/shell.css), trimmed
- * to the surfaces this app has: a source-list Sidebar of workspaces, a titlebar
- * band, and one Surface that is a hole for the workbench view behind it.
- * Everything follows the viewer's system appearance through tokens.css.
+ * The shell is native chrome around provider-owned Surfaces: a unified
+ * titlebar, a source-list Sidebar, and one Surface viewport. Everything here
+ * follows the viewer's system appearance through the tokens in tokens.css.
  */
 
 /* ---------------------------------------------------------------- layout */
@@ -48,27 +47,13 @@
   border-bottom: 1px solid var(--line-strong);
   background: transparent;
   grid-template-columns: 1fr auto 1fr;
-  /* The window has no native title bar of its own, so this band is the drag
-     region. */
-  -webkit-app-region: drag;
 }
 
-.titlebar button {
-  -webkit-app-region: no-drag;
-}
-
+/* The window buttons are over the Sidebar now, so the content titlebar has
+   nothing to reserve; the leading cell only balances the centred control. */
 .titlebar-leading {
   min-width: 0;
   height: 100%;
-}
-
-.titlebar-title {
-  overflow: hidden;
-  color: var(--secondary);
-  font-size: 12px;
-  font-weight: 590;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 /* The Sidebar's own titlebar strip: same height as the content titlebar so
@@ -77,7 +62,6 @@
   flex: 0 0 var(--titlebar-height);
   min-width: var(--traffic-light-inset);
   height: var(--titlebar-height);
-  -webkit-app-region: drag;
 }
 
 .titlebar-trailing {
@@ -86,6 +70,46 @@
   height: 100%;
   align-items: center;
   justify-content: flex-end;
+}
+
+/* A segmented control, not a row of pills: one track, one selected segment. */
+.activity-segments {
+  display: flex;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--sunken);
+  gap: 2px;
+}
+
+.activity-segment {
+  min-width: 84px;
+  height: 24px;
+  padding: 0 var(--space-3);
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--secondary);
+  font-size: 12px;
+  transition: background-color 120ms ease;
+}
+
+.activity-segment:hover:not(:disabled):not([aria-pressed="true"]) {
+  background: var(--wash);
+  color: var(--primary);
+}
+
+.activity-segment[aria-pressed="true"] {
+  background: var(--raised);
+  box-shadow: var(--shadow-raised);
+  color: var(--primary);
+  font-weight: 590;
+}
+
+.activity-segment:disabled {
+  background: transparent;
+  box-shadow: none;
+  color: var(--disabled-ink);
 }
 
 /* --------------------------------------------------------------- sidebar */
@@ -104,12 +128,18 @@
 
 /* The Sidebar and titlebar are the only panes that reveal the window's
    material; the Surface paints itself opaquely over it. When there is no
-   material to reveal, the same chrome has to be painted by CSS instead. */
+   material to reveal — Reduce Transparency, or a window that could not take
+   one — the same chrome has to be painted by CSS instead. */
 @media (prefers-reduced-transparency: reduce) {
   .titlebar,
   .sidebar {
     background: var(--chrome);
   }
+}
+
+:root[data-window-material="none"] .titlebar,
+:root[data-window-material="none"] .sidebar {
+  background: var(--chrome);
 }
 
 .sidebar-scroll-region {
@@ -136,7 +166,9 @@
   color: var(--tertiary);
 }
 
-/* The band owns the layout; the heading element owns only the text. */
+/* The band owns the layout; the heading element owns only the text. Left to
+   the user agent an `h2` arrives at 1.5em bold with 0.83em of vertical margin,
+   which both oversizes the label and eats the gap before the first row. */
 .sidebar-section-heading h2 {
   margin: 0;
   font-size: 11px;
@@ -145,14 +177,20 @@
   text-transform: uppercase;
 }
 
-.workspace-tree {
+.workspace-tree,
+.agent-tree {
   padding: 0;
   margin: 0;
   list-style: none;
 }
 
 /* Rows are a single line with fixed leading columns, so no row can push the
-   Sidebar into horizontal overflow regardless of label or path length. */
+   Sidebar into horizontal overflow regardless of label or path length.
+ *
+ * A row is a `div` when it has children to disclose and a `button` when it
+ * does not, and the user agent pads a button by `1px 6px` while leaving a div
+ * alone. Left unstated, that inset shifts a whole row — glyph and label
+ * together — off the rail the other rows sit on. */
 .sidebar-row {
   position: relative;
   display: flex;
@@ -174,12 +212,24 @@
 
 /* A selected source-list row is a neutral fill with a semibold label — the
    saturated accent fill with inverted text belongs to a table row, not to
-   navigation. */
+   navigation. The fill weakens when the window is not key, which is the only
+   cue that the selection is not live. */
 .sidebar-row.is-selected,
 .sidebar-row.is-selected:hover {
   background: var(--selection);
   color: var(--primary);
   font-weight: 590;
+}
+
+/* Keyed to whether the *window* is key, which is what AppKit dims a selection
+   on — not to where DOM focus sits. The two are different facts in DevHub:
+   the Editor is a sibling native WebView, so clicking into it takes focus out
+   of the shell's document entirely while the window stays perfectly active.
+   The attribute is absent until the native side reports otherwise, so a shell
+   rendered without it reads as active rather than permanently dimmed. */
+:root[data-window-active="false"] .sidebar-row.is-selected {
+  background: var(--selection-inactive);
+  color: var(--primary);
 }
 
 .sidebar-context-button {
@@ -197,11 +247,36 @@
   text-align: left;
 }
 
+.disclosure-button,
 .disclosure-spacer {
   display: flex;
   width: var(--sidebar-disclosure-width);
   height: 100%;
   flex: 0 0 var(--sidebar-disclosure-width);
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.disclosure-button svg {
+  width: 10px;
+  height: 10px;
+  fill: none;
+  stroke: var(--tertiary);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.6;
+  transition: transform 120ms ease;
+}
+
+.disclosure-button[aria-expanded="true"] svg {
+  transform: rotate(90deg);
+}
+
+.disclosure-button:hover svg {
+  stroke: var(--primary);
 }
 
 .row-glyph {
@@ -217,7 +292,8 @@
   height: var(--sidebar-glyph-ink);
   fill: none;
   /* Finder's source-list icons are accented on every row, not only the
-     selected one — the accent names the column. */
+     selected one — the accent names the column, and selection is carried by
+     the fill and the label weight. */
   stroke: var(--accent);
   stroke-linecap: round;
   stroke-linejoin: round;
@@ -226,6 +302,10 @@
 
 .workspace-row .row-glyph svg {
   fill: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.agent-row .row-glyph svg {
+  fill: none;
 }
 
 .row-label {
@@ -248,6 +328,27 @@
   flex: 0 0 auto;
   color: var(--secondary);
   font-size: 11px;
+}
+
+/* Keep the status dot clear of the label and of the trailing actions. */
+.sidebar-context-button .status-mark {
+  margin-left: var(--space-1);
+}
+
+/* Agents sit one indent level in from their Workspace row. */
+.agent-row .sidebar-context-button {
+  padding-left: 34px;
+}
+
+.workspace-row[data-state="unavailable"] .row-label,
+.workspace-row[data-state="closing"] .row-label,
+.workspace-row[data-state="closing-failed"] .row-label {
+  color: var(--secondary);
+  font-style: italic;
+}
+
+.sidebar-row[data-control-state="stopping"] {
+  opacity: 0.55;
 }
 
 /* Trailing actions stay out of the way until the row is hovered, focused, or
@@ -291,6 +392,14 @@
   stroke: var(--primary);
 }
 
+.row-action-button:disabled {
+  opacity: 0;
+}
+
+.sidebar-row:hover .row-action-button:disabled {
+  opacity: 0.35;
+}
+
 /* Sized and inset like a trailing row action so the two share a right edge. */
 .section-action-button {
   display: flex;
@@ -323,11 +432,82 @@
   font-size: 12px;
 }
 
+/* The drag target straddles the Sidebar's trailing edge and is wider than the
+   hairline it paints. It is positioned rather than laid out, so it cannot be
+   folded into the Sidebar's column flow. */
+.sidebar-resize-handle {
+  position: absolute;
+  z-index: 2;
+  top: 0;
+  right: -5px;
+  width: 10px;
+  height: 100%;
+  background: transparent;
+  cursor: col-resize;
+}
+
+.sidebar-resize-handle::after {
+  display: block;
+  width: 1px;
+  height: 100%;
+  background: transparent;
+  content: "";
+  margin-inline: 4px;
+  transition: background-color 120ms ease;
+}
+
+.sidebar-resize-handle:hover::after,
+.sidebar-resize-handle.is-dragging::after,
+.sidebar-resize-handle:focus-visible::after {
+  background: var(--accent);
+}
+
+body.is-resizing-sidebar {
+  cursor: col-resize;
+  user-select: none;
+}
+
+/* ---------------------------------------------------------- status marks */
+
+.status-mark {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--secondary);
+  font-size: 11px;
+}
+
+.status-mark > span:first-child {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--tertiary);
+}
+
+.status-mark-working > span:first-child {
+  background: var(--working);
+}
+
+.status-mark-waiting > span:first-child {
+  background: var(--waiting);
+}
+
+.status-mark-error > span:first-child {
+  background: var(--danger);
+}
+
+.status-mark-compact .status-mark-label {
+  position: absolute;
+  overflow: hidden;
+  width: 1px;
+  height: 1px;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 /* --------------------------------------------------------------- surface */
 
-/* The Surface is a hole. The selected workspace's workbench is a native view
-   laid over exactly this rectangle by the main process, so nothing is drawn
-   here except the states that mean "there is no workbench to show". */
 .surface {
   position: relative;
   display: flex;
@@ -339,17 +519,18 @@
   background: var(--surface);
 }
 
-/* States sit over the hole rather than beside it. */
+/* Surface states follow the shape of a macOS alert: a short declarative
+   message, the informative text under it, then the actions. Centring uses
+   auto margins rather than justify-content, because centred flex content that
+   overflows its container cannot be scrolled back to. */
 .surface-state {
-  position: absolute;
-  z-index: 1;
   display: flex;
   overflow-y: auto;
+  width: 100%;
+  height: 100%;
   flex-direction: column;
   align-items: center;
   padding: var(--space-6);
-  background: var(--surface);
-  inset: 0;
 }
 
 .surface-state > * {
@@ -368,12 +549,6 @@
 .surface-line {
   margin: 0;
   color: var(--secondary);
-}
-
-.surface-state:not(.surface-failure) > * {
-  width: auto;
-  max-width: min(460px, 100%);
-  text-align: center;
 }
 
 /* An error has to read as one before it is read at all. */
@@ -400,16 +575,37 @@
   stroke-width: 1.5;
 }
 
-/* Informative text: prose, so it is set as prose. */
+/* Informative text: prose, so it is set as prose. Monospace here would say
+   "this is code" about an ordinary sentence. */
 .failure-detail {
   margin: 0;
   color: var(--secondary);
-  font-family: var(--font-mono);
-  font-size: 11px;
   line-height: 1.55;
   text-wrap: pretty;
-  white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+/* The waiting state is two centred items, not a left-aligned column. */
+.surface-state:not(.surface-failure) > * {
+  width: auto;
+  max-width: min(460px, 100%);
+  text-align: center;
+}
+
+.surface-spinner {
+  width: 14px;
+  height: 14px;
+  margin-bottom: var(--space-3);
+  border: 2px solid var(--line-strong);
+  border-radius: 50%;
+  animation: surface-spin 700ms linear infinite;
+  border-top-color: var(--accent);
+}
+
+@keyframes surface-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .surface-actions {
@@ -419,8 +615,138 @@
   gap: var(--space-2);
 }
 
+/* Identifiers for a bug report. Monospace belongs here and only here. */
+.surface-meta {
+  margin: var(--space-4) 0 0;
+  color: var(--tertiary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.surface-inline-alert {
+  position: absolute;
+  z-index: 2;
+  top: var(--space-3);
+  right: var(--space-3);
+  left: var(--space-3);
+  display: flex;
+  align-items: center;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid color-mix(in srgb, var(--danger) 38%, transparent);
+  border-radius: var(--radius-control);
+  background: var(--raised);
+  box-shadow: var(--shadow-raised);
+  font-size: 12px;
+  gap: var(--space-2);
+}
+
+.surface-inline-alert-message {
+  flex: 1;
+}
+
+/* The detail is the concrete cause under the summary's instruction. It is
+   secondary in weight because it is secondary in what the reader needs. */
+.surface-inline-alert-detail {
+  display: block;
+  margin-top: 2px;
+  color: var(--secondary);
+}
+
+/* The alert has no owner but the reader, so the dismiss control sits at its
+   trailing edge, quiet until the pointer or the keyboard finds it. */
+.surface-inline-alert-close {
+  display: flex;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  margin-right: -2px;
+  background: transparent;
+}
+
+.surface-inline-alert-close svg {
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: var(--secondary);
+  stroke-linecap: round;
+  stroke-width: 1.5;
+}
+
+.surface-inline-alert-close:hover {
+  background: var(--wash-strong);
+}
+
+.surface-inline-alert-close:hover svg {
+  stroke: var(--primary);
+}
+
+.surface-inline-alert-mark {
+  display: flex;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--danger);
+  color: var(--raised);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+/* One Editor, in a document of its own. The frame is what keeps VS Code's
+   assumptions about owning a window — fixed-position modals, document-level
+   keys, page focus — inside the Editor and out of the Sidebar and the tabs. */
+.editor-frame {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+}
+
+.editor-frame-document {
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  border: 0;
+}
+
+.editor-frame-document[hidden] {
+  display: none;
+}
+
+/* Every Surface is mounted, and the selection decides which is on screen.
+   Only the active entry is in flow; the rest are `display: none`, which also
+   takes them out of the accessibility tree. Coming back to one costs no
+   handshake and loses no scrollback, because it never went anywhere. */
+.surface-pool-entry {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+}
+
+.surface-pool-entry[hidden] {
+  display: none;
+}
+
+/* The terminal owns its own background; give it the whole viewport. */
+.surface[data-surface-state="terminal"],
+.surface[data-surface-state="agent"] {
+  background: var(--sunken);
+}
+
 /* --------------------------------------------------------------- buttons */
 
+/* Native control height, with enough padding that the hit target stays
+   comfortable at every supported text zoom. */
 .primary-button,
 .secondary-button {
   min-height: 28px;
@@ -445,4 +771,242 @@
 
 .secondary-button:hover:not(:disabled) {
   background: var(--wash);
+}
+
+.primary-button:disabled,
+.secondary-button:disabled {
+  box-shadow: none;
+  color: var(--disabled-ink);
+  opacity: 0.6;
+}
+
+/* --------------------------------------------------- pickers and dialogs */
+
+.workspace-picker {
+  position: fixed;
+  z-index: 20;
+  inset: 0;
+}
+
+.confirmation-backdrop,
+.workspace-picker,
+.agent-profile-picker {
+  position: fixed;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-6);
+  background: light-dark(rgba(20, 24, 27, 0.24), rgba(0, 0, 0, 0.5));
+  inset: 0;
+}
+
+.confirmation-dialog,
+.workspace-picker-panel,
+.agent-profile-picker-panel {
+  width: min(460px, 100%);
+  padding: var(--space-5);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+  background: var(--raised);
+  box-shadow: var(--shadow-dialog);
+}
+
+.confirmation-dialog h2 {
+  margin: 0 0 var(--space-2);
+  font-size: 15px;
+  font-weight: 620;
+}
+
+.confirmation-dialog p {
+  margin: 0;
+  color: var(--secondary);
+  line-height: 1.5;
+}
+
+.confirmation-resources {
+  padding: var(--space-2) 0 0;
+  margin: var(--space-3) 0 0;
+  border-top: 1px solid var(--line-soft);
+  list-style: none;
+}
+
+.confirmation-resources li {
+  display: flex;
+  justify-content: space-between;
+  padding: var(--space-1) 0;
+  color: var(--secondary);
+  font-size: 12px;
+}
+
+.confirmation-actions,
+.workspace-picker-header {
+  display: flex;
+  align-items: center;
+  margin-top: var(--space-5);
+  gap: var(--space-2);
+}
+
+.confirmation-actions {
+  justify-content: flex-end;
+}
+
+.workspace-picker,
+.agent-profile-picker {
+  align-items: flex-start;
+  padding-top: 12vh;
+}
+
+.workspace-picker-header {
+  margin: 0 0 var(--space-3);
+}
+
+.workspace-picker-header input {
+  width: 100%;
+  height: 28px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+}
+
+.workspace-picker-results {
+  overflow-y: auto;
+  max-height: 46vh;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.workspace-picker-result {
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  align-items: flex-start;
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  border-radius: var(--radius-row);
+  background: transparent;
+  gap: 2px;
+  text-align: left;
+}
+
+.workspace-picker-result:hover,
+.workspace-picker-result[aria-selected="true"] {
+  background: var(--selection);
+}
+
+.workspace-picker-result span:last-child {
+  overflow: hidden;
+  max-width: 100%;
+  color: var(--secondary);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-profile-picker-card {
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  align-items: flex-start;
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-row);
+  margin-bottom: var(--space-2);
+  background: var(--surface);
+  gap: 2px;
+  text-align: left;
+}
+
+.agent-profile-card:hover,
+.agent-profile-picker-card:hover {
+  border-color: var(--accent);
+}
+
+.agent-profile-options {
+  display: grid;
+  margin: var(--space-3) 0 0;
+  gap: var(--space-2);
+}
+
+/* -------------------------------------------------------------- terminal */
+
+/* The margin lives here, on the parent of the box the fit addon measures, so
+   the grid is computed against an already-inset area rather than relying on
+   the addon to notice padding. An absolutely positioned state still covers the
+   whole pane, because its containing block is this element's padding box. */
+.terminal-surface-shell {
+  position: relative;
+  display: flex;
+  overflow: hidden;
+  width: 100%;
+  height: 100%;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  padding: var(--terminal-margin, 4px);
+  background: var(--terminal-background, var(--surface));
+}
+
+/* The emulator can only draw whole cells, so the grid almost never divides the
+   pane exactly. `.xterm` has no size of its own — its one in-flow child is the
+   cell grid — so as a flex item it shrinks to exactly what was drawn and
+   centres, leaving the remainder split evenly around it. The addon still
+   measures this host, which keeps its full size, so nothing feeds back. */
+.terminal-surface {
+  position: relative;
+  display: flex;
+  overflow: hidden;
+  width: 100%;
+  height: 100%;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+  background: var(--terminal-background, var(--surface));
+}
+
+/* That remainder has to read as part of the terminal, so the emulator's own
+   layers stay transparent and the host carries the background. */
+.terminal-surface .xterm,
+.terminal-surface .xterm-viewport {
+  background: transparent;
+}
+
+.terminal-surface-title {
+  position: absolute;
+  overflow: hidden;
+  width: 1px;
+  height: 1px;
+  clip-path: inset(50%);
+}
+
+/* The provider owns the canvas, so a state has to sit over it rather than
+   beside it, and cover the dead terminal instead of floating on top of it. */
+.terminal-surface-shell > .surface-state {
+  position: absolute;
+  z-index: 3;
+  background: var(--surface);
+  inset: 0;
+}
+
+/* --------------------------------------------------------- window dragging */
+
+/* The Tauri build marked the draggable chrome with `data-tauri-drag-region`.
+   Electron's equivalent is a CSS property, so the same three strips say it
+   here instead — and every control inside them has to opt back out, because a
+   draggable region swallows the clicks that land on it. */
+.titlebar,
+.titlebar-leading,
+.titlebar-trailing,
+.sidebar-titlebar {
+  -webkit-app-region: drag;
+}
+
+.titlebar button,
+.titlebar input,
+.titlebar a,
+.sidebar-titlebar button {
+  -webkit-app-region: no-drag;
 }

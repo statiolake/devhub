@@ -130,7 +130,10 @@ export type AppIntentWire =
 			readonly workspaceId: string;
 	  }
 	| { readonly type: "request_close_workspace"; readonly workspaceId: string }
-	| { readonly confirmationId: string; readonly type: "confirm_close_workspace" }
+	| {
+			readonly confirmationId: string;
+			readonly type: "confirm_close_workspace";
+	  }
 	| { readonly type: "retry_close_workspace"; readonly workspaceId: string };
 export type AppOutcomeWire =
 	| { readonly kind: "noop"; readonly snapshot: AppSnapshotWire }
@@ -185,7 +188,10 @@ export type CloseResourceWire =
 	| { readonly count: number; readonly kind: "busy" }
 	| { readonly diagnostic: CloseDiagnosticWire; readonly kind: "unknown" };
 export type ConfirmationPurposeWire =
-	| { readonly inspection: CloseInspectionWire; readonly kind: "workspace_close" }
+	| {
+			readonly inspection: CloseInspectionWire;
+			readonly kind: "workspace_close";
+	  }
 	| { readonly kind: "agent_stop" };
 export type ContextWire =
 	| { readonly kind: "global" }
@@ -337,7 +343,9 @@ export function workspaceForContext(
 	}
 	return undefined;
 }
-export function activeActivitySnapshot(snapshot: AppSnapshot): ActivitySnapshot {
+export function activeActivitySnapshot(
+	snapshot: AppSnapshot,
+): ActivitySnapshot {
 	return (
 		snapshot.activities.find(
 			({ activity }) => activity === snapshot.selection.activity,

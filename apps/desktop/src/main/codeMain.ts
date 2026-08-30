@@ -47,6 +47,7 @@ import { Client as NodeIPCClient } from 'code-oss-dev/out/vs/base/parts/ipc/comm
 import { connect as nodeIPCConnect, serve as nodeIPCServe, Server as NodeIPCServer, XDG_RUNTIME_DIR } from 'code-oss-dev/out/vs/base/parts/ipc/node/ipc.net.js';
 import { DevHubApplication } from './devhubApplication.js';
 import { bootstrapShell } from './shell/bootstrapShell.js';
+import { appController } from './shell/appController.js';
 import { localize } from 'code-oss-dev/out/vs/nls.js';
 import { IConfigurationService } from 'code-oss-dev/out/vs/platform/configuration/common/configuration.js';
 import { ConfigurationService } from 'code-oss-dev/out/vs/platform/configuration/common/configurationService.js';
@@ -176,9 +177,16 @@ class CodeMain {
 				// DevHub: the App Shell window must exist before the first workbench
 				// window is asked for, because that request is what becomes a view
 				// inside it.
-				bootstrapShell(environmentMainService.userDataPath, environmentMainService.args);
+				await bootstrapShell(environmentMainService.userDataPath, environmentMainService.args);
 
-				return instantiationService.createInstance(DevHubApplication, mainProcessNodeIpcServer, instanceEnvironment).startup();
+				const application = instantiationService.createInstance(DevHubApplication, mainProcessNodeIpcServer, instanceEnvironment);
+				await application.startup();
+
+				// DevHub: everything the App Shell projects is available once the
+				// services behind it are. Until then the page shows "Connecting…"
+				// rather than an empty shell that looks like a state.
+				appController().markReady();
+				return;
 			});
 		} catch (error) {
 			instantiationService.invokeFunction(this.quit, error);

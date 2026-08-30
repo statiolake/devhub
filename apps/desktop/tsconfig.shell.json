@@ -19,5 +19,5 @@
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": ["src/shell", "src/ipc", "vite.config.ts"]
+  "include": ["src/shell", "src/settings", "src/ipc", "vite.config.ts"]
 }

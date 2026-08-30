@@ -47,7 +47,6 @@ import {
   type AgentControlState,
   type AgentProfileKind,
   type AgentStatus,
-  type DiagnosticCode,
   type RuntimeHealth,
 } from "./domain.js";
 import { AppModel, SIDEBAR_DEFAULT_WIDTH } from "./appModel.js";

@@ -1,143 +1,410 @@
 /**
- * DevHub's App Shell: native chrome around the workbench views.
+ * DevHub's App Shell: the thing outside VS Code.
  *
- * The content area to the right of the sidebar is deliberately empty in the
- * DOM. It is a hole: main lays the selected workspace's `WebContentsView` over
- * exactly this rectangle, which is why the page measures it and reports it
- * rather than drawing anything into it.
+ * A Sidebar of Workspaces and their Agents, an Activity control in the title
+ * bar, and one Surface viewport. The viewport is deliberately a hole for the
+ * Editor activity: main lays a workbench `WebContentsView` over it. Everything
+ * else on this page is DOM.
  */
 
-import {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  useState,
-} from "react";
-import type { ShellState } from "../ipc/contract";
-import { devhub } from "./devhub";
-import {
-  currentFailure,
-  dismissFailure,
-  reportFailure,
-  subscribeToFailures,
-  type Failure,
-} from "./failures";
-import { Sidebar } from "./Sidebar";
+import { useCallback, useEffect, useRef } from "react";
+import { AppShellProvider } from "./AppShellContext";
+import type { AppShellClient } from "./client";
+import { useAppShell } from "./useAppShell";
+import { Sidebar } from "./components/sidebar/Sidebar";
+import { TitlebarActivities } from "./components/shell/TitlebarActivities";
+import { SurfaceViewport } from "./components/shell/SurfaceViewport";
+import type { AppError, CloseResourceWire } from "../ipc/appShell";
+import { isImeComposing } from "./accessibility/ime";
 
-const EMPTY_STATE: ShellState = { workspaces: [], selectedId: undefined };
+function closeResourceStatus(resource: CloseResourceWire): string {
+  switch (resource.kind) {
+    case "clean":
+      return "Ready";
+    case "busy":
+      return `${String(resource.count)} busy`;
+    case "unknown":
+      switch (resource.diagnostic) {
+        case "root_missing":
+          return "Could not verify: workspace root is missing";
+        case "root_inaccessible":
+          return "Could not verify: workspace root is inaccessible";
+        case "close_agents_unknown":
+          return "Could not verify agents";
+        case "close_terminal_unknown":
+          return "Could not verify terminal state";
+        case "close_editor_unknown":
+          return "Could not verify editor state";
+        case "cleanup_failed":
+          return "Could not verify cleanup state";
+        case "runtime_unavailable":
+          return "Could not verify: runtime unavailable";
+      }
+  }
+}
 
-export function AppShell() {
-  const [state, setState] = useState<ShellState>(EMPTY_STATE);
-  const [failure, setFailure] = useState<Failure | undefined>(currentFailure);
-  const contentRef = useRef<HTMLElement | null>(null);
+export interface AppShellProps {
+  readonly client?: AppShellClient;
+}
 
-  useEffect(() => subscribeToFailures(setFailure), []);
-
-  useEffect(() => {
-    // A rejection here is not handled here: it goes to the root handler, which
-    // is the only thing that decides what the person sees.
-    void devhub().getState().then(setState).catch(reportFailure);
-    return devhub().onStateChanged(setState);
-  }, []);
-
-  // The workbench views are native siblings of this document, so the only way
-  // main can know where to put them is for the page to measure the hole.
-  useLayoutEffect(() => {
-    const element = contentRef.current;
-    if (!element) {
-      return;
-    }
-    const report = () => {
-      const rect = element.getBoundingClientRect();
-      void devhub()
-        .setContentRect({
-          x: rect.left,
-          y: rect.top,
-          width: rect.width,
-          height: rect.height,
-        })
-        .catch(reportFailure);
-    };
-    const observer = new ResizeObserver(report);
-    observer.observe(element);
-    report();
-    return () => observer.disconnect();
-  }, []);
-
-  const onSelect = useCallback((id: string) => {
-    void devhub().selectWorkspace(id).catch(reportFailure);
-  }, []);
-  const onRemove = useCallback((id: string) => {
-    void devhub().removeWorkspace(id).catch(reportFailure);
-  }, []);
-  const onAdd = useCallback(() => {
-    void devhub().addWorkspace().catch(reportFailure);
-  }, []);
-
-  const selected = state.workspaces.find(
-    (workspace) => workspace.id === state.selectedId,
-  );
-
+export function AppShell({ client }: AppShellProps) {
   return (
-    <main className="app-shell">
-      <div className="app-shell-content">
-        <Sidebar
-          state={state}
-          onSelect={onSelect}
-          onRemove={onRemove}
-          onAdd={onAdd}
-        />
-        <div className="workbench">
-          <div className="titlebar">
-            <div className="titlebar-leading" />
-            <div className="titlebar-title">{selected?.name ?? "DevHub"}</div>
-            <div className="titlebar-trailing" />
-          </div>
-          <section className="surface" aria-label="Workspace" ref={contentRef}>
-            {failure ? (
-              <FailureSurface failure={failure} />
-            ) : state.selectedId === undefined ? (
-              <div className="surface-state" role="status">
-                <p className="surface-line">
-                  {state.workspaces.length === 0
-                    ? "No workspaces yet. Add a folder to open it here."
-                    : "Select a workspace."}
-                </p>
-              </div>
-            ) : null}
-          </section>
-        </div>
-      </div>
-    </main>
+    <AppShellProvider client={client}>
+      <Workbench />
+    </AppShellProvider>
   );
 }
 
-function FailureSurface({ failure }: { readonly failure: Failure }) {
+function ErrorSurface({
+  error,
+  retry,
+  openSettings,
+}: {
+  readonly error: AppError;
+  readonly retry: () => void;
+  readonly openSettings: () => Promise<void>;
+}) {
+  const showSettings = error.actions.includes("open_settings");
+  const primaryActionRef = useRef<HTMLButtonElement | null>(null);
+  const detailsRef = useRef<HTMLParagraphElement | null>(null);
+
+  useEffect(() => {
+    (primaryActionRef.current ?? detailsRef.current)?.focus();
+  }, [error]);
+
   return (
-    <div className="surface-state surface-failure" role="alert">
-      <p className="failure-title">
-        <svg
-          className="failure-icon"
-          viewBox="0 0 16 16"
-          aria-hidden="true"
-          focusable="false"
-        >
-          <circle cx="8" cy="8" r="7" />
-          <path d="M8 4.6v4.2M8 11.1v.6" />
-        </svg>
-        {failure.summary}
-      </p>
-      <p className="failure-detail">{failure.detail}</p>
-      <div className="surface-actions">
-        <button
-          className="secondary-button"
-          type="button"
-          onClick={dismissFailure}
-        >
-          Dismiss
-        </button>
+    <section className="surface" aria-label="Error surface" aria-live="polite">
+      <div className="surface-state surface-failure" role="alert">
+        <p className="failure-title">
+          <svg
+            className="failure-icon"
+            viewBox="0 0 16 16"
+            aria-hidden="true"
+            focusable="false"
+          >
+            <circle cx="8" cy="8" r="7" />
+            <path d="M8 4.6v4.2M8 11.1v.6" />
+          </svg>
+          {error.summary}
+        </p>
+        {error.detail ? <p className="failure-detail">{error.detail}</p> : null}
+        <div className="surface-actions">
+          {error.actions.includes("retry") && (
+            <button
+              ref={primaryActionRef}
+              className="primary-button"
+              type="button"
+              onClick={retry}
+            >
+              Try again
+            </button>
+          )}
+          {showSettings && (
+            <button
+              className="secondary-button"
+              type="button"
+              ref={
+                error.actions.includes("retry") ? undefined : primaryActionRef
+              }
+              onClick={() => void openSettings()}
+            >
+              Open Settings
+            </button>
+          )}
+        </div>
+        <p className="surface-meta" ref={detailsRef} tabIndex={-1}>
+          {error.module} · {error.code} · {error.runtimeVersion}
+        </p>
       </div>
-    </div>
+    </section>
+  );
+}
+
+function Workbench() {
+  const {
+    state,
+    appearance,
+    intentError,
+    dispatch,
+    retry,
+    openSettings,
+    pendingConfirmation,
+    confirmationBusy,
+    confirmPending,
+    dismissCloseConfirmation,
+  } = useAppShell();
+  const onDispatch = useCallback(
+    (intent: Parameters<typeof dispatch>[0]) => {
+      void dispatch(intent);
+    },
+    [dispatch],
+  );
+  const confirmationRef = useRef<HTMLElement | null>(null);
+  const previousFocus = useRef<HTMLElement | null>(null);
+  const focusRestoreGeneration = useRef(0);
+  const closePurpose = pendingConfirmation?.purpose;
+
+  const pendingAgent =
+    pendingConfirmation?.purpose.kind === "agent_stop"
+      ? state.status === "ready"
+        ? state.snapshot.workspaces
+            .flatMap((workspace) => workspace.agents)
+            .find((agent) => agent.id === pendingConfirmation.agentId)
+        : undefined
+      : undefined;
+  const pendingConfirmationId = pendingConfirmation?.confirmationId;
+  const pendingWorkspaceId = pendingAgent?.workspaceId;
+
+  const restoreFocus = useCallback((target: HTMLElement | null | undefined) => {
+    if (
+      !target?.isConnected ||
+      target.hasAttribute("disabled") ||
+      target.getAttribute("aria-hidden") === "true" ||
+      target.tabIndex < 0 ||
+      (target.closest<HTMLElement>("[inert]")?.inert ?? false)
+    ) {
+      return false;
+    }
+    target.focus();
+    return document.activeElement === target;
+  }, []);
+
+  const scheduleFocusRestore = useCallback(
+    (
+      target: HTMLElement | null | undefined,
+      workspaceId: string | undefined,
+    ) => {
+      const generation = ++focusRestoreGeneration.current;
+      window.requestAnimationFrame(() =>
+        window.requestAnimationFrame(() => {
+          if (generation !== focusRestoreGeneration.current) return;
+          const active = document.activeElement as HTMLElement | null;
+          if (
+            active &&
+            active !== document.body &&
+            !active.closest("[role='dialog']")
+          ) {
+            return;
+          }
+          if (document.querySelector("[role='dialog'][aria-modal='true']")) {
+            return;
+          }
+          const inertContent =
+            target?.closest<HTMLElement>(".app-shell-content");
+          if (inertContent?.inert) inertContent.inert = false;
+          const workspaceButton = workspaceId
+            ? [
+                ...document.querySelectorAll<HTMLElement>(
+                  "[data-workspace-id]",
+                ),
+              ].find((element) => element.dataset.workspaceId === workspaceId)
+            : undefined;
+          const fallback =
+            workspaceButton ??
+            document.querySelector<HTMLElement>(
+              '[aria-label="Workspace navigation"] .section-action-button:not([disabled]), [aria-label="Workspace navigation"] [data-tree-item-id]:not([disabled])[tabindex="0"], [aria-label="Workspace navigation"] button:not([disabled]), .activity-segments button:not([disabled])',
+            );
+          if (!restoreFocus(target) && !restoreFocus(fallback)) {
+            focusRestoreGeneration.current += 1;
+          }
+        }),
+      );
+    },
+    [restoreFocus],
+  );
+
+  useEffect(() => {
+    if (pendingConfirmationId === undefined) return;
+    previousFocus.current = document.activeElement as HTMLElement | null;
+    const dialog = confirmationRef.current;
+    const first = dialog?.querySelector<HTMLElement>("button:not([disabled])");
+    first?.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !isImeComposing(event)) {
+        event.preventDefault();
+        dismissCloseConfirmation();
+        return;
+      }
+      if (event.key !== "Tab" || !dialog) return;
+      const buttons = [
+        ...dialog.querySelectorAll<HTMLElement>("button:not([disabled])"),
+      ];
+      if (buttons.length === 0) return;
+      const index = buttons.indexOf(document.activeElement as HTMLElement);
+      const next = event.shiftKey
+        ? index <= 0
+          ? buttons.length - 1
+          : index - 1
+        : (index + 1) % buttons.length;
+      event.preventDefault();
+      buttons[next]?.focus();
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      scheduleFocusRestore(previousFocus.current, pendingWorkspaceId);
+      previousFocus.current = null;
+    };
+  }, [
+    dismissCloseConfirmation,
+    pendingConfirmationId,
+    pendingWorkspaceId,
+    scheduleFocusRestore,
+  ]);
+
+  useEffect(() => {
+    if (pendingConfirmation?.purpose.kind === "agent_stop" && !pendingAgent) {
+      // A natural exit removes the Agent and its confirmation together in
+      // main. Clear the local dialog as soon as that snapshot arrives rather
+      // than leaving a stale confirmation behind.
+      dismissCloseConfirmation();
+    }
+  }, [dismissCloseConfirmation, pendingAgent, pendingConfirmation]);
+
+  const closeInspection =
+    closePurpose?.kind === "workspace_close"
+      ? closePurpose.inspection
+      : undefined;
+  const allResources: readonly [string, CloseResourceWire][] = closeInspection
+    ? [
+        ["Agents", closeInspection.agents],
+        ["Terminal processes", closeInspection.terminalProcesses],
+        ["Terminal panes", closeInspection.terminalPanes],
+        ["Terminal windows", closeInspection.terminalWindows],
+        ["Unsaved editors", closeInspection.unsavedEditors],
+      ]
+    : [];
+  const resources = allResources.filter(
+    ([, resource]) => resource.kind !== "clean",
+  );
+
+  if (state.status === "loading") {
+    return (
+      <main className="app-shell app-shell-state">
+        <div className="titlebar titlebar-state" />
+        <section
+          className="surface"
+          aria-label="Surface"
+          aria-busy="true"
+          aria-live="polite"
+        >
+          <div className="surface-state" role="status">
+            <span className="surface-spinner" aria-hidden="true" />
+            <p className="surface-line">Connecting…</p>
+          </div>
+        </section>
+      </main>
+    );
+  }
+
+  if (state.status === "error") {
+    return (
+      <main className="app-shell app-shell-state">
+        <div className="titlebar titlebar-state" />
+        <ErrorSurface
+          error={state.error}
+          retry={retry}
+          openSettings={openSettings}
+        />
+      </main>
+    );
+  }
+
+  return (
+    <main
+      className="app-shell"
+      data-readiness={state.snapshot.readiness}
+      data-sidebar-density={appearance?.sidebarDensity ?? "compact"}
+    >
+      <div
+        className="app-shell-content"
+        inert={pendingConfirmation ? true : undefined}
+      >
+        <Sidebar snapshot={state.snapshot} />
+        <div className="workbench">
+          <TitlebarActivities
+            snapshot={state.snapshot}
+            onDispatch={onDispatch}
+          />
+          <SurfaceViewport
+            snapshot={state.snapshot}
+            intentError={intentError ?? undefined}
+            appearance={appearance}
+          />
+        </div>
+      </div>
+      {pendingConfirmation &&
+        (pendingConfirmation.purpose.kind !== "agent_stop" || pendingAgent) && (
+          <div className="confirmation-backdrop" role="presentation">
+            <section
+              ref={confirmationRef}
+              className="confirmation-dialog"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="confirmation-title"
+              aria-describedby="confirmation-description"
+              onKeyDown={(event) => {
+                if (
+                  event.key === "Escape" &&
+                  !isImeComposing(event.nativeEvent)
+                ) {
+                  event.preventDefault();
+                  dismissCloseConfirmation();
+                }
+              }}
+            >
+              <h2 id="confirmation-title">
+                {closeInspection
+                  ? `Close ${closeInspection.workspaceLabel}?`
+                  : pendingAgent
+                    ? `Stop ${pendingAgent.displayName}?`
+                    : "Confirm action?"}
+              </h2>
+              <p id="confirmation-description">
+                {closeInspection
+                  ? "The following workspace resources need confirmation before they are closed."
+                  : pendingAgent
+                    ? "This stops the Agent runtime. It can be retried if cleanup fails."
+                    : "Confirm this operation to continue."}
+              </p>
+              {resources.length > 0 && (
+                <ul className="confirmation-resources">
+                  {resources.map(([label, resource]) => (
+                    <li key={label}>
+                      <span>{label}</span>
+                      <span>{closeResourceStatus(resource)}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <div className="confirmation-actions">
+                <button
+                  type="button"
+                  onClick={dismissCloseConfirmation}
+                  disabled={confirmationBusy}
+                >
+                  Cancel
+                </button>
+                {(closeInspection ?? pendingAgent) && (
+                  <button
+                    className="primary-button"
+                    type="button"
+                    onClick={() => void confirmPending()}
+                    disabled={confirmationBusy}
+                  >
+                    {confirmationBusy
+                      ? pendingAgent
+                        ? "Stopping…"
+                        : "Closing…"
+                      : pendingAgent
+                        ? "Stop Agent"
+                        : "Close workspace"}
+                  </button>
+                )}
+              </div>
+            </section>
+          </div>
+        )}
+    </main>
   );
 }
