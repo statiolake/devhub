@@ -1,45 +1,55 @@
-# Install DevHub 0.1.0
+# Install DevHub
 
-DevHub requires macOS 15 or later on Apple Silicon (arm64). The official
-Microsoft Visual Studio Code application is a separate prerequisite: DevHub
-does not bundle, download, or redistribute VS Code.
+DevHub requires macOS 15 or later on Apple Silicon (arm64). Nothing else has to
+be installed: the application bundle carries its own editor.
 
-## Install the VS Code CLI (first time)
+## From a nightly release
 
-1. Open the separately installed official VS Code application.
-2. Press `Shift-Command-P` and run **Shell Command: Install 'code' command in
-   PATH**.
-3. Restart the terminal and verify that `code` resolves to one of these paths:
+Every night, `.github/workflows/nightly.yml` packages `main` and replaces the
+prerelease tagged `nightly` with a fresh `DevHub-darwin-arm64-<date>-<sha>.zip`.
 
-   - `/usr/local/bin/code`
-   - `/opt/homebrew/bin/code`
+1. Download the zip from the release page and unzip it (double-clicking is
+   enough; the archive is produced with `ditto`).
+2. Move `DevHub.app` to `/Applications`, or wherever you keep applications.
+3. Clear the quarantine flag. The build is signed ad-hoc, not by a registered
+   developer, and it is not notarised, so macOS refuses to open it until you
+   say otherwise:
 
    ```sh
-   command -v code
-   code --version
-   code serve-web --help
+   xattr -dr com.apple.quarantine /Applications/DevHub.app
    ```
 
-Install DevHub by verifying the adjacent checksum, unzipping the release, and
-moving `DevHub.app` to `/Applications` (or another applications folder):
+The first launch asks for access to the keychain item "DevHub Safe Storage".
+That is the app creating the store the editor keeps secrets in; answer once and
+it stops asking.
+
+DevHub has no update mechanism. To update, replace the app with a later
+nightly.
+
+## From a local build
+
+The packaging script assembles the same bundle from a built tree, and is the
+only supported way to reproduce a release locally:
 
 ```sh
-shasum -a 256 -c DevHub-v0.1.0-macos-arm64.zip.sha256
+scripts/provision-vscode.sh          # the VS Code submodule: deps, patches, compile
+pnpm install --frozen-lockfile
+pnpm run build                       # apps/desktop and the bridge extension
+scripts/package-nightly.py --out-dir dist --zip
 ```
 
-## Reproduce a local package
+The result is `dist/DevHub.app` and, with `--zip`, the archive beside it. The
+script neither signs with a real identity, notarises, nor publishes anything;
+it only fetches what VS Code's own extension build fetches.
 
-The release script packages an already-generated `.app`; it does not build,
-sign, notarize, publish, or contact a remote service. From a macOS Apple
-Silicon checkout, run:
+`scripts/package-icon.sh` regenerates `distribution/DevHub.icns` from
+`assets/icon-master.svg`. Run it when the icon changes and commit the result —
+packaging uses the committed file.
 
-```sh
-CI=true pnpm --filter @devhub/app exec tauri build --bundles app
-pnpm run package:local-release -- \
-  --app target/release/bundle/macos/DevHub.app \
-  --output-dir dist/release
-```
+## What is inside
 
-The script emits the zip, its `.zip.sha256` checksum, and a sorted SHA-256
-manifest for the app bundle. The release archive also contains the DevHub
-license, the bundled production-dependency notices, and this document.
+`DevHub.app/Contents/Resources/app` holds DevHub's own main process and App
+Shell, and `node_modules/code-oss-dev` holds the pinned VS Code submodule: its
+compiled `out/`, its production dependencies, and the built-in extension set,
+with DevHub's bridge extension among them. The licences of everything
+redistributed are in `DevHub.app/Contents/Resources/licenses`.
