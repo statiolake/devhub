@@ -454,7 +454,7 @@ process.env["VSCODE_CLI"] ??= "1";
 const state = join(homedir(), "Library", "Application Support", "DevHub");
 
 for (const [flag, value] of [
-\t["--user-data-dir", join(state, "user-data")],
+\t["--user-data-dir", join(state, "editor")],
 \t["--extensions-dir", join(state, "extensions")],
 ]) {
 \tconst given = process.argv.some(
