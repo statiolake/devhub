@@ -129,7 +129,6 @@ export interface SidebarState {
    * setting says nothing about it, and a sidebar nobody hid is a visible one.
    */
   visible?: boolean;
-  expanded_workspace_ids: string[];
 }
 
 export interface ShutdownMetadata {
@@ -295,7 +294,6 @@ export function freshState(): PersistedAppState {
     sidebar: {
       width: SIDEBAR_DEFAULT_WIDTH,
       visible: true,
-      expanded_workspace_ids: [],
     },
     window: {
       frame: {
@@ -642,14 +640,6 @@ export function validateState(state: PersistedAppState): void {
   ) {
     fail("STATE_INVALID");
   }
-  const seenExpanded = new Set<string>();
-  for (const id of state.sidebar.expanded_workspace_ids) {
-    validateUuid(id);
-    if (seenExpanded.has(id) || !workspaceIds.has(id)) {
-      fail("STATE_INVALID");
-    }
-    seenExpanded.add(id);
-  }
   const frame = state.window.frame;
   if (
     frame.width === 0 ||
@@ -820,11 +810,7 @@ export function hydrateModel(
   }
 
   try {
-    model.restoreSidebar(
-      state.sidebar.width,
-      state.sidebar.expanded_workspace_ids.map((raw) => parseWorkspaceId(raw)),
-      state.sidebar.visible ?? true,
-    );
+    model.restoreSidebar(state.sidebar.width, state.sidebar.visible ?? true);
   } catch {
     return fail("STATE_INVALID");
   }
@@ -967,7 +953,6 @@ export function stateFromSnapshot(
     sidebar: {
       width: snapshot.sidebar.width,
       visible: snapshot.sidebar.visible,
-      expanded_workspace_ids: [...snapshot.sidebar.expandedWorkspaceIds],
     },
   };
   validateState(state);

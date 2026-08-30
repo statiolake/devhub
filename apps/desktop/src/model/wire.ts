@@ -26,6 +26,7 @@ import type {
   WorkspaceSnapshot,
 } from "./appModel.js";
 import { SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH } from "./appModel.js";
+import { isValidFontFamily } from "./fontFamily.js";
 import {
   AppError,
   AppErrorCode,
@@ -135,8 +136,7 @@ function validateAppearanceWire(
     );
   }
   if (
-    wire.terminalFontFamily.trim().length === 0 ||
-    [...wire.terminalFontFamily].length > 128 ||
+    !isValidFontFamily(wire.terminalFontFamily) ||
     wire.terminalFontSize < 9 ||
     wire.terminalFontSize > 24 ||
     !Number.isFinite(wire.terminalLineHeight) ||
@@ -282,7 +282,6 @@ export function snapshotWire(
     sidebar: {
       width: snapshot.sidebar.width,
       visible: snapshot.sidebar.visible,
-      expandedWorkspaceIds: [...snapshot.sidebar.expandedWorkspaceIds],
     },
   };
   if (
@@ -591,12 +590,6 @@ export function intentFromWire(wire: AppIntentWire): UserIntent {
     }
     case "select_activity":
       return { type: "select_activity", activity: wire.activity };
-    case "toggle_workspace_disclosure":
-      return {
-        type: "toggle_workspace_disclosure",
-        workspaceId: tryParse(() => parseWorkspaceId(wire.workspaceId)),
-        expanded: wire.expanded,
-      };
     case "resize_sidebar":
       if (
         !Number.isInteger(wire.width) ||

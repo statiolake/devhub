@@ -78,7 +78,6 @@ export interface SidebarSnapshot {
    * wide the person made it, and a width of zero is not a legal width.
    */
   readonly visible: boolean;
-  readonly expandedWorkspaceIds: readonly WorkspaceId[];
 }
 
 export interface AgentSnapshot {
@@ -140,7 +139,6 @@ export interface AppSnapshot {
 export interface WorkspaceCloseRollback {
   readonly workspace: Workspace;
   readonly index: number;
-  readonly expanded: boolean;
   readonly selectionBefore: NavigationSelection;
   readonly selectionAfter: NavigationSelection;
 }
@@ -170,7 +168,6 @@ export class AppModel {
   private readonly workspaceList: Workspace[] = [];
   private readonly repositoryMap = new Map<RepositoryId, Repository>();
   private readonly nextAgentOrdinals = new Map<string, number>();
-  private readonly expandedWorkspaces = new Set<WorkspaceId>();
   private selectionValue: NavigationSelection = {
     context: GLOBAL_CONTEXT,
     activity: "terminal",
@@ -198,7 +195,6 @@ export class AppModel {
       sidebar: {
         width: this.sidebarWidthValue,
         visible: this.sidebarVisibleValue,
-        expandedWorkspaceIds: [...this.expandedWorkspaces].sort(),
       },
       editorHost: this.editorHost,
     };
@@ -228,40 +224,15 @@ export class AppModel {
     return this.workspaceList;
   }
 
-  get expandedWorkspaceIds(): readonly WorkspaceId[] {
-    return [...this.expandedWorkspaces].sort();
-  }
-
-  restoreSidebar(
-    width: number,
-    expandedWorkspaceIds: Iterable<WorkspaceId>,
-    visible = true,
-  ): boolean {
+  restoreSidebar(width: number, visible = true): boolean {
     if (width < SIDEBAR_MIN_WIDTH || width > SIDEBAR_MAX_WIDTH) {
       fail(DomainErrorCode.InvalidSidebarWidth);
     }
-    const restored = new Set<WorkspaceId>();
-    for (const id of expandedWorkspaceIds) {
-      const workspace = this.workspace(id);
-      if (!workspace) {
-        fail(DomainErrorCode.UnknownWorkspace);
-      }
-      if (workspace.agents.length > 0) {
-        restored.add(id);
-      }
-    }
     const changed =
-      this.sidebarWidthValue !== width ||
-      this.sidebarVisibleValue !== visible ||
-      restored.size !== this.expandedWorkspaces.size ||
-      [...restored].some((id) => !this.expandedWorkspaces.has(id));
+      this.sidebarWidthValue !== width || this.sidebarVisibleValue !== visible;
     if (changed) {
       this.sidebarWidthValue = width;
       this.sidebarVisibleValue = visible;
-      this.expandedWorkspaces.clear();
-      for (const id of restored) {
-        this.expandedWorkspaces.add(id);
-      }
       this.bumpRevision();
     }
     return changed;
@@ -290,24 +261,6 @@ export class AppModel {
     this.sidebarVisibleValue = visible;
     this.bumpRevision();
     return true;
-  }
-
-  setWorkspaceDisclosure(id: WorkspaceId, expanded: boolean): boolean {
-    const workspace = this.workspace(id);
-    if (!workspace) {
-      fail(DomainErrorCode.UnknownWorkspace);
-    }
-    if (workspace.agents.length === 0) {
-      return false;
-    }
-    const changed = expanded
-      ? !this.expandedWorkspaces.has(id) &&
-        Boolean(this.expandedWorkspaces.add(id))
-      : this.expandedWorkspaces.delete(id);
-    if (changed) {
-      this.bumpRevision();
-    }
-    return changed;
   }
 
   registerRepository(repository: Repository): void {
@@ -620,9 +573,6 @@ export class AppModel {
     const workspace = this.workspaceList[position.workspaceIndex];
     const nextAgent = workspace.agents[position.agentIndex + 1]?.id;
     workspace.removeAgent(id);
-    if (workspace.agents.length === 0) {
-      this.expandedWorkspaces.delete(workspace.id);
-    }
     if (
       this.selectionValue.context.kind === "agent" &&
       this.selectionValue.context.agentId === id
@@ -660,7 +610,6 @@ export class AppModel {
           ? this.agent(context.agentId)?.workspaceId === id
           : false;
     this.workspaceList.splice(index, 1);
-    this.expandedWorkspaces.delete(id);
     if (ownsSelection) {
       const successor = next ?? previous;
       this.selectionValue = successor
@@ -686,12 +635,10 @@ export class AppModel {
     }
     const workspace = this.workspaceList[index].clone();
     const selectionBefore = this.selectionValue;
-    const expanded = this.expandedWorkspaces.has(id);
     this.closeWorkspace(id, inspection);
     return {
       workspace,
       index,
-      expanded,
       selectionBefore,
       selectionAfter: this.selectionValue,
     };
@@ -710,9 +657,6 @@ export class AppModel {
     }
     const index = Math.min(rollback.index, this.workspaceList.length);
     this.workspaceList.splice(index, 0, rollback.workspace);
-    if (rollback.expanded) {
-      this.expandedWorkspaces.add(this.workspaceList[index].id);
-    }
     if (sameSelection(this.selectionValue, rollback.selectionAfter)) {
       this.selectionValue = rollback.selectionBefore;
     }

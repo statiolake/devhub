@@ -227,14 +227,14 @@ describe("sidebar", () => {
     expect(model.snapshot().sidebar.width).toBe(300);
   });
 
-  it("only expands a workspace that has agents", () => {
+  it("keeps a workspace's agents in the projection, always", () => {
     const model = modelWith([WS_A, "/dev/a"]);
-    expect(model.setWorkspaceDisclosure(WS_A, true)).toBe(false);
     model.addAgent(WS_A, AG_A, codex);
-    expect(model.setWorkspaceDisclosure(WS_A, true)).toBe(true);
-    expect(model.snapshot().sidebar.expandedWorkspaceIds).toEqual([WS_A]);
+    expect(model.snapshot().workspaces[0].agents.map((a) => a.id)).toEqual([
+      AG_A,
+    ]);
     model.agentExited(AG_A);
-    expect(model.snapshot().sidebar.expandedWorkspaceIds).toEqual([]);
+    expect(model.snapshot().workspaces[0].agents).toEqual([]);
   });
 });
 

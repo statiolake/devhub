@@ -159,7 +159,7 @@
   justify-content: space-between;
   padding: 0 2px 0
     calc(
-      var(--sidebar-disclosure-width) +
+      var(--sidebar-rail-width) +
         (var(--sidebar-glyph-width) - var(--sidebar-glyph-ink)) / 2
     );
   margin-top: var(--space-3);
@@ -187,10 +187,10 @@
 /* Rows are a single line with fixed leading columns, so no row can push the
    Sidebar into horizontal overflow regardless of label or path length.
  *
- * A row is a `div` when it has children to disclose and a `button` when it
- * does not, and the user agent pads a button by `1px 6px` while leaving a div
- * alone. Left unstated, that inset shifts a whole row — glyph and label
- * together — off the rail the other rows sit on. */
+ * A Workspace row is a `div` and the Scratch row is a `button`, and the user
+ * agent pads a button by `1px 6px` while leaving a div alone. Left unstated,
+ * that inset shifts a whole row — glyph and label together — off the rail the
+ * other rows sit on. */
 .sidebar-row {
   position: relative;
   display: flex;
@@ -247,36 +247,14 @@
   text-align: left;
 }
 
-.disclosure-button,
-.disclosure-spacer {
+/* The leading rail every row reserves before its glyph. It carries nothing:
+   a Workspace is always open, so there is no disclosure to put in it, and the
+   rail is what keeps the glyph column off the Sidebar's edge. */
+.row-rail {
   display: flex;
-  width: var(--sidebar-disclosure-width);
+  width: var(--sidebar-rail-width);
   height: 100%;
-  flex: 0 0 var(--sidebar-disclosure-width);
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  border: 0;
-  background: transparent;
-}
-
-.disclosure-button svg {
-  width: 10px;
-  height: 10px;
-  fill: none;
-  stroke: var(--tertiary);
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  stroke-width: 1.6;
-  transition: transform 120ms ease;
-}
-
-.disclosure-button[aria-expanded="true"] svg {
-  transform: rotate(90deg);
-}
-
-.disclosure-button:hover svg {
-  stroke: var(--primary);
+  flex: 0 0 var(--sidebar-rail-width);
 }
 
 .row-glyph {

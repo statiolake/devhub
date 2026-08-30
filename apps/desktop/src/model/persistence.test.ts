@@ -38,7 +38,7 @@ function emptied(state: PersistedAppState): PersistedAppState {
     ...state,
     workspaces: [],
     navigation: { context: { kind: "global" }, activity: "terminal" },
-    sidebar: { ...state.sidebar, expanded_workspace_ids: [] },
+    sidebar: { ...state.sidebar },
   };
 }
 
@@ -51,7 +51,6 @@ function populatedModel(): AppModel {
     new Workspace(WS_B, workspaceRoot("/dev/b"), displayPath("/dev/b")),
   );
   model.addAgent(WS_A, AG_A, codex);
-  model.setWorkspaceDisclosure(WS_A, true);
   return model;
 }
 
@@ -68,7 +67,6 @@ describe("projection", () => {
       AG_A,
     ]);
     expect(restored.snapshot().selection).toEqual(model.snapshot().selection);
-    expect(restored.snapshot().sidebar.expandedWorkspaceIds).toEqual([WS_A]);
   });
 
   it("keeps an agent whose profile is gone, marked unavailable", () => {
@@ -140,14 +138,6 @@ describe("validation", () => {
       agents: [],
     };
     state.workspaces = [record, { ...record, workspace_id: WS_B }];
-    expect(() => {
-      validateState(state);
-    }).toThrow(StateError);
-  });
-
-  it("rejects an expanded id that names no workspace", () => {
-    const state = freshState();
-    state.sidebar.expanded_workspace_ids = [WS_A];
     expect(() => {
       validateState(state);
     }).toThrow(StateError);

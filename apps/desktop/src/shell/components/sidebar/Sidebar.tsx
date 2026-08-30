@@ -64,7 +64,6 @@ function WorkspaceRow({
   workspace,
   snapshot,
   onDispatch,
-  chooseWorkspaceFolder,
   agentProfiles,
   agentProfilesAvailability,
   onCreateAgent,
@@ -73,7 +72,6 @@ function WorkspaceRow({
   readonly workspace: WorkspaceSnapshot;
   readonly snapshot: AppSnapshot;
   readonly onDispatch: (intent: AppIntent) => void;
-  readonly chooseWorkspaceFolder: () => Promise<string | undefined>;
   readonly agentProfiles: readonly AgentProfile[];
   readonly agentProfilesAvailability: AgentProfilesAvailabilityWire;
   readonly onCreateAgent: (workspaceId: string) => void;
@@ -86,7 +84,6 @@ function WorkspaceRow({
     snapshot.selection.context.kind === "agent"
       ? snapshot.selection.context.agentId
       : undefined;
-  const expanded = snapshot.sidebar.expandedWorkspaceIds.includes(workspace.id);
 
   const dispatch = useCallback(
     (intent: AppIntent) => onDispatch(intent),
@@ -99,33 +96,15 @@ function WorkspaceRow({
       role="treeitem"
       aria-level={1}
       aria-selected={selected}
-      aria-expanded={workspace.agents.length > 0 ? expanded : undefined}
+      // A Workspace is always open. The attribute states that, and there is
+      // nothing that can change it.
+      aria-expanded={workspace.agents.length > 0 ? true : undefined}
     >
       <div
         className={`sidebar-row workspace-row${selected ? " is-selected" : ""}`}
         data-state={workspace.state}
       >
-        {workspace.agents.length > 0 ? (
-          <button
-            className="disclosure-button"
-            type="button"
-            aria-label={`${expanded ? "Collapse" : "Expand"} ${workspace.label} agents`}
-            aria-expanded={expanded}
-            onClick={() =>
-              dispatch({
-                type: "toggle_workspace_disclosure",
-                workspaceId: workspace.id,
-                expanded: !expanded,
-              })
-            }
-          >
-            <svg viewBox="0 0 10 10" aria-hidden="true" focusable="false">
-              <path d="M3.5 1.5 L7 5 L3.5 8.5" />
-            </svg>
-          </button>
-        ) : (
-          <span className="disclosure-spacer" aria-hidden="true" />
-        )}
+        <span className="row-rail" aria-hidden="true" />
         <button
           className="sidebar-context-button"
           type="button"
@@ -175,73 +154,31 @@ function WorkspaceRow({
             </svg>
           </button>
         )}
-        {workspace.state === "unavailable" && (
-          <>
-            <button
-              className="row-action-button"
-              type="button"
-              aria-label={`Retry ${workspace.label}`}
-              title="Retry workspace"
-              onClick={() =>
-                dispatch({ type: "retry_workspace", workspaceId: workspace.id })
-              }
-            >
-              <svg viewBox="0 0 14 14" aria-hidden="true" focusable="false">
-                <path d="M11 7a4 4 0 1 1-1.2-2.85M11 2.5V5H8.5" />
-              </svg>
-            </button>
-            <button
-              className="row-action-button"
-              type="button"
-              aria-label={`Locate ${workspace.label}`}
-              title="Locate workspace"
-              onClick={() => {
-                void chooseWorkspaceFolder().then((path) => {
-                  if (path)
-                    dispatch({
-                      type: "locate_workspace",
-                      workspaceId: workspace.id,
-                      path,
-                    });
-                });
-              }}
-            >
-              <svg viewBox="0 0 14 14" aria-hidden="true" focusable="false">
-                <circle cx="6.4" cy="6.4" r="3.4" />
-                <path d="M9 9l2.4 2.4" />
-              </svg>
-            </button>
-          </>
-        )}
-        {workspace.state === "closing-failed" && (
-          <button
-            className="row-action-button"
-            type="button"
-            aria-label={`Retry closing ${workspace.label}`}
-            title="Retry close"
-            onClick={() =>
-              dispatch({
-                type: "retry_close_workspace",
-                workspaceId: workspace.id,
-              })
-            }
-          >
-            <svg viewBox="0 0 14 14" aria-hidden="true" focusable="false">
-              <path d="M11 7a4 4 0 1 1-1.2-2.85M11 2.5V5H8.5" />
-            </svg>
-          </button>
-        )}
+        {/* One close, whatever state the Workspace is in: a close that failed
+            is retried by asking for the same thing again, not by a second
+            icon that means the same thing. */}
         {workspace.state !== "closing" && (
           <button
             className="row-action-button"
             type="button"
             aria-label={`Close ${workspace.label}`}
-            title="Close workspace"
+            title={
+              workspace.state === "closing-failed"
+                ? "Retry close"
+                : "Close workspace"
+            }
             onClick={() =>
-              dispatch({
-                type: "request_close_workspace",
-                workspaceId: workspace.id,
-              })
+              dispatch(
+                workspace.state === "closing-failed"
+                  ? {
+                      type: "retry_close_workspace",
+                      workspaceId: workspace.id,
+                    }
+                  : {
+                      type: "request_close_workspace",
+                      workspaceId: workspace.id,
+                    },
+              )
             }
           >
             <svg viewBox="0 0 14 14" aria-hidden="true" focusable="false">
@@ -250,7 +187,7 @@ function WorkspaceRow({
           </button>
         )}
       </div>
-      {workspace.agents.length > 0 && expanded && (
+      {workspace.agents.length > 0 && (
         <ul
           className="agent-tree"
           role="group"
@@ -258,6 +195,7 @@ function WorkspaceRow({
         >
           {workspace.agents.map((agent) => {
             const agentSelected = selectedAgentId === agent.id;
+            const stopFailed = agent.controlState === "stop-failed";
             return (
               <li
                 key={agent.id}
@@ -275,7 +213,7 @@ function WorkspaceRow({
                     data-tree-item-id={`agent:${agent.id}`}
                     tabIndex={agentSelected ? 0 : -1}
                     aria-current={agentSelected ? "page" : undefined}
-                    aria-label={`${agent.displayName}, ${statusLabel(agent.status)} agent, ${agent.controlState === "stopping" ? "Stopping" : agent.controlState === "stop-failed" ? "Stop failed" : runtimeHealthLabel(agent.runtimeHealth)}`}
+                    aria-label={`${agent.displayName}, ${statusLabel(agent.status)} agent, ${agent.controlState === "stopping" ? "Stopping" : stopFailed ? "Stop failed" : runtimeHealthLabel(agent.runtimeHealth)}`}
                     disabled={agent.controlState === "stopping"}
                     onClick={() =>
                       dispatch({
@@ -283,6 +221,10 @@ function WorkspaceRow({
                         context: { kind: "agent", agentId: agent.id },
                       })
                     }
+                    // Renaming is what a source list does on a second click at
+                    // rest, and it stays off the row: an icon whose meaning has
+                    // to be guessed is worse than one that is not there.
+                    onDoubleClick={() => onRenameAgent(agent)}
                   >
                     <span className="row-glyph" aria-hidden="true">
                       <svg viewBox="0 0 14 14" focusable="false">
@@ -295,81 +237,25 @@ function WorkspaceRow({
                       <span className="row-note">
                         {agent.controlState === "stopping"
                           ? "Stopping"
-                          : agent.controlState === "stop-failed"
+                          : stopFailed
                             ? "Stop failed"
                             : runtimeHealthLabel(agent.runtimeHealth)}
                       </span>
                     ) : null}
                     <StatusMark status={agent.status} compact />
                   </button>
-                  <button
-                    className="row-action-button agent-row-action"
-                    type="button"
-                    aria-label="Rename agent"
-                    title="Rename agent"
-                    disabled={agent.controlState === "stopping"}
-                    onClick={() => onRenameAgent(agent)}
-                  >
-                    <svg
-                      viewBox="0 0 14 14"
-                      aria-hidden="true"
-                      focusable="false"
-                    >
-                      <path d="M9.4 2.9 11.1 4.6 5 10.7 2.9 11.1 3.3 9z" />
-                    </svg>
-                  </button>
-                  {agent.runtimeHealth !== "healthy" &&
-                  agent.controlState !== "stopping" ? (
+                  {agent.controlState === "stopping" ? null : (
                     <button
                       className="row-action-button agent-row-action"
                       type="button"
-                      aria-label="Reconcile agent"
-                      title="Retry Agent runtime reconciliation"
+                      aria-label={`Stop ${agent.displayName}`}
+                      title={stopFailed ? "Retry stop" : "Stop agent"}
                       onClick={() =>
-                        dispatch({
-                          type: "reconcile_agent",
-                          agentId: agent.id,
-                        })
-                      }
-                    >
-                      <svg
-                        viewBox="0 0 14 14"
-                        aria-hidden="true"
-                        focusable="false"
-                      >
-                        <path d="M11 7a4 4 0 1 1-1.2-2.85M11 2.5V5H8.5" />
-                      </svg>
-                    </button>
-                  ) : null}
-                  {agent.controlState === "stop-failed" ? (
-                    <button
-                      className="row-action-button agent-row-action"
-                      type="button"
-                      aria-label="Retry stopping agent"
-                      title="Retry stop"
-                      onClick={() =>
-                        dispatch({
-                          type: "retry_stop_agent",
-                          agentId: agent.id,
-                        })
-                      }
-                    >
-                      <svg
-                        viewBox="0 0 14 14"
-                        aria-hidden="true"
-                        focusable="false"
-                      >
-                        <path d="M11 7a4 4 0 1 1-1.2-2.85M11 2.5V5H8.5" />
-                      </svg>
-                    </button>
-                  ) : agent.controlState === "stopping" ? null : (
-                    <button
-                      className="row-action-button agent-row-action"
-                      type="button"
-                      aria-label="Stop agent"
-                      title="Stop agent"
-                      onClick={() =>
-                        dispatch({ type: "stop_agent", agentId: agent.id })
+                        dispatch(
+                          stopFailed
+                            ? { type: "retry_stop_agent", agentId: agent.id }
+                            : { type: "stop_agent", agentId: agent.id },
+                        )
                       }
                     >
                       <svg
@@ -409,7 +295,7 @@ function ScratchRow({
         onDispatch({ type: "select_context", context: { kind: "global" } })
       }
     >
-      <span className="disclosure-spacer" aria-hidden="true" />
+      <span className="row-rail" aria-hidden="true" />
       {/* Mirrors a Workspace row's context button so the glyph, the label and
           the trailing inset land on the same columns. */}
       <span className="sidebar-context-button">
@@ -509,7 +395,7 @@ function SidebarResizeHandle({
 }
 
 export function Sidebar({ snapshot }: SidebarProps) {
-  const { dispatch, agentProfiles, chooseWorkspaceFolder } = useAppShell();
+  const { dispatch, agentProfiles } = useAppShell();
   const [pickerOpen, setPickerOpen] = useState(false);
   // File ▸ Add Workspace… is the same command as the sidebar's +, so it opens
   // the same picker rather than a second way of adding a workspace.
@@ -533,7 +419,6 @@ export function Sidebar({ snapshot }: SidebarProps) {
   const renameInputRef = useRef<HTMLInputElement>(null);
   const workspaceTreeRef = useRef<HTMLUListElement>(null);
   const treeFocusId = useRef<string | undefined>(undefined);
-  const pendingTreeChildFocus = useRef<string | undefined>(undefined);
   const focusRestoreGeneration = useRef(0);
   const pendingFocusRestore = useRef<HTMLElement | null>(null);
 
@@ -541,23 +426,6 @@ export function Sidebar({ snapshot }: SidebarProps) {
     const tree = workspaceTreeRef.current;
     if (!tree) return;
     const items = treeContextButtons(tree);
-    if (pendingTreeChildFocus.current) {
-      const workspaceButton = items.find(
-        (item) => item.dataset.treeItemId === pendingTreeChildFocus.current,
-      );
-      const child = workspaceButton
-        ?.closest<HTMLElement>("[role=treeitem]")
-        ?.querySelector<HTMLButtonElement>(
-          ".agent-tree [data-tree-item-id]:not([disabled])",
-        );
-      if (child) {
-        pendingTreeChildFocus.current = undefined;
-        treeFocusId.current = child.dataset.treeItemId;
-        setTreeTabStop(tree, child);
-        child.focus();
-        return;
-      }
-    }
     const previousId = treeFocusId.current;
     const requested = previousId
       ? items.find((item) => item.dataset.treeItemId === previousId)
@@ -581,11 +449,7 @@ export function Sidebar({ snapshot }: SidebarProps) {
       (active === document.body || active === tree || tree.contains(active));
     treeFocusId.current = target.dataset.treeItemId;
     if (activeWasRemoved) target.focus();
-  }, [
-    snapshot.selection.context,
-    snapshot.sidebar.expandedWorkspaceIds,
-    snapshot.workspaces,
-  ]);
+  }, [snapshot.selection.context, snapshot.workspaces]);
 
   const modalOpen =
     pickerOpen || Boolean(agentPickerWorkspaceId) || Boolean(renameTarget);
@@ -820,46 +684,27 @@ export function Sidebar({ snapshot }: SidebarProps) {
               }
               const item = activeItem.closest<HTMLElement>("[role=treeitem]");
               if (!item) return;
+              // Nothing here collapses: a Workspace is always open, so the
+              // horizontal keys only walk between a Workspace and its Agents.
               if (event.key === "ArrowRight") {
-                const disclosure =
-                  item.querySelector<HTMLButtonElement>(".disclosure-button");
                 const child = item.querySelector<HTMLButtonElement>(
-                  ".agent-tree [data-tree-item-id]",
+                  ".agent-tree [data-tree-item-id]:not([disabled])",
                 );
-                if (!disclosure) return;
+                if (!child) return;
                 event.preventDefault();
-                if (disclosure.getAttribute("aria-expanded") !== "true") {
-                  pendingTreeChildFocus.current = activeItem.dataset.treeItemId;
-                  disclosure.click();
-                  window.requestAnimationFrame(() => {
-                    const next = item.querySelector<HTMLButtonElement>(
-                      ".agent-tree [data-tree-item-id]",
-                    );
-                    focusItem(next);
-                  });
-                } else if (child) {
-                  focusItem(child);
-                }
+                focusItem(child);
                 return;
               }
               if (event.key === "ArrowLeft") {
                 const parent =
                   item.parentElement?.closest<HTMLElement>("[role=treeitem]");
-                if (parent) {
-                  event.preventDefault();
-                  focusItem(
-                    parent.querySelector<HTMLButtonElement>(
-                      ":scope > .sidebar-row [data-tree-item-id]",
-                    ),
-                  );
-                  return;
-                }
-                const disclosure =
-                  item.querySelector<HTMLButtonElement>(".disclosure-button");
-                if (disclosure?.getAttribute("aria-expanded") === "true") {
-                  event.preventDefault();
-                  disclosure.click();
-                }
+                if (!parent) return;
+                event.preventDefault();
+                focusItem(
+                  parent.querySelector<HTMLButtonElement>(
+                    ":scope > .sidebar-row [data-tree-item-id]",
+                  ),
+                );
               }
             }}
           >
@@ -869,7 +714,6 @@ export function Sidebar({ snapshot }: SidebarProps) {
                 workspace={workspace}
                 snapshot={snapshot}
                 onDispatch={onDispatch}
-                chooseWorkspaceFolder={chooseWorkspaceFolder}
                 agentProfiles={agentProfiles.profiles}
                 agentProfilesAvailability={agentProfiles.availability}
                 onCreateAgent={openAgentPicker}

@@ -528,9 +528,6 @@ export class AppCoordinator {
       case "select_activity":
         this.model.selectActivity(intent.activity);
         return this.transitionOutcome(beforeRevision, id);
-      case "toggle_workspace_disclosure":
-        this.model.setWorkspaceDisclosure(intent.workspaceId, intent.expanded);
-        return this.transitionOutcome(beforeRevision, id);
       case "resize_sidebar":
         this.model.setSidebarWidth(intent.width);
         return this.transitionOutcome(beforeRevision, id);

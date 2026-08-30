@@ -106,11 +106,6 @@ export interface AppErrorWire {
 export type AppIntentWire =
 	| { readonly context: ContextWire; readonly type: "select_context" }
 	| { readonly activity: ActivityName; readonly type: "select_activity" }
-	| {
-			readonly expanded: boolean;
-			readonly type: "toggle_workspace_disclosure";
-			readonly workspaceId: string;
-	  }
 	| { readonly type: "resize_sidebar"; readonly width: number }
 	| { readonly type: "set_sidebar_visible"; readonly visible: boolean }
 	| { readonly type: "open_workspace_picker" }
@@ -246,7 +241,6 @@ export interface SelectionWire {
 	readonly context: ContextWire;
 }
 export interface SidebarWire {
-	readonly expandedWorkspaceIds: readonly string[];
 	readonly width: number;
 	readonly visible: boolean;
 }
@@ -366,12 +360,6 @@ export function activeActivitySnapshot(
 			({ activity }) => activity === snapshot.selection.activity,
 		) ?? snapshot.activities[0]
 	);
-}
-export function isWorkspaceExpanded(
-	snapshot: AppSnapshot,
-	workspaceId: string,
-): boolean {
-	return snapshot.sidebar.expandedWorkspaceIds.includes(workspaceId);
 }
 
 /** Keep pointer updates bounded before they cross the intent seam. */
