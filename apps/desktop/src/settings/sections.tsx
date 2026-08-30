@@ -246,7 +246,14 @@ export function WorkspacesSection({
                       ? {
                           type: "command",
                           id: source.id,
-                          command: [],
+                          // One empty argument, not none. A command source with
+                          // no command at all is a config the loader refuses,
+                          // so switching the popup used to be a change that
+                          // could not be saved: the file kept the folder source
+                          // while the window showed a command form. One blank
+                          // argument is what the loader calls a command source,
+                          // and it is a row visibly waiting to be typed into.
+                          command: [""],
                           timeoutMs: 2000,
                         }
                       : {

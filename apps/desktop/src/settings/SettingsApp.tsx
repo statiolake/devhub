@@ -33,25 +33,17 @@ import {
 import {
   SETTINGS_SCHEMA_VERSION,
   type SettingsConfig,
-  type SettingsDiagnosticWire,
   type SettingsError,
   type SettingsSnapshot,
   type SettingsSocketPreflightWire,
 } from "../ipc/settings";
-import { FONT_FAMILY_RULE } from "../model/fontFamily";
 import { Alert } from "../shell/components/shell/Alert";
 import {
   createSettingsClient,
   parseSettingsTransportError,
   type SettingsClient,
 } from "./client";
-import {
-  DUPLICATE_RULE,
-  ID_RULE,
-  RUNTIME_RULE,
-  SOCKET_RULE,
-  TMUX_ARGUMENT_RULE,
-} from "./rules";
+import { errorMessage, fileDiagnosticMessage } from "./errorMessage";
 import {
   AdvancedSection,
   AgentsSection,
@@ -82,67 +74,6 @@ type Section = (typeof SECTIONS)[number];
 
 const clone = (config: SettingsConfig): SettingsConfig =>
   JSON.parse(JSON.stringify(config)) as SettingsConfig;
-
-/**
- * What the rule was, for the refusals a person can act on.
- *
- * A refused save carries the diagnostic that refused it — the code and the key
- * it came from. Saying only "that value is not one DevHub can use" turns every
- * one of those into the same dead end: the person cannot tell which field was
- * wrong, let alone what would have been right. The sentences are the ones the
- * fields themselves use (`rules.ts`), so a rule is never described two ways.
- * Codes with nothing specific to add are left to the general sentence rather
- * than given a paraphrase of themselves.
- */
-function ruleMessage(diagnostic: SettingsDiagnosticWire): string | undefined {
-  switch (diagnostic.code) {
-    case "invalid_font_family":
-      return FONT_FAMILY_RULE;
-    case "invalid_runtime":
-      return RUNTIME_RULE;
-    case "invalid_socket_name":
-      return SOCKET_RULE;
-    case "forbidden_tmux_argument":
-      return TMUX_ARGUMENT_RULE;
-    case "invalid_id":
-      return ID_RULE;
-    case "duplicate_identity":
-      return DUPLICATE_RULE;
-    default:
-      return undefined;
-  }
-}
-
-function errorMessage(error: SettingsError): string {
-  switch (error.code) {
-    case "external_edit_conflict":
-      return "config.toml changed outside Settings. Reload to see the new file.";
-    case "invalid_config": {
-      const rule = error.diagnostic ? ruleMessage(error.diagnostic) : undefined;
-      const where = error.diagnostic?.path;
-      if (rule) {
-        return where
-          ? `${where} was not saved. ${rule}`
-          : `That value was not saved. ${rule}`;
-      }
-      return where
-        ? `${where} is not a value DevHub can use. It has not been saved.`
-        : "That value is not one DevHub can use. It has not been saved.";
-    }
-    case "invalid_file":
-      return "config.toml could not be read or written.";
-    case "runtime_unavailable":
-      return "DevHub could not inspect the runtimes.";
-    case "permission_denied":
-      return "DevHub does not have permission to do that.";
-    case "native_unavailable":
-      return "The Settings window lost its connection to DevHub.";
-    case "native_busy":
-      return "Another action is still finishing. Try again in a moment.";
-    case "native_timed_out":
-      return "That action timed out. It may still be finishing.";
-  }
-}
 
 // ------------------------------------------------------------------ toolbar
 
@@ -502,7 +433,9 @@ export function SettingsApp({ client }: { readonly client?: SettingsClient }) {
           <span>
             {error
               ? errorMessage(error)
-              : `config.toml has a problem DevHub could not read: ${snapshot.diagnostic?.code ?? ""}`}
+              : snapshot.diagnostic
+                ? fileDiagnosticMessage(snapshot.diagnostic)
+                : ""}
           </span>
           <button type="button" className="mac-button" onClick={reload}>
             Reload
