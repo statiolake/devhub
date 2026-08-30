@@ -60,11 +60,12 @@ export interface AgentWiringOptions {
 	readonly home: string;
 	readonly model: () => AppModel;
 	/**
-	 * An observation the adapter made on its own — an attach that saw a status,
-	 * or a control stream that failed. It reaches the model the same way every
-	 * other observation does, through a reconcile.
+	 * The adapter saw something on its own — an attach that read a status, or a
+	 * control stream that died. It is a hint that the next reconcile is worth
+	 * running now; what it means is decided by that reconcile, like everything
+	 * else the provider says.
 	 */
-	readonly onObserved: (agentId: AgentId) => void;
+	readonly onObserved: () => void;
 }
 
 export function wireAgents(options: AgentWiringOptions): AgentService {
@@ -72,14 +73,11 @@ export function wireAgents(options: AgentWiringOptions): AgentService {
 		journalPath: options.journalPath,
 		configuredHerdr: options.configuredHerdr,
 		home: options.home,
-		onObservation: (observation) => {
-			options.onObserved(parseAgentId(observation.agentId));
-		},
-		onSurfaceFailure: (agentId) => {
+		onSurfaceFailure: () => {
 			// A dead control stream is a health fact, not a row change: the model
 			// learns it by reconciling, which is the one path that can also decide
 			// the Agent is gone.
-			options.onObserved(parseAgentId(agentId));
+			options.onObserved();
 		},
 	});
 	service.register();
@@ -122,12 +120,25 @@ export function wireAgents(options: AgentWiringOptions): AgentService {
 
 		async reconcile(agentId?: AgentId): Promise<AgentReconciliation> {
 			const reconciliation = await service.runtime.reconcile(token());
-			const observations = reconciliation.observations.map((observation) => ({
-				agentId: parseAgentId(observation.agentId),
-				status: observation.status,
-				runtimeHealth: observation.runtimeHealth,
-			}));
-			const exited = reconciliation.exited.map((id) => parseAgentId(id));
+			// The adapter answers about every provider resource it owns, which is
+			// not the same set as the Agents the model has: a mapping outlives its
+			// row until the provider confirms the cleanup, and a relaunch recovers
+			// mappings for Agents this DevHub never knew. The model is the
+			// authority on which Agents exist, so anything it does not have is not
+			// news about a row — it is news about a resource, and the adapter is
+			// already the one dealing with it.
+			const known = (id: AgentId): boolean =>
+				options.model().workspaceForAgent(id) !== undefined;
+			const observations = reconciliation.observations
+				.map((observation) => ({
+					agentId: parseAgentId(observation.agentId),
+					status: observation.status,
+					runtimeHealth: observation.runtimeHealth,
+				}))
+				.filter((observation) => known(observation.agentId));
+			const exited = reconciliation.exited
+				.map((id) => parseAgentId(id))
+				.filter(known);
 			if (agentId === undefined) {
 				return { observations, exited };
 			}

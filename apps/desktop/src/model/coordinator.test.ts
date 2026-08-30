@@ -594,3 +594,73 @@ describe("retrying a failed close", () => {
     expect(driver.coordinator.snapshot().workspaces).toHaveLength(0);
   });
 });
+
+describe("reconciling agents", () => {
+  function withAgent(): Driver {
+    const driver = new Driver();
+    driver.openFolder("/dev/project");
+    driver.dispatch({
+      type: "create_agent",
+      workspaceId: WS_A,
+      profileId: agentProfileId("codex"),
+    });
+    driver.settle();
+    return driver;
+  }
+
+  it("asks the provider about every agent at once", () => {
+    const driver = withAgent();
+    driver.dispatch({ type: "reconcile_agents" });
+    expect(driver.drainEffects().map((effect) => effect.kind)).toEqual([
+      "reconcile_agents",
+    ]);
+  });
+
+  it("projects what the provider reported onto the rows", () => {
+    const driver = withAgent();
+    driver.dispatch({ type: "reconcile_agents" });
+    const effect = driver.drainEffects()[0];
+    driver.accept({
+      type: "agents_reconciled",
+      token: effect.token,
+      reconciliation: {
+        observations: [
+          { agentId: AG_A, status: "working", runtimeHealth: "healthy" },
+        ],
+        exited: [],
+      },
+    });
+    const agent = driver.coordinator.snapshot().workspaces[0].agents[0];
+    expect(agent.status).toBe("working");
+    expect(agent.runtimeHealth).toBe("healthy");
+  });
+
+  it("takes the row away when the provider says the agent is gone", () => {
+    const driver = withAgent();
+    driver.dispatch({ type: "reconcile_agents" });
+    const effect = driver.drainEffects()[0];
+    driver.accept({
+      type: "agents_reconciled",
+      token: effect.token,
+      reconciliation: { observations: [], exited: [AG_A] },
+    });
+    expect(driver.coordinator.snapshot().workspaces[0].agents).toHaveLength(0);
+  });
+
+  it("announces a round it superseded, so nothing waits on the answer", () => {
+    const driver = withAgent();
+    driver.dispatch({ type: "reconcile_agents" });
+    const superseded = driver.drainEffects()[0];
+    driver.dispatch({ type: "reconcile_agents" });
+    const events = driver.coordinator
+      .subscribeFrom(0)
+      .events.map(({ event }) => event);
+    expect(
+      events.some(
+        (event) =>
+          event.kind === "operation_completed" &&
+          event.token.operationId === superseded.token.operationId,
+      ),
+    ).toBe(true);
+  });
+});

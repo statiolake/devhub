@@ -29,6 +29,7 @@ import { UnloadReason } from "code-oss-dev/out/vs/platform/window/electron-main/
 import {
 	CHANNELS,
 	type ContentRect,
+	type ModalRequest,
 	type WorkspacePickerEvent,
 } from "../../ipc/contract.js";
 import type {
@@ -46,7 +47,6 @@ import {
 	agentProfileId,
 	displayPath,
 	agentId as parseAgentId,
-	type AgentId,
 	surfaceKeyName,
 	workspaceId as parseWorkspaceId,
 	workspaceRoot,
@@ -107,11 +107,11 @@ import {
 	type TerminalPreflight,
 } from "../terminal/ports.js";
 import { wireAgents } from "./agentWiring.js";
+import { AgentReconciler } from "./agentReconciler.js";
 import { resolveRuntimes } from "./runtimes.js";
 import type { AgentService } from "../agent/index.js";
 import { startWorkspacePicker } from "./workspacePicker.js";
 import { installMenu, refreshMenu } from "./menu.js";
-import { captureBackdrop } from "./workbenchDialogs.js";
 import {
 	openSettingsWindow,
 	publishSettingsSnapshot,
@@ -175,17 +175,23 @@ export class AppController {
 	private terminalsWiring: TerminalWiring | undefined;
 	private agentService: AgentService | undefined;
 	/**
-	 * Agents the adapter has said something about, waiting for one reconcile.
+	 * The one thing that keeps every Agent's status and existence true.
 	 *
-	 * An observation arrives *because* a reconcile is running, so dispatching a
-	 * reconcile from one is a loop that never ends — and it runs on the main
-	 * thread, so the app simply stops. What an observation means is "the model's
-	 * idea of this Agent may be stale"; the answer is one reconcile after the
-	 * current one finishes, not another one inside it.
+	 * Nothing else asks the provider on its own: a status that only moved when
+	 * a view happened to attach is a status that stays on "Starting runtime"
+	 * for an Agent that started, and an exit nobody asked about is a row for a
+	 * process that is gone.
 	 */
-	private readonly staleAgents = new Set<AgentId>();
-	private reconcileScheduled = false;
-	private reconciling = false;
+	private readonly agentReconciler = new AgentReconciler({
+		hasAgents: () =>
+			this.coordinator.model.workspaces.some(
+				(workspace) => workspace.agents.length > 0,
+			),
+		reconcile: () => this.reconcileAllAgents(),
+		onFailure: (error) => {
+			this.publishError(errorWire(error));
+		},
+	});
 	private stopWatchingConfig: (() => void) | undefined;
 
 	constructor(
@@ -206,6 +212,12 @@ export class AppController {
 		this.state = state;
 		this.config = config;
 		this.coordinator = new AppCoordinator(model);
+		// The overlay has to know whether the workbench a question belongs to is
+		// the one on screen. Views are the window's; surface keys are the
+		// model's; this is the one place the two are joined.
+		shellWindow().setSurfaceKeyResolver((view) =>
+			this.editorSurfaceKeyForView(view.id),
+		);
 		this.registerIpc();
 		this.watchConfig();
 	}
@@ -276,27 +288,29 @@ export class AppController {
 			userDataPath,
 			model: () => this.coordinator.model,
 		});
-		// Everything restored from the state file describes the previous run: an
-		// Agent's status and its runtime health are what they were when DevHub
-		// last wrote them down. Nothing will contradict them on its own — an
-		// idle agent produces no events — so a restored Agent that is never
-		// reconciled sits there claiming to be starting a runtime that started
-		// long ago. Ask about each of them once, as soon as there is something
-		// to ask.
-		for (const workspace of this.coordinator.model.workspaces) {
-			for (const agent of workspace.agents) {
-				this.noteStaleAgent(agent.id);
-			}
-		}
 		this.agentService = wireAgents({
 			journalPath: join(userDataPath, "devhub", "agents.journal"),
 			configuredHerdr: config?.runtimes.herdr ?? "herdr",
 			home: homedir(),
 			model: () => this.coordinator.model,
-			onObserved: (agentId) => {
-				this.noteStaleAgent(agentId);
+			onObserved: () => {
+				this.agentReconciler.wake();
 			},
 		});
+		// Everything restored from the state file describes the previous run.
+		// The adapter is told which Workspace each restored Agent belongs to,
+		// so the provider snapshot it takes can be matched back to the rows
+		// that are already on screen; the loop below does the rest.
+		for (const workspace of this.coordinator.model.workspaces) {
+			for (const agent of workspace.agents) {
+				this.agentService.runtime.registerAgentWorkspace(
+					agent.id,
+					workspace.id,
+					workspace.root,
+				);
+			}
+		}
+		this.agentReconciler.start();
 	}
 
 	/**
@@ -399,38 +413,13 @@ export class AppController {
 	}
 
 	/**
-	 * Remember that an Agent may be stale, and reconcile once, later.
-	 *
-	 * Coalescing is the point: a burst of observations about several Agents is
-	 * still one round of catching up, and none of it may happen while a
-	 * reconcile is already in flight.
+	 * One round of the reconciler: ask the provider about every Agent and let
+	 * the model settle before the next round is scheduled.
 	 */
-	private noteStaleAgent(agentId: AgentId): void {
-		this.staleAgents.add(agentId);
-		if (this.reconcileScheduled || this.reconciling) return;
-		this.reconcileScheduled = true;
-		const timer = setTimeout(() => {
-			this.reconcileScheduled = false;
-			this.reconcileStaleAgents();
-		}, 250);
-		// Catching up on Agents must never be the reason the process stays alive.
-		(timer as unknown as { unref?: () => void }).unref?.();
-	}
-
-	private reconcileStaleAgents(): void {
-		const pending = [...this.staleAgents].filter((agentId) =>
-			this.coordinator.model.agent(agentId),
-		);
-		this.staleAgents.clear();
-		if (pending.length === 0) return;
-		this.reconciling = true;
-		try {
-			for (const agentId of pending) {
-				this.dispatchOwn({ type: "reconcile_agent", agentId });
-			}
-		} finally {
-			this.reconciling = false;
-		}
+	private async reconcileAllAgents(): Promise<void> {
+		const outcome = this.dispatchOwn({ type: "reconcile_agents" });
+		if (!outcome) return;
+		await this.awaitOutcome(outcome);
 	}
 
 	markReady(): void {
@@ -454,6 +443,7 @@ export class AppController {
 		// runtime was slow to let go.
 		markCleanShutdown(this.state);
 		await this.stateStore.saveState(this.state);
+		this.agentReconciler.stop();
 		this.terminalsWiring?.service.dispose();
 		await this.agentService?.dispose();
 	}
@@ -503,11 +493,19 @@ export class AppController {
 		return this.config;
 	}
 
+	/**
+	 * Push one projection to every page that draws from it.
+	 *
+	 * The App Shell page and the modal overlay are two views of the same model
+	 * — an alert about a workspace is the same workspace the sidebar lists —
+	 * so they are told the same things at the same moment rather than the
+	 * overlay fetching its own copy on a second path.
+	 */
 	private send(channel: string, payload: unknown): void {
 		const shell = shellWindow();
-		if (!shell.window.isDestroyed()) {
-			shell.window.webContents.send(channel, payload);
-		}
+		if (shell.window.isDestroyed()) return;
+		shell.window.webContents.send(channel, payload);
+		shell.modals.contents()?.send(channel, payload);
 	}
 
 	private publishSnapshot(): void {
@@ -580,10 +578,19 @@ export class AppController {
 			});
 			this.settle(id, outcome);
 		} catch (error) {
-			// A completion the coordinator refused is a real failure — a stale
-			// token, an operation that no longer exists — and it belongs on screen
-			// rather than in a log nobody reads.
-			this.publishError(errorWire(error));
+			// A completion the coordinator refused is a real failure — an operation
+			// that no longer exists, a token that does not match — and it belongs on
+			// screen rather than in a log nobody reads.
+			//
+			// A *stale* completion is the one exception, and it is not an
+			// exception to the rule so much as a different fact: the operation it
+			// answers was already settled by something newer, on purpose. The
+			// reconciler supersedes its own rounds by design, and a person told
+			// "an operation went stale" every time DevHub asked the provider a
+			// fresher question learns nothing and stops reading the error area.
+			if (!isStaleCompletion(error)) {
+				this.publishError(errorWire(error));
+			}
 			this.reject(id, error);
 		}
 		this.drain();
@@ -695,8 +702,17 @@ export class AppController {
 						case "effect":
 							effects.push(event.effect);
 							break;
-						case "noop":
 						case "operation_completed":
+							// A chain that ends without a provider event of its own —
+							// a reconcile superseded by a newer one — still ends. The
+							// page request that started it is answered here rather
+							// than left to time out.
+							this.settle(event.token.operationId, {
+								kind: "noop",
+								snapshot: this.coordinator.snapshot(),
+							});
+							break;
+						case "noop":
 							break;
 					}
 				}
@@ -1571,31 +1587,28 @@ export class AppController {
 			}
 			shellWindow().setNativeSurfaceVisible(visible);
 		});
-		// A DevHub modal has to appear above the workbench, and DOM cannot be
-		// painted over a native view — so the workbench stands down. Capturing
-		// it *first* is what keeps it from simply vanishing: the page draws that
-		// frame, dimmed, under the sheet, which is what a sheet over a window
-		// looks like. One capture per modal, and only while there is something
-		// on screen to capture.
-		handle(CHANNELS.setModalOpen, async (_event, open: boolean) => {
-			const shell = shellWindow();
-			if (!open) {
-				shell.setModalOpen(false);
-				this.send(CHANNELS.modalBackdrop, {});
-				return;
-			}
-			const view = shell.revealedView();
-			const backdrop = view ? await captureBackdrop(view) : undefined;
-			// The frame goes first and the view stands down second. Both orders
-			// end in the same place, but this one has no instant where neither is
-			// on screen: the native view still covers the page while the page is
-			// drawing the image that replaces it.
-			this.send(CHANNELS.modalBackdrop, { backdrop });
-			shell.setModalOpen(true);
-		});
+		// One way in and one way out for every modal DevHub shows. Main owns the
+		// set that is open because the overlay view is a fact about the window,
+		// not about whichever page happened to ask.
+		handle(CHANNELS.openModal, (_event, request: ModalRequest) =>
+			shellWindow().modals.openModal(request),
+		);
+		handle(
+			CHANNELS.closeModal,
+			(_event, id: string, response: number | undefined) => {
+				shellWindow().modals.closeModal(id, response);
+			},
+		);
 	}
 
 	//#endregion
+}
+
+/** An answer to an operation something newer already replaced. */
+function isStaleCompletion(error: unknown): boolean {
+	return (
+		error instanceof AppError && error.code === AppErrorCode.StaleCompletion
+	);
 }
 
 function asIpcError(error: AppErrorWire): Error {

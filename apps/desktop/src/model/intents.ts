@@ -199,6 +199,12 @@ export type UserIntent =
     }
   | { readonly type: "retry_stop_agent"; readonly agentId: AgentId }
   | { readonly type: "reconcile_agent"; readonly agentId: AgentId }
+  /**
+   * Ask the provider about every Agent at once. DevHub raises this on its own
+   * cadence; the page has no way to send it, because nothing about it is a
+   * thing a person asks for.
+   */
+  | { readonly type: "reconcile_agents" }
   | {
       readonly type: "request_close_workspace";
       readonly workspaceId: WorkspaceId;

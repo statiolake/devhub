@@ -27,7 +27,7 @@ import {
 } from "../../ipc/agent.js";
 import { AgentSurfaceManager, type FrameSink } from "./channel.js";
 import { RuntimeLaunchContext } from "./launchContext.js";
-import type { AgentId, AgentObservation } from "./ports.js";
+import type { AgentId } from "./ports.js";
 import { HerdrAgentRuntime } from "./runtime.js";
 
 export interface AgentServiceOptions {
@@ -36,8 +36,6 @@ export interface AgentServiceOptions {
 	/** The configured Herdr command: a path, a `~` path, or a PATH name. */
 	readonly configuredHerdr: string;
 	readonly home: string;
-	/** Applied to state when a surface read fails or an attach observes. */
-	readonly onObservation: (observation: AgentObservation) => void;
 	/** Called when a live control stream fails; health is reconciled, not the row. */
 	readonly onSurfaceFailure: (agentId: AgentId) => void;
 }

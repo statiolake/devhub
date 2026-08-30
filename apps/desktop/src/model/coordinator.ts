@@ -571,6 +571,8 @@ export class AppCoordinator {
         return this.retryStop(intent.agentId, id);
       case "reconcile_agent":
         return this.requestAgentReconcile(id, intent.agentId);
+      case "reconcile_agents":
+        return this.requestAgentsReconcile(id);
       case "request_close_workspace":
         return this.beginWorkspaceInspection(intent.workspaceId, id, {
           kind: "begin",
@@ -2058,12 +2060,22 @@ export class AppCoordinator {
     return token;
   }
 
+  /**
+   * Drop a reconcile whose answer no longer describes the model.
+   *
+   * The superseded operation is announced as completed, and that is not a
+   * formality: something asked for it and is waiting on the answer. An
+   * operation that is removed in silence leaves that caller waiting for as
+   * long as its own deadline, and what it is finally told is that time ran
+   * out — which is true, and says nothing about what actually happened.
+   */
   private invalidateReconciliation(): void {
     const active = this.activeReconcile;
     if (!active) return;
     this.activeReconcile = undefined;
     if (this.pending.delete(active.token.operationId)) {
       this.rememberCompleted(active.token);
+      this.emit({ kind: "operation_completed", token: active.token });
     }
   }
 
