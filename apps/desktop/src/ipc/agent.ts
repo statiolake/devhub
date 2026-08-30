@@ -11,11 +11,19 @@
  * terminal bytes verbatim — so binary PTY output never becomes base64 JSON.
  * Electron's structured clone carries the `Uint8Array` as-is.
  *
- * Workstream B owns the identical contract for workspace terminals in
- * `src/ipc/terminal.ts`. The two are deliberately separate files until
- * integration: agent surfaces and PTY terminals differ in their surface-key
- * grammar and in whether resize reaches a real PTY.
+ * Workspace terminals have their own contract in `src/ipc/terminal.ts`. The
+ * two stay separate because their surface-key grammars genuinely differ; the
+ * framing they once each carried a copy of is now shared, in `./frame.ts`.
  */
+
+import {
+	FRAME_HEADER_BYTES,
+	FRAME_KINDS,
+	FramingFailure,
+	decodeChannelFrame,
+	encodeChannelFrame,
+	type FrameLimits,
+} from "./frame.js";
 
 export const TERMINAL_PROTOCOL_VERSION = 1;
 export const MAX_ATTACH_REQUEST_BYTES = 16 * 1024;
@@ -36,7 +44,12 @@ export const MAX_PIXEL = 10_000;
 export const MAX_INPUT_SEQUENCE = 9_007_199_254_740_991;
 export const MAX_TARGET_GENERATION = MAX_INPUT_SEQUENCE;
 export const RESIZE_INTERVAL_MS = 16;
-export const FRAME_HEADER_BYTES = 8;
+export { FRAME_HEADER_BYTES };
+
+const FRAME_LIMITS: FrameLimits = {
+	maxFrameBytes: MAX_CHANNEL_FRAME_BYTES,
+	maxOutputBytes: MAX_OUTPUT_FRAME_BYTES,
+};
 
 export enum FrameKind {
 	Started = 1,
@@ -240,13 +253,6 @@ export type TerminalFrame =
 			readonly error: TerminalErrorBody;
 	  };
 
-const FRAME_KINDS: Record<TerminalFrame["type"], FrameKind> = {
-	started: FrameKind.Started,
-	output: FrameKind.Output,
-	exited: FrameKind.Exited,
-	error: FrameKind.Error,
-};
-
 /**
  * Raw framing. Every message is a complete frame, so the page can reject a
  * malformed or truncated one without retaining partial terminal data. The
@@ -263,52 +269,41 @@ export function encodeFrame(frame: TerminalFrame): Uint8Array {
 					sequence: frame.sequence,
 				}
 			: frame;
-	const header = Buffer.from(JSON.stringify(metadata), "utf8");
-	const output = frame.type === "output" ? frame.bytes : new Uint8Array(0);
-	if (
-		output.length > MAX_OUTPUT_FRAME_BYTES ||
-		header.length > MAX_CHANNEL_FRAME_BYTES ||
-		header.length + output.length + FRAME_HEADER_BYTES > MAX_CHANNEL_FRAME_BYTES
-	) {
-		throw terminalError(TerminalErrorCode.Backpressure);
+	try {
+		return encodeChannelFrame(
+			TERMINAL_PROTOCOL_VERSION,
+			FRAME_KINDS[frame.type],
+			metadata,
+			frame.type === "output" ? frame.bytes : new Uint8Array(0),
+			FRAME_LIMITS,
+		);
+	} catch (failure) {
+		if (failure instanceof FramingFailure) {
+			throw terminalError(TerminalErrorCode.Backpressure);
+		}
+		throw failure;
 	}
-	const encoded = Buffer.alloc(
-		FRAME_HEADER_BYTES + header.length + output.length,
-	);
-	encoded[0] = TERMINAL_PROTOCOL_VERSION;
-	encoded[1] = FRAME_KINDS[frame.type];
-	encoded.writeUInt32LE(header.length, 4);
-	header.copy(encoded, FRAME_HEADER_BYTES);
-	Buffer.from(output).copy(encoded, FRAME_HEADER_BYTES + header.length);
-	return encoded;
 }
 
 /** The page's half of the framing. A malformed frame is an error, not a skip. */
 export function decodeFrame(raw: Uint8Array): TerminalFrame {
-	if (raw.length < FRAME_HEADER_BYTES) {
-		throw terminalError(TerminalErrorCode.InvalidRequest);
+	let frame;
+	try {
+		frame = decodeChannelFrame(TERMINAL_PROTOCOL_VERSION, raw, FRAME_LIMITS);
+	} catch (failure) {
+		if (failure instanceof FramingFailure) {
+			throw terminalError(TerminalErrorCode.InvalidRequest);
+		}
+		throw failure;
 	}
-	const view = new DataView(raw.buffer, raw.byteOffset, raw.byteLength);
-	if (raw[0] !== TERMINAL_PROTOCOL_VERSION) {
-		throw terminalError(TerminalErrorCode.InvalidRequest);
-	}
-	const kind = raw[1];
-	const headerBytes = view.getUint32(4, true);
-	if (FRAME_HEADER_BYTES + headerBytes > raw.length) {
-		throw terminalError(TerminalErrorCode.InvalidRequest);
-	}
-	const metadata = JSON.parse(
-		new TextDecoder().decode(
-			raw.subarray(FRAME_HEADER_BYTES, FRAME_HEADER_BYTES + headerBytes),
-		),
-	) as Record<string, unknown>;
-	if (kind === FrameKind.Output) {
+	const metadata = frame.metadata as Record<string, unknown>;
+	if (frame.kind === FrameKind.Output) {
 		return {
 			type: "output",
 			schemaVersion: metadata.schemaVersion as number,
 			attachmentId: metadata.attachmentId as string,
 			sequence: metadata.sequence as number,
-			bytes: raw.subarray(FRAME_HEADER_BYTES + headerBytes),
+			bytes: frame.payload,
 		};
 	}
 	return metadata as unknown as TerminalFrame;

@@ -15,6 +15,15 @@
  * the main process, the preload, and the page alike.
  */
 
+import {
+	FRAME_HEADER_BYTES,
+	FRAME_KINDS,
+	FramingFailure,
+	decodeChannelFrame,
+	encodeChannelFrame,
+	type FrameLimits,
+} from "./frame.js";
+
 export const TERMINAL_PROTOCOL_VERSION = 1 as const;
 export const MAX_ATTACH_REQUEST_BYTES = 16 * 1024;
 export const MAX_INPUT_BYTES = 64 * 1024;
@@ -38,14 +47,14 @@ export const MAX_INPUT_SEQUENCE = 9_007_199_254_740_991;
 export const MAX_TARGET_GENERATION = MAX_INPUT_SEQUENCE;
 export const RESIZE_INTERVAL_MS = 16;
 /** The fixed binary header: version, kind, two reserved bytes, header length. */
-export const TERMINAL_FRAME_HEADER_BYTES = 8;
+export const TERMINAL_FRAME_HEADER_BYTES = FRAME_HEADER_BYTES;
 
-export const TERMINAL_FRAME_KINDS = {
-	started: 1,
-	output: 2,
-	exited: 3,
-	error: 4,
-} as const;
+export const TERMINAL_FRAME_KINDS = FRAME_KINDS;
+
+const FRAME_LIMITS: FrameLimits = {
+	maxFrameBytes: MAX_CHANNEL_FRAME_BYTES,
+	maxOutputBytes: MAX_OUTPUT_FRAME_BYTES,
+};
 
 export type TerminalErrorCode =
 	| "invalid_request"
@@ -550,7 +559,6 @@ export function validateDetachRequest(value: unknown): AttachmentIdentity {
  * raw output bytes, and only an Output frame has any.
  */
 export function encodeTerminalFrame(frame: TerminalFrame): Uint8Array {
-	const kind = TERMINAL_FRAME_KINDS[frame.type];
 	const metadata: Record<string, unknown> =
 		frame.type === "output"
 			? {
@@ -560,27 +568,22 @@ export function encodeTerminalFrame(frame: TerminalFrame): Uint8Array {
 					sequence: frame.sequence,
 				}
 			: { ...frame };
-	const header = new TextEncoder().encode(JSON.stringify(metadata));
-	const output = frame.type === "output" ? frame.bytes : new Uint8Array(0);
-	if (
-		output.byteLength > MAX_OUTPUT_FRAME_BYTES ||
-		header.byteLength > MAX_CHANNEL_FRAME_BYTES ||
-		header.byteLength + output.byteLength + TERMINAL_FRAME_HEADER_BYTES >
-			MAX_CHANNEL_FRAME_BYTES
-	) {
-		throw new TerminalFailure("backpressure");
+	try {
+		return encodeChannelFrame(
+			TERMINAL_PROTOCOL_VERSION,
+			TERMINAL_FRAME_KINDS[frame.type],
+			metadata,
+			frame.type === "output" ? frame.bytes : new Uint8Array(0),
+			FRAME_LIMITS,
+		);
+	} catch (failure) {
+		// A frame too large to send is back-pressure in this channel's algebra:
+		// the sender must slow down, not retry the same bytes.
+		if (failure instanceof FramingFailure) {
+			throw new TerminalFailure("backpressure");
+		}
+		throw failure;
 	}
-	const encoded = new Uint8Array(
-		TERMINAL_FRAME_HEADER_BYTES + header.byteLength + output.byteLength,
-	);
-	encoded[0] = TERMINAL_PROTOCOL_VERSION;
-	encoded[1] = kind;
-	encoded[2] = 0;
-	encoded[3] = 0;
-	new DataView(encoded.buffer).setUint32(4, header.byteLength, true);
-	encoded.set(header, TERMINAL_FRAME_HEADER_BYTES);
-	encoded.set(output, TERMINAL_FRAME_HEADER_BYTES + header.byteLength);
-	return encoded;
 }
 
 function frameBytes(value: unknown): Uint8Array {
@@ -624,50 +627,23 @@ function parseFrameError(value: unknown): TerminalError {
 
 /** Decode exactly one raw frame; malformed or truncated frames fail closed. */
 export function decodeTerminalFrame(value: unknown): TerminalFrame {
-	const bytes = frameBytes(value);
-	if (
-		bytes.byteLength < TERMINAL_FRAME_HEADER_BYTES ||
-		bytes.byteLength > MAX_CHANNEL_FRAME_BYTES
-	) {
-		throw new Error("terminal frame length is invalid");
-	}
-	if (
-		bytes[0] !== TERMINAL_PROTOCOL_VERSION ||
-		bytes[2] !== 0 ||
-		bytes[3] !== 0
-	) {
-		throw new Error("terminal frame header is invalid");
-	}
-	const headerLength = new DataView(
-		bytes.buffer,
-		bytes.byteOffset,
-		bytes.byteLength,
-	).getUint32(4, true);
-	if (
-		headerLength > MAX_CHANNEL_FRAME_BYTES - TERMINAL_FRAME_HEADER_BYTES ||
-		headerLength > bytes.byteLength - TERMINAL_FRAME_HEADER_BYTES
-	) {
-		throw new Error("terminal frame header length is invalid");
-	}
-	const kind = bytes[1];
-	const headerBytes = bytes.subarray(
-		TERMINAL_FRAME_HEADER_BYTES,
-		TERMINAL_FRAME_HEADER_BYTES + headerLength,
-	);
-	let header: unknown;
+	let raw;
 	try {
-		header = JSON.parse(
-			new TextDecoder("utf-8", { fatal: true }).decode(headerBytes),
+		raw = decodeChannelFrame(
+			TERMINAL_PROTOCOL_VERSION,
+			frameBytes(value),
+			FRAME_LIMITS,
 		);
-	} catch {
-		// Not a swallow: a frame whose metadata is not valid JSON has exactly
-		// one meaning, and the caller is told it as its own failure.
-		throw new Error("terminal frame metadata is invalid");
+	} catch (failure) {
+		if (failure instanceof FramingFailure) {
+			throw new Error(`terminal ${failure.message}`);
+		}
+		throw failure;
 	}
+	const { kind, metadata: header, payload } = raw;
 	if (!isRecord(header) || typeof header.type !== "string") {
 		throw new Error("terminal frame metadata is invalid");
 	}
-	const payload = bytes.subarray(TERMINAL_FRAME_HEADER_BYTES + headerLength);
 	if (header.schemaVersion !== TERMINAL_PROTOCOL_VERSION) {
 		throw new Error("invalid schema version");
 	}
