@@ -41,7 +41,7 @@ import {
   type AgentTerminalFactory,
   type AgentTerminalView,
   type TerminalGeometry,
-} from "./xtermView.js";
+} from "../surfaces/xtermView";
 
 export interface AgentSurfaceViewProps {
   /** The domain Agent this surface shows. The surface key is derived. */

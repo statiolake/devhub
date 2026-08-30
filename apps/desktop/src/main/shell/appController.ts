@@ -44,6 +44,7 @@ import {
 	agentProfileId,
 	displayPath,
 	agentId as parseAgentId,
+	type AgentId,
 	surfaceKeyName,
 	workspaceId as parseWorkspaceId,
 	workspaceRoot,
@@ -117,6 +118,9 @@ const SCRATCH_EDITOR = "";
 /** How long the page waits for a deferred operation before it is a failure. */
 const OPERATION_TIMEOUT_MS = 60_000;
 
+/** More rounds than any real chain needs, and fewer than a cycle survives. */
+const MAX_DRAIN_ROUNDS = 512;
+
 interface PendingRequest {
 	readonly promise: Promise<IntentOutcome>;
 	readonly settle: (outcome: IntentOutcome) => void;
@@ -142,6 +146,18 @@ export class AppController {
 	private readonly pendingRequests = new Map<OperationId, PendingRequest>();
 	private terminalsWiring: TerminalWiring | undefined;
 	private agentService: AgentService | undefined;
+	/**
+	 * Agents the adapter has said something about, waiting for one reconcile.
+	 *
+	 * An observation arrives *because* a reconcile is running, so dispatching a
+	 * reconcile from one is a loop that never ends — and it runs on the main
+	 * thread, so the app simply stops. What an observation means is "the model's
+	 * idea of this Agent may be stale"; the answer is one reconcile after the
+	 * current one finishes, not another one inside it.
+	 */
+	private readonly staleAgents = new Set<AgentId>();
+	private reconcileScheduled = false;
+	private reconciling = false;
 	private stopWatchingConfig: (() => void) | undefined;
 
 	constructor(
@@ -156,6 +172,8 @@ export class AppController {
 		 * started — after that the flag describes this run, not the last one.
 		 */
 		private readonly previousExitValue: "clean" | "unclean" | "unknown",
+		/** Whether this run started from a state file that did not exist. */
+		private readonly freshState: boolean,
 	) {
 		this.state = state;
 		this.config = config;
@@ -198,6 +216,21 @@ export class AppController {
 	 */
 	async startRuntimes(userDataPath: string): Promise<void> {
 		const config = this.config;
+		// On a state file that has never existed, the configured socket *is* the
+		// effective one: there are no sessions to migrate, so adopting it is the
+		// whole of the change. Once a run has owned sessions on a socket, the
+		// configured name becomes a request Settings has to apply, because
+		// switching silently would abandon them.
+		const configuredSocket = config?.runtimes.tmux_socket_name;
+		if (
+			this.freshState &&
+			configuredSocket !== undefined &&
+			this.state.tmux.transition.kind === "stable" &&
+			this.state.tmux.effective_socket_name !== configuredSocket
+		) {
+			this.state.tmux.effective_socket_name = configuredSocket;
+			await this.stateStore.saveState(this.state);
+		}
 		const resolved = await resolveRuntimes(
 			config?.runtimes ?? {
 				shell: "/bin/zsh",
@@ -221,15 +254,48 @@ export class AppController {
 			home: homedir(),
 			model: () => this.coordinator.model,
 			onObserved: (agentId) => {
-				// Whatever the adapter noticed reaches the model the one way any
-				// observation does: by reconciling that Agent.
-				this.dispatchOwn({ type: "reconcile_agent", agentId });
+				this.noteStaleAgent(agentId);
 			},
 		});
 	}
 
 	get terminalRuntime(): TerminalWiring | undefined {
 		return this.terminalsWiring;
+	}
+
+	/**
+	 * Remember that an Agent may be stale, and reconcile once, later.
+	 *
+	 * Coalescing is the point: a burst of observations about several Agents is
+	 * still one round of catching up, and none of it may happen while a
+	 * reconcile is already in flight.
+	 */
+	private noteStaleAgent(agentId: AgentId): void {
+		this.staleAgents.add(agentId);
+		if (this.reconcileScheduled || this.reconciling) return;
+		this.reconcileScheduled = true;
+		const timer = setTimeout(() => {
+			this.reconcileScheduled = false;
+			this.reconcileStaleAgents();
+		}, 250);
+		// Catching up on Agents must never be the reason the process stays alive.
+		(timer as unknown as { unref?: () => void }).unref?.();
+	}
+
+	private reconcileStaleAgents(): void {
+		const pending = [...this.staleAgents].filter((agentId) =>
+			this.coordinator.model.agent(agentId),
+		);
+		this.staleAgents.clear();
+		if (pending.length === 0) return;
+		this.reconciling = true;
+		try {
+			for (const agentId of pending) {
+				this.dispatchOwn({ type: "reconcile_agent", agentId });
+			}
+		} finally {
+			this.reconciling = false;
+		}
 	}
 
 	markReady(): void {
@@ -247,10 +313,14 @@ export class AppController {
 	 */
 	async shutdown(): Promise<void> {
 		this.stopWatchingConfig?.();
-		this.terminalsWiring?.service.dispose();
-		await this.agentService?.dispose();
+		// The flag is written first, and on purpose: it records that the person
+		// asked to quit, which is true whether or not the teardown below manages
+		// to finish. Writing it afterwards would report a crash every time a
+		// runtime was slow to let go.
 		markCleanShutdown(this.state);
 		await this.stateStore.saveState(this.state);
+		this.terminalsWiring?.service.dispose();
+		await this.agentService?.dispose();
 	}
 
 	//#endregion
@@ -445,7 +515,16 @@ export class AppController {
 		if (this.draining) return;
 		this.draining = true;
 		try {
-			for (;;) {
+			// One dispatch settles in a handful of rounds. A chain that does not
+			// is a cycle, and a cycle here spins the main thread — the app stops
+			// answering anything, including its own window. Failing loudly at a
+			// bound turns that into a stack trace at the moment it starts.
+			for (let round = 0; ; round += 1) {
+				if (round > MAX_DRAIN_ROUNDS) {
+					throw new Error(
+						"the coordinator did not settle: an effect chain is cycling",
+					);
+				}
 				const subscription = this.coordinator.subscribeFrom(this.cursor);
 				if (subscription.events.length === 0) break;
 				this.cursor = subscription.cursor;
@@ -1110,6 +1189,7 @@ export async function createAppController(
 		state,
 		config,
 		previousExit,
+		load.metadata.origin === "fresh",
 	);
 	return current;
 }

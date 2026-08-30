@@ -737,6 +737,16 @@ body.is-resizing-sidebar {
   display: none;
 }
 
+/* A pooled Surface fills its entry.
+   This is the viewport's rule, not each Surface's: the entry is the rectangle
+   the selection hands over, and a renderer that has to remember to fill it is
+   one that will eventually forget — as the Agent Surface did, drawing itself
+   at its content's height with the viewport's background showing below. */
+.surface-pool-entry > * {
+  min-height: 0;
+  flex: 1;
+}
+
 /* The terminal owns its own background; give it the whole viewport. */
 .surface[data-surface-state="terminal"],
 .surface[data-surface-state="agent"] {

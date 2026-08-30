@@ -37,8 +37,23 @@ import {
 export const CONFIG_SCHEMA_VERSION = 1;
 export const CONFIG_RELATIVE_PATH = ".config/devhub/config.toml";
 
-export function defaultConfigPath(home: string): string {
-  return join(home, CONFIG_RELATIVE_PATH);
+/**
+ * Where the config lives.
+ *
+ * `~/.config/devhub/config.toml`, unless `XDG_CONFIG_HOME` says otherwise —
+ * which is the convention for everything else under `~/.config`, and is what
+ * lets a test or a second instance be pointed somewhere else without moving
+ * `HOME` and taking the Keychain, the caches and the app's whole identity
+ * with it.
+ */
+export function defaultConfigPath(
+  home: string,
+  environment: Readonly<Record<string, string | undefined>> = process.env,
+): string {
+  const xdg = environment["XDG_CONFIG_HOME"];
+  return xdg !== undefined && xdg.startsWith("/")
+    ? join(xdg, "devhub", "config.toml")
+    : join(home, CONFIG_RELATIVE_PATH);
 }
 
 export const DEFAULT_EXCLUDE_NAMES: readonly string[] = [

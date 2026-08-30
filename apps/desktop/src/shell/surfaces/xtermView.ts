@@ -14,6 +14,10 @@
  * agent surface never pays for the terminal bundle.
  */
 
+import { FitAddon } from "@xterm/addon-fit";
+import { Terminal } from "@xterm/xterm";
+import "@xterm/xterm/css/xterm.css";
+
 export interface TerminalGeometry {
   readonly cols: number;
   readonly rows: number;
@@ -50,15 +54,7 @@ export const FALLBACK_GEOMETRY: TerminalGeometry = {
   pixelHeight: 0,
 };
 
-const XTERM_SPECIFIER = "@xterm/xterm";
-const FIT_SPECIFIER = "@xterm/addon-fit";
-
-/* eslint-disable @typescript-eslint/no-explicit-any */
 export const createXtermView: AgentTerminalFactory = async (host, options) => {
-  const { Terminal } = (await import(
-    /* @vite-ignore */ XTERM_SPECIFIER
-  )) as any;
-  const { FitAddon } = (await import(/* @vite-ignore */ FIT_SPECIFIER)) as any;
   const terminal = new Terminal({
     allowProposedApi: true,
     convertEol: false,
@@ -108,4 +104,3 @@ export const createXtermView: AgentTerminalFactory = async (host, options) => {
     },
   };
 };
-/* eslint-enable @typescript-eslint/no-explicit-any */

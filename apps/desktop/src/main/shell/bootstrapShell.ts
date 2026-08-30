@@ -19,6 +19,9 @@ import { electron } from "../electron.js";
 import { createShellWindow, shellWindowIfCreated } from "./shellWindow.js";
 import { installSettingsWindow, logDirectoryFor } from "./settingsWindow.js";
 
+/** How long a quit waits for the runtimes to let go before leaving anyway. */
+const SHUTDOWN_DEADLINE_MS = 3_000;
+
 /** `apps/desktop/out/main/shell` -> `apps/desktop`. */
 const APP_ROOT = join(
 	dirname(fileURLToPath(import.meta.url)),
@@ -99,9 +102,29 @@ export async function bootstrapShell(
 
 	// The state file records that this run ended on purpose, which is what the
 	// next launch reads to tell a clean exit from a crash.
-	electron.app.on("will-quit", (event) => {
+	//
+	// The wait is bounded because a quit that does not quit is worse than any
+	// tidying it was waiting for: a runtime that will not let go leaves the
+	// person with an app they cannot close, and the state has already been
+	// written by the time the deadline matters.
+	//
+	// It hangs off `before-quit` rather than `will-quit` because `will-quit`
+	// comes after every window has agreed to close, and a workbench view can
+	// hold that negotiation open — which leaves the person with an app that
+	// will not quit. `before-quit` always fires, so the state is always
+	// written and the deadline always applies.
+	let quitting = false;
+	electron.app.on("before-quit", (event) => {
+		if (quitting) return;
+		quitting = true;
 		event.preventDefault();
-		void controller.shutdown().finally(() => {
+		const deadline = new Promise<void>((resolve) => {
+			setTimeout(() => {
+				console.warn("[devhub] quit: shutdown did not finish in time");
+				resolve();
+			}, SHUTDOWN_DEADLINE_MS);
+		});
+		void Promise.race([controller.shutdown(), deadline]).finally(() => {
 			electron.app.exit(0);
 		});
 	});
