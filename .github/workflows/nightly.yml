@@ -1,0 +1,145 @@
+# Package `main` every night and publish the result as a rolling prerelease.
+#
+# The long pole is the VS Code submodule: `npm ci` and `npm run compile` in
+# vscode/ take the better part of half an hour, and they produce exactly the
+# same tree until the submodule commit, its lockfile, its Node version or
+# DevHub's patches change. One cache keyed on all four therefore turns the
+# common nightly run into a build of DevHub's own code plus the packaging step.
+#
+# The result is unsigned beyond an ad-hoc signature. Signing needs a paid Apple
+# Developer identity in the repository's secrets; until there is one, the
+# release notes tell people how to clear the quarantine flag themselves.
+name: Nightly
+
+on:
+  schedule:
+    # 18:00 UTC — 03:00 JST, after the working day this repository is worked in.
+    - cron: "0 18 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  # Never two nightlies at once: they would race for the same rolling tag.
+  group: nightly
+  cancel-in-progress: false
+
+jobs:
+  package:
+    name: DevHub.app (darwin-arm64)
+    runs-on: macos-15
+    timeout-minutes: 120
+    env:
+      CI: "true"
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+          fetch-depth: 1
+
+      - name: Describe this build
+        id: meta
+        run: |
+          echo "date=$(date -u +%Y%m%d)" >> "$GITHUB_OUTPUT"
+          echo "sha=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+          echo "vscode_sha=$(git -C vscode rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Activate pinned pnpm
+        run: corepack enable && corepack prepare pnpm@11.20.0 --activate
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.21.1
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      # Everything scripts/provision-vscode.sh produces, under one key. A miss
+      # costs the full npm ci and compile; a hit makes provisioning a no-op,
+      # because every step of that script is skipped when its output exists.
+      - name: Restore the provisioned VS Code build
+        id: vscode-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            vscode-toolchain
+            vscode/node_modules
+            vscode/out
+            vscode/.build
+          key: >-
+            vscode-${{ runner.os }}-${{ runner.arch }}-${{ steps.meta.outputs.vscode_sha }}-${{
+            hashFiles('vscode/package-lock.json', 'vscode/.nvmrc', 'patches/vscode/*.patch') }}
+
+      - name: Install JavaScript dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Provision the VS Code submodule
+        run: scripts/provision-vscode.sh
+
+      - name: Build DevHub
+        run: pnpm run build
+
+      - name: Package DevHub.app
+        env:
+          # The built-in extension set pulls a handful of extensions from
+          # GitHub releases; the token is only there for the rate limit.
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          scripts/package-nightly.py \
+            --out-dir dist \
+            --zip \
+            --zip-name "DevHub-darwin-arm64-${{ steps.meta.outputs.date }}-${{ steps.meta.outputs.sha }}.zip"
+
+      # The same zip, reachable without a release, for debugging a run.
+      - name: Upload the zip as a workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DevHub-darwin-arm64-${{ steps.meta.outputs.date }}-${{ steps.meta.outputs.sha }}
+          path: dist/*.zip
+          retention-days: 7
+          if-no-files-found: error
+
+      - name: Write the release notes
+        run: |
+          cat > dist/notes.md <<'NOTES'
+          A nightly build of DevHub for macOS on Apple Silicon. It is not
+          signed by a registered developer and it is not notarised, so macOS
+          quarantines it. Unzip it, move `DevHub.app` where you keep it, and
+          clear the flag once:
+
+          ```sh
+          xattr -dr com.apple.quarantine /Applications/DevHub.app
+          ```
+
+          The first launch asks for access to the keychain item "DevHub Safe
+          Storage" — that is the app creating the store VS Code keeps secrets
+          in. Answer once and it stops asking.
+
+          Requires macOS 15 or later on Apple Silicon. There is no update
+          mechanism: replace the app with the next nightly.
+          NOTES
+          {
+            echo ""
+            echo "Built from \`${{ github.sha }}\` with VS Code \`${{ steps.meta.outputs.vscode_sha }}\`."
+            echo ""
+            echo "[The run that produced it](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})"
+          } >> dist/notes.md
+
+      # One rolling prerelease, replaced whole: the tag has to move to the
+      # commit that was packaged, and a release cannot be retagged in place.
+      - name: Publish the nightly release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view nightly >/dev/null 2>&1; then
+            gh release delete nightly --yes --cleanup-tag
+          fi
+          gh release create nightly \
+            --prerelease \
+            --target "$GITHUB_SHA" \
+            --title "Nightly ${{ steps.meta.outputs.date }} (${{ steps.meta.outputs.sha }})" \
+            --notes-file dist/notes.md \
+            dist/*.zip
