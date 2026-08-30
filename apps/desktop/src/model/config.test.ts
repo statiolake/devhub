@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   ConfigError,
   ConfigStore,
+  configOntoDocument,
   configToToml,
   contentRevision,
   defaultConfig,
@@ -190,6 +191,39 @@ describe("round trip", () => {
   it("re-parses to the same config", () => {
     const config = defaultConfig();
     expect(parseConfig(configToToml(config))).toEqual(config);
+  });
+
+  it("empties a collection and fills it again, re-parsing each time", () => {
+    const full = configToToml(defaultConfig());
+    const config = parseConfig(full);
+    expect(config.workspaceSources.length).toBeGreaterThan(0);
+
+    const emptied = configOntoDocument(full, {
+      ...config,
+      workspaceSources: [],
+    });
+    expect(emptied).not.toContain("[[workspace_sources]]");
+    expect(parseConfig(emptied).workspaceSources).toEqual([]);
+    // Emptying one collection leaves the other alone.
+    expect(parseConfig(emptied).agentProfiles).toEqual(config.agentProfiles);
+
+    const refilled = configOntoDocument(emptied, {
+      ...parseConfig(emptied),
+      workspaceSources: config.workspaceSources,
+    });
+    expect(parseConfig(refilled)).toEqual(config);
+  });
+
+  it("empties every collection at once and still re-parses", () => {
+    const full = configToToml(defaultConfig());
+    const emptied = configOntoDocument(full, {
+      ...parseConfig(full),
+      workspaceSources: [],
+      agentProfiles: [],
+    });
+    const reparsed = parseConfig(emptied);
+    expect(reparsed.workspaceSources).toEqual([]);
+    expect(reparsed.agentProfiles).toEqual([]);
   });
 });
 

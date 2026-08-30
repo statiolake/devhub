@@ -162,6 +162,68 @@ describe("editing in place", () => {
     expect(next).toContain("# I like it small.");
   });
 
+  it("removes the last entry of a one-entry array and writes the empty array", () => {
+    const one = [
+      "version = 1",
+      "",
+      "# The only profile.",
+      "[[agent_profiles]]",
+      'id = "codex"',
+      'display_name = "Codex"',
+      "[agent_profiles.env]",
+      'TOKEN = "x"',
+      "",
+    ].join("\n");
+    const next = updateTomlDocument(one, {
+      ...documentOf(one),
+      agent_profiles: [],
+    });
+    expect(next).not.toContain("[[agent_profiles]]");
+    expect(next).not.toContain("[agent_profiles.env]");
+    expect(next).toContain("agent_profiles = []");
+    expect(parseTomlValue(next)).toEqual({ version: 1, agent_profiles: [] });
+  });
+
+  it("removes the last of two entries, then re-adds one, re-parsing each time", () => {
+    const emptied = updateTomlDocument(source, {
+      ...document,
+      agent_profiles: [],
+    });
+    expect(emptied).not.toContain("[[agent_profiles]]");
+    expect(emptied).toContain("agent_profiles = []");
+    // The rest of the file is untouched.
+    expect(emptied).toContain("# I like it small.");
+    expect(emptied).toContain("terminal_font_size = 13   # not 14");
+    expect(parseTomlValue(emptied)).toEqual({
+      ...document,
+      agent_profiles: [],
+    });
+
+    const refilled = updateTomlDocument(emptied, {
+      ...documentOf(emptied),
+      agent_profiles: [profiles[1]],
+    });
+    // The empty marker gave way to the block spelling rather than joining it.
+    expect(refilled).not.toContain("agent_profiles = []");
+    expect(refilled.match(/\[\[agent_profiles\]\]/g)).toHaveLength(1);
+    expect(parseTomlValue(refilled)).toEqual({
+      ...document,
+      agent_profiles: [profiles[1]],
+    });
+  });
+
+  it("keeps an inline array of tables inline", () => {
+    const inline =
+      'version = 1\nagent_profiles = [ { id = "codex" } ]\nworkspace_sources = []\n';
+    const next = updateTomlDocument(inline, {
+      ...documentOf(inline),
+      agent_profiles: [{ id: "codex", display_name: "Codex" }],
+    });
+    expect(next).toBe(
+      'version = 1\nagent_profiles = [ { id = "codex", display_name = "Codex" } ]\nworkspace_sources = []\n',
+    );
+  });
+
   it("appends an array-of-tables entry the file does not have", () => {
     const next = updateTomlDocument(source, {
       ...document,

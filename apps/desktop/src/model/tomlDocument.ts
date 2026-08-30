@@ -27,6 +27,17 @@
  *   are matched by their `id`, not their position: reordering the array in the
  *   UI does not rewrite unrelated blocks, and a removed entry takes its own
  *   block and nothing else.
+ * - An array of tables has two spellings — a run of `[[key]]` blocks, or one
+ *   inline `key = [ { … } ]` — and the document's own spelling wins. An empty
+ *   array has no block spelling at all, so `key = []` is the empty marker
+ *   rather than a choice of spelling: emptying an array removes every block
+ *   *and* writes `key = []`, and refilling it takes the blocks back. The key
+ *   is still written because `desired` says it is there, and a reader that
+ *   tells an absent key from an empty one (DevHub's loader does — an absent
+ *   `workspace_sources` means the defaults) would otherwise read back
+ *   something nobody asked for. Writing one spelling without removing the
+ *   other is how a document ends up defining the same key twice, which is not
+ *   TOML at all.
  */
 
 import { parseTOML, getStaticTOMLValue } from "toml-eslint-parser";
@@ -338,6 +349,63 @@ export function updateTomlDocument(
   ): AST.TOMLTable | undefined =>
     allTables.find((entry) => samePath(entry.path, path))?.node;
 
+  /** The `[[path]]` blocks the document already has, in document order. */
+  const arrayTableBlocks = (
+    path: readonly (string | number)[],
+  ): readonly TableEntry[] =>
+    allTables.filter(
+      (entry) =>
+        entry.node.kind === "array" &&
+        entry.path.length === path.length + 1 &&
+        samePath(entry.path.slice(0, -1), path),
+    );
+
+  /**
+   * A block's own span plus the sub-tables written inside it.
+   *
+   * `[agent_profiles.env]` belongs to the `[[agent_profiles]]` block above it.
+   * Removing the block without it leaves a heading whose parent is gone, and
+   * the document stops parsing — the same class of failure as leaving the
+   * block behind, just spelled differently.
+   */
+  const blockWithChildrenSpan = (
+    entry: TableEntry,
+  ): { start: number; end: number } => {
+    let last = entry;
+    for (
+      let next = allTables.indexOf(entry) + 1;
+      next < allTables.length;
+      next += 1
+    ) {
+      const candidate = allTables[next];
+      if (candidate.path.length <= entry.path.length) break;
+      if (!samePath(candidate.path.slice(0, entry.path.length), entry.path)) {
+        break;
+      }
+      last = candidate;
+    }
+    return {
+      start: blockSpan(source, entry.node).start,
+      end: blockSpan(source, last.node).end,
+    };
+  };
+
+  /**
+   * Whether this key is an array of tables at all.
+   *
+   * With entries the value answers: every element is a table. Empty, the value
+   * cannot answer, so the document does — `[[key]]` blocks mean this is that
+   * array being emptied. With neither, it is an ordinary empty array, and
+   * `key = []` is the whole of it either way.
+   */
+  const isArrayOfTables = (
+    path: readonly (string | number)[],
+    wanted: readonly unknown[],
+  ): boolean =>
+    wanted.length > 0
+      ? wanted.every((item) => needsTableBlock(item as TomlValue))
+      : arrayTableBlocks(path).length > 0;
+
   /**
    * Reconcile one table's worth of keys.
    *
@@ -367,16 +435,39 @@ export function updateTomlDocument(
     for (const [key, wanted] of Object.entries(target)) {
       const childPath = [...path, key];
 
-      if (
-        Array.isArray(wanted) &&
-        wanted.length > 0 &&
-        wanted.every((item) => needsTableBlock(item as TomlValue))
-      ) {
+      if (Array.isArray(wanted) && isArrayOfTables(childPath, wanted)) {
+        // The document's own spelling wins — but only while it has entries to
+        // spell. An inline `key = []` is the empty marker, not a claim on the
+        // inline spelling, so refilling the array goes back to blocks.
+        const inline = pairs.get(key);
+        const spelledInline =
+          inline !== undefined &&
+          Array.isArray(existing[key]) &&
+          (existing[key] as readonly unknown[]).length > 0;
+        if (spelledInline) {
+          if (!valuesEqual(existing[key], wanted)) {
+            edits.push({
+              start: inline.value.range[0],
+              end: inline.value.range[1],
+              text: renderValue(wanted),
+            });
+          }
+          continue;
+        }
         reconcileArrayOfTables(
           childPath,
+          existing,
           key,
           wanted as readonly Record<string, TomlValue>[],
         );
+        // Exactly one of the two spellings survives: blocks when there is
+        // anything to put in them, `key = []` when there is not.
+        if (wanted.length === 0) {
+          if (!inline) newKeys.push([key, wanted]);
+        } else if (inline) {
+          const span = lineSpan(source, inline);
+          edits.push({ start: span.start, end: span.end, text: "" });
+        }
         continue;
       }
 
@@ -445,18 +536,14 @@ export function updateTomlDocument(
 
   const reconcileArrayOfTables = (
     path: readonly (string | number)[],
+    existing: Record<string, unknown>,
     key: string,
     wanted: readonly Record<string, TomlValue>[],
   ): void => {
     const name = path.map(String);
-    const blocks = allTables.filter(
-      (entry) =>
-        entry.node.kind === "array" &&
-        entry.path.length === path.length + 1 &&
-        samePath(entry.path.slice(0, -1), path),
-    );
-    const existingArray = Array.isArray(current[key])
-      ? (current[key] as Record<string, unknown>[])
+    const blocks = arrayTableBlocks(path);
+    const existingArray = Array.isArray(existing[key])
+      ? (existing[key] as Record<string, unknown>[])
       : [];
 
     // Blocks are matched by their own `id`, not by position: the array can be
@@ -471,7 +558,7 @@ export function updateTomlDocument(
       if (id !== undefined) byId.set(id, { node: entry.node, value });
     });
 
-    const keptIds = new Set<string>();
+    const kept = new Set<AST.TOMLTable>();
     for (const item of wanted) {
       const id = typeof item["id"] === "string" ? item["id"] : undefined;
       const match = id === undefined ? undefined : byId.get(id);
@@ -479,7 +566,7 @@ export function updateTomlDocument(
         appended.push(renderArrayTableBlock(name, item));
         continue;
       }
-      if (id !== undefined) keptIds.add(id);
+      kept.add(match.node);
       reconcile(
         [...path, blocks.findIndex((entry) => entry.node === match.node)],
         match.node.body,
@@ -489,13 +576,13 @@ export function updateTomlDocument(
       );
     }
 
-    for (const [id, match] of byId) {
-      if (keptIds.has(id)) continue;
-      edits.push({
-        start: blockSpan(source, match.node).start,
-        end: blockSpan(source, match.node).end,
-        text: "",
-      });
+    // Every block the desired array did not claim goes, whether it had an `id`
+    // to be matched by or not: a block left behind is an entry that comes back
+    // on the next read.
+    for (const entry of blocks) {
+      if (kept.has(entry.node)) continue;
+      const span = blockWithChildrenSpan(entry);
+      edits.push({ start: span.start, end: span.end, text: "" });
     }
   };
 
