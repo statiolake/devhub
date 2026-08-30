@@ -135,6 +135,10 @@ const OPERATION_TIMEOUT_MS = 60_000;
 /** More rounds than any real chain needs, and fewer than a cycle survives. */
 const MAX_DRAIN_ROUNDS = 512;
 
+/** A crash loop is a bug to report, not a thing to keep feeding. */
+const MAX_EDITOR_RESTARTS = 5;
+const RESTART_BACKOFF_MS = 250;
+
 interface PendingRequest {
 	readonly promise: Promise<IntentOutcome>;
 	readonly settle: (outcome: IntentOutcome) => void;
@@ -149,6 +153,8 @@ export class AppController {
 
 	/** Folder path (or the scratch key) -> the `ICodeWindow` id of its view. */
 	private readonly viewsByFolder = new Map<string, number>();
+	/** How many unasked-for deaths a folder's workbench gets before DevHub stops. */
+	private readonly editorRestarts = new Map<string, number>();
 	/** One in-flight workbench open per folder, shared by concurrent callers. */
 	private readonly editorOpens = new Map<
 		string,
@@ -1080,20 +1086,81 @@ export class AppController {
 			.then((windows) => {
 				const opened = windows.at(0);
 				if (opened) this.viewsByFolder.set(folder, opened.id);
+				const view =
+					opened === undefined
+						? undefined
+						: shellWindow().getViewById(opened.id);
+				if (view) this.superviseEditorView(folder, view);
 				// A view no longer puts itself on screen when it is created, so
 				// the arrival of one is a moment to ask the selection again what
 				// belongs there — otherwise the workbench being waited for opens
 				// and nothing reveals it.
 				void this.syncEditorView();
-				return opened === undefined
-					? undefined
-					: shellWindow().getViewById(opened.id);
+				return view;
 			})
 			.finally(() => {
 				this.editorOpens.delete(folder);
 			});
 		this.editorOpens.set(folder, attempt);
 		return attempt;
+	}
+
+	/**
+	 * Watch a workbench, and stand it back up if it falls over.
+	 *
+	 * DevHub owns the editor's lifecycle. VS Code is one element inside
+	 * DevHub's page, and an element that vanishes because its renderer was
+	 * killed — or because VS Code decided to close itself — is not a decision
+	 * DevHub made and must not be one the person has to notice. So a death
+	 * DevHub did not ask for is answered by building the workbench again, in
+	 * the same slot, for the same folder.
+	 *
+	 * With a delay that grows, because the interesting failure is the one that
+	 * repeats: a workbench that cannot start would otherwise be rebuilt as fast
+	 * as it dies, and a spinning main process is worse than a missing editor.
+	 * After enough tries it stops and says so, with the count, rather than
+	 * pretending nothing happened.
+	 */
+	private superviseEditorView(folder: string, view: WorkbenchView): void {
+		const died = () => {
+			// A view DevHub destroyed on purpose is not a casualty: its folder is
+			// no longer in the table, because that is what destroying it means.
+			if (this.viewsByFolder.get(folder) !== view.id) return;
+			this.viewsByFolder.delete(folder);
+			const failures = (this.editorRestarts.get(folder) ?? 0) + 1;
+			this.editorRestarts.set(folder, failures);
+			if (failures > MAX_EDITOR_RESTARTS) {
+				this.publishError(
+					errorWire(
+						new Error(
+							`the workbench for this folder stopped ${String(failures)} times and will not be restarted again`,
+						),
+					),
+				);
+				return;
+			}
+			const delay = RESTART_BACKOFF_MS * 2 ** (failures - 1);
+			const timer = setTimeout(() => {
+				void this.ensureEditorView(folder).catch((error: unknown) => {
+					this.publishError(errorWire(error));
+				});
+			}, delay);
+			(timer as unknown as { unref?: () => void }).unref?.();
+			this.publishError(
+				errorWire(
+					new Error(
+						`the workbench stopped unexpectedly and is restarting (attempt ${String(failures)})`,
+					),
+				),
+			);
+		};
+		view.webContents.once("destroyed", died);
+		view.webContents.on("render-process-gone", died);
+		// A workbench that got all the way up is a success, whatever happened
+		// before it: the count is about a loop, not about a lifetime.
+		view.webContents.once("did-finish-load", () => {
+			this.editorRestarts.delete(folder);
+		});
 	}
 
 	/**
@@ -1202,6 +1269,24 @@ export class AppController {
 			.lifecycle()
 			.unload(codeWindow, UnloadReason.CLOSE);
 		return !vetoed;
+	}
+
+	/**
+	 * Which editor surface a workbench view is, in the page's own vocabulary.
+	 *
+	 * A dialog raised by a workbench has to be drawn over *that* workbench, and
+	 * the page knows its surfaces by key, not by view id.
+	 */
+	editorSurfaceKeyForView(viewId: number): string | undefined {
+		for (const [folder, id] of this.viewsByFolder) {
+			if (id !== viewId) continue;
+			if (folder === SCRATCH_EDITOR) return "global-editor";
+			const workspace = this.coordinator.model.workspaces.find(
+				(candidate) => candidate.root === folder,
+			);
+			return workspace ? `workspace-editor:${workspace.id}` : undefined;
+		}
+		return undefined;
 	}
 
 	/** The `openInBrowserWindow` override's half of the folder binding. */

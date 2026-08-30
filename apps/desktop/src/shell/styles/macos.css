@@ -451,6 +451,12 @@
   gap: var(--space-4);
 }
 
+/* A message that carries no glyph gets the whole width; without this the text
+   lands in the icon's column and wraps a word to a line. */
+.mac-alert-body.plain {
+  grid-template-columns: 1fr;
+}
+
 .mac-alert-icon {
   display: flex;
   align-items: flex-start;
@@ -557,6 +563,46 @@
   justify-content: flex-end;
   gap: var(--space-2);
   padding: var(--space-3) var(--space-4);
+}
+
+/*
+ * An alert that belongs to one workbench.
+ *
+ * Inside the viewport, not over the window: it is clipped to the editor area
+ * by being positioned within it, so the sidebar and the rest of the app stay
+ * both visible and usable while it stands.
+ */
+.view-scoped-alert {
+  position: absolute;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  inset: 0;
+  overflow: hidden;
+}
+
+/* The workbench's own last frame, so the editor does not appear to vanish
+   while it is standing down for its question. */
+.view-scoped-alert-backdrop {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  inset: 0;
+  object-fit: fill;
+}
+
+.view-scoped-alert-scrim {
+  position: absolute;
+  inset: 0;
+  background: light-dark(rgba(0, 0, 0, 0.16), rgba(0, 0, 0, 0.36));
+}
+
+.view-scoped-alert .mac-alert {
+  position: relative;
+  /* Centred in the editor area, not measured from the top of the window. */
+  margin-top: 0;
+  max-width: calc(100% - var(--space-6) * 2);
 }
 
 /* ----------------------------------------------------------- empty states */

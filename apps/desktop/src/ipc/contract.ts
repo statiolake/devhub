@@ -182,6 +182,23 @@ export const CHANNELS = {
  */
 export interface WorkbenchDialogRequest {
 	readonly id: string;
+	/**
+	 * The editor surface this question belongs to.
+	 *
+	 * It is drawn inside that workbench's own rectangle and nowhere else: the
+	 * question is about one editor, so it is modal to one editor. Everything
+	 * outside — the sidebar, the other workspaces, the terminal — stays live.
+	 */
+	readonly surfaceKey: string;
+	/**
+	 * The workbench as it looked when it asked, as a data URL.
+	 *
+	 * DOM cannot be drawn over a native view, so the view stands down while its
+	 * dialog is up; without this the editor would visibly vanish underneath the
+	 * question, which is alarming and makes it harder to answer. The still
+	 * image is what keeps the editor *there* while it is not accepting input.
+	 */
+	readonly backdrop?: string;
 	readonly message: string;
 	readonly detail?: string;
 	readonly buttons: readonly string[];

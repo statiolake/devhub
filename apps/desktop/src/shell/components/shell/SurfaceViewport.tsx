@@ -22,6 +22,8 @@ import {
   disabledReasonLabel,
 } from "./activityPresentation";
 import { Failure, Waiting } from "./SurfaceState";
+import { answerWorkbenchDialog, useWorkbenchDialogs } from "./workbenchDialogs";
+import { ViewScopedAlert } from "./ViewScopedAlert";
 
 export interface SurfaceViewportProps {
   readonly snapshot: AppSnapshot;
@@ -147,6 +149,9 @@ export function SurfaceViewport({
   const activitySnapshot = activeActivitySnapshot(snapshot);
   const workspace = workspaceForContext(snapshot, snapshot.selection.context);
   const attachable = useMemo(() => attachableSurfaces(snapshot), [snapshot]);
+  // Questions raised by workbenches, each waiting for the editor it belongs to
+  // to be the one on screen.
+  const workbenchDialogs = useWorkbenchDialogs();
   const viewportRef = useRef<HTMLElement | null>(null);
 
   // A missing Workspace Root keeps its identity, so recovery belongs on the
@@ -186,6 +191,22 @@ export function SurfaceViewport({
         ] as const)
       : undefined;
 
+  // A question a workbench asked belongs to that workbench, whatever the
+  // workspace is doing — a close is usually *why* it is asking. It is found by
+  // the context's own editor key rather than by the resolved activity, so it
+  // survives the workspace going into "closing" and survives being switched
+  // away from: it goes away with its editor and comes back with it.
+  const contextEditorKey =
+    snapshot.selection.context.kind === "global"
+      ? "global-editor"
+      : workspace
+        ? `workspace-editor:${workspace.id}`
+        : undefined;
+  const editorDialog =
+    contextEditorKey === undefined
+      ? undefined
+      : workbenchDialogs.get(contextEditorKey);
+
   let surfaceState: string;
   let body: ReactNode = null;
   let activeKey: string | undefined;
@@ -198,6 +219,11 @@ export function SurfaceViewport({
   if (snapshot.readiness !== "ready") {
     surfaceState = "loading";
     body = <Waiting label="Connecting…" />;
+  } else if (editorDialog) {
+    // The workbench is standing down under its own question; the question is
+    // what is on screen, over the still frame it came with.
+    surfaceState = "editor";
+    announce = false;
   } else if (
     workspace?.state === "closing" ||
     workspace?.state === "closing-failed"
@@ -266,8 +292,10 @@ export function SurfaceViewport({
 
   // One flag, sent whenever it changes: is the native view the thing on screen?
   useEffect(() => {
-    void devhub().setSurfaceVisible(editorOnScreen).catch(reportFailure);
-  }, [editorOnScreen, reportFailure]);
+    void devhub()
+      .setSurfaceVisible(editorOnScreen && editorDialog === undefined)
+      .catch(reportFailure);
+  }, [editorOnScreen, editorDialog, reportFailure]);
 
   // Everything is mounted; the selection decides what is on screen. There is
   // no cheaper set to keep than the Workspaces the user has open.
@@ -301,6 +329,14 @@ export function SurfaceViewport({
           visible={surface.key === activeKey}
         />
       ))}
+      {editorDialog ? (
+        <ViewScopedAlert
+          request={editorDialog}
+          onAnswer={(response) => {
+            answerWorkbenchDialog(editorDialog, response);
+          }}
+        />
+      ) : null}
     </section>
   );
 }

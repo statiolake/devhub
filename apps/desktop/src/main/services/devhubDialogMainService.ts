@@ -16,6 +16,7 @@
 import { DialogMainService } from "code-oss-dev/out/vs/platform/dialogs/electron-main/dialogMainService.js";
 import { shellWindowIfCreated } from "../shell/shellWindow.js";
 import { askWorkbenchDialog } from "../shell/workbenchDialogs.js";
+import { appController } from "../shell/appController.js";
 
 function parentWindow(
 	window?: Electron.BrowserWindow,
@@ -36,8 +37,12 @@ export class DevHubDialogMainService extends DialogMainService {
 		window?: Electron.BrowserWindow,
 	): Promise<Electron.MessageBoxReturnValue> {
 		const shell = shellWindowIfCreated();
-		if (window && shell?.getViewById(window.id)) {
-			return askWorkbenchDialog(options);
+		const view = window ? shell?.getViewById(window.id) : undefined;
+		const surfaceKey = window
+			? appController().editorSurfaceKeyForView(window.id)
+			: undefined;
+		if (view && surfaceKey !== undefined) {
+			return askWorkbenchDialog(options, surfaceKey, view);
 		}
 		return super.showMessageBox(options, parentWindow(window));
 	}

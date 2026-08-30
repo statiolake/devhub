@@ -22,6 +22,7 @@ import {
 	type WorkbenchDialogRequest,
 } from "../../ipc/contract.js";
 import { shellWindowIfCreated } from "./shellWindow.js";
+import type { WorkbenchView } from "./workbenchView.js";
 
 const pending = new Map<string, (response: number) => void>();
 let installed = false;
@@ -75,13 +76,23 @@ export function installWorkbenchDialogs(): void {
  */
 export async function askWorkbenchDialog(
 	options: Electron.MessageBoxOptions,
+	surfaceKey: string,
+	view: WorkbenchView,
 ): Promise<Electron.MessageBoxReturnValue> {
 	const shell = shellWindowIfCreated();
 	if (!shell) throw new Error("no App Shell window to ask");
 	const buttons = options.buttons ?? ["OK"];
 	const id = randomUUID();
+	// Taken before the view stands down, so the still image is the workbench as
+	// it was at the moment it asked.
+	const backdrop = await view.webContents
+		.capturePage()
+		.then((image) => (image.isEmpty() ? undefined : image.toDataURL()))
+		.catch(() => undefined);
 	const request: WorkbenchDialogRequest = {
 		id,
+		surfaceKey,
+		backdrop,
 		message: options.message,
 		detail: options.detail,
 		buttons: buttons.map(withoutMnemonics),
