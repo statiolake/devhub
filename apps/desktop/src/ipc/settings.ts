@@ -40,8 +40,17 @@ export interface SettingsTerminalThemeWire {
 	readonly dark: SettingsTerminalPaletteWire;
 }
 
+/**
+ * There is no colour scheme here on purpose.
+ *
+ * DevHub's chrome takes its colours from the active VS Code theme, so "light or
+ * dark" is already answered — by the theme the person chose in the workbench.
+ * A DevHub-level scheme would be a second answer to the same question, and the
+ * two would disagree the first time somebody changed one of them. The config's
+ * own `appearance.color_scheme` is a value the loader accepts exactly one of;
+ * a save carries over whatever the file says rather than the page asserting it.
+ */
 export interface SettingsAppearanceWire {
-	readonly colorScheme: string;
 	readonly sidebarDensity: string;
 	readonly terminalFontFamily: string;
 	readonly terminalFontSize: number;

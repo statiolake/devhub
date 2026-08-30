@@ -70,12 +70,15 @@ export function openSettingsWindow(): void {
 		return;
 	}
 	window = new electron.BrowserWindow({
-		// Wide enough that the header's four actions sit on one row: they wrap
-		// otherwise, and a wrapped Save is a Save nobody finds.
-		width: 980,
-		height: 680,
-		minWidth: 860,
-		minHeight: 520,
+		// Sized by what the widest screen needs, which is a collection: the
+		// source list, plus an inspector wide enough that a label, its control
+		// and what the control resolved to sit on one line. Below the minimum
+		// the inspector starts wrapping resolved paths, which is the point at
+		// which the two columns stop being worth having.
+		width: 880,
+		height: 640,
+		minWidth: 740,
+		minHeight: 540,
 		title: "DevHub Settings",
 		titleBarStyle: "hiddenInset",
 		show: false,
@@ -129,7 +132,6 @@ function toWireConfig(config: Config): SettingsConfigWire {
 			tmuxArgs: [...config.runtimes.tmux_args],
 		},
 		appearance: {
-			colorScheme: config.appearance.colorScheme,
 			sidebarDensity: config.appearance.sidebarDensity,
 			terminalFontFamily: config.appearance.terminalFontFamily,
 			terminalFontSize: config.appearance.terminalFontSize,
@@ -166,7 +168,16 @@ function toWireConfig(config: Config): SettingsConfigWire {
 	};
 }
 
-function fromWireConfig(wire: SettingsConfigWire): Config {
+/**
+ * Back to the config, with the fields the wire does not carry taken from the
+ * file rather than invented.
+ *
+ * `appearance.color_scheme` is the only one: the window does not offer it (see
+ * `SettingsAppearanceWire`), so a save must leave whatever is on disk alone.
+ * Writing a constant here instead would be the page asserting a value nobody
+ * chose — which is how a projection starts lying.
+ */
+function fromWireConfig(wire: SettingsConfigWire, base: Config): Config {
 	return {
 		version: wire.version,
 		general: { import_login_environment: wire.general.importLoginEnvironment },
@@ -179,7 +190,7 @@ function fromWireConfig(wire: SettingsConfigWire): Config {
 			tmux_args: [...wire.runtimes.tmuxArgs],
 		},
 		appearance: {
-			colorScheme: wire.appearance.colorScheme,
+			colorScheme: base.appearance.colorScheme,
 			sidebarDensity: wire.appearance.sidebarDensity,
 			terminalFontFamily: wire.appearance.terminalFontFamily,
 			terminalFontSize: wire.appearance.terminalFontSize,
@@ -305,9 +316,11 @@ function registerIpc(): void {
 		async (_event, request: SettingsSaveRequestWire) => {
 			const settings = requireHost();
 			try {
+				const current =
+					settings.store.current() ?? (await settings.store.load());
 				const loaded = await settings.store.save(
 					request.revision,
-					fromWireConfig(request.config),
+					fromWireConfig(request.config, current.config),
 				);
 				settings.adopt(loaded.config);
 				return await buildSnapshot();

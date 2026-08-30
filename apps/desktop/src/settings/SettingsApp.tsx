@@ -1,13 +1,26 @@
 /**
  * Settings, shaped like a macOS preferences window.
  *
- * A toolbar of sections across the top, and grouped form rows underneath with
- * their labels right-aligned in a shared column. There is no draft banner and
- * no Save button: a preferences window on a Mac does not have a document to
- * save, so a change is applied when you make it, and the only thing that can
- * go wrong — the file changed underneath you — is said once, where it happened.
+ * A toolbar of sections across the title bar, and one screen under it. There is
+ * no draft banner and no Save button: a preferences window on a Mac does not
+ * have a document to save, so a change is applied when you make it, and the
+ * only thing that can go wrong — the file changed underneath you — is said once,
+ * at the top, where it happened.
  *
- * `Cmd+W` closes the window. `Esc` cancels whatever sheet is open.
+ * What is a screen and what is a sheet:
+ *
+ * - Every value is edited on a screen, in place. Values do not deserve a modal.
+ * - The one thing in this window that is a decision rather than a value — moving
+ *   DevHub's terminal sessions to another tmux socket — is a sheet, because it
+ *   is a question with consequences and an answer, and the person has to be
+ *   able to say no. It is the only one.
+ *
+ * Keyboard: the section toolbar is a tab list, so the arrows move between
+ * sections; a collection's list is a list box, so the arrows move between
+ * entries; everything else is reached with Tab. **No shortcut is claimed here.**
+ * Accelerators live in the menu bar and nowhere else (`main/shell/menu.ts`), so
+ * Close Settings is File ▸ Close Settings and nothing on this page competes for
+ * a key with whatever is focused.
  */
 
 import {
@@ -19,33 +32,50 @@ import {
 } from "react";
 import {
   SETTINGS_SCHEMA_VERSION,
-  type SettingsAgentProfileWire,
   type SettingsConfig,
   type SettingsDiagnosticWire,
   type SettingsError,
-  type SettingsRuntimeWire,
   type SettingsSnapshot,
   type SettingsSocketPreflightWire,
-  type SettingsWorkspaceKindWire,
-  type SettingsWorkspaceSourceWire,
 } from "../ipc/settings";
-import { FONT_FAMILY_RULE, isValidFontFamily } from "../model/fontFamily";
+import { FONT_FAMILY_RULE } from "../model/fontFamily";
 import { Alert } from "../shell/components/shell/Alert";
 import {
   createSettingsClient,
   parseSettingsTransportError,
   type SettingsClient,
 } from "./client";
+import {
+  DUPLICATE_RULE,
+  ID_RULE,
+  RUNTIME_RULE,
+  SOCKET_RULE,
+  TMUX_ARGUMENT_RULE,
+} from "./rules";
+import {
+  AdvancedSection,
+  AgentsSection,
+  GeneralSection,
+  TerminalSection,
+  WorkspacesSection,
+} from "./sections";
 import "../shell/styles/tokens.css";
 import "../shell/styles/macos.css";
 import "./settings.css";
 
+/**
+ * The sections, in the order they are shown.
+ *
+ * Ordered the way a Mac orders panes: what applies to the whole app first, the
+ * two collections next (in the order they appear in the sidebar), the surface
+ * after them, and Advanced last.
+ */
 const SECTIONS = [
   "General",
   "Workspaces",
   "Agents",
-  "Runtimes",
-  "Appearance",
+  "Terminal",
+  "Advanced",
 ] as const;
 
 type Section = (typeof SECTIONS)[number];
@@ -59,24 +89,25 @@ const clone = (config: SettingsConfig): SettingsConfig =>
  * A refused save carries the diagnostic that refused it — the code and the key
  * it came from. Saying only "that value is not one DevHub can use" turns every
  * one of those into the same dead end: the person cannot tell which field was
- * wrong, let alone what would have been right. Codes with nothing specific to
- * add are left to the general sentence rather than given a paraphrase of
- * themselves.
+ * wrong, let alone what would have been right. The sentences are the ones the
+ * fields themselves use (`rules.ts`), so a rule is never described two ways.
+ * Codes with nothing specific to add are left to the general sentence rather
+ * than given a paraphrase of themselves.
  */
 function ruleMessage(diagnostic: SettingsDiagnosticWire): string | undefined {
   switch (diagnostic.code) {
     case "invalid_font_family":
       return FONT_FAMILY_RULE;
     case "invalid_runtime":
-      return "A runtime is either a bare command name looked up on your PATH, or an absolute path (or one starting with ~/). It cannot be empty.";
+      return RUNTIME_RULE;
     case "invalid_socket_name":
-      return "A tmux socket name may use letters, digits, dots, dashes and underscores, and cannot be empty.";
+      return SOCKET_RULE;
     case "forbidden_tmux_argument":
-      return "Only the tmux options -u and -2 are allowed; the rest could point DevHub at another server.";
+      return TMUX_ARGUMENT_RULE;
     case "invalid_id":
-      return "An identifier may use letters, digits, dots, dashes and underscores, and cannot be empty.";
+      return ID_RULE;
     case "duplicate_identity":
-      return "Two entries have the same identifier. Each one has to be unique.";
+      return DUPLICATE_RULE;
     default:
       return undefined;
   }
@@ -135,20 +166,17 @@ const SECTION_GLYPHS: Readonly<Record<Section, ReactNode>> = {
       <path d="M10 2.6v3" />
     </svg>
   ),
-  Runtimes: (
+  Terminal: (
     <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
       <rect x="2.6" y="4" width="14.8" height="12" rx="2" />
       <path d="M5.8 8.4 8.2 10.6l-2.4 2.2M10.4 13h4" />
     </svg>
   ),
-  Appearance: (
+  Advanced: (
     <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
-      <circle cx="10" cy="10" r="7.2" />
-      <path
-        d="M10 2.8a7.2 7.2 0 0 0 0 14.4z"
-        fill="currentColor"
-        stroke="none"
-      />
+      <path d="M3 6.2h14M3 13.8h14" />
+      <circle cx="7.6" cy="6.2" r="2" />
+      <circle cx="12.8" cy="13.8" r="2" />
     </svg>
   ),
 };
@@ -160,15 +188,48 @@ function Toolbar({
   readonly section: Section;
   readonly onSelect: (next: Section) => void;
 }) {
+  const strip = useRef<HTMLDivElement>(null);
+
+  // Roving tabindex plus arrows, which is what a tab list is on a Mac: Tab gets
+  // you to the toolbar, the arrows choose within it.
+  const onKeyDown = (event: React.KeyboardEvent) => {
+    const at = SECTIONS.indexOf(section);
+    const last = SECTIONS.length - 1;
+    const next =
+      event.key === "ArrowRight" || event.key === "ArrowDown"
+        ? Math.min(at + 1, last)
+        : event.key === "ArrowLeft" || event.key === "ArrowUp"
+          ? Math.max(at - 1, 0)
+          : event.key === "Home"
+            ? 0
+            : event.key === "End"
+              ? last
+              : undefined;
+    if (next === undefined) return;
+    event.preventDefault();
+    onSelect(SECTIONS[next]);
+    strip.current?.querySelectorAll<HTMLElement>('[role="tab"]')[next]?.focus();
+  };
+
   return (
     <header className="settings-toolbar">
-      <nav className="settings-tabs" aria-label="Settings sections">
+      <div
+        className="settings-tabs"
+        role="tablist"
+        aria-label="Settings sections"
+        ref={strip}
+        onKeyDown={onKeyDown}
+      >
         {SECTIONS.map((item) => (
           <button
             key={item}
             type="button"
+            role="tab"
+            id={`settings-tab-${item}`}
+            aria-controls="settings-panel"
+            aria-selected={section === item}
+            tabIndex={section === item ? 0 : -1}
             className={`settings-tab${section === item ? " is-selected" : ""}`}
-            aria-current={section === item ? "page" : undefined}
             onClick={() => {
               onSelect(item);
             }}
@@ -177,218 +238,8 @@ function Toolbar({
             <span>{item}</span>
           </button>
         ))}
-      </nav>
-    </header>
-  );
-}
-
-// -------------------------------------------------------------- form pieces
-
-function Group({
-  heading,
-  children,
-}: {
-  readonly heading?: string;
-  readonly children: ReactNode;
-}) {
-  return (
-    <>
-      {heading ? <h2 className="mac-group-heading">{heading}</h2> : null}
-      <div className="mac-group">{children}</div>
-    </>
-  );
-}
-
-function Row({
-  label,
-  help,
-  children,
-}: {
-  readonly label: string;
-  readonly help?: string;
-  readonly children: ReactNode;
-}) {
-  return (
-    <div className="mac-row">
-      <span className="mac-label">{label}</span>
-      <div className="mac-row-value">{children}</div>
-      {help ? <p className="mac-row-help mac-caption">{help}</p> : null}
-    </div>
-  );
-}
-
-function SwitchRow({
-  label,
-  help,
-  checked,
-  onChange,
-}: {
-  readonly label: string;
-  readonly help?: string;
-  readonly checked: boolean;
-  readonly onChange: (next: boolean) => void;
-}) {
-  return (
-    <div className="mac-row">
-      <span className="mac-label">{label}</span>
-      <div className="mac-row-value">
-        <input
-          type="checkbox"
-          className="mac-switch"
-          aria-label={label}
-          checked={checked}
-          onChange={(event) => {
-            onChange(event.target.checked);
-          }}
-        />
       </div>
-      {help ? <p className="mac-row-help mac-caption">{help}</p> : null}
-    </div>
-  );
-}
-
-/**
- * A text field that is applied when it is committed, not while it is typed.
- *
- * Every other control in this window carries a value that is already whole the
- * moment it changes — a checkbox, a popup, a stepper. A text field does not:
- * between "SF Mono" and "Menlo" the field passes through the empty string, and
- * through "M", and none of those are what the person is asking for. Applying
- * each of them as if it were the final answer means the empty one comes back
- * refused, about a value nobody chose, while the word being typed is still on
- * screen — which is exactly what "changing the font is broken" looks like.
- *
- * So the field holds its own text until it is committed with Return or by
- * moving away, says so while it is holding it, and puts back what is in effect
- * on Escape. `validate` is the same rule the config loader applies, asked here
- * only so the answer arrives before the round trip rather than instead of it —
- * a value that gets past this still has to get past the loader.
- */
-function CommittedField({
-  label,
-  value,
-  placeholder,
-  validate,
-  onCommit,
-}: {
-  readonly label: string;
-  readonly value: string;
-  readonly placeholder?: string;
-  readonly validate?: (next: string) => string | undefined;
-  readonly onCommit: (next: string) => void;
-}) {
-  const [pending, setPending] = useState<string>();
-  const text = pending ?? value;
-  const problem = pending === undefined ? undefined : validate?.(pending);
-  const uncommitted = pending !== undefined && pending !== value;
-
-  const commit = () => {
-    if (pending === undefined) return;
-    if (validate?.(pending) !== undefined) return;
-    setPending(undefined);
-    if (pending !== value) onCommit(pending);
-  };
-
-  return (
-    <>
-      <input
-        className="mac-field settings-grow"
-        aria-label={label}
-        aria-invalid={problem !== undefined}
-        placeholder={placeholder}
-        value={text}
-        onChange={(event) => {
-          setPending(event.target.value);
-        }}
-        onBlur={commit}
-        onKeyDown={(event) => {
-          if (event.key === "Enter") {
-            event.preventDefault();
-            commit();
-          } else if (event.key === "Escape") {
-            event.preventDefault();
-            setPending(undefined);
-          }
-        }}
-      />
-      {problem !== undefined ? (
-        <p className="mac-row-help mac-caption" role="alert">
-          {problem}
-        </p>
-      ) : uncommitted ? (
-        <p className="mac-row-help mac-caption" role="status">
-          Not applied yet — press Return.
-        </p>
-      ) : null}
-    </>
-  );
-}
-
-/** A list of strings a person can add to, reorder and remove. */
-function TokenList({
-  label,
-  values,
-  placeholder,
-  onChange,
-}: {
-  readonly label: string;
-  readonly values: readonly string[];
-  readonly placeholder?: string;
-  readonly onChange: (values: string[]) => void;
-}) {
-  return (
-    <div className="settings-tokens" aria-label={label}>
-      {values.map((value, index) => (
-        // Two identical arguments are two arguments: position is the identity.
-        <div className="settings-token" key={index}>
-          <input
-            className="mac-field"
-            aria-label={`${label} ${String(index + 1)}`}
-            value={value}
-            placeholder={placeholder}
-            onChange={(event) => {
-              onChange(
-                values.map((item, position) =>
-                  position === index ? event.target.value : item,
-                ),
-              );
-            }}
-          />
-          <button
-            type="button"
-            className="mac-icon-button"
-            aria-label={`Move ${label} ${String(index + 1)} up`}
-            disabled={index === 0}
-            onClick={() => {
-              const next = [...values];
-              [next[index - 1], next[index]] = [next[index], next[index - 1]];
-              onChange(next);
-            }}
-          >
-            ↑
-          </button>
-          <button
-            type="button"
-            className="mac-icon-button"
-            aria-label={`Remove ${label} ${String(index + 1)}`}
-            onClick={() => {
-              onChange(values.filter((_, position) => position !== index));
-            }}
-          >
-            ✕
-          </button>
-        </div>
-      ))}
-      <button
-        type="button"
-        className="mac-button plain settings-token-add"
-        onClick={() => {
-          onChange([...values, ""]);
-        }}
-      >
-        + Add
-      </button>
-    </div>
+    </header>
   );
 }
 
@@ -448,691 +299,6 @@ function socketQuestion(preflight: SettingsSocketPreflightWire): {
   }
 }
 
-// ---------------------------------------------------------------- sections
-
-function GeneralSection({
-  config,
-  update,
-}: {
-  readonly config: SettingsConfig;
-  readonly update: (next: SettingsConfig) => void;
-}) {
-  return (
-    <Group>
-      <SwitchRow
-        label="Import login environment"
-        help="Use your login shell's environment when DevHub launches terminals and agents."
-        checked={config.general.importLoginEnvironment}
-        onChange={(importLoginEnvironment) => {
-          update({ ...config, general: { importLoginEnvironment } });
-        }}
-      />
-    </Group>
-  );
-}
-
-function WorkspacesSection({
-  config,
-  update,
-}: {
-  readonly config: SettingsConfig;
-  readonly update: (next: SettingsConfig) => void;
-}) {
-  const replace = (index: number, next: SettingsWorkspaceSourceWire) => {
-    update({
-      ...config,
-      workspaceSources: config.workspaceSources.map((item, position) =>
-        position === index ? next : item,
-      ),
-    });
-  };
-
-  return (
-    <>
-      <p className="settings-intro mac-caption">
-        Where the workspace picker looks. A filesystem source walks a folder; a
-        command source runs a program that prints one path per line.
-      </p>
-      {config.workspaceSources.map((source, index) => (
-        <div className="settings-card" key={`${source.id}-${String(index)}`}>
-          <Group>
-            <Row label="Identifier">
-              <input
-                className="mac-field settings-grow"
-                aria-label="Workspace source identifier"
-                value={source.id}
-                onChange={(event) => {
-                  replace(index, { ...source, id: event.target.value });
-                }}
-              />
-              <button
-                type="button"
-                className="mac-icon-button"
-                aria-label={`Remove source ${source.id}`}
-                onClick={() => {
-                  update({
-                    ...config,
-                    workspaceSources: config.workspaceSources.filter(
-                      (_, position) => position !== index,
-                    ),
-                  });
-                }}
-              >
-                ✕
-              </button>
-            </Row>
-            <Row label="Kind">
-              <select
-                className="mac-popup"
-                aria-label="Workspace source kind"
-                value={source.type}
-                onChange={(event) => {
-                  replace(
-                    index,
-                    event.target.value === "command"
-                      ? {
-                          type: "command",
-                          id: source.id,
-                          command: [""],
-                          timeoutMs: 2000,
-                        }
-                      : {
-                          type: "filesystem",
-                          id: source.id,
-                          path:
-                            source.type === "filesystem" ? source.path : "~",
-                          minDepth: 1,
-                          maxDepth: 2,
-                          kinds: ["directory"],
-                          includeHidden: false,
-                          excludeNames: [],
-                        },
-                  );
-                }}
-              >
-                <option value="filesystem">Folder</option>
-                <option value="command">Command</option>
-              </select>
-            </Row>
-
-            {source.type === "filesystem" ? (
-              <>
-                <Row label="Folder">
-                  <input
-                    className="mac-field settings-grow"
-                    aria-label="Workspace root path"
-                    value={source.path}
-                    onChange={(event) => {
-                      replace(index, { ...source, path: event.target.value });
-                    }}
-                  />
-                </Row>
-                <Row label="Depth" help="How far below the folder to look.">
-                  <input
-                    className="mac-field"
-                    type="number"
-                    min={0}
-                    aria-label="Minimum depth"
-                    value={source.minDepth}
-                    onChange={(event) => {
-                      replace(index, {
-                        ...source,
-                        minDepth: Number(event.target.value),
-                      });
-                    }}
-                  />
-                  <span className="mac-caption">to</span>
-                  <input
-                    className="mac-field"
-                    type="number"
-                    min={0}
-                    aria-label="Maximum depth"
-                    value={source.maxDepth ?? ""}
-                    onChange={(event) => {
-                      replace(index, {
-                        ...source,
-                        maxDepth:
-                          event.target.value === ""
-                            ? null
-                            : Number(event.target.value),
-                      });
-                    }}
-                  />
-                </Row>
-                <Row label="Match">
-                  <div className="settings-checks">
-                    {(
-                      ["directory", "git_repository", "git_worktree"] as const
-                    ).map((kind: SettingsWorkspaceKindWire) => (
-                      <label key={kind} className="settings-check">
-                        <input
-                          type="checkbox"
-                          checked={source.kinds.includes(kind)}
-                          onChange={(event) => {
-                            replace(index, {
-                              ...source,
-                              kinds: event.target.checked
-                                ? [...source.kinds, kind]
-                                : source.kinds.filter(
-                                    (value) => value !== kind,
-                                  ),
-                            });
-                          }}
-                        />
-                        {kind === "directory"
-                          ? "Any folder"
-                          : kind === "git_repository"
-                            ? "Git repository"
-                            : "Git worktree"}
-                      </label>
-                    ))}
-                  </div>
-                </Row>
-                <SwitchRow
-                  label="Include hidden folders"
-                  checked={source.includeHidden}
-                  onChange={(includeHidden) => {
-                    replace(index, { ...source, includeHidden });
-                  }}
-                />
-                <Row label="Skip folders named">
-                  <TokenList
-                    label="Excluded name"
-                    values={source.excludeNames}
-                    placeholder="node_modules"
-                    onChange={(excludeNames) => {
-                      replace(index, { ...source, excludeNames });
-                    }}
-                  />
-                </Row>
-              </>
-            ) : (
-              <>
-                <Row label="Command">
-                  <TokenList
-                    label="Command argument"
-                    values={source.command}
-                    onChange={(command) => {
-                      replace(index, { ...source, command });
-                    }}
-                  />
-                </Row>
-                <Row
-                  label="Timeout"
-                  help="Milliseconds, between 100 and 30000."
-                >
-                  <input
-                    className="mac-field"
-                    type="number"
-                    min={100}
-                    max={30000}
-                    aria-label="Command timeout"
-                    value={source.timeoutMs}
-                    onChange={(event) => {
-                      replace(index, {
-                        ...source,
-                        timeoutMs: Number(event.target.value),
-                      });
-                    }}
-                  />
-                </Row>
-              </>
-            )}
-          </Group>
-        </div>
-      ))}
-      <button
-        type="button"
-        className="mac-button settings-add"
-        onClick={() => {
-          update({
-            ...config,
-            workspaceSources: [
-              ...config.workspaceSources,
-              {
-                type: "filesystem",
-                id: `source-${String(config.workspaceSources.length + 1)}`,
-                path: "~",
-                minDepth: 1,
-                maxDepth: 2,
-                kinds: ["git_repository"],
-                includeHidden: false,
-                excludeNames: [],
-              },
-            ],
-          });
-        }}
-      >
-        Add Source
-      </button>
-    </>
-  );
-}
-
-function AgentsSection({
-  config,
-  update,
-}: {
-  readonly config: SettingsConfig;
-  readonly update: (next: SettingsConfig) => void;
-}) {
-  const replace = (index: number, next: SettingsAgentProfileWire) => {
-    update({
-      ...config,
-      agentProfiles: config.agentProfiles.map((item, position) =>
-        position === index ? next : item,
-      ),
-    });
-  };
-
-  return (
-    <>
-      <p className="settings-intro mac-caption">
-        The agents you can launch in a workspace. Environment values stay on
-        this machine and are never included in a diagnostics summary.
-      </p>
-      {config.agentProfiles.map((profile, index) => (
-        <div className="settings-card" key={`${profile.id}-${String(index)}`}>
-          <Group>
-            <Row label="Identifier">
-              <input
-                className="mac-field settings-grow"
-                aria-label="Agent profile identifier"
-                value={profile.id}
-                onChange={(event) => {
-                  replace(index, { ...profile, id: event.target.value });
-                }}
-              />
-              <button
-                type="button"
-                className="mac-icon-button"
-                aria-label={`Remove profile ${profile.id}`}
-                onClick={() => {
-                  update({
-                    ...config,
-                    agentProfiles: config.agentProfiles.filter(
-                      (_, position) => position !== index,
-                    ),
-                  });
-                }}
-              >
-                ✕
-              </button>
-            </Row>
-            <Row label="Name">
-              <input
-                className="mac-field settings-grow"
-                aria-label="Agent display name"
-                value={profile.displayName}
-                onChange={(event) => {
-                  replace(index, {
-                    ...profile,
-                    displayName: event.target.value,
-                  });
-                }}
-              />
-            </Row>
-            <Row label="Runtime">
-              <select
-                className="mac-popup"
-                aria-label="Agent runtime"
-                value={profile.kind}
-                onChange={(event) => {
-                  replace(index, {
-                    ...profile,
-                    kind: event.target
-                      .value as SettingsAgentProfileWire["kind"],
-                  });
-                }}
-              >
-                <option value="codex">Codex</option>
-                <option value="claude">Claude</option>
-              </select>
-            </Row>
-            <Row label="Arguments">
-              <TokenList
-                label="Agent argument"
-                values={profile.args}
-                onChange={(args) => {
-                  replace(index, { ...profile, args });
-                }}
-              />
-            </Row>
-            <Row label="Environment">
-              <div className="settings-tokens">
-                {Object.entries(profile.env).map(([key, value]) => (
-                  <div className="settings-token" key={key}>
-                    <input
-                      className="mac-field"
-                      aria-label="Environment variable name"
-                      value={key}
-                      onChange={(event) => {
-                        const env = { ...profile.env };
-                        delete env[key];
-                        env[event.target.value] = value;
-                        replace(index, { ...profile, env });
-                      }}
-                    />
-                    <input
-                      className="mac-field settings-grow"
-                      aria-label={`Value of ${key}`}
-                      value={value}
-                      onChange={(event) => {
-                        replace(index, {
-                          ...profile,
-                          env: { ...profile.env, [key]: event.target.value },
-                        });
-                      }}
-                    />
-                    <button
-                      type="button"
-                      className="mac-icon-button"
-                      aria-label={`Remove ${key}`}
-                      onClick={() => {
-                        const env = { ...profile.env };
-                        delete env[key];
-                        replace(index, { ...profile, env });
-                      }}
-                    >
-                      ✕
-                    </button>
-                  </div>
-                ))}
-                <button
-                  type="button"
-                  className="mac-button plain settings-token-add"
-                  onClick={() => {
-                    replace(index, {
-                      ...profile,
-                      env: { ...profile.env, NEW_VARIABLE: "" },
-                    });
-                  }}
-                >
-                  + Add
-                </button>
-              </div>
-            </Row>
-          </Group>
-        </div>
-      ))}
-      <button
-        type="button"
-        className="mac-button settings-add"
-        onClick={() => {
-          update({
-            ...config,
-            agentProfiles: [
-              ...config.agentProfiles,
-              {
-                id: `agent-${String(config.agentProfiles.length + 1)}`,
-                displayName: "New Agent",
-                kind: "codex",
-                args: [],
-                env: {},
-              },
-            ],
-          });
-        }}
-      >
-        Add Profile
-      </button>
-    </>
-  );
-}
-
-function ResolvedValue({
-  value,
-}: {
-  readonly value: SettingsRuntimeWire["resolved"]["shell"];
-}) {
-  if (value.kind === "unavailable") {
-    return <span className="settings-badge warning">Not found</span>;
-  }
-  return <code className="mac-mono settings-resolved">{value.value}</code>;
-}
-
-function RuntimesSection({
-  config,
-  update,
-  runtime,
-  diagnostics,
-  onRecheck,
-  onOpenLogs,
-  onCopyDiagnostics,
-  socketDraft,
-  onSocketDraft,
-  onSocketChange,
-  effectiveSocket,
-  status,
-  busy,
-}: {
-  readonly config: SettingsConfig;
-  readonly update: (next: SettingsConfig) => void;
-  readonly runtime: SettingsRuntimeWire;
-  readonly diagnostics: SettingsSnapshot["diagnostics"];
-  readonly onRecheck: () => void;
-  readonly onOpenLogs: () => void;
-  readonly onCopyDiagnostics: () => void;
-  readonly socketDraft: string;
-  readonly onSocketDraft: (next: string) => void;
-  readonly onSocketChange: () => void;
-  readonly effectiveSocket: string;
-  readonly status?: string;
-  readonly busy: boolean;
-}) {
-  const fields = [
-    ["shell", "Shell"],
-    ["git", "Git"],
-    ["tmux", "tmux"],
-    ["herdr", "Herdr"],
-  ] as const;
-
-  return (
-    <>
-      <p className="settings-intro mac-caption">
-        A name is looked up on your PATH; a path is used as given. What DevHub
-        found is shown under each one.
-      </p>
-      <Group>
-        {fields.map(([field, label]) => (
-          <Row key={field} label={label}>
-            <CommittedField
-              label={`${label} command`}
-              value={config.runtimes[field]}
-              onCommit={(next) => {
-                update({
-                  ...config,
-                  runtimes: { ...config.runtimes, [field]: next },
-                });
-              }}
-            />
-            <ResolvedValue value={runtime.resolved[field]} />
-          </Row>
-        ))}
-      </Group>
-
-      <h2 className="mac-group-heading">Terminals</h2>
-      <div className="mac-group">
-        {/* The one setting that is not just a value in a file: DevHub's live
-            sessions are on this socket, so the field holds what is being asked
-            for and the button is what actually moves them. */}
-        <Row
-          label="tmux socket"
-          help={
-            socketDraft === effectiveSocket
-              ? "DevHub keeps its terminal sessions on a socket of its own, so they survive quitting."
-              : `DevHub is still using “${effectiveSocket}”. Changing the socket closes the sessions it has there.`
-          }
-        >
-          <input
-            className="mac-field settings-grow"
-            aria-label="tmux socket name"
-            value={socketDraft}
-            onChange={(event) => {
-              onSocketDraft(event.target.value);
-            }}
-          />
-          <button
-            type="button"
-            className="mac-button"
-            disabled={busy || socketDraft.trim() === effectiveSocket}
-            onClick={onSocketChange}
-          >
-            Change…
-          </button>
-        </Row>
-        <Row label="tmux options">
-          <TokenList
-            label="tmux option"
-            values={config.runtimes.tmuxArgs}
-            placeholder="-u"
-            onChange={(tmuxArgs) => {
-              update({ ...config, runtimes: { ...config.runtimes, tmuxArgs } });
-            }}
-          />
-        </Row>
-      </div>
-
-      <h2 className="mac-group-heading">Diagnostics</h2>
-      <div className="mac-group">
-        <Row label="This session">
-          <code className="mac-mono">{diagnostics.sessionId}</code>
-        </Row>
-        <Row label="Last quit">
-          <span>
-            {diagnostics.previousExit === "clean"
-              ? "Normal"
-              : diagnostics.previousExit === "unclean"
-                ? "Unexpected"
-                : "Unknown"}
-          </span>
-        </Row>
-        <div className="mac-row full settings-actions">
-          <button
-            type="button"
-            className="mac-button"
-            onClick={onRecheck}
-            disabled={busy}
-          >
-            Check Again
-          </button>
-          <button
-            type="button"
-            className="mac-button"
-            onClick={onOpenLogs}
-            disabled={busy}
-          >
-            Show Logs in Finder
-          </button>
-          <button
-            type="button"
-            className="mac-button"
-            onClick={onCopyDiagnostics}
-            disabled={busy}
-          >
-            Copy Summary
-          </button>
-          {status ? (
-            <span className="mac-caption" role="status" aria-live="polite">
-              {status}
-            </span>
-          ) : null}
-        </div>
-      </div>
-    </>
-  );
-}
-
-function AppearanceSection({
-  config,
-  update,
-}: {
-  readonly config: SettingsConfig;
-  readonly update: (next: SettingsConfig) => void;
-}) {
-  const appearance = config.appearance;
-  const set = (patch: Partial<SettingsConfig["appearance"]>) => {
-    update({ ...config, appearance: { ...appearance, ...patch } });
-  };
-
-  return (
-    <>
-      <Group heading="Sidebar">
-        <Row label="Density">
-          <select
-            className="mac-popup"
-            aria-label="Sidebar density"
-            value={appearance.sidebarDensity}
-            onChange={(event) => {
-              set({ sidebarDensity: event.target.value });
-            }}
-          >
-            <option value="compact">Compact</option>
-            <option value="comfortable">Comfortable</option>
-          </select>
-        </Row>
-      </Group>
-
-      <h2 className="mac-group-heading">Terminal</h2>
-      <div className="mac-group">
-        <Row label="Font">
-          <CommittedField
-            label="Terminal font family"
-            value={appearance.terminalFontFamily}
-            placeholder="ui-monospace"
-            validate={(next) =>
-              isValidFontFamily(next) ? undefined : FONT_FAMILY_RULE
-            }
-            onCommit={(terminalFontFamily) => {
-              set({ terminalFontFamily });
-            }}
-          />
-        </Row>
-        <Row label="Size">
-          <input
-            className="mac-field"
-            type="number"
-            min={9}
-            max={24}
-            aria-label="Terminal font size"
-            value={appearance.terminalFontSize}
-            onChange={(event) => {
-              set({ terminalFontSize: Number(event.target.value) });
-            }}
-          />
-        </Row>
-        <Row label="Line height">
-          <input
-            className="mac-field"
-            type="number"
-            min={1}
-            max={2}
-            step={0.05}
-            aria-label="Terminal line height"
-            value={appearance.terminalLineHeight}
-            onChange={(event) => {
-              set({ terminalLineHeight: Number(event.target.value) });
-            }}
-          />
-        </Row>
-        <Row label="Inset">
-          <input
-            className="mac-field"
-            type="number"
-            min={0}
-            max={64}
-            aria-label="Terminal margin"
-            value={appearance.terminalMargin}
-            onChange={(event) => {
-              set({ terminalMargin: Number(event.target.value) });
-            }}
-          />
-        </Row>
-      </div>
-    </>
-  );
-}
-
 // -------------------------------------------------------------------- app
 
 export function SettingsApp({ client }: { readonly client?: SettingsClient }) {
@@ -1188,9 +354,9 @@ export function SettingsApp({ client }: { readonly client?: SettingsClient }) {
    * A change is applied, not staged.
    *
    * A preferences window has no document, so it has no Save. The write is
-   * debounced only so that typing into a field is one write rather than one per
-   * keystroke — and a write that fails says so, in place, without discarding
-   * what the person typed.
+   * debounced only so that a burst of changes is one write rather than one per
+   * change — and a write that fails says so, in place, without discarding what
+   * the person typed.
    */
   const update = (next: SettingsConfig) => {
     setDraft(next);
@@ -1344,59 +510,66 @@ export function SettingsApp({ client }: { readonly client?: SettingsClient }) {
         </div>
       ) : null}
 
-      <div className="settings-body">
-        <div className="settings-content">
-          {section === "General" ? (
-            <GeneralSection config={draft} update={update} />
-          ) : null}
-          {section === "Workspaces" ? (
-            <WorkspacesSection config={draft} update={update} />
-          ) : null}
-          {section === "Agents" ? (
-            <AgentsSection config={draft} update={update} />
-          ) : null}
-          {section === "Runtimes" ? (
-            <RuntimesSection
-              config={draft}
-              update={update}
-              runtime={snapshot.runtime}
-              diagnostics={snapshot.diagnostics}
-              onRecheck={recheck}
-              onOpenLogs={() => {
-                setStatus("Opening…");
-                void transport.openLogFolder().then(
-                  () => {
-                    setStatus(undefined);
-                  },
-                  (value: unknown) => {
-                    setError(parseSettingsTransportError(value));
-                    setStatus(undefined);
-                  },
-                );
-              }}
-              onCopyDiagnostics={() => {
-                void transport.copyDiagnostics().then(
-                  () => {
-                    setStatus("Copied.");
-                  },
-                  (value: unknown) => {
-                    setError(parseSettingsTransportError(value));
-                    setStatus(undefined);
-                  },
-                );
-              }}
-              socketDraft={socketDraft ?? draft.runtimes.tmuxSocketName}
-              onSocketDraft={setSocketDraft}
-              onSocketChange={askToChangeSocket}
-              effectiveSocket={snapshot.config.runtimes.tmuxSocketName}
-              status={status}
-              busy={busy}
-            />
-          ) : null}
-          {section === "Appearance" ? (
-            <AppearanceSection config={draft} update={update} />
-          ) : null}
-        </div>
+      <div
+        className="settings-body"
+        role="tabpanel"
+        id="settings-panel"
+        aria-labelledby={`settings-tab-${section}`}
+      >
+        {section === "General" ? (
+          <GeneralSection config={draft} update={update} />
+        ) : null}
+        {section === "Workspaces" ? (
+          <WorkspacesSection config={draft} update={update} />
+        ) : null}
+        {section === "Agents" ? (
+          <AgentsSection config={draft} update={update} />
+        ) : null}
+        {section === "Terminal" ? (
+          <TerminalSection
+            config={draft}
+            update={update}
+            socketDraft={socketDraft ?? draft.runtimes.tmuxSocketName}
+            onSocketDraft={setSocketDraft}
+            onSocketChange={askToChangeSocket}
+            effectiveSocket={snapshot.config.runtimes.tmuxSocketName}
+            busy={busy}
+          />
+        ) : null}
+        {section === "Advanced" ? (
+          <AdvancedSection
+            config={draft}
+            update={update}
+            runtime={snapshot.runtime}
+            diagnostics={snapshot.diagnostics}
+            onRecheck={recheck}
+            onOpenLogs={() => {
+              setStatus("Opening…");
+              void transport.openLogFolder().then(
+                () => {
+                  setStatus(undefined);
+                },
+                (value: unknown) => {
+                  setError(parseSettingsTransportError(value));
+                  setStatus(undefined);
+                },
+              );
+            }}
+            onCopyDiagnostics={() => {
+              void transport.copyDiagnostics().then(
+                () => {
+                  setStatus("Copied.");
+                },
+                (value: unknown) => {
+                  setError(parseSettingsTransportError(value));
+                  setStatus(undefined);
+                },
+              );
+            }}
+            status={status}
+            busy={busy}
+          />
+        ) : null}
       </div>
 
       {socketSheet ? (
