@@ -21,12 +21,19 @@ export function AgentRenameAlert({
   onDismiss,
 }: AgentRenameAlertProps) {
   const { state, dispatch } = useAppShell();
-  const agent =
+  /**
+   * Every Agent there is, or nothing while this page is still being told.
+   *
+   * The overlay page is built when the first modal opens, so its projection is
+   * in flight while the sheet mounts. "I have not been told" is not "the Agent
+   * is gone" — reading them as the same thing closes the sheet on the frame it
+   * opens and leaves the layer up with nothing on it.
+   */
+  const agents =
     state.status === "ready"
-      ? state.snapshot.workspaces
-          .flatMap((workspace) => workspace.agents)
-          .find((candidate) => candidate.id === agentId)
+      ? state.snapshot.workspaces.flatMap((workspace) => workspace.agents)
       : undefined;
+  const agent = agents?.find((candidate) => candidate.id === agentId);
 
   const [value, setValue] = useState<string>();
   const [busy, setBusy] = useState(false);
@@ -51,8 +58,9 @@ export function AgentRenameAlert({
   // An Agent that is no longer running cannot be renamed, so the question
   // stops being asked rather than standing with a disabled button.
   useEffect(() => {
+    if (!agents) return;
     if (!agent || agent.controlState !== "running") onDismiss();
-  }, [agent, onDismiss]);
+  }, [agent, agents, onDismiss]);
 
   const submit = useCallback(async () => {
     const trimmed = (value ?? "").trim();
