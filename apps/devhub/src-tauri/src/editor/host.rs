@@ -228,6 +228,28 @@ impl EditorHost {
         Ok(())
     }
 
+    /// The directories whose files the browser itself has to load.
+    ///
+    /// An icon theme's font and images are loaded by the browser, not read
+    /// through the connection, so the host has to serve them — and it should
+    /// serve exactly these and nothing else. Resolved from where the server
+    /// actually is, which differs between a source build and a packaged app
+    /// and is not something a static list of paths can name.
+    pub fn browser_readable_directories(&self) -> EditorResult<Vec<PathBuf>> {
+        let executable = super::provider::BundledServerExecutable::resolve(
+            self.config.server_executable.as_deref(),
+            self.config.resource_dir.as_deref(),
+        )?;
+        let server_root = executable
+            .path()
+            .parent()
+            .and_then(Path::parent)
+            .ok_or_else(|| EditorError::new(EditorErrorCode::OfficialVscodeUnavailable))?
+            .to_path_buf();
+        let paths = EditorPaths::new(&self.config.home);
+        Ok(vec![server_root, paths.extensions().to_path_buf()])
+    }
+
     /// Start the server if it is not running, and say how to reach it.
     ///
     /// The Workbench runs in the App Shell's own document and speaks to the

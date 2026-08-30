@@ -5919,6 +5919,35 @@ pub fn run() {
             let state = NativeAppState::bootstrap_with_resource_dir(&home, app_resource_dir)
                 .map_err(|_| std::io::Error::other("DevHub native bootstrap failed"))?;
             app.manage(state);
+            // An icon theme's font and images are loaded by the browser
+            // rather than read through the connection, so the host serves
+            // them — and only these. Where the server is differs between a
+            // source build and a packaged app, so it is asked rather than
+            // written down; a Workspace's own files are never included,
+            // because they are read through the connection.
+            match app.state::<NativeAppState>().editor_host.browser_readable_directories() {
+                Ok(directories) => {
+                    for directory in directories {
+                        if let Err(error) =
+                            app.asset_protocol_scope().allow_directory(&directory, true)
+                        {
+                            let _ = error;
+                            app.state::<NativeAppState>().record_native_error(
+                                AppErrorWire::native_unavailable().with_summary(
+                                    "the editor's own resources could not be made readable",
+                                ),
+                            );
+                        }
+                    }
+                }
+                Err(error) => {
+                    let _ = error;
+                    app.state::<NativeAppState>().record_native_error(
+                        AppErrorWire::native_unavailable()
+                            .with_summary("the editor server could not be located"),
+                    );
+                }
+            }
             // AppKit requires the main thread for this, and `setup` is the
             // only place that is guaranteed to be on it.
             if let Some(window) = app.get_webview_window(APP_SHELL_WINDOW_LABEL) {
