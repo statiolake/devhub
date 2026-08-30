@@ -24,6 +24,8 @@ import type { NativeParsedArgs } from "code-oss-dev/out/vs/platform/environment/
 import type { IWindowsMainService } from "code-oss-dev/out/vs/platform/windows/electron-main/windows.js";
 import { OpenContext } from "code-oss-dev/out/vs/platform/windows/electron-main/windows.js";
 import type { IDialogMainService } from "code-oss-dev/out/vs/platform/dialogs/electron-main/dialogMainService.js";
+import type { ILifecycleMainService } from "code-oss-dev/out/vs/platform/lifecycle/electron-main/lifecycleMainService.js";
+import { UnloadReason } from "code-oss-dev/out/vs/platform/window/electron-main/window.js";
 import {
 	CHANNELS,
 	type ContentRect,
@@ -43,7 +45,6 @@ import {
 	AgentProfile,
 	agentProfileId,
 	displayPath,
-	isWorkspaceAvailable,
 	agentId as parseAgentId,
 	type AgentId,
 	surfaceKeyName,
@@ -121,6 +122,8 @@ import {
 export interface MainServices {
 	windows(): IWindowsMainService;
 	dialogs(): IDialogMainService;
+	/** Closing a workbench is an unload, and an unload can be vetoed. */
+	lifecycle(): ILifecycleMainService;
 }
 
 /** The folder key a scratch (folderless) workbench view is filed under. */
@@ -515,7 +518,7 @@ export class AppController {
 	 */
 	private projectionChanged(): void {
 		refreshMenu();
-		this.startEditorViews();
+		this.syncEditorViews();
 		// What is on screen follows the selection, wherever the selection
 		// changed — a menu command, a restored session, or the page.
 		void this.syncEditorView();
@@ -775,9 +778,12 @@ export class AppController {
 		try {
 			this.state = applySnapshot(this.state, this.coordinator.snapshot());
 			await this.stateStore.saveState(this.state);
-		} catch {
+		} catch (error) {
 			// A save that did not happen is reported as degraded, so the model can
-			// roll back a close that depended on it rather than believing it landed.
+			// roll back a close that depended on it rather than believing it landed
+			// — and the reason it did not happen goes to the page, because a
+			// silent one turns every later symptom into a mystery.
+			this.publishError(errorWire(error));
 			this.accept({ type: "state_persistence_failed", token });
 			return;
 		}
@@ -840,12 +846,20 @@ export class AppController {
 		// never opened, or already closed, holds nothing. A live view might hold
 		// unsaved work and nothing here can ask it, so that is `unknown` — and
 		// the close confirmation says exactly that rather than guessing "clean".
+		// Once the workbench has agreed to close, its editors *are* clean —
+		// agreeing is what being clean means, and it is a better answer than
+		// looking at whether a view object still exists.
+		const state = workspace?.state;
+		const agreed =
+			state !== undefined &&
+			(state.kind === "closing" || state.kind === "closing-failed") &&
+			state.progress.editorClosed;
 		const hasView =
 			workspace !== undefined && this.viewsByFolder.has(workspace.root);
 		const inspection = await inspectWorkspaceResources(
 			workspaceId,
 			workspace?.agents.length ?? 0,
-			hasView
+			hasView && !agreed
 				? { kind: "unknown", diagnostic: "close_editor_unknown" }
 				: { kind: "clean" },
 		);
@@ -963,9 +977,26 @@ export class AppController {
 					}
 					break;
 				}
-				case "editor":
-					this.destroyEditorView(workspaceId);
+				case "editor": {
+					const closed = await this.askEditorToClose(workspaceId);
+					if (!closed) {
+						// The workbench refused — unsaved work, most likely, and the
+						// person has just been asked about it. That is a reason, not
+						// an error, and it belongs on the failure surface.
+						this.accept({
+							type: "workspace_cleanup_completed",
+							token,
+							workspaceId,
+							result: {
+								kind: "failed",
+								step,
+								diagnostic: "close_editor_vetoed",
+							},
+						});
+						return;
+					}
 					break;
+				}
 				case "state_committed":
 					break;
 			}
@@ -1079,7 +1110,25 @@ export class AppController {
 	 * start says so on the page's one error surface, and the failure is shown
 	 * again in place when that surface is selected.
 	 */
-	startEditorViews(): void {
+	/**
+	 * Make the set of workbench views match the set of workspaces.
+	 *
+	 * One rule, in one place: every workspace DevHub knows about has a
+	 * workbench, plus the scratch one, and nothing else does. Creating them at
+	 * launch rather than on first selection is why nobody waits for a workbench
+	 * at the moment they ask to see it; destroying one only when its workspace
+	 * leaves the model is why a close that fails or is refused still has its
+	 * workbench standing afterwards.
+	 *
+	 * A workspace that is closing keeps its view for the same reason. It leaves
+	 * the model only once the close has actually finished, and that is the
+	 * moment — the last one — at which the view goes.
+	 *
+	 * Nothing here is awaited by the caller: a workbench that is slow to start
+	 * must not hold up the window. Nothing is swallowed either — a workbench
+	 * that cannot start says so on the page's one error surface.
+	 */
+	syncEditorViews(): void {
 		// Before VS Code's services exist there is no path that opens a
 		// workbench. `markReady` publishes a projection as soon as there is, and
 		// that is the call that starts them.
@@ -1092,18 +1141,25 @@ export class AppController {
 			editor?.resolution.kind === "enabled"
 				? this.folderForSurfaceKey(surfaceKeyName(editor.resolution.surfaceKey))
 				: undefined;
-		const folders = [
+
+		const wanted = new Set<string>([
 			SCRATCH_EDITOR,
-			// Only workspaces that are actually open: one that is closing is
-			// having its view torn down, and must not have it built again.
-			...this.coordinator.model.workspaces
-				.filter((workspace) => isWorkspaceAvailable(workspace.state))
-				.map((workspace) => workspace.root),
-		];
+			...this.coordinator.model.workspaces.map((workspace) => workspace.root),
+		]);
+		for (const folder of [...this.viewsByFolder.keys()]) {
+			if (wanted.has(folder)) continue;
+			const viewId = this.viewsByFolder.get(folder);
+			this.viewsByFolder.delete(folder);
+			if (viewId !== undefined) {
+				shellWindow().getViewById(viewId)?.destroy();
+			}
+		}
+
+		// The selected workbench first: it is the one being waited for.
 		const ordered =
 			selected === undefined
-				? folders
-				: [selected, ...folders.filter((folder) => folder !== selected)];
+				? [...wanted]
+				: [selected, ...[...wanted].filter((folder) => folder !== selected)];
 		for (const folder of ordered) {
 			void this.ensureEditorView(folder).catch((error: unknown) => {
 				this.publishError(errorWire(error));
@@ -1119,14 +1175,33 @@ export class AppController {
 		return this.coordinator.model.workspace(id)?.root;
 	}
 
-	private destroyEditorView(workspaceId: WorkspaceId): void {
+	/**
+	 * Ask a workspace's workbench whether it may close.
+	 *
+	 * Closing a window in VS Code is an *unload*, and an unload is what runs
+	 * the workbench's "do you want to save?" and what lets it refuse. Killing
+	 * the `WebContents` instead — which is what this used to do — skipped all
+	 * of that and threw away unsaved work without asking.
+	 *
+	 * It also does not destroy the view. Nothing here does: a view belongs to
+	 * a workspace, and it goes when the workspace does (`syncEditorViews`). A
+	 * step that destroyed it early is how a close that failed later left a
+	 * workspace in the sidebar with a white pane beside it.
+	 */
+	private async askEditorToClose(workspaceId: WorkspaceId): Promise<boolean> {
 		const root = this.coordinator.model.workspace(workspaceId)?.root;
-		if (root === undefined) return;
+		if (root === undefined) return true;
 		const viewId = this.viewsByFolder.get(root);
-		this.viewsByFolder.delete(root);
-		if (viewId !== undefined) {
-			shellWindow().getViewById(viewId)?.destroy();
-		}
+		if (viewId === undefined) return true;
+		const codeWindow = this.services()
+			.windows()
+			.getWindows()
+			.find((candidate) => candidate.id === viewId);
+		if (!codeWindow) return true;
+		const vetoed = await this.services()
+			.lifecycle()
+			.unload(codeWindow, UnloadReason.CLOSE);
+		return !vetoed;
 	}
 
 	/** The `openInBrowserWindow` override's half of the folder binding. */

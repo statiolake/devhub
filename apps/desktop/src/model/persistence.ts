@@ -148,6 +148,7 @@ export type PersistedDiagnosticCode =
   | "close_agents_unknown"
   | "close_terminal_unknown"
   | "close_editor_unknown"
+  | "close_editor_vetoed"
   | "cleanup_failed"
   | "runtime_unavailable";
 

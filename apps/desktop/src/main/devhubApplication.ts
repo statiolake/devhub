@@ -20,6 +20,7 @@ import { IAuxiliaryWindowsMainService } from "code-oss-dev/out/vs/platform/auxil
 import { SyncDescriptor } from "code-oss-dev/out/vs/platform/instantiation/common/descriptors.js";
 import { IWindowsMainService } from "code-oss-dev/out/vs/platform/windows/electron-main/windows.js";
 import { IDialogMainService } from "code-oss-dev/out/vs/platform/dialogs/electron-main/dialogMainService.js";
+import { ILifecycleMainService } from "code-oss-dev/out/vs/platform/lifecycle/electron-main/lifecycleMainService.js";
 import type { Client as MessagePortClient } from "code-oss-dev/out/vs/base/parts/ipc/electron-main/ipc.mp.js";
 import { DevHubWindowsMainService } from "./services/devhubWindowsMainService.js";
 import { DevHubDialogMainService } from "./services/devhubDialogMainService.js";
@@ -125,6 +126,10 @@ const upstreamInitServices = (
 		dialogs: () =>
 			instantiationService.invokeFunction((accessor) =>
 				accessor.get(IDialogMainService),
+			),
+		lifecycle: () =>
+			instantiationService.invokeFunction((accessor) =>
+				accessor.get(ILifecycleMainService),
 			),
 	});
 

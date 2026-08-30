@@ -51,6 +51,7 @@ import {
   type AppOutcomeWire,
   type AppReadiness,
   type AppSnapshotWire,
+  type CloseDiagnosticWire,
   type CloseInspectionWire,
   type CloseResourceWire,
   type ConfirmationPurposeWire,
@@ -207,6 +208,20 @@ function workspaceStateName(
   return state.kind;
 }
 
+/** The reason behind a state that has one; nothing for the states that do not. */
+function workspaceStateDiagnostic(
+  state: WorkspaceSnapshot["state"],
+): CloseDiagnosticWire | undefined {
+  switch (state.kind) {
+    case "unavailable":
+      return state.reason;
+    case "closing-failed":
+      return state.diagnostic;
+    default:
+      return undefined;
+  }
+}
+
 function agentWire(agent: AgentSnapshot): AgentWire {
   return {
     id: agent.id,
@@ -248,6 +263,7 @@ export function snapshotWire(
     root: workspace.root,
     selectedPath: workspace.selectedPath,
     state: workspaceStateName(workspace.state),
+    stateDiagnostic: workspaceStateDiagnostic(workspace.state),
     aggregateStatus: workspace.aggregateStatus,
     agents: workspace.agents.map(agentWire),
     canCreateAgent: workspace.canCreateAgent,

@@ -173,6 +173,7 @@ export type CloseDiagnosticWire =
 	| "close_agents_unknown"
 	| "close_terminal_unknown"
 	| "close_editor_unknown"
+	| "close_editor_vetoed"
 	| "cleanup_failed"
 	| "runtime_unavailable";
 export interface CloseInspectionWire {
@@ -272,6 +273,14 @@ export interface WorkspaceWire {
 	readonly root: string;
 	readonly selectedPath: string;
 	readonly state: WorkspaceStateWire;
+	/**
+	 * Why the workspace is not available, when it is not.
+	 *
+	 * The state alone says something went wrong; this says what, which is the
+	 * difference between "could not be closed" and "the editor has unsaved
+	 * changes".
+	 */
+	readonly stateDiagnostic?: CloseDiagnosticWire;
 }
 
 export type Activity = ActivityName;

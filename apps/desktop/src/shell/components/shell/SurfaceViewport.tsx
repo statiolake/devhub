@@ -17,7 +17,10 @@ import { useAppShell } from "../../useAppShell";
 import { devhub } from "../../client";
 import { attachableSurfaces } from "./surfacePool";
 import { surfaceRenderer } from "./surfaceRegistry";
-import { disabledReasonLabel } from "./activityPresentation";
+import {
+  closeDiagnosticLabel,
+  disabledReasonLabel,
+} from "./activityPresentation";
 import { Failure, Waiting } from "./SurfaceState";
 
 export interface SurfaceViewportProps {
@@ -202,7 +205,14 @@ export function SurfaceViewport({
     surfaceState = workspace.state;
     body =
       workspace.state === "closing-failed" ? (
-        <Failure summary="This Workspace could not be closed. Retry close from the Sidebar." />
+        <Failure
+          summary="This Workspace could not be closed. Retry close from the Sidebar."
+          detail={
+            workspace.stateDiagnostic
+              ? closeDiagnosticLabel(workspace.stateDiagnostic)
+              : undefined
+          }
+        />
       ) : (
         <Waiting label="Closing the workspace…" />
       );
