@@ -5,7 +5,7 @@
  *  Pinned at: microsoft/vscode 987c9597516278c9fcf10d963a0592ce1384ab93 (tag 1.121.0)
  *
  *  This is the file Electron runs (apps/desktop/package.json "main"). It exists
- *  to substitute three things and nothing else. Keep it as close to upstream as
+ *  to substitute the things below and nothing else. Keep it as close to upstream as
  *  possible; a VS Code bump re-applies exactly this list:
  *
  *    1. `./shimEntry.js` is imported first, before anything else — including
@@ -18,6 +18,8 @@
  *       DevHub's own resource, on a scheme DevHub owns and serves.
  *    4. The final dynamic import of VS Code's `CodeMain` loads DevHub's copy
  *       (./codeMain.js) instead.
+ *    5. `app.setName('DevHub')`. In development Electron guesses an app's name
+ *       from package.json, so without this it calls DevHub "@devhub/desktop".
  *
  *  Everything else is upstream, including the copyright below.
  *--------------------------------------------------------------------------------------------*/
@@ -96,6 +98,17 @@ if (process.platform === 'win32') {
 		addUNCHostToAllowlist(userDataUNCHost); // enables to use UNC paths in userDataPath
 	}
 }
+// DevHub is not "@devhub/desktop", which is what Electron calls an app whose
+// name it has to guess from package.json. Set before `setPath` below so nothing
+// derived from the name can be computed from the wrong one.
+//
+// This does *not* rename the application on macOS. The menu bar, the Dock tile,
+// Mission Control and the window switcher all read the running bundle's
+// Info.plist, and in development the bundle is VS Code's own Electron — so they
+// say "Code - OSS" no matter what this call does. Only shipping DevHub in a
+// bundle of its own changes that.
+app.setName('DevHub');
+
 app.setPath('userData', userDataPath);
 
 // Resolve code cache path

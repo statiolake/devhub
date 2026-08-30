@@ -9,6 +9,7 @@
 
 import { electron } from "../electron.js";
 import type { ContentRect } from "../../ipc/contract.js";
+import { WINDOW_TITLES } from "../../ipc/windowTitles.js";
 import { ModalOverlay } from "./modalOverlay.js";
 import { shellTheme } from "./shellTheme.js";
 import type { ShellPalette } from "../../ipc/palette.js";
@@ -51,7 +52,7 @@ export class ShellWindow {
 			height: 900,
 			minWidth: 720,
 			minHeight: 480,
-			title: "DevHub",
+			title: WINDOW_TITLES.shell,
 			// The Tauri app's chrome: the page paints the titlebar band itself
 			// over the window's own material, and the traffic lights sit on the
 			// sidebar rather than above it.

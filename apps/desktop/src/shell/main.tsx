@@ -17,6 +17,7 @@ import { installSelectionGuard } from "./selection";
 import { installSurfaceRenderers } from "./components/shell/surfaceRenderers";
 import { SettingsApp } from "../settings/SettingsApp";
 import { OverlayApp } from "./overlay/OverlayApp";
+import { WINDOW_TITLES, windowKindOf } from "../ipc/windowTitles";
 import "./styles/tokens.css";
 import "./styles/shell.css";
 import "./styles/macos.css";
@@ -36,7 +37,14 @@ installSelectionGuard(document);
 installSurfaceRenderers();
 installPalette(document);
 
-const which = new URLSearchParams(window.location.search).get("window");
+const which = windowKindOf(window.location.search);
+
+// Electron gives a window its page's title, so the title main chose when it
+// created the window lasts only until the page loads. Both windows are served
+// from one `index.html`, so the page has to say which of them it is — otherwise
+// the Settings window takes the shell's `<title>` and calls itself "DevHub".
+document.title = WINDOW_TITLES[which];
+
 if (which === "overlay") {
   // The layer is a sheet of glass over the whole window: whatever it does not
   // draw has to show the live workbench through it, not a page background.

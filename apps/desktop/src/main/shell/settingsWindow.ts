@@ -14,6 +14,7 @@
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { electron } from "../electron.js";
+import { WINDOW_TITLES } from "../../ipc/windowTitles.js";
 import {
 	SETTINGS_CHANNELS,
 	SETTINGS_SCHEMA_VERSION,
@@ -79,7 +80,7 @@ export function openSettingsWindow(): void {
 		height: 640,
 		minWidth: 740,
 		minHeight: 540,
-		title: "DevHub Settings",
+		title: WINDOW_TITLES.settings,
 		titleBarStyle: "hiddenInset",
 		show: false,
 		webPreferences: {
