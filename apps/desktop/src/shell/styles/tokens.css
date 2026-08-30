@@ -104,16 +104,21 @@
     var(--primary) var(--ink-selection-inactive),
     transparent
   );
-  /* System-adjacent semantics: green, orange, red as macOS renders them. */
-  --working: light-dark(#1d7f36, #30d158);
+  /* System-adjacent semantics: orange and red as macOS renders them. */
   --waiting: light-dark(#b25000, #ff9f0a);
   --danger: light-dark(#c0392f, #ff6961);
-  /* Idle is a status like the other three and needs a name of its own: it is
-     drawn as an outline, and an outline in `--tertiary` is a hairline that
-     disappears. Ink rather than a literal, so it follows a colour theme the
-     way the rest of the ink does. */
-  --ink-idle: 46%;
-  --idle: color-mix(in srgb, var(--primary) var(--ink-idle), transparent);
+
+  /* Agent status ink.
+   *
+   * The four statuses take VS Code's own colours for them, mirrored from the
+   * sibling extension `vscode-herdr-switcher` (`src/agentPresentation.ts`) so
+   * that one Agent reads the same in both places. This block is the whole of
+   * the translation from a VS Code theme colour key to DevHub ink; the shapes
+   * that go with them are in `StatusMark.tsx`. */
+  --status-working: light-dark(#b25000, #ff9f0a); /* charts.yellow */
+  --status-waiting: light-dark(#0a66d0, #0a84ff); /* charts.blue */
+  --status-idle: light-dark(#1d7f36, #30d158); /* testing.iconPassed */
+  --status-error: var(--danger); /* testing.iconFailed */
 
   /* Separators. */
   --ink-line: 14%;
@@ -177,7 +182,6 @@
      each the size of a toolbar control, with the same gutter either side. */
   --sidebar-collapsed-width: 52px;
   --sidebar-tile-size: 32px;
-  --status-mark-size: 8px;
 }
 
 @supports (color: AccentColor) {

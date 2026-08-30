@@ -110,7 +110,10 @@ function WorkspaceRow({
           data-tree-item-id={`workspace:${workspace.id}`}
           tabIndex={selected ? 0 : -1}
           aria-current={selected ? "page" : undefined}
-          aria-label={`${workspace.label} workspace, path ${workspace.root}, ${statusLabel(workspace.aggregateStatus)} aggregate status`}
+          // A Workspace has no status of its own. Its Agents each carry
+          // theirs on their own row, and rolling four of them into one mark
+          // only produced a fifth thing to read that named none of them.
+          aria-label={`${workspace.label} workspace, path ${workspace.root}`}
           title={workspace.root}
           onClick={() =>
             dispatch({
@@ -125,9 +128,6 @@ function WorkspaceRow({
             </svg>
           </span>
           <span className="row-label">{workspace.label}</span>
-          {workspace.agents.length > 0 && (
-            <StatusMark status={workspace.aggregateStatus} compact />
-          )}
         </button>
         {workspace.canCreateAgent && (
           <button
@@ -224,11 +224,10 @@ function WorkspaceRow({
                     // to be guessed is worse than one that is not there.
                     onDoubleClick={() => onRenameAgent(agent)}
                   >
-                    <span className="row-glyph" aria-hidden="true">
-                      <svg viewBox="0 0 14 14" focusable="false">
-                        <circle cx="7" cy="7" r="4.25" />
-                      </svg>
-                    </span>
+                    {/* The leading glyph *is* the status. There is no second
+                        mark trailing the row saying the same thing in a
+                        smaller size. */}
+                    <StatusMark status={agent.status} />
                     <span className="row-label">{agent.displayName}</span>
                     {agent.controlState !== "running" ||
                     agent.runtimeHealth !== "healthy" ? (
@@ -240,7 +239,6 @@ function WorkspaceRow({
                             : runtimeHealthLabel(agent.runtimeHealth)}
                       </span>
                     ) : null}
-                    <StatusMark status={agent.status} compact />
                   </button>
                   {agent.controlState === "stopping" ? null : (
                     <button

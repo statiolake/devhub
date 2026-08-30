@@ -332,10 +332,6 @@
   fill: color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
-.agent-row .row-glyph svg {
-  fill: none;
-}
-
 .row-label {
   overflow: hidden;
   min-width: 0;
@@ -367,11 +363,6 @@
 
 .row-label {
   flex: 1 1 auto;
-}
-
-/* Keep the status dot clear of the label and of the trailing actions. */
-.sidebar-context-button .status-mark {
-  margin-left: var(--space-1);
 }
 
 /* Agents sit one indent level in from their Workspace row. */
@@ -558,7 +549,6 @@ body.is-resizing-sidebar {
 /* One tile per destination: the glyph the row shows, at the size a toolbar
    control is, with the row's own selection fill behind it. */
 .rail-tile {
-  position: relative;
   display: flex;
   width: var(--sidebar-tile-size);
   height: var(--sidebar-tile-size);
@@ -598,82 +588,58 @@ body.is-resizing-sidebar {
   fill: color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
-/* The status sits on the tile's trailing corner, where a badge goes, with a
-   ring of the pane behind it so it reads over the glyph rather than in it. */
-.rail-badge {
-  position: absolute;
-  right: 1px;
-  bottom: 1px;
-  display: flex;
-  padding: 1.5px;
-  border-radius: 50%;
-  background: var(--chrome);
-}
-
 /* ---------------------------------------------------------- status marks */
 
+/* The mark occupies the row's leading glyph column, so an Agent's status and a
+   Workspace's folder sit on one left edge and the rows still line up. */
 .status-mark {
-  display: inline-flex;
-  flex: 0 0 auto;
+  display: flex;
+  width: var(--sidebar-glyph-width);
+  flex: 0 0 var(--sidebar-glyph-width);
   align-items: center;
-  gap: var(--space-1);
-  color: var(--secondary);
-  font-size: 11px;
+  justify-content: center;
+  color: var(--status-idle);
 }
 
-/* The mark is one ink colour and one silhouette. Shape is drawn in the SVG so
-   that it survives greyscale, Increase Contrast and a colour-blind reader;
-   the colour is the second telling, never the only one. */
+/* Codicon outlines are filled shapes on a 16-unit box; they carry their whole
+   silhouette in the path, so shape survives greyscale, Increase Contrast and a
+   colour-blind reader and the colour is the second telling, never the only
+   one. */
 .status-glyph {
   display: block;
-  width: var(--status-mark-size);
-  height: var(--status-mark-size);
-  flex: 0 0 var(--status-mark-size);
+  width: var(--sidebar-glyph-ink);
+  height: var(--sidebar-glyph-ink);
   fill: currentcolor;
   stroke: none;
-  color: var(--idle);
+  transform-origin: 50% 50%;
 }
 
-/* A ring and an outline are the same circle at two weights, so the stroke has
-   to be stated where the shape is, not where the colour is. */
-.status-glyph .status-ring {
-  fill: none;
-  stroke: currentcolor;
-  stroke-width: 2.4;
+.status-mark-working {
+  color: var(--status-working);
 }
 
-.status-glyph .status-outline {
-  fill: none;
-  stroke: currentcolor;
-  stroke-width: 1.4;
+.status-mark-waiting {
+  color: var(--status-waiting);
 }
 
-.status-mark-working .status-glyph {
-  color: var(--working);
+.status-mark-idle {
+  color: var(--status-idle);
 }
 
-.status-mark-waiting .status-glyph {
-  color: var(--waiting);
-}
-
-.status-mark-error .status-glyph {
-  color: var(--danger);
+.status-mark-error {
+  color: var(--status-error);
 }
 
 /* Working is the one status that is going somewhere, so it is the one that
-   moves — slowly, and not at all for a reader who asked for less motion. */
+   moves — the codicon `loading` arc turning, the way VS Code turns it, and
+   not at all for a reader who asked for less motion. */
 .status-mark-working .status-glyph {
-  animation: status-breathe 2s ease-in-out infinite;
+  animation: status-spin 1.5s linear infinite;
 }
 
-@keyframes status-breathe {
-  0%,
+@keyframes status-spin {
   100% {
-    opacity: 1;
-  }
-
-  50% {
-    opacity: 0.45;
+    transform: rotate(360deg);
   }
 }
 
@@ -693,7 +659,12 @@ body.is-resizing-sidebar {
   min-height: 0;
   flex: 1;
   flex-direction: column;
-  background: var(--surface);
+  /* The content area is painted in the active surface's own ground, not in
+     DevHub's: `--content` is the Editor background for the Editor and the
+     terminal background for the two emulator surfaces, and the viewport sets
+     it in the same commit as `data-surface-state`. The fallback is the frame
+     before the viewport has mounted, where the Editor is the assumption. */
+  background: var(--content, var(--surface));
 }
 
 /* Surface states follow the shape of a macOS alert: a short declarative
@@ -922,12 +893,6 @@ body.is-resizing-sidebar {
 .surface-pool-entry > * {
   min-height: 0;
   flex: 1;
-}
-
-/* The terminal owns its own background; give it the whole viewport. */
-.surface[data-surface-state="terminal"],
-.surface[data-surface-state="agent"] {
-  background: var(--sunken);
 }
 
 /* --------------------------------------------------------------- buttons */

@@ -4,10 +4,13 @@
  * The collapsed Sidebar.
  *
  * What the rail must keep from the pane is what a label cannot replace: every
- * destination is still there and still reachable, the Agents' status is still
- * on the tile, and selecting through the rail is the same intent as selecting
- * through a row. A rail that shows fewer places than the pane is a place the
- * person cannot get back to without expanding it again.
+ * destination is still there and still reachable, and selecting through the
+ * rail is the same intent as selecting through a row. A rail that shows fewer
+ * places than the pane is a place the person cannot get back to without
+ * expanding it again.
+ *
+ * What it must *not* grow is a status of its own. Status belongs to an Agent,
+ * the rail has no Agent tiles, and a Workspace has nothing to roll up.
  */
 
 import "@testing-library/jest-dom/vitest";
@@ -36,7 +39,6 @@ function workspace(
     root: `/w/${label}`,
     selectedPath: `/w/${label}`,
     state: "available",
-    aggregateStatus: statuses[0] ?? "idle",
     canCreateAgent: true,
     agents: statuses.map((status, index) => ({
       id: index === 0 ? AGENT_A : `${id}-${String(index)}`,
@@ -89,10 +91,10 @@ describe("the Sidebar collapsed to a rail", () => {
       "title",
       "Scratch",
     );
-    // The name plus what its Agents are doing: the tile has no room to write
+    // The name plus how many Agents are in it: the tile has no room to write
     // either one, so hovering is where both have to be.
     expect(
-      screen.getByRole("button", { name: "folderA — 1 Agent, Working" }),
+      screen.getByRole("button", { name: "folderA — 1 Agent" }),
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "folderB" })).toBeInTheDocument();
     expect(
@@ -100,11 +102,9 @@ describe("the Sidebar collapsed to a rail", () => {
     ).toBeInTheDocument();
   });
 
-  it("shows an Agent's status on the tile, and nothing where there are none", () => {
+  it("puts no status on a Workspace tile, not even where Agents are working", () => {
     mount({ kind: "global" });
-    const marks = screen.getAllByRole("img");
-    expect(marks).toHaveLength(1);
-    expect(marks[0]).toHaveAccessibleName("Working");
+    expect(screen.queryAllByRole("img")).toHaveLength(0);
   });
 
   it("selects through the same intent a row does", () => {

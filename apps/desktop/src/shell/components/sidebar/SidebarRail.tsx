@@ -4,10 +4,10 @@
  * Collapsing a navigation pane on a Mac narrows it to its icons; it does not
  * delete it. So the rail carries exactly what the pane carries and in the same
  * order — Scratch at the top, one tile per Workspace under it, Add at the
- * bottom — and each tile keeps the two things a source-list row has that a
- * label cannot replace: what it is (the glyph) and how its Agents are doing
- * (the status mark, the same one the row draws). The name comes back on hover
- * and is always in the accessibility tree.
+ * bottom — and a tile carries what its row carries: what the place is. Status
+ * belongs to an Agent, and the rail has no Agent tiles, so it shows none —
+ * a Workspace never had a status of its own to roll one up from. The name
+ * comes back on hover and is always in the accessibility tree.
  *
  * Selection and dispatch are the pane's, not a second set: a tile sends the
  * same `select_context` intent the row sends, so the two forms cannot disagree
@@ -19,14 +19,12 @@ import type {
   AppSnapshot,
   WorkspaceSnapshot,
 } from "../../../ipc/appShell";
-import { StatusMark } from "./StatusMark";
-import { statusLabel } from "./status";
 
 /** What the tile says on hover and to a screen reader. */
 function workspaceDescription(workspace: WorkspaceSnapshot): string {
   const agents = workspace.agents.length;
   if (agents === 0) return workspace.label;
-  return `${workspace.label} — ${String(agents)} ${agents === 1 ? "Agent" : "Agents"}, ${statusLabel(workspace.aggregateStatus)}`;
+  return `${workspace.label} — ${String(agents)} ${agents === 1 ? "Agent" : "Agents"}`;
 }
 
 function RailTile({
@@ -122,11 +120,6 @@ export function SidebarRail({
                       <path d="M1.5 3.5a1 1 0 0 1 1-1h3l1.4 1.6h4.6a1 1 0 0 1 1 1v5.4a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1z" />
                     </svg>
                   </span>
-                  {workspace.agents.length > 0 && (
-                    <span className="rail-badge">
-                      <StatusMark status={workspace.aggregateStatus} compact />
-                    </span>
-                  )}
                 </RailTile>
               </li>
             );
