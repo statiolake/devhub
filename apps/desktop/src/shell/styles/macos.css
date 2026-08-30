@@ -501,6 +501,40 @@
   }
 }
 
+/* An alert that asks for a value as well as a decision. */
+.mac-alert-field {
+  width: 100%;
+  margin-top: var(--space-3);
+}
+
+/* A sheet that is a list of choices: header, list, footer. */
+.mac-sheet-header {
+  padding: var(--space-4) var(--space-4) var(--space-2);
+}
+
+.mac-sheet-header .mac-message {
+  margin-top: 4px;
+}
+
+.mac-sheet .mac-list {
+  max-height: 44vh;
+  border-top: 1px solid var(--line-soft);
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.mac-sheet-empty,
+.mac-sheet-note {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+}
+
+.mac-sheet-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+}
+
 /* ----------------------------------------------------------- empty states */
 
 /*

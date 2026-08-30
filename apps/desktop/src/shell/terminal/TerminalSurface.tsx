@@ -3,6 +3,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import "./terminal.css";
+import { Failure, Waiting } from "../components/shell/SurfaceState";
 import {
   activePalette,
   prefersDark,
@@ -629,41 +630,19 @@ export function TerminalSurface({
         aria-label={`${surfaceLabel} terminal`}
         tabIndex={0}
       />
-      {connection === "connecting" && (
-        <div className="surface-state" role="status" aria-live="polite">
-          <span className="surface-spinner" aria-hidden="true" />
-          <p className="surface-line">Connecting…</p>
-        </div>
-      )}
+      {connection === "connecting" && <Waiting label="Connecting…" />}
       {connection === "disconnected" && (
-        <div
-          className="surface-state surface-failure"
-          role="alert"
-          aria-live="polite"
-        >
-          <p className="failure-title">
-            <svg
-              className="failure-icon"
-              viewBox="0 0 16 16"
-              aria-hidden="true"
-              focusable="false"
-            >
-              <circle cx="8" cy="8" r="7" />
-              <path d="M8 4.6v4.2M8 11.1v.6" />
-            </svg>
-            The terminal session is not connected.
-          </p>
-          <p className="failure-detail">{error ?? DETACHABLE_ERROR}</p>
-          <div className="surface-actions">
-            <button
-              type="button"
-              className="primary-button"
-              onClick={() => controllerRef.current?.retry()}
-            >
-              Retry
-            </button>
-          </div>
-        </div>
+        <Failure
+          summary="The terminal session is not connected."
+          detail={error ?? DETACHABLE_ERROR}
+          actions={[
+            {
+              label: "Retry",
+              primary: true,
+              run: () => controllerRef.current?.retry(),
+            },
+          ]}
+        />
       )}
     </div>
   );

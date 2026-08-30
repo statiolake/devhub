@@ -1246,56 +1246,58 @@ export function SettingsApp({ client }: { readonly client?: SettingsClient }) {
       ) : null}
 
       <div className="settings-body">
-        {section === "General" ? (
-          <GeneralSection config={draft} update={update} />
-        ) : null}
-        {section === "Workspaces" ? (
-          <WorkspacesSection config={draft} update={update} />
-        ) : null}
-        {section === "Agents" ? (
-          <AgentsSection config={draft} update={update} />
-        ) : null}
-        {section === "Runtimes" ? (
-          <RuntimesSection
-            config={draft}
-            update={update}
-            runtime={snapshot.runtime}
-            diagnostics={snapshot.diagnostics}
-            onRecheck={recheck}
-            onOpenLogs={() => {
-              setStatus("Opening…");
-              void transport.openLogFolder().then(
-                () => {
-                  setStatus(undefined);
-                },
-                (value: unknown) => {
-                  setError(parseSettingsTransportError(value));
-                  setStatus(undefined);
-                },
-              );
-            }}
-            onCopyDiagnostics={() => {
-              void transport.copyDiagnostics().then(
-                () => {
-                  setStatus("Copied.");
-                },
-                (value: unknown) => {
-                  setError(parseSettingsTransportError(value));
-                  setStatus(undefined);
-                },
-              );
-            }}
-            socketDraft={socketDraft ?? draft.runtimes.tmuxSocketName}
-            onSocketDraft={setSocketDraft}
-            onSocketChange={askToChangeSocket}
-            effectiveSocket={snapshot.config.runtimes.tmuxSocketName}
-            status={status}
-            busy={busy}
-          />
-        ) : null}
-        {section === "Appearance" ? (
-          <AppearanceSection config={draft} update={update} />
-        ) : null}
+        <div className="settings-content">
+          {section === "General" ? (
+            <GeneralSection config={draft} update={update} />
+          ) : null}
+          {section === "Workspaces" ? (
+            <WorkspacesSection config={draft} update={update} />
+          ) : null}
+          {section === "Agents" ? (
+            <AgentsSection config={draft} update={update} />
+          ) : null}
+          {section === "Runtimes" ? (
+            <RuntimesSection
+              config={draft}
+              update={update}
+              runtime={snapshot.runtime}
+              diagnostics={snapshot.diagnostics}
+              onRecheck={recheck}
+              onOpenLogs={() => {
+                setStatus("Opening…");
+                void transport.openLogFolder().then(
+                  () => {
+                    setStatus(undefined);
+                  },
+                  (value: unknown) => {
+                    setError(parseSettingsTransportError(value));
+                    setStatus(undefined);
+                  },
+                );
+              }}
+              onCopyDiagnostics={() => {
+                void transport.copyDiagnostics().then(
+                  () => {
+                    setStatus("Copied.");
+                  },
+                  (value: unknown) => {
+                    setError(parseSettingsTransportError(value));
+                    setStatus(undefined);
+                  },
+                );
+              }}
+              socketDraft={socketDraft ?? draft.runtimes.tmuxSocketName}
+              onSocketDraft={setSocketDraft}
+              onSocketChange={askToChangeSocket}
+              effectiveSocket={snapshot.config.runtimes.tmuxSocketName}
+              status={status}
+              busy={busy}
+            />
+          ) : null}
+          {section === "Appearance" ? (
+            <AppearanceSection config={draft} update={update} />
+          ) : null}
+        </div>
       </div>
 
       {socketSheet ? (

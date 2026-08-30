@@ -6,7 +6,6 @@ import {
   useState,
   type PointerEvent as ReactPointerEvent,
 } from "react";
-import { createPortal } from "react-dom";
 import {
   type AgentProfile,
   type AgentProfilesAvailabilityWire,
@@ -18,6 +17,8 @@ import {
 import { clampSidebarWidth } from "../../../ipc/appShell";
 import { useAppShell } from "../../useAppShell";
 import { isImeComposing } from "../../accessibility/ime";
+import { Alert } from "../shell/Alert";
+import { ChooseSheet } from "../shell/ChooseSheet";
 import { WorkspacePicker } from "../shell/WorkspacePicker";
 import { StatusMark } from "./StatusMark";
 import { statusLabel } from "./status";
@@ -39,40 +40,6 @@ function runtimeHealthLabel(health: AgentSnapshot["runtimeHealth"]): string {
 
 export interface SidebarProps {
   readonly snapshot: AppSnapshot;
-}
-
-function dialogFocusables(dialog: HTMLElement): HTMLElement[] {
-  return [
-    ...dialog.querySelectorAll<HTMLElement>(
-      "button:not([disabled]), input:not([disabled]), [href], [tabindex]:not([tabindex='-1'])",
-    ),
-  ];
-}
-
-function trapDialogKey(
-  event: KeyboardEvent,
-  dialog: HTMLElement | null,
-  onEscape: () => void,
-): void {
-  if (event.key === "Escape") {
-    // Escape during IME composition belongs to the text composition, not the
-    // modal lifecycle.
-    if (isImeComposing(event)) return;
-    event.preventDefault();
-    onEscape();
-    return;
-  }
-  if (event.key !== "Tab" || !dialog) return;
-  const focusables = dialogFocusables(dialog);
-  if (focusables.length === 0) return;
-  const index = focusables.indexOf(document.activeElement as HTMLElement);
-  const next = event.shiftKey
-    ? index <= 0
-      ? focusables.length - 1
-      : index - 1
-    : (index + 1) % focusables.length;
-  event.preventDefault();
-  focusables[next]?.focus();
 }
 
 function treeContextButtons(tree: HTMLElement): HTMLButtonElement[] {
@@ -553,16 +520,12 @@ export function Sidebar({ snapshot }: SidebarProps) {
   const pickerCompositionActive = useRef(false);
   const renameCompositionActive = useRef(false);
   const pickerTriggerRef = useRef<HTMLButtonElement>(null);
-  const agentPickerRef = useRef<HTMLElement>(null);
-  const renameDialogRef = useRef<HTMLElement>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
   const workspaceTreeRef = useRef<HTMLUListElement>(null);
   const treeFocusId = useRef<string | undefined>(undefined);
   const pendingTreeChildFocus = useRef<string | undefined>(undefined);
   const focusRestoreGeneration = useRef(0);
   const pendingFocusRestore = useRef<HTMLElement | null>(null);
-  const agentPickerPreviousFocus = useRef<HTMLElement | null>(null);
-  const renamePreviousFocus = useRef<HTMLElement | null>(null);
 
   useLayoutEffect(() => {
     const tree = workspaceTreeRef.current;
@@ -681,20 +644,14 @@ export function Sidebar({ snapshot }: SidebarProps) {
   const closeAgentPicker = useCallback(() => {
     setAgentPickerWorkspaceId(undefined);
     pickerCompositionActive.current = false;
-    const previous = agentPickerPreviousFocus.current;
-    scheduleFocusRestore(previous);
-    agentPickerPreviousFocus.current = null;
-  }, [scheduleFocusRestore]);
+  }, []);
 
   const closeRename = useCallback(() => {
     setRenameBusy(false);
     setRenameError(false);
     renameCompositionActive.current = false;
     setRenameTarget(undefined);
-    const previous = renamePreviousFocus.current;
-    scheduleFocusRestore(previous);
-    renamePreviousFocus.current = null;
-  }, [scheduleFocusRestore]);
+  }, []);
 
   useEffect(() => {
     if (!renameTarget) return;
@@ -704,37 +661,19 @@ export function Sidebar({ snapshot }: SidebarProps) {
     if (!current || current.controlState !== "running") closeRename();
   }, [closeRename, renameTarget, snapshot.workspaces]);
 
+  // The field, not the default button: a rename starts by typing over what is
+  // there. The sheet itself owns the trap and the restore.
   useEffect(() => {
-    if (!agentPickerWorkspaceId) return undefined;
-    const first = agentPickerRef.current?.querySelector<HTMLElement>(
-      "button, [tabindex='0']",
-    );
-    first?.focus();
-    const onKeyDown = (event: KeyboardEvent) => {
-      trapDialogKey(event, agentPickerRef.current, closeAgentPicker);
-    };
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
-  }, [agentPickerWorkspaceId, closeAgentPicker]);
-
-  useEffect(() => {
-    if (!renameTarget) return undefined;
+    if (!renameTarget) return;
     renameInputRef.current?.focus();
     renameInputRef.current?.select();
-    const onKeyDown = (event: KeyboardEvent) => {
-      trapDialogKey(event, renameDialogRef.current, closeRename);
-    };
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
-  }, [closeRename, renameTarget]);
+  }, [renameTarget]);
 
   const openAgentPicker = useCallback((workspaceId: string) => {
-    agentPickerPreviousFocus.current = document.activeElement as HTMLElement;
     setAgentPickerWorkspaceId(workspaceId);
   }, []);
 
   const openRename = useCallback((agent: AgentSnapshot) => {
-    renamePreviousFocus.current = document.activeElement as HTMLElement;
     setRenameValue(agent.displayName);
     setRenameError(false);
     setRenameTarget(agent);
@@ -932,146 +871,81 @@ export function Sidebar({ snapshot }: SidebarProps) {
           <p className="sidebar-empty">No workspaces open</p>
         )}
       </div>
-      {agentPickerWorkspaceId && typeof document !== "undefined"
-        ? createPortal(
-            <section
-              ref={agentPickerRef}
-              className="agent-profile-picker"
-              role="dialog"
-              aria-modal="true"
-              aria-labelledby="agent-profile-picker-title"
-            >
-              <div className="agent-profile-picker-card">
-                <h2 id="agent-profile-picker-title">New Agent</h2>
-                <p>
-                  Select an enabled profile to launch at the workspace root.
-                </p>
-                {agentProfiles.profiles.length > 0 ? (
-                  <div className="agent-profile-options">
-                    {agentProfiles.profiles.map((profile) => (
-                      <button
-                        key={profile.id}
-                        type="button"
-                        onClick={() => {
-                          onDispatch({
-                            type: "request_create_agent",
-                            workspaceId: agentPickerWorkspaceId,
-                            profileId: profile.id,
-                          });
-                          closeAgentPicker();
-                        }}
-                      >
-                        <span>{profile.displayName}</span>
-                        <small>
-                          {profile.kind === "codex" ? "Codex" : "Claude"}
-                        </small>
-                      </button>
-                    ))}
-                  </div>
-                ) : (
-                  <p role="status">
-                    {agentProfiles.availability === "unavailable"
-                      ? "Agent profiles are unavailable. Try again after configuration is restored."
-                      : "No enabled Agent profiles are available."}
-                  </p>
-                )}
-                {agentProfiles.availability === "degraded" && (
-                  <p role="status">
-                    Profile configuration needs attention; these are the last
-                    confirmed choices.
-                  </p>
-                )}
-                <button type="button" onClick={closeAgentPicker}>
-                  Cancel
-                </button>
-              </div>
-            </section>,
-            document.body,
-          )
-        : null}
-      {renameTarget && typeof document !== "undefined"
-        ? createPortal(
-            <section
-              ref={renameDialogRef}
-              className="agent-profile-picker"
-              role="dialog"
-              aria-modal="true"
-              aria-labelledby="rename-agent-title"
-            >
-              <form
-                className="agent-profile-picker-card"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  if (renameCompositionActive.current) return;
-                  void submitRename();
-                }}
-              >
-                <h2 id="rename-agent-title">Rename Agent</h2>
-                <label>
-                  Display name
-                  <input
-                    ref={renameInputRef}
-                    value={renameValue}
-                    maxLength={256}
-                    aria-invalid={renameError}
-                    disabled={renameBusy}
-                    onCompositionStart={() => {
-                      renameCompositionActive.current = true;
-                    }}
-                    onCompositionEnd={() => {
-                      renameCompositionActive.current = false;
-                    }}
-                    onKeyDown={(event) => {
-                      if (
-                        isImeComposing(
-                          event.nativeEvent,
-                          renameCompositionActive.current,
-                        )
-                      ) {
-                        if (
-                          event.key === "Enter" ||
-                          event.key === "NumpadEnter" ||
-                          event.key === "Escape"
-                        ) {
-                          event.preventDefault();
-                          event.stopPropagation();
-                        }
-                        return;
-                      }
-                    }}
-                    onChange={(event) => setRenameValue(event.target.value)}
-                  />
-                </label>
-                {renameError && (
-                  <p className="surface-inline-alert" role="alert">
-                    Rename could not be completed. Try again.
-                  </p>
-                )}
-                <div className="confirmation-actions">
-                  <button
-                    type="button"
-                    onClick={closeRename}
-                    disabled={renameBusy}
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    className="primary-button"
-                    type="submit"
-                    disabled={
-                      renameBusy ||
-                      renameValue.trim().length === 0 ||
-                      renameTarget.controlState !== "running"
-                    }
-                  >
-                    {renameBusy ? "Renaming…" : "Rename"}
-                  </button>
-                </div>
-              </form>
-            </section>,
-            document.body,
-          )
-        : null}
+      {agentPickerWorkspaceId ? (
+        <ChooseSheet
+          title="New Agent"
+          message="The agent starts at the workspace root."
+          options={agentProfiles.profiles.map((profile) => ({
+            id: profile.id,
+            label: profile.displayName,
+            detail: profile.kind === "codex" ? "Codex" : "Claude",
+          }))}
+          empty={
+            agentProfiles.availability === "unavailable"
+              ? "Agent profiles are unavailable until the configuration is readable again."
+              : "No agent profiles are enabled."
+          }
+          note={
+            agentProfiles.availability === "degraded"
+              ? "The configuration needs attention; these are the last profiles DevHub could confirm."
+              : undefined
+          }
+          onChoose={(profileId) => {
+            onDispatch({
+              type: "request_create_agent",
+              workspaceId: agentPickerWorkspaceId,
+              profileId,
+            });
+            closeAgentPicker();
+          }}
+          onCancel={closeAgentPicker}
+        />
+      ) : null}
+      {renameTarget ? (
+        <Alert
+          title="Rename Agent"
+          message="The name is how this agent appears in the sidebar."
+          onCancel={closeRename}
+          actions={[
+            { label: "Cancel", run: closeRename, disabled: renameBusy },
+            {
+              label: renameBusy ? "Renaming…" : "Rename",
+              isDefault: true,
+              disabled:
+                renameBusy ||
+                renameValue.trim().length === 0 ||
+                renameTarget.controlState !== "running",
+              run: () => {
+                void submitRename();
+              },
+            },
+          ]}
+        >
+          <input
+            ref={renameInputRef}
+            className="mac-field mac-alert-field"
+            aria-label="Display name"
+            value={renameValue}
+            maxLength={256}
+            aria-invalid={renameError}
+            disabled={renameBusy}
+            onCompositionStart={() => {
+              renameCompositionActive.current = true;
+            }}
+            onCompositionEnd={() => {
+              renameCompositionActive.current = false;
+            }}
+            onChange={(event) => {
+              setRenameValue(event.target.value);
+            }}
+          />
+          {renameError ? (
+            <p className="mac-message" role="alert">
+              The agent could not be renamed. Try again.
+            </p>
+          ) : null}
+        </Alert>
+      ) : null}
       <SidebarResizeHandle
         width={renderedWidth}
         onPreview={previewResize}

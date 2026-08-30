@@ -31,7 +31,7 @@ body {
   /* The window has one label column, so every control in every section lines
      up down the page — which is what makes it read as one window rather than
      five panels that happen to share a frame. */
-  --mac-label-width: 148px;
+  --mac-label-width: 190px;
 }
 
 .settings-loading {
@@ -112,10 +112,23 @@ body {
 
 /* ---------------------------------------------------------------- body */
 
+/*
+ * One centred column, not the whole window.
+ *
+ * A form row is a label and a control, and a control stretched across a wide
+ * window puts them so far apart that the pair stops reading as one thing. The
+ * window can be as wide as the person likes; the form stays where the eye is.
+ */
 .settings-body {
   flex: 1;
   overflow-y: auto;
   padding: var(--space-6) var(--space-6) var(--space-8);
+}
+
+.settings-content {
+  width: 100%;
+  max-width: 720px;
+  margin: 0 auto;
 }
 
 .settings-intro {
@@ -162,7 +175,6 @@ body {
   max-width: 26ch;
   white-space: nowrap;
   text-overflow: ellipsis;
-  direction: rtl;
   color: var(--secondary);
 }
 
