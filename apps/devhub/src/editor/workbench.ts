@@ -15,12 +15,7 @@
  * of its own rather than a slot in this one — and why a modal it draws over
  * "the window" covers its own frame and nothing else.
  */
-import {
-  getService,
-  IExtensionResourceLoaderService,
-  IFileService,
-  initialize as initializeVscodeServices,
-} from "@codingame/monaco-vscode-api";
+import { initialize as initializeVscodeServices } from "@codingame/monaco-vscode-api";
 import getAccessibilityServiceOverride from "@codingame/monaco-vscode-accessibility-service-override";
 import getAiServiceOverride from "@codingame/monaco-vscode-ai-service-override";
 import getAssignmentServiceOverride from "@codingame/monaco-vscode-assignment-service-override";
@@ -92,6 +87,7 @@ import getWorkbenchServiceOverride from "@codingame/monaco-vscode-workbench-serv
 import getWorkspaceTrustOverride from "@codingame/monaco-vscode-workspace-trust-service-override";
 import "@codingame/monaco-vscode-theme-defaults-default-extension";
 import * as monaco from "monaco-editor";
+import { registerAssetFiles } from "./assetFiles";
 import type { EditorRemote } from "../app/client";
 import { UserFacingFailure } from "../app/failure";
 import { setDisplayLanguage } from "./frameProtocol";
@@ -162,6 +158,9 @@ async function raise(
   { remote, folder, assetPrefix }: WorkbenchTarget,
 ): Promise<void> {
   const { authority, connectionToken } = remote;
+  // Before the services start, because the first icon theme is loaded as
+  // soon as they do.
+  if (assetPrefix != null) registerAssetFiles(authority);
   trace("workbench: initialising services");
   await initializeVscodeServices(
     {
@@ -343,31 +342,5 @@ async function raise(
       },
     },
   );
-  await readExtensionResourcesThroughTheConnection();
   trace("workbench: services initialised");
-}
-
-/**
- * Read an extension's own files over the connection rather than fetching them.
- *
- * The loader decides between the two by asking where a *browser* would load
- * the file — the same question `resourceUriProvider` answers for fonts and
- * images — and then, for anything that is not an ordinary web address, reads
- * it through the file service. Those are two different questions with two
- * different right answers, and the loader only asks one of them.
- *
- * So the one whose answer it gets wrong is settled here: a `vscode-remote:`
- * resource is always read through the connection, which is already open and
- * needs nobody's permission.
- */
-async function readExtensionResourcesThroughTheConnection(): Promise<void> {
-  const [loader, files] = await Promise.all([
-    getService(IExtensionResourceLoaderService),
-    getService(IFileService),
-  ]);
-  const fetchIt = loader.readExtensionResource.bind(loader);
-  loader.readExtensionResource = async (uri) =>
-    uri.scheme === "vscode-remote"
-      ? (await files.readFile(uri)).value.toString()
-      : fetchIt(uri);
 }
