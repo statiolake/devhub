@@ -100,6 +100,8 @@ export type Effect =
       readonly token: OperationToken;
       readonly workspaceId: WorkspaceId;
       readonly profileId: AgentProfileId;
+      /** Appended to the resolved profile's arguments, for this Agent only. */
+      readonly extraArgs: readonly string[];
     }
   | {
       readonly kind: "generate_confirmation_id";
@@ -578,6 +580,7 @@ export class AppCoordinator {
         return this.beginProfileResolution(
           intent.workspaceId,
           intent.profileId,
+          intent.extraArgs ?? [],
           id,
         );
       case "rename_agent":
@@ -737,6 +740,7 @@ export class AppCoordinator {
   private beginProfileResolution(
     workspaceId: WorkspaceId,
     profileId: AgentProfileId,
+    extraArgs: readonly string[],
     id: OperationId,
   ): IntentOutcome {
     const workspace = this.model.workspace(workspaceId);
@@ -760,6 +764,7 @@ export class AppCoordinator {
       token,
       workspaceId,
       profileId,
+      extraArgs,
     });
     return { kind: "deferred", operationId: id, snapshot: this.snapshot() };
   }

@@ -203,6 +203,16 @@ export type UserIntent =
       readonly type: "create_agent";
       readonly workspaceId: WorkspaceId;
       readonly profileId: AgentProfileId;
+      /**
+       * Arguments to append to the profile's own, for this Agent only.
+       *
+       * They are what a person typed after `--` on the `devhub` command line,
+       * so they are a user intent like everything else here. The page has
+       * nowhere to type them and therefore never sets this; the one read site
+       * treats absent and empty as the same thing, so there is still exactly
+       * one rule about how a launch's arguments are composed.
+       */
+      readonly extraArgs?: readonly string[];
     }
   | {
       readonly type: "rename_agent";
