@@ -169,15 +169,13 @@ function toWireConfig(config: Config): SettingsConfigWire {
 }
 
 /**
- * Back to the config, with the fields the wire does not carry taken from the
- * file rather than invented.
+ * Back to the config.
  *
- * `appearance.color_scheme` is the only one: the window does not offer it (see
- * `SettingsAppearanceWire`), so a save must leave whatever is on disk alone.
- * Writing a constant here instead would be the page asserting a value nobody
- * chose — which is how a projection starts lying.
+ * The wire now carries every field the config has, so nothing here is taken
+ * from anywhere else: `appearance.color_scheme` was the one exception, and it
+ * is retired (see `SettingsAppearanceWire`).
  */
-function fromWireConfig(wire: SettingsConfigWire, base: Config): Config {
+function fromWireConfig(wire: SettingsConfigWire): Config {
 	return {
 		version: wire.version,
 		general: { import_login_environment: wire.general.importLoginEnvironment },
@@ -190,7 +188,6 @@ function fromWireConfig(wire: SettingsConfigWire, base: Config): Config {
 			tmux_args: [...wire.runtimes.tmuxArgs],
 		},
 		appearance: {
-			colorScheme: base.appearance.colorScheme,
 			sidebarDensity: wire.appearance.sidebarDensity,
 			terminalFontFamily: wire.appearance.terminalFontFamily,
 			terminalFontSize: wire.appearance.terminalFontSize,
@@ -316,11 +313,9 @@ function registerIpc(): void {
 		async (_event, request: SettingsSaveRequestWire) => {
 			const settings = requireHost();
 			try {
-				const current =
-					settings.store.current() ?? (await settings.store.load());
 				const loaded = await settings.store.save(
 					request.revision,
-					fromWireConfig(request.config, current.config),
+					fromWireConfig(request.config),
 				);
 				settings.adopt(loaded.config);
 				return await buildSnapshot();
