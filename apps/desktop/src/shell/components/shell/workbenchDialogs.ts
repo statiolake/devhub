@@ -96,3 +96,24 @@ export function useRestartingEditors(): ReadonlySet<string> {
 
   return restarting;
 }
+
+/**
+ * The frame to draw where the workbench was, while a DevHub modal is open.
+ *
+ * The same mechanism the scoped VS Code dialog uses, for the same reason: a
+ * modal the page draws needs the native view to stand down, and a workbench
+ * that disappears is not what a sheet over a window looks like.
+ */
+export function useModalBackdrop(): string | undefined {
+  const [backdrop, setBackdrop] = useState<string>();
+
+  useEffect(
+    () =>
+      devhub().onModalBackdrop(({ backdrop: frame }) => {
+        setBackdrop(frame);
+      }),
+    [],
+  );
+
+  return backdrop;
+}

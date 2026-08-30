@@ -74,6 +74,28 @@ export function installWorkbenchDialogs(): void {
  * and answering it for them — either way — is worse than waiting. The promise
  * settles if the window goes away, because then there is nobody to ask.
  */
+/**
+ * The workbench as it looks right now, as a data URL.
+ *
+ * DOM cannot be painted over a native view, so any DevHub surface that has to
+ * appear above a workbench stands that workbench down first — and without this
+ * the editor would simply vanish underneath, which is alarming and makes what
+ * replaced it harder to read. The still image is what keeps the workbench
+ * *there* while it is not accepting input.
+ *
+ * Only meaningful while the view is actually on screen; an off-screen view
+ * captures as nothing, and nothing is the right answer then anyway, because
+ * there was nothing to preserve.
+ */
+export async function captureBackdrop(
+	view: WorkbenchView,
+): Promise<string | undefined> {
+	return view.webContents
+		.capturePage()
+		.then((image) => (image.isEmpty() ? undefined : image.toDataURL()))
+		.catch(() => undefined);
+}
+
 export async function askWorkbenchDialog(
 	options: Electron.MessageBoxOptions,
 	surfaceKey: string,
@@ -85,10 +107,7 @@ export async function askWorkbenchDialog(
 	const id = randomUUID();
 	// Taken before the view stands down, so the still image is the workbench as
 	// it was at the moment it asked.
-	const backdrop = await view.webContents
-		.capturePage()
-		.then((image) => (image.isEmpty() ? undefined : image.toDataURL()))
-		.catch(() => undefined);
+	const backdrop = await captureBackdrop(view);
 	const request: WorkbenchDialogRequest = {
 		id,
 		surfaceKey,

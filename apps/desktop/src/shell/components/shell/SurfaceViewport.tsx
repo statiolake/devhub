@@ -24,9 +24,11 @@ import {
 import { Failure, Waiting } from "./SurfaceState";
 import {
   answerWorkbenchDialog,
+  useModalBackdrop,
   useRestartingEditors,
   useWorkbenchDialogs,
 } from "./workbenchDialogs";
+import { SurfaceBackdrop } from "./SurfaceBackdrop";
 import { ViewScopedAlert } from "./ViewScopedAlert";
 
 export interface SurfaceViewportProps {
@@ -157,6 +159,10 @@ export function SurfaceViewport({
   // to be the one on screen.
   const workbenchDialogs = useWorkbenchDialogs();
   const restartingEditors = useRestartingEditors();
+  // While a DevHub modal is open the workbench has stood down for it. This is
+  // the frame it stood down on, drawn where it was so it dims rather than
+  // disappears.
+  const modalBackdrop = useModalBackdrop();
   const viewportRef = useRef<HTMLElement | null>(null);
 
   // A missing Workspace Root keeps its identity, so recovery belongs on the
@@ -343,6 +349,7 @@ export function SurfaceViewport({
           visible={surface.key === activeKey}
         />
       ))}
+      <SurfaceBackdrop src={modalBackdrop} />
       {editorDialog ? (
         <ViewScopedAlert
           request={editorDialog}

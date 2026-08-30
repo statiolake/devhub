@@ -19,6 +19,7 @@
 import { useEffect, useRef } from "react";
 import { isImeComposing } from "../../accessibility/ime";
 import type { WorkbenchDialogRequest } from "../../../ipc/contract";
+import { SurfaceBackdrop } from "./SurfaceBackdrop";
 
 export interface ViewScopedAlertProps {
   readonly request: WorkbenchDialogRequest;
@@ -47,14 +48,7 @@ export function ViewScopedAlert({ request, onAnswer }: ViewScopedAlertProps) {
         }
       }}
     >
-      {request.backdrop ? (
-        <img
-          className="view-scoped-alert-backdrop"
-          src={request.backdrop}
-          alt=""
-          aria-hidden="true"
-        />
-      ) : null}
+      <SurfaceBackdrop src={request.backdrop} />
       <div className="view-scoped-alert-scrim" />
       <div className="mac-alert" ref={panel}>
         <div className="mac-alert-body plain">

@@ -108,6 +108,7 @@ export interface DevhubApi {
 	onEditorRestarting(
 		listener: (event: EditorRestartingWire) => void,
 	): () => void;
+	onModalBackdrop(listener: (event: ModalBackdropWire) => void): () => void;
 	answerWorkbenchDialog(answer: WorkbenchDialogAnswer): Promise<void>;
 	setModalOpen(open: boolean): Promise<void>;
 
@@ -174,7 +175,21 @@ export const CHANNELS = {
 	workbenchDialogAnswer: "devhub:workbench-dialog-answer",
 	/** A workbench died unasked and is being built again in the same slot. */
 	editorRestarting: "devhub:editor-restarting",
+	/** The workbench's last frame, to stand in for it under a DevHub modal. */
+	modalBackdrop: "devhub:modal-backdrop",
 } as const;
+
+/**
+ * What to draw where the workbench was, while a DevHub modal is open.
+ *
+ * A native view paints above this document unconditionally, so a modal the
+ * page draws requires the workbench to stand down — and a workbench that
+ * simply disappears is not what a sheet over a window looks like. This is the
+ * frame it stood down on; the page draws it, dimmed, under the sheet.
+ */
+export interface ModalBackdropWire {
+	readonly backdrop?: string;
+}
 
 /**
  * A workbench that is coming back.

@@ -582,14 +582,22 @@
   overflow: hidden;
 }
 
-/* The workbench's own last frame, so the editor does not appear to vanish
-   while it is standing down for its question. */
-.view-scoped-alert-backdrop {
+/*
+ * A workbench's last frame, standing in for the workbench.
+ *
+ * It fills the rectangle the view had, so the still image lands exactly where
+ * the live one was and the swap is invisible. It is inert by construction —
+ * an image cannot be typed into — which is what makes "dimmed and not
+ * accepting input" true rather than merely looking true.
+ */
+.surface-backdrop {
   position: absolute;
+  z-index: 2;
   width: 100%;
   height: 100%;
   inset: 0;
   object-fit: fill;
+  pointer-events: none;
 }
 
 .view-scoped-alert-scrim {

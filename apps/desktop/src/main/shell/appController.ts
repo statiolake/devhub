@@ -111,6 +111,7 @@ import { resolveRuntimes } from "./runtimes.js";
 import type { AgentService } from "../agent/index.js";
 import { startWorkspacePicker } from "./workspacePicker.js";
 import { installMenu, refreshMenu } from "./menu.js";
+import { captureBackdrop } from "./workbenchDialogs.js";
 import {
 	openSettingsWindow,
 	publishSettingsSnapshot,
@@ -1570,8 +1571,27 @@ export class AppController {
 			}
 			shellWindow().setNativeSurfaceVisible(visible);
 		});
-		handle(CHANNELS.setModalOpen, (_event, open: boolean) => {
-			shellWindow().setModalOpen(open);
+		// A DevHub modal has to appear above the workbench, and DOM cannot be
+		// painted over a native view — so the workbench stands down. Capturing
+		// it *first* is what keeps it from simply vanishing: the page draws that
+		// frame, dimmed, under the sheet, which is what a sheet over a window
+		// looks like. One capture per modal, and only while there is something
+		// on screen to capture.
+		handle(CHANNELS.setModalOpen, async (_event, open: boolean) => {
+			const shell = shellWindow();
+			if (!open) {
+				shell.setModalOpen(false);
+				this.send(CHANNELS.modalBackdrop, {});
+				return;
+			}
+			const view = shell.revealedView();
+			const backdrop = view ? await captureBackdrop(view) : undefined;
+			// The frame goes first and the view stands down second. Both orders
+			// end in the same place, but this one has no instant where neither is
+			// on screen: the native view still covers the page while the page is
+			// drawing the image that replaces it.
+			this.send(CHANNELS.modalBackdrop, { backdrop });
+			shell.setModalOpen(true);
 		});
 	}
 

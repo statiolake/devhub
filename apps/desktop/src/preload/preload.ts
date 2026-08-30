@@ -20,6 +20,7 @@ import {
 	CHANNELS,
 	type MenuCommand,
 	type EditorRestartingWire,
+	type ModalBackdropWire,
 	type WorkbenchDialogAnswer,
 	type WorkbenchDialogRequest,
 	type ContentRect,
@@ -79,6 +80,8 @@ const devhub: DevhubApi = {
 		on<WorkbenchDialogRequest>(CHANNELS.workbenchDialog, listener),
 	onEditorRestarting: (listener) =>
 		on<EditorRestartingWire>(CHANNELS.editorRestarting, listener),
+	onModalBackdrop: (listener) =>
+		on<ModalBackdropWire>(CHANNELS.modalBackdrop, listener),
 	answerWorkbenchDialog: (answer: WorkbenchDialogAnswer) =>
 		ipcRenderer.invoke(CHANNELS.workbenchDialogAnswer, answer) as Promise<void>,
 	setModalOpen: (open: boolean) =>
