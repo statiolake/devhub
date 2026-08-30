@@ -90,6 +90,8 @@ import {
 	replayWire,
 	setRuntimeVersion,
 	snapshotWire,
+	withDetail,
+	withSummary,
 	unavailableAgentProfiles,
 	InvalidIntent,
 } from "../../model/wire.js";
@@ -1122,23 +1124,39 @@ export class AppController {
 	 * pretending nothing happened.
 	 */
 	private superviseEditorView(folder: string, view: WorkbenchView): void {
-		const died = () => {
+		const died = (reason: string) => {
 			// A view DevHub destroyed on purpose is not a casualty: its folder is
 			// no longer in the table, because that is what destroying it means.
 			if (this.viewsByFolder.get(folder) !== view.id) return;
 			this.viewsByFolder.delete(folder);
 			const failures = (this.editorRestarts.get(folder) ?? 0) + 1;
 			this.editorRestarts.set(folder, failures);
+
+			// The summary is what happened and how far along the recovery is; the
+			// detail is why. A summary that named something else — "the native
+			// app shell is unavailable", say — would be a false statement on the
+			// one surface errors are read from, which is worse than no message.
 			if (failures > MAX_EDITOR_RESTARTS) {
 				this.publishError(
-					errorWire(
-						new Error(
-							`the workbench for this folder stopped ${String(failures)} times and will not be restarted again`,
+					withDetail(
+						withSummary(
+							errorWireAt("editor_restart_exhausted"),
+							`The workbench stopped ${String(failures)} times and will not be restarted again.`,
 						),
+						reason,
 					),
 				);
 				return;
 			}
+			this.publishError(
+				withDetail(
+					withSummary(
+						errorWireAt("editor_restarting"),
+						`The workbench stopped unexpectedly and is restarting (attempt ${String(failures)} of ${String(MAX_EDITOR_RESTARTS)}).`,
+					),
+					reason,
+				),
+			);
 			const delay = RESTART_BACKOFF_MS * 2 ** (failures - 1);
 			const timer = setTimeout(() => {
 				void this.ensureEditorView(folder).catch((error: unknown) => {
@@ -1146,18 +1164,19 @@ export class AppController {
 				});
 			}, delay);
 			(timer as unknown as { unref?: () => void }).unref?.();
-			this.publishError(
-				errorWire(
-					new Error(
-						`the workbench stopped unexpectedly and is restarting (attempt ${String(failures)})`,
-					),
-				),
-			);
 		};
-		view.webContents.once("destroyed", died);
-		view.webContents.on("render-process-gone", died);
-		// A workbench that got all the way up is a success, whatever happened
-		// before it: the count is about a loop, not about a lifetime.
+		view.webContents.once("destroyed", () => {
+			died("The workbench process ended.");
+		});
+		view.webContents.on("render-process-gone", (_event, details) => {
+			died(
+				`The workbench renderer stopped: ${details.reason}${
+					details.exitCode === undefined
+						? ""
+						: ` (exit code ${String(details.exitCode)})`
+				}.`,
+			);
+		});
 		view.webContents.once("did-finish-load", () => {
 			this.editorRestarts.delete(folder);
 		});

@@ -59,13 +59,55 @@ function deadline(promise, milliseconds, what) {
 				() => reject(new Error(`timed out waiting for ${what}`)),
 				milliseconds,
 			);
-			timer.unref();
+			// Deliberately *not* unref'd. This timer is the test's only defence
+			// against waiting for something that will never arrive — a shell
+			// whose server was killed under it, say. An unref'd one lets the
+			// process go idle instead, and the runner then reports "cancelled"
+			// with no message at all rather than the timeout that explains it.
+			// It is cleared in `finally`, so it never outlives its own wait.
 		}),
 	]).finally(() => clearTimeout(timer));
 }
 
 const sleep = (milliseconds) =>
 	new Promise((resolve) => setTimeout(resolve, milliseconds));
+
+/** Whether the server this test started is still there. */
+function serverIsAlive(socket) {
+	try {
+		execFileSync(TMUX, ["-L", socket, "has-session", "-t", "scratch"], {
+			stdio: "ignore",
+		});
+		return true;
+	} catch {
+		// Not a swallow: absence is the answer this function exists to give.
+		return false;
+	}
+}
+
+/**
+ * Run the body, and if it fails, say whether the ground moved underneath it.
+ *
+ * This test owns its socket and starts and stops its own server, so the only
+ * way that server can vanish mid-run is something outside the test — a global
+ * `pkill`, or a cleanup script matching more than it created. That is a
+ * different fact from the runtime misbehaving, and a failure that cannot tell
+ * them apart is the one that "passes on retry" and sends the next person
+ * looking in the wrong place.
+ */
+async function withSocketGuard(socket, body) {
+	try {
+		await body();
+	} catch (failure) {
+		if (!serverIsAlive(socket)) {
+			throw new Error(
+				`the tmux server this test started on socket "${socket}" was gone before the test finished — something outside the test killed it (a global pkill, or a cleanup script matching more than it created). The failure underneath was: ${String(failure)}`,
+				{ cause: failure },
+			);
+		}
+		throw failure;
+	}
+}
 
 test("node-pty resolves from the submodule and drives a real child", async (t) => {
 	assert.equal(typeof nodePty().spawn, "function");
@@ -112,6 +154,7 @@ test(
 			rmSync(home, { recursive: true, force: true });
 		});
 
+		await withSocketGuard(socket, async () => {
 		const runtime = new TmuxTerminalRuntime({
 			context: { home, environment: { ...process.env } },
 			tmux: { path: TMUX, basename: "tmux" },
@@ -279,5 +322,6 @@ test(
 			viewLabel: "real-pty-window",
 		});
 		assert.equal(surfaces.attachmentCount, 0);
+		});
 	},
 );

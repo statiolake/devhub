@@ -79,7 +79,11 @@ export type AppErrorCodeWire =
 	| "native_unavailable"
 	| "editor_provider_missing"
 	| "editor_port_unavailable"
-	| "editor_unavailable";
+	| "editor_unavailable"
+	/** A workbench died unasked and DevHub is building it again. */
+	| "editor_restarting"
+	/** It kept dying, so DevHub stopped building it again. */
+	| "editor_restart_exhausted";
 export type AppErrorModuleWire =
 	| "app"
 	| "config"

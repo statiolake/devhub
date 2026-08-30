@@ -398,6 +398,9 @@ const SAFE_ERROR_SUMMARY: Readonly<Record<AppErrorCodeWire, string>> = {
   editor_provider_missing: "Visual Studio Code was not found.",
   editor_port_unavailable: "The editor's port is already in use.",
   editor_unavailable: "The editor could not start.",
+  editor_restarting: "The workbench stopped unexpectedly and is restarting.",
+  editor_restart_exhausted:
+    "The workbench kept stopping and will not be restarted again.",
 };
 
 function defaultErrorModule(code: AppErrorCodeWire): AppErrorModuleWire {
@@ -407,6 +410,8 @@ function defaultErrorModule(code: AppErrorCodeWire): AppErrorModuleWire {
     case "editor_provider_missing":
     case "editor_port_unavailable":
     case "editor_unavailable":
+    case "editor_restarting":
+    case "editor_restart_exhausted":
       return "editor";
     default:
       return "app";
@@ -435,7 +440,8 @@ export function errorWireAt(
     code === "persistence_degraded" ||
     code === "editor_provider_missing" ||
     code === "editor_port_unavailable" ||
-    code === "editor_unavailable"
+    code === "editor_unavailable" ||
+    code === "editor_restart_exhausted"
       ? ["retry", "open_settings"]
       : ["retry"];
   return {
