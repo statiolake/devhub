@@ -42,6 +42,7 @@ import type {
 	ReplayWire,
 } from "../../ipc/appShell.js";
 import { AppCoordinator, type Effect } from "../../model/coordinator.js";
+import { editorReveal } from "./editorReveal.js";
 import {
 	AgentProfile,
 	agentProfileId,
@@ -1342,6 +1343,45 @@ export class AppController {
 		}
 	}
 
+	/**
+	 * Put the selected workbench on screen, waiting for it if it is coming.
+	 *
+	 * Called when the page says the native surface is the one to show. A view
+	 * that is already revealed is the whole answer; one whose open is in flight
+	 * is waited for and then revealed; a folder with neither is the invariant
+	 * violation the page's request is checked against, and it is thrown at the
+	 * page rather than absorbed.
+	 */
+	private async revealSelectedEditor(): Promise<void> {
+		const snapshot = this.coordinator.snapshot();
+		const editor = snapshot.activities.find(
+			(entry) => entry.activity === "editor",
+		);
+		const surfaceKey =
+			editor?.resolution.kind === "enabled"
+				? surfaceKeyName(editor.resolution.surfaceKey)
+				: undefined;
+		const folder =
+			surfaceKey === undefined
+				? undefined
+				: this.folderForSurfaceKey(surfaceKey);
+		const reveal = editorReveal({
+			revealed: shellWindow().revealedView() !== undefined,
+			opening: folder !== undefined && this.editorOpens.has(folder),
+		});
+		if (reveal === "on-screen") return;
+		if (reveal === "coming" && surfaceKey !== undefined) {
+			await this.revealEditorFor(surfaceKey);
+			if (shellWindow().revealedView()) return;
+		}
+		throw asIpcError(
+			withDetail(
+				errorWireAt("editor_unavailable"),
+				`the page asked to show ${surfaceKey ?? "the editor surface"}, which has no live workbench view`,
+			),
+		);
+	}
+
 	private folderForSurfaceKey(surfaceKey: string): string | undefined {
 		if (surfaceKey === "global-editor") return SCRATCH_EDITOR;
 		const prefix = "workspace-editor:";
@@ -1596,29 +1636,20 @@ export class AppController {
 		handle(CHANNELS.setContentRect, (_event, rect: ContentRect) => {
 			shellWindow().setContentRect(rect);
 		});
-		handle(CHANNELS.setSurfaceVisible, (_event, visible: boolean) => {
+		handle(CHANNELS.setSurfaceVisible, async (_event, visible: boolean) => {
 			// Being asked to show a workbench that no longer exists is a broken
 			// invariant, not a state to accommodate: the page only says this when
 			// the Editor activity resolved to a surface, and every surface it can
 			// resolve to has a view. Answering it by quietly showing nothing —
 			// or by handing a destroyed view to Electron — turns a bug here into
 			// a blank pane over there.
-			if (visible && !shellWindow().revealedView()) {
-				const snapshot = this.coordinator.snapshot();
-				const editor = snapshot.activities.find(
-					(entry) => entry.activity === "editor",
-				);
-				const surface =
-					editor?.resolution.kind === "enabled"
-						? surfaceKeyName(editor.resolution.surfaceKey)
-						: "the editor surface";
-				throw asIpcError(
-					withDetail(
-						errorWireAt("editor_unavailable"),
-						`the page asked to show ${surface}, which has no live workbench view`,
-					),
-				);
-			}
+			//
+			// A workbench that has not been built *yet* is a different fact, and
+			// at launch it is the normal one: the restored selection is asked for
+			// before the eager open for that folder has finished. So the reveal
+			// joins the open already in flight and answers when the view is on
+			// screen.
+			if (visible) await this.revealSelectedEditor();
 			shellWindow().setNativeSurfaceVisible(visible);
 		});
 		// One way in and one way out for every modal DevHub shows. Main owns the
