@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import "./terminal.css";
+import { useColorScheme } from "../appearance";
 import { Failure, Waiting } from "../components/shell/SurfaceState";
 import { openXtermSession, type XtermSession } from "../surfaces/xtermSession";
 import {
   activePalette,
-  prefersDark,
   terminalSurfaceStyle,
   type TerminalAppearance,
 } from "./theme";
@@ -130,19 +130,13 @@ export function TerminalSurface({
   clientRef.current = boundClient;
   hiddenRef.current = hidden;
 
-  // The palette follows the system appearance rather than a saved choice, so
-  // it changes without the snapshot changing. Both schemes are already here.
-  const [dark, setDark] = useState(() => prefersDark());
-  useEffect(() => {
-    const query = window.matchMedia?.("(prefers-color-scheme: dark)");
-    if (!query) return undefined;
-    const onChange = (event: MediaQueryListEvent) => setDark(event.matches);
-    query.addEventListener("change", onChange);
-    setDark(query.matches);
-    return () => query.removeEventListener("change", onChange);
-  }, []);
+  // The palette follows the page's scheme rather than a saved choice, so it
+  // changes without the snapshot changing. Both schemes are already here, and
+  // the scheme is the document's one answer — the viewport picks the ground
+  // around this pane from the same palette, and the two have to match.
+  const scheme = useColorScheme();
 
-  const palette = activePalette(appearance, dark);
+  const palette = activePalette(appearance, scheme === "dark");
   const paletteRef = useRef(palette);
   paletteRef.current = palette;
   useEffect(() => {

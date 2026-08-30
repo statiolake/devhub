@@ -20,9 +20,9 @@ export interface TerminalPalette {
 }
 
 /**
- * Both schemes travel together. The shell follows the system appearance for
- * everything else and the terminal is not an exception; sending only the
- * resolved one would mean a round trip every time the viewer switched.
+ * Both schemes travel together. Which one applies is the page's business — a
+ * colour theme decides it, and the system decides it until one has — so
+ * sending only the resolved one would mean a round trip every time it moved.
  */
 export interface TerminalTheme {
   readonly light: TerminalPalette;
@@ -89,11 +89,6 @@ export function terminalFontStack(family: string | undefined): string {
     .join(", ");
 }
 
-/** True when the viewer's system appearance is Dark. */
-export function prefersDark(view: Window = window): boolean {
-  return view.matchMedia?.("(prefers-color-scheme: dark)").matches ?? false;
-}
-
 /**
  * Project a configured palette onto xterm's theme. The ANSI array is in the
  * canonical order the config documents, and this is the one place that order
@@ -144,7 +139,7 @@ export function xtermTheme(palette: TerminalPalette): ITheme {
   };
 }
 
-/** The palette for the viewer's current system appearance. */
+/** The palette for the scheme the page is in; `useColorScheme` says which. */
 export function activePalette(
   appearance: TerminalAppearance | undefined,
   dark: boolean,
@@ -164,6 +159,11 @@ export const DEFAULT_TERMINAL_MARGIN = 4;
  * invalid declaration. `--terminal-margin: undefinedpx` is *not* an unset
  * property: `var()` will not fall back to its default for it, and the padding
  * silently computes to zero instead.
+ *
+ * `--terminal-background` is the same colour `--content` carries around the
+ * pane: both are this palette's background, and the palette is chosen once,
+ * from the page's scheme, for both. That is what makes the emulator look like
+ * it fills the viewport instead of sitting on a differently-coloured mat.
  */
 export function terminalSurfaceStyle(
   palette: TerminalPalette | undefined,

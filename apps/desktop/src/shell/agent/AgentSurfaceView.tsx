@@ -50,10 +50,10 @@ import {
 } from "../surfaces/xtermSession";
 import {
   activePalette,
-  prefersDark,
   terminalSurfaceStyle,
   type TerminalAppearance,
 } from "../terminal/theme";
+import { useColorScheme } from "../appearance";
 
 export interface AgentSurfaceViewProps {
   /** The domain Agent this surface shows. The surface key is derived. */
@@ -97,16 +97,11 @@ export function AgentSurfaceView({
   const [failure, setFailure] = useState<AgentFailure>();
   hiddenRef.current = hidden;
 
-  const [dark, setDark] = useState(() => prefersDark());
-  useEffect(() => {
-    const query = window.matchMedia?.("(prefers-color-scheme: dark)");
-    if (!query) return undefined;
-    const onChange = (event: MediaQueryListEvent) => setDark(event.matches);
-    query.addEventListener("change", onChange);
-    setDark(query.matches);
-    return () => query.removeEventListener("change", onChange);
-  }, []);
-  const palette = activePalette(appearance, dark);
+  // The same emulator as a terminal surface, so the same rule: the palette
+  // follows the page's one scheme, and the viewport paints the ground around
+  // this pane from that same palette.
+  const scheme = useColorScheme();
+  const palette = activePalette(appearance, scheme === "dark");
   const paletteRef = useRef(palette);
   paletteRef.current = palette;
 

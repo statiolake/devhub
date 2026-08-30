@@ -13,6 +13,7 @@ import {
   type AppSnapshot,
   type WorkspaceSnapshot,
 } from "../../../ipc/appShell";
+import { contentVariables, useColorScheme } from "../../appearance";
 import { useAppShell } from "../../useAppShell";
 import { devhub } from "../../client";
 import { attachableSurfaces } from "./surfacePool";
@@ -150,6 +151,10 @@ export function SurfaceViewport({
   const attachable = useMemo(() => attachableSurfaces(snapshot), [snapshot]);
   const restartingEditors = useRestartingEditors();
   const viewportRef = useRef<HTMLElement | null>(null);
+  // The content area is a hole with somebody else's surface in it, so it is
+  // painted in that surface's own ground. `contentVariables` is the whole of
+  // that rule; this is only where the selection and the palettes meet.
+  const scheme = useColorScheme();
 
   // A missing Workspace Root keeps its identity, so recovery belongs on the
   // Surface the user is already looking at rather than only in the Sidebar.
@@ -292,6 +297,9 @@ export function SurfaceViewport({
       aria-live={announce ? "polite" : undefined}
       data-surface-key={surfaceKeyAttr}
       data-surface-state={surfaceState}
+      style={
+        contentVariables(activity, appearance, scheme) as React.CSSProperties
+      }
       ref={viewportRef}
     >
       {intentError && (

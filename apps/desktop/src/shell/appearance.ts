@@ -13,8 +13,15 @@
  * for both sides.
  */
 
-import { paletteVariables, type ShellPalette } from "../ipc/palette";
+import { useSyncExternalStore } from "react";
+import type { ActivityName } from "../ipc/appShell";
+import {
+  paletteVariables,
+  type ShellPalette,
+  type ShellPaletteBase,
+} from "../ipc/palette";
 import { devhub } from "./client";
+import { activePalette, type TerminalAppearance } from "./terminal/theme";
 
 export function applyPalette(
   root: HTMLElement,
@@ -41,4 +48,96 @@ export function installPalette(document: Document): () => void {
   return devhub().onTheme((palette) => {
     applyPalette(document.documentElement, palette);
   });
+}
+
+/** Which half of every two-valued appearance in the page applies. */
+export type ColorScheme = ShellPaletteBase;
+
+/**
+ * The scheme the page is in right now: the theme's, or the system's until a
+ * theme has said otherwise.
+ *
+ * There is one answer and it is read off the document, because more than one
+ * thing needs it and a disagreement between them is *visible*: the content
+ * area's ground and the xterm palette painted on it are two colours that have
+ * to be the same one. `color-scheme` on the root is the record — main writes
+ * it from the palette before the first paint and `applyPalette` writes it on
+ * every theme change afterwards — so reading it back cannot drift from what
+ * the tokens actually resolved to. `light dark` is the untouched fallback and
+ * means no theme has spoken yet, so the system decides.
+ */
+export function documentColorScheme(view: Window = window): ColorScheme {
+  const declared = view
+    .getComputedStyle(view.document.documentElement)
+    .colorScheme?.trim();
+  if (declared === "light" || declared === "dark") return declared;
+  return view.matchMedia?.("(prefers-color-scheme: dark)").matches
+    ? "dark"
+    : "light";
+}
+
+/**
+ * Tell me when that answer can have changed.
+ *
+ * Two events can move it and both are watched here rather than in whoever
+ * happens to be asking: a theme arrives — which `applyPalette` records as
+ * inline properties on the root, so the root's `style` attribute mutating is
+ * exactly the signal — or the viewer flips the system appearance under a page
+ * that has no theme yet.
+ */
+export function observeColorScheme(
+  changed: () => void,
+  view: Window & typeof globalThis = window,
+): () => void {
+  const query = view.matchMedia?.("(prefers-color-scheme: dark)");
+  query?.addEventListener("change", changed);
+  const observer = new view.MutationObserver(changed);
+  observer.observe(view.document.documentElement, {
+    attributes: true,
+    attributeFilter: ["style"],
+  });
+  return () => {
+    query?.removeEventListener("change", changed);
+    observer.disconnect();
+  };
+}
+
+export function useColorScheme(): ColorScheme {
+  return useSyncExternalStore(
+    observeColorScheme,
+    () => documentColorScheme(),
+    () => "light",
+  );
+}
+
+/**
+ * The ground the content area is drawn on: the active surface's own ground.
+ *
+ * The chrome is DevHub's and follows the Workbench's theme; the content area
+ * is not DevHub's at all — it is a hole with somebody else's surface in it —
+ * so it is painted in whatever that surface paints itself in. For the Editor
+ * that is `--surface`, the editor background out of the theme's window splash,
+ * and the token already carries it. For a Terminal or an Agent — the same
+ * emulator twice — it is the terminal background out of DevHub's appearance
+ * config, in the scheme the page is currently in.
+ *
+ * One rule, computed where the selection and the palettes already meet, rather
+ * than a branch in each component: the emulator pane sets its own background
+ * from the same palette in the same scheme, so the pane and the area around it
+ * are the same colour by construction and the terminal reads as filling the
+ * viewport edge to edge.
+ *
+ * The value is an inline custom property, so it lands in the same commit as
+ * the `data-surface-state` it goes with — one frame, no intermediate colour.
+ */
+export function contentVariables(
+  activity: ActivityName,
+  appearance: TerminalAppearance | undefined,
+  scheme: ColorScheme,
+): Record<string, string> {
+  const emulator =
+    activity === "editor"
+      ? undefined
+      : activePalette(appearance, scheme === "dark");
+  return { "--content": emulator?.background ?? "var(--surface)" };
 }
