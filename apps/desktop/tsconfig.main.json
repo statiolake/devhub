@@ -1,0 +1,46 @@
+{
+  // The main process. It runs inside VS Code's Electron and imports VS Code's
+  // compiled ESM modules, so it is compiled the way VS Code compiles its own
+  // main process: nodenext ESM, parameter decorators for the DI container.
+  //
+  // Types for `code-oss-dev/out/**` come from the submodule's TypeScript
+  // sources: the compiled `out/` carries no declarations, and the compiled
+  // layout mirrors `src/` one to one. The mapping goes through node_modules so
+  // that TypeScript treats those files as an external library — read for their
+  // types, never emitted.
+  //
+  // `noUnusedLocals`/`noUnusedParameters` are off because the program contains
+  // VS Code's sources and DevHub's near-verbatim copies of two of its files.
+  "compilerOptions": {
+    "target": "ES2024",
+    "lib": ["ES2024", "DOM", "DOM.Iterable"],
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "moduleDetection": "legacy",
+    "experimentalDecorators": true,
+    "useDefineForClassFields": false,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "strict": true,
+    "useUnknownInCatchVariables": false,
+    "noImplicitOverride": true,
+    "noImplicitReturns": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "outDir": "out",
+    "rootDir": "src",
+    "paths": {
+      "code-oss-dev/out/*": ["./node_modules/code-oss-dev/src/*"],
+      // Dependencies of the copied entry points, resolved where VS Code keeps
+      // them: they are the submodule's, not DevHub's.
+      "minimist": ["../../vscode/node_modules/@types/minimist/index.d.ts"],
+      "windows-foreground-love": [
+        "../../vscode/node_modules/@types/windows-foreground-love/index.d.ts"
+      ],
+      "@vscode/windows-mutex": [
+        "../../vscode/node_modules/@vscode/windows-mutex/index.d.ts"
+      ]
+    }
+  },
+  "include": ["src/main", "src/ipc"]
+}

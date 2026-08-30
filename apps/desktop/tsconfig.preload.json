@@ -1,0 +1,19 @@
+{
+  // The App Shell page's preload. Electron loads an ESM preload only from a
+  // `.mjs` file, so the source is `.mts` and tsc keeps the extension.
+  "compilerOptions": {
+    "target": "ES2024",
+    "lib": ["ES2024", "DOM", "DOM.Iterable"],
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "moduleDetection": "legacy",
+    "esModuleInterop": true,
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "skipLibCheck": true,
+    "outDir": "out",
+    "rootDir": "src"
+  },
+  "include": ["src/preload", "src/ipc"]
+}

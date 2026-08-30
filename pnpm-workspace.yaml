@@ -5,5 +5,11 @@ packages:
 # pnpm 11 blocks dependency lifecycle scripts by default. Vite's native
 # transformer is the only dependency whose install script is required for
 # deterministic local builds.
+#
+# `electron` is here for its type declarations only: the binary DevHub runs is
+# VS Code's own, under vscode/.build/electron, because the native modules in
+# vscode/node_modules are built for exactly that one. Downloading a second copy
+# would be waste, so its install script stays off.
 allowBuilds:
+  electron: false
   esbuild: true

@@ -1,0 +1,41 @@
+{
+  "name": "@devhub/desktop",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "main": "out/main/main.js",
+  "scripts": {
+    "dev": "scripts/dev.sh",
+    "build:main": "tsc -p tsconfig.main.json && tsc -p tsconfig.preload.json",
+    "build:shell": "vite build",
+    "build": "pnpm run build:main && pnpm run build:shell",
+    "typecheck": "tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.preload.json --noEmit && tsc -p tsconfig.shell.json --noEmit",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "fmt": "prettier --write src scripts index.html package.json vite.config.ts eslint.config.js",
+    "fmt:check": "prettier --check src scripts index.html package.json vite.config.ts eslint.config.js"
+  },
+  "dependencies": {
+    "code-oss-dev": "link:../../vscode",
+    "react": "19.1.1",
+    "react-dom": "19.1.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.34.0",
+    "@testing-library/jest-dom": "6.8.0",
+    "@testing-library/react": "16.3.0",
+    "@types/react": "19.1.10",
+    "@types/react-dom": "19.1.7",
+    "@vitejs/plugin-react": "5.0.2",
+    "electron": "39.8.8",
+    "eslint": "9.34.0",
+    "eslint-plugin-react-hooks": "5.2.0",
+    "globals": "16.3.0",
+    "jsdom": "26.1.0",
+    "prettier": "3.6.2",
+    "typescript": "5.9.2",
+    "typescript-eslint": "8.41.0",
+    "vite": "7.1.3",
+    "vitest": "3.2.4"
+  }
+}

@@ -1,0 +1,64 @@
+/**
+ * Bring up the App Shell before the first workbench asks for a window.
+ *
+ * Ordering matters and is the whole reason this is a separate step: the shim
+ * turns `new BrowserWindow(workbench options)` into a view *inside* the shell,
+ * so the shell has to exist first.
+ */
+
+import { readFileSync, mkdirSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import type { NativeParsedArgs } from 'code-oss-dev/out/vs/platform/environment/common/argv.js';
+import { createShellController } from './shellController.js';
+import { createShellWindow } from './shellWindow.js';
+import { WorkspaceStore } from './workspaces.js';
+
+/** `apps/desktop/out/main/shell` -> `apps/desktop`. */
+const APP_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
+
+/**
+ * A workbench view is chrome inside DevHub's own window, so it must not draw a
+ * title bar of its own. These are written once, and only where the person has
+ * not already said otherwise.
+ */
+const WORKBENCH_DEFAULTS: Readonly<Record<string, string>> = {
+	'window.titleBarStyle': 'custom',
+	'window.customTitleBarVisibility': 'never'
+};
+
+function ensureWorkbenchDefaults(userDataPath: string): void {
+	const file = join(userDataPath, 'User', 'settings.json');
+
+	let settings: Record<string, unknown>;
+	try {
+		settings = JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>;
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+			throw error;
+		}
+		settings = {};
+	}
+
+	const missing = Object.entries(WORKBENCH_DEFAULTS).filter(([key]) => !(key in settings));
+	if (missing.length === 0) {
+		return;
+	}
+
+	for (const [key, value] of missing) {
+		settings[key] = value;
+	}
+	mkdirSync(dirname(file), { recursive: true });
+	writeFileSync(file, `${JSON.stringify(settings, undefined, '\t')}\n`);
+	console.log(`[devhub] wrote workbench defaults: ${missing.map(([key]) => key).join(', ')}`);
+}
+
+export function bootstrapShell(userDataPath: string, cliArgs: NativeParsedArgs): void {
+	ensureWorkbenchDefaults(userDataPath);
+
+	createShellWindow(
+		join(APP_ROOT, 'out', 'preload', 'preload.mjs'),
+		join(APP_ROOT, 'dist', 'shell', 'index.html')
+	);
+	createShellController(new WorkspaceStore(join(userDataPath, 'devhub', 'workspaces.json')), cliArgs);
+}

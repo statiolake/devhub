@@ -1,0 +1,448 @@
+/*
+ * DevHub App Shell.
+ *
+ * Ported from the Tauri App Shell (apps/devhub/src/styles/shell.css), trimmed
+ * to the surfaces this app has: a source-list Sidebar of workspaces, a titlebar
+ * band, and one Surface that is a hole for the workbench view behind it.
+ * Everything follows the viewer's system appearance through tokens.css.
+ */
+
+/* ---------------------------------------------------------------- layout */
+
+.app-shell {
+  display: flex;
+  overflow: hidden;
+  width: 100%;
+  height: 100%;
+  flex-direction: column;
+  background: transparent;
+}
+
+/* The Sidebar spans the full height of the window and the titlebar belongs to
+   the content column beside it, the way Finder and Mail are laid out: the
+   window buttons sit on the navigation pane, not above it. */
+.app-shell-content {
+  display: flex;
+  overflow: hidden;
+  flex: 1;
+  min-height: 0;
+}
+
+.workbench {
+  display: flex;
+  overflow: hidden;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* -------------------------------------------------------------- titlebar */
+
+.titlebar {
+  display: grid;
+  flex: 0 0 var(--titlebar-height);
+  align-items: center;
+  height: var(--titlebar-height);
+  padding: 0 var(--space-3);
+  border-bottom: 1px solid var(--line-strong);
+  background: transparent;
+  grid-template-columns: 1fr auto 1fr;
+  /* The window has no native title bar of its own, so this band is the drag
+     region. */
+  -webkit-app-region: drag;
+}
+
+.titlebar button {
+  -webkit-app-region: no-drag;
+}
+
+.titlebar-leading {
+  min-width: 0;
+  height: 100%;
+}
+
+.titlebar-title {
+  overflow: hidden;
+  color: var(--secondary);
+  font-size: 12px;
+  font-weight: 590;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The Sidebar's own titlebar strip: same height as the content titlebar so
+   the two read as one band, and wide enough to clear the window buttons. */
+.sidebar-titlebar {
+  flex: 0 0 var(--titlebar-height);
+  min-width: var(--traffic-light-inset);
+  height: var(--titlebar-height);
+  -webkit-app-region: drag;
+}
+
+.titlebar-trailing {
+  display: flex;
+  overflow: hidden;
+  height: 100%;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+/* --------------------------------------------------------------- sidebar */
+
+.sidebar {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  width: var(--sidebar-width);
+  flex: 0 0 var(--sidebar-width);
+  flex-direction: column;
+  border-right: 1px solid var(--line-strong);
+  background: transparent;
+}
+
+/* The Sidebar and titlebar are the only panes that reveal the window's
+   material; the Surface paints itself opaquely over it. When there is no
+   material to reveal, the same chrome has to be painted by CSS instead. */
+@media (prefers-reduced-transparency: reduce) {
+  .titlebar,
+  .sidebar {
+    background: var(--chrome);
+  }
+}
+
+.sidebar-scroll-region {
+  overflow-x: hidden;
+  overflow-y: auto;
+  flex: 1;
+  padding: var(--space-2) var(--space-2) var(--space-4);
+}
+
+/* The heading is a band of the same height as a row, so the run of text down
+   the Sidebar keeps one rhythm: heading to first row is the same step as row
+   to row. Its leading edge is the glyph column, not the row edge. */
+.sidebar-section-heading {
+  display: flex;
+  height: var(--row-height);
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 2px 0
+    calc(
+      var(--sidebar-disclosure-width) +
+        (var(--sidebar-glyph-width) - var(--sidebar-glyph-ink)) / 2
+    );
+  margin-top: var(--space-3);
+  color: var(--tertiary);
+}
+
+/* The band owns the layout; the heading element owns only the text. */
+.sidebar-section-heading h2 {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 590;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.workspace-tree {
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+/* Rows are a single line with fixed leading columns, so no row can push the
+   Sidebar into horizontal overflow regardless of label or path length. */
+.sidebar-row {
+  position: relative;
+  display: flex;
+  overflow: hidden;
+  width: 100%;
+  height: var(--row-height);
+  align-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-row);
+  background: transparent;
+  color: var(--primary);
+  text-align: left;
+}
+
+.sidebar-row:hover {
+  background: var(--wash);
+}
+
+/* A selected source-list row is a neutral fill with a semibold label — the
+   saturated accent fill with inverted text belongs to a table row, not to
+   navigation. */
+.sidebar-row.is-selected,
+.sidebar-row.is-selected:hover {
+  background: var(--selection);
+  color: var(--primary);
+  font-weight: 590;
+}
+
+.sidebar-context-button {
+  display: flex;
+  overflow: hidden;
+  min-width: 0;
+  height: 100%;
+  flex: 1;
+  align-items: center;
+  padding: 0 var(--space-2) 0 0;
+  border: 0;
+  background: transparent;
+  gap: var(--space-2);
+  /* Buttons centre their text by UA default; rows are a source list. */
+  text-align: left;
+}
+
+.disclosure-spacer {
+  display: flex;
+  width: var(--sidebar-disclosure-width);
+  height: 100%;
+  flex: 0 0 var(--sidebar-disclosure-width);
+}
+
+.row-glyph {
+  display: flex;
+  width: var(--sidebar-glyph-width);
+  flex: 0 0 var(--sidebar-glyph-width);
+  align-items: center;
+  justify-content: center;
+}
+
+.row-glyph svg {
+  width: var(--sidebar-glyph-ink);
+  height: var(--sidebar-glyph-ink);
+  fill: none;
+  /* Finder's source-list icons are accented on every row, not only the
+     selected one — the accent names the column. */
+  stroke: var(--accent);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.3;
+}
+
+.workspace-row .row-glyph svg {
+  fill: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.row-label {
+  overflow: hidden;
+  min-width: 0;
+  flex: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-row .row-label {
+  font-weight: 510;
+}
+
+.sidebar-row.is-selected .row-label {
+  font-weight: 590;
+}
+
+.row-note {
+  flex: 0 0 auto;
+  color: var(--secondary);
+  font-size: 11px;
+}
+
+/* Trailing actions stay out of the way until the row is hovered, focused, or
+   selected. They are always in the accessibility tree. */
+.row-action-button {
+  display: flex;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  margin-right: 2px;
+  background: transparent;
+  opacity: 0;
+}
+
+.row-action-button svg {
+  width: 13px;
+  height: 13px;
+  fill: none;
+  stroke: var(--secondary);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.4;
+}
+
+.sidebar-row:hover .row-action-button,
+.sidebar-row.is-selected .row-action-button,
+.row-action-button:focus-visible {
+  opacity: 1;
+}
+
+.row-action-button:hover:not(:disabled) {
+  background: var(--wash-strong);
+}
+
+.row-action-button:hover:not(:disabled) svg {
+  stroke: var(--primary);
+}
+
+/* Sized and inset like a trailing row action so the two share a right edge. */
+.section-action-button {
+  display: flex;
+  width: 20px;
+  height: 20px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+}
+
+.section-action-button svg {
+  width: 13px;
+  height: 13px;
+  fill: none;
+  stroke: var(--secondary);
+  stroke-linecap: round;
+  stroke-width: 1.4;
+}
+
+.section-action-button:hover {
+  background: var(--wash-strong);
+}
+
+.sidebar-empty {
+  padding: var(--space-3);
+  color: var(--tertiary);
+  font-size: 12px;
+}
+
+/* --------------------------------------------------------------- surface */
+
+/* The Surface is a hole. The selected workspace's workbench is a native view
+   laid over exactly this rectangle by the main process, so nothing is drawn
+   here except the states that mean "there is no workbench to show". */
+.surface {
+  position: relative;
+  display: flex;
+  overflow: hidden;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  background: var(--surface);
+}
+
+/* States sit over the hole rather than beside it. */
+.surface-state {
+  position: absolute;
+  z-index: 1;
+  display: flex;
+  overflow-y: auto;
+  flex-direction: column;
+  align-items: center;
+  padding: var(--space-6);
+  background: var(--surface);
+  inset: 0;
+}
+
+.surface-state > * {
+  width: min(460px, 100%);
+  flex: 0 0 auto;
+}
+
+.surface-state > :first-child {
+  margin-top: auto;
+}
+
+.surface-state > :last-child {
+  margin-bottom: auto;
+}
+
+.surface-line {
+  margin: 0;
+  color: var(--secondary);
+}
+
+.surface-state:not(.surface-failure) > * {
+  width: auto;
+  max-width: min(460px, 100%);
+  text-align: center;
+}
+
+/* An error has to read as one before it is read at all. */
+.failure-title {
+  display: flex;
+  align-items: baseline;
+  margin: 0 0 var(--space-2);
+  color: var(--danger);
+  font-size: 15px;
+  font-weight: 600;
+  gap: var(--space-2);
+  letter-spacing: -0.01em;
+  text-wrap: balance;
+}
+
+.failure-icon {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 14px;
+  align-self: center;
+  fill: none;
+  stroke: var(--danger);
+  stroke-linecap: round;
+  stroke-width: 1.5;
+}
+
+/* Informative text: prose, so it is set as prose. */
+.failure-detail {
+  margin: 0;
+  color: var(--secondary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.55;
+  text-wrap: pretty;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.surface-actions {
+  display: flex;
+  flex-wrap: wrap;
+  margin-top: var(--space-5);
+  gap: var(--space-2);
+}
+
+/* --------------------------------------------------------------- buttons */
+
+.primary-button,
+.secondary-button {
+  min-height: 28px;
+  padding: var(--space-1) var(--space-4);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-control);
+  background: var(--raised);
+  box-shadow: var(--shadow-raised);
+  font-size: 12px;
+}
+
+.primary-button {
+  border-color: transparent;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 590;
+}
+
+.primary-button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 88%, black);
+}
+
+.secondary-button:hover:not(:disabled) {
+  background: var(--wash);
+}
