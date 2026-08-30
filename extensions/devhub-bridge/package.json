@@ -34,6 +34,10 @@
       {
         "command": "devhub.bridge.newWindow",
         "title": "DevHub: New Window"
+      },
+      {
+        "command": "devhub.installCli",
+        "title": "DevHub: Install 'devhub' command in PATH"
       }
     ]
   },

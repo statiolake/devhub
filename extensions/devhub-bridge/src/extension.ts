@@ -11,6 +11,7 @@ import {
 import { BridgeControllerCore } from "./controller";
 import { parseNavigationUri } from "./navigation";
 import { isSafeBearerToken, LoopbackSocket } from "./transport";
+import { controlSocketFromGlobalStorage, requestInstall } from "./installCli";
 
 interface BridgeConfiguration {
   endpoint: string;
@@ -219,7 +220,41 @@ function install(
   return controller;
 }
 
+/**
+ * The palette command that puts `devhub` on the PATH.
+ *
+ * Registered unconditionally, unlike everything else in this extension: the
+ * bridge transport only comes up when a Web Workbench handed it an endpoint,
+ * and this command has nothing to do with that. It works wherever DevHub is
+ * the host, which is the only place this extension is built in.
+ *
+ * Nothing is caught: a failure to reach DevHub or to write the launcher is the
+ * answer to the command and is shown as an error, not logged and shrugged off.
+ */
+function installCliCommand(
+  context: vscode.ExtensionContext,
+): vscode.Disposable {
+  return vscode.commands.registerCommand("devhub.installCli", async () => {
+    const socketPath = controlSocketFromGlobalStorage(
+      context.globalStorageUri.fsPath,
+    );
+    if (!socketPath) {
+      await vscode.window.showErrorMessage(
+        "This workbench is not running inside DevHub, so there is no DevHub to install a command for.",
+      );
+      return;
+    }
+    const answer = await requestInstall(socketPath);
+    if (answer.ok) {
+      await vscode.window.showInformationMessage(answer.message);
+    } else {
+      await vscode.window.showErrorMessage(answer.message);
+    }
+  });
+}
+
 export function activate(context: vscode.ExtensionContext): void {
+  context.subscriptions.push(installCliCommand(context));
   void resolveConfiguration()
     .then((config) => {
       if (!config) return;
