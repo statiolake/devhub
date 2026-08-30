@@ -1,14 +1,21 @@
 /**
- * Native dialogs, parented to the one window DevHub actually has.
+ * Dialogs, put where the thing they are about is.
  *
  * The main process hands `electron.dialog` the "window" a dialog belongs to.
  * For a workbench that is a `WorkbenchView`, and Electron does not accept it:
- * it is not a `BrowserWindow`, so the sheet is not attached at all. Everything
- * that reaches Electron is therefore mapped to the App Shell window first.
+ * it is not a `BrowserWindow`, so the sheet is not attached at all.
+ *
+ * Mapping those to the App Shell window is right for a file picker, which is
+ * genuinely a question the application is asking. It is wrong for a message
+ * box: "do you want to save the changes you made?" is about one workbench, and
+ * as a window-modal sheet it covers the whole of DevHub and freezes every
+ * other workspace behind it while the person decides. Those go to the page
+ * instead, which draws them over the workbench they belong to.
  */
 
 import { DialogMainService } from "code-oss-dev/out/vs/platform/dialogs/electron-main/dialogMainService.js";
 import { shellWindowIfCreated } from "../shell/shellWindow.js";
+import { askWorkbenchDialog } from "../shell/workbenchDialogs.js";
 
 function parentWindow(
 	window?: Electron.BrowserWindow,
@@ -28,6 +35,10 @@ export class DevHubDialogMainService extends DialogMainService {
 		options: Electron.MessageBoxOptions,
 		window?: Electron.BrowserWindow,
 	): Promise<Electron.MessageBoxReturnValue> {
+		const shell = shellWindowIfCreated();
+		if (window && shell?.getViewById(window.id)) {
+			return askWorkbenchDialog(options);
+		}
 		return super.showMessageBox(options, parentWindow(window));
 	}
 

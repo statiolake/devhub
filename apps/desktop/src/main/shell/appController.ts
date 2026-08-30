@@ -1405,6 +1405,9 @@ export class AppController {
 		handle(CHANNELS.setSurfaceVisible, (_event, visible: boolean) => {
 			shellWindow().setNativeSurfaceVisible(visible);
 		});
+		handle(CHANNELS.setModalOpen, (_event, open: boolean) => {
+			shellWindow().setModalOpen(open);
+		});
 	}
 
 	//#endregion

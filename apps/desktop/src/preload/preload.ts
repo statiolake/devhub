@@ -19,6 +19,8 @@ import { contextBridge, ipcRenderer } from "electron";
 import {
 	CHANNELS,
 	type MenuCommand,
+	type WorkbenchDialogAnswer,
+	type WorkbenchDialogRequest,
 	type ContentRect,
 	type DevhubApi,
 	type WorkspacePickerEvent,
@@ -72,6 +74,12 @@ const devhub: DevhubApi = {
 		on<AgentProfiles>(CHANNELS.agentProfilesChanged, listener),
 	onNativeError: (listener) => on<AppError>(CHANNELS.nativeError, listener),
 	onMenuCommand: (listener) => on<MenuCommand>(CHANNELS.menuCommand, listener),
+	onWorkbenchDialog: (listener) =>
+		on<WorkbenchDialogRequest>(CHANNELS.workbenchDialog, listener),
+	answerWorkbenchDialog: (answer: WorkbenchDialogAnswer) =>
+		ipcRenderer.invoke(CHANNELS.workbenchDialogAnswer, answer) as Promise<void>,
+	setModalOpen: (open: boolean) =>
+		ipcRenderer.invoke(CHANNELS.setModalOpen, open) as Promise<void>,
 	onWorkspacePicker: (listener) =>
 		on<WorkspacePickerEvent>(CHANNELS.workspacePicker, listener),
 

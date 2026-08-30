@@ -14,6 +14,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { isImeComposing } from "../../accessibility/ime";
+import { useModalPresence } from "./modalPresence";
 import { useAppShell } from "../../useAppShell";
 
 export interface WorkspacePickerProps {
@@ -44,6 +45,7 @@ export function WorkspacePicker({ onDismiss }: WorkspacePickerProps) {
   const input = useRef<HTMLInputElement | null>(null);
   const listRef = useRef<HTMLUListElement | null>(null);
   const restoreTo = useRef<HTMLElement | null>(null);
+  useModalPresence();
 
   const ranked = useMemo(
     () => [...pickerCandidates].sort((left, right) => right.score - left.score),

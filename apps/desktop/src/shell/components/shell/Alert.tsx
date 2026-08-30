@@ -14,6 +14,7 @@
 import { useEffect, useRef, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { isImeComposing } from "../../accessibility/ime";
+import { useModalPresence } from "./modalPresence";
 
 export interface AlertAction {
   readonly label: string;
@@ -56,6 +57,7 @@ export function Alert({
 }: AlertProps) {
   const dialog = useRef<HTMLDivElement | null>(null);
   const restoreTo = useRef<HTMLElement | null>(null);
+  useModalPresence();
 
   useEffect(() => {
     restoreTo.current = document.activeElement as HTMLElement | null;

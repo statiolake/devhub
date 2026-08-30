@@ -12,6 +12,7 @@ import { AppShellProvider } from "./AppShellContext";
 import type { AppShellClient } from "./client";
 import { useAppShell } from "./useAppShell";
 import { Sidebar } from "./components/sidebar/Sidebar";
+import { WorkbenchDialogHost } from "./components/shell/WorkbenchDialogHost";
 import { TitlebarActivities } from "./components/shell/TitlebarActivities";
 import { SurfaceViewport } from "./components/shell/SurfaceViewport";
 import type { AppError, CloseResourceWire } from "../ipc/appShell";
@@ -202,6 +203,7 @@ function Workbench() {
         {state.snapshot.sidebar.visible ? (
           <Sidebar snapshot={state.snapshot} />
         ) : null}
+        <WorkbenchDialogHost />
         <div className="workbench">
           <TitlebarActivities
             snapshot={state.snapshot}

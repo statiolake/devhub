@@ -26,6 +26,8 @@ export class ShellWindow {
 	 * this is that answer.
 	 */
 	private nativeSurfaceVisible = true;
+	/** A modal in the page outranks the workbench for the same rectangle. */
+	private modalOpen = false;
 
 	constructor(preloadPath: string, pageUrl: string) {
 		this.window = new electron.BrowserWindow({
@@ -144,6 +146,22 @@ export class ShellWindow {
 		this.layout();
 	}
 
+	/**
+	 * The page has a modal open, or no longer does.
+	 *
+	 * A native view paints above this document unconditionally, so a modal the
+	 * page draws would be invisible behind a workbench while still holding the
+	 * keyboard. Standing the view down for as long as the modal is up is the
+	 * only arrangement in which the person can see what they are answering.
+	 */
+	setModalOpen(open: boolean): void {
+		if (this.modalOpen === open) {
+			return;
+		}
+		this.modalOpen = open;
+		this.layout();
+	}
+
 	boundsOf(_view: WorkbenchView): Electron.Rectangle {
 		return this.currentRect();
 	}
@@ -170,7 +188,8 @@ export class ShellWindow {
 			return;
 		}
 		const bounds = this.currentRect();
-		const onScreen = this.nativeSurfaceVisible ? this.revealed : undefined;
+		const onScreen =
+			this.nativeSurfaceVisible && !this.modalOpen ? this.revealed : undefined;
 		// Bounds first, then visibility, and the shown one last of all: a view
 		// made visible before it is sized shows its previous size for a frame.
 		for (const view of this.views) {

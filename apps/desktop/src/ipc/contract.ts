@@ -102,6 +102,11 @@ export interface DevhubApi {
 	/** Failures that happen between requests, such as a startup mount. */
 	onNativeError(listener: (error: AppError) => void): () => void;
 	onMenuCommand(listener: (command: MenuCommand) => void): () => void;
+	onWorkbenchDialog(
+		listener: (request: WorkbenchDialogRequest) => void,
+	): () => void;
+	answerWorkbenchDialog(answer: WorkbenchDialogAnswer): Promise<void>;
+	setModalOpen(open: boolean): Promise<void>;
 
 	/** Opens the native folder picker; resolves to the pick, or nothing. */
 	chooseWorkspaceFolder(): Promise<string | undefined>;
@@ -159,7 +164,36 @@ export const CHANNELS = {
 	workspacePicker: "devhub:workspace-picker",
 	/** A menu command the page has to carry out itself, e.g. open the picker. */
 	menuCommand: "devhub:menu-command",
+	/** The page has a modal open, or no longer does. */
+	setModalOpen: "devhub:set-modal-open",
+	/** A workbench asked a question; the page draws it and answers. */
+	workbenchDialog: "devhub:workbench-dialog",
+	workbenchDialogAnswer: "devhub:workbench-dialog-answer",
 } as const;
+
+/**
+ * A question a workbench asked, for the page to draw.
+ *
+ * VS Code raises these through Electron, which would make them a sheet across
+ * DevHub's whole window — a workbench's question presented as if the
+ * application were asking it, with everything else frozen behind it. It is one
+ * workbench's business, so DevHub draws it over that workbench instead and the
+ * rest of the app stays usable while it stands.
+ */
+export interface WorkbenchDialogRequest {
+	readonly id: string;
+	readonly message: string;
+	readonly detail?: string;
+	readonly buttons: readonly string[];
+	readonly defaultId: number;
+	readonly cancelId: number;
+	readonly kind: "none" | "info" | "warning" | "error" | "question";
+}
+
+export interface WorkbenchDialogAnswer {
+	readonly id: string;
+	readonly response: number;
+}
 
 /**
  * What the menu bar asks the page to do.
