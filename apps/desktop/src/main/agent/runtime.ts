@@ -233,6 +233,11 @@ export class HerdrAgentRuntime {
 			executable = undefined;
 		}
 		const xdg = context.environmentValue("XDG_CONFIG_HOME");
+		// Not caught, unlike a missing executable: a Herdr that is not installed
+		// is a state Settings can show and the user can fix from inside a running
+		// app, while a config home too long to hold a socket makes every launch
+		// from this process fail for a reason no health state can spell. It is
+		// raised where it is found, with the path and the limit in it.
 		const socketPath = sessionSocketPath(context.home, xdg);
 		return new HerdrAgentRuntime({
 			context,

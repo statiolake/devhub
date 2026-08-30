@@ -14,6 +14,7 @@ import {
 	clientSocketPath,
 	parseResponse,
 	sessionSocketPath,
+	socketPathLimit,
 } from "./api.js";
 import {
 	AgentRuntimeErrorCode,
@@ -88,6 +89,41 @@ describe("the Herdr JSON transport", () => {
 		expect(
 			clientSocketPath("/config/herdr/sessions/devhub-session/herdr.sock"),
 		).toBe("/config/herdr/sessions/devhub-session/herdr-client.sock");
+	});
+
+	it("caps a socket path at the platform's sun_path size", () => {
+		expect(socketPathLimit("darwin")).toBe(104);
+		expect(socketPathLimit("linux")).toBe(108);
+	});
+
+	it("refuses a config home whose client socket cannot be bound", () => {
+		// Long enough that the API socket still fits and the client socket, the
+		// longer of the two, does not — the shape of the failure Herdr reports
+		// as nothing at all.
+		const xdg = `/${"c".repeat(59)}`;
+		const apiSocket = `${xdg}/herdr/sessions/devhub-session/herdr.sock`;
+		expect(apiSocket.length).toBeLessThanOrEqual(104);
+		expect(clientSocketPath(apiSocket).length).toBeGreaterThan(104);
+
+		let thrown: AgentRuntimeError | undefined;
+		try {
+			sessionSocketPath("/devhub-home", xdg, 104);
+		} catch (error) {
+			thrown = error as AgentRuntimeError;
+		}
+		expect(thrown?.code).toBe(AgentRuntimeErrorCode.SocketPathTooLong);
+		expect(thrown?.message).toBe(
+			`The agent runtime's socket path is too long (${clientSocketPath(apiSocket).length} of 104 bytes): ${clientSocketPath(apiSocket)}`,
+		);
+		// The sentence is the whole diagnostic, so it must survive being logged
+		// the way main logs a thrown error.
+		expect(thrown?.stack).toContain(clientSocketPath(apiSocket));
+	});
+
+	it("accepts a config home that leaves room for both sockets", () => {
+		expect(sessionSocketPath("/devhub-home", "/config", 104)).toBe(
+			"/config/herdr/sessions/devhub-session/herdr.sock",
+		);
 	});
 
 	it("rejects an oversized request before it connects a socket", async () => {

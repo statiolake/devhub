@@ -650,23 +650,59 @@ export function classifyProviderCode(code: string): AgentRuntimeError {
 }
 
 /**
+ * The kernel's cap on a unix-domain socket path — the size of `sun_path` in
+ * `struct sockaddr_un`: 104 bytes on the BSDs including macOS, 108 on Linux.
+ *
+ * It is checked here rather than left to `bind(2)` because Herdr binds two
+ * sockets and only reports the first: with a long config home it binds the API
+ * socket, fails on the longer client socket and exits, and every DevHub
+ * request after that reads as a runtime that is merely unavailable.
+ */
+export function socketPathLimit(
+	platform: NodeJS.Platform = process.platform,
+): number {
+	return platform === "linux" ? 108 : 104;
+}
+
+/**
  * Derives Herdr's named-session API socket from the startup-frozen launch
  * context. The release CLI uses `~/.config/herdr`; tests may supply a direct
  * endpoint through the `HerdrTransport` constructor.
+ *
+ * A path that cannot hold a socket fails here, before anything is launched.
+ * Both of the session's sockets are measured — the client socket is the longer
+ * of the two — and the failing one is named, because "too long" without the
+ * path and the limit leaves the reader nothing to act on.
  */
 export function sessionSocketPath(
 	home: string,
 	xdgConfigHome: string | undefined,
+	limit: number = socketPathLimit(),
 ): string {
 	const configHome =
 		xdgConfigHome !== undefined && isAbsolute(xdgConfigHome)
 			? xdgConfigHome
 			: join(home, ".config");
-	return join(
+	const apiSocket = join(
 		configHome,
 		"herdr",
 		"sessions",
 		HERDR_SESSION_NAME,
 		"herdr.sock",
 	);
+	const longest = [apiSocket, clientSocketPath(apiSocket)].reduce(
+		(widest, candidate) =>
+			Buffer.byteLength(candidate) > Buffer.byteLength(widest)
+				? candidate
+				: widest,
+	);
+	const bytes = Buffer.byteLength(longest);
+	if (bytes > limit) {
+		throw agentError(
+			AgentRuntimeErrorCode.SocketPathTooLong,
+			undefined,
+			`The agent runtime's socket path is too long (${bytes} of ${limit} bytes): ${longest}`,
+		);
+	}
+	return apiSocket;
 }

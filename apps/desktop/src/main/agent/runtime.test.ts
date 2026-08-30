@@ -177,6 +177,25 @@ describe("the Herdr ping handshake", () => {
 });
 
 describe("the Herdr agent runtime", () => {
+	it("refuses to be created on a config home that cannot hold its socket", () => {
+		const longConfigHome = `/${"config-home".repeat(12)}`;
+		let thrown: AgentRuntimeError | undefined;
+		try {
+			HerdrAgentRuntime.create(
+				RuntimeLaunchContext.create(scratchDir(), {
+					...process.env,
+					XDG_CONFIG_HOME: longConfigHome,
+				}),
+				"herdr",
+				join(scratchDir(), "journal.json"),
+			);
+		} catch (error) {
+			thrown = error as AgentRuntimeError;
+		}
+		expect(thrown?.code).toBe(AgentRuntimeErrorCode.SocketPathTooLong);
+		expect(thrown?.message).toContain(longConfigHome);
+	});
+
 	it("bootstraps without mutating anything and installs one subscription", async () => {
 		const transport = new FakeTransport([["ping", PONG]]);
 		const runtime = runtimeWith(transport);

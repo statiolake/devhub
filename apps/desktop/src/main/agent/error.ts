@@ -1,10 +1,11 @@
 /**
  * Bounded, content-free AgentRuntime errors.
  *
- * Ported 1:1 from `src-tauri/src/agent/error.rs`. No provider response, path,
- * command, token, environment value, or agent content is stored in this type;
- * `toString()` renders only the stable summary, so an error can be logged
- * anywhere without leaking a user's session.
+ * Ported 1:1 from `src-tauri/src/agent/error.rs`. No provider response,
+ * command, token, environment value, or agent content is stored in this type,
+ * so an error can be logged anywhere without leaking a user's session. The
+ * single exception is `detail` (see below), which carries a path DevHub itself
+ * derived, in the one failure where that path is the whole diagnostic.
  */
 
 import { PortError, PortErrorCode } from "./ports.js";
@@ -17,6 +18,13 @@ export enum AgentRuntimeErrorCode {
 	ProtocolMismatch = "protocolMismatch",
 	CapabilityMismatch = "capabilityMismatch",
 	Unavailable = "unavailable",
+	/**
+	 * The socket path DevHub would hand Herdr is longer than the kernel's
+	 * `sun_path`. Distinct from `Unavailable` on purpose: a runtime that could
+	 * not be reached may well be there, while a path that cannot hold a socket
+	 * is a fact about this machine's configuration that no retry changes.
+	 */
+	SocketPathTooLong = "socketPathTooLong",
 	Disconnected = "disconnected",
 	Timeout = "timeout",
 	Cancelled = "cancelled",
@@ -51,6 +59,8 @@ const SUMMARIES: Record<AgentRuntimeErrorCode, string> = {
 	[AgentRuntimeErrorCode.ProtocolMismatch]: "Herdr protocol mismatch",
 	[AgentRuntimeErrorCode.CapabilityMismatch]: "Herdr capability mismatch",
 	[AgentRuntimeErrorCode.Unavailable]: "Agent runtime unavailable",
+	[AgentRuntimeErrorCode.SocketPathTooLong]:
+		"The agent runtime's socket path is too long",
 	[AgentRuntimeErrorCode.Disconnected]: "Agent runtime disconnected",
 	[AgentRuntimeErrorCode.Timeout]: "Agent runtime timed out",
 	[AgentRuntimeErrorCode.Cancelled]: "Agent operation cancelled",
@@ -69,19 +79,30 @@ export function summaryOf(code: AgentRuntimeErrorCode): string {
 export class AgentRuntimeError extends Error {
 	readonly code: AgentRuntimeErrorCode;
 	readonly providerCategory: ProviderErrorCategory | undefined;
+	/**
+	 * The one thing this type may carry besides its code, and only where the
+	 * value *is* the failure: a path DevHub derived from its own configuration
+	 * before it spoke to anything. It is never provider output, agent content,
+	 * a command line, or an environment value — those stay out, as they always
+	 * were. Without it "too long" cannot say which path or by how much, which
+	 * is the entire diagnostic.
+	 */
+	readonly detail: string | undefined;
 
 	constructor(
 		code: AgentRuntimeErrorCode,
 		providerCategory?: ProviderErrorCategory,
+		detail?: string,
 	) {
-		super(SUMMARIES[code]);
+		super(detail ?? SUMMARIES[code]);
 		this.name = "AgentRuntimeError";
 		this.code = code;
 		this.providerCategory = providerCategory;
+		this.detail = detail;
 		// Node renders a thrown Error by its stack. Keep the stack free of the
 		// call site's captured provider strings by dropping it entirely: the
-		// code is the whole diagnostic this type is allowed to carry.
-		this.stack = `AgentRuntimeError: ${SUMMARIES[code]}`;
+		// code and this error's own detail are the whole diagnostic it carries.
+		this.stack = `AgentRuntimeError: ${detail ?? SUMMARIES[code]}`;
 	}
 
 	get portCode(): PortErrorCode {
@@ -112,8 +133,9 @@ export class AgentRuntimeError extends Error {
 export function agentError(
 	code: AgentRuntimeErrorCode,
 	providerCategory?: ProviderErrorCategory,
+	detail?: string,
 ): AgentRuntimeError {
-	return new AgentRuntimeError(code, providerCategory);
+	return new AgentRuntimeError(code, providerCategory, detail);
 }
 
 /**
