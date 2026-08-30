@@ -1,4 +1,4 @@
-/** Generated from Rust bridge protocol types; do not edit by hand. */
+/** Generated from contracts/bridge/bridge-v1.schema.json; do not edit by hand. */
 /* eslint-disable @typescript-eslint/no-explicit-any, no-empty */
 
 export const BRIDGE_PROTOCOL_VERSION = 1 as const;

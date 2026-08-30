@@ -224,3 +224,67 @@ describe("store", () => {
     expect(saved.revision).toBe(contentRevision(await readFile(path)));
   });
 });
+
+describe("saving over a hand-written file", () => {
+  let directory: string;
+  let path: string;
+
+  beforeEach(() => {
+    directory = makeScratchDir("config-roundtrip");
+    path = join(directory, "config.toml");
+  });
+
+  afterEach(() => {
+    removeScratchDir(directory);
+  });
+
+  it("keeps the comments, grouping and order the person wrote", async () => {
+    const handWritten = [
+      "# My DevHub config. Do not reformat.",
+      "version = 1",
+      "",
+      "# Small on this display.",
+      "[appearance]",
+      "terminal_font_size = 13",
+      'terminal_font_family = "SF Mono"',
+      "",
+      "[runtimes]",
+      'shell = "/bin/zsh"   # not fish, on purpose',
+      "",
+    ].join("\n");
+    await writeFile(path, handWritten, { mode: 0o600 });
+
+    const store = new ConfigStore(path);
+    const loaded = await store.load();
+    await store.save(loaded.revision, {
+      ...loaded.config,
+      appearance: { ...loaded.config.appearance, terminalFontSize: 15 },
+    });
+
+    const saved = await readFile(path, "utf8");
+    expect(saved).toContain("# My DevHub config. Do not reformat.");
+    expect(saved).toContain("# Small on this display.");
+    expect(saved).toContain("# not fish, on purpose");
+    expect(saved).toContain("terminal_font_size = 15");
+    expect(saved).toContain('terminal_font_family = "SF Mono"');
+
+    // Every line the person wrote is still there, in the order they wrote it,
+    // byte for byte apart from the one value that changed.
+    const lines = saved.split("\n");
+    const written = handWritten
+      .split("\n")
+      .filter((line) => line.length > 0)
+      .map((line) =>
+        line.replace("terminal_font_size = 13", "terminal_font_size = 15"),
+      );
+    const positions = written.map((line) => lines.indexOf(line));
+    expect(positions.every((position) => position >= 0)).toBe(true);
+    expect(positions).toEqual([...positions].sort((a, b) => a - b));
+
+    // A section the file left implicit is written out, because a save states
+    // the whole config — the same as the Rust's document merge. What it never
+    // does is rewrite what was already there.
+    expect(saved).toContain("[appearance.terminal_theme.light]");
+    expect(parseConfig(saved).appearance.terminalFontSize).toBe(15);
+  });
+});

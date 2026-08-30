@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Verify the checked-in bridge artifacts still agree with the v1 schema.
 set -euo pipefail
-
-cargo run --locked -p devhub-app-core --bin generate_bridge_contract -- --check
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+exec node scripts/bridge-contract.ts --check

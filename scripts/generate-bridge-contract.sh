@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Regenerate the bridge extension's contract module from the frozen v1 schema.
 set -euo pipefail
-
-cargo run --locked -p devhub-app-core --bin generate_bridge_contract
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+exec node scripts/bridge-contract.ts "$@"

@@ -3,9 +3,7 @@
 .idea/
 .vscode/
 
-# Rust and JavaScript build output
-target/
-**/target/
+# Build output
 node_modules/
 **/node_modules/
 apps/desktop/out/

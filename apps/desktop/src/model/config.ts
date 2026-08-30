@@ -8,12 +8,9 @@
  * effect while a broken one is on disk — with the diagnostic kept, so "still
  * running on the old config" is a state the app can show rather than a silence.
  *
- * One thing is not carried over. The Rust used `toml_edit`, so a save rewrote
- * only the values that changed and left the user's comments and layout alone.
- * No TOML library for Node does that, so a save here re-serialises the
- * document: **comments and formatting in `config.toml` are lost on save from
- * the Settings window**. Hand-edits are otherwise untouched, because DevHub
- * only writes when the user presses Apply.
+ * A save keeps the document the person wrote: `tomlDocument.ts` rewrites only
+ * the spans whose values actually changed, so comments, grouping, key order and
+ * spacing survive — the same guarantee `toml_edit` gave the Rust.
  */
 
 import { createHash } from "node:crypto";
@@ -29,7 +26,13 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { parse as parseToml, stringify as stringifyToml } from "smol-toml";
+import {
+  parseTomlValue,
+  renderTomlDocument,
+  TomlSyntaxError,
+  updateTomlDocument,
+  type TomlValue,
+} from "./tomlDocument.js";
 
 export const CONFIG_SCHEMA_VERSION = 1;
 export const CONFIG_RELATIVE_PATH = ".config/devhub/config.toml";
@@ -796,21 +799,15 @@ function agentProfileFromTable(
 export function parseConfig(input: string): Config {
   let document: unknown;
   try {
-    document = parseToml(input);
+    document = parseTomlValue(input);
   } catch (error) {
-    const line =
-      error instanceof Error && "line" in error
-        ? Number((error as { line: unknown }).line)
-        : undefined;
-    const column =
-      error instanceof Error && "column" in error
-        ? Number((error as { column: unknown }).column)
-        : undefined;
     throw new ConfigError({
       code: "parse",
       location:
-        line !== undefined && column !== undefined
-          ? { line, column }
+        error instanceof TomlSyntaxError &&
+        error.line !== undefined &&
+        error.column !== undefined
+          ? { line: error.line, column: error.column }
           : undefined,
     });
   }
@@ -951,10 +948,9 @@ export function parseConfig(input: string): Config {
   return config;
 }
 
-/** Serialise a config back to TOML. See the module note about comments. */
-export function configToToml(config: Config): string {
-  validateConfig(config);
-  const document = {
+/** The on-disk shape of a config: what the file is expected to say. */
+export function configDocument(config: Config): Record<string, TomlValue> {
+  return {
     version: config.version,
     general: {
       import_login_environment: config.general.import_login_environment,
@@ -1007,9 +1003,24 @@ export function configToToml(config: Config): string {
       args: [...profile.args],
       env: { ...profile.env },
     })),
-  };
-  const output = stringifyToml(document);
-  return output.endsWith("\n") ? output : `${output}\n`;
+  } as Record<string, TomlValue>;
+}
+
+/** A whole document, for when there is no file to preserve. */
+export function configToToml(config: Config): string {
+  validateConfig(config);
+  return renderTomlDocument(configDocument(config));
+}
+
+/**
+ * The same config, written over the document that is already on disk.
+ *
+ * Only the values that differ are replaced. A config the person hand-wrote
+ * comes back looking like the one they hand-wrote.
+ */
+export function configOntoDocument(source: string, config: Config): string {
+  validateConfig(config);
+  return updateTomlDocument(source, configDocument(config));
 }
 
 function paletteToTable(palette: TerminalPalette) {
@@ -1126,7 +1137,9 @@ export class ConfigStore {
     if (actual !== expectedRevision) {
       throw new ConfigError({ code: "conflict" }, expectedRevision, actual);
     }
-    const output = configToToml(config);
+    // Written over the document that is there, not in place of it: the file
+    // keeps its comments, its grouping and its order.
+    const output = configOntoDocument(currentBytes.toString("utf8"), config);
     const loaded = this.decode(Buffer.from(output, "utf8"));
     await this.atomicWrite(output, expectedRevision);
     this.active = loaded;
