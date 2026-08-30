@@ -48,6 +48,7 @@ import {
 import {
   AppError,
   AppErrorCode,
+  type PortName,
   operationToken,
   requestedPath,
   sameToken,
@@ -181,6 +182,25 @@ type OperationKind =
   | "terminate_agent"
   | "persist_state"
   | `cleanup:${CleanupStep}`;
+
+/**
+ * What an operation was talking to. A port failure means "that side could not
+ * do it", and which side it was is exactly what the operation's kind says.
+ */
+function portFor(kind: OperationKind): PortName {
+  switch (kind) {
+    case "launch_agent":
+    case "stop_agent":
+    case "terminate_agent":
+    case "reconcile_agent":
+    case "reconcile_agents":
+      return "agent";
+    case "persist_state":
+      return "state";
+    default:
+      return "app";
+  }
+}
 
 type OperationTarget =
   | { readonly kind: "path"; readonly path: RequestedPath }
@@ -1000,9 +1020,9 @@ export class AppCoordinator {
     this.pending.delete(token.operationId);
     this.clearOperationAuxiliaryState(token);
     this.rememberCompleted(token);
-    throw new AppError(AppErrorCode.PortUnavailable).withOperation(
-      token.operationId,
-    );
+    throw new AppError(AppErrorCode.PortUnavailable)
+      .withPort(portFor(pending.kind))
+      .withOperation(token.operationId);
   }
 
   private clearOperationAuxiliaryState(token: OperationToken): void {
@@ -1251,9 +1271,9 @@ export class AppCoordinator {
     this.launchProfiles.delete(token.operationId);
 
     if (result.kind === "failed") {
-      throw new AppError(AppErrorCode.PortUnavailable).withOperation(
-        token.operationId,
-      );
+      throw new AppError(AppErrorCode.PortUnavailable)
+        .withPort("agent")
+        .withOperation(token.operationId);
     }
 
     try {
@@ -1293,9 +1313,9 @@ export class AppCoordinator {
     const snapshot = this.snapshot();
     this.emit({ kind: "operation_completed", token });
     if (result.kind === "failed") {
-      const error = new AppError(AppErrorCode.PortUnavailable).withOperation(
-        token.operationId,
-      );
+      const error = new AppError(AppErrorCode.PortUnavailable)
+        .withPort("agent")
+        .withOperation(token.operationId);
       this.emit({ kind: "error", error });
       throw error;
     }

@@ -16,6 +16,7 @@
  * framing they once each carried a copy of is now shared, in `./frame.ts`.
  */
 
+import { APP_ERROR_SUMMARY, type AppErrorCodeWire } from "./appShell.js";
 import {
 	FRAME_HEADER_BYTES,
 	FRAME_KINDS,
@@ -60,6 +61,7 @@ export enum FrameKind {
 
 export enum TerminalErrorCode {
 	InvalidRequest = "invalid_request",
+	TimedOut = "timed_out",
 	InvalidSurface = "invalid_surface",
 	SurfaceUnavailable = "surface_unavailable",
 	StaleTarget = "stale_target",
@@ -77,6 +79,7 @@ export enum TerminalErrorCode {
 
 const SUMMARIES: Record<TerminalErrorCode, string> = {
 	[TerminalErrorCode.InvalidRequest]: "The terminal request is invalid.",
+	[TerminalErrorCode.TimedOut]: "The agent runtime did not answer in time.",
 	[TerminalErrorCode.InvalidSurface]:
 		"The selected terminal surface is invalid.",
 	[TerminalErrorCode.SurfaceUnavailable]:
@@ -129,6 +132,111 @@ export class TerminalError extends Error {
 
 export function terminalError(code: TerminalErrorCode): TerminalError {
 	return new TerminalError(code);
+}
+
+/**
+ * What each channel failure is called where DevHub shows failures.
+ *
+ * The channel's codes describe the transport; the App Shell's describe what a
+ * person is looking at. Mapping them here, once, is what stops an Agent
+ * failure from arriving on screen as the app shell's generic "unavailable" —
+ * and stops every raising site from choosing its own words for the same thing.
+ */
+export function agentFailureCode(code: TerminalErrorCode): AppErrorCodeWire {
+	switch (code) {
+		case TerminalErrorCode.TimedOut:
+			return "agent_attach_timed_out";
+		case TerminalErrorCode.RuntimeUnavailable:
+		case TerminalErrorCode.PtyUnavailable:
+			return "agent_runtime_unavailable";
+		case TerminalErrorCode.SessionUnavailable:
+		case TerminalErrorCode.SurfaceUnavailable:
+			return "agent_exited";
+		case TerminalErrorCode.InvalidRequest:
+		case TerminalErrorCode.InvalidSurface:
+		case TerminalErrorCode.StaleTarget:
+		case TerminalErrorCode.WrongAttachment:
+		case TerminalErrorCode.AttachmentLimit:
+		case TerminalErrorCode.InputTooLarge:
+		case TerminalErrorCode.InvalidResize:
+		case TerminalErrorCode.ChannelClosed:
+		case TerminalErrorCode.Backpressure:
+		case TerminalErrorCode.Internal:
+			return "agent_not_connected";
+	}
+}
+
+/** One Agent failure, named and worded the way every other failure is. */
+export interface AgentFailure {
+	readonly code: AppErrorCodeWire;
+	readonly summary: string;
+	readonly detail: string;
+}
+
+function isTerminalErrorBody(value: unknown): value is TerminalErrorBody {
+	if (typeof value !== "object" || value === null) {
+		return false;
+	}
+	const candidate = value as Partial<TerminalErrorBody>;
+	return (
+		typeof candidate.code === "string" &&
+		Object.values(TerminalErrorCode).includes(
+			candidate.code as TerminalErrorCode,
+		)
+	);
+}
+
+/**
+ * Carry a channel failure across Electron IPC without losing its code.
+ *
+ * Electron gives the page only a message, so the body travels inside it — the
+ * same way the App Shell's own errors do. What must never travel is a stack:
+ * the page has nowhere useful to put one, and the surface would render it.
+ */
+export function agentIpcError(error: TerminalError): Error {
+	return new Error(JSON.stringify(error.body));
+}
+
+/**
+ * The one place an unknown Agent failure becomes something a person can read.
+ *
+ * It takes whatever the surface caught — a body from an error frame, an IPC
+ * rejection carrying one, or something nobody anticipated — and answers with a
+ * code, the sentence that code is always shown as, and a detail that says what
+ * the channel reported. Never a message from a stack, never a raw throw.
+ */
+export function agentFailure(error: unknown): AgentFailure {
+	const body = agentErrorBody(error);
+	const code = agentFailureCode(body.code);
+	return { code, summary: APP_ERROR_SUMMARY[code], detail: body.summary };
+}
+
+function agentErrorBody(error: unknown): TerminalErrorBody {
+	if (error instanceof TerminalError) {
+		return error.body;
+	}
+	if (isTerminalErrorBody(error)) {
+		return { code: error.code, summary: SUMMARIES[error.code] };
+	}
+	if (error instanceof Error) {
+		const start = error.message.indexOf("{");
+		if (start >= 0) {
+			try {
+				const decoded: unknown = JSON.parse(error.message.slice(start));
+				if (isTerminalErrorBody(decoded)) {
+					return { code: decoded.code, summary: SUMMARIES[decoded.code] };
+				}
+			} catch {
+				// Not a structured body. It is still a failure, and it is still
+				// reported — as the one thing that can honestly be said about a
+				// failure whose shape nobody recognises.
+			}
+		}
+	}
+	return {
+		code: TerminalErrorCode.Internal,
+		summary: SUMMARIES[TerminalErrorCode.Internal],
+	};
 }
 
 export interface AttachRequest {

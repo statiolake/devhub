@@ -616,13 +616,21 @@ describe("reconciling agents", () => {
     ]);
   });
 
-  it("projects what the provider reported onto the rows", () => {
-    const driver = withAgent();
+  function reconcileToken(driver: Driver): OperationToken {
     driver.dispatch({ type: "reconcile_agents" });
     const effect = driver.drainEffects()[0];
+    if (effect.kind !== "reconcile_agents") {
+      throw new Error("the coordinator did not ask for a reconcile");
+    }
+    return effect.token;
+  }
+
+  it("projects what the provider reported onto the rows", () => {
+    const driver = withAgent();
+    const token = reconcileToken(driver);
     driver.accept({
       type: "agents_reconciled",
-      token: effect.token,
+      token,
       reconciliation: {
         observations: [
           { agentId: AG_A, status: "working", runtimeHealth: "healthy" },
@@ -637,11 +645,10 @@ describe("reconciling agents", () => {
 
   it("takes the row away when the provider says the agent is gone", () => {
     const driver = withAgent();
-    driver.dispatch({ type: "reconcile_agents" });
-    const effect = driver.drainEffects()[0];
+    const token = reconcileToken(driver);
     driver.accept({
       type: "agents_reconciled",
-      token: effect.token,
+      token,
       reconciliation: { observations: [], exited: [AG_A] },
     });
     expect(driver.coordinator.snapshot().workspaces[0].agents).toHaveLength(0);
@@ -649,8 +656,7 @@ describe("reconciling agents", () => {
 
   it("announces a round it superseded, so nothing waits on the answer", () => {
     const driver = withAgent();
-    driver.dispatch({ type: "reconcile_agents" });
-    const superseded = driver.drainEffects()[0];
+    const superseded = reconcileToken(driver);
     driver.dispatch({ type: "reconcile_agents" });
     const events = driver.coordinator
       .subscribeFrom(0)
@@ -659,7 +665,7 @@ describe("reconciling agents", () => {
       events.some(
         (event) =>
           event.kind === "operation_completed" &&
-          event.token.operationId === superseded.token.operationId,
+          event.token.operationId === superseded.operationId,
       ),
     ).toBe(true);
   });

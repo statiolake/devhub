@@ -37,6 +37,7 @@ import {
   type UserIntent,
 } from "./intents.js";
 import {
+  APP_ERROR_SUMMARY,
   APP_SHELL_SCHEMA_VERSION,
   MAX_SAFE_JS_INTEGER,
   type ActivityWire,
@@ -384,23 +385,7 @@ export function replayWire(
   };
 }
 
-const SAFE_ERROR_SUMMARY: Readonly<Record<AppErrorCodeWire, string>> = {
-  invalid_intent: "The requested action is not available.",
-  activity_disabled: "This activity is unavailable in the current context.",
-  unknown_context: "The selected context is no longer available.",
-  workspace_unavailable: "The workspace is unavailable.",
-  workspace_closing: "The workspace is already closing.",
-  workspace_close_failed: "The workspace could not be closed cleanly.",
-  operation_pending: "Another operation is still in progress.",
-  persistence_degraded: "Changes could not be saved.",
-  native_unavailable: "The native app shell is unavailable.",
-  editor_provider_missing: "Visual Studio Code was not found.",
-  editor_port_unavailable: "The editor's port is already in use.",
-  editor_unavailable: "The editor could not start.",
-  editor_restarting: "The workbench stopped unexpectedly and is restarting.",
-  editor_restart_exhausted:
-    "The workbench kept stopping and will not be restarted again.",
-};
+const SAFE_ERROR_SUMMARY = APP_ERROR_SUMMARY;
 
 function defaultErrorModule(code: AppErrorCodeWire): AppErrorModuleWire {
   switch (code) {
@@ -412,6 +397,11 @@ function defaultErrorModule(code: AppErrorCodeWire): AppErrorModuleWire {
     case "editor_restarting":
     case "editor_restart_exhausted":
       return "editor";
+    case "agent_not_connected":
+    case "agent_exited":
+    case "agent_runtime_unavailable":
+    case "agent_attach_timed_out":
+      return "agent";
     default:
       return "app";
   }
@@ -469,6 +459,22 @@ export function withSummary(
   };
 }
 
+/**
+ * A failure this app raises deliberately, already in the words it should be
+ * shown in.
+ *
+ * Everything else that reaches `errorWire` is something unexpected, and the
+ * one thing that can honestly be said about an unexpected failure is that the
+ * app shell could not do what it was asked. A condition DevHub knows by name
+ * says so here instead of being flattened into that.
+ */
+export class TypedFailure extends Error {
+  constructor(readonly wire: AppErrorWire) {
+    super(wire.summary);
+    this.name = "TypedFailure";
+  }
+}
+
 export function nativeUnavailable(): AppErrorWire {
   return errorWireAt("native_unavailable");
 }
@@ -482,10 +488,20 @@ export function nativeUnavailable(): AppErrorWire {
  * reader can act on.
  */
 export function errorWire(error: unknown): AppErrorWire {
+  if (error instanceof TypedFailure) {
+    return error.wire;
+  }
   if (!(error instanceof AppError)) {
+    // The stack is for whoever is reading the log, and only there. On screen
+    // it is noise that displaces the sentence a reader could act on — and the
+    // frames name this app's own files, which is not something a person using
+    // it can do anything with.
+    if (error instanceof Error && error.stack !== undefined) {
+      console.error(error.stack);
+    }
     return withDetail(
       errorWireAt("native_unavailable"),
-      error instanceof Error ? (error.stack ?? error.message) : String(error),
+      error instanceof Error ? error.message : String(error),
     );
   }
   let code: AppErrorCodeWire;
@@ -521,7 +537,12 @@ export function errorWire(error: unknown): AppErrorWire {
       code = "persistence_degraded";
       break;
     case AppErrorCode.PortUnavailable:
-      code = "native_unavailable";
+      // Which port could not answer is the whole difference between a
+      // sentence a person can act on and the app shell's catch-all.
+      code =
+        error.port === "agent"
+          ? "agent_runtime_unavailable"
+          : "native_unavailable";
       break;
     default:
       code = "invalid_intent";

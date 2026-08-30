@@ -114,8 +114,20 @@ export enum AppErrorCode {
  * Application failure. User content, provider identifiers, paths and command
  * output never enter this type.
  */
+/**
+ * Which side of DevHub could not do the thing.
+ *
+ * A port failure is the same failure everywhere in the model, and it has to
+ * become a different sentence on screen depending on what was unreachable —
+ * "the agent runtime is unavailable" is something a person can act on, and
+ * "the app shell is unavailable" is not, when it was Herdr that did not
+ * answer. The model carries which port, and the projection picks the words.
+ */
+export type PortName = "app" | "agent" | "terminal" | "editor" | "state";
+
 export class AppError extends Error {
   domainCode: DomainErrorCode | undefined;
+  port: PortName | undefined;
   intentId: IntentId | undefined;
   operationId: OperationId | undefined;
   providerEventId: ProviderEventId | undefined;
@@ -133,6 +145,11 @@ export class AppError extends Error {
       return new AppError(AppErrorCode.Domain).withDomain(error.code);
     }
     throw error;
+  }
+
+  withPort(port: PortName): AppError {
+    this.port = port;
+    return this;
   }
 
   withDomain(code: DomainErrorCode): AppError {

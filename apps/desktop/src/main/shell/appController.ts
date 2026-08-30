@@ -51,6 +51,7 @@ import {
 	workspaceId as parseWorkspaceId,
 	workspaceRoot,
 	type AgentProfileKind,
+	type AgentReconciliation,
 	type WorkspaceId,
 } from "../../model/domain.js";
 import {
@@ -90,6 +91,7 @@ import {
 	replayWire,
 	setRuntimeVersion,
 	snapshotWire,
+	TypedFailure,
 	withDetail,
 	withSummary,
 	unavailableAgentProfiles,
@@ -189,7 +191,10 @@ export class AppController {
 			),
 		reconcile: () => this.reconcileAllAgents(),
 		onFailure: (error) => {
-			this.publishError(errorWire(error));
+			// The round already reported itself: an Agent operation that failed is
+			// published where every operation failure is published. What is left
+			// here is the round's own bookkeeping, and it belongs in the log.
+			console.error(error instanceof Error ? error.stack : error);
 		},
 	});
 	private stopWatchingConfig: (() => void) | undefined;
@@ -625,7 +630,7 @@ export class AppController {
 		const timer = setTimeout(() => {
 			this.reject(
 				outcome.operationId,
-				new Error("the operation did not complete"),
+				new TypedFailure(errorWireAt("operation_timed_out")),
 			);
 		}, OPERATION_TIMEOUT_MS);
 		// A pending page request must never be the reason the process stays alive.
@@ -954,7 +959,20 @@ export class AppController {
 			this.accept({ type: "operation_failed", token });
 			return;
 		}
-		const reconciliation = await adapter.reconcile(agentId);
+		let reconciliation: AgentReconciliation;
+		try {
+			reconciliation = await adapter.reconcile(agentId);
+		} catch (error) {
+			// A provider that would not answer is a failure of the Agent port, and
+			// the model has to be told so: an effect nobody completes leaves the
+			// operation open until its deadline and reports the deadline instead of
+			// the outage. The reason goes to the log; the page is told which port
+			// failed, in that port's own words, by the one path that reports
+			// operation failures.
+			console.error(error instanceof Error ? error.stack : error);
+			this.accept({ type: "operation_failed", token });
+			return;
+		}
 		if (agentId === undefined) {
 			this.accept({ type: "agents_reconciled", token, reconciliation });
 			return;

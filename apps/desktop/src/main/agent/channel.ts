@@ -81,7 +81,7 @@ export function terminalErrorFromPort(error: unknown): TerminalError {
 		case PortErrorCode.Conflict:
 			return terminalError(TerminalErrorCode.AttachmentLimit);
 		case PortErrorCode.TimedOut:
-			return terminalError(TerminalErrorCode.RuntimeUnavailable);
+			return terminalError(TerminalErrorCode.TimedOut);
 		case PortErrorCode.Cancelled:
 			return terminalError(TerminalErrorCode.SurfaceUnavailable);
 		case PortErrorCode.Incompatible:

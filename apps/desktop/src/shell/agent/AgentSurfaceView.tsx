@@ -16,8 +16,9 @@
  *    chunked on character boundaries;
  *  - geometry reported on resize, never while the view is hidden (a
  *    `display: none` host measures as nothing);
- *  - detach on unmount, and every failure raised to the page's error area
- *    rather than swallowed into a blank pane.
+ *  - detach on unmount, and every failure drawn in the Surface it happened
+ *    in, named by the same codes the rest of DevHub names failures by, rather
+ *    than swallowed into a blank pane.
  */
 
 import { useEffect, useRef, useState } from "react";
@@ -25,7 +26,11 @@ import { useEffect, useRef, useState } from "react";
 import {
   MAX_TARGET_GENERATION,
   TERMINAL_PROTOCOL_VERSION,
+  TerminalErrorCode,
+  agentFailure,
   agentSurfaceKey,
+  terminalError,
+  type AgentFailure,
   type AttachReceipt,
   type TerminalFrame,
 } from "../../ipc/agent.js";
@@ -35,6 +40,7 @@ import {
   defaultAgentSurfaceClient,
   type AgentSurfaceClient,
 } from "./client.js";
+import { APP_ERROR_SUMMARY } from "../../ipc/appShell.js";
 import { Failure, Waiting } from "../components/shell/SurfaceState";
 import {
   FALLBACK_GEOMETRY,
@@ -62,8 +68,6 @@ export interface AgentSurfaceViewProps {
   readonly client?: AgentSurfaceClient;
   /** The same appearance a terminal surface gets: it is the same emulator. */
   readonly appearance?: TerminalAppearance;
-  /** The page's one error area. A failure here is reported, never hidden. */
-  readonly onError?: (error: unknown) => void;
 }
 
 type ConnectionState = "connecting" | "connected" | "disconnected";
@@ -85,16 +89,13 @@ export function AgentSurfaceView({
   hidden = false,
   client,
   appearance,
-  onError,
 }: AgentSurfaceViewProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const sessionRef = useRef<XtermSession | null>(null);
   const hiddenRef = useRef(hidden);
-  const errorRef = useRef(onError);
   const [connection, setConnection] = useState<ConnectionState>("connecting");
-  const [error, setError] = useState<string>();
+  const [failure, setFailure] = useState<AgentFailure>();
   hiddenRef.current = hidden;
-  errorRef.current = onError;
 
   const [dark, setDark] = useState(() => prefersDark());
   useEffect(() => {
@@ -123,17 +124,15 @@ export function AgentSurfaceView({
     let inputTail: Promise<void> = Promise.resolve();
     let inputFailed = false;
 
-    const report = (failure: unknown): void => {
+    // Every way this surface can fail ends here, and leaves as the same shape
+    // the rest of DevHub shows a failure in: a code, the sentence that code is
+    // always drawn as, and a detail that says what the channel reported.
+    const report = (caught: unknown): void => {
       if (disposed) {
         return;
       }
       setConnection("disconnected");
-      setError(
-        failure instanceof Error
-          ? failure.message
-          : "The agent surface failed.",
-      );
-      errorRef.current?.(failure);
+      setFailure(agentFailure(caught));
     };
 
     const acknowledge = (sequence: number): void => {
@@ -164,9 +163,7 @@ export function AgentSurfaceView({
             frame.surfaceKey !== surfaceKey ||
             frame.targetGeneration !== receipt.targetGeneration
           ) {
-            report(
-              new Error("agent attachment receipt did not match its channel"),
-            );
+            report(terminalError(TerminalErrorCode.WrongAttachment));
             return;
           }
           setConnection("connected");
@@ -177,9 +174,12 @@ export function AgentSurfaceView({
           return;
         case "exited":
           setConnection("disconnected");
+          setFailure(
+            agentFailure(terminalError(TerminalErrorCode.SessionUnavailable)),
+          );
           return;
         case "error":
-          report(new Error(frame.error.summary));
+          report(frame.error);
           return;
       }
     };
@@ -207,12 +207,12 @@ export function AgentSurfaceView({
           )
           .then(
             () => undefined,
-            (failure) => {
+            (inputError: unknown) => {
               // One rejected input invalidates the sequence: every
               // later chunk would be refused as a gap. Stop, and
               // say so.
               inputFailed = true;
-              report(failure);
+              report(inputError);
             },
           );
       }
@@ -267,7 +267,7 @@ export function AgentSurfaceView({
           return;
         }
         if (!validReceipt(surfaceKey, attached)) {
-          throw new Error("agent attachment receipt is malformed");
+          throw terminalError(TerminalErrorCode.WrongAttachment);
         }
         receipt = attached;
         setConnection("connected");
@@ -323,8 +323,8 @@ export function AgentSurfaceView({
       {connection === "connecting" && <Waiting label="Connecting…" />}
       {connection === "disconnected" && (
         <Failure
-          summary="The agent surface is not connected."
-          detail={error ?? "The agent connection is unavailable."}
+          summary={failure?.summary ?? APP_ERROR_SUMMARY.agent_not_connected}
+          detail={failure?.detail}
         />
       )}
     </div>

@@ -83,7 +83,48 @@ export type AppErrorCodeWire =
 	/** A workbench died unasked and DevHub is building it again. */
 	| "editor_restarting"
 	/** It kept dying, so DevHub stopped building it again. */
-	| "editor_restart_exhausted";
+	| "editor_restart_exhausted"
+	/** The Agent Surface has no live channel to its Agent. */
+	| "agent_not_connected"
+	/** The Agent is gone: it ended, or something ended it. */
+	| "agent_exited"
+	/** Herdr is not answering, so no Agent can be started or watched. */
+	| "agent_runtime_unavailable"
+	/** The Agent Surface asked to attach and got no answer in time. */
+	| "agent_attach_timed_out"
+	/** A request DevHub accepted never reached an answer. */
+	| "operation_timed_out";
+
+/**
+ * The sentence each failure is shown as.
+ *
+ * It lives with the code rather than with whoever raises one, because the
+ * same failure has to read the same way wherever it is drawn — the page's
+ * error area, a Surface that failed, a log line. A raising site that writes
+ * its own words is how one condition ends up with two names.
+ */
+export const APP_ERROR_SUMMARY: Readonly<Record<AppErrorCodeWire, string>> = {
+	invalid_intent: "The requested action is not available.",
+	activity_disabled: "This activity is unavailable in the current context.",
+	unknown_context: "The selected context is no longer available.",
+	workspace_unavailable: "The workspace is unavailable.",
+	workspace_closing: "The workspace is already closing.",
+	workspace_close_failed: "The workspace could not be closed cleanly.",
+	operation_pending: "Another operation is still in progress.",
+	operation_timed_out: "The requested action did not finish.",
+	persistence_degraded: "Changes could not be saved.",
+	native_unavailable: "The native app shell is unavailable.",
+	editor_provider_missing: "Visual Studio Code was not found.",
+	editor_port_unavailable: "The editor's port is already in use.",
+	editor_unavailable: "The editor could not start.",
+	editor_restarting: "The workbench stopped unexpectedly and is restarting.",
+	editor_restart_exhausted:
+		"The workbench kept stopping and will not be restarted again.",
+	agent_not_connected: "The agent surface is not connected.",
+	agent_exited: "The agent has exited.",
+	agent_runtime_unavailable: "The agent runtime is unavailable.",
+	agent_attach_timed_out: "The agent surface did not connect in time.",
+};
 export type AppErrorModuleWire =
 	| "app"
 	| "config"

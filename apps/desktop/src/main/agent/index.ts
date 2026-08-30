@@ -17,6 +17,7 @@ import {
 	AGENT_CHANNELS,
 	TerminalError,
 	TerminalErrorCode,
+	agentIpcError,
 	terminalError,
 	type AckRequest,
 	type AttachReceipt,
@@ -65,7 +66,7 @@ export class AgentService {
 			throw new Error("the agent IPC handlers are already registered");
 		}
 		this.#registered = true;
-		ipcMain.handle(
+		handle(
 			AGENT_CHANNELS.attach,
 			async (
 				event: IpcMainInvokeEvent,
@@ -81,25 +82,17 @@ export class AgentService {
 				return receipt;
 			},
 		);
-		ipcMain.handle(
-			AGENT_CHANNELS.input,
-			(event: IpcMainInvokeEvent, request: InputRequest) =>
-				this.surfaces.input(viewLabel(event.sender), request),
+		handle(AGENT_CHANNELS.input, (event, request: InputRequest) =>
+			this.surfaces.input(viewLabel(event.sender), request),
 		);
-		ipcMain.handle(
-			AGENT_CHANNELS.resize,
-			(event: IpcMainInvokeEvent, request: ResizeRequest) =>
-				this.surfaces.resize(viewLabel(event.sender), request),
+		handle(AGENT_CHANNELS.resize, (event, request: ResizeRequest) =>
+			this.surfaces.resize(viewLabel(event.sender), request),
 		);
-		ipcMain.handle(
-			AGENT_CHANNELS.acknowledge,
-			(event: IpcMainInvokeEvent, request: AckRequest) =>
-				this.surfaces.acknowledge(viewLabel(event.sender), request),
+		handle(AGENT_CHANNELS.acknowledge, (event, request: AckRequest) =>
+			this.surfaces.acknowledge(viewLabel(event.sender), request),
 		);
-		ipcMain.handle(
-			AGENT_CHANNELS.detach,
-			(event: IpcMainInvokeEvent, request: DetachRequest) =>
-				this.surfaces.detach(viewLabel(event.sender), request),
+		handle(AGENT_CHANNELS.detach, (event, request: DetachRequest) =>
+			this.surfaces.detach(viewLabel(event.sender), request),
 		);
 	}
 
@@ -121,6 +114,32 @@ export class AgentService {
 		const runtime = await this.runtime.shutdown(deadline);
 		return surfaces && runtime;
 	}
+}
+
+/**
+ * Every Agent request answers a failure the same way: with the channel's own
+ * code, carried across IPC as a body the page can read.
+ *
+ * Electron would otherwise hand the page an `Error` whose message is this
+ * process's stack, and the surface would draw it. A failure that is not a
+ * `TerminalError` is a bug in this adapter, so it goes to the log with its
+ * stack and reaches the page as the one thing that is true about it.
+ */
+function handle<Request>(
+	channel: string,
+	run: (event: IpcMainInvokeEvent, request: Request) => unknown,
+): void {
+	ipcMain.handle(channel, async (event, request: Request) => {
+		try {
+			return await run(event, request);
+		} catch (error) {
+			if (error instanceof TerminalError) {
+				throw agentIpcError(error);
+			}
+			console.error(error instanceof Error ? error.stack : error);
+			throw agentIpcError(terminalError(TerminalErrorCode.Internal));
+		}
+	});
 }
 
 function viewLabel(sender: WebContents): string {
