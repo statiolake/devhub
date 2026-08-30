@@ -62,10 +62,23 @@ export class ShellWindow {
 
 	//#region the views
 
+	/**
+	 * Take ownership of a new workbench view — without putting it on screen.
+	 *
+	 * A view used to reveal itself here, which made *creation* decide what is
+	 * shown. Once workbenches are started at launch that is plainly wrong: three
+	 * of them finish opening in whatever order they finish in, and the last one
+	 * wins the screen no matter which workspace the person selected. Worse, it
+	 * wins it before it has painted, which is the white content area.
+	 *
+	 * What is on screen is a function of the selection and nothing else, so it
+	 * is `reveal` — called by whoever knows the selection — that decides.
+	 */
 	attach(view: WorkbenchView): void {
 		this.views.push(view);
 		this.window.contentView.addChildView(view.view);
-		this.reveal(view);
+		view.view.setBounds(this.currentRect());
+		view.view.setVisible(false);
 	}
 
 	detach(view: WorkbenchView): void {
@@ -76,7 +89,9 @@ export class ShellWindow {
 		this.views.splice(index, 1);
 		this.window.contentView.removeChildView(view.view);
 		if (this.revealed === view) {
-			this.revealed = this.views.at(-1);
+			// Not "some other view": nothing is on screen until the selection
+			// says what is, exactly as at startup.
+			this.revealed = undefined;
 		}
 		this.layout();
 	}
@@ -89,8 +104,19 @@ export class ShellWindow {
 		return this.views.find((view) => view.id === id);
 	}
 
-	/** Exactly one view is on screen at a time; this says which. */
+	/**
+	 * Put one workbench on screen, and no other.
+	 *
+	 * The whole of it happens here, in this order, synchronously: the view is
+	 * sized to the current content rectangle *before* it is shown, so it never
+	 * appears at stale bounds; it is brought to the top of the child list,
+	 * because sibling views paint in order and a shown view under another one
+	 * is invisible for no visible reason; and every other view is hidden. Doing
+	 * any of that in a later tick is what leaves a frame — or a session — of
+	 * the wrong thing on screen.
+	 */
 	reveal(view: WorkbenchView): void {
+		if (!this.views.includes(view)) return;
 		this.revealed = view;
 		this.layout();
 	}
@@ -144,10 +170,39 @@ export class ShellWindow {
 			return;
 		}
 		const bounds = this.currentRect();
+		const onScreen = this.nativeSurfaceVisible ? this.revealed : undefined;
+		// Bounds first, then visibility, and the shown one last of all: a view
+		// made visible before it is sized shows its previous size for a frame.
 		for (const view of this.views) {
 			view.view.setBounds(bounds);
-			view.view.setVisible(view === this.revealed && this.nativeSurfaceVisible);
+			if (view !== onScreen) view.view.setVisible(false);
 		}
+		if (onScreen) {
+			// Re-adding an existing child moves it to the end of the list, which
+			// is the top of the stack. Nothing else establishes that order.
+			this.window.contentView.addChildView(onScreen.view);
+			onScreen.view.setVisible(true);
+		}
+	}
+
+	/**
+	 * The invariant this class exists to keep: at most one workbench view is
+	 * on screen, and if there is one it is the topmost child.
+	 *
+	 * Exposed so a test can assert it rather than assert the calls that
+	 * happen to establish it today.
+	 */
+	visibleViews(): readonly WorkbenchView[] {
+		return this.views.filter((view) => view.view.getVisible());
+	}
+
+	topmostView(): WorkbenchView | undefined {
+		const children = this.window.contentView.children;
+		for (let index = children.length - 1; index >= 0; index -= 1) {
+			const match = this.views.find((view) => view.view === children[index]);
+			if (match) return match;
+		}
+		return undefined;
 	}
 
 	//#endregion

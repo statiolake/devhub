@@ -516,6 +516,9 @@ export class AppController {
 	private projectionChanged(): void {
 		refreshMenu();
 		this.startEditorViews();
+		// What is on screen follows the selection, wherever the selection
+		// changed — a menu command, a restored session, or the page.
+		void this.syncEditorView();
 	}
 
 	private publishAppearance(): void {
@@ -1046,6 +1049,11 @@ export class AppController {
 			.then((windows) => {
 				const opened = windows.at(0);
 				if (opened) this.viewsByFolder.set(folder, opened.id);
+				// A view no longer puts itself on screen when it is created, so
+				// the arrival of one is a moment to ask the selection again what
+				// belongs there — otherwise the workbench being waited for opens
+				// and nothing reveals it.
+				void this.syncEditorView();
 				return opened === undefined
 					? undefined
 					: shellWindow().getViewById(opened.id);
