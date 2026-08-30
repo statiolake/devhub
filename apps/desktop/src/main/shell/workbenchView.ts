@@ -37,6 +37,16 @@ export class WorkbenchView {
 	readonly view: Electron.WebContentsView;
 
 	private destroyed = false;
+	/**
+	 * Whether something asked this window to be hidden.
+	 *
+	 * Not the same question as "is this the view on screen right now". A
+	 * workbench view exists inside DevHub's window from the moment it is
+	 * created, so it is a shown window from that moment; selecting another
+	 * workspace or another activity puts it *behind* what is on screen, which
+	 * for a `BrowserWindow` is being occluded, not being hidden.
+	 */
+	private hidden = false;
 
 	constructor(
 		private readonly shell: ShellWindow,
@@ -113,14 +123,17 @@ export class WorkbenchView {
 
 	/** The shell decides what is on screen; `show()` is a request to be it. */
 	show(): void {
+		this.hidden = false;
 		this.shell.reveal(this);
 	}
 
 	showInactive(): void {
+		this.hidden = false;
 		this.shell.reveal(this);
 	}
 
 	hide(): void {
+		this.hidden = true;
 		this.view.setVisible(false);
 	}
 
@@ -150,8 +163,20 @@ export class WorkbenchView {
 		return this.destroyed || this.view.webContents.isDestroyed();
 	}
 
+	/**
+	 * What `BrowserWindow.isVisible` means: shown, and not destroyed.
+	 *
+	 * It must not answer "is this the selected view", however tempting that
+	 * reading is. When VS Code runs from sources it waits ten seconds after a
+	 * window loads and, if the window is neither visible nor minimized, treats
+	 * the start as failed — it forces the window up and opens its DevTools
+	 * (`windowImpl.ts`, `RunOnceScheduler(..., 10000)`). Answering `false` for
+	 * a workbench the person simply is not looking at made that fire for every
+	 * deselected workspace, which is where the DevTools that opened by
+	 * themselves came from.
+	 */
 	isVisible(): boolean {
-		return !this.destroyed && this.shell.isRevealed(this);
+		return !this.isDestroyed() && !this.hidden;
 	}
 
 	isFocused(): boolean {

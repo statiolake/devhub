@@ -43,6 +43,7 @@ import {
 	AgentProfile,
 	agentProfileId,
 	displayPath,
+	isWorkspaceAvailable,
 	agentId as parseAgentId,
 	type AgentId,
 	surfaceKeyName,
@@ -92,6 +93,7 @@ import {
 	InvalidIntent,
 } from "../../model/wire.js";
 import { shellWindow } from "./shellWindow.js";
+import type { WorkbenchView } from "./workbenchView.js";
 import { agents, inspectWorkspaceResources, terminals } from "./adapters.js";
 import { wireTerminals, type TerminalWiring } from "./terminalWiring.js";
 import {
@@ -144,6 +146,11 @@ export class AppController {
 
 	/** Folder path (or the scratch key) -> the `ICodeWindow` id of its view. */
 	private readonly viewsByFolder = new Map<string, number>();
+	/** One in-flight workbench open per folder, shared by concurrent callers. */
+	private readonly editorOpens = new Map<
+		string,
+		Promise<WorkbenchView | undefined>
+	>();
 
 	private resolveServices: MainServices | undefined;
 	private config: Config | undefined;
@@ -493,9 +500,22 @@ export class AppController {
 
 	private publishSnapshot(): void {
 		this.send(CHANNELS.snapshotChanged, this.snapshot());
-		// The menu says what is true of the model, so it is rebuilt wherever the
-		// projection is: one place, and it cannot go stale behind the window.
+		this.projectionChanged();
+	}
+
+	/**
+	 * What has to be true again whenever the projection changes.
+	 *
+	 * The menu describes the model, so it is rebuilt; and a workspace that has
+	 * just appeared is a workbench that should already be starting, for the
+	 * same reason the restored ones are — nobody should wait for one at the
+	 * moment they ask to see it. Both are idempotent, and both are here rather
+	 * than at each place a snapshot is sent, so neither can be forgotten at one
+	 * of them.
+	 */
+	private projectionChanged(): void {
 		refreshMenu();
+		this.startEditorViews();
 	}
 
 	private publishAppearance(): void {
@@ -667,7 +687,7 @@ export class AppController {
 				}
 				if (latest) {
 					this.send(CHANNELS.snapshotChanged, latest);
-					refreshMenu();
+					this.projectionChanged();
 				}
 				for (const effect of effects) {
 					void this.perform(effect);
@@ -979,19 +999,40 @@ export class AppController {
 	private async revealEditorFor(surfaceKey: string): Promise<void> {
 		const folder = this.folderForSurfaceKey(surfaceKey);
 		if (folder === undefined) return;
+		const view = await this.ensureEditorView(folder);
+		if (!view) return;
+		shellWindow().reveal(view);
+		view.focus();
+	}
+
+	/**
+	 * The workbench for a folder, made if it is not there yet.
+	 *
+	 * The one way a workbench comes into existence, called both when a folder
+	 * is first known and when it is selected — so selecting is only ever a
+	 * reveal, and never the moment a person pays for a whole workbench start.
+	 *
+	 * Concurrent callers share one attempt: startup asks for every folder at
+	 * once, and a selection landing in the middle of that must join the open
+	 * already in flight rather than start a second workbench for the same
+	 * folder.
+	 */
+	private async ensureEditorView(
+		folder: string,
+	): Promise<WorkbenchView | undefined> {
 		const existingId = this.viewsByFolder.get(folder);
 		const existing =
 			existingId === undefined
 				? undefined
 				: shellWindow().getViewById(existingId);
-		if (existing) {
-			shellWindow().reveal(existing);
-			existing.focus();
-			return;
-		}
+		if (existing) return existing;
+
+		const inFlight = this.editorOpens.get(folder);
+		if (inFlight) return inFlight;
+
 		// No view yet: go through VS Code's own open path, which is what creates a
 		// `CodeWindow` — and therefore, through the shim, a view in the shell.
-		const window = await this.services()
+		const attempt = this.services()
 			.windows()
 			.open({
 				context: OpenContext.API,
@@ -1001,10 +1042,64 @@ export class AppController {
 				forceEmpty: folder === SCRATCH_EDITOR,
 				forceNewWindow: true,
 				noRecentEntry: true,
+			})
+			.then((windows) => {
+				const opened = windows.at(0);
+				if (opened) this.viewsByFolder.set(folder, opened.id);
+				return opened === undefined
+					? undefined
+					: shellWindow().getViewById(opened.id);
+			})
+			.finally(() => {
+				this.editorOpens.delete(folder);
 			});
-		const opened = window.at(0);
-		if (opened) {
-			this.viewsByFolder.set(folder, opened.id);
+		this.editorOpens.set(folder, attempt);
+		return attempt;
+	}
+
+	/**
+	 * Start every workbench now, rather than when it is first looked at.
+	 *
+	 * A workbench takes seconds to come up, and doing it on first selection
+	 * spends those seconds in front of someone who has just asked to see it.
+	 * They are started together instead, while the shell is painting: the one
+	 * that is selected first, because that is the one being waited for, and the
+	 * rest in parallel behind it.
+	 *
+	 * Nothing here is awaited by the caller — a workbench that is slow must not
+	 * hold up the window — and nothing is swallowed: a workbench that cannot
+	 * start says so on the page's one error surface, and the failure is shown
+	 * again in place when that surface is selected.
+	 */
+	startEditorViews(): void {
+		// Before VS Code's services exist there is no path that opens a
+		// workbench. `markReady` publishes a projection as soon as there is, and
+		// that is the call that starts them.
+		if (!this.resolveServices) return;
+		const snapshot = this.coordinator.snapshot();
+		const editor = snapshot.activities.find(
+			(entry) => entry.activity === "editor",
+		);
+		const selected =
+			editor?.resolution.kind === "enabled"
+				? this.folderForSurfaceKey(surfaceKeyName(editor.resolution.surfaceKey))
+				: undefined;
+		const folders = [
+			SCRATCH_EDITOR,
+			// Only workspaces that are actually open: one that is closing is
+			// having its view torn down, and must not have it built again.
+			...this.coordinator.model.workspaces
+				.filter((workspace) => isWorkspaceAvailable(workspace.state))
+				.map((workspace) => workspace.root),
+		];
+		const ordered =
+			selected === undefined
+				? folders
+				: [selected, ...folders.filter((folder) => folder !== selected)];
+		for (const folder of ordered) {
+			void this.ensureEditorView(folder).catch((error: unknown) => {
+				this.publishError(errorWire(error));
+			});
 		}
 	}
 
