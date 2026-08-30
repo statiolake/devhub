@@ -41,5 +41,5 @@
       ]
     }
   },
-  "include": ["src/main", "src/ipc"]
+  "include": ["src/main", "src/ipc", "src/model"]
 }

@@ -12,15 +12,19 @@
     "typecheck": "tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.preload.json --noEmit && tsc -p tsconfig.shell.json --noEmit",
     "lint": "eslint .",
     "test": "vitest run",
+    "test:pty": "test/terminal/run-under-electron.sh",
     "fmt": "prettier --write src scripts index.html package.json vite.config.ts vite.config.preload.ts eslint.config.js",
     "fmt:check": "prettier --check src scripts index.html package.json vite.config.ts vite.config.preload.ts eslint.config.js",
     "build:preload": "vite build -c vite.config.preload.ts"
   },
   "dependencies": {
+    "@xterm/addon-fit": "0.11.0",
+    "@xterm/xterm": "6.0.0",
     "code-oss-dev": "link:../../vscode",
     "minimist": "1.2.8",
     "react": "19.1.1",
-    "react-dom": "19.1.1"
+    "react-dom": "19.1.1",
+    "smol-toml": "1.4.2"
   },
   "devDependencies": {
     "@eslint/js": "9.34.0",

@@ -28,6 +28,9 @@ extensions/devhub-bridge/build/
 __pycache__/
 
 # Runtime and test leftovers
+# Scratch the unit tests write to: never $TMPDIR, so the path is the same
+# inside and outside a sandbox.
+apps/desktop/.test-scratch/
 *.log
 *.tmp
 *.swp
