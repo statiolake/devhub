@@ -20,6 +20,7 @@ import type {
 	AppIntent,
 	AppOutcome,
 	AppSnapshot,
+	ConfirmationPurposeWire,
 	ReplayWire,
 } from "./appShell.js";
 
@@ -102,15 +103,27 @@ export interface DevhubApi {
 	/** Failures that happen between requests, such as a startup mount. */
 	onNativeError(listener: (error: AppError) => void): () => void;
 	onMenuCommand(listener: (command: MenuCommand) => void): () => void;
-	onWorkbenchDialog(
-		listener: (request: WorkbenchDialogRequest) => void,
-	): () => void;
 	onEditorRestarting(
 		listener: (event: EditorRestartingWire) => void,
 	): () => void;
-	onModalBackdrop(listener: (event: ModalBackdropWire) => void): () => void;
-	answerWorkbenchDialog(answer: WorkbenchDialogAnswer): Promise<void>;
-	setModalOpen(open: boolean): Promise<void>;
+
+	/**
+	 * Put a modal on screen. Resolves to the id that closes it again.
+	 *
+	 * The page never draws a modal itself: main owns the set that is open, and
+	 * the overlay view draws it. That is what makes stacking a fact about the
+	 * window rather than something each page has to reconstruct.
+	 */
+	openModal(request: ModalRequest): Promise<string>;
+	/**
+	 * Take one modal off screen.
+	 *
+	 * `response` is the button a workbench's own question was answered with;
+	 * every other modal has nothing to answer and passes nothing.
+	 */
+	closeModal(id: string, response?: number): Promise<void>;
+	/** The modals that are open, newest last. The overlay page draws these. */
+	onModals(listener: (modals: readonly OpenModal[]) => void): () => void;
 
 	/** Opens the native folder picker; resolves to the pick, or nothing. */
 	chooseWorkspaceFolder(): Promise<string | undefined>;
@@ -168,27 +181,51 @@ export const CHANNELS = {
 	workspacePicker: "devhub:workspace-picker",
 	/** A menu command the page has to carry out itself, e.g. open the picker. */
 	menuCommand: "devhub:menu-command",
-	/** The page has a modal open, or no longer does. */
-	setModalOpen: "devhub:set-modal-open",
-	/** A workbench asked a question; the page draws it and answers. */
-	workbenchDialog: "devhub:workbench-dialog",
-	workbenchDialogAnswer: "devhub:workbench-dialog-answer",
+	/** Put a modal on screen; answers with the id that closes it. */
+	openModal: "devhub:open-modal",
+	/** Take a modal off screen, with the answer if it asked for one. */
+	closeModal: "devhub:close-modal",
+	/** The set of open modals, pushed to the overlay page whenever it moves. */
+	modalsChanged: "devhub:modals-changed",
 	/** A workbench died unasked and is being built again in the same slot. */
 	editorRestarting: "devhub:editor-restarting",
-	/** The workbench's last frame, to stand in for it under a DevHub modal. */
-	modalBackdrop: "devhub:modal-backdrop",
 } as const;
 
 /**
- * What to draw where the workbench was, while a DevHub modal is open.
+ * A modal DevHub is showing.
  *
- * A native view paints above this document unconditionally, so a modal the
- * page draws requires the workbench to stand down — and a workbench that
- * simply disappears is not what a sheet over a window looks like. This is the
- * frame it stood down on; the page draws it, dimmed, under the sheet.
+ * Every one of them is drawn by the overlay view — a transparent
+ * `WebContentsView` that main puts on top of the window for exactly as long as
+ * this list is non-empty. Native views always paint above the App Shell page's
+ * DOM, so a modal drawn *by that page* can only be seen if the workbench is
+ * taken off screen first; drawing them one layer up instead makes the stacking
+ * true rather than reconstructed, and the workbench stays visible underneath.
+ *
+ * The set lives in main because two different things open modals — the App
+ * Shell page, and a workbench asking its own question through Electron — and
+ * the answer has to come back to whichever asked.
  */
-export interface ModalBackdropWire {
-	readonly backdrop?: string;
+export type ModalRequest =
+	| { readonly kind: "workspace-picker" }
+	| { readonly kind: "agent-picker"; readonly workspaceId: string }
+	| { readonly kind: "agent-rename"; readonly agentId: string }
+	| {
+			readonly kind: "close-confirmation";
+			readonly confirmationId: string;
+			readonly purpose: ConfirmationPurposeWire;
+			/**
+			 * Which Agent is being stopped.
+			 *
+			 * A replacement confirmation carries only its token, so the identity
+			 * travels with the request rather than being read back out of it.
+			 */
+			readonly agentId?: string;
+	  }
+	| WorkbenchDialogRequest;
+
+export interface OpenModal {
+	readonly id: string;
+	readonly request: ModalRequest;
 }
 
 /**
@@ -214,35 +251,23 @@ export interface EditorRestartingWire {
  * rest of the app stays usable while it stands.
  */
 export interface WorkbenchDialogRequest {
-	readonly id: string;
+	readonly kind: "workbench-dialog";
 	/**
 	 * The editor surface this question belongs to.
 	 *
 	 * It is drawn inside that workbench's own rectangle and nowhere else: the
 	 * question is about one editor, so it is modal to one editor. Everything
-	 * outside — the sidebar, the other workspaces, the terminal — stays live.
+	 * outside — the sidebar, the other workspaces, the terminal — stays live,
+	 * because main sizes the overlay view to that workbench's rectangle and the
+	 * rest of the window is not covered at all.
 	 */
 	readonly surfaceKey: string;
-	/**
-	 * The workbench as it looked when it asked, as a data URL.
-	 *
-	 * DOM cannot be drawn over a native view, so the view stands down while its
-	 * dialog is up; without this the editor would visibly vanish underneath the
-	 * question, which is alarming and makes it harder to answer. The still
-	 * image is what keeps the editor *there* while it is not accepting input.
-	 */
-	readonly backdrop?: string;
 	readonly message: string;
 	readonly detail?: string;
 	readonly buttons: readonly string[];
 	readonly defaultId: number;
 	readonly cancelId: number;
-	readonly kind: "none" | "info" | "warning" | "error" | "question";
-}
-
-export interface WorkbenchDialogAnswer {
-	readonly id: string;
-	readonly response: number;
+	readonly tone: "none" | "info" | "warning" | "error" | "question";
 }
 
 /**

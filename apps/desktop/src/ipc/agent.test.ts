@@ -21,6 +21,9 @@ describe("how an agent failure is named", () => {
 			agentFailure(terminalError(TerminalErrorCode.SessionUnavailable)).code,
 		).toBe("agent_exited");
 		expect(
+			agentFailure(terminalError(TerminalErrorCode.SurfaceUnavailable)).code,
+		).toBe("agent_not_connected");
+		expect(
 			agentFailure(terminalError(TerminalErrorCode.ChannelClosed)).code,
 		).toBe("agent_not_connected");
 	});

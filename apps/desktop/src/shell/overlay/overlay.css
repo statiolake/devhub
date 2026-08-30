@@ -1,0 +1,28 @@
+/*
+ * The modal layer's own page.
+ *
+ * Everything it does not draw must be transparent, because what is behind it
+ * is the real window: the sidebar, the titlebar and a live workbench. A page
+ * background here would paint over all of them, which is the exact failure
+ * this layer exists to stop.
+ */
+
+:root[data-window="overlay"],
+:root[data-window="overlay"] body,
+:root[data-window="overlay"] #root {
+  background: transparent;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+/*
+ * The layer takes no click of its own. A modal's scrim is what swallows
+ * clicks, and it covers this page whenever one is up; without this rule the
+ * gaps between modals would still be a surface, and the workbench under a
+ * workbench-scoped question would be unreachable for no visible reason.
+ */
+:root[data-window="overlay"] #root {
+  position: fixed;
+  inset: 0;
+}

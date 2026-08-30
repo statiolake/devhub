@@ -2089,6 +2089,11 @@ export class AppCoordinator {
    * long as its own deadline, and what it is finally told is that time ran
    * out — which is true, and says nothing about what actually happened.
    */
+  /** Whether an operation with this identity is still in flight. */
+  hasPending(id: OperationId): boolean {
+    return this.pending.has(id);
+  }
+
   private invalidateReconciliation(): void {
     const active = this.activeReconcile;
     if (!active) return;

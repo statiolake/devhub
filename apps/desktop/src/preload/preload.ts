@@ -20,9 +20,8 @@ import {
 	CHANNELS,
 	type MenuCommand,
 	type EditorRestartingWire,
-	type ModalBackdropWire,
-	type WorkbenchDialogAnswer,
-	type WorkbenchDialogRequest,
+	type ModalRequest,
+	type OpenModal,
 	type ContentRect,
 	type DevhubApi,
 	type WorkspacePickerEvent,
@@ -76,16 +75,15 @@ const devhub: DevhubApi = {
 		on<AgentProfiles>(CHANNELS.agentProfilesChanged, listener),
 	onNativeError: (listener) => on<AppError>(CHANNELS.nativeError, listener),
 	onMenuCommand: (listener) => on<MenuCommand>(CHANNELS.menuCommand, listener),
-	onWorkbenchDialog: (listener) =>
-		on<WorkbenchDialogRequest>(CHANNELS.workbenchDialog, listener),
 	onEditorRestarting: (listener) =>
 		on<EditorRestartingWire>(CHANNELS.editorRestarting, listener),
-	onModalBackdrop: (listener) =>
-		on<ModalBackdropWire>(CHANNELS.modalBackdrop, listener),
-	answerWorkbenchDialog: (answer: WorkbenchDialogAnswer) =>
-		ipcRenderer.invoke(CHANNELS.workbenchDialogAnswer, answer) as Promise<void>,
-	setModalOpen: (open: boolean) =>
-		ipcRenderer.invoke(CHANNELS.setModalOpen, open) as Promise<void>,
+
+	openModal: (request: ModalRequest) =>
+		ipcRenderer.invoke(CHANNELS.openModal, request) as Promise<string>,
+	closeModal: (id: string, response?: number) =>
+		ipcRenderer.invoke(CHANNELS.closeModal, id, response) as Promise<void>,
+	onModals: (listener) =>
+		on<readonly OpenModal[]>(CHANNELS.modalsChanged, listener),
 	onWorkspacePicker: (listener) =>
 		on<WorkspacePickerEvent>(CHANNELS.workspacePicker, listener),
 

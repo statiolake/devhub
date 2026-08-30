@@ -9,6 +9,7 @@
 
 import { electron } from "../electron.js";
 import type { ContentRect } from "../../ipc/contract.js";
+import { ModalOverlay } from "./modalOverlay.js";
 import type { WorkbenchView } from "./workbenchView.js";
 
 export class ShellWindow {
@@ -26,8 +27,17 @@ export class ShellWindow {
 	 * this is that answer.
 	 */
 	private nativeSurfaceVisible = true;
-	/** A modal in the page outranks the workbench for the same rectangle. */
-	private modalOpen = false;
+	/**
+	 * The layer every DevHub modal is drawn on.
+	 *
+	 * It belongs to the window rather than to any page because it is a fact
+	 * about the window's child list: the last child paints on top, and that is
+	 * the whole of what makes a modal a modal here.
+	 */
+	readonly modals: ModalOverlay;
+	/** How the surface key of the workbench on screen is looked up. */
+	private surfaceKeyOfView: (view: WorkbenchView) => string | undefined = () =>
+		undefined;
 
 	constructor(preloadPath: string, pageUrl: string) {
 		this.window = new electron.BrowserWindow({
@@ -50,6 +60,20 @@ export class ShellWindow {
 				nodeIntegration: false,
 			},
 		});
+
+		this.modals = new ModalOverlay(
+			{
+				window: this.window,
+				workbenchRect: () => this.currentRect(),
+				focusTarget: () =>
+					this.onScreenView()?.webContents ?? this.window.webContents,
+				modalsChanged: () => {
+					this.layout();
+				},
+			},
+			preloadPath,
+			`${pageUrl}?window=overlay`,
+		);
 
 		this.window.loadURL(pageUrl);
 		this.window.once("ready-to-show", () => this.window.show());
@@ -171,19 +195,17 @@ export class ShellWindow {
 	}
 
 	/**
-	 * The page has a modal open, or no longer does.
+	 * How to name the workbench a view is showing.
 	 *
-	 * A native view paints above this document unconditionally, so a modal the
-	 * page draws would be invisible behind a workbench while still holding the
-	 * keyboard. Standing the view down for as long as the modal is up is the
-	 * only arrangement in which the person can see what they are answering.
+	 * The model owns surface keys and this class owns views; the overlay needs
+	 * to ask "is the workbench this question belongs to the one on screen?",
+	 * and this is the one place the two are joined.
 	 */
-	setModalOpen(open: boolean): void {
-		if (this.modalOpen === open) {
-			return;
-		}
-		this.modalOpen = open;
-		this.layout();
+	setSurfaceKeyResolver(
+		resolve: (view: WorkbenchView) => string | undefined,
+	): void {
+		this.surfaceKeyOfView = resolve;
+		this.modals.reposition();
 	}
 
 	boundsOf(_view: WorkbenchView): Electron.Rectangle {
@@ -207,6 +229,39 @@ export class ShellWindow {
 		return { x: 0, y: 0, width, height };
 	}
 
+	/** The workbench the selection resolves to, whether or not it is shown. */
+	private liveRevealed(): WorkbenchView | undefined {
+		const revealed = this.revealed;
+		if (!revealed || revealed.isDestroyed()) return undefined;
+		return this.views.includes(revealed) ? revealed : undefined;
+	}
+
+	/**
+	 * The workbench that is actually on screen.
+	 *
+	 * A workbench waiting for an answer outranks the selection: the question is
+	 * about *that* workbench, and answering "do you want to save?" against a
+	 * blank pane — or against another workspace — is not an arrangement anybody
+	 * can act on. Everything outside its rectangle stays live, so the sidebar
+	 * and the rest of the app are still usable while it stands.
+	 *
+	 * Otherwise it is whatever the selection resolves to, unless the page is
+	 * showing a Surface of its own over the same rectangle.
+	 */
+	private onScreenView(): WorkbenchView | undefined {
+		const asking = this.modals.askingSurfaceKey();
+		if (asking !== undefined) {
+			const view = this.views.find(
+				(candidate) =>
+					!candidate.isDestroyed() &&
+					this.surfaceKeyOfView(candidate) === asking,
+			);
+			if (view) return view;
+		}
+		if (!this.nativeSurfaceVisible) return undefined;
+		return this.liveRevealed();
+	}
+
 	layout(): void {
 		if (this.window.isDestroyed()) {
 			return;
@@ -215,10 +270,7 @@ export class ShellWindow {
 		// A destroyed view is skipped rather than special-cased at each call:
 		// there is no arrangement in which touching one is right.
 		const live = this.views.filter((view) => !view.isDestroyed());
-		const revealed =
-			this.revealed && live.includes(this.revealed) ? this.revealed : undefined;
-		const onScreen =
-			this.nativeSurfaceVisible && !this.modalOpen ? revealed : undefined;
+		const onScreen = this.onScreenView();
 		// Bounds first, then visibility, and the shown one last of all: a view
 		// made visible before it is sized shows its previous size for a frame.
 		for (const view of live) {
@@ -231,6 +283,9 @@ export class ShellWindow {
 			this.window.contentView.addChildView(onScreen.view);
 			onScreen.view.setVisible(true);
 		}
+		// The modal layer is last, always: whatever this just decided about the
+		// workbench, a question about it is above it.
+		this.modals.reposition();
 	}
 
 	/**

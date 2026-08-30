@@ -13,7 +13,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { isImeComposing } from "../../accessibility/ime";
-import { useModalPresence } from "./modalPresence";
 
 export interface ChooseSheetOption {
   readonly id: string;
@@ -45,7 +44,6 @@ export function ChooseSheet({
   const [active, setActive] = useState(0);
   const sheet = useRef<HTMLElement | null>(null);
   const restoreTo = useRef<HTMLElement | null>(null);
-  useModalPresence();
 
   useEffect(() => {
     restoreTo.current = document.activeElement as HTMLElement | null;

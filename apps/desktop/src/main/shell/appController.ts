@@ -422,9 +422,7 @@ export class AppController {
 	 * the model settle before the next round is scheduled.
 	 */
 	private async reconcileAllAgents(): Promise<void> {
-		const outcome = this.dispatchOwn({ type: "reconcile_agents" });
-		if (!outcome) return;
-		await this.awaitOutcome(outcome);
+		await this.dispatchAwaiting({ type: "reconcile_agents" });
 	}
 
 	markReady(): void {
@@ -710,12 +708,15 @@ export class AppController {
 						case "operation_completed":
 							// A chain that ends without a provider event of its own —
 							// a reconcile superseded by a newer one — still ends. The
-							// page request that started it is answered here rather
-							// than left to time out.
-							this.settle(event.token.operationId, {
-								kind: "noop",
-								snapshot: this.coordinator.snapshot(),
-							});
+							// request that started it is answered here rather than left
+							// to time out. A chain that carries on under the same
+							// identity is not over, and is left alone.
+							if (!this.coordinator.hasPending(event.token.operationId)) {
+								this.settle(event.token.operationId, {
+									kind: "noop",
+									snapshot: this.coordinator.snapshot(),
+								});
+							}
 							break;
 						case "noop":
 							break;
@@ -1402,30 +1403,42 @@ export class AppController {
 
 	/** Open a folder on the page's behalf, and answer with the outcome. */
 	private async openFolder(path: string): Promise<AppOutcomeWire> {
+		const settled = await this.dispatchAwaiting({
+			type: "open_folder",
+			path: requestedPath(path),
+		});
+		await this.syncEditorView();
+		return outcomeWire(settled, this.coordinator.readiness);
+	}
+
+	/**
+	 * Dispatch, and take hold of the answer before the chain is allowed to run.
+	 *
+	 * The order is the whole point. Some effects complete synchronously inside
+	 * the drain — generating a confirmation id is one — so a chain can be over
+	 * before `drain()` returns. Registering the waiter afterwards means
+	 * registering it for an operation that already ended: nothing will ever
+	 * settle it, and the caller waits out its own deadline and is told the
+	 * request did not finish. That is how asking to stop an Agent produced a
+	 * timeout instead of a confirmation.
+	 */
+	private dispatchAwaiting(intent: UserIntent): Promise<IntentOutcome> {
 		let outcome: IntentOutcome;
 		try {
 			outcome = this.coordinator.dispatchUser({
 				intentId: parseIntentId(randomUUID()),
 				operationId: this.freshOperationId(),
-				intent: { type: "open_folder", path: requestedPath(path) },
+				intent,
 			});
 		} catch (error) {
 			this.drain();
 			throw asIpcError(errorWire(error));
 		}
+		const answer = this.awaitOutcome(outcome);
 		this.drain();
-		const settled = await this.settled(outcome);
-		await this.syncEditorView();
-		return outcomeWire(settled, this.coordinator.readiness);
-	}
-
-	/** The page's answer: whatever the chain this intent started produced. */
-	private async settled(outcome: IntentOutcome): Promise<IntentOutcome> {
-		try {
-			return await this.awaitOutcome(outcome);
-		} catch (error) {
+		return answer.catch((error: unknown) => {
 			throw asIpcError(errorWire(error));
-		}
+		});
 	}
 
 	revealFolderView(folder: string): void {
@@ -1486,19 +1499,7 @@ export class AppController {
 					: errorWire(error),
 			);
 		}
-		let outcome: IntentOutcome;
-		try {
-			outcome = this.coordinator.dispatchUser({
-				intentId: parseIntentId(randomUUID()),
-				operationId: this.freshOperationId(),
-				intent,
-			});
-		} catch (error) {
-			this.drain();
-			throw asIpcError(errorWire(error));
-		}
-		this.drain();
-		const settled = await this.settled(outcome);
+		const settled = await this.dispatchAwaiting(intent);
 
 		// Selecting the Editor activity is the moment its view has to exist. It is
 		// done here rather than in the model because a view is an effect on the

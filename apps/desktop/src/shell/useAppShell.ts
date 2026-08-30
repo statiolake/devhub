@@ -39,6 +39,12 @@ export interface AppShellContextValue {
   readonly confirmationBusy: boolean;
   readonly confirmPending: () => Promise<void>;
   readonly dismissCloseConfirmation: () => void;
+  /** Take on a confirmation raised on another page, as if raised here. */
+  readonly adoptConfirmation: (confirmation: {
+    readonly confirmationId: string;
+    readonly purpose: ConfirmationPurposeWire;
+    readonly agentId?: string;
+  }) => void;
 }
 
 export const AppShellContext = createContext<AppShellContextValue | null>(null);

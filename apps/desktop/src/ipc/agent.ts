@@ -77,31 +77,34 @@ export enum TerminalErrorCode {
 	Internal = "internal",
 }
 
+/**
+ * What the channel reported, in words. These are details, not summaries: the
+ * sentence a person reads first comes from the App Shell's error codes, and
+ * this says which of them it was. They name the Agent, because this contract
+ * is the Agent's — a reader told "the terminal surface" would go looking for
+ * a terminal they never opened.
+ */
 const SUMMARIES: Record<TerminalErrorCode, string> = {
-	[TerminalErrorCode.InvalidRequest]: "The terminal request is invalid.",
+	[TerminalErrorCode.InvalidRequest]: "The agent request is invalid.",
 	[TerminalErrorCode.TimedOut]: "The agent runtime did not answer in time.",
-	[TerminalErrorCode.InvalidSurface]:
-		"The selected terminal surface is invalid.",
+	[TerminalErrorCode.InvalidSurface]: "The selected agent surface is invalid.",
 	[TerminalErrorCode.SurfaceUnavailable]:
-		"The selected terminal surface is unavailable.",
-	[TerminalErrorCode.StaleTarget]: "The terminal target is stale.",
+		"The agent surface could not be attached.",
+	[TerminalErrorCode.StaleTarget]: "The agent surface's target is stale.",
 	[TerminalErrorCode.WrongAttachment]:
-		"The terminal attachment is not owned by this view.",
+		"The agent attachment is not owned by this view.",
 	[TerminalErrorCode.AttachmentLimit]:
-		"This terminal surface already has an attachment.",
-	[TerminalErrorCode.SessionUnavailable]:
-		"The terminal session is unavailable.",
+		"This agent surface already has an attachment.",
+	[TerminalErrorCode.SessionUnavailable]: "The agent's session has ended.",
 	[TerminalErrorCode.PtyUnavailable]:
-		"The terminal client could not be attached.",
-	[TerminalErrorCode.InputTooLarge]:
-		"Terminal input exceeded the allowed size.",
-	[TerminalErrorCode.InvalidResize]: "The terminal size is invalid.",
-	[TerminalErrorCode.ChannelClosed]: "The terminal view is disconnected.",
-	[TerminalErrorCode.Backpressure]: "Terminal output exceeded the view buffer.",
-	[TerminalErrorCode.RuntimeUnavailable]:
-		"The terminal runtime is unavailable.",
+		"The agent's terminal could not be attached.",
+	[TerminalErrorCode.InputTooLarge]: "Agent input exceeded the allowed size.",
+	[TerminalErrorCode.InvalidResize]: "The agent surface's size is invalid.",
+	[TerminalErrorCode.ChannelClosed]: "The agent view is disconnected.",
+	[TerminalErrorCode.Backpressure]: "Agent output exceeded the view buffer.",
+	[TerminalErrorCode.RuntimeUnavailable]: "The agent runtime is unavailable.",
 	[TerminalErrorCode.Internal]:
-		"The terminal runtime could not complete the request.",
+		"The agent runtime could not complete the request.",
 };
 
 export interface TerminalErrorBody {
@@ -150,8 +153,11 @@ export function agentFailureCode(code: TerminalErrorCode): AppErrorCodeWire {
 		case TerminalErrorCode.PtyUnavailable:
 			return "agent_runtime_unavailable";
 		case TerminalErrorCode.SessionUnavailable:
-		case TerminalErrorCode.SurfaceUnavailable:
 			return "agent_exited";
+		// Not "exited": the surface could not be attached, and whether the Agent
+		// is still there is a question only a reconcile answers. Saying it ended
+		// on the strength of a failed attach is a guess dressed as a fact.
+		case TerminalErrorCode.SurfaceUnavailable:
 		case TerminalErrorCode.InvalidRequest:
 		case TerminalErrorCode.InvalidSurface:
 		case TerminalErrorCode.StaleTarget:

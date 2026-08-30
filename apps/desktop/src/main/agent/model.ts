@@ -864,11 +864,12 @@ export function parseSessionSnapshot(value: unknown): ProviderSnapshot {
 	if (rawWorkspaces.length + rawPanes.length > 16_384) {
 		throw agentError(AgentRuntimeErrorCode.BoundedInput);
 	}
-	// Where the agent identity lives moved between pinned Herdr releases: 0.8.1
-	// put an `agent` label on the pane, 0.8.2 lists agents separately and keys
-	// them by pane. Both are read, because the fact the adapter needs — "this
-	// pane has a detected agent" — is the same one, and the confirmed-agent
-	// rule that decides natural exit is built on it.
+	// Where the agent identity lives is read two ways. A live 0.8.2 snapshot
+	// puts it on the pane — `agent`, `agent_status`, `agent_session` — and has
+	// no top-level `agents` at all; a release that keys agents by pane in a
+	// list of their own is read as well. The fact the adapter needs is the same
+	// one either way — "this pane has a detected agent" — and the confirmed-
+	// agent rule that decides natural exit is built on it.
 	const agentByPane = new Map<string, string>();
 	for (const entry of rawAgents) {
 		const agent = asObject(entry);

@@ -29,8 +29,25 @@ import {
 } from "./failure";
 import { AppShellContext, type AppShellContextValue } from "./useAppShell";
 
+/** What a dispatch came back asking to have confirmed. */
+export interface PendingConfirmation {
+  readonly confirmationId: string;
+  readonly purpose: ConfirmationPurposeWire;
+  readonly agentId?: string;
+}
+
 export interface AppShellProviderProps {
   readonly client?: AppShellClient;
+  /**
+   * Where a confirmation goes when main asks for one.
+   *
+   * The App Shell page does not draw modals — they live one layer up, on the
+   * overlay view, so a workbench cannot paint over them. So the page hands the
+   * confirmation to main and the overlay page draws it; the overlay's own
+   * provider keeps the default, which is to hold it right here, because there
+   * the alert *is* the thing on screen.
+   */
+  readonly raiseConfirmation?: (confirmation: PendingConfirmation) => void;
   readonly children: ReactNode;
 }
 
@@ -41,7 +58,11 @@ export interface AppShellProviderProps {
  * selection or disclosure state of its own, because a second copy of those is
  * a second thing that can be wrong.
  */
-export function AppShellProvider({ client, children }: AppShellProviderProps) {
+export function AppShellProvider({
+  client,
+  raiseConfirmation,
+  children,
+}: AppShellProviderProps) {
   const transport = useMemo(() => client ?? createShellClient(), [client]);
   const [attempt, setAttempt] = useState(0);
   const [state, setState] = useState<AppLoadState>({ status: "loading" });
@@ -67,11 +88,8 @@ export function AppShellProvider({ client, children }: AppShellProviderProps) {
     WorkspacePickerCandidate[]
   >([]);
   const [pickerBusy, setPickerBusy] = useState(false);
-  const [pendingConfirmation, setPendingConfirmation] = useState<{
-    confirmationId: string;
-    purpose: ConfirmationPurposeWire;
-    agentId?: string;
-  } | null>(null);
+  const [pendingConfirmation, setPendingConfirmation] =
+    useState<PendingConfirmation | null>(null);
   const [confirmationBusy, setConfirmationBusy] = useState(false);
   const confirmationBusyRef = useRef(false);
   const lastRevision = useRef(-1);
@@ -245,7 +263,7 @@ export function AppShellProvider({ client, children }: AppShellProviderProps) {
           setIntentError(PERSISTENCE_DEGRADED_ERROR);
         }
         if (outcome.kind === "confirmation_required") {
-          setPendingConfirmation({
+          (raiseConfirmation ?? setPendingConfirmation)({
             confirmationId: outcome.confirmationId,
             purpose: outcome.purpose,
             // A confirmation can be replaced by main while this one is being
@@ -266,7 +284,7 @@ export function AppShellProvider({ client, children }: AppShellProviderProps) {
         return undefined;
       }
     },
-    [applySnapshot, transport, pendingConfirmation],
+    [applySnapshot, transport, pendingConfirmation, raiseConfirmation],
   );
 
   const retry = useCallback(() => {
@@ -397,6 +415,21 @@ export function AppShellProvider({ client, children }: AppShellProviderProps) {
     setPendingConfirmation(null);
   }, []);
 
+  /**
+   * Take on a confirmation raised somewhere else.
+   *
+   * The overlay page is told what to ask by main, not by a dispatch of its
+   * own; adopting it here is what lets the confirmation behave exactly as one
+   * raised in place, down to the retry-on-failure rule.
+   */
+  const adoptConfirmation = useCallback((confirmation: PendingConfirmation) => {
+    setPendingConfirmation((current) =>
+      current?.confirmationId === confirmation.confirmationId
+        ? current
+        : confirmation,
+    );
+  }, []);
+
   const value = useMemo<AppShellContextValue>(
     () => ({
       state,
@@ -419,8 +452,10 @@ export function AppShellProvider({ client, children }: AppShellProviderProps) {
       confirmationBusy,
       confirmPending,
       dismissCloseConfirmation,
+      adoptConfirmation,
     }),
     [
+      adoptConfirmation,
       agentProfiles,
       appearance,
       cancelWorkspacePicker,

@@ -18,9 +18,6 @@ import { clampSidebarWidth } from "../../../ipc/appShell";
 import { useAppShell } from "../../useAppShell";
 import { devhub } from "../../client";
 import { isImeComposing } from "../../accessibility/ime";
-import { Alert } from "../shell/Alert";
-import { ChooseSheet } from "../shell/ChooseSheet";
-import { WorkspacePicker } from "../shell/WorkspacePicker";
 import { StatusMark } from "./StatusMark";
 import { statusLabel } from "./status";
 
@@ -396,31 +393,24 @@ function SidebarResizeHandle({
 
 export function Sidebar({ snapshot }: SidebarProps) {
   const { dispatch, agentProfiles } = useAppShell();
-  const [pickerOpen, setPickerOpen] = useState(false);
+  // The sidebar draws no modals. Every one of them lives on the overlay layer
+  // above the workbench views, so opening one is a request to main and nothing
+  // more — there is no local "is it open" to keep in step with anything.
+  const openPicker = useCallback(() => {
+    void devhub().openModal({ kind: "workspace-picker" });
+  }, []);
   // File ▸ Add Workspace… is the same command as the sidebar's +, so it opens
   // the same picker rather than a second way of adding a workspace.
   useEffect(
     () =>
       devhub().onMenuCommand((command) => {
-        if (command === "open_workspace_picker") setPickerOpen(true);
+        if (command === "open_workspace_picker") openPicker();
       }),
-    [],
+    [openPicker],
   );
-  const [agentPickerWorkspaceId, setAgentPickerWorkspaceId] = useState<
-    string | undefined
-  >();
-  const [renameTarget, setRenameTarget] = useState<AgentSnapshot>();
-  const [renameValue, setRenameValue] = useState("");
-  const [renameBusy, setRenameBusy] = useState(false);
-  const [renameError, setRenameError] = useState(false);
-  const pickerCompositionActive = useRef(false);
-  const renameCompositionActive = useRef(false);
   const pickerTriggerRef = useRef<HTMLButtonElement>(null);
-  const renameInputRef = useRef<HTMLInputElement>(null);
   const workspaceTreeRef = useRef<HTMLUListElement>(null);
   const treeFocusId = useRef<string | undefined>(undefined);
-  const focusRestoreGeneration = useRef(0);
-  const pendingFocusRestore = useRef<HTMLElement | null>(null);
 
   useLayoutEffect(() => {
     const tree = workspaceTreeRef.current;
@@ -451,129 +441,16 @@ export function Sidebar({ snapshot }: SidebarProps) {
     if (activeWasRemoved) target.focus();
   }, [snapshot.selection.context, snapshot.workspaces]);
 
-  const modalOpen =
-    pickerOpen || Boolean(agentPickerWorkspaceId) || Boolean(renameTarget);
-
-  useEffect(() => {
-    const content = document.querySelector<HTMLElement>(".app-shell-content");
-    if (!content) return undefined;
-    content.inert = modalOpen;
-    return () => {
-      content.inert = false;
-    };
-  }, [modalOpen]);
-
-  useEffect(() => {
-    if (modalOpen || !pendingFocusRestore.current) return;
-    const generation = focusRestoreGeneration.current;
-    const target = pendingFocusRestore.current;
-    pendingFocusRestore.current = null;
-    const restore = () => {
-      if (generation !== focusRestoreGeneration.current) return;
-      const active = document.activeElement as HTMLElement | null;
-      if (
-        active &&
-        active !== document.body &&
-        !active.closest("[role='dialog']")
-      ) {
-        return;
-      }
-      const inertContent =
-        target?.closest<HTMLElement>(".app-shell-content") ??
-        document.querySelector<HTMLElement>(".app-shell-content");
-      // This effect only runs after modalOpen became false. Clear a stale
-      // property left by browsers that do not reflect inert removal promptly.
-      if (inertContent?.inert) inertContent.inert = false;
-      const candidate =
-        target &&
-        target.isConnected &&
-        !target.hasAttribute("disabled") &&
-        !(target.closest<HTMLElement>("[inert]")?.inert ?? false)
-          ? target
-          : document.querySelector<HTMLElement>(
-              '[aria-label="Workspace navigation"] .section-action-button:not([disabled]), [aria-label="Workspace navigation"] [data-tree-item-id]:not([disabled])[tabindex="0"], [aria-label="Workspace navigation"] button:not([disabled]), .activity-segments button:not([disabled])',
-            );
-      candidate?.focus();
-    };
-    queueMicrotask(restore);
-  }, [modalOpen]);
-
-  const scheduleFocusRestore = useCallback(
-    (target: HTMLElement | null | undefined) => {
-      focusRestoreGeneration.current += 1;
-      pendingFocusRestore.current = target ?? null;
-    },
-    [],
-  );
-
   const [inProgressWidth, setInProgressWidth] = useState<number | null>(null);
   const renderedWidth = inProgressWidth ?? snapshot.sidebar.width;
 
-  const closePicker = useCallback(() => {
-    setPickerOpen(false);
-    pickerCompositionActive.current = false;
-    scheduleFocusRestore(pickerTriggerRef.current);
-  }, [scheduleFocusRestore]);
-
-  const closeAgentPicker = useCallback(() => {
-    setAgentPickerWorkspaceId(undefined);
-    pickerCompositionActive.current = false;
-  }, []);
-
-  const closeRename = useCallback(() => {
-    setRenameBusy(false);
-    setRenameError(false);
-    renameCompositionActive.current = false;
-    setRenameTarget(undefined);
-  }, []);
-
-  useEffect(() => {
-    if (!renameTarget) return;
-    const current = snapshot.workspaces
-      .flatMap((workspace) => workspace.agents)
-      .find((agent) => agent.id === renameTarget.id);
-    if (!current || current.controlState !== "running") closeRename();
-  }, [closeRename, renameTarget, snapshot.workspaces]);
-
-  // The field, not the default button: a rename starts by typing over what is
-  // there. The sheet itself owns the trap and the restore.
-  useEffect(() => {
-    if (!renameTarget) return;
-    renameInputRef.current?.focus();
-    renameInputRef.current?.select();
-  }, [renameTarget]);
-
   const openAgentPicker = useCallback((workspaceId: string) => {
-    setAgentPickerWorkspaceId(workspaceId);
+    void devhub().openModal({ kind: "agent-picker", workspaceId });
   }, []);
 
   const openRename = useCallback((agent: AgentSnapshot) => {
-    setRenameValue(agent.displayName);
-    setRenameError(false);
-    setRenameTarget(agent);
+    void devhub().openModal({ kind: "agent-rename", agentId: agent.id });
   }, []);
-
-  const submitRename = useCallback(async () => {
-    const agent = renameTarget;
-    const displayName = renameValue.trim();
-    if (
-      !agent ||
-      displayName.length === 0 ||
-      agent.controlState !== "running" ||
-      renameBusy
-    )
-      return;
-    setRenameBusy(true);
-    setRenameError(false);
-    const outcome = await dispatch({
-      type: "rename_agent",
-      agentId: agent.id,
-      displayName,
-    });
-    setRenameBusy(false);
-    if (outcome) closeRename();
-    else setRenameError(true);
-  }, [closeRename, dispatch, renameBusy, renameTarget, renameValue]);
 
   const onDispatch = useCallback(
     (intent: AppIntent) => {
@@ -615,9 +492,7 @@ export function Sidebar({ snapshot }: SidebarProps) {
             type="button"
             aria-label="Open workspace picker"
             title="Open workspace picker"
-            onClick={() => {
-              setPickerOpen(true);
-            }}
+            onClick={openPicker}
           >
             <svg viewBox="0 0 14 14" aria-hidden="true" focusable="false">
               <path d="M7 3.25v7.5M3.25 7h7.5" />
@@ -725,87 +600,11 @@ export function Sidebar({ snapshot }: SidebarProps) {
           <p className="sidebar-empty">No workspaces open</p>
         )}
       </div>
-      {agentPickerWorkspaceId ? (
-        <ChooseSheet
-          title="New Agent"
-          message="The agent starts at the workspace root."
-          options={agentProfiles.profiles.map((profile) => ({
-            id: profile.id,
-            label: profile.displayName,
-            detail: profile.kind === "codex" ? "Codex" : "Claude",
-          }))}
-          empty={
-            agentProfiles.availability === "unavailable"
-              ? "Agent profiles are unavailable until the configuration is readable again."
-              : "No agent profiles are enabled."
-          }
-          note={
-            agentProfiles.availability === "degraded"
-              ? "The configuration needs attention; these are the last profiles DevHub could confirm."
-              : undefined
-          }
-          onChoose={(profileId) => {
-            onDispatch({
-              type: "request_create_agent",
-              workspaceId: agentPickerWorkspaceId,
-              profileId,
-            });
-            closeAgentPicker();
-          }}
-          onCancel={closeAgentPicker}
-        />
-      ) : null}
-      {renameTarget ? (
-        <Alert
-          title="Rename Agent"
-          message="The name is how this agent appears in the sidebar."
-          onCancel={closeRename}
-          actions={[
-            { label: "Cancel", run: closeRename, disabled: renameBusy },
-            {
-              label: renameBusy ? "Renaming…" : "Rename",
-              isDefault: true,
-              disabled:
-                renameBusy ||
-                renameValue.trim().length === 0 ||
-                renameTarget.controlState !== "running",
-              run: () => {
-                void submitRename();
-              },
-            },
-          ]}
-        >
-          <input
-            ref={renameInputRef}
-            className="mac-field mac-alert-field"
-            aria-label="Display name"
-            value={renameValue}
-            maxLength={256}
-            aria-invalid={renameError}
-            disabled={renameBusy}
-            onCompositionStart={() => {
-              renameCompositionActive.current = true;
-            }}
-            onCompositionEnd={() => {
-              renameCompositionActive.current = false;
-            }}
-            onChange={(event) => {
-              setRenameValue(event.target.value);
-            }}
-          />
-          {renameError ? (
-            <p className="mac-message" role="alert">
-              The agent could not be renamed. Try again.
-            </p>
-          ) : null}
-        </Alert>
-      ) : null}
       <SidebarResizeHandle
         width={renderedWidth}
         onPreview={previewResize}
         onCommit={resize}
       />
-      {pickerOpen ? <WorkspacePicker onDismiss={closePicker} /> : null}
     </aside>
   );
 }

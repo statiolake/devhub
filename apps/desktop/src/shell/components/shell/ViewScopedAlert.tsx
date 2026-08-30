@@ -6,10 +6,10 @@
  * and every other workspace with it would stop the person doing the very thing
  * that helps them answer — looking at something else.
  *
- * It is positioned inside the viewport rather than portalled to the body, so it
- * is clipped to the editor area by construction. The native view stands down
- * underneath (there is no way to paint DOM over it), and the still image the
- * request carries stands in for it, so the editor does not appear to vanish.
+ * It is drawn on the modal layer, whose view main sizes to that workbench's
+ * own rectangle — so it is clipped to the editor area by construction, the
+ * live workbench is still there underneath it, and the sidebar and every other
+ * workspace are not covered at all and stay usable.
  *
  * There is no dismiss-by-clicking-outside. Outside is another part of the
  * application, not a way of answering a question about unsaved work; only the
@@ -19,7 +19,6 @@
 import { useEffect, useRef } from "react";
 import { isImeComposing } from "../../accessibility/ime";
 import type { WorkbenchDialogRequest } from "../../../ipc/contract";
-import { SurfaceBackdrop } from "./SurfaceBackdrop";
 
 export interface ViewScopedAlertProps {
   readonly request: WorkbenchDialogRequest;
@@ -32,7 +31,7 @@ export function ViewScopedAlert({ request, onAnswer }: ViewScopedAlertProps) {
   useEffect(() => {
     const buttons = panel.current?.querySelectorAll("button");
     buttons?.[request.defaultId]?.focus();
-  }, [request.id, request.defaultId]);
+  }, [request.defaultId]);
 
   return (
     <div
@@ -48,7 +47,6 @@ export function ViewScopedAlert({ request, onAnswer }: ViewScopedAlertProps) {
         }
       }}
     >
-      <SurfaceBackdrop src={request.backdrop} />
       <div className="view-scoped-alert-scrim" />
       <div className="mac-alert" ref={panel}>
         <div className="mac-alert-body plain">
