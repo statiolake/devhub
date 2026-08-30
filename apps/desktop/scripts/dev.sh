@@ -4,7 +4,7 @@
 # The main process runs inside VS Code's own Electron: the native modules in
 # vscode/node_modules are built for exactly that binary, and nothing else will
 # load them. The environment below is the same one vscode/scripts/code.sh sets
-# for a source build, plus DevHub's own user-data and extensions directories.
+# for a source build, plus DevHub's own editor and extensions directories.
 #
 # Any argument is passed through to the app, so a second invocation such as
 #   apps/desktop/scripts/dev.sh --new-window <folder>
@@ -38,7 +38,7 @@ fi
 
 # DevHub's own state, beside the user's real VS Code state and never inside it.
 DEVHUB_DATA="$HOME/Library/Application Support/DevHub"
-USER_DATA_DIR="$DEVHUB_DATA/user-data"
+USER_DATA_DIR="$DEVHUB_DATA/editor"
 EXTENSIONS_DIR="$DEVHUB_DATA/extensions"
 mkdir -p "$USER_DATA_DIR" "$EXTENSIONS_DIR"
 

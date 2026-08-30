@@ -20,6 +20,8 @@
  *       (./codeMain.js) instead.
  *    5. `app.setName('DevHub')`. In development Electron guesses an app's name
  *       from package.json, so without this it calls DevHub "@devhub/desktop".
+ *    6. `migrateUserDataDirectory` runs the moment the user-data path is
+ *       resolved, before anything derives a path from it. See its own file.
  *
  *  Everything else is upstream, including the copyright below.
  *--------------------------------------------------------------------------------------------*/
@@ -49,6 +51,7 @@ import { getUNCHost, addUNCHostToAllowlist } from 'code-oss-dev/out/vs/base/node
 import { INLSConfiguration } from 'code-oss-dev/out/vs/nls.js';
 import { NativeParsedArgs } from 'code-oss-dev/out/vs/platform/environment/common/argv.js';
 import { createRequire } from 'node:module';
+import { migrateUserDataDirectory } from './userDataMigration.js';
 
 /**
  * VS Code resolves its NLS bundles relative to the file that asks for them.
@@ -92,6 +95,7 @@ if (args['sandbox'] &&
 
 // Set userData path before app 'ready' event
 const userDataPath = getUserDataPath(args, product.nameShort ?? 'code-oss-dev');
+migrateUserDataDirectory(userDataPath);
 if (process.platform === 'win32') {
 	const userDataUNCHost = getUNCHost(userDataPath);
 	if (userDataUNCHost) {
