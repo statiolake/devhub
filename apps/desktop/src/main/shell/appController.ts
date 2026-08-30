@@ -94,6 +94,13 @@ import {
 import { shellWindow } from "./shellWindow.js";
 import { agents, inspectWorkspaceResources, terminals } from "./adapters.js";
 import { wireTerminals, type TerminalWiring } from "./terminalWiring.js";
+import {
+	CancellationToken,
+	SCRATCH_TARGET,
+	socketName,
+	workspaceTarget,
+	type TerminalPreflight,
+} from "../terminal/ports.js";
 import { wireAgents } from "./agentWiring.js";
 import { resolveRuntimes } from "./runtimes.js";
 import type { AgentService } from "../agent/index.js";
@@ -261,6 +268,69 @@ export class AppController {
 
 	get terminalRuntime(): TerminalWiring | undefined {
 		return this.terminalsWiring;
+	}
+
+	/**
+	 * What the socket a person is asking DevHub to move to looks like.
+	 *
+	 * Read-only, and the same probe the runtime uses for its own health, so the
+	 * question the confirmation asks is the situation the migration will meet.
+	 */
+	async preflightTerminalSocket(name: string): Promise<TerminalPreflight> {
+		const wiring = this.terminalsWiring;
+		if (!wiring) throw new Error("the terminal runtime is not running");
+		return wiring.runtime.preflight(socketName(name));
+	}
+
+	/**
+	 * Move DevHub's terminal sessions onto another socket.
+	 *
+	 * The order is the whole correctness argument. Every attached client is
+	 * detached first, because a client of a session that is about to be killed
+	 * is a client reading a closed pipe. Then one transition permit is held
+	 * across the entire migration, so no ordinary operation can create a session
+	 * on the socket being left behind — which is why the calls inside are the
+	 * ungated `transition*` variants: taking the gate again under a permit we
+	 * are already holding would deadlock, by design.
+	 *
+	 * Nothing here is caught. A migration that fails part-way must surface as a
+	 * failure with the effective socket unchanged, not as an app that quietly
+	 * believes it moved.
+	 */
+	async changeTerminalSocket(name: string): Promise<void> {
+		const wiring = this.terminalsWiring;
+		if (!wiring) throw new Error("the terminal runtime is not running");
+		const next = socketName(name);
+		const previous = this.state.tmux.effective_socket_name;
+		if (next === previous) return;
+
+		wiring.service.surfaces.detachAll();
+		const release = await wiring.runtime.beginTransition();
+		try {
+			const cancel = new CancellationToken();
+			const old = socketName(previous);
+			const owned = await wiring.runtime.transitionInspectOwnedSessions(
+				old,
+				cancel,
+			);
+			for (const record of owned.sessions) {
+				await wiring.runtime.transitionCloseOwnedSession(old, record, cancel);
+			}
+			const targets = [
+				SCRATCH_TARGET,
+				...this.coordinator.model.workspaces.map((workspace) =>
+					workspaceTarget(workspace.id, workspace.root),
+				),
+			];
+			for (const target of targets) {
+				await wiring.runtime.transitionEnsureOnSocket(next, target, cancel);
+			}
+			wiring.runtime.setEffectiveSocket(next);
+			this.state.tmux.effective_socket_name = next;
+			await this.stateStore.saveState(this.state);
+		} finally {
+			release();
+		}
 	}
 
 	/**

@@ -2,7 +2,6 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
-  useMemo,
   useRef,
   useState,
   type PointerEvent as ReactPointerEvent,
@@ -19,6 +18,7 @@ import {
 import { clampSidebarWidth } from "../../../ipc/appShell";
 import { useAppShell } from "../../useAppShell";
 import { isImeComposing } from "../../accessibility/ime";
+import { WorkspacePicker } from "../shell/WorkspacePicker";
 import { StatusMark } from "./StatusMark";
 import { statusLabel } from "./status";
 
@@ -541,18 +541,8 @@ function SidebarResizeHandle({
 }
 
 export function Sidebar({ snapshot }: SidebarProps) {
-  const {
-    dispatch,
-    agentProfiles,
-    pickerCandidates,
-    pickerBusy,
-    startWorkspacePicker,
-    cancelWorkspacePicker,
-    selectWorkspacePicker,
-    chooseWorkspaceFolder,
-  } = useAppShell();
+  const { dispatch, agentProfiles, chooseWorkspaceFolder } = useAppShell();
   const [pickerOpen, setPickerOpen] = useState(false);
-  const [pickerQuery, setPickerQuery] = useState("");
   const [agentPickerWorkspaceId, setAgentPickerWorkspaceId] = useState<
     string | undefined
   >();
@@ -563,7 +553,6 @@ export function Sidebar({ snapshot }: SidebarProps) {
   const pickerCompositionActive = useRef(false);
   const renameCompositionActive = useRef(false);
   const pickerTriggerRef = useRef<HTMLButtonElement>(null);
-  const workspacePickerRef = useRef<HTMLElement>(null);
   const agentPickerRef = useRef<HTMLElement>(null);
   const renameDialogRef = useRef<HTMLElement>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
@@ -574,10 +563,6 @@ export function Sidebar({ snapshot }: SidebarProps) {
   const pendingFocusRestore = useRef<HTMLElement | null>(null);
   const agentPickerPreviousFocus = useRef<HTMLElement | null>(null);
   const renamePreviousFocus = useRef<HTMLElement | null>(null);
-  const rankedCandidates = useMemo(
-    () => [...pickerCandidates].sort((left, right) => right.score - left.score),
-    [pickerCandidates],
-  );
 
   useLayoutEffect(() => {
     const tree = workspaceTreeRef.current;
@@ -684,15 +669,6 @@ export function Sidebar({ snapshot }: SidebarProps) {
     [],
   );
 
-  useEffect(() => {
-    if (!pickerOpen) return undefined;
-    const timer = window.setTimeout(() => {
-      void cancelWorkspacePicker().then(() =>
-        startWorkspacePicker(pickerQuery),
-      );
-    }, 250);
-    return () => window.clearTimeout(timer);
-  }, [cancelWorkspacePicker, pickerOpen, pickerQuery, startWorkspacePicker]);
   const [inProgressWidth, setInProgressWidth] = useState<number | null>(null);
   const renderedWidth = inProgressWidth ?? snapshot.sidebar.width;
 
@@ -727,19 +703,6 @@ export function Sidebar({ snapshot }: SidebarProps) {
       .find((agent) => agent.id === renameTarget.id);
     if (!current || current.controlState !== "running") closeRename();
   }, [closeRename, renameTarget, snapshot.workspaces]);
-
-  useEffect(() => {
-    if (!pickerOpen) return undefined;
-    const input = workspacePickerRef.current?.querySelector<HTMLElement>(
-      "input, button, [tabindex='0']",
-    );
-    input?.focus();
-    const onKeyDown = (event: KeyboardEvent) => {
-      trapDialogKey(event, workspacePickerRef.current, closePicker);
-    };
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
-  }, [closePicker, pickerOpen]);
 
   useEffect(() => {
     if (!agentPickerWorkspaceId) return undefined;
@@ -799,16 +762,6 @@ export function Sidebar({ snapshot }: SidebarProps) {
     else setRenameError(true);
   }, [closeRename, dispatch, renameBusy, renameTarget, renameValue]);
 
-  const finishPickerAction = useCallback(
-    (action?: () => Promise<unknown>) => {
-      void cancelWorkspacePicker()
-        .then(() => action?.())
-        .catch(() => undefined)
-        .finally(closePicker);
-    },
-    [cancelWorkspacePicker, closePicker],
-  );
-
   const onDispatch = useCallback(
     (intent: AppIntent) => {
       void dispatch(intent);
@@ -858,97 +811,6 @@ export function Sidebar({ snapshot }: SidebarProps) {
             </svg>
           </button>
         </div>
-        {pickerOpen && typeof document !== "undefined"
-          ? createPortal(
-              <section
-                ref={workspacePickerRef}
-                className="workspace-picker"
-                role="dialog"
-                aria-modal="true"
-                aria-labelledby="workspace-picker-title"
-              >
-                <div className="workspace-picker-header">
-                  <h2 id="workspace-picker-title">Open workspace</h2>
-                  <input
-                    aria-label="Filter workspaces"
-                    placeholder="Filter workspaces"
-                    value={pickerQuery}
-                    onCompositionStart={() => {
-                      pickerCompositionActive.current = true;
-                    }}
-                    onCompositionEnd={() => {
-                      pickerCompositionActive.current = false;
-                    }}
-                    onChange={(event) => setPickerQuery(event.target.value)}
-                    onKeyDown={(event) => {
-                      const composing = isImeComposing(
-                        event.nativeEvent,
-                        pickerCompositionActive.current,
-                      );
-                      if (
-                        composing &&
-                        (event.key === "Enter" || event.key === "Escape")
-                      ) {
-                        event.preventDefault();
-                        event.stopPropagation();
-                        return;
-                      }
-                      if (
-                        !composing &&
-                        event.key === "Enter" &&
-                        rankedCandidates[0]
-                      ) {
-                        finishPickerAction(() =>
-                          selectWorkspacePicker(rankedCandidates[0].path),
-                        );
-                      }
-                      if (event.key === "Escape" && !composing) {
-                        finishPickerAction();
-                      }
-                    }}
-                  />
-                  <button type="button" onClick={() => finishPickerAction()}>
-                    Cancel
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      finishPickerAction(async () => {
-                        const path = await chooseWorkspaceFolder();
-                        if (path) await selectWorkspacePicker(path);
-                      })
-                    }
-                  >
-                    Open Folder…
-                  </button>
-                </div>
-                <div className="workspace-picker-results" aria-live="polite">
-                  {rankedCandidates.map((candidate) => (
-                    <button
-                      type="button"
-                      className="workspace-picker-result"
-                      key={`${candidate.operationId}:${candidate.path}`}
-                      onClick={() =>
-                        finishPickerAction(() =>
-                          selectWorkspacePicker(candidate.path),
-                        )
-                      }
-                    >
-                      <span>{candidate.label}</span>
-                      <small>{candidate.path}</small>
-                    </button>
-                  ))}
-                  {!pickerBusy && pickerCandidates.length === 0 && (
-                    <p>No workspaces found.</p>
-                  )}
-                  {pickerBusy && (
-                    <p role="status">Searching configured locations…</p>
-                  )}
-                </div>
-              </section>,
-              document.body,
-            )
-          : null}
         {snapshot.workspaces.length > 0 ? (
           <ul
             ref={workspaceTreeRef}
@@ -1215,6 +1077,7 @@ export function Sidebar({ snapshot }: SidebarProps) {
         onPreview={previewResize}
         onCommit={resize}
       />
+      {pickerOpen ? <WorkspacePicker onDismiss={closePicker} /> : null}
     </aside>
   );
 }

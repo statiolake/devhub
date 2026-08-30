@@ -38,6 +38,7 @@ import {
 	type SettingsApi,
 	type SettingsSaveRequestWire,
 	type SettingsSnapshot,
+	type SettingsSocketPreflightWire,
 } from "../ipc/settings.js";
 
 /** One push channel, one listener, one way to stop listening. */
@@ -118,6 +119,16 @@ const devhubSettings: SettingsApi = {
 		ipcRenderer.invoke(SETTINGS_CHANNELS.openLogFolder) as Promise<void>,
 	copyDiagnostics: () =>
 		ipcRenderer.invoke(SETTINGS_CHANNELS.copyDiagnostics) as Promise<void>,
+	socketPreflight: (socketName: string) =>
+		ipcRenderer.invoke(
+			SETTINGS_CHANNELS.socketPreflight,
+			socketName,
+		) as Promise<SettingsSocketPreflightWire>,
+	socketApply: (socketName: string) =>
+		ipcRenderer.invoke(
+			SETTINGS_CHANNELS.socketApply,
+			socketName,
+		) as Promise<SettingsSnapshot>,
 	close: () => ipcRenderer.invoke(SETTINGS_CHANNELS.close) as Promise<void>,
 	onChanged: (listener) =>
 		on<SettingsSnapshot>(SETTINGS_CHANNELS.changed, listener),

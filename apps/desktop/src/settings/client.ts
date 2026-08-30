@@ -3,6 +3,7 @@ import type {
   SettingsError,
   SettingsSaveRequestWire,
   SettingsSnapshot,
+  SettingsSocketPreflightWire,
 } from "../ipc/settings";
 
 export interface SettingsClient {
@@ -12,6 +13,8 @@ export interface SettingsClient {
   recheck(): Promise<SettingsSnapshot>;
   openLogFolder(): Promise<void>;
   copyDiagnostics(): Promise<void>;
+  socketPreflight(socketName: string): Promise<SettingsSocketPreflightWire>;
+  socketApply(socketName: string): Promise<SettingsSnapshot>;
   close(): Promise<void>;
   subscribe(listener: (snapshot: SettingsSnapshot) => void): () => void;
 }
@@ -42,6 +45,8 @@ export function createSettingsClient(
     recheck: () => api.recheck(),
     openLogFolder: () => api.openLogFolder(),
     copyDiagnostics: () => api.copyDiagnostics(),
+    socketPreflight: (socketName) => api.socketPreflight(socketName),
+    socketApply: (socketName) => api.socketApply(socketName),
     close: () => api.close(),
     subscribe: (listener) => api.onChanged(listener),
   };

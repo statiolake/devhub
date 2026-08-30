@@ -15,6 +15,7 @@ import { installSurfaceRenderers } from "./components/shell/surfaceRenderers";
 import { SettingsApp } from "../settings/SettingsApp";
 import "./styles/tokens.css";
 import "./styles/shell.css";
+import "./styles/macos.css";
 
 const container = document.getElementById("root");
 if (!container) {

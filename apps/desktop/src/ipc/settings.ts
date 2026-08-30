@@ -6,11 +6,11 @@
  * carries the revision it was drafted from, so an edit made in a text editor
  * while Settings was open is a refusal rather than a silent overwrite.
  *
- * **Dropped:** everything about the tmux socket transition — the state, the
- * preflight, the session counts and the confirmation sheet. Terminals are no
- * longer tmux sessions on a shared socket, so there is no socket to migrate
- * and nothing for a confirmation to be about. `tmux` itself stays a configured
- * runtime because the config file still carries it.
+ * Changing the tmux socket is the one setting that is not just a value in a
+ * file: DevHub's terminal sessions live on that socket, so moving to another
+ * one moves them. It therefore has a contract of its own — look at the socket
+ * being asked for (`socketPreflight`), then migrate onto it (`socketApply`) —
+ * rather than riding along on an ordinary save.
  */
 
 export const SETTINGS_SCHEMA_VERSION = 1 as const;
@@ -220,6 +220,27 @@ export type SettingsConfig = SettingsConfigWire;
 export type SettingsError = SettingsErrorWire;
 
 /** The surface the preload puts on `window.devhubSettings`. */
+/**
+ * What the socket DevHub is being asked to move to looks like right now.
+ *
+ * `target_absent` — no server there; `target_devhub_empty` — a DevHub server
+ * with no sessions; `marked_sessions` — DevHub sessions from another run;
+ * `wrong_marker` — somebody else's tmux server. The counts are what the person
+ * is deciding about, so they travel with the state rather than being fetched
+ * again by whoever draws the question.
+ */
+export interface SettingsSocketPreflightWire {
+	readonly requestedSocketName: string;
+	readonly state:
+		| "not_checked"
+		| "target_absent"
+		| "target_devhub_empty"
+		| "wrong_marker"
+		| "marked_sessions";
+	readonly ownedSessionCount: number;
+	readonly unknownSessionCount: number;
+}
+
 export interface SettingsApi {
 	getSnapshot(): Promise<SettingsSnapshot>;
 	save(request: SettingsSaveRequestWire): Promise<SettingsSnapshot>;
@@ -227,6 +248,8 @@ export interface SettingsApi {
 	recheck(): Promise<SettingsSnapshot>;
 	openLogFolder(): Promise<void>;
 	copyDiagnostics(): Promise<void>;
+	socketPreflight(socketName: string): Promise<SettingsSocketPreflightWire>;
+	socketApply(socketName: string): Promise<SettingsSnapshot>;
 	close(): Promise<void>;
 	onChanged(listener: (snapshot: SettingsSnapshot) => void): () => void;
 }
@@ -238,6 +261,8 @@ export const SETTINGS_CHANNELS = {
 	recheck: "devhub-settings:recheck",
 	openLogFolder: "devhub-settings:open-log-folder",
 	copyDiagnostics: "devhub-settings:copy-diagnostics",
+	socketPreflight: "devhub-settings:socket-preflight",
+	socketApply: "devhub-settings:socket-apply",
 	close: "devhub-settings:close",
 	changed: "devhub-settings:changed",
 } as const;

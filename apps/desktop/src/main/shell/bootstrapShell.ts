@@ -137,5 +137,15 @@ export async function bootstrapShell(
 		adopt: (config) => {
 			controller.adoptConfig(config);
 		},
+		preflightSocket: async (name) => {
+			const preflight = await controller.preflightTerminalSocket(name);
+			return {
+				requestedSocketName: preflight.requestedSocketName,
+				state: preflight.state,
+				ownedSessionCount: preflight.ownedSessionCount,
+				unknownSessionCount: preflight.unknownSessionCount,
+			};
+		},
+		changeSocket: (name) => controller.changeTerminalSocket(name),
 	});
 }

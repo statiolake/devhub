@@ -21,6 +21,7 @@ import {
 	type SettingsErrorWire,
 	type SettingsSaveRequestWire,
 	type SettingsSnapshotWire,
+	type SettingsSocketPreflightWire,
 } from "../../ipc/settings.js";
 import {
 	ConfigError,
@@ -38,6 +39,10 @@ interface SettingsHost {
 	previousExit(): "clean" | "unclean" | "unknown";
 	/** Told when a save changed the config, so the shell re-projects it. */
 	adopt(config: Config): void;
+	/** What the socket a person wants to move to looks like right now. */
+	preflightSocket(socketName: string): Promise<SettingsSocketPreflightWire>;
+	/** Move DevHub's terminal sessions onto that socket, or fail loudly. */
+	changeSocket(socketName: string): Promise<void>;
 }
 
 let host: SettingsHost | undefined;
@@ -354,6 +359,37 @@ function registerIpc(): void {
 				2,
 			),
 		);
+	});
+
+	handle(
+		SETTINGS_CHANNELS.socketPreflight,
+		async (_event, requested: string) => {
+			const settings = requireHost();
+			try {
+				return await settings.preflightSocket(requested);
+			} catch (error) {
+				throw settingsError(error);
+			}
+		},
+	);
+
+	// The socket name is saved only once the sessions have actually moved: a
+	// config file naming a socket the app is not on would be a lie the next
+	// launch would believe.
+	handle(SETTINGS_CHANNELS.socketApply, async (_event, requested: string) => {
+		const settings = requireHost();
+		try {
+			await settings.changeSocket(requested);
+			const loaded = settings.store.current() ?? (await settings.store.load());
+			const saved = await settings.store.save(loaded.revision, {
+				...loaded.config,
+				runtimes: { ...loaded.config.runtimes, tmux_socket_name: requested },
+			});
+			settings.adopt(saved.config);
+			return await buildSnapshot();
+		} catch (error) {
+			throw settingsError(error);
+		}
 	});
 
 	handle(SETTINGS_CHANNELS.close, () => {

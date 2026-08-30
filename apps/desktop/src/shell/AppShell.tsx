@@ -7,7 +7,7 @@
  * else on this page is DOM.
  */
 
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect } from "react";
 import { AppShellProvider } from "./AppShellContext";
 import type { AppShellClient } from "./client";
 import { useAppShell } from "./useAppShell";
@@ -15,7 +15,8 @@ import { Sidebar } from "./components/sidebar/Sidebar";
 import { TitlebarActivities } from "./components/shell/TitlebarActivities";
 import { SurfaceViewport } from "./components/shell/SurfaceViewport";
 import type { AppError, CloseResourceWire } from "../ipc/appShell";
-import { isImeComposing } from "./accessibility/ime";
+import { Alert } from "./components/shell/Alert";
+import { Failure, Waiting } from "./components/shell/SurfaceState";
 
 function closeResourceStatus(resource: CloseResourceWire): string {
   switch (resource.kind) {
@@ -55,6 +56,13 @@ export function AppShell({ client }: AppShellProps) {
   );
 }
 
+/**
+ * The whole app could not start.
+ *
+ * Not an alert: there is nothing to dismiss it back to. It fills the Surface
+ * the way any other Surface-level failure does, with the actions the error
+ * itself says are worth offering and the identifying line a bug report needs.
+ */
 function ErrorSurface({
   error,
   retry,
@@ -64,58 +72,32 @@ function ErrorSurface({
   readonly retry: () => void;
   readonly openSettings: () => Promise<void>;
 }) {
-  const showSettings = error.actions.includes("open_settings");
-  const primaryActionRef = useRef<HTMLButtonElement | null>(null);
-  const detailsRef = useRef<HTMLParagraphElement | null>(null);
-
-  useEffect(() => {
-    (primaryActionRef.current ?? detailsRef.current)?.focus();
-  }, [error]);
+  const actions = [
+    ...(error.actions.includes("retry")
+      ? [{ label: "Try Again", primary: true, run: retry }]
+      : []),
+    ...(error.actions.includes("open_settings")
+      ? [
+          {
+            label: "Open Settings",
+            run: () => {
+              void openSettings();
+            },
+          },
+        ]
+      : []),
+  ];
 
   return (
     <section className="surface" aria-label="Error surface" aria-live="polite">
-      <div className="surface-state surface-failure" role="alert">
-        <p className="failure-title">
-          <svg
-            className="failure-icon"
-            viewBox="0 0 16 16"
-            aria-hidden="true"
-            focusable="false"
-          >
-            <circle cx="8" cy="8" r="7" />
-            <path d="M8 4.6v4.2M8 11.1v.6" />
-          </svg>
-          {error.summary}
-        </p>
-        {error.detail ? <p className="failure-detail">{error.detail}</p> : null}
-        <div className="surface-actions">
-          {error.actions.includes("retry") && (
-            <button
-              ref={primaryActionRef}
-              className="primary-button"
-              type="button"
-              onClick={retry}
-            >
-              Try again
-            </button>
-          )}
-          {showSettings && (
-            <button
-              className="secondary-button"
-              type="button"
-              ref={
-                error.actions.includes("retry") ? undefined : primaryActionRef
-              }
-              onClick={() => void openSettings()}
-            >
-              Open Settings
-            </button>
-          )}
-        </div>
-        <p className="surface-meta" ref={detailsRef} tabIndex={-1}>
-          {error.module} · {error.code} · {error.runtimeVersion}
-        </p>
-      </div>
+      <Failure
+        summary={error.summary}
+        detail={error.detail ?? undefined}
+        actions={actions}
+      />
+      <p className="mac-caption surface-meta">
+        {error.module} · {error.code} · {error.runtimeVersion}
+      </p>
     </section>
   );
 }
@@ -139,9 +121,6 @@ function Workbench() {
     },
     [dispatch],
   );
-  const confirmationRef = useRef<HTMLElement | null>(null);
-  const previousFocus = useRef<HTMLElement | null>(null);
-  const focusRestoreGeneration = useRef(0);
   const closePurpose = pendingConfirmation?.purpose;
 
   const pendingAgent =
@@ -152,105 +131,6 @@ function Workbench() {
             .find((agent) => agent.id === pendingConfirmation.agentId)
         : undefined
       : undefined;
-  const pendingConfirmationId = pendingConfirmation?.confirmationId;
-  const pendingWorkspaceId = pendingAgent?.workspaceId;
-
-  const restoreFocus = useCallback((target: HTMLElement | null | undefined) => {
-    if (
-      !target?.isConnected ||
-      target.hasAttribute("disabled") ||
-      target.getAttribute("aria-hidden") === "true" ||
-      target.tabIndex < 0 ||
-      (target.closest<HTMLElement>("[inert]")?.inert ?? false)
-    ) {
-      return false;
-    }
-    target.focus();
-    return document.activeElement === target;
-  }, []);
-
-  const scheduleFocusRestore = useCallback(
-    (
-      target: HTMLElement | null | undefined,
-      workspaceId: string | undefined,
-    ) => {
-      const generation = ++focusRestoreGeneration.current;
-      window.requestAnimationFrame(() =>
-        window.requestAnimationFrame(() => {
-          if (generation !== focusRestoreGeneration.current) return;
-          const active = document.activeElement as HTMLElement | null;
-          if (
-            active &&
-            active !== document.body &&
-            !active.closest("[role='dialog']")
-          ) {
-            return;
-          }
-          if (document.querySelector("[role='dialog'][aria-modal='true']")) {
-            return;
-          }
-          const inertContent =
-            target?.closest<HTMLElement>(".app-shell-content");
-          if (inertContent?.inert) inertContent.inert = false;
-          const workspaceButton = workspaceId
-            ? [
-                ...document.querySelectorAll<HTMLElement>(
-                  "[data-workspace-id]",
-                ),
-              ].find((element) => element.dataset.workspaceId === workspaceId)
-            : undefined;
-          const fallback =
-            workspaceButton ??
-            document.querySelector<HTMLElement>(
-              '[aria-label="Workspace navigation"] .section-action-button:not([disabled]), [aria-label="Workspace navigation"] [data-tree-item-id]:not([disabled])[tabindex="0"], [aria-label="Workspace navigation"] button:not([disabled]), .activity-segments button:not([disabled])',
-            );
-          if (!restoreFocus(target) && !restoreFocus(fallback)) {
-            focusRestoreGeneration.current += 1;
-          }
-        }),
-      );
-    },
-    [restoreFocus],
-  );
-
-  useEffect(() => {
-    if (pendingConfirmationId === undefined) return;
-    previousFocus.current = document.activeElement as HTMLElement | null;
-    const dialog = confirmationRef.current;
-    const first = dialog?.querySelector<HTMLElement>("button:not([disabled])");
-    first?.focus();
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !isImeComposing(event)) {
-        event.preventDefault();
-        dismissCloseConfirmation();
-        return;
-      }
-      if (event.key !== "Tab" || !dialog) return;
-      const buttons = [
-        ...dialog.querySelectorAll<HTMLElement>("button:not([disabled])"),
-      ];
-      if (buttons.length === 0) return;
-      const index = buttons.indexOf(document.activeElement as HTMLElement);
-      const next = event.shiftKey
-        ? index <= 0
-          ? buttons.length - 1
-          : index - 1
-        : (index + 1) % buttons.length;
-      event.preventDefault();
-      buttons[next]?.focus();
-    };
-    document.addEventListener("keydown", onKeyDown);
-    return () => {
-      document.removeEventListener("keydown", onKeyDown);
-      scheduleFocusRestore(previousFocus.current, pendingWorkspaceId);
-      previousFocus.current = null;
-    };
-  }, [
-    dismissCloseConfirmation,
-    pendingConfirmationId,
-    pendingWorkspaceId,
-    scheduleFocusRestore,
-  ]);
 
   useEffect(() => {
     if (pendingConfirmation?.purpose.kind === "agent_stop" && !pendingAgent) {
@@ -288,10 +168,7 @@ function Workbench() {
           aria-busy="true"
           aria-live="polite"
         >
-          <div className="surface-state" role="status">
-            <span className="surface-spinner" aria-hidden="true" />
-            <p className="surface-line">Connecting…</p>
-          </div>
+          <Waiting label="Starting DevHub…" />
         </section>
       </main>
     );
@@ -335,75 +212,48 @@ function Workbench() {
       </div>
       {pendingConfirmation &&
         (pendingConfirmation.purpose.kind !== "agent_stop" || pendingAgent) && (
-          <div className="confirmation-backdrop" role="presentation">
-            <section
-              ref={confirmationRef}
-              className="confirmation-dialog"
-              role="dialog"
-              aria-modal="true"
-              aria-labelledby="confirmation-title"
-              aria-describedby="confirmation-description"
-              onKeyDown={(event) => {
-                if (
-                  event.key === "Escape" &&
-                  !isImeComposing(event.nativeEvent)
-                ) {
-                  event.preventDefault();
-                  dismissCloseConfirmation();
-                }
-              }}
-            >
-              <h2 id="confirmation-title">
-                {closeInspection
-                  ? `Close ${closeInspection.workspaceLabel}?`
+          <Alert
+            tone="danger"
+            title={
+              closeInspection
+                ? `Close “${closeInspection.workspaceLabel}”?`
+                : pendingAgent
+                  ? `Stop “${pendingAgent.displayName}”?`
+                  : "Confirm this action?"
+            }
+            message={
+              closeInspection
+                ? "The workspace has resources open. Closing it will close them."
+                : pendingAgent
+                  ? "This stops the Agent runtime. You can retry if cleanup fails."
+                  : undefined
+            }
+            detail={resources.map(
+              ([label, resource]) =>
+                [label, closeResourceStatus(resource)] as const,
+            )}
+            onCancel={dismissCloseConfirmation}
+            actions={[
+              {
+                label: "Cancel",
+                disabled: confirmationBusy,
+                run: dismissCloseConfirmation,
+              },
+              {
+                label: confirmationBusy
+                  ? pendingAgent
+                    ? "Stopping…"
+                    : "Closing…"
                   : pendingAgent
-                    ? `Stop ${pendingAgent.displayName}?`
-                    : "Confirm action?"}
-              </h2>
-              <p id="confirmation-description">
-                {closeInspection
-                  ? "The following workspace resources need confirmation before they are closed."
-                  : pendingAgent
-                    ? "This stops the Agent runtime. It can be retried if cleanup fails."
-                    : "Confirm this operation to continue."}
-              </p>
-              {resources.length > 0 && (
-                <ul className="confirmation-resources">
-                  {resources.map(([label, resource]) => (
-                    <li key={label}>
-                      <span>{label}</span>
-                      <span>{closeResourceStatus(resource)}</span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-              <div className="confirmation-actions">
-                <button
-                  type="button"
-                  onClick={dismissCloseConfirmation}
-                  disabled={confirmationBusy}
-                >
-                  Cancel
-                </button>
-                {(closeInspection ?? pendingAgent) && (
-                  <button
-                    className="primary-button"
-                    type="button"
-                    onClick={() => void confirmPending()}
-                    disabled={confirmationBusy}
-                  >
-                    {confirmationBusy
-                      ? pendingAgent
-                        ? "Stopping…"
-                        : "Closing…"
-                      : pendingAgent
-                        ? "Stop Agent"
-                        : "Close workspace"}
-                  </button>
-                )}
-              </div>
-            </section>
-          </div>
+                    ? "Stop Agent"
+                    : "Close Workspace",
+                isDefault: true,
+                destructive: true,
+                disabled: confirmationBusy,
+                run: () => void confirmPending(),
+              },
+            ]}
+          />
         )}
     </main>
   );

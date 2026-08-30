@@ -1,575 +1,229 @@
-.settings-window {
-  width: 100%;
+/*
+ * The Settings window's own layout.
+ *
+ * Everything that has an AppKit shape — buttons, fields, switches, form rows,
+ * groups — comes from `macos.css`. What is left here is this window's frame:
+ * the toolbar of sections, the scrolling body, and the few things only a
+ * preferences window has.
+ */
+
+html,
+body,
+#root {
   height: 100%;
-  min-height: 100%;
-  display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr);
-  background: var(--surface);
+}
+
+body {
+  margin: 0;
+  background: var(--canvas);
   color: var(--primary);
+  font-family:
+    -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue",
+    system-ui, sans-serif;
   font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+}
+
+.settings-window {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  /* The window has one label column, so every control in every section lines
+     up down the page — which is what makes it read as one window rather than
+     five panels that happen to share a frame. */
+  --mac-label-width: 148px;
 }
 
 .settings-loading {
-  min-height: 100%;
-  display: grid;
-  place-items: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
   padding: var(--space-8);
-  background: var(--surface);
-  color: var(--secondary);
+  text-align: center;
 }
 
-.settings-header {
-  position: relative;
+/* ------------------------------------------------------------- toolbar */
+
+/*
+ * The section switcher lives in the title bar, as a Mac preferences window's
+ * does. The window is `hiddenInset`, so the leading padding clears the traffic
+ * lights and the strip itself is the drag region.
+ */
+.settings-toolbar {
   display: flex;
-  align-items: center;
-  gap: var(--space-4);
-  min-height: 76px;
-  padding: 20px 28px 16px;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 30px var(--space-4) var(--space-2);
   border-bottom: 1px solid var(--line);
-  background: var(--canvas);
+  background: var(--chrome);
+  -webkit-app-region: drag;
 }
 
-.settings-eyebrow {
-  margin: 0 0 2px;
+.settings-tabs {
+  display: flex;
+  gap: var(--space-1);
+  -webkit-app-region: no-drag;
+}
+
+.settings-tab {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  min-width: 74px;
+  padding: var(--space-1) var(--space-2) 5px;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: none;
   color: var(--secondary);
   font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font-family: inherit;
+  cursor: default;
 }
 
-.settings-header h1,
-.settings-section h2 {
-  margin: 0;
-  font-weight: 650;
-  letter-spacing: -0.015em;
+.settings-tab:hover:not(.is-selected) {
+  background: var(--wash);
 }
 
-.settings-header h1 {
-  font-size: 20px;
+.settings-tab.is-selected {
+  background: var(--selection);
+  color: var(--primary);
 }
 
-.settings-header-actions {
+.settings-tab:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+.settings-tab-glyph svg {
+  width: 19px;
+  height: 19px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.settings-tab.is-selected .settings-tab-glyph {
+  color: var(--accent);
+}
+
+/* ---------------------------------------------------------------- body */
+
+.settings-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-6) var(--space-6) var(--space-8);
+}
+
+.settings-intro {
+  margin: 0 0 var(--space-4);
+  max-width: 62ch;
+}
+
+.settings-card + .settings-card {
+  margin-top: var(--space-4);
+}
+
+.settings-add {
+  margin-top: var(--space-4);
+}
+
+/*
+ * A problem with the file itself, said once at the top of the window.
+ *
+ * It is not an alert: nothing is waiting on an answer, and the person can keep
+ * working. It stays until the condition it describes is gone.
+ */
+.settings-notice {
   display: flex;
   align-items: center;
-  gap: 7px;
-  margin-left: auto;
-  flex-wrap: wrap;
-}
-
-.settings-revision {
-  position: absolute;
-  bottom: 4px;
-  left: 28px;
+  justify-content: space-between;
+  gap: var(--space-4);
   margin: 0;
+  padding: var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--line);
+  background: light-dark(#fff4e5, #3a2a12);
+  color: var(--primary);
+  font-size: 12px;
+}
+
+/* --------------------------------------------------------------- pieces */
+
+.settings-grow {
+  flex: 1;
+  min-width: 0;
+}
+
+.settings-resolved {
+  overflow: hidden;
+  max-width: 26ch;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  direction: rtl;
   color: var(--secondary);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 10px;
 }
 
-.settings-saved,
-.settings-dirty {
-  margin-right: 7px;
+.settings-badge {
+  padding: 1px 7px;
+  border-radius: 9px;
+  background: var(--wash-strong);
   font-size: 11px;
-  font-weight: 600;
+  color: var(--secondary);
 }
 
-.settings-saved {
-  color: var(--working);
-}
-.settings-dirty {
+.settings-badge.warning {
+  background: light-dark(#ffe6d5, #4a2a12);
   color: var(--waiting);
 }
 
-.settings-notices {
-  display: grid;
-  min-height: 0;
-  align-content: start;
-}
-
-.settings-body {
-  display: grid;
-  grid-template-columns: minmax(148px, 188px) minmax(0, 1fr);
-  min-height: 0;
-}
-
-.settings-sidebar {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 20px 12px;
-  border-right: 1px solid var(--line);
-  background: var(--chrome);
-}
-
-.settings-sidebar button {
-  min-height: 40px;
-  border: 0;
-  border-radius: var(--radius-control);
-  padding: 8px 12px;
-  background: transparent;
-  color: var(--secondary);
-  text-align: left;
-  cursor: pointer;
-}
-
-.settings-sidebar button:hover {
-  background: rgba(255, 255, 255, 0.42);
-  color: var(--primary);
-}
-.settings-sidebar button.active {
-  background: var(--selection);
-  color: var(--primary);
-  font-weight: 650;
-}
-
-.settings-content {
-  min-width: 0;
-  overflow: auto;
-  padding: 28px 34px 48px;
-  overflow-wrap: anywhere;
-}
-
-.settings-section {
-  width: min(740px, 100%);
-}
-
-.settings-section-heading {
-  margin-bottom: 24px;
-}
-
-.settings-section-heading h2 {
-  font-size: 18px;
-}
-.settings-section-heading p {
-  max-width: 620px;
-  margin: 6px 0 0;
-  color: var(--secondary);
-  line-height: 1.45;
-}
-
-.settings-field {
-  display: grid;
-  gap: 6px;
-  min-width: 0;
-  margin: 0 0 15px;
-}
-
-.settings-field-label {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-}
-.settings-field-label,
-.settings-subheading {
-  color: var(--secondary);
-  font-size: 12px;
-  font-weight: 650;
-}
-.settings-help,
-.settings-inline-note {
-  color: var(--secondary);
-  font-size: 11px;
-  line-height: 1.35;
-}
-
-.settings-field input,
-.settings-field select,
-.settings-source-heading input,
-.settings-source-heading select,
-.settings-env-row input {
-  width: 100%;
-  min-height: 40px;
-  border: 1px solid var(--line-strong);
-  border-radius: var(--radius-control);
-  padding: 5px 8px;
-  background: var(--surface);
-  color: var(--primary);
-}
-
-.settings-field input:focus,
-.settings-field select:focus,
-.settings-source-heading input:focus,
-.settings-source-heading select:focus,
-.settings-env-row input:focus {
-  border-color: var(--focus-ring);
-  outline: 2px solid color-mix(in srgb, var(--focus-ring) 28%, transparent);
-}
-
-.settings-button {
-  min-height: 40px;
-  border: 1px solid var(--line-strong);
-  border-radius: var(--radius-control);
-  padding: 5px 11px;
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.settings-button.quiet {
-  background: var(--surface);
-  color: var(--secondary);
-}
-.settings-button.quiet:hover:not(:disabled) {
-  background: var(--chrome);
-  color: var(--primary);
-}
-.settings-button.primary {
-  /* `--pine` in the Tauri build named a token nothing defined, so the primary
-     button came out white on white — invisible, and disabled it stayed
-     invisible. The accent pair is the token that exists. */
-  border-color: var(--accent);
-  background: var(--accent);
-  color: var(--accent-ink);
-}
-.settings-button:disabled {
-  opacity: 0.48;
-  cursor: not-allowed;
-}
-
-.settings-check-row {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 10px 0;
-  color: var(--primary);
-}
-.settings-check-row input {
-  width: 15px;
-  height: 15px;
-  margin-top: 2px;
-  accent-color: var(--accent);
-}
-.settings-check-row span {
-  display: grid;
-  gap: 3px;
-}
-.settings-check-row strong {
-  font-size: 13px;
-  font-weight: 600;
-}
-.settings-check-row small {
-  color: var(--secondary);
-  font-size: 12px;
-  line-height: 1.4;
-}
-.settings-check-row.compact {
-  padding: 4px 0 12px;
-  color: var(--secondary);
-  font-size: 12px;
-}
-
-.settings-list {
-  display: grid;
-  gap: 16px;
-  margin-bottom: 18px;
-}
-.settings-source-row {
-  padding: 16px;
-  border-top: 1px solid var(--line);
-  background: color-mix(in srgb, var(--canvas) 45%, var(--surface));
-}
-.settings-source-heading {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 150px;
-  gap: 10px;
-  margin-bottom: 14px;
-}
-.settings-inline-fields {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
-}
-.settings-kind-list {
+.settings-checks {
   display: flex;
   flex-wrap: wrap;
-  gap: 12px;
-  margin: 2px 0 8px;
-  color: var(--secondary);
-  font-size: 12px;
+  gap: var(--space-3);
 }
-.settings-kind-list label {
-  display: inline-flex;
+
+.settings-check {
+  display: flex;
   align-items: center;
   gap: 5px;
+  color: var(--primary);
 }
-.settings-kind-list input {
+
+.settings-check input {
   accent-color: var(--accent);
 }
 
-.settings-env {
-  display: grid;
-  gap: 8px;
-  margin-top: 16px;
-}
-.settings-env-row {
-  display: grid;
-  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr) 40px;
-  gap: 7px;
+/* A list of strings: one row each, with the add button under them. */
+.settings-tokens {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-1);
   min-width: 0;
 }
-.settings-argv {
-  display: grid;
-  gap: 8px;
-  margin: 0 0 15px;
+
+.settings-token {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
 }
-.settings-argv-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 40px 40px 40px;
-  gap: 5px;
+
+.settings-token .mac-field {
+  flex: 1;
   min-width: 0;
 }
-.settings-icon-button {
-  min-width: 40px;
-  min-height: 40px;
-  border: 0;
-  background: transparent;
-  color: var(--tertiary);
-  font-size: 18px;
-  cursor: pointer;
+
+.settings-token-add {
+  align-self: flex-start;
+  padding-left: 0;
 }
 
-.settings-runtime-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 2px 18px;
-}
-.settings-runtime-detail {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: 5px 10px;
-  padding: 7px 0 0;
-  color: var(--secondary);
-  font-size: 11px;
-}
-.settings-runtime-detail code {
-  overflow: hidden;
-  color: var(--secondary);
-  text-overflow: ellipsis;
-  overflow-wrap: anywhere;
-}
-.settings-runtime-values {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 8px;
-  margin: 12px 0;
-}
-.settings-runtime-value {
-  display: grid;
-  gap: 3px;
-  min-width: 0;
-}
-.settings-runtime-value span {
-  color: var(--secondary);
-  font-size: 10px;
-}
-.settings-runtime-value code {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  overflow-wrap: anywhere;
-}
-.settings-code,
-.settings-runtime-value code {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 11px;
-}
-.settings-runtime-callout {
-  margin: 20px 0;
-  padding: 14px 16px;
-  border-top: 1px solid var(--line-strong);
-  border-bottom: 1px solid var(--line);
-}
-.settings-runtime-callout p {
-  margin: 8px 0 12px;
-  color: var(--secondary);
-  font-size: 12px;
-  line-height: 1.4;
-}
-.settings-diagnostics-summary {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 11px;
-}
-.settings-action-status {
-  color: var(--secondary);
-  font-size: 12px;
-}
-.settings-callout-heading {
+.settings-actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
-}
-.settings-badge {
-  display: inline-flex;
-  align-items: center;
-  width: fit-content;
-  border-radius: 999px;
-  padding: 2px 7px;
-  background: var(--chrome);
-  color: var(--secondary);
-  font-size: 10px;
-  font-weight: 650;
-  text-transform: capitalize;
-}
-.settings-badge.warning {
-  background: #f0dfb7;
-  color: #735000;
-}
-.settings-muted {
-  color: var(--secondary);
-  font-size: 11px;
-}
-
-.settings-error,
-.settings-diagnostic {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 9px 28px;
-  border-bottom: 1px solid var(--line);
-  font-size: 12px;
-  line-height: 1.4;
-}
-.settings-error {
-  background: #f9e5e5;
-  color: #762d36;
-}
-.settings-diagnostic {
-  background: #fff4d9;
-  color: #735000;
-}
-.settings-error .settings-button {
-  margin-left: auto;
-}
-.settings-sheet-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 5;
-  display: grid;
-  place-items: center;
-  padding: 24px;
-  background: rgba(44, 54, 60, 0.22);
-}
-.settings-sheet {
-  width: min(430px, 100%);
-  padding: 22px;
-  border: 1px solid var(--line-strong);
-  border-radius: var(--radius-control);
-  background: var(--surface);
-  box-shadow: 0 18px 50px rgba(44, 54, 60, 0.2);
-}
-.settings-sheet h2 {
-  margin: 0;
-  font-size: 16px;
-}
-.settings-sheet p {
-  margin: 10px 0 18px;
-  color: var(--secondary);
-  font-size: 12px;
-  line-height: 1.45;
-}
-.settings-sheet-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-}
-
-.settings-sidebar button:focus-visible,
-.settings-button:focus-visible,
-.settings-icon-button:focus-visible,
-.settings-field input:focus-visible,
-.settings-field select:focus-visible,
-.settings-source-heading input:focus-visible,
-.settings-source-heading select:focus-visible,
-.settings-env-row input:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 2px;
-}
-
-@media (max-width: 760px) {
-  .settings-body {
-    grid-template-columns: 148px minmax(0, 1fr);
-  }
-  .settings-content {
-    padding: 24px 20px 40px;
-  }
-  .settings-header {
-    padding-left: 20px;
-    padding-right: 20px;
-  }
-  .settings-revision {
-    left: 20px;
-  }
-  .settings-runtime-grid,
-  .settings-runtime-values {
-    grid-template-columns: 1fr 1fr;
-  }
-}
-
-@media (max-width: 560px) {
-  .settings-body {
-    grid-template-columns: 1fr;
-  }
-
-  .settings-sidebar {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    border-right: 0;
-    border-bottom: 1px solid var(--line);
-  }
-
-  .settings-sidebar button {
-    min-height: 40px;
-  }
-
-  .settings-content {
-    padding: 20px 16px 32px;
-  }
-
-  .settings-source-heading,
-  .settings-inline-fields,
-  .settings-runtime-grid,
-  .settings-runtime-values {
-    grid-template-columns: 1fr;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    scroll-behavior: auto !important;
-    transition-duration: 0.01ms !important;
-    animation-duration: 0.01ms !important;
-  }
-
-  .settings-button:active {
-    transform: none;
-  }
-}
-
-@media (prefers-contrast: more) {
-  .settings-sidebar button,
-  .settings-button,
-  .settings-icon-button,
-  .settings-field input,
-  .settings-field select {
-    border-color: var(--primary);
-  }
-}
-
-@media (forced-colors: active) {
-  .settings-sidebar button.active,
-  .settings-button.primary {
-    forced-color-adjust: none;
-    border: 1px solid CanvasText;
-    background: Highlight;
-    color: HighlightText;
-  }
-
-  .settings-field input,
-  .settings-field select,
-  .settings-icon-button,
-  .settings-button {
-    border-color: ButtonText;
-  }
+  gap: var(--space-2);
 }
