@@ -124,6 +124,11 @@ export interface WindowFrame {
 
 export interface SidebarState {
   width: number;
+  /**
+   * Whether the sidebar is on screen. A state file written before this was a
+   * setting says nothing about it, and a sidebar nobody hid is a visible one.
+   */
+  visible?: boolean;
   expanded_workspace_ids: string[];
 }
 
@@ -286,7 +291,11 @@ export function freshState(): PersistedAppState {
     schema_version: STATE_SCHEMA_VERSION,
     workspaces: [],
     navigation: { context: { kind: "global" }, activity: "terminal" },
-    sidebar: { width: SIDEBAR_DEFAULT_WIDTH, expanded_workspace_ids: [] },
+    sidebar: {
+      width: SIDEBAR_DEFAULT_WIDTH,
+      visible: true,
+      expanded_workspace_ids: [],
+    },
     window: {
       frame: {
         x: 0,
@@ -813,6 +822,7 @@ export function hydrateModel(
     model.restoreSidebar(
       state.sidebar.width,
       state.sidebar.expanded_workspace_ids.map((raw) => parseWorkspaceId(raw)),
+      state.sidebar.visible ?? true,
     );
   } catch {
     return fail("STATE_INVALID");
@@ -955,6 +965,7 @@ export function stateFromSnapshot(
     },
     sidebar: {
       width: snapshot.sidebar.width,
+      visible: snapshot.sidebar.visible,
       expanded_workspace_ids: [...snapshot.sidebar.expandedWorkspaceIds],
     },
   };

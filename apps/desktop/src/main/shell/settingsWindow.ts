@@ -95,6 +95,11 @@ export function openSettingsWindow(): void {
 	});
 }
 
+/** True while the Settings window is the key window. */
+export function settingsWindowIsFocused(): boolean {
+	return window !== undefined && !window.isDestroyed() && window.isFocused();
+}
+
 /** Tell an open Settings window that the file changed underneath it. */
 export function publishSettingsSnapshot(): void {
 	if (!window || window.isDestroyed() || !host) return;

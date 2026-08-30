@@ -101,6 +101,7 @@ export interface DevhubApi {
 	onAgentProfiles(listener: (profiles: AgentProfiles) => void): () => void;
 	/** Failures that happen between requests, such as a startup mount. */
 	onNativeError(listener: (error: AppError) => void): () => void;
+	onMenuCommand(listener: (command: MenuCommand) => void): () => void;
 
 	/** Opens the native folder picker; resolves to the pick, or nothing. */
 	chooseWorkspaceFolder(): Promise<string | undefined>;
@@ -156,4 +157,16 @@ export const CHANNELS = {
 	agentProfilesChanged: "devhub:agent-profiles-changed",
 	nativeError: "devhub:native-error",
 	workspacePicker: "devhub:workspace-picker",
+	/** A menu command the page has to carry out itself, e.g. open the picker. */
+	menuCommand: "devhub:menu-command",
 } as const;
+
+/**
+ * What the menu bar asks the page to do.
+ *
+ * Only the commands the page genuinely owns are here. Everything the model
+ * owns — selecting an activity, hiding the sidebar, closing a workspace — is
+ * dispatched in main as an ordinary intent, because routing it through the
+ * page would be a second way to do what there is already one way to do.
+ */
+export type MenuCommand = "open_workspace_picker";

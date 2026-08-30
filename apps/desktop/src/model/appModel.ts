@@ -71,6 +71,13 @@ export interface ActivitySnapshot {
 
 export interface SidebarSnapshot {
   readonly width: number;
+  /**
+   * Whether the sidebar is on screen.
+   *
+   * Separate from the width on purpose: hiding the sidebar must not forget how
+   * wide the person made it, and a width of zero is not a legal width.
+   */
+  readonly visible: boolean;
   readonly expandedWorkspaceIds: readonly WorkspaceId[];
 }
 
@@ -169,6 +176,7 @@ export class AppModel {
     activity: "terminal",
   };
   private sidebarWidthValue = SIDEBAR_DEFAULT_WIDTH;
+  private sidebarVisibleValue = true;
   private editorHost: EditorHostState = { kind: "starting" };
   private revision = 0;
 
@@ -189,6 +197,7 @@ export class AppModel {
       workspaces: this.workspaceSnapshots(),
       sidebar: {
         width: this.sidebarWidthValue,
+        visible: this.sidebarVisibleValue,
         expandedWorkspaceIds: [...this.expandedWorkspaces].sort(),
       },
       editorHost: this.editorHost,
@@ -226,6 +235,7 @@ export class AppModel {
   restoreSidebar(
     width: number,
     expandedWorkspaceIds: Iterable<WorkspaceId>,
+    visible = true,
   ): boolean {
     if (width < SIDEBAR_MIN_WIDTH || width > SIDEBAR_MAX_WIDTH) {
       fail(DomainErrorCode.InvalidSidebarWidth);
@@ -242,10 +252,12 @@ export class AppModel {
     }
     const changed =
       this.sidebarWidthValue !== width ||
+      this.sidebarVisibleValue !== visible ||
       restored.size !== this.expandedWorkspaces.size ||
       [...restored].some((id) => !this.expandedWorkspaces.has(id));
     if (changed) {
       this.sidebarWidthValue = width;
+      this.sidebarVisibleValue = visible;
       this.expandedWorkspaces.clear();
       for (const id of restored) {
         this.expandedWorkspaces.add(id);
@@ -263,6 +275,19 @@ export class AppModel {
       return false;
     }
     this.sidebarWidthValue = width;
+    this.bumpRevision();
+    return true;
+  }
+
+  get sidebarVisible(): boolean {
+    return this.sidebarVisibleValue;
+  }
+
+  setSidebarVisible(visible: boolean): boolean {
+    if (this.sidebarVisibleValue === visible) {
+      return false;
+    }
+    this.sidebarVisibleValue = visible;
     this.bumpRevision();
     return true;
   }

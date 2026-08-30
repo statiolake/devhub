@@ -34,7 +34,6 @@ import {
   parseSettingsTransportError,
   type SettingsClient,
 } from "./client";
-import { isImeComposing } from "../shell/accessibility/ime";
 import "../shell/styles/tokens.css";
 import "../shell/styles/macos.css";
 import "./settings.css";
@@ -1064,26 +1063,6 @@ export function SettingsApp({ client }: { readonly client?: SettingsClient }) {
       unsubscribe();
     };
   }, [adopt, transport]);
-
-  // Cmd+W closes a settings window, the way it closes any other window.
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (
-        event.metaKey &&
-        !event.ctrlKey &&
-        !event.altKey &&
-        event.key.toLowerCase() === "w" &&
-        !isImeComposing(event)
-      ) {
-        event.preventDefault();
-        void transport.close();
-      }
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => {
-      window.removeEventListener("keydown", onKeyDown);
-    };
-  }, [transport]);
 
   /**
    * A change is applied, not staged.

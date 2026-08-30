@@ -16,6 +16,7 @@ import {
 } from "../../../ipc/appShell";
 import { clampSidebarWidth } from "../../../ipc/appShell";
 import { useAppShell } from "../../useAppShell";
+import { devhub } from "../../client";
 import { isImeComposing } from "../../accessibility/ime";
 import { Alert } from "../shell/Alert";
 import { ChooseSheet } from "../shell/ChooseSheet";
@@ -510,6 +511,15 @@ function SidebarResizeHandle({
 export function Sidebar({ snapshot }: SidebarProps) {
   const { dispatch, agentProfiles, chooseWorkspaceFolder } = useAppShell();
   const [pickerOpen, setPickerOpen] = useState(false);
+  // File ▸ Add Workspace… is the same command as the sidebar's +, so it opens
+  // the same picker rather than a second way of adding a workspace.
+  useEffect(
+    () =>
+      devhub().onMenuCommand((command) => {
+        if (command === "open_workspace_picker") setPickerOpen(true);
+      }),
+    [],
+  );
   const [agentPickerWorkspaceId, setAgentPickerWorkspaceId] = useState<
     string | undefined
   >();

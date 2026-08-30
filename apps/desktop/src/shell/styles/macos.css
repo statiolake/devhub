@@ -269,6 +269,9 @@
   justify-self: end;
   text-align: right;
   color: var(--primary);
+  /* The column is sized for the longest label; a label that would still wrap
+     is a label that is too long, not a row that is two lines tall. */
+  white-space: nowrap;
 }
 
 /* A row whose control is a switch puts the switch first, label after: that is

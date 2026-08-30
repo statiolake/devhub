@@ -108,6 +108,7 @@ export type AppIntentWire =
 			readonly workspaceId: string;
 	  }
 	| { readonly type: "resize_sidebar"; readonly width: number }
+	| { readonly type: "set_sidebar_visible"; readonly visible: boolean }
 	| { readonly type: "open_workspace_picker" }
 	| {
 			readonly profileId: string;
@@ -242,6 +243,7 @@ export interface SelectionWire {
 export interface SidebarWire {
 	readonly expandedWorkspaceIds: readonly string[];
 	readonly width: number;
+	readonly visible: boolean;
 }
 export interface TerminalPaletteWire {
 	readonly ansi: readonly string[];

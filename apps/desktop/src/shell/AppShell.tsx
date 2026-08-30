@@ -197,7 +197,9 @@ function Workbench() {
         className="app-shell-content"
         inert={pendingConfirmation ? true : undefined}
       >
-        <Sidebar snapshot={state.snapshot} />
+        {state.snapshot.sidebar.visible ? (
+          <Sidebar snapshot={state.snapshot} />
+        ) : null}
         <div className="workbench">
           <TitlebarActivities
             snapshot={state.snapshot}

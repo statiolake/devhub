@@ -18,6 +18,7 @@
 import { contextBridge, ipcRenderer } from "electron";
 import {
 	CHANNELS,
+	type MenuCommand,
 	type ContentRect,
 	type DevhubApi,
 	type WorkspacePickerEvent,
@@ -70,6 +71,7 @@ const devhub: DevhubApi = {
 	onAgentProfiles: (listener) =>
 		on<AgentProfiles>(CHANNELS.agentProfilesChanged, listener),
 	onNativeError: (listener) => on<AppError>(CHANNELS.nativeError, listener),
+	onMenuCommand: (listener) => on<MenuCommand>(CHANNELS.menuCommand, listener),
 	onWorkspacePicker: (listener) =>
 		on<WorkspacePickerEvent>(CHANNELS.workspacePicker, listener),
 

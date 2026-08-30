@@ -105,9 +105,11 @@ import { wireAgents } from "./agentWiring.js";
 import { resolveRuntimes } from "./runtimes.js";
 import type { AgentService } from "../agent/index.js";
 import { startWorkspacePicker } from "./workspacePicker.js";
+import { installMenu, refreshMenu } from "./menu.js";
 import {
 	openSettingsWindow,
 	publishSettingsSnapshot,
+	settingsWindowIsFocused,
 } from "./settingsWindow.js";
 
 /**
@@ -262,6 +264,38 @@ export class AppController {
 			model: () => this.coordinator.model,
 			onObserved: (agentId) => {
 				this.noteStaleAgent(agentId);
+			},
+		});
+	}
+
+	/**
+	 * Wire the menu bar to the same model everything else uses.
+	 *
+	 * Every command here is an ordinary intent, dispatched exactly as the page
+	 * dispatches its own; only opening the picker is pushed to the page, because
+	 * the picker is a page dialog and nothing in the model knows about it.
+	 */
+	installMenuBar(): void {
+		installMenu({
+			snapshot: () => this.snapshot(),
+			focusedWindow: () => (settingsWindowIsFocused() ? "settings" : "shell"),
+			selectActivity: (activity) => {
+				this.dispatchOwn({ type: "select_activity", activity });
+			},
+			setSidebarVisible: (visible) => {
+				this.dispatchOwn({ type: "set_sidebar_visible", visible });
+			},
+			closeWorkspace: (workspaceId) => {
+				void this.dispatchFromPage({
+					type: "request_close_workspace",
+					workspaceId,
+				});
+			},
+			openWorkspacePicker: () => {
+				this.send(CHANNELS.menuCommand, "open_workspace_picker");
+			},
+			openSettings: () => {
+				openSettingsWindow();
 			},
 		});
 	}
@@ -447,6 +481,9 @@ export class AppController {
 
 	private publishSnapshot(): void {
 		this.send(CHANNELS.snapshotChanged, this.snapshot());
+		// The menu says what is true of the model, so it is rebuilt wherever the
+		// projection is: one place, and it cannot go stale behind the window.
+		refreshMenu();
 	}
 
 	private publishAppearance(): void {
@@ -618,6 +655,7 @@ export class AppController {
 				}
 				if (latest) {
 					this.send(CHANNELS.snapshotChanged, latest);
+					refreshMenu();
 				}
 				for (const effect of effects) {
 					void this.perform(effect);

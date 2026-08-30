@@ -31,7 +31,9 @@ body {
   /* The window has one label column, so every control in every section lines
      up down the page — which is what makes it read as one window rather than
      five panels that happen to share a frame. */
-  --mac-label-width: 190px;
+  /* Wide enough for the longest label this window has — a wrapped label in a
+     right-aligned column reads as two rows rather than one. */
+  --mac-label-width: 216px;
 }
 
 .settings-loading {
