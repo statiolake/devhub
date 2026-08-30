@@ -65,10 +65,12 @@ export function openSettingsWindow(): void {
 		return;
 	}
 	window = new electron.BrowserWindow({
-		width: 860,
-		height: 640,
-		minWidth: 640,
-		minHeight: 480,
+		// Wide enough that the header's four actions sit on one row: they wrap
+		// otherwise, and a wrapped Save is a Save nobody finds.
+		width: 980,
+		height: 680,
+		minWidth: 860,
+		minHeight: 520,
 		title: "DevHub Settings",
 		titleBarStyle: "hiddenInset",
 		show: false,
