@@ -79,11 +79,16 @@ else
 fi
 
 # --- 5. the Electron our main process runs in ------------------------------
-# npm ci's postinstall downloads it; check rather than assume.
+# Our main process runs inside VS Code's own Electron: the native modules in
+# vscode/node_modules are built for exactly this binary. npm ci does not fetch
+# it; VS Code's `electron` script does.
 step "Electron runtime"
 ELECTRON_APP="$VSCODE_DIR/.build/electron"
+if [ "$FORCE" = 1 ] || [ ! -d "$ELECTRON_APP" ]; then
+	(cd "$VSCODE_DIR" && npm run electron)
+fi
 if [ ! -d "$ELECTRON_APP" ]; then
-	echo "missing $ELECTRON_APP — VS Code's postinstall did not fetch Electron" >&2
+	echo "missing $ELECTRON_APP — 'npm run electron' did not produce it" >&2
 	exit 1
 fi
 echo "Electron $(cat "$VSCODE_DIR/.build/electron/version" 2>/dev/null || echo '(version file missing)')"
