@@ -21,6 +21,7 @@ import {
   SETTINGS_SCHEMA_VERSION,
   type SettingsAgentProfileWire,
   type SettingsConfig,
+  type SettingsDiagnosticWire,
   type SettingsError,
   type SettingsRuntimeWire,
   type SettingsSnapshot,
@@ -28,6 +29,7 @@ import {
   type SettingsWorkspaceKindWire,
   type SettingsWorkspaceSourceWire,
 } from "../ipc/settings";
+import { FONT_FAMILY_RULE, isValidFontFamily } from "../model/fontFamily";
 import { Alert } from "../shell/components/shell/Alert";
 import {
   createSettingsClient,
@@ -51,12 +53,51 @@ type Section = (typeof SECTIONS)[number];
 const clone = (config: SettingsConfig): SettingsConfig =>
   JSON.parse(JSON.stringify(config)) as SettingsConfig;
 
+/**
+ * What the rule was, for the refusals a person can act on.
+ *
+ * A refused save carries the diagnostic that refused it — the code and the key
+ * it came from. Saying only "that value is not one DevHub can use" turns every
+ * one of those into the same dead end: the person cannot tell which field was
+ * wrong, let alone what would have been right. Codes with nothing specific to
+ * add are left to the general sentence rather than given a paraphrase of
+ * themselves.
+ */
+function ruleMessage(diagnostic: SettingsDiagnosticWire): string | undefined {
+  switch (diagnostic.code) {
+    case "invalid_font_family":
+      return FONT_FAMILY_RULE;
+    case "invalid_runtime":
+      return "A runtime is either a bare command name looked up on your PATH, or an absolute path (or one starting with ~/). It cannot be empty.";
+    case "invalid_socket_name":
+      return "A tmux socket name may use letters, digits, dots, dashes and underscores, and cannot be empty.";
+    case "forbidden_tmux_argument":
+      return "Only the tmux options -u and -2 are allowed; the rest could point DevHub at another server.";
+    case "invalid_id":
+      return "An identifier may use letters, digits, dots, dashes and underscores, and cannot be empty.";
+    case "duplicate_identity":
+      return "Two entries have the same identifier. Each one has to be unique.";
+    default:
+      return undefined;
+  }
+}
+
 function errorMessage(error: SettingsError): string {
   switch (error.code) {
     case "external_edit_conflict":
       return "config.toml changed outside Settings. Reload to see the new file.";
-    case "invalid_config":
-      return "That value is not one DevHub can use. It has not been saved.";
+    case "invalid_config": {
+      const rule = error.diagnostic ? ruleMessage(error.diagnostic) : undefined;
+      const where = error.diagnostic?.path;
+      if (rule) {
+        return where
+          ? `${where} was not saved. ${rule}`
+          : `That value was not saved. ${rule}`;
+      }
+      return where
+        ? `${where} is not a value DevHub can use. It has not been saved.`
+        : "That value is not one DevHub can use. It has not been saved.";
+    }
     case "invalid_file":
       return "config.toml could not be read or written.";
     case "runtime_unavailable":
@@ -203,6 +244,83 @@ function SwitchRow({
       </div>
       {help ? <p className="mac-row-help mac-caption">{help}</p> : null}
     </div>
+  );
+}
+
+/**
+ * A text field that is applied when it is committed, not while it is typed.
+ *
+ * Every other control in this window carries a value that is already whole the
+ * moment it changes — a checkbox, a popup, a stepper. A text field does not:
+ * between "SF Mono" and "Menlo" the field passes through the empty string, and
+ * through "M", and none of those are what the person is asking for. Applying
+ * each of them as if it were the final answer means the empty one comes back
+ * refused, about a value nobody chose, while the word being typed is still on
+ * screen — which is exactly what "changing the font is broken" looks like.
+ *
+ * So the field holds its own text until it is committed with Return or by
+ * moving away, says so while it is holding it, and puts back what is in effect
+ * on Escape. `validate` is the same rule the config loader applies, asked here
+ * only so the answer arrives before the round trip rather than instead of it —
+ * a value that gets past this still has to get past the loader.
+ */
+function CommittedField({
+  label,
+  value,
+  placeholder,
+  validate,
+  onCommit,
+}: {
+  readonly label: string;
+  readonly value: string;
+  readonly placeholder?: string;
+  readonly validate?: (next: string) => string | undefined;
+  readonly onCommit: (next: string) => void;
+}) {
+  const [pending, setPending] = useState<string>();
+  const text = pending ?? value;
+  const problem = pending === undefined ? undefined : validate?.(pending);
+  const uncommitted = pending !== undefined && pending !== value;
+
+  const commit = () => {
+    if (pending === undefined) return;
+    if (validate?.(pending) !== undefined) return;
+    setPending(undefined);
+    if (pending !== value) onCommit(pending);
+  };
+
+  return (
+    <>
+      <input
+        className="mac-field settings-grow"
+        aria-label={label}
+        aria-invalid={problem !== undefined}
+        placeholder={placeholder}
+        value={text}
+        onChange={(event) => {
+          setPending(event.target.value);
+        }}
+        onBlur={commit}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") {
+            event.preventDefault();
+            commit();
+          } else if (event.key === "Escape") {
+            event.preventDefault();
+            setPending(undefined);
+          }
+        }}
+      />
+      {problem !== undefined ? (
+        <p className="mac-row-help mac-caption" role="alert">
+          {problem}
+        </p>
+      ) : uncommitted ? (
+        <p className="mac-row-help mac-caption" role="status">
+          Not applied yet — press Return.
+        </p>
+      ) : null}
+    </>
   );
 }
 
@@ -818,14 +936,13 @@ function RuntimesSection({
       <Group>
         {fields.map(([field, label]) => (
           <Row key={field} label={label}>
-            <input
-              className="mac-field settings-grow"
-              aria-label={`${label} command`}
+            <CommittedField
+              label={`${label} command`}
               value={config.runtimes[field]}
-              onChange={(event) => {
+              onCommit={(next) => {
                 update({
                   ...config,
-                  runtimes: { ...config.runtimes, [field]: event.target.value },
+                  runtimes: { ...config.runtimes, [field]: next },
                 });
               }}
             />
@@ -959,12 +1076,15 @@ function AppearanceSection({
       <h2 className="mac-group-heading">Terminal</h2>
       <div className="mac-group">
         <Row label="Font">
-          <input
-            className="mac-field settings-grow"
-            aria-label="Terminal font family"
+          <CommittedField
+            label="Terminal font family"
             value={appearance.terminalFontFamily}
-            onChange={(event) => {
-              set({ terminalFontFamily: event.target.value });
+            placeholder="ui-monospace"
+            validate={(next) =>
+              isValidFontFamily(next) ? undefined : FONT_FAMILY_RULE
+            }
+            onCommit={(terminalFontFamily) => {
+              set({ terminalFontFamily });
             }}
           />
         </Row>

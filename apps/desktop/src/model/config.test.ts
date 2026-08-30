@@ -12,6 +12,7 @@ import {
   parseConfig,
   type ValidationCode,
 } from "./config.js";
+import { isValidFontFamily, MAX_FONT_FAMILY_LENGTH } from "./fontFamily.js";
 import { makeScratchDir, removeScratchDir } from "./testScratch.js";
 
 function codeOf(run: () => unknown): ValidationCode | undefined {
@@ -24,6 +25,16 @@ function codeOf(run: () => unknown): ValidationCode | undefined {
 }
 
 const MINIMAL = "version = 1\n";
+const EMPTY_FONT = 'version = 1\n[appearance]\nterminal_font_family = ""\n';
+
+function pathOf(run: () => unknown): string | undefined {
+  try {
+    run();
+  } catch (error) {
+    return error instanceof ConfigError ? error.diagnostic.path : undefined;
+  }
+  return undefined;
+}
 
 describe("parsing", () => {
   it("fills every section from defaults when only the version is present", () => {
@@ -95,6 +106,40 @@ describe("parsing", () => {
         parseConfig('version = 1\n[appearance]\nsidebar_density = "roomy"\n'),
       ),
     ).toBe("invalid_appearance");
+  });
+
+  it("takes any font family CSS would take", () => {
+    // The four spellings a person actually types: a bare name, a name with a
+    // space, a fallback list, and a quoted name. None of them is DevHub's
+    // business to second-guess — CSS resolves the name, and falls back when it
+    // cannot.
+    for (const family of [
+      "Menlo",
+      "SF Mono",
+      "JetBrains Mono, Menlo, monospace",
+      '"Fira Code"',
+      "ui-monospace",
+    ]) {
+      expect(isValidFontFamily(family)).toBe(true);
+      const document = `version = 1\n[appearance]\nterminal_font_family = ${JSON.stringify(family)}\n`;
+      expect(parseConfig(document).appearance.terminalFontFamily).toBe(family);
+    }
+  });
+
+  it("names the font family itself when it is the value that is wrong", () => {
+    // Not "appearance": the diagnostic is what the Settings window turns into
+    // a sentence, so it has to carry which key was refused.
+    expect(codeOf(() => parseConfig(EMPTY_FONT))).toBe("invalid_font_family");
+    expect(pathOf(() => parseConfig(EMPTY_FONT))).toBe(
+      "appearance.terminal_font_family",
+    );
+    expect(isValidFontFamily("")).toBe(false);
+    expect(isValidFontFamily("   ")).toBe(false);
+    expect(isValidFontFamily("Men\u0000lo")).toBe(false);
+    expect(isValidFontFamily("M".repeat(MAX_FONT_FAMILY_LENGTH + 1))).toBe(
+      false,
+    );
+    expect(isValidFontFamily("M".repeat(MAX_FONT_FAMILY_LENGTH))).toBe(true);
   });
 
   it("rejects a duplicate identity in either array", () => {
@@ -286,5 +331,41 @@ describe("saving over a hand-written file", () => {
     // does is rewrite what was already there.
     expect(saved).toContain("[appearance.terminal_theme.light]");
     expect(parseConfig(saved).appearance.terminalFontSize).toBe(15);
+  });
+
+  it("saves every font family spelling and keeps the comments around it", async () => {
+    const handWritten = [
+      "# My DevHub config. Do not reformat.",
+      "version = 1",
+      "",
+      "[appearance]",
+      'terminal_font_family = "ui-monospace"',
+      "",
+    ].join("\n");
+
+    for (const family of [
+      "SF Mono",
+      "Menlo",
+      "JetBrains Mono, Menlo, monospace",
+      '"Fira Code"',
+    ]) {
+      await writeFile(path, handWritten, { mode: 0o600 });
+      const store = new ConfigStore(path);
+      const loaded = await store.load();
+      const saved = await store.save(loaded.revision, {
+        ...loaded.config,
+        appearance: {
+          ...loaded.config.appearance,
+          terminalFontFamily: family,
+        },
+      });
+
+      expect(saved.config.appearance.terminalFontFamily).toBe(family);
+      const text = await readFile(path, "utf8");
+      expect(text).toContain("# My DevHub config. Do not reformat.");
+      // Read back through the parser rather than matched as text: a quoted
+      // name only survives if the escaping and the parsing agree.
+      expect(parseConfig(text).appearance.terminalFontFamily).toBe(family);
+    }
   });
 });

@@ -26,6 +26,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { isValidFontFamily } from "./fontFamily.js";
 import {
   parseTomlValue,
   renderTomlDocument,
@@ -323,6 +324,7 @@ export type ValidationCode =
   | "invalid_socket_name"
   | "forbidden_tmux_argument"
   | "invalid_appearance"
+  | "invalid_font_family"
   | "invalid_workspace_path"
   | "invalid_workspace_depth"
   | "invalid_workspace_kind"
@@ -589,10 +591,14 @@ function validateRuntimes(runtimes: RuntimeConfig): void {
 }
 
 function validateAppearance(appearance: AppearanceConfig): void {
+  // Named on its own, and by the key it came from: a font family is the one
+  // value in this table a person types freely, so a refusal that says only
+  // "appearance" is a refusal they cannot act on.
+  if (!isValidFontFamily(appearance.terminalFontFamily)) {
+    fail("invalid_font_family", "appearance.terminal_font_family");
+  }
   if (
     appearance.colorScheme !== "light" ||
-    appearance.terminalFontFamily.trim().length === 0 ||
-    appearance.terminalFontFamily.includes("\0") ||
     appearance.terminalFontSize < 9 ||
     appearance.terminalFontSize > 24 ||
     !Number.isFinite(appearance.terminalLineHeight) ||

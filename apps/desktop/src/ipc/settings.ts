@@ -163,6 +163,7 @@ export type SettingsDiagnosticCodeWire =
 	| "invalid_socket_name"
 	| "forbidden_tmux_argument"
 	| "invalid_appearance"
+	| "invalid_font_family"
 	| "invalid_workspace_path"
 	| "invalid_workspace_depth"
 	| "invalid_workspace_kind"
