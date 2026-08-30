@@ -10,7 +10,9 @@ import { readFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { NativeParsedArgs } from "code-oss-dev/out/vs/platform/environment/common/argv.js";
+import type { IThemeMainService } from "code-oss-dev/out/vs/platform/theme/electron-main/themeMainService.js";
 import { createAppController } from "./appController.js";
+import { shellTheme } from "./shellTheme.js";
 import {
 	registerShellPageProtocol,
 	SHELL_ORIGIN,
@@ -91,13 +93,30 @@ function ensureWorkbenchDefaults(userDataPath: string): void {
 export async function bootstrapShell(
 	userDataPath: string,
 	cliArgs: NativeParsedArgs,
+	themeMainService: IThemeMainService,
 ): Promise<void> {
 	ensureWorkbenchDefaults(userDataPath);
 
+	// The colour theme comes first, before the page is servable and before the
+	// window exists, because both are created wearing it. VS Code stores the
+	// last workbench's window splash for exactly this purpose — it paints its
+	// own windows from it while they load — so the shell around them starts in
+	// the same colours and never changes colour as the first workbench comes up.
+	const palette = shellTheme().restore(
+		themeMainService.getWindowSplash(undefined),
+		() => shellWindowIfCreated()?.revealedView()?.id,
+	);
+
 	const preloadPath = join(APP_ROOT, "out", "preload", "preload.js");
-	registerShellPageProtocol(join(APP_ROOT, "dist", "shell"));
-	createShellWindow(preloadPath, `${SHELL_ORIGIN}/index.html`);
+	registerShellPageProtocol(join(APP_ROOT, "dist", "shell"), () =>
+		shellTheme().palette(),
+	);
+	createShellWindow(preloadPath, `${SHELL_ORIGIN}/index.html`, palette);
 	const controller = await createAppController(userDataPath, cliArgs);
+	shellTheme().onDidChange((next) => {
+		shellWindowIfCreated()?.applyPalette(next);
+		controller.publishTheme(next);
+	});
 	await controller.startRuntimes(userDataPath);
 
 	// macOS: the dock icon brings the shell back after its window was hidden.
@@ -110,7 +129,11 @@ export async function bootstrapShell(
 			shell.window.focus();
 			return;
 		}
-		createShellWindow(preloadPath, `${SHELL_ORIGIN}/index.html`);
+		createShellWindow(
+			preloadPath,
+			`${SHELL_ORIGIN}/index.html`,
+			shellTheme().palette(),
+		);
 	});
 
 	// The state file records that this run ended on purpose, which is what the

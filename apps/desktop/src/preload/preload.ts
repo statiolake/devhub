@@ -26,6 +26,7 @@ import {
 	type DevhubApi,
 	type WorkspacePickerEvent,
 } from "../ipc/contract.js";
+import type { ShellPalette } from "../ipc/palette.js";
 import type {
 	AgentProfiles,
 	AppAppearance,
@@ -61,6 +62,8 @@ const devhub: DevhubApi = {
 		ipcRenderer.invoke(CHANNELS.getSnapshot) as Promise<AppSnapshot>,
 	getAppearance: () =>
 		ipcRenderer.invoke(CHANNELS.getAppearance) as Promise<AppAppearance>,
+	getTheme: () =>
+		ipcRenderer.invoke(CHANNELS.getTheme) as Promise<ShellPalette | null>,
 	getAgentProfiles: () =>
 		ipcRenderer.invoke(CHANNELS.getAgentProfiles) as Promise<AgentProfiles>,
 	dispatch: (intent: AppIntent) =>
@@ -71,6 +74,7 @@ const devhub: DevhubApi = {
 	onSnapshot: (listener) => on<AppSnapshot>(CHANNELS.snapshotChanged, listener),
 	onAppearance: (listener) =>
 		on<AppAppearance>(CHANNELS.appearanceChanged, listener),
+	onTheme: (listener) => on<ShellPalette>(CHANNELS.themeChanged, listener),
 	onAgentProfiles: (listener) =>
 		on<AgentProfiles>(CHANNELS.agentProfilesChanged, listener),
 	onNativeError: (listener) => on<AppError>(CHANNELS.nativeError, listener),

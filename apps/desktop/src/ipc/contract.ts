@@ -12,6 +12,7 @@
  */
 
 import type { AgentApi } from "./agent.js";
+import type { ShellPalette } from "./palette.js";
 import type { DevhubTerminalApi } from "./terminal.js";
 import type {
 	AgentProfiles,
@@ -93,12 +94,25 @@ export type WorkspacePickerEvent =
 export interface DevhubApi {
 	getSnapshot(): Promise<AppSnapshot>;
 	getAppearance(): Promise<AppAppearance>;
+	/**
+	 * The colours of the Workbench's theme, which DevHub's chrome wears too.
+	 *
+	 * Separate from `getAppearance`, and not folded into it, because it has a
+	 * different source: appearance is what the person wrote in `config.toml`,
+	 * and this is what the Workbench is wearing. A config that will not parse
+	 * must not take the window's colours down with it.
+	 *
+	 * `null` means this profile has never run a workbench, so there is no theme
+	 * to follow and the tokens keep their own light/dark defaults.
+	 */
+	getTheme(): Promise<ShellPalette | null>;
 	getAgentProfiles(): Promise<AgentProfiles>;
 	dispatch(intent: AppIntent): Promise<AppOutcome>;
 	replay(cursor: number): Promise<ReplayWire>;
 
 	onSnapshot(listener: (snapshot: AppSnapshot) => void): () => void;
 	onAppearance(listener: (appearance: AppAppearance) => void): () => void;
+	onTheme(listener: (palette: ShellPalette) => void): () => void;
 	onAgentProfiles(listener: (profiles: AgentProfiles) => void): () => void;
 	/** Failures that happen between requests, such as a startup mount. */
 	onNativeError(listener: (error: AppError) => void): () => void;
@@ -162,6 +176,7 @@ export interface DevhubApi {
 export const CHANNELS = {
 	getSnapshot: "devhub:get-snapshot",
 	getAppearance: "devhub:get-appearance",
+	getTheme: "devhub:get-theme",
 	getAgentProfiles: "devhub:get-agent-profiles",
 	dispatch: "devhub:dispatch",
 	replay: "devhub:replay",
@@ -176,6 +191,8 @@ export const CHANNELS = {
 
 	snapshotChanged: "devhub:snapshot-changed",
 	appearanceChanged: "devhub:appearance-changed",
+	/** The Workbench changed colour theme, so DevHub's chrome changes with it. */
+	themeChanged: "devhub:theme-changed",
 	agentProfilesChanged: "devhub:agent-profiles-changed",
 	nativeError: "devhub:native-error",
 	workspacePicker: "devhub:workspace-picker",

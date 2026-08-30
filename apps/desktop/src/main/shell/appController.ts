@@ -98,6 +98,8 @@ import {
 	InvalidIntent,
 } from "../../model/wire.js";
 import { shellWindow } from "./shellWindow.js";
+import { shellTheme } from "./shellTheme.js";
+import type { ShellPalette } from "../../ipc/palette.js";
 import type { WorkbenchView } from "./workbenchView.js";
 import { agents, inspectWorkspaceResources, terminals } from "./adapters.js";
 import { wireTerminals, type TerminalWiring } from "./terminalWiring.js";
@@ -537,6 +539,18 @@ export class AppController {
 	private publishAppearance(): void {
 		if (!this.config) return;
 		this.send(CHANNELS.appearanceChanged, this.appearance());
+	}
+
+	/**
+	 * Tell every page DevHub draws chrome on what the Workbench now looks like.
+	 *
+	 * The App Shell page and the modal overlay are the same two views of the
+	 * same window as everywhere else in this region, so the palette goes out
+	 * the same way — a modal must never be a different colour from the window
+	 * it is standing on.
+	 */
+	publishTheme(palette: ShellPalette): void {
+		this.send(CHANNELS.themeChanged, palette);
 	}
 
 	private publishProfiles(): void {
@@ -1528,6 +1542,7 @@ export class AppController {
 
 		handle(CHANNELS.getSnapshot, () => this.snapshot());
 		handle(CHANNELS.getAppearance, () => this.appearance());
+		handle(CHANNELS.getTheme, () => shellTheme().palette() ?? null);
 		handle(CHANNELS.getAgentProfiles, () => this.agentProfiles());
 		handle(CHANNELS.dispatch, (_event, intent: AppIntentWire) =>
 			this.dispatchFromPage(intent),

@@ -10,6 +10,8 @@
 import { electron } from "../electron.js";
 import type { ContentRect } from "../../ipc/contract.js";
 import { ModalOverlay } from "./modalOverlay.js";
+import { shellTheme } from "./shellTheme.js";
+import type { ShellPalette } from "../../ipc/palette.js";
 import type { WorkbenchView } from "./workbenchView.js";
 
 export class ShellWindow {
@@ -39,7 +41,11 @@ export class ShellWindow {
 	private surfaceKeyOfView: (view: WorkbenchView) => string | undefined = () =>
 		undefined;
 
-	constructor(preloadPath: string, pageUrl: string) {
+	constructor(
+		preloadPath: string,
+		pageUrl: string,
+		palette: ShellPalette | undefined,
+	) {
 		this.window = new electron.BrowserWindow({
 			width: 1440,
 			height: 900,
@@ -50,8 +56,15 @@ export class ShellWindow {
 			// over the window's own material, and the traffic lights sit on the
 			// sidebar rather than above it.
 			titleBarStyle: "hiddenInset",
-			vibrancy: "sidebar",
-			backgroundColor: "#00000000",
+			// The window's material and its background are the same decision as
+			// the page's `data-window-material`, made in the same breath: a shell
+			// that follows the Workbench's colour theme cannot also show a system
+			// material through its chrome, because the material follows the
+			// *system* appearance and the theme does not. With a palette the
+			// window is opaque and painted; without one it is the macOS sidebar
+			// material, as it was before any workbench ever ran.
+			vibrancy: palette ? undefined : "sidebar",
+			backgroundColor: palette ? palette.canvas : "#00000000",
 			show: false,
 			webPreferences: {
 				preload: preloadPath,
@@ -97,6 +110,20 @@ export class ShellWindow {
 		});
 	}
 
+	/**
+	 * Wear a palette the Workbench reported after the window was created.
+	 *
+	 * Only the window itself: the pages are told over IPC and set the same
+	 * variables the page was served with. This is the frame around them — the
+	 * colour behind a resize, and the material that must be gone once there is
+	 * a theme to follow.
+	 */
+	applyPalette(palette: ShellPalette): void {
+		if (this.window.isDestroyed()) return;
+		this.window.setVibrancy(null);
+		this.window.setBackgroundColor(palette.canvas);
+	}
+
 	//#region the views
 
 	/**
@@ -133,6 +160,7 @@ export class ShellWindow {
 		}
 		this.views.splice(index, 1);
 		this.window.contentView.removeChildView(view.view);
+		shellTheme().forgetWindow(view.id);
 		if (this.revealed === view) {
 			// Not "some other view": nothing is on screen until the selection
 			// says what is, exactly as at startup.
@@ -164,6 +192,8 @@ export class ShellWindow {
 		if (!this.views.includes(view) || view.isDestroyed()) return;
 		this.revealed = view;
 		this.layout();
+		// Which workbench is on screen is which theme the shell wears.
+		shellTheme().selectionChanged();
 	}
 
 	/** The view on screen, if there is one and it still exists. */
@@ -331,11 +361,12 @@ export function beginQuit(): void {
 export function createShellWindow(
 	preloadPath: string,
 	pageUrl: string,
+	palette: ShellPalette | undefined,
 ): ShellWindow {
 	if (current) {
 		throw new Error("the App Shell window already exists");
 	}
-	current = new ShellWindow(preloadPath, pageUrl);
+	current = new ShellWindow(preloadPath, pageUrl, palette);
 	return current;
 }
 

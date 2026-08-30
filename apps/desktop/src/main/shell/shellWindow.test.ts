@@ -115,7 +115,11 @@ describe("the shell window's workbench views", () => {
 	let c: WorkbenchView;
 
 	beforeEach(() => {
-		shell = new ShellWindow("preload.js", "devhub-app://shell/index.html");
+		shell = new ShellWindow(
+			"preload.js",
+			"devhub-app://shell/index.html",
+			undefined,
+		);
 		shell.setContentRect({ x: 248, y: 38, width: 1192, height: 837 });
 		a = new WorkbenchView(shell, {});
 		b = new WorkbenchView(shell, {});
@@ -221,7 +225,11 @@ describe("the shell window's modal layer", () => {
 
 	beforeEach(() => {
 		focused = undefined;
-		shell = new ShellWindow("preload.js", "devhub-app://shell/index.html");
+		shell = new ShellWindow(
+			"preload.js",
+			"devhub-app://shell/index.html",
+			undefined,
+		);
 		shell.setContentRect({ x: 248, y: 38, width: 1192, height: 837 });
 		editor = new WorkbenchView(shell, {});
 		other = new WorkbenchView(shell, {});

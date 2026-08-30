@@ -11,6 +11,7 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { AppShell } from "./AppShell";
+import { installPalette } from "./appearance";
 import { installRootFailureHandler } from "./failure";
 import { installSelectionGuard } from "./selection";
 import { installSurfaceRenderers } from "./components/shell/surfaceRenderers";
@@ -26,11 +27,14 @@ if (!container) {
   throw new Error("the App Shell page has no #root element");
 }
 
-// Installed outside React so no remount can drop either of them, and so both
-// windows get them from the one entry point they share.
+// Installed outside React so no remount can drop any of them, and so every
+// window gets them from the one entry point they share. The palette is one of
+// these: the page was served wearing it, and this is only what keeps it
+// current when a workbench changes theme.
 installRootFailureHandler();
 installSelectionGuard(document);
 installSurfaceRenderers();
+installPalette(document);
 
 const which = new URLSearchParams(window.location.search).get("window");
 if (which === "overlay") {

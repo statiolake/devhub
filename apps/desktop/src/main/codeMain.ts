@@ -12,8 +12,13 @@
  *    2. `CodeApplication` is `DevHubApplication` (../devhubApplication.ts),
  *       which registers DevHub's windows and dialog services.
  *    3. `bootstrapShell(...)` runs before `startup()`, so the App Shell window
- *       exists before the first workbench asks Electron for a window. Nothing
- *       else in `startup()` changed.
+ *       exists before the first workbench asks Electron for a window, and it
+ *       is handed `IThemeMainService` so the window can be created in the
+ *       colour theme the last session quit in. Nothing else in `startup()`
+ *       changed.
+ *    4. `IThemeMainService` is `DevHubThemeMainService`
+ *       (./services/devhubThemeMainService.ts), which is upstream's service
+ *       plus an announcement when a workbench saves its window splash.
  *
  *  Everything else is upstream, including the copyright below.
  *--------------------------------------------------------------------------------------------*/
@@ -94,7 +99,7 @@ import { massageMessageBoxOptions } from 'code-oss-dev/out/vs/platform/dialogs/c
 import { SaveStrategy, StateService } from 'code-oss-dev/out/vs/platform/state/node/stateService.js';
 import { FileUserDataProvider } from 'code-oss-dev/out/vs/platform/userData/common/fileUserDataProvider.js';
 import { addUNCHostToAllowlist, getUNCHost } from 'code-oss-dev/out/vs/base/node/unc.js';
-import { ThemeMainService } from 'code-oss-dev/out/vs/platform/theme/electron-main/themeMainServiceImpl.js';
+import { DevHubThemeMainService } from './services/devhubThemeMainService.js';
 import { LINUX_SYSTEM_POLICY_FILE_PATH } from 'code-oss-dev/out/vs/base/common/policy.js';
 
 /**
@@ -177,7 +182,9 @@ class CodeMain {
 				// DevHub: the App Shell window must exist before the first workbench
 				// window is asked for, because that request is what becomes a view
 				// inside it.
-				await bootstrapShell(environmentMainService.userDataPath, environmentMainService.args);
+				// A fresh accessor: `accessor` above is only valid for the synchronous
+				// part of its own invocation, and this point is several awaits later.
+				await bootstrapShell(environmentMainService.userDataPath, environmentMainService.args, instantiationService.invokeFunction(a => a.get(IThemeMainService)));
 
 				const application = instantiationService.createInstance(DevHubApplication, mainProcessNodeIpcServer, instanceEnvironment);
 				await application.startup();
@@ -273,7 +280,7 @@ class CodeMain {
 		services.set(IRequestService, new SyncDescriptor(RequestService, undefined, true));
 
 		// Themes
-		services.set(IThemeMainService, new SyncDescriptor(ThemeMainService));
+		services.set(IThemeMainService, new SyncDescriptor(DevHubThemeMainService));
 
 		// Signing
 		services.set(ISignService, new SyncDescriptor(SignService, undefined, false /* proxied to other processes */));
