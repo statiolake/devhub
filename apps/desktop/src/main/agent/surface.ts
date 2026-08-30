@@ -35,6 +35,10 @@ export class AgentSurface {
 		await this.#runtime.surfaceSendText(this.agentId, this.surfaceKey, text);
 	}
 
+	resize(cols: number, rows: number): void {
+		this.#runtime.surfaceResize(this.agentId, this.surfaceKey, cols, rows);
+	}
+
 	async readRecent(): Promise<Buffer> {
 		return this.#runtime.surfaceReadRecent(this.agentId, this.surfaceKey);
 	}

@@ -238,6 +238,11 @@ export class AgentSurfaceManager {
 			output: new OutputFlow(),
 		};
 		this.#attachments.set(attachmentId, attachment);
+		// The handshake could only announce a default grid, because the socket
+		// is opened before there is an attachment. Say the real one now, before
+		// the first frame is read, so the agent's first paint is the right size
+		// rather than an 80x24 one that reflows a moment later.
+		attachment.surface.resize(request.cols, request.rows);
 
 		const receipt: AttachReceipt = {
 			schemaVersion: TERMINAL_PROTOCOL_VERSION,
@@ -372,15 +377,20 @@ export class AgentSurfaceManager {
 		validateAgentSurfaceKey(request.surfaceKey);
 		validateAttachmentId(request.attachmentId);
 		validatePtySize(request);
-		this.#owned(
+		const attachment = this.#owned(
 			request.attachmentId,
 			viewLabel,
 			request.surfaceKey,
 			request.targetGeneration,
 		);
-		// Herdr's control stream is a logical Agent Surface, not a PTY. It has
-		// no resize operation; accepting the bounded geometry keeps the xterm
-		// view responsive without inventing provider state.
+		// Herdr's control stream is a terminal, and an agent's TUI is laid out
+		// to the size its client reports. A surface that never reports one is
+		// drawn at the 80x24 the handshake announced, whatever size it is.
+		try {
+			attachment.surface.resize(request.cols, request.rows);
+		} catch (error) {
+			throw terminalErrorFromPort(error);
+		}
 	}
 
 	acknowledge(viewLabel: string, request: AckRequest): void {

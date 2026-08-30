@@ -48,8 +48,7 @@ function Agent({
       agentId={agentId}
       agentLabel={surfaceLabel}
       hidden={!visible}
-      fontFamily={appearance?.terminalFontFamily}
-      fontSize={appearance?.terminalFontSize}
+      appearance={appearance}
     />
   );
 }

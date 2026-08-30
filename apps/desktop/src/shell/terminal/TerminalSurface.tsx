@@ -1,15 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { FitAddon } from "@xterm/addon-fit";
-import { Terminal } from "@xterm/xterm";
-import "@xterm/xterm/css/xterm.css";
 import "./terminal.css";
 import { Failure, Waiting } from "../components/shell/SurfaceState";
+import { openXtermSession, type XtermSession } from "../surfaces/xtermSession";
 import {
   activePalette,
   prefersDark,
-  terminalFontStack,
   terminalSurfaceStyle,
-  xtermTheme,
   type TerminalAppearance,
 } from "./theme";
 import {
@@ -55,37 +51,10 @@ export interface TerminalSurfaceProps {
 
 type ConnectionState = "connecting" | "connected" | "disconnected";
 
-const FALLBACK_SIZE: TerminalSize = {
-  cols: 80,
-  rows: 24,
-  pixelWidth: 0,
-  pixelHeight: 0,
-};
-
 const DETACHABLE_ERROR = "The terminal connection is unavailable.";
 const HANDSHAKE_TIMEOUT_MS = 5_000;
 const MAX_HANDSHAKE_BUFFER_FRAMES = 8;
 const MAX_HANDSHAKE_BUFFER_BYTES = 256 * 1024;
-
-function terminalSize(fit: FitAddon): TerminalSize {
-  try {
-    fit.fit();
-    const dimensions = fit.proposeDimensions();
-    if (dimensions && dimensions.cols > 0 && dimensions.rows > 0) {
-      return {
-        cols: Math.min(500, Math.max(1, dimensions.cols)),
-        rows: Math.min(500, Math.max(1, dimensions.rows)),
-        pixelWidth: 0,
-        pixelHeight: 0,
-      };
-    }
-  } catch {
-    // Not a swallow: a host with no layout metrics yet (jsdom, or a pane that
-    // has never been on screen) has no size to report, and the bounded
-    // fallback below is the answer. Main validates it either way.
-  }
-  return FALLBACK_SIZE;
-}
 
 function requestFor(
   surfaceKey: string,
@@ -152,8 +121,7 @@ export function TerminalSurface({
   // surface's frame and not another's.
   const boundClient = useMemo(() => client ?? createTerminalClient(), [client]);
   const clientRef = useRef(boundClient);
-  const terminalRef = useRef<Terminal | null>(null);
-  const resizeRef = useRef<(() => void) | null>(null);
+  const sessionRef = useRef<XtermSession | null>(null);
   const controllerRef = useRef<{ retry: () => void } | null>(null);
   const hiddenRef = useRef(hidden);
   const [connection, setConnection] = useState<ConnectionState>("connecting");
@@ -178,8 +146,7 @@ export function TerminalSurface({
   const paletteRef = useRef(palette);
   paletteRef.current = palette;
   useEffect(() => {
-    const terminal = terminalRef.current;
-    if (terminal && palette) terminal.options.theme = xtermTheme(palette);
+    sessionRef.current?.applyAppearance(undefined, palette);
   }, [palette]);
 
   useEffect(() => {
@@ -199,50 +166,32 @@ export function TerminalSurface({
           failed: boolean;
         }
       | undefined;
-    let observer: ResizeObserver | undefined;
-    let resizeTimer: ReturnType<typeof setTimeout> | undefined;
-    let pendingResize: TerminalSize | undefined;
-    let currentSize = FALLBACK_SIZE;
-
-    let terminal: Terminal;
-    let fit: FitAddon;
+    let session: XtermSession;
     try {
-      terminal = new Terminal({
-        cursorBlink: true,
-        convertEol: false,
-        fontFamily: terminalFontStack(appearance?.terminalFontFamily),
-        fontSize: appearance?.terminalFontSize ?? 13,
-        lineHeight: appearance?.terminalLineHeight ?? 1.2,
-        scrollback: 10_000,
-        theme: paletteRef.current ? xtermTheme(paletteRef.current) : undefined,
-      });
-      terminalRef.current = terminal;
-      fit = new FitAddon();
-      terminal.loadAddon(fit);
-      terminal.open(host);
-      // xterm owns a hidden native textarea for keyboard and IME input. Keep
-      // that responder discoverable to VoiceOver without adding a second
-      // visible control or intercepting composition events in React.
-      const input = host.querySelector<HTMLTextAreaElement>("textarea");
-      if (input) {
-        input.setAttribute("aria-label", `${surfaceLabel} terminal input`);
-        if (!hideTitle) {
-          input.setAttribute(
-            "aria-describedby",
-            `${surfaceKey}-terminal-title`,
+      session = openXtermSession(host, {
+        appearance,
+        palette: paletteRef.current,
+        inputLabel: `${surfaceLabel} terminal input`,
+        describedBy: hideTitle ? undefined : `${surfaceKey}-terminal-title`,
+        isHidden: () => hiddenRef.current,
+        onGeometry: (next) => {
+          const nextReceipt = receipt;
+          if (!nextReceipt || receiptDetached) return;
+          const serial = attachSerial;
+          void sendResize(nextReceipt, next, serial).catch(
+            (resizeError: unknown) => fail(serial, resizeError),
           );
-        }
-      }
-      terminal.attachCustomKeyEventHandler(() => true);
+        },
+      });
     } catch {
       // The emulator itself could not be constructed. There is no terminal to
       // recover into, so the pane says so instead of pretending to connect.
-      terminalRef.current?.dispose();
-      terminalRef.current = null;
       setConnection("disconnected");
       setError("The terminal renderer is unavailable.");
       return undefined;
     }
+    sessionRef.current = session;
+    const terminal = session.terminal;
 
     const detachExact = (targetReceipt: TerminalReceipt) => {
       if (detachedAttachmentIds.has(targetReceipt.attachmentId)) return;
@@ -285,30 +234,6 @@ export function TerminalSurface({
       });
     };
 
-    const queueResize = (size: TerminalSize, serial: number) => {
-      pendingResize = size;
-      if (resizeTimer !== undefined) return;
-      // ResizeObserver can deliver a burst while layout settles. Keep only the
-      // latest bounded dimensions and send at most one request per frame
-      // interval; main applies the same coalescing policy as a backstop.
-      resizeTimer = setTimeout(() => {
-        resizeTimer = undefined;
-        const nextSize = pendingResize;
-        pendingResize = undefined;
-        const nextReceipt = receipt;
-        if (!nextSize || !nextReceipt || receiptDetached) return;
-        void sendResize(nextReceipt, nextSize, serial).catch(
-          (resizeError: unknown) => fail(serial, resizeError),
-        );
-      }, 16);
-    };
-
-    resizeRef.current = () => {
-      if (hiddenRef.current) return;
-      currentSize = terminalSize(fit);
-      queueResize(currentSize, attachSerial);
-    };
-
     const attach = async () => {
       const serial = ++attachSerial;
       const previousReceipt = receipt;
@@ -332,7 +257,7 @@ export function TerminalSurface({
       });
       setConnection("connecting");
       setError(undefined);
-      currentSize = terminalSize(fit);
+      session.remeasure();
 
       const processFrame = (
         frame: TerminalFrame,
@@ -443,7 +368,7 @@ export function TerminalSurface({
             schemaVersion: TERMINAL_PROTOCOL_VERSION,
             surfaceKey,
             targetGeneration: 0,
-            ...currentSize,
+            ...session.geometry,
           },
           onFrame,
         );
@@ -478,7 +403,7 @@ export function TerminalSurface({
           failed: false,
         };
         setConnection("connected");
-        await sendResize(returnedReceipt, currentSize, serial);
+        await sendResize(returnedReceipt, session.geometry, serial);
       } catch (attachError: unknown) {
         if (handshakeTimer !== undefined) {
           clearTimeout(handshakeTimer);
@@ -536,15 +461,6 @@ export function TerminalSurface({
       }
     });
 
-    const resize = () => {
-      if (hiddenRef.current) return;
-      currentSize = terminalSize(fit);
-      queueResize(currentSize, attachSerial);
-    };
-    if (typeof ResizeObserver !== "undefined") {
-      observer = new ResizeObserver(resize);
-      observer.observe(host);
-    }
     const focusTerminal = () => terminal.focus();
     host.addEventListener("click", focusTerminal);
     void attach();
@@ -559,20 +475,13 @@ export function TerminalSurface({
     return () => {
       disposed = true;
       attachSerial += 1;
-      if (resizeTimer !== undefined) {
-        clearTimeout(resizeTimer);
-        resizeTimer = undefined;
-      }
-      pendingResize = undefined;
-      resizeRef.current = null;
-      observer?.disconnect();
       host.removeEventListener("click", focusTerminal);
       dataDisposable.dispose();
       if (receipt && !receiptDetached) detachExact(receipt);
       receipt = undefined;
       inputQueue = undefined;
-      terminal.dispose();
-      terminalRef.current = null;
+      session.dispose();
+      sessionRef.current = null;
       controllerRef.current = null;
     };
     // The surface key is the mount identity, so unrelated snapshot revisions
@@ -584,24 +493,16 @@ export function TerminalSurface({
     // Coming back on screen is the first moment the host has a real box, so
     // the size the pane missed while it was pooled is sent now.
     if (hidden) return;
-    resizeRef.current?.();
+    sessionRef.current?.remeasure();
     // Selecting a surface is a request to type into it, whether it is being
     // attached for the first time or coming back out of the pool.
-    terminalRef.current?.focus();
+    sessionRef.current?.focus();
   }, [hidden]);
 
   useEffect(() => {
     // Appearance is a projection, not a surface identity. Update the live
     // xterm options and geometry without tearing down the PTY attachment.
-    const terminal = terminalRef.current;
-    if (terminal && appearance) {
-      terminal.options.fontFamily = terminalFontStack(
-        appearance.terminalFontFamily,
-      );
-      terminal.options.fontSize = appearance.terminalFontSize;
-      terminal.options.lineHeight = appearance.terminalLineHeight;
-      resizeRef.current?.();
-    }
+    sessionRef.current?.applyAppearance(appearance, undefined);
   }, [appearance]);
 
   return (

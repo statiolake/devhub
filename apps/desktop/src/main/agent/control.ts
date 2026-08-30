@@ -37,6 +37,7 @@ const SERVER_SHUTDOWN = 4;
 /** Client frame tags. */
 const CLIENT_HELLO = 0;
 const CLIENT_INPUT = 1;
+const CLIENT_RESIZE = 3;
 const CLIENT_DETACH = 4;
 const CLIENT_CONTROL_TERMINAL = 9;
 
@@ -145,12 +146,12 @@ function decodeTag(frame: Buffer): [number, Cursor] {
 	return [readVarint(frame, cursor), cursor];
 }
 
-export function encodeHello(): Buffer {
+export function encodeHello(cols = 80, rows = 24): Buffer {
 	const payload: number[] = [];
 	pushVarint(payload, CLIENT_HELLO);
 	pushVarint(payload, PROTOCOL_VERSION);
-	pushVarint(payload, 80); // cols
-	pushVarint(payload, 24); // rows
+	pushVarint(payload, cols);
+	pushVarint(payload, rows);
 	pushVarint(payload, 0); // cell width px
 	pushVarint(payload, 0); // cell height px
 	pushVarint(payload, 1); // requested encoding: TerminalAnsi
@@ -163,6 +164,28 @@ export function encodeInput(data: Uint8Array): Buffer {
 	const payload: number[] = [];
 	pushVarint(payload, CLIENT_INPUT);
 	pushBytes(payload, data);
+	return Buffer.from(payload);
+}
+
+/**
+ * Tell Herdr the window the agent is drawing into changed size.
+ *
+ * The control stream is a terminal like any other: Herdr lays the agent's TUI
+ * out to the size the client reports, so a client that never reports one gets
+ * the 80x24 it announced at Hello no matter how large the surface is.
+ */
+export function encodeResize(
+	cols: number,
+	rows: number,
+	cellWidthPx: number,
+	cellHeightPx: number,
+): Buffer {
+	const payload: number[] = [];
+	pushVarint(payload, CLIENT_RESIZE);
+	pushVarint(payload, cols);
+	pushVarint(payload, rows);
+	pushVarint(payload, cellWidthPx);
+	pushVarint(payload, cellHeightPx);
 	return Buffer.from(payload);
 }
 
@@ -358,6 +381,8 @@ class FrameSocket {
 export class NoopTerminalControl implements TerminalControl {
 	async sendText(_text: string): Promise<void> {}
 
+	resize(_cols: number, _rows: number): void {}
+
 	async readRecent(): Promise<Buffer> {
 		return Buffer.alloc(0);
 	}
@@ -383,10 +408,14 @@ export class HerdrTerminalControl implements TerminalControl {
 		socketPath: string,
 		terminalId: string,
 		takeover: boolean,
+		size: { readonly cols: number; readonly rows: number } = {
+			cols: 80,
+			rows: 24,
+		},
 	): Promise<TerminalControl> {
 		const socket = await FrameSocket.open(socketPath, HANDSHAKE_TIMEOUT_MS);
 		try {
-			socket.write(encodeHello());
+			socket.write(encodeHello(size.cols, size.rows));
 			verifyWelcome(await socket.nextFrame(HANDSHAKE_TIMEOUT_MS));
 			socket.write(encodeControlTerminal(terminalId, takeover));
 
@@ -428,6 +457,13 @@ export class HerdrTerminalControl implements TerminalControl {
 			throw agentError(AgentRuntimeErrorCode.Disconnected);
 		}
 		this.#socket.write(encodeInput(bytes));
+	}
+
+	resize(cols: number, rows: number): void {
+		if (this.#detached) {
+			throw agentError(AgentRuntimeErrorCode.Disconnected);
+		}
+		this.#socket.write(encodeResize(cols, rows, 0, 0));
 	}
 
 	async readRecent(): Promise<Buffer> {

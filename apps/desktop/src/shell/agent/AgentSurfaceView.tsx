@@ -35,13 +35,19 @@ import {
   defaultAgentSurfaceClient,
   type AgentSurfaceClient,
 } from "./client.js";
+import { Failure, Waiting } from "../components/shell/SurfaceState";
 import {
   FALLBACK_GEOMETRY,
-  createXtermView,
-  type AgentTerminalFactory,
-  type AgentTerminalView,
-  type TerminalGeometry,
-} from "../surfaces/xtermView";
+  openXtermSession,
+  type SurfaceGeometry,
+  type XtermSession,
+} from "../surfaces/xtermSession";
+import {
+  activePalette,
+  prefersDark,
+  terminalSurfaceStyle,
+  type TerminalAppearance,
+} from "../terminal/theme";
 
 export interface AgentSurfaceViewProps {
   /** The domain Agent this surface shows. The surface key is derived. */
@@ -54,10 +60,8 @@ export interface AgentSurfaceViewProps {
    */
   readonly hidden?: boolean;
   readonly client?: AgentSurfaceClient;
-  readonly createView?: AgentTerminalFactory;
-  readonly fontFamily?: string;
-  readonly fontSize?: number;
-  readonly theme?: Record<string, string>;
+  /** The same appearance a terminal surface gets: it is the same emulator. */
+  readonly appearance?: TerminalAppearance;
   /** The page's one error area. A failure here is reported, never hidden. */
   readonly onError?: (error: unknown) => void;
 }
@@ -80,19 +84,30 @@ export function AgentSurfaceView({
   agentLabel,
   hidden = false,
   client,
-  createView = createXtermView,
-  fontFamily,
-  fontSize,
-  theme,
+  appearance,
   onError,
 }: AgentSurfaceViewProps) {
   const hostRef = useRef<HTMLDivElement>(null);
+  const sessionRef = useRef<XtermSession | null>(null);
   const hiddenRef = useRef(hidden);
   const errorRef = useRef(onError);
   const [connection, setConnection] = useState<ConnectionState>("connecting");
   const [error, setError] = useState<string>();
   hiddenRef.current = hidden;
   errorRef.current = onError;
+
+  const [dark, setDark] = useState(() => prefersDark());
+  useEffect(() => {
+    const query = window.matchMedia?.("(prefers-color-scheme: dark)");
+    if (!query) return undefined;
+    const onChange = (event: MediaQueryListEvent) => setDark(event.matches);
+    query.addEventListener("change", onChange);
+    setDark(query.matches);
+    return () => query.removeEventListener("change", onChange);
+  }, []);
+  const palette = activePalette(appearance, dark);
+  const paletteRef = useRef(palette);
+  paletteRef.current = palette;
 
   useEffect(() => {
     const host = hostRef.current;
@@ -102,9 +117,8 @@ export function AgentSurfaceView({
     const surfaceKey = agentSurfaceKey(agentId);
     const surfaceClient = client ?? defaultAgentSurfaceClient();
     let disposed = false;
-    let view: AgentTerminalView | undefined;
+    let session: XtermSession | undefined;
     let receipt: AttachReceipt | undefined;
-    let observer: ResizeObserver | undefined;
     let nextInputSequence = 1;
     let inputTail: Promise<void> = Promise.resolve();
     let inputFailed = false;
@@ -158,7 +172,7 @@ export function AgentSurfaceView({
           setConnection("connected");
           return;
         case "output":
-          view?.write(frame.bytes);
+          session?.terminal.write(frame.bytes);
           acknowledge(frame.sequence);
           return;
         case "exited":
@@ -204,7 +218,7 @@ export function AgentSurfaceView({
       }
     };
 
-    const reportGeometry = (geometry: TerminalGeometry): void => {
+    const reportGeometry = (geometry: SurfaceGeometry): void => {
       if (receipt === undefined || hiddenRef.current) {
         return;
       }
@@ -221,13 +235,22 @@ export function AgentSurfaceView({
 
     void (async () => {
       try {
-        view = await createView(host, { fontFamily, fontSize, theme });
+        session = openXtermSession(host, {
+          appearance,
+          palette: paletteRef.current,
+          inputLabel: `${agentLabel} agent input`,
+          isHidden: () => hiddenRef.current,
+          onGeometry: reportGeometry,
+        });
         if (disposed) {
-          view.dispose();
+          session.dispose();
           return;
         }
-        view.onData(sendInput);
-        const geometry = hiddenRef.current ? FALLBACK_GEOMETRY : view.measure();
+        sessionRef.current = session;
+        session.terminal.onData(sendInput);
+        const geometry = hiddenRef.current
+          ? FALLBACK_GEOMETRY
+          : session.geometry;
         const attached = await surfaceClient.attach(
           {
             schemaVersion: TERMINAL_PROTOCOL_VERSION,
@@ -248,12 +271,7 @@ export function AgentSurfaceView({
         }
         receipt = attached;
         setConnection("connected");
-        observer = new ResizeObserver(() => {
-          if (view !== undefined) {
-            reportGeometry(view.measure());
-          }
-        });
-        observer.observe(host);
+        if (!hiddenRef.current) session.focus();
       } catch (failure) {
         report(failure);
       }
@@ -261,7 +279,6 @@ export function AgentSurfaceView({
 
     return () => {
       disposed = true;
-      observer?.disconnect();
       const attached = receipt;
       receipt = undefined;
       if (attached !== undefined) {
@@ -269,22 +286,47 @@ export function AgentSurfaceView({
           .detach(agentDetachRequest(surfaceKey, attached))
           .catch(() => undefined);
       }
-      view?.dispose();
+      session?.dispose();
+      sessionRef.current = null;
     };
-  }, [agentId, client, createView, fontFamily, fontSize, theme]);
+    // The agent id is the mount identity: an appearance change updates the
+    // live emulator below rather than tearing the attachment down.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agentId, client]);
+
+  useEffect(() => {
+    sessionRef.current?.applyAppearance(appearance, palette);
+  }, [appearance, palette]);
+
+  useEffect(() => {
+    // Coming back on screen is the first moment the host has a real box, so
+    // the size the surface missed while it was pooled is reported now.
+    if (hidden) return;
+    sessionRef.current?.remeasure();
+    sessionRef.current?.focus();
+  }, [hidden]);
 
   return (
-    <section
-      className="agent-surface"
+    <div
+      className="terminal-surface-shell"
       data-connection={connection}
       aria-label={`Agent surface for ${agentLabel}`}
+      style={terminalSurfaceStyle(palette, appearance?.terminalMargin)}
     >
-      {error !== undefined && (
-        <p className="agent-surface__error" role="alert">
-          {error}
-        </p>
+      <div
+        ref={hostRef}
+        className="terminal-surface"
+        role="application"
+        aria-label={`${agentLabel} agent`}
+        tabIndex={0}
+      />
+      {connection === "connecting" && <Waiting label="Connecting…" />}
+      {connection === "disconnected" && (
+        <Failure
+          summary="The agent surface is not connected."
+          detail={error ?? "The agent connection is unavailable."}
+        />
       )}
-      <div className="agent-surface__host" ref={hostRef} />
-    </section>
+    </div>
   );
 }

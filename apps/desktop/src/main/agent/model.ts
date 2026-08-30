@@ -701,6 +701,8 @@ function quarantineAndSync(path: string): void {
 
 export interface TerminalControl {
 	sendText(text: string): Promise<void>;
+	/** Tell the provider the surface's grid, so the agent lays out to it. */
+	resize(cols: number, rows: number): void;
 	readRecent(): Promise<Buffer>;
 	detach(): void;
 }

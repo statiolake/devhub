@@ -49,13 +49,19 @@ function collectingSink(): FrameSink & { frames: Uint8Array[] } {
 }
 
 /** A surface whose provider reads are scripted, with detach observable. */
-function fakeSurface(chunks: Buffer[]): AgentSurface & { detached: boolean } {
+function fakeSurface(
+	chunks: Buffer[],
+): AgentSurface & { detached: boolean; resizes: [number, number][] } {
 	const queue = [...chunks];
 	const surface = {
 		agentId: AGENT_ID,
 		surfaceKey: SURFACE_KEY,
 		detached: false,
+		resizes: [] as [number, number][],
 		async sendText() {},
+		resize(cols: number, rows: number) {
+			surface.resizes.push([cols, rows]);
+		},
 		async readRecent() {
 			return queue.shift() ?? Buffer.alloc(0);
 		},
@@ -63,7 +69,10 @@ function fakeSurface(chunks: Buffer[]): AgentSurface & { detached: boolean } {
 			surface.detached = true;
 		},
 	};
-	return surface as unknown as AgentSurface & { detached: boolean };
+	return surface as unknown as AgentSurface & {
+		detached: boolean;
+		resizes: [number, number][];
+	};
 }
 
 function fakeRuntime(
@@ -167,6 +176,37 @@ describe("the agent surface manager", () => {
 		});
 		expect(surface.detached).toBe(true);
 		expect(await manager.detachAllUntil(Date.now() + 1_000)).toBe(true);
+	});
+
+	it("tells the provider what size the surface is, on attach and on resize", async () => {
+		// An agent's TUI is laid out to the size its client reports. Before the
+		// attachment exists the handshake can only announce a default, so the
+		// real grid has to arrive before the first frame is read — otherwise the
+		// first paint is an 80x24 one in a much larger pane.
+		const surface = fakeSurface([]);
+		const manager = new AgentSurfaceManager();
+		const [receipt] = await manager.attach(
+			fakeRuntime(async () => [surface, { agentId: AGENT_ID }]),
+			"view",
+			{ ...attachRequest(), cols: 203, rows: 61 },
+			collectingSink(),
+			() => undefined,
+		);
+		expect(surface.resizes).toEqual([[203, 61]]);
+		await manager.resize("view", {
+			schemaVersion: TERMINAL_PROTOCOL_VERSION,
+			surfaceKey: SURFACE_KEY,
+			attachmentId: receipt.attachmentId,
+			targetGeneration: receipt.targetGeneration,
+			cols: 120,
+			rows: 40,
+			pixelWidth: 0,
+			pixelHeight: 0,
+		});
+		expect(surface.resizes).toEqual([
+			[203, 61],
+			[120, 40],
+		]);
 	});
 
 	it("refuses input that skips a sequence and refuses a foreign attachment", async () => {

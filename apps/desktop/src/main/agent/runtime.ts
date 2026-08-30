@@ -1400,6 +1400,27 @@ export class HerdrAgentRuntime {
 		}
 	}
 
+	/**
+	 * Tell the provider what grid the surface is drawing at.
+	 *
+	 * Fire-and-forget by design: geometry is a fact about the window, not a
+	 * request with an outcome, and the next resize supersedes this one. A
+	 * failure still travels — the surface reports it like any other.
+	 */
+	surfaceResize(
+		agentId: AgentId,
+		surfaceKey: string,
+		cols: number,
+		rows: number,
+	): void {
+		const control = this.#ownedControl(agentId, surfaceKey);
+		try {
+			control.resize(cols, rows);
+		} catch (error) {
+			throw asAgentError(error).toPortError();
+		}
+	}
+
 	async surfaceReadRecent(
 		agentId: AgentId,
 		surfaceKey: string,
