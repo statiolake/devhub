@@ -15,6 +15,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { isImeComposing } from "../../accessibility/ime";
 import { useAppShell } from "../../useAppShell";
+import { PathLabel } from "./PathLabel";
 
 export interface WorkspacePickerProps {
   readonly onDismiss: () => void;
@@ -202,7 +203,7 @@ export function WorkspacePicker({ onDismiss }: WorkspacePickerProps) {
                   <span className="mac-list-text">
                     <span className="mac-list-title">{candidate.label}</span>
                     <span className="mac-list-subtitle mac-caption">
-                      {candidate.path}
+                      <PathLabel path={candidate.path} />
                     </span>
                   </span>
                 </button>

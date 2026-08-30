@@ -323,9 +323,37 @@
   text-overflow: ellipsis;
 }
 
-.mac-list-subtitle {
-  direction: rtl;
-  text-align: left;
+/*
+ * A path truncated in the middle, laid out left to right.
+ *
+ * The rule this replaces set `direction: rtl` on the line to move the ellipsis
+ * to the leading edge. That is bidi reordering, not truncation: the separators
+ * in a path are neutral characters, so a path that fitted perfectly well came
+ * out backwards — `~/dev` was drawn as `dev/~`. Here the path is two elements
+ * and only the head gives way, so nothing is ever reordered and the last
+ * segment, which is what names the folder, is the last thing to go.
+ */
+.mac-path {
+  display: flex;
+  min-width: 0;
+}
+
+.mac-path-head,
+.mac-path-tail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Everything the line has to lose comes off the head, and only a folder whose
+   own name is wider than the row takes anything off the tail. */
+.mac-path-head {
+  flex: 0 1 auto;
+}
+
+.mac-path-tail {
+  max-width: 100%;
+  flex: 0 0 auto;
 }
 
 /* ------------------------------------------------------- alerts and sheets */
