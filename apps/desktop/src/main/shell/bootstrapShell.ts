@@ -7,6 +7,7 @@
  */
 
 import { readFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { NativeParsedArgs } from "code-oss-dev/out/vs/platform/environment/common/argv.js";
@@ -26,6 +27,9 @@ import {
 import { installSettingsWindow, logDirectoryFor } from "./settingsWindow.js";
 import { refreshMenu } from "./menu.js";
 import { installKeyboard } from "./keyboard.js";
+import { startControlServer } from "../cli/controlServer.js";
+import { controlSocketPath } from "../cli/protocol.js";
+import { installLauncher } from "../cli/install.js";
 
 /** How long a quit waits for the runtimes to let go before leaving anyway. */
 const SHUTDOWN_DEADLINE_MS = 3_000;
@@ -119,6 +123,31 @@ export async function bootstrapShell(
 	});
 	await controller.startRuntimes(userDataPath);
 
+	// DevHub's own front door. It is opened here, once the model and the
+	// runtimes behind it exist, because every request it accepts is answered by
+	// them — and it is a startup failure rather than a warning if the socket
+	// cannot be taken, since a `devhub` command that silently does nothing is
+	// worse than one that says DevHub is not running.
+	const socketPath = controlSocketPath(userDataPath);
+	const control = await startControlServer(socketPath, {
+		open: (path, cwd) => controller.openFromCli(path, cwd),
+		addAgent: (profileId, args, cwd) =>
+			controller.addAgentFromCli(profileId, args, cwd),
+		installCli: () =>
+			Promise.resolve(
+				installLauncher({
+					// The binary running this process is the app's own Electron,
+					// in a checkout and in a bundle alike, and it is what the
+					// launcher runs the CLI with as Node.
+					execPath: process.execPath,
+					cliScript: join(APP_ROOT, "out", "main", "cli", "devhubCli.js"),
+					socketPath,
+					home: homedir(),
+					pathValue: process.env["PATH"] ?? "",
+				}).message,
+			),
+	});
+
 	// macOS: the dock icon brings the shell back after its window was hidden.
 	// DevHub is the app, not the window, and the window it comes back to is the
 	// same one, with every workbench, terminal and agent still in it.
@@ -157,6 +186,9 @@ export async function bootstrapShell(
 		// a close by hiding.
 		beginQuit();
 		event.preventDefault();
+		// Nothing new may be accepted from here: the model behind every request
+		// is about to be torn down.
+		void control.close();
 		const deadline = new Promise<void>((resolve) => {
 			setTimeout(() => {
 				console.warn("[devhub] quit: shutdown did not finish in time");

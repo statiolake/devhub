@@ -20,7 +20,9 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { electron } from "../electron.js";
 import { URI } from "code-oss-dev/out/vs/base/common/uri.js";
+import { CancellationToken as VSCancellationToken } from "code-oss-dev/out/vs/base/common/cancellation.js";
 import type { NativeParsedArgs } from "code-oss-dev/out/vs/platform/environment/common/argv.js";
+import type { ICodeWindow } from "code-oss-dev/out/vs/platform/window/electron-main/window.js";
 import type { IWindowsMainService } from "code-oss-dev/out/vs/platform/windows/electron-main/windows.js";
 import { OpenContext } from "code-oss-dev/out/vs/platform/windows/electron-main/windows.js";
 import type { IDialogMainService } from "code-oss-dev/out/vs/platform/dialogs/electron-main/dialogMainService.js";
@@ -43,6 +45,9 @@ import type {
 } from "../../ipc/appShell.js";
 import { AppCoordinator, type Effect } from "../../model/coordinator.js";
 import { editorReveal } from "./editorReveal.js";
+import { canonicalise } from "../cli/canonical.js";
+import { openFileInWorkbench } from "../cli/openFiles.js";
+import { workspaceRootFor } from "../cli/resolve.js";
 import {
 	AgentProfile,
 	agentProfileId,
@@ -790,7 +795,12 @@ export class AppController {
 				});
 				return;
 			case "resolve_agent_profile":
-				this.resolveProfile(effect.token, effect.workspaceId, effect.profileId);
+				this.resolveProfile(
+					effect.token,
+					effect.workspaceId,
+					effect.profileId,
+					effect.extraArgs,
+				);
 				return;
 			case "inspect_workspace":
 				await this.inspect(effect.token, effect.workspaceId);
@@ -863,10 +873,25 @@ export class AppController {
 		}
 	}
 
+	/**
+	 * The profile an Agent is launched with.
+	 *
+	 * The combination rule, in one place: **the profile's own arguments first,
+	 * then the caller's, appended in the order they were given.** Nothing is
+	 * deduplicated and nothing is reordered, because the profile is the base
+	 * command and the extra arguments are what a person added to this one run
+	 * — and an agent command reads its last flag as the winning one.
+	 *
+	 * They go into the profile *snapshot* rather than being carried alongside
+	 * it, because that snapshot is what the Agent keeps for its whole life: an
+	 * Agent's record then says what it was actually started with, and a later
+	 * edit to the configured profile still cannot rewrite a running Agent.
+	 */
 	private resolveProfile(
 		token: OperationToken,
 		workspaceId: WorkspaceId,
 		profileId: string,
+		extraArgs: readonly string[],
 	): void {
 		const configured = this.config?.agentProfiles.find(
 			(profile) => profile.id === profileId,
@@ -879,7 +904,10 @@ export class AppController {
 			type: "profile_resolved",
 			token,
 			workspaceId,
-			profile: toDomainProfile(configured),
+			profile: toDomainProfile({
+				...configured,
+				args: [...configured.args, ...extraArgs],
+			}),
 		});
 	}
 
@@ -1495,6 +1523,206 @@ export class AppController {
 		});
 	}
 
+	/**
+	 * Whether the scratch workbench is being built right now.
+	 *
+	 * `openInBrowserWindow` asks this to tell its two no-folder callers apart:
+	 * DevHub building the scratch workbench (which must go through to upstream,
+	 * or it would ask itself for the workbench it is creating) and everything
+	 * else asking for an empty window (which is a request for scratch).
+	 */
+	isOpeningScratch(): boolean {
+		return this.editorOpens.has(SCRATCH_EDITOR);
+	}
+
+	/**
+	 * The scratch workbench, built if it is not there, revealed, and selected.
+	 *
+	 * This is where every "new window with no folder" ends up: DevHub has one
+	 * window, and the empty workbench in it is the Scratch editor. Selecting
+	 * Global → Editor is the same intent the menu's New Window raises, so the
+	 * sidebar, the activity and the view agree afterwards however it was asked.
+	 */
+	async scratchWorkbench(): Promise<ICodeWindow> {
+		await this.ensureEditorView(SCRATCH_EDITOR);
+		await this.dispatchAwaiting({ type: "new_window" });
+		await this.syncEditorView();
+		return this.workbenchWindow(SCRATCH_EDITOR);
+	}
+
+	/** The `ICodeWindow` behind a folder's view; a missing one is a bug. */
+	private workbenchWindow(folder: string): ICodeWindow {
+		const viewId = this.viewsByFolder.get(folder);
+		const window =
+			viewId === undefined
+				? undefined
+				: this.services()
+						.windows()
+						.getWindows()
+						.find((candidate) => candidate.id === viewId);
+		if (!window) {
+			throw new Error(
+				`the workbench for ${folder === SCRATCH_EDITOR ? "the Scratch editor" : folder} is not running`,
+			);
+		}
+		return window;
+	}
+
+	//#endregion
+
+	//#region the devhub command line
+
+	/**
+	 * `devhub <path>`.
+	 *
+	 * A folder is a Workspace: opening one that DevHub already knows selects
+	 * the entry it has rather than making a second, because `open_folder` keys
+	 * on the canonical root and that is the one rule for it.
+	 *
+	 * A file belongs to the open Workspace whose root is its nearest ancestor,
+	 * and to the Scratch editor when no open Workspace contains it. It is
+	 * deliberately never "the window you last looked at": the same command has
+	 * to mean the same thing from the same directory, whatever has the focus.
+	 *
+	 * Either way the thing that was opened is then *activated* — selected in
+	 * the sidebar, with the Editor activity showing and the window in front —
+	 * because a command that opens something you cannot see has not opened it.
+	 */
+	async openFromCli(path: string, _cwd: string): Promise<string> {
+		return asSentence(() => this.doOpenFromCli(path));
+	}
+
+	private async doOpenFromCli(path: string): Promise<string> {
+		const target = await canonicalise(path);
+		if (target.isDirectory) {
+			await this.openFolder(target.path);
+			await this.dispatchAwaiting({
+				type: "select_activity",
+				activity: "editor",
+			});
+			await this.syncEditorView();
+			this.bringToFront();
+			return `${target.path} is open in DevHub.`;
+		}
+
+		const root = workspaceRootFor(target.path, this.workspaceRoots());
+		if (root === undefined) {
+			await this.dispatchAwaiting({ type: "new_window" });
+			await this.syncEditorView();
+			openFileInWorkbench(this.workbenchWindow(SCRATCH_EDITOR), target);
+			this.bringToFront();
+			return `${target.path} is open in the Scratch editor: no open workspace contains it.`;
+		}
+
+		const workspace = this.coordinator.model.workspaces.find(
+			(candidate) => candidate.root === root,
+		);
+		if (!workspace) {
+			throw new Error(`no workspace is rooted at ${root}`);
+		}
+		await this.dispatchAwaiting({
+			type: "select_context",
+			context: { kind: "workspace", workspaceId: workspace.id },
+		});
+		await this.dispatchAwaiting({
+			type: "select_activity",
+			activity: "editor",
+		});
+		await this.syncEditorView();
+		openFileInWorkbench(this.workbenchWindow(root), target);
+		this.bringToFront();
+		return `${target.path} is open in the workspace at ${root}.`;
+	}
+
+	/**
+	 * `devhub --agent <profile> -- <args>`.
+	 *
+	 * The Workspace comes from the *current directory*, by the same ancestor
+	 * walk a file uses. An Agent runs in a Workspace — it has a root, a
+	 * terminal and a lifetime that belong to one — so a directory that is in no
+	 * open Workspace is refused rather than quietly attached to something else.
+	 */
+	async addAgentFromCli(
+		profileId: string,
+		args: readonly string[],
+		cwd: string,
+	): Promise<string> {
+		return asSentence(() => this.doAddAgentFromCli(profileId, args, cwd));
+	}
+
+	private async doAddAgentFromCli(
+		profileId: string,
+		args: readonly string[],
+		cwd: string,
+	): Promise<string> {
+		// The profile is checked here rather than left to the resolver, because
+		// a name that is not in the config is a typo on a command line, not an
+		// operation that failed — and the person needs to be told which names
+		// there are, not that an operation could not be completed.
+		const configured = this.config?.agentProfiles ?? [];
+		if (!configured.some((profile) => profile.id === profileId)) {
+			const known = configured.map((profile) => profile.id).join(", ");
+			throw new Error(
+				`there is no agent profile called '${profileId}'. Configured profiles: ${known.length > 0 ? known : "none"}.`,
+			);
+		}
+		const here = await canonicalise(cwd);
+		const root = workspaceRootFor(here.path, this.workspaceRoots());
+		if (root === undefined) {
+			throw new Error(
+				`${here.path} is not inside any open DevHub workspace, and an agent needs one — open the folder first with 'devhub <folder>'.`,
+			);
+		}
+		const workspace = this.coordinator.model.workspaces.find(
+			(candidate) => candidate.root === root,
+		);
+		if (!workspace) {
+			throw new Error(`no workspace is rooted at ${root}`);
+		}
+		await this.dispatchAwaiting({
+			type: "create_agent",
+			workspaceId: workspace.id,
+			profileId: agentProfileId(profileId),
+			extraArgs: args,
+		});
+		// Creating an Agent selects it; the Activity is the half the model does
+		// not choose, and showing the Agent is the whole point of the command.
+		await this.dispatchAwaiting({ type: "select_activity", activity: "agent" });
+		this.bringToFront();
+		const context = this.coordinator.model.selection.context;
+		const agent =
+			context.kind === "agent"
+				? workspace.agents.find((candidate) => candidate.id === context.agentId)
+				: undefined;
+		return `${agent?.displayName ?? "The agent"} is running in the workspace at ${root}.`;
+	}
+
+	private workspaceRoots(): readonly string[] {
+		return this.coordinator.model.workspaces.map((workspace) => workspace.root);
+	}
+
+	/**
+	 * Put DevHub in front of whatever the person was looking at.
+	 *
+	 * They typed a command asking to see something; the app answering from
+	 * behind a terminal window has not answered.
+	 */
+	private bringToFront(): void {
+		const shell = shellWindow();
+		shell.window.show();
+		shell.window.focus();
+		electron.app.focus({ steal: true });
+	}
+
+	/** Hand a request's files to a workbench, exactly as upstream would. */
+	sendFilesToWorkbench(window: ICodeWindow, files: unknown): void {
+		window.sendWhenReady("vscode:openFiles", VSCancellationToken.None, files);
+	}
+
+	//#endregion
+
+	//#region workbench views
+
 	revealFolderView(folder: string): void {
 		const viewId = this.viewsByFolder.get(folder);
 		const view =
@@ -1674,6 +1902,44 @@ function isStaleCompletion(error: unknown): boolean {
 	return (
 		error instanceof AppError && error.code === AppErrorCode.StaleCompletion
 	);
+}
+
+/**
+ * The command line's half of the one error conversion.
+ *
+ * A failure inside main travels to the page as a JSON payload that the page
+ * unwraps and draws on its error surface; a terminal has no such reader, and
+ * printing the payload at somebody is not reporting a failure. So the same
+ * values are unwrapped here and printed instead of drawn. Nothing new is
+ * invented: the summary and the detail the model already produced are exactly
+ * what is shown, and anything that is not one of those payloads is passed on
+ * with its own message.
+ */
+async function asSentence(run: () => Promise<string>): Promise<string> {
+	try {
+		return await run();
+	} catch (error) {
+		if (!(error instanceof Error)) throw error;
+		let parsed: unknown;
+		try {
+			parsed = JSON.parse(error.message);
+		} catch {
+			// Not one of main's structured failures. Its own message is the
+			// report, and it is already a sentence.
+			throw error;
+		}
+		if (
+			typeof parsed !== "object" ||
+			parsed === null ||
+			typeof (parsed as AppErrorWire).summary !== "string"
+		) {
+			throw error;
+		}
+		const wire = parsed as AppErrorWire;
+		throw new Error(
+			wire.detail ? `${wire.summary} ${wire.detail}` : wire.summary,
+		);
+	}
 }
 
 function asIpcError(error: AppErrorWire): Error {
