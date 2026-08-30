@@ -18,6 +18,7 @@ import { clampSidebarWidth } from "../../../ipc/appShell";
 import { useAppShell } from "../../useAppShell";
 import { devhub } from "../../client";
 import { isImeComposing } from "../../accessibility/ime";
+import { SidebarRail } from "./SidebarRail";
 import { StatusMark } from "./StatusMark";
 import { statusLabel } from "./status";
 
@@ -472,6 +473,19 @@ export function Sidebar({ snapshot }: SidebarProps) {
   const previewResize = useCallback((width: number) => {
     setInProgressWidth(width);
   }, []);
+
+  // Collapsed, the Sidebar is the rail — the same navigation at icon width,
+  // not an absent pane. Both forms are this component's, so nothing above it
+  // has to know there are two.
+  if (!snapshot.sidebar.expanded) {
+    return (
+      <SidebarRail
+        snapshot={snapshot}
+        onDispatch={onDispatch}
+        onAddWorkspace={openPicker}
+      />
+    );
+  }
 
   return (
     <aside

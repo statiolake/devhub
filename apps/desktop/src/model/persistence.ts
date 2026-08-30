@@ -125,10 +125,11 @@ export interface WindowFrame {
 export interface SidebarState {
   width: number;
   /**
-   * Whether the sidebar is on screen. A state file written before this was a
-   * setting says nothing about it, and a sidebar nobody hid is a visible one.
+   * Whether the sidebar is the full pane rather than the icon rail. A state
+   * file written before this was a setting says nothing about it, and a
+   * sidebar nobody collapsed is an expanded one.
    */
-  visible?: boolean;
+  expanded?: boolean;
 }
 
 export interface ShutdownMetadata {
@@ -293,7 +294,7 @@ export function freshState(): PersistedAppState {
     navigation: { context: { kind: "global" }, activity: "terminal" },
     sidebar: {
       width: SIDEBAR_DEFAULT_WIDTH,
-      visible: true,
+      expanded: true,
     },
     window: {
       frame: {
@@ -810,7 +811,7 @@ export function hydrateModel(
   }
 
   try {
-    model.restoreSidebar(state.sidebar.width, state.sidebar.visible ?? true);
+    model.restoreSidebar(state.sidebar.width, state.sidebar.expanded ?? true);
   } catch {
     return fail("STATE_INVALID");
   }
@@ -952,7 +953,7 @@ export function stateFromSnapshot(
     },
     sidebar: {
       width: snapshot.sidebar.width,
-      visible: snapshot.sidebar.visible,
+      expanded: snapshot.sidebar.expanded,
     },
   };
   validateState(state);

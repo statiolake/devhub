@@ -132,9 +132,9 @@ function Workbench() {
       data-sidebar-density={appearance?.sidebarDensity ?? "compact"}
     >
       <div className="app-shell-content">
-        {state.snapshot.sidebar.visible ? (
-          <Sidebar snapshot={state.snapshot} />
-        ) : null}
+        {/* Always: collapsed, the Sidebar is an icon rail, and which of its
+            two forms is on screen is the Sidebar's own business. */}
+        <Sidebar snapshot={state.snapshot} />
         <div className="workbench">
           <TitlebarActivities
             snapshot={state.snapshot}

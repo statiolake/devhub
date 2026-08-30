@@ -334,8 +334,8 @@ export class AppController {
 			selectActivity: (activity) => {
 				this.dispatchOwn({ type: "select_activity", activity });
 			},
-			setSidebarVisible: (visible) => {
-				this.dispatchOwn({ type: "set_sidebar_visible", visible });
+			setSidebarExpanded: (expanded) => {
+				this.dispatchOwn({ type: "set_sidebar_expanded", expanded });
 			},
 			closeWorkspace: (workspaceId) => {
 				void this.dispatchFromPage({

@@ -39,7 +39,7 @@ function snapshotWith(agents: boolean): AppSnapshot {
       activity: "agent",
       context: { kind: "agent", agentId: AGENT_ID },
     } as AppSnapshot["selection"],
-    sidebar: { visible: true, width: 240 } as AppSnapshot["sidebar"],
+    sidebar: { expanded: true, width: 240 } as AppSnapshot["sidebar"],
     workspaces: [
       {
         id: WORKSPACE_ID,

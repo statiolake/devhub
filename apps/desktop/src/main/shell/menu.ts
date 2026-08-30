@@ -8,7 +8,7 @@
  *
  * The menu is rebuilt whenever the model changes, because a menu item has to
  * say what is true now — Close Workspace is only meaningful with a workspace
- * selected, Hide Sidebar becomes Show Sidebar, and an activity that is not
+ * selected, Collapse Sidebar becomes Expand Sidebar, and an activity that is not
  * available in the current context is not a choice.
  *
  * **Nothing here has an accelerator, deliberately.** A menu accelerator is a
@@ -37,7 +37,7 @@ export interface MenuHost {
 	 */
 	focusedWindow(): "shell" | "settings" | "none";
 	selectActivity(activity: Activity): void;
-	setSidebarVisible(visible: boolean): void;
+	setSidebarExpanded(expanded: boolean): void;
 	closeWorkspace(workspaceId: string): void;
 	openWorkspacePicker(): void;
 	openSettings(): void;
@@ -79,7 +79,7 @@ function selectedWorkspace(
 function template(menuHost: MenuHost): Electron.MenuItemConstructorOptions[] {
 	const snapshot = menuHost.snapshot();
 	const workspace = selectedWorkspace(snapshot);
-	const sidebarVisible = snapshot?.sidebar.visible ?? true;
+	const sidebarExpanded = snapshot?.sidebar.expanded ?? true;
 
 	return [
 		{
@@ -180,9 +180,11 @@ function template(menuHost: MenuHost): Electron.MenuItemConstructorOptions[] {
 				),
 				{ type: "separator" },
 				{
-					label: sidebarVisible ? "Hide Sidebar" : "Show Sidebar",
+					// Collapsed is the icon rail, not nothing, so the item says what
+					// it does: the sidebar is there either way.
+					label: sidebarExpanded ? "Collapse Sidebar" : "Expand Sidebar",
 					click: () => {
-						menuHost.setSidebarVisible(!sidebarVisible);
+						menuHost.setSidebarExpanded(!sidebarExpanded);
 					},
 				},
 				{ type: "separator" },

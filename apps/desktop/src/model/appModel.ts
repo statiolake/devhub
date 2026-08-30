@@ -72,12 +72,15 @@ export interface ActivitySnapshot {
 export interface SidebarSnapshot {
   readonly width: number;
   /**
-   * Whether the sidebar is on screen.
+   * Whether the sidebar is the full pane rather than the icon rail.
    *
-   * Separate from the width on purpose: hiding the sidebar must not forget how
-   * wide the person made it, and a width of zero is not a legal width.
+   * The sidebar is never absent: collapsed, it is a rail of one glyph per
+   * Workspace, so this says which of its two forms is on screen and not
+   * whether it exists. Separate from the width on purpose: collapsing must not
+   * forget how wide the person made the pane, and a width of zero is not a
+   * legal width.
    */
-  readonly visible: boolean;
+  readonly expanded: boolean;
 }
 
 export interface AgentSnapshot {
@@ -173,7 +176,7 @@ export class AppModel {
     activity: "terminal",
   };
   private sidebarWidthValue = SIDEBAR_DEFAULT_WIDTH;
-  private sidebarVisibleValue = true;
+  private sidebarExpandedValue = true;
   private editorHost: EditorHostState = { kind: "starting" };
   private revision = 0;
 
@@ -194,7 +197,7 @@ export class AppModel {
       workspaces: this.workspaceSnapshots(),
       sidebar: {
         width: this.sidebarWidthValue,
-        visible: this.sidebarVisibleValue,
+        expanded: this.sidebarExpandedValue,
       },
       editorHost: this.editorHost,
     };
@@ -224,15 +227,16 @@ export class AppModel {
     return this.workspaceList;
   }
 
-  restoreSidebar(width: number, visible = true): boolean {
+  restoreSidebar(width: number, expanded = true): boolean {
     if (width < SIDEBAR_MIN_WIDTH || width > SIDEBAR_MAX_WIDTH) {
       fail(DomainErrorCode.InvalidSidebarWidth);
     }
     const changed =
-      this.sidebarWidthValue !== width || this.sidebarVisibleValue !== visible;
+      this.sidebarWidthValue !== width ||
+      this.sidebarExpandedValue !== expanded;
     if (changed) {
       this.sidebarWidthValue = width;
-      this.sidebarVisibleValue = visible;
+      this.sidebarExpandedValue = expanded;
       this.bumpRevision();
     }
     return changed;
@@ -250,15 +254,15 @@ export class AppModel {
     return true;
   }
 
-  get sidebarVisible(): boolean {
-    return this.sidebarVisibleValue;
+  get sidebarExpanded(): boolean {
+    return this.sidebarExpandedValue;
   }
 
-  setSidebarVisible(visible: boolean): boolean {
-    if (this.sidebarVisibleValue === visible) {
+  setSidebarExpanded(expanded: boolean): boolean {
+    if (this.sidebarExpandedValue === expanded) {
       return false;
     }
-    this.sidebarVisibleValue = visible;
+    this.sidebarExpandedValue = expanded;
     this.bumpRevision();
     return true;
   }

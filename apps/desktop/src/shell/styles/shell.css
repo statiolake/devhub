@@ -49,11 +49,61 @@
   grid-template-columns: 1fr auto 1fr;
 }
 
-/* The window buttons are over the Sidebar now, so the content titlebar has
-   nothing to reserve; the leading cell only balances the centred control. */
+/* The window buttons are over the Sidebar now, so with the Sidebar open the
+   content titlebar has nothing to reserve and the leading cell carries the
+   Sidebar toggle. Collapsed, the rail is narrower than the buttons are wide
+   and they spill into this cell, so it insets by the difference. */
 .titlebar-leading {
+  display: flex;
   min-width: 0;
   height: 100%;
+  align-items: center;
+}
+
+.titlebar-leading[data-clears-window-buttons] {
+  padding-left: calc(
+    var(--traffic-light-inset) - var(--sidebar-collapsed-width)
+  );
+}
+
+/* A toolbar button: no chrome at rest, a wash under the pointer. */
+.titlebar-button {
+  display: flex;
+  width: 26px;
+  height: 24px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+}
+
+.titlebar-button svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: var(--secondary);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.2;
+}
+
+.titlebar-button:hover {
+  background: var(--wash);
+}
+
+.titlebar-button:hover svg {
+  stroke: var(--primary);
+}
+
+.sidebar-toggle .sidebar-toggle-pane {
+  fill: color-mix(in srgb, var(--secondary) 45%, transparent);
+  stroke: none;
+}
+
+.titlebar-button:hover .sidebar-toggle-pane {
+  fill: color-mix(in srgb, var(--primary) 45%, transparent);
 }
 
 /* The Sidebar's own titlebar strip: same height as the content titlebar so
@@ -456,6 +506,110 @@ body.is-resizing-sidebar {
   user-select: none;
 }
 
+/* ------------------------------------------------------------- icon rail */
+
+/* The collapsed Sidebar. Fixed width, and not resizable: the rail is as wide
+   as one tile plus its gutters, and a rail the person can drag is a pane. */
+.sidebar-collapsed {
+  width: var(--sidebar-collapsed-width);
+  flex: 0 0 var(--sidebar-collapsed-width);
+  /* The window buttons overhang a rail this narrow, so the pane's full-height
+     hairline would be drawn straight through them. The rail carries its
+     separator below the titlebar band instead, where nothing crosses it. */
+  border-right: 0;
+}
+
+.sidebar-collapsed .sidebar-titlebar {
+  min-width: 0;
+}
+
+.rail-region,
+.rail-footer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  border-right: 1px solid var(--line-strong);
+}
+
+.rail-region {
+  overflow-x: hidden;
+  overflow-y: auto;
+  flex: 1;
+  padding: var(--space-2) 0;
+  gap: var(--space-1);
+}
+
+.rail-footer {
+  padding: var(--space-2) 0;
+  border-top: 1px solid var(--line-soft);
+}
+
+.rail-list {
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  align-items: center;
+  padding: 0;
+  margin: var(--space-1) 0 0;
+  gap: var(--space-1);
+  list-style: none;
+}
+
+/* One tile per destination: the glyph the row shows, at the size a toolbar
+   control is, with the row's own selection fill behind it. */
+.rail-tile {
+  position: relative;
+  display: flex;
+  width: var(--sidebar-tile-size);
+  height: var(--sidebar-tile-size);
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-row);
+  background: transparent;
+}
+
+.rail-tile:hover {
+  background: var(--wash);
+}
+
+.rail-tile.is-selected,
+.rail-tile.is-selected:hover {
+  background: var(--selection);
+}
+
+:root[data-window-active="false"] .rail-tile.is-selected {
+  background: var(--selection-inactive);
+}
+
+.rail-glyph svg {
+  display: block;
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: var(--accent);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.3;
+}
+
+.rail-list .rail-glyph svg {
+  fill: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+/* The status sits on the tile's trailing corner, where a badge goes, with a
+   ring of the pane behind it so it reads over the glyph rather than in it. */
+.rail-badge {
+  position: absolute;
+  right: 1px;
+  bottom: 1px;
+  display: flex;
+  padding: 1.5px;
+  border-radius: 50%;
+  background: var(--chrome);
+}
+
 /* ---------------------------------------------------------- status marks */
 
 .status-mark {
@@ -467,32 +621,66 @@ body.is-resizing-sidebar {
   font-size: 11px;
 }
 
-.status-mark > span:first-child {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--tertiary);
+/* The mark is one ink colour and one silhouette. Shape is drawn in the SVG so
+   that it survives greyscale, Increase Contrast and a colour-blind reader;
+   the colour is the second telling, never the only one. */
+.status-glyph {
+  display: block;
+  width: var(--status-mark-size);
+  height: var(--status-mark-size);
+  flex: 0 0 var(--status-mark-size);
+  fill: currentcolor;
+  stroke: none;
+  color: var(--idle);
 }
 
-.status-mark-working > span:first-child {
-  background: var(--working);
+/* A ring and an outline are the same circle at two weights, so the stroke has
+   to be stated where the shape is, not where the colour is. */
+.status-glyph .status-ring {
+  fill: none;
+  stroke: currentcolor;
+  stroke-width: 2.4;
 }
 
-.status-mark-waiting > span:first-child {
-  background: var(--waiting);
+.status-glyph .status-outline {
+  fill: none;
+  stroke: currentcolor;
+  stroke-width: 1.4;
 }
 
-.status-mark-error > span:first-child {
-  background: var(--danger);
+.status-mark-working .status-glyph {
+  color: var(--working);
 }
 
-.status-mark-compact .status-mark-label {
-  position: absolute;
-  overflow: hidden;
-  width: 1px;
-  height: 1px;
-  clip-path: inset(50%);
-  white-space: nowrap;
+.status-mark-waiting .status-glyph {
+  color: var(--waiting);
+}
+
+.status-mark-error .status-glyph {
+  color: var(--danger);
+}
+
+/* Working is the one status that is going somewhere, so it is the one that
+   moves — slowly, and not at all for a reader who asked for less motion. */
+.status-mark-working .status-glyph {
+  animation: status-breathe 2s ease-in-out infinite;
+}
+
+@keyframes status-breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.45;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .status-mark-working .status-glyph {
+    animation: none;
+  }
 }
 
 /* --------------------------------------------------------------- surface */
