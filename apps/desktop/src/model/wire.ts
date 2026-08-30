@@ -264,7 +264,6 @@ export function snapshotWire(
     selectedPath: workspace.selectedPath,
     state: workspaceStateName(workspace.state),
     stateDiagnostic: workspaceStateDiagnostic(workspace.state),
-    aggregateStatus: workspace.aggregateStatus,
     agents: workspace.agents.map(agentWire),
     canCreateAgent: workspace.canCreateAgent,
   }));

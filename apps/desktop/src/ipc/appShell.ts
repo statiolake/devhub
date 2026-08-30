@@ -316,7 +316,6 @@ export type WorkspaceStateWire =
 	| "closing-failed";
 export interface WorkspaceWire {
 	readonly agents: readonly AgentWire[];
-	readonly aggregateStatus: AgentStatusWire;
 	readonly canCreateAgent: boolean;
 	readonly id: string;
 	readonly label: string;

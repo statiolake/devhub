@@ -190,21 +190,6 @@ describe("labels", () => {
   });
 });
 
-describe("aggregate status", () => {
-  it("reports the most urgent agent status", () => {
-    const model = modelWith([WS_A, "/dev/a"]);
-    model.addAgent(WS_A, AG_A, codex);
-    model.addAgent(WS_A, AG_B, codex);
-    expect(model.snapshot().workspaces[0].aggregateStatus).toBe("idle");
-    model.setAgentStatus(AG_A, "working");
-    expect(model.snapshot().workspaces[0].aggregateStatus).toBe("working");
-    model.setAgentStatus(AG_B, "waiting");
-    expect(model.snapshot().workspaces[0].aggregateStatus).toBe("waiting");
-    model.setAgentStatus(AG_A, "error");
-    expect(model.snapshot().workspaces[0].aggregateStatus).toBe("error");
-  });
-});
-
 describe("revisions", () => {
   it("bumps only when something actually changed", () => {
     const model = modelWith([WS_A, "/dev/a"]);

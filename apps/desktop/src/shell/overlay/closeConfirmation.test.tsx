@@ -47,7 +47,6 @@ function snapshotWith(agents: boolean): AppSnapshot {
         root: "/tmp/folderA",
         selectedPath: "/tmp/folderA",
         state: { kind: "available" } as never,
-        aggregateStatus: "working",
         canCreateAgent: true,
         agents: agents
           ? [

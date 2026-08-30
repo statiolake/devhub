@@ -97,8 +97,6 @@ export interface AgentSnapshot {
   readonly controlState: AgentControlState;
 }
 
-export type WorkspaceAggregateStatus = AgentStatus;
-
 export interface WorkspaceSnapshot {
   readonly id: WorkspaceId;
   readonly label: string;
@@ -106,7 +104,6 @@ export interface WorkspaceSnapshot {
   readonly selectedPath: DisplayPath;
   readonly repositoryId: RepositoryId | undefined;
   readonly state: WorkspaceState;
-  readonly aggregateStatus: WorkspaceAggregateStatus;
   readonly agents: readonly AgentSnapshot[];
   readonly canCreateAgent: boolean;
 }
@@ -157,14 +154,6 @@ function sameEditorHost(
     return left.summary === right.summary && left.detail === right.detail;
   }
   return true;
-}
-
-function aggregateStatus(workspace: Workspace): WorkspaceAggregateStatus {
-  const agents = workspace.agents;
-  if (agents.some((agent) => agent.status === "error")) return "error";
-  if (agents.some((agent) => agent.status === "waiting")) return "waiting";
-  if (agents.some((agent) => agent.status === "working")) return "working";
-  return "idle";
 }
 
 export class AppModel {
@@ -797,7 +786,6 @@ export class AppModel {
       selectedPath: workspace.selectedPath,
       repositoryId: workspace.repositoryId,
       state: workspace.state,
-      aggregateStatus: aggregateStatus(workspace),
       canCreateAgent: isWorkspaceAvailable(workspace.state),
       agents: workspace.agents.map((agent) => ({
         id: agent.id,
