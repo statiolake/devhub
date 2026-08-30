@@ -13,6 +13,7 @@
  * name, at warn level, because a silent no-op is how a real breakage hides.
  */
 
+import { EventEmitter } from "node:events";
 import { electron } from "../electron.js";
 import type { ShellWindow } from "./shellWindow.js";
 
@@ -26,9 +27,26 @@ export function unimplementedMembers(): readonly string[] {
 
 /**
  * Events that describe the view itself rather than the window around it. The
- * rest — maximize, full screen, move, resize — are facts about the shell.
+ * rest — maximize, full screen, move, resize — are facts about the shell, and
+ * a workbench is entitled to hear them because they are true of it too.
  */
 const VIEW_EVENTS = new Set(["focus", "blur", "responsive", "unresponsive"]);
+
+/**
+ * Events about this window's *lifetime*, which are nobody else's.
+ *
+ * This is the important half of the table. Sharing a fact — the window was
+ * maximized, the window moved — is harmless: the listener updates something.
+ * Sharing an *ending* is not, because the listener acts on it, and VS Code's
+ * lifecycle acts on `close` by unloading the workbench and destroying its
+ * contents. Routed to the shell window, that meant the shell's own close
+ * button ran VS Code's close for every workbench: the person clicked the red
+ * button and watched their editors disappear out of a window that stayed.
+ *
+ * A workbench view therefore emits these for itself and only for itself —
+ * when DevHub destroys it with its workspace, or when VS Code closes it.
+ */
+const LIFETIME_EVENTS = new Set(["close", "closed", "session-end"]);
 
 /** `BrowserWindow`'s 'closed' is `WebContents`' 'destroyed'. */
 const EVENT_ALIAS: Readonly<Record<string, string>> = { closed: "destroyed" };
@@ -47,6 +65,11 @@ export class WorkbenchView {
 	 * for a `BrowserWindow` is being occluded, not being hidden.
 	 */
 	private hidden = false;
+	/**
+	 * This window's own lifetime events. Not the shell's, and not another
+	 * view's: an ending is about exactly one window.
+	 */
+	private readonly lifetime = new EventEmitter();
 
 	constructor(
 		private readonly shell: ShellWindow,
@@ -74,9 +97,10 @@ export class WorkbenchView {
 	//#region events
 
 	private emitterFor(event: string): NodeJS.EventEmitter {
-		return VIEW_EVENTS.has(event) || event === "closed"
-			? this.view.webContents
-			: this.shell.window;
+		if (event === "closed") return this.view.webContents;
+		if (VIEW_EVENTS.has(event)) return this.view.webContents;
+		if (LIFETIME_EVENTS.has(event)) return this.lifetime;
+		return this.shell.window;
 	}
 
 	on(event: string, listener: (...args: unknown[]) => void): this {
@@ -146,7 +170,15 @@ export class WorkbenchView {
 		this.shell.window.blur();
 	}
 
+	/**
+	 * Ask this window to close.
+	 *
+	 * The listeners are VS Code's own: its lifecycle answers a close by
+	 * unloading the workbench, which is what runs "do you want to save?" and
+	 * what can veto. It is told, and then the view goes.
+	 */
 	close(): void {
+		this.lifetime.emit("close", { preventDefault: () => undefined });
 		this.destroy();
 	}
 

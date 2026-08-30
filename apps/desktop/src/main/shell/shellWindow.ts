@@ -54,9 +54,20 @@ export class ShellWindow {
 		this.window.loadURL(pageUrl);
 		this.window.once("ready-to-show", () => this.window.show());
 		this.window.on("resize", () => this.layout());
-		// macOS convention: closing the shell window does not end the app. The
-		// dock icon reopens it, and Quit is what quits — which is also what lets
-		// DevHub exist with no window at all.
+
+		// macOS convention: closing the window does not end the app, and here it
+		// must not even end the window. Every workbench, terminal and agent lives
+		// inside this one window; destroying it to rebuild it on the next dock
+		// click would throw all of that away and start it again. So the window
+		// hides, keeping its views, and comes back exactly as it was.
+		//
+		// Quitting is the Quit item or the Command-Q chord, and that is the only
+		// path that ends anything.
+		this.window.on("close", (event) => {
+			if (quitting) return;
+			event.preventDefault();
+			this.window.hide();
+		});
 		this.window.on("closed", () => {
 			current = undefined;
 		});
@@ -228,6 +239,19 @@ export class ShellWindow {
 }
 
 let current: ShellWindow | undefined;
+
+/**
+ * Whether the application is on its way out.
+ *
+ * The shell window refuses to close right up until this is true, which is what
+ * makes the red button a hide and Quit a quit.
+ */
+let quitting = false;
+
+/** Called once, when the app has decided to quit. */
+export function beginQuit(): void {
+	quitting = true;
+}
 
 export function createShellWindow(
 	preloadPath: string,

@@ -12,9 +12,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 class FakeWebContents {
 	destroyed = false;
+	private readonly listeners = new Map<string, (() => void)[]>();
 	focus(): void {}
 	close(): void {
 		this.destroyed = true;
+		for (const listener of this.listeners.get("destroyed") ?? []) listener();
 	}
 	isDestroyed(): boolean {
 		return this.destroyed;
@@ -22,8 +24,12 @@ class FakeWebContents {
 	get id(): number {
 		return 7;
 	}
-	on(): this {
+	on(event: string, listener: () => void): this {
+		this.listeners.set(event, [...(this.listeners.get(event) ?? []), listener]);
 		return this;
+	}
+	once(event: string, listener: () => void): this {
+		return this.on(event, listener);
 	}
 	removeListener(): this {
 		return this;
@@ -47,7 +53,30 @@ const { WorkbenchView } = await import("./workbenchView.js");
 type WorkbenchView = InstanceType<typeof WorkbenchView>;
 
 /** Only the part of the shell a view touches while being shown or hidden. */
+class FakeShellWindow {
+	private readonly listeners = new Map<
+		string,
+		((...args: unknown[]) => void)[]
+	>();
+	on(event: string, listener: (...args: unknown[]) => void): this {
+		this.listeners.set(event, [...(this.listeners.get(event) ?? []), listener]);
+		return this;
+	}
+	once(event: string, listener: (...args: unknown[]) => void): this {
+		return this.on(event, listener);
+	}
+	removeListener(): this {
+		return this;
+	}
+	/** Fire what Electron fires when the person clicks the red button. */
+	emit(event: string, ...args: unknown[]): void {
+		for (const listener of this.listeners.get(event) ?? []) listener(...args);
+	}
+}
+
 class FakeShell {
+	/** The real shell's `BrowserWindow`, which a view must not mistake for its own. */
+	readonly window = new FakeShellWindow();
 	revealed: WorkbenchView | undefined;
 	reveal(view: WorkbenchView): void {
 		this.revealed = view;
@@ -105,6 +134,41 @@ describe("a workbench view's window state", () => {
 
 		view.show();
 		expect(view.isVisible()).toBe(true);
+	});
+
+	it("never hears the shell window's close", () => {
+		// The shell's red button is DevHub's business. VS Code answers a `close`
+		// by unloading the workbench and destroying its contents, so a view that
+		// listened to the shell's close would empty itself out of a window that
+		// stayed — which is exactly what people saw.
+		let closes = 0;
+		let closeds = 0;
+		view.on("close", () => {
+			closes += 1;
+		});
+		view.on("closed", () => {
+			closeds += 1;
+		});
+
+		shell.window.emit("close", { preventDefault: () => undefined });
+		shell.window.emit("closed");
+		expect(closes).toBe(0);
+		expect(closeds).toBe(0);
+		expect(view.isDestroyed()).toBe(false);
+
+		// Its own close is its own business, and does reach it.
+		view.close();
+		expect(closes).toBe(1);
+		expect(closeds).toBe(1);
+	});
+
+	it("still hears what is genuinely true of the window around it", () => {
+		let maximized = 0;
+		view.on("maximize", () => {
+			maximized += 1;
+		});
+		shell.window.emit("maximize");
+		expect(maximized).toBe(1);
 	});
 
 	it("is not visible once destroyed", () => {

@@ -16,7 +16,11 @@ import {
 	SHELL_ORIGIN,
 } from "./shellPageProtocol.js";
 import { electron } from "../electron.js";
-import { createShellWindow, shellWindowIfCreated } from "./shellWindow.js";
+import {
+	beginQuit,
+	createShellWindow,
+	shellWindowIfCreated,
+} from "./shellWindow.js";
 import { installSettingsWindow, logDirectoryFor } from "./settingsWindow.js";
 import { refreshMenu } from "./menu.js";
 import { installWorkbenchDialogs } from "./workbenchDialogs.js";
@@ -93,11 +97,14 @@ export async function bootstrapShell(
 	const controller = await createAppController(userDataPath, cliArgs);
 	await controller.startRuntimes(userDataPath);
 
-	// macOS: the dock icon brings the shell back after its window was closed.
-	// DevHub is the app, not the window, so closing the window is not quitting.
+	// macOS: the dock icon brings the shell back after its window was hidden.
+	// DevHub is the app, not the window, and the window it comes back to is the
+	// same one, with every workbench, terminal and agent still in it.
 	electron.app.on("activate", () => {
-		if (shellWindowIfCreated()) {
-			shellWindowIfCreated()?.window.show();
+		const shell = shellWindowIfCreated();
+		if (shell) {
+			shell.window.show();
+			shell.window.focus();
 			return;
 		}
 		createShellWindow(preloadPath, `${SHELL_ORIGIN}/index.html`);
@@ -120,6 +127,9 @@ export async function bootstrapShell(
 	electron.app.on("before-quit", (event) => {
 		if (quitting) return;
 		quitting = true;
+		// From here the shell window is allowed to close: until now it answered
+		// a close by hiding.
+		beginQuit();
 		event.preventDefault();
 		const deadline = new Promise<void>((resolve) => {
 			setTimeout(() => {
