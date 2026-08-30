@@ -46,14 +46,23 @@ const ACTIVITY_ITEMS: readonly {
 	{ activity: "terminal", label: "Terminal", accelerator: "CmdOrCtrl+3" },
 ];
 
-/** The selected workspace, or nothing when the selection is Global. */
+/**
+ * The workspace the selection is in, or nothing when it is Global.
+ *
+ * An Agent is selected *within* a workspace, so Close Workspace means the same
+ * thing there as it does with the workspace row itself selected. Anything else
+ * would make the command's availability depend on which row of the same
+ * workspace happens to be highlighted.
+ */
 function selectedWorkspace(
 	snapshot: AppSnapshotWire | undefined,
 ): { readonly id: string; readonly label: string } | undefined {
 	const context = snapshot?.selection.context;
-	if (!context || context.kind !== "workspace") return undefined;
-	const workspace = snapshot?.workspaces.find(
-		(candidate) => candidate.id === context.workspaceId,
+	if (!context || context.kind === "global") return undefined;
+	const workspace = snapshot?.workspaces.find((candidate) =>
+		context.kind === "workspace"
+			? candidate.id === context.workspaceId
+			: candidate.agents.some((agent) => agent.id === context.agentId),
 	);
 	if (!workspace) return undefined;
 	return { id: workspace.id, label: workspace.label };

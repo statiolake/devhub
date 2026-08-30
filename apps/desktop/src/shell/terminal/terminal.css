@@ -60,8 +60,10 @@
 }
 
 /* The provider owns the canvas, so a state has to sit over it rather than
-   beside it, and cover the dead terminal instead of floating on top of it. */
-.terminal-surface-shell > .surface-state {
+   beside it, and cover the dead terminal instead of floating on top of it —
+   a live cursor blinking behind "not connected" is the surface contradicting
+   itself. */
+.terminal-surface-shell > .mac-empty {
   position: absolute;
   z-index: 3;
   background: var(--surface);

@@ -166,13 +166,34 @@
   outline-offset: 1px;
 }
 
+/*
+ * A popup button's trailing chevrons.
+ *
+ * They are the whole difference between "this opens a menu" and "type here":
+ * without them the control is a text field that ignores typing.
+ */
 .mac-popup {
   appearance: none;
-  padding-right: 22px;
-  /* The disclosure chevrons a popup button carries on its trailing edge. */
-  background-image: linear-gradient(transparent, transparent);
+  padding-right: 24px;
+  background-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20width%3D%2710%27%20height%3D%2716%27%20viewBox%3D%270%200%2010%2016%27%3E%3Cpath%20d%3D%27M2%206.5%205%203.5%208%206.5M2%209.5%205%2012.5%208%209.5%27%20fill%3D%27none%27%20stroke%3D%27%236b6b6b%27%20stroke-width%3D%271.5%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%2F%3E%3C%2Fsvg%3E");
   background-repeat: no-repeat;
+  background-position: right 6px center;
+  background-size: 10px 16px;
   cursor: default;
+}
+
+:root:not([data-theme="light"]) .mac-popup {
+  background-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20width%3D%2710%27%20height%3D%2716%27%20viewBox%3D%270%200%2010%2016%27%3E%3Cpath%20d%3D%27M2%206.5%205%203.5%208%206.5M2%209.5%205%2012.5%208%209.5%27%20fill%3D%27none%27%20stroke%3D%27%23a8a8a8%27%20stroke-width%3D%271.5%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%2F%3E%3C%2Fsvg%3E");
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) .mac-popup {
+    background-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20width%3D%2710%27%20height%3D%2716%27%20viewBox%3D%270%200%2010%2016%27%3E%3Cpath%20d%3D%27M2%206.5%205%203.5%208%206.5M2%209.5%205%2012.5%208%209.5%27%20fill%3D%27none%27%20stroke%3D%27%236b6b6b%27%20stroke-width%3D%271.5%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%2F%3E%3C%2Fsvg%3E");
+  }
+}
+
+:root[data-theme="dark"] .mac-popup {
+  background-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20width%3D%2710%27%20height%3D%2716%27%20viewBox%3D%270%200%2010%2016%27%3E%3Cpath%20d%3D%27M2%206.5%205%203.5%208%206.5M2%209.5%205%2012.5%208%209.5%27%20fill%3D%27none%27%20stroke%3D%27%23a8a8a8%27%20stroke-width%3D%271.5%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%2F%3E%3C%2Fsvg%3E");
 }
 
 .mac-field[type="number"] {

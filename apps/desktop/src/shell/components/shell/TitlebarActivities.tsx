@@ -34,6 +34,11 @@ export function TitlebarActivities({
               disabled={disabled}
               aria-pressed={selected}
               aria-label={`${label}${disabled ? `${reason}, unavailable` : ""}`}
+              // A control that cannot be used has to say why where a pointer
+              // is, not only where a screen reader is.
+              title={
+                disabled ? disabledReasonLabel(resolution.reason) : undefined
+              }
               data-activity={activity satisfies Activity}
               onClick={() => onDispatch({ type: "select_activity", activity })}
             >

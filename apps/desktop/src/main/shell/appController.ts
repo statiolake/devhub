@@ -257,6 +257,18 @@ export class AppController {
 			userDataPath,
 			model: () => this.coordinator.model,
 		});
+		// Everything restored from the state file describes the previous run: an
+		// Agent's status and its runtime health are what they were when DevHub
+		// last wrote them down. Nothing will contradict them on its own — an
+		// idle agent produces no events — so a restored Agent that is never
+		// reconciled sits there claiming to be starting a runtime that started
+		// long ago. Ask about each of them once, as soon as there is something
+		// to ask.
+		for (const workspace of this.coordinator.model.workspaces) {
+			for (const agent of workspace.agents) {
+				this.noteStaleAgent(agent.id);
+			}
+		}
 		this.agentService = wireAgents({
 			journalPath: join(userDataPath, "devhub", "agents.journal"),
 			configuredHerdr: config?.runtimes.herdr ?? "herdr",

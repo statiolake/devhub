@@ -324,10 +324,21 @@
   font-weight: 590;
 }
 
+/* The note is a qualifier on the name, so it is the part that gives way: a
+   row that drops the name to fit "Starting runtime" has told you nothing. */
 .row-note {
-  flex: 0 0 auto;
+  overflow: hidden;
+  min-width: 0;
+  max-width: 50%;
+  flex: 0 1 auto;
   color: var(--secondary);
   font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row-label {
+  flex: 1 1 auto;
 }
 
 /* Keep the status dot clear of the label and of the trailing actions. */

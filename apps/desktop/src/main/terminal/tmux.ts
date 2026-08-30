@@ -379,6 +379,8 @@ export class TmuxTerminalRuntime {
 	private effectiveSocket: SocketName | undefined;
 	private readonly gate = new RuntimeOperationGate();
 	private readonly bootstrapDirectory: string;
+	/** One in-flight bring-up per socket, shared by concurrent callers. */
+	private readonly serverBootstraps = new Map<SocketName, Promise<void>>();
 	readonly timeoutMs: number;
 
 	constructor(options: TmuxTerminalRuntimeOptions) {
@@ -1002,7 +1004,37 @@ export class TmuxTerminalRuntime {
 		if (!output.success) throw portFailure("failed");
 	}
 
+	/**
+	 * Bring the socket up, and do it once at a time.
+	 *
+	 * Attaching takes a *shared* permit, because two surfaces attaching at once
+	 * is normal. Bringing a socket up is not shareable: the second caller sees
+	 * a server that exists with its marker not yet written and reads that as
+	 * somebody else's tmux — which is how a workspace terminal failed on the
+	 * first launch after the socket was empty, while the scratch one succeeded.
+	 *
+	 * Concurrent callers therefore share one attempt. The result is not cached:
+	 * a server can be killed underneath the app between two operations, so the
+	 * next operation still verifies for itself.
+	 */
 	private async ensureServer(
+		socket: SocketName,
+		cancel: CancellationToken,
+		deadline: OperationDeadline,
+	): Promise<void> {
+		const inFlight = this.serverBootstraps.get(socket);
+		if (inFlight) {
+			await inFlight;
+			return;
+		}
+		const attempt = this.bringServerUp(socket, cancel, deadline).finally(() => {
+			this.serverBootstraps.delete(socket);
+		});
+		this.serverBootstraps.set(socket, attempt);
+		await attempt;
+	}
+
+	private async bringServerUp(
 		socket: SocketName,
 		cancel: CancellationToken,
 		deadline: OperationDeadline,
