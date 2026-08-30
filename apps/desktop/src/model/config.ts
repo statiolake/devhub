@@ -135,7 +135,6 @@ export interface TerminalThemeConfig {
 }
 
 export interface AppearanceConfig {
-  readonly colorScheme: string;
   readonly terminalFontFamily: string;
   readonly terminalFontSize: number;
   readonly terminalLineHeight: number;
@@ -213,7 +212,6 @@ export function defaultTerminalDark(): TerminalPalette {
 
 export function defaultAppearance(): AppearanceConfig {
   return {
-    colorScheme: "light",
     terminalFontFamily: DEFAULT_FONT_FAMILY,
     terminalFontSize: 13,
     terminalLineHeight: 1.2,
@@ -401,15 +399,38 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/**
+ * Keys a past DevHub read and this one does not, with why they went.
+ *
+ * An unknown key is an error on purpose: a typo must not be quietly ignored.
+ * But a key DevHub itself told people to write is not their typo, and refusing
+ * to start over one would make DevHub's own change of mind their problem. So a
+ * retired key loads, is ignored, and says so once at info level — loud enough
+ * that "I set that and nothing happened" has an answer, quiet enough that it
+ * is not a failure. The next save drops it from the document, because a save
+ * states the whole config and this is no longer part of it.
+ */
+const RETIRED_KEYS: Readonly<Record<string, string>> = {
+  "appearance.color_scheme":
+    "the shell follows the active VS Code theme, so DevHub has no colour scheme of its own",
+};
+
 function checkKeys(
   table: Record<string, unknown>,
   allowed: readonly string[],
   prefix: string,
 ): void {
   for (const key of Object.keys(table)) {
-    if (!allowed.includes(key)) {
-      fail("unknown_key", prefix.length > 0 ? `${prefix}.${key}` : key);
+    if (allowed.includes(key)) continue;
+    const path = prefix.length > 0 ? `${prefix}.${key}` : key;
+    const retired = RETIRED_KEYS[path];
+    if (retired !== undefined) {
+      console.info(
+        `[devhub] config: ${path} is no longer used and is ignored — ${retired}. The next save drops it from the file.`,
+      );
+      continue;
     }
+    fail("unknown_key", path);
   }
 }
 
@@ -598,7 +619,6 @@ function validateAppearance(appearance: AppearanceConfig): void {
     fail("invalid_font_family", "appearance.terminal_font_family");
   }
   if (
-    appearance.colorScheme !== "light" ||
     appearance.terminalFontSize < 9 ||
     appearance.terminalFontSize > 24 ||
     !Number.isFinite(appearance.terminalLineHeight) ||
@@ -852,7 +872,6 @@ export function parseConfig(input: string): Config {
   checkKeys(
     appearanceTable,
     [
-      "color_scheme",
       "terminal_font_family",
       "terminal_font_size",
       "terminal_line_height",
@@ -906,12 +925,6 @@ export function parseConfig(input: string): Config {
       ),
     },
     appearance: {
-      colorScheme: optionalString(
-        appearanceTable,
-        "color_scheme",
-        "appearance",
-        "light",
-      ),
       terminalFontFamily: optionalString(
         appearanceTable,
         "terminal_font_family",
@@ -985,7 +998,6 @@ export function configDocument(config: Config): Record<string, TomlValue> {
       tmux_args: [...config.runtimes.tmux_args],
     },
     appearance: {
-      color_scheme: config.appearance.colorScheme,
       terminal_font_family: config.appearance.terminalFontFamily,
       terminal_font_size: config.appearance.terminalFontSize,
       terminal_line_height: config.appearance.terminalLineHeight,

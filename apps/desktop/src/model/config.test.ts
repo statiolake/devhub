@@ -1,6 +1,6 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ConfigError,
   ConfigStore,
@@ -57,6 +57,21 @@ describe("parsing", () => {
         ),
       ),
     ).toBe("unknown_key");
+  });
+
+  it("still loads a file with a retired key, and says so once", () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    const retired = 'version = 1\n[appearance]\ncolor_scheme = "dark"\n';
+    try {
+      expect(parseConfig(retired)).toEqual(defaultConfig());
+      expect(info).toHaveBeenCalledTimes(1);
+      expect(info.mock.calls[0][0]).toContain("appearance.color_scheme");
+    } finally {
+      info.mockRestore();
+    }
+    // And the next save drops it, rather than keeping a key nothing reads.
+    const saved = configOntoDocument(retired, parseConfig(retired));
+    expect(saved).not.toContain("color_scheme");
   });
 
   it("refuses a version it does not implement", () => {

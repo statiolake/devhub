@@ -111,7 +111,6 @@ export function appearanceWire(
 ): AppAppearanceWire {
   const wire: AppAppearanceWire = {
     sequence,
-    colorScheme: "light",
     sidebarDensity:
       config.sidebarDensity === "comfortable" ? "comfortable" : "compact",
     terminalFontFamily: config.terminalFontFamily,

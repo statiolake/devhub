@@ -46,9 +46,10 @@ export interface SettingsTerminalThemeWire {
  * DevHub's chrome takes its colours from the active VS Code theme, so "light or
  * dark" is already answered — by the theme the person chose in the workbench.
  * A DevHub-level scheme would be a second answer to the same question, and the
- * two would disagree the first time somebody changed one of them. The config's
- * own `appearance.color_scheme` is a value the loader accepts exactly one of;
- * a save carries over whatever the file says rather than the page asserting it.
+ * two would disagree the first time somebody changed one of them. There is no
+ * `appearance.color_scheme` in the config either: the loader still accepts the
+ * key so an older file keeps loading, but it is retired — read nowhere, and
+ * dropped from the document on the next save.
  */
 export interface SettingsAppearanceWire {
 	readonly sidebarDensity: string;

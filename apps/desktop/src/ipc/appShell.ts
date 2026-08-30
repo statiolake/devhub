@@ -55,8 +55,14 @@ export interface AgentWire {
 	readonly status: AgentStatusWire;
 	readonly workspaceId: string;
 }
+/**
+ * No colour scheme here: the shell chrome takes its colours from the active
+ * VS Code theme, so "light or dark" is already answered by the theme the
+ * person chose. This carried a `colorScheme` that was the constant `"light"`
+ * however the app was actually painted — a field the page could read, believe
+ * and be wrong about.
+ */
 export interface AppAppearanceWire {
-	readonly colorScheme: AppColorSchemeWire;
 	readonly sequence: number;
 	readonly sidebarDensity: AppSidebarDensityWire;
 	readonly terminalFontFamily: string;
@@ -65,7 +71,6 @@ export interface AppAppearanceWire {
 	readonly terminalMargin: number;
 	readonly terminalTheme: TerminalThemeWire;
 }
-export type AppColorSchemeWire = "light";
 export type AppErrorActionWire = "retry" | "open_settings";
 export type AppErrorCodeWire =
 	| "invalid_intent"
