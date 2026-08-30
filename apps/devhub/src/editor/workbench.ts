@@ -15,7 +15,12 @@
  * of its own rather than a slot in this one — and why a modal it draws over
  * "the window" covers its own frame and nothing else.
  */
-import { initialize as initializeVscodeServices } from "@codingame/monaco-vscode-api";
+import {
+  getService,
+  IExtensionResourceLoaderService,
+  IFileService,
+  initialize as initializeVscodeServices,
+} from "@codingame/monaco-vscode-api";
 import getAccessibilityServiceOverride from "@codingame/monaco-vscode-accessibility-service-override";
 import getAiServiceOverride from "@codingame/monaco-vscode-ai-service-override";
 import getAssignmentServiceOverride from "@codingame/monaco-vscode-assignment-service-override";
@@ -96,6 +101,13 @@ import { trace } from "./trace";
 export interface WorkbenchTarget {
   readonly remote: EditorRemote;
   readonly folder?: string;
+  /**
+   * Where the browser can load a file the server has on disk, if it can.
+   *
+   * Absent outside the app, and then the Workbench addresses resources the
+   * way it would with no host at all.
+   */
+  readonly assetPrefix?: string;
 }
 
 /**
@@ -147,7 +159,7 @@ export function raiseWorkbench(
 
 async function raise(
   container: HTMLElement,
-  { remote, folder }: WorkbenchTarget,
+  { remote, folder, assetPrefix }: WorkbenchTarget,
 ): Promise<void> {
   const { authority, connectionToken } = remote;
   trace("workbench: initialising services");
@@ -289,17 +301,19 @@ async function raise(
     {
       remoteAuthority: authority,
       connectionToken,
-      // Left unset, VS Code rewrites every `vscode-remote:` resource into an
-      // HTTP address on the server's own origin and fetches it. The server
-      // answers, and the browser throws the answer away: it only sends
-      // `Access-Control-Allow-Origin` for the origin its `product.json`
-      // names, which is never this one. That cost the file icon theme, the
-      // grammars, and the language configurations.
+      // This answers one question: where can the *browser* load this? Left
+      // unset, VS Code answers with an HTTP address on the server's own
+      // origin, and the browser throws every response away — the server only
+      // sends `Access-Control-Allow-Origin` for the origin its `product.json`
+      // names, which is never this one.
       //
-      // Returning the URI unchanged keeps it off HTTP entirely — the loader
-      // then reads it through the file service, over the connection that is
-      // already open. One origin, and nothing to authorise.
-      resourceUriProvider: (uri) => uri,
+      // The remote is this machine, so the host can serve the file itself.
+      // What is read rather than loaded — grammars, language configurations
+      // — goes through the file service instead, which is the loader below.
+      resourceUriProvider: (uri) =>
+        assetPrefix == null
+          ? uri
+          : monaco.Uri.parse(`${assetPrefix}${encodeURIComponent(uri.path)}`),
       // Workspace trust stays on. Choosing to open a folder in the Sidebar is
       // not the same as agreeing to run what is inside it, which is the whole
       // question trust asks. What had to be fixed was the prompt blocking the
@@ -329,5 +343,31 @@ async function raise(
       },
     },
   );
+  await readExtensionResourcesThroughTheConnection();
   trace("workbench: services initialised");
+}
+
+/**
+ * Read an extension's own files over the connection rather than fetching them.
+ *
+ * The loader decides between the two by asking where a *browser* would load
+ * the file — the same question `resourceUriProvider` answers for fonts and
+ * images — and then, for anything that is not an ordinary web address, reads
+ * it through the file service. Those are two different questions with two
+ * different right answers, and the loader only asks one of them.
+ *
+ * So the one whose answer it gets wrong is settled here: a `vscode-remote:`
+ * resource is always read through the connection, which is already open and
+ * needs nobody's permission.
+ */
+async function readExtensionResourcesThroughTheConnection(): Promise<void> {
+  const [loader, files] = await Promise.all([
+    getService(IExtensionResourceLoaderService),
+    getService(IFileService),
+  ]);
+  const fetchIt = loader.readExtensionResource.bind(loader);
+  loader.readExtensionResource = async (uri) =>
+    uri.scheme === "vscode-remote"
+      ? (await files.readFile(uri)).value.toString()
+      : fetchIt(uri);
 }

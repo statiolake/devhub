@@ -23,7 +23,11 @@ nix = { version = "=0.28.0", features = ["fs", "resource", "signal", "user"] }
 rustix = { version = "=0.38.44", features = ["fs"] }
 socket2 = "=0.6.5"
 raw-window-handle = "=0.6.2"
-tauri = { version = "=2.11.5", features = ["macos-private-api"] }
+# `protocol-asset` is how a file the Editor server has on disk reaches the
+# browser: an icon theme's font and images are loaded by the browser itself
+# rather than read through the connection, and they need an address it will
+# accept.
+tauri = { version = "=2.11.5", features = ["macos-private-api", "protocol-asset"] }
 wry = "=0.55.1"
 
 [target.'cfg(target_os = "macos")'.dependencies]

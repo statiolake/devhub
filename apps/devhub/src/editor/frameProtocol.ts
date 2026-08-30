@@ -34,6 +34,27 @@ export type WorkbenchFrameMessage =
   | WorkbenchFailed
   | OpenExternal;
 
+/**
+ * Where the browser can load a file the Editor's server has on disk.
+ *
+ * Fonts and images in a file icon theme are loaded by the browser itself, not
+ * read through the connection, so they need an address it will accept. Tauri
+ * serves local files under its own asset protocol; this is that protocol's
+ * prefix, resolved once by the shell because the frame has no Tauri of its
+ * own. Absent outside the app — a test, a plain browser — and the Workbench
+ * then keeps addressing resources as it would without one.
+ */
+export function assetPrefix(): string | null {
+  const internals = (
+    window as unknown as {
+      __TAURI_INTERNALS__?: {
+        convertFileSrc?: (path: string, protocol: string) => string;
+      };
+    }
+  ).__TAURI_INTERNALS__;
+  return internals?.convertFileSrc?.("", "asset") ?? null;
+}
+
 /** The frame's own address, carrying what it needs to raise a Workbench. */
 export function workbenchFrameSource(
   authority: string,
@@ -42,6 +63,8 @@ export function workbenchFrameSource(
 ): string {
   const query = new URLSearchParams({ authority, connectionToken });
   if (folder != null) query.set("folder", folder);
+  const assets = assetPrefix();
+  if (assets != null) query.set("assetPrefix", assets);
   // The display language is chosen before the Workbench boots — it decides
   // which language pack to load — so it travels in the address rather than
   // being set afterwards.

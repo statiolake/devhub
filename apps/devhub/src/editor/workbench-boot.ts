@@ -34,6 +34,7 @@ const parameters = new URLSearchParams(window.location.search);
 const authority = parameters.get("authority");
 const connectionToken = parameters.get("connectionToken");
 const folder = parameters.get("folder") ?? undefined;
+const assetPrefix = parameters.get("assetPrefix") ?? undefined;
 
 if (!container || !authority || !connectionToken) {
   // The frame is addressed by the shell, so this is a broken build rather
@@ -47,6 +48,7 @@ if (!container || !authority || !connectionToken) {
   raiseWorkbench(container, {
     remote: { authority, connectionToken, commit: "" },
     folder,
+    assetPrefix,
   }).then(
     async () => {
       // The default opener calls `window.open`, which from inside a frame
