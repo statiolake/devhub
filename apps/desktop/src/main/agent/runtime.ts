@@ -43,9 +43,11 @@ import {
 import {
 	AgentRuntimeHealth,
 	AgentRuntimeState,
+	EXIT_EVIDENCE_ROUNDS,
 	MARKER_LABEL_PREFIX,
 	MAX_SURFACE_KEY_BYTES,
 	MAX_TOMBSTONE_ATTEMPTS,
+	ProviderStatus,
 	TombstoneReason,
 	cleanupMappingFromCreated,
 	decodeProviderMapping,
@@ -58,7 +60,6 @@ import {
 	parseSessionSnapshot,
 	projectProviderStatus,
 	providerAgentName,
-	providerStatusIsExited,
 	recoverMapping,
 	saveCleanupJournal,
 	terminalIdFromStarted,
@@ -74,6 +75,7 @@ import {
 	cancelledPort,
 	conflictPort,
 	failedPort,
+	gonePort,
 	isUuid,
 	unavailablePort,
 	type AgentId,
@@ -331,6 +333,21 @@ export class HerdrAgentRuntime {
 		root: string,
 	): void {
 		this.#state.workspaceRoots.set(agentId, [workspaceId, root]);
+	}
+
+	/**
+	 * The same registration, for an Agent that DevHub read out of its own state
+	 * file rather than is about to launch.
+	 *
+	 * The difference is what the provider's silence means. Nothing carrying a
+	 * launching Agent's marker is expected — the launch has not run yet. For a
+	 * restored one it is the answer to the only question startup asks: is last
+	 * run's runtime still there? If it is not, the row is stale and goes,
+	 * rather than living on as a surface that can never attach.
+	 */
+	restoreAgent(agentId: AgentId, workspaceId: WorkspaceId, root: string): void {
+		this.registerAgentWorkspace(agentId, workspaceId, root);
+		this.#state.restoredAgents.add(agentId);
 	}
 
 	async bootstrap(cancel: CancellationToken): Promise<AgentRuntimeHealth> {
@@ -927,7 +944,11 @@ export class HerdrAgentRuntime {
 			this.#state.mappings.get(agentId) ??
 			recoverMapping(snapshot, agentId, root, workspaceId, 1);
 		if (mapping === undefined) {
-			throw unavailablePort();
+			// Nothing in the provider's snapshot carries this Agent — no pane
+			// to take over, and no workspace bearing its marker either. That is
+			// an Agent that ended, not a surface that would not connect, and
+			// the reconcile this failure wakes is about to remove the row.
+			throw gonePort();
 		}
 		const pane = paneFor(snapshot, mapping);
 		if (pane === undefined) {
@@ -942,8 +963,7 @@ export class HerdrAgentRuntime {
 			throw unavailablePort();
 		}
 		const [status, runtimeHealth] = projectProviderStatus(pane.status);
-		const paneConfirmsActive =
-			pane.agent !== undefined && !providerStatusIsExited(pane.status);
+		const paneConfirmsActive = pane.agent !== undefined;
 		const current = this.#state.mappings.get(agentId);
 		if (current !== undefined && !mappingsEqual(current, mapping)) {
 			this.#state.confirmedAgents.delete(agentId);
@@ -1015,7 +1035,24 @@ export class HerdrAgentRuntime {
 		}
 	}
 
-	/** Exposed for the ported natural-exit test; not part of the port seam. */
+	/**
+	 * Turns one provider snapshot into what the model may be told.
+	 *
+	 * The whole rule is here, and it has one shape. Every round asks a single
+	 * question of every Agent the adapter owns: does this snapshot carry its
+	 * identity? A snapshot that carries it is an observation. A snapshot that
+	 * affirmatively does not — the pane gone from the list, or the pane's
+	 * detected agent gone after Herdr had confirmed one, or no workspace at
+	 * all bearing a restored Agent's marker — is one round of evidence that it
+	 * ended, and only `EXIT_EVIDENCE_ROUNDS` consecutive such rounds remove a
+	 * row. Anything else is missing information: the round says nothing, and
+	 * the Agent keeps the status it had.
+	 *
+	 * Status never decides an exit. See `projectProviderStatus` for why `done`
+	 * is not one.
+	 *
+	 * Exposed for the ported natural-exit test; not part of the port seam.
+	 */
 	projectSnapshot(snapshot: ProviderSnapshot): {
 		observations: AgentObservation[];
 		exited: AgentId[];
@@ -1023,33 +1060,83 @@ export class HerdrAgentRuntime {
 		const observations: AgentObservation[] = [];
 		const exited: AgentId[] = [];
 		let journalChanged = false;
+		// `unknown` is Herdr saying it cannot classify what it sees — while a
+		// launch settles, while a pane redraws — and it is explicit that this
+		// "does not prove completion". Reporting it as an Error status would
+		// make the row flash a failure that never happened; the round simply
+		// has nothing to say, and the Agent keeps the status it had.
+		const observe = (agentId: AgentId, status: ProviderStatus): void => {
+			if (status === ProviderStatus.Unknown) {
+				return;
+			}
+			const [projected, runtimeHealth] = projectProviderStatus(status);
+			observations.push({ agentId, status: projected, runtimeHealth });
+		};
+		const end = (
+			agentId: AgentId,
+			mapping: ProviderMapping,
+			evidence: string,
+		): void => {
+			if (this.#countAbsence(agentId, evidence) < EXIT_EVIDENCE_ROUNDS) {
+				return;
+			}
+			this.#state.addTombstone(agentId, mapping, TombstoneReason.NaturalExit);
+			journalChanged = true;
+			exited.push(agentId);
+			console.log(
+				`[devhub] agent ${agentId} removed: the runtime ended — ${evidence}, on ${EXIT_EVIDENCE_ROUNDS} consecutive snapshots`,
+			);
+		};
 		for (const [agentId, mapping] of [...this.#state.mappings]) {
 			const pane = paneFor(snapshot, mapping);
 			if (pane === undefined) {
-				this.#state.addTombstone(agentId, mapping, TombstoneReason.NaturalExit);
-				journalChanged = true;
-				exited.push(agentId);
+				end(agentId, mapping, `pane ${mapping.paneId} is not in the snapshot`);
 				continue;
 			}
-			// Herdr may temporarily have no detected agent label while a managed
-			// launch settles. Treat that startup absence as still observable,
-			// but once a pane has reported an agent, a later missing identity is
-			// the provider's natural-exit signal.
-			const agentWasConfirmed = this.#state.confirmedAgents.has(agentId);
 			if (pane.agent !== undefined) {
 				this.#state.confirmedAgents.add(agentId);
-			}
-			if (
-				providerStatusIsExited(pane.status) ||
-				(pane.agent === undefined && agentWasConfirmed)
-			) {
-				this.#state.addTombstone(agentId, mapping, TombstoneReason.NaturalExit);
-				journalChanged = true;
-				exited.push(agentId);
+				this.#state.absentRounds.delete(agentId);
+				observe(agentId, pane.status);
 				continue;
 			}
-			const [status, runtimeHealth] = projectProviderStatus(pane.status);
-			observations.push({ agentId, status, runtimeHealth });
+			// Herdr has no detected agent for this pane. Before it ever had
+			// one, that is a managed launch still settling — the pane is alive
+			// and whatever it can say about it is the truth. After it had one,
+			// the identity going away is what an agent process ending looks
+			// like.
+			if (!this.#state.confirmedAgents.has(agentId)) {
+				this.#state.absentRounds.delete(agentId);
+				observe(agentId, pane.status);
+				continue;
+			}
+			end(
+				agentId,
+				mapping,
+				`pane ${mapping.paneId} reports status '${pane.status}' with no detected agent after Herdr had confirmed one`,
+			);
+		}
+		// An Agent restored from the last run whose marker workspace is in no
+		// snapshot has no runtime left to attach to. Herdr lists every
+		// workspace it has, so its absence is an answer, not a silence.
+		for (const agentId of [...this.#state.restoredAgents]) {
+			if (
+				this.#state.mappings.has(agentId) ||
+				this.#state.tombstones.has(agentId)
+			) {
+				this.#state.restoredAgents.delete(agentId);
+				continue;
+			}
+			const evidence = `no workspace carries the marker for the restored agent`;
+			if (this.#countAbsence(agentId, evidence) < EXIT_EVIDENCE_ROUNDS) {
+				continue;
+			}
+			this.#state.restoredAgents.delete(agentId);
+			this.#state.absentRounds.delete(agentId);
+			this.#state.workspaceRoots.delete(agentId);
+			exited.push(agentId);
+			console.log(
+				`[devhub] agent ${agentId} removed: its runtime did not survive the last run — ${evidence}, on ${EXIT_EVIDENCE_ROUNDS} consecutive snapshots`,
+			);
 		}
 		if (journalChanged) {
 			try {
@@ -1063,6 +1150,24 @@ export class HerdrAgentRuntime {
 			}
 		}
 		return { observations, exited };
+	}
+
+	/**
+	 * Records one round of "the provider does not have this Agent" and answers
+	 * how many in a row there have now been. The first one is logged, because
+	 * the interesting case is the Agent that comes back: without the line, a
+	 * provider that keeps blinking leaves nothing behind to explain a row that
+	 * flickers.
+	 */
+	#countAbsence(agentId: AgentId, evidence: string): number {
+		const rounds = (this.#state.absentRounds.get(agentId) ?? 0) + 1;
+		this.#state.absentRounds.set(agentId, rounds);
+		if (rounds === 1) {
+			console.log(
+				`[devhub] agent ${agentId}: ${evidence}; keeping the row until ${EXIT_EVIDENCE_ROUNDS} consecutive snapshots agree`,
+			);
+		}
+		return rounds;
 	}
 
 	async #retryDueTombstones(cancel: CancellationToken): Promise<void> {
@@ -1559,6 +1664,7 @@ export function verifyPing(value: unknown): void {
 export function cleanupHealthCode(error: PortError): AgentRuntimeErrorCode {
 	switch (error.code) {
 		case PortErrorCode.Unavailable:
+		case PortErrorCode.Gone:
 			return AgentRuntimeErrorCode.Disconnected;
 		case PortErrorCode.Incompatible:
 			return AgentRuntimeErrorCode.CapabilityMismatch;

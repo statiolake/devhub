@@ -95,6 +95,22 @@ export class HerdrHarness {
 		this.state.agentStatus = "working";
 	}
 
+	/**
+	 * The agent finished its turn with nobody watching the Herdr UI — which is
+	 * every turn, for a session DevHub keeps hidden. Pane, terminal and agent
+	 * are all still there.
+	 */
+	setDone(): void {
+		this.state.agentLive = true;
+		this.state.agentStatus = "done";
+	}
+
+	/** Herdr closed the pane: the whole workspace is gone from the snapshot. */
+	closePane(): void {
+		this.state.paneLive = false;
+		this.state.agentLive = false;
+	}
+
 	restoreAgent(): void {
 		this.state.agentLive = true;
 		this.state.agentStatus = "working";

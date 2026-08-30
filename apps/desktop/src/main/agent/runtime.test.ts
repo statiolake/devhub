@@ -18,6 +18,8 @@ import {
 import { RuntimeLaunchContext } from "./launchContext.js";
 import {
 	AgentRuntimeHealthState,
+	EXIT_EVIDENCE_ROUNDS,
+	ProviderStatus,
 	encodeProviderMapping,
 	type ProviderMapping,
 	type ProviderProfile,
@@ -29,9 +31,11 @@ import {
 } from "./runtime.js";
 import {
 	AgentProfileKind,
+	AgentStatus,
 	CancellationToken,
 	PortError,
 	PortErrorCode,
+	RuntimeHealth,
 	type AgentProfile,
 } from "./ports.js";
 
@@ -392,12 +396,79 @@ describe("the Herdr agent runtime", () => {
 			AGENT_ID,
 			mapping({ workspaceDomainId: WORKSPACE_ID }),
 		);
-		const { observations, exited } = runtime.projectSnapshot({
-			workspaces: [],
-			panes: [],
-		});
+		const empty = { workspaces: [], panes: [] };
+		for (let round = 1; round < EXIT_EVIDENCE_ROUNDS; round += 1) {
+			const pending = runtime.projectSnapshot(empty);
+			expect(pending.observations).toEqual([]);
+			expect(pending.exited).toEqual([]);
+			expect(runtime.stateForTests.tombstones.has(AGENT_ID)).toBe(false);
+		}
+		const { observations, exited } = runtime.projectSnapshot(empty);
 		expect(observations).toEqual([]);
 		expect(exited).toEqual([AGENT_ID]);
 		expect(runtime.stateForTests.tombstones.has(AGENT_ID)).toBe(true);
+	});
+
+	it("says nothing about an agent Herdr cannot classify", () => {
+		const runtime = runtimeWith(new FakeTransport());
+		const owned = mapping({ workspaceDomainId: WORKSPACE_ID });
+		runtime.stateForTests.mappings.set(AGENT_ID, owned);
+		const pane = (status: ProviderStatus) => ({
+			workspaces: [],
+			panes: [
+				{
+					id: owned.paneId,
+					terminalId: owned.terminalId,
+					workspaceId: owned.workspaceId,
+					tabId: owned.tabId,
+					agent: "codex",
+					status,
+				},
+			],
+		});
+		expect(
+			runtime.projectSnapshot(pane(ProviderStatus.Working)).observations,
+		).toEqual([
+			{
+				agentId: AGENT_ID,
+				status: AgentStatus.Working,
+				runtimeHealth: RuntimeHealth.Healthy,
+			},
+		]);
+		// `unknown` is not a failure to report: the row keeps the status it
+		// has rather than flashing Error while Herdr catches up.
+		const unclassified = runtime.projectSnapshot(pane(ProviderStatus.Unknown));
+		expect(unclassified.observations).toEqual([]);
+		expect(unclassified.exited).toEqual([]);
+		expect(runtime.stateForTests.tombstones.has(AGENT_ID)).toBe(false);
+	});
+
+	it("forgets the evidence as soon as the pane comes back", () => {
+		const runtime = runtimeWith(new FakeTransport());
+		const owned = mapping({ workspaceDomainId: WORKSPACE_ID });
+		runtime.stateForTests.mappings.set(AGENT_ID, owned);
+		const live = {
+			workspaces: [],
+			panes: [
+				{
+					id: owned.paneId,
+					terminalId: owned.terminalId,
+					workspaceId: owned.workspaceId,
+					tabId: owned.tabId,
+					agent: "codex",
+					status: ProviderStatus.Working,
+				},
+			],
+		};
+		const empty = { workspaces: [], panes: [] };
+		for (let round = 0; round < EXIT_EVIDENCE_ROUNDS * 3; round += 1) {
+			// Two rounds of absence, then one that finds it again: the streak
+			// never completes, so the Agent stays for as long as this goes on.
+			expect(runtime.projectSnapshot(empty).exited).toEqual([]);
+			expect(runtime.projectSnapshot(empty).exited).toEqual([]);
+			expect(runtime.projectSnapshot(live).exited).toEqual([]);
+		}
+		expect(runtime.stateForTests.tombstones.has(AGENT_ID)).toBe(false);
+		expect(runtime.stateForTests.mappings.has(AGENT_ID)).toBe(true);
 	});
 });

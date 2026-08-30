@@ -311,7 +311,7 @@ export class AppController {
 		// that are already on screen; the loop below does the rest.
 		for (const workspace of this.coordinator.model.workspaces) {
 			for (const agent of workspace.agents) {
-				this.agentService.runtime.registerAgentWorkspace(
+				this.agentService.runtime.restoreAgent(
 					agent.id,
 					workspace.id,
 					workspace.root,

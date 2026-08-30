@@ -56,6 +56,18 @@ export const MAX_SURFACE_KEY_BYTES = 256;
 export const MAX_TOMBSTONES = 1_024;
 export const MAX_TOMBSTONE_ATTEMPTS = 8;
 export const CLEANUP_RETRY_BASE_MS = 100;
+/**
+ * How many consecutive snapshots must say an Agent's runtime is gone before
+ * DevHub agrees that it is.
+ *
+ * A single snapshot is a photograph, and Herdr takes it while it is itself
+ * changing: a pane can be listed one instant and its agent identity a beat
+ * later. Removing a row on one such frame is how a live Agent disappears with
+ * nothing to show for it. Three rounds is about a second at the reconciler's
+ * cadence — long enough that a frame taken mid-change cannot decide anything,
+ * short enough that an Agent that really ended leaves the sidebar at once.
+ */
+export const EXIT_EVIDENCE_ROUNDS = 3;
 export const RUNTIME_JOURNAL_SCHEMA_VERSION = 1;
 const MAX_RUNTIME_JOURNAL_BYTES = 512 * 1024;
 const RUNTIME_JOURNAL_BACKUP_SUFFIX = ".bak";
@@ -715,6 +727,20 @@ export class AgentRuntimeState {
 	 * remains alive, so absence is only exit evidence after confirmation.
 	 */
 	readonly confirmedAgents = new Set<AgentId>();
+	/**
+	 * How many consecutive reconcile rounds have found nothing of this Agent
+	 * in the provider's snapshot. Reset by any round that finds its identity
+	 * again; read against `EXIT_EVIDENCE_ROUNDS` to decide an exit.
+	 */
+	readonly absentRounds = new Map<AgentId, number>();
+	/**
+	 * Agents this DevHub restored from its own state file and has not yet
+	 * found in the provider. Their runtime belongs to the previous run: if no
+	 * snapshot carries their marker workspace, Herdr is saying it is gone, and
+	 * the row goes with it. An Agent about to be launched is not one of these,
+	 * so a launch in flight is never mistaken for a runtime that ended.
+	 */
+	readonly restoredAgents = new Set<AgentId>();
 	readonly workspaceRoots = new Map<AgentId, [WorkspaceId, string]>();
 	readonly tombstones = new Map<AgentId, CleanupTombstone>();
 	readonly stopping = new Set<AgentId>();
@@ -733,6 +759,8 @@ export class AgentRuntimeState {
 		reason: TombstoneReason,
 	): void {
 		this.confirmedAgents.delete(agentId);
+		this.absentRounds.delete(agentId);
+		this.restoredAgents.delete(agentId);
 		if (
 			this.tombstones.size >= MAX_TOMBSTONES &&
 			!this.tombstones.has(agentId)
@@ -824,10 +852,23 @@ export function providerStatusFromWire(
 	}
 }
 
-export function providerStatusIsExited(status: ProviderStatus): boolean {
-	return status === ProviderStatus.Done;
-}
-
+/**
+ * What a provider status says about the Agent, and what it deliberately does
+ * not say.
+ *
+ * None of these five is an exit. `done` reads like one and is not: Herdr
+ * documents it as "the same underlying idle state after unseen background
+ * work finishes", and an Agent in DevHub's hidden session is unseen by
+ * construction — nobody is looking at that Herdr UI — so every turn an Agent
+ * completes ends in `done` and stays there while the pane, the terminal and
+ * the agent process are all alive. `unknown` says only that Herdr could not
+ * classify what it sees; the skill file is explicit that it "does not prove
+ * completion".
+ *
+ * So an exit is never read off a status. It is read off identity: the pane
+ * gone from the snapshot, or the pane's detected agent gone after Herdr had
+ * confirmed one. See `HerdrAgentRuntime.projectSnapshot`.
+ */
 export function projectProviderStatus(
 	status: ProviderStatus,
 ): [AgentStatus, RuntimeHealth] {

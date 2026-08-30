@@ -15,10 +15,11 @@ import {
 import {
 	AgentSurfaceManager,
 	OutputFlowForTests,
+	terminalErrorFromPort,
 	type FrameSink,
 } from "./channel.js";
 import { delay } from "./api.js";
-import { CancellationToken, unavailablePort } from "./ports.js";
+import { CancellationToken, gonePort, unavailablePort } from "./ports.js";
 import type { HerdrAgentRuntime } from "./runtime.js";
 import type { AgentSurface } from "./surface.js";
 
@@ -312,5 +313,16 @@ describe("the agent surface manager", () => {
 			.find((frame) => frame.type === "error");
 		expect(error?.type).toBe("error");
 		await manager.detachAllUntil(Date.now() + 1_000);
+	});
+
+	it("tells an ended agent apart from a surface that would not connect", () => {
+		// The two look identical to a person unless they are named apart: one
+		// is worth retrying, the other has nothing left to retry against.
+		expect(terminalErrorFromPort(gonePort()).code).toBe(
+			TerminalErrorCode.SessionUnavailable,
+		);
+		expect(terminalErrorFromPort(unavailablePort()).code).toBe(
+			TerminalErrorCode.SurfaceUnavailable,
+		);
 	});
 });

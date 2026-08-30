@@ -25,7 +25,6 @@ import {
 	mappingsEqual,
 	projectProviderStatus,
 	providerAgentName,
-	providerStatusIsExited,
 	recoverMapping,
 	saveCleanupJournal,
 	validateProfile,
@@ -234,7 +233,13 @@ describe("provider projection", () => {
 			AgentStatus.Error,
 			RuntimeHealth.Degraded,
 		]);
-		expect(providerStatusIsExited(ProviderStatus.Done)).toBe(true);
+		// `done` is Herdr's idle-after-unseen-work, not an exit: an Agent in
+		// DevHub's hidden session is unseen by construction, so every finished
+		// turn lands here while the agent is still very much alive.
+		expect(projectProviderStatus(ProviderStatus.Done)).toEqual([
+			AgentStatus.Idle,
+			RuntimeHealth.Healthy,
+		]);
 	});
 
 	it("recovers a mapping from the hidden workspace marker", () => {

@@ -22,6 +22,14 @@ import type {
 export enum PortErrorCode {
 	Failed = "failed",
 	Unavailable = "unavailable",
+	/**
+	 * The provider affirmatively has no such resource: nothing in its snapshot
+	 * carries this Agent. Distinct from `Unavailable`, which says the thing may
+	 * well be there and could not be reached — the difference between "it
+	 * ended" and "it did not answer", and the two must never be shown as the
+	 * same sentence.
+	 */
+	Gone = "gone",
 	Incompatible = "incompatible",
 	Conflict = "conflict",
 	TimedOut = "timedOut",
@@ -45,6 +53,10 @@ export function failedPort(): PortError {
 
 export function unavailablePort(): PortError {
 	return new PortError(PortErrorCode.Unavailable);
+}
+
+export function gonePort(): PortError {
+	return new PortError(PortErrorCode.Gone);
 }
 
 export function conflictPort(): PortError {

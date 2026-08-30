@@ -78,6 +78,12 @@ export function terminalErrorFromPort(error: unknown): TerminalError {
 	switch (error.code) {
 		case PortErrorCode.Unavailable:
 			return terminalError(TerminalErrorCode.SurfaceUnavailable);
+		// The Agent's runtime is not missing an answer, it is missing. Saying
+		// "not connected" here would invite a retry of something that has
+		// nothing left to connect to, and would hide the one fact that matters
+		// while the reconciler removes the row.
+		case PortErrorCode.Gone:
+			return terminalError(TerminalErrorCode.SessionUnavailable);
 		case PortErrorCode.Conflict:
 			return terminalError(TerminalErrorCode.AttachmentLimit);
 		case PortErrorCode.TimedOut:
