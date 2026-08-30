@@ -2,3 +2,7 @@
 	path = vscode
 	url = https://github.com/microsoft/vscode.git
 	shallow = true
+	# scripts/provision-vscode.sh applies patches/vscode/*.patch to the checkout
+	# and resets it before every run, so the working tree is expected to differ
+	# from the pinned commit. The commit itself is still tracked.
+	ignore = dirty

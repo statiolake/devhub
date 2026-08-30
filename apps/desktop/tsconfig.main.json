@@ -33,7 +33,6 @@
       "code-oss-dev/out/*": ["./node_modules/code-oss-dev/src/*"],
       // Dependencies of the copied entry points, resolved where VS Code keeps
       // them: they are the submodule's, not DevHub's.
-      "minimist": ["../../vscode/node_modules/@types/minimist/index.d.ts"],
       "windows-foreground-love": [
         "../../vscode/node_modules/@types/windows-foreground-love/index.d.ts"
       ],

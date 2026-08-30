@@ -11,6 +11,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { NativeParsedArgs } from 'code-oss-dev/out/vs/platform/environment/common/argv.js';
 import { createShellController } from './shellController.js';
+import { registerShellPageProtocol, SHELL_ORIGIN } from './shellPageProtocol.js';
 import { createShellWindow } from './shellWindow.js';
 import { WorkspaceStore } from './workspaces.js';
 
@@ -22,9 +23,14 @@ const APP_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
  * title bar of its own. These are written once, and only where the person has
  * not already said otherwise.
  */
-const WORKBENCH_DEFAULTS: Readonly<Record<string, string>> = {
+const WORKBENCH_DEFAULTS: Readonly<Record<string, string | boolean>> = {
 	'window.titleBarStyle': 'custom',
-	'window.customTitleBarVisibility': 'never'
+	'window.customTitleBarVisibility': 'never',
+	// The workbench forces the title bar back to 'auto' whenever something that
+	// lives in it is enabled — the command centre and the layout controls both
+	// count — so asking for 'never' means turning those off as well.
+	'window.commandCenter': false,
+	'workbench.layoutControl.enabled': false
 };
 
 function ensureWorkbenchDefaults(userDataPath: string): void {
@@ -56,9 +62,7 @@ function ensureWorkbenchDefaults(userDataPath: string): void {
 export function bootstrapShell(userDataPath: string, cliArgs: NativeParsedArgs): void {
 	ensureWorkbenchDefaults(userDataPath);
 
-	createShellWindow(
-		join(APP_ROOT, 'out', 'preload', 'preload.mjs'),
-		join(APP_ROOT, 'dist', 'shell', 'index.html')
-	);
+	registerShellPageProtocol(join(APP_ROOT, 'dist', 'shell'));
+	createShellWindow(join(APP_ROOT, 'out', 'preload', 'preload.js'), `${SHELL_ORIGIN}/index.html`);
 	createShellController(new WorkspaceStore(join(userDataPath, 'devhub', 'workspaces.json')), cliArgs);
 }

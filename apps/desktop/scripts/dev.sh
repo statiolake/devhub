@@ -15,12 +15,14 @@ APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPO_ROOT="$(cd "$APP_DIR/../.." && pwd)"
 VSCODE_DIR="$REPO_ROOT/vscode"
 
-ELECTRON="$VSCODE_DIR/.build/electron/Code - OSS.app/Contents/MacOS/Electron"
+# The binary is named after VS Code's own product, because it is VS Code's own
+# Electron: the app bundle npm run electron unpacked into the submodule.
+case "$(uname -s)" in
+	Darwin) ELECTRON="$VSCODE_DIR/.build/electron/Code - OSS.app/Contents/MacOS/Code - OSS" ;;
+	*) ELECTRON="$VSCODE_DIR/.build/electron/code-oss" ;;
+esac
 if [ ! -x "$ELECTRON" ]; then
-	ELECTRON="$VSCODE_DIR/.build/electron/electron"
-fi
-if [ ! -x "$ELECTRON" ]; then
-	echo "no Electron in $VSCODE_DIR/.build — run scripts/provision-vscode.sh" >&2
+	echo "no Electron at $ELECTRON — run scripts/provision-vscode.sh" >&2
 	exit 1
 fi
 

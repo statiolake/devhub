@@ -18,7 +18,7 @@ export class ShellWindow {
 	private revealed: WorkbenchView | undefined;
 	private contentRect: ContentRect | undefined;
 
-	constructor(preloadPath: string, pagePath: string) {
+	constructor(preloadPath: string, pageUrl: string) {
 		this.window = new electron.BrowserWindow({
 			width: 1440,
 			height: 900,
@@ -40,7 +40,7 @@ export class ShellWindow {
 			}
 		});
 
-		this.window.loadFile(pagePath);
+		this.window.loadURL(pageUrl);
 		this.window.once('ready-to-show', () => this.window.show());
 		this.window.on('resize', () => this.layout());
 		this.window.on('closed', () => electron.app.quit());
@@ -132,11 +132,11 @@ export class ShellWindow {
 
 let current: ShellWindow | undefined;
 
-export function createShellWindow(preloadPath: string, pagePath: string): ShellWindow {
+export function createShellWindow(preloadPath: string, pageUrl: string): ShellWindow {
 	if (current) {
 		throw new Error('the App Shell window already exists');
 	}
-	current = new ShellWindow(preloadPath, pagePath);
+	current = new ShellWindow(preloadPath, pageUrl);
 	return current;
 }
 

@@ -14,7 +14,9 @@
  *    2. Imports are rebased from relative paths onto `code-oss-dev/out/...`,
  *       and the NLS bundle paths point at the submodule's own `out/` rather
  *       than at this file's directory, which is now DevHub's.
- *    3. The final dynamic import of VS Code's `CodeMain` loads DevHub's copy
+ *    3. `devhub-app:` joins the privileged schemes: the App Shell page is
+ *       DevHub's own resource, on a scheme DevHub owns and serves.
+ *    4. The final dynamic import of VS Code's `CodeMain` loads DevHub's copy
  *       (./codeMain.js) instead.
  *
  *  Everything else is upstream, including the copyright below.
@@ -133,6 +135,12 @@ protocol.registerSchemesAsPrivileged([
 	},
 	{
 		scheme: 'vscode-file',
+		privileges: { secure: true, standard: true, supportFetchAPI: true, corsEnabled: true, codeCache: true }
+	},
+	// DevHub: the App Shell page's own scheme. It is not VS Code's, and it is
+	// served from one directory only (shell/shellPageProtocol.ts).
+	{
+		scheme: 'devhub-app',
 		privileges: { secure: true, standard: true, supportFetchAPI: true, corsEnabled: true, codeCache: true }
 	}
 ]);

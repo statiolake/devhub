@@ -6,17 +6,19 @@
   "main": "out/main/main.js",
   "scripts": {
     "dev": "scripts/dev.sh",
-    "build:main": "tsc -p tsconfig.main.json && tsc -p tsconfig.preload.json",
+    "build:main": "tsc -p tsconfig.main.json",
     "build:shell": "vite build",
-    "build": "pnpm run build:main && pnpm run build:shell",
+    "build": "pnpm run build:main && pnpm run build:preload && pnpm run build:shell",
     "typecheck": "tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.preload.json --noEmit && tsc -p tsconfig.shell.json --noEmit",
     "lint": "eslint .",
     "test": "vitest run",
-    "fmt": "prettier --write src scripts index.html package.json vite.config.ts eslint.config.js",
-    "fmt:check": "prettier --check src scripts index.html package.json vite.config.ts eslint.config.js"
+    "fmt": "prettier --write src scripts index.html package.json vite.config.ts vite.config.preload.ts eslint.config.js",
+    "fmt:check": "prettier --check src scripts index.html package.json vite.config.ts vite.config.preload.ts eslint.config.js",
+    "build:preload": "vite build -c vite.config.preload.ts"
   },
   "dependencies": {
     "code-oss-dev": "link:../../vscode",
+    "minimist": "1.2.8",
     "react": "19.1.1",
     "react-dom": "19.1.1"
   },
@@ -24,6 +26,7 @@
     "@eslint/js": "9.34.0",
     "@testing-library/jest-dom": "6.8.0",
     "@testing-library/react": "16.3.0",
+    "@types/minimist": "1.2.5",
     "@types/react": "19.1.10",
     "@types/react-dom": "19.1.7",
     "@vitejs/plugin-react": "5.0.2",

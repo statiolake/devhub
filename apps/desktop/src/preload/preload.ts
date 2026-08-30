@@ -4,6 +4,11 @@
  * Nothing here decides anything: each member forwards one request and lets the
  * failure through. A rejected call surfaces in the page's error area rather
  * than being turned into a quiet default here.
+ *
+ * VS Code calls `app.enableSandbox()`, so every renderer — DevHub's page
+ * included — is sandboxed, and a sandboxed preload is a single CommonJS file
+ * with no module resolver behind it. Vite bundles this one, which is how the
+ * contract it shares with main stays a single file.
  */
 
 import { contextBridge, ipcRenderer } from 'electron';

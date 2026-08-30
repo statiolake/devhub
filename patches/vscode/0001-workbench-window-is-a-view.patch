@@ -1,0 +1,21 @@
+diff --git a/src/vs/platform/windows/electron-main/windowImpl.ts b/src/vs/platform/windows/electron-main/windowImpl.ts
+index 7aeeb120..5096bb93 100644
+--- a/src/vs/platform/windows/electron-main/windowImpl.ts
++++ b/src/vs/platform/windows/electron-main/windowImpl.ts
+@@ -716,7 +716,15 @@ export class CodeWindow extends BaseWindow implements ICodeWindow {
+ 
+ 			// Create the browser window
+ 			mark('code/willCreateCodeBrowserWindow');
+-			this._win = new electron.BrowserWindow(options);
++			// DevHub: a workbench window is a view inside DevHub's App Shell
++			// window, never a window of its own. The factory is installed by
++			// apps/desktop/src/main/shell/browserWindowShim.ts before any VS Code
++			// module loads; its absence is a broken invariant, not a fallback.
++			const devhubCreateWorkbenchWindow = (globalThis as { __devhubCreateWorkbenchWindow?: (options: electron.BrowserWindowConstructorOptions) => electron.BrowserWindow }).__devhubCreateWorkbenchWindow;
++			if (typeof devhubCreateWorkbenchWindow !== 'function') {
++				throw new Error('DevHub: __devhubCreateWorkbenchWindow is not installed');
++			}
++			this._win = devhubCreateWorkbenchWindow(options);
+ 			mark('code/didCreateCodeBrowserWindow');
+ 
+ 			this._id = this._win.id;

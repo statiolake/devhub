@@ -1,6 +1,6 @@
 {
-  // The App Shell page's preload. Electron loads an ESM preload only from a
-  // `.mjs` file, so the source is `.mts` and tsc keeps the extension.
+  // The App Shell page's preload. Vite bundles it (see vite.config.preload.ts);
+  // this config only type-checks it.
   "compilerOptions": {
     "target": "ES2024",
     "lib": ["ES2024", "DOM", "DOM.Iterable"],
@@ -12,8 +12,7 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "skipLibCheck": true,
-    "outDir": "out",
-    "rootDir": "src"
+    "noEmit": true
   },
   "include": ["src/preload", "src/ipc"]
 }

@@ -70,12 +70,31 @@ else
 	echo "vscode/node_modules already installed"
 fi
 
+# --- 3b. the patches DevHub cannot avoid ------------------------------------
+# VS Code is consumed, never edited: everything DevHub needs is a subclass, a
+# service registration, or a replaced Electron static. patches/vscode/ is the
+# one exception, for what none of those can reach. Each patch says why in its
+# own body; the working tree is reset first so this stays idempotent.
+step "patches/vscode"
+PATCH_STAMP="$VSCODE_DIR/.build/devhub-patches.stamp"
+PATCH_STATE="$(cat "$REPO_ROOT"/patches/vscode/*.patch 2>/dev/null | shasum | cut -d' ' -f1)"
+git -C "$VSCODE_DIR" checkout -- .
+for patch in "$REPO_ROOT"/patches/vscode/*.patch; do
+	[ -e "$patch" ] || continue
+	echo "applying $(basename "$patch")"
+	git -C "$VSCODE_DIR" apply "$patch"
+done
+
 # --- 4. compile ------------------------------------------------------------
 step "compile vscode/"
-if [ "$FORCE" = 1 ] || [ ! -f "$VSCODE_DIR/out/vs/code/electron-main/main.js" ]; then
+if [ "$FORCE" = 1 ] \
+	|| [ ! -f "$VSCODE_DIR/out/vs/code/electron-main/main.js" ] \
+	|| [ "$(cat "$PATCH_STAMP" 2>/dev/null)" != "$PATCH_STATE" ]; then
 	(cd "$VSCODE_DIR" && npm run compile)
+	mkdir -p "$(dirname "$PATCH_STAMP")"
+	printf '%s' "$PATCH_STATE" > "$PATCH_STAMP"
 else
-	echo "vscode/out already compiled"
+	echo "vscode/out already compiled from the current patches"
 fi
 
 # --- 5. the Electron our main process runs in ------------------------------

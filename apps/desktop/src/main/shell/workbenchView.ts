@@ -239,6 +239,7 @@ export class WorkbenchView {
 	setSheetOffset(): void { }
 	setTitleBarOverlay(): void { }
 	setWindowButtonVisibility(): void { }
+	setWindowButtonPosition(): void { }
 	setProgressBar(): void { }
 	setIcon(): void { }
 	setSkipTaskbar(): void { }

@@ -1,128 +1,106 @@
 /**
- * Replace Electron's `BrowserWindow` before VS Code ever sees it.
+ * Teach Electron's `BrowserWindow` about DevHub's workbench views.
  *
- * VS Code creates its workbench window with `new Electron.BrowserWindow(...)`
- * and finds windows again through the statics `getAllWindows`,
- * `fromWebContents`, `getFocusedWindow` and `fromId`. Rather than patch those
- * call sites in the submodule, DevHub installs a subclass on the `electron`
- * module object once, at startup, before any VS Code module is loaded:
+ * VS Code's main process finds windows through four statics on that class —
+ * `getAllWindows`, `fromWebContents`, `getFocusedWindow`, `fromId`. DevHub's
+ * workbenches are not windows but `WebContentsView`s inside the one App Shell
+ * window, so those four are replaced here, once, before any VS Code module
+ * loads. Everything upstream that resolves a window by id then keeps working
+ * unmodified: `CodeWindow.id` is its window's id, and a view's id is its
+ * webContents id.
  *
- *  - constructing one with a workbench window's options returns a
- *    `WorkbenchView` instead of a window (a constructor may return a different
- *    object; the derived constructor simply never calls `super`);
- *  - the statics answer with the views, so every `getWindowById` /
- *    `getWindowByWebContents` / `getFocusedWindow` path in the main process
- *    keeps working unmodified.
+ * The construction site cannot be reached this way. `electron.BrowserWindow`
+ * is a non-configurable accessor on the module object, so the class itself
+ * cannot be swapped for a subclass whose constructor returns a view. That one
+ * site is therefore the single source patch DevHub carries against the
+ * submodule — patches/vscode/0001-workbench-window-is-a-view.patch — and it
+ * calls the factory installed here as a global.
  *
- * The App Shell window itself is created through the same class, with options
- * that carry no workbench signature, so it comes out as a real window.
- *
- * The module property is a lazy getter, and ESM named imports of a CommonJS
- * module snapshot its properties the first time it is imported as ESM. Both are
- * checked here and both fail loudly: a silent fallback would leave the workbench
- * quietly creating real windows.
+ * Both facts are checked at startup and fail loudly. A silent fallback would
+ * leave the workbench quietly opening real windows of its own.
  */
 
-import { electron as electronModule } from '../electron.js';
+import { electron } from '../electron.js';
 import { shellWindow, shellWindowIfCreated } from './shellWindow.js';
 import { asBrowserWindow, WorkbenchView } from './workbenchView.js';
 
-/**
- * The signature of a workbench window: `CodeWindow` passes the address of its
- * window configuration to the sandbox preload through an additional argument,
- * and nothing else in the main process does.
- */
-const WINDOW_CONFIG_ARGUMENT = '--vscode-window-config=';
-
-function isWorkbenchWindow(options: Electron.BrowserWindowConstructorOptions | undefined): boolean {
-	return options?.webPreferences?.additionalArguments?.some(argument => argument.startsWith(WINDOW_CONFIG_ARGUMENT)) ?? false;
+declare global {
+	// eslint-disable-next-line no-var
+	var __devhubCreateWorkbenchWindow:
+		| ((options: Electron.BrowserWindowConstructorOptions) => Electron.BrowserWindow)
+		| undefined;
 }
 
-export async function installBrowserWindowShim(): Promise<void> {
-	const RealBrowserWindow = electronModule.BrowserWindow;
+function createWorkbenchWindow(options: Electron.BrowserWindowConstructorOptions): Electron.BrowserWindow {
+	const shell = shellWindow();
+	const view = new WorkbenchView(shell, options);
+	shell.attach(view);
+	console.log(`[devhub] workbench view ${view.id} created — ${shell.getViews().length} view(s) in the shell`);
+	return asBrowserWindow(view);
+}
 
-	class DevHubBrowserWindow extends RealBrowserWindow {
-		constructor(options?: Electron.BrowserWindowConstructorOptions) {
-			if (isWorkbenchWindow(options)) {
-				const shell = shellWindow();
-				const view = new WorkbenchView(shell, options!);
-				shell.attach(view);
-				console.log(`[devhub] workbench view ${view.id} created — ${shell.getViews().length} view(s) in the shell`);
-				return asBrowserWindow(view) as unknown as DevHubBrowserWindow;
-			}
+function assertReplaceable(target: object, property: string, what: string): void {
+	const descriptor = Object.getOwnPropertyDescriptor(target, property);
+	if (!descriptor?.writable && !descriptor?.configurable) {
+		throw new Error(`DevHub cannot replace ${what}: it is a ${descriptor?.get ? 'non-configurable accessor' : 'read-only property'}`);
+	}
+}
 
-			super(options);
-		}
+export function installBrowserWindowShim(): void {
+	const BrowserWindow = electron.BrowserWindow;
 
-		/**
-		 * The windows VS Code owns are the workbench views. The App Shell
-		 * window is DevHub's own chrome: handing it to VS Code would put it in
-		 * the lifecycle's kill list and in the diagnostics as a workbench.
-		 */
-		static override getAllWindows(): Electron.BrowserWindow[] {
-			const shell = shellWindowIfCreated();
-			if (!shell) {
-				return RealBrowserWindow.getAllWindows();
-			}
-			const real = RealBrowserWindow.getAllWindows().filter(window => window !== shell.window);
-			return [...real, ...shell.getViews().map(view => asBrowserWindow(view))];
-		}
+	// Captured before they are replaced; the replacements call them.
+	const realGetAllWindows = BrowserWindow.getAllWindows.bind(BrowserWindow);
+	const realFromWebContents = BrowserWindow.fromWebContents.bind(BrowserWindow);
+	const realGetFocusedWindow = BrowserWindow.getFocusedWindow.bind(BrowserWindow);
+	const realFromId = BrowserWindow.fromId.bind(BrowserWindow);
 
-		static override fromWebContents(webContents: Electron.WebContents): Electron.BrowserWindow | null {
-			const shell = shellWindowIfCreated();
-			const view = shell?.getViewById(webContents.id);
-			if (view) {
-				return asBrowserWindow(view);
-			}
-			const window = RealBrowserWindow.fromWebContents(webContents);
-			return window && window === shell?.window ? null : window;
-		}
-
-		static override fromId(id: number): Electron.BrowserWindow | null {
-			const shell = shellWindowIfCreated();
-			const view = shell?.getViewById(id);
-			if (view) {
-				return asBrowserWindow(view);
-			}
-			const window = RealBrowserWindow.fromId(id);
-			return window && window === shell?.window ? null : window;
-		}
-
-		/**
-		 * Focus lives on the shell window; which workbench is focused is the
-		 * question of which view's contents hold it.
-		 */
-		static override getFocusedWindow(): Electron.BrowserWindow | null {
-			const shell = shellWindowIfCreated();
-			const window = RealBrowserWindow.getFocusedWindow();
-			if (!shell || window !== shell.window) {
-				return window;
-			}
-			const view = shell.getViews().find(candidate => candidate.webContents.isFocused());
-			return view ? asBrowserWindow(view) : null;
-		}
+	for (const name of ['getAllWindows', 'fromWebContents', 'getFocusedWindow', 'fromId'] as const) {
+		assertReplaceable(BrowserWindow, name, `BrowserWindow.${name}`);
 	}
 
-	const descriptor = Object.getOwnPropertyDescriptor(electronModule, 'BrowserWindow');
-	if (!descriptor?.configurable) {
-		throw new Error(`cannot replace Electron.BrowserWindow: property is not configurable (${JSON.stringify(descriptor)})`);
-	}
-	Object.defineProperty(electronModule, 'BrowserWindow', {
-		value: DevHubBrowserWindow,
-		configurable: true,
-		enumerable: descriptor.enumerable,
-		writable: true
-	});
+	/**
+	 * The views join the real windows; nothing is taken away. The App Shell
+	 * window is one of DevHub's windows too, and code that walks this list is
+	 * asking about real windows on screen — the frame authorisation in
+	 * `app.ts`, for one, which serves `vscode-file:` only to a frame belonging
+	 * to a window it finds here, and the App Shell page is served that way.
+	 */
+	BrowserWindow.getAllWindows = () => {
+		const shell = shellWindowIfCreated();
+		if (!shell) {
+			return realGetAllWindows();
+		}
+		return [...realGetAllWindows(), ...shell.getViews().map(view => asBrowserWindow(view))];
+	};
 
-	// Mint the ESM namespace now and prove that it — and therefore every
-	// `import { BrowserWindow } from 'electron'` in VS Code — sees ours.
-	const namespace = await import('electron');
-	if (namespace.BrowserWindow !== DevHubBrowserWindow) {
-		throw new Error('electron ESM named export BrowserWindow did not observe the DevHub replacement');
-	}
-	if (namespace.default.BrowserWindow !== DevHubBrowserWindow) {
-		throw new Error('electron ESM default export BrowserWindow did not observe the DevHub replacement');
-	}
+	BrowserWindow.fromWebContents = webContents => {
+		const view = shellWindowIfCreated()?.getViewById(webContents.id);
+		return view ? asBrowserWindow(view) : realFromWebContents(webContents);
+	};
+
+	BrowserWindow.fromId = id => {
+		const view = shellWindowIfCreated()?.getViewById(id);
+		return view ? asBrowserWindow(view) : realFromId(id);
+	};
+
+	/**
+	 * The one place the App Shell window must *not* be the answer. Focus lives
+	 * on it, but "which window is focused" is asked in order to find the
+	 * workbench the person is working in, and that is whichever view's contents
+	 * hold focus inside the shell.
+	 */
+	BrowserWindow.getFocusedWindow = () => {
+		const shell = shellWindowIfCreated();
+		const window = realGetFocusedWindow();
+		if (!shell || window !== shell.window) {
+			return window;
+		}
+		const view = shell.getViews().find(candidate => candidate.webContents.isFocused());
+		return view ? asBrowserWindow(view) : null;
+	};
+
+	globalThis.__devhubCreateWorkbenchWindow = createWorkbenchWindow;
 
 	console.log('[devhub] BrowserWindow shim installed');
 }
