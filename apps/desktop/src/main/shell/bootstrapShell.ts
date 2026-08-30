@@ -20,6 +20,7 @@ import { createShellWindow, shellWindowIfCreated } from "./shellWindow.js";
 import { installSettingsWindow, logDirectoryFor } from "./settingsWindow.js";
 import { refreshMenu } from "./menu.js";
 import { installWorkbenchDialogs } from "./workbenchDialogs.js";
+import { installKeyboard } from "./keyboard.js";
 
 /** How long a quit waits for the runtimes to let go before leaving anyway. */
 const SHUTDOWN_DEADLINE_MS = 3_000;
@@ -152,6 +153,7 @@ export async function bootstrapShell(
 	});
 
 	installWorkbenchDialogs();
+	installKeyboard();
 	controller.installMenuBar();
 	// A Mac menu bar describes the key window, so it is rebuilt when the key
 	// window changes as well as when the model does.

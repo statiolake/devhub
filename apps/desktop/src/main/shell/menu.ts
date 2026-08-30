@@ -10,6 +10,15 @@
  * say what is true now — Close Workspace is only meaningful with a workspace
  * selected, Hide Sidebar becomes Show Sidebar, and an activity that is not
  * available in the current context is not a choice.
+ *
+ * **Nothing here has an accelerator, deliberately.** A menu accelerator is a
+ * key taken away from whatever is focused, and DevHub's surfaces are whole
+ * applications with their own: Command-W closes an editor tab, Command-N makes
+ * a file, Command-1 focuses an editor group, Command-K belongs to the
+ * terminal. A menu that claimed those would break every one of them to save a
+ * click. The keys stay with the surfaces; the menu stays the place commands
+ * can be found and clicked. Quitting is the Quit item, or the Command-Q chord
+ * (see `keyRouter.ts`), which is the one key DevHub does interpret.
  */
 
 import { electron } from "../electron.js";
@@ -24,7 +33,7 @@ export interface MenuHost {
 	 *
 	 * A Mac menu bar describes the key window, so Cmd+W has to mean "close this
 	 * Settings window" while Settings is in front and "close this workspace"
-	 * while the main window is. One accelerator, whichever window it lands in.
+	 * while the main window is.
 	 */
 	focusedWindow(): "shell" | "settings" | "none";
 	selectActivity(activity: Activity): void;
@@ -39,11 +48,10 @@ let host: MenuHost | undefined;
 const ACTIVITY_ITEMS: readonly {
 	readonly activity: Activity;
 	readonly label: string;
-	readonly accelerator: string;
 }[] = [
-	{ activity: "editor", label: "Editor", accelerator: "CmdOrCtrl+1" },
-	{ activity: "agent", label: "Agent", accelerator: "CmdOrCtrl+2" },
-	{ activity: "terminal", label: "Terminal", accelerator: "CmdOrCtrl+3" },
+	{ activity: "editor", label: "Editor" },
+	{ activity: "agent", label: "Agent" },
+	{ activity: "terminal", label: "Terminal" },
 ];
 
 /**
@@ -77,34 +85,44 @@ function template(menuHost: MenuHost): Electron.MenuItemConstructorOptions[] {
 		{
 			label: "DevHub",
 			submenu: [
-				{ role: "about", label: "About DevHub" },
+				{ role: "about", label: "About DevHub", registerAccelerator: false },
 				{ type: "separator" },
 				{
 					label: "Settings…",
-					accelerator: "CmdOrCtrl+,",
 					click: () => {
 						menuHost.openSettings();
 					},
 				},
 				{ type: "separator" },
-				{ role: "services" },
+				{ role: "services", registerAccelerator: false },
 				{ type: "separator" },
-				{ role: "hide", label: "Hide DevHub" },
-				{ role: "hideOthers" },
-				{ role: "unhide" },
+				{ role: "hide", label: "Hide DevHub", registerAccelerator: false },
+				{ role: "hideOthers", registerAccelerator: false },
+				{ role: "unhide", registerAccelerator: false },
 				{ type: "separator" },
-				{ role: "quit", label: "Quit DevHub" },
+				{
+					label: "Quit DevHub",
+					click: () => {
+						electron.app.quit();
+					},
+				},
 			],
 		},
 		{
 			label: "File",
 			submenu:
 				menuHost.focusedWindow() === "settings"
-					? [{ role: "close", label: "Close Settings" }]
+					? [
+							{
+								label: "Close Settings",
+								click: () => {
+									electron.BrowserWindow.getFocusedWindow()?.close();
+								},
+							},
+						]
 					: [
 							{
 								label: "Add Workspace…",
-								accelerator: "CmdOrCtrl+N",
 								click: () => {
 									menuHost.openWorkspacePicker();
 								},
@@ -117,44 +135,39 @@ function template(menuHost: MenuHost): Electron.MenuItemConstructorOptions[] {
 								label: workspace
 									? `Close “${workspace.label}”`
 									: "Close Workspace",
-								accelerator: "CmdOrCtrl+W",
 								enabled: workspace !== undefined,
 								click: () => {
 									if (workspace) menuHost.closeWorkspace(workspace.id);
 								},
 							},
 							{
-								role: "close",
 								label: "Close Window",
-								accelerator: "Shift+Cmd+W",
+								click: () => {
+									electron.BrowserWindow.getFocusedWindow()?.close();
+								},
 							},
 						],
 		},
 		{
 			label: "Edit",
 			submenu: [
-				{ role: "undo" },
-				{ role: "redo" },
+				{ role: "undo", registerAccelerator: false },
+				{ role: "redo", registerAccelerator: false },
 				{ type: "separator" },
-				{ role: "cut" },
-				{ role: "copy" },
-				{ role: "paste" },
-				{ role: "pasteAndMatchStyle" },
-				{ role: "delete" },
-				{ role: "selectAll" },
+				{ role: "cut", registerAccelerator: false },
+				{ role: "copy", registerAccelerator: false },
+				{ role: "paste", registerAccelerator: false },
+				{ role: "pasteAndMatchStyle", registerAccelerator: false },
+				{ role: "delete", registerAccelerator: false },
+				{ role: "selectAll", registerAccelerator: false },
 			],
 		},
 		{
 			label: "View",
 			submenu: [
 				...ACTIVITY_ITEMS.map(
-					({
-						activity,
+					({ activity, label }): Electron.MenuItemConstructorOptions => ({
 						label,
-						accelerator,
-					}): Electron.MenuItemConstructorOptions => ({
-						label,
-						accelerator,
 						type: "checkbox",
 						checked: snapshot?.selection.activity === activity,
 						enabled:
@@ -168,22 +181,25 @@ function template(menuHost: MenuHost): Electron.MenuItemConstructorOptions[] {
 				{ type: "separator" },
 				{
 					label: sidebarVisible ? "Hide Sidebar" : "Show Sidebar",
-					accelerator: "Control+Cmd+S",
 					click: () => {
 						menuHost.setSidebarVisible(!sidebarVisible);
 					},
 				},
 				{ type: "separator" },
-				{ role: "togglefullscreen" },
+				{ role: "togglefullscreen", registerAccelerator: false },
 			],
 		},
 		{
 			label: "Window",
 			submenu: [
-				{ role: "minimize" },
-				{ role: "zoom" },
+				{ role: "minimize", registerAccelerator: false },
+				{ role: "zoom", registerAccelerator: false },
 				{ type: "separator" },
-				{ role: "front", label: "Bring All to Front" },
+				{
+					role: "front",
+					label: "Bring All to Front",
+					registerAccelerator: false,
+				},
 			],
 		},
 		{
