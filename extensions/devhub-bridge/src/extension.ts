@@ -1,11 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import * as vscode from "vscode";
-import type {
-  AbsolutePath,
-  Context,
-  UUID,
-} from "../../../apps/devhub/src/generated/bridge/index";
+import type { AbsolutePath, Context, UUID } from "./generated/bridge/index";
 import {
   findSurfaceForRoot,
   normalizedAbsolutePath,

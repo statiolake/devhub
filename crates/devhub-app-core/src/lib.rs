@@ -1,26 +1,13 @@
 #![forbid(unsafe_code)]
 
-//! Rust-owned state for the native DevHub application shell.
+//! The Rust side of DevHub's Bridge protocol.
 //!
-//! The pure [`domain`] and [`snapshot`] modules own Workspace, Agent,
-//! navigation, lifecycle, and immutable UI projection rules. The shell seam
-//! below remains deliberately separate: provider/editor/terminal adapters and
-//! Tauri command wiring do not enter the pure model.
+//! The Bridge is the narrow, versioned surface between DevHub and the VS Code
+//! extension that runs inside a workbench. The protocol types here own the
+//! schema and its canonical fixtures; the TypeScript consumer is generated from
+//! them, so the two cannot drift.
+//!
+//! DevHub's own application state lives in the desktop app's main process, not
+//! here.
 
-pub mod application;
 pub mod bridge;
-pub mod config;
-pub mod domain;
-pub mod ports;
-pub mod settings;
-pub mod shell;
-pub mod snapshot;
-pub mod state;
-
-pub use application::*;
-pub use domain::*;
-pub use ports::*;
-pub use settings::*;
-pub use shell::*;
-pub use snapshot::*;
-pub use state::*;

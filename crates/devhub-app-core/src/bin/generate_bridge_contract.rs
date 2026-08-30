@@ -460,7 +460,10 @@ fn outputs(root: &Path) -> Vec<(PathBuf, String)> {
         ),
         (root.join("contracts/bridge/valid.ndjson"), valid),
         (root.join("contracts/bridge/invalid.ndjson"), invalid),
-        (root.join("apps/devhub/src/generated/bridge/index.ts"), generated_typescript(&schema)),
+        (
+            root.join("extensions/devhub-bridge/src/generated/bridge/index.ts"),
+            generated_typescript(&schema),
+        ),
     ]
 }
 

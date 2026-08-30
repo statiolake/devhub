@@ -7,14 +7,14 @@ import { findSurfaceForRoot, parseSurfaceRegistry } from "../src/registry";
 const globalSurface = "11111111-1111-4111-8111-111111111111";
 const workspaceId = "22222222-2222-4222-8222-222222222222";
 const workspaceSurface = "33333333-3333-4333-8333-333333333333";
-const workspaceRoot = "/Users/statiolake/DevHub/workspaces/alpha";
+const workspaceRoot = "/Users/testuser/DevHub/workspaces/alpha";
 
 function sharedDocument(): Record<string, unknown> {
   return JSON.parse(
     readFileSync(
       resolve(
         process.cwd(),
-        "apps/devhub/src-tauri/src/editor/fixtures/surface-registry.v1.json",
+        "extensions/devhub-bridge/test/fixtures/surface-registry.v1.json",
       ),
       "utf8",
     ),
@@ -33,7 +33,7 @@ test("registry resolves global and workspace surfaces using the Rust shape", () 
     findSurfaceForRoot(entries, workspaceRoot)?.workspace_id,
     workspaceId,
   );
-  assert.equal(findSurfaceForRoot(entries, "/Users/statiolake/other"), null);
+  assert.equal(findSurfaceForRoot(entries, "/Users/testuser/other"), null);
 });
 
 test("registry requires owner-canonical absolute roots and rejects traversal", () => {
@@ -43,13 +43,13 @@ test("registry requires owner-canonical absolute roots and rejects traversal", (
       surfaces: [
         {
           workspace_id: workspaceId,
-          canonical_root: "/Users/statiolake/project",
+          canonical_root: "/Users/testuser/project",
           surface_id: workspaceSurface,
         },
       ],
     }),
   );
-  assert.equal(entries?.[0].canonical_root, "/Users/statiolake/project");
+  assert.equal(entries?.[0].canonical_root, "/Users/testuser/project");
   assert.equal(
     parseSurfaceRegistry(
       JSON.stringify({
@@ -57,7 +57,7 @@ test("registry requires owner-canonical absolute roots and rejects traversal", (
         surfaces: [
           {
             workspace_id: workspaceId,
-            canonical_root: "/Users/statiolake/./project",
+            canonical_root: "/Users/testuser/./project",
             surface_id: workspaceSurface,
           },
         ],
@@ -72,7 +72,7 @@ test("registry requires owner-canonical absolute roots and rejects traversal", (
         surfaces: [
           {
             workspace_id: workspaceId,
-            canonical_root: "/Users/statiolake/../project",
+            canonical_root: "/Users/testuser/../project",
             surface_id: workspaceSurface,
           },
         ],

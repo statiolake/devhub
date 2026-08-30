@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseEnvelope } from "../../../apps/devhub/src/generated/bridge/index";
+import { parseEnvelope } from "../src/generated/bridge/index";
 import { BridgeSession } from "../src/session";
 
 const ids = [

@@ -10,11 +10,11 @@ test("navigation accepts the product URI scheme and strictly decodes roots", () 
       {
         scheme,
         path: "/open-workspace",
-        query: "path=%2FUsers%2Fstatiolake%2Fproject",
+        query: "path=%2FUsers%2Ftestuser%2Fproject",
       },
       scheme,
     ),
-    { kind: "open_workspace", path: "/Users/statiolake/project" },
+    { kind: "open_workspace", path: "/Users/testuser/project" },
   );
   assert.deepEqual(
     parseNavigationUri({ scheme, path: "/new-window", query: "" }, scheme),

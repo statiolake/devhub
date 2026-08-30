@@ -1,8 +1,5 @@
-import type {
-  AbsolutePath,
-  Context,
-} from "../../../apps/devhub/src/generated/bridge/index";
-import type { OpenWorkspaceSource } from "../../../apps/devhub/src/generated/bridge/index";
+import type { AbsolutePath, Context } from "./generated/bridge/index";
+import type { OpenWorkspaceSource } from "./generated/bridge/index";
 import { BridgeSession } from "./session";
 
 const MAX_RECONNECT_DELAY_MS = 5_000;

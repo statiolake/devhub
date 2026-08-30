@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseEnvelope } from "../../../apps/devhub/src/generated/bridge/index";
-import type { Context } from "../../../apps/devhub/src/generated/bridge/index";
+import { parseEnvelope } from "../src/generated/bridge/index";
+import type { Context } from "../src/generated/bridge/index";
 import {
   BridgeControllerCore,
   type ControllerSocket,

@@ -7,7 +7,7 @@ import {
   type Context,
   type Envelope,
   type Readiness,
-} from "../../../apps/devhub/src/generated/bridge/index";
+} from "./generated/bridge/index";
 
 export interface SessionConfig {
   surfaceId: string;
