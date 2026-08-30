@@ -7,9 +7,9 @@
  * command line.
  */
 
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
-import { basename, dirname } from 'node:path';
-import type { Workspace } from '../../ipc/contract.js';
+import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { basename, dirname } from "node:path";
+import type { Workspace } from "../../ipc/contract.js";
 
 export interface WorkspaceEntry {
 	readonly id: string;
@@ -31,12 +31,12 @@ export class WorkspaceStore {
 	private read(): WorkspaceEntry[] {
 		let raw: string;
 		try {
-			raw = readFileSync(this.file, 'utf8');
+			raw = readFileSync(this.file, "utf8");
 		} catch (error) {
 			// Not having been written yet is the one condition that is not a
 			// failure. Anything else — unreadable, a directory, no permission —
 			// is a real problem and belongs to the root handler.
-			if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+			if ((error as NodeJS.ErrnoException).code === "ENOENT") {
 				return [];
 			}
 			throw error;
@@ -48,7 +48,10 @@ export class WorkspaceStore {
 
 	private write(): void {
 		mkdirSync(dirname(this.file), { recursive: true });
-		writeFileSync(this.file, `${JSON.stringify({ workspaces: this.entries }, undefined, '\t')}\n`);
+		writeFileSync(
+			this.file,
+			`${JSON.stringify({ workspaces: this.entries }, undefined, "\t")}\n`,
+		);
 	}
 
 	all(): readonly WorkspaceEntry[] {
@@ -56,11 +59,11 @@ export class WorkspaceStore {
 	}
 
 	byId(id: string): WorkspaceEntry | undefined {
-		return this.entries.find(entry => entry.id === id);
+		return this.entries.find((entry) => entry.id === id);
 	}
 
 	byPath(path: string): WorkspaceEntry | undefined {
-		return this.entries.find(entry => entry.path === path);
+		return this.entries.find((entry) => entry.path === path);
 	}
 
 	/** Adds the folder if it is new; returns the entry either way. */
@@ -69,7 +72,11 @@ export class WorkspaceStore {
 		if (existing) {
 			return existing;
 		}
-		const entry: WorkspaceEntry = { id: path, name: basename(path) || path, path };
+		const entry: WorkspaceEntry = {
+			id: path,
+			name: basename(path) || path,
+			path,
+		};
 		this.entries = [...this.entries, entry];
 		this.write();
 		return entry;
@@ -80,12 +87,15 @@ export class WorkspaceStore {
 		if (!entry) {
 			return undefined;
 		}
-		this.entries = this.entries.filter(candidate => candidate.id !== id);
+		this.entries = this.entries.filter((candidate) => candidate.id !== id);
 		this.write();
 		return entry;
 	}
 }
 
-export function toWireWorkspace(entry: WorkspaceEntry, opened: boolean): Workspace {
+export function toWireWorkspace(
+	entry: WorkspaceEntry,
+	opened: boolean,
+): Workspace {
 	return { id: entry.id, name: entry.name, path: entry.path, opened };
 }

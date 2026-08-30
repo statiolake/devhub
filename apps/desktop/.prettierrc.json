@@ -1,0 +1,9 @@
+{
+  "overrides": [
+    {
+      "comment": "Main-process code sits beside VS Code's own and is read against it, so it keeps VS Code's tabs.",
+      "files": ["src/main/**", "src/preload/**", "src/ipc/**"],
+      "options": { "useTabs": true }
+    }
+  ]
+}

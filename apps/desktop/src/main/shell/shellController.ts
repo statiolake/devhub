@@ -8,15 +8,23 @@
  * in `select`, and there is exactly one way from there to a view on screen.
  */
 
-import { electron } from '../electron.js';
-import { URI } from 'code-oss-dev/out/vs/base/common/uri.js';
-import type { NativeParsedArgs } from 'code-oss-dev/out/vs/platform/environment/common/argv.js';
-import type { IWindowsMainService } from 'code-oss-dev/out/vs/platform/windows/electron-main/windows.js';
-import { OpenContext } from 'code-oss-dev/out/vs/platform/windows/electron-main/windows.js';
-import type { IDialogMainService } from 'code-oss-dev/out/vs/platform/dialogs/electron-main/dialogMainService.js';
-import { CHANNELS, type ContentRect, type ShellState } from '../../ipc/contract.js';
-import { shellWindow } from './shellWindow.js';
-import { toWireWorkspace, WorkspaceStore, type WorkspaceEntry } from './workspaces.js';
+import { electron } from "../electron.js";
+import { URI } from "code-oss-dev/out/vs/base/common/uri.js";
+import type { NativeParsedArgs } from "code-oss-dev/out/vs/platform/environment/common/argv.js";
+import type { IWindowsMainService } from "code-oss-dev/out/vs/platform/windows/electron-main/windows.js";
+import { OpenContext } from "code-oss-dev/out/vs/platform/windows/electron-main/windows.js";
+import type { IDialogMainService } from "code-oss-dev/out/vs/platform/dialogs/electron-main/dialogMainService.js";
+import {
+	CHANNELS,
+	type ContentRect,
+	type ShellState,
+} from "../../ipc/contract.js";
+import { shellWindow } from "./shellWindow.js";
+import {
+	toWireWorkspace,
+	WorkspaceStore,
+	type WorkspaceEntry,
+} from "./workspaces.js";
 
 /**
  * The two main-process services the shell drives. They are resolved on demand:
@@ -37,7 +45,7 @@ export class ShellController {
 
 	constructor(
 		private readonly store: WorkspaceStore,
-		private readonly cliArgs: NativeParsedArgs
+		private readonly cliArgs: NativeParsedArgs,
 	) {
 		this.registerIpc();
 	}
@@ -53,7 +61,9 @@ export class ShellController {
 
 	private services(): MainServices {
 		if (!this.resolveServices) {
-			throw new Error('the App Shell was used before the main services were registered');
+			throw new Error(
+				"the App Shell was used before the main services were registered",
+			);
 		}
 		return this.resolveServices;
 	}
@@ -62,8 +72,10 @@ export class ShellController {
 
 	state(): ShellState {
 		return {
-			workspaces: this.store.all().map(entry => toWireWorkspace(entry, this.windowIds.has(entry.id))),
-			selectedId: this.selectedId
+			workspaces: this.store
+				.all()
+				.map((entry) => toWireWorkspace(entry, this.windowIds.has(entry.id))),
+			selectedId: this.selectedId,
 		};
 	}
 
@@ -104,7 +116,8 @@ export class ShellController {
 		}
 
 		const windowId = this.windowIds.get(workspaceId);
-		const view = windowId === undefined ? undefined : shellWindow().getViewById(windowId);
+		const view =
+			windowId === undefined ? undefined : shellWindow().getViewById(windowId);
 		if (view) {
 			shellWindow().reveal(view);
 			view.focus();
@@ -115,13 +128,15 @@ export class ShellController {
 
 		// No view yet: go through VS Code's own open path, which is what
 		// creates a `CodeWindow` — and therefore, through the shim, a view.
-		await this.services().windows().open({
-			context: OpenContext.API,
-			cli: this.cliArgs,
-			urisToOpen: [{ folderUri: URI.file(entry.path) }],
-			forceNewWindow: true,
-			noRecentEntry: false
-		});
+		await this.services()
+			.windows()
+			.open({
+				context: OpenContext.API,
+				cli: this.cliArgs,
+				urisToOpen: [{ folderUri: URI.file(entry.path) }],
+				forceNewWindow: true,
+				noRecentEntry: false,
+			});
 	}
 
 	private async addWorkspace(): Promise<void> {
@@ -157,12 +172,21 @@ export class ShellController {
 
 	private registerIpc(): void {
 		electron.ipcMain.handle(CHANNELS.getState, () => this.state());
-		electron.ipcMain.handle(CHANNELS.selectWorkspace, (_event, workspaceId: string) => this.select(workspaceId));
+		electron.ipcMain.handle(
+			CHANNELS.selectWorkspace,
+			(_event, workspaceId: string) => this.select(workspaceId),
+		);
 		electron.ipcMain.handle(CHANNELS.addWorkspace, () => this.addWorkspace());
-		electron.ipcMain.handle(CHANNELS.removeWorkspace, (_event, workspaceId: string) => this.removeWorkspace(workspaceId));
-		electron.ipcMain.handle(CHANNELS.setContentRect, (_event, rect: ContentRect) => {
-			shellWindow().setContentRect(rect);
-		});
+		electron.ipcMain.handle(
+			CHANNELS.removeWorkspace,
+			(_event, workspaceId: string) => this.removeWorkspace(workspaceId),
+		);
+		electron.ipcMain.handle(
+			CHANNELS.setContentRect,
+			(_event, rect: ContentRect) => {
+				shellWindow().setContentRect(rect);
+			},
+		);
 	}
 
 	//#endregion
@@ -170,9 +194,12 @@ export class ShellController {
 
 let current: ShellController | undefined;
 
-export function createShellController(store: WorkspaceStore, cliArgs: NativeParsedArgs): ShellController {
+export function createShellController(
+	store: WorkspaceStore,
+	cliArgs: NativeParsedArgs,
+): ShellController {
 	if (current) {
-		throw new Error('the App Shell controller already exists');
+		throw new Error("the App Shell controller already exists");
 	}
 	current = new ShellController(store, cliArgs);
 	return current;
@@ -180,7 +207,7 @@ export function createShellController(store: WorkspaceStore, cliArgs: NativePars
 
 export function shellController(): ShellController {
 	if (!current) {
-		throw new Error('the App Shell controller has not been created yet');
+		throw new Error("the App Shell controller has not been created yet");
 	}
 	return current;
 }

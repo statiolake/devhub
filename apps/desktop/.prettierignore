@@ -1,0 +1,8 @@
+# Build output.
+dist
+out
+
+# Near-verbatim copies of VS Code's entry points. They are kept diffable against
+# upstream, which means they are not reformatted.
+src/main/main.ts
+src/main/codeMain.ts

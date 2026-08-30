@@ -7,7 +7,13 @@
  * rather than drawing anything into it.
  */
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import type { ShellState } from "../ipc/contract";
 import { devhub } from "./devhub";
 import {
@@ -124,7 +130,11 @@ function FailureSurface({ failure }: { readonly failure: Failure }) {
       </p>
       <p className="failure-detail">{failure.detail}</p>
       <div className="surface-actions">
-        <button className="secondary-button" type="button" onClick={dismissFailure}>
+        <button
+          className="secondary-button"
+          type="button"
+          onClick={dismissFailure}
+        >
           Dismiss
         </button>
       </div>

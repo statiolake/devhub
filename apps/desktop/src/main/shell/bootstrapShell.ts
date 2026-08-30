@@ -6,17 +6,25 @@
  * so the shell has to exist first.
  */
 
-import { readFileSync, mkdirSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import type { NativeParsedArgs } from 'code-oss-dev/out/vs/platform/environment/common/argv.js';
-import { createShellController } from './shellController.js';
-import { registerShellPageProtocol, SHELL_ORIGIN } from './shellPageProtocol.js';
-import { createShellWindow } from './shellWindow.js';
-import { WorkspaceStore } from './workspaces.js';
+import { readFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import type { NativeParsedArgs } from "code-oss-dev/out/vs/platform/environment/common/argv.js";
+import { createShellController } from "./shellController.js";
+import {
+	registerShellPageProtocol,
+	SHELL_ORIGIN,
+} from "./shellPageProtocol.js";
+import { createShellWindow } from "./shellWindow.js";
+import { WorkspaceStore } from "./workspaces.js";
 
 /** `apps/desktop/out/main/shell` -> `apps/desktop`. */
-const APP_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
+const APP_ROOT = join(
+	dirname(fileURLToPath(import.meta.url)),
+	"..",
+	"..",
+	"..",
+);
 
 /**
  * A workbench view is chrome inside DevHub's own window, so it must not draw a
@@ -24,29 +32,34 @@ const APP_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
  * not already said otherwise.
  */
 const WORKBENCH_DEFAULTS: Readonly<Record<string, string | boolean>> = {
-	'window.titleBarStyle': 'custom',
-	'window.customTitleBarVisibility': 'never',
+	"window.titleBarStyle": "custom",
+	"window.customTitleBarVisibility": "never",
 	// The workbench forces the title bar back to 'auto' whenever something that
 	// lives in it is enabled — the command centre and the layout controls both
 	// count — so asking for 'never' means turning those off as well.
-	'window.commandCenter': false,
-	'workbench.layoutControl.enabled': false
+	"window.commandCenter": false,
+	"workbench.layoutControl.enabled": false,
 };
 
 function ensureWorkbenchDefaults(userDataPath: string): void {
-	const file = join(userDataPath, 'User', 'settings.json');
+	const file = join(userDataPath, "User", "settings.json");
 
 	let settings: Record<string, unknown>;
 	try {
-		settings = JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>;
+		settings = JSON.parse(readFileSync(file, "utf8")) as Record<
+			string,
+			unknown
+		>;
 	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+		if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
 			throw error;
 		}
 		settings = {};
 	}
 
-	const missing = Object.entries(WORKBENCH_DEFAULTS).filter(([key]) => !(key in settings));
+	const missing = Object.entries(WORKBENCH_DEFAULTS).filter(
+		([key]) => !(key in settings),
+	);
 	if (missing.length === 0) {
 		return;
 	}
@@ -55,14 +68,25 @@ function ensureWorkbenchDefaults(userDataPath: string): void {
 		settings[key] = value;
 	}
 	mkdirSync(dirname(file), { recursive: true });
-	writeFileSync(file, `${JSON.stringify(settings, undefined, '\t')}\n`);
-	console.log(`[devhub] wrote workbench defaults: ${missing.map(([key]) => key).join(', ')}`);
+	writeFileSync(file, `${JSON.stringify(settings, undefined, "\t")}\n`);
+	console.log(
+		`[devhub] wrote workbench defaults: ${missing.map(([key]) => key).join(", ")}`,
+	);
 }
 
-export function bootstrapShell(userDataPath: string, cliArgs: NativeParsedArgs): void {
+export function bootstrapShell(
+	userDataPath: string,
+	cliArgs: NativeParsedArgs,
+): void {
 	ensureWorkbenchDefaults(userDataPath);
 
-	registerShellPageProtocol(join(APP_ROOT, 'dist', 'shell'));
-	createShellWindow(join(APP_ROOT, 'out', 'preload', 'preload.js'), `${SHELL_ORIGIN}/index.html`);
-	createShellController(new WorkspaceStore(join(userDataPath, 'devhub', 'workspaces.json')), cliArgs);
+	registerShellPageProtocol(join(APP_ROOT, "dist", "shell"));
+	createShellWindow(
+		join(APP_ROOT, "out", "preload", "preload.js"),
+		`${SHELL_ORIGIN}/index.html`,
+	);
+	createShellController(
+		new WorkspaceStore(join(userDataPath, "devhub", "workspaces.json")),
+		cliArgs,
+	);
 }

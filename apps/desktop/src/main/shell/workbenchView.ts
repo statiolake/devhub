@@ -13,8 +13,8 @@
  * name, at warn level, because a silent no-op is how a real breakage hides.
  */
 
-import { electron } from '../electron.js';
-import type { ShellWindow } from './shellWindow.js';
+import { electron } from "../electron.js";
+import type { ShellWindow } from "./shellWindow.js";
 
 /** Members the workbench asked for that this class does not implement. */
 const unimplemented = new Set<string>();
@@ -28,10 +28,10 @@ export function unimplementedMembers(): readonly string[] {
  * Events that describe the view itself rather than the window around it. The
  * rest — maximize, full screen, move, resize — are facts about the shell.
  */
-const VIEW_EVENTS = new Set(['focus', 'blur', 'responsive', 'unresponsive']);
+const VIEW_EVENTS = new Set(["focus", "blur", "responsive", "unresponsive"]);
 
 /** `BrowserWindow`'s 'closed' is `WebContents`' 'destroyed'. */
-const EVENT_ALIAS: Readonly<Record<string, string>> = { closed: 'destroyed' };
+const EVENT_ALIAS: Readonly<Record<string, string>> = { closed: "destroyed" };
 
 export class WorkbenchView {
 	readonly view: Electron.WebContentsView;
@@ -40,9 +40,11 @@ export class WorkbenchView {
 
 	constructor(
 		private readonly shell: ShellWindow,
-		options: Electron.BrowserWindowConstructorOptions
+		options: Electron.BrowserWindowConstructorOptions,
 	) {
-		this.view = new electron.WebContentsView({ webPreferences: options.webPreferences });
+		this.view = new electron.WebContentsView({
+			webPreferences: options.webPreferences,
+		});
 		if (options.backgroundColor) {
 			this.view.setBackgroundColor(options.backgroundColor);
 		}
@@ -62,7 +64,7 @@ export class WorkbenchView {
 	//#region events
 
 	private emitterFor(event: string): NodeJS.EventEmitter {
-		return VIEW_EVENTS.has(event) || event === 'closed'
+		return VIEW_EVENTS.has(event) || event === "closed"
 			? this.view.webContents
 			: this.shell.window;
 	}
@@ -82,7 +84,10 @@ export class WorkbenchView {
 	}
 
 	off(event: string, listener: (...args: unknown[]) => void): this {
-		this.emitterFor(event).removeListener(EVENT_ALIAS[event] ?? event, listener);
+		this.emitterFor(event).removeListener(
+			EVENT_ALIAS[event] ?? event,
+			listener,
+		);
 		return this;
 	}
 
@@ -217,42 +222,42 @@ export class WorkbenchView {
 		return false;
 	}
 
-	restore(): void { }
-	maximize(): void { }
-	unmaximize(): void { }
-	minimize(): void { }
-	center(): void { }
-	setFullScreen(): void { }
-	setSimpleFullScreen(): void { }
-	setAlwaysOnTop(): void { }
-	setEnabled(): void { }
-	setResizable(): void { }
-	setMovable(): void { }
-	setClosable(): void { }
-	setMinimumSize(): void { }
-	setAspectRatio(): void { }
-	setDocumentEdited(): void { }
-	setRepresentedFilename(): void { }
-	setTouchBar(): void { }
-	setMenuBarVisibility(): void { }
-	setAutoHideMenuBar(): void { }
-	setSheetOffset(): void { }
-	setTitleBarOverlay(): void { }
-	setWindowButtonVisibility(): void { }
-	setWindowButtonPosition(): void { }
-	setProgressBar(): void { }
-	setIcon(): void { }
-	setSkipTaskbar(): void { }
-	setVisibleOnAllWorkspaces(): void { }
-	setOpacity(): void { }
-	setContentProtection(): void { }
-	setParentWindow(): void { }
-	flashFrame(): void { }
-	addTabbedWindow(): void { }
-	invalidateShadow(): void { }
+	restore(): void {}
+	maximize(): void {}
+	unmaximize(): void {}
+	minimize(): void {}
+	center(): void {}
+	setFullScreen(): void {}
+	setSimpleFullScreen(): void {}
+	setAlwaysOnTop(): void {}
+	setEnabled(): void {}
+	setResizable(): void {}
+	setMovable(): void {}
+	setClosable(): void {}
+	setMinimumSize(): void {}
+	setAspectRatio(): void {}
+	setDocumentEdited(): void {}
+	setRepresentedFilename(): void {}
+	setTouchBar(): void {}
+	setMenuBarVisibility(): void {}
+	setAutoHideMenuBar(): void {}
+	setSheetOffset(): void {}
+	setTitleBarOverlay(): void {}
+	setWindowButtonVisibility(): void {}
+	setWindowButtonPosition(): void {}
+	setProgressBar(): void {}
+	setIcon(): void {}
+	setSkipTaskbar(): void {}
+	setVisibleOnAllWorkspaces(): void {}
+	setOpacity(): void {}
+	setContentProtection(): void {}
+	setParentWindow(): void {}
+	flashFrame(): void {}
+	addTabbedWindow(): void {}
+	invalidateShadow(): void {}
 
 	getRepresentedFilename(): string {
-		return '';
+		return "";
 	}
 
 	getParentWindow(): Electron.BaseWindow | null {
@@ -264,7 +269,7 @@ export class WorkbenchView {
 	}
 
 	/** DevHub owns the whole window title; a view does not get to set it. */
-	setTitle(): void { }
+	setTitle(): void {}
 
 	getTitle(): string {
 		return this.view.webContents.getTitle();
@@ -277,7 +282,12 @@ export class WorkbenchView {
 	getBounds(): Electron.Rectangle {
 		const shellBounds = this.shell.window.getBounds();
 		const rect = this.shell.boundsOf(this);
-		return { x: shellBounds.x + rect.x, y: shellBounds.y + rect.y, width: rect.width, height: rect.height };
+		return {
+			x: shellBounds.x + rect.x,
+			y: shellBounds.y + rect.y,
+			width: rect.width,
+			height: rect.height,
+		};
 	}
 
 	getNormalBounds(): Electron.Rectangle {
@@ -288,10 +298,10 @@ export class WorkbenchView {
 		return this.getBounds();
 	}
 
-	setBounds(): void { }
-	setContentBounds(): void { }
-	setSize(): void { }
-	setPosition(): void { }
+	setBounds(): void {}
+	setContentBounds(): void {}
+	setSize(): void {}
+	setPosition(): void {}
 
 	getSize(): [number, number] {
 		const rect = this.shell.boundsOf(this);
@@ -369,12 +379,14 @@ export function asBrowserWindow(view: WorkbenchView): Electron.BrowserWindow {
 			if (property in target) {
 				return Reflect.get(target, property, receiver);
 			}
-			if (typeof property === 'symbol') {
+			if (typeof property === "symbol") {
 				return undefined;
 			}
 			if (!unimplemented.has(property)) {
 				unimplemented.add(property);
-				console.warn(`[devhub] WorkbenchView: unimplemented BrowserWindow member '${property}'`);
+				console.warn(
+					`[devhub] WorkbenchView: unimplemented BrowserWindow member '${property}'`,
+				);
 			}
 			return () => undefined;
 		},
@@ -384,7 +396,7 @@ export function asBrowserWindow(view: WorkbenchView): Electron.BrowserWindow {
 		},
 		has() {
 			return true;
-		}
+		},
 	});
 
 	const window = proxy as unknown as Electron.BrowserWindow;

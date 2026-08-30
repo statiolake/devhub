@@ -5,14 +5,14 @@ import tseslint from "typescript-eslint";
 
 export default tseslint.config(
   {
-    // Build output, and the VS Code submodule, which DevHub consumes and does
-    // not lint.
+    // Build output. The VS Code submodule is not linted at all: DevHub
+    // consumes it.
     ignores: ["dist", "out"],
   },
   eslint.configs.recommended,
   ...tseslint.configs.recommended,
   {
-    files: ["**/*.{ts,mts,tsx}"],
+    files: ["**/*.{ts,tsx}"],
     languageOptions: {
       globals: {
         ...globals.browser,
@@ -24,6 +24,24 @@ export default tseslint.config(
     },
     rules: {
       ...reactHooks.configs.recommended.rules,
+      // A leading underscore is how this codebase says "part of the shape,
+      // deliberately unused".
+      "@typescript-eslint/no-unused-vars": [
+        "error",
+        { argsIgnorePattern: "^_", varsIgnorePattern: "^_" },
+      ],
     },
+  },
+  {
+    // The ambient declarations VS Code's own sources are compiled against are
+    // reached the only way ambient globals can be: by reference.
+    files: ["**/*.d.ts"],
+    rules: { "@typescript-eslint/triple-slash-reference": "off" },
+  },
+  {
+    // Near-verbatim copies of VS Code's entry points. They are kept diffable
+    // against upstream, so upstream's unused bindings stay where they are.
+    files: ["src/main/main.ts", "src/main/codeMain.ts"],
+    rules: { "@typescript-eslint/no-unused-vars": "off" },
   },
 );

@@ -46,10 +46,10 @@ export interface DevhubApi {
  * the page mirrors. Main→page pushes carry no other traffic.
  */
 export const CHANNELS = {
-	getState: 'devhub:get-state',
-	selectWorkspace: 'devhub:select-workspace',
-	addWorkspace: 'devhub:add-workspace',
-	removeWorkspace: 'devhub:remove-workspace',
-	setContentRect: 'devhub:set-content-rect',
-	stateChanged: 'devhub:state-changed'
+	getState: "devhub:get-state",
+	selectWorkspace: "devhub:select-workspace",
+	addWorkspace: "devhub:add-workspace",
+	removeWorkspace: "devhub:remove-workspace",
+	setContentRect: "devhub:set-content-rect",
+	stateChanged: "devhub:state-changed",
 } as const;

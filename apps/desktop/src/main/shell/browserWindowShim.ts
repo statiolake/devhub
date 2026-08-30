@@ -20,29 +20,40 @@
  * leave the workbench quietly opening real windows of its own.
  */
 
-import { electron } from '../electron.js';
-import { shellWindow, shellWindowIfCreated } from './shellWindow.js';
-import { asBrowserWindow, WorkbenchView } from './workbenchView.js';
+import { electron } from "../electron.js";
+import { shellWindow, shellWindowIfCreated } from "./shellWindow.js";
+import { asBrowserWindow, WorkbenchView } from "./workbenchView.js";
 
 declare global {
-	// eslint-disable-next-line no-var
 	var __devhubCreateWorkbenchWindow:
-		| ((options: Electron.BrowserWindowConstructorOptions) => Electron.BrowserWindow)
+		| ((
+				options: Electron.BrowserWindowConstructorOptions,
+		  ) => Electron.BrowserWindow)
 		| undefined;
 }
 
-function createWorkbenchWindow(options: Electron.BrowserWindowConstructorOptions): Electron.BrowserWindow {
+function createWorkbenchWindow(
+	options: Electron.BrowserWindowConstructorOptions,
+): Electron.BrowserWindow {
 	const shell = shellWindow();
 	const view = new WorkbenchView(shell, options);
 	shell.attach(view);
-	console.log(`[devhub] workbench view ${view.id} created — ${shell.getViews().length} view(s) in the shell`);
+	console.log(
+		`[devhub] workbench view ${view.id} created — ${shell.getViews().length} view(s) in the shell`,
+	);
 	return asBrowserWindow(view);
 }
 
-function assertReplaceable(target: object, property: string, what: string): void {
+function assertReplaceable(
+	target: object,
+	property: string,
+	what: string,
+): void {
 	const descriptor = Object.getOwnPropertyDescriptor(target, property);
 	if (!descriptor?.writable && !descriptor?.configurable) {
-		throw new Error(`DevHub cannot replace ${what}: it is a ${descriptor?.get ? 'non-configurable accessor' : 'read-only property'}`);
+		throw new Error(
+			`DevHub cannot replace ${what}: it is a ${descriptor?.get ? "non-configurable accessor" : "read-only property"}`,
+		);
 	}
 }
 
@@ -52,10 +63,16 @@ export function installBrowserWindowShim(): void {
 	// Captured before they are replaced; the replacements call them.
 	const realGetAllWindows = BrowserWindow.getAllWindows.bind(BrowserWindow);
 	const realFromWebContents = BrowserWindow.fromWebContents.bind(BrowserWindow);
-	const realGetFocusedWindow = BrowserWindow.getFocusedWindow.bind(BrowserWindow);
+	const realGetFocusedWindow =
+		BrowserWindow.getFocusedWindow.bind(BrowserWindow);
 	const realFromId = BrowserWindow.fromId.bind(BrowserWindow);
 
-	for (const name of ['getAllWindows', 'fromWebContents', 'getFocusedWindow', 'fromId'] as const) {
+	for (const name of [
+		"getAllWindows",
+		"fromWebContents",
+		"getFocusedWindow",
+		"fromId",
+	] as const) {
 		assertReplaceable(BrowserWindow, name, `BrowserWindow.${name}`);
 	}
 
@@ -71,15 +88,18 @@ export function installBrowserWindowShim(): void {
 		if (!shell) {
 			return realGetAllWindows();
 		}
-		return [...realGetAllWindows(), ...shell.getViews().map(view => asBrowserWindow(view))];
+		return [
+			...realGetAllWindows(),
+			...shell.getViews().map((view) => asBrowserWindow(view)),
+		];
 	};
 
-	BrowserWindow.fromWebContents = webContents => {
+	BrowserWindow.fromWebContents = (webContents) => {
 		const view = shellWindowIfCreated()?.getViewById(webContents.id);
 		return view ? asBrowserWindow(view) : realFromWebContents(webContents);
 	};
 
-	BrowserWindow.fromId = id => {
+	BrowserWindow.fromId = (id) => {
 		const view = shellWindowIfCreated()?.getViewById(id);
 		return view ? asBrowserWindow(view) : realFromId(id);
 	};
@@ -96,11 +116,13 @@ export function installBrowserWindowShim(): void {
 		if (!shell || window !== shell.window) {
 			return window;
 		}
-		const view = shell.getViews().find(candidate => candidate.webContents.isFocused());
+		const view = shell
+			.getViews()
+			.find((candidate) => candidate.webContents.isFocused());
 		return view ? asBrowserWindow(view) : null;
 	};
 
 	globalThis.__devhubCreateWorkbenchWindow = createWorkbenchWindow;
 
-	console.log('[devhub] BrowserWindow shim installed');
+	console.log("[devhub] BrowserWindow shim installed");
 }

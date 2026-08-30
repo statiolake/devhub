@@ -12,6 +12,8 @@
  * Types come from the global `Electron` namespace and need no import at all.
  */
 
-import { createRequire } from 'node:module';
+import { createRequire } from "node:module";
 
-export const electron: typeof import('electron') = createRequire(import.meta.url)('electron');
+export const electron: typeof import("electron") = createRequire(
+	import.meta.url,
+)("electron");

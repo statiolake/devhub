@@ -7,9 +7,9 @@
  * way to size it (`layout`); the page never positions anything itself.
  */
 
-import { electron } from '../electron.js';
-import type { ContentRect } from '../../ipc/contract.js';
-import type { WorkbenchView } from './workbenchView.js';
+import { electron } from "../electron.js";
+import type { ContentRect } from "../../ipc/contract.js";
+import type { WorkbenchView } from "./workbenchView.js";
 
 export class ShellWindow {
 	readonly window: Electron.BrowserWindow;
@@ -24,26 +24,26 @@ export class ShellWindow {
 			height: 900,
 			minWidth: 720,
 			minHeight: 480,
-			title: 'DevHub',
+			title: "DevHub",
 			// The Tauri app's chrome: the page paints the titlebar band itself
 			// over the window's own material, and the traffic lights sit on the
 			// sidebar rather than above it.
-			titleBarStyle: 'hiddenInset',
-			vibrancy: 'sidebar',
-			backgroundColor: '#00000000',
+			titleBarStyle: "hiddenInset",
+			vibrancy: "sidebar",
+			backgroundColor: "#00000000",
 			show: false,
 			webPreferences: {
 				preload: preloadPath,
 				sandbox: false,
 				contextIsolation: true,
-				nodeIntegration: false
-			}
+				nodeIntegration: false,
+			},
 		});
 
 		this.window.loadURL(pageUrl);
-		this.window.once('ready-to-show', () => this.window.show());
-		this.window.on('resize', () => this.layout());
-		this.window.on('closed', () => electron.app.quit());
+		this.window.once("ready-to-show", () => this.window.show());
+		this.window.on("resize", () => this.layout());
+		this.window.on("closed", () => electron.app.quit());
 	}
 
 	//#region the views
@@ -72,7 +72,7 @@ export class ShellWindow {
 	}
 
 	getViewById(id: number): WorkbenchView | undefined {
-		return this.views.find(view => view.id === id);
+		return this.views.find((view) => view.id === id);
 	}
 
 	/** Exactly one view is on screen at a time; this says which. */
@@ -105,7 +105,7 @@ export class ShellWindow {
 				x: Math.round(this.contentRect.x),
 				y: Math.round(this.contentRect.y),
 				width: Math.round(this.contentRect.width),
-				height: Math.round(this.contentRect.height)
+				height: Math.round(this.contentRect.height),
 			};
 		}
 
@@ -132,9 +132,12 @@ export class ShellWindow {
 
 let current: ShellWindow | undefined;
 
-export function createShellWindow(preloadPath: string, pageUrl: string): ShellWindow {
+export function createShellWindow(
+	preloadPath: string,
+	pageUrl: string,
+): ShellWindow {
 	if (current) {
-		throw new Error('the App Shell window already exists');
+		throw new Error("the App Shell window already exists");
 	}
 	current = new ShellWindow(preloadPath, pageUrl);
 	return current;
@@ -143,7 +146,7 @@ export function createShellWindow(preloadPath: string, pageUrl: string): ShellWi
 /** The shell must exist before any workbench does; not having one is a bug. */
 export function shellWindow(): ShellWindow {
 	if (!current) {
-		throw new Error('the App Shell window has not been created yet');
+		throw new Error("the App Shell window has not been created yet");
 	}
 	return current;
 }

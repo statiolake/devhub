@@ -54,7 +54,11 @@ export function Sidebar({ state, onSelect, onRemove, onAdd }: SidebarProps) {
                     onClick={() => onSelect(workspace.id)}
                   >
                     <span className="row-glyph">
-                      <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+                      <svg
+                        viewBox="0 0 16 16"
+                        aria-hidden="true"
+                        focusable="false"
+                      >
                         <path d="M1.8 4.2a1 1 0 0 1 1-1h3l1.4 1.6h5a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-9.4a1 1 0 0 1-1-1z" />
                       </svg>
                     </span>
@@ -70,7 +74,11 @@ export function Sidebar({ state, onSelect, onRemove, onAdd }: SidebarProps) {
                     title={`Remove ${workspace.name}`}
                     onClick={() => onRemove(workspace.id)}
                   >
-                    <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+                    <svg
+                      viewBox="0 0 16 16"
+                      aria-hidden="true"
+                      focusable="false"
+                    >
                       <path d="M4 4l8 8M12 4l-8 8" />
                     </svg>
                   </button>

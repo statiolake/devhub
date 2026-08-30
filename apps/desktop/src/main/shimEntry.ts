@@ -7,6 +7,6 @@
  * else runs the shim is in.
  */
 
-import { installBrowserWindowShim } from './shell/browserWindowShim.js';
+import { installBrowserWindowShim } from "./shell/browserWindowShim.js";
 
 installBrowserWindowShim();

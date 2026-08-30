@@ -9,8 +9,8 @@
  */
 
 export interface Failure {
-	readonly summary: string;
-	readonly detail: string;
+  readonly summary: string;
+  readonly detail: string;
 }
 
 type Listener = (failure: Failure | undefined) => void;
@@ -19,37 +19,41 @@ const listeners = new Set<Listener>();
 let current: Failure | undefined;
 
 function describe(reason: unknown): Failure {
-	if (reason instanceof Error) {
-		return { summary: reason.message, detail: reason.stack ?? String(reason) };
-	}
-	return { summary: 'Something went wrong', detail: String(reason) };
+  if (reason instanceof Error) {
+    return { summary: reason.message, detail: reason.stack ?? String(reason) };
+  }
+  return { summary: "Something went wrong", detail: String(reason) };
 }
 
 export function reportFailure(reason: unknown): void {
-	current = describe(reason);
-	for (const listener of listeners) {
-		listener(current);
-	}
+  current = describe(reason);
+  for (const listener of listeners) {
+    listener(current);
+  }
 }
 
 export function dismissFailure(): void {
-	current = undefined;
-	for (const listener of listeners) {
-		listener(undefined);
-	}
+  current = undefined;
+  for (const listener of listeners) {
+    listener(undefined);
+  }
 }
 
 export function currentFailure(): Failure | undefined {
-	return current;
+  return current;
 }
 
 export function subscribeToFailures(listener: Listener): () => void {
-	listeners.add(listener);
-	return () => listeners.delete(listener);
+  listeners.add(listener);
+  return () => listeners.delete(listener);
 }
 
 /** The root handler. Installed once, from the page's entry point. */
 export function installRootFailureHandler(): void {
-	window.addEventListener('error', event => reportFailure(event.error ?? event.message));
-	window.addEventListener('unhandledrejection', event => reportFailure(event.reason));
+  window.addEventListener("error", (event) =>
+    reportFailure(event.error ?? event.message),
+  );
+  window.addEventListener("unhandledrejection", (event) =>
+    reportFailure(event.reason),
+  );
 }
