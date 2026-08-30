@@ -11,6 +11,7 @@ import { createRoot } from "react-dom/client";
 import { AppShell } from "./AppShell";
 import { installRootFailureHandler } from "./failure";
 import { installSelectionGuard } from "./selection";
+import { installSurfaceRenderers } from "./components/shell/surfaceRenderers";
 import { SettingsApp } from "../settings/SettingsApp";
 import "./styles/tokens.css";
 import "./styles/shell.css";
@@ -24,6 +25,7 @@ if (!container) {
 // windows get them from the one entry point they share.
 installRootFailureHandler();
 installSelectionGuard(document);
+installSurfaceRenderers();
 
 const isSettings =
   new URLSearchParams(window.location.search).get("window") === "settings";

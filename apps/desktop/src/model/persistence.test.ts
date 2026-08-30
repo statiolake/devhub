@@ -258,18 +258,51 @@ describe("store", () => {
     );
   });
 
-  it("migrates a legacy file that still carries a version and a tmux table", async () => {
-    await writeFile(
-      path,
-      JSON.stringify({ ...freshState(), version: 1, tmux: { x: 1 } }),
-      { mode: 0o600 },
-    );
+  it("migrates a legacy file that still spells the schema as `version`", async () => {
+    await writeFile(path, JSON.stringify({ ...freshState(), version: 1 }), {
+      mode: 0o600,
+    });
     const load = await new JsonStateStore(path).loadState();
     expect(load.metadata.migrated).toBe(true);
     const written: Record<string, unknown> = JSON.parse(
       await readFile(path, "utf8"),
     ) as Record<string, unknown>;
-    expect(written["tmux"]).toBeUndefined();
     expect(written["version"]).toBeUndefined();
+    expect(written["schema_version"]).toBe(1);
+  });
+
+  it("round-trips an interrupted socket transition", async () => {
+    const state = stateFromSnapshot(populatedModel().snapshot());
+    state.tmux = {
+      effective_socket_name: "devhub",
+      transition: {
+        kind: "cleaning_old",
+        old_socket_name: "devhub",
+        requested_socket_name: "devhub-next",
+        target_preflight: "target_absent",
+        required: [
+          { kind: "scratch", session_name: "scratch" },
+          {
+            kind: "workspace",
+            workspace_id: WS_A,
+            session_name: "ws-0123456789abcdef0123",
+          },
+          {
+            kind: "workspace",
+            workspace_id: WS_B,
+            session_name: "ws-fedcba9876543210fedc",
+          },
+        ],
+        sessions: [
+          {
+            session: { kind: "scratch", session_name: "scratch" },
+            status: "completed",
+          },
+        ],
+      },
+    };
+    const store = new JsonStateStore(path);
+    await store.saveState(state);
+    expect((await store.loadState()).state.tmux).toEqual(state.tmux);
   });
 });

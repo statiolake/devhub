@@ -11,12 +11,12 @@
  * - a file from a newer schema is an error, never a silent downgrade;
  * - the whole document is validated before any of it is adopted.
  *
- * **Dropped:** the `tmux` section and its socket-transition state machine. It
- * existed because terminals were tmux sessions on a shared socket that had to
- * be migrated when the socket name changed. Terminals are `node-pty` processes
- * owned by this app now, so there is no socket to migrate and no session set to
- * reconcile — the whole machine had nothing left to be about. A legacy file
- * that still carries a `tmux` table loads: the key is dropped on migration.
+ * The `tmux` section is what makes a terminal outlive the app. A DevHub
+ * terminal is a client attached to a tmux session on DevHub's own socket, so
+ * the durable facts are which socket is in effect and which sessions DevHub
+ * created — and, if a socket change was interrupted, which phase it stopped in,
+ * so the next launch can finish it instead of stranding sessions on a socket
+ * nothing points at any more.
  */
 
 import { constants } from "node:fs";
@@ -198,12 +198,86 @@ export interface WindowState {
   frame: WindowFrame;
 }
 
+/**
+ * A tmux session DevHub created, and can therefore close.
+ *
+ * The only durable record of a tmux resource. A session DevHub did not create
+ * is counted and never named, so it can never become a kill target after a
+ * crash — which is why this is a record of ownership rather than a listing.
+ */
+export type OwnedSessionRecord =
+  | { kind: "scratch"; session_name: string }
+  | { kind: "workspace"; workspace_id: string; session_name: string };
+
+export type CleanupSessionStatus =
+  | "pending"
+  | "completed"
+  | "failed"
+  | "conflict";
+export type RecreationSessionStatus = "pending" | "completed" | "failed";
+
+export type SocketTargetPreflightState =
+  | "not_checked"
+  | "target_absent"
+  | "target_devhub_empty"
+  | "wrong_marker"
+  | "marked_sessions";
+
+/**
+ * Where a socket change got to.
+ *
+ * A change moves every DevHub session from one socket to another, and each
+ * phase is persisted before it is attempted, so an app that dies in the middle
+ * knows on the next launch what it had already done. `stable` is the state
+ * every healthy run is in.
+ */
+export type SocketTransitionState =
+  | { kind: "stable" }
+  | {
+      kind: "pending";
+      requested_socket_name: string;
+      required: OwnedSessionRecord[];
+      preflight: SocketTargetPreflightState;
+      verified_old_sessions?: OwnedSessionRecord[];
+    }
+  | {
+      kind: "cleaning_old";
+      old_socket_name: string;
+      requested_socket_name: string;
+      required: OwnedSessionRecord[];
+      target_preflight: SocketTargetPreflightState;
+      sessions: { session: OwnedSessionRecord; status: CleanupSessionStatus }[];
+    }
+  | {
+      kind: "old_cleaned";
+      old_socket_name: string;
+      new_socket_name: string;
+      required: OwnedSessionRecord[];
+    }
+  | {
+      kind: "recreation_pending";
+      effective_socket_name: string;
+      required: OwnedSessionRecord[];
+      sessions: {
+        session: OwnedSessionRecord;
+        status: RecreationSessionStatus;
+      }[];
+    };
+
+export interface TmuxState {
+  effective_socket_name: string;
+  transition: SocketTransitionState;
+}
+
+export const DEFAULT_TMUX_SOCKET_NAME = "devhub";
+
 export interface PersistedAppState {
   schema_version: number;
   workspaces: WorkspaceStateRecord[];
   navigation: NavigationState;
   sidebar: SidebarState;
   window: WindowState;
+  tmux: TmuxState;
   shutdown: ShutdownMetadata;
 }
 
@@ -221,6 +295,10 @@ export function freshState(): PersistedAppState {
         height: DEFAULT_WINDOW_HEIGHT,
         maximized: false,
       },
+    },
+    tmux: {
+      effective_socket_name: DEFAULT_TMUX_SOCKET_NAME,
+      transition: { kind: "stable" },
     },
     shutdown: { clean: true, launch_generation: 0 },
   };
@@ -362,6 +440,167 @@ function validateWorkspaceRecord(record: WorkspaceStateRecord): void {
   }
 }
 
+function isValidSocketName(value: string): boolean {
+  return (
+    value.length > 0 && value.length <= 64 && /^[A-Za-z0-9_.-]+$/.test(value)
+  );
+}
+
+function validateOwnedSession(session: OwnedSessionRecord): void {
+  const name = session.session_name;
+  if (name.length === 0 || name.length > 256 || name.includes("\0")) {
+    fail("STATE_INVALID");
+  }
+  if (session.kind === "scratch") {
+    if (name !== "scratch") fail("STATE_INVALID");
+    return;
+  }
+  validateUuid(session.workspace_id);
+  // A workspace session is named from a digest of its canonical root, which is
+  // what lets the name be rebuilt from the snapshot after a crash.
+  const digest = name.startsWith("ws-") ? name.slice(3) : undefined;
+  if (
+    digest === undefined ||
+    (digest.length !== 20 && digest.length !== 32) ||
+    !/^[0-9a-f]+$/.test(digest)
+  ) {
+    fail("STATE_INVALID");
+  }
+}
+
+/**
+ * A required set is exactly one scratch session plus one per workspace, with
+ * no duplicate names — the same shape the runtime rebuilds from the snapshot.
+ */
+function validateRequiredSet(sessions: readonly OwnedSessionRecord[]): void {
+  const names = new Set<string>();
+  let scratch = 0;
+  const workspaces = new Set<string>();
+  for (const session of sessions) {
+    validateOwnedSession(session);
+    if (names.has(session.session_name)) fail("STATE_INVALID");
+    names.add(session.session_name);
+    if (session.kind === "scratch") scratch += 1;
+    else workspaces.add(session.workspace_id);
+  }
+  if (scratch !== 1 || workspaces.size + 1 !== sessions.length) {
+    fail("STATE_INVALID");
+  }
+}
+
+function requiredOf(
+  transition: SocketTransitionState,
+): readonly OwnedSessionRecord[] | undefined {
+  return transition.kind === "stable" ? undefined : transition.required;
+}
+
+function validateTmux(
+  tmux: TmuxState,
+  workspaceIds: ReadonlySet<string>,
+): void {
+  if (!isValidSocketName(tmux.effective_socket_name)) fail("STATE_INVALID");
+  const transition = tmux.transition;
+  switch (transition.kind) {
+    case "stable":
+      break;
+    case "pending": {
+      if (!isValidSocketName(transition.requested_socket_name)) {
+        fail("STATE_INVALID");
+      }
+      if (transition.requested_socket_name === tmux.effective_socket_name) {
+        fail("STATE_INVALID");
+      }
+      validateRequiredSet(transition.required);
+      if (transition.verified_old_sessions) {
+        // Old sessions are only inventoried once the target is known good.
+        if (
+          transition.preflight !== "target_absent" &&
+          transition.preflight !== "target_devhub_empty"
+        ) {
+          fail("STATE_INVALID");
+        }
+        const names = new Set<string>();
+        for (const session of transition.verified_old_sessions) {
+          validateOwnedSession(session);
+          if (names.has(session.session_name)) fail("STATE_INVALID");
+          names.add(session.session_name);
+        }
+      }
+      break;
+    }
+    case "cleaning_old": {
+      if (
+        !isValidSocketName(transition.old_socket_name) ||
+        !isValidSocketName(transition.requested_socket_name) ||
+        transition.old_socket_name === transition.requested_socket_name ||
+        tmux.effective_socket_name !== transition.old_socket_name
+      ) {
+        fail("STATE_INVALID");
+      }
+      validateRequiredSet(transition.required);
+      const names = new Set<string>();
+      for (const record of transition.sessions) {
+        validateOwnedSession(record.session);
+        if (names.has(record.session.session_name)) fail("STATE_INVALID");
+        names.add(record.session.session_name);
+      }
+      break;
+    }
+    case "old_cleaned": {
+      if (
+        !isValidSocketName(transition.old_socket_name) ||
+        !isValidSocketName(transition.new_socket_name) ||
+        transition.old_socket_name === transition.new_socket_name ||
+        tmux.effective_socket_name !== transition.old_socket_name
+      ) {
+        fail("STATE_INVALID");
+      }
+      validateRequiredSet(transition.required);
+      break;
+    }
+    case "recreation_pending": {
+      if (
+        !isValidSocketName(transition.effective_socket_name) ||
+        tmux.effective_socket_name !== transition.effective_socket_name
+      ) {
+        fail("STATE_INVALID");
+      }
+      validateRequiredSet(transition.required);
+      const wanted = new Set(
+        transition.required.map((session) => session.session_name),
+      );
+      const listed = new Set(
+        transition.sessions.map((record) => record.session.session_name),
+      );
+      if (
+        wanted.size !== listed.size ||
+        [...wanted].some((name) => !listed.has(name))
+      ) {
+        fail("STATE_INVALID");
+      }
+      break;
+    }
+  }
+
+  // A transition's required set names the workspaces the snapshot has. If they
+  // disagree, one of the two is from a different run and neither can be
+  // trusted to say which sessions DevHub owns.
+  const required = requiredOf(transition);
+  if (required) {
+    const named = new Set(
+      required
+        .filter((session) => session.kind === "workspace")
+        .map((session) => (session as { workspace_id: string }).workspace_id),
+    );
+    if (
+      named.size !== workspaceIds.size ||
+      [...named].some((id) => !workspaceIds.has(id))
+    ) {
+      fail("STATE_INVALID");
+    }
+  }
+}
+
 export function validateState(state: PersistedAppState): void {
   if (state.schema_version !== STATE_SCHEMA_VERSION) {
     fail("STATE_NEWER_VERSION");
@@ -413,6 +652,7 @@ export function validateState(state: PersistedAppState): void {
   const context = state.navigation.context;
   if (context.kind === "workspace") validateUuid(context.workspace_id);
   if (context.kind === "agent") validateUuid(context.agent_id);
+  validateTmux(state.tmux, workspaceIds);
 }
 
 // -------------------------------------------------------------- projection
@@ -899,6 +1139,7 @@ function decodeState(
       (object["navigation"] as NavigationState | undefined) ?? fresh.navigation,
     sidebar: (object["sidebar"] as SidebarState | undefined) ?? fresh.sidebar,
     window: (object["window"] as WindowState | undefined) ?? fresh.window,
+    tmux: (object["tmux"] as TmuxState | undefined) ?? fresh.tmux,
     shutdown:
       (object["shutdown"] as ShutdownMetadata | undefined) ?? fresh.shutdown,
   };
@@ -909,7 +1150,7 @@ function decodeState(
       ? "newer_version"
       : "corrupt";
   }
-  return { state, migrated: migrated || object["tmux"] !== undefined };
+  return { state, migrated };
 }
 
 export class JsonStateStore {

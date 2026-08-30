@@ -1,0 +1,23 @@
+{
+  // The PTY test's own build.
+  //
+  // The node-dependent terminal tests run under VS Code's Electron as Node, so
+  // they need JavaScript, not TypeScript — and they must not wait on the whole
+  // main process compiling, or be broken by an unrelated file that does not. It
+  // inherits the main process's compiler settings so the modules are built
+  // exactly as they ship, and emits only what the PTY test loads.
+  "extends": "../../tsconfig.main.json",
+  "compilerOptions": {
+    "outDir": "../../out/test-terminal",
+    "rootDir": "../../src"
+  },
+  // `service.ts` is not loaded by the test, but it is what imports Electron,
+  // and Electron's declarations are what bring Node's globals into the program
+  // — the same way they reach these modules in the real main-process build.
+  "include": [
+    "../../src/ipc/terminal.ts",
+    "../../src/main/terminal/pty.ts",
+    "../../src/main/terminal/attachments.ts",
+    "../../src/main/terminal/service.ts"
+  ]
+}

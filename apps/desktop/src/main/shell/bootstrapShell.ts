@@ -85,6 +85,7 @@ export async function bootstrapShell(
 	registerShellPageProtocol(join(APP_ROOT, "dist", "shell"));
 	createShellWindow(preloadPath, `${SHELL_ORIGIN}/index.html`);
 	const controller = await createAppController(userDataPath, cliArgs);
+	await controller.startRuntimes(userDataPath);
 
 	// macOS: the dock icon brings the shell back after its window was closed.
 	// DevHub is the app, not the window, so closing the window is not quitting.

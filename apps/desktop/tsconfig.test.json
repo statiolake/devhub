@@ -1,0 +1,13 @@
+{
+  // The tests that live outside `src/`.
+  //
+  // `test/` holds the suites that need a real PTY or a real tmux, plus the
+  // fixtures and drivers they share. They are typechecked like everything else
+  // — a test that does not compile is a test nobody is running.
+  //
+  // It extends the page's config rather than the main process's because these
+  // files reach into both halves, and bundler resolution is the only one that
+  // reads a `./x.js` specifier and a `./x` specifier as the same module.
+  "extends": "./tsconfig.shell.json",
+  "include": ["test"]
+}

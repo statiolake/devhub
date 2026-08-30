@@ -11,6 +11,8 @@
  * are unchanged, so the App Shell components are the same components.
  */
 
+import type { AgentApi } from "./agent.js";
+import type { DevhubTerminalApi } from "./terminal.js";
 import type {
 	AgentProfiles,
 	AppAppearance,
@@ -116,6 +118,18 @@ export interface DevhubApi {
 	setContentRect(rect: ContentRect): Promise<void>;
 	/** Whether a DOM surface is on screen, so the native view can hide. */
 	setSurfaceVisible(visible: boolean): Promise<void>;
+
+	/**
+	 * The two Surface runtimes, each on its own slice.
+	 *
+	 * They are separate namespaces rather than more members here because they
+	 * are separate subsystems with their own framing and their own surface-key
+	 * grammars — `global-terminal` / `workspace-terminal:<uuid>` for one,
+	 * `agent:<uuid>` for the other. Flattening them would invite a caller to
+	 * pass one's key to the other.
+	 */
+	readonly terminal: DevhubTerminalApi;
+	readonly agent: AgentApi;
 }
 
 /**

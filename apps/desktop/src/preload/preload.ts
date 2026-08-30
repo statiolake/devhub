@@ -31,6 +31,8 @@ import type {
 	AppSnapshot,
 	ReplayWire,
 } from "../ipc/appShell.js";
+import { agentApi } from "./agent.js";
+import { terminalApi } from "./terminal.js";
 import {
 	SETTINGS_CHANNELS,
 	type SettingsApi,
@@ -93,6 +95,9 @@ const devhub: DevhubApi = {
 		ipcRenderer.invoke(CHANNELS.setContentRect, rect) as Promise<void>,
 	setSurfaceVisible: (visible: boolean) =>
 		ipcRenderer.invoke(CHANNELS.setSurfaceVisible, visible) as Promise<void>,
+
+	terminal: terminalApi,
+	agent: agentApi,
 };
 
 const devhubSettings: SettingsApi = {

@@ -92,6 +92,10 @@ import {
 } from "../../model/wire.js";
 import { shellWindow } from "./shellWindow.js";
 import { agents, inspectWorkspaceResources, terminals } from "./adapters.js";
+import { wireTerminals, type TerminalWiring } from "./terminalWiring.js";
+import { wireAgents } from "./agentWiring.js";
+import { resolveRuntimes } from "./runtimes.js";
+import type { AgentService } from "../agent/index.js";
 import { startWorkspacePicker } from "./workspacePicker.js";
 import {
 	openSettingsWindow,
@@ -136,6 +140,8 @@ export class AppController {
 	private cancelPicker: (() => void) | undefined;
 	/** Page requests still waiting on a deferred chain, by operation identity. */
 	private readonly pendingRequests = new Map<OperationId, PendingRequest>();
+	private terminalsWiring: TerminalWiring | undefined;
+	private agentService: AgentService | undefined;
 	private stopWatchingConfig: (() => void) | undefined;
 
 	constructor(
@@ -183,15 +189,66 @@ export class AppController {
 		return this.previousExitValue;
 	}
 
+	/**
+	 * Bring up the terminal and Agent runtimes.
+	 *
+	 * They are built after the config and the state are loaded, because both
+	 * are inputs: which tmux and shell to use, which socket is in effect, and
+	 * which Herdr command to launch all come from those two files.
+	 */
+	async startRuntimes(userDataPath: string): Promise<void> {
+		const config = this.config;
+		const resolved = await resolveRuntimes(
+			config?.runtimes ?? {
+				shell: "/bin/zsh",
+				git: "git",
+				tmux: "tmux",
+				herdr: "herdr",
+				tmux_socket_name: "devhub",
+				tmux_args: [],
+			},
+		);
+		this.terminalsWiring = wireTerminals({
+			config,
+			resolved: { tmux: resolved.tmux, shell: resolved.shell },
+			effectiveSocketName: this.state.tmux.effective_socket_name,
+			userDataPath,
+			model: () => this.coordinator.model,
+		});
+		this.agentService = wireAgents({
+			journalPath: join(userDataPath, "devhub", "agents.journal"),
+			configuredHerdr: config?.runtimes.herdr ?? "herdr",
+			home: homedir(),
+			model: () => this.coordinator.model,
+			onObserved: (agentId) => {
+				// Whatever the adapter noticed reaches the model the one way any
+				// observation does: by reconciling that Agent.
+				this.dispatchOwn({ type: "reconcile_agent", agentId });
+			},
+		});
+	}
+
+	get terminalRuntime(): TerminalWiring | undefined {
+		return this.terminalsWiring;
+	}
+
 	markReady(): void {
 		this.coordinator.markReady();
 		this.coordinator.setEditorHostState({ kind: "ready" });
 		this.publishSnapshot();
 	}
 
-	/** Record a clean shutdown, so the next launch knows this one ended well. */
+	/**
+	 * Record a clean shutdown, so the next launch knows this one ended well.
+	 *
+	 * Terminals are deliberately *not* closed: a DevHub terminal is a tmux
+	 * session that outlives the app, and quitting detaches the clients rather
+	 * than killing the work. Agents get a bounded chance to shut down.
+	 */
 	async shutdown(): Promise<void> {
 		this.stopWatchingConfig?.();
+		this.terminalsWiring?.service.dispose();
+		await this.agentService?.dispose();
 		markCleanShutdown(this.state);
 		await this.stateStore.saveState(this.state);
 	}
