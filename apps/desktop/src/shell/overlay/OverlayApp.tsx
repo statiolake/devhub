@@ -11,7 +11,7 @@
  * says when each one is done. That is the whole protocol.
  */
 
-import { useEffect, useState } from "react";
+import { useSyncExternalStore } from "react";
 import { AppShellProvider } from "../AppShellContext";
 import { devhub } from "../client";
 import type { OpenModal } from "../../ipc/contract";
@@ -24,6 +24,36 @@ import { CloseConfirmationAlert } from "./CloseConfirmationAlert";
 /** Take one modal off screen, with the answer if it asked for one. */
 function close(id: string, response?: number): void {
   void devhub().closeModal(id, response);
+}
+
+/**
+ * The set that is open, subscribed to as this module is evaluated.
+ *
+ * Not when the layer mounts. Main publishes the set from the page's
+ * `did-finish-load`, which is after this module's script has run and before
+ * any React effect has: a subscription taken in an effect is taken too late,
+ * and the first modal of a session was pushed to nobody at all. The layer went
+ * up with nothing drawn on it — the blank stop confirmation in
+ * `.spike/agents-09-stop-confirmation.png`, reproduced by opening any modal as
+ * the first one after launch.
+ *
+ * One page serves the shell, Settings and this layer, so this subscription is
+ * taken on all three. Main sends the set only to the overlay view, so on the
+ * other two it simply never hears anything.
+ */
+let openModals: readonly OpenModal[] = [];
+const subscribers = new Set<() => void>();
+
+devhub().onModals((modals) => {
+  openModals = modals;
+  for (const notify of subscribers) notify();
+});
+
+function subscribeToModals(notify: () => void): () => void {
+  subscribers.add(notify);
+  return () => {
+    subscribers.delete(notify);
+  };
 }
 
 function Modal({ modal }: { readonly modal: OpenModal }) {
@@ -77,8 +107,7 @@ function Modal({ modal }: { readonly modal: OpenModal }) {
 }
 
 function ModalLayer() {
-  const [modals, setModals] = useState<readonly OpenModal[]>([]);
-  useEffect(() => devhub().onModals(setModals), []);
+  const modals = useSyncExternalStore(subscribeToModals, () => openModals);
   return (
     <>
       {modals.map((modal) => (
