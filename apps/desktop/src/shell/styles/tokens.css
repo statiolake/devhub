@@ -1,10 +1,28 @@
 /*
  * DevHub design tokens.
  *
- * The palette is the Zenbones-derived product palette from ADR 0019, expressed
- * once per role and resolved for the viewer's system appearance. Provider
- * surfaces (the VS Code Workbench, xterm) keep their own themes; nothing here
- * reaches into them.
+ * Every token is declared once per role and resolved for the viewer's system
+ * appearance. What is written here is the *fallback*: the colours a profile
+ * that has never run a workbench comes up in.
+ *
+ * Once one has, DevHub's chrome takes its colours from the Workbench's own
+ * colour theme instead. The Workbench is not a provider surface DevHub sits
+ * beside — it is the thing DevHub is a frame around — so a shell in macOS grey
+ * around a Solarized editor is two applications in one window. xterm keeps its
+ * own theme.
+ *
+ * A theme replaces exactly four values — `--canvas`, `--chrome`, `--surface`,
+ * `--primary` — and resolves `color-scheme`. Everything else below is written
+ * as a relation to one of those (a lift off the surface, an ink at a strength)
+ * rather than as a literal, which is what lets a theme reach every token, and
+ * what lets Increase Contrast keep working on top of one: it moves the
+ * strengths, and the strengths are named. No component knows any of it
+ * happened.
+ *
+ * The four arrive from `src/ipc/palette.ts` by two routes that write the same
+ * thing: main puts them in the page's `<head>` as it serves it, so the first
+ * frame is already right, and the page sets them inline when a workbench
+ * changes theme afterwards.
  */
 
 :root {
@@ -17,24 +35,50 @@
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
 
-  /* Materials, back to front.
+  /* Materials, back to front — and the three anchors a colour theme replaces.
    *
-   * These track the macOS system colours rather than a brand palette: window
-   * chrome sits behind bright content, and content is white in Light. A warm
-   * tint here reads as a web app dropped onto the desktop.
+   * The fallbacks track the macOS system colours rather than a brand palette:
+   * window chrome sits behind bright content, and content is white in Light. A
+   * warm tint here reads as a web app dropped onto the desktop.
    */
   --canvas: light-dark(#ececec, #1e1e1e);
   --chrome: light-dark(#ececec, #262626);
   --surface: light-dark(#ffffff, #1e1e1e);
-  --raised: light-dark(#ffffff, #2d2d2d);
-  --sunken: light-dark(#e3e3e3, #161616);
+
+  /* Raised and sunken are not colours, they are a lift and a recess off the
+     surface — one step towards white, one towards black. Written as a relation
+     rather than as two more literals so that any surface, this file's or a
+     theme's, gets a card that reads as above it and a well that reads as
+     below it.
+   *
+   * One step, not one per appearance: a light surface is already at white and
+   * cannot be lifted past it, which is why the same 7% reads as "no change" on
+   * white and as a card on #1e1e1e. Every strength below is a single number for
+   * the same reason — and because `light-dark()` is defined for colours only,
+   * so a percentage written that way silently voids the whole declaration. */
+  --lift: 7%;
+  --recess: 11%;
+  --raised: color-mix(in srgb, #ffffff var(--lift), var(--surface));
+  --sunken: color-mix(in srgb, #000000 var(--recess), var(--surface));
 
   /* Ink. macOS label colours are alpha over the surface, not fixed greys, so
-     they stay legible on any material. */
+     they stay legible on any material — and every one of them below is the
+     same ink at a different strength, so a theme with warm or cool text stays
+     warm or cool all the way down to its hairlines. */
   --primary: light-dark(rgba(0, 0, 0, 0.85), rgba(255, 255, 255, 0.85));
-  --secondary: light-dark(rgba(0, 0, 0, 0.5), rgba(255, 255, 255, 0.55));
-  --tertiary: light-dark(rgba(0, 0, 0, 0.26), rgba(255, 255, 255, 0.25));
-  --disabled-ink: light-dark(rgba(0, 0, 0, 0.25), rgba(255, 255, 255, 0.25));
+  --ink-secondary: 62%;
+  --ink-tertiary: 30%;
+  --secondary: color-mix(
+    in srgb,
+    var(--primary) var(--ink-secondary),
+    transparent
+  );
+  --tertiary: color-mix(
+    in srgb,
+    var(--primary) var(--ink-tertiary),
+    transparent
+  );
+  --disabled-ink: var(--tertiary);
 
   /* Accent and state.
    *
@@ -48,25 +92,55 @@
   /* A source list selection is a neutral fill, not a tinted one: the accent
      appears on the row's glyph and the label goes semibold, which is what
      carries "this one" — the fill only marks the extent of the row. */
-  --selection: light-dark(rgba(0, 0, 0, 0.11), rgba(255, 255, 255, 0.14));
-  --selection-inactive: light-dark(
-    rgba(0, 0, 0, 0.06),
-    rgba(255, 255, 255, 0.07)
+  --ink-selection: 14%;
+  --ink-selection-inactive: 7%;
+  --selection: color-mix(
+    in srgb,
+    var(--primary) var(--ink-selection),
+    transparent
+  );
+  --selection-inactive: color-mix(
+    in srgb,
+    var(--primary) var(--ink-selection-inactive),
+    transparent
   );
   /* System-adjacent semantics: green, orange, red as macOS renders them. */
   --working: light-dark(#1d7f36, #30d158);
   --waiting: light-dark(#b25000, #ff9f0a);
   --danger: light-dark(#c0392f, #ff6961);
+  /* Idle is a status like the other three and needs a name of its own: it is
+     drawn as an outline, and an outline in `--tertiary` is a hairline that
+     disappears. Ink rather than a literal, so it follows a colour theme the
+     way the rest of the ink does. */
+  --ink-idle: 46%;
+  --idle: color-mix(in srgb, var(--primary) var(--ink-idle), transparent);
 
   /* Separators. */
-  --line: light-dark(rgba(0, 0, 0, 0.12), rgba(255, 255, 255, 0.12));
-  --line-soft: light-dark(rgba(0, 0, 0, 0.07), rgba(255, 255, 255, 0.07));
-  --line-strong: light-dark(rgba(0, 0, 0, 0.24), rgba(255, 255, 255, 0.2));
+  --ink-line: 14%;
+  --ink-line-soft: 8%;
+  --ink-line-strong: 26%;
+  --line: color-mix(in srgb, var(--primary) var(--ink-line), transparent);
+  --line-soft: color-mix(
+    in srgb,
+    var(--primary) var(--ink-line-soft),
+    transparent
+  );
+  --line-strong: color-mix(
+    in srgb,
+    var(--primary) var(--ink-line-strong),
+    transparent
+  );
   --focus-ring: var(--accent);
 
   /* Hover/pressed washes that work on any material. */
-  --wash: light-dark(rgba(0, 0, 0, 0.05), rgba(255, 255, 255, 0.06));
-  --wash-strong: light-dark(rgba(0, 0, 0, 0.09), rgba(255, 255, 255, 0.11));
+  --ink-wash: 6%;
+  --ink-wash-strong: 12%;
+  --wash: color-mix(in srgb, var(--primary) var(--ink-wash), transparent);
+  --wash-strong: color-mix(
+    in srgb,
+    var(--primary) var(--ink-wash-strong),
+    transparent
+  );
 
   --shadow-raised: 0 1px 2px light-dark(rgba(0, 0, 0, 0.12), rgba(0, 0, 0, 0.5));
   --shadow-dialog: 0 12px 38px
@@ -99,6 +173,11 @@
   --sidebar-rail-width: 14px;
   --sidebar-glyph-width: 16px;
   --sidebar-glyph-ink: 14px;
+  /* The Sidebar collapsed: an icon rail, not nothing. One column of tiles,
+     each the size of a toolbar control, with the same gutter either side. */
+  --sidebar-collapsed-width: 52px;
+  --sidebar-tile-size: 32px;
+  --status-mark-size: 8px;
 }
 
 @supports (color: AccentColor) {
@@ -108,21 +187,22 @@
   }
 }
 
-/* Increase Contrast asks for firmer edges and darker secondary ink. */
+/* Increase Contrast asks for firmer edges and darker secondary ink.
+ *
+ * It moves the strengths, not the colours, which is why the strengths are
+ * named: a colour theme replaces `--primary` and this block still applies to
+ * it, in the one place these relationships are written. */
 @media (prefers-contrast: more) {
   :root {
-    --secondary: light-dark(rgba(0, 0, 0, 0.72), rgba(255, 255, 255, 0.78));
-    --tertiary: light-dark(rgba(0, 0, 0, 0.55), rgba(255, 255, 255, 0.6));
-    --line: light-dark(rgba(0, 0, 0, 0.34), rgba(255, 255, 255, 0.3));
-    --line-soft: light-dark(rgba(0, 0, 0, 0.22), rgba(255, 255, 255, 0.2));
-    --line-strong: light-dark(rgba(0, 0, 0, 0.55), rgba(255, 255, 255, 0.48));
+    --ink-secondary: 88%;
+    --ink-tertiary: 68%;
+    --ink-line: 38%;
+    --ink-line-soft: 25%;
+    --ink-line-strong: 60%;
     /* Increase Contrast wants the selected row to be unmistakable, so the
        fill firms up rather than staying a whisper. */
-    --selection: light-dark(rgba(0, 0, 0, 0.24), rgba(255, 255, 255, 0.28));
-    --selection-inactive: light-dark(
-      rgba(0, 0, 0, 0.14),
-      rgba(255, 255, 255, 0.16)
-    );
+    --ink-selection: 30%;
+    --ink-selection-inactive: 17%;
   }
 }
 
