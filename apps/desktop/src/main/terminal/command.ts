@@ -267,12 +267,34 @@ function decodeUtf8(output: Buffer): string {
 	return text;
 }
 
-/** The one stderr classification the runtime makes: "there is no server". */
+/**
+ * The one stderr classification the runtime makes: "there is no server".
+ *
+ * Everything it does not match is read as a *foreign* server, which is the
+ * fail-closed answer — DevHub refuses a socket it cannot prove is its own. That
+ * makes the exact set here load-bearing in both directions, and it has to cover
+ * every way tmux says the server is gone, not only the ways it says so before
+ * connecting:
+ *
+ * - "no server running on <socket>" — the socket is absent, or stale after a
+ *   server was killed.
+ * - "error connecting to <socket> (No such file or directory)" — no socket.
+ * - "server exited unexpectedly" — the client *did* connect, and the server
+ *   went away mid-exchange. This is the one that arrives while DevHub's own
+ *   server is shutting down: killing the last session ends the server, and a
+ *   command that overlaps that exit gets this instead of a value. A server that
+ *   has exited is not somebody else's tmux, and reading it as one made DevHub
+ *   declare its own socket foreign for as long as the race lasted.
+ *
+ * Calling any of them "absent" costs no safety: the caller bootstraps a server
+ * and verifies the marker on it before using it.
+ */
 export function isNoServerError(stderr: Buffer): boolean {
 	const text = stderr.toString("utf8").trim().toLowerCase();
 	return (
 		text.includes("no server running") ||
 		text === "no server" ||
+		text.includes("server exited unexpectedly") ||
 		(text.startsWith("error connecting") &&
 			text.includes("no such file or directory"))
 	);

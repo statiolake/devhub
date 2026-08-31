@@ -12,6 +12,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
 	OperationDeadline,
+	isNoServerError,
 	parseLines,
 	parseOptionValue,
 	resolveExecutable,
@@ -430,5 +431,36 @@ describe("scratch directories", () => {
 		const directory = mkdtempSync(join(SCRATCH_ROOT, "probe-"));
 		created.push(directory);
 		expect(directory.startsWith(SCRATCH_ROOT)).toBe(true);
+	});
+});
+
+describe("the absent-server classification", () => {
+	/**
+	 * Everything this does not match is read as a foreign server and refuses
+	 * the socket, so each of these sentences is one way DevHub could declare
+	 * its own tmux somebody else's.
+	 */
+	it("covers every way tmux says the server is gone", () => {
+		for (const stderr of [
+			"no server running on /tmp/tmux-501/devhub",
+			"error connecting to /tmp/tmux-501/devhub (No such file or directory)",
+			// Killing the last session ends the server; a command that overlaps
+			// that exit connects and is then told the server went away. tmux
+			// prints exactly this, and it means the same thing as the two above.
+			"server exited unexpectedly",
+		]) {
+			expect(isNoServerError(Buffer.from(`${stderr}\n`, "utf8"))).toBe(true);
+		}
+	});
+
+	it("still reads a server that answered as a server", () => {
+		for (const stderr of [
+			"",
+			"can't find session: scratch",
+			"lost server",
+			"unknown command: show-options",
+		]) {
+			expect(isNoServerError(Buffer.from(stderr, "utf8"))).toBe(false);
+		}
 	});
 });
