@@ -24,9 +24,18 @@
 import { electron } from "../electron.js";
 import { SHELL_SCHEME } from "./shellPageProtocol.js";
 
-/** The only pages DevHub draws: its own bundle, on the scheme it owns. */
-function isOwnPage(url: string): boolean {
-	return url.startsWith(`${SHELL_SCHEME}:`);
+/**
+ * Whether this URL is something to hand to the browser.
+ *
+ * Two things are not. DevHub's own page, on the scheme it owns, is the one
+ * document these contents are allowed to be showing. And `about:blank` is not a
+ * link at all — it is what a bare `window.open()` asks for, a blank window to
+ * write into later, which is a request DevHub has no answer to; asking the
+ * operating system to open it would be nonsense reaching the person as a
+ * flickering browser tab.
+ */
+function leavesTheApp(url: string): boolean {
+	return !url.startsWith(`${SHELL_SCHEME}:`) && !url.startsWith("about:");
 }
 
 /**
@@ -38,14 +47,14 @@ function isOwnPage(url: string): boolean {
  */
 export function sendLinksToTheBrowser(contents: Electron.WebContents): void {
 	contents.setWindowOpenHandler(({ url }) => {
-		if (!isOwnPage(url)) void electron.shell.openExternal(url);
+		if (leavesTheApp(url)) void electron.shell.openExternal(url);
 		// Never `allow`. There is no second DevHub window, and a window with
 		// somebody else's page in it wearing DevHub's preload is worse than no
 		// window at all.
 		return { action: "deny" };
 	});
 	contents.on("will-navigate", (event, url) => {
-		if (isOwnPage(url)) return;
+		if (!leavesTheApp(url)) return;
 		// The page replacing itself with a stranger's document would take the
 		// sidebar, the surfaces and every live attachment with it.
 		event.preventDefault();

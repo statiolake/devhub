@@ -458,6 +458,14 @@ describe("links out of the App Shell page", () => {
 		expect(openedExternally).toEqual(["https://example.com/docs"]);
 	});
 
+	it("refuses a bare window.open without troubling the browser", () => {
+		// `window.open()` with no URL asks for a blank window to write into.
+		// There is no such window here, and `about:blank` is not a link.
+		const answer = fake().windowOpenHandler?.({ url: "about:blank" });
+		expect(answer).toEqual({ action: "deny" });
+		expect(openedExternally).toEqual([]);
+	});
+
 	it("leaves the shell's own page alone", () => {
 		expect(navigate("devhub-app://shell/index.html?window=overlay")).toBe(
 			false,
