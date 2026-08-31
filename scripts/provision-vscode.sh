@@ -25,12 +25,17 @@ TOOLCHAIN_DIR="$REPO_ROOT/vscode-toolchain"
 step() { printf '\n==> %s\n' "$1"; }
 
 # --- 1. the submodule ------------------------------------------------------
+# The pinned commit is the one the *parent repo* records, not whatever the
+# submodule's working tree happens to sit on: `submodule update` checks the
+# recorded gitlink out. So a bump is `git -C vscode checkout <tag>` **and**
+# `git add vscode` before this script runs — provisioning against an unstaged
+# bump would quietly rebuild the old version. The checked-out version is
+# printed for exactly that reason.
 step "VS Code submodule"
 if [ "$FORCE" = 1 ] || [ ! -f "$VSCODE_DIR/package.json" ]; then
 	git -C "$REPO_ROOT" submodule update --init --depth 1 -- vscode
-else
-	echo "already checked out: $(git -C "$VSCODE_DIR" rev-parse --short HEAD)"
 fi
+echo "checked out: $(git -C "$VSCODE_DIR" rev-parse --short HEAD) (VS Code $(sed -n 's/.*"version": "\([^"]*\)".*/\1/p' "$VSCODE_DIR/package.json" | head -1))"
 
 # --- 2. the Node the VS Code build requires --------------------------------
 # The machine default is whatever the developer runs; VS Code's build refuses
