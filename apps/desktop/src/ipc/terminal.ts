@@ -361,10 +361,25 @@ const UUID_PATTERN =
 
 export const GLOBAL_TERMINAL_SURFACE_KEY = "global-terminal";
 export const WORKSPACE_TERMINAL_SURFACE_PREFIX = "workspace-terminal:";
+/**
+ * An Agent's surface.
+ *
+ * An Agent is a tmux session like the other two, so it is a key this channel
+ * answers about rather than a channel of its own. It is listed here because
+ * the grammar is checked at the wire, before anything resolves it: a key this
+ * function does not know is refused, so a new kind of surface has to be
+ * admitted here on purpose and cannot arrive by accident.
+ */
+export const AGENT_SURFACE_PREFIX = "agent:";
 
 /** The surface key for a workspace's terminal, from its workspace id. */
 export function workspaceTerminalSurfaceKey(workspaceId: string): string {
 	return `${WORKSPACE_TERMINAL_SURFACE_PREFIX}${workspaceId}`;
+}
+
+/** The surface key for an Agent, from its Agent id. */
+export function agentSurfaceKey(agentId: string): string {
+	return `${AGENT_SURFACE_PREFIX}${agentId}`;
 }
 
 export function validateSurfaceKey(value: unknown): string {
@@ -379,7 +394,11 @@ export function validateSurfaceKey(value: unknown): string {
 	const valid =
 		value === GLOBAL_TERMINAL_SURFACE_KEY ||
 		(value.startsWith(WORKSPACE_TERMINAL_SURFACE_PREFIX) &&
-			UUID_PATTERN.test(value.slice(WORKSPACE_TERMINAL_SURFACE_PREFIX.length)));
+			UUID_PATTERN.test(
+				value.slice(WORKSPACE_TERMINAL_SURFACE_PREFIX.length),
+			)) ||
+		(value.startsWith(AGENT_SURFACE_PREFIX) &&
+			UUID_PATTERN.test(value.slice(AGENT_SURFACE_PREFIX.length)));
 	if (!valid) throw new TerminalFailure("invalid_surface");
 	return value;
 }

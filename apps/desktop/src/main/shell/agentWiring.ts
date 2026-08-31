@@ -67,8 +67,8 @@ export function wireAgents(options: AgentWiringOptions): AgentSessions {
 			}
 		},
 
-		stop: (agentId) => terminate(sessions, options.model, agentId),
-		terminate: (agentId) => terminate(sessions, options.model, agentId),
+		stop: (agentId) => terminate(sessions, agentId),
+		terminate: (agentId) => terminate(sessions, agentId),
 
 		/**
 		 * One round: the socket's Agent sessions, matched against the model's.
@@ -84,6 +84,27 @@ export function wireAgents(options: AgentWiringOptions): AgentSessions {
 			const health: RuntimeHealth = sessions.available
 				? "healthy"
 				: "unavailable";
+			// The Agents this round is *about*, read before the socket is asked.
+			//
+			// This order is the whole of the exit rule's correctness. A round
+			// that listed sessions first and then read the model would judge an
+			// Agent launched in between against a list taken before it existed,
+			// and report a running Agent as ended — which is exactly what it did
+			// until this line moved. An Agent that appears after the list is
+			// simply not this round's business.
+			const asked = new Map<
+				AgentId,
+				{ workspaceId: WorkspaceId; kind: string }
+			>();
+			for (const workspace of options.model().workspaces) {
+				for (const agent of workspace.agents) {
+					if (agentId !== undefined && agent.id !== agentId) continue;
+					asked.set(agent.id, {
+						workspaceId: workspace.id,
+						kind: agent.profile.kind,
+					});
+				}
+			}
 			const live = new Set((await sessions.list()).map((one) => one.agentId));
 			const observations: {
 				agentId: AgentId;
@@ -91,27 +112,28 @@ export function wireAgents(options: AgentWiringOptions): AgentSessions {
 				runtimeHealth: RuntimeHealth;
 			}[] = [];
 			const exited: AgentId[] = [];
-			for (const workspace of options.model().workspaces) {
-				for (const agent of workspace.agents) {
-					if (agentId !== undefined && agent.id !== agentId) continue;
-					if (!live.has(agent.id)) {
-						if (sessions.isLaunching(agent.id)) continue;
-						detector.forget(agent.id);
-						exited.push(agent.id);
-						continue;
-					}
-					observations.push({
-						agentId: agent.id,
-						status: await status(
-							sessions,
-							detector,
-							agent.id,
-							workspace.id,
-							agent.profile.kind,
-						),
-						runtimeHealth: health,
-					});
+			for (const [id, about] of asked) {
+				// And read the model again at the end: an Agent that went away
+				// while the screens were being captured is news the model already
+				// has, and reporting it back would name an Agent it cannot find.
+				if (options.model().workspaceForAgent(id) === undefined) continue;
+				if (!live.has(id)) {
+					if (sessions.isLaunching(id)) continue;
+					detector.forget(id);
+					exited.push(id);
+					continue;
 				}
+				observations.push({
+					agentId: id,
+					status: await status(
+						sessions,
+						detector,
+						id,
+						about.workspaceId,
+						about.kind,
+					),
+					runtimeHealth: health,
+				});
 			}
 			return { observations, exited };
 		},
@@ -120,7 +142,7 @@ export function wireAgents(options: AgentWiringOptions): AgentSessions {
 			const workspace = options.model().workspace(workspaceId);
 			if (!workspace) return;
 			for (const agent of workspace.agents) {
-				await terminate(sessions, options.model, agent.id);
+				await terminate(sessions, agent.id);
 			}
 		},
 	});
@@ -153,17 +175,10 @@ async function status(
 
 async function terminate(
 	sessions: AgentSessions,
-	model: () => AppModel,
 	agentId: AgentId,
 ): Promise<AgentStopResult> {
-	const workspace = model().workspaceForAgent(agentId);
-	if (workspace === undefined) {
-		// The model does not have this Agent, so there is no workspace to name
-		// its session with. Nothing to kill, and nothing to retry.
-		return { kind: "stopped" };
-	}
 	try {
-		await sessions.terminate(agentId, workspace.id);
+		await sessions.terminate(agentId);
 		return { kind: "stopped" };
 	} catch {
 		// A stop that did not stop leaves the Agent retryable rather than

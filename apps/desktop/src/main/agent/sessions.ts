@@ -33,7 +33,6 @@ import {
 	CancellationToken,
 	type AgentSessionCommand,
 	type AgentTerminalTarget,
-	type OwnedSessionRecord,
 } from "../terminal/ports.js";
 import {
 	agentSessionName,
@@ -164,7 +163,7 @@ export class AgentSessions {
 		let reaped = 0;
 		for (const session of live) {
 			if (known.has(session.agentId)) continue;
-			await this.terminate(session.agentId, session.workspaceId, cancel);
+			await this.terminate(session.agentId, cancel);
 			reaped += 1;
 		}
 		return reaped;
@@ -180,18 +179,18 @@ export class AgentSessions {
 	 */
 	async terminate(
 		agentId: string,
-		workspaceId: string,
 		cancel = new CancellationToken(),
 	): Promise<void> {
-		const record: OwnedSessionRecord = {
-			kind: "agent",
-			agentId,
-			workspaceId,
-			// The name is a pure function of the id, so a record built here and
-			// a record read off the server are the same record without either
-			// having had to be persisted.
-			sessionName: agentSessionName(agentId),
-		};
+		// The record comes off the server, not out of the model. The one caller
+		// that most needs this is the compensation for a launch that failed
+		// after creating its session: there is no row for that Agent and there
+		// never will be, so a terminate that could only work for Agents the
+		// model knows would leave exactly those sessions running for ever.
+		const record = (await this.#runtime.listAgents(cancel)).find(
+			(candidate) =>
+				candidate.kind === "agent" && candidate.agentId === agentId,
+		);
+		if (!record) return;
 		await this.#runtime.closeAgent(record, cancel);
 	}
 }

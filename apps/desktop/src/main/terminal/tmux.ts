@@ -908,6 +908,13 @@ export class TmuxTerminalRuntime {
 	 * stream: the sidebar must be able to say what every Agent is doing with no
 	 * surface open at all.
 	 *
+	 * The ownership check is the first command in the *same* client queue as
+	 * the read, rather than a separate `list-sessions` before it. That is both
+	 * cheaper — one tmux invocation per Agent per round instead of a full
+	 * marker inventory — and stricter: a session that was replaced between a
+	 * separate check and the capture could still have been read, and here it
+	 * cannot, because the id and the screen come out of one command run.
+	 *
 	 * There is no OSC-progress equivalent. tmux exposes the pane title (OSC 0
 	 * and 2) as `#{pane_title}` and does not expose OSC 9;4 progress at all, so
 	 * a rule keyed on progress can never match here. That is stated rather than
@@ -919,33 +926,45 @@ export class TmuxTerminalRuntime {
 		record: OwnedSessionRecord,
 		cancel = new CancellationToken(),
 	): Promise<{ readonly screen: string; readonly oscTitle: string }> {
+		if (record.kind !== "agent") throw portFailure("failed");
 		const release = await this.gate.acquireOperation(cancel);
 		try {
 			const socket = this.socket();
 			const deadline = OperationDeadline.in(this.timeoutMs);
-			// The exact-record check first: a capture is a read of somebody's
-			// terminal, and it must never read a session that is not this
-			// Agent's because a name was reused.
-			const exact = await this.findOwned(socket, record, cancel, deadline);
-			if (!exact) throw portFailure("conflict");
-			const title = await this.runTmux(
+			const output = await this.runTmux(
 				socket,
-				["display-message", "-p", "-t", record.sessionName, "#{pane_title}"],
+				[
+					"display-message",
+					"-p",
+					"-t",
+					record.sessionName,
+					`#{${AGENT_ID_OPTION}}`,
+					";",
+					"display-message",
+					"-p",
+					"-t",
+					record.sessionName,
+					"#{pane_title}",
+					";",
+					"capture-pane",
+					"-p",
+					"-J",
+					"-t",
+					record.sessionName,
+				],
 				this.contextHome,
 				cancel,
 				deadline,
 			);
-			const screen = await this.runTmux(
-				socket,
-				["capture-pane", "-p", "-J", "-t", record.sessionName],
-				this.contextHome,
-				cancel,
-				deadline,
-			);
-			if (!title.success || !screen.success) throw portFailure("failed");
+			if (!output.success) throw portFailure("conflict");
+			// The first two lines are the two `display-message` answers; a pane
+			// title cannot contain a newline, because tmux takes it from an OSC
+			// string and control characters do not survive that.
+			const lines = parseCapture(output.stdout).split("\n");
+			if (lines[0] !== record.agentId) throw portFailure("conflict");
 			return {
-				screen: parseCapture(screen.stdout),
-				oscTitle: parseLines(title.stdout)[0] ?? "",
+				oscTitle: lines[1] ?? "",
+				screen: lines.slice(2).join("\n"),
 			};
 		} finally {
 			release();

@@ -189,7 +189,9 @@ describe("terminal frame decoding", () => {
       sequence: 1,
       reason: "eof",
     });
-    expect(() => decodeTerminalFrame(raw.subarray(0, raw.byteLength - 3))).toThrow();
+    expect(() =>
+      decodeTerminalFrame(raw.subarray(0, raw.byteLength - 3)),
+    ).toThrow();
     const retagged = Uint8Array.from(raw);
     retagged[1] = TERMINAL_FRAME_KINDS.output;
     expect(() => decodeTerminalFrame(retagged)).toThrow();
@@ -277,17 +279,26 @@ describe("terminal request validation", () => {
         "workspace-terminal:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
       ),
     ).toBeTruthy();
+    // An Agent is a tmux session like the other two, so its key is one this
+    // channel answers about rather than a channel of its own.
+    expect(
+      validateSurfaceKey("agent:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+    ).toBeTruthy();
     for (const invalid of [
       "",
       "/var/folders/session",
       "workspace terminal",
       "workspace-terminal:not-a-uuid",
+      "agent:not-a-uuid",
+      "agent:",
       "global-terminal\0",
       "x".repeat(MAX_SURFACE_KEY_BYTES + 1),
       42,
     ]) {
       expect(() => validateSurfaceKey(invalid)).toThrowError(
-        expect.objectContaining({ code: "invalid_surface" }) as unknown as Error,
+        expect.objectContaining({
+          code: "invalid_surface",
+        }) as unknown as Error,
       );
     }
   });
@@ -324,7 +335,10 @@ describe("terminal request validation", () => {
     ).toThrow();
     // Attach never names a generation: the capability is main's to allocate.
     expect(() =>
-      validateAttachRequest({ ...fixture.requests.attach, targetGeneration: 1 }),
+      validateAttachRequest({
+        ...fixture.requests.attach,
+        targetGeneration: 1,
+      }),
     ).toThrowError(
       expect.objectContaining({ code: "invalid_request" }) as unknown as Error,
     );
@@ -346,9 +360,7 @@ describe("terminal request validation", () => {
     ).toThrowError(
       expect.objectContaining({ code: "input_too_large" }) as unknown as Error,
     );
-    expect(() =>
-      validateInputRequest({ ...base, inputSequence: 0 }),
-    ).toThrow();
+    expect(() => validateInputRequest({ ...base, inputSequence: 0 })).toThrow();
     expect(() =>
       validateInputRequest({
         ...base,
