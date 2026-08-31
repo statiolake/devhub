@@ -289,7 +289,12 @@ describe("TerminalSurface lifecycle", () => {
     });
     expect(harness.client.resize).toHaveBeenCalledTimes(attachResizes);
 
-    // Coming back on screen is the first moment there is a real box to report.
+    // Coming back on screen is the first moment there is a real box to
+    // report, and a real box is a different size from the 80x24 a surface with
+    // no layout falls back to — that difference is the whole reason there is
+    // something to send.
+    mocks.fits[0].dimensions.cols = 132;
+    mocks.fits[0].dimensions.rows = 43;
     view.rerender(
       <TerminalSurface
         surfaceKey="global-terminal"
@@ -598,6 +603,10 @@ describe("TerminalSurface lifecycle", () => {
       fontSize: 13,
       lineHeight: 1.2,
     });
+    // A bigger face is fewer cells in the same pane; the addon would measure
+    // that, so the mock says it, and the refit has something to report.
+    mocks.fits[0].dimensions.cols = 69;
+    mocks.fits[0].dimensions.rows = 20;
     rendered.rerender(
       <TerminalSurface
         surfaceKey="global-terminal"

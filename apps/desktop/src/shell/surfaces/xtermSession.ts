@@ -51,6 +51,16 @@ export const FALLBACK_GEOMETRY: SurfaceGeometry = {
 /** The largest grid main will accept, and the largest one worth drawing. */
 const MAX_AXIS = 500;
 
+/** Two measurements of the same host that mean the same thing. */
+function sameGeometry(a: SurfaceGeometry, b: SurfaceGeometry): boolean {
+  return (
+    a.cols === b.cols &&
+    a.rows === b.rows &&
+    a.pixelWidth === b.pixelWidth &&
+    a.pixelHeight === b.pixelHeight
+  );
+}
+
 /**
  * Which of xterm's renderers is drawing.
  *
@@ -216,6 +226,21 @@ export function openXtermSession(
   let pending: SurfaceGeometry | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let disposed = false;
+  /**
+   * The last geometry this session actually told the surface about.
+   *
+   * `onGeometry` means "the host changed size", so it has to be said only when
+   * the host has. Several things ask for a measurement that turns out to be the
+   * same one — mounting takes it once for the attach request and the surface
+   * asks again the moment it is on screen; a ResizeObserver fires for a layout
+   * pass that moved nothing; an appearance change refits to the identical grid.
+   * Each of those used to become a resize request for a size the other end
+   * already had. Redundant traffic is the mild half of that. The sharp half is
+   * that it arrives on a timer, so whether a surface has sent one resize or two
+   * depends on when the clock lands, which is a test that fails once in three
+   * runs and a bug you cannot reproduce.
+   */
+  let reported: SurfaceGeometry | undefined;
 
   const measure = (): SurfaceGeometry => {
     try {
@@ -248,6 +273,11 @@ export function openXtermSession(
       const next = pending;
       pending = undefined;
       if (disposed || next === undefined) return;
+      // Decided here rather than at each `remeasure`, so a burst that ends
+      // where it started — A to B and back to A within one frame — says
+      // nothing, instead of announcing the B nobody ever saw.
+      if (reported && sameGeometry(next, reported)) return;
+      reported = next;
       options.onGeometry(next);
     }, 16);
   };
@@ -260,8 +290,11 @@ export function openXtermSession(
         });
   observer?.observe(host);
   // The first measurement is taken without reporting: the surface has not
-  // attached to anything yet, and it is the attach request that carries it.
+  // attached to anything yet, and it is the attach request that carries it. It
+  // still counts as said — the other end has it — so it is what a later
+  // measurement is compared against.
   geometry = options.isHidden() ? FALLBACK_GEOMETRY : measure();
+  reported = geometry;
 
   return {
     terminal,
