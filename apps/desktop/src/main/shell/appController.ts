@@ -138,6 +138,7 @@ import { installKeyboard } from "./keyboard.js";
 import {
 	openSettingsWindow,
 	publishSettingsSnapshot,
+	settingsWindowContents,
 	settingsWindowIsFocused,
 } from "./settingsWindow.js";
 
@@ -411,7 +412,33 @@ export class AppController {
 			openSettings: () => {
 				openSettingsWindow();
 			},
+			openDeveloperTools: () => {
+				this.openDeveloperTools();
+			},
 		});
+	}
+
+	/**
+	 * Open the Web Inspector on whatever the keyboard is in.
+	 *
+	 * One DevHub window holds several web contents over one rectangle — the App
+	 * Shell page, a `WebContentsView` per workbench — and Settings is a window
+	 * of its own. "The page" therefore names nothing on its own, so this asks
+	 * the same question the focus rule asks and gets the same answer: Settings
+	 * when Settings has the keyboard, and otherwise whatever `focusTarget` says
+	 * is on screen. Two rules would drift; there is one, and the Inspector opens
+	 * on the thing the person is looking at.
+	 *
+	 * Detached, because a panel docked inside a workbench view would be laid out
+	 * inside the rectangle DevHub positions, and the surface would appear to
+	 * shrink for reasons nothing on screen explains.
+	 */
+	private openDeveloperTools(): void {
+		const contents = settingsWindowIsFocused()
+			? settingsWindowContents()
+			: shellWindow().focusTarget();
+		if (!contents || contents.isDestroyed()) return;
+		contents.openDevTools({ mode: "detach" });
 	}
 
 	/**

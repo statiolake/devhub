@@ -116,6 +116,13 @@ export function settingsWindowIsFocused(): boolean {
 	return window !== undefined && !window.isDestroyed() && window.isFocused();
 }
 
+/** The Settings page's contents, for whoever has to address it directly. */
+export function settingsWindowContents(): Electron.WebContents | undefined {
+	return window === undefined || window.isDestroyed()
+		? undefined
+		: window.webContents;
+}
+
 /** Tell an open Settings window that the file changed underneath it. */
 export function publishSettingsSnapshot(): void {
 	if (!window || window.isDestroyed() || !host) return;
