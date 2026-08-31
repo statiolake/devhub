@@ -76,7 +76,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import plistlib
 import re
 import shutil
 import subprocess
@@ -94,16 +93,17 @@ BRIDGE_DIR = REPO_ROOT / "extensions" / "devhub-bridge"
 # The packaged app gets it merged into product.json below; a source run gets it
 # through vscode/product.overrides.json, which apps/desktop/scripts/dev.sh
 # writes from the same file. Neither path restates a value the other one owns.
-PRODUCT_OVERRIDES = json.loads((DESKTOP_DIR / "product-overrides.json").read_text())
-
-APP_NAME = PRODUCT_OVERRIDES["nameShort"]
-BUNDLE_IDENTIFIER = PRODUCT_OVERRIDES["darwinBundleIdentifier"]
-
-# The `Code - OSS` names come from VS Code's own Electron staging step
-# (`npm run electron`), which renames the prebuilt Electron bundle after its
-# product. Ours renames it once more.
-BASE_APP = VSCODE_DIR / ".build" / "electron" / "Code - OSS.app"
-BASE_PRODUCT_NAME = "Code - OSS"
+#
+# Renaming the Electron bundle after those same names is a source run's problem
+# too — macOS names an application from the bundle it runs in — so that rename
+# lives in darwin_bundle.py and both callers import it from there.
+from darwin_bundle import (  # noqa: E402
+	APP_NAME,
+	BASE_APP,
+	PRODUCT_OVERRIDES,
+	rebrand,
+	sign,
+)
 
 # The inline `//# sourceMappingURL=data:...` tail every file of the dev compile
 # carries. It is about half the weight of `out/` and means nothing without the
@@ -345,55 +345,20 @@ def directory_size(root: Path) -> int:
 
 
 def rename_bundle(app: Path, version: str) -> None:
-	"""Make the Electron bundle DevHub's.
+	"""Make the Electron bundle DevHub's, and say which DevHub it is.
 
-	Electron locates its helper processes at
-	`Contents/Frameworks/<CFBundleName> Helper*.app`, so the helper bundles are
-	renamed in the same pass as the plist. Renaming one without the other
-	produces an app that launches and then cannot open a single window.
+	The rename itself is `darwin_bundle.rebrand`, shared with the source run's
+	bundle so that the two cannot come to disagree about what DevHub is called.
+	What only a release knows is added here: the icon and the version.
 	"""
-	contents = app / "Contents"
-
-	executable = contents / "MacOS" / BASE_PRODUCT_NAME
-	executable.rename(contents / "MacOS" / APP_NAME)
-
-	for helper in sorted((contents / "Frameworks").glob(f"{BASE_PRODUCT_NAME} Helper*.app")):
-		suffix = helper.name[len(BASE_PRODUCT_NAME):-len(".app")]  # " Helper (GPU)"
-		renamed = helper.with_name(f"{APP_NAME}{suffix}.app")
-		helper.rename(renamed)
-		binary = renamed / "Contents" / "MacOS"
-		(binary / f"{BASE_PRODUCT_NAME}{suffix}").rename(binary / f"{APP_NAME}{suffix}")
-		kind = suffix[len(" Helper"):].strip("() ").lower()  # "", "gpu", "renderer"…
-		patch_plist(
-			renamed / "Contents" / "Info.plist",
-			{
-				"CFBundleExecutable": f"{APP_NAME}{suffix}",
-				"CFBundleName": f"{APP_NAME}{suffix}",
-				"CFBundleDisplayName": f"{APP_NAME}{suffix}",
-				"CFBundleIdentifier": f"{BUNDLE_IDENTIFIER}.helper" + (f".{kind}" if kind else ""),
-			},
-		)
-
-	patch_plist(
-		contents / "Info.plist",
+	rebrand(
+		app,
 		{
-			"CFBundleExecutable": APP_NAME,
-			"CFBundleName": APP_NAME,
-			"CFBundleDisplayName": APP_NAME,
-			"CFBundleIdentifier": BUNDLE_IDENTIFIER,
 			"CFBundleIconFile": f"{APP_NAME}.icns",
 			"CFBundleShortVersionString": version,
 			"CFBundleVersion": f"{version}.{date.today():%Y%m%d}",
 		},
 	)
-
-
-def patch_plist(path: Path, values: dict[str, str]) -> None:
-	with path.open("rb") as handle:
-		plist = plistlib.load(handle)
-	plist.update(values)
-	with path.open("wb") as handle:
-		plistlib.dump(plist, handle, fmt=plistlib.FMT_XML)
 
 
 def write_icon(app: Path) -> None:
@@ -610,8 +575,7 @@ def main() -> int:
 	# An Apple Silicon Mac refuses to run a modified bundle with no signature at
 	# all. Ad-hoc is not notarisation: the first launch still needs
 	# `xattr -dr com.apple.quarantine`.
-	run(["codesign", "--force", "--deep", "--sign", "-", str(app)])
-	run(["codesign", "--verify", "--deep", "--strict", str(app)])
+	sign(app)
 
 	print(f"\n    {app}  {directory_size(app) / 1e6:.0f} MB")
 

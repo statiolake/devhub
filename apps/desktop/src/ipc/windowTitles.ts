@@ -11,8 +11,8 @@
  *
  * These are the names macOS shows in Mission Control, in the Window menu and in
  * the window switcher. They are *not* the application's name: that comes from
- * the running bundle, and in development the bundle is VS Code's own.
- * `app.setName` in `main.ts` says what can be done about it.
+ * the bundle DevHub is running in. `app.setName` in `main.ts` says where that
+ * bundle comes from in each mode.
  */
 
 /** The `?window=` value each surface is served with; the shell has none. */

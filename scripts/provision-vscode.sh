@@ -181,6 +181,31 @@ if [ ! -d "$ELECTRON_APP" ]; then
 fi
 echo "Electron $(cat "$VSCODE_DIR/.build/electron/version" 2>/dev/null || echo '(version file missing)')"
 
+# --- 5b. the same Electron, in a bundle that says DevHub -------------------
+# macOS names an application from the bundle it is running in, not from
+# anything the process says about itself: the application menu, the Dock tile,
+# Mission Control and the window switcher all read the bundle's CFBundleName.
+# The bundle above is VS Code's own, so a source run booted straight from it
+# calls itself "Code - OSS" in every one of those places — `app.setName()` in
+# apps/desktop/src/main/main.ts cannot reach any of them.
+#
+# So a source run boots a branded clone of it instead, the way the packaged app
+# boots a branded copy. It is the same Electron either way, which is what the
+# native modules in vscode/node_modules require; only the names differ, and
+# they come from apps/desktop/product-overrides.json like every other name
+# DevHub goes by. On APFS the clone is copy-on-write, so it costs no disk.
+step "DevHub-branded Electron"
+DEVHUB_ELECTRON_DIR="$VSCODE_DIR/.build/devhub-electron"
+if [ "$(uname -s)" = "Darwin" ]; then
+	if [ "$FORCE" = 1 ]; then
+		rm -rf "$DEVHUB_ELECTRON_DIR"
+	fi
+	python3 "$REPO_ROOT/scripts/darwin_bundle.py" "$DEVHUB_ELECTRON_DIR"
+else
+	# Only macOS reads a name out of a bundle; elsewhere the binary is the app.
+	echo "not macOS — a source run boots VS Code's Electron directly"
+fi
+
 # --- 6. the built-in extension set DevHub starts with ---------------------
 # DevHub's own integration ships as a built-in so that its workbench defaults
 # (contributes.configurationDefaults) are in effect and cannot be uninstalled.

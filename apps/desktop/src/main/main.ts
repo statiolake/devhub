@@ -106,11 +106,12 @@ if (process.platform === 'win32') {
 // name it has to guess from package.json. Set before `setPath` below so nothing
 // derived from the name can be computed from the wrong one.
 //
-// This does *not* rename the application on macOS. The menu bar, the Dock tile,
-// Mission Control and the window switcher all read the running bundle's
-// Info.plist, and in development the bundle is VS Code's own Electron — so they
-// say "Code - OSS" no matter what this call does. Only shipping DevHub in a
-// bundle of its own changes that.
+// This names what Electron and JavaScript produce, and only that. The menu
+// bar, the Dock tile, Mission Control and the window switcher all read the
+// running bundle's Info.plist, which no call from inside the process can
+// reach — so DevHub is run from a bundle of its own in both modes: the
+// packaged app is one (scripts/package-nightly.py), and a source run boots a
+// branded clone of VS Code's Electron (step 5b of scripts/provision-vscode.sh).
 app.setName('DevHub');
 
 app.setPath('userData', userDataPath);

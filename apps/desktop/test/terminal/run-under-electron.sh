@@ -14,6 +14,10 @@ APP_DIR="$(cd "$TEST_DIR/../.." && pwd)"
 REPO_ROOT="$(cd "$APP_DIR/../.." && pwd)"
 VSCODE_DIR="$REPO_ROOT/vscode"
 
+# VS Code's own Electron, not the DevHub-branded clone dev.sh boots. The clone
+# exists so that macOS has a name to show for a running application; this one
+# is an interpreter with no windows, so it has nothing to be named, and reading
+# the unbranded bundle keeps the tests independent of the branding step.
 case "$(uname -s)" in
 	Darwin) ELECTRON="$VSCODE_DIR/.build/electron/Code - OSS.app/Contents/MacOS/Code - OSS" ;;
 	*) ELECTRON="$VSCODE_DIR/.build/electron/code-oss" ;;

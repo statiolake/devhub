@@ -15,10 +15,14 @@ APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPO_ROOT="$(cd "$APP_DIR/../.." && pwd)"
 VSCODE_DIR="$REPO_ROOT/vscode"
 
-# The binary is named after VS Code's own product, because it is VS Code's own
-# Electron: the app bundle npm run electron unpacked into the submodule.
+# VS Code's own Electron, because the native modules in vscode/node_modules are
+# built for exactly that binary. On a Mac it is the branded clone provisioning
+# makes rather than the bundle `npm run electron` unpacked: macOS names an
+# application from the bundle it runs in, so booting VS Code's own would put
+# "Code - OSS" in the menu bar, the Dock and the window switcher no matter what
+# the process calls itself. See step 5b of scripts/provision-vscode.sh.
 case "$(uname -s)" in
-	Darwin) ELECTRON="$VSCODE_DIR/.build/electron/Code - OSS.app/Contents/MacOS/Code - OSS" ;;
+	Darwin) ELECTRON="$VSCODE_DIR/.build/devhub-electron/DevHub.app/Contents/MacOS/DevHub" ;;
 	*) ELECTRON="$VSCODE_DIR/.build/electron/code-oss" ;;
 esac
 if [ ! -x "$ELECTRON" ]; then
