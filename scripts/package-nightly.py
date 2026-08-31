@@ -152,10 +152,16 @@ def check_inputs() -> None:
 		if not path.exists():
 			fail(f"missing {path}\n       produce it with: {command}")
 
-	stamp = VSCODE_DIR / ".build" / "devhub-patches.stamp"
+	# The same state provision-vscode.sh stamps: the submodule HEAD plus the
+	# patch contents, so a bumped submodule with unchanged patches is stale too.
+	stamp = VSCODE_DIR / ".build" / "devhub-source.stamp"
 	patches = sorted((REPO_ROOT / "patches" / "vscode").glob("*.patch"))
+	head = subprocess.run(
+		["git", "-C", str(VSCODE_DIR), "rev-parse", "HEAD"],
+		capture_output=True, check=True, text=True,
+	).stdout
 	state = subprocess.run(
-		["shasum"], input=b"".join(p.read_bytes() for p in patches),
+		["shasum"], input=head.encode() + b"".join(p.read_bytes() for p in patches),
 		capture_output=True, check=True,
 	).stdout.split()[0].decode()
 	if not stamp.exists() or stamp.read_text().strip() != state:
