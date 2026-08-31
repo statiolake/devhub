@@ -160,6 +160,16 @@ export type AppIntentWire =
 	| { readonly type: "open_workspace_picker" }
 	| {
 			readonly profileId: string;
+			/**
+			 * The person asked for the Agent *beside* its workbench — Command-Return
+			 * in the picker, Command-click on a row — rather than on its own.
+			 *
+			 * Absent means the plain choice, which is the Agent alone. It is carried
+			 * on the intent rather than set afterwards because it is part of what
+			 * was asked for: "open this" and "open this beside the editor" are one
+			 * decision, made once, at the moment the row is taken.
+			 */
+			readonly split?: boolean;
 			readonly type: "request_create_agent";
 			readonly workspaceId: string;
 	  }
