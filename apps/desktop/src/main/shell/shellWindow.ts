@@ -109,6 +109,16 @@ export class ShellWindow {
 		this.window.once("ready-to-show", () => this.window.show());
 		this.window.on("resize", () => this.layout());
 
+		// Coming back to DevHub puts the keyboard where it belongs.
+		//
+		// macOS restores focus to whatever held it when the app was last in
+		// front, which is not the same question as "what is on screen now" — a
+		// workbench that was revealed while the app was in the background would
+		// be looked at while the keys went somewhere else. `focusSurface` is
+		// already the one answer to that question, so it is asked again here
+		// rather than a second rule being written for this case.
+		this.window.on("focus", () => this.focusSurface());
+
 		// macOS convention: closing the window does not end the app, and here it
 		// must not even end the window. Every workbench, terminal and agent lives
 		// inside this one window; destroying it to rebuild it on the next dock
@@ -250,6 +260,16 @@ export class ShellWindow {
 	 */
 	focusSurface(): void {
 		if (this.window.isDestroyed()) return;
+		// An open Web Inspector keeps the keyboard. It is a window onto these
+		// same contents, so unlike the Settings window it is not protected by
+		// simply belonging to somebody else — and a rule that quietly pulled
+		// focus back out of it every time a surface was revealed is how a
+		// debugging session becomes impossible to hold.
+		//
+		// Deliberately not a check on whether this window is focused: a reveal
+		// raised by the `devhub` command line happens *before* the window is
+		// brought to the front, and would then never place the keyboard at all.
+		if (this.window.webContents.isDevToolsFocused()) return;
 		// A modal owns the keyboard for as long as it stands; it is on top of
 		// everything this method can see, and taking focus out of it would leave
 		// a dialog on screen that no key reaches.

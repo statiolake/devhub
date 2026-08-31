@@ -14,6 +14,7 @@ import { AppShell } from "./AppShell";
 import { installPalette } from "./appearance";
 import { installRootFailureHandler } from "./failure";
 import { installSelectionGuard } from "./selection";
+import { installFocusHome } from "./focusHome";
 import { SettingsApp } from "../settings/SettingsApp";
 import { OverlayApp } from "./overlay/OverlayApp";
 import { WINDOW_TITLES, windowKindOf } from "../ipc/windowTitles";
@@ -42,6 +43,13 @@ const which = windowKindOf(window.location.search);
 // from one `index.html`, so the page has to say which of them it is — otherwise
 // the Settings window takes the shell's `<title>` and calls itself "DevHub".
 document.title = WINDOW_TITLES[which];
+
+if (which === "shell") {
+  // The keyboard's home is the main area, and only this window has one. The
+  // Settings window is an ordinary form, and the overlay layer exists to hold
+  // the keyboard for as long as something is being asked.
+  installFocusHome(document);
+}
 
 if (which === "overlay") {
   // The layer is a sheet of glass over the whole window: whatever it does not

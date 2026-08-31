@@ -49,6 +49,8 @@ class FakeView {
 		focus: () => {
 			focused = this.webContents.id;
 		},
+		devToolsFocused: false,
+		isDevToolsFocused: () => this.webContents.devToolsFocused,
 		loadURL: () => Promise.resolve(),
 	};
 }
@@ -94,6 +96,8 @@ class FakeWindow {
 		focus: () => {
 			focused = this.webContents.id;
 		},
+		devToolsFocused: false,
+		isDevToolsFocused: () => this.webContents.devToolsFocused,
 		setWindowOpenHandler: (handler: WindowOpenHandler) => {
 			this.windowOpenHandler = handler;
 		},
