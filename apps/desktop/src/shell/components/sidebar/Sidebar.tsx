@@ -20,7 +20,6 @@ import { devhub } from "../../client";
 import { isImeComposing } from "../../accessibility/ime";
 import { RowMenu, type RowMenuItem } from "./RowMenu";
 import { SidebarHeader } from "./SidebarHeader";
-import { SidebarRail } from "./SidebarRail";
 import { StatusMark } from "./StatusMark";
 import { statusLabel } from "./status";
 
@@ -511,19 +510,6 @@ export function Sidebar({ snapshot, onDispatch }: SidebarProps) {
     setInProgressWidth(width);
   }, []);
 
-  // Collapsed, the Sidebar is the rail — the same navigation at icon width,
-  // not an absent pane. Both forms are this component's, so nothing above it
-  // has to know there are two.
-  if (!snapshot.sidebar.expanded) {
-    return (
-      <SidebarRail
-        snapshot={snapshot}
-        onDispatch={onDispatch}
-        onAddWorkspace={openPicker}
-      />
-    );
-  }
-
   return (
     <aside
       className="sidebar"
@@ -531,9 +517,8 @@ export function Sidebar({ snapshot, onDispatch }: SidebarProps) {
       style={{ "--sidebar-width": `${renderedWidth}px` } as React.CSSProperties}
     >
       {/* The Sidebar runs the full height of the window, so its own top strip
-          is where the window buttons live, where the window is dragged, and
-          where the one control left in DevHub's chrome sits. */}
-      <SidebarHeader expanded onDispatch={onDispatch} />
+          is where the window buttons live and where the window is dragged. */}
+      <SidebarHeader />
       <div className="sidebar-scroll-region">
         <ScratchRow snapshot={snapshot} onDispatch={onDispatch} />
         <div className="sidebar-section-heading">

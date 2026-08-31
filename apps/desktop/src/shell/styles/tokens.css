@@ -199,12 +199,8 @@
    * `.spike/agentfix2/measure3.mjs` reports the label's optical centre 0.87px
    * to 1.0px below its box centre in all of them. It follows the font, not the
    * row, so it is the same at any row height; only a change of type size or
-   * family would move it. Icon-only surfaces — the collapsed rail's tiles —
-   * have no label to sit level with and do not take it. */
+   * family would move it. */
   --sidebar-glyph-optical-shift: 1px;
-  /* The gutter either side of a collapsed rail's tile. The rail is as wide as
-     one tile plus two of these, whatever size the tile is at. */
-  --sidebar-tile-gutter: 10px;
 }
 
 /*
@@ -224,10 +220,6 @@
  * the chrome would read as a different app rather than as a denser one. That
  * is also why `--sidebar-glyph-optical-shift` is not here: it is derived from
  * the font, not from the row, and 1px stays correct at every row height.
- *
- * The rail is included. Collapsed, a tile *is* the row, so a rail that kept
- * one size would be the one place the setting stopped applying; the rail's
- * width follows its tile so the gutters stay equal either side.
  */
 .app-shell[data-sidebar-density="compact"] {
   --row-height: 28px;
@@ -236,8 +228,6 @@
   --sidebar-row-gap: var(--space-1);
   --sidebar-section-gap: var(--space-3);
   --sidebar-scroll-inset: var(--space-2);
-  --sidebar-tile-size: 32px;
-  --sidebar-tile-ink: 17px;
 }
 
 .app-shell[data-sidebar-density="comfortable"] {
@@ -247,14 +237,6 @@
   --sidebar-row-gap: var(--space-2);
   --sidebar-section-gap: var(--space-5);
   --sidebar-scroll-inset: var(--space-3);
-  --sidebar-tile-size: 38px;
-  --sidebar-tile-ink: 20px;
-}
-
-.app-shell {
-  --sidebar-collapsed-width: calc(
-    var(--sidebar-tile-size) + 2 * var(--sidebar-tile-gutter)
-  );
 }
 
 @supports (color: AccentColor) {

@@ -30,71 +30,15 @@
 
 /* --------------------------------------------------- the sidebar's header */
 
-/* The strip the window is dragged by, and the one control left in DevHub's
-   chrome. Exactly the traffic lights' band height, inset past the lights, so
-   the toggle can never land under one; the same strip tops the rail, where the
-   pane is narrower than the lights are wide and the inset is what keeps the
-   button clear of them. */
+/* The strip the window is dragged by. Exactly the traffic lights' band height
+   and inset past the lights, so the row the lights sit in stays theirs alone.
+   It carries no control: the Sidebar is always the pane. */
 .sidebar-header {
   display: flex;
   flex: 0 0 var(--titlebar-height);
   align-items: center;
-  justify-content: flex-end;
   padding: 0 var(--space-2) 0 var(--traffic-light-inset);
   height: var(--titlebar-height);
-}
-
-/* Collapsed, the rail is narrower than the window buttons are wide, so there
-   is no room beside them: the strip grows by one band instead, keeping the
-   lights' row empty and putting the toggle directly under it. The control
-   stays at the top of the sidebar in both forms, which is what matters — it
-   just cannot stay on the same line as buttons that overhang the pane. */
-.sidebar-collapsed .sidebar-header {
-  height: calc(var(--titlebar-height) * 2);
-  flex-basis: calc(var(--titlebar-height) * 2);
-  align-items: flex-end;
-  justify-content: center;
-  padding: 0 0 var(--space-1);
-}
-
-/* A toolbar button: no chrome at rest, a wash under the pointer. */
-.sidebar-toggle {
-  display: flex;
-  width: 26px;
-  height: 24px;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  border: 0;
-  border-radius: var(--radius-control);
-  background: transparent;
-}
-
-.sidebar-toggle svg {
-  width: 16px;
-  height: 16px;
-  fill: none;
-  stroke: var(--secondary);
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  stroke-width: 1.2;
-}
-
-.sidebar-toggle:hover {
-  background: var(--wash);
-}
-
-.sidebar-toggle:hover svg {
-  stroke: var(--primary);
-}
-
-.sidebar-toggle .sidebar-toggle-pane {
-  fill: color-mix(in srgb, var(--secondary) 45%, transparent);
-  stroke: none;
-}
-
-.sidebar-toggle:hover .sidebar-toggle-pane {
-  fill: color-mix(in srgb, var(--primary) 45%, transparent);
 }
 
 /* --------------------------------------------------------------- sidebar */
@@ -436,93 +380,6 @@
 body.is-resizing-sidebar {
   cursor: col-resize;
   user-select: none;
-}
-
-/* ------------------------------------------------------------- icon rail */
-
-/* The collapsed Sidebar. Fixed width, and not resizable: the rail is as wide
-   as one tile plus its gutters, and a rail the person can drag is a pane. */
-.sidebar-collapsed {
-  width: var(--sidebar-collapsed-width);
-  flex: 0 0 var(--sidebar-collapsed-width);
-  /* The window buttons overhang a rail this narrow, so the pane's full-height
-     hairline would be drawn straight through them. The rail carries its
-     separator below the header strip instead, where nothing crosses it. */
-  border-right: 0;
-}
-
-.rail-region,
-.rail-footer {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  border-right: 1px solid var(--line-strong);
-}
-
-.rail-region {
-  overflow-x: hidden;
-  overflow-y: auto;
-  flex: 1;
-  padding: var(--sidebar-scroll-inset) 0;
-  gap: var(--sidebar-row-gap);
-}
-
-.rail-footer {
-  padding: var(--sidebar-scroll-inset) 0;
-  border-top: 1px solid var(--line-soft);
-}
-
-.rail-list {
-  display: flex;
-  width: 100%;
-  flex-direction: column;
-  align-items: center;
-  padding: 0;
-  margin: var(--sidebar-row-gap) 0 0;
-  gap: var(--sidebar-row-gap);
-  list-style: none;
-}
-
-/* One tile per destination: the glyph the row shows, at the size a toolbar
-   control is, with the row's own selection fill behind it. */
-.rail-tile {
-  display: flex;
-  width: var(--sidebar-tile-size);
-  height: var(--sidebar-tile-size);
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  border: 0;
-  border-radius: var(--radius-row);
-  background: transparent;
-}
-
-.rail-tile:hover {
-  background: var(--wash);
-}
-
-.rail-tile.is-selected,
-.rail-tile.is-selected:hover {
-  background: var(--selection);
-}
-
-:root[data-window-active="false"] .rail-tile.is-selected {
-  background: var(--selection-inactive);
-}
-
-.rail-glyph svg {
-  display: block;
-  width: var(--sidebar-tile-ink);
-  height: var(--sidebar-tile-ink);
-  fill: none;
-  stroke: var(--accent);
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  stroke-width: 1.3;
-}
-
-.rail-list .rail-glyph svg {
-  fill: color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
 /* ---------------------------------------------------------- status marks */
@@ -1124,8 +981,8 @@ body.is-resizing-split {
    clicks that land on it — so a control added later that is not on the list
    would be a control nobody can press, and it would look like a bug in the
    control rather than in this rule. What is left draggable is what is left
-   over: the header strip, the padding, the section heading's dead space, the
-   empty room below the rows, and the rail's empty column. */
+   over: the header strip, the padding, the section heading's dead space, and
+   the empty room below the rows. */
 .sidebar {
   -webkit-app-region: drag;
 }

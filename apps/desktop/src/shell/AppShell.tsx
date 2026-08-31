@@ -155,8 +155,6 @@ function Workbench() {
           pointer, so nothing under it stops working while it is up. */}
       <div className="attention-glow" aria-hidden="true" />
       <div className="app-shell-content">
-        {/* Always: collapsed, the Sidebar is an icon rail, and which of its
-            two forms is on screen is the Sidebar's own business. */}
         <Sidebar snapshot={state.snapshot} onDispatch={onDispatch} />
         <SurfaceViewport
           snapshot={state.snapshot}
