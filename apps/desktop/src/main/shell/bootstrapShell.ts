@@ -22,6 +22,7 @@ import { electron } from "../electron.js";
 import {
 	beginQuit,
 	createShellWindow,
+	openShellPage,
 	shellWindowIfCreated,
 } from "./shellWindow.js";
 import { installSettingsWindow, logDirectoryFor } from "./settingsWindow.js";
@@ -114,6 +115,16 @@ export async function bootstrapShell(
 	registerShellPageProtocol(join(APP_ROOT, "dist", "shell"), () =>
 		shellTheme().palette(),
 	);
+	// The window is created first — the controller is built around it, and it
+	// paints in the restored palette while the rest of startup happens — but its
+	// *page* is not run until the runtimes it will ask for exist. The page asks
+	// for its terminal the moment it mounts, and a request that arrives before
+	// the handler that answers it produced "No handler registered for
+	// 'devhub:terminal:attach'" in the log and a pane saying the connection was
+	// unavailable, on a machine where everything was installed and reachable.
+	// The race was always there; asking the login shell for its environment
+	// (which is part of starting the runtimes) turned it from unlucky into
+	// normal. Ordering is the fix, not speed.
 	createShellWindow(preloadPath, `${SHELL_ORIGIN}/index.html`, palette);
 	const controller = await createAppController(userDataPath, cliArgs);
 	shellTheme().onDidChange((next) => {
@@ -121,6 +132,7 @@ export async function bootstrapShell(
 		controller.publishTheme(next);
 	});
 	await controller.startRuntimes(userDataPath);
+	openShellPage();
 
 	// DevHub's own front door. It is opened here, once the model and the
 	// runtimes behind it exist, because every request it accepts is answered by
@@ -157,11 +169,14 @@ export async function bootstrapShell(
 			shell.window.focus();
 			return;
 		}
+		// A window rebuilt after its own was closed has the whole app behind it
+		// already, so its page runs at once.
 		createShellWindow(
 			preloadPath,
 			`${SHELL_ORIGIN}/index.html`,
 			shellTheme().palette(),
 		);
+		openShellPage();
 	});
 
 	// The state file records that this run ended on purpose, which is what the
@@ -204,6 +219,8 @@ export async function bootstrapShell(
 		logDirectory: logDirectoryFor(userDataPath),
 		preloadPath,
 		previousExit: () => controller.previousExit(),
+		launchEnvironment: () => controller.launchEnvironmentValue(),
+		loginEnvironment: () => controller.loginEnvironmentValue(),
 		adopt: (config) => {
 			controller.adoptConfig(config);
 		},

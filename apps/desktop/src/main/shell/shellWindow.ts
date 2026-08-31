@@ -42,6 +42,20 @@ export class ShellWindow {
 	private surfaceKeyOfView: (view: WorkbenchView) => string | undefined = () =>
 		undefined;
 
+	/**
+	 * The App Shell page's URL, held until `openPage` runs it.
+	 *
+	 * Creating the window and running its page are two facts, not one. The
+	 * window has to exist early — the controller is built around it, and it
+	 * paints in the restored palette while the rest of startup happens — but the
+	 * page starts asking for its terminal the moment it mounts, and a request
+	 * that arrives before the handler that answers it is a pane reporting a
+	 * failure that never happened. So the page is opened by whoever finished the
+	 * things it will ask for; see `bootstrapShell`.
+	 */
+	private readonly pageUrl: string;
+	private pageOpened = false;
+
 	constructor(
 		preloadPath: string,
 		pageUrl: string,
@@ -89,7 +103,7 @@ export class ShellWindow {
 			`${pageUrl}?window=overlay`,
 		);
 
-		this.window.loadURL(pageUrl);
+		this.pageUrl = pageUrl;
 		this.window.once("ready-to-show", () => this.window.show());
 		this.window.on("resize", () => this.layout());
 
@@ -109,6 +123,15 @@ export class ShellWindow {
 		this.window.on("closed", () => {
 			current = undefined;
 		});
+	}
+
+	/** Runs the page. Calling it twice is a bug, not a reload. */
+	openPage(): void {
+		if (this.pageOpened) {
+			throw new Error("the App Shell page has already been opened");
+		}
+		this.pageOpened = true;
+		void this.window.loadURL(this.pageUrl);
 	}
 
 	/**
@@ -369,6 +392,11 @@ export function createShellWindow(
 	}
 	current = new ShellWindow(preloadPath, pageUrl, palette);
 	return current;
+}
+
+/** Runs the App Shell page, once everything it will ask for exists. */
+export function openShellPage(): void {
+	shellWindow().openPage();
 }
 
 /** The shell must exist before any workbench does; not having one is a bug. */
