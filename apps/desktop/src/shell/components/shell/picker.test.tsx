@@ -111,16 +111,29 @@ describe("the picker", () => {
     expect(document.activeElement).toBe(field);
   });
 
-  it("takes the keyboard back when something else has it", () => {
+  it("takes the keyboard back when it is typed into", () => {
     renderPicker({});
     const field = screen.getByRole("textbox");
     const thief = document.createElement("input");
     document.body.append(thief);
     thief.focus();
     expect(document.activeElement).toBe(thief);
-    fireEvent.focus(window);
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "a" });
     expect(document.activeElement).toBe(field);
     thief.remove();
+  });
+
+  it("does not fight another window for the keyboard", () => {
+    renderPicker({});
+    // Focus that left the page is somewhere the person put it — DevTools, the
+    // Settings window. The sheet must not snatch it back when the page is
+    // focused again, or those windows cannot be used at all while it is up.
+    const elsewhere = document.createElement("input");
+    document.body.append(elsewhere);
+    elsewhere.focus();
+    fireEvent.focus(window);
+    expect(document.activeElement).toBe(elsewhere);
+    elsewhere.remove();
   });
 
   it("cancels on Escape", () => {

@@ -151,15 +151,14 @@ export function Picker({
     };
   }, [focusField]);
 
-  // Whatever took the keyboard — the window going away and coming back, a
-  // native view under the sheet — the field takes it back. One rule, so there
-  // is no state in which the sheet is up and the keys go somewhere else.
-  useEffect(() => {
-    window.addEventListener("focus", focusField);
-    return () => {
-      window.removeEventListener("focus", focusField);
-    };
-  }, [focusField]);
+  // There is deliberately no "take the keyboard back whenever this window is
+  // focused" rule here. It was written, and it made the app unusable: every
+  // other window — DevTools, Settings — got into a tug of war with the sheet
+  // the moment it opened, because the sheet cannot tell "focus came back to
+  // me" from "focus went somewhere the person chose". Recovery is driven by
+  // what happens *inside* the sheet instead: it is opened, it is clicked in,
+  // it is typed into. Those are the three ways focus can be lost to something
+  // this control owns, and they are the three it takes it back from.
 
   // The source, if there is one, is told what was typed — after a pause, so a
   // burst of keystrokes is one search. The first call is not delayed: the
