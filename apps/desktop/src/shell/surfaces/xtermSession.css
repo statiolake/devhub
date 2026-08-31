@@ -1,0 +1,25 @@
+/* The one rule every terminal DevHub draws needs, whatever surface it is on.
+ *
+ * The shell's page tokens set `-webkit-font-smoothing: antialiased` on `:root`
+ * — the right choice for chrome text on macOS, and inherited by everything.
+ * Everything includes the emulator, and that is not a typography preference
+ * there: xterm's WebGL renderer rasterises each glyph onto a scratch 2D canvas
+ * that it appends into `terminal.element` on purpose, so the glyph inherits the
+ * font settings around it (`TextureAtlas._drawToCache`, "Attach the canvas to
+ * the DOM in order to inherit font-feature-settings"). `antialiased` is a
+ * global instruction to Chromium to rasterise text without the LCD/gamma path,
+ * so the scratch canvas hands the GPU atlas a paler glyph and every terminal in
+ * the app is drawn from it.
+ *
+ * Measured at 13px, dpr 2, `ui-monospace` on `#BBBEBF` over `#121314`, through
+ * xterm and the WebGL renderer, from the screen pixels: ink per pixel 10.95
+ * inherited versus 13.97 with this rule, and 16% more lit pixels — which is the
+ * whole of the "thin and washed out next to VS Code's terminal" report. VS
+ * Code's own workbench leaves the property at `auto`, which is why its
+ * integrated terminal, on the same machine in the same font, looks right.
+ *
+ * `text-rendering: optimizeLegibility` inherits the same way and was measured
+ * alongside it: it moves the ink by 0.00%, so it is left alone. */
+.xterm {
+  -webkit-font-smoothing: auto;
+}

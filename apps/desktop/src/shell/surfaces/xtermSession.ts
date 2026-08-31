@@ -18,6 +18,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
+import "./xtermSession.css";
 import { devhub } from "../client";
 import {
   terminalFontStack,
@@ -79,9 +80,11 @@ export type SurfaceRenderer = "webgl" | "dom";
  * is the fallback, never the choice.
  *
  * What this does *not* change is how heavy the text looks: measured ink mass
- * moves by 0.6% between the two. The weight of shell text is decided by
- * `-webkit-font-smoothing` in the page tokens, and a glyph rasterised into the
- * GPU atlas is out of that property's reach entirely.
+ * moves by 0.6% between the two. That weight is decided by
+ * `-webkit-font-smoothing`, which reaches the GPU atlas as surely as it reaches
+ * the DOM renderer — the atlas rasterises its glyphs onto a scratch canvas it
+ * appends into this very element. `xtermSession.css` is where that is settled,
+ * once, for both renderers.
  */
 function attachRenderer(
   terminal: Terminal,
