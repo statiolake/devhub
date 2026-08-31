@@ -69,18 +69,105 @@ export interface LoginEnvironmentOptions {
 }
 
 /**
+ * The variables that describe *DevHub's own process*, never the user's session.
+ *
+ * DevHub is a VS Code build running inside VS Code's Electron, and it is
+ * started by a script that tells that build what it is: `VSCODE_DEV=1`,
+ * `VSCODE_CLI=1`, `NODE_ENV=development`, `ELECTRON_ENABLE_LOGGING=1`. Electron
+ * and Chromium add more of their own (`ELECTRON_RUN_AS_NODE` on a child that
+ * was a Node printer, `CHROME_DESKTOP`), and DevHub itself exports `DEVHUB_*`
+ * to reach its own helpers.
+ *
+ * Every one of those is a *true statement about this process* and a *false
+ * statement about the shell the user is about to type into*. A `.zshrc` that
+ * sees `VSCODE_DEV` reasonably concludes it is running inside VS Code's
+ * integrated terminal and behaves accordingly — invoking the real `code` CLI,
+ * changing its prompt, skipping its own setup. The user's shell is not wrong to
+ * believe what the environment tells it; the environment is wrong.
+ *
+ * So they are removed by prefix rather than by name. A list of names is a list
+ * of the variables that happened to break something once, and the next
+ * `VSCODE_`-something to appear would have to break something again before
+ * anybody added it. The families are the rule, stated once:
+ *
+ *  - `VSCODE_*` — the editor build's own bootstrap and IPC hooks.
+ *  - `ELECTRON_*` — the runtime's, including `ELECTRON_RUN_AS_NODE`, which
+ *    would make every shell DevHub starts believe it is a Node process.
+ *  - `CHROME_*` — Chromium's, which Electron sets on the app's behalf.
+ *  - `DEVHUB_*` — DevHub's own, the control socket among them.
+ *  - `NODE_ENV` — `development` is a fact about this build, not about the
+ *    user's tools, several of which change behaviour on it.
+ *
+ * The packaged app sets fewer of these than `dev.sh` does. That is not a
+ * separate case: the rule removes whatever is present, so a packaged run and a
+ * source run hand a terminal the same environment, which is the only way a
+ * developer run reproduces what a user gets.
+ */
+const DEVHUB_RUNTIME_PREFIXES = [
+	"VSCODE_",
+	"ELECTRON_",
+	"CHROME_",
+	"DEVHUB_",
+] as const;
+
+const DEVHUB_RUNTIME_NAMES = new Set(["NODE_ENV"]);
+
+function isDevHubRuntimeVariable(name: string): boolean {
+	return (
+		DEVHUB_RUNTIME_NAMES.has(name) ||
+		DEVHUB_RUNTIME_PREFIXES.some((prefix) => name.startsWith(prefix))
+	);
+}
+
+/**
+ * The process environment with DevHub's own runtime taken out of it.
+ *
+ * Both users of the rule go through here, and they must: the login shell is a
+ * *child of DevHub*, so asking it for its environment from DevHub's own
+ * environment gets DevHub's own environment back. A profile does not delete
+ * `VSCODE_DEV`; it inherits it, reacts to it, and prints it out again — which
+ * is how a strip applied only to the merge came to be undone by the merge's
+ * other half, with the user's `.zshrc` running the real VS Code CLI in the
+ * middle of DevHub's startup to prove it.
+ *
+ * Asked from a clean environment, the shell answers the question that was
+ * actually meant: what does this user's login shell build? Whatever comes back
+ * is then genuinely theirs, including a `VSCODE_`-something they set on
+ * purpose, and needs no second rule to protect it.
+ */
+export function withoutDevHubRuntime(
+	environment: Readonly<Record<string, string | undefined>>,
+): Record<string, string | undefined> {
+	const clean: Record<string, string | undefined> = {};
+	for (const [name, value] of Object.entries(environment)) {
+		if (isDevHubRuntimeVariable(name)) continue;
+		clean[name] = value;
+	}
+	return clean;
+}
+
+/**
  * The environment DevHub's children are launched with.
  *
- * The process environment first, the login shell's values over it: a variable
+ * DevHub's own runtime variables are dropped from the process environment
+ * first, then the login shell's values are laid over what is left: a variable
  * the user's profile sets is the one they meant, and a variable only the launch
- * context has (Electron's own, the user-data dir) survives because the shell
+ * context has (the user-data dir, `XDG_CONFIG_HOME`) survives because the shell
  * never mentions it.
+ *
+ * The order matters and is the whole of the rule. Stripping happens on the
+ * *process* layer only, so a `VSCODE_`- or `NODE_ENV`-something the user's own
+ * profile exports comes back with the login import: it is theirs, and DevHub
+ * has no business deleting it. There is no per-variable exception anywhere —
+ * where a value came from is what decides, and that is a fact the two layers
+ * already carry, because `readShellEnvironment` asks the shell from a stripped
+ * environment as well. Both halves clean, or neither is.
  */
 export function launchEnvironment(
 	processEnvironment: Readonly<Record<string, string | undefined>>,
 	login: LoginEnvironment,
 ): Readonly<Record<string, string | undefined>> {
-	const merged: Record<string, string | undefined> = { ...processEnvironment };
+	const merged = withoutDevHubRuntime(processEnvironment);
 	if (login.kind === "imported") {
 		for (const [name, value] of Object.entries(login.variables)) {
 			merged[name] = value;
@@ -182,8 +269,11 @@ function readShellEnvironment(
 ): Promise<LoginEnvironment> {
 	const mark = randomUUID().replaceAll("-", "").slice(0, 12);
 	const { command, args } = printerCommand(shell, execPath, mark);
+	// Clean first, then the three the printer itself needs. `variablesOf` drops
+	// those three again on the way back, so the shell is asked from — and
+	// answers about — an environment with nothing of DevHub's in it.
 	const environment = {
-		...processEnvironment,
+		...withoutDevHubRuntime(processEnvironment),
 		ELECTRON_RUN_AS_NODE: "1",
 		ELECTRON_NO_ATTACH_CONSOLE: "1",
 		DEVHUB_RESOLVING_ENVIRONMENT: "1",
