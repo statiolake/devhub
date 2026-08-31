@@ -98,6 +98,33 @@ disappears from the tree immediately.
 `Command+Q` is the only key DevHub takes from the workbench, as a prefix:
 press it twice to quit. Everything else is forwarded to VS Code.
 
+## The `devhub` command
+
+`DevHub: Install 'devhub' command in PATH` writes a launcher that talks to the
+running app over a unix socket in its user-data directory. Everything the
+command does happens inside the app: there is one instance, one extensions
+directory and one editor, and a second process doing any of this behind the
+first one's back is the state the single-instance design exists to prevent.
+
+```sh
+devhub <folder>                      # open it as a Workspace and show it
+devhub <file>                        # open it in the Workspace that contains it
+devhub -g|--goto <file:line[:col]>   # ...with the cursor there
+devhub --agent <profile> [-- <args>] # start an Agent in this directory's Workspace
+devhub --install-extension <id|vsix> [--force]
+devhub --uninstall-extension <id> [--force]
+devhub --list-extensions [--show-versions]
+devhub --version                     # DevHub, VS Code, and the commit
+```
+
+Which Workspace a path lands in is decided by the path, never by which window
+was focused last: the open Workspace whose root is its nearest ancestor, and
+the Scratch editor when no open Workspace contains it. The extension options
+are VS Code's own `ExtensionManagementCLI`, run against the running app's
+extension management service, so the gallery (Open VSX), the allow-list and the
+built-in protections are the ones the app itself uses. An option `devhub` does
+not know is refused with a sentence — it is never quietly treated as a path.
+
 ## Configuration
 
 One `~/.config/devhub/config.toml`, safe to symlink from dotfiles. Native
