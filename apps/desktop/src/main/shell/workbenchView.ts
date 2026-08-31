@@ -167,11 +167,6 @@ export class WorkbenchView {
 		this.view.setVisible(false);
 	}
 
-	focus(): void {
-		this.shell.window.focus();
-		this.view.webContents.focus();
-	}
-
 	blur(): void {
 		this.shell.window.blur();
 	}

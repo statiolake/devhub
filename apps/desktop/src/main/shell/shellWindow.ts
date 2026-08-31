@@ -93,8 +93,7 @@ export class ShellWindow {
 			{
 				window: this.window,
 				workbenchRect: () => this.currentRect(),
-				focusTarget: () =>
-					this.onScreenView()?.webContents ?? this.window.webContents,
+				focusTarget: () => this.focusTarget(),
 				modalsChanged: () => {
 					this.layout();
 				},
@@ -218,6 +217,50 @@ export class ShellWindow {
 		this.layout();
 		// Which workbench is on screen is which theme the shell wears.
 		shellTheme().selectionChanged();
+		this.focusSurface();
+	}
+
+	/**
+	 * Where the keyboard goes: to whatever is on screen.
+	 *
+	 * This window holds several web contents over one rectangle — the App Shell
+	 * page, one `WebContentsView` per workbench — and hiding a view does not
+	 * take the keyboard away from it. So a switch away from the Editor used to
+	 * leave focus inside a workbench nobody could see: typing went into an
+	 * invisible editor, the terminal underneath never received a key, and the
+	 * chord layer's `before-input-event` was listening on contents the window
+	 * was no longer delivering to. That is why a chord could not be used twice
+	 * in a row — the first one moved the surface and left focus nowhere usable,
+	 * and the second had nothing to arrive at.
+	 *
+	 * It is deliberately not the caller's decision. `focusTarget` already
+	 * answers "what is on screen" for the modal layer, and every caller asking
+	 * that question separately is how the two got to disagree. So focus is a
+	 * function of the same state the layout is a function of, moved by the two
+	 * calls that change it (`reveal`, `setNativeSurfaceVisible`) and by nothing
+	 * else.
+	 *
+	 * Window-level focus is not touched here. Whether DevHub should come to the
+	 * front is a different question with different answers — a chord is typed
+	 * into an app that is already frontmost; a `devhub` command from a terminal
+	 * is not — and the paths that mean it say so themselves.
+	 */
+	focusSurface(): void {
+		if (this.window.isDestroyed()) return;
+		// A modal owns the keyboard for as long as it stands; it is on top of
+		// everything this method can see, and taking focus out of it would leave
+		// a dialog on screen that no key reaches.
+		if (this.modals.isPresent()) return;
+		this.focusTarget().focus();
+	}
+
+	/**
+	 * The contents the keyboard belongs to: the workbench that is on screen, or
+	 * the App Shell page — which is where a terminal and an Agent surface live,
+	 * so "no workbench on screen" and "the page has it" are the same fact.
+	 */
+	focusTarget(): Electron.WebContents {
+		return this.onScreenView()?.webContents ?? this.window.webContents;
 	}
 
 	/** The view on screen, if there is one and it still exists. */
@@ -246,6 +289,10 @@ export class ShellWindow {
 		}
 		this.nativeSurfaceVisible = visible;
 		this.layout();
+		// Revealing a surface is a request to type into it. The page focuses
+		// the xterm inside itself; only main can take the keyboard off the
+		// workbench view that had it.
+		this.focusSurface();
 	}
 
 	/**

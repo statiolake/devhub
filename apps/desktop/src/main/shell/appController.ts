@@ -1243,8 +1243,11 @@ export class AppController {
 		if (folder === undefined) return;
 		const view = await this.ensureEditorView(folder);
 		if (!view) return;
+		// `reveal` is the whole of it: what is on screen and where the keyboard
+		// is are one decision, made in one place (`ShellWindow.focusSurface`).
+		// Focusing the view from here as well would take the keyboard into a
+		// workbench even when the page's own Surface is the thing on screen.
 		shellWindow().reveal(view);
-		view.focus();
 	}
 
 	/**
@@ -1857,10 +1860,7 @@ export class AppController {
 		const viewId = this.viewsByFolder.get(folder);
 		const view =
 			viewId === undefined ? undefined : shellWindow().getViewById(viewId);
-		if (view) {
-			shellWindow().reveal(view);
-			view.focus();
-		}
+		if (view) shellWindow().reveal(view);
 	}
 
 	//#endregion

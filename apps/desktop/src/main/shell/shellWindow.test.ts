@@ -187,6 +187,71 @@ describe("the shell window's workbench views", () => {
 		invariantHolds(b);
 	});
 
+	/**
+	 * Focus follows the surface.
+	 *
+	 * Hiding a `WebContentsView` does not take the keyboard away from it, so
+	 * the window kept delivering keys to a workbench nobody could see: typing
+	 * went into an invisible editor, and the chord layer — which listens on
+	 * whichever contents the keys arrive at — had nothing to listen to. That is
+	 * the "the chord works once and then stops" report.
+	 */
+	describe("and where the keyboard goes", () => {
+		const page = () => shell.window.webContents.id;
+		const contentsOf = (view: WorkbenchView): number =>
+			(view.webContents as unknown as { id: number }).id;
+
+		beforeEach(() => {
+			focused = undefined;
+		});
+
+		it("gives the keyboard to the workbench that is on screen", () => {
+			shell.reveal(a);
+			expect(focused).toBe(contentsOf(a));
+			shell.reveal(b);
+			expect(focused).toBe(contentsOf(b));
+		});
+
+		it("takes it off a hidden workbench and gives it to the page", () => {
+			// The page is where a terminal and an Agent surface live, so this is
+			// what makes typing go straight into the xterm with no click.
+			shell.reveal(a);
+			shell.setNativeSurfaceVisible(false);
+			expect(focused).toBe(page());
+		});
+
+		it("survives being asked over and over, from either end", () => {
+			// Editor → Terminal → Editor → Terminal, which is the chord the
+			// report says cannot be used twice in a row.
+			shell.reveal(a);
+			for (let round = 0; round < 3; round += 1) {
+				shell.setNativeSurfaceVisible(false);
+				expect(focused).toBe(page());
+				shell.setNativeSurfaceVisible(true);
+				expect(focused).toBe(contentsOf(a));
+			}
+		});
+
+		it("leaves a workbench alone while the page's surface is on screen", () => {
+			// A projection change re-reveals the selected Editor even while the
+			// Terminal is showing. That must not pull the keyboard out of it.
+			shell.setNativeSurfaceVisible(false);
+			focused = undefined;
+			shell.reveal(a);
+			expect(focused).toBe(page());
+		});
+
+		it("does not take the keyboard out of an open modal", () => {
+			shell.reveal(a);
+			shell.modals.openModal({ kind: "workspace-picker" });
+			focused = undefined;
+			shell.setNativeSurfaceVisible(false);
+			shell.reveal(b);
+			// A dialog no key reaches is a dialog nobody can answer.
+			expect(focused).toBeUndefined();
+		});
+	});
+
 	it("shows nothing when the revealed view goes away", () => {
 		shell.reveal(c);
 		shell.detach(c);
