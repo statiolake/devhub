@@ -1,0 +1,16 @@
+{
+	"nameShort": "DevHub",
+	"nameLong": "DevHub",
+	"applicationName": "devhub",
+	"dataFolderName": ".devhub",
+	"sharedDataFolderName": ".devhub-shared",
+	"serverDataFolderName": ".devhub-server",
+	"darwinBundleIdentifier": "dev.devhub.app",
+	"urlProtocol": "devhub",
+	"win32MutexName": "devhub",
+	"extensionsGallery": {
+		"serviceUrl": "https://open-vsx.org/vscode/gallery",
+		"itemUrl": "https://open-vsx.org/vscode/item",
+		"resourceUrlTemplate": "https://open-vsx.org/vscode/asset/{publisher}/{name}/{version}/Microsoft.VisualStudio.Code.WebResources/{path}"
+	}
+}

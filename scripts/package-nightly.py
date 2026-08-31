@@ -71,8 +71,15 @@ VSCODE_DIR = REPO_ROOT / "vscode"
 DESKTOP_DIR = REPO_ROOT / "apps" / "desktop"
 BRIDGE_DIR = REPO_ROOT / "extensions" / "devhub-bridge"
 
-APP_NAME = "DevHub"
-BUNDLE_IDENTIFIER = "dev.devhub.app"
+# Everything DevHub says about itself that VS Code reads out of product.json —
+# its name, its data folders, its extension gallery — lives in this one file.
+# The packaged app gets it merged into product.json below; a source run gets it
+# through vscode/product.overrides.json, which apps/desktop/scripts/dev.sh
+# writes from the same file. Neither path restates a value the other one owns.
+PRODUCT_OVERRIDES = json.loads((DESKTOP_DIR / "product-overrides.json").read_text())
+
+APP_NAME = PRODUCT_OVERRIDES["nameShort"]
+BUNDLE_IDENTIFIER = PRODUCT_OVERRIDES["darwinBundleIdentifier"]
 
 # The `Code - OSS` names come from VS Code's own Electron staging step
 # (`npm run electron`), which renames the prebuilt Electron bundle after its
@@ -399,19 +406,7 @@ def write_licenses(app: Path) -> None:
 def write_product_json(target: Path) -> None:
 	"""VS Code's product metadata, saying DevHub where it says Code - OSS."""
 	product = json.loads((VSCODE_DIR / "product.json").read_text())
-	product.update(
-		{
-			"nameShort": APP_NAME,
-			"nameLong": APP_NAME,
-			"applicationName": "devhub",
-			"dataFolderName": ".devhub",
-			"sharedDataFolderName": ".devhub-shared",
-			"serverDataFolderName": ".devhub-server",
-			"darwinBundleIdentifier": BUNDLE_IDENTIFIER,
-			"urlProtocol": "devhub",
-			"win32MutexName": "devhub",
-		}
-	)
+	product.update(PRODUCT_OVERRIDES)
 	target.write_text(json.dumps(product, indent="\t") + "\n")
 
 

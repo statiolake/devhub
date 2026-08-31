@@ -36,6 +36,17 @@ fi
 # defaults.
 "$REPO_ROOT/scripts/stage-builtin-extensions.sh" >/dev/null
 
+# DevHub's product identity and its extension gallery, from the one file that
+# holds them (scripts/package-nightly.py writes the packaged product.json from
+# the same file). A source run reads vscode/product.json, so the overrides have
+# to reach it another way: vscode/src/bootstrap-meta.ts merges
+# vscode/product.overrides.json over it whenever VSCODE_DEV is set, in every
+# process that boots VS Code's ESM loader — main, renderer, shared process,
+# extension host — which is exactly the reach the gallery needs. The file is
+# gitignored inside the submodule and rewritten here on every run, so the
+# submodule stays unedited and can never hold a stale copy.
+cp "$APP_DIR/product-overrides.json" "$VSCODE_DIR/product.overrides.json"
+
 # DevHub's own state, beside the user's real VS Code state and never inside it.
 DEVHUB_DATA="$HOME/Library/Application Support/DevHub"
 USER_DATA_DIR="$DEVHUB_DATA/editor"
