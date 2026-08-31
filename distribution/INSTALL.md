@@ -8,16 +8,34 @@ be installed: the application bundle carries its own editor.
 Every night, `.github/workflows/nightly.yml` packages `main` and replaces the
 prerelease tagged `nightly` with a fresh `DevHub-darwin-arm64-<date>-<sha>.zip`.
 
-1. Download the zip from the release page and unzip it (double-clicking is
-   enough; the archive is produced with `ditto`).
-2. Move `DevHub.app` to `/Applications`, or wherever you keep applications.
-3. Clear the quarantine flag. The build is signed ad-hoc, not by a registered
-   developer, and it is not notarised, so macOS refuses to open it until you
-   say otherwise:
+The build is signed ad-hoc, not by a registered developer, and it is not
+notarised, so the browser's quarantine flag has to come off before macOS will
+open it. Take it off the *archive*, before unpacking:
+
+1. Download the zip, and clear the flag on the zip file:
 
    ```sh
-   xattr -dr com.apple.quarantine /Applications/DevHub.app
+   xattr -d com.apple.quarantine ~/Downloads/DevHub-darwin-arm64-*.zip
    ```
+
+   `No such xattr` means the download was never quarantined; carry on.
+
+2. Unzip it (double-clicking is enough; the archive is produced with `ditto`,
+   so `ditto -x -k` is the faithful command-line counterpart — plain `unzip`
+   writes the bundle's extended attributes out as `._` files beside it).
+3. Move `DevHub.app` to `/Applications`, or wherever you keep applications.
+
+Order matters. Whatever unpacks the archive copies the flag onto every file it
+writes — 20,000 of them for this app, which is why the usual `xattr -dr` on the
+unpacked bundle is the slow way round. Clear it on the one file first and the
+extraction has nothing to propagate; there is nothing left to clean up
+afterwards.
+
+If you unzipped first, the recursive form is still the way out:
+
+```sh
+xattr -dr com.apple.quarantine /Applications/DevHub.app
+```
 
 The first launch asks for access to the keychain item "DevHub Safe Storage".
 That is the app creating the store the editor keeps secrets in; answer once and

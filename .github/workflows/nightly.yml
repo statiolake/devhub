@@ -108,13 +108,21 @@ jobs:
         run: |
           cat > dist/notes.md <<'NOTES'
           A nightly build of DevHub for macOS on Apple Silicon. It is not
-          signed by a registered developer and it is not notarised, so macOS
-          quarantines it. Unzip it, move `DevHub.app` where you keep it, and
-          clear the flag once:
+          signed by a registered developer and it is not notarised, so your
+          browser quarantines the download. Clear the flag on the **zip**, and
+          only then unpack it:
 
           ```sh
-          xattr -dr com.apple.quarantine /Applications/DevHub.app
+          xattr -d com.apple.quarantine ~/Downloads/DevHub-darwin-arm64-*.zip
           ```
+
+          Then unzip it — double-clicking is enough — and move `DevHub.app`
+          where you keep applications. Order matters: whatever unpacks the
+          archive copies the flag onto every one of the app's 20,000 files,
+          and `xattr -dr` over the unpacked bundle is then the slow way round.
+          Cleared on the archive, there is nothing to propagate and nothing to
+          clean up. (`No such xattr` means the download was never quarantined;
+          carry on.)
 
           The first launch asks for access to the keychain item "DevHub Safe
           Storage" — that is the app creating the store VS Code keeps secrets

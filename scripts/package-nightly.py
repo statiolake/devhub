@@ -45,6 +45,24 @@ The layout inside the bundle, and why:
 Nothing here is a symlink: a link into the developer's checkout would leave the
 zip working only on the machine that made it.
 
+Nothing here is an `app.asar` either, and that is not an oversight. Collapsing
+`Resources/app` into one archive takes the bundle from 20,081 files to 1,985
+and the app does start from it — Electron's fs, its ESM loader and VS Code's
+own fork of `out/bootstrap-fork.js` all read straight out of the archive. What
+does not work is `spawn`: Electron's asar layer is in its file system, not in
+its process spawner, so an executable inside the archive fails with ENOTDIR
+even when `--unpack` has written a real copy to `app.asar.unpacked`. VS Code
+spawns several — ripgrep for search and for the dev-mode CSS scan, node-pty's
+`spawn-helper` for terminals — and it reaches them by paths it computes itself
+from `__dirname`. Upstream's answer is a convention its source hard-codes at
+every such place: rewrite the segment `node_modules.asar` in the computed path
+to `node_modules.asar.unpacked`. That fires only for an archive with that exact
+name, and Electron 39 no longer resolves modules out of one at all — neither
+`import` nor `require` finds a package inside a sibling `node_modules.asar`
+(measured). So the two halves do not meet: the archive shape VS Code knows how
+to spawn out of is the one this Electron cannot import from. The bundle stays a
+directory tree until that changes.
+
 Usage:
     scripts/package-nightly.py [--out-dir DIR] [--zip] [--zip-name NAME]
 
