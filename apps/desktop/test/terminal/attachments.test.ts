@@ -75,11 +75,15 @@ class FakePty implements Pty {
 
 const WORKSPACE_SURFACE =
   "workspace-terminal:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const OTHER_WORKSPACE_SURFACE =
+  "workspace-terminal:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 
 function targetFor(surfaceKey: string): TerminalTarget {
-  return surfaceKey === "global-terminal"
-    ? SCRATCH_TARGET
-    : workspaceTarget("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "/ws");
+  if (surfaceKey === "global-terminal") return SCRATCH_TARGET;
+  if (surfaceKey === OTHER_WORKSPACE_SURFACE) {
+    return workspaceTarget("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "/other");
+  }
+  return workspaceTarget("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "/ws");
 }
 
 interface Harness {
@@ -118,6 +122,7 @@ function harness(): Harness {
       // then publish. The test does the resolving instantly.
       const permit = manager.beginAttach(
         target,
+        surfaceKey,
         viewLabel,
         new CancellationToken(),
       );
@@ -207,7 +212,7 @@ describe("attach", () => {
     expect(second.attachmentId).not.toBe(first.attachmentId);
   });
 
-  it("replaces the attachment a view or a surface already had", () => {
+  it("replaces the attachment the same surface already had", () => {
     const test = harness();
     const first = test.attach();
     const second = test.attach();
@@ -226,11 +231,13 @@ describe("attach", () => {
     const test = harness();
     const first = test.manager.beginAttach(
       SCRATCH_TARGET,
+      "global-terminal",
       "shell:1",
       new CancellationToken(),
     );
     const second = test.manager.beginAttach(
       SCRATCH_TARGET,
+      "global-terminal",
       "shell:1",
       new CancellationToken(),
     );
@@ -271,6 +278,7 @@ describe("attach", () => {
     });
     const permit = manager.beginAttach(
       SCRATCH_TARGET,
+      "global-terminal",
       "shell:1",
       new CancellationToken(),
     );
@@ -374,6 +382,7 @@ describe("output", () => {
     // reading a PTY nobody can see.
     const permit = manager.beginAttach(
       SCRATCH_TARGET,
+      "global-terminal",
       "shell:1",
       new CancellationToken(),
     );
@@ -543,5 +552,183 @@ describe("detach", () => {
     expect(() =>
       test.manager.input(identity, 1, Uint8Array.from([65])),
     ).toThrowError(TerminalFailure);
+  });
+});
+
+/**
+ * Who owns an attachment.
+ *
+ * Every terminal surface of a window — Scratch and each workspace — is a
+ * component of one App Shell page, and the pool keeps them all mounted, so the
+ * page label names the page and nothing finer. Ownership is the (page, surface)
+ * pair: these are the cases that pair has to get right, and every one of them
+ * is what the page label alone would get wrong.
+ */
+describe("ownership", () => {
+  const PAGE = "7";
+  const OTHER_PAGE = "9";
+
+  const identityOf = (
+    receipt: ReturnType<AttachmentManager["attach"]>,
+    viewLabel: string,
+  ) => ({
+    surfaceKey: receipt.surfaceKey,
+    attachmentId: receipt.attachmentId,
+    targetGeneration: receipt.targetGeneration,
+    viewLabel,
+  });
+
+  it("lets every terminal surface of one page hold its own attachment", () => {
+    const test = harness();
+    const scratch = test.attach({ viewLabel: PAGE });
+    const workspace = test.attach({
+      viewLabel: PAGE,
+      surfaceKey: WORKSPACE_SURFACE,
+    });
+    const other = test.attach({
+      viewLabel: PAGE,
+      surfaceKey: OTHER_WORKSPACE_SURFACE,
+    });
+
+    expect(test.manager.count).toBe(3);
+    for (const surface of [scratch, workspace, other]) {
+      expect(surface.pty.killed).toBe(false);
+      expect(surface.frames.at(-1)).toMatchObject({ type: "started" });
+    }
+    // All three are usable at once: a keystroke reaches the pane it was typed
+    // into, and only that one.
+    test.manager.input(
+      identityOf(scratch.receipt, PAGE),
+      1,
+      new TextEncoder().encode("a"),
+    );
+    test.manager.input(
+      identityOf(workspace.receipt, PAGE),
+      1,
+      new TextEncoder().encode("b"),
+    );
+    test.manager.input(
+      identityOf(other.receipt, PAGE),
+      1,
+      new TextEncoder().encode("c"),
+    );
+    expect(scratch.pty.written.map((bytes) => bytes[0])).toEqual([0x61]);
+    expect(workspace.pty.written.map((bytes) => bytes[0])).toEqual([0x62]);
+    expect(other.pty.written.map((bytes) => bytes[0])).toEqual([0x63]);
+  });
+
+  it("keeps two attaches of one page in flight together", () => {
+    // Startup attaches Scratch and a workspace terminal at once, and neither
+    // resolves instantly: the ledger must not treat the second as a
+    // replacement for the first.
+    const test = harness();
+    const scratch = test.manager.beginAttach(
+      SCRATCH_TARGET,
+      "global-terminal",
+      PAGE,
+      new CancellationToken(),
+    );
+    const workspace = test.manager.beginAttach(
+      targetFor(WORKSPACE_SURFACE),
+      WORKSPACE_SURFACE,
+      PAGE,
+      new CancellationToken(),
+    );
+    expect(scratch.cancel.isCancelled).toBe(false);
+    expect(workspace.cancel.isCancelled).toBe(false);
+    scratch.release();
+    workspace.release();
+  });
+
+  it("supersedes the surface that remounted, and only that one", () => {
+    const test = harness();
+    const scratch = test.attach({ viewLabel: PAGE });
+    const workspace = test.attach({
+      viewLabel: PAGE,
+      surfaceKey: WORKSPACE_SURFACE,
+    });
+    // The pooled workspace surface remounts: it attaches again before React
+    // has run the old unmount's detach.
+    const remounted = test.attach({
+      viewLabel: PAGE,
+      surfaceKey: WORKSPACE_SURFACE,
+    });
+
+    expect(workspace.pty.killed).toBe(true);
+    expect(workspace.frames.at(-1)).toMatchObject({
+      type: "exited",
+      reason: "detached",
+    });
+    expect(remounted.pty.killed).toBe(false);
+    expect(scratch.pty.killed).toBe(false);
+    expect(test.manager.count).toBe(2);
+  });
+
+  it("refuses a receipt only once it is genuinely stale", () => {
+    const test = harness();
+    const scratch = test.attach({ viewLabel: PAGE });
+    const workspace = test.attach({
+      viewLabel: PAGE,
+      surfaceKey: WORKSPACE_SURFACE,
+    });
+    const remounted = test.attach({
+      viewLabel: PAGE,
+      surfaceKey: WORKSPACE_SURFACE,
+    });
+
+    // The superseded receipt is the one stale handle; the sibling's is not,
+    // and neither is the replacement's.
+    expect(() =>
+      test.manager.input(
+        identityOf(workspace.receipt, PAGE),
+        1,
+        Uint8Array.from([65]),
+      ),
+    ).toThrowError(
+      expect.objectContaining({ code: "wrong_attachment" }) as unknown as Error,
+    );
+    expect(() =>
+      test.manager.input(
+        identityOf(scratch.receipt, PAGE),
+        1,
+        Uint8Array.from([65]),
+      ),
+    ).not.toThrow();
+    expect(() =>
+      test.manager.input(
+        identityOf(remounted.receipt, PAGE),
+        1,
+        Uint8Array.from([65]),
+      ),
+    ).not.toThrow();
+    // A live handle presented by another page is still foreign.
+    expect(() =>
+      test.manager.input(
+        identityOf(scratch.receipt, OTHER_PAGE),
+        2,
+        Uint8Array.from([65]),
+      ),
+    ).toThrowError(
+      expect.objectContaining({ code: "wrong_attachment" }) as unknown as Error,
+    );
+  });
+
+  it("releases every surface of a page that goes away, and no other page's", () => {
+    const test = harness();
+    const scratch = test.attach({ viewLabel: PAGE });
+    const workspace = test.attach({
+      viewLabel: PAGE,
+      surfaceKey: WORKSPACE_SURFACE,
+    });
+    const elsewhere = test.attach({
+      viewLabel: OTHER_PAGE,
+      surfaceKey: OTHER_WORKSPACE_SURFACE,
+    });
+
+    test.manager.detachView(PAGE);
+    expect(scratch.pty.killed).toBe(true);
+    expect(workspace.pty.killed).toBe(true);
+    expect(elsewhere.pty.killed).toBe(false);
+    expect(test.manager.count).toBe(1);
   });
 });

@@ -94,15 +94,20 @@ export function registerTerminalService(
 		attachments,
 	});
 	const watched = new Set<WebContents>();
-	/** Every mounted surface this service has seen, as `<webContents>:<channel>`. */
-	const labels = new Set<string>();
 
-	const viewLabel = (event: IpcMainInvokeEvent, channelId: string) =>
-		`${event.sender.id}:${channelId}`;
+	/**
+	 * The page a request came from, and only the page.
+	 *
+	 * Which surface it is about is the surface key, which every request already
+	 * carries: the two together are what the attachment ledger owns by. The
+	 * channel id is not part of it — it addresses frames back to one mounted
+	 * client, and a surface that remounts gets a new one while remaining the
+	 * same surface of the same page.
+	 */
+	const viewLabel = (event: IpcMainInvokeEvent) => String(event.sender.id);
 
 	const identityOf = (
 		event: IpcMainInvokeEvent,
-		channelId: string,
 		request: {
 			surfaceKey: string;
 			attachmentId: string;
@@ -112,7 +117,7 @@ export function registerTerminalService(
 		surfaceKey: request.surfaceKey,
 		attachmentId: request.attachmentId,
 		targetGeneration: request.targetGeneration,
-		viewLabel: viewLabel(event, channelId),
+		viewLabel: viewLabel(event),
 	});
 
 	const targetFor = (surfaceKey: string): TerminalTarget => {
@@ -131,12 +136,10 @@ export function registerTerminalService(
 		watched.add(sender);
 		sender.once("destroyed", () => {
 			watched.delete(sender);
-			for (const label of [...labels]) {
-				if (label.startsWith(`${sender.id}:`)) {
-					surfaces.detachView(label);
-					labels.delete(label);
-				}
-			}
+			// One call: the page is the label, and every surface it held is
+			// released by it. Nothing here keeps a list of mounted surfaces to
+			// fall out of step with the ledger.
+			surfaces.detachView(String(sender.id));
 		});
 	};
 
@@ -158,9 +161,8 @@ export function registerTerminalService(
 				const id = channel(channelId);
 				const request = validateAttachRequest(payload);
 				const target = targetFor(request.surfaceKey);
-				const label = viewLabel(event, id);
+				const label = viewLabel(event);
 				watch(event.sender);
-				labels.add(label);
 				const sender = event.sender;
 				return ok(
 					await surfaces.attach({
@@ -194,10 +196,10 @@ export function registerTerminalService(
 		TERMINAL_CHANNELS.input,
 		(event, channelId: unknown, payload: unknown): TerminalResult<void> => {
 			try {
-				const id = channel(channelId);
+				channel(channelId);
 				const request = validateInputRequest(payload);
 				surfaces.input(
-					identityOf(event, id, request),
+					identityOf(event, request),
 					request.inputSequence,
 					request.bytes,
 				);
@@ -216,10 +218,10 @@ export function registerTerminalService(
 			payload: unknown,
 		): Promise<TerminalResult<void>> => {
 			try {
-				const id = channel(channelId);
+				channel(channelId);
 				const request = validateResizeRequest(payload);
 				await surfaces.resize(
-					identityOf(event, id, request),
+					identityOf(event, request),
 					targetFor(request.surfaceKey),
 					request.size,
 				);
@@ -234,9 +236,9 @@ export function registerTerminalService(
 		TERMINAL_CHANNELS.acknowledge,
 		(event, channelId: unknown, payload: unknown): TerminalResult<void> => {
 			try {
-				const id = channel(channelId);
+				channel(channelId);
 				const request = validateAckRequest(payload);
-				surfaces.acknowledge(identityOf(event, id, request), request.sequence);
+				surfaces.acknowledge(identityOf(event, request), request.sequence);
 				return ok(undefined);
 			} catch (failure: unknown) {
 				return refuse(failure);
@@ -248,11 +250,9 @@ export function registerTerminalService(
 		TERMINAL_CHANNELS.detach,
 		(event, channelId: unknown, payload: unknown): TerminalResult<void> => {
 			try {
-				const id = channel(channelId);
+				channel(channelId);
 				const request = validateDetachRequest(payload);
-				const label = viewLabel(event, id);
-				surfaces.detach({ ...request, viewLabel: label });
-				labels.delete(label);
+				surfaces.detach({ ...request, viewLabel: viewLabel(event) });
 				return ok(undefined);
 			} catch (failure: unknown) {
 				return refuse(failure);

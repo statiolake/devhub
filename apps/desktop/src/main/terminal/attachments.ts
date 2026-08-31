@@ -3,11 +3,21 @@
  *
  * Ported from the Tauri app's `src-tauri/src/terminal/pty.rs`. A *surface* is a
  * semantic place a terminal lives (the scratch terminal, one workspace's
- * terminal); an *attachment* is one view's live binding to a PTY for that
- * surface, named by an unguessable handle and a generation. The view can only
- * act on the attachment it was given: every request carries the handle, and a
- * request that names a surface it does not own is refused rather than resolved
- * to "the current one".
+ * terminal); an *attachment* is one surface's live binding to a PTY, named by
+ * an unguessable handle and a generation. The view can only act on the
+ * attachment it was given: every request carries the handle, and a request that
+ * names a surface it does not own is refused rather than resolved to "the
+ * current one".
+ *
+ * **Who owns an attachment is the (page, surface) pair.** The Tauri app gave
+ * every surface its own webview, so a view label named a surface and the two
+ * were the same thing; in Electron the Scratch terminal and every workspace
+ * terminal are components of the *same* App Shell page, and the pool keeps them
+ * all mounted. So a page holds as many attachments as it has terminal surfaces,
+ * a second attach of the same surface in the same page — a pooled surface
+ * remounting — supersedes only itself, and the page label is what a closing
+ * window releases as a group. This is the same rule the Agent channel keeps
+ * (`main/agent/channel.ts`), said the same way.
  *
  * This module owns only short-lived tmux *client* processes and their PTY file
  * descriptors. Detaching kills the client; the tmux session it was attached to
@@ -15,11 +25,11 @@
  * outlive the window, and the app.
  *
  * Attaching resolves a live tmux session first, so it is not instantaneous, and
- * two attaches for the same view can be in flight at once. The in-flight ledger
- * below is the Rust's `AttachPermit`: a newer attach supersedes an older one
- * before either can publish, so a view can never be handed a receipt for a
- * client that has already been replaced. Publication itself is synchronous, so
- * once the ledger says an attach is current, nothing can interleave with it.
+ * two attaches for the same surface can be in flight at once. The in-flight
+ * ledger below is the Rust's `AttachPermit`: a newer attach supersedes an older
+ * one before either can publish, so a surface can never be handed a receipt for
+ * a client that has already been replaced. Publication itself is synchronous,
+ * so once the ledger says an attach is current, nothing can interleave with it.
  */
 
 import {
@@ -59,9 +69,20 @@ const MAX_QUEUED_OUTPUT_BYTES = MAX_OUTPUT_BUFFER_BYTES;
  */
 export type FrameSink = (frame: TerminalFrame) => boolean;
 
+/**
+ * Who owns an attachment: one terminal surface inside one page.
+ *
+ * The page label alone names the page and nothing finer — every terminal
+ * surface of a window is a component of the same App Shell page — so the pair
+ * is what a reservation, a supersede and a remount are keyed by.
+ */
+export function surfaceOwnerKey(viewLabel: string, surfaceKey: string): string {
+	return `${viewLabel}\u0000${surfaceKey}`;
+}
+
 export interface AttachContext {
 	readonly surfaceKey: string;
-	/** The mounted surface's identity: one page can hold several. */
+	/** The page this surface is mounted in: one page holds several. */
 	readonly viewLabel: string;
 	/** The semantic terminal this attachment is a client of. */
 	readonly target: TerminalTarget;
@@ -78,15 +99,21 @@ export interface AttachContext {
  * A place in the in-flight ledger.
  *
  * Holding one is what makes an attach publishable. A newer attach for the same
- * view or the same target cancels this permit's token, so the provider work it
- * is waiting on stops and the publication is refused as stale.
+ * surface owner or the same target cancels this permit's token, so the provider
+ * work it is waiting on stops and the publication is refused as stale.
  */
 export interface AttachPermit {
 	readonly cancel: CancellationToken;
 	release(): void;
 }
 
-/** The identity every non-attach request must present. */
+/**
+ * The identity every non-attach request must present.
+ *
+ * The surface key and the page label together name the owner, and the
+ * attachment id and generation name the exact client it was handed. All four
+ * must match: a stale handle is refused, never resolved to whatever is current.
+ */
 export interface RequestIdentity {
 	readonly surfaceKey: string;
 	readonly attachmentId: string;
@@ -425,6 +452,7 @@ export interface AttachmentManagerOptions {
 }
 
 interface InFlightAttach {
+	readonly ownerKey: string;
 	readonly viewLabel: string;
 	readonly target: TerminalTarget;
 	readonly cancel: CancellationToken;
@@ -459,30 +487,33 @@ export class AttachmentManager {
 	/**
 	 * Claim the in-flight ledger for one attach.
 	 *
-	 * A view owns one mounted surface at a time, so an older attach for the
-	 * same view — or for the same terminal — is superseded here, before either
-	 * can publish. The superseded entry stays in the ledger until its permit is
-	 * released, which is what gives its publisher a definitive stale answer
-	 * instead of a timing-dependent lookup.
+	 * An owner — one surface of one page — has one attach at a time, so an
+	 * older attach by the same owner, or for the same terminal, is superseded
+	 * here, before either can publish. A sibling surface of the same page is a
+	 * different owner and is left alone. The superseded entry stays in the
+	 * ledger until its permit is released, which is what gives its publisher a
+	 * definitive stale answer instead of a timing-dependent lookup.
 	 */
 	beginAttach(
 		target: TerminalTarget,
+		surfaceKey: string,
 		viewLabel: string,
 		cancel: CancellationToken,
 	): AttachPermit {
 		cancel.check();
 		const key = this.nextAttachKey;
 		this.nextAttachKey += 1;
+		const ownerKey = surfaceOwnerKey(viewLabel, surfaceKey);
 		for (const inFlight of this.inFlight.values()) {
 			if (
-				inFlight.viewLabel === viewLabel ||
+				inFlight.ownerKey === ownerKey ||
 				sameTarget(inFlight.target, target)
 			) {
 				inFlight.cancel.cancel();
 			}
 		}
 		const operation = cancel.child();
-		this.inFlight.set(key, { viewLabel, target, cancel: operation });
+		this.inFlight.set(key, { ownerKey, viewLabel, target, cancel: operation });
 		let released = false;
 		return {
 			cancel: operation,
@@ -511,14 +542,13 @@ export class AttachmentManager {
 	 */
 	attach(permit: AttachPermit, context: AttachContext): TerminalAttachReceipt {
 		if (!this.isCurrent(permit)) throw new TerminalFailure("stale_target");
-		// One attachment per surface and one per mounted view. A replacement is
-		// reaped before the new PTY exists, so the old child never outlives the
-		// receipt that named it.
+		// One attachment per surface: a surface that remounts, or that is opened
+		// in another page, replaces its own client and nobody else's. The
+		// sibling surfaces of this page keep theirs. A replacement is reaped
+		// before the new PTY exists, so the old child never outlives the receipt
+		// that named it.
 		for (const existing of [...this.attachments.values()]) {
-			if (
-				existing.surfaceKey === context.surfaceKey ||
-				existing.viewLabel === context.viewLabel
-			) {
+			if (existing.surfaceKey === context.surfaceKey) {
 				existing.stop("detached");
 			}
 		}
@@ -614,6 +644,11 @@ export class AttachmentManager {
 		existing.stop("detached");
 	}
 
+	/**
+	 * Every client a page holds goes, and every attach it has in flight is
+	 * cancelled. This is the page-scoped release — a window closing, a page
+	 * reloading — and the only path that takes a page's surfaces as a group.
+	 */
 	detachView(viewLabel: string): void {
 		for (const inFlight of this.inFlight.values()) {
 			if (inFlight.viewLabel === viewLabel) inFlight.cancel.cancel();

@@ -63,6 +63,7 @@ export function terminalFailureFromPort(failure: unknown): TerminalFailure {
 export interface AttachSurfaceRequest {
 	readonly target: TerminalTarget;
 	readonly surfaceKey: string;
+	/** The page the surface is mounted in; with the key, it names the owner. */
 	readonly viewLabel: string;
 	readonly size: TerminalSize;
 	readonly sink: FrameSink;
@@ -99,6 +100,7 @@ export class TerminalSurfaces {
 	): Promise<TerminalAttachReceipt> {
 		const permit = this.attachments.beginAttach(
 			request.target,
+			request.surfaceKey,
 			request.viewLabel,
 			cancel,
 		);
