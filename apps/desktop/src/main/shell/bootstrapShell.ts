@@ -30,6 +30,7 @@ import { refreshMenu } from "./menu.js";
 import { startControlServer } from "../cli/controlServer.js";
 import { controlSocketPath } from "../cli/protocol.js";
 import { installLauncher } from "../cli/install.js";
+import { missingWorkbenchDefaults } from "../workbenchDefaults.js";
 
 /** How long a quit waits for the runtimes to let go before leaving anyway. */
 const SHUTDOWN_DEADLINE_MS = 3_000;
@@ -42,25 +43,7 @@ const APP_ROOT = join(
 	"..",
 );
 
-/**
- * The two workbench settings DevHub cannot contribute as defaults.
- *
- * A workbench view is chrome inside DevHub's own window, so it must not draw a
- * title bar of its own. Everything else that takes goes through the bridge
- * extension's `contributes.configurationDefaults`, which is the supported way
- * for a product to move a default — but VS Code accepts extension-contributed
- * defaults only for machine-overridable, window, resource and language-
- * overridable scoped settings (see the `configurationDefaults` extension point
- * in `vscode/src/vs/workbench/api/common/configurationExtensionPoint.ts`), and
- * these two are `ConfigurationScope.APPLICATION`. Contributing them is refused
- * with a warning, so they are written here instead — once, and only where the
- * person has not already said otherwise, so a user override still wins.
- */
-const WORKBENCH_DEFAULTS: Readonly<Record<string, string | boolean>> = {
-	"window.titleBarStyle": "native",
-	"window.customTitleBarVisibility": "never",
-};
-
+/** Write the settings DevHub cannot contribute as defaults; see the module. */
 function ensureWorkbenchDefaults(userDataPath: string): void {
 	const file = join(userDataPath, "User", "settings.json");
 
@@ -77,9 +60,7 @@ function ensureWorkbenchDefaults(userDataPath: string): void {
 		settings = {};
 	}
 
-	const missing = Object.entries(WORKBENCH_DEFAULTS).filter(
-		([key]) => !(key in settings),
-	);
+	const missing = missingWorkbenchDefaults(settings);
 	if (missing.length === 0) {
 		return;
 	}
