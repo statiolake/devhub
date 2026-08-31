@@ -21,6 +21,19 @@
  *
  * - **The title bar.** A workbench view is chrome inside DevHub's own window,
  *   so it must not draw a title bar of its own.
+ * - **Workspace trust.** Upstream's Workspace Trust exists because a window can
+ *   be opened by something other than the person at the keyboard — a link, a
+ *   recently-opened list, a folder handed to `code` by another program — so the
+ *   code in it has to be treated as unknown until somebody says otherwise.
+ *   Nothing reaches DevHub that way. A DevHub Workspace is a folder the person
+ *   added in DevHub's own picker or named on DevHub's own command line, and the
+ *   next thing they do in it is start an Agent, which runs a program of their
+ *   choosing against those same files. Restricted Mode in the workbench does
+ *   not make that safer; it makes the *terminal* — the one that is now the
+ *   workbench's own, on DevHub's tmux session — refuse to open until the folder
+ *   is trusted a second time, for a question DevHub already asked by being the
+ *   thing that opened it. A person who wants the prompt back sets this to
+ *   `true` and gets upstream's behaviour unchanged.
  * - **Untrusted files.** DevHub sends a file no open Workspace contains to the
  *   Scratch workbench, and an empty window is a *trusted* workspace, so
  *   upstream's `requestOpenFilesTrust` asks — every time, about every loose
@@ -34,6 +47,7 @@
 export const WORKBENCH_DEFAULTS: Readonly<Record<string, string | boolean>> = {
 	"window.titleBarStyle": "native",
 	"window.customTitleBarVisibility": "never",
+	"security.workspace.trust.enabled": false,
 	"security.workspace.trust.untrustedFiles": "open",
 };
 
