@@ -79,6 +79,12 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Provision the VS Code submodule
+        env:
+          # The nested installs under build/ and extensions/* download
+          # prebuilt binaries (ripgrep among them) from GitHub releases;
+          # unauthenticated requests from shared runner addresses hit the
+          # rate limit (403). The token is only there for that limit.
+          GITHUB_TOKEN: ${{ github.token }}
         run: scripts/provision-vscode.sh
 
       - name: Build DevHub
