@@ -24,6 +24,7 @@ import type {
 	WorkspaceSource,
 } from "../../model/config.js";
 import type { WorkspacePickerEvent } from "../../ipc/contract.js";
+import { score } from "../../model/fuzzy.js";
 
 const MAX_CANDIDATES = 1000;
 const MAX_STDERR_BYTES = 16 * 1024;
@@ -32,25 +33,6 @@ export function expandHome(path: string): string {
 	if (path === "~") return homedir();
 	if (path.startsWith("~/")) return join(homedir(), path.slice(2));
 	return path;
-}
-
-/**
- * How well a candidate matches. Subsequence matching, with a bonus for a hit in
- * the last path component — a person filtering "hub" means the folder, not a
- * parent directory that happens to contain the letters.
- */
-export function score(searchText: string, query: string): number {
-	if (query.length === 0) return 1;
-	const haystack = searchText.toLowerCase();
-	const needle = query.toLowerCase();
-	let index = 0;
-	for (const character of needle) {
-		index = haystack.indexOf(character, index);
-		if (index < 0) return 0;
-		index += 1;
-	}
-	const name = basename(haystack);
-	return name.includes(needle) ? 100 : 10;
 }
 
 interface RunState {

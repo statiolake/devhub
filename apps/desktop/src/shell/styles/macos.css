@@ -705,6 +705,15 @@
   text-align: center;
 }
 
+/* A line of guidance under the list — what the modifier does, or why the list
+   is not what it should be. Not an error: it stands whether or not anything is
+   wrong with the choice being made. */
+.picker-note {
+  padding: var(--space-2) var(--space-4);
+  border-top: 1px solid var(--line);
+  color: var(--secondary);
+}
+
 .picker-footer {
   display: flex;
   justify-content: space-between;

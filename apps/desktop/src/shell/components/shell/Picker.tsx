@@ -1,0 +1,368 @@
+/**
+ * Open Quickly, for anything.
+ *
+ * One control answers every "which one?" DevHub asks: a search field, a ranked
+ * list, and a footer. Typing filters, the arrows move, Return chooses, Escape
+ * cancels — and Command-Return chooses the same row the other way, which is the
+ * only thing a caller may vary. There used to be two of these, a searchable one
+ * for workspaces and a plain list for agent profiles, and the second was a
+ * different control answering the same question with different keys. A person
+ * should not have to know which list they are looking at to know what Return
+ * does.
+ *
+ * **Filtering is local, always.** The caller hands over everything it knows
+ * about; this ranks it with the shared scorer (`model/fuzzy.ts`) and draws what
+ * matches. A caller whose candidates come from somewhere slow — the workspace
+ * sources — also gets `onQueryChange`, so it can go and ask for more; what
+ * comes back is simply added to the items it passes. Nothing here waits for
+ * that. That is what makes the list survive typing: the rows already on screen
+ * are re-ranked in the same frame as the keystroke, and a search still running
+ * can only add to them, never blank them.
+ *
+ * Focus lives in the field for as long as the sheet stands. Rows do not take
+ * it — they refuse it on mousedown — and anything that manages to steal it is
+ * taken back, because a picker that has stopped answering the keyboard and
+ * cannot be clicked back into is a dead end with no way out but the mouse.
+ */
+
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
+import { createPortal } from "react-dom";
+import { score } from "../../../model/fuzzy";
+import { isImeComposing } from "../../accessibility/ime";
+
+/** One row: what is drawn, and what the query is matched against. */
+export interface PickerItem {
+  readonly id: string;
+  readonly label: string;
+  /** The second line, when a row has more to say than its name. */
+  readonly detail?: ReactNode;
+  /** What the query matches. The label, when a row is only its name. */
+  readonly searchText?: string;
+  readonly glyph?: ReactNode;
+}
+
+/**
+ * A row, and how the person asked for it.
+ *
+ * `split` is the Command modifier — Command-Return, or Command-click — and it
+ * is reported for every picker whether or not the caller has anything to do
+ * with it. One key means one thing everywhere; a picker that quietly dropped
+ * the modifier would teach that it sometimes does nothing.
+ */
+export interface PickerChoice {
+  readonly id: string;
+  readonly split: boolean;
+}
+
+export interface PickerProps {
+  /** Names the dialog for assistive technology; not drawn. */
+  readonly title: string;
+  readonly placeholder: string;
+  readonly items: readonly PickerItem[];
+  /** A source is still answering. Shown as a spinner, never as an empty list. */
+  readonly busy?: boolean;
+  /** Nothing matches what was typed. */
+  readonly emptyNoMatch: string;
+  /** Nothing to pick from at all, before anything was typed. */
+  readonly emptyNoItems: string;
+  /** A caveat about the list itself, under it. */
+  readonly note?: ReactNode;
+  /** A slow source's cue to go and look for more. Optional. */
+  readonly onQueryChange?: (query: string) => void;
+  /** How long to sit on a keystroke before `onQueryChange`. */
+  readonly queryDelayMs?: number;
+  readonly onChoose: (choice: PickerChoice) => void;
+  readonly onCancel: () => void;
+  /** The escape hatch beside Cancel — "Other…", and nothing else so far. */
+  readonly extraAction?: { readonly label: string; readonly run: () => void };
+}
+
+function SearchGlyph() {
+  return (
+    <svg
+      className="picker-search-glyph"
+      viewBox="0 0 16 16"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <circle cx="7" cy="7" r="4.2" />
+      <path d="M10.2 10.2 13.4 13.4" />
+    </svg>
+  );
+}
+
+export function Picker({
+  title,
+  placeholder,
+  items,
+  busy = false,
+  emptyNoMatch,
+  emptyNoItems,
+  note,
+  onQueryChange,
+  queryDelayMs = 150,
+  onChoose,
+  onCancel,
+  extraAction,
+}: PickerProps) {
+  const [query, setQuery] = useState("");
+  const [active, setActive] = useState(0);
+  const composing = useRef(false);
+  const input = useRef<HTMLInputElement | null>(null);
+  const listRef = useRef<HTMLUListElement | null>(null);
+  const restoreTo = useRef<HTMLElement | null>(null);
+
+  const ranked = useMemo(() => {
+    const scored = items.flatMap((item) => {
+      const value = score(item.searchText ?? item.label, query);
+      return value === 0 ? [] : [{ item, value }];
+    });
+    // A stable order under a query that ranks everything the same: the caller's
+    // order is the one the person already saw, and re-sorting equal rows on
+    // every keystroke moves the selection out from under them.
+    return scored
+      .map((entry, index) => ({ ...entry, index }))
+      .sort((left, right) =>
+        right.value === left.value
+          ? left.index - right.index
+          : right.value - left.value,
+      )
+      .map((entry) => entry.item);
+  }, [items, query]);
+
+  const focusField = useCallback(() => {
+    const field = input.current;
+    if (field && document.activeElement !== field) field.focus();
+  }, []);
+
+  useEffect(() => {
+    restoreTo.current = document.activeElement as HTMLElement | null;
+    focusField();
+    return () => {
+      const target = restoreTo.current;
+      if (target?.isConnected) target.focus();
+    };
+  }, [focusField]);
+
+  // Whatever took the keyboard — the window going away and coming back, a
+  // native view under the sheet — the field takes it back. One rule, so there
+  // is no state in which the sheet is up and the keys go somewhere else.
+  useEffect(() => {
+    window.addEventListener("focus", focusField);
+    return () => {
+      window.removeEventListener("focus", focusField);
+    };
+  }, [focusField]);
+
+  // The source, if there is one, is told what was typed — after a pause, so a
+  // burst of keystrokes is one search. The first call is not delayed: the
+  // sheet comes up empty and the only thing that fills it is this.
+  const first = useRef(true);
+  useEffect(() => {
+    if (!onQueryChange) return;
+    if (first.current) {
+      first.current = false;
+      onQueryChange(query);
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      onQueryChange(query);
+    }, queryDelayMs);
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [onQueryChange, query, queryDelayMs]);
+
+  // The top row is the one Return takes, so a list that changed under the
+  // person must not leave the selection pointing into the middle of it.
+  const activeId = ranked[active]?.id;
+  useEffect(() => {
+    setActive((current) => (current < ranked.length ? current : 0));
+  }, [ranked.length]);
+
+  useEffect(() => {
+    listRef.current
+      ?.querySelector('[aria-selected="true"]')
+      ?.scrollIntoView({ block: "nearest" });
+  }, [activeId]);
+
+  const choose = useCallback(
+    (id: string, split: boolean) => {
+      onChoose({ id, split });
+    },
+    [onChoose],
+  );
+
+  const onKeyDown = (event: React.KeyboardEvent) => {
+    if (isImeComposing(event.nativeEvent, composing.current)) {
+      if (event.key === "Enter" || event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+      return;
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      onCancel();
+      return;
+    }
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      if (ranked.length === 0) return;
+      const delta = event.key === "ArrowDown" ? 1 : -1;
+      setActive((current) => (current + delta + ranked.length) % ranked.length);
+      return;
+    }
+    if (event.key === "Enter") {
+      event.preventDefault();
+      const candidate = ranked[active];
+      if (candidate) choose(candidate.id, event.metaKey);
+      return;
+    }
+    // Anything else is typing, and typing belongs in the field.
+    focusField();
+  };
+
+  const emptyMessage =
+    items.length === 0 && busy
+      ? "Searching…"
+      : query.length > 0
+        ? emptyNoMatch
+        : emptyNoItems;
+
+  return createPortal(
+    <div
+      className="mac-scrim mac"
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onCancel();
+      }}
+    >
+      <section
+        className="mac-sheet picker"
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        onKeyDown={onKeyDown}
+        // A click inside the sheet acts, it does not move the keyboard. The
+        // field keeps it whatever was pressed, which is what makes the sheet
+        // still answer Return after a row was clicked and missed.
+        onMouseDown={focusField}
+      >
+        <div className="picker-search">
+          <SearchGlyph />
+          <input
+            ref={input}
+            className="picker-input"
+            type="text"
+            aria-label={title}
+            placeholder={placeholder}
+            value={query}
+            onCompositionStart={() => {
+              composing.current = true;
+            }}
+            onCompositionEnd={() => {
+              composing.current = false;
+            }}
+            onChange={(event) => {
+              setQuery(event.target.value);
+              setActive(0);
+            }}
+          />
+          {busy ? (
+            <span
+              className="mac-spinner"
+              aria-label="Searching"
+              role="status"
+            />
+          ) : null}
+        </div>
+
+        {ranked.length > 0 ? (
+          <ul
+            className="mac-list picker-results"
+            role="listbox"
+            aria-label={title}
+            ref={listRef}
+          >
+            {ranked.map((item, index) => (
+              <li key={item.id}>
+                <button
+                  type="button"
+                  role="option"
+                  aria-selected={index === active}
+                  className="mac-list-row"
+                  tabIndex={-1}
+                  onMouseDown={(event) => {
+                    // The row is a target, not a place to stand: taking focus
+                    // here is what used to leave the sheet deaf to the keyboard.
+                    event.preventDefault();
+                  }}
+                  onMouseEnter={() => {
+                    setActive(index);
+                  }}
+                  onClick={(event) => {
+                    choose(item.id, event.metaKey);
+                  }}
+                >
+                  {item.glyph ? (
+                    <span className="mac-list-glyph">{item.glyph}</span>
+                  ) : null}
+                  <span className="mac-list-text">
+                    <span className="mac-list-title">{item.label}</span>
+                    {item.detail ? (
+                      <span className="mac-list-subtitle mac-caption">
+                        {item.detail}
+                      </span>
+                    ) : null}
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="picker-empty mac-caption" role="status">
+            {emptyMessage}
+          </p>
+        )}
+
+        {note ? (
+          <p className="picker-note mac-caption" role="status">
+            {note}
+          </p>
+        ) : null}
+
+        <footer className="picker-footer">
+          {extraAction ? (
+            <button
+              type="button"
+              className="mac-button plain"
+              tabIndex={-1}
+              onClick={extraAction.run}
+            >
+              {extraAction.label}
+            </button>
+          ) : (
+            <span />
+          )}
+          <button
+            type="button"
+            className="mac-button"
+            tabIndex={-1}
+            onClick={onCancel}
+          >
+            Cancel
+          </button>
+        </footer>
+      </section>
+    </div>,
+    document.body,
+  );
+}
