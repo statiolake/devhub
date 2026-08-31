@@ -644,6 +644,15 @@ body.is-resizing-sidebar {
   color: var(--status-error);
 }
 
+/*
+ * No detector for this Agent's kind. It is a permanent answer, not a pending
+ * one, so it takes the row's secondary ink rather than a status colour: the
+ * mark is legible, and it is visibly not one of the four verdicts.
+ */
+.status-mark-unknown {
+  color: var(--secondary);
+}
+
 /* Working is the one status that is going somewhere, so it is the one that
    moves — the codicon `loading` arc turning, the way VS Code turns it, and
    not at all for a reader who asked for less motion. */
@@ -1098,64 +1107,11 @@ body.is-resizing-sidebar {
 
 /* -------------------------------------------------------------- terminal */
 
-/* The margin lives here, on the parent of the box the fit addon measures, so
-   the grid is computed against an already-inset area rather than relying on
-   the addon to notice padding. An absolutely positioned state still covers the
-   whole pane, because its containing block is this element's padding box. */
-.terminal-surface-shell {
-  position: relative;
-  display: flex;
-  overflow: hidden;
-  width: 100%;
-  height: 100%;
-  flex: 1;
-  flex-direction: column;
-  min-height: 0;
-  padding: var(--terminal-margin, 4px);
-  background: var(--terminal-background, var(--surface));
-}
-
-/* The emulator can only draw whole cells, so the grid almost never divides the
-   pane exactly. `.xterm` has no size of its own — its one in-flow child is the
-   cell grid — so as a flex item it shrinks to exactly what was drawn and
-   centres, leaving the remainder split evenly around it. The addon still
-   measures this host, which keeps its full size, so nothing feeds back. */
-.terminal-surface {
-  position: relative;
-  display: flex;
-  overflow: hidden;
-  width: 100%;
-  height: 100%;
-  flex: 1;
-  align-items: center;
-  justify-content: center;
-  min-height: 0;
-  background: var(--terminal-background, var(--surface));
-}
-
-/* That remainder has to read as part of the terminal, so the emulator's own
-   layers stay transparent and the host carries the background. */
-.terminal-surface .xterm,
-.terminal-surface .xterm-viewport {
-  background: transparent;
-}
-
-.terminal-surface-title {
-  position: absolute;
-  overflow: hidden;
-  width: 1px;
-  height: 1px;
-  clip-path: inset(50%);
-}
-
-/* The provider owns the canvas, so a state has to sit over it rather than
-   beside it, and cover the dead terminal instead of floating on top of it. */
-.terminal-surface-shell > .surface-state {
-  position: absolute;
-  z-index: 3;
-  background: var(--surface);
-  inset: 0;
-}
+/* A terminal surface's own rules live with the terminal surface, in
+   `terminal/terminal.css`. A second copy lived here and drifted: it still
+   centred the cell grid after the surface had stopped, and its state overlay
+   named a class (`.surface-state`) that no element has carried for some time.
+   Two answers to "how is the grid placed" is one answer too many. */
 
 /* --------------------------------------------------------- window dragging */
 

@@ -1,4 +1,76 @@
-/* The one rule every terminal DevHub draws needs, whatever surface it is on.
+/* How a terminal sits in its pane, and how its glyphs are drawn.
+ *
+ * These rules belong to the emulator, not to one surface that shows one. A
+ * terminal surface and an Agent surface are the same xterm in the same host
+ * markup, and they were styled from two stylesheets that had already drifted —
+ * one still centred the cell grid after the other had stopped. So the layout
+ * lives here, beside `openXtermSession`, and every surface that opens a
+ * terminal gets it by opening one. */
+
+/* The pane. The margin is on the parent of the box the fit addon measures, so
+   the grid is computed against an already-inset area rather than relying on the
+   addon to notice padding. An absolutely positioned state still covers the
+   whole pane, because its containing block is this element's padding box. */
+.terminal-surface-shell {
+  position: relative;
+  display: flex;
+  overflow: hidden;
+  width: 100%;
+  height: 100%;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  padding: var(--terminal-margin, 4px);
+  background: var(--terminal-background, var(--surface));
+}
+
+/* The host the fit addon measures. The emulator can only draw whole cells, so
+   the grid almost never divides the pane exactly: the addon takes the rows that
+   fit and leaves up to one cell's worth over. `.xterm` has no size of its own —
+   its one in-flow child is the cell grid — so as a flex item it shrinks to
+   exactly what was drawn. This host keeps its full size, so nothing feeds back.
+
+   The leftover is a letterbox at the bottom and the right, never a margin split
+   around the grid. Centring put half of it *above* row one — measured between
+   0.6 and 8.95 css px as the pane resized, and at a fractional offset whenever
+   the pane's own height was fractional — which is a terminal whose first row
+   floats and whose last row stops short of the bottom edge with a band of
+   background under it. tmux's status line is on that last row, and a bar that
+   does not reach the bottom of its pane is exactly what "the bottom row looks
+   clipped" describes. Anchoring the grid to the top left makes the offset the
+   pane's own inset and nothing else: measured at pane heights 300, 407.5,
+   512.4, 617 and 718.75, the top and left gaps are 0 every time and the last
+   row is fully inside. It is also where VS Code's terminal puts its own
+   remainder, so the two read the same. */
+.terminal-surface {
+  position: relative;
+  display: flex;
+  overflow: hidden;
+  width: 100%;
+  height: 100%;
+  flex: 1;
+  align-items: flex-start;
+  justify-content: flex-start;
+  min-height: 0;
+  background: var(--terminal-background, var(--surface));
+}
+
+/* The letterbox has to read as part of the terminal, so the emulator's own
+   layers stay transparent and the host carries the background. */
+.terminal-surface .xterm,
+.terminal-surface .xterm-viewport {
+  background: transparent;
+}
+
+/* Terminal output exists to be selected and copied, whatever the shell's own
+   cursor rules are. */
+.terminal-surface,
+.terminal-surface * {
+  cursor: auto;
+  user-select: text;
+}
+
+/* How heavy the glyphs are.
  *
  * The shell's page tokens set `-webkit-font-smoothing: antialiased` on `:root`
  * — the right choice for chrome text on macOS, and inherited by everything.
