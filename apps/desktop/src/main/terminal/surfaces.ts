@@ -147,6 +147,50 @@ export class TerminalSurfaces {
 		}
 	}
 
+	/**
+	 * The argv that attaches a client to a target's session — for a client
+	 * DevHub does not run itself.
+	 *
+	 * A workbench's integrated terminal is that client. It is spawned by VS
+	 * Code's pty host from a terminal profile, so DevHub cannot hand it a PTY;
+	 * it can only hand it the command line. Everything that makes attaching
+	 * safe still happens here and only here: the session is ensured, the list
+	 * is read back, and the full marker triple is compared, so the profile that
+	 * comes out names a session DevHub has just proven it owns. A profile that
+	 * merely said `new -A -s <name>` would create an unmarked session on
+	 * DevHub's own socket the first time it missed — a session close inspection
+	 * could only count, never name.
+	 */
+	async profile(
+		target: TerminalTarget,
+		cancel = new CancellationToken(),
+	): Promise<{ readonly file: string; readonly args: readonly string[] }> {
+		const release = await this.runtime.acquireOperation(cancel);
+		try {
+			const deadline = OperationDeadline.in(this.runtime.timeoutMs);
+			await this.runtime.ensureUnlocked(target, cancel);
+			const sessions = await this.runtime.listSessionsUnlocked(
+				cancel,
+				deadline,
+			);
+			const identity = this.runtime.targetIdentity(target, sessions);
+			const exact = sessions.find(
+				(session) =>
+					session.name === identity.sessionName &&
+					sessionMatches(session, identity),
+			);
+			if (!exact) throw new TerminalFailure("session_unavailable");
+			return {
+				file: this.runtime.tmuxPath(),
+				args: this.runtime.attachArgv(exact.name),
+			};
+		} catch (failure: unknown) {
+			throw terminalFailureFromPort(failure);
+		} finally {
+			release();
+		}
+	}
+
 	input(identity: RequestIdentity, sequence: number, bytes: Uint8Array): void {
 		this.attachments.input(identity, sequence, bytes);
 	}

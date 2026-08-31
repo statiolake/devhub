@@ -449,6 +449,42 @@ export class AppController {
 	}
 
 	/**
+	 * How a workbench's integrated terminal attaches to DevHub's session.
+	 *
+	 * A terminal in DevHub is a tmux session on DevHub's socket, and it always
+	 * was; what changed is who runs the client. It used to be a surface of
+	 * DevHub's own with an xterm and a PTY beside the workbench; it is now the
+	 * workbench's integrated terminal, which is a better terminal than DevHub
+	 * will ever write and is where a person looks for one. So DevHub keeps the
+	 * half only it can do — owning the socket, the names and the markers — and
+	 * hands out the command line for the half VS Code does.
+	 *
+	 * The root identifies the workbench, not the workspace: a folderless
+	 * workbench is the Scratch context, and its session is the same `scratch`
+	 * one it has been since before this existed, so an integrated terminal
+	 * opened after this change lands in the shell that was already running
+	 * there.
+	 */
+	async terminalProfileFor(
+		root: string | null,
+	): Promise<{ readonly file: string; readonly args: readonly string[] }> {
+		const wiring = this.terminalsWiring;
+		if (!wiring) throw new Error("the terminal runtime is not running");
+		if (root === null) {
+			return wiring.service.surfaces.profile(SCRATCH_TARGET);
+		}
+		const workspace = this.coordinator.model.workspaces.find(
+			(candidate) => candidate.root === root,
+		);
+		if (!workspace) {
+			throw new Error(`no DevHub workspace is rooted at ${root}`);
+		}
+		return wiring.service.surfaces.profile(
+			workspaceTarget(workspace.id, workspace.root),
+		);
+	}
+
+	/**
 	 * What the socket a person is asking DevHub to move to looks like.
 	 *
 	 * Read-only, and the same probe the runtime uses for its own health, so the

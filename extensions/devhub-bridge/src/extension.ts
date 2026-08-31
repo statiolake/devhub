@@ -12,6 +12,7 @@ import { BridgeControllerCore } from "./controller";
 import { parseNavigationUri } from "./navigation";
 import { isSafeBearerToken, LoopbackSocket } from "./transport";
 import { controlSocketFromGlobalStorage, requestInstall } from "./installCli";
+import { registerTerminalProfile } from "./terminalProfile";
 
 interface BridgeConfiguration {
   endpoint: string;
@@ -255,6 +256,10 @@ function installCliCommand(
 
 export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(installCliCommand(context));
+  // Registered unconditionally, for the same reason the palette command is:
+  // it needs a DevHub behind the window, not a bridge transport in front of
+  // it. The provider itself refuses when there is no DevHub to ask.
+  context.subscriptions.push(registerTerminalProfile(context));
   void resolveConfiguration()
     .then((config) => {
       if (!config) return;

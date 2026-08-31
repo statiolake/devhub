@@ -24,7 +24,8 @@
   "contributes": {
     "configurationDefaults": {
       "window.commandCenter": false,
-      "workbench.layoutControl.enabled": false
+      "workbench.layoutControl.enabled": false,
+      "terminal.integrated.defaultProfile.osx": "DevHub"
     },
     "commands": [
       {
@@ -39,7 +40,16 @@
         "command": "devhub.installCli",
         "title": "DevHub: Install 'devhub' command in PATH"
       }
-    ]
+    ],
+    "terminal": {
+      "profiles": [
+        {
+          "id": "devhub.tmux",
+          "title": "DevHub",
+          "icon": "terminal-tmux"
+        }
+      ]
+    }
   },
   "scripts": {
     "build": "node scripts/build.mjs",

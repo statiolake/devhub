@@ -132,6 +132,7 @@ export async function bootstrapShell(
 		listExtensions: (showVersions) =>
 			controller.listExtensionsFromCli(showVersions),
 		version: () => controller.versionFromCli(),
+		terminalProfile: (root) => controller.terminalProfileFor(root),
 		installCli: () =>
 			Promise.resolve(
 				installLauncher({

@@ -19,6 +19,7 @@ import {
 	type ControlPosition,
 	type ControlRequest,
 	type ControlResponse,
+	type TerminalProfileAnswer,
 } from "./protocol.js";
 
 /** Longer than any request DevHub sends; short enough that nothing accumulates. */
@@ -45,6 +46,11 @@ export interface ControlHandlers {
 	listExtensions(showVersions: boolean): Promise<string>;
 	version(): Promise<string>;
 	installCli(): Promise<string>;
+	/**
+	 * The command line the workbench rooted at `root` — or the folderless one,
+	 * for `null` — starts its integrated terminal with.
+	 */
+	terminalProfile(root: string | null): Promise<TerminalProfileAnswer>;
 }
 
 export interface ControlServer {
@@ -203,6 +209,16 @@ async function handle(
 				return { ok: true, message: await handlers.version() };
 			case "install-cli":
 				return { ok: true, message: await handlers.installCli() };
+			case "terminal-profile": {
+				const profile = await handlers.terminalProfile(request.root);
+				return {
+					ok: true,
+					// The sentence is for a log and for a person who sends this
+					// request by hand; the profile is the answer.
+					message: `${profile.file} ${profile.args.join(" ")}`,
+					profile,
+				};
+			}
 		}
 	} catch (error) {
 		return { ok: false, message: messageOf(error) };

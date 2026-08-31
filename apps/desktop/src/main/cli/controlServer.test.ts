@@ -28,6 +28,7 @@ function everythingSaysOk(): ControlHandlers {
 		listExtensions: () => Promise.resolve("ok"),
 		version: () => Promise.resolve("ok"),
 		installCli: () => Promise.resolve("ok"),
+		terminalProfile: () => Promise.resolve({ file: "tmux", args: [] }),
 	};
 }
 
@@ -93,6 +94,18 @@ describe("the DevHub control socket", () => {
 			},
 			version: () => Promise.resolve("DevHub 0.1.0\nVS Code 1.0.0\nabc123"),
 			installCli: () => Promise.resolve("installed"),
+			terminalProfile: (root) => {
+				calls.push(`profile ${root ?? "scratch"}`);
+				if (root === "/work/gone") {
+					return Promise.reject(
+						new Error("no DevHub workspace is rooted at /work/gone"),
+					);
+				}
+				return Promise.resolve({
+					file: "/usr/bin/tmux",
+					args: ["-L", "devhub", "attach-session", "-t", "ws-abc"],
+				});
+			},
 		});
 	});
 
@@ -320,5 +333,37 @@ describe("the DevHub control socket", () => {
 		await expect(
 			startControlServer(socketPath, everythingSaysOk()),
 		).rejects.toThrow(/already listening/);
+	});
+
+	it("answers a workbench's terminal profile with the argv, not a sentence", async () => {
+		const answer = await ask(
+			socketPath,
+			`${JSON.stringify({ kind: "terminal-profile", root: "/work/a" })}\n`,
+		);
+		expect(answer.profile).toEqual({
+			file: "/usr/bin/tmux",
+			args: ["-L", "devhub", "attach-session", "-t", "ws-abc"],
+		});
+		expect(calls).toEqual(["profile /work/a"]);
+	});
+
+	it("takes a folderless workbench as the Scratch context", async () => {
+		const answer = await ask(
+			socketPath,
+			`${JSON.stringify({ kind: "terminal-profile", root: null })}\n`,
+		);
+		expect(answer.ok).toBe(true);
+		expect(calls).toEqual(["profile scratch"]);
+	});
+
+	it("reports a workbench DevHub has no session for, with no profile", async () => {
+		const answer = await ask(
+			socketPath,
+			`${JSON.stringify({ kind: "terminal-profile", root: "/work/gone" })}\n`,
+		);
+		expect(answer).toEqual({
+			ok: false,
+			message: "no DevHub workspace is rooted at /work/gone",
+		});
 	});
 });

@@ -95,7 +95,25 @@ export type ControlRequest =
 	| {
 			/** Put the `devhub` launcher on the PATH. Sent by the workbench command. */
 			readonly kind: "install-cli";
+	  }
+	| {
+			/**
+			 * How this workbench's integrated terminal attaches to its DevHub
+			 * session. Sent by the bridge extension, never by a person.
+			 *
+			 * The root is the workbench's own workspace folder, or `null` for the
+			 * folderless one — which is the Scratch context, and the same session
+			 * the Scratch terminal has always been.
+			 */
+			readonly kind: "terminal-profile";
+			readonly root: string | null;
 	  };
+
+/** The command line a workbench's integrated terminal is started with. */
+export interface TerminalProfileAnswer {
+	readonly file: string;
+	readonly args: readonly string[];
+}
 
 export interface ControlResponse {
 	readonly ok: boolean;
@@ -104,6 +122,16 @@ export interface ControlResponse {
 	 * install transcript are several lines, and they are still one answer.
 	 */
 	readonly message: string;
+	/**
+	 * The one answer that is data rather than a sentence.
+	 *
+	 * Every other request on this socket is a person asking for something and
+	 * reading the reply; `terminal-profile` is a workbench asking for an argv,
+	 * and an argv squeezed through a human sentence would have to be parsed
+	 * back out of it. Absent on every other answer, and on a failed one — a
+	 * failure is a sentence, whoever is reading.
+	 */
+	readonly profile?: TerminalProfileAnswer;
 }
 
 /** Reject anything that is not a request this server understands. */
@@ -152,6 +180,14 @@ export function parseControlRequest(line: string): ControlRequest {
 			};
 		case "install-cli":
 			return { kind: "install-cli" };
+		case "terminal-profile":
+			return {
+				kind: "terminal-profile",
+				root:
+					record["root"] === null
+						? null
+						: requireAbsolute(record["root"], "root"),
+			};
 		default:
 			throw new Error(`unknown control request: ${String(record["kind"])}`);
 	}
