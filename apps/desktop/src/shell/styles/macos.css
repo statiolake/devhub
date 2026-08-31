@@ -489,34 +489,6 @@
   margin-top: var(--space-3);
 }
 
-/* A sheet that is a list of choices: header, list, footer. */
-.mac-sheet-header {
-  padding: var(--space-4) var(--space-4) var(--space-2);
-}
-
-.mac-sheet-header .mac-message {
-  margin-top: 4px;
-}
-
-.mac-sheet .mac-list {
-  max-height: 44vh;
-  border-top: 1px solid var(--line-soft);
-  border-bottom: 1px solid var(--line-soft);
-}
-
-.mac-sheet-empty,
-.mac-sheet-note {
-  margin: 0;
-  padding: var(--space-3) var(--space-4);
-}
-
-.mac-sheet-footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: var(--space-2);
-  padding: var(--space-3) var(--space-4);
-}
-
 /*
  * An alert that belongs to one workbench.
  *
@@ -650,10 +622,27 @@
 
 /* ------------------------------------------------------- workspace picker */
 
+/*
+ * A picker is a stack of bands: the search field, the list (or what stands in
+ * for it), a note when there is one, the footer.
+ *
+ * **A rule stands between two bands, and this is the only place that says so.**
+ * Every band used to draw its own edge — the field a bottom, the list a top and
+ * a bottom, the footer a top — so how many rules the sheet had depended on
+ * which bands happened to exist: two rules doubled up under the field, and the
+ * one above the note disappeared when the list was replaced by "nothing
+ * matches". Nothing here knows what its neighbours are; the seam belongs to the
+ * stack, so every state is drawn by the same rule and no state can be wrong on
+ * its own.
+ */
 .picker {
   display: flex;
   flex-direction: column;
   max-height: min(520px, 76vh);
+}
+
+.picker > * + * {
+  border-top: 1px solid var(--line-soft);
 }
 
 .picker-search {
@@ -661,7 +650,6 @@
   align-items: center;
   gap: var(--space-2);
   padding: var(--space-3) var(--space-4);
-  border-bottom: 1px solid var(--line);
 }
 
 .picker-search-glyph {
@@ -700,26 +688,36 @@
   gap: 1px;
 }
 
+/* A band, so it carries no margin of its own: the space around it is the
+   band's padding, the same way every other band's is. */
 .picker-empty {
+  margin: 0;
   padding: var(--space-6) var(--space-4);
   text-align: center;
 }
 
-/* A line of guidance under the list — what the modifier does, or why the list
-   is not what it should be. Not an error: it stands whether or not anything is
-   wrong with the choice being made. */
+/* The footer: what the sheet has to say about itself, and the way out of it.
+   One band, so the seam above it is in the same place whether or not there is
+   a note to read. */
+.picker-footer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  background: var(--chrome);
+}
+
+/* A line of guidance — what the modifier does, or why the list is not what it
+   should be. Not an error: it stands whether or not anything is wrong with the
+   choice being made. */
 .picker-note {
-  padding: var(--space-2) var(--space-4);
-  border-top: 1px solid var(--line);
+  margin: 0;
   color: var(--secondary);
 }
 
-.picker-footer {
+.picker-actions {
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: var(--space-2);
-  padding: var(--space-3) var(--space-4);
-  border-top: 1px solid var(--line);
-  background: var(--chrome);
 }

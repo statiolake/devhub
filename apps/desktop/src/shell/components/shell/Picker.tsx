@@ -332,33 +332,39 @@ export function Picker({
           </p>
         )}
 
-        {note ? (
-          <p className="picker-note mac-caption" role="status">
-            {note}
-          </p>
-        ) : null}
-
+        {/* The note is part of the footer, not a band of its own. It is the
+            sheet saying something about itself — what the modifier does, why
+            the list is short — and giving it its own band would put a rule
+            between a caption and the thing it captions, and would make the
+            sheet's seams depend on whether a caller passed one. */}
         <footer className="picker-footer">
-          {extraAction ? (
+          {note ? (
+            <p className="picker-note mac-caption" role="status">
+              {note}
+            </p>
+          ) : null}
+          <div className="picker-actions">
+            {extraAction ? (
+              <button
+                type="button"
+                className="mac-button plain"
+                tabIndex={-1}
+                onClick={extraAction.run}
+              >
+                {extraAction.label}
+              </button>
+            ) : (
+              <span />
+            )}
             <button
               type="button"
-              className="mac-button plain"
+              className="mac-button"
               tabIndex={-1}
-              onClick={extraAction.run}
+              onClick={onCancel}
             >
-              {extraAction.label}
+              Cancel
             </button>
-          ) : (
-            <span />
-          )}
-          <button
-            type="button"
-            className="mac-button"
-            tabIndex={-1}
-            onClick={onCancel}
-          >
-            Cancel
-          </button>
+          </div>
         </footer>
       </section>
     </div>,
