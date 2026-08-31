@@ -210,6 +210,32 @@ export function isWorkspaceSessionName(name: string, root: string): boolean {
 	);
 }
 
+/**
+ * The agent-id marker, as the rest of this file compares it.
+ *
+ * `@devhub-agent-id` joined the marker tuple after the other three, and tmux
+ * has no way to say "this option was written as empty" — an unset option and
+ * an empty one read back the same. So a session DevHub itself created before
+ * the marker existed carries `@devhub-context`, `@devhub-workspace-id` and
+ * `@devhub-root` exactly, and nothing here. That session is DevHub's own, on
+ * DevHub's own socket, under DevHub's own server protocol marker; it is not a
+ * foreign resource, and the fact it states about agents is the one `none`
+ * states.
+ *
+ * Reading it that way *here* is deliberate. This is the boundary where a
+ * session's markers become the tuple every comparison above uses, so the
+ * older spelling is decoded once and `isMarked` and `sessionMatches` stay
+ * exact matches on a canonical tuple — rather than each of them growing an
+ * "unless it is missing" branch that the next comparison would forget.
+ *
+ * The absence is not read as permission for anything: an Agent session still
+ * has to carry a real id, and `none` is not one, so an agent-context session
+ * with no marker stays unowned exactly as before.
+ */
+function agentIdMarker(raw: string | undefined): string {
+	return raw === undefined ? NO_AGENT : raw;
+}
+
 export function isRootMetadata(value: string): boolean {
 	return (
 		value.length > 0 &&
@@ -1615,12 +1641,14 @@ export class TmuxTerminalRuntime {
 					cancel,
 					deadline,
 				),
-				agentId: await this.showOption(
-					socket,
-					name,
-					AGENT_ID_OPTION,
-					cancel,
-					deadline,
+				agentId: agentIdMarker(
+					await this.showOption(
+						socket,
+						name,
+						AGENT_ID_OPTION,
+						cancel,
+						deadline,
+					),
 				),
 			});
 		}

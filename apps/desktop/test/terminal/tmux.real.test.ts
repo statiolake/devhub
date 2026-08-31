@@ -585,6 +585,108 @@ describe.skipIf(TMUX === undefined)(
         }),
       ).rejects.toThrow();
     });
+
+    /**
+     * A server left by a DevHub from before `@devhub-agent-id` existed.
+     *
+     * This is the shape that took the whole runtime down: `ensureScratch`
+     * compares the complete marker tuple, `scratch` carried only the three
+     * markers that existed when it was created, and the mismatch was a
+     * conflict. Every operation goes through `ensureServer`, so no agent could
+     * launch and no workbench terminal could attach — on a socket holding
+     * DevHub's own sessions, with DevHub's own protocol marker on it.
+     */
+    it("adopts its own sessions from before the agent-id marker existed", async () => {
+      const test = fixture("premarker");
+      const workspaceId = "cccccccc-cccc-4ccc-8ccc-ccccccccccc1";
+      const agentId = "dddddddd-dddd-4ddd-8ddd-ddddddddddd1";
+      const digest = workspaceDigest(test.home);
+
+      // Built from outside, exactly as the older DevHub wrote it: the server
+      // protocol marker, and sessions carrying context, workspace id and root
+      // — and no agent-id option at all.
+      tmuxOutside(test.socket, [
+        "new-session",
+        "-d",
+        "-s",
+        SCRATCH_SESSION,
+        "-c",
+        test.home,
+      ]);
+      tmuxOutside(test.socket, ["set-option", "-g", "@devhub-protocol", "1"]);
+      for (const [option, value] of [
+        ["@devhub-context", "global"],
+        ["@devhub-workspace-id", "global"],
+        ["@devhub-root", test.home],
+      ]) {
+        tmuxOutside(test.socket, [
+          "set-option",
+          "-t",
+          SCRATCH_SESSION,
+          option,
+          value,
+        ]);
+      }
+      const workspaceSession = `ws-${digest.slice(0, 20)}`;
+      tmuxOutside(test.socket, [
+        "new-session",
+        "-d",
+        "-s",
+        workspaceSession,
+        "-c",
+        test.home,
+      ]);
+      for (const [option, value] of [
+        ["@devhub-context", "workspace"],
+        ["@devhub-workspace-id", workspaceId],
+        ["@devhub-root", test.home],
+      ]) {
+        tmuxOutside(test.socket, [
+          "set-option",
+          "-t",
+          workspaceSession,
+          option,
+          value,
+        ]);
+      }
+
+      // An absent agent-id marker reads as `none`, so these are DevHub's own
+      // sessions and the tuple matches.
+      const sessions = await test.runtime.listSessions(
+        test.socket,
+        test.cancel,
+        deadline(test.runtime),
+      );
+      for (const session of sessions) {
+        expect(isMarked(session, test.home)).toBe(true);
+      }
+
+      // The two operations the user could not perform: a workbench terminal
+      // attaching to the workspace session that is already there, and an Agent
+      // launching at all. Both go through `ensureServer`, which is what the
+      // mismatch was taking down.
+      await test.runtime.ensure(SCRATCH_TARGET);
+      await test.runtime.ensure(workspaceTarget(workspaceId, test.home));
+      await test.runtime.launchAgent(
+        { agentId, workspaceId, root: test.home },
+        { file: "/bin/sh", args: ["-c", "sleep 30"], env: {} },
+      );
+
+      const live = await test.runtime.listAgents(test.cancel);
+      expect(live.map((one) => one.sessionName)).toContain(
+        agentSessionName(agentId),
+      );
+
+      // The pre-existing sessions are still the ones that were there: adopting
+      // them must not have replaced or renamed anything.
+      const after = await test.runtime.listSessions(
+        test.socket,
+        test.cancel,
+        deadline(test.runtime),
+      );
+      expect(after.map((one) => one.name)).toContain(SCRATCH_SESSION);
+      expect(after.map((one) => one.name)).toContain(workspaceSession);
+    });
   },
 );
 
