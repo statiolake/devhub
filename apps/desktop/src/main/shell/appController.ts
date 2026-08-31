@@ -124,7 +124,8 @@ import {
 import { wireAgents } from "./agentWiring.js";
 import { AgentReconciler } from "./agentReconciler.js";
 import { MainServicesGate, type MainServices } from "./mainServices.js";
-import { resolveRuntimes } from "./runtimes.js";
+import { resolveExecutable, resolveRuntimes } from "./runtimes.js";
+import { runtimeUnavailableMessage } from "../../ipc/settings.js";
 import {
 	launchEnvironment,
 	resolveLoginEnvironment,
@@ -716,6 +717,27 @@ export class AppController {
 		this.send(CHANNELS.nativeError, error);
 	}
 
+	/**
+	 * Refuse an operation, and say why where a person can read it.
+	 *
+	 * `operation_failed` is the coordinator's whole vocabulary for "this did
+	 * not happen": it consumes the token so nothing is left pending, and it
+	 * carries no reason, because the reason is not the model's to know. Sent on
+	 * its own it produces a row that quietly never appears — which is how
+	 * "I picked Codex and nothing happened" became unanswerable.
+	 *
+	 * So the two go together, always, through this one call: the reason to the
+	 * error surface, the token back to the coordinator. A caller that accepts
+	 * `operation_failed` directly is a caller that has decided the person does
+	 * not need to know, and none of them has.
+	 */
+	private failOperation(token: OperationToken, reason: string): void {
+		this.publishError(
+			withDetail(errorWireAt("agent_runtime_unavailable"), reason),
+		);
+		this.accept({ type: "operation_failed", token });
+	}
+
 	//#endregion
 
 	//#region the coordinator
@@ -949,7 +971,7 @@ export class AppController {
 				});
 				return;
 			case "resolve_agent_profile":
-				this.resolveProfile(
+				await this.resolveProfile(
 					effect.token,
 					effect.workspaceId,
 					effect.profileId,
@@ -1040,18 +1062,38 @@ export class AppController {
 	 * it, because that snapshot is what the Agent keeps for its whole life: an
 	 * Agent's record then says what it was actually started with, and a later
 	 * edit to the configured profile still cannot rewrite a running Agent.
+	 *
+	 * The command is looked up here too, in the launch environment's PATH, and
+	 * the Agent is started from the absolute path that lookup returns. Passing
+	 * the bare name to tmux instead would hand the search to a *different* PATH
+	 * than the one DevHub resolved its own runtimes in — which is how a profile
+	 * whose program is plainly on the person's PATH failed to start while tmux,
+	 * found by the same kind of name, worked. And a name that resolves to
+	 * nothing is said out loud rather than becoming a session that dies on
+	 * `exec` a moment later, with nothing left to read.
 	 */
-	private resolveProfile(
+	private async resolveProfile(
 		token: OperationToken,
 		workspaceId: WorkspaceId,
 		profileId: string,
 		extraArgs: readonly string[],
-	): void {
+	): Promise<void> {
 		const configured = this.config?.agentProfiles.find(
 			(profile) => profile.id === profileId,
 		);
 		if (!configured) {
-			this.accept({ type: "operation_failed", token });
+			this.failOperation(
+				token,
+				`There is no agent profile called “${profileId}”.`,
+			);
+			return;
+		}
+		const resolved = await resolveExecutable(
+			configured.command,
+			this.launchEnvironment["PATH"] ?? "",
+		);
+		if (resolved.kind === "unavailable") {
+			this.failOperation(token, runtimeUnavailableMessage(resolved));
 			return;
 		}
 		this.accept({
@@ -1060,6 +1102,7 @@ export class AppController {
 			workspaceId,
 			profile: toDomainProfile({
 				...configured,
+				command: resolved.value,
 				args: [...configured.args, ...extraArgs],
 			}),
 		});

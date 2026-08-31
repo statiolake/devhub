@@ -35,7 +35,17 @@ async function isExecutableFile(path: string): Promise<boolean> {
 	}
 }
 
-async function resolveOne(
+/**
+ * Look one configured program up, the way a shell would.
+ *
+ * Exported because an Agent profile's `command` is the same kind of fact as
+ * `runtimes.tmux`: a name a person wrote, which has to become a path on this
+ * machine before anything can run it. Leaving the profile's command as a bare
+ * name and letting tmux resolve it is what made `codex` fail while `tmux`
+ * worked — two different search paths for two things DevHub launches the same
+ * way. One resolver, one PATH, one answer.
+ */
+export async function resolveExecutable(
 	value: string,
 	searchPath: string,
 ): Promise<SettingsResolvedRuntimeWire> {
@@ -83,9 +93,9 @@ export async function resolveRuntimes(
 	searchPath: string,
 ): Promise<SettingsResolvedRuntimeConfigWire> {
 	const [shell, git, tmux] = await Promise.all([
-		resolveOne(runtimes.shell, searchPath),
-		resolveOne(runtimes.git, searchPath),
-		resolveOne(runtimes.tmux, searchPath),
+		resolveExecutable(runtimes.shell, searchPath),
+		resolveExecutable(runtimes.git, searchPath),
+		resolveExecutable(runtimes.tmux, searchPath),
 	]);
 	return { shell, git, tmux };
 }

@@ -128,6 +128,8 @@ export type PortName = "app" | "agent" | "terminal" | "editor" | "state";
 export class AppError extends Error {
   domainCode: DomainErrorCode | undefined;
   port: PortName | undefined;
+  /** What the failing side said, for the reader; never for a branch. */
+  detail: string | undefined;
   intentId: IntentId | undefined;
   operationId: OperationId | undefined;
   providerEventId: ProviderEventId | undefined;
@@ -149,6 +151,11 @@ export class AppError extends Error {
 
   withPort(port: PortName): AppError {
     this.port = port;
+    return this;
+  }
+
+  withDetail(detail: string | undefined): AppError {
+    this.detail = detail;
     return this;
   }
 
@@ -265,7 +272,20 @@ export type AgentStopResult =
 
 export type AgentLaunchResult =
   | { readonly kind: "started" }
-  | { readonly kind: "failed"; readonly diagnostic: DiagnosticCode };
+  | {
+      readonly kind: "failed";
+      readonly diagnostic: DiagnosticCode;
+      /**
+       * What the adapter could say about the failure, in its own words.
+       *
+       * The diagnostic is the model's vocabulary and stays closed; this is the
+       * sentence the person reads underneath it. It is optional because an
+       * adapter that genuinely knows nothing more must not be made to invent
+       * something, and never carries user content — only the runtime's own
+       * refusal.
+       */
+      readonly detail?: string;
+    };
 
 export type CleanupStep = "agents" | "terminal" | "editor" | "state_committed";
 

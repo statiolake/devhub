@@ -59,11 +59,21 @@ export function wireAgents(options: AgentWiringOptions): AgentSessions {
 					},
 				});
 				return { kind: "started" };
-			} catch {
-				// Why it failed belongs to the runtime, which has already refused
-				// in its own vocabulary; what the model needs is that no Agent is
-				// running, so the row stays retryable rather than pretending.
-				return { kind: "failed", diagnostic: "runtime_unavailable" };
+			} catch (failure: unknown) {
+				// The model needs to know no Agent is running, so this stays a
+				// `failed` result rather than a throw — the row has to be
+				// retryable rather than pretending.
+				//
+				// But it used to stop there, and "the agent runtime is
+				// unavailable" was the whole of what anyone could learn from a
+				// launch that failed for a reason the runtime knew exactly. The
+				// reason travels with the failure now, to the same error surface
+				// every other failure is read on.
+				return {
+					kind: "failed",
+					diagnostic: "runtime_unavailable",
+					detail: failure instanceof Error ? failure.message : String(failure),
+				};
 			}
 		},
 

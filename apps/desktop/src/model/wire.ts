@@ -547,7 +547,12 @@ export function errorWire(error: unknown): AppErrorWire {
     default:
       code = "invalid_intent";
   }
-  return errorWireAt(code);
+  // The failing side's own words, when it had any. The summary stays the
+  // sentence chosen for the code, so the same failure reads the same way
+  // wherever it is drawn; the detail is what makes *this* one actionable.
+  return error.detail === undefined
+    ? errorWireAt(code)
+    : withDetail(errorWireAt(code), error.detail);
 }
 
 /** A wire intent that carries no valid domain command. */

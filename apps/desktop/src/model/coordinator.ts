@@ -1277,6 +1277,7 @@ export class AppCoordinator {
     if (result.kind === "failed") {
       throw new AppError(AppErrorCode.PortUnavailable)
         .withPort("agent")
+        .withDetail(result.detail)
         .withOperation(token.operationId);
     }
 
