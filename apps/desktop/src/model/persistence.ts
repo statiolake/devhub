@@ -175,6 +175,8 @@ export interface AgentStateRecord {
   profile_id: string;
   profile_kind?: AgentProfileKind;
   profile_display_name?: string;
+  /** The program the Agent was launched with, as it was at launch. */
+  profile_command?: string;
   profile_args?: string[];
   profile_env?: Record<string, string>;
   ordinal: number;
@@ -347,6 +349,15 @@ function validateAgentRecord(record: AgentStateRecord): void {
     fail("STATE_INVALID");
   }
   if (!Number.isInteger(record.ordinal) || record.ordinal === 0) {
+    fail("STATE_INVALID");
+  }
+  if (
+    record.profile_command !== undefined &&
+    (record.profile_command.trim().length === 0 ||
+      record.profile_command.includes("\0") ||
+      Buffer.byteLength(record.profile_command, "utf8") >
+        MAX_AGENT_PROFILE_ARG_BYTES)
+  ) {
     fail("STATE_INVALID");
   }
   for (const name of [record.temporary_name, record.profile_display_name]) {
@@ -699,6 +710,9 @@ function launchProfile(
 ): AgentProfile {
   const kind = record.profile_kind ?? fallback?.kind;
   const displayName = record.profile_display_name ?? fallback?.displayName;
+  // A record written before profiles carried a command names its kind, which
+  // is exactly what that kind's command defaulted to.
+  const command = record.profile_command ?? fallback?.command ?? kind;
   const args = record.profile_args ?? fallback?.args;
   const env =
     record.profile_env !== undefined
@@ -707,6 +721,7 @@ function launchProfile(
   if (
     kind === undefined ||
     displayName === undefined ||
+    command === undefined ||
     args === undefined ||
     env === undefined
   ) {
@@ -717,6 +732,7 @@ function launchProfile(
       parseAgentProfileId(record.profile_id),
       displayName,
       kind,
+      command,
       args,
       env,
     );
@@ -938,6 +954,7 @@ export function stateFromSnapshot(
         profile_id: agent.profileId,
         profile_kind: agent.profileKind,
         profile_display_name: agent.profileDisplayName,
+        profile_command: agent.profile.command,
         profile_args: [...agent.profile.args],
         profile_env: Object.fromEntries(agent.profile.env),
         ordinal: agent.ordinal,

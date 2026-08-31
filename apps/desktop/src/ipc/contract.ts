@@ -11,7 +11,6 @@
  * are unchanged, so the App Shell components are the same components.
  */
 
-import type { AgentApi } from "./agent.js";
 import type { ShellPalette } from "./palette.js";
 import type { DevhubTerminalApi } from "./terminal.js";
 import type {
@@ -157,16 +156,16 @@ export interface DevhubApi {
 	setSurfaceVisible(visible: boolean): Promise<void>;
 
 	/**
-	 * The two Surface runtimes, each on its own slice.
+	 * The Surface runtime.
 	 *
-	 * They are separate namespaces rather than more members here because they
-	 * are separate subsystems with their own framing and their own surface-key
-	 * grammars — `global-terminal` / `workspace-terminal:<uuid>` for one,
-	 * `agent:<uuid>` for the other. Flattening them would invite a caller to
-	 * pass one's key to the other.
+	 * There is one, and there used to be two. An Agent had its own namespace
+	 * because it had its own provider, its own framing and its own idea of a
+	 * screen; now an Agent is a tmux session like any other, so `agent:<uuid>`
+	 * is simply another surface key this API answers about, alongside
+	 * `global-terminal` and `workspace-terminal:<uuid>`. What the key names is
+	 * the resolver's business, not the page's.
 	 */
 	readonly terminal: DevhubTerminalApi;
-	readonly agent: AgentApi;
 }
 
 /**

@@ -12,7 +12,14 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+	existsSync,
+	mkdirSync,
+	readFileSync,
+	realpathSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { OperationDeadline } from "../../src/main/terminal/command";
@@ -26,9 +33,11 @@ import {
 import {
 	SCRATCH_SESSION,
 	TmuxTerminalRuntime,
+	agentSessionName,
 	isMarked,
 	workspaceDigest,
 } from "../../src/main/terminal/tmux";
+import { AgentSessions } from "../../src/main/agent/sessions";
 import { scratchDirectory } from "./scratch";
 
 const TMUX_CANDIDATES = [
@@ -441,4 +450,119 @@ describe.skipIf(TMUX === undefined)("the tmux runtime, for real", { timeout: 30_
 		await test.runtime.ensure(SCRATCH_TARGET);
 		expect(await test.runtime.recheckHealth()).toBe(true);
 	});
+
+	/**
+	 * The property this whole transport exists for: an Agent's session ends
+	 * exactly when its command does, and nothing has to be told about it.
+	 */
+	it("ends an Agent session when the Agent's own command exits", async () => {
+		const test = fixture("agentexit");
+		const sessions = new AgentSessions(test.runtime);
+		const agentId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1";
+		const workspaceId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1";
+		await test.runtime.ensure(SCRATCH_TARGET);
+
+		await sessions.launch({
+			agentId,
+			workspaceId,
+			root: test.home,
+			// `sleep` stands in for an agent CLI: a real command, run directly
+			// as the session command, that ends on its own.
+			command: { file: "/bin/sh", args: ["-c", "sleep 30"], env: {} },
+		});
+
+		expect(await sessions.list()).toEqual([{ agentId, workspaceId }]);
+		const listed = await test.runtime.listSessions(
+			test.socket,
+			test.cancel,
+			deadline(test.runtime),
+		);
+		const session = listed.find(
+			(candidate) => candidate.name === agentSessionName(agentId),
+		);
+		expect(session).toBeDefined();
+		expect(isMarked(session as never, test.home)).toBe(true);
+		expect(session?.agentId).toBe(agentId);
+
+		// Kill the Agent's process, not its session. tmux takes the session
+		// with it, and the next list is the only signal the row needs.
+		tmuxOutside(test.socket, [
+			"send-keys",
+			"-t",
+			agentSessionName(agentId),
+			"C-c",
+		]);
+		await untilGone(sessions, agentId);
+		expect(await sessions.list()).toEqual([]);
+	});
+
+	it("carries the profile's environment into the Agent's pane", async () => {
+		const test = fixture("agentenv");
+		const sessions = new AgentSessions(test.runtime);
+		const agentId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2";
+		const workspaceId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2";
+		const marker = join(test.home, "agent-env.txt");
+		await test.runtime.ensure(SCRATCH_TARGET);
+
+		await sessions.launch({
+			agentId,
+			workspaceId,
+			root: test.home,
+			command: {
+				file: "/bin/sh",
+				args: [
+					"-c",
+					'printf %s "$DEVHUB_TEST_VALUE" > "$1"; sleep 30',
+					"sh",
+					marker,
+				],
+				env: { DEVHUB_TEST_VALUE: "carried" },
+			},
+		});
+		await untilFile(marker);
+		expect(readFileSync(marker, "utf8")).toBe("carried");
+
+		// Terminating is the exact-record kill, and it takes the pane with it.
+		await sessions.terminate(agentId, workspaceId);
+		expect(await sessions.list()).toEqual([]);
+	});
+
+	it("refuses to resurrect an Agent whose session has ended", async () => {
+		const test = fixture("agentgone");
+		const agentId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa3";
+		const workspaceId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb3";
+		await test.runtime.ensure(SCRATCH_TARGET);
+
+		// `ensure` creates a terminal, because a terminal is a place. An Agent
+		// is a process, so the same call must refuse rather than hand back an
+		// empty shell wearing the Agent's name.
+		await expect(
+			test.runtime.ensure({
+				kind: "agent",
+				agentId,
+				workspaceId,
+				root: test.home,
+			}),
+		).rejects.toThrow();
+	});
 });
+
+async function untilGone(
+	sessions: AgentSessions,
+	agentId: string,
+): Promise<void> {
+	for (let attempt = 0; attempt < 200; attempt += 1) {
+		const live = await sessions.list();
+		if (!live.some((one) => one.agentId === agentId)) return;
+		await new Promise((resolve) => setTimeout(resolve, 50));
+	}
+	throw new Error("the Agent session outlived its command");
+}
+
+async function untilFile(path: string): Promise<void> {
+	for (let attempt = 0; attempt < 200; attempt += 1) {
+		if (existsSync(path)) return;
+		await new Promise((resolve) => setTimeout(resolve, 50));
+	}
+	throw new Error("the Agent never wrote its marker file");
+}

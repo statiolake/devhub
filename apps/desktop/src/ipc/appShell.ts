@@ -44,7 +44,13 @@ export interface AgentProfilesWire {
 	readonly profiles: readonly AgentProfileWire[];
 	readonly sequence: number;
 }
-export type AgentStatusWire = "working" | "waiting" | "idle" | "error";
+export type AgentStatusWire =
+	| "working"
+	| "waiting"
+	| "idle"
+	| "error"
+	/** No detector for this Agent's kind; nobody has read its screen. */
+	| "unknown";
 export interface AgentWire {
 	readonly controlState: AgentControlStateWire;
 	readonly displayName: string;
@@ -93,7 +99,7 @@ export type AppErrorCodeWire =
 	| "agent_not_connected"
 	/** The Agent is gone: it ended, or something ended it. */
 	| "agent_exited"
-	/** Herdr is not answering, so no Agent can be started or watched. */
+	/** The Agent runtime is not answering, so no Agent can be started. */
 	| "agent_runtime_unavailable"
 	/** The Agent Surface asked to attach and got no answer in time. */
 	| "agent_attach_timed_out"

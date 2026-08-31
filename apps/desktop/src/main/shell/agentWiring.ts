@@ -1,94 +1,52 @@
 /**
- * Where DevHub's Agents get built, and how the model's vocabulary meets the
- * Herdr adapter's.
+ * Where DevHub's Agents get built.
  *
- * The two sides agree about almost everything — status, health and profile kind
- * are literally the same values — but a `Workspace` identity is a branded string
- * in the model and a validated plain string in the adapter, and a profile's
- * environment is a `Map` in one and a record in the other. Those are the only
- * two differences, and they are converted here, once, rather than in every
- * effect that crosses.
+ * An Agent is a tmux session on the same socket, with the same markers and the
+ * same client, as a workspace terminal (`main/agent/sessions.ts`). So this file
+ * has shrunk to what it always should have been: turning a launch effect into a
+ * session command, and turning the list of live sessions into the model's
+ * vocabulary.
+ *
+ * The two vocabularies now differ in exactly one place — a profile's
+ * environment is a `Map` in the model and a record on the wire to tmux — and
+ * that is converted here, once.
  */
 
-import { randomUUID } from "node:crypto";
-import { AgentService } from "../agent/index.js";
-import type { AgentProfile as AdapterProfile } from "../agent/ports.js";
-import { CancellationToken } from "../agent/ports.js";
+import { AgentSessions } from "../agent/sessions.js";
 import type { AppModel } from "../../model/appModel.js";
-import {
-	agentId as parseAgentId,
-	type AgentId,
-	type AgentProfile,
-	type AgentReconciliation,
-	type WorkspaceId,
+import type {
+	AgentId,
+	AgentProfile,
+	AgentReconciliation,
+	AgentStatus,
+	RuntimeHealth,
+	WorkspaceId,
 } from "../../model/domain.js";
 import type {
 	AgentLaunchResult,
 	AgentStopResult,
 } from "../../model/intents.js";
+import type { TmuxTerminalRuntime } from "../terminal/tmux.js";
 import { registerAgentAdapter } from "./adapters.js";
 
-/**
- * A fresh cancellation token.
- *
- * The adapter identifies a cancellable operation by a UUID. The coordinator
- * already gave every effect an operation identity, but the effect runner does
- * not hand it down here, so each call gets its own — nothing in the shell
- * cancels an Agent operation from outside yet, and inventing a shared token
- * would suggest something can.
- */
-function token(): CancellationToken {
-	return new CancellationToken(randomUUID());
-}
-
-/** The adapter's spelling of a profile: the same values, a plain record. */
-function toAdapterProfile(profile: AgentProfile): AdapterProfile {
-	return {
-		id: profile.id,
-		displayName: profile.displayName,
-		kind: profile.kind,
-		args: [...profile.args],
-		env: Object.fromEntries(
-			[...profile.env].sort(([a], [b]) => (a < b ? -1 : 1)),
-		),
-	};
-}
-
 export interface AgentWiringOptions {
-	readonly journalPath: string;
-	readonly configuredHerdr: string;
-	readonly home: string;
-	/**
-	 * The one environment every DevHub child is launched with, resolved once at
-	 * startup (see `loginEnvironment.ts`). Herdr and the agent it starts see the
-	 * same PATH the terminals do, which is what makes "it works in a terminal
-	 * but not as an agent" impossible rather than merely unlikely.
-	 */
-	readonly environment: Readonly<Record<string, string | undefined>>;
+	readonly runtime: TmuxTerminalRuntime;
+	/** The live model: the authority on which Agents exist and where they run. */
 	readonly model: () => AppModel;
-	/**
-	 * The adapter saw something on its own — an attach that read a status, or a
-	 * control stream that died. It is a hint that the next reconcile is worth
-	 * running now; what it means is decided by that reconcile, like everything
-	 * else the provider says.
-	 */
-	readonly onObserved: () => void;
 }
 
-export function wireAgents(options: AgentWiringOptions): AgentService {
-	const service = new AgentService({
-		journalPath: options.journalPath,
-		configuredHerdr: options.configuredHerdr,
-		home: options.home,
-		environment: options.environment,
-		onSurfaceFailure: () => {
-			// A dead control stream is a health fact, not a row change: the model
-			// learns it by reconciling, which is the one path that can also decide
-			// the Agent is gone.
-			options.onObserved();
-		},
-	});
-	service.register();
+/**
+ * What an Agent's status is, before anything has read its screen.
+ *
+ * There is no detector yet, so every Agent reports this and the row says so.
+ * The alternative — reporting `working` because a process exists — would be a
+ * claim about a screen nobody looked at, and it is exactly the claim that made
+ * the previous runtime's status hard to trust.
+ */
+const UNREAD_STATUS: AgentStatus = "unknown";
+
+export function wireAgents(options: AgentWiringOptions): AgentSessions {
+	const sessions = new AgentSessions(options.runtime);
 
 	registerAgentAdapter({
 		async launch(
@@ -97,87 +55,93 @@ export function wireAgents(options: AgentWiringOptions): AgentService {
 			profile: AgentProfile,
 			workspaceRoot: string,
 		): Promise<AgentLaunchResult> {
-			service.runtime.registerAgentWorkspace(
-				agentId,
-				workspaceId,
-				workspaceRoot,
-			);
 			try {
-				await service.runtime.launchForWorkspace(
-					workspaceId,
-					workspaceRoot,
+				await sessions.launch({
 					agentId,
-					toAdapterProfile(profile),
-					token(),
-				);
+					workspaceId,
+					root: workspaceRoot,
+					command: {
+						file: profile.command,
+						args: [...profile.args],
+						env: Object.fromEntries(profile.env),
+					},
+				});
 				return { kind: "started" };
 			} catch {
-				// Why it failed is the adapter's business and is already recorded
-				// there; what the model needs is that it did not start.
+				// Why it failed belongs to the runtime, which has already refused
+				// in its own vocabulary; what the model needs is that no Agent is
+				// running, so the row stays retryable rather than pretending.
 				return { kind: "failed", diagnostic: "runtime_unavailable" };
 			}
 		},
 
-		stop(agentId: AgentId): Promise<AgentStopResult> {
-			return terminate(service, agentId);
-		},
+		stop: (agentId) => terminate(sessions, options.model, agentId),
+		terminate: (agentId) => terminate(sessions, options.model, agentId),
 
-		terminate(agentId: AgentId): Promise<AgentStopResult> {
-			return terminate(service, agentId);
-		},
-
+		/**
+		 * One round: the socket's Agent sessions, matched against the model's.
+		 *
+		 * There is a single source of truth and it is `list-sessions`. An id it
+		 * carries is an Agent whose command is still running, because tmux
+		 * destroys the session when that command exits; an id the model has and
+		 * the list does not is an Agent that ended. The only exception is an
+		 * Agent whose launch has not returned yet, which is a snapshot taken
+		 * early rather than a process that is gone.
+		 */
 		async reconcile(agentId?: AgentId): Promise<AgentReconciliation> {
-			const reconciliation = await service.runtime.reconcile(token());
-			// The adapter answers about every provider resource it owns, which is
-			// not the same set as the Agents the model has: a mapping outlives its
-			// row until the provider confirms the cleanup, and a relaunch recovers
-			// mappings for Agents this DevHub never knew. The model is the
-			// authority on which Agents exist, so anything it does not have is not
-			// news about a row — it is news about a resource, and the adapter is
-			// already the one dealing with it.
-			const known = (id: AgentId): boolean =>
-				options.model().workspaceForAgent(id) !== undefined;
-			const observations = reconciliation.observations
-				.map((observation) => ({
-					agentId: parseAgentId(observation.agentId),
-					status: observation.status,
-					runtimeHealth: observation.runtimeHealth,
-				}))
-				.filter((observation) => known(observation.agentId));
-			const exited = reconciliation.exited
-				.map((id) => parseAgentId(id))
-				.filter(known);
-			if (agentId === undefined) {
-				return { observations, exited };
+			const health: RuntimeHealth = sessions.available
+				? "healthy"
+				: "unavailable";
+			const live = new Set((await sessions.list()).map((one) => one.agentId));
+			const observations: {
+				agentId: AgentId;
+				status: AgentStatus;
+				runtimeHealth: RuntimeHealth;
+			}[] = [];
+			const exited: AgentId[] = [];
+			for (const workspace of options.model().workspaces) {
+				for (const agent of workspace.agents) {
+					if (agentId !== undefined && agent.id !== agentId) continue;
+					if (!live.has(agent.id)) {
+						if (sessions.isLaunching(agent.id)) continue;
+						exited.push(agent.id);
+						continue;
+					}
+					observations.push({
+						agentId: agent.id,
+						status: UNREAD_STATUS,
+						runtimeHealth: health,
+					});
+				}
 			}
-			// A single-Agent reconcile answers about that Agent only; the rest of
-			// the provider's view belongs to the next full reconcile.
-			return {
-				observations: observations.filter(
-					(observation) => observation.agentId === agentId,
-				),
-				exited: exited.filter((id) => id === agentId),
-			};
+			return { observations, exited };
 		},
 
 		async closeWorkspaceAgents(workspaceId: WorkspaceId): Promise<void> {
 			const workspace = options.model().workspace(workspaceId);
 			if (!workspace) return;
 			for (const agent of workspace.agents) {
-				await terminate(service, agent.id);
+				await terminate(sessions, options.model, agent.id);
 			}
 		},
 	});
 
-	return service;
+	return sessions;
 }
 
 async function terminate(
-	service: AgentService,
+	sessions: AgentSessions,
+	model: () => AppModel,
 	agentId: AgentId,
 ): Promise<AgentStopResult> {
+	const workspace = model().workspaceForAgent(agentId);
+	if (workspace === undefined) {
+		// The model does not have this Agent, so there is no workspace to name
+		// its session with. Nothing to kill, and nothing to retry.
+		return { kind: "stopped" };
+	}
 	try {
-		await service.runtime.terminate(agentId, token());
+		await sessions.terminate(agentId, workspace.id);
 		return { kind: "stopped" };
 	} catch {
 		// A stop that did not stop leaves the Agent retryable rather than

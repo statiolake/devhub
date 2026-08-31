@@ -30,7 +30,12 @@ const WS_A = workspaceId("550e8400-e29b-41d4-a716-446655440000");
 const WS_B = workspaceId("550e8400-e29b-41d4-a716-446655440001");
 const AG_A = agentId("550e8400-e29b-41d4-a716-4466554400a0");
 const AG_B = agentId("550e8400-e29b-41d4-a716-4466554400a1");
-const codex = AgentProfile.create(agentProfileId("codex"), "Codex", "codex");
+const codex = AgentProfile.create(
+  agentProfileId("codex"),
+  "Codex",
+  "codex",
+  "codex",
+);
 
 /** The same state with nothing left in it, which is still a valid state. */
 function emptied(state: PersistedAppState): PersistedAppState {

@@ -16,8 +16,9 @@
  * all mounted. So a page holds as many attachments as it has terminal surfaces,
  * a second attach of the same surface in the same page — a pooled surface
  * remounting — supersedes only itself, and the page label is what a closing
- * window releases as a group. This is the same rule the Agent channel keeps
- * (`main/agent/channel.ts`), said the same way.
+ * window releases as a group. An Agent surface is one of these too: it is a
+ * tmux client like any other, on a session whose command happens to be an
+ * agent, so there is one ledger and one rule rather than two of each.
  *
  * This module owns only short-lived tmux *client* processes and their PTY file
  * descriptors. Detaching kills the client; the tmux session it was attached to

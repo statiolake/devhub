@@ -123,7 +123,9 @@ describe("terminal client transport", () => {
   });
 
   it("turns a refusal back into a failure that still carries its code", async () => {
-    const harness = transportHarness(new TerminalFailure("surface_unavailable"));
+    const harness = transportHarness(
+      new TerminalFailure("surface_unavailable"),
+    );
     await expect(
       harness.client.attach(
         {
@@ -175,7 +177,7 @@ describe("terminal client transport", () => {
   });
 
   it("carries the wire's summary into the failure it throws", async () => {
-    const named = "DevHub could not find 'herdr' at /opt/nothing/bin/herdr.";
+    const named = "DevHub could not find 'tmux' at /opt/nothing/bin/tmux.";
     const harness = transportHarness(
       new TerminalFailure("runtime_unavailable", { summary: named }),
     );

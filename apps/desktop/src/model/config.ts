@@ -69,7 +69,6 @@ export const DEFAULT_EXCLUDE_NAMES: readonly string[] = [
 const DEFAULT_SHELL = "/bin/zsh";
 const DEFAULT_GIT = "git";
 const DEFAULT_TMUX = "tmux";
-const DEFAULT_HERDR = "herdr";
 const DEFAULT_TMUX_SOCKET = "devhub";
 const DEFAULT_FONT_FAMILY = "ui-monospace";
 const MAX_TERMINAL_MARGIN = 64;
@@ -102,6 +101,16 @@ export interface ConfiguredAgentProfile {
   readonly id: string;
   readonly display_name: string;
   readonly kind: AgentProfileKind;
+  /**
+   * The program tmux runs as the Agent's session command.
+   *
+   * Absent in the file means the kind's own name, which is what the two
+   * shipped profiles want and why nobody has to write it. It is separate from
+   * `kind` because the two answer different questions: this one is what to
+   * start, and `kind` is whose screen it is — which is the only thing status
+   * detection can be keyed on.
+   */
+  readonly command: string;
   readonly args: readonly string[];
   readonly env: Readonly<Record<string, string>>;
 }
@@ -114,7 +123,6 @@ export interface RuntimeConfig {
   readonly shell: string;
   readonly git: string;
   readonly tmux: string;
-  readonly herdr: string;
   readonly tmux_socket_name: string;
   readonly tmux_args: readonly string[];
 }
@@ -229,7 +237,6 @@ export function defaultRuntimes(): RuntimeConfig {
     shell: DEFAULT_SHELL,
     git: DEFAULT_GIT,
     tmux: DEFAULT_TMUX,
-    herdr: DEFAULT_HERDR,
     tmux_socket_name: DEFAULT_TMUX_SOCKET,
     tmux_args: [],
   };
@@ -282,6 +289,7 @@ export function defaultAgentProfiles(): ConfiguredAgentProfile[] {
       id: "codex",
       display_name: "Codex",
       kind: "codex",
+      command: "codex",
       args: [],
       env: {},
     },
@@ -289,6 +297,7 @@ export function defaultAgentProfiles(): ConfiguredAgentProfile[] {
       id: "claude",
       display_name: "Claude",
       kind: "claude",
+      command: "claude",
       args: [],
       env: {},
     },
@@ -413,6 +422,8 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 const RETIRED_KEYS: Readonly<Record<string, string>> = {
   "appearance.color_scheme":
     "the shell follows the active VS Code theme, so DevHub has no colour scheme of its own",
+  "runtimes.herdr":
+    "an Agent is now a tmux session on DevHub's own socket, so there is no separate Agent runtime to point at; the program to run is each profile's own `command`",
 };
 
 function checkKeys(
@@ -584,7 +595,6 @@ function validateRuntimes(runtimes: RuntimeConfig): void {
     ["shell", runtimes.shell],
     ["git", runtimes.git],
     ["tmux", runtimes.tmux],
-    ["herdr", runtimes.herdr],
   ] as const) {
     if (value.includes("\0")) {
       fail("invalid_string", `runtimes.${key}`);
@@ -706,6 +716,9 @@ function validateAgentProfiles(
     ) {
       fail("invalid_profile", `${prefix}.display_name`);
     }
+    if (profile.command.trim().length === 0 || profile.command.includes("\0")) {
+      fail("invalid_profile", `${prefix}.command`);
+    }
     if (profile.args.some((argument) => argument.includes("\0"))) {
       fail("invalid_profile", `${prefix}.args`);
     }
@@ -811,7 +824,11 @@ function agentProfileFromTable(
 ): ConfiguredAgentProfile {
   const prefix = `agent_profiles[${String(index)}]`;
   const table = requireTable(value, prefix);
-  checkKeys(table, ["id", "display_name", "kind", "args", "env"], prefix);
+  checkKeys(
+    table,
+    ["id", "display_name", "kind", "command", "args", "env"],
+    prefix,
+  );
   const kind = table["kind"];
   if (kind !== "codex" && kind !== "claude") {
     fail("invalid_profile_kind", `${prefix}.kind`);
@@ -831,6 +848,7 @@ function agentProfileFromTable(
     id: optionalString(table, "id", prefix, ""),
     display_name: optionalString(table, "display_name", prefix, ""),
     kind,
+    command: optionalString(table, "command", prefix, kind),
     args: optionalStringArray(table, "args", prefix, []),
     env,
   };
@@ -864,7 +882,7 @@ export function parseConfig(input: string): Config {
   const runtimesTable = requireTable(table["runtimes"] ?? {}, "runtimes");
   checkKeys(
     runtimesTable,
-    ["shell", "git", "tmux", "herdr", "tmux_socket_name", "tmux_args"],
+    ["shell", "git", "tmux", "tmux_socket_name", "tmux_args"],
     "runtimes",
   );
 
@@ -910,7 +928,6 @@ export function parseConfig(input: string): Config {
       shell: optionalString(runtimesTable, "shell", "runtimes", DEFAULT_SHELL),
       git: optionalString(runtimesTable, "git", "runtimes", DEFAULT_GIT),
       tmux: optionalString(runtimesTable, "tmux", "runtimes", DEFAULT_TMUX),
-      herdr: optionalString(runtimesTable, "herdr", "runtimes", DEFAULT_HERDR),
       tmux_socket_name: optionalString(
         runtimesTable,
         "tmux_socket_name",
@@ -993,7 +1010,6 @@ export function configDocument(config: Config): Record<string, TomlValue> {
       shell: config.runtimes.shell,
       git: config.runtimes.git,
       tmux: config.runtimes.tmux,
-      herdr: config.runtimes.herdr,
       tmux_socket_name: config.runtimes.tmux_socket_name,
       tmux_args: [...config.runtimes.tmux_args],
     },
@@ -1033,6 +1049,7 @@ export function configDocument(config: Config): Record<string, TomlValue> {
       id: profile.id,
       display_name: profile.display_name,
       kind: profile.kind,
+      command: profile.command,
       args: [...profile.args],
       env: { ...profile.env },
     })),

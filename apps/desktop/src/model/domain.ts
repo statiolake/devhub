@@ -302,6 +302,11 @@ export class AgentProfile {
     readonly id: AgentProfileId,
     readonly displayName: string,
     readonly kind: AgentProfileKind,
+    /**
+     * The program to run. It is what makes the Agent an Agent; `kind` only
+     * says whose screen it is, so that a detector knows how to read it.
+     */
+    readonly command: string,
     readonly args: readonly string[],
     readonly env: ReadonlyMap<string, string>,
   ) {}
@@ -310,11 +315,15 @@ export class AgentProfile {
     id: AgentProfileId,
     displayName: string,
     kind: AgentProfileKind,
+    command: string,
     args: readonly string[] = [],
     env: ReadonlyMap<string, string> = new Map(),
   ): AgentProfile {
     if (!validDisplayName(displayName)) {
       throw invalid(DomainErrorCode.InvalidDisplayName);
+    }
+    if (command.trim().length === 0 || command.includes("\0")) {
+      throw invalid(DomainErrorCode.InvalidProfile);
     }
     if (
       args.some((argument) => argument.includes("\0")) ||
@@ -329,6 +338,7 @@ export class AgentProfile {
       id,
       displayName,
       kind,
+      command,
       [...args],
       new Map([...env].sort(([left], [right]) => (left < right ? -1 : 1))),
     );
@@ -339,6 +349,7 @@ export class AgentProfile {
       this.id !== other.id ||
       this.displayName !== other.displayName ||
       this.kind !== other.kind ||
+      this.command !== other.command ||
       this.args.length !== other.args.length ||
       this.env.size !== other.env.size
     ) {
@@ -351,7 +362,17 @@ export class AgentProfile {
   }
 }
 
-export type AgentStatus = "working" | "waiting" | "idle" | "error";
+/**
+ * What an Agent is doing.
+ *
+ * `unknown` is not a failure and not a transient. It is the permanent answer
+ * for an Agent whose screen DevHub has no detector for — a profile with a
+ * command and no manifest — and it is what every Agent reports until a
+ * detector for its kind says otherwise. Folding it into `error` would tell
+ * somebody who deliberately attached a plain command that something is wrong;
+ * folding it into `idle` would claim a reading nobody took.
+ */
+export type AgentStatus = "working" | "waiting" | "idle" | "error" | "unknown";
 export type RuntimeHealth =
   | "starting"
   | "healthy"
@@ -461,7 +482,9 @@ export class Agent {
         workspaceId: owner,
         profile,
         ordinal,
-        status: "idle",
+        // Nothing has read this Agent's screen yet, and "idle" would be a
+        // reading. The first reconcile replaces it.
+        status: "unknown",
         runtimeHealth: "starting",
         controlState: RUNNING,
       }),

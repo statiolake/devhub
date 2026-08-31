@@ -492,6 +492,7 @@ export function AgentsSection({
               ),
               displayName: "New Agent",
               kind: "codex",
+              command: "codex",
               args: [],
               env: {},
             },
@@ -541,7 +542,28 @@ export function AgentsSection({
                 }}
               />
             </Row>
-            <Row label="Runtime">
+            <Row
+              label="Command"
+              help="The program to run. DevHub finds it on the same PATH your terminals use."
+            >
+              <TextField
+                label="Agent command"
+                value={profile.command}
+                mono
+                validate={(next) =>
+                  next.trim().length === 0
+                    ? "An agent profile needs a command to run."
+                    : undefined
+                }
+                onCommit={(command) => {
+                  replace({ ...profile, command });
+                }}
+              />
+            </Row>
+            <Row
+              label="Runtime"
+              help="Whose screen this is, so DevHub knows how to read its status."
+            >
               <Popup
                 label="Agent runtime"
                 value={profile.kind}
@@ -891,7 +913,6 @@ export function AdvancedSection({
     ["shell", "Shell"],
     ["git", "Git"],
     ["tmux", "tmux"],
-    ["herdr", "Herdr"],
   ] as const;
 
   return (

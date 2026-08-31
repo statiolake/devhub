@@ -17,6 +17,7 @@
 import { homedir } from "node:os";
 import {
 	SCRATCH_TARGET,
+	agentTarget,
 	socketName,
 	workspaceTarget,
 	type TerminalTarget,
@@ -31,7 +32,10 @@ import {
 } from "../terminal/service.js";
 import type { Config } from "../../model/config.js";
 import type { AppModel } from "../../model/appModel.js";
-import { workspaceId as parseWorkspaceId } from "../../model/domain.js";
+import {
+	agentId as parseAgentId,
+	workspaceId as parseWorkspaceId,
+} from "../../model/domain.js";
 import {
 	runtimeUnavailableMessage,
 	type SettingsResolvedRuntimeWire,
@@ -109,8 +113,29 @@ export function wireTerminals(options: TerminalWiringOptions): TerminalWiring {
 		bootstrapDirectory: options.userDataPath,
 	});
 
+	/**
+	 * The whole surface-key grammar, in one function.
+	 *
+	 * All three keys name a tmux session on the same socket, so all three are
+	 * answered here rather than by a second resolver for Agents. An Agent's
+	 * workspace is not part of its key — the model owns which workspace an
+	 * Agent belongs to, and asking it is what keeps the two from disagreeing.
+	 */
 	const resolveSurface = (surfaceKey: string): TerminalTarget | undefined => {
 		if (surfaceKey === "global-terminal") return SCRATCH_TARGET;
+		const agentPrefix = "agent:";
+		if (surfaceKey.startsWith(agentPrefix)) {
+			const raw = surfaceKey.slice(agentPrefix.length);
+			let agent;
+			try {
+				agent = parseAgentId(raw);
+			} catch {
+				return undefined;
+			}
+			const workspace = options.model().workspaceForAgent(agent);
+			if (!workspace) return undefined;
+			return agentTarget(agent, workspace.id, workspace.root);
+		}
 		const prefix = "workspace-terminal:";
 		if (!surfaceKey.startsWith(prefix)) return undefined;
 		const raw = surfaceKey.slice(prefix.length);

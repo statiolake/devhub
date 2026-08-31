@@ -3,28 +3,33 @@
  *
  * The vocabulary is not invented here. It is VS Code's, taken from the sibling
  * extension `vscode-herdr-switcher` (`src/agentPresentation.ts`), so that the
- * same Agent reported by the same Herdr looks the same in the editor sidebar
- * and in DevHub's Sidebar:
+ * same Agent looks the same in the editor sidebar and in DevHub's Sidebar:
  *
  *   DevHub status    codicon         theme colour         extension case
  *   working          loading (spun)  charts.yellow        working
  *   waiting          circle-filled   charts.blue          done
  *   idle             check           testing.iconPassed   idle
  *   error            warning         testing.iconFailed   blocked
+ *   unknown          question        (muted ink)          unknown
  *
  * The right-hand column is where the two differ, and deliberately. DevHub's
- * `waiting` is Herdr's `blocked` — an Agent that has stopped to ask you
- * something — and DevHub's `error` is Herdr's `unknown`, a status Herdr could
- * not read at all. The extension's `done` disc is the "it wants you" mark and
- * its `blocked` warning is the "something is wrong" mark, so those are the
- * marks each DevHub status takes. The pairing is by what the mark means, not
- * by the name of the Herdr status it came from; `projectProviderStatus` in
- * `src/main/agent/model.ts` is where the names are translated.
+ * `waiting` is the extension's `blocked` — an Agent that has stopped to ask
+ * you something — and DevHub's `error` is a status that was read and came back
+ * wrong. The extension's `done` disc is the "it wants you" mark and its
+ * `blocked` warning is the "something is wrong" mark, so those are the marks
+ * each DevHub status takes. The pairing is by what the mark means, not by the
+ * name it came from.
  *
  * The path data below is the codicon outline itself, on the codicon's own
  * 16-unit box, so the silhouettes are the extension's and not an approximation
  * of them; the theme colours are carried by the `--status-*` tokens, which is
  * where the mapping from a VS Code theme colour to DevHub ink is written.
+ *
+ * `unknown` is the mark for an Agent whose screen DevHub has no detector for —
+ * a profile that names a command and no manifest. It is a permanent, correct
+ * answer rather than a stage on the way to another one, so it gets the
+ * extension's `unknown` glyph and muted ink: legible, and plainly not a claim
+ * about what the Agent is doing.
  *
  * The status is the glyph, not a dot beside it: a row has one leading mark,
  * and what an Agent is doing is the thing worth putting there.
@@ -57,6 +62,20 @@ function StatusIcon({ status }: { readonly status: AgentStatus }) {
       // nobody could read is never one more circle in a column of circles.
       return (
         <path d="M14.831 11.965L9.206 1.714C8.965 1.274 8.503 1 8 1C7.497 1 7.035 1.274 6.794 1.714L1.169 11.965C1.059 12.167 1 12.395 1 12.625C1 13.383 1.617 14 2.375 14H13.625C14.383 14 15 13.383 15 12.625C15 12.395 14.941 12.167 14.831 11.965ZM13.625 13H2.375C2.168 13 2 12.832 2 12.625C2 12.561 2.016 12.5 2.046 12.445L7.671 2.195C7.736 2.075 7.863 2 8 2C8.137 2 8.264 2.075 8.329 2.195L13.954 12.445C13.984 12.501 14 12.561 14 12.625C14 12.832 13.832 13 13.625 13ZM8.75 11.25C8.75 11.664 8.414 12 8 12C7.586 12 7.25 11.664 7.25 11.25C7.25 10.836 7.586 10.5 8 10.5C8.414 10.5 8.75 10.836 8.75 11.25ZM7.5 9V5.5C7.5 5.224 7.724 5 8 5C8.276 5 8.5 5.224 8.5 5.5V9C8.5 9.276 8.276 9.5 8 9.5C7.724 9.5 7.5 9.276 7.5 9Z" />
+      );
+    case "unknown":
+      // codicon `question`: a ring with a query inside it, so a status nobody
+      // took is visibly a question rather than a fifth kind of verdict.
+      return (
+        <>
+          <path d="M8 11C8.41421 11 8.75 11.3358 8.75 11.75C8.75 12.1642 8.41421 12.5 8 12.5C7.58579 12.5 7.25 12.1642 7.25 11.75C7.25 11.3358 7.58579 11 8 11Z" />
+          <path d="M8 4C9.262 4 10.25 4.988 10.25 6.25C10.25 7.333 9.68352 7.89852 9.22852 8.35352C8.82052 8.76052 8.5 9.082 8.5 9.75C8.5 10.026 8.276 10.25 8 10.25C7.724 10.25 7.5 10.026 7.5 9.75C7.5 8.667 8.06648 8.10148 8.52148 7.64648C8.92948 7.23948 9.25 6.918 9.25 6.25C9.25 5.538 8.712 5 8 5C7.288 5 6.75 5.538 6.75 6.25C6.75 6.526 6.526 6.75 6.25 6.75C5.974 6.75 5.75 6.526 5.75 6.25C5.75 4.988 6.738 4 8 4Z" />
+          <path
+            fillRule="evenodd"
+            clipRule="evenodd"
+            d="M8 1C11.86 1 15 4.14 15 8C15 11.86 11.86 15 8 15C4.14 15 1 11.86 1 8C1 4.14 4.14 1 8 1ZM8 2C4.691 2 2 4.691 2 8C2 11.309 4.691 14 8 14C11.309 14 14 11.309 14 8C14 4.691 11.309 2 8 2Z"
+          />
+        </>
       );
   }
 }

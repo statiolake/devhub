@@ -136,6 +136,7 @@ describe("agent naming", () => {
     agentProfileId("codex"),
     "Codex",
     "codex",
+    "codex",
     ["--full-auto"],
   );
 
@@ -170,6 +171,7 @@ describe("workspace lifecycle", () => {
   const profile = AgentProfile.create(
     agentProfileId("codex"),
     "Codex",
+    "codex",
     "codex",
   );
 

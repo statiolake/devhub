@@ -130,7 +130,7 @@ import {
 	resolveLoginEnvironment,
 	type LoginEnvironment,
 } from "./loginEnvironment.js";
-import type { AgentService } from "../agent/index.js";
+import type { AgentSessions } from "../agent/sessions.js";
 import { startWorkspacePicker } from "./workspacePicker.js";
 import { installMenu, refreshMenu } from "./menu.js";
 import { installKeyboard } from "./keyboard.js";
@@ -193,7 +193,7 @@ export class AppController {
 	/** Page requests still waiting on a deferred chain, by operation identity. */
 	private readonly pendingRequests = new Map<OperationId, PendingRequest>();
 	private terminalsWiring: TerminalWiring | undefined;
-	private agentService: AgentService | undefined;
+	private agentSessions: AgentSessions | undefined;
 	/**
 	 * What became of the login-shell environment import, and the environment it
 	 * produced. Both are answered once, at `startRuntimes`, and every executable
@@ -302,8 +302,10 @@ export class AppController {
 	 * Bring up the terminal and Agent runtimes.
 	 *
 	 * They are built after the config and the state are loaded, because both
-	 * are inputs: which tmux and shell to use, which socket is in effect, and
-	 * which Herdr command to launch all come from those two files.
+	 * are inputs: which tmux and shell to use, and which socket is in effect,
+	 * come from those two files. Agents are built on the terminal runtime,
+	 * because an Agent *is* a tmux session — there is one socket, one marker
+	 * protocol and one client for both.
 	 */
 	async startRuntimes(userDataPath: string): Promise<void> {
 		const config = this.config;
@@ -324,9 +326,9 @@ export class AppController {
 		}
 		// The environment is resolved before anything is looked up in it, and
 		// once. A DevHub launched from Finder inherits launchd's four-entry PATH,
-		// so without this the lookups below would find neither the user's tmux
-		// nor their Herdr, and the terminals and agents launched with it would
-		// not find their tools either. One environment, one resolution: what
+		// so without this the lookup below would not find the user's tmux, and
+		// the terminals and agents launched with it would not find their tools
+		// either. One environment, one resolution: what
 		// DevHub can find and what a shell inside it can find cannot disagree.
 		this.loginEnvironment = await resolveLoginEnvironment({
 			enabled: config?.general.import_login_environment ?? true,
@@ -340,7 +342,6 @@ export class AppController {
 				shell: "/bin/zsh",
 				git: "git",
 				tmux: "tmux",
-				herdr: "herdr",
 				tmux_socket_name: "devhub",
 				tmux_args: [],
 			},
@@ -354,26 +355,25 @@ export class AppController {
 			userDataPath,
 			model: () => this.coordinator.model,
 		});
-		this.agentService = wireAgents({
-			journalPath: join(userDataPath, "devhub", "agents.journal"),
-			configuredHerdr: config?.runtimes.herdr ?? "herdr",
-			home: homedir(),
-			environment: this.launchEnvironment,
+		this.agentSessions = wireAgents({
+			runtime: this.terminalsWiring.runtime,
 			model: () => this.coordinator.model,
-			onObserved: () => {
-				this.agentReconciler.wake();
-			},
 		});
-		// Everything restored from the state file describes the previous run.
-		// The adapter is told which Workspace each restored Agent belongs to,
-		// so the provider snapshot it takes can be matched back to the rows
-		// that are already on screen; the loop below does the rest.
+		// Everything restored from the state file describes the previous run,
+		// and the sessions on the socket are what is left of it. Nothing has to
+		// be told which Agent belongs where: the session carries its own
+		// workspace and Agent id in its markers, so restoring a row is finding
+		// its session again. What is left over is swept once, here, because a
+		// session no row can show is a process nobody can reach.
+		const known = new Set<string>();
 		for (const workspace of this.coordinator.model.workspaces) {
-			for (const agent of workspace.agents) {
-				this.agentService.runtime.restoreAgent(
-					agent.id,
-					workspace.id,
-					workspace.root,
+			for (const agent of workspace.agents) known.add(agent.id);
+		}
+		if (this.agentSessions.available) {
+			const reaped = await this.agentSessions.reapUnknown(known);
+			if (reaped > 0) {
+				console.info(
+					`[devhub] agents: closed ${String(reaped)} Agent session(s) no longer known to this DevHub`,
 				);
 			}
 		}
@@ -550,8 +550,10 @@ export class AppController {
 		markCleanShutdown(this.state);
 		await this.stateStore.saveState(this.state);
 		this.agentReconciler.stop();
+		// Quitting detaches clients and leaves every session — an Agent's as
+		// much as a terminal's. That is the point of putting them on the same
+		// runtime: coming back finds the same work still running.
 		this.terminalsWiring?.service.dispose();
-		await this.agentService?.dispose();
 	}
 
 	//#endregion
@@ -2176,6 +2178,7 @@ function toDomainProfile(profile: {
 	id: string;
 	display_name: string;
 	kind: AgentProfileKind;
+	command: string;
 	args: readonly string[];
 	env: Readonly<Record<string, string>>;
 }): AgentProfile {
@@ -2183,6 +2186,7 @@ function toDomainProfile(profile: {
 		agentProfileId(profile.id),
 		profile.display_name,
 		profile.kind,
+		profile.command,
 		profile.args,
 		new Map(Object.entries(profile.env)),
 	);

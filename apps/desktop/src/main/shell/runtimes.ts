@@ -82,13 +82,12 @@ export async function resolveRuntimes(
 	runtimes: RuntimeConfig,
 	searchPath: string,
 ): Promise<SettingsResolvedRuntimeConfigWire> {
-	const [shell, git, tmux, herdr] = await Promise.all([
+	const [shell, git, tmux] = await Promise.all([
 		resolveOne(runtimes.shell, searchPath),
 		resolveOne(runtimes.git, searchPath),
 		resolveOne(runtimes.tmux, searchPath),
-		resolveOne(runtimes.herdr, searchPath),
 	]);
-	return { shell, git, tmux, herdr };
+	return { shell, git, tmux };
 }
 
 export function runtimeHealth(
@@ -102,7 +101,6 @@ export function runtimeHealth(
 		shell: health(resolved.shell),
 		git: health(resolved.git),
 		tmux: health(resolved.tmux),
-		herdr: health(resolved.herdr),
 		inspectionAvailable: true,
 	};
 }

@@ -21,6 +21,8 @@ export interface SettingsAgentProfileWire {
 	readonly id: string;
 	readonly displayName: string;
 	readonly kind: SettingsAgentProfileKindWire;
+	/** The program to run. `kind` only says whose screen it is. */
+	readonly command: string;
 	readonly args: readonly string[];
 	readonly env: Record<string, string>;
 }
@@ -73,7 +75,6 @@ export interface SettingsRuntimeConfigWire {
 	readonly shell: string;
 	readonly git: string;
 	readonly tmux: string;
-	readonly herdr: string;
 	readonly tmuxSocketName: string;
 	readonly tmuxArgs: readonly string[];
 }
@@ -167,7 +168,6 @@ export interface SettingsResolvedRuntimeConfigWire {
 	readonly shell: SettingsResolvedRuntimeWire;
 	readonly git: SettingsResolvedRuntimeWire;
 	readonly tmux: SettingsResolvedRuntimeWire;
-	readonly herdr: SettingsResolvedRuntimeWire;
 }
 
 export type SettingsRuntimeHealthValueWire =
@@ -181,7 +181,6 @@ export interface SettingsRuntimeHealthWire {
 	readonly shell: SettingsRuntimeHealthValueWire;
 	readonly git: SettingsRuntimeHealthValueWire;
 	readonly tmux: SettingsRuntimeHealthValueWire;
-	readonly herdr: SettingsRuntimeHealthValueWire;
 	readonly inspectionAvailable: boolean;
 }
 

@@ -5,6 +5,7 @@ const STATUS_LABELS: Record<AgentStatus, string> = {
   waiting: "Waiting",
   idle: "Idle",
   error: "Error",
+  unknown: "Unknown",
 };
 
 export function statusLabel(status: AgentStatus): string {

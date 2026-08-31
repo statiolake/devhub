@@ -135,6 +135,23 @@ export interface WorkspaceTerminalTarget {
 }
 
 /**
+ * An Agent's session: one workspace's folder, named by the Agent's own id.
+ *
+ * An Agent is a tmux session like any other, and that is the entire point of
+ * retiring the separate Agent runtime: the same socket, the same markers, the
+ * same client. What makes it a different *kind* of target is not its transport
+ * but its lifetime — a workspace terminal is a place that is created on
+ * demand and outlives whatever runs in it, while an Agent session runs one
+ * command and ends when that command ends.
+ */
+export interface AgentTerminalTarget {
+	readonly agentId: string;
+	readonly workspaceId: string;
+	/** Absolute, canonical: the workspace root the Agent runs in. */
+	readonly root: string;
+}
+
+/**
  * Which terminal a request is about.
  *
  * `scratch` is the Global context's terminal; it has no workspace and its root
@@ -142,7 +159,8 @@ export interface WorkspaceTerminalTarget {
  */
 export type TerminalTarget =
 	| { readonly kind: "scratch" }
-	| ({ readonly kind: "workspace" } & WorkspaceTerminalTarget);
+	| ({ readonly kind: "workspace" } & WorkspaceTerminalTarget)
+	| ({ readonly kind: "agent" } & AgentTerminalTarget);
 
 export const SCRATCH_TARGET: TerminalTarget = { kind: "scratch" };
 
@@ -153,13 +171,46 @@ export function workspaceTarget(
 	return { kind: "workspace", workspaceId, root };
 }
 
+export function agentTarget(
+	agentId: string,
+	workspaceId: string,
+	root: string,
+): TerminalTarget {
+	return { kind: "agent", agentId, workspaceId, root };
+}
+
 export function sameTarget(
 	left: TerminalTarget,
 	right: TerminalTarget,
 ): boolean {
 	if (left.kind !== right.kind) return false;
-	if (left.kind === "scratch" || right.kind === "scratch") return true;
-	return left.workspaceId === right.workspaceId && left.root === right.root;
+	if (left.kind === "scratch") return true;
+	if (left.kind === "agent") {
+		// The Agent id is the whole identity: a workspace can be reopened at a
+		// different root, and the Agent running in it is still that Agent.
+		return right.kind === "agent" && left.agentId === right.agentId;
+	}
+	return (
+		right.kind === "workspace" &&
+		left.workspaceId === right.workspaceId &&
+		left.root === right.root
+	);
+}
+
+/**
+ * What an Agent session is started with.
+ *
+ * The command is not resolved to an absolute path here. tmux execs it from the
+ * server's own environment, which is DevHub's frozen launch environment — the
+ * same PATH the workspace terminals get — so a command DevHub can find is a
+ * command the Agent can run, and there is no second resolution to disagree
+ * with the first.
+ */
+export interface AgentSessionCommand {
+	readonly file: string;
+	readonly args: readonly string[];
+	/** Extra variables for this Agent only, on top of the server's. */
+	readonly env: Readonly<Record<string, string>>;
 }
 
 /**
@@ -172,6 +223,12 @@ export type OwnedSessionRecord =
 	| { readonly kind: "scratch"; readonly sessionName: string }
 	| {
 			readonly kind: "workspace";
+			readonly workspaceId: string;
+			readonly sessionName: string;
+	  }
+	| {
+			readonly kind: "agent";
+			readonly agentId: string;
 			readonly workspaceId: string;
 			readonly sessionName: string;
 	  };
@@ -187,11 +244,15 @@ export function sameOwnedSession(
 	if (left.kind !== right.kind || left.sessionName !== right.sessionName) {
 		return false;
 	}
-	return (
-		left.kind !== "workspace" ||
-		right.kind !== "workspace" ||
-		left.workspaceId === right.workspaceId
-	);
+	if (left.kind === "scratch") return true;
+	if (left.kind === "agent") {
+		return (
+			right.kind === "agent" &&
+			left.agentId === right.agentId &&
+			left.workspaceId === right.workspaceId
+		);
+	}
+	return right.kind === "workspace" && left.workspaceId === right.workspaceId;
 }
 
 /**

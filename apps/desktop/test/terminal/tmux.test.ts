@@ -111,10 +111,15 @@ describe("session naming", () => {
 					context: "global",
 					workspaceId: "global",
 					root: first,
+					agentId: "none",
 				},
-				"global",
-				"global",
-				first,
+				{
+					sessionName: "workspace",
+					context: "global",
+					workspaceId: "global",
+					root: first,
+					agentId: "none",
+				},
 			),
 		).toBe(true);
 		expect(isRootMetadata("hex:2f746d70")).toBe(false);
@@ -124,17 +129,62 @@ describe("session naming", () => {
 });
 
 describe("ownership", () => {
+	it("owns an Agent session only when the whole marker tuple is its own", () => {
+		const agentId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+		const workspaceId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+		const root = "/workspaces/project";
+		const session = {
+			name: `ag-${agentId}`,
+			context: "agent",
+			workspaceId,
+			root,
+			agentId,
+		};
+		expect(isMarked(session, "/workspaces")).toBe(true);
+		// The name is the id. A session claiming to be this Agent under another
+		// name is a session DevHub did not create.
+		expect(isMarked({ ...session, name: "ag-other" }, "/workspaces")).toBe(
+			false,
+		);
+		// An Agent context with no Agent id is a half-written marker, not an
+		// Agent whose id happens to be missing.
+		expect(isMarked({ ...session, agentId: "none" }, "/workspaces")).toBe(
+			false,
+		);
+		// A workspace terminal that has picked up an Agent id is not a terminal
+		// DevHub wrote, so it is nobody's to touch.
+		expect(
+			isMarked(
+				{
+					name: `ws-${workspaceDigest(root).slice(0, 20)}`,
+					context: "workspace",
+					workspaceId,
+					root,
+					agentId,
+				},
+				"/workspaces",
+			),
+		).toBe(false);
+	});
+
 	it("never treats unknown metadata as owned", () => {
 		const session = {
 			name: "scratch",
 			context: "other",
 			workspaceId: "secret",
 			root: "/elsewhere/secret",
+			agentId: "none",
 		};
 		expect(isMarked(session, "/workspaces")).toBe(false);
-		expect(sessionMatches(session, "global", "global", "/workspaces")).toBe(
-			false,
-		);
+		expect(
+			sessionMatches(session, {
+				sessionName: "scratch",
+				context: "global",
+				workspaceId: "global",
+				root: "/workspaces",
+				agentId: "none",
+			}),
+		).toBe(false);
 	});
 
 	it("requires the whole marker triple, not just a matching name", () => {
@@ -147,6 +197,7 @@ describe("ownership", () => {
 					context: "workspace",
 					workspaceId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
 					root,
+					agentId: "none",
 				},
 				"/workspaces",
 			),
@@ -154,7 +205,13 @@ describe("ownership", () => {
 		// The right name with a workspace id that is not an id is not ownership.
 		expect(
 			isMarked(
-				{ name, context: "workspace", workspaceId: "not-a-uuid", root },
+				{
+					name,
+					context: "workspace",
+					workspaceId: "not-a-uuid",
+					root,
+					agentId: "none",
+				},
 				"/workspaces",
 			),
 		).toBe(false);
@@ -167,6 +224,7 @@ describe("ownership", () => {
 					context: "global",
 					workspaceId: "global",
 					root: "/elsewhere",
+					agentId: "none",
 				},
 				"/workspaces",
 			),

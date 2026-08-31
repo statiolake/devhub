@@ -242,7 +242,6 @@ describe("runtime resolution in the imported environment", () => {
 		shell: "/bin/sh",
 		git: "git",
 		tmux: "tmux",
-		herdr: "herdr",
 		tmux_socket_name: "devhub",
 		tmux_args: [],
 	};

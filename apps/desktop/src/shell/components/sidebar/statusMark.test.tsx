@@ -9,7 +9,7 @@
  * from waiting. The second is that the vocabulary is the one the sibling
  * extension already uses (`vscode-herdr-switcher`, `src/agentPresentation.ts`),
  * because the same Agent is shown in both places and two vocabularies for one
- * Herdr is a vocabulary nobody can rely on.
+ * Agent is a vocabulary nobody can rely on.
  */
 
 import "@testing-library/jest-dom/vitest";
@@ -23,6 +23,7 @@ const STATUSES: readonly AgentStatus[] = [
   "waiting",
   "idle",
   "error",
+  "unknown",
 ];
 
 function pathOf(status: AgentStatus): string {
@@ -45,6 +46,7 @@ describe("the Agent status mark", () => {
         waiting: "Waiting",
         idle: "Idle",
         error: "Error",
+        unknown: "Unknown",
       }[status];
       expect(mark).toHaveAccessibleName(label);
       expect(mark).toHaveAttribute("title", label);
@@ -81,5 +83,7 @@ describe("the Agent status mark", () => {
     expect(pathOf("idle")).toMatch(/^M13\.6572 3\.13573C/); // check
     cleanup();
     expect(pathOf("error")).toMatch(/^M14\.831 11\.965L/); // warning
+    cleanup();
+    expect(pathOf("unknown")).toMatch(/^M8 11C/); // question
   });
 });

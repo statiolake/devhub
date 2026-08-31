@@ -1,21 +1,28 @@
 /**
- * The two DOM Surfaces, plugged into the viewport's registry.
+ * The DOM Surfaces, plugged into the viewport's registry.
  *
- * The viewport decides which Surface is on screen and hands each one the same
- * four things; what a terminal and an Agent do with them is their own business,
- * and neither knows the other exists. This file is the only place the three
- * meet, which is why it is the only place that has to know that an Agent's
- * surface key carries its identity and a terminal's does not.
+ * There is one renderer behind both kinds, and that is the point. A terminal
+ * and an Agent are both a tmux session attached over a PTY, so both are drawn
+ * by `TerminalSurface` and the only thing that differs is the surface key —
+ * `global-terminal`, `workspace-terminal:<uuid>`, `agent:<uuid>` — which main
+ * resolves to a session. The Agent used to have a renderer of its own because
+ * it had a runtime of its own, rendering a screen the provider had already
+ * drawn; retiring that runtime removed the reason for the second view, and with
+ * it the second scrollback model, the second input path and the second set of
+ * ways for those to disagree with the terminal's.
+ *
+ * The registry keeps two entries rather than one because the *viewport* still
+ * distinguishes them — an Agent row and a terminal row are different things in
+ * the Sidebar — and this file is where that distinction is allowed to end.
  */
 
 import { TerminalSurface } from "../../terminal/TerminalSurface";
-import { AgentSurfaceView } from "../../agent/AgentSurfaceView";
 import {
   registerSurfaceRenderer,
   type SurfaceRendererProps,
 } from "./surfaceRegistry";
 
-function Terminal({
+function Session({
   surfaceKey,
   surfaceLabel,
   appearance,
@@ -34,27 +41,8 @@ function Terminal({
   );
 }
 
-function Agent({
-  surfaceKey,
-  surfaceLabel,
-  appearance,
-  visible,
-}: SurfaceRendererProps) {
-  const agentId = surfaceKey.startsWith("agent:")
-    ? surfaceKey.slice("agent:".length)
-    : surfaceKey;
-  return (
-    <AgentSurfaceView
-      agentId={agentId}
-      agentLabel={surfaceLabel}
-      hidden={!visible}
-      appearance={appearance}
-    />
-  );
-}
-
 /** Called once, from the page's entry point, before anything renders. */
 export function installSurfaceRenderers(): void {
-  registerSurfaceRenderer("terminal", Terminal);
-  registerSurfaceRenderer("agent", Agent);
+  registerSurfaceRenderer("terminal", Session);
+  registerSurfaceRenderer("agent", Session);
 }

@@ -89,6 +89,7 @@ const PROFILE: ConfiguredAgentProfile = {
   id: "agent",
   display_name: "Agent",
   kind: "codex",
+  command: "codex",
   args: [],
   env: {},
 };

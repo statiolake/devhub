@@ -1,12 +1,11 @@
 /**
  * The loop that keeps DevHub's Agents true.
  *
- * A port of the Tauri app's `devhub-agent-reconciler` thread. Herdr is not a
- * thing DevHub can be told about: it publishes events on a subscription the
- * adapter consumes as *hints*, and the only authoritative answer is a session
- * snapshot taken now. So the one honest way to know an Agent's status — and
- * the only way to learn that it exited — is to keep asking, for as long as
- * there is an Agent to ask about.
+ * A port of the Tauri app's `devhub-agent-reconciler` thread. tmux is not a
+ * thing DevHub can be told about: nothing pushes a session's death, and the
+ * only authoritative answer is the session list taken now. So the one honest
+ * way to know an Agent's status — and the only way to learn that it exited —
+ * is to keep asking, for as long as there is an Agent to ask about.
  *
  * Nothing else reconciles on its own. Making this the single cadence is the
  * point: with two of them, a status would be right for one reason here and a

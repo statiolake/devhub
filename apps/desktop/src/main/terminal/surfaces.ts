@@ -118,12 +118,7 @@ export class TerminalSurfaces {
 				const exact = sessions.find(
 					(session) =>
 						session.name === identity.sessionName &&
-						sessionMatches(
-							session,
-							identity.context,
-							identity.workspaceId,
-							identity.root,
-						),
+						sessionMatches(session, identity),
 				);
 				// `ensure` only guarantees the session existed a moment ago. The
 				// client is never pointed at a name; it is pointed at a session

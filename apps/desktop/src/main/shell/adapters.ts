@@ -2,9 +2,10 @@
  * Where the parts of an effect DevHub's shell does not own get filled in.
  *
  * The coordinator emits effects; something has to perform them. Three of them
- * belong to subsystems that live outside this directory — terminals are PTYs in
- * `main/terminal`, Agents are Herdr sessions in `main/agent` — so those register
- * an adapter here and the effect runner calls it.
+ * belong to subsystems that live outside this directory — terminals and Agents
+ * are both tmux sessions on DevHub's own socket (`main/terminal`,
+ * `main/agent`) — so those register an adapter here and the effect runner
+ * calls it.
  *
  * Every adapter is optional and the absence of one is a *stated* answer, not a
  * silent default:

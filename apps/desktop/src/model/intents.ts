@@ -120,8 +120,9 @@ export enum AppErrorCode {
  * A port failure is the same failure everywhere in the model, and it has to
  * become a different sentence on screen depending on what was unreachable —
  * "the agent runtime is unavailable" is something a person can act on, and
- * "the app shell is unavailable" is not, when it was Herdr that did not
- * answer. The model carries which port, and the projection picks the words.
+ * "the app shell is unavailable" is not, when it was the Agent's own runtime
+ * that did not answer. The model carries which port, and the projection picks
+ * the words.
  */
 export type PortName = "app" | "agent" | "terminal" | "editor" | "state";
 

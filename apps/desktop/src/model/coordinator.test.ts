@@ -27,7 +27,12 @@ import {
 const WS_A = workspaceId("550e8400-e29b-41d4-a716-446655440000");
 const AG_A = agentId("550e8400-e29b-41d4-a716-4466554400a0");
 const CONFIRM = confirmationId("550e8400-e29b-41d4-a716-4466554400c0");
-const codex = AgentProfile.create(agentProfileId("codex"), "Codex", "codex");
+const codex = AgentProfile.create(
+  agentProfileId("codex"),
+  "Codex",
+  "codex",
+  "codex",
+);
 
 /**
  * A test driver that plays the adapter's part: it collects the effects the

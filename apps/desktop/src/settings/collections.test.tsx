@@ -199,11 +199,19 @@ describe("a collection of workspace sources", () => {
 
 describe("a collection of agent profiles", () => {
   const PROFILES: SettingsConfig["agentProfiles"] = [
-    { id: "codex", displayName: "Codex", kind: "codex", args: [], env: {} },
+    {
+      id: "codex",
+      displayName: "Codex",
+      kind: "codex",
+      command: "codex",
+      args: [],
+      env: {},
+    },
     {
       id: "claude",
       displayName: "Claude",
       kind: "claude",
+      command: "claude",
       args: ["--verbose"],
       env: { TOKEN: "x" },
     },
@@ -229,6 +237,7 @@ describe("a collection of agent profiles", () => {
             id: "codex",
             displayName: "Codex",
             kind: "codex",
+            command: "codex",
             args: [],
             env: { FIRST: "1", SECOND: "2" },
           },

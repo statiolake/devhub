@@ -62,8 +62,11 @@ import {
 	isValidSocketName,
 	portFailure,
 	socketName,
+	SCRATCH_TARGET,
 	terminalOwnedSessions,
 	terminalPreflight,
+	type AgentSessionCommand,
+	type AgentTerminalTarget,
 	type OwnedSessionRecord,
 	type RequiredTerminalSet,
 	type RuntimeLaunchContext,
@@ -81,9 +84,13 @@ const PROTOCOL_VALUE = "1";
 const CONTEXT_OPTION = "@devhub-context";
 const WORKSPACE_ID_OPTION = "@devhub-workspace-id";
 const ROOT_OPTION = "@devhub-root";
+const AGENT_ID_OPTION = "@devhub-agent-id";
 const GLOBAL_CONTEXT = "global";
 const WORKSPACE_CONTEXT = "workspace";
+const AGENT_CONTEXT = "agent";
 const GLOBAL_ID = "global";
+/** The marker value a session that is not an Agent carries. */
+const NO_AGENT = "none";
 export const SCRATCH_SESSION = "scratch";
 const MIN_TMUX_MAJOR = 3;
 const MIN_TMUX_MINOR = 3;
@@ -143,6 +150,7 @@ const BOOTSTRAP_CONFIG = [
 		`set-option -t ${SCRATCH_SESSION} ${CONTEXT_OPTION} ${GLOBAL_CONTEXT}`,
 		`set-option -t ${SCRATCH_SESSION} ${WORKSPACE_ID_OPTION} ${GLOBAL_ID}`,
 		`set-option -t ${SCRATCH_SESSION} ${ROOT_OPTION} "$${BOOTSTRAP_ENV_ROOT}"`,
+		`set-option -t ${SCRATCH_SESSION} ${AGENT_ID_OPTION} ${NO_AGENT}`,
 		`set-option -g ${PROTOCOL_OPTION} ${PROTOCOL_VALUE}`,
 	].join(" ; "),
 	"",
@@ -156,6 +164,7 @@ export interface SessionInfo {
 	readonly context: string | undefined;
 	readonly workspaceId: string | undefined;
 	readonly root: string | undefined;
+	readonly agentId: string | undefined;
 }
 
 interface SessionSpec {
@@ -163,14 +172,30 @@ interface SessionSpec {
 	readonly root: string;
 	readonly context: string;
 	readonly workspaceId: string;
+	readonly agentId: string;
+	/**
+	 * The session's own command, when the session *is* a command.
+	 *
+	 * Absent means tmux starts the login shell, which is what a workspace or
+	 * scratch terminal is. Present means the pane dies when the command exits
+	 * and takes the session with it, which is what an Agent is.
+	 */
+	readonly command?: AgentSessionCommand;
 }
 
 /** The identity a target resolves to on a given server. */
-interface TargetIdentity {
+export interface TargetIdentity {
 	readonly sessionName: string;
 	readonly root: string;
 	readonly workspaceId: string;
 	readonly context: string;
+	/** `none` for everything that is not an Agent. */
+	readonly agentId: string;
+}
+
+/** An Agent session's name is its id, so it is findable after a restart. */
+export function agentSessionName(agentId: string): string {
+	return `ag-${agentId}`;
 }
 
 export function workspaceDigest(root: string): string {
@@ -202,16 +227,18 @@ export function isMarked(
 	session: SessionInfo,
 	expectedGlobalRoot: string,
 ): boolean {
-	const { context, workspaceId, root } = session;
+	const { context, workspaceId, root, agentId } = session;
 	if (
 		context === undefined ||
 		workspaceId === undefined ||
-		root === undefined
+		root === undefined ||
+		agentId === undefined
 	) {
 		return false;
 	}
 	if (context === GLOBAL_CONTEXT && workspaceId === GLOBAL_ID) {
 		return (
+			agentId === NO_AGENT &&
 			session.name === SCRATCH_SESSION &&
 			expectedGlobalRoot === root &&
 			isRootMetadata(root)
@@ -219,24 +246,39 @@ export function isMarked(
 	}
 	if (context === WORKSPACE_CONTEXT) {
 		return (
+			agentId === NO_AGENT &&
 			isUuid(workspaceId) &&
 			isRootMetadata(root) &&
 			isWorkspaceSessionName(session.name, root)
 		);
 	}
+	if (context === AGENT_CONTEXT) {
+		return (
+			isUuid(agentId) &&
+			isUuid(workspaceId) &&
+			isRootMetadata(root) &&
+			session.name === agentSessionName(agentId)
+		);
+	}
 	return false;
 }
 
+/**
+ * Whether a session is the exact one an identity names.
+ *
+ * The whole marker tuple is compared, never a prefix of it: a session that
+ * agrees about three of the four is a different session that happens to share
+ * a name, and it must stay intact.
+ */
 export function sessionMatches(
 	session: SessionInfo,
-	context: string,
-	workspaceId: string,
-	root: string,
+	identity: TargetIdentity,
 ): boolean {
 	return (
-		session.context === context &&
-		session.workspaceId === workspaceId &&
-		session.root === root
+		session.context === identity.context &&
+		session.workspaceId === identity.workspaceId &&
+		session.root === identity.root &&
+		session.agentId === identity.agentId
 	);
 }
 
@@ -252,6 +294,27 @@ function resourceCount(count: number): ResourceInspection {
 
 function cleanInspection(): TerminalInspection {
 	return { process: CLEAN, extraPanes: CLEAN, extraWindows: CLEAN };
+}
+
+/**
+ * `new-session -e KEY=VALUE` for each of a command's own variables.
+ *
+ * Sorted, so the argv a launch produces depends on the profile and nothing
+ * else. The server's environment — the app's frozen launch environment — is
+ * already what every pane inherits; these are the profile's additions to it.
+ */
+function envArguments(
+	env: Readonly<Record<string, string>> | undefined,
+): string[] {
+	if (!env) return [];
+	const args: string[] = [];
+	for (const key of Object.keys(env).sort()) {
+		if (!/^[A-Za-z_][A-Za-z0-9_]*$/u.test(key)) throw portFailure("failed");
+		const value = env[key] ?? "";
+		if (value.includes("\0")) throw portFailure("failed");
+		args.push("-e", `${key}=${value}`);
+	}
+	return args;
 }
 
 function unknownInspection(): TerminalInspection {
@@ -714,6 +777,15 @@ export class TmuxTerminalRuntime {
 		);
 	}
 
+	/**
+	 * After this returns, the target's exact marked session exists.
+	 *
+	 * A terminal is a *place*: if it is not there it is created, because that
+	 * is what asking for a workspace's terminal means. An Agent is a *process*:
+	 * its session is created once, by `launchAgent`, with the command that is
+	 * the Agent — so a missing Agent session means the Agent ended, and
+	 * recreating it here would resurrect it as an empty shell wearing its name.
+	 */
 	private async ensureSyncOnSocket(
 		socket: SocketName,
 		target: TerminalTarget,
@@ -728,18 +800,10 @@ export class TmuxTerminalRuntime {
 			(session) => session.name === identity.sessionName,
 		);
 		if (existing) {
-			if (
-				sessionMatches(
-					existing,
-					identity.context,
-					identity.workspaceId,
-					identity.root,
-				)
-			) {
-				return;
-			}
+			if (sessionMatches(existing, identity)) return;
 			throw portFailure("conflict");
 		}
+		if (target.kind === "agent") throw portFailure("conflict");
 		await this.createSession(
 			socket,
 			{
@@ -747,10 +811,105 @@ export class TmuxTerminalRuntime {
 				root: identity.root,
 				context: identity.context,
 				workspaceId: identity.workspaceId,
+				agentId: identity.agentId,
 			},
 			cancel,
 			deadline,
 		);
+	}
+
+	// --- Agents ------------------------------------------------------------
+
+	/**
+	 * Start one Agent: a marked session whose session command is the Agent.
+	 *
+	 * There is no separate "is it already running" branch. The create is the
+	 * claim: if a session with this Agent's name already exists, tmux refuses
+	 * and the launch is a conflict, which is the truth — two DevHubs, or a
+	 * relaunch of an id that never died.
+	 */
+	async launchAgent(
+		target: AgentTerminalTarget,
+		command: AgentSessionCommand,
+		cancel = new CancellationToken(),
+	): Promise<void> {
+		const release = await this.gate.acquireOperation(cancel);
+		try {
+			const socket = this.socket();
+			const deadline = OperationDeadline.in(this.timeoutMs);
+			await this.ensureVersion(socket, cancel, deadline);
+			await this.ensureServer(socket, cancel, deadline);
+			const identity = this.targetIdentity({ kind: "agent", ...target }, []);
+			await this.createSession(
+				socket,
+				{
+					name: identity.sessionName,
+					root: identity.root,
+					context: identity.context,
+					workspaceId: identity.workspaceId,
+					agentId: identity.agentId,
+					command,
+				},
+				cancel,
+				deadline,
+			);
+			// Read the whole marker tuple back before calling the Agent started.
+			// A session that exists but is not this Agent's is somebody else's
+			// resource, and the row must not claim it.
+			const readBack = await this.listSessions(socket, cancel, deadline);
+			const created = readBack.find(
+				(session) => session.name === identity.sessionName,
+			);
+			if (!created || !sessionMatches(created, identity)) {
+				throw portFailure("conflict");
+			}
+		} finally {
+			release();
+		}
+	}
+
+	/**
+	 * Every Agent session on the effective socket, by Agent id.
+	 *
+	 * This is the whole of "which Agents are alive". tmux destroys a session
+	 * when its command exits, so an id that is not in this list is an Agent
+	 * that has ended — there is no second signal to reconcile against.
+	 */
+	async listAgents(
+		cancel = new CancellationToken(),
+	): Promise<readonly OwnedSessionRecord[]> {
+		const release = await this.gate.acquireOperation(cancel);
+		try {
+			const socket = this.socket();
+			const deadline = OperationDeadline.in(this.timeoutMs);
+			await this.ensureVersion(socket, cancel, deadline);
+			const marker = await this.markerState(socket, cancel, deadline);
+			if (marker === "absent") return [];
+			if (marker === "wrong") throw portFailure("conflict");
+			const sessions = await this.listSessions(socket, cancel, deadline);
+			return sessions
+				.filter(
+					(session) =>
+						session.context === AGENT_CONTEXT &&
+						isMarked(session, this.contextHome),
+				)
+				.map((session) => this.ownedSessionRecord(session));
+		} finally {
+			release();
+		}
+	}
+
+	/** Kill one Agent's session, by the same exact-record rule as any other. */
+	async closeAgent(
+		record: OwnedSessionRecord,
+		cancel = new CancellationToken(),
+	): Promise<void> {
+		const release = await this.gate.acquireOperation(cancel);
+		try {
+			await this.closeOwnedSessionSync(this.socket(), record, cancel);
+		} finally {
+			release();
+		}
 	}
 
 	/**
@@ -796,6 +955,20 @@ export class TmuxTerminalRuntime {
 		) {
 			return {
 				kind: "workspace",
+				workspaceId: session.workspaceId,
+				sessionName: session.name,
+			};
+		}
+		if (
+			session.context === AGENT_CONTEXT &&
+			session.agentId !== undefined &&
+			session.workspaceId !== undefined &&
+			isUuid(session.agentId) &&
+			isUuid(session.workspaceId)
+		) {
+			return {
+				kind: "agent",
+				agentId: session.agentId,
 				workspaceId: session.workspaceId,
 				sessionName: session.name,
 			};
@@ -877,19 +1050,24 @@ export class TmuxTerminalRuntime {
 		session: SessionInfo,
 		expected: OwnedSessionRecord,
 	): boolean {
+		if (session.name !== expected.sessionName) return false;
 		if (expected.kind === "scratch") {
-			return (
-				session.name === expected.sessionName &&
-				sessionMatches(session, GLOBAL_CONTEXT, GLOBAL_ID, this.contextHome)
-			);
+			return sessionMatches(session, this.targetIdentity(SCRATCH_TARGET, []));
 		}
 		const root = session.root;
-		if (root === undefined) return false;
+		if (root === undefined || !isRootMetadata(root)) return false;
+		if (expected.kind === "agent") {
+			return (
+				session.context === AGENT_CONTEXT &&
+				session.workspaceId === expected.workspaceId &&
+				session.agentId === expected.agentId &&
+				expected.sessionName === agentSessionName(expected.agentId)
+			);
+		}
 		return (
-			session.name === expected.sessionName &&
 			session.context === WORKSPACE_CONTEXT &&
 			session.workspaceId === expected.workspaceId &&
-			isRootMetadata(root) &&
+			session.agentId === NO_AGENT &&
 			isWorkspaceSessionName(expected.sessionName, root)
 		);
 	}
@@ -911,14 +1089,7 @@ export class TmuxTerminalRuntime {
 				(candidate) => candidate.name === identity.sessionName,
 			);
 			if (!session) return cleanInspection();
-			if (
-				!sessionMatches(
-					session,
-					identity.context,
-					identity.workspaceId,
-					identity.root,
-				)
-			) {
+			if (!sessionMatches(session, identity)) {
 				return unknownInspection();
 			}
 			// Without the configured shell's name there is no way to tell a
@@ -966,14 +1137,7 @@ export class TmuxTerminalRuntime {
 			(session) => session.name === identity.sessionName,
 		);
 		if (!existing) return;
-		if (
-			!sessionMatches(
-				existing,
-				WORKSPACE_CONTEXT,
-				identity.workspaceId,
-				identity.root,
-			)
-		) {
+		if (!sessionMatches(existing, identity)) {
 			throw portFailure("conflict");
 		}
 		// Re-inspect immediately before the destructive command. A session may
@@ -987,14 +1151,7 @@ export class TmuxTerminalRuntime {
 			(session) => session.name === identity.sessionName,
 		);
 		if (!current) return;
-		if (
-			!sessionMatches(
-				current,
-				WORKSPACE_CONTEXT,
-				identity.workspaceId,
-				identity.root,
-			)
-		) {
+		if (!sessionMatches(current, identity)) {
 			throw portFailure("conflict");
 		}
 		const output = await this.runTmux(
@@ -1029,12 +1186,7 @@ export class TmuxTerminalRuntime {
 		const exact = sessions.find(
 			(session) =>
 				session.name === identity.sessionName &&
-				sessionMatches(
-					session,
-					identity.context,
-					identity.workspaceId,
-					identity.root,
-				),
+				sessionMatches(session, identity),
 		);
 		if (!exact) throw portFailure("conflict");
 		const output = await this.runTmux(
@@ -1112,12 +1264,13 @@ export class TmuxTerminalRuntime {
 		deadline: OperationDeadline,
 	): Promise<void> {
 		const home = this.contextHome;
+		const identity = this.targetIdentity(SCRATCH_TARGET, []);
 		const sessions = await this.listSessions(socket, cancel, deadline);
 		const scratch = sessions.find(
 			(session) => session.name === SCRATCH_SESSION,
 		);
 		if (scratch) {
-			if (!sessionMatches(scratch, GLOBAL_CONTEXT, GLOBAL_ID, home)) {
+			if (!sessionMatches(scratch, identity)) {
 				throw portFailure("conflict");
 			}
 			if ((await this.markerState(socket, cancel, deadline)) !== "owned") {
@@ -1132,6 +1285,7 @@ export class TmuxTerminalRuntime {
 				root: home,
 				context: GLOBAL_CONTEXT,
 				workspaceId: GLOBAL_ID,
+				agentId: NO_AGENT,
 			},
 			cancel,
 			deadline,
@@ -1143,7 +1297,7 @@ export class TmuxTerminalRuntime {
 		const created = readBack.find(
 			(session) => session.name === SCRATCH_SESSION,
 		);
-		if (!created || !sessionMatches(created, GLOBAL_CONTEXT, GLOBAL_ID, home)) {
+		if (!created || !sessionMatches(created, identity)) {
 			throw portFailure("conflict");
 		}
 	}
@@ -1211,6 +1365,23 @@ export class TmuxTerminalRuntime {
 				root: this.contextHome,
 				workspaceId: GLOBAL_ID,
 				context: GLOBAL_CONTEXT,
+				agentId: NO_AGENT,
+			};
+		}
+		if (target.kind === "agent") {
+			// No fallback name. An Agent id is unique by construction, so a
+			// collision is not a name that is taken — it is a second session
+			// claiming to be the same Agent, and renaming around it would hide
+			// exactly the thing worth stopping for.
+			if (!isUuid(target.agentId) || !isAbsolute(target.root)) {
+				throw portFailure("failed");
+			}
+			return {
+				sessionName: agentSessionName(target.agentId),
+				root: target.root,
+				workspaceId: target.workspaceId,
+				context: AGENT_CONTEXT,
+				agentId: target.agentId,
 			};
 		}
 		return this.workspaceIdentity(target, sessions);
@@ -1231,30 +1402,21 @@ export class TmuxTerminalRuntime {
 		const digest = workspaceDigest(root);
 		const short = `ws-${digest.slice(0, 20)}`;
 		const long = `ws-${digest.slice(0, 32)}`;
+		const identityFor = (name: string): TargetIdentity => ({
+			sessionName: name,
+			root,
+			workspaceId,
+			context: WORKSPACE_CONTEXT,
+			agentId: NO_AGENT,
+		});
 		const expected = (name: string): boolean | undefined => {
 			const session = sessions.find((candidate) => candidate.name === name);
-			return session
-				? sessionMatches(session, WORKSPACE_CONTEXT, workspaceId, root)
-				: undefined;
+			return session ? sessionMatches(session, identityFor(name)) : undefined;
 		};
 		const shortState = expected(short);
-		if (shortState === undefined || shortState) {
-			return {
-				sessionName: short,
-				root,
-				workspaceId,
-				context: WORKSPACE_CONTEXT,
-			};
-		}
+		if (shortState === undefined || shortState) return identityFor(short);
 		const longState = expected(long);
-		if (longState === undefined || longState) {
-			return {
-				sessionName: long,
-				root,
-				workspaceId,
-				context: WORKSPACE_CONTEXT,
-			};
-		}
+		if (longState === undefined || longState) return identityFor(long);
 		throw portFailure("conflict");
 	}
 
@@ -1279,6 +1441,11 @@ export class TmuxTerminalRuntime {
 		// The root is identity. A path that canonicalises to somewhere else is
 		// a different directory, and the session must not claim to be its.
 		if (canonical !== spec.root) throw portFailure("conflict");
+		// One client queue creates the session and writes its whole marker
+		// tuple, so a session can never be observed half-owned. The command,
+		// where there is one, is the session's own: tmux runs it in the pane
+		// and destroys the session when it exits, which is what makes an Agent
+		// row disappear the moment its process does.
 		const args = [
 			"new-session",
 			"-d",
@@ -1286,6 +1453,8 @@ export class TmuxTerminalRuntime {
 			spec.name,
 			"-c",
 			spec.root,
+			...envArguments(spec.command?.env),
+			...(spec.command ? ["--", spec.command.file, ...spec.command.args] : []),
 			";",
 			"set-option",
 			"-t",
@@ -1304,6 +1473,12 @@ export class TmuxTerminalRuntime {
 			spec.name,
 			ROOT_OPTION,
 			spec.root,
+			";",
+			"set-option",
+			"-t",
+			spec.name,
+			AGENT_ID_OPTION,
+			spec.agentId,
 		];
 		// The last read before creating a session. The earlier check protects
 		// path validation; this one keeps a server that changed marker state
@@ -1365,6 +1540,13 @@ export class TmuxTerminalRuntime {
 					socket,
 					name,
 					ROOT_OPTION,
+					cancel,
+					deadline,
+				),
+				agentId: await this.showOption(
+					socket,
+					name,
+					AGENT_ID_OPTION,
 					cancel,
 					deadline,
 				),
