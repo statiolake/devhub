@@ -7,6 +7,7 @@
  * handed a copy through the modal request.
  */
 
+import type { AgentProfileKindWire } from "../../ipc/appShell";
 import { useAppShell } from "../useAppShell";
 import { ChooseSheet } from "../components/shell/ChooseSheet";
 
@@ -28,7 +29,7 @@ export function AgentPickerSheet({
       options={agentProfiles.profiles.map((profile) => ({
         id: profile.id,
         label: profile.displayName,
-        detail: profile.kind === "codex" ? "Codex" : "Claude",
+        detail: kindLabel(profile.kind),
       }))}
       empty={
         agentProfiles.availability === "unavailable"
@@ -51,4 +52,22 @@ export function AgentPickerSheet({
       onCancel={onDismiss}
     />
   );
+}
+
+/**
+ * The one line under a profile's name: whose screen it draws.
+ *
+ * A `custom` profile has no manifest, so its status will stay `?` for the life
+ * of the Agent. Saying so here is where a person can still change their mind
+ * about which profile to start.
+ */
+function kindLabel(kind: AgentProfileKindWire): string {
+  switch (kind) {
+    case "codex":
+      return "Codex";
+    case "claude":
+      return "Claude";
+    case "custom":
+      return "Other — no status detection";
+  }
 }

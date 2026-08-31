@@ -95,6 +95,8 @@ export interface AgentSnapshot {
   readonly status: AgentStatus;
   readonly runtimeHealth: RuntimeHealth;
   readonly controlState: AgentControlState;
+  /** The Agent asked for attention and nobody has opened it since. */
+  readonly unread: boolean;
 }
 
 export interface WorkspaceSnapshot {
@@ -381,10 +383,43 @@ export class AppModel {
     }
   }
 
+  /**
+   * Set an Agent's status, and raise its unread flag if it just asked for you.
+   *
+   * The rule is one rule, stated once, here — where both the status and the
+   * selection live. An Agent becomes unread when it *enters* `waiting` and it
+   * is not the thing on screen; if it is on screen, you are already looking at
+   * the question, so there is nothing to come back to. Nothing else in the app
+   * decides this, so a new caller of `setAgentStatus` cannot get it wrong.
+   */
   setAgentStatus(id: AgentId, status: AgentStatus): void {
-    if (this.requireAgent(id).setStatus(status)) {
+    const agent = this.requireAgent(id);
+    const entered = agent.status !== "waiting" && status === "waiting";
+    let changed = agent.setStatus(status);
+    if (entered && !this.isSelectedAgent(id) && agent.setUnread(true)) {
+      changed = true;
+    }
+    if (changed) {
       this.bumpRevision();
     }
+  }
+
+  /**
+   * Put an Agent back in the unread pile by hand.
+   *
+   * The counterpart to opening one, and the reason unread is not simply
+   * "waiting and not selected": having looked at something is a decision, and
+   * so is deciding you have not finished with it.
+   */
+  markAgentUnread(id: AgentId): void {
+    if (this.requireAgent(id).setUnread(true)) {
+      this.bumpRevision();
+    }
+  }
+
+  private isSelectedAgent(id: AgentId): boolean {
+    const context = this.selectionValue.context;
+    return context.kind === "agent" && context.agentId === id;
   }
 
   setAgentRuntimeHealth(id: AgentId, health: RuntimeHealth): void {
@@ -453,6 +488,12 @@ export class AppModel {
 
   selectContext(context: NavigationContext): void {
     this.ensureContextExists(context);
+    // Opening an Agent is reading it. This is the only place that clears the
+    // flag automatically, so "it went away and I do not know why" has one
+    // answer.
+    const read =
+      context.kind === "agent" &&
+      this.agent(context.agentId)?.setUnread(false) === true;
     const activity: Activity =
       context.kind === "global"
         ? "terminal"
@@ -462,6 +503,10 @@ export class AppModel {
     const next: NavigationSelection = { context, activity };
     if (!sameSelection(this.selectionValue, next)) {
       this.selectionValue = next;
+      this.bumpRevision();
+    } else if (read) {
+      // Re-selecting what is already selected still reads it: an Agent marked
+      // unread by hand while it was on screen is read again by clicking it.
       this.bumpRevision();
     }
   }
@@ -799,6 +844,7 @@ export class AppModel {
         status: agent.status,
         runtimeHealth: agent.runtimeHealth,
         controlState: agent.controlState,
+        unread: agent.unread,
       })),
     }));
   }

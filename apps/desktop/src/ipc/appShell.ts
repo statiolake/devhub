@@ -24,7 +24,7 @@ export interface ActivityWire {
 	readonly resolution: ResolutionWire;
 }
 export type AgentControlStateWire = "running" | "stopping" | "stop-failed";
-export type AgentProfileKindWire = "codex" | "claude";
+export type AgentProfileKindWire = "codex" | "claude" | "custom";
 export interface AgentProfileWire {
 	readonly displayName: string;
 	readonly id: string;
@@ -59,6 +59,8 @@ export interface AgentWire {
 	readonly profileId: string;
 	readonly runtimeHealth: RuntimeHealthWire;
 	readonly status: AgentStatusWire;
+	/** The Agent asked for attention and nobody has opened it since. */
+	readonly unread: boolean;
 	readonly workspaceId: string;
 }
 /**
@@ -174,6 +176,7 @@ export type AppIntentWire =
 	| { readonly agentId: string; readonly type: "stop_agent" }
 	| { readonly confirmationId: string; readonly type: "confirm_stop_agent" }
 	| { readonly agentId: string; readonly type: "retry_stop_agent" }
+	| { readonly agentId: string; readonly type: "mark_agent_unread" }
 	| { readonly agentId: string; readonly type: "reconcile_agent" }
 	| { readonly type: "retry_workspace"; readonly workspaceId: string }
 	| {

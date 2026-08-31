@@ -17,6 +17,7 @@ function agent(id: string, workspaceId: string, ordinal: number): AgentWire {
 		profileId: "profile",
 		runtimeHealth: "healthy",
 		status: "idle",
+		unread: false,
 		workspaceId,
 	};
 }

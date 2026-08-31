@@ -182,6 +182,7 @@ export interface AgentStateRecord {
   ordinal: number;
   temporary_name?: string;
   status: AgentStatus;
+  unread?: boolean;
   runtime_health: RuntimeHealth;
   control_state: PersistedAgentControlState;
   /** An adapter's own identity for this Agent. Opaque and never interpreted. */
@@ -817,6 +818,7 @@ export function hydrateModel(
           ordinal: agentRecord.ordinal,
           temporaryName: agentRecord.temporary_name,
           status,
+          unread: agentRecord.unread === true,
           runtimeHealth,
           controlState: controlStateFrom(agentRecord.control_state),
         });
@@ -960,6 +962,7 @@ export function stateFromSnapshot(
         ordinal: agent.ordinal,
         temporary_name: agent.displayName,
         status: agent.status,
+        unread: agent.unread,
         runtime_health: agent.runtimeHealth,
         control_state: controlStateTo(agent.controlState),
       })),

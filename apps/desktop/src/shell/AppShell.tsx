@@ -125,12 +125,36 @@ function Workbench() {
     );
   }
 
+  /**
+   * Whether anything is waiting for the person, and is not the thing they are
+   * looking at.
+   *
+   * One rule, computed in one place: glow while some Agent is unread and the
+   * selection is not that Agent. Opening it reads it, which clears the flag,
+   * which stops the glow — so there is no second condition to keep in step and
+   * no way for the glow to outlive its reason.
+   */
+  const selectedAgentId =
+    state.snapshot.selection.context.kind === "agent"
+      ? state.snapshot.selection.context.agentId
+      : undefined;
+  const attention = state.snapshot.workspaces.some((workspace) =>
+    workspace.agents.some(
+      (agent) => agent.unread && agent.id !== selectedAgentId,
+    ),
+  );
+
   return (
     <main
       className="app-shell"
       data-readiness={state.snapshot.readiness}
       data-sidebar-density={appearance?.sidebarDensity ?? "compact"}
+      data-attention={attention ? "true" : undefined}
     >
+      {/* A thin edge that breathes, drawn over the window's own inset — the
+          macOS way of saying "over here" without a banner. It is inert to the
+          pointer, so nothing under it stops working while it is up. */}
+      <div className="attention-glow" aria-hidden="true" />
       <div className="app-shell-content">
         {/* Always: collapsed, the Sidebar is an icon rail, and which of its
             two forms is on screen is the Sidebar's own business. */}

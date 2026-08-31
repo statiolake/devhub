@@ -18,6 +18,7 @@ import { clampSidebarWidth } from "../../../ipc/appShell";
 import { useAppShell } from "../../useAppShell";
 import { devhub } from "../../client";
 import { isImeComposing } from "../../accessibility/ime";
+import { RowMenu, type RowMenuItem } from "./RowMenu";
 import { SidebarRail } from "./SidebarRail";
 import { StatusMark } from "./StatusMark";
 import { statusLabel } from "./status";
@@ -66,6 +67,7 @@ function WorkspaceRow({
   agentProfilesAvailability,
   onCreateAgent,
   onRenameAgent,
+  onAgentMenu,
 }: {
   readonly workspace: WorkspaceSnapshot;
   readonly snapshot: AppSnapshot;
@@ -74,6 +76,10 @@ function WorkspaceRow({
   readonly agentProfilesAvailability: AgentProfilesAvailabilityWire;
   readonly onCreateAgent: (workspaceId: string) => void;
   readonly onRenameAgent: (agent: AgentSnapshot) => void;
+  readonly onAgentMenu: (
+    agent: AgentSnapshot,
+    at: { x: number; y: number },
+  ) => void;
 }) {
   const selected =
     snapshot.selection.context.kind === "workspace" &&
@@ -202,8 +208,15 @@ function WorkspaceRow({
                 aria-selected={agentSelected}
               >
                 <div
-                  className={`sidebar-row agent-row${agentSelected ? " is-selected" : ""}`}
+                  className={`sidebar-row agent-row${agentSelected ? " is-selected" : ""}${agent.unread ? " is-unread" : ""}`}
                   data-control-state={agent.controlState}
+                  onContextMenu={(event) => {
+                    event.preventDefault();
+                    onAgentMenu(agent, {
+                      x: event.clientX,
+                      y: event.clientY,
+                    });
+                  }}
                 >
                   <button
                     className="sidebar-context-button"
@@ -211,7 +224,7 @@ function WorkspaceRow({
                     data-tree-item-id={`agent:${agent.id}`}
                     tabIndex={agentSelected ? 0 : -1}
                     aria-current={agentSelected ? "page" : undefined}
-                    aria-label={`${agent.displayName}, ${statusLabel(agent.status)} agent, ${agent.controlState === "stopping" ? "Stopping" : stopFailed ? "Stop failed" : runtimeHealthLabel(agent.runtimeHealth)}`}
+                    aria-label={`${agent.displayName}, ${statusLabel(agent.status)} agent, ${agent.controlState === "stopping" ? "Stopping" : stopFailed ? "Stop failed" : runtimeHealthLabel(agent.runtimeHealth)}${agent.unread ? ", unread" : ""}`}
                     disabled={agent.controlState === "stopping"}
                     onClick={() =>
                       dispatch({
@@ -229,6 +242,13 @@ function WorkspaceRow({
                         smaller size. */}
                     <StatusMark status={agent.status} />
                     <span className="row-label">{agent.displayName}</span>
+                    {/* The unread mark is not a second status. It says the
+                        Agent asked for you and you have not been, which is a
+                        fact about the person and outlives whatever the Agent
+                        is doing now. */}
+                    {agent.unread ? (
+                      <span className="row-unread" aria-hidden="true" />
+                    ) : null}
                     {agent.controlState !== "running" ||
                     agent.runtimeHealth !== "healthy" ? (
                       <span className="row-note">
@@ -451,6 +471,30 @@ export function Sidebar({ snapshot }: SidebarProps) {
     void devhub().openModal({ kind: "agent-rename", agentId: agent.id });
   }, []);
 
+  /**
+   * The row's context menu.
+   *
+   * One piece of state for the whole tree rather than one per row: only one
+   * menu can be open, and saying so here is what makes that true instead of
+   * hoping every row closes itself when another opens.
+   */
+  const [agentMenu, setAgentMenu] = useState<
+    | {
+        readonly agent: AgentSnapshot;
+        readonly at: { x: number; y: number };
+      }
+    | undefined
+  >(undefined);
+  const openAgentMenu = useCallback(
+    (agent: AgentSnapshot, at: { x: number; y: number }) => {
+      setAgentMenu({ agent, at });
+    },
+    [],
+  );
+  const closeAgentMenu = useCallback(() => {
+    setAgentMenu(undefined);
+  }, []);
+
   const onDispatch = useCallback(
     (intent: AppIntent) => {
       void dispatch(intent);
@@ -605,6 +649,7 @@ export function Sidebar({ snapshot }: SidebarProps) {
                 agentProfilesAvailability={agentProfiles.availability}
                 onCreateAgent={openAgentPicker}
                 onRenameAgent={openRename}
+                onAgentMenu={openAgentMenu}
               />
             ))}
           </ul>
@@ -617,6 +662,60 @@ export function Sidebar({ snapshot }: SidebarProps) {
         onPreview={previewResize}
         onCommit={resize}
       />
+      {agentMenu ? (
+        <RowMenu
+          at={agentMenu.at}
+          label={`${agentMenu.agent.displayName} actions`}
+          items={agentMenuItems(agentMenu.agent, onDispatch, openRename)}
+          onDismiss={closeAgentMenu}
+        />
+      ) : null}
     </aside>
   );
+}
+
+/**
+ * What a right-click on an Agent offers.
+ *
+ * Mark as Unread is the only one that is not already a control on the row, and
+ * it is here because it is the counterpart to opening one: reading is
+ * automatic, and un-reading has to be something you can say.
+ */
+function agentMenuItems(
+  agent: AgentSnapshot,
+  dispatch: (intent: AppIntent) => void,
+  onRename: (agent: AgentSnapshot) => void,
+): RowMenuItem[] {
+  const items: RowMenuItem[] = [
+    {
+      id: "rename",
+      label: "Rename…",
+      run: () => {
+        onRename(agent);
+      },
+    },
+  ];
+  if (!agent.unread) {
+    items.push({
+      id: "unread",
+      label: "Mark as Unread",
+      run: () => {
+        dispatch({ type: "mark_agent_unread", agentId: agent.id });
+      },
+    });
+  }
+  if (agent.controlState !== "stopping") {
+    items.push({
+      id: "stop",
+      label: agent.controlState === "stop-failed" ? "Retry Stop" : "Stop Agent",
+      run: () => {
+        dispatch(
+          agent.controlState === "stop-failed"
+            ? { type: "retry_stop_agent", agentId: agent.id }
+            : { type: "stop_agent", agentId: agent.id },
+        );
+      },
+    });
+  }
+  return items;
 }

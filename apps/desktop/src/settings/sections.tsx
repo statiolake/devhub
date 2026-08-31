@@ -570,6 +570,7 @@ export function AgentsSection({
                 options={[
                   ["codex", "Codex"],
                   ["claude", "Claude"],
+                  ["custom", "Other (no status)"],
                 ]}
                 onChange={(kind) => {
                   replace({ ...profile, kind });

@@ -52,6 +52,7 @@ import {
 	isNoServerError,
 	parseLines,
 	parseOptionValue,
+	parseCapture,
 	runBounded,
 	type CommandOutput,
 	type ResolvedExecutable,
@@ -894,6 +895,58 @@ export class TmuxTerminalRuntime {
 						isMarked(session, this.contextHome),
 				)
 				.map((session) => this.ownedSessionRecord(session));
+		} finally {
+			release();
+		}
+	}
+
+	/**
+	 * One Agent's visible screen, and the title its program set.
+	 *
+	 * `capture-pane` reads the pane whether or not a client is attached, which
+	 * is why status detection uses it rather than the attached surface's
+	 * stream: the sidebar must be able to say what every Agent is doing with no
+	 * surface open at all.
+	 *
+	 * There is no OSC-progress equivalent. tmux exposes the pane title (OSC 0
+	 * and 2) as `#{pane_title}` and does not expose OSC 9;4 progress at all, so
+	 * a rule keyed on progress can never match here. That is stated rather than
+	 * worked around: reading it would mean DevHub parsing the pane's byte
+	 * stream itself, which is the rendered-screen indirection this transport
+	 * exists to remove.
+	 */
+	async captureAgent(
+		record: OwnedSessionRecord,
+		cancel = new CancellationToken(),
+	): Promise<{ readonly screen: string; readonly oscTitle: string }> {
+		const release = await this.gate.acquireOperation(cancel);
+		try {
+			const socket = this.socket();
+			const deadline = OperationDeadline.in(this.timeoutMs);
+			// The exact-record check first: a capture is a read of somebody's
+			// terminal, and it must never read a session that is not this
+			// Agent's because a name was reused.
+			const exact = await this.findOwned(socket, record, cancel, deadline);
+			if (!exact) throw portFailure("conflict");
+			const title = await this.runTmux(
+				socket,
+				["display-message", "-p", "-t", record.sessionName, "#{pane_title}"],
+				this.contextHome,
+				cancel,
+				deadline,
+			);
+			const screen = await this.runTmux(
+				socket,
+				["capture-pane", "-p", "-J", "-t", record.sessionName],
+				this.contextHome,
+				cancel,
+				deadline,
+			);
+			if (!title.success || !screen.success) throw portFailure("failed");
+			return {
+				screen: parseCapture(screen.stdout),
+				oscTitle: parseLines(title.stdout)[0] ?? "",
+			};
 		} finally {
 			release();
 		}

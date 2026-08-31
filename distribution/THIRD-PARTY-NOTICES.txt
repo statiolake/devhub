@@ -24,6 +24,19 @@ Shipped application components
 * minimist 1.2.8, toml-eslint-parser 1.0.3 and eslint-visitor-keys 5.0.1 — MIT.
   The main process imports these three at runtime.
 
+Ported source
+-------------
+
+* herdr — Apache License 2.0; see `licenses/herdr-Apache-2.0.txt`. No code from
+  herdr is linked or redistributed. DevHub's agent status detection
+  (`apps/desktop/src/main/agent/detect/`) is a TypeScript port of herdr's rule
+  model from `src/detect/mod.rs` and `src/detect/manifest.rs`, and carries the
+  rules of its `claude` and `codex` screen manifests
+  (`src/detect/manifests/claude.toml` 2026.08.13.1 and
+  `src/detect/manifests/codex.toml` 2026.08.09.1). Each ported file names herdr
+  and this licence in its header. herdr ships no NOTICE file, so there is no
+  attribution notice to reproduce beyond this entry and the licence text.
+
 Build-only tools — Vite, TypeScript, ESLint, Prettier, esbuild and the rest of
 the toolchain — are not part of the bundle and are not represented here.
 
@@ -44,3 +57,4 @@ Upstream source references
 * https://github.com/electron/electron
 * https://github.com/facebook/react
 * https://github.com/xtermjs/xterm.js
+* https://github.com/herdrdev/herdr

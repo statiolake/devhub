@@ -39,6 +39,7 @@ import {
 	agentSessionName,
 	type TmuxTerminalRuntime,
 } from "../terminal/tmux.js";
+import type { AgentScreen } from "./detect/detector.js";
 
 /** One Agent, as the runtime needs to see it to start it. */
 export interface AgentLaunchSpec extends AgentTerminalTarget {
@@ -116,6 +117,30 @@ export class AgentSessions {
 				? [{ agentId: record.agentId, workspaceId: record.workspaceId }]
 				: [],
 		);
+	}
+
+	/**
+	 * One Agent's screen, for status detection.
+	 *
+	 * `capture-pane`, on the reconcile cadence, is the single source: it works
+	 * with no surface attached, which is what the sidebar needs. See
+	 * `detect/detector.ts` for why there is not a second one.
+	 */
+	async screen(
+		agentId: string,
+		workspaceId: string,
+		cancel = new CancellationToken(),
+	): Promise<AgentScreen> {
+		const captured = await this.#runtime.captureAgent(
+			{
+				kind: "agent",
+				agentId,
+				workspaceId,
+				sessionName: agentSessionName(agentId),
+			},
+			cancel,
+		);
+		return { agentId, ...captured, oscProgress: "" };
 	}
 
 	/**

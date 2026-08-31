@@ -592,6 +592,9 @@ export class AppCoordinator {
         return this.confirmStop(intent.confirmationId, id);
       case "retry_stop_agent":
         return this.retryStop(intent.agentId, id);
+      case "mark_agent_unread":
+        this.model.markAgentUnread(intent.agentId);
+        return this.transitionOutcome(beforeRevision, id);
       case "reconcile_agent":
         return this.requestAgentReconcile(id, intent.agentId);
       case "reconcile_agents":

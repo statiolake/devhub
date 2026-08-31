@@ -280,7 +280,17 @@ export class Repository {
   }
 }
 
-export type AgentProfileKind = "codex" | "claude";
+/**
+ * Whose screen an Agent's program draws.
+ *
+ * It is not "which program to run" — that is the profile's `command`. It is the
+ * only thing status detection can be keyed on, so `custom` is a real member
+ * rather than an absence: it says, permanently, that DevHub has no manifest for
+ * this screen and will not guess at one. An Agent on a `custom` profile is a
+ * live pane with a `?` for a status, which is exactly what attaching an editor
+ * or a plain command should get you.
+ */
+export type AgentProfileKind = "codex" | "claude" | "custom";
 
 export function validDisplayName(value: string): boolean {
   return value.trim().length > 0 && !value.includes("\0");
@@ -436,6 +446,8 @@ export interface AgentRestoreRecord {
   readonly status: AgentStatus;
   readonly runtimeHealth: RuntimeHealth;
   readonly controlState: AgentControlState;
+  /** Whether this Agent has asked for attention that nobody has looked at. */
+  readonly unread?: boolean;
 }
 
 export function agentRestoreRecord(
@@ -466,6 +478,16 @@ export class Agent {
     private statusValue: AgentStatus,
     private runtimeHealthValue: RuntimeHealth,
     private controlStateValue: AgentControlState,
+    /**
+     * The Agent asked for something and nobody has looked yet.
+     *
+     * It is a fact about the *person*, not about the Agent, which is why it is
+     * a flag of its own rather than a fifth status: an Agent can be waiting and
+     * read (you are looking at it now), or idle and unread (it asked, you never
+     * came, and it timed out). Collapsing the two would lose the second, which
+     * is the one worth a glow.
+     */
+    private unreadValue: boolean,
   ) {
     this.nameOverride = nameOverride;
   }
@@ -502,6 +524,7 @@ export class Agent {
       validated.status,
       validated.runtimeHealth,
       validated.controlState,
+      validated.unread === true,
     );
   }
 
@@ -515,6 +538,7 @@ export class Agent {
       this.statusValue,
       this.runtimeHealthValue,
       this.controlStateValue,
+      this.unreadValue,
     );
   }
 
@@ -538,6 +562,16 @@ export class Agent {
 
   get controlState(): AgentControlState {
     return this.controlStateValue;
+  }
+
+  get unread(): boolean {
+    return this.unreadValue;
+  }
+
+  setUnread(unread: boolean): boolean {
+    if (this.unreadValue === unread) return false;
+    this.unreadValue = unread;
+    return true;
   }
 
   get isInteractive(): boolean {

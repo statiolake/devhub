@@ -95,7 +95,7 @@ export interface CommandSource {
 
 export type WorkspaceSource = FilesystemSource | CommandSource;
 
-export type AgentProfileKind = "codex" | "claude";
+export type AgentProfileKind = "codex" | "claude" | "custom";
 
 export interface ConfiguredAgentProfile {
   readonly id: string;
@@ -460,6 +460,21 @@ function optionalString(
 ): string {
   const value = table[key];
   if (value === undefined) return fallback;
+  if (typeof value !== "string") fail("invalid_type", `${path}.${key}`);
+  return value;
+}
+
+/**
+ * A string the document must carry. Absence is a missing field, not a default:
+ * there is no value DevHub could supply that would be the author's intent.
+ */
+function requiredString(
+  table: Record<string, unknown>,
+  key: string,
+  path: string,
+): string {
+  const value = table[key];
+  if (value === undefined) fail("missing_required_field", `${path}.${key}`);
   if (typeof value !== "string") fail("invalid_type", `${path}.${key}`);
   return value;
 }
@@ -830,7 +845,7 @@ function agentProfileFromTable(
     prefix,
   );
   const kind = table["kind"];
-  if (kind !== "codex" && kind !== "claude") {
+  if (kind !== "codex" && kind !== "claude" && kind !== "custom") {
     fail("invalid_profile_kind", `${prefix}.kind`);
   }
   const rawEnv = table["env"];
@@ -848,7 +863,13 @@ function agentProfileFromTable(
     id: optionalString(table, "id", prefix, ""),
     display_name: optionalString(table, "display_name", prefix, ""),
     kind,
-    command: optionalString(table, "command", prefix, kind),
+    // A known kind's command defaults to its own name, which is what the two
+    // shipped profiles want and why nobody has to write it. `custom` has no
+    // such name: the whole of what it says is "run this", so it has to say it.
+    command:
+      kind === "custom"
+        ? requiredString(table, "command", prefix)
+        : optionalString(table, "command", prefix, kind),
     args: optionalStringArray(table, "args", prefix, []),
     env,
   };

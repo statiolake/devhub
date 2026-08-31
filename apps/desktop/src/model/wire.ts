@@ -232,6 +232,7 @@ function agentWire(agent: AgentSnapshot): AgentWire {
     status: agent.status,
     runtimeHealth: agent.runtimeHealth,
     controlState: agent.controlState.kind,
+    unread: agent.unread,
   };
 }
 
@@ -690,6 +691,11 @@ export function intentFromWire(wire: AppIntentWire): UserIntent {
     case "retry_stop_agent":
       return {
         type: "retry_stop_agent",
+        agentId: tryParse(() => parseAgentId(wire.agentId)),
+      };
+    case "mark_agent_unread":
+      return {
+        type: "mark_agent_unread",
         agentId: tryParse(() => parseAgentId(wire.agentId)),
       };
     case "reconcile_agent":

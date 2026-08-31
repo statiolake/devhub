@@ -226,6 +226,13 @@ export type UserIntent =
       readonly confirmationId: ConfirmationId;
     }
   | { readonly type: "retry_stop_agent"; readonly agentId: AgentId }
+  /**
+   * Put an Agent back in the unread pile.
+   *
+   * Opening one reads it, which is right almost always and wrong exactly when
+   * you looked, could not deal with it, and want the app to keep telling you.
+   */
+  | { readonly type: "mark_agent_unread"; readonly agentId: AgentId }
   | { readonly type: "reconcile_agent"; readonly agentId: AgentId }
   /**
    * Ask the provider about every Agent at once. DevHub raises this on its own

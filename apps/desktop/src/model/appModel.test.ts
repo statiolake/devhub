@@ -309,3 +309,60 @@ describe("duplicates", () => {
     ).toBe(DomainErrorCode.DuplicateWorkspaceRoot);
   });
 });
+
+describe("unread agents", () => {
+  /**
+   * A launched Agent, with the person looking somewhere else.
+   *
+   * Launching one selects it — you asked for it, you are looking at it — so
+   * every case below has to navigate away first to be about an Agent nobody is
+   * watching, which is the only case unread is about.
+   */
+  function withAgent() {
+    const model = modelWith([WS_A, "/dev/a"]);
+    model.addAgent(WS_A, AG_A, codex);
+    model.selectContext({ kind: "workspace", workspaceId: WS_A });
+    return model;
+  }
+
+  it("becomes unread on entering waiting, but not while it is on screen", () => {
+    const model = withAgent();
+    // Nobody is looking: the question is one to come back to.
+    model.setAgentStatus(AG_A, "waiting");
+    expect(model.agent(AG_A)?.unread).toBe(true);
+
+    // Opening it is reading it.
+    model.selectContext({ kind: "agent", agentId: AG_A });
+    expect(model.agent(AG_A)?.unread).toBe(false);
+
+    // Asking again while you are looking at it is not something to come back
+    // to — you are already there.
+    model.setAgentStatus(AG_A, "working");
+    model.setAgentStatus(AG_A, "waiting");
+    expect(model.agent(AG_A)?.unread).toBe(false);
+  });
+
+  it("survives the Agent moving on, and is only cleared by opening it", () => {
+    const model = withAgent();
+    model.setAgentStatus(AG_A, "waiting");
+    // It asked, nobody came, it timed out and went idle. The row still owes an
+    // answer, which is the case a single status mark would lose.
+    model.setAgentStatus(AG_A, "idle");
+    expect(model.agent(AG_A)?.unread).toBe(true);
+    model.selectContext({ kind: "agent", agentId: AG_A });
+    expect(model.agent(AG_A)?.unread).toBe(false);
+  });
+
+  it("can be put back by hand, and re-read by clicking the same row", () => {
+    const model = withAgent();
+    model.selectContext({ kind: "agent", agentId: AG_A });
+    model.markAgentUnread(AG_A);
+    expect(model.agent(AG_A)?.unread).toBe(true);
+    const before = model.snapshot().revision;
+    // Already selected: re-selecting still reads it, and still counts as a
+    // change, or the sidebar would keep drawing the dot.
+    model.selectContext({ kind: "agent", agentId: AG_A });
+    expect(model.agent(AG_A)?.unread).toBe(false);
+    expect(model.snapshot().revision).toBeGreaterThan(before);
+  });
+});

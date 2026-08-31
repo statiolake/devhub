@@ -12,6 +12,7 @@
  * that is converted here, once.
  */
 
+import { AgentStatusDetector } from "../agent/detect/detector.js";
 import { AgentSessions } from "../agent/sessions.js";
 import type { AppModel } from "../../model/appModel.js";
 import type {
@@ -35,18 +36,9 @@ export interface AgentWiringOptions {
 	readonly model: () => AppModel;
 }
 
-/**
- * What an Agent's status is, before anything has read its screen.
- *
- * There is no detector yet, so every Agent reports this and the row says so.
- * The alternative — reporting `working` because a process exists — would be a
- * claim about a screen nobody looked at, and it is exactly the claim that made
- * the previous runtime's status hard to trust.
- */
-const UNREAD_STATUS: AgentStatus = "unknown";
-
 export function wireAgents(options: AgentWiringOptions): AgentSessions {
 	const sessions = new AgentSessions(options.runtime);
+	const detector = new AgentStatusDetector();
 
 	registerAgentAdapter({
 		async launch(
@@ -104,12 +96,19 @@ export function wireAgents(options: AgentWiringOptions): AgentSessions {
 					if (agentId !== undefined && agent.id !== agentId) continue;
 					if (!live.has(agent.id)) {
 						if (sessions.isLaunching(agent.id)) continue;
+						detector.forget(agent.id);
 						exited.push(agent.id);
 						continue;
 					}
 					observations.push({
 						agentId: agent.id,
-						status: UNREAD_STATUS,
+						status: await status(
+							sessions,
+							detector,
+							agent.id,
+							workspace.id,
+							agent.profile.kind,
+						),
 						runtimeHealth: health,
 					});
 				}
@@ -127,6 +126,29 @@ export function wireAgents(options: AgentWiringOptions): AgentSessions {
 	});
 
 	return sessions;
+}
+
+/**
+ * One Agent's status this round.
+ *
+ * A capture that fails is not a status: the Agent's session is there — it was
+ * in the list a moment ago — and DevHub could not read its screen. Claiming
+ * `error` would report the Agent as broken for a failure of DevHub's own, so
+ * the reading is simply not taken and the row keeps what it had until the next
+ * round, which is the same thing a screen the manifest does not describe does.
+ */
+async function status(
+	sessions: AgentSessions,
+	detector: AgentStatusDetector,
+	agentId: AgentId,
+	workspaceId: WorkspaceId,
+	kind: string,
+): Promise<AgentStatus> {
+	const screen = await sessions
+		.screen(agentId, workspaceId)
+		.catch(() => undefined);
+	if (screen === undefined) return detector.showing(agentId);
+	return detector.status(kind, screen);
 }
 
 async function terminate(

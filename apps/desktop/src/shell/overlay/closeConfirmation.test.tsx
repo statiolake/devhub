@@ -57,6 +57,7 @@ function snapshotWith(agents: boolean): AppSnapshot {
                 profileId: "claude",
                 ordinal: 1,
                 status: "working",
+                unread: false,
                 controlState: { kind: "running" } as never,
                 runtimeHealth: { kind: "healthy" } as never,
               },

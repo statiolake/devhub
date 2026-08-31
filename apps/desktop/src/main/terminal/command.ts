@@ -257,6 +257,21 @@ export function parseOptionValue(output: Buffer): string {
 	return value;
 }
 
+/**
+ * A pane capture, as text.
+ *
+ * This is the one place provider output is read as *content* rather than as
+ * identity, and the rules are different for it. It is bounded like everything
+ * else and it must be valid UTF-8 — a pane mid-way through a multi-byte
+ * sequence would otherwise reach the detector as replacement characters and
+ * quietly stop matching — but it is not required to end in a newline and its
+ * embedded newlines are the lines the rules read.
+ */
+export function parseCapture(output: Buffer): string {
+	if (output.byteLength > MAX_OUTPUT_BYTES) throw portFailure("failed");
+	return decodeUtf8(output);
+}
+
 function decodeUtf8(output: Buffer): string {
 	const text = output.toString("utf8");
 	// Buffer#toString replaces invalid sequences; comparing byte lengths is how
