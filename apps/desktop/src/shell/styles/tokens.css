@@ -170,14 +170,13 @@
      title to carry, so the row is only as tall as the Activity control needs. */
   --titlebar-height: 38px;
   --traffic-light-inset: 88px;
-  --row-height: 28px;
   --sidebar-width: 248px;
   /* The Sidebar's leading rail. Every row reserves the rail first, then the
      glyph column; a section heading aligns to the glyph so the headings and
-     the icons beneath them share one left edge. */
+     the icons beneath them share one left edge. The rail is the one part of a
+     row that does not follow the density: it is the inset the glyph column
+     hangs off, and it reads as the pane's edge, not as space around a row. */
   --sidebar-rail-width: 14px;
-  --sidebar-glyph-width: 16px;
-  --sidebar-glyph-ink: 14px;
   /* How far a row's leading glyph drops to sit level with its label.
    *
    * A row centres its glyph and its label on the same box, and that is the
@@ -203,10 +202,59 @@
    * family would move it. Icon-only surfaces — the collapsed rail's tiles —
    * have no label to sit level with and do not take it. */
   --sidebar-glyph-optical-shift: 1px;
-  /* The Sidebar collapsed: an icon rail, not nothing. One column of tiles,
-     each the size of a toolbar control, with the same gutter either side. */
-  --sidebar-collapsed-width: 52px;
+  /* The gutter either side of a collapsed rail's tile. The rail is as wide as
+     one tile plus two of these, whatever size the tile is at. */
+  --sidebar-tile-gutter: 10px;
+}
+
+/*
+ * The Sidebar's two densities.
+ *
+ * `sidebar_density` is the one appearance setting that is about space rather
+ * than colour, and this is the whole of what it means. Both densities are
+ * written out, neither is "the other one with a rule missing", so the geometry
+ * of a density can be read off in one place; the App Shell always stamps the
+ * attribute, defaulting to compact, so exactly one of these always applies.
+ *
+ * What changes is the room a row takes and the size of the mark that leads it
+ * — the two things Finder's own sidebar-icon-size control changes. What does
+ * *not* change is the type: a Sidebar label is the 13px macOS control size in
+ * both, because it sits in the same window as titlebar and dialog text that is
+ * also 13px, and a navigation pane whose type size drifted from the rest of
+ * the chrome would read as a different app rather than as a denser one. That
+ * is also why `--sidebar-glyph-optical-shift` is not here: it is derived from
+ * the font, not from the row, and 1px stays correct at every row height.
+ *
+ * The rail is included. Collapsed, a tile *is* the row, so a rail that kept
+ * one size would be the one place the setting stopped applying; the rail's
+ * width follows its tile so the gutters stay equal either side.
+ */
+.app-shell[data-sidebar-density="compact"] {
+  --row-height: 28px;
+  --sidebar-glyph-width: 16px;
+  --sidebar-glyph-ink: 14px;
+  --sidebar-row-gap: var(--space-1);
+  --sidebar-section-gap: var(--space-3);
+  --sidebar-scroll-inset: var(--space-2);
   --sidebar-tile-size: 32px;
+  --sidebar-tile-ink: 17px;
+}
+
+.app-shell[data-sidebar-density="comfortable"] {
+  --row-height: 34px;
+  --sidebar-glyph-width: 18px;
+  --sidebar-glyph-ink: 16px;
+  --sidebar-row-gap: var(--space-2);
+  --sidebar-section-gap: var(--space-5);
+  --sidebar-scroll-inset: var(--space-3);
+  --sidebar-tile-size: 38px;
+  --sidebar-tile-ink: 20px;
+}
+
+.app-shell {
+  --sidebar-collapsed-width: calc(
+    var(--sidebar-tile-size) + 2 * var(--sidebar-tile-gutter)
+  );
 }
 
 @supports (color: AccentColor) {
