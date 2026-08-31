@@ -227,10 +227,16 @@ function WorkspaceRow({
                     aria-current={agentSelected ? "page" : undefined}
                     aria-label={`${agent.displayName}, ${statusLabel(agent.status)} agent, ${agent.controlState === "stopping" ? "Stopping" : stopFailed ? "Stop failed" : runtimeHealthLabel(agent.runtimeHealth)}${agent.unread ? ", unread" : ""}`}
                     disabled={agent.controlState === "stopping"}
-                    onClick={() =>
+                    // Command-click opens the Agent beside its workbench; a
+                    // plain click gives it the whole content area. The same
+                    // pair as Return and Command-Return in the picker, because
+                    // it is the same choice, and it is stated in the intent
+                    // rather than applied afterwards.
+                    onClick={(event) =>
                       dispatch({
                         type: "select_context",
                         context: { kind: "agent", agentId: agent.id },
+                        split: event.metaKey,
                       })
                     }
                     // Renaming is what a source list does on a second click at

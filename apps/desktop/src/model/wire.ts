@@ -18,6 +18,7 @@ import {
   type CloseInspectionProjection,
   type ResourceInspection,
   type SurfaceLayout,
+  type SurfacePresentation,
 } from "./domain.js";
 import type {
   AgentSnapshot,
@@ -187,10 +188,24 @@ export function unavailableAgentProfiles(
   };
 }
 
+/**
+ * The gesture, as the model's presentation.
+ *
+ * The page speaks of a modifier — did they hold Command? — and the model
+ * speaks of how much of the content area the thing takes. Absent is the plain
+ * gesture, so a page that says nothing gets the arrangement a plain click
+ * means, and this is the only place the two vocabularies touch.
+ */
+function presentationFrom(split: boolean | undefined): SurfacePresentation {
+  return split === true ? "beside" : "full";
+}
+
 function layoutWire(layout: SurfaceLayout): LayoutWire {
   switch (layout.kind) {
     case "workbench":
       return { kind: "workbench", editorKey: surfaceKeyName(layout.editor) };
+    case "agent":
+      return { kind: "agent", agentKey: surfaceKeyName(layout.agent) };
     case "split":
       return {
         kind: "split",
@@ -282,7 +297,10 @@ export function snapshotWire(
     revision: snapshot.revision,
     readiness,
     editorHost: editorHostWire(snapshot.editorHost),
-    selection: { context: contextWire(snapshot.selection.context) },
+    selection: {
+      context: contextWire(snapshot.selection.context),
+      presentation: snapshot.selection.presentation,
+    },
     layout: layoutWire(snapshot.layout),
     workspaces,
     sidebar: { width: snapshot.sidebar.width },
@@ -590,9 +608,17 @@ export function intentFromWire(wire: AppIntentWire): UserIntent {
   switch (wire.type) {
     case "select_context": {
       const context = wire.context;
+      // The wire says which gesture was used; the model says what the layout
+      // is. The two words meet here, once, and `split` is absent for every
+      // plain click and every plain Return.
+      const presentation = presentationFrom(wire.split);
       switch (context.kind) {
         case "global":
-          return { type: "select_context", context: { kind: "global" } };
+          return {
+            type: "select_context",
+            context: { kind: "global" },
+            presentation,
+          };
         case "workspace":
           return {
             type: "select_context",
@@ -602,6 +628,7 @@ export function intentFromWire(wire: AppIntentWire): UserIntent {
                 parseWorkspaceId(context.workspaceId),
               ),
             },
+            presentation,
           };
         case "agent":
           return {
@@ -610,6 +637,7 @@ export function intentFromWire(wire: AppIntentWire): UserIntent {
               kind: "agent",
               agentId: tryParse(() => parseAgentId(context.agentId)),
             },
+            presentation,
           };
       }
       break;
@@ -669,6 +697,7 @@ export function intentFromWire(wire: AppIntentWire): UserIntent {
         type: "create_agent",
         workspaceId: tryParse(() => parseWorkspaceId(wire.workspaceId)),
         profileId: tryParse(() => parseAgentProfileId(wire.profileId)),
+        presentation: presentationFrom(wire.split),
       };
     case "rename_agent": {
       const displayName = wire.displayName;

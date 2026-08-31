@@ -982,12 +982,34 @@ export function surfaceKeyName(key: SurfaceKey): string {
  */
 export type SurfaceLayout =
   | { readonly kind: "workbench"; readonly editor: SurfaceKey }
+  | { readonly kind: "agent"; readonly agent: SurfaceKey }
   | {
       readonly kind: "split";
       readonly editor: SurfaceKey;
       readonly agent: SurfaceKey;
     }
   | { readonly kind: "unavailable" };
+
+/**
+ * How much of the content area the thing you selected takes.
+ *
+ * Selecting an Agent used to mean one arrangement — the workbench, with the
+ * Agent's pane beside it — so the layout could be read off the context alone.
+ * It cannot any more: the same Agent is either the whole content area or half
+ * of it, and which one is what the person asked for when they selected it.
+ * Plain click, Return: `full`. Command-click, Command-Return: `beside`.
+ *
+ * It is a property of the *selection*, not of the Agent. Opening an Agent
+ * beside the workbench and later opening the same Agent on its own are two
+ * selections of one Agent, so nothing about the Agent itself changes and
+ * nothing has to be stored on it or remembered between launches.
+ *
+ * Only an Agent has two answers. A Workspace *is* its workbench, full width,
+ * and Scratch is the same — so `full` is the only presentation a non-Agent
+ * selection is ever recorded with, which `AppModel.selectContext` enforces
+ * rather than leaving a second value lying around that nothing reads.
+ */
+export type SurfacePresentation = "full" | "beside";
 
 /** One input to the consolidated Workspace close inspection. */
 export type ResourceInspection =

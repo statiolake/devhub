@@ -36,6 +36,7 @@ import {
   type CloseInspectionInputs,
   type CloseInspectionProjection,
   type DisplayPath,
+  type SurfacePresentation,
   type WorkspaceId,
   type WorkspaceRoot,
 } from "./domain.js";
@@ -371,13 +372,31 @@ export class AppCoordinator {
     OperationId,
     { root: WorkspaceRoot; selectedPath: DisplayPath }
   >();
+  // The presentation rides along with the profile from the moment the request
+  // is made until the Agent is in the model, because "open it beside the
+  // workbench" is part of that one request — not a second command that could
+  // arrive after the row already appeared somewhere else.
   private readonly resolvedProfiles = new Map<
     OperationId,
-    { workspaceId: WorkspaceId; profile: AgentProfile }
+    {
+      workspaceId: WorkspaceId;
+      profile: AgentProfile;
+      presentation: SurfacePresentation;
+    }
   >();
   private readonly launchProfiles = new Map<
     OperationId,
-    { workspaceId: WorkspaceId; agentId: AgentId; profile: AgentProfile }
+    {
+      workspaceId: WorkspaceId;
+      agentId: AgentId;
+      profile: AgentProfile;
+      presentation: SurfacePresentation;
+    }
+  >();
+  /** The presentation an agent-creation request asked for, until it lands. */
+  private readonly requestedPresentations = new Map<
+    OperationId,
+    SurfacePresentation
   >();
   private readonly inspectionContinuations = new Map<
     OperationId,
@@ -545,7 +564,7 @@ export class AppCoordinator {
     const beforeRevision = this.model.snapshot().revision;
     switch (intent.type) {
       case "select_context":
-        this.model.selectContext(intent.context);
+        this.model.selectContext(intent.context, intent.presentation);
         return this.transitionOutcome(beforeRevision, id);
       case "resize_split":
         this.model.setSplitRatio(intent.ratio);
@@ -577,6 +596,7 @@ export class AppCoordinator {
           intent.workspaceId,
           intent.profileId,
           intent.extraArgs ?? [],
+          intent.presentation,
           id,
         );
       case "rename_agent":
@@ -740,6 +760,7 @@ export class AppCoordinator {
     workspaceId: WorkspaceId,
     profileId: AgentProfileId,
     extraArgs: readonly string[],
+    presentation: SurfacePresentation,
     id: OperationId,
   ): IntentOutcome {
     const workspace = this.model.workspace(workspaceId);
@@ -758,6 +779,7 @@ export class AppCoordinator {
       { kind: "profile", workspaceId, profileId },
       id,
     );
+    this.requestedPresentations.set(token.operationId, presentation);
     this.emitEffect({
       kind: "resolve_agent_profile",
       token,
@@ -1032,6 +1054,7 @@ export class AppCoordinator {
   private clearOperationAuxiliaryState(token: OperationToken): void {
     const id = token.operationId;
     this.resolvedPaths.delete(id);
+    this.requestedPresentations.delete(id);
     this.resolvedProfiles.delete(id);
     this.launchProfiles.delete(id);
     this.inspectionContinuations.delete(id);
@@ -1176,7 +1199,13 @@ export class AppCoordinator {
       { kind: "profile", workspaceId, profileId: profile.id },
       id,
     );
-    this.resolvedProfiles.set(nextToken.operationId, { workspaceId, profile });
+    const presentation = this.requestedPresentations.get(id) ?? "full";
+    this.requestedPresentations.delete(id);
+    this.resolvedProfiles.set(nextToken.operationId, {
+      workspaceId,
+      profile,
+      presentation,
+    });
     this.emitEffect({
       kind: "generate_agent_id",
       token: nextToken,
@@ -1217,6 +1246,7 @@ export class AppCoordinator {
       workspaceId,
       agentId,
       profile: resolved.profile,
+      presentation: resolved.presentation,
     });
     const launchToken = this.startOperation(
       "launch_agent",
@@ -1272,6 +1302,7 @@ export class AppCoordinator {
         target.agentId === agentId,
     );
     const profile = expected.profile;
+    const presentation = expected.presentation;
     this.launchProfiles.delete(token.operationId);
 
     if (result.kind === "failed") {
@@ -1282,7 +1313,7 @@ export class AppCoordinator {
     }
 
     try {
-      this.model.addAgent(workspaceId, agentId, profile);
+      this.model.addAgent(workspaceId, agentId, profile, presentation);
     } catch (raw) {
       const error = AppError.from(raw);
       const terminateToken = this.startOperation(
@@ -1297,7 +1328,7 @@ export class AppCoordinator {
       });
       throw error;
     }
-    this.model.selectContext({ kind: "agent", agentId });
+    this.model.selectContext({ kind: "agent", agentId }, presentation);
     const snapshot = this.snapshot();
     this.emit({ kind: "snapshot", snapshot });
     this.emit({ kind: "operation_completed", token });

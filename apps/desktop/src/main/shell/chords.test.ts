@@ -46,7 +46,7 @@ function snapshotOf({
 		readiness: "ready",
 		revision: 1,
 		schemaVersion: 1,
-		selection: { context },
+		selection: { context, presentation: "full" },
 		sidebar: { width: 248 },
 		splitRatio: 0.55,
 		workspaces,

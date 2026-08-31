@@ -24,6 +24,7 @@ import type {
   DisplayPath,
   DomainErrorCode,
   NavigationContext,
+  SurfacePresentation,
   RuntimeHealth,
   WorkspaceId,
   WorkspaceRoot,
@@ -194,7 +195,12 @@ export function requestedPath(raw: string): RequestedPath {
 }
 
 export type UserIntent =
-  | { readonly type: "select_context"; readonly context: NavigationContext }
+  | {
+      readonly type: "select_context";
+      readonly context: NavigationContext;
+      /** How much of the content area it should take. Only Agents have two. */
+      readonly presentation: SurfacePresentation;
+    }
   | { readonly type: "resize_sidebar"; readonly width: number }
   | { readonly type: "resize_split"; readonly ratio: number }
   | { readonly type: "open_folder"; readonly path: RequestedPath }
@@ -219,6 +225,15 @@ export type UserIntent =
        * one rule about how a launch's arguments are composed.
        */
       readonly extraArgs?: readonly string[];
+      /**
+       * How the new Agent should be shown once it is running.
+       *
+       * Creating an Agent selects it, so the same choice applies as when one is
+       * selected from a row — and it is made here, with the request, rather
+       * than by a second command afterwards that could arrive late enough to be
+       * seen as a jump.
+       */
+      readonly presentation: SurfacePresentation;
     }
   | {
       readonly type: "rename_agent";

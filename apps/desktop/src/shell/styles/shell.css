@@ -479,6 +479,7 @@ body.is-resizing-sidebar {
 /* ----------------------------------------------------------------- panes */
 
 .surface-panes {
+  position: relative;
   display: flex;
   overflow: hidden;
   flex: 1;
@@ -541,6 +542,19 @@ body.is-resizing-sidebar {
   min-width: 0;
   min-height: 0;
   background: var(--terminal-background, var(--surface));
+}
+
+/* An Agent on its own covers the whole content area, hole included.
+ *
+ * Laid over the hole rather than replacing it, because the hole is what the
+ * page measures and reports as the workbench's rectangle. Collapsing it to
+ * nothing would tell main the workbench is zero-sized, and a workbench laid
+ * out against nothing does not recover when it comes back — so the hole keeps
+ * its full size, the native view is simply not the thing on screen, and the
+ * Agent is painted on top of where it would have been. */
+.agent-pane[data-presentation="full"] {
+  position: absolute;
+  inset: 0;
 }
 
 body.is-resizing-split {

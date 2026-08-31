@@ -164,14 +164,20 @@ function AgentPane({
   snapshot,
   appearance,
   activeKey,
+  presentation,
 }: {
   readonly snapshot: AppSnapshot;
   readonly appearance: AppAppearance | undefined;
   readonly activeKey: string | undefined;
+  readonly presentation: "full" | "beside";
 }) {
   const pool = useMemo(() => runningAgentSurfaces(snapshot), [snapshot]);
   return (
-    <div className="agent-pane" hidden={activeKey === undefined}>
+    <div
+      className="agent-pane"
+      hidden={activeKey === undefined}
+      data-presentation={presentation}
+    >
       {[...pool.values()].map((surface) => (
         <div
           className="surface-pool-entry"
@@ -305,6 +311,15 @@ export function SurfaceViewport({
   let surfaceState: string;
   let body: ReactNode = null;
   let split = false;
+  /**
+   * Whether the Agent's pane covers the content area or sits beside it.
+   *
+   * Read straight off the layout rather than from the selection: the layout is
+   * already the one answer to "what is in the content area", and asking the
+   * selection separately would be a second reading of the same fact that could
+   * disagree with the first.
+   */
+  let agentPresentation: "full" | "beside" = "beside";
   let agentKey: string | undefined;
   let editorKey: string | undefined;
   let workbenchOnScreen = false;
@@ -318,6 +333,13 @@ export function SurfaceViewport({
   } else if (layout.kind === "unavailable") {
     surfaceState = workspace?.state ?? "unavailable";
     body = <Unavailable workspace={workspace} actions={unavailableActions} />;
+  } else if (layout.kind === "agent") {
+    // No workbench in this arrangement, so none is asked for and none is
+    // revealed. The views stay built and running behind it: this is the Agent
+    // covering the workbench, not the workbench going away.
+    surfaceState = "agent";
+    agentPresentation = "full";
+    agentKey = layout.agentKey;
   } else if (restartingEditors.has(layout.editorKey)) {
     // The workbench is being rebuilt in this same slot. The selection has not
     // moved and must not: what changed is that there is nothing to show yet,
@@ -332,6 +354,7 @@ export function SurfaceViewport({
     announce = false;
     if (layout.kind === "split") {
       split = true;
+      agentPresentation = "beside";
       agentKey = layout.agentKey;
     }
   }
@@ -408,6 +431,7 @@ export function SurfaceViewport({
           snapshot={snapshot}
           appearance={appearance}
           activeKey={agentKey}
+          presentation={agentPresentation}
         />
       </div>
     </section>

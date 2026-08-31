@@ -154,7 +154,19 @@ export interface AppErrorWire {
 	readonly timestampMs: number;
 }
 export type AppIntentWire =
-	| { readonly context: ContextWire; readonly type: "select_context" }
+	| {
+			readonly context: ContextWire;
+			/**
+			 * Show it beside the workbench rather than on its own.
+			 *
+			 * The same modifier as on `request_create_agent`, and absent means the
+			 * same thing: the plain gesture, which fills the content area. Only an
+			 * Agent has two answers; on any other context the model records `full`
+			 * whatever this says.
+			 */
+			readonly split?: boolean;
+			readonly type: "select_context";
+	  }
 	| { readonly type: "resize_sidebar"; readonly width: number }
 	| { readonly ratio: number; readonly type: "resize_split" }
 	| { readonly type: "open_workspace_picker" }
@@ -240,12 +252,17 @@ export interface AppSnapshotWire {
  */
 export type LayoutWire =
 	| { readonly kind: "workbench"; readonly editorKey: string }
+	/** An Agent on its own, over the whole content area. */
+	| { readonly kind: "agent"; readonly agentKey: string }
 	| {
 			readonly kind: "split";
 			readonly editorKey: string;
 			readonly agentKey: string;
 	  }
 	| { readonly kind: "unavailable" };
+
+/** See `SurfacePresentation` in the domain: how much of the area it takes. */
+export type SurfacePresentationWire = "full" | "beside";
 export type CloseDiagnosticWire =
 	| "root_missing"
 	| "root_inaccessible"
@@ -309,6 +326,7 @@ export type RuntimeHealthWire =
 	| "failed";
 export interface SelectionWire {
 	readonly context: ContextWire;
+	readonly presentation: SurfacePresentationWire;
 }
 export interface SidebarWire {
 	readonly width: number;

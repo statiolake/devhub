@@ -133,6 +133,11 @@ import {
 } from "./loginEnvironment.js";
 import type { AgentSessions } from "../agent/sessions.js";
 import { startWorkspacePicker } from "./workspacePicker.js";
+import {
+	cloneProject,
+	createProject,
+	defaultProjectDirectory,
+} from "./projects.js";
 import { installMenu, refreshMenu } from "./menu.js";
 import { installKeyboard } from "./keyboard.js";
 import {
@@ -1599,12 +1604,19 @@ export class AppController {
 	 * The workbench the selection wants on screen, as a folder key.
 	 *
 	 * One reading of the layout, used by everything that has to put a workbench
-	 * somewhere. A Workspace and an Agent in it resolve to the same workbench,
-	 * which is what makes selecting an Agent a split rather than a jump.
+	 * somewhere. A Workspace and an Agent *beside* it resolve to the same
+	 * workbench, which is what makes that arrangement a split rather than a
+	 * jump.
+	 *
+	 * Nothing, for the two layouts with no workbench in them: a Workspace that
+	 * cannot be shown, and an Agent filling the content area on its own. In
+	 * neither case is a workbench closed or forgotten — the view stays built and
+	 * running, and `syncEditorViews` still keeps one per workspace — it is only
+	 * that no workbench is the thing on screen, so there is none to reveal.
 	 */
 	private selectedEditorSurfaceKey(): string | undefined {
 		const layout = this.coordinator.snapshot().layout;
-		return layout.kind === "unavailable"
+		return layout.kind === "unavailable" || layout.kind === "agent"
 			? undefined
 			: surfaceKeyName(layout.editor);
 	}
@@ -1902,6 +1914,7 @@ export class AppController {
 		await this.dispatchAwaiting({
 			type: "select_context",
 			context: { kind: "workspace", workspaceId: workspace.id },
+			presentation: "full",
 		});
 		await this.syncEditorView();
 		openFileInWorkbench(await this.workbenchWindow(root), target, position);
@@ -2008,9 +2021,13 @@ export class AppController {
 			workspaceId: workspace.id,
 			profileId: agentProfileId(profileId),
 			extraArgs: args,
+			// `devhub agent` has no modifier to hold, so it gets the plain
+			// arrangement: the Agent, on its own, which is what the person who
+			// typed the command asked to see.
+			presentation: "full",
 		});
-		// Creating an Agent selects it, and selecting an Agent is a split with
-		// its pane in it — so there is nothing left for this to choose.
+		// Creating an Agent selects it, and the request above already said how it
+		// should be shown — so there is nothing left for this to choose.
 		this.bringToFront();
 		const context = this.coordinator.model.selection.context;
 		const agent =
@@ -2139,6 +2156,31 @@ export class AppController {
 		return picked?.[0];
 	}
 
+	/**
+	 * Clone with the `git` this DevHub resolved, not whatever a `git` on some
+	 * PATH turns out to be.
+	 *
+	 * The same lookup every runtime goes through, in the same environment the
+	 * terminals and Agents get, so a clone can only fail for reasons the person
+	 * can see — and "there is no git here" is one of them, said plainly.
+	 */
+	private async clone(url: string, parentDirectory: string): Promise<string> {
+		const configured = this.config?.runtimes.git ?? "git";
+		const git = await resolveExecutable(
+			configured,
+			this.launchEnvironment["PATH"] ?? "",
+		);
+		if (git.kind === "unavailable") {
+			throw new Error(runtimeUnavailableMessage(git));
+		}
+		return cloneProject({
+			url,
+			parentDirectory,
+			git: git.value,
+			environment: this.launchEnvironment,
+		});
+	}
+
 	private registerIpc(): void {
 		const handle = electron.ipcMain.handle.bind(electron.ipcMain);
 
@@ -2188,6 +2230,24 @@ export class AppController {
 			this.cancelPicker = undefined;
 			return this.openFolder(path);
 		});
+		// Creating and cloning end where picking does — `openFolder` — because
+		// they differ only in how the directory came to exist.
+		handle(CHANNELS.projectDefaultDirectory, () =>
+			defaultProjectDirectory(this.config),
+		);
+		handle(CHANNELS.createProject, async (_event, path: string) => {
+			this.cancelPicker?.();
+			this.cancelPicker = undefined;
+			return this.openFolder(await createProject(path));
+		});
+		handle(
+			CHANNELS.cloneProject,
+			async (_event, url: string, parentDirectory: string) => {
+				this.cancelPicker?.();
+				this.cancelPicker = undefined;
+				return this.openFolder(await this.clone(url, parentDirectory));
+			},
+		);
 
 		handle(CHANNELS.openSettings, () => {
 			openSettingsWindow();

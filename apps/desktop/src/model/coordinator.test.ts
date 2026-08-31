@@ -259,7 +259,11 @@ describe("opening a folder", () => {
   it("selects the existing workspace when the same folder is opened again", () => {
     const driver = new Driver();
     driver.openFolder("/dev/project");
-    driver.dispatch({ type: "select_context", context: { kind: "global" } });
+    driver.dispatch({
+      type: "select_context",
+      context: { kind: "global" },
+      presentation: "full",
+    });
     driver.settle();
     driver.openFolder("/dev/project");
     expect(driver.coordinator.snapshot().workspaces).toHaveLength(1);
@@ -417,6 +421,7 @@ describe("launching an agent", () => {
       type: "create_agent",
       workspaceId: WS_A,
       profileId: agentProfileId("codex"),
+      presentation: "full",
     });
     driver.settle();
     const snapshot = driver.coordinator.snapshot();
@@ -425,6 +430,7 @@ describe("launching an agent", () => {
     ]);
     expect(snapshot.selection).toEqual({
       context: { kind: "agent", agentId: AG_A },
+      presentation: "full",
     });
   });
 
@@ -435,6 +441,7 @@ describe("launching an agent", () => {
       type: "create_agent",
       workspaceId: WS_A,
       profileId: agentProfileId("codex"),
+      presentation: "full",
     });
     driver.answer(driver.drainEffects()[0]);
     driver.answer(driver.drainEffects()[0]);
@@ -463,6 +470,7 @@ describe("stopping an agent", () => {
       type: "create_agent",
       workspaceId: WS_A,
       profileId: agentProfileId("codex"),
+      presentation: "full",
     });
     driver.settle();
 
@@ -490,6 +498,7 @@ describe("stopping an agent", () => {
       type: "create_agent",
       workspaceId: WS_A,
       profileId: agentProfileId("codex"),
+      presentation: "full",
     });
     driver.settle();
     driver.dispatch({ type: "stop_agent", agentId: AG_A });
@@ -607,6 +616,7 @@ describe("reconciling agents", () => {
       type: "create_agent",
       workspaceId: WS_A,
       profileId: agentProfileId("codex"),
+      presentation: "full",
     });
     driver.settle();
     return driver;

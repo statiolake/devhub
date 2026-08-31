@@ -35,6 +35,7 @@ import {
   type Repository,
   type RuntimeHealth,
   type SurfaceLayout,
+  type SurfacePresentation,
   type WorkspaceId,
   type WorkspaceRoot,
   type WorkspaceState,
@@ -62,22 +63,29 @@ function fail(code: DomainErrorCode): never {
 }
 
 /**
- * The selection, which is the context and nothing else.
+ * The selection: what is selected, and how it is being shown.
  *
- * It carried an Activity beside the context until the Activity ring was
- * retired. The wrapper stays because the persisted record and the wire both
- * name a `selection`, and because a selection is a thing the model has one of
- * — but there is now exactly one field, and `sameSelection` is `sameContext`.
+ * The presentation is here rather than on the context because it is not part
+ * of what was selected — the same Agent selected two ways is the same Agent,
+ * and the Sidebar highlights the same row either way. It is part of *this*
+ * selection, which is why re-selecting what is already selected can still be a
+ * change: opening an Agent that is already open, but on its own this time, has
+ * to move the layout, and `sameSelection` is what decides whether anything
+ * moved.
  */
 export interface NavigationSelection {
   readonly context: NavigationContext;
+  readonly presentation: SurfacePresentation;
 }
 
 export function sameSelection(
   left: NavigationSelection,
   right: NavigationSelection,
 ): boolean {
-  return sameContext(left.context, right.context);
+  return (
+    sameContext(left.context, right.context) &&
+    left.presentation === right.presentation
+  );
 }
 
 export interface SidebarSnapshot {
@@ -166,7 +174,10 @@ export class AppModel {
   private readonly workspaceList: Workspace[] = [];
   private readonly repositoryMap = new Map<RepositoryId, Repository>();
   private readonly nextAgentOrdinals = new Map<string, number>();
-  private selectionValue: NavigationSelection = { context: GLOBAL_CONTEXT };
+  private selectionValue: NavigationSelection = {
+    context: GLOBAL_CONTEXT,
+    presentation: "full",
+  };
   private sidebarWidthValue = SIDEBAR_DEFAULT_WIDTH;
   private splitRatioValue = SPLIT_DEFAULT_RATIO;
   private editorHost: EditorHostState = { kind: "starting" };
@@ -177,7 +188,7 @@ export class AppModel {
       schemaVersion: APP_SNAPSHOT_SCHEMA_VERSION,
       revision: this.revision,
       selection: this.selectionValue,
-      layout: this.resolveLayout(this.selectionValue.context),
+      layout: this.resolveLayout(this.selectionValue),
       workspaces: this.workspaceSnapshots(),
       sidebar: { width: this.sidebarWidthValue },
       splitRatio: this.splitRatioValue,
@@ -324,7 +335,19 @@ export class AppModel {
     }
   }
 
-  addAgent(owner: WorkspaceId, id: AgentId, profile: AgentProfile): void {
+  /**
+   * Add an Agent and select it, shown the way the person asked for.
+   *
+   * Creating an Agent is a way of selecting it, so it takes the presentation
+   * for the same reason `selectContext` does — and defaults it the same way,
+   * to `full`.
+   */
+  addAgent(
+    owner: WorkspaceId,
+    id: AgentId,
+    profile: AgentProfile,
+    presentation: SurfacePresentation = "full",
+  ): void {
     if (this.agent(id)) {
       fail(DomainErrorCode.DuplicateAgent);
     }
@@ -339,7 +362,10 @@ export class AppModel {
     }
     workspace.addAgent(Agent.create(id, owner, profile, ordinal));
     this.nextAgentOrdinals.set(key, ordinal + 1);
-    this.selectionValue = { context: { kind: "agent", agentId: id } };
+    this.selectionValue = {
+      context: { kind: "agent", agentId: id },
+      presentation,
+    };
     this.bumpRevision();
   }
 
@@ -484,7 +510,23 @@ export class AppModel {
     }
   }
 
-  selectContext(context: NavigationContext): void {
+  /**
+   * Select something, and say how it should be shown.
+   *
+   * The presentation defaults to `full`, which is the plain click and the
+   * plain Return. A caller that means "beside the workbench" has to say so,
+   * because that is the modified gesture — and a caller that forgets cannot
+   * accidentally produce the arrangement nobody asked for.
+   *
+   * Only an Agent has two presentations, so anything else is recorded as
+   * `full` whatever the caller passed. That keeps the invariant a fact about
+   * the stored value rather than a rule every reader has to remember: there is
+   * no non-Agent selection carrying a `beside` nothing would honour.
+   */
+  selectContext(
+    context: NavigationContext,
+    presentation: SurfacePresentation = "full",
+  ): void {
     this.ensureContextExists(context);
     // Opening an Agent is reading it. This is the only place that clears the
     // flag automatically, so "it went away and I do not know why" has one
@@ -492,7 +534,10 @@ export class AppModel {
     const read =
       context.kind === "agent" &&
       this.agent(context.agentId)?.setUnread(false) === true;
-    const next: NavigationSelection = { context };
+    const next: NavigationSelection = {
+      context,
+      presentation: context.kind === "agent" ? presentation : "full",
+    };
     if (!sameSelection(this.selectionValue, next)) {
       this.selectionValue = next;
       this.bumpRevision();
@@ -507,7 +552,8 @@ export class AppModel {
    * The one place that decides what the content area holds, and what it points
    * at. Everything the page draws in it comes from here.
    */
-  resolveLayout(context: NavigationContext): SurfaceLayout {
+  resolveLayout(selection: NavigationSelection): SurfaceLayout {
+    const context = selection.context;
     if (context.kind === "global") {
       return { kind: "workbench", editor: { kind: "global-editor" } };
     }
@@ -528,9 +574,13 @@ export class AppModel {
     if (!agent || !workspace || !isWorkspaceAvailable(workspace.state)) {
       return { kind: "unavailable" };
     }
-    // An Agent is not a place of its own: it is a pane beside the workbench of
-    // the Workspace it runs in, and selecting it must not take that workbench
-    // away. That is the whole of what the split is for.
+    // An Agent is the whole content area, unless the person asked for it
+    // beside the workbench. Both arrangements keep the Workspace's workbench
+    // running — a full-screen Agent covers it, it is not closed — so moving
+    // between them costs nothing and loses nothing.
+    if (selection.presentation === "full") {
+      return { kind: "agent", agent: { kind: "agent", agentId: agent.id } };
+    }
     return {
       kind: "split",
       editor: { kind: "workspace-editor", workspaceId: workspace.id },
@@ -547,9 +597,14 @@ export class AppModel {
       this.selectionValue.context.kind === "agent" &&
       this.selectionValue.context.agentId === id
     ) {
-      this.selectionValue = nextAgent
-        ? { context: { kind: "agent", agentId: nextAgent } }
-        : { context: { kind: "workspace", workspaceId: workspace.id } };
+      // Whatever the departing Agent was shown as, the successor is shown on
+      // its own: `beside` was asked for about an Agent that is gone.
+      this.selectionValue = {
+        context: nextAgent
+          ? { kind: "agent", agentId: nextAgent }
+          : { kind: "workspace", workspaceId: workspace.id },
+        presentation: "full",
+      };
     }
     this.bumpRevision();
   }
@@ -579,9 +634,12 @@ export class AppModel {
     this.workspaceList.splice(index, 1);
     if (ownsSelection) {
       const successor = next ?? previous;
-      this.selectionValue = successor
-        ? { context: { kind: "workspace", workspaceId: successor } }
-        : { context: GLOBAL_CONTEXT };
+      this.selectionValue = {
+        context: successor
+          ? { kind: "workspace", workspaceId: successor }
+          : GLOBAL_CONTEXT,
+        presentation: "full",
+      };
     }
     this.bumpRevision();
   }

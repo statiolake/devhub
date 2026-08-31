@@ -12,6 +12,7 @@ import {
   Workspace,
   workspaceId,
   workspaceRoot,
+  type NavigationContext,
 } from "./domain.js";
 
 const WS_A = workspaceId("550e8400-e29b-41d4-a716-446655440000");
@@ -49,15 +50,23 @@ describe("startup", () => {
   it("starts on the Global context with no workspaces", () => {
     const snapshot = new AppModel().snapshot();
     expect(snapshot.workspaces).toHaveLength(0);
-    expect(snapshot.selection).toEqual({ context: { kind: "global" } });
+    expect(snapshot.selection).toEqual({
+      context: { kind: "global" },
+      presentation: "full",
+    });
     expect(snapshot.revision).toBe(0);
   });
 });
 
+/** The layout for a plainly selected context — the unmodified gesture. */
+function full(model: AppModel, context: NavigationContext) {
+  return model.resolveLayout({ context, presentation: "full" });
+}
+
 describe("layout resolution", () => {
   it("gives the Global context the folderless workbench, alone", () => {
     const model = new AppModel();
-    expect(model.resolveLayout({ kind: "global" })).toEqual({
+    expect(full(model, { kind: "global" })).toEqual({
       kind: "workbench",
       editor: { kind: "global-editor" },
     });
@@ -65,9 +74,7 @@ describe("layout resolution", () => {
 
   it("gives a Workspace its own workbench, alone", () => {
     const model = modelWith([WS_A, "/dev/a"]);
-    expect(
-      model.resolveLayout({ kind: "workspace", workspaceId: WS_A }),
-    ).toEqual({
+    expect(full(model, { kind: "workspace", workspaceId: WS_A })).toEqual({
       kind: "workbench",
       editor: { kind: "workspace-editor", workspaceId: WS_A },
     });
@@ -77,33 +84,69 @@ describe("layout resolution", () => {
     const model = modelWith([WS_A, "/dev/a"]);
     const context = { kind: "workspace", workspaceId: WS_A } as const;
     model.markWorkspaceUnavailable(WS_A, "root_missing");
-    expect(model.resolveLayout(context)).toEqual({ kind: "unavailable" });
+    expect(full(model, context)).toEqual({ kind: "unavailable" });
     model.markWorkspaceAvailable(WS_A);
     model.markWorkspaceClosing(WS_A, cleanupProgress(0, false, false));
-    expect(model.resolveLayout(context)).toEqual({ kind: "unavailable" });
+    expect(full(model, context)).toEqual({ kind: "unavailable" });
     model.markWorkspaceClosingFailed(
       WS_A,
       "cleanup_failed",
       cleanupProgress(0, false, false),
     );
-    expect(model.resolveLayout(context)).toEqual({ kind: "unavailable" });
+    expect(full(model, context)).toEqual({ kind: "unavailable" });
   });
 
-  it("splits an Agent beside its own Workspace's workbench", () => {
+  it("gives a plainly selected Agent the whole content area", () => {
     const model = modelWith([WS_A, "/dev/a"]);
     model.addAgent(WS_A, AG_A, codex);
-    expect(model.resolveLayout({ kind: "agent", agentId: AG_A })).toEqual({
+    expect(full(model, { kind: "agent", agentId: AG_A })).toEqual({
+      kind: "agent",
+      agent: { kind: "agent", agentId: AG_A },
+    });
+  });
+
+  it("splits an Agent beside its own Workspace's workbench when asked", () => {
+    const model = modelWith([WS_A, "/dev/a"]);
+    model.addAgent(WS_A, AG_A, codex);
+    expect(
+      model.resolveLayout({
+        context: { kind: "agent", agentId: AG_A },
+        presentation: "beside",
+      }),
+    ).toEqual({
       kind: "split",
       editor: { kind: "workspace-editor", workspaceId: WS_A },
       agent: { kind: "agent", agentId: AG_A },
     });
   });
 
+  it("keeps the presentation out of a selection that has only one", () => {
+    const model = modelWith([WS_A, "/dev/a"]);
+    // A Workspace *is* its workbench, so `beside` names no arrangement it
+    // has. Recording it anyway would leave a value in the snapshot that
+    // nothing honours and that the next reader has to know to ignore.
+    model.selectContext({ kind: "workspace", workspaceId: WS_A }, "beside");
+    expect(model.snapshot().selection.presentation).toBe("full");
+  });
+
+  it("re-selecting the same Agent a different way moves the layout", () => {
+    const model = modelWith([WS_A, "/dev/a"]);
+    model.addAgent(WS_A, AG_A, codex);
+    const context = { kind: "agent", agentId: AG_A } as const;
+    model.selectContext(context, "full");
+    const before = model.snapshot().revision;
+    model.selectContext(context, "beside");
+    // The context did not change, so a selection compared on context alone
+    // would call this a no-op and leave the Agent full screen.
+    expect(model.snapshot().revision).toBeGreaterThan(before);
+    expect(model.snapshot().layout.kind).toBe("split");
+  });
+
   it("shows nothing for an Agent whose Workspace went away", () => {
     const model = modelWith([WS_A, "/dev/a"]);
     model.addAgent(WS_A, AG_A, codex);
     model.markWorkspaceUnavailable(WS_A, "root_missing");
-    expect(model.resolveLayout({ kind: "agent", agentId: AG_A })).toEqual({
+    expect(full(model, { kind: "agent", agentId: AG_A })).toEqual({
       kind: "unavailable",
     });
   });
@@ -130,18 +173,23 @@ describe("the split", () => {
 });
 
 describe("selection", () => {
-  it("is the context and nothing else, and a new Agent takes it", () => {
+  it("is the context and how it is shown, and a new Agent takes it", () => {
     const model = modelWith([WS_A, "/dev/a"]);
     model.selectContext({ kind: "workspace", workspaceId: WS_A });
     expect(model.selection).toEqual({
       context: { kind: "workspace", workspaceId: WS_A },
+      presentation: "full",
     });
     model.addAgent(WS_A, AG_A, codex);
     expect(model.selection).toEqual({
       context: { kind: "agent", agentId: AG_A },
+      presentation: "full",
     });
     model.selectContext({ kind: "global" });
-    expect(model.selection).toEqual({ context: { kind: "global" } });
+    expect(model.selection).toEqual({
+      context: { kind: "global" },
+      presentation: "full",
+    });
   });
 
   it("falls to the next agent, then the workspace, when one exits", () => {
@@ -152,10 +200,12 @@ describe("selection", () => {
     model.agentExited(AG_A);
     expect(model.selection).toEqual({
       context: { kind: "agent", agentId: AG_B },
+      presentation: "full",
     });
     model.agentExited(AG_B);
     expect(model.selection).toEqual({
       context: { kind: "workspace", workspaceId: WS_A },
+      presentation: "full",
     });
   });
 });
@@ -241,7 +291,10 @@ describe("closing", () => {
       workspaceId: WS_B,
     });
     model.closeWorkspace(WS_B, CLEAN_CLOSE_INSPECTION);
-    expect(model.selection).toEqual({ context: { kind: "global" } });
+    expect(model.selection).toEqual({
+      context: { kind: "global" },
+      presentation: "full",
+    });
   });
 
   it("puts a rolled-back close back where it was", () => {
