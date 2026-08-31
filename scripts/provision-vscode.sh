@@ -136,8 +136,17 @@ fi
 # one exception, for what none of those can reach. Each patch says why in its
 # own body; the working tree is reset first so this stays idempotent.
 step "patches/vscode"
-PATCH_STAMP="$VSCODE_DIR/.build/devhub-patches.stamp"
-PATCH_STATE="$(cat "$REPO_ROOT"/patches/vscode/*.patch 2>/dev/null | shasum | cut -d' ' -f1)"
+# What `vscode/out` was built from: the submodule commit *and* the patches on
+# top of it. Both belong in the stamp — a stamp over the patches alone survives
+# a submodule bump unchanged, so the next non-`--force` run would find an `out/`
+# that looks current and skip the compile, leaving DevHub running yesterday's
+# VS Code against today's source.
+SOURCE_STAMP="$VSCODE_DIR/.build/devhub-source.stamp"
+SOURCE_STATE="$(
+	git -C "$VSCODE_DIR" rev-parse HEAD
+	cat "$REPO_ROOT"/patches/vscode/*.patch 2>/dev/null
+	)"
+SOURCE_STATE="$(printf '%s' "$SOURCE_STATE" | shasum | cut -d' ' -f1)"
 git -C "$VSCODE_DIR" checkout -- .
 for patch in "$REPO_ROOT"/patches/vscode/*.patch; do
 	[ -e "$patch" ] || continue
@@ -149,12 +158,12 @@ done
 step "compile vscode/"
 if [ "$FORCE" = 1 ] \
 	|| [ ! -f "$VSCODE_DIR/out/vs/code/electron-main/main.js" ] \
-	|| [ "$(cat "$PATCH_STAMP" 2>/dev/null)" != "$PATCH_STATE" ]; then
+	|| [ "$(cat "$SOURCE_STAMP" 2>/dev/null)" != "$SOURCE_STATE" ]; then
 	(cd "$VSCODE_DIR" && npm run compile)
-	mkdir -p "$(dirname "$PATCH_STAMP")"
-	printf '%s' "$PATCH_STATE" > "$PATCH_STAMP"
+	mkdir -p "$(dirname "$SOURCE_STAMP")"
+	printf '%s' "$SOURCE_STATE" > "$SOURCE_STAMP"
 else
-	echo "vscode/out already compiled from the current patches"
+	echo "vscode/out already compiled from this commit and these patches"
 fi
 
 # --- 5. the Electron our main process runs in ------------------------------
