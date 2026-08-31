@@ -178,6 +178,31 @@
   --sidebar-rail-width: 14px;
   --sidebar-glyph-width: 16px;
   --sidebar-glyph-ink: 14px;
+  /* How far a row's leading glyph drops to sit level with its label.
+   *
+   * A row centres its glyph and its label on the same box, and that is the
+   * problem: the label's line box is symmetric and the text inside it is not.
+   * The macOS system font at 13px reports an ascent of 13 and a descent of 3
+   * over a 16px line box, so the baseline sits 13px down a box whose centre is
+   * at 8px, and the band the eye reads as "the text" — cap height down to the
+   * baseline, with the x-height mass inside it — has its optical centre a full
+   * pixel *below* the centre of the box. A glyph centred on the box therefore
+   * sits a pixel high, on every row, which is what made the Sidebar's icons
+   * look like they had floated off their labels.
+   *
+   * It is not a line-height, an `align-items` or an SVG baseline: no
+   * line-height fixes it, because half-leading is distributed evenly and the
+   * ascent/descent asymmetry survives every value of it. The only correct
+   * answer is to align the glyph to the text's optical centre rather than to
+   * its box, which is this shift.
+   *
+   * Measured rather than guessed, over Scratch, workspace and agent rows —
+   * `.spike/agentfix2/measure3.mjs` reports the label's optical centre 0.87px
+   * to 1.0px below its box centre in all of them. It follows the font, not the
+   * row, so it is the same at any row height; only a change of type size or
+   * family would move it. Icon-only surfaces — the collapsed rail's tiles —
+   * have no label to sit level with and do not take it. */
+  --sidebar-glyph-optical-shift: 1px;
   /* The Sidebar collapsed: an icon rail, not nothing. One column of tiles,
      each the size of a toolbar control, with the same gutter either side. */
   --sidebar-collapsed-width: 52px;

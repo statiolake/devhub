@@ -313,6 +313,8 @@
   flex: 0 0 var(--sidebar-glyph-width);
   align-items: center;
   justify-content: center;
+  /* Level with the label, not with the label's box — see the token. */
+  transform: translateY(var(--sidebar-glyph-optical-shift));
 }
 
 .row-glyph svg {
@@ -599,6 +601,12 @@ body.is-resizing-sidebar {
   align-items: center;
   justify-content: center;
   color: var(--status-idle);
+  /* The same drop the folder glyph takes: an Agent's status mark is a row's
+     leading glyph, and it sits level with the Agent's name for the same
+     reason. Carried here rather than on `.status-glyph`, which is the element
+     the working status spins — a transform there would be overwritten by the
+     animation on every frame. */
+  transform: translateY(var(--sidebar-glyph-optical-shift));
 }
 
 /* Codicon outlines are filled shapes on a 16-unit box; they carry their whole
