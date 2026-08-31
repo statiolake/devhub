@@ -23,10 +23,7 @@ import { URI } from "code-oss-dev/out/vs/base/common/uri.js";
 import { CancellationToken as VSCancellationToken } from "code-oss-dev/out/vs/base/common/cancellation.js";
 import type { NativeParsedArgs } from "code-oss-dev/out/vs/platform/environment/common/argv.js";
 import type { ICodeWindow } from "code-oss-dev/out/vs/platform/window/electron-main/window.js";
-import type { IWindowsMainService } from "code-oss-dev/out/vs/platform/windows/electron-main/windows.js";
 import { OpenContext } from "code-oss-dev/out/vs/platform/windows/electron-main/windows.js";
-import type { IDialogMainService } from "code-oss-dev/out/vs/platform/dialogs/electron-main/dialogMainService.js";
-import type { ILifecycleMainService } from "code-oss-dev/out/vs/platform/lifecycle/electron-main/lifecycleMainService.js";
 import { UnloadReason } from "code-oss-dev/out/vs/platform/window/electron-main/window.js";
 import {
 	CHANNELS,
@@ -118,6 +115,7 @@ import {
 } from "../terminal/ports.js";
 import { wireAgents } from "./agentWiring.js";
 import { AgentReconciler } from "./agentReconciler.js";
+import { MainServicesGate, type MainServices } from "./mainServices.js";
 import { resolveRuntimes } from "./runtimes.js";
 import type { AgentService } from "../agent/index.js";
 import { startWorkspacePicker } from "./workspacePicker.js";
@@ -127,17 +125,6 @@ import {
 	publishSettingsSnapshot,
 	settingsWindowIsFocused,
 } from "./settingsWindow.js";
-
-/**
- * The two main-process services the shell drives. They are resolved on demand:
- * VS Code's DI container builds them lazily, and the shell exists before it.
- */
-export interface MainServices {
-	windows(): IWindowsMainService;
-	dialogs(): IDialogMainService;
-	/** Closing a workbench is an unload, and an unload can be vetoed. */
-	lifecycle(): ILifecycleMainService;
-}
 
 /** The folder key a scratch (folderless) workbench view is filed under. */
 const SCRATCH_EDITOR = "";
@@ -174,7 +161,16 @@ export class AppController {
 		Promise<WorkbenchView | undefined>
 	>();
 
-	private resolveServices: MainServices | undefined;
+	/**
+	 * The one place anything waits for VS Code's main process to be usable.
+	 *
+	 * Everything that needs a workbench goes through `services()`, and
+	 * `services()` goes through here — so a request that arrives during startup
+	 * is answered late rather than dropped or thrown. See `mainServices.ts`.
+	 */
+	private readonly mainServices = new MainServicesGate();
+	/** Handed over by `setServices`; released to the gate by `markReady`. */
+	private handedOverServices: MainServices | undefined;
 	private config: Config | undefined;
 	private state: PersistedAppState;
 	private appearanceSequence = 0;
@@ -238,21 +234,28 @@ export class AppController {
 	//#region lifecycle
 
 	/**
-	 * The main-process services are built by VS Code's DI container, which is
-	 * only assembled once the application starts up; the shell exists before that
-	 * so the first workbench has somewhere to go.
+	 * Take the main-process services from VS Code's DI container.
+	 *
+	 * They are only *held* here. The container is built several steps before
+	 * `CodeApplication.startup()` has finished, and a workbench opened in that
+	 * window would be opened into an application still assembling itself. The
+	 * moment they may be used is `markReady`, and that is the moment the gate
+	 * opens — one gate, opened once, at the one point where using them is
+	 * correct.
 	 */
 	setServices(services: MainServices): void {
-		this.resolveServices = services;
+		this.handedOverServices = services;
 	}
 
-	private services(): MainServices {
-		if (!this.resolveServices) {
-			throw new Error(
-				"the App Shell was used before the main services were registered",
-			);
-		}
-		return this.resolveServices;
+	/**
+	 * The main-process services, waiting for them if startup has not got there.
+	 *
+	 * This is a promise rather than a value because the alternative is asking
+	 * every caller to know how far into startup it is. It never rejects and it
+	 * never resolves to nothing: "not yet" is a duration, not an outcome.
+	 */
+	private services(): Promise<MainServices> {
+		return this.mainServices.wait();
 	}
 
 	/** Whether the previous run ended cleanly, for the Settings diagnostics. */
@@ -344,9 +347,13 @@ export class AppController {
 				this.dispatchOwn({ type: "set_sidebar_expanded", expanded });
 			},
 			closeWorkspace: (workspaceId) => {
+				// A menu command has no caller waiting on its answer, so its
+				// failure goes to the error surface like every other one.
 				void this.dispatchFromPage({
 					type: "request_close_workspace",
 					workspaceId,
+				}).catch((error: unknown) => {
+					this.publishError(errorWire(error));
 				});
 			},
 			openWorkspacePicker: () => {
@@ -434,6 +441,15 @@ export class AppController {
 	}
 
 	markReady(): void {
+		const services = this.handedOverServices;
+		if (!services) {
+			// Bootstrap order, not a race: nothing waits this out, because the
+			// only way here is a startup that skipped `setServices` entirely.
+			throw new Error(
+				"the App Shell was marked ready before the main services were handed over",
+			);
+		}
+		this.mainServices.register(services);
 		this.coordinator.markReady();
 		this.coordinator.setEditorHostState({ kind: "ready" });
 		this.publishSnapshot();
@@ -539,7 +555,7 @@ export class AppController {
 		this.syncEditorViews();
 		// What is on screen follows the selection, wherever the selection
 		// changed — a menu command, a restored session, or the page.
-		void this.syncEditorView();
+		this.syncEditorViewInBackground();
 	}
 
 	private publishAppearance(): void {
@@ -747,7 +763,12 @@ export class AppController {
 					this.projectionChanged();
 				}
 				for (const effect of effects) {
-					void this.perform(effect);
+					// Effects are performed with nobody waiting on them, so the
+					// same rule applies: a failure goes to the error surface, never
+					// to `unhandledRejection`.
+					void this.perform(effect).catch((error: unknown) => {
+						this.publishError(errorWire(error));
+					});
 				}
 			}
 		} finally {
@@ -1138,69 +1159,78 @@ export class AppController {
 	 * already in flight rather than start a second workbench for the same
 	 * folder.
 	 */
-	private async ensureEditorView(
-		folder: string,
-	): Promise<WorkbenchView | undefined> {
+	private ensureEditorView(folder: string): Promise<WorkbenchView | undefined> {
 		const existingId = this.viewsByFolder.get(folder);
 		const existing =
 			existingId === undefined
 				? undefined
 				: shellWindow().getViewById(existingId);
-		if (existing) return existing;
+		if (existing) return Promise.resolve(existing);
 
 		const inFlight = this.editorOpens.get(folder);
 		if (inFlight) return inFlight;
 
-		// No view yet: go through VS Code's own open path, which is what creates a
-		// `CodeWindow` — and therefore, through the shim, a view in the shell.
-		const attempt = this.services()
-			.windows()
-			.open({
-				context: OpenContext.API,
-				cli: this.cliArgs,
-				urisToOpen:
-					folder === SCRATCH_EDITOR ? [] : [{ folderUri: URI.file(folder) }],
-				forceEmpty: folder === SCRATCH_EDITOR,
-				forceNewWindow: true,
-				noRecentEntry: true,
-			})
-			.then((windows) => {
-				const opened = windows.at(0);
-				if (opened) this.viewsByFolder.set(folder, opened.id);
-				const view =
-					opened === undefined
-						? undefined
-						: shellWindow().getViewById(opened.id);
-				if (view) {
-					this.superviseEditorView(folder, view);
-					// A workbench that is up again is no longer restarting. Waiting
-					// for `did-finish-load` is not enough on its own: a fast
-					// workbench can have finished loading before this promise
-					// resolved, and a `once` on an event that already happened
-					// never fires — which would leave the page saying "restarting"
-					// for ever about a workbench that is right there.
-					const settled = () => {
-						this.editorRestarts.delete(folder);
-						this.announceRestarting(folder, false);
-					};
-					if (view.webContents.isLoading()) {
-						view.webContents.once("did-finish-load", settled);
-					} else {
-						settled();
-					}
-				}
-				// A view no longer puts itself on screen when it is created, so
-				// the arrival of one is a moment to ask the selection again what
-				// belongs there — otherwise the workbench being waited for opens
-				// and nothing reveals it.
-				void this.syncEditorView();
-				return view;
-			})
-			.finally(() => {
-				this.editorOpens.delete(folder);
-			});
+		// Registered before the first `await` inside, so an open asked for twice
+		// in the same tick is still one open. An open that has to wait for VS
+		// Code's services is in flight from the moment it is asked for, which is
+		// what stops startup from queuing one attempt per projection change.
+		const attempt = this.openEditorView(folder).finally(() => {
+			this.editorOpens.delete(folder);
+		});
 		this.editorOpens.set(folder, attempt);
 		return attempt;
+	}
+
+	/**
+	 * The open itself, from the wait for VS Code to the view on the window.
+	 *
+	 * The first thing it does is wait: the shell is up long before the DI
+	 * container is, and a workbench asked for in that window is early, not
+	 * impossible. Everything after the wait is the same whenever it was asked.
+	 */
+	private async openEditorView(
+		folder: string,
+	): Promise<WorkbenchView | undefined> {
+		const services = await this.services();
+		// Go through VS Code's own open path, which is what creates a
+		// `CodeWindow` — and therefore, through the shim, a view in the shell.
+		const windows = await services.windows().open({
+			context: OpenContext.API,
+			cli: this.cliArgs,
+			urisToOpen:
+				folder === SCRATCH_EDITOR ? [] : [{ folderUri: URI.file(folder) }],
+			forceEmpty: folder === SCRATCH_EDITOR,
+			forceNewWindow: true,
+			noRecentEntry: true,
+		});
+		const opened = windows.at(0);
+		if (opened) this.viewsByFolder.set(folder, opened.id);
+		const view =
+			opened === undefined ? undefined : shellWindow().getViewById(opened.id);
+		if (view) {
+			this.superviseEditorView(folder, view);
+			// A workbench that is up again is no longer restarting. Waiting for
+			// `did-finish-load` is not enough on its own: a fast workbench can
+			// have finished loading before this promise resolved, and a `once` on
+			// an event that already happened never fires — which would leave the
+			// page saying "restarting" for ever about a workbench that is right
+			// there.
+			const settled = () => {
+				this.editorRestarts.delete(folder);
+				this.announceRestarting(folder, false);
+			};
+			if (view.webContents.isLoading()) {
+				view.webContents.once("did-finish-load", settled);
+			} else {
+				settled();
+			}
+		}
+		// A view no longer puts itself on screen when it is created, so the
+		// arrival of one is a moment to ask the selection again what belongs
+		// there — otherwise the workbench being waited for opens and nothing
+		// reveals it.
+		this.syncEditorViewInBackground();
+		return view;
 	}
 
 	/**
@@ -1333,10 +1363,9 @@ export class AppController {
 	 * that cannot start says so on the page's one error surface.
 	 */
 	syncEditorViews(): void {
-		// Before VS Code's services exist there is no path that opens a
-		// workbench. `markReady` publishes a projection as soon as there is, and
-		// that is the call that starts them.
-		if (!this.resolveServices) return;
+		// No readiness check here, and none anywhere else either: an open that
+		// starts before VS Code's services exist waits inside `ensureEditorView`
+		// for exactly as long as it has to. See `mainServices.ts`.
 		const snapshot = this.coordinator.snapshot();
 		const editor = snapshot.activities.find(
 			(entry) => entry.activity === "editor",
@@ -1436,12 +1465,13 @@ export class AppController {
 		if (root === undefined) return true;
 		const viewId = this.viewsByFolder.get(root);
 		if (viewId === undefined) return true;
-		const codeWindow = this.services()
+		const services = await this.services();
+		const codeWindow = services
 			.windows()
 			.getWindows()
 			.find((candidate) => candidate.id === viewId);
 		if (!codeWindow) return true;
-		const vetoed = await this.services()
+		const vetoed = await services
 			.lifecycle()
 			.unload(codeWindow, UnloadReason.CLOSE);
 		return !vetoed;
@@ -1547,16 +1577,16 @@ export class AppController {
 		await this.ensureEditorView(SCRATCH_EDITOR);
 		await this.dispatchAwaiting({ type: "new_window" });
 		await this.syncEditorView();
-		return this.workbenchWindow(SCRATCH_EDITOR);
+		return await this.workbenchWindow(SCRATCH_EDITOR);
 	}
 
 	/** The `ICodeWindow` behind a folder's view; a missing one is a bug. */
-	private workbenchWindow(folder: string): ICodeWindow {
+	private async workbenchWindow(folder: string): Promise<ICodeWindow> {
 		const viewId = this.viewsByFolder.get(folder);
 		const window =
 			viewId === undefined
 				? undefined
-				: this.services()
+				: (await this.services())
 						.windows()
 						.getWindows()
 						.find((candidate) => candidate.id === viewId);
@@ -1609,7 +1639,7 @@ export class AppController {
 		if (root === undefined) {
 			await this.dispatchAwaiting({ type: "new_window" });
 			await this.syncEditorView();
-			openFileInWorkbench(this.workbenchWindow(SCRATCH_EDITOR), target);
+			openFileInWorkbench(await this.workbenchWindow(SCRATCH_EDITOR), target);
 			this.bringToFront();
 			return `${target.path} is open in the Scratch editor: no open workspace contains it.`;
 		}
@@ -1629,7 +1659,7 @@ export class AppController {
 			activity: "editor",
 		});
 		await this.syncEditorView();
-		openFileInWorkbench(this.workbenchWindow(root), target);
+		openFileInWorkbench(await this.workbenchWindow(root), target);
 		this.bringToFront();
 		return `${target.path} is open in the workspace at ${root}.`;
 	}
@@ -1790,6 +1820,22 @@ export class AppController {
 		return outcomeWire(settled, this.coordinator.readiness);
 	}
 
+	/**
+	 * `syncEditorView` where there is nobody to hand a failure back to.
+	 *
+	 * A projection changes for reasons with no caller — a reconciler round, a
+	 * workbench finishing its open — so the promise has no `await` above it. A
+	 * bare `void` on one of those routes its failure to the process's
+	 * `unhandledRejection`, which is where the crash this replaced went; it
+	 * belongs on the page's one error surface, the same as every failure with a
+	 * caller.
+	 */
+	private syncEditorViewInBackground(): void {
+		void this.syncEditorView().catch((error: unknown) => {
+			this.publishError(errorWire(error));
+		});
+	}
+
 	private async syncEditorView(): Promise<void> {
 		const snapshot = this.coordinator.snapshot();
 		if (snapshot.selection.activity !== "editor") return;
@@ -1801,7 +1847,7 @@ export class AppController {
 	}
 
 	private async pickFolder(): Promise<string | undefined> {
-		const picked = await this.services().dialogs().pickFolder({});
+		const picked = await (await this.services()).dialogs().pickFolder({});
 		return picked?.[0];
 	}
 

@@ -48,7 +48,16 @@ export class AgentReconciler {
 	start(): void {
 		if (this.#started || this.#stopped) return;
 		this.#started = true;
-		void this.#run();
+		// The loop has no caller, so a rejection escaping it has no reader but
+		// the process's `unhandledRejection` — a warning on stderr that nothing
+		// in DevHub can show and nothing in DevHub can act on. Rounds already
+		// report themselves; this catches the loop *itself* dying, which is a
+		// different and worse fact, and says so.
+		void this.#run().catch((error: unknown) => {
+			this.#options.onFailure(
+				new Error("the Agent reconciler loop stopped", { cause: error }),
+			);
+		});
 	}
 
 	/**
