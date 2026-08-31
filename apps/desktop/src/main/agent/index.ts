@@ -6,9 +6,12 @@
  * back to the requesting page's `webContents`. Every failure is thrown across
  * IPC as a `TerminalError` body — nothing here turns a failure into a default.
  *
- * The `viewLabel` the manager keys attachments by is the page's `webContents`
- * id: one App Shell page owns at most one live agent attachment, exactly as
- * the Tauri webview label did.
+ * The `viewLabel` this hands the manager is the page's `webContents` id, and
+ * that is all it names: the page. The Tauri app gave every surface its own
+ * webview, so a label there named a surface; here every Agent Surface of a
+ * window is a component of the same App Shell page. The manager therefore owns
+ * attachments by the (page, surface key) pair — see `surfaceOwnerKey` — and a
+ * page holds as many attachments as it has Agent Surfaces mounted.
  */
 
 import { ipcMain, type IpcMainInvokeEvent, type WebContents } from "electron";

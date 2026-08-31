@@ -145,9 +145,25 @@ class OutputFlow {
 	}
 }
 
+/**
+ * Who owns an attachment: one Agent Surface inside one page.
+ *
+ * The Tauri app gave every surface its own webview, so the webview label alone
+ * named a surface and the two were the same thing. In Electron every Agent
+ * Surface of a window is a component of the *same* App Shell page, so the
+ * page's `webContents` id names the page and nothing finer. Ownership is
+ * therefore the pair: a page can hold as many attachments as it has Agent
+ * Surfaces, and a second attach of the same Agent in the same page — a pooled
+ * surface remounting — still supersedes the first, because that pair repeats.
+ */
+function surfaceOwnerKey(viewLabel: string, surfaceKey: string): string {
+	return `${viewLabel}\u0000${surfaceKey}`;
+}
+
 interface AgentAttachment {
 	readonly surfaceKey: string;
 	readonly viewLabel: string;
+	readonly ownerKey: string;
 	readonly targetGeneration: number;
 	readonly lifecycleEpoch: number;
 	readonly surface: AgentSurface;
@@ -158,20 +174,28 @@ interface AgentAttachment {
 
 interface ActiveAttach {
 	readonly viewLabel: string;
+	readonly ownerKey: string;
 	readonly lifecycleEpoch: number;
 	readonly cancellation: CancellationToken;
 	readonly finished: Promise<void>;
 }
 
+/** A claim on one Agent Surface of one page, held while its attach runs. */
+interface AttachReservation {
+	readonly viewLabel: string;
+	readonly epoch: number;
+}
+
 export class AgentSurfaceManager {
 	readonly #attachments = new Map<string, AgentAttachment>();
 	readonly #readers = new Map<string, Promise<void>>();
-	readonly #viewEpochs = new Map<string, number>();
+	readonly #surfaceEpochs = new Map<string, number>();
 	/**
 	 * A reservation prevents a provider attach in flight from publishing after
-	 * a close or replacement invalidated its view.
+	 * a close or replacement invalidated its surface. Keyed by owner, so an
+	 * attach on one Agent Surface never invalidates a sibling's.
 	 */
-	readonly #attachReservations = new Map<string, number>();
+	readonly #attachReservations = new Map<string, AttachReservation>();
 	/**
 	 * Every provider attach has an owned in-flight record until its result is
 	 * consumed or the quit path has awaited it. Without this, a cancelled
@@ -191,13 +215,17 @@ export class AgentSurfaceManager {
 	): Promise<[AttachReceipt, AgentObservation]> {
 		validateAttachRequest(request);
 		const agentId = agentIdFromSurfaceKey(request.surfaceKey);
+		const ownerKey = surfaceOwnerKey(viewLabel, request.surfaceKey);
 
-		// Reserve this view and release the prior attachment first. The Herdr
-		// attach below is provider I/O: a close or reopen can invalidate this
-		// reservation while the provider is slow or unavailable, and the
-		// result must then be discarded rather than published.
-		await this.detachView(viewLabel);
-		const lifecycleEpoch = this.#reserveView(viewLabel);
+		// Reserve this surface and release its own prior attachment first — a
+		// pooled surface that remounts attaches again before React has run the
+		// old unmount's detach. The Herdr attach below is provider I/O: a close
+		// or reopen can invalidate this reservation while the provider is slow
+		// or unavailable, and the result must then be discarded rather than
+		// published. Sibling Agent Surfaces of the same page are untouched:
+		// they are different owners, and each keeps its own attachment.
+		await this.#detachOwner(ownerKey);
+		const lifecycleEpoch = this.#reserveSurface(ownerKey, viewLabel);
 		let surface: AgentSurface;
 		let observation: AgentObservation;
 		try {
@@ -207,13 +235,14 @@ export class AgentSurfaceManager {
 				request.surfaceKey,
 				true,
 				viewLabel,
+				ownerKey,
 				lifecycleEpoch,
 			);
 		} catch (error) {
-			this.#clearReservation(viewLabel, lifecycleEpoch);
+			this.#clearReservation(ownerKey, lifecycleEpoch);
 			throw terminalErrorFromPort(error);
 		}
-		if (!this.#reservationIsCurrent(viewLabel, lifecycleEpoch)) {
+		if (!this.#reservationIsCurrent(ownerKey, lifecycleEpoch)) {
 			surface.detach();
 			throw terminalError(TerminalErrorCode.SurfaceUnavailable);
 		}
@@ -223,22 +252,23 @@ export class AgentSurfaceManager {
 			attachmentId = this.#nextAttachmentId();
 			targetGeneration = this.#nextGeneration();
 		} catch (error) {
-			this.#clearReservation(viewLabel, lifecycleEpoch);
+			this.#clearReservation(ownerKey, lifecycleEpoch);
 			surface.detach();
 			throw error;
 		}
-		if (this.#attachReservations.get(viewLabel) !== lifecycleEpoch) {
+		if (!this.#reservationIsCurrent(ownerKey, lifecycleEpoch)) {
 			surface.detach();
 			throw terminalError(TerminalErrorCode.SurfaceUnavailable);
 		}
 		if (this.#attachments.size >= MAX_ATTACHMENTS) {
-			this.#attachReservations.delete(viewLabel);
+			this.#attachReservations.delete(ownerKey);
 			surface.detach();
 			throw terminalError(TerminalErrorCode.AttachmentLimit);
 		}
 		const attachment: AgentAttachment = {
 			surfaceKey: request.surfaceKey,
 			viewLabel,
+			ownerKey,
 			targetGeneration,
 			lifecycleEpoch,
 			surface,
@@ -272,7 +302,7 @@ export class AgentSurfaceManager {
 		try {
 			sink.send(encodeFrame(started));
 		} catch {
-			this.#clearReservation(viewLabel, lifecycleEpoch);
+			this.#clearReservation(ownerKey, lifecycleEpoch);
 			this.#detachExact(viewLabel, receipt);
 			throw terminalError(TerminalErrorCode.ChannelClosed);
 		}
@@ -281,11 +311,11 @@ export class AgentSurfaceManager {
 			attachmentId,
 			this.#readSurface(attachmentId, attachment, sink, onFailure),
 		);
-		if (!this.#reservationIsCurrent(viewLabel, lifecycleEpoch)) {
+		if (!this.#reservationIsCurrent(ownerKey, lifecycleEpoch)) {
 			this.#detachExact(viewLabel, receipt);
 			throw terminalError(TerminalErrorCode.SurfaceUnavailable);
 		}
-		this.#clearReservation(viewLabel, lifecycleEpoch);
+		this.#clearReservation(ownerKey, lifecycleEpoch);
 		return [receipt, observation];
 	}
 
@@ -295,6 +325,7 @@ export class AgentSurfaceManager {
 		surfaceKey: string,
 		takeover: boolean,
 		viewLabel: string,
+		ownerKey: string,
 		lifecycleEpoch: number,
 	): Promise<[AgentSurface, AgentObservation]> {
 		const operationKey = this.#nextAttachOperation;
@@ -306,6 +337,7 @@ export class AgentSurfaceManager {
 		});
 		this.#attachOperations.set(operationKey, {
 			viewLabel,
+			ownerKey,
 			lifecycleEpoch,
 			cancellation,
 			finished,
@@ -338,7 +370,7 @@ export class AgentSurfaceManager {
 				}
 				throw failure;
 			}
-			if (!this.#reservationIsCurrent(viewLabel, lifecycleEpoch)) {
+			if (!this.#reservationIsCurrent(ownerKey, lifecycleEpoch)) {
 				// The owner has cancelled this reservation. The operation stays
 				// in the map so `detachAllUntil` can await or boundedly abandon
 				// its provider work, and a surface that arrives late is
@@ -429,12 +461,38 @@ export class AgentSurfaceManager {
 		this.#detachExact(viewLabel, request);
 	}
 
-	/** Releases every attachment a view owns, and cancels its in-flight attach. */
+	/**
+	 * Releases every attachment a page owns, and cancels its in-flight attaches.
+	 * This is the page-scoped release — a window closing or a page reloading —
+	 * and it is the only path that touches a page's Agent Surfaces as a group.
+	 */
 	async detachView(viewLabel: string): Promise<void> {
-		this.#attachReservations.delete(viewLabel);
-		this.#cancelAttachOperations(viewLabel, undefined);
+		for (const [key, reservation] of [...this.#attachReservations]) {
+			if (reservation.viewLabel === viewLabel) {
+				this.#attachReservations.delete(key);
+			}
+		}
+		this.#cancelAttachOperationsForView(viewLabel);
 		for (const [id, attachment] of [...this.#attachments]) {
 			if (attachment.viewLabel === viewLabel) {
+				this.#attachments.delete(id);
+				attachment.stopped = true;
+				attachment.surface.detach();
+			}
+		}
+		await this.#reapFinishedReaders();
+	}
+
+	/**
+	 * Releases the one attachment this owner holds — the same Agent Surface of
+	 * the same page — and cancels its in-flight attach. A remount supersedes
+	 * itself; nothing else on the page is disturbed.
+	 */
+	async #detachOwner(ownerKey: string): Promise<void> {
+		this.#attachReservations.delete(ownerKey);
+		this.#cancelAttachOperations(ownerKey, undefined);
+		for (const [id, attachment] of [...this.#attachments]) {
+			if (attachment.ownerKey === ownerKey) {
 				this.#attachments.delete(id);
 				attachment.stopped = true;
 				attachment.surface.detach();
@@ -477,33 +535,41 @@ export class AgentSurfaceManager {
 		return results.every((stopped) => stopped);
 	}
 
-	#reserveView(viewLabel: string): number {
-		const epoch = (this.#viewEpochs.get(viewLabel) ?? 0) + 1;
+	#reserveSurface(ownerKey: string, viewLabel: string): number {
+		const epoch = (this.#surfaceEpochs.get(ownerKey) ?? 0) + 1;
 		if (!Number.isSafeInteger(epoch)) {
 			throw terminalError(TerminalErrorCode.RuntimeUnavailable);
 		}
-		this.#viewEpochs.set(viewLabel, epoch);
-		this.#attachReservations.set(viewLabel, epoch);
+		this.#surfaceEpochs.set(ownerKey, epoch);
+		this.#attachReservations.set(ownerKey, { viewLabel, epoch });
 		return epoch;
 	}
 
-	#reservationIsCurrent(viewLabel: string, epoch: number): boolean {
-		return this.#attachReservations.get(viewLabel) === epoch;
+	#reservationIsCurrent(ownerKey: string, epoch: number): boolean {
+		return this.#attachReservations.get(ownerKey)?.epoch === epoch;
 	}
 
-	#clearReservation(viewLabel: string, epoch: number): void {
-		if (this.#attachReservations.get(viewLabel) === epoch) {
-			this.#attachReservations.delete(viewLabel);
+	#clearReservation(ownerKey: string, epoch: number): void {
+		if (this.#attachReservations.get(ownerKey)?.epoch === epoch) {
+			this.#attachReservations.delete(ownerKey);
 		}
-		this.#cancelAttachOperations(viewLabel, epoch);
+		this.#cancelAttachOperations(ownerKey, epoch);
 	}
 
-	#cancelAttachOperations(viewLabel: string, epoch: number | undefined): void {
+	#cancelAttachOperations(ownerKey: string, epoch: number | undefined): void {
 		for (const operation of this.#attachOperations.values()) {
 			if (
-				operation.viewLabel === viewLabel &&
+				operation.ownerKey === ownerKey &&
 				(epoch === undefined || operation.lifecycleEpoch === epoch)
 			) {
+				operation.cancellation.cancel();
+			}
+		}
+	}
+
+	#cancelAttachOperationsForView(viewLabel: string): void {
+		for (const operation of this.#attachOperations.values()) {
+			if (operation.viewLabel === viewLabel) {
 				operation.cancellation.cancel();
 			}
 		}

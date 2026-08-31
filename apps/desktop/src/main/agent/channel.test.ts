@@ -25,12 +25,14 @@ import type { AgentSurface } from "./surface.js";
 
 const AGENT_ID = "00000000-0000-4000-8000-000000000001";
 const SURFACE_KEY = `agent:${AGENT_ID}`;
+const OTHER_AGENT_ID = "00000000-0000-4000-8000-000000000002";
+const OTHER_SURFACE_KEY = `agent:${OTHER_AGENT_ID}`;
 const MAX_OUTPUT_IN_FLIGHT_FRAMES = 64;
 
-function attachRequest(): AttachRequest {
+function attachRequest(surfaceKey: string = SURFACE_KEY): AttachRequest {
 	return {
 		schemaVersion: TERMINAL_PROTOCOL_VERSION,
-		surfaceKey: SURFACE_KEY,
+		surfaceKey,
 		targetGeneration: 0,
 		cols: 80,
 		rows: 24,
@@ -52,14 +54,23 @@ function collectingSink(): FrameSink & { frames: Uint8Array[] } {
 /** A surface whose provider reads are scripted, with detach observable. */
 function fakeSurface(
 	chunks: Buffer[],
-): AgentSurface & { detached: boolean; resizes: [number, number][] } {
+	agentId: string = AGENT_ID,
+	surfaceKey: string = SURFACE_KEY,
+): AgentSurface & {
+	detached: boolean;
+	resizes: [number, number][];
+	sent: string[];
+} {
 	const queue = [...chunks];
 	const surface = {
-		agentId: AGENT_ID,
-		surfaceKey: SURFACE_KEY,
+		agentId,
+		surfaceKey,
 		detached: false,
 		resizes: [] as [number, number][],
-		async sendText() {},
+		sent: [] as string[],
+		async sendText(text: string) {
+			surface.sent.push(text);
+		},
 		resize(cols: number, rows: number) {
 			surface.resizes.push([cols, rows]);
 		},
@@ -73,6 +84,7 @@ function fakeSurface(
 	return surface as unknown as AgentSurface & {
 		detached: boolean;
 		resizes: [number, number][];
+		sent: string[];
 	};
 }
 
@@ -236,6 +248,159 @@ describe("the agent surface manager", () => {
 			manager.input("other-view", { ...base, inputSequence: 2, bytes: [66] }),
 		).rejects.toMatchObject({ code: TerminalErrorCode.WrongAttachment });
 		expect(sendText).toHaveBeenCalledTimes(1);
+		await manager.detachAllUntil(Date.now() + 1_000);
+	});
+
+	it("keeps every agent surface of one page attached at once", async () => {
+		// Every Agent Surface of a window is a component of the same App Shell
+		// page, so they share a `webContents` id. Ownership that stopped at the
+		// page would make the second agent's attach detach the first, and the
+		// first surface would then be told its own attachment is foreign.
+		const manager = new AgentSurfaceManager();
+		const first = fakeSurface([]);
+		const second = fakeSurface([], OTHER_AGENT_ID, OTHER_SURFACE_KEY);
+		const runtime = fakeRuntime(async (_id, surfaceKey) => [
+			surfaceKey === SURFACE_KEY ? first : second,
+			{ agentId: AGENT_ID },
+		]);
+		const [firstReceipt] = await manager.attach(
+			runtime,
+			"page",
+			attachRequest(SURFACE_KEY),
+			collectingSink(),
+			() => undefined,
+		);
+		const [secondReceipt] = await manager.attach(
+			runtime,
+			"page",
+			attachRequest(OTHER_SURFACE_KEY),
+			collectingSink(),
+			() => undefined,
+		);
+		expect(first.detached).toBe(false);
+		expect(second.detached).toBe(false);
+		expect(secondReceipt.attachmentId).not.toBe(firstReceipt.attachmentId);
+		expect(secondReceipt.targetGeneration).not.toBe(
+			firstReceipt.targetGeneration,
+		);
+
+		// Both stay usable: neither surface's input is refused as foreign.
+		await manager.input("page", {
+			schemaVersion: TERMINAL_PROTOCOL_VERSION,
+			surfaceKey: SURFACE_KEY,
+			attachmentId: firstReceipt.attachmentId,
+			targetGeneration: firstReceipt.targetGeneration,
+			inputSequence: 1,
+			bytes: [65],
+		});
+		await manager.input("page", {
+			schemaVersion: TERMINAL_PROTOCOL_VERSION,
+			surfaceKey: OTHER_SURFACE_KEY,
+			attachmentId: secondReceipt.attachmentId,
+			targetGeneration: secondReceipt.targetGeneration,
+			inputSequence: 1,
+			bytes: [66],
+		});
+		expect(first.sent).toEqual(["A"]);
+		expect(second.sent).toEqual(["B"]);
+		await manager.detachAllUntil(Date.now() + 1_000);
+	});
+
+	it("supersedes only itself when a pooled surface remounts", async () => {
+		// A pooled surface that comes back on screen can attach again before
+		// React has run the old unmount's detach. That replacement releases the
+		// stale attachment — and nothing else the page owns.
+		const manager = new AgentSurfaceManager();
+		const stale = fakeSurface([]);
+		const fresh = fakeSurface([]);
+		const sibling = fakeSurface([], OTHER_AGENT_ID, OTHER_SURFACE_KEY);
+		const surfaces = [stale, fresh];
+		const runtime = fakeRuntime(async (_id, surfaceKey) => [
+			surfaceKey === OTHER_SURFACE_KEY ? sibling : (surfaces.shift() ?? fresh),
+			{ agentId: AGENT_ID },
+		]);
+		const [staleReceipt] = await manager.attach(
+			runtime,
+			"page",
+			attachRequest(SURFACE_KEY),
+			collectingSink(),
+			() => undefined,
+		);
+		await manager.attach(
+			runtime,
+			"page",
+			attachRequest(OTHER_SURFACE_KEY),
+			collectingSink(),
+			() => undefined,
+		);
+		const [freshReceipt] = await manager.attach(
+			runtime,
+			"page",
+			attachRequest(SURFACE_KEY),
+			collectingSink(),
+			() => undefined,
+		);
+		expect(stale.detached).toBe(true);
+		expect(fresh.detached).toBe(false);
+		expect(sibling.detached).toBe(false);
+		// The stale receipt names an attachment that no longer exists, and
+		// says so; the fresh one is the surface's live attachment.
+		await expect(
+			manager.input("page", {
+				schemaVersion: TERMINAL_PROTOCOL_VERSION,
+				surfaceKey: SURFACE_KEY,
+				attachmentId: staleReceipt.attachmentId,
+				targetGeneration: staleReceipt.targetGeneration,
+				inputSequence: 1,
+				bytes: [65],
+			}),
+		).rejects.toMatchObject({ code: TerminalErrorCode.WrongAttachment });
+		await manager.input("page", {
+			schemaVersion: TERMINAL_PROTOCOL_VERSION,
+			surfaceKey: SURFACE_KEY,
+			attachmentId: freshReceipt.attachmentId,
+			targetGeneration: freshReceipt.targetGeneration,
+			inputSequence: 1,
+			bytes: [65],
+		});
+		expect(fresh.sent).toEqual(["A"]);
+		await manager.detachAllUntil(Date.now() + 1_000);
+	});
+
+	it("releases every surface a page owns when the page goes away", async () => {
+		const manager = new AgentSurfaceManager();
+		const first = fakeSurface([]);
+		const second = fakeSurface([], OTHER_AGENT_ID, OTHER_SURFACE_KEY);
+		const other = fakeSurface([]);
+		const runtime = fakeRuntime(async (_id, surfaceKey, _takeover) => [
+			surfaceKey === OTHER_SURFACE_KEY ? second : first,
+			{ agentId: AGENT_ID },
+		]);
+		await manager.attach(
+			runtime,
+			"page",
+			attachRequest(SURFACE_KEY),
+			collectingSink(),
+			() => undefined,
+		);
+		await manager.attach(
+			runtime,
+			"page",
+			attachRequest(OTHER_SURFACE_KEY),
+			collectingSink(),
+			() => undefined,
+		);
+		await manager.attach(
+			fakeRuntime(async () => [other, { agentId: AGENT_ID }]),
+			"second-page",
+			attachRequest(SURFACE_KEY),
+			collectingSink(),
+			() => undefined,
+		);
+		await manager.detachView("page");
+		expect(first.detached).toBe(true);
+		expect(second.detached).toBe(true);
+		expect(other.detached).toBe(false);
 		await manager.detachAllUntil(Date.now() + 1_000);
 	});
 

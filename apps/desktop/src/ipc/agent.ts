@@ -92,7 +92,7 @@ const SUMMARIES: Record<TerminalErrorCode, string> = {
 		"The agent surface could not be attached.",
 	[TerminalErrorCode.StaleTarget]: "The agent surface's target is stale.",
 	[TerminalErrorCode.WrongAttachment]:
-		"The agent attachment is not owned by this view.",
+		"The agent attachment does not belong to this agent surface.",
 	[TerminalErrorCode.AttachmentLimit]:
 		"This agent surface already has an attachment.",
 	[TerminalErrorCode.SessionUnavailable]: "The agent's session has ended.",
