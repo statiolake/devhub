@@ -229,6 +229,51 @@ describe("round trip", () => {
     expect(parseConfig(refilled)).toEqual(config);
   });
 
+  it("switches a profile to a custom runtime and still re-parses", () => {
+    // A profile block written with its `env` as a sub-table heading, which is
+    // how the shipped defaults are saved.
+    const source = [
+      "version = 1",
+      "",
+      "[[agent_profiles]]",
+      'id = "codex"',
+      'display_name = "Codex"',
+      'kind = "codex"',
+      "args = []",
+      "",
+      "[agent_profiles.env]",
+      "",
+      "[[agent_profiles]]",
+      'id = "claude"',
+      'display_name = "Claude"',
+      'kind = "claude"',
+      "args = []",
+      "",
+      "[agent_profiles.env]",
+      "",
+    ].join("\n");
+    const config = parseConfig(source);
+    const saved = configOntoDocument(source, {
+      ...config,
+      agentProfiles: config.agentProfiles.map((profile) =>
+        profile.id === "claude"
+          ? { ...profile, kind: "custom" as const, command: "my-agent" }
+          : profile,
+      ),
+    });
+    const reparsed = parseConfig(saved);
+    expect(reparsed.agentProfiles.map((profile) => profile.kind)).toEqual([
+      "codex",
+      "custom",
+    ]);
+    expect(reparsed.agentProfiles[1].command).toBe("my-agent");
+  });
+
+  it("saves a document it did not change back byte for byte", () => {
+    const full = configToToml(defaultConfig());
+    expect(configOntoDocument(full, parseConfig(full))).toBe(full);
+  });
+
   it("empties every collection at once and still re-parses", () => {
     const full = configToToml(defaultConfig());
     const emptied = configOntoDocument(full, {

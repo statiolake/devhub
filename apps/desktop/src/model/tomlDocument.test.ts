@@ -249,6 +249,95 @@ describe("editing in place", () => {
     );
   });
 
+  it("leaves an empty sub-table's heading to spell it, not a second definition", () => {
+    const withEmptyEnv = [
+      "version = 1",
+      "",
+      "[[agent_profiles]]",
+      'id = "codex"',
+      'kind = "codex"',
+      "",
+      "[agent_profiles.env]",
+      "",
+      "[[agent_profiles]]",
+      'id = "claude"',
+      'kind = "claude"',
+      "",
+      "[agent_profiles.env]",
+      "",
+    ].join("\n");
+    const value = documentOf(withEmptyEnv);
+    const next = updateTomlDocument(withEmptyEnv, {
+      ...value,
+      agent_profiles: [
+        { id: "codex", kind: "codex", env: {} },
+        { id: "claude", kind: "custom", command: "my-agent", env: {} },
+      ],
+    });
+    expect(next).not.toContain("env = {}");
+    expect(next.match(/\[agent_profiles\.env\]/g)).toHaveLength(2);
+    expect(parseTomlValue(next)).toEqual({
+      version: 1,
+      agent_profiles: [
+        { id: "codex", kind: "codex", env: {} },
+        { id: "claude", kind: "custom", command: "my-agent", env: {} },
+      ],
+    });
+  });
+
+  it("empties a sub-table's contents and keeps its heading", () => {
+    const withEnv = [
+      "version = 1",
+      "",
+      "[[agent_profiles]]",
+      'id = "codex"',
+      "",
+      "[agent_profiles.env]",
+      'TOKEN = "x"',
+      "",
+    ].join("\n");
+    const next = updateTomlDocument(withEnv, {
+      ...documentOf(withEnv),
+      agent_profiles: [{ id: "codex", env: {} }],
+    });
+    expect(next).toContain("[agent_profiles.env]");
+    expect(next).not.toContain("env = {}");
+    expect(parseTomlValue(next)).toEqual({
+      version: 1,
+      agent_profiles: [{ id: "codex", env: {} }],
+    });
+  });
+
+  it("leaves an empty top-level table's heading alone", () => {
+    const withEmptyGeneral = "version = 1\n\n[general]\n";
+    const next = updateTomlDocument(withEmptyGeneral, {
+      version: 1,
+      general: {},
+    });
+    expect(next).toBe(withEmptyGeneral);
+  });
+
+  it("writes an empty table the document does not have as one line", () => {
+    const next = updateTomlDocument("version = 1\n", {
+      version: 1,
+      general: {},
+    });
+    expect(next).toContain("general = {}");
+    expect(parseTomlValue(next)).toEqual({ version: 1, general: {} });
+  });
+
+  it("empties an inline table without re-spelling it as a block", () => {
+    const inlineEnv = 'version = 1\nagent_profiles = [ { id = "codex" } ]\n';
+    const next = updateTomlDocument(inlineEnv, {
+      ...documentOf(inlineEnv),
+      agent_profiles: [{ id: "codex", env: {} }],
+    });
+    expect(parseTomlValue(next)).toEqual({
+      version: 1,
+      agent_profiles: [{ id: "codex", env: {} }],
+    });
+  });
+
   it("round-trips whatever it produced", () => {
     const next = updateTomlDocument(source, {
       ...document,

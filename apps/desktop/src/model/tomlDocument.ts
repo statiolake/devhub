@@ -471,7 +471,11 @@ export function updateTomlDocument(
         continue;
       }
 
-      if (needsTableBlock(wanted)) {
+      if (isTable(wanted)) {
+        // The document's own spelling wins, and a table has one either way it
+        // is written — `[path]` with no keys under it is an empty table, not an
+        // absent one. Asking `wanted` how to spell it would write a second
+        // definition of a key the document already defines.
         const child = tableAt(childPath);
         if (child) {
           reconcile(
@@ -495,7 +499,14 @@ export function updateTomlDocument(
           }
           continue;
         }
-        appended.push(renderTableBlock(childPath.map(String), wanted));
+        // Neither spelling is in the document, so this picks one: a table with
+        // contents earns its own block, an empty one reads better as `key = {}`
+        // than as a heading with nothing under it.
+        if (needsTableBlock(wanted)) {
+          appended.push(renderTableBlock(childPath.map(String), wanted));
+        } else {
+          newKeys.push([key, wanted]);
+        }
         continue;
       }
 
