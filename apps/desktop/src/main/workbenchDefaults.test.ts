@@ -18,10 +18,18 @@ describe("the workbench defaults DevHub writes itself", () => {
 		expect(missingWorkbenchDefaults(theirs)).toEqual([]);
 	});
 
-	it("does not put a folder the person opened in DevHub into Restricted Mode", () => {
-		// The workbench's terminal is DevHub's tmux session now, and Restricted
-		// Mode refuses to start a terminal process at all.
-		expect(WORKBENCH_DEFAULTS["security.workspace.trust.enabled"]).toBe(false);
+	it("leaves Workspace Trust itself alone, so a folder is still asked about", () => {
+		// Untrusted *files* is the one trust-related default DevHub sets. Whether
+		// the authors of a folder are trusted is upstream's question to ask, once
+		// per folder, and DevHub does not answer it for anybody.
+		expect(WORKBENCH_DEFAULTS).not.toHaveProperty(
+			"security.workspace.trust.enabled",
+		);
+		expect(
+			Object.keys(WORKBENCH_DEFAULTS).filter((key) =>
+				key.startsWith("security.workspace.trust."),
+			),
+		).toEqual(["security.workspace.trust.untrustedFiles"]);
 	});
 
 	it("lets a loose file into the Scratch workbench without a trust question", () => {

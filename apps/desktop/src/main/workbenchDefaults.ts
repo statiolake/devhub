@@ -21,33 +21,30 @@
  *
  * - **The title bar.** A workbench view is chrome inside DevHub's own window,
  *   so it must not draw a title bar of its own.
- * - **Workspace trust.** Upstream's Workspace Trust exists because a window can
- *   be opened by something other than the person at the keyboard — a link, a
- *   recently-opened list, a folder handed to `code` by another program — so the
- *   code in it has to be treated as unknown until somebody says otherwise.
- *   Nothing reaches DevHub that way. A DevHub Workspace is a folder the person
- *   added in DevHub's own picker or named on DevHub's own command line, and the
- *   next thing they do in it is start an Agent, which runs a program of their
- *   choosing against those same files. Restricted Mode in the workbench does
- *   not make that safer; it makes the *terminal* — the one that is now the
- *   workbench's own, on DevHub's tmux session — refuse to open until the folder
- *   is trusted a second time, for a question DevHub already asked by being the
- *   thing that opened it. A person who wants the prompt back sets this to
- *   `true` and gets upstream's behaviour unchanged.
- * - **Untrusted files.** DevHub sends a file no open Workspace contains to the
- *   Scratch workbench, and an empty window is a *trusted* workspace, so
- *   upstream's `requestOpenFilesTrust` asks — every time, about every loose
- *   file, in a modal inside the workbench view — before it will open one
- *   (`editorService.openEditors(..., { validateTrust: true })`). Upstream is
- *   right to ask when the target window was chosen for you by "whichever
- *   window you last looked at". DevHub chose it from the path you typed, on
- *   DevHub's own command line, so the question has one answer and asking it is
- *   the whole of why `devhub <file>` appeared to do nothing.
+ * - **Untrusted files, and only untrusted files.** This is the single
+ *   trust-related default DevHub sets, and it is deliberately the narrow one.
+ *   Workspace Trust itself stays **on**: opening a folder asks "do you trust
+ *   the authors of the files in this folder?" exactly as stock VS Code does,
+ *   once per folder, and until somebody answers, the workspace is in Restricted
+ *   Mode and its terminal will not start. That wall is correct — a person
+ *   clicks "Yes, I trust the authors" once and it is gone for good — and DevHub
+ *   is not the right place to decide otherwise on their behalf.
+ *
+ *   What this key covers is a different question with no such answer. DevHub
+ *   sends a file no open Workspace contains to the Scratch workbench, and an
+ *   empty window is a *trusted* workspace, so upstream's `requestOpenFilesTrust`
+ *   asks — every time, about every loose file, in a modal inside the workbench
+ *   view — before it will open one (`editorService.openEditors(..., {
+ *   validateTrust: true })`). Upstream is right to ask when the target window
+ *   was chosen for you by "whichever window you last looked at". DevHub chose
+ *   it from the path you typed, on DevHub's own command line, so the question
+ *   has one answer and asking it is the whole of why `devhub <file>` appeared
+ *   to do nothing. A person who wants the prompt back sets this to `prompt` and
+ *   gets upstream's behaviour unchanged.
  */
 export const WORKBENCH_DEFAULTS: Readonly<Record<string, string | boolean>> = {
 	"window.titleBarStyle": "native",
 	"window.customTitleBarVisibility": "never",
-	"security.workspace.trust.enabled": false,
 	"security.workspace.trust.untrustedFiles": "open",
 };
 
