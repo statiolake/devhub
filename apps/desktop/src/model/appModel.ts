@@ -806,7 +806,7 @@ export class AppModel {
 }
 
 function ordinalKey(owner: WorkspaceId, profile: AgentProfileId): string {
-  return `${owner} ${profile}`;
+  return `${owner}\u0000${profile}`;
 }
 
 export { AVAILABLE };
