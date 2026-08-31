@@ -26,7 +26,6 @@ import {
 } from "./shellWindow.js";
 import { installSettingsWindow, logDirectoryFor } from "./settingsWindow.js";
 import { refreshMenu } from "./menu.js";
-import { installKeyboard } from "./keyboard.js";
 import { startControlServer } from "../cli/controlServer.js";
 import { controlSocketPath } from "../cli/protocol.js";
 import { installLauncher } from "../cli/install.js";
@@ -220,7 +219,7 @@ export async function bootstrapShell(
 		changeSocket: (name) => controller.changeTerminalSocket(name),
 	});
 
-	installKeyboard();
+	controller.installChords();
 	controller.installMenuBar();
 	// A Mac menu bar describes the key window, so it is rebuilt when the key
 	// window changes as well as when the model does.

@@ -120,6 +120,7 @@ import { resolveRuntimes } from "./runtimes.js";
 import type { AgentService } from "../agent/index.js";
 import { startWorkspacePicker } from "./workspacePicker.js";
 import { installMenu, refreshMenu } from "./menu.js";
+import { installKeyboard } from "./keyboard.js";
 import {
 	openSettingsWindow,
 	publishSettingsSnapshot,
@@ -355,6 +356,34 @@ export class AppController {
 				}).catch((error: unknown) => {
 					this.publishError(errorWire(error));
 				});
+			},
+			openWorkspacePicker: () => {
+				this.send(CHANNELS.menuCommand, "open_workspace_picker");
+			},
+			openSettings: () => {
+				openSettingsWindow();
+			},
+		});
+	}
+
+	/**
+	 * Wire the Command-Q chords to the same commands the menu bar raises.
+	 *
+	 * Every one of these is a line the menu already has, on purpose: a chord is
+	 * a second way to reach a command, never a second implementation of it.
+	 * See `chords.ts` for the table and `keyboard.ts` for where it is caught.
+	 */
+	installChords(): void {
+		installKeyboard({
+			snapshot: () => this.snapshot(),
+			selectContext: (context) => {
+				this.dispatchOwn(intentFromWire({ type: "select_context", context }));
+			},
+			selectActivity: (activity) => {
+				this.dispatchOwn({ type: "select_activity", activity });
+			},
+			setSidebarExpanded: (expanded) => {
+				this.dispatchOwn({ type: "set_sidebar_expanded", expanded });
 			},
 			openWorkspacePicker: () => {
 				this.send(CHANNELS.menuCommand, "open_workspace_picker");

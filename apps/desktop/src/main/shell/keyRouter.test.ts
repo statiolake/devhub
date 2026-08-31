@@ -45,7 +45,7 @@ describe("the Command-Q chord", () => {
 		});
 	});
 
-	it("leaves every other key alone, armed or not", () => {
+	it("leaves every other key alone while nothing is armed", () => {
 		for (const key of [
 			stroke("w", { command: true }),
 			stroke("n", { command: true }),
@@ -53,26 +53,13 @@ describe("the Command-Q chord", () => {
 			stroke("c", { command: true }),
 			stroke("k", { control: true }),
 			stroke("a"),
+			// The chord keys themselves: without the prefix they are ordinary.
+			stroke("z"),
+			stroke("3"),
+			stroke("P", { shift: true }),
 		]) {
-			expect(router.route(key, 0)).toEqual({
-				kind: "pass",
-				clearedPrefix: false,
-			});
+			expect(router.route(key, 0)).toEqual({ kind: "pass" });
 		}
-	});
-
-	it("clears the prefix when the second key is something else", () => {
-		router.route(commandQ, 0);
-		expect(router.route(stroke("w", { command: true }), 10)).toEqual({
-			kind: "pass",
-			clearedPrefix: true,
-		});
-		expect(router.isArmed(10)).toBe(false);
-		// And the Command-W that followed must not have become a quit.
-		expect(router.route(commandQ, 20)).toEqual({
-			kind: "armed",
-			deadline: 20 + PREFIX_TIMEOUT_MS,
-		});
 	});
 
 	it("is not armed by a Command-Q that carries other modifiers", () => {
@@ -82,10 +69,7 @@ describe("the Command-Q chord", () => {
 			stroke("q", { command: true, control: true }),
 			stroke("q"),
 		]) {
-			expect(router.route(key, 0)).toEqual({
-				kind: "pass",
-				clearedPrefix: false,
-			});
+			expect(router.route(key, 0)).toEqual({ kind: "pass" });
 		}
 	});
 
@@ -104,5 +88,118 @@ describe("the Command-Q chord", () => {
 			kind: "armed",
 			deadline: 10 + PREFIX_TIMEOUT_MS,
 		});
+	});
+});
+
+describe("completing a chord", () => {
+	let router: KeyRouter;
+
+	function complete(second: KeyStroke) {
+		router.route(commandQ, 0);
+		return router.route(second, 10);
+	}
+
+	beforeEach(() => {
+		router = new KeyRouter();
+	});
+
+	it("runs the workspace, agent and activity cycles", () => {
+		expect(complete(stroke("P", { shift: true }))).toEqual({
+			kind: "run",
+			action: { kind: "cycle-workspace", step: -1 },
+		});
+		expect(complete(stroke("N", { shift: true }))).toEqual({
+			kind: "run",
+			action: { kind: "cycle-workspace", step: 1 },
+		});
+		expect(complete(stroke("{", { shift: true }))).toEqual({
+			kind: "run",
+			action: { kind: "cycle-agent", step: -1 },
+		});
+		expect(complete(stroke("}", { shift: true }))).toEqual({
+			kind: "run",
+			action: { kind: "cycle-agent", step: 1 },
+		});
+		expect(complete(stroke("p"))).toEqual({
+			kind: "run",
+			action: { kind: "cycle-activity", step: -1 },
+		});
+		expect(complete(stroke("n", { control: true }))).toEqual({
+			kind: "run",
+			action: { kind: "cycle-activity", step: 1 },
+		});
+	});
+
+	it("runs the window commands", () => {
+		expect(complete(stroke("C", { shift: true }))).toEqual({
+			kind: "run",
+			action: { kind: "add-workspace" },
+		});
+		expect(complete(stroke("<", { shift: true }))).toEqual({
+			kind: "run",
+			action: { kind: "open-settings" },
+		});
+		expect(complete(stroke("z"))).toEqual({
+			kind: "run",
+			action: { kind: "toggle-sidebar" },
+		});
+	});
+
+	it("selects the Nth sidebar entry by its digit", () => {
+		for (const ordinal of [1, 5, 9]) {
+			expect(complete(stroke(String(ordinal)))).toEqual({
+				kind: "run",
+				action: { kind: "select-entry", ordinal },
+			});
+		}
+	});
+
+	it("distinguishes the shifted chord from the unshifted one", () => {
+		expect(complete(stroke("p"))).toEqual({
+			kind: "run",
+			action: { kind: "cycle-activity", step: -1 },
+		});
+		expect(complete(stroke("P", { shift: true }))).toEqual({
+			kind: "run",
+			action: { kind: "cycle-workspace", step: -1 },
+		});
+	});
+
+	it("cancels on a key the table does not have, and forwards nothing", () => {
+		expect(complete(stroke("w", { command: true }))).toEqual({
+			kind: "cancelled",
+		});
+		expect(router.isArmed(10)).toBe(false);
+		// And the Command-W that was swallowed must not have become a quit.
+		expect(router.route(commandQ, 20)).toEqual({
+			kind: "armed",
+			deadline: 20 + PREFIX_TIMEOUT_MS,
+		});
+	});
+
+	it("cancels on the pane and split keys DevHub deliberately does not bind", () => {
+		for (const key of ["h", "j", "k", "l", "v", "s", "d", "0"]) {
+			expect(complete(stroke(key))).toEqual({ kind: "cancelled" });
+		}
+	});
+
+	it("is over once the second has passed", () => {
+		router.route(commandQ, 0);
+		expect(router.route(stroke("z"), PREFIX_TIMEOUT_MS + 1)).toEqual({
+			kind: "pass",
+		});
+	});
+
+	it("takes its table as data, so an override is another array", () => {
+		const overridden = new KeyRouter([
+			{ key: "s", action: { kind: "open-settings" } },
+		]);
+		overridden.route(commandQ, 0);
+		expect(overridden.route(stroke("s"), 10)).toEqual({
+			kind: "run",
+			action: { kind: "open-settings" },
+		});
+		overridden.route(commandQ, 20);
+		expect(overridden.route(stroke("z"), 30)).toEqual({ kind: "cancelled" });
 	});
 });

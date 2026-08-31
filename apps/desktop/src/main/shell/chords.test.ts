@@ -1,0 +1,256 @@
+import { describe, expect, it } from "vitest";
+import { resolveChord, type ChordAction } from "./chords.js";
+import type {
+	ActivityName,
+	AgentWire,
+	AppSnapshotWire,
+	NavigationContext,
+	WorkspaceWire,
+} from "../../ipc/appShell.js";
+
+function agent(id: string, workspaceId: string, ordinal: number): AgentWire {
+	return {
+		controlState: "running",
+		displayName: id,
+		id,
+		ordinal,
+		profileId: "profile",
+		runtimeHealth: "healthy",
+		status: "idle",
+		workspaceId,
+	};
+}
+
+function workspace(id: string, agentIds: readonly string[]): WorkspaceWire {
+	return {
+		agents: agentIds.map((agentId, index) => agent(agentId, id, index)),
+		canCreateAgent: true,
+		id,
+		label: id,
+		root: `/tmp/${id}`,
+		selectedPath: `/tmp/${id}`,
+		state: "available",
+	};
+}
+
+function snapshotOf({
+	workspaces = [],
+	context = { kind: "global" } as NavigationContext,
+	activity = "editor" as ActivityName,
+	enabled = ["editor", "agent", "terminal"] as readonly ActivityName[],
+	expanded = true,
+}: {
+	workspaces?: readonly WorkspaceWire[];
+	context?: NavigationContext;
+	activity?: ActivityName;
+	enabled?: readonly ActivityName[];
+	expanded?: boolean;
+} = {}): AppSnapshotWire {
+	return {
+		activities: (["editor", "agent", "terminal"] as const).map((name) => ({
+			activity: name,
+			resolution: enabled.includes(name)
+				? { kind: "enabled", surfaceKey: name }
+				: { kind: "disabled", reason: "workspace-unavailable" },
+		})),
+		editorHost: { status: "ready" },
+		readiness: "ready",
+		revision: 1,
+		schemaVersion: 1,
+		selection: { activity, context },
+		sidebar: { width: 248, expanded },
+		workspaces,
+	};
+}
+
+const one = workspace("one", []);
+const two = workspace("two", ["a1", "a2"]);
+
+function run(action: ChordAction, snapshot: AppSnapshotWire) {
+	return resolveChord(action, snapshot);
+}
+
+describe("the sidebar cycle", () => {
+	const snapshot = snapshotOf({ workspaces: [one, two] });
+
+	it("counts Scratch as the first entry", () => {
+		expect(run({ kind: "select-entry", ordinal: 1 }, snapshot)).toEqual({
+			kind: "select-context",
+			context: { kind: "global" },
+		});
+		expect(run({ kind: "select-entry", ordinal: 3 }, snapshot)).toEqual({
+			kind: "select-context",
+			context: { kind: "workspace", workspaceId: "two" },
+		});
+	});
+
+	it("does nothing for a digit past the end of the list", () => {
+		expect(run({ kind: "select-entry", ordinal: 7 }, snapshot)).toBeUndefined();
+	});
+
+	it("steps forward through Scratch and the workspaces, wrapping", () => {
+		expect(run({ kind: "cycle-workspace", step: 1 }, snapshot)).toEqual({
+			kind: "select-context",
+			context: { kind: "workspace", workspaceId: "one" },
+		});
+		expect(
+			run(
+				{ kind: "cycle-workspace", step: 1 },
+				snapshotOf({
+					workspaces: [one, two],
+					context: { kind: "workspace", workspaceId: "two" },
+				}),
+			),
+		).toEqual({ kind: "select-context", context: { kind: "global" } });
+	});
+
+	it("steps back from Scratch to the last workspace", () => {
+		expect(run({ kind: "cycle-workspace", step: -1 }, snapshot)).toEqual({
+			kind: "select-context",
+			context: { kind: "workspace", workspaceId: "two" },
+		});
+	});
+
+	it("moves out of an agent by the workspace that agent is in", () => {
+		expect(
+			run(
+				{ kind: "cycle-workspace", step: -1 },
+				snapshotOf({
+					workspaces: [one, two],
+					context: { kind: "agent", agentId: "a2" },
+				}),
+			),
+		).toEqual({
+			kind: "select-context",
+			context: { kind: "workspace", workspaceId: "one" },
+		});
+	});
+
+	it("does nothing when Scratch is the only entry", () => {
+		expect(
+			run({ kind: "cycle-workspace", step: 1 }, snapshotOf()),
+		).toBeUndefined();
+	});
+});
+
+describe("the agent cycle", () => {
+	it("starts at the first agent from the workspace row", () => {
+		expect(
+			run(
+				{ kind: "cycle-agent", step: 1 },
+				snapshotOf({
+					workspaces: [two],
+					context: { kind: "workspace", workspaceId: "two" },
+				}),
+			),
+		).toEqual({
+			kind: "select-context",
+			context: { kind: "agent", agentId: "a1" },
+		});
+	});
+
+	it("starts at the last agent stepping back from the workspace row", () => {
+		expect(
+			run(
+				{ kind: "cycle-agent", step: -1 },
+				snapshotOf({
+					workspaces: [two],
+					context: { kind: "workspace", workspaceId: "two" },
+				}),
+			),
+		).toEqual({
+			kind: "select-context",
+			context: { kind: "agent", agentId: "a2" },
+		});
+	});
+
+	it("wraps within the workspace it is already in", () => {
+		expect(
+			run(
+				{ kind: "cycle-agent", step: 1 },
+				snapshotOf({
+					workspaces: [one, two],
+					context: { kind: "agent", agentId: "a2" },
+				}),
+			),
+		).toEqual({
+			kind: "select-context",
+			context: { kind: "agent", agentId: "a1" },
+		});
+	});
+
+	it("is a no-op, not an error, with no agents to move between", () => {
+		expect(
+			run(
+				{ kind: "cycle-agent", step: 1 },
+				snapshotOf({
+					workspaces: [one],
+					context: { kind: "workspace", workspaceId: "one" },
+				}),
+			),
+		).toBeUndefined();
+		// And on Scratch, which has no agents at all.
+		expect(
+			run({ kind: "cycle-agent", step: 1 }, snapshotOf({ workspaces: [two] })),
+		).toBeUndefined();
+	});
+});
+
+describe("the activity cycle", () => {
+	it("runs Editor to Agent to Terminal and wraps", () => {
+		expect(run({ kind: "cycle-activity", step: 1 }, snapshotOf())).toEqual({
+			kind: "select-activity",
+			activity: "agent",
+		});
+		expect(
+			run(
+				{ kind: "cycle-activity", step: 1 },
+				snapshotOf({ activity: "terminal" }),
+			),
+		).toEqual({ kind: "select-activity", activity: "editor" });
+		expect(run({ kind: "cycle-activity", step: -1 }, snapshotOf())).toEqual({
+			kind: "select-activity",
+			activity: "terminal",
+		});
+	});
+
+	it("skips an activity that is disabled here rather than erroring into it", () => {
+		expect(
+			run(
+				{ kind: "cycle-activity", step: 1 },
+				snapshotOf({ enabled: ["editor", "terminal"] }),
+			),
+		).toEqual({ kind: "select-activity", activity: "terminal" });
+	});
+
+	it("does nothing when no activity is available", () => {
+		expect(
+			run({ kind: "cycle-activity", step: 1 }, snapshotOf({ enabled: [] })),
+		).toBeUndefined();
+	});
+});
+
+describe("the window commands", () => {
+	it("toggles the sidebar to whichever form it is not in", () => {
+		expect(run({ kind: "toggle-sidebar" }, snapshotOf())).toEqual({
+			kind: "set-sidebar-expanded",
+			expanded: false,
+		});
+		expect(
+			run({ kind: "toggle-sidebar" }, snapshotOf({ expanded: false })),
+		).toEqual({ kind: "set-sidebar-expanded", expanded: true });
+	});
+
+	it("opens the picker and the settings window", () => {
+		expect(run({ kind: "add-workspace" }, snapshotOf())).toEqual({
+			kind: "open-workspace-picker",
+		});
+		expect(run({ kind: "open-settings" }, snapshotOf())).toEqual({
+			kind: "open-settings",
+		});
+	});
+
+	it("resolves the double prefix to nothing: the router forwards it", () => {
+		expect(run({ kind: "forward-prefix" }, snapshotOf())).toBeUndefined();
+	});
+});

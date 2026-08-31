@@ -1,31 +1,33 @@
 /**
- * Command-Q is a chord, not a shortcut.
+ * Command-Q is a prefix, not a shortcut.
  *
- * A port of the Tauri app's `src-tauri/src/keyboard.rs`. DevHub's surfaces are
- * whole applications in their own right — a VS Code workbench, a terminal —
- * and they want their own keys. Quitting on a single Command-Q, next to an
- * editor where Command-W closes a tab and Command-N makes a file, is a keypress
- * away from losing everything unsaved. So the first Command-Q only arms; the
- * second, within a second, is passed to whatever is focused as an ordinary
- * Command-Q, which is what actually quits.
+ * A port of the Tauri app's `src-tauri/src/keyboard.rs`, grown into DevHub's
+ * chord layer. DevHub's surfaces are whole applications in their own right — a
+ * VS Code workbench, a terminal — and they want their own keys. Quitting on a
+ * single Command-Q, next to an editor where Command-W closes a tab and
+ * Command-N makes a file, is a keypress away from losing everything unsaved.
+ * So the first Command-Q only arms; the second stroke is looked up in the
+ * chord table (`chords.ts`, which is also where the bindings and the reasoning
+ * behind them are written down), and `Cmd+Q Cmd+Q` is the row that passes a
+ * real Command-Q through to whatever is focused, which is what actually quits.
  *
- * Everything else is untouched, by construction. This router's only power is
- * to swallow an exact Command-Q, and it never invents a key event: composition,
- * marked text, and every shortcut a surface defines travel as they always did.
+ * Outside an armed prefix this router has no power at all: it never invents a
+ * key event, and composition, marked text and every shortcut a surface defines
+ * travel as they always did.
  */
+
+import {
+	DEFAULT_CHORDS,
+	matchChord,
+	type ChordAction,
+	type ChordBinding,
+	type KeyStroke,
+} from "./chords.js";
+
+export type { KeyStroke } from "./chords.js";
 
 /** The product contract is an exact one-second prefix interval. */
 export const PREFIX_TIMEOUT_MS = 1_000;
-
-export interface KeyStroke {
-	/** Electron's `input.key`, compared case-insensitively. */
-	readonly key: string;
-	readonly command: boolean;
-	readonly shift: boolean;
-	readonly option: boolean;
-	readonly control: boolean;
-	readonly isAutoRepeat: boolean;
-}
 
 export type RouteDecision =
 	/** Swallow it: it must never reach a surface. */
@@ -34,8 +36,12 @@ export type RouteDecision =
 	| { readonly kind: "armed"; readonly deadline: number }
 	/** Let it through as an ordinary Command-Q. */
 	| { readonly kind: "forward" }
+	/** Swallow it, and run this chord. */
+	| { readonly kind: "run"; readonly action: ChordAction }
+	/** Swallow it: it completed no chord, so the chord is abandoned. */
+	| { readonly kind: "cancelled" }
 	/** Leave it entirely alone. */
-	| { readonly kind: "pass"; readonly clearedPrefix: boolean };
+	| { readonly kind: "pass" };
 
 function isExactCommandQ(stroke: KeyStroke): boolean {
 	return (
@@ -51,9 +57,17 @@ export class KeyRouter {
 	private armedUntil: number | undefined;
 
 	/**
+	 * The table is an argument so that a user override is a different array
+	 * rather than a different router. Nothing builds one yet; see `chords.ts`.
+	 */
+	constructor(
+		private readonly table: readonly ChordBinding[] = DEFAULT_CHORDS,
+	) {}
+
+	/**
 	 * A change of what is focused invalidates an armed prefix.
 	 *
-	 * Otherwise a second Command-Q lands on whatever happens to be focused a
+	 * Otherwise a second stroke lands on whatever happens to be focused a
 	 * moment later, which is not what the person armed it against.
 	 */
 	focusChanged(): void {
@@ -75,10 +89,16 @@ export class KeyRouter {
 		const deadline = this.armedUntil;
 		this.armedUntil = undefined;
 		if (deadline !== undefined && now <= deadline) {
-			if (isExactCommandQ(stroke)) return { kind: "forward" };
-			// Any other second key clears the prefix and carries on untouched,
-			// which is what keeps Command-W, Command-M and IME working.
-			return { kind: "pass", clearedPrefix: true };
+			const binding = matchChord(this.table, stroke);
+			if (!binding) {
+				// Once the prefix is armed the keyboard belongs to the chord layer.
+				// A key that completes nothing abandons the chord and goes nowhere:
+				// a mistyped chord must do nothing at all rather than fire whatever
+				// the focused surface would have done with that key.
+				return { kind: "cancelled" };
+			}
+			if (binding.action.kind === "forward-prefix") return { kind: "forward" };
+			return { kind: "run", action: binding.action };
 		}
 
 		if (isExactCommandQ(stroke)) {
@@ -86,6 +106,6 @@ export class KeyRouter {
 			this.armedUntil = armed;
 			return { kind: "armed", deadline: armed };
 		}
-		return { kind: "pass", clearedPrefix: false };
+		return { kind: "pass" };
 	}
 }
