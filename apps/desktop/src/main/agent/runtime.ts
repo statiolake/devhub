@@ -257,9 +257,14 @@ export class HerdrAgentRuntime {
 			executable,
 			missingExecutableReason,
 			transport: new HerdrTransport(socketPath),
+			// There is no environment override here on purpose. A
+			// `DEVHUB_AGENT_RUNTIME_JOURNAL` fallback used to sit between these
+			// two, and it could not fire: `wireAgents` always passes
+			// `journalPath`, and `DEVHUB_*` is stripped from the app-derived
+			// environment anyway. Keeping it would have left a third place the
+			// journal could come from that no caller and no test could reach.
 			journalPath:
 				journalPath ??
-				context.environmentValue("DEVHUB_AGENT_RUNTIME_JOURNAL") ??
 				join(
 					context.home,
 					"Library/Application Support/DevHub/agent-runtime-journal.json",
