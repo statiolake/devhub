@@ -15,6 +15,7 @@
  */
 
 import { FitAddon } from "@xterm/addon-fit";
+import { WebglAddon } from "@xterm/addon-webgl";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import {
@@ -48,6 +49,66 @@ export const FALLBACK_GEOMETRY: SurfaceGeometry = {
 /** The largest grid main will accept, and the largest one worth drawing. */
 const MAX_AXIS = 500;
 
+/**
+ * Which of xterm's renderers is drawing.
+ *
+ * `"dom"` is not a configuration — it is what is left when the GPU one cannot
+ * run, and it draws visibly worse (see `attachRenderer`), so a surface running
+ * on it is running degraded and says so rather than looking merely blurry.
+ */
+export type SurfaceRenderer = "webgl" | "dom";
+
+/**
+ * Draw through the GPU renderer, and say whether that succeeded.
+ *
+ * xterm without a renderer addon falls back to its DOM renderer, which lays a
+ * row out as runs of text in `<span>`s and stretches each run onto the cell
+ * grid with a single `letter-spacing`. One spacing value can only fit a run
+ * whose glyphs all have the same natural advance, and a Japanese line does
+ * not: the punctuation comes from the chosen monospace face and the kana from
+ * the CJK fallback behind it. Measured in Chromium at 13px, dpr 2, on
+ * `、。「あ漢」ABCdef`, `。` and `」` drew 2.83 cells wide instead of 2 and
+ * pushed everything after them 1.6 cells to the right — while the buffer had
+ * every one of those cells at the correct width 2. The emulator's model was
+ * right the whole time; only the drawing was wrong.
+ *
+ * That is impossible for the GPU renderer, which positions and clips every
+ * cell on its own, and it also puts the grid on whole device pixels (a 7.5 css
+ * px cell rather than the DOM renderer's measured 7.6136). So the DOM renderer
+ * is the fallback, never the choice.
+ *
+ * What this does *not* change is how heavy the text looks: measured ink mass
+ * moves by 0.6% between the two. The weight of shell text is decided by
+ * `-webkit-font-smoothing` in the page tokens, and a glyph rasterised into the
+ * GPU atlas is out of that property's reach entirely.
+ */
+function attachRenderer(
+  terminal: Terminal,
+  degraded: () => void,
+): SurfaceRenderer {
+  let addon: WebglAddon;
+  try {
+    addon = new WebglAddon();
+    terminal.loadAddon(addon);
+  } catch {
+    // Not a swallow: a machine with no WebGL context to give has no GPU
+    // renderer to attach, and the answer to "which renderer is drawing" is
+    // the DOM one. The caller is told, and that is the whole recovery.
+    return "dom";
+  }
+  // A context can be taken away later — a browser hands out a bounded number of
+  // them, and a page with enough surfaces loses the oldest. A lost context
+  // leaves the addon drawing nothing at all, so disposing it puts xterm back on
+  // the DOM renderer: worse, but a picture. The surface is told, because a
+  // `renderer` that still said "webgl" would be the same silent lie as having
+  // never reported it.
+  addon.onContextLoss(() => {
+    addon.dispose();
+    degraded();
+  });
+  return "webgl";
+}
+
 export interface XtermSessionOptions {
   readonly appearance?: TerminalAppearance;
   readonly palette?: TerminalPalette;
@@ -63,6 +124,8 @@ export interface XtermSessionOptions {
 
 export interface XtermSession {
   readonly terminal: Terminal;
+  /** Which renderer this surface got. `"dom"` means it is drawing degraded. */
+  readonly renderer: SurfaceRenderer;
   /** The last measurement. Legal even before the host has ever had layout. */
   readonly geometry: SurfaceGeometry;
   /** Fit to the host now, and report the result unless the surface is hidden. */
@@ -99,6 +162,10 @@ export function openXtermSession(
   const fit = new FitAddon();
   terminal.loadAddon(fit);
   terminal.open(host);
+  // After `open`: the GPU renderer needs the element it will draw into.
+  let renderer = attachRenderer(terminal, () => {
+    renderer = "dom";
+  });
 
   // xterm owns a hidden native textarea for keyboard and IME input. Keep that
   // responder discoverable to VoiceOver without adding a second visible
@@ -165,6 +232,9 @@ export function openXtermSession(
 
   return {
     terminal,
+    get renderer() {
+      return renderer;
+    },
     get geometry() {
       return geometry;
     },
