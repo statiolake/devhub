@@ -136,6 +136,41 @@ describe("the picker", () => {
     elsewhere.remove();
   });
 
+  it("puts pinned entries first while nothing is typed", () => {
+    renderPicker({ pinned: [{ id: "new", label: "New Project…" }] });
+    expect(screen.getAllByRole("option").map((row) => row.textContent)).toEqual(
+      ["New Project…", "Claude", "Codex"],
+    );
+  });
+
+  it("puts them last once something is, and keeps them there", () => {
+    renderPicker({ pinned: [{ id: "new", label: "New Project…" }] });
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "cod" } });
+    expect(screen.getAllByRole("option").map((row) => row.textContent)).toEqual(
+      ["Codex", "New Project…"],
+    );
+  });
+
+  it("keeps a pinned entry when nothing matches at all", () => {
+    // The person who typed the name of a project that does not exist yet is
+    // exactly the person who wants to create it, so this is the state the
+    // entry matters most in.
+    renderPicker({ pinned: [{ id: "new", label: "New Project…" }] });
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "zzz" } });
+    expect(screen.getAllByRole("option").map((row) => row.textContent)).toEqual(
+      ["New Project…"],
+    );
+    expect(screen.getByText("No agent profiles match.")).toBeInTheDocument();
+  });
+
+  it("reports a pinned entry by its own id", () => {
+    const { onChoose } = renderPicker({
+      pinned: [{ id: "new", label: "New Project…" }],
+    });
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Enter" });
+    expect(onChoose).toHaveBeenCalledWith({ id: "new", split: false });
+  });
+
   it("cancels on Escape", () => {
     const { onCancel } = renderPicker({});
     fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });

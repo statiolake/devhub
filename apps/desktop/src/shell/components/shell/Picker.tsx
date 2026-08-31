@@ -66,6 +66,20 @@ export interface PickerProps {
   readonly title: string;
   readonly placeholder: string;
   readonly items: readonly PickerItem[];
+  /**
+   * Rows that are not candidates: they *do* something rather than name
+   * something that already exists — "New Project…", "Clone Project…".
+   *
+   * Two things follow from that, and they are the whole of why the picker
+   * knows about them at all. They are never filtered out, because a person who
+   * has typed the name of a project that does not exist yet is exactly the
+   * person who wants to make it. And they move: first while nothing is typed,
+   * because that is the menu of what one can do here; last once something is,
+   * because then the list is an answer to a question and these are not part of
+   * the answer. In every other respect they are rows — the arrows reach them,
+   * Return takes them, the caller tells them apart by their id.
+   */
+  readonly pinned?: readonly PickerItem[];
   /** A source is still answering. Shown as a spinner, never as an empty list. */
   readonly busy?: boolean;
   /** Nothing matches what was typed. */
@@ -98,10 +112,13 @@ function SearchGlyph() {
   );
 }
 
+const NO_PINNED: readonly PickerItem[] = [];
+
 export function Picker({
   title,
   placeholder,
   items,
+  pinned = NO_PINNED,
   busy = false,
   emptyNoMatch,
   emptyNoItems,
@@ -136,6 +153,20 @@ export function Picker({
       )
       .map((entry) => entry.item);
   }, [items, query]);
+
+  /**
+   * Every row there is, in the order it is drawn.
+   *
+   * The pinned rows lead while nothing is typed and trail once something is;
+   * from here down nothing distinguishes them, so the arrows, Return, the
+   * click and the scroll-into-view are one implementation and cannot disagree
+   * about what "the row you are on" means.
+   */
+  const rows = useMemo(
+    () =>
+      query.length === 0 ? [...pinned, ...ranked] : [...ranked, ...pinned],
+    [pinned, query.length, ranked],
+  );
 
   const focusField = useCallback(() => {
     const field = input.current;
@@ -181,10 +212,10 @@ export function Picker({
 
   // The top row is the one Return takes, so a list that changed under the
   // person must not leave the selection pointing into the middle of it.
-  const activeId = ranked[active]?.id;
+  const activeId = rows[active]?.id;
   useEffect(() => {
-    setActive((current) => (current < ranked.length ? current : 0));
-  }, [ranked.length]);
+    setActive((current) => (current < rows.length ? current : 0));
+  }, [rows.length]);
 
   useEffect(() => {
     listRef.current
@@ -214,14 +245,14 @@ export function Picker({
     }
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       event.preventDefault();
-      if (ranked.length === 0) return;
+      if (rows.length === 0) return;
       const delta = event.key === "ArrowDown" ? 1 : -1;
-      setActive((current) => (current + delta + ranked.length) % ranked.length);
+      setActive((current) => (current + delta + rows.length) % rows.length);
       return;
     }
     if (event.key === "Enter") {
       event.preventDefault();
-      const candidate = ranked[active];
+      const candidate = rows[active];
       if (candidate) choose(candidate.id, event.metaKey);
       return;
     }
@@ -284,14 +315,23 @@ export function Picker({
           ) : null}
         </div>
 
-        {ranked.length > 0 ? (
+        {/* One band whatever it holds. The message and the rows can both be
+            here at once — nothing you typed exists yet, but "New Project…"
+            still does — so the sheet's seams do not move with its state. */}
+        <div className="picker-body">
+          {ranked.length === 0 ? (
+            <p className="picker-empty mac-caption" role="status">
+              {emptyMessage}
+            </p>
+          ) : null}
           <ul
             className="mac-list picker-results"
             role="listbox"
             aria-label={title}
             ref={listRef}
+            hidden={rows.length === 0}
           >
-            {ranked.map((item, index) => (
+            {rows.map((item, index) => (
               <li key={item.id}>
                 <button
                   type="button"
@@ -326,11 +366,7 @@ export function Picker({
               </li>
             ))}
           </ul>
-        ) : (
-          <p className="picker-empty mac-caption" role="status">
-            {emptyMessage}
-          </p>
-        )}
+        </div>
 
         {/* The note is part of the footer, not a band of its own. It is the
             sheet saying something about itself — what the modifier does, why

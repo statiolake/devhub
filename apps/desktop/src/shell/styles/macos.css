@@ -489,6 +489,14 @@
   margin-top: var(--space-3);
 }
 
+/* Where a clone is going to land: the sheet showing its own arithmetic, so
+   nobody has to run it in their head from two fields. */
+.project-destination {
+  margin: var(--space-2) 0 0;
+  color: var(--secondary);
+  word-break: break-all;
+}
+
 /*
  * An alert that belongs to one workbench.
  *
@@ -682,18 +690,34 @@
   color: var(--tertiary);
 }
 
+/* The middle band: what there is to pick, and a line about it when there is
+   nothing. Both at once is a real state — nothing you typed exists yet, and
+   "New Project…" is still there to be taken — so this holds either or both. */
+.picker-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
 .picker-results {
   flex: 1;
   padding: var(--space-2);
   gap: 1px;
 }
 
-/* A band, so it carries no margin of its own: the space around it is the
-   band's padding, the same way every other band's is. */
+/* Carries no margin of its own: the space around it is padding, the same way
+   every other part of the sheet's is. Roomy when it is alone in the band, and
+   no more than a line when rows follow it. */
 .picker-empty {
   margin: 0;
   padding: var(--space-6) var(--space-4);
   text-align: center;
+}
+
+.picker-body:has(.picker-results:not([hidden])) .picker-empty {
+  padding: var(--space-3) var(--space-4);
+  text-align: start;
 }
 
 /* The footer: what the sheet has to say about itself, and the way out of it.
