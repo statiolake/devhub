@@ -2,7 +2,7 @@
  *  DevHub's copy of VS Code's main-process entry point.
  *
  *  Upstream: vscode/src/vs/code/electron-main/main.ts
- *  Pinned at: microsoft/vscode 987c9597516278c9fcf10d963a0592ce1384ab93 (tag 1.121.0)
+ *  Pinned at: microsoft/vscode 8a7abeba6e03ea3af87bfbce9a1b7e48fed567b8 (tag 1.129.1)
  *
  *  This file exists to substitute two things and nothing else. Keep it as close
  *  to upstream as possible; a VS Code bump re-applies exactly this list:
@@ -41,7 +41,7 @@ import { IPathWithLineAndColumn, isValidBasename, parseLineAndColumnAware, sanit
 import { Event } from 'code-oss-dev/out/vs/base/common/event.js';
 import { getPathLabel } from 'code-oss-dev/out/vs/base/common/labels.js';
 import { Schemas } from 'code-oss-dev/out/vs/base/common/network.js';
-import { basename, resolve } from 'code-oss-dev/out/vs/base/common/path.js';
+import { basename, join, resolve } from 'code-oss-dev/out/vs/base/common/path.js';
 import { mark } from 'code-oss-dev/out/vs/base/common/performance.js';
 import { IProcessEnvironment, isLinux, isMacintosh, isWindows, OS } from 'code-oss-dev/out/vs/base/common/platform.js';
 import { cwd } from 'code-oss-dev/out/vs/base/common/process.js';
@@ -90,6 +90,10 @@ import { IUserDataProfilesMainService, UserDataProfilesMainService } from 'code-
 import { IPolicyService, NullPolicyService } from 'code-oss-dev/out/vs/platform/policy/common/policy.js';
 import { NativePolicyService } from 'code-oss-dev/out/vs/platform/policy/node/nativePolicyService.js';
 import { FilePolicyService } from 'code-oss-dev/out/vs/platform/policy/common/filePolicyService.js';
+import { MultiplexPolicyService } from 'code-oss-dev/out/vs/platform/policy/common/multiplexPolicyService.js';
+import { GITHUB_COPILOT_MACOS_BUNDLE_ID, GITHUB_COPILOT_WIN32_POLICY_NAME, GITHUB_COPILOT_WIN32_REGISTRY_PATH, INativeManagedSettingsService, IFileManagedSettingsService, MANAGED_SETTINGS_FILE_NAME, MANAGED_SETTINGS_LINUX_FILE_PATH, MANAGED_SETTINGS_MACOS_FILE_PATH, MANAGED_SETTINGS_WINDOWS_DIR, NullNativeManagedSettingsService, NullFileManagedSettingsService } from 'code-oss-dev/out/vs/platform/policy/common/copilotManagedSettings.js';
+import { FileManagedSettingsService } from 'code-oss-dev/out/vs/platform/policy/common/fileManagedSettingsService.js';
+import { NativeManagedSettingsService } from 'code-oss-dev/out/vs/platform/policy/node/nativeManagedSettingsService.js';
 import { DisposableStore } from 'code-oss-dev/out/vs/base/common/lifecycle.js';
 import { IUriIdentityService } from 'code-oss-dev/out/vs/platform/uriIdentity/common/uriIdentity.js';
 import { UriIdentityService } from 'code-oss-dev/out/vs/platform/uriIdentity/common/uriIdentityService.js';
@@ -256,14 +260,52 @@ class CodeMain {
 		const policyProductName = isWindows
 			? (productService.parentPolicyConfig?.win32RegValueName ?? productService.win32RegValueName)
 			: (productService.parentPolicyConfig?.darwinBundleIdentifier ?? productService.darwinBundleIdentifier);
+		const policyServices: IPolicyService[] = [];
 		if (isWindows && policyProductName) {
-			policyService = disposables.add(new NativePolicyService(logService, policyProductName));
+			policyServices.push(disposables.add(new NativePolicyService(logService, policyProductName)));
 		} else if (isMacintosh && policyProductName) {
-			policyService = disposables.add(new NativePolicyService(logService, policyProductName));
+			policyServices.push(disposables.add(new NativePolicyService(logService, policyProductName)));
 		} else if (isLinux) {
-			policyService = disposables.add(new FilePolicyService(URI.file(LINUX_SYSTEM_POLICY_FILE_PATH), fileService, logService));
+			policyServices.push(disposables.add(new FilePolicyService(URI.file(LINUX_SYSTEM_POLICY_FILE_PATH), fileService, logService)));
 		} else if (environmentMainService.policyFile) {
-			policyService = disposables.add(new FilePolicyService(environmentMainService.policyFile, fileService, logService));
+			policyServices.push(disposables.add(new FilePolicyService(environmentMainService.policyFile, fileService, logService)));
+		}
+
+		let nativeManagedSettingsService: NativeManagedSettingsService | undefined;
+		if (isWindows) {
+			nativeManagedSettingsService = disposables.add(new NativeManagedSettingsService(logService, GITHUB_COPILOT_WIN32_POLICY_NAME, { registryPath: GITHUB_COPILOT_WIN32_REGISTRY_PATH }));
+		} else if (isMacintosh) {
+			nativeManagedSettingsService = disposables.add(new NativeManagedSettingsService(logService, GITHUB_COPILOT_MACOS_BUNDLE_ID));
+		}
+		if (nativeManagedSettingsService) {
+			services.set(INativeManagedSettingsService, nativeManagedSettingsService);
+		} else {
+			services.set(INativeManagedSettingsService, new NullNativeManagedSettingsService());
+		}
+
+		// File-based managed settings
+		let fileManagedSettingsPath: string | undefined;
+		if (isWindows) {
+			const programFiles = process.env['ProgramFiles'];
+			if (programFiles) {
+				fileManagedSettingsPath = join(programFiles, MANAGED_SETTINGS_WINDOWS_DIR, MANAGED_SETTINGS_FILE_NAME);
+			}
+		} else if (isMacintosh) {
+			fileManagedSettingsPath = MANAGED_SETTINGS_MACOS_FILE_PATH;
+		} else if (isLinux) {
+			fileManagedSettingsPath = MANAGED_SETTINGS_LINUX_FILE_PATH;
+		}
+		if (fileManagedSettingsPath) {
+			const fileManagedSettingsService = disposables.add(new FileManagedSettingsService(URI.file(fileManagedSettingsPath), fileService, logService));
+			services.set(IFileManagedSettingsService, fileManagedSettingsService);
+		} else {
+			services.set(IFileManagedSettingsService, new NullFileManagedSettingsService());
+		}
+
+		if (policyServices.length > 1) {
+			policyService = disposables.add(new MultiplexPolicyService(policyServices, logService));
+		} else if (policyServices.length === 1) {
+			policyService = policyServices[0];
 		} else {
 			policyService = new NullPolicyService();
 		}

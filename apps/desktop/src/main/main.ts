@@ -2,7 +2,7 @@
  *  DevHub's copy of VS Code's outer bootstrap.
  *
  *  Upstream: vscode/src/main.ts
- *  Pinned at: microsoft/vscode 987c9597516278c9fcf10d963a0592ce1384ab93 (tag 1.121.0)
+ *  Pinned at: microsoft/vscode 8a7abeba6e03ea3af87bfbce9a1b7e48fed567b8 (tag 1.129.1)
  *
  *  This is the file Electron runs (apps/desktop/package.json "main"). It exists
  *  to substitute the things below and nothing else. Keep it as close to upstream as
@@ -153,6 +153,14 @@ protocol.registerSchemesAsPrivileged([
 	{
 		scheme: 'vscode-file',
 		privileges: { secure: true, standard: true, supportFetchAPI: true, corsEnabled: true, codeCache: true }
+	},
+	{
+		scheme: 'vscode-remote-resource',
+		privileges: { secure: true, supportFetchAPI: true, corsEnabled: true }
+	},
+	{
+		scheme: 'vscode-managed-remote-resource',
+		privileges: { secure: true, supportFetchAPI: true, corsEnabled: true }
 	},
 	// DevHub: the App Shell page's own scheme. It is not VS Code's, and it is
 	// served from one directory only (shell/shellPageProtocol.ts).
@@ -382,8 +390,9 @@ function configureCommandlineSwitchesSync(cliArgs: NativeParsedArgs) {
 	// `DocumentPolicyIncludeJSCallStacksInCrashReports` - https://www.electronjs.org/docs/latest/api/web-frame-main#framecollectjavascriptcallstack-experimental
 	// `EarlyEstablishGpuChannel` - Refs https://issues.chromium.org/issues/40208065
 	// `EstablishGpuChannelAsync` - Refs https://issues.chromium.org/issues/40208065
+	// `GlobalShortcutsPortal` - Enables Electron's `globalShortcut` (system-wide keybindings) on Linux Wayland via the XDG global shortcuts portal (no-op elsewhere)
 	const featuresToEnable =
-		`NetAdapterMaxBufSizeFeature:NetAdapterMaxBufSize/8192,DocumentPolicyIncludeJSCallStacksInCrashReports,EarlyEstablishGpuChannel,EstablishGpuChannelAsync,${app.commandLine.getSwitchValue('enable-features')}`;
+		`NetAdapterMaxBufSizeFeature:NetAdapterMaxBufSize/8192,DocumentPolicyIncludeJSCallStacksInCrashReports,EarlyEstablishGpuChannel,EstablishGpuChannelAsync${process.platform === 'linux' ? ',GlobalShortcutsPortal' : ''},${app.commandLine.getSwitchValue('enable-features')}`;
 	app.commandLine.appendSwitch('enable-features', featuresToEnable);
 
 	// Following features are disabled from the runtime:
@@ -607,18 +616,6 @@ function getJSFlags(cliArgs: NativeParsedArgs, argvConfig: IArgvConfig): string 
 	// Add JS flags from runtime arguments (argv.json)
 	if (typeof argvConfig['js-flags'] === 'string' && argvConfig['js-flags']) {
 		jsFlags.push(argvConfig['js-flags']);
-	}
-
-	if (process.platform === 'linux') {
-		// Fix cppgc crash on Linux with 16KB page size.
-		// Refs https://issues.chromium.org/issues/378017037
-		// The fix from https://github.com/electron/electron/commit/6c5b2ef55e08dc0bede02384747549c1eadac0eb
-		// only affects non-renderer process.
-		// The following will ensure that the flag will be
-		// applied to the renderer process as well.
-		// TODO(deepak1556): Remove this once we update to
-		// Chromium >= 134.
-		jsFlags.push('--nodecommit_pooled_pages');
 	}
 
 	return jsFlags.length > 0 ? jsFlags.join(' ') : null;
