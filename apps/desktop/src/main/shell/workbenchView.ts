@@ -66,6 +66,12 @@ export class WorkbenchView {
 	 */
 	private hidden = false;
 	/**
+	 * What this workbench last said about its unsaved work. False until it says
+	 * otherwise, which is what a workbench with nothing open means: the
+	 * renderer pushes this only when a working copy changes dirty.
+	 */
+	private documentEdited = false;
+	/**
 	 * This window's own lifetime events. Not the shell's, and not another
 	 * view's: an ending is about exactly one window.
 	 */
@@ -287,8 +293,24 @@ export class WorkbenchView {
 		return false;
 	}
 
+	/**
+	 * Whether this workbench holds unsaved work.
+	 *
+	 * VS Code's renderer pushes this whenever its working copies change dirty
+	 * (`workbench/electron-browser/window.ts` → `nativeHostService
+	 * .setDocumentEdited` → `CodeWindow.setDocumentEdited` → here), which makes
+	 * it the one answer about unsaved editors that main can read without asking
+	 * the page anything. A `BrowserWindow` keeps it because macOS draws it as
+	 * the dot in the close button; a view has no close button, so it keeps it
+	 * for DevHub's close inspection instead.
+	 *
+	 * This pair used to be a no-op setter and a `return false` getter. That is
+	 * why "Unsaved editors: Could not verify editor state" was the only thing
+	 * a close could ever say: nothing recorded the answer, so nothing could
+	 * report it, and the inspection fell back to not knowing.
+	 */
 	isDocumentEdited(): boolean {
-		return false;
+		return this.documentEdited;
 	}
 
 	restore(): void {}
@@ -305,7 +327,9 @@ export class WorkbenchView {
 	setClosable(): void {}
 	setMinimumSize(): void {}
 	setAspectRatio(): void {}
-	setDocumentEdited(): void {}
+	setDocumentEdited(edited: boolean): void {
+		this.documentEdited = edited;
+	}
 	setRepresentedFilename(): void {}
 	setTouchBar(): void {}
 	setMenuBarVisibility(): void {}

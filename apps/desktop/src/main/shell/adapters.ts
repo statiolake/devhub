@@ -16,11 +16,13 @@
  *   it. With no adapter there are no terminals, so "close the workspace's
  *   terminals" is already true and the step completes — that is a fact about
  *   the build, not an assumption about the world.
- * - **Close inspection.** Nobody can say whether an editor has unsaved work
- *   until something asks the workbench. With no inspector the shell answers
- *   from what it does know — whether a workbench view for that Workspace
- *   exists at all — which is what puts "Could not verify editor state" in
- *   front of the person instead of quietly reporting "clean".
+ *
+ * Editors are deliberately not one of these. The shell owns every workbench
+ * view itself, and VS Code's renderer has already told main whether a view
+ * holds unsaved work, so the App Controller answers that question directly
+ * (`inspectEditors`) rather than through a seam. There was an `EditorInspector`
+ * here that nothing ever registered; the branch for its absence was the whole
+ * of the behaviour, and it said "could not verify" every time.
  */
 
 import type {
@@ -61,14 +63,8 @@ export interface TerminalAdapter {
 	}>;
 }
 
-export interface EditorInspector {
-	/** Unsaved editors in this workspace's workbench view. */
-	inspect(workspaceId: WorkspaceId): Promise<ResourceInspection>;
-}
-
 let agentAdapter: AgentAdapter | undefined;
 let terminalAdapter: TerminalAdapter | undefined;
-let editorInspector: EditorInspector | undefined;
 
 export function registerAgentAdapter(adapter: AgentAdapter): void {
 	agentAdapter = adapter;
@@ -78,20 +74,12 @@ export function registerTerminalAdapter(adapter: TerminalAdapter): void {
 	terminalAdapter = adapter;
 }
 
-export function registerEditorInspector(inspector: EditorInspector): void {
-	editorInspector = inspector;
-}
-
 export function agents(): AgentAdapter | undefined {
 	return agentAdapter;
 }
 
 export function terminals(): TerminalAdapter | undefined {
 	return terminalAdapter;
-}
-
-export function editors(): EditorInspector | undefined {
-	return editorInspector;
 }
 
 const CLEAN: ResourceInspection = { kind: "clean" };
@@ -106,20 +94,17 @@ const CLEAN: ResourceInspection = { kind: "clean" };
 export async function inspectWorkspaceResources(
 	workspaceId: WorkspaceId,
 	agentCount: number,
-	fallbackEditors: ResourceInspection,
+	unsavedEditors: ResourceInspection,
 ): Promise<CloseInspectionInputs> {
 	const terminal = terminals();
 	const terminalInspection = terminal
 		? await terminal.inspect(workspaceId)
 		: { processes: CLEAN, panes: CLEAN, windows: CLEAN };
-	const inspector = editors();
 	return {
 		agents: agentCount > 0 ? { kind: "busy", count: agentCount } : CLEAN,
 		terminalProcesses: terminalInspection.processes,
 		terminalPanes: terminalInspection.panes,
 		terminalWindows: terminalInspection.windows,
-		unsavedEditors: inspector
-			? await inspector.inspect(workspaceId)
-			: fallbackEditors,
+		unsavedEditors,
 	};
 }

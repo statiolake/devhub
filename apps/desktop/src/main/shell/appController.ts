@@ -55,6 +55,7 @@ import {
 	workspaceRoot,
 	type AgentProfileKind,
 	type AgentReconciliation,
+	type ResourceInspection,
 	type WorkspaceId,
 } from "../../model/domain.js";
 import {
@@ -105,6 +106,7 @@ import { shellTheme } from "./shellTheme.js";
 import type { ShellPalette } from "../../ipc/palette.js";
 import type { WorkbenchView } from "./workbenchView.js";
 import { agents, inspectWorkspaceResources, terminals } from "./adapters.js";
+import { editorInspection } from "./editorInspection.js";
 import { wireTerminals, type TerminalWiring } from "./terminalWiring.js";
 import {
 	CancellationToken,
@@ -1008,32 +1010,59 @@ export class AppController {
 		workspaceId: WorkspaceId,
 	): Promise<void> {
 		const workspace = this.coordinator.model.workspace(workspaceId);
-		// What the shell itself knows about this Workspace's editors: a view it
-		// never opened, or already closed, holds nothing. A live view might hold
-		// unsaved work and nothing here can ask it, so that is `unknown` — and
-		// the close confirmation says exactly that rather than guessing "clean".
-		// Once the workbench has agreed to close, its editors *are* clean —
-		// agreeing is what being clean means, and it is a better answer than
-		// looking at whether a view object still exists.
-		const state = workspace?.state;
-		const agreed =
-			state !== undefined &&
-			(state.kind === "closing" || state.kind === "closing-failed") &&
-			state.progress.editorClosed;
-		const hasView =
-			workspace !== undefined && this.viewsByFolder.has(workspace.root);
 		const inspection = await inspectWorkspaceResources(
 			workspaceId,
 			workspace?.agents.length ?? 0,
-			hasView && !agreed
-				? { kind: "unknown", diagnostic: "close_editor_unknown" }
-				: { kind: "clean" },
+			await this.inspectEditors(workspaceId),
 		);
 		this.accept({
 			type: "workspace_inspection_completed",
 			token,
 			workspaceId,
 			inspection,
+		});
+	}
+
+	/**
+	 * Gather what `editorInspection` decides from. The rule itself lives there;
+	 * this only reads the three places the facts come from.
+	 */
+	private async inspectEditors(
+		workspaceId: WorkspaceId,
+	): Promise<ResourceInspection> {
+		const workspace = this.coordinator.model.workspace(workspaceId);
+		const state = workspace?.state;
+		const facts = {
+			editorAgreedToClose:
+				state !== undefined &&
+				(state.kind === "closing" || state.kind === "closing-failed") &&
+				state.progress.editorClosed,
+			hasView:
+				workspace !== undefined && this.viewsByFolder.has(workspace.root),
+			workbenchIsRunning: false,
+			documentEdited: false,
+		};
+		if (!facts.hasView || facts.editorAgreedToClose) {
+			return editorInspection(facts);
+		}
+		const viewId = this.viewsByFolder.get(workspace?.root ?? "");
+		const codeWindow = (await this.services())
+			.windows()
+			.getWindows()
+			.find((candidate) => candidate.id === viewId);
+		const contents = codeWindow?.win?.webContents;
+		return editorInspection({
+			...facts,
+			// `isReady` is the workbench's own handshake: it is true from the
+			// moment the workbench signalled it had come up, and false again
+			// while it navigates. Crashed or destroyed contents cannot answer
+			// either, whatever the handshake last said.
+			workbenchIsRunning:
+				codeWindow?.isReady === true &&
+				contents !== undefined &&
+				!contents.isDestroyed() &&
+				!contents.isCrashed(),
+			documentEdited: codeWindow?.isDocumentEdited() === true,
 		});
 	}
 

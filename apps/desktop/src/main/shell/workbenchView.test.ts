@@ -193,6 +193,20 @@ describe("a workbench view's window state", () => {
 		expect(view.isDestroyed()).toBe(true);
 	});
 
+	it("remembers what the workbench said about its unsaved work", () => {
+		// VS Code's renderer pushes this whenever a working copy changes dirty,
+		// and it is the only answer main can read about unsaved editors. A
+		// no-op setter with a `return false` getter is why every workspace
+		// close said "Could not verify editor state".
+		expect(view.isDocumentEdited()).toBe(false);
+		view.setDocumentEdited(true);
+		expect(view.isDocumentEdited()).toBe(true);
+		// Each view answers for itself; a sibling workbench is not consulted.
+		expect(other.isDocumentEdited()).toBe(false);
+		view.setDocumentEdited(false);
+		expect(view.isDocumentEdited()).toBe(false);
+	});
+
 	it("is not visible once destroyed", () => {
 		view.destroy();
 		expect(view.isDestroyed()).toBe(true);
