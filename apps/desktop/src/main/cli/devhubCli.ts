@@ -8,6 +8,13 @@
  * socket client and an argument parser, and the whole of DevHub's behaviour
  * lives on the other side of the socket.
  *
+ * That includes `--version` and the extension options, which `code` answers in
+ * a separate short-lived process of its own. DevHub does not: a second process
+ * installing extensions into the directory the running app owns is the same
+ * split-brain the single-instance design exists to prevent, and a version
+ * printed from somewhere other than the running app is a version of something
+ * else. One front door, and it is the socket.
+ *
  * When DevHub is not running the command says so and stops. Launching the app
  * from the CLI is a later feature; doing it badly — starting a second instance
  * against a user-data directory the first one owns — is the failure mode the
@@ -18,6 +25,7 @@ import { connect } from "node:net";
 import { homedir } from "node:os";
 import { resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseFileAndPosition, type FilePosition } from "./goto.js";
 import { expandPath } from "./resolve.js";
 import type { ControlRequest, ControlResponse } from "./protocol.js";
 
@@ -29,24 +37,63 @@ usage:
   devhub <file>                    open the file in the workspace whose root
                                    contains it, or in the Scratch editor when
                                    no open workspace does
+  devhub -g|--goto <file:line[:col]>
+                                   open the file the same way and put the
+                                   cursor on that line and column
   devhub --agent <profile> [-- <args>...]
                                    add an agent with that profile to the
                                    workspace containing the current directory
                                    and select it; <args> are appended to the
                                    profile's own arguments
-  devhub --help                    show this text
+
+extensions:
+  devhub --install-extension <ext-id|path-to-vsix>
+                                   install an extension from the gallery, or
+                                   from a .vsix file; repeat the option to
+                                   install several
+  devhub --uninstall-extension <ext-id>
+                                   uninstall an extension; repeat for several
+  --force                          install over an extension that is already
+                                   there, and uninstall one the user marked as
+                                   built in
+  devhub --list-extensions         list the installed extensions, one per line
+  --show-versions                  list them as <ext-id>@<version>
+
+  devhub -v|--version              print DevHub's version, VS Code's, and the
+                                   commit it was built from
+  devhub -h|--help                 show this text
 
 The command talks to a running DevHub over its control socket. If DevHub is
 not running, start it and try again.`;
 
+/** What to say after a refusal, so nobody has to guess where the list is. */
+const HINT = "Run 'devhub --help' to see what devhub takes.";
+
 export type Command =
-	| { readonly kind: "usage"; readonly exitCode: number }
-	| { readonly kind: "open"; readonly path: string }
+	| { readonly kind: "usage" }
+	| { readonly kind: "invalid"; readonly message: string }
+	| {
+			readonly kind: "open";
+			readonly path: string;
+			readonly position: FilePosition | undefined;
+	  }
 	| {
 			readonly kind: "add-agent";
 			readonly profileId: string;
 			readonly args: readonly string[];
-	  };
+	  }
+	| {
+			readonly kind: "install-extensions";
+			readonly targets: readonly string[];
+			readonly force: boolean;
+	  }
+	| {
+			readonly kind: "uninstall-extensions";
+			readonly ids: readonly string[];
+			readonly force: boolean;
+	  }
+	| { readonly kind: "list-extensions"; readonly showVersions: boolean }
+	| { readonly kind: "version" };
 
 /**
  * What the arguments asked for.
@@ -54,27 +101,186 @@ export type Command =
  * `--` is the boundary and nothing else is: every argument after it belongs to
  * the agent, including ones that look like DevHub's own options. That is the
  * only way `devhub --agent claude -- --help` can mean "ask claude for its
- * help" rather than "print mine".
+ * help" rather than "print mine". `--agent` therefore has to come first, and
+ * everything else is read by the scanner below.
+ *
+ * An option this command does not know is a refusal with a sentence, never a
+ * path: `devhub --isntall-extension x` that quietly tried to open a file
+ * called `--isntall-extension` would report a missing file, and the typo would
+ * be the last thing anybody suspected.
  */
 export function parseArguments(argv: readonly string[]): Command {
-	if (argv.length === 0) return { kind: "usage", exitCode: 2 };
-	if (argv[0] === "--help" || argv[0] === "-h") {
-		return { kind: "usage", exitCode: 0 };
+	const args = splitAssignments(argv);
+	if (args.length === 0) {
+		return { kind: "invalid", message: "devhub was not asked to do anything." };
 	}
-	if (argv[0] === "--agent") {
-		const profileId = argv[1];
-		if (profileId === undefined || profileId.startsWith("-")) {
-			return { kind: "usage", exitCode: 2 };
+	if (args[0] === "--help" || args[0] === "-h") return { kind: "usage" };
+	if (args[0] === "--agent") return parseAgent(args.slice(1));
+	return parseOptions(args);
+}
+
+/** `--option=value` is `--option value`; every reader downstream sees one form. */
+function splitAssignments(argv: readonly string[]): readonly string[] {
+	const out: string[] = [];
+	for (const arg of argv) {
+		const equals = arg.startsWith("--") ? arg.indexOf("=") : -1;
+		if (equals > 2) {
+			out.push(arg.slice(0, equals), arg.slice(equals + 1));
+		} else {
+			out.push(arg);
 		}
-		const rest = argv.slice(2);
-		if (rest.length === 0) return { kind: "add-agent", profileId, args: [] };
-		if (rest[0] !== "--") return { kind: "usage", exitCode: 2 };
-		return { kind: "add-agent", profileId, args: rest.slice(1) };
 	}
-	if (argv.length !== 1 || argv[0] === undefined || argv[0].startsWith("-")) {
-		return { kind: "usage", exitCode: 2 };
+	return out;
+}
+
+function parseAgent(rest: readonly string[]): Command {
+	const profileId = rest[0];
+	if (profileId === undefined || profileId.startsWith("-")) {
+		return {
+			kind: "invalid",
+			message: "--agent needs the name of an agent profile.",
+		};
 	}
-	return { kind: "open", path: argv[0] };
+	const args = rest.slice(1);
+	if (args.length === 0) return { kind: "add-agent", profileId, args: [] };
+	if (args[0] !== "--") {
+		return {
+			kind: "invalid",
+			message:
+				"arguments for the agent go after `--`, as in: devhub --agent claude -- --model opus.",
+		};
+	}
+	return { kind: "add-agent", profileId, args: args.slice(1) };
+}
+
+/**
+ * Everything that is not `--agent`.
+ *
+ * The options are gathered in any order and the mode is decided at the end,
+ * from what was gathered. Deciding it from the first argument instead would
+ * make `--force --install-extension x` a different command from
+ * `--install-extension x --force`, and `code` treats them as one.
+ */
+function parseOptions(args: readonly string[]): Command {
+	const install: string[] = [];
+	const uninstall: string[] = [];
+	const paths: string[] = [];
+	let goto: string | undefined;
+	let force = false;
+	let list = false;
+	let showVersions = false;
+	let version = false;
+
+	for (let index = 0; index < args.length; index++) {
+		const arg = args[index] ?? "";
+		// Every option that takes a value takes exactly one, and it is the next
+		// argument. Reading it here rather than in each branch keeps the index
+		// moving in one place.
+		const takesValue =
+			arg === "--install-extension" ||
+			arg === "--uninstall-extension" ||
+			arg === "-g" ||
+			arg === "--goto";
+		let value: string | undefined;
+		if (takesValue) {
+			index += 1;
+			value = args[index];
+		}
+		switch (arg) {
+			case "--install-extension": {
+				if (value === undefined || value.length === 0) {
+					return needsValue(arg, "an extension id or a path to a .vsix file");
+				}
+				install.push(value);
+				continue;
+			}
+			case "--uninstall-extension": {
+				if (value === undefined || value.length === 0) {
+					return needsValue(arg, "an extension id");
+				}
+				uninstall.push(value);
+				continue;
+			}
+			case "-g":
+			case "--goto": {
+				if (value === undefined || value.length === 0) {
+					return needsValue(arg, "a file, optionally with :line:column");
+				}
+				goto = value;
+				continue;
+			}
+			case "--force":
+				force = true;
+				continue;
+			case "--list-extensions":
+				list = true;
+				continue;
+			case "--show-versions":
+				showVersions = true;
+				continue;
+			case "-v":
+			case "--version":
+				version = true;
+				continue;
+			case "-h":
+			case "--help":
+				return { kind: "usage" };
+			default:
+				if (arg.startsWith("-")) {
+					return {
+						kind: "invalid",
+						message: `devhub does not know the option '${arg}'.`,
+					};
+				}
+				paths.push(arg);
+		}
+	}
+
+	const modes = [
+		install.length > 0,
+		uninstall.length > 0,
+		list,
+		version,
+		goto !== undefined,
+		paths.length > 0,
+	].filter(Boolean).length;
+	if (modes === 0) {
+		return { kind: "invalid", message: "devhub was not asked to do anything." };
+	}
+	if (modes > 1) {
+		return {
+			kind: "invalid",
+			message: "devhub does one of these things at a time.",
+		};
+	}
+
+	if (install.length > 0) {
+		return { kind: "install-extensions", targets: install, force };
+	}
+	if (uninstall.length > 0) {
+		return { kind: "uninstall-extensions", ids: uninstall, force };
+	}
+	if (list) return { kind: "list-extensions", showVersions };
+	if (version) return { kind: "version" };
+	if (goto !== undefined) {
+		try {
+			const { path, position } = parseFileAndPosition(goto);
+			return { kind: "open", path, position };
+		} catch (error) {
+			return { kind: "invalid", message: messageOf(error) };
+		}
+	}
+	if (paths.length > 1) {
+		return {
+			kind: "invalid",
+			message: "devhub opens one path at a time.",
+		};
+	}
+	return { kind: "open", path: paths[0] ?? "", position: undefined };
+}
+
+function needsValue(option: string, what: string): Command {
+	return { kind: "invalid", message: `${option} needs ${what}.` };
 }
 
 export function requestFor(
@@ -84,9 +290,17 @@ export function requestFor(
 ): ControlRequest | undefined {
 	switch (command.kind) {
 		case "usage":
+		case "invalid":
 			return undefined;
 		case "open":
-			return { kind: "open", path: expandPath(command.path, cwd, home), cwd };
+			return {
+				kind: "open",
+				path: expandPath(command.path, cwd, home),
+				cwd,
+				...(command.position === undefined
+					? {}
+					: { position: command.position }),
+			};
 		case "add-agent":
 			return {
 				kind: "add-agent",
@@ -94,6 +308,30 @@ export function requestFor(
 				args: command.args,
 				cwd,
 			};
+		case "install-extensions":
+			// The targets are sent as they were typed. Which of them is a `.vsix`
+			// path rather than an extension id is VS Code's own rule, and it is
+			// applied where that rule lives; `cwd` is what a path among them is
+			// then resolved against.
+			return {
+				kind: "install-extensions",
+				targets: command.targets,
+				force: command.force,
+				cwd,
+			};
+		case "uninstall-extensions":
+			return {
+				kind: "uninstall-extensions",
+				ids: command.ids,
+				force: command.force,
+			};
+		case "list-extensions":
+			return {
+				kind: "list-extensions",
+				showVersions: command.showVersions,
+			};
+		case "version":
+			return { kind: "version" };
 	}
 }
 
@@ -131,15 +369,19 @@ async function ask(
 	});
 }
 
+function messageOf(error: unknown): string {
+	return error instanceof Error ? error.message : String(error);
+}
+
 export async function main(argv: readonly string[]): Promise<number> {
 	const command = parseArguments(argv);
 	if (command.kind === "usage") {
-		if (command.exitCode === 0) {
-			console.log(USAGE);
-		} else {
-			console.error(USAGE);
-		}
-		return command.exitCode;
+		console.log(USAGE);
+		return 0;
+	}
+	if (command.kind === "invalid") {
+		console.error(`devhub: ${command.message}\n${HINT}`);
+		return 2;
 	}
 	const socketPath = process.env["DEVHUB_CONTROL_SOCKET"];
 	if (!socketPath) {
@@ -172,7 +414,7 @@ if (
 			process.exitCode = code;
 		})
 		.catch((error: unknown) => {
-			console.error(error instanceof Error ? error.message : String(error));
+			console.error(messageOf(error));
 			process.exitCode = 1;
 		});
 }

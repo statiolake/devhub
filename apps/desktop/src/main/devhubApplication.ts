@@ -25,6 +25,7 @@ import type { Client as MessagePortClient } from "code-oss-dev/out/vs/base/parts
 import { DevHubWindowsMainService } from "./services/devhubWindowsMainService.js";
 import { DevHubDialogMainService } from "./services/devhubDialogMainService.js";
 import { appController } from "./shell/appController.js";
+import { createExtensionSupport } from "./cli/extensionServices.js";
 
 /** The members of `CodeApplication` this file reaches for, by their real names. */
 interface CodeApplicationInternals {
@@ -118,7 +119,17 @@ const upstreamInitServices = (
 		instantiationService.createInstance(DevHubDialogMainService),
 	);
 
+	// Extension management for the `devhub` command. Built here because this is
+	// the one place that holds both the container and `sharedProcessReady`, and
+	// built once: it owns a channel client, and a second one would be a second
+	// listener on every install event.
+	const extensions = createExtensionSupport(
+		instantiationService,
+		sharedProcessReady,
+	);
+
 	appController().setServices({
+		extensions: () => extensions,
 		windows: () =>
 			instantiationService.invokeFunction((accessor) =>
 				accessor.get(IWindowsMainService),

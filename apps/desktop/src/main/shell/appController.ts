@@ -43,7 +43,13 @@ import type {
 import { AppCoordinator, type Effect } from "../../model/coordinator.js";
 import { editorReveal } from "./editorReveal.js";
 import { canonicalise } from "../cli/canonical.js";
+import {
+	installExtensions,
+	listExtensions,
+	uninstallExtensions,
+} from "../cli/extensionCommands.js";
 import { openFileInWorkbench } from "../cli/openFiles.js";
+import type { ControlPosition } from "../cli/protocol.js";
 import { workspaceRootFor } from "../cli/resolve.js";
 import {
 	AgentProfile,
@@ -1721,13 +1727,25 @@ export class AppController {
 	 * the sidebar, with the Editor activity showing and the window in front —
 	 * because a command that opens something you cannot see has not opened it.
 	 */
-	async openFromCli(path: string, _cwd: string): Promise<string> {
-		return asSentence(() => this.doOpenFromCli(path));
+	async openFromCli(
+		path: string,
+		_cwd: string,
+		position: ControlPosition | undefined,
+	): Promise<string> {
+		return asSentence(() => this.doOpenFromCli(path, position));
 	}
 
-	private async doOpenFromCli(path: string): Promise<string> {
+	private async doOpenFromCli(
+		path: string,
+		position: ControlPosition | undefined,
+	): Promise<string> {
 		const target = await canonicalise(path);
 		if (target.isDirectory) {
+			if (position) {
+				throw new Error(
+					`${target.path} is a folder, and a line and column belong to a file.`,
+				);
+			}
 			await this.openFolder(target.path);
 			await this.dispatchAwaiting({
 				type: "select_activity",
@@ -1742,9 +1760,13 @@ export class AppController {
 		if (root === undefined) {
 			await this.dispatchAwaiting({ type: "new_window" });
 			await this.syncEditorView();
-			openFileInWorkbench(await this.workbenchWindow(SCRATCH_EDITOR), target);
+			openFileInWorkbench(
+				await this.workbenchWindow(SCRATCH_EDITOR),
+				target,
+				position,
+			);
 			this.bringToFront();
-			return `${target.path} is open in the Scratch editor: no open workspace contains it.`;
+			return `${target.path}${at(position)} is open in the Scratch editor: no open workspace contains it.`;
 		}
 
 		const workspace = this.coordinator.model.workspaces.find(
@@ -1762,9 +1784,58 @@ export class AppController {
 			activity: "editor",
 		});
 		await this.syncEditorView();
-		openFileInWorkbench(await this.workbenchWindow(root), target);
+		openFileInWorkbench(await this.workbenchWindow(root), target, position);
 		this.bringToFront();
-		return `${target.path} is open in the workspace at ${root}.`;
+		return `${target.path}${at(position)} is open in the workspace at ${root}.`;
+	}
+
+	/**
+	 * `devhub --install-extension`, `--uninstall-extension`, `--list-extensions`.
+	 *
+	 * Nothing about extensions is decided here. The three go straight to VS
+	 * Code's own extension CLI, driven against the running app's extension
+	 * management service — see `extensionCommands.ts` for why that is the
+	 * running app and not a process of its own.
+	 */
+	async installExtensionsFromCli(
+		targets: readonly string[],
+		force: boolean,
+		cwd: string,
+	): Promise<string> {
+		const extensions = (await this.services()).extensions();
+		return installExtensions(extensions, targets, force, cwd, homedir());
+	}
+
+	async uninstallExtensionsFromCli(
+		ids: readonly string[],
+		force: boolean,
+	): Promise<string> {
+		const extensions = (await this.services()).extensions();
+		return uninstallExtensions(extensions, ids, force);
+	}
+
+	async listExtensionsFromCli(showVersions: boolean): Promise<string> {
+		const extensions = (await this.services()).extensions();
+		return listExtensions(extensions, showVersions);
+	}
+
+	/**
+	 * `devhub --version`.
+	 *
+	 * Three facts, one per line, the way `code --version` prints three. They
+	 * come from the running app rather than from the launcher, because a
+	 * version read anywhere else is the version of something else. A source
+	 * checkout has no commit and says so instead of printing a blank line.
+	 */
+	async versionFromCli(): Promise<string> {
+		const { vscodeVersion, commit } = (await this.services())
+			.extensions()
+			.version();
+		return [
+			`DevHub ${electron.app.getVersion()}`,
+			`VS Code ${vscodeVersion}`,
+			commit ?? "no commit: this DevHub was built from a source checkout",
+		].join("\n");
 	}
 
 	/**
@@ -2048,6 +2119,13 @@ function isStaleCompletion(error: unknown): boolean {
 	return (
 		error instanceof AppError && error.code === AppErrorCode.StaleCompletion
 	);
+}
+
+/** How a `--goto` position reads back in the sentence the command prints. */
+function at(position: ControlPosition | undefined): string {
+	return position === undefined
+		? ""
+		: ` at line ${position.line}, column ${position.column},`;
 }
 
 /**

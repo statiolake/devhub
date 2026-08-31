@@ -41,12 +41,49 @@ export function userDataPathFromGlobalStorage(
 	return index <= 0 ? undefined : globalStoragePath.slice(0, index);
 }
 
+/** Where `--goto` asks for the cursor. One-based, as every editor counts. */
+export interface ControlPosition {
+	readonly line: number;
+	readonly column: number;
+}
+
 export type ControlRequest =
 	| {
-			/** A folder or a file the person asked DevHub to open. */
+			/**
+			 * A folder or a file the person asked DevHub to open, and — for
+			 * `--goto` — where in it. A position is part of an open rather than
+			 * a request of its own because it *is* one: the same ancestor walk
+			 * picks the same workspace, and the only difference is what the
+			 * editor is told once the file is there.
+			 */
 			readonly kind: "open";
 			readonly path: string;
 			readonly cwd: string;
+			readonly position?: ControlPosition;
+	  }
+	| {
+			/**
+			 * Extension ids, or paths to `.vsix` files. Which of the two a
+			 * target is, is decided where VS Code's own rule lives — the app —
+			 * so `cwd` comes along for the paths among them.
+			 */
+			readonly kind: "install-extensions";
+			readonly targets: readonly string[];
+			readonly force: boolean;
+			readonly cwd: string;
+	  }
+	| {
+			readonly kind: "uninstall-extensions";
+			readonly ids: readonly string[];
+			readonly force: boolean;
+	  }
+	| {
+			readonly kind: "list-extensions";
+			readonly showVersions: boolean;
+	  }
+	| {
+			/** DevHub's version, VS Code's, and the commit it was built from. */
+			readonly kind: "version";
 	  }
 	| {
 			/** An Agent for the workspace the current directory belongs to. */
@@ -62,7 +99,10 @@ export type ControlRequest =
 
 export interface ControlResponse {
 	readonly ok: boolean;
-	/** One sentence, meant to be printed or shown as-is. */
+	/**
+	 * What the CLI prints, as-is. Usually one sentence; a listing and an
+	 * install transcript are several lines, and they are still one answer.
+	 */
 	readonly message: string;
 }
 
@@ -79,7 +119,30 @@ export function parseControlRequest(line: string): ControlRequest {
 				kind: "open",
 				path: requireAbsolute(record["path"], "path"),
 				cwd: requireAbsolute(record["cwd"], "cwd"),
+				...(record["position"] === undefined
+					? {}
+					: { position: requirePosition(record["position"]) }),
 			};
+		case "install-extensions":
+			return {
+				kind: "install-extensions",
+				targets: requireNonEmptyStrings(record["targets"], "targets"),
+				force: requireBoolean(record["force"], "force"),
+				cwd: requireAbsolute(record["cwd"], "cwd"),
+			};
+		case "uninstall-extensions":
+			return {
+				kind: "uninstall-extensions",
+				ids: requireNonEmptyStrings(record["ids"], "ids"),
+				force: requireBoolean(record["force"], "force"),
+			};
+		case "list-extensions":
+			return {
+				kind: "list-extensions",
+				showVersions: requireBoolean(record["showVersions"], "showVersions"),
+			};
+		case "version":
+			return { kind: "version" };
 		case "add-agent":
 			return {
 				kind: "add-agent",
@@ -114,4 +177,41 @@ function requireStrings(value: unknown, field: string): readonly string[] {
 		throw new Error(`${field} must be an array of strings`);
 	}
 	return value as readonly string[];
+}
+
+/** An agent's arguments may be empty; a list of things to install may not. */
+function requireNonEmptyStrings(
+	value: unknown,
+	field: string,
+): readonly string[] {
+	const items = requireStrings(value, field);
+	if (items.length === 0 || items.some((item) => item.length === 0)) {
+		throw new Error(`${field} must be a non-empty array of non-empty strings`);
+	}
+	return items;
+}
+
+function requireBoolean(value: unknown, field: string): boolean {
+	if (typeof value !== "boolean") {
+		throw new Error(`${field} must be a boolean`);
+	}
+	return value;
+}
+
+function requirePosition(value: unknown): ControlPosition {
+	if (typeof value !== "object" || value === null) {
+		throw new Error("position must be an object");
+	}
+	const record = value as Record<string, unknown>;
+	return {
+		line: requireLineOrColumn(record["line"], "line"),
+		column: requireLineOrColumn(record["column"], "column"),
+	};
+}
+
+function requireLineOrColumn(value: unknown, field: string): number {
+	if (typeof value !== "number" || !Number.isInteger(value) || value < 1) {
+		throw new Error(`${field} must be a whole number from 1 up`);
+	}
+	return value;
 }

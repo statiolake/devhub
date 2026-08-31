@@ -31,17 +31,23 @@
 import type { IWindowsMainService } from "code-oss-dev/out/vs/platform/windows/electron-main/windows.js";
 import type { IDialogMainService } from "code-oss-dev/out/vs/platform/dialogs/electron-main/dialogMainService.js";
 import type { ILifecycleMainService } from "code-oss-dev/out/vs/platform/lifecycle/electron-main/lifecycleMainService.js";
+import type { ExtensionSupport } from "../cli/extensionServices.js";
 
 /**
- * The three main-process services the shell drives. They are resolved on
- * demand: VS Code's DI container builds them lazily, and the shell exists
- * before it.
+ * The main-process services the shell drives. They are resolved on demand:
+ * VS Code's DI container builds them lazily, and the shell exists before it.
  */
 export interface MainServices {
 	windows(): IWindowsMainService;
 	dialogs(): IDialogMainService;
 	/** Closing a workbench is an unload, and an unload can be vetoed. */
 	lifecycle(): ILifecycleMainService;
+	/**
+	 * Extension management, and the versions the `devhub` command prints. Both
+	 * come from VS Code, and both are behind this gate for the same reason as
+	 * the rest: they are not usable until VS Code's container is built.
+	 */
+	extensions(): ExtensionSupport;
 }
 
 export class MainServicesGate {

@@ -11,8 +11,25 @@ import { statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { makeScratchDir, removeScratchDir } from "../../model/testScratch.js";
-import { startControlServer, type ControlServer } from "./controlServer.js";
+import {
+	startControlServer,
+	type ControlHandlers,
+	type ControlServer,
+} from "./controlServer.js";
 import type { ControlResponse } from "./protocol.js";
+
+/** A server for the tests that are about the socket rather than the handlers. */
+function everythingSaysOk(): ControlHandlers {
+	return {
+		open: () => Promise.resolve("ok"),
+		addAgent: () => Promise.resolve("ok"),
+		installExtensions: () => Promise.resolve("ok"),
+		uninstallExtensions: () => Promise.resolve("ok"),
+		listExtensions: () => Promise.resolve("ok"),
+		version: () => Promise.resolve("ok"),
+		installCli: () => Promise.resolve("ok"),
+	};
+}
 
 function ask(socketPath: string, line: string): Promise<ControlResponse> {
 	return new Promise((resolve, reject) => {
@@ -42,8 +59,10 @@ describe("the DevHub control socket", () => {
 		socketPath = join(scratch, "c.sock");
 		calls = [];
 		server = await startControlServer(socketPath, {
-			open: (path, cwd) => {
-				calls.push(`open ${path} ${cwd}`);
+			open: (path, cwd, position) => {
+				calls.push(
+					`open ${path} ${cwd}${position ? ` @${position.line}:${position.column}` : ""}`,
+				);
 				return Promise.resolve(`opened ${path}`);
 			},
 			addAgent: (profileId, args, cwd) => {
@@ -53,6 +72,26 @@ describe("the DevHub control socket", () => {
 				}
 				return Promise.resolve(`agent ${profileId} started`);
 			},
+			installExtensions: (targets, force, cwd) => {
+				calls.push(`install [${targets.join(" ")}] force=${force} ${cwd}`);
+				if (targets.includes("nope.nothing")) {
+					return Promise.reject(
+						new Error("Extension 'nope.nothing' not found."),
+					);
+				}
+				return Promise.resolve(`installed ${targets.join(", ")}`);
+			},
+			uninstallExtensions: (ids, force) => {
+				calls.push(`uninstall [${ids.join(" ")}] force=${force}`);
+				return Promise.resolve(`uninstalled ${ids.join(", ")}`);
+			},
+			listExtensions: (showVersions) => {
+				calls.push(`list versions=${showVersions}`);
+				return Promise.resolve(
+					showVersions ? "a.b@1.0.0\nc.d@2.0.0" : "a.b\nc.d",
+				);
+			},
+			version: () => Promise.resolve("DevHub 0.1.0\nVS Code 1.0.0\nabc123"),
 			installCli: () => Promise.resolve("installed"),
 		});
 	});
@@ -105,6 +144,102 @@ describe("the DevHub control socket", () => {
 		});
 	});
 
+	it("carries a --goto position through to the handler", async () => {
+		const answer = await ask(
+			socketPath,
+			`${JSON.stringify({
+				kind: "open",
+				path: "/work/a/f.txt",
+				cwd: "/work/a",
+				position: { line: 42, column: 7 },
+			})}\n`,
+		);
+		expect(answer.ok).toBe(true);
+		expect(calls).toEqual(["open /work/a/f.txt /work/a @42:7"]);
+	});
+
+	it("refuses a position that is not a place in a file", async () => {
+		for (const position of [
+			{ line: 0, column: 1 },
+			{ line: 1, column: 0 },
+			{ line: 2.5, column: 1 },
+			{ line: "3", column: 1 },
+		]) {
+			const answer = await ask(
+				socketPath,
+				`${JSON.stringify({
+					kind: "open",
+					path: "/work/a/f.txt",
+					cwd: "/work/a",
+					position,
+				})}\n`,
+			);
+			expect(answer.ok).toBe(false);
+			expect(answer.message).toMatch(/whole number from 1 up/);
+		}
+		expect(calls).toEqual([]);
+	});
+
+	it("installs, lists and uninstalls extensions", async () => {
+		expect(
+			await ask(
+				socketPath,
+				`${JSON.stringify({
+					kind: "install-extensions",
+					targets: ["publisher.name", "./a.vsix"],
+					force: true,
+					cwd: "/work/a",
+				})}\n`,
+			),
+		).toEqual({ ok: true, message: "installed publisher.name, ./a.vsix" });
+
+		expect(
+			await ask(
+				socketPath,
+				`${JSON.stringify({ kind: "list-extensions", showVersions: true })}\n`,
+			),
+		).toEqual({ ok: true, message: "a.b@1.0.0\nc.d@2.0.0" });
+
+		expect(
+			await ask(
+				socketPath,
+				`${JSON.stringify({
+					kind: "uninstall-extensions",
+					ids: ["publisher.name"],
+					force: false,
+				})}\n`,
+			),
+		).toEqual({ ok: true, message: "uninstalled publisher.name" });
+
+		expect(calls).toEqual([
+			"install [publisher.name ./a.vsix] force=true /work/a",
+			"list versions=true",
+			"uninstall [publisher.name] force=false",
+		]);
+	});
+
+	it("reports an install that failed, with the reason", async () => {
+		const answer = await ask(
+			socketPath,
+			`${JSON.stringify({
+				kind: "install-extensions",
+				targets: ["nope.nothing"],
+				force: false,
+				cwd: "/work/a",
+			})}\n`,
+		);
+		expect(answer).toEqual({
+			ok: false,
+			message: "Extension 'nope.nothing' not found.",
+		});
+	});
+
+	it("answers a version request with the three lines it was given", async () => {
+		expect(
+			await ask(socketPath, `${JSON.stringify({ kind: "version" })}\n`),
+		).toEqual({ ok: true, message: "DevHub 0.1.0\nVS Code 1.0.0\nabc123" });
+	});
+
 	it("refuses a request it does not understand", async () => {
 		const unknown = await ask(
 			socketPath,
@@ -124,6 +259,29 @@ describe("the DevHub control socket", () => {
 
 		const garbage = await ask(socketPath, "not json\n");
 		expect(garbage.ok).toBe(false);
+
+		const nothingToInstall = await ask(
+			socketPath,
+			`${JSON.stringify({
+				kind: "install-extensions",
+				targets: [],
+				force: false,
+				cwd: "/work",
+			})}\n`,
+		);
+		expect(nothingToInstall).toEqual({
+			ok: false,
+			message: "targets must be a non-empty array of non-empty strings",
+		});
+
+		const notABoolean = await ask(
+			socketPath,
+			`${JSON.stringify({ kind: "list-extensions", showVersions: "yes" })}\n`,
+		);
+		expect(notABoolean).toEqual({
+			ok: false,
+			message: "showVersions must be a boolean",
+		});
 	});
 
 	it("waits for a whole line before answering", async () => {
@@ -150,11 +308,7 @@ describe("the DevHub control socket", () => {
 		await server?.close();
 		server = undefined;
 		writeFileSync(socketPath, "");
-		server = await startControlServer(socketPath, {
-			open: () => Promise.resolve("ok"),
-			addAgent: () => Promise.resolve("ok"),
-			installCli: () => Promise.resolve("ok"),
-		});
+		server = await startControlServer(socketPath, everythingSaysOk());
 		const answer = await ask(
 			socketPath,
 			`${JSON.stringify({ kind: "install-cli" })}\n`,
@@ -164,11 +318,7 @@ describe("the DevHub control socket", () => {
 
 	it("refuses to take a socket another DevHub is answering on", async () => {
 		await expect(
-			startControlServer(socketPath, {
-				open: () => Promise.resolve("ok"),
-				addAgent: () => Promise.resolve("ok"),
-				installCli: () => Promise.resolve("ok"),
-			}),
+			startControlServer(socketPath, everythingSaysOk()),
 		).rejects.toThrow(/already listening/);
 	});
 });

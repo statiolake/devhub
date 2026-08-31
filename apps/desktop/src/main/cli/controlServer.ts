@@ -16,6 +16,7 @@ import { connect, createServer, type Server, type Socket } from "node:net";
 import { dirname } from "node:path";
 import {
 	parseControlRequest,
+	type ControlPosition,
 	type ControlRequest,
 	type ControlResponse,
 } from "./protocol.js";
@@ -24,13 +25,25 @@ import {
 const MAX_REQUEST_BYTES = 64 * 1024;
 
 export interface ControlHandlers {
-	/** A folder or a file. Answers with the sentence the CLI prints. */
-	open(path: string, cwd: string): Promise<string>;
+	/** A folder or a file. Answers with the text the CLI prints. */
+	open(
+		path: string,
+		cwd: string,
+		position: ControlPosition | undefined,
+	): Promise<string>;
 	addAgent(
 		profileId: string,
 		args: readonly string[],
 		cwd: string,
 	): Promise<string>;
+	installExtensions(
+		targets: readonly string[],
+		force: boolean,
+		cwd: string,
+	): Promise<string>;
+	uninstallExtensions(ids: readonly string[], force: boolean): Promise<string>;
+	listExtensions(showVersions: boolean): Promise<string>;
+	version(): Promise<string>;
 	installCli(): Promise<string>;
 }
 
@@ -149,7 +162,11 @@ async function handle(
 			case "open":
 				return {
 					ok: true,
-					message: await handlers.open(request.path, request.cwd),
+					message: await handlers.open(
+						request.path,
+						request.cwd,
+						request.position,
+					),
 				};
 			case "add-agent":
 				return {
@@ -160,6 +177,30 @@ async function handle(
 						request.cwd,
 					),
 				};
+			case "install-extensions":
+				return {
+					ok: true,
+					message: await handlers.installExtensions(
+						request.targets,
+						request.force,
+						request.cwd,
+					),
+				};
+			case "uninstall-extensions":
+				return {
+					ok: true,
+					message: await handlers.uninstallExtensions(
+						request.ids,
+						request.force,
+					),
+				};
+			case "list-extensions":
+				return {
+					ok: true,
+					message: await handlers.listExtensions(request.showVersions),
+				};
+			case "version":
+				return { ok: true, message: await handlers.version() };
 			case "install-cli":
 				return { ok: true, message: await handlers.installCli() };
 		}
