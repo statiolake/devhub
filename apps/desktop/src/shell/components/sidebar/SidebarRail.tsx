@@ -19,6 +19,7 @@ import type {
   AppSnapshot,
   WorkspaceSnapshot,
 } from "../../../ipc/appShell";
+import { SidebarHeader } from "./SidebarHeader";
 
 /** What the tile says on hover and to a screen reader. */
 function workspaceDescription(workspace: WorkspaceSnapshot): string {
@@ -79,8 +80,9 @@ export function SidebarRail({
       aria-label="Workspace navigation"
     >
       {/* The window buttons live on the Sidebar in both of its forms, so the
-          rail reserves the same top strip the pane does. */}
-      <div className="sidebar-titlebar" />
+          rail carries the same strip the pane does — the same drag region and
+          the same toggle, in the same place. */}
+      <SidebarHeader expanded={false} onDispatch={onDispatch} />
       <div className="rail-region">
         <RailTile
           label="Scratch"

@@ -28,7 +28,6 @@ export enum DomainErrorCode {
   UnknownWorkspace = "UNKNOWN_WORKSPACE",
   UnknownAgent = "UNKNOWN_AGENT",
   WorkspaceUnavailable = "WORKSPACE_UNAVAILABLE",
-  ActivityDisabled = "ACTIVITY_DISABLED",
   WorkspaceNotClean = "WORKSPACE_NOT_CLEAN",
   GlobalContextCannotClose = "GLOBAL_CONTEXT_CANNOT_CLOSE",
   InvalidProfile = "INVALID_PROFILE",
@@ -39,6 +38,7 @@ export enum DomainErrorCode {
   WorkspaceClosing = "WORKSPACE_CLOSING",
   WorkspaceClosingFailed = "WORKSPACE_CLOSING_FAILED",
   InvalidSidebarWidth = "INVALID_SIDEBAR_WIDTH",
+  InvalidSplitRatio = "INVALID_SPLIT_RATIO",
 }
 
 /**
@@ -916,7 +916,7 @@ export class Workspace {
   }
 }
 
-/** The left-pane Navigation Context, distinct from Activity and SurfaceKey. */
+/** The left-pane Navigation Context, and the whole of the selection. */
 export type NavigationContext =
   | { readonly kind: "global" }
   | { readonly kind: "workspace"; readonly workspaceId: WorkspaceId }
@@ -940,52 +940,54 @@ export function sameContext(
   return true;
 }
 
-/** Fixed top-level choices. Activities are never created or destroyed. */
-export type Activity = "editor" | "agent" | "terminal";
-export const ALL_ACTIVITIES: readonly Activity[] = [
-  "editor",
-  "agent",
-  "terminal",
-];
-
-/** Why an Activity is disabled for a context. */
-export type DisabledReason =
-  | "global-agent-not-applicable"
-  | "workspace-agent-requires-agent-selection"
-  | "workspace-unavailable"
-  | "workspace-closing"
-  | "workspace-closing-failed";
-
 /**
  * Semantic DevHub surface identity. Provider and editor identifiers do not
  * cross this seam.
+ *
+ * There are three kinds, and there used to be five. A terminal is no longer a
+ * DevHub Surface — it is the workbench's integrated terminal, on the same tmux
+ * session it always was — so `global-terminal` and `workspace-terminal` name
+ * nothing the shell page can put on screen. The tmux runtime still owns those
+ * sessions and still spells their keys that way on the wire it shares with the
+ * Agents; what is gone is the idea that a person could *select* one.
  */
 export type SurfaceKey =
   | { readonly kind: "global-editor" }
-  | { readonly kind: "global-terminal" }
   | { readonly kind: "workspace-editor"; readonly workspaceId: WorkspaceId }
-  | { readonly kind: "workspace-terminal"; readonly workspaceId: WorkspaceId }
   | { readonly kind: "agent"; readonly agentId: AgentId };
 
 export function surfaceKeyName(key: SurfaceKey): string {
   switch (key.kind) {
     case "global-editor":
       return "global-editor";
-    case "global-terminal":
-      return "global-terminal";
     case "workspace-editor":
       return `workspace-editor:${key.workspaceId}`;
-    case "workspace-terminal":
-      return `workspace-terminal:${key.workspaceId}`;
     case "agent":
       return `agent:${key.agentId}`;
   }
 }
 
-/** An Activity's availability and semantic target. */
-export type SurfaceResolution =
-  | { readonly kind: "enabled"; readonly surfaceKey: SurfaceKey }
-  | { readonly kind: "disabled"; readonly reason: DisabledReason };
+/**
+ * What the content area holds for the selected context.
+ *
+ * This is what the Activity ring became, and it is smaller than one on
+ * purpose. A context no longer offers a choice of things to look at: a
+ * Workspace *is* its workbench, full width, and an Agent is that same workbench
+ * with the Agent's pane beside it. Nothing chooses, so nothing can be disabled,
+ * and there is no state in which the selection and what is on screen disagree.
+ *
+ * `unavailable` carries no reason. The Workspace's own state is the reason and
+ * is already in the snapshot beside this; a second copy would be a second
+ * answer to "why can I not see it".
+ */
+export type SurfaceLayout =
+  | { readonly kind: "workbench"; readonly editor: SurfaceKey }
+  | {
+      readonly kind: "split";
+      readonly editor: SurfaceKey;
+      readonly agent: SurfaceKey;
+    }
+  | { readonly kind: "unavailable" };
 
 /** One input to the consolidated Workspace close inspection. */
 export type ResourceInspection =

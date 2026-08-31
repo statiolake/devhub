@@ -547,8 +547,8 @@ export class AppCoordinator {
       case "select_context":
         this.model.selectContext(intent.context);
         return this.transitionOutcome(beforeRevision, id);
-      case "select_activity":
-        this.model.selectActivity(intent.activity);
+      case "resize_split":
+        this.model.setSplitRatio(intent.ratio);
         return this.transitionOutcome(beforeRevision, id);
       case "resize_sidebar":
         this.model.setSidebarWidth(intent.width);
@@ -565,7 +565,6 @@ export class AppCoordinator {
         if (this.model.selection.context.kind !== "global") {
           this.model.selectContext(GLOBAL_CONTEXT);
         }
-        this.model.selectActivity("editor");
         return this.transitionOutcome(beforeRevision, id);
       }
       case "retry_workspace":

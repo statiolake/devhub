@@ -59,8 +59,9 @@ function snapshot(context: NavigationContext): AppSnapshot {
     revision: 3,
     readiness: "ready",
     editorHost: { status: "ready" },
-    activities: [],
-    selection: { activity: "editor", context },
+    layout: { kind: "workbench", editorKey: "global-editor" },
+    selection: { context },
+    splitRatio: 0.55,
     sidebar: { expanded: false, width: 248 },
     workspaces: [
       workspace(WORKSPACE_A, "folderA", ["working"]),

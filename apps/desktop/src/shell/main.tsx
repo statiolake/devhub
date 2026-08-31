@@ -14,7 +14,6 @@ import { AppShell } from "./AppShell";
 import { installPalette } from "./appearance";
 import { installRootFailureHandler } from "./failure";
 import { installSelectionGuard } from "./selection";
-import { installSurfaceRenderers } from "./components/shell/surfaceRenderers";
 import { SettingsApp } from "../settings/SettingsApp";
 import { OverlayApp } from "./overlay/OverlayApp";
 import { WINDOW_TITLES, windowKindOf } from "../ipc/windowTitles";
@@ -34,7 +33,6 @@ if (!container) {
 // current when a workbench changes theme.
 installRootFailureHandler();
 installSelectionGuard(document);
-installSurfaceRenderers();
 installPalette(document);
 
 const which = windowKindOf(window.location.search);

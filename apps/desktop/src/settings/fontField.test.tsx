@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 /**
- * Changing the terminal font family.
+ * Changing the Agent pane's font family.
  *
  * The bug this pins: the field used to apply every keystroke, so clearing
  * "SF Mono" to type "Menlo" asked DevHub to accept an empty font family, and
@@ -36,17 +36,19 @@ function harness(terminalFontFamily = "SF Mono") {
   };
 }
 
-async function openTerminal(client: SettingsClient) {
+async function openFontField(client: SettingsClient) {
   render(<SettingsApp client={client} />);
-  fireEvent.click(await screen.findByRole("tab", { name: "Terminal" }));
-  return screen.getByLabelText("Terminal font family");
+  // General, not Terminal: the field styles the Agent pane, which is the one
+  // text surface DevHub still draws for itself.
+  fireEvent.click(await screen.findByRole("tab", { name: "General" }));
+  return screen.getByLabelText("Agent pane font family");
 }
 
 const type = (field: HTMLElement, value: string) => {
   fireEvent.change(field, { target: { value } });
 };
 
-describe("the terminal font family field", () => {
+describe("the agent pane font family field", () => {
   it("carries every spelling a person types through to the save", async () => {
     for (const family of [
       "Menlo",
@@ -57,7 +59,7 @@ describe("the terminal font family field", () => {
       // Started from something else each time, so every spelling below is a
       // real change rather than the value already in effect.
       const { families, client } = harness("ui-monospace");
-      const field = await openTerminal(client);
+      const field = await openFontField(client);
 
       type(field, family);
       fireEvent.blur(field);
@@ -71,7 +73,7 @@ describe("the terminal font family field", () => {
 
   it("saves nothing while the field is being typed into", async () => {
     const { families, client } = harness();
-    const field = await openTerminal(client);
+    const field = await openFontField(client);
 
     // The states a person passes through on the way from SF Mono to Menlo.
     // The empty one is the one that used to be sent and refused.
@@ -86,7 +88,7 @@ describe("the terminal font family field", () => {
 
   it("states the rule for an empty family rather than sending it", async () => {
     const { families, client } = harness();
-    const field = await openTerminal(client);
+    const field = await openFontField(client);
 
     type(field, "");
     fireEvent.blur(field);
@@ -96,12 +98,12 @@ describe("the terminal font family field", () => {
     expect(screen.getByRole("alert")).toHaveTextContent(FONT_FAMILY_RULE);
     // The refusal is visible and the typing is kept — nothing is silently
     // reverted behind the person's back.
-    expect(screen.getByLabelText("Terminal font family")).toHaveValue("");
+    expect(screen.getByLabelText("Agent pane font family")).toHaveValue("");
   });
 
   it("commits on Return without leaving the field", async () => {
     const { families, client } = harness();
-    const field = await openTerminal(client);
+    const field = await openFontField(client);
 
     type(field, "Menlo");
     fireEvent.keyDown(field, { key: "Enter" });
@@ -113,14 +115,14 @@ describe("the terminal font family field", () => {
 
   it("puts back what is in effect on Escape", async () => {
     const { families, client } = harness();
-    const field = await openTerminal(client);
+    const field = await openFontField(client);
 
     type(field, "Menl");
     fireEvent.keyDown(field, { key: "Escape" });
 
     await new Promise((resolve) => setTimeout(resolve, 600));
     expect(families()).toEqual([]);
-    expect(screen.getByLabelText("Terminal font family")).toHaveValue(
+    expect(screen.getByLabelText("Agent pane font family")).toHaveValue(
       "SF Mono",
     );
   });

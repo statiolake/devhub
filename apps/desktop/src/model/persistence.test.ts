@@ -1,7 +1,7 @@
 import { chmod, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { AppModel } from "./appModel.js";
+import { AppModel, SPLIT_DEFAULT_RATIO } from "./appModel.js";
 import {
   AgentProfile,
   agentId,
@@ -21,6 +21,7 @@ import {
   restoreNavigation,
   StateError,
   stateFromSnapshot,
+  STATE_SCHEMA_VERSION,
   validateState,
   type PersistedAppState,
 } from "./persistence.js";
@@ -42,7 +43,7 @@ function emptied(state: PersistedAppState): PersistedAppState {
   return {
     ...state,
     workspaces: [],
-    navigation: { context: { kind: "global" }, activity: "terminal" },
+    navigation: { context: { kind: "global" } },
     sidebar: { ...state.sidebar },
   };
 }
@@ -108,7 +109,6 @@ describe("navigation restore", () => {
     );
     expect(nextAgent).toEqual({
       context: { kind: "agent", agent_id: AG_B },
-      activity: "agent",
       changed: true,
     });
 
@@ -119,14 +119,12 @@ describe("navigation restore", () => {
     );
     expect(workspace).toEqual({
       context: { kind: "workspace", workspace_id: WS_A },
-      activity: "editor",
       changed: true,
     });
 
     const global = restoreNavigation(state, new Set(), new Set());
     expect(global).toEqual({
       context: { kind: "global" },
-      activity: "terminal",
       changed: true,
     });
   });
@@ -254,16 +252,37 @@ describe("store", () => {
   });
 
   it("migrates a legacy file that still spells the schema as `version`", async () => {
-    await writeFile(path, JSON.stringify({ ...freshState(), version: 1 }), {
-      mode: 0o600,
-    });
+    await writeFile(
+      path,
+      JSON.stringify({ ...freshState(), schema_version: 1, version: 1 }),
+      { mode: 0o600 },
+    );
     const load = await new JsonStateStore(path).loadState();
     expect(load.metadata.migrated).toBe(true);
     const written: Record<string, unknown> = JSON.parse(
       await readFile(path, "utf8"),
     ) as Record<string, unknown>;
     expect(written["version"]).toBeUndefined();
-    expect(written["schema_version"]).toBe(1);
+    expect(written["schema_version"]).toBe(STATE_SCHEMA_VERSION);
+  });
+
+  it("takes a version-1 file, activity and all, and drops what it retired", async () => {
+    const legacy = {
+      ...freshState(),
+      schema_version: 1,
+      navigation: { context: { kind: "global" }, activity: "terminal" },
+    };
+    delete (legacy as Record<string, unknown>)["split"];
+    await writeFile(path, JSON.stringify(legacy), { mode: 0o600 });
+    const load = await new JsonStateStore(path).loadState();
+    expect(load.metadata.migrated).toBe(true);
+    // The retired field is not read, and the new one defaults rather than
+    // making an old file unloadable.
+    expect(load.state.navigation).toEqual({
+      context: { kind: "global" },
+      activity: "terminal",
+    });
+    expect(load.state.split.ratio).toBe(SPLIT_DEFAULT_RATIO);
   });
 
   it("round-trips an interrupted socket transition", async () => {
@@ -299,5 +318,17 @@ describe("store", () => {
     const store = new JsonStateStore(path);
     await store.saveState(state);
     expect((await store.loadState()).state.tmux).toEqual(state.tmux);
+  });
+
+  it("carries every field the model owns, not only the ones it used to", () => {
+    // `applySnapshot` merges the live model over the stored document, and a
+    // field it forgets is a setting that changes on screen and is gone at the
+    // next launch — which is what happened to the split's ratio.
+    const model = populatedModel();
+    model.setSidebarWidth(321);
+    model.setSplitRatio(0.7);
+    const merged = applySnapshot(freshState(), model.snapshot());
+    expect(merged.sidebar.width).toBe(321);
+    expect(merged.split.ratio).toBe(0.7);
   });
 });

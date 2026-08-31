@@ -22,11 +22,7 @@
 import { electron } from "../electron.js";
 import { resolveChord, type ChordEffect } from "./chords.js";
 import { KeyRouter, type KeyStroke } from "./keyRouter.js";
-import type {
-	Activity,
-	AppSnapshotWire,
-	NavigationContext,
-} from "../../ipc/appShell.js";
+import type { AppSnapshotWire, NavigationContext } from "../../ipc/appShell.js";
 
 /**
  * What a chord needs from the rest of the app.
@@ -39,7 +35,8 @@ export interface ChordHost {
 	/** The model as the page sees it, or nothing before the first projection. */
 	snapshot(): AppSnapshotWire | undefined;
 	selectContext(context: NavigationContext): void;
-	selectActivity(activity: Activity): void;
+	/** Show or hide the integrated terminal in the workbench on screen. */
+	toggleIntegratedTerminal(): void;
 	setSidebarExpanded(expanded: boolean): void;
 	openWorkspacePicker(): void;
 	openSettings(): void;
@@ -64,8 +61,8 @@ function perform(host: ChordHost, effect: ChordEffect): void {
 		case "select-context":
 			host.selectContext(effect.context);
 			return;
-		case "select-activity":
-			host.selectActivity(effect.activity);
+		case "toggle-terminal":
+			host.toggleIntegratedTerminal();
 			return;
 		case "set-sidebar-expanded":
 			host.setSidebarExpanded(effect.expanded);

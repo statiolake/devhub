@@ -29,9 +29,9 @@ export const TERMINAL_PROFILE_ID = "devhub.tmux";
 export const TERMINAL_PROFILE_TITLE = "DevHub";
 
 interface ProfileAnswer {
-	ok: boolean;
-	message: string;
-	profile?: { file: string; args: string[] };
+  ok: boolean;
+  message: string;
+  profile?: { file: string; args: string[] };
 }
 
 /**
@@ -41,29 +41,29 @@ interface ProfileAnswer {
  * refuses is a terminal that cannot be opened, and saying so is the answer.
  */
 export function requestTerminalProfile(
-	socketPath: string,
-	root: string | null,
+  socketPath: string,
+  root: string | null,
 ): Promise<ProfileAnswer> {
-	return new Promise<ProfileAnswer>((resolve, reject) => {
-		const socket = connect(socketPath);
-		let buffer = "";
-		socket.setEncoding("utf8");
-		socket.on("connect", () => {
-			socket.write(`${JSON.stringify({ kind: "terminal-profile", root })}\n`);
-		});
-		socket.on("data", (chunk: string) => {
-			buffer += chunk;
-		});
-		socket.on("error", reject);
-		socket.on("close", () => {
-			const line = buffer.split("\n")[0] ?? "";
-			if (line.length === 0) {
-				reject(new Error("DevHub closed the connection without answering."));
-				return;
-			}
-			resolve(JSON.parse(line) as ProfileAnswer);
-		});
-	});
+  return new Promise<ProfileAnswer>((resolve, reject) => {
+    const socket = connect(socketPath);
+    let buffer = "";
+    socket.setEncoding("utf8");
+    socket.on("connect", () => {
+      socket.write(`${JSON.stringify({ kind: "terminal-profile", root })}\n`);
+    });
+    socket.on("data", (chunk: string) => {
+      buffer += chunk;
+    });
+    socket.on("error", reject);
+    socket.on("close", () => {
+      const line = buffer.split("\n")[0] ?? "";
+      if (line.length === 0) {
+        reject(new Error("DevHub closed the connection without answering."));
+        return;
+      }
+      resolve(JSON.parse(line) as ProfileAnswer);
+    });
+  });
 }
 
 /**
@@ -74,40 +74,40 @@ export function requestTerminalProfile(
  * them the terminal belongs to would be inventing an answer.
  */
 export function workbenchRoot(
-	folders: readonly { readonly uri: vscode.Uri }[] | undefined,
+  folders: readonly { readonly uri: vscode.Uri }[] | undefined,
 ): string | null | undefined {
-	if (!folders || folders.length === 0) return null;
-	if (folders.length > 1) return undefined;
-	const uri = folders[0].uri;
-	return uri.scheme === "file" ? uri.fsPath : undefined;
+  if (!folders || folders.length === 0) return null;
+  if (folders.length > 1) return undefined;
+  const uri = folders[0].uri;
+  return uri.scheme === "file" ? uri.fsPath : undefined;
 }
 
 export function registerTerminalProfile(
-	context: vscode.ExtensionContext,
+  context: vscode.ExtensionContext,
 ): vscode.Disposable {
-	return vscode.window.registerTerminalProfileProvider(TERMINAL_PROFILE_ID, {
-		async provideTerminalProfile() {
-			const socketPath = controlSocketFromGlobalStorage(
-				context.globalStorageUri.fsPath,
-			);
-			const root = workbenchRoot(vscode.workspace.workspaceFolders);
-			if (!socketPath || root === undefined) {
-				throw new Error(
-					"This workbench is not running inside DevHub, so it has no DevHub terminal session to attach to.",
-				);
-			}
-			const answer = await requestTerminalProfile(socketPath, root);
-			if (!answer.ok || !answer.profile) {
-				throw new Error(answer.message);
-			}
-			return new vscode.TerminalProfile({
-				name: TERMINAL_PROFILE_TITLE,
-				shellPath: answer.profile.file,
-				shellArgs: answer.profile.args,
-				// tmux is the shell here, and it is the session's shell that runs a
-				// login profile — a login flag on the client would run one twice.
-				isTransient: false,
-			});
-		},
-	});
+  return vscode.window.registerTerminalProfileProvider(TERMINAL_PROFILE_ID, {
+    async provideTerminalProfile() {
+      const socketPath = controlSocketFromGlobalStorage(
+        context.globalStorageUri.fsPath,
+      );
+      const root = workbenchRoot(vscode.workspace.workspaceFolders);
+      if (!socketPath || root === undefined) {
+        throw new Error(
+          "This workbench is not running inside DevHub, so it has no DevHub terminal session to attach to.",
+        );
+      }
+      const answer = await requestTerminalProfile(socketPath, root);
+      if (!answer.ok || !answer.profile) {
+        throw new Error(answer.message);
+      }
+      return new vscode.TerminalProfile({
+        name: TERMINAL_PROFILE_TITLE,
+        shellPath: answer.profile.file,
+        shellArgs: answer.profile.args,
+        // tmux is the shell here, and it is the session's shell that runs a
+        // login profile — a login flag on the client would run one twice.
+        isTransient: false,
+      });
+    },
+  });
 }

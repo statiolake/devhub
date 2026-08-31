@@ -14,14 +14,12 @@
  */
 
 import { useSyncExternalStore } from "react";
-import type { ActivityName } from "../ipc/appShell";
 import {
   paletteVariables,
   type ShellPalette,
   type ShellPaletteBase,
 } from "../ipc/palette";
 import { devhub } from "./client";
-import { activePalette, type TerminalAppearance } from "./terminal/theme";
 
 export function applyPalette(
   root: HTMLElement,
@@ -108,36 +106,4 @@ export function useColorScheme(): ColorScheme {
     () => documentColorScheme(),
     () => "light",
   );
-}
-
-/**
- * The ground the content area is drawn on: the active surface's own ground.
- *
- * The chrome is DevHub's and follows the Workbench's theme; the content area
- * is not DevHub's at all — it is a hole with somebody else's surface in it —
- * so it is painted in whatever that surface paints itself in. For the Editor
- * that is `--surface`, the editor background out of the theme's window splash,
- * and the token already carries it. For a Terminal or an Agent — the same
- * emulator twice — it is the terminal background out of DevHub's appearance
- * config, in the scheme the page is currently in.
- *
- * One rule, computed where the selection and the palettes already meet, rather
- * than a branch in each component: the emulator pane sets its own background
- * from the same palette in the same scheme, so the pane and the area around it
- * are the same colour by construction and the terminal reads as filling the
- * viewport edge to edge.
- *
- * The value is an inline custom property, so it lands in the same commit as
- * the `data-surface-state` it goes with — one frame, no intermediate colour.
- */
-export function contentVariables(
-  activity: ActivityName,
-  appearance: TerminalAppearance | undefined,
-  scheme: ColorScheme,
-): Record<string, string> {
-  const emulator =
-    activity === "editor"
-      ? undefined
-      : activePalette(appearance, scheme === "dark");
-  return { "--content": emulator?.background ?? "var(--surface)" };
 }

@@ -19,6 +19,7 @@ import { useAppShell } from "../../useAppShell";
 import { devhub } from "../../client";
 import { isImeComposing } from "../../accessibility/ime";
 import { RowMenu, type RowMenuItem } from "./RowMenu";
+import { SidebarHeader } from "./SidebarHeader";
 import { SidebarRail } from "./SidebarRail";
 import { StatusMark } from "./StatusMark";
 import { statusLabel } from "./status";
@@ -40,6 +41,7 @@ function runtimeHealthLabel(health: AgentSnapshot["runtimeHealth"]): string {
 
 export interface SidebarProps {
   readonly snapshot: AppSnapshot;
+  readonly onDispatch: (intent: AppIntent) => void;
 }
 
 function treeContextButtons(tree: HTMLElement): HTMLButtonElement[] {
@@ -410,7 +412,7 @@ function SidebarResizeHandle({
   );
 }
 
-export function Sidebar({ snapshot }: SidebarProps) {
+export function Sidebar({ snapshot, onDispatch }: SidebarProps) {
   const { dispatch, agentProfiles } = useAppShell();
   // The sidebar draws no modals. Every one of them lives on the overlay layer
   // above the workbench views, so opening one is a request to main and nothing
@@ -495,13 +497,6 @@ export function Sidebar({ snapshot }: SidebarProps) {
     setAgentMenu(undefined);
   }, []);
 
-  const onDispatch = useCallback(
-    (intent: AppIntent) => {
-      void dispatch(intent);
-    },
-    [dispatch],
-  );
-
   const resize = useCallback(
     (width: number) => {
       setInProgressWidth(width);
@@ -536,8 +531,9 @@ export function Sidebar({ snapshot }: SidebarProps) {
       style={{ "--sidebar-width": `${renderedWidth}px` } as React.CSSProperties}
     >
       {/* The Sidebar runs the full height of the window, so its own top strip
-          is where the window buttons live and where the window is dragged. */}
-      <div className="sidebar-titlebar" />
+          is where the window buttons live, where the window is dragged, and
+          where the one control left in DevHub's chrome sits. */}
+      <SidebarHeader expanded onDispatch={onDispatch} />
       <div className="sidebar-scroll-region">
         <ScratchRow snapshot={snapshot} onDispatch={onDispatch} />
         <div className="sidebar-section-heading">

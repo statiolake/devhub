@@ -425,7 +425,6 @@ describe("launching an agent", () => {
     ]);
     expect(snapshot.selection).toEqual({
       context: { kind: "agent", agentId: AG_A },
-      activity: "agent",
     });
   });
 

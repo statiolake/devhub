@@ -1,9 +1,11 @@
 /*
  * DevHub App Shell.
  *
- * The shell is native chrome around provider-owned Surfaces: a unified
- * titlebar, a source-list Sidebar, and one Surface viewport. Everything here
- * follows the viewer's system appearance through the tokens in tokens.css.
+ * The shell is native chrome around provider-owned Surfaces: a source-list
+ * Sidebar and, beside it, the content area. There is no titlebar — the
+ * workbench spans the content area's full height and the Sidebar is what the
+ * window is dragged by. Everything here follows the active colour theme
+ * through the tokens in tokens.css.
  */
 
 /* ---------------------------------------------------------------- layout */
@@ -17,9 +19,8 @@
   background: transparent;
 }
 
-/* The Sidebar spans the full height of the window and the titlebar belongs to
-   the content column beside it, the way Finder and Mail are laid out: the
-   window buttons sit on the navigation pane, not above it. */
+/* The Sidebar spans the full height of the window, and the content area beside
+   it spans it too: there is no band above either of them. */
 .app-shell-content {
   display: flex;
   overflow: hidden;
@@ -27,47 +28,37 @@
   min-height: 0;
 }
 
-.workbench {
+/* --------------------------------------------------- the sidebar's header */
+
+/* The strip the window is dragged by, and the one control left in DevHub's
+   chrome. Exactly the traffic lights' band height, inset past the lights, so
+   the toggle can never land under one; the same strip tops the rail, where the
+   pane is narrower than the lights are wide and the inset is what keeps the
+   button clear of them. */
+.sidebar-header {
   display: flex;
-  overflow: hidden;
-  flex: 1;
-  flex-direction: column;
-  min-width: 0;
-  min-height: 0;
-}
-
-/* -------------------------------------------------------------- titlebar */
-
-.titlebar {
-  display: grid;
   flex: 0 0 var(--titlebar-height);
   align-items: center;
+  justify-content: flex-end;
+  padding: 0 var(--space-2) 0 var(--traffic-light-inset);
   height: var(--titlebar-height);
-  padding: 0 var(--space-3);
-  border-bottom: 1px solid var(--line-strong);
-  background: transparent;
-  grid-template-columns: 1fr auto 1fr;
 }
 
-/* The window buttons are over the Sidebar now, so with the Sidebar open the
-   content titlebar has nothing to reserve and the leading cell carries the
-   Sidebar toggle. Collapsed, the rail is narrower than the buttons are wide
-   and they spill into this cell, so it insets by the difference. */
-.titlebar-leading {
-  display: flex;
-  min-width: 0;
-  height: 100%;
-  align-items: center;
-}
-
-.titlebar-leading[data-clears-window-buttons] {
-  padding-left: calc(
-    var(--traffic-light-inset) - var(--sidebar-collapsed-width)
-  );
+/* Collapsed, the rail is narrower than the window buttons are wide, so there
+   is no room beside them: the strip grows by one band instead, keeping the
+   lights' row empty and putting the toggle directly under it. The control
+   stays at the top of the sidebar in both forms, which is what matters — it
+   just cannot stay on the same line as buttons that overhang the pane. */
+.sidebar-collapsed .sidebar-header {
+  height: calc(var(--titlebar-height) * 2);
+  flex-basis: calc(var(--titlebar-height) * 2);
+  align-items: flex-end;
+  justify-content: center;
+  padding: 0 0 var(--space-1);
 }
 
 /* A toolbar button: no chrome at rest, a wash under the pointer. */
-.titlebar-button {
+.sidebar-toggle {
   display: flex;
   width: 26px;
   height: 24px;
@@ -79,7 +70,7 @@
   background: transparent;
 }
 
-.titlebar-button svg {
+.sidebar-toggle svg {
   width: 16px;
   height: 16px;
   fill: none;
@@ -89,11 +80,11 @@
   stroke-width: 1.2;
 }
 
-.titlebar-button:hover {
+.sidebar-toggle:hover {
   background: var(--wash);
 }
 
-.titlebar-button:hover svg {
+.sidebar-toggle:hover svg {
   stroke: var(--primary);
 }
 
@@ -102,64 +93,8 @@
   stroke: none;
 }
 
-.titlebar-button:hover .sidebar-toggle-pane {
+.sidebar-toggle:hover .sidebar-toggle-pane {
   fill: color-mix(in srgb, var(--primary) 45%, transparent);
-}
-
-/* The Sidebar's own titlebar strip: same height as the content titlebar so
-   the two read as one band, and wide enough to clear the window buttons. */
-.sidebar-titlebar {
-  flex: 0 0 var(--titlebar-height);
-  min-width: var(--traffic-light-inset);
-  height: var(--titlebar-height);
-}
-
-.titlebar-trailing {
-  display: flex;
-  overflow: hidden;
-  height: 100%;
-  align-items: center;
-  justify-content: flex-end;
-}
-
-/* A segmented control, not a row of pills: one track, one selected segment. */
-.activity-segments {
-  display: flex;
-  padding: 2px;
-  border: 1px solid var(--line);
-  border-radius: 7px;
-  background: var(--sunken);
-  gap: 2px;
-}
-
-.activity-segment {
-  min-width: 84px;
-  height: 24px;
-  padding: 0 var(--space-3);
-  border: 0;
-  border-radius: 5px;
-  background: transparent;
-  color: var(--secondary);
-  font-size: 12px;
-  transition: background-color 120ms ease;
-}
-
-.activity-segment:hover:not(:disabled):not([aria-pressed="true"]) {
-  background: var(--wash);
-  color: var(--primary);
-}
-
-.activity-segment[aria-pressed="true"] {
-  background: var(--raised);
-  box-shadow: var(--shadow-raised);
-  color: var(--primary);
-  font-weight: 590;
-}
-
-.activity-segment:disabled {
-  background: transparent;
-  box-shadow: none;
-  color: var(--disabled-ink);
 }
 
 /* --------------------------------------------------------------- sidebar */
@@ -176,18 +111,16 @@
   background: transparent;
 }
 
-/* The Sidebar and titlebar are the only panes that reveal the window's
+/* The Sidebar is the only pane that reveals the window's
    material; the Surface paints itself opaquely over it. When there is no
    material to reveal — Reduce Transparency, or a window that could not take
    one — the same chrome has to be painted by CSS instead. */
 @media (prefers-reduced-transparency: reduce) {
-  .titlebar,
   .sidebar {
     background: var(--chrome);
   }
 }
 
-:root[data-window-material="none"] .titlebar,
 :root[data-window-material="none"] .sidebar {
   background: var(--chrome);
 }
@@ -514,12 +447,8 @@ body.is-resizing-sidebar {
   flex: 0 0 var(--sidebar-collapsed-width);
   /* The window buttons overhang a rail this narrow, so the pane's full-height
      hairline would be drawn straight through them. The rail carries its
-     separator below the titlebar band instead, where nothing crosses it. */
+     separator below the header strip instead, where nothing crosses it. */
   border-right: 0;
-}
-
-.sidebar-collapsed .sidebar-titlebar {
-  min-width: 0;
 }
 
 .rail-region,
@@ -682,12 +611,84 @@ body.is-resizing-sidebar {
   min-height: 0;
   flex: 1;
   flex-direction: column;
-  /* The content area is painted in the active surface's own ground, not in
-     DevHub's: `--content` is the Editor background for the Editor and the
-     terminal background for the two emulator surfaces, and the viewport sets
-     it in the same commit as `data-surface-state`. The fallback is the frame
-     before the viewport has mounted, where the Editor is the assumption. */
-  background: var(--content, var(--surface));
+  /* The content area is the workbench's ground. It used to be whichever of
+     three surfaces was selected, set per activity from the page; there is one
+     surface here now and `--surface` already carries the editor background out
+     of the theme's window splash. An Agent's pane paints its own terminal
+     ground inside itself, which is why it needs nothing from here. */
+  background: var(--surface);
+}
+
+/* ----------------------------------------------------------------- panes */
+
+.surface-panes {
+  display: flex;
+  overflow: hidden;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* The hole. It draws nothing at all when a workbench is in it — main lays the
+   native view over exactly this rectangle — and its states when there is not.
+   `min-width: 0` because a flex item's automatic minimum would otherwise stop
+   the divider short of the ratio the person dragged to. */
+.workbench-hole {
+  position: relative;
+  display: flex;
+  overflow: hidden;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* The seam. Its own element between the two panes, never on top of either: the
+   workbench is a native view and paints over anything in the page that
+   overlaps it. Wider to the pointer than to the eye, the way a Mac's split
+   handles are — a hairline you have to hit exactly is a hairline you miss. */
+.split-divider {
+  position: relative;
+  width: 1px;
+  flex: 0 0 1px;
+  background: var(--line-strong);
+  cursor: col-resize;
+}
+
+.split-divider::after {
+  position: absolute;
+  content: "";
+  inset: 0 -3px;
+}
+
+.split-divider:hover,
+.split-divider.is-dragging,
+.split-divider:focus-visible {
+  background: var(--accent);
+  outline: none;
+}
+
+/* The Agent's pane. It carries the terminal's own ground, set from the same
+   palette the emulator inside it is drawn with, so the pane and its cells are
+   one colour by construction. */
+.agent-pane[hidden] {
+  display: none;
+}
+
+.agent-pane {
+  position: relative;
+  display: flex;
+  overflow: hidden;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--terminal-background, var(--surface));
+}
+
+body.is-resizing-split {
+  cursor: col-resize;
+  user-select: none;
 }
 
 /* Surface states follow the shape of a macOS alert: a short declarative
@@ -1115,21 +1116,29 @@ body.is-resizing-sidebar {
 
 /* --------------------------------------------------------- window dragging */
 
-/* The Tauri build marked the draggable chrome with `data-tauri-drag-region`.
-   Electron's equivalent is a CSS property, so the same three strips say it
-   here instead — and every control inside them has to opt back out, because a
-   draggable region swallows the clicks that land on it. */
-.titlebar,
-.titlebar-leading,
-.titlebar-trailing,
-.sidebar-titlebar {
+/* With the titlebar gone the Sidebar is the handle: the whole pane is a drag
+   region, and every part of it that does something opts back out.
+
+   The opt-out list is written as "anything interactive" rather than as a list
+   of the classes that exist today, because a draggable region swallows the
+   clicks that land on it — so a control added later that is not on the list
+   would be a control nobody can press, and it would look like a bug in the
+   control rather than in this rule. What is left draggable is what is left
+   over: the header strip, the padding, the section heading's dead space, the
+   empty room below the rows, and the rail's empty column. */
+.sidebar {
   -webkit-app-region: drag;
 }
 
-.titlebar button,
-.titlebar input,
-.titlebar a,
-.sidebar-titlebar button {
+.sidebar button,
+.sidebar a,
+.sidebar input,
+.sidebar [role="separator"],
+.sidebar [role="menu"],
+.sidebar [tabindex]:not([tabindex="-1"]),
+/* The whole row, not only the buttons in it: a row answers a right-click with
+   its context menu, and that gesture starts on the row's own background. */
+.sidebar-row {
   -webkit-app-region: no-drag;
 }
 

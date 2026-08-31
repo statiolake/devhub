@@ -17,7 +17,7 @@ import {
   type AgentProfile,
   type CloseInspectionProjection,
   type ResourceInspection,
-  type SurfaceResolution,
+  type SurfaceLayout,
 } from "./domain.js";
 import type {
   AgentSnapshot,
@@ -25,7 +25,12 @@ import type {
   EditorHostState,
   WorkspaceSnapshot,
 } from "./appModel.js";
-import { SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH } from "./appModel.js";
+import {
+  SIDEBAR_MAX_WIDTH,
+  SIDEBAR_MIN_WIDTH,
+  SPLIT_MAX_RATIO,
+  SPLIT_MIN_RATIO,
+} from "./appModel.js";
 import { isValidFontFamily } from "./fontFamily.js";
 import {
   AppError,
@@ -40,7 +45,6 @@ import {
   APP_ERROR_SUMMARY,
   APP_SHELL_SCHEMA_VERSION,
   MAX_SAFE_JS_INTEGER,
-  type ActivityWire,
   type AgentProfilesWire,
   type AgentProfileWire,
   type AgentWire,
@@ -61,7 +65,7 @@ import {
   type EditorHostWire,
   type ReplayEventKindWire,
   type ReplayWire,
-  type ResolutionWire,
+  type LayoutWire,
   type WorkspaceStateWire,
   type WorkspaceWire,
 } from "../ipc/appShell.js";
@@ -183,10 +187,19 @@ export function unavailableAgentProfiles(
   };
 }
 
-function resolutionWire(resolution: SurfaceResolution): ResolutionWire {
-  return resolution.kind === "enabled"
-    ? { kind: "enabled", surfaceKey: surfaceKeyName(resolution.surfaceKey) }
-    : { kind: "disabled", reason: resolution.reason };
+function layoutWire(layout: SurfaceLayout): LayoutWire {
+  switch (layout.kind) {
+    case "workbench":
+      return { kind: "workbench", editorKey: surfaceKeyName(layout.editor) };
+    case "split":
+      return {
+        kind: "split",
+        editorKey: surfaceKeyName(layout.editor),
+        agentKey: surfaceKeyName(layout.agent),
+      };
+    case "unavailable":
+      return { kind: "unavailable" };
+  }
 }
 
 function contextWire(
@@ -254,10 +267,6 @@ export function snapshotWire(
   if (snapshot.revision > MAX_SAFE_JS_INTEGER) {
     throw new SnapshotWireError("snapshot revision is outside the safe range");
   }
-  const activities: ActivityWire[] = snapshot.activities.map((activity) => ({
-    activity: activity.activity,
-    resolution: resolutionWire(activity.resolution),
-  }));
   const workspaces: WorkspaceWire[] = snapshot.workspaces.map((workspace) => ({
     id: workspace.id,
     label: workspace.label,
@@ -273,16 +282,14 @@ export function snapshotWire(
     revision: snapshot.revision,
     readiness,
     editorHost: editorHostWire(snapshot.editorHost),
-    selection: {
-      context: contextWire(snapshot.selection.context),
-      activity: snapshot.selection.activity,
-    },
-    activities,
+    selection: { context: contextWire(snapshot.selection.context) },
+    layout: layoutWire(snapshot.layout),
     workspaces,
     sidebar: {
       width: snapshot.sidebar.width,
       expanded: snapshot.sidebar.expanded,
     },
+    splitRatio: snapshot.splitRatio,
   };
   if (
     wire.sidebar.width < SIDEBAR_MIN_WIDTH ||
@@ -507,9 +514,6 @@ export function errorWire(error: unknown): AppErrorWire {
   switch (error.code) {
     case AppErrorCode.Domain:
       switch (error.domainCode) {
-        case DomainErrorCode.ActivityDisabled:
-          code = "activity_disabled";
-          break;
         case DomainErrorCode.UnknownWorkspace:
         case DomainErrorCode.UnknownAgent:
           code = "unknown_context";
@@ -608,8 +612,16 @@ export function intentFromWire(wire: AppIntentWire): UserIntent {
       }
       break;
     }
-    case "select_activity":
-      return { type: "select_activity", activity: wire.activity };
+    case "resize_split":
+      if (
+        typeof wire.ratio !== "number" ||
+        !Number.isFinite(wire.ratio) ||
+        wire.ratio < SPLIT_MIN_RATIO ||
+        wire.ratio > SPLIT_MAX_RATIO
+      ) {
+        invalid();
+      }
+      return { type: "resize_split", ratio: wire.ratio };
     case "resize_sidebar":
       if (
         !Number.isInteger(wire.width) ||

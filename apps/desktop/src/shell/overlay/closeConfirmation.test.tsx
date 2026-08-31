@@ -34,12 +34,16 @@ function snapshotWith(agents: boolean): AppSnapshot {
     revision: 7,
     readiness: "ready",
     editorHost: { status: "ready", host: "local" } as AppSnapshot["editorHost"],
-    activities: [],
+    layout: {
+      kind: "split",
+      editorKey: `workspace-editor:${WORKSPACE_ID}`,
+      agentKey: `agent:${AGENT_ID}`,
+    },
     selection: {
-      activity: "agent",
       context: { kind: "agent", agentId: AGENT_ID },
     } as AppSnapshot["selection"],
     sidebar: { expanded: true, width: 240 } as AppSnapshot["sidebar"],
+    splitRatio: 0.55,
     workspaces: [
       {
         id: WORKSPACE_ID,

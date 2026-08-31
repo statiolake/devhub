@@ -24,33 +24,36 @@ One window. A left pane of Workspaces, each with its Agents nested under it,
 and one main surface on the right.
 
 ```text
-┌──────────────────────────────────────────────────────┐
-│              [Editor] [Agent] [Terminal]             │
-├───────────────┬──────────────────────────────────────┤
-│ Scratch       │                                      │
-│               │                                      │
-│ ▼ foo         │            Active Surface            │
-│    Claude 1 ● │                                      │
-│    Codex  2 ○ │                                      │
-│ ▼ bar         │                                      │
-│    Claude 1 ● │                                      │
-└───────────────┴──────────────────────────────────────┘
+┌───────────────┬───────────────────────┬──────────────┐
+│           [▥] │                       │              │
+│ Scratch       │                       │              │
+│               │                       │              │
+│ ▼ foo         │       Workbench       │  Agent pane  │
+│    Claude 1 ● │                       │              │
+│    Codex  2 ○ │                       │              │
+│ ▼ bar         │                       │              │
+│    Claude 1 ● │                       │              │
+└───────────────┴───────────────────────┴──────────────┘
 ```
 
-The top strip is a fixed set of **Activities**, not tabs: Editor, Agent,
-Terminal. There is no subtitle strip and no status bar.
+There is no title bar, no activity switcher, no subtitle strip and no status
+bar. A Workspace **is** its workbench, full width and full height; the sidebar
+is what the window is dragged by, and the one control on it collapses the
+sidebar to an icon rail.
 
-The left pane selects **what** you are working on; the Activity selects
-**which view** of it you see:
+The left pane selects what you are working on, and that is the whole selection:
 
-- select a Workspace → its Editor
-- select an Agent → that Agent
-- Editor is per Workspace; Terminal is per Workspace; Agent is per Agent
+- select a Workspace → its workbench
+- select an Agent → that same workbench, with the Agent's pane beside it on a
+  divider you can drag; the ratio is remembered
+- there is no separate Terminal: a terminal is the workbench's own integrated
+  terminal, attached to the tmux session DevHub keeps for that context, so it
+  survives quitting the app exactly as it always did
 
 A Workspace with no Agents shows no disclosure and no child tree at all.
 
-Editor never appears in the left pane, because every Workspace has exactly one
-and the Workspace node is its entry point.
+The workbench never appears in the left pane, because every Workspace has
+exactly one and the Workspace node is its entry point.
 
 ## Domain
 

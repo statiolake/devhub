@@ -20,7 +20,6 @@ import {
   rootParentComponents,
   sameContext,
   Workspace,
-  type Activity,
   type AgentControlState,
   type AgentId,
   type AgentProfileId,
@@ -35,7 +34,7 @@ import {
   type RepositoryId,
   type Repository,
   type RuntimeHealth,
-  type SurfaceResolution,
+  type SurfaceLayout,
   type WorkspaceId,
   type WorkspaceRoot,
   type WorkspaceState,
@@ -45,28 +44,40 @@ export const APP_SNAPSHOT_SCHEMA_VERSION = 1;
 export const SIDEBAR_MIN_WIDTH = 200;
 export const SIDEBAR_MAX_WIDTH = 400;
 export const SIDEBAR_DEFAULT_WIDTH = 248;
+/**
+ * How much of the content area the workbench takes when an Agent is selected.
+ *
+ * A ratio rather than a width: the split is between two panes of one area, and
+ * the area changes size with the window while the person's sense of "a bit more
+ * than half for the editor" does not. The bounds are what leaves both panes
+ * usable — a workbench narrower than a quarter has no editor left in it, and an
+ * Agent pane narrower than that cannot hold a terminal's eighty columns.
+ */
+export const SPLIT_MIN_RATIO = 0.25;
+export const SPLIT_MAX_RATIO = 0.85;
+export const SPLIT_DEFAULT_RATIO = 0.55;
 
 function fail(code: DomainErrorCode): never {
   throw new DomainError(code);
 }
 
+/**
+ * The selection, which is the context and nothing else.
+ *
+ * It carried an Activity beside the context until the Activity ring was
+ * retired. The wrapper stays because the persisted record and the wire both
+ * name a `selection`, and because a selection is a thing the model has one of
+ * — but there is now exactly one field, and `sameSelection` is `sameContext`.
+ */
 export interface NavigationSelection {
   readonly context: NavigationContext;
-  readonly activity: Activity;
 }
 
 export function sameSelection(
   left: NavigationSelection,
   right: NavigationSelection,
 ): boolean {
-  return (
-    left.activity === right.activity && sameContext(left.context, right.context)
-  );
-}
-
-export interface ActivitySnapshot {
-  readonly activity: Activity;
-  readonly resolution: SurfaceResolution;
+  return sameContext(left.context, right.context);
 }
 
 export interface SidebarSnapshot {
@@ -131,9 +142,12 @@ export interface AppSnapshot {
   readonly schemaVersion: number;
   readonly revision: number;
   readonly selection: NavigationSelection;
-  readonly activities: readonly ActivitySnapshot[];
+  /** What the content area holds for that selection. */
+  readonly layout: SurfaceLayout;
   readonly workspaces: readonly WorkspaceSnapshot[];
   readonly sidebar: SidebarSnapshot;
+  /** Where the divider sits when the layout is a split. */
+  readonly splitRatio: number;
   readonly editorHost: EditorHostState;
 }
 
@@ -162,11 +176,9 @@ export class AppModel {
   private readonly workspaceList: Workspace[] = [];
   private readonly repositoryMap = new Map<RepositoryId, Repository>();
   private readonly nextAgentOrdinals = new Map<string, number>();
-  private selectionValue: NavigationSelection = {
-    context: GLOBAL_CONTEXT,
-    activity: "terminal",
-  };
+  private selectionValue: NavigationSelection = { context: GLOBAL_CONTEXT };
   private sidebarWidthValue = SIDEBAR_DEFAULT_WIDTH;
+  private splitRatioValue = SPLIT_DEFAULT_RATIO;
   private sidebarExpandedValue = true;
   private editorHost: EditorHostState = { kind: "starting" };
   private revision = 0;
@@ -176,20 +188,13 @@ export class AppModel {
       schemaVersion: APP_SNAPSHOT_SCHEMA_VERSION,
       revision: this.revision,
       selection: this.selectionValue,
-      activities: [...(["editor", "agent", "terminal"] as const)].map(
-        (activity) => ({
-          activity,
-          resolution: this.resolveSurface(
-            this.selectionValue.context,
-            activity,
-          ),
-        }),
-      ),
+      layout: this.resolveLayout(this.selectionValue.context),
       workspaces: this.workspaceSnapshots(),
       sidebar: {
         width: this.sidebarWidthValue,
         expanded: this.sidebarExpandedValue,
       },
+      splitRatio: this.splitRatioValue,
       editorHost: this.editorHost,
     };
   }
@@ -243,6 +248,32 @@ export class AppModel {
     this.sidebarWidthValue = width;
     this.bumpRevision();
     return true;
+  }
+
+  get splitRatio(): number {
+    return this.splitRatioValue;
+  }
+
+  /**
+   * Move the divider. Out-of-range is a bug in the caller, not a value to
+   * clamp quietly: the page clamps a pointer before it crosses the seam, the
+   * same way it does for the sidebar's width.
+   */
+  setSplitRatio(ratio: number): boolean {
+    if (ratio < SPLIT_MIN_RATIO || ratio > SPLIT_MAX_RATIO) {
+      fail(DomainErrorCode.InvalidSplitRatio);
+    }
+    if (this.splitRatioValue === ratio) {
+      return false;
+    }
+    this.splitRatioValue = ratio;
+    this.bumpRevision();
+    return true;
+  }
+
+  /** Restoring is setting, minus the revision bump on an unchanged value. */
+  restoreSplitRatio(ratio: number): boolean {
+    return this.setSplitRatio(ratio);
   }
 
   get sidebarExpanded(): boolean {
@@ -338,10 +369,7 @@ export class AppModel {
     }
     workspace.addAgent(Agent.create(id, owner, profile, ordinal));
     this.nextAgentOrdinals.set(key, ordinal + 1);
-    this.selectionValue = {
-      context: { kind: "agent", agentId: id },
-      activity: "agent",
-    };
+    this.selectionValue = { context: { kind: "agent", agentId: id } };
     this.bumpRevision();
   }
 
@@ -494,13 +522,7 @@ export class AppModel {
     const read =
       context.kind === "agent" &&
       this.agent(context.agentId)?.setUnread(false) === true;
-    const activity: Activity =
-      context.kind === "global"
-        ? "terminal"
-        : context.kind === "workspace"
-          ? "editor"
-          : "agent";
-    const next: NavigationSelection = { context, activity };
+    const next: NavigationSelection = { context };
     if (!sameSelection(this.selectionValue, next)) {
       this.selectionValue = next;
       this.bumpRevision();
@@ -511,99 +533,39 @@ export class AppModel {
     }
   }
 
-  selectActivity(activity: Activity): void {
-    if (
-      this.resolveSurface(this.selectionValue.context, activity).kind !==
-      "enabled"
-    ) {
-      fail(DomainErrorCode.ActivityDisabled);
-    }
-    if (this.selectionValue.activity !== activity) {
-      this.selectionValue = { ...this.selectionValue, activity };
-      this.bumpRevision();
-    }
-  }
-
   /**
-   * The one place that decides whether an Activity is reachable, and what it
-   * points at when it is. Every enable/disable in the UI comes from here.
+   * The one place that decides what the content area holds, and what it points
+   * at. Everything the page draws in it comes from here.
    */
-  resolveSurface(
-    context: NavigationContext,
-    activity: Activity,
-  ): SurfaceResolution {
+  resolveLayout(context: NavigationContext): SurfaceLayout {
     if (context.kind === "global") {
-      if (activity === "editor") {
-        return { kind: "enabled", surfaceKey: { kind: "global-editor" } };
-      }
-      if (activity === "terminal") {
-        return { kind: "enabled", surfaceKey: { kind: "global-terminal" } };
-      }
-      return { kind: "disabled", reason: "global-agent-not-applicable" };
+      return { kind: "workbench", editor: { kind: "global-editor" } };
     }
 
     if (context.kind === "workspace") {
       const workspace = this.workspace(context.workspaceId);
-      if (!workspace) {
-        return { kind: "disabled", reason: "workspace-unavailable" };
+      if (!workspace || !isWorkspaceAvailable(workspace.state)) {
+        return { kind: "unavailable" };
       }
-      if (activity === "agent") {
-        return {
-          kind: "disabled",
-          reason: "workspace-agent-requires-agent-selection",
-        };
-      }
-      switch (workspace.state.kind) {
-        case "available":
-          return {
-            kind: "enabled",
-            surfaceKey:
-              activity === "editor"
-                ? { kind: "workspace-editor", workspaceId: context.workspaceId }
-                : {
-                    kind: "workspace-terminal",
-                    workspaceId: context.workspaceId,
-                  },
-          };
-        case "unavailable":
-          return { kind: "disabled", reason: "workspace-unavailable" };
-        case "closing":
-          return { kind: "disabled", reason: "workspace-closing" };
-        case "closing-failed":
-          return { kind: "disabled", reason: "workspace-closing-failed" };
-      }
+      return {
+        kind: "workbench",
+        editor: { kind: "workspace-editor", workspaceId: workspace.id },
+      };
     }
 
     const agent = this.agent(context.agentId);
-    if (!agent) {
-      return { kind: "disabled", reason: "workspace-unavailable" };
+    const workspace = agent ? this.workspace(agent.workspaceId) : undefined;
+    if (!agent || !workspace || !isWorkspaceAvailable(workspace.state)) {
+      return { kind: "unavailable" };
     }
-    const workspace = this.workspace(agent.workspaceId);
-    if (!workspace) {
-      return { kind: "disabled", reason: "workspace-unavailable" };
-    }
-    if (activity === "agent") {
-      return {
-        kind: "enabled",
-        surfaceKey: { kind: "agent", agentId: context.agentId },
-      };
-    }
-    switch (workspace.state.kind) {
-      case "available":
-        return {
-          kind: "enabled",
-          surfaceKey:
-            activity === "editor"
-              ? { kind: "workspace-editor", workspaceId: agent.workspaceId }
-              : { kind: "workspace-terminal", workspaceId: agent.workspaceId },
-        };
-      case "closing":
-        return { kind: "disabled", reason: "workspace-closing" };
-      case "unavailable":
-        return { kind: "disabled", reason: "workspace-unavailable" };
-      case "closing-failed":
-        return { kind: "disabled", reason: "workspace-closing-failed" };
-    }
+    // An Agent is not a place of its own: it is a pane beside the workbench of
+    // the Workspace it runs in, and selecting it must not take that workbench
+    // away. That is the whole of what the split is for.
+    return {
+      kind: "split",
+      editor: { kind: "workspace-editor", workspaceId: workspace.id },
+      agent: { kind: "agent", agentId: agent.id },
+    };
   }
 
   agentExited(id: AgentId): void {
@@ -616,11 +578,8 @@ export class AppModel {
       this.selectionValue.context.agentId === id
     ) {
       this.selectionValue = nextAgent
-        ? { context: { kind: "agent", agentId: nextAgent }, activity: "agent" }
-        : {
-            context: { kind: "workspace", workspaceId: workspace.id },
-            activity: "editor",
-          };
+        ? { context: { kind: "agent", agentId: nextAgent } }
+        : { context: { kind: "workspace", workspaceId: workspace.id } };
     }
     this.bumpRevision();
   }
@@ -651,11 +610,8 @@ export class AppModel {
     if (ownsSelection) {
       const successor = next ?? previous;
       this.selectionValue = successor
-        ? {
-            context: { kind: "workspace", workspaceId: successor },
-            activity: "editor",
-          }
-        : { context: GLOBAL_CONTEXT, activity: "terminal" };
+        ? { context: { kind: "workspace", workspaceId: successor } }
+        : { context: GLOBAL_CONTEXT };
     }
     this.bumpRevision();
   }

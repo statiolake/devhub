@@ -17,12 +17,10 @@ export const MAX_SAFE_JS_INTEGER = 9007199254740991 as const;
 export const MIN_SIDEBAR_WIDTH = 200 as const;
 export const MAX_SIDEBAR_WIDTH = 400 as const;
 export const DEFAULT_SIDEBAR_WIDTH = 248 as const;
+export const MIN_SPLIT_RATIO = 0.25 as const;
+export const MAX_SPLIT_RATIO = 0.85 as const;
+export const DEFAULT_SPLIT_RATIO = 0.55 as const;
 
-export type ActivityName = "editor" | "agent" | "terminal";
-export interface ActivityWire {
-	readonly activity: ActivityName;
-	readonly resolution: ResolutionWire;
-}
 export type AgentControlStateWire = "running" | "stopping" | "stop-failed";
 export type AgentProfileKindWire = "codex" | "claude" | "custom";
 export interface AgentProfileWire {
@@ -82,7 +80,6 @@ export interface AppAppearanceWire {
 export type AppErrorActionWire = "retry" | "open_settings";
 export type AppErrorCodeWire =
 	| "invalid_intent"
-	| "activity_disabled"
 	| "unknown_context"
 	| "workspace_unavailable"
 	| "workspace_closing"
@@ -118,7 +115,6 @@ export type AppErrorCodeWire =
  */
 export const APP_ERROR_SUMMARY: Readonly<Record<AppErrorCodeWire, string>> = {
 	invalid_intent: "The requested action is not available.",
-	activity_disabled: "This activity is unavailable in the current context.",
 	unknown_context: "The selected context is no longer available.",
 	workspace_unavailable: "The workspace is unavailable.",
 	workspace_closing: "The workspace is already closing.",
@@ -159,8 +155,8 @@ export interface AppErrorWire {
 }
 export type AppIntentWire =
 	| { readonly context: ContextWire; readonly type: "select_context" }
-	| { readonly activity: ActivityName; readonly type: "select_activity" }
 	| { readonly type: "resize_sidebar"; readonly width: number }
+	| { readonly ratio: number; readonly type: "resize_split" }
 	| { readonly expanded: boolean; readonly type: "set_sidebar_expanded" }
 	| { readonly type: "open_workspace_picker" }
 	| {
@@ -212,15 +208,35 @@ export type AppOutcomeWire =
 export type AppReadiness = "starting" | "ready" | "unavailable";
 export type AppSidebarDensityWire = "compact" | "comfortable";
 export interface AppSnapshotWire {
-	readonly activities: readonly ActivityWire[];
 	readonly editorHost: EditorHostWire;
+	/** What the content area holds for the selected context. */
+	readonly layout: LayoutWire;
 	readonly readiness: AppReadiness;
 	readonly revision: number;
 	readonly schemaVersion: 1;
 	readonly selection: SelectionWire;
 	readonly sidebar: SidebarWire;
+	/** Where the divider sits when the layout is a split, as a fraction. */
+	readonly splitRatio: number;
 	readonly workspaces: readonly WorkspaceWire[];
 }
+
+/**
+ * The content area, for this selection.
+ *
+ * A workbench alone for a Workspace or for Scratch; that workbench with an
+ * Agent's pane beside it when an Agent is selected; nothing at all when the
+ * Workspace cannot be shown, in which case the workspace's own `state` and
+ * `stateDiagnostic` are what say why.
+ */
+export type LayoutWire =
+	| { readonly kind: "workbench"; readonly editorKey: string }
+	| {
+			readonly kind: "split";
+			readonly editorKey: string;
+			readonly agentKey: string;
+	  }
+	| { readonly kind: "unavailable" };
 export type CloseDiagnosticWire =
 	| "root_missing"
 	| "root_inaccessible"
@@ -253,12 +269,6 @@ export type ContextWire =
 	| { readonly kind: "global" }
 	| { readonly kind: "workspace"; readonly workspaceId: string }
 	| { readonly agentId: string; readonly kind: "agent" };
-export type DisabledReasonWire =
-	| "global-agent-not-applicable"
-	| "workspace-agent-requires-agent-selection"
-	| "workspace-unavailable"
-	| "workspace-closing"
-	| "workspace-closing-failed";
 export type EditorHostWire =
 	| { readonly status: "starting" }
 	| { readonly status: "ready" }
@@ -282,9 +292,6 @@ export interface ReplayWire {
 	readonly historyGap: boolean;
 	readonly snapshot: AppSnapshotWire;
 }
-export type ResolutionWire =
-	| { readonly kind: "enabled"; readonly surfaceKey: string }
-	| { readonly kind: "disabled"; readonly reason: DisabledReasonWire };
 export type RuntimeHealthWire =
 	| "starting"
 	| "healthy"
@@ -292,7 +299,6 @@ export type RuntimeHealthWire =
 	| "unavailable"
 	| "failed";
 export interface SelectionWire {
-	readonly activity: ActivityName;
 	readonly context: ContextWire;
 }
 export interface SidebarWire {
@@ -341,17 +347,10 @@ export interface WorkspaceWire {
 	readonly stateDiagnostic?: CloseDiagnosticWire;
 }
 
-export type Activity = ActivityName;
-export const ACTIVITIES: readonly Activity[] = [
-	"editor",
-	"agent",
-	"terminal",
-] as const;
 export type SnapshotReadiness = AppReadiness;
 export type NavigationContext = ContextWire;
 export type SelectionSnapshot = SelectionWire;
-export type ActivityResolution = ResolutionWire;
-export type ActivitySnapshot = ActivityWire;
+export type SurfaceLayout = LayoutWire;
 export type AgentStatus = AgentStatusWire;
 export type RuntimeHealth = RuntimeHealthWire;
 export type AgentControlState = AgentControlStateWire;
@@ -389,9 +388,6 @@ export function isContextSelected(
 ): boolean {
 	return contextKey(selected) === contextKey(candidate);
 }
-export function activityLabel(activity: Activity): string {
-	return activity[0].toUpperCase() + activity.slice(1);
-}
 export function workspaceById(
 	snapshot: AppSnapshot,
 	workspaceId: string,
@@ -412,20 +408,24 @@ export function workspaceForContext(
 	}
 	return undefined;
 }
-export function activeActivitySnapshot(
-	snapshot: AppSnapshot,
-): ActivitySnapshot {
-	return (
-		snapshot.activities.find(
-			({ activity }) => activity === snapshot.selection.activity,
-		) ?? snapshot.activities[0]
-	);
-}
-
 /** Keep pointer updates bounded before they cross the intent seam. */
 export function clampSidebarWidth(width: number): number {
 	return Math.max(
 		MIN_SIDEBAR_WIDTH,
 		Math.min(MAX_SIDEBAR_WIDTH, Math.round(width)),
+	);
+}
+
+/**
+ * The same, for the split.
+ *
+ * Rounded to whole percent: a divider dragged by hand produces a new float on
+ * every pointer move, and a ratio that is stored, sent and compared is better
+ * off with a hundred values than with a thousand indistinguishable ones.
+ */
+export function clampSplitRatio(ratio: number): number {
+	return Math.max(
+		MIN_SPLIT_RATIO,
+		Math.min(MAX_SPLIT_RATIO, Math.round(ratio * 100) / 100),
 	);
 }

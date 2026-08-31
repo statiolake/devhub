@@ -21,8 +21,7 @@
  * | `Cmd+Q Shift+N`             | next sidebar entry (workspace cycle)           | `next_workspace`          |
  * | `Cmd+Q {`                   | previous agent in the current workspace        | `previous_agent`          |
  * | `Cmd+Q }`                   | next agent in the current workspace            | `next_agent`              |
- * | `Cmd+Q P` / `Cmd+Q Ctrl+P`  | previous activity (Editor→Agent→Terminal)      | `previous_tab`            |
- * | `Cmd+Q N` / `Cmd+Q Ctrl+N`  | next activity                                  | `next_tab`                |
+ * | `Cmd+Q T`                   | toggle the workbench's integrated terminal     | DevHub                    |
  * | `Cmd+Q Shift+C`             | Add Workspace (the picker)                     | `new_workspace`           |
  * | `Cmd+Q Shift+,`             | DevHub Settings                                | `settings`                |
  * | `Cmd+Q 1`…`Cmd+Q 9`         | select the Nth sidebar entry (Scratch = 1)     | extension (tmux idiom)    |
@@ -36,10 +35,13 @@
  * `Cmd+Q 1` disagree about what the list is. One list, one order: Scratch,
  * then the workspaces in sidebar order, wrapping at both ends.
  *
- * **Activities are tabs.** DevHub has no tab strip; the nearest thing a person
- * cycles through within one context is the Activity control — Editor, Agent,
- * Terminal. An activity that is disabled in the current context is skipped
- * rather than selected into an error.
+ * **There is no activity ring left to cycle.** `Cmd+Q P` / `Cmd+Q N` and their
+ * Control variants cycled Editor → Agent → Terminal. A context is now one
+ * arrangement — a workbench, or a workbench with an Agent's pane beside it —
+ * so there is nothing to step through and the four rows are gone rather than
+ * given a new meaning. What is left of "show me the terminal" is `Cmd+Q T`,
+ * which toggles the workbench's own integrated terminal: the terminal is
+ * inside the workbench now, and the command that shows it is the workbench's.
  *
  * **Zoom is the sidebar toggle.** DevHub has no panes to zoom, so there is no
  * literal analogue. What `prefix+z` is *for* is "give the thing I am working
@@ -78,11 +80,7 @@
  * is deliberately not built yet; this file is only the defaults.
  */
 
-import type {
-	Activity,
-	AppSnapshotWire,
-	NavigationContext,
-} from "../../ipc/appShell.js";
+import type { AppSnapshotWire, NavigationContext } from "../../ipc/appShell.js";
 
 /** What a chord asks DevHub to do, before it is resolved against the model. */
 export type ChordAction =
@@ -90,7 +88,7 @@ export type ChordAction =
 	| { readonly kind: "forward-prefix" }
 	| { readonly kind: "cycle-workspace"; readonly step: 1 | -1 }
 	| { readonly kind: "cycle-agent"; readonly step: 1 | -1 }
-	| { readonly kind: "cycle-activity"; readonly step: 1 | -1 }
+	| { readonly kind: "toggle-terminal" }
 	/** One-based, as it is typed: 1 is Scratch. */
 	| { readonly kind: "select-entry"; readonly ordinal: number }
 	| { readonly kind: "add-workspace" }
@@ -140,10 +138,7 @@ export const DEFAULT_CHORDS: readonly ChordBinding[] = [
 	{ key: "{", shift: true, action: { kind: "cycle-agent", step: -1 } },
 	{ key: "}", shift: true, action: { kind: "cycle-agent", step: 1 } },
 
-	{ key: "p", action: { kind: "cycle-activity", step: -1 } },
-	{ key: "p", control: true, action: { kind: "cycle-activity", step: -1 } },
-	{ key: "n", action: { kind: "cycle-activity", step: 1 } },
-	{ key: "n", control: true, action: { kind: "cycle-activity", step: 1 } },
+	{ key: "t", action: { kind: "toggle-terminal" } },
 
 	{ key: "c", shift: true, action: { kind: "add-workspace" } },
 
@@ -191,7 +186,7 @@ export function matchChord(
  */
 export type ChordEffect =
 	| { readonly kind: "select-context"; readonly context: NavigationContext }
-	| { readonly kind: "select-activity"; readonly activity: Activity }
+	| { readonly kind: "toggle-terminal" }
 	| { readonly kind: "set-sidebar-expanded"; readonly expanded: boolean }
 	| { readonly kind: "open-workspace-picker" }
 	| { readonly kind: "open-settings" };
@@ -256,6 +251,9 @@ export function resolveChord(
 		case "open-settings":
 			return { kind: "open-settings" };
 
+		case "toggle-terminal":
+			return { kind: "toggle-terminal" };
+
 		case "toggle-sidebar":
 			return {
 				kind: "set-sidebar-expanded",
@@ -303,25 +301,6 @@ export function resolveChord(
 				kind: "select-context",
 				context: { kind: "agent", agentId: next.id },
 			};
-		}
-
-		case "cycle-activity": {
-			// Only the activities that are actually available here: cycling into
-			// a disabled one would be a chord that answers with an error.
-			const available = snapshot.activities.filter(
-				(activity) => activity.resolution.kind === "enabled",
-			);
-			if (available.length === 0) return undefined;
-			const current = available.findIndex(
-				(activity) => activity.activity === snapshot.selection.activity,
-			);
-			// A selection that is itself disabled has no place in the ring, so
-			// stepping from it lands on the first available activity.
-			const next =
-				current < 0
-					? available[0]
-					: available[wrap(current + action.step, available.length)];
-			return { kind: "select-activity", activity: next.activity };
 		}
 	}
 }

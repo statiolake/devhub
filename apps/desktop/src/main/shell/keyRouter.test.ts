@@ -103,7 +103,7 @@ describe("completing a chord", () => {
 		router = new KeyRouter();
 	});
 
-	it("runs the workspace, agent and activity cycles", () => {
+	it("runs the workspace and agent cycles", () => {
 		expect(complete(stroke("P", { shift: true }))).toEqual({
 			kind: "run",
 			action: { kind: "cycle-workspace", step: -1 },
@@ -120,13 +120,12 @@ describe("completing a chord", () => {
 			kind: "run",
 			action: { kind: "cycle-agent", step: 1 },
 		});
-		expect(complete(stroke("p"))).toEqual({
+	});
+
+	it("toggles the workbench's terminal", () => {
+		expect(complete(stroke("t"))).toEqual({
 			kind: "run",
-			action: { kind: "cycle-activity", step: -1 },
-		});
-		expect(complete(stroke("n", { control: true }))).toEqual({
-			kind: "run",
-			action: { kind: "cycle-activity", step: 1 },
+			action: { kind: "toggle-terminal" },
 		});
 	});
 
@@ -155,13 +154,13 @@ describe("completing a chord", () => {
 	});
 
 	it("distinguishes the shifted chord from the unshifted one", () => {
-		expect(complete(stroke("p"))).toEqual({
+		// Modifiers are matched exactly, so retiring the unshifted `N` — it
+		// stepped the activity ring, which no longer exists — leaves it
+		// cancelling rather than falling through to its shifted neighbour.
+		expect(complete(stroke("n"))).toEqual({ kind: "cancelled" });
+		expect(complete(stroke("N", { shift: true }))).toEqual({
 			kind: "run",
-			action: { kind: "cycle-activity", step: -1 },
-		});
-		expect(complete(stroke("P", { shift: true }))).toEqual({
-			kind: "run",
-			action: { kind: "cycle-workspace", step: -1 },
+			action: { kind: "cycle-workspace", step: 1 },
 		});
 	});
 

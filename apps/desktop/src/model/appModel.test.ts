@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AppModel } from "./appModel.js";
+import { AppModel, SPLIT_DEFAULT_RATIO } from "./appModel.js";
 import {
   AgentProfile,
   agentId,
@@ -46,107 +46,102 @@ function modelWith(...roots: [ReturnType<typeof workspaceId>, string][]) {
 }
 
 describe("startup", () => {
-  it("starts on the Global context's terminal with no workspaces", () => {
+  it("starts on the Global context with no workspaces", () => {
     const snapshot = new AppModel().snapshot();
     expect(snapshot.workspaces).toHaveLength(0);
-    expect(snapshot.selection).toEqual({
-      context: { kind: "global" },
-      activity: "terminal",
-    });
+    expect(snapshot.selection).toEqual({ context: { kind: "global" } });
     expect(snapshot.revision).toBe(0);
   });
 });
 
-describe("activity resolution", () => {
-  it("offers Editor and Terminal in the Global context and never Agent", () => {
+describe("layout resolution", () => {
+  it("gives the Global context the folderless workbench, alone", () => {
     const model = new AppModel();
-    expect(model.resolveSurface({ kind: "global" }, "editor")).toEqual({
-      kind: "enabled",
-      surfaceKey: { kind: "global-editor" },
-    });
-    expect(model.resolveSurface({ kind: "global" }, "terminal")).toEqual({
-      kind: "enabled",
-      surfaceKey: { kind: "global-terminal" },
-    });
-    expect(model.resolveSurface({ kind: "global" }, "agent")).toEqual({
-      kind: "disabled",
-      reason: "global-agent-not-applicable",
+    expect(model.resolveLayout({ kind: "global" })).toEqual({
+      kind: "workbench",
+      editor: { kind: "global-editor" },
     });
   });
 
-  it("asks for an Agent selection in a Workspace, whatever its state", () => {
+  it("gives a Workspace its own workbench, alone", () => {
+    const model = modelWith([WS_A, "/dev/a"]);
+    expect(
+      model.resolveLayout({ kind: "workspace", workspaceId: WS_A }),
+    ).toEqual({
+      kind: "workbench",
+      editor: { kind: "workspace-editor", workspaceId: WS_A },
+    });
+  });
+
+  it("has nothing to show for a Workspace that is not available", () => {
     const model = modelWith([WS_A, "/dev/a"]);
     const context = { kind: "workspace", workspaceId: WS_A } as const;
-    expect(model.resolveSurface(context, "agent")).toEqual({
-      kind: "disabled",
-      reason: "workspace-agent-requires-agent-selection",
-    });
     model.markWorkspaceUnavailable(WS_A, "root_missing");
-    expect(model.resolveSurface(context, "agent")).toEqual({
-      kind: "disabled",
-      reason: "workspace-agent-requires-agent-selection",
-    });
-    expect(model.resolveSurface(context, "editor")).toEqual({
-      kind: "disabled",
-      reason: "workspace-unavailable",
-    });
-  });
-
-  it("distinguishes closing from closing-failed", () => {
-    const model = modelWith([WS_A, "/dev/a"]);
-    const context = { kind: "workspace", workspaceId: WS_A } as const;
+    expect(model.resolveLayout(context)).toEqual({ kind: "unavailable" });
+    model.markWorkspaceAvailable(WS_A);
     model.markWorkspaceClosing(WS_A, cleanupProgress(0, false, false));
-    expect(model.resolveSurface(context, "editor")).toEqual({
-      kind: "disabled",
-      reason: "workspace-closing",
-    });
+    expect(model.resolveLayout(context)).toEqual({ kind: "unavailable" });
     model.markWorkspaceClosingFailed(
       WS_A,
       "cleanup_failed",
       cleanupProgress(0, false, false),
     );
-    expect(model.resolveSurface(context, "terminal")).toEqual({
-      kind: "disabled",
-      reason: "workspace-closing-failed",
-    });
+    expect(model.resolveLayout(context)).toEqual({ kind: "unavailable" });
   });
 
-  it("keeps an Agent context's own surface enabled and borrows its workspace", () => {
+  it("splits an Agent beside its own Workspace's workbench", () => {
     const model = modelWith([WS_A, "/dev/a"]);
     model.addAgent(WS_A, AG_A, codex);
-    const context = { kind: "agent", agentId: AG_A } as const;
-    expect(model.resolveSurface(context, "agent")).toEqual({
-      kind: "enabled",
-      surfaceKey: { kind: "agent", agentId: AG_A },
-    });
-    expect(model.resolveSurface(context, "terminal")).toEqual({
-      kind: "enabled",
-      surfaceKey: { kind: "workspace-terminal", workspaceId: WS_A },
+    expect(model.resolveLayout({ kind: "agent", agentId: AG_A })).toEqual({
+      kind: "split",
+      editor: { kind: "workspace-editor", workspaceId: WS_A },
+      agent: { kind: "agent", agentId: AG_A },
     });
   });
 
-  it("refuses to select a disabled activity", () => {
+  it("shows nothing for an Agent whose Workspace went away", () => {
+    const model = modelWith([WS_A, "/dev/a"]);
+    model.addAgent(WS_A, AG_A, codex);
+    model.markWorkspaceUnavailable(WS_A, "root_missing");
+    expect(model.resolveLayout({ kind: "agent", agentId: AG_A })).toEqual({
+      kind: "unavailable",
+    });
+  });
+});
+
+describe("the split", () => {
+  it("starts where a person would put it and remembers where they moved it", () => {
     const model = new AppModel();
-    expect(
-      codeOf(() => {
-        model.selectActivity("agent");
-      }),
-    ).toBe(DomainErrorCode.ActivityDisabled);
+    expect(model.snapshot().splitRatio).toBe(SPLIT_DEFAULT_RATIO);
+    expect(model.setSplitRatio(0.7)).toBe(true);
+    expect(model.snapshot().splitRatio).toBe(0.7);
+    expect(model.setSplitRatio(0.7)).toBe(false);
+  });
+
+  it("refuses a ratio that would leave a pane with nothing in it", () => {
+    const model = new AppModel();
+    expect(codeOf(() => model.setSplitRatio(0.1))).toBe(
+      DomainErrorCode.InvalidSplitRatio,
+    );
+    expect(codeOf(() => model.setSplitRatio(0.99))).toBe(
+      DomainErrorCode.InvalidSplitRatio,
+    );
   });
 });
 
 describe("selection", () => {
-  it("lands each context on its own default activity", () => {
+  it("is the context and nothing else, and a new Agent takes it", () => {
     const model = modelWith([WS_A, "/dev/a"]);
     model.selectContext({ kind: "workspace", workspaceId: WS_A });
-    expect(model.selection.activity).toBe("editor");
+    expect(model.selection).toEqual({
+      context: { kind: "workspace", workspaceId: WS_A },
+    });
     model.addAgent(WS_A, AG_A, codex);
     expect(model.selection).toEqual({
       context: { kind: "agent", agentId: AG_A },
-      activity: "agent",
     });
     model.selectContext({ kind: "global" });
-    expect(model.selection.activity).toBe("terminal");
+    expect(model.selection).toEqual({ context: { kind: "global" } });
   });
 
   it("falls to the next agent, then the workspace, when one exits", () => {
@@ -157,12 +152,10 @@ describe("selection", () => {
     model.agentExited(AG_A);
     expect(model.selection).toEqual({
       context: { kind: "agent", agentId: AG_B },
-      activity: "agent",
     });
     model.agentExited(AG_B);
     expect(model.selection).toEqual({
       context: { kind: "workspace", workspaceId: WS_A },
-      activity: "editor",
     });
   });
 });
@@ -248,10 +241,7 @@ describe("closing", () => {
       workspaceId: WS_B,
     });
     model.closeWorkspace(WS_B, CLEAN_CLOSE_INSPECTION);
-    expect(model.selection).toEqual({
-      context: { kind: "global" },
-      activity: "terminal",
-    });
+    expect(model.selection).toEqual({ context: { kind: "global" } });
   });
 
   it("puts a rolled-back close back where it was", () => {

@@ -391,8 +391,8 @@ export class AppController {
 		installMenu({
 			snapshot: () => this.snapshot(),
 			focusedWindow: () => (settingsWindowIsFocused() ? "settings" : "shell"),
-			selectActivity: (activity) => {
-				this.dispatchOwn({ type: "select_activity", activity });
+			toggleIntegratedTerminal: () => {
+				this.toggleIntegratedTerminal();
 			},
 			setSidebarExpanded: (expanded) => {
 				this.dispatchOwn({ type: "set_sidebar_expanded", expanded });
@@ -429,8 +429,8 @@ export class AppController {
 			selectContext: (context) => {
 				this.dispatchOwn(intentFromWire({ type: "select_context", context }));
 			},
-			selectActivity: (activity) => {
-				this.dispatchOwn({ type: "select_activity", activity });
+			toggleIntegratedTerminal: () => {
+				this.toggleIntegratedTerminal();
 			},
 			setSidebarExpanded: (expanded) => {
 				this.dispatchOwn({ type: "set_sidebar_expanded", expanded });
@@ -446,6 +446,28 @@ export class AppController {
 
 	get terminalRuntime(): TerminalWiring | undefined {
 		return this.terminalsWiring;
+	}
+
+	/**
+	 * Show or hide the terminal in the workbench on screen.
+	 *
+	 * `Cmd+Q T` and View ▸ Toggle Integrated Terminal are the same command and
+	 * this is it. The command itself is the workbench's — DevHub has no panel to
+	 * toggle — so it is *forwarded*, not reimplemented, over `vscode:runAction`,
+	 * which is upstream's own way for main to raise a workbench command (it is
+	 * how the touch bar and the dock menu do it). Forwarding the keystroke
+	 * instead was the alternative and is worse: it would have to arrive as
+	 * whatever key the person has bound the toggle to in *their* keybindings,
+	 * which DevHub does not know and must not guess.
+	 *
+	 * No workbench on screen is a no-op, like every other chord with nothing to
+	 * act on.
+	 */
+	toggleIntegratedTerminal(): void {
+		shellWindow().revealedView()?.webContents.send("vscode:runAction", {
+			id: "workbench.action.terminal.toggleTerminal",
+			from: "menu",
+		});
 	}
 
 	/**
@@ -1509,18 +1531,29 @@ export class AppController {
 	 * must not hold up the window. Nothing is swallowed either — a workbench
 	 * that cannot start says so on the page's one error surface.
 	 */
+	/**
+	 * The workbench the selection wants on screen, as a folder key.
+	 *
+	 * One reading of the layout, used by everything that has to put a workbench
+	 * somewhere. A Workspace and an Agent in it resolve to the same workbench,
+	 * which is what makes selecting an Agent a split rather than a jump.
+	 */
+	private selectedEditorSurfaceKey(): string | undefined {
+		const layout = this.coordinator.snapshot().layout;
+		return layout.kind === "unavailable"
+			? undefined
+			: surfaceKeyName(layout.editor);
+	}
+
 	syncEditorViews(): void {
 		// No readiness check here, and none anywhere else either: an open that
 		// starts before VS Code's services exist waits inside `ensureEditorView`
 		// for exactly as long as it has to. See `mainServices.ts`.
-		const snapshot = this.coordinator.snapshot();
-		const editor = snapshot.activities.find(
-			(entry) => entry.activity === "editor",
-		);
+		const selectedKey = this.selectedEditorSurfaceKey();
 		const selected =
-			editor?.resolution.kind === "enabled"
-				? this.folderForSurfaceKey(surfaceKeyName(editor.resolution.surfaceKey))
-				: undefined;
+			selectedKey === undefined
+				? undefined
+				: this.folderForSurfaceKey(selectedKey);
 
 		const wanted = new Set<string>([
 			SCRATCH_EDITOR,
@@ -1557,14 +1590,7 @@ export class AppController {
 	 * page rather than absorbed.
 	 */
 	private async revealSelectedEditor(): Promise<void> {
-		const snapshot = this.coordinator.snapshot();
-		const editor = snapshot.activities.find(
-			(entry) => entry.activity === "editor",
-		);
-		const surfaceKey =
-			editor?.resolution.kind === "enabled"
-				? surfaceKeyName(editor.resolution.surfaceKey)
-				: undefined;
+		const surfaceKey = this.selectedEditorSurfaceKey();
 		const folder =
 			surfaceKey === undefined
 				? undefined
@@ -1785,10 +1811,6 @@ export class AppController {
 				);
 			}
 			await this.openFolder(target.path);
-			await this.dispatchAwaiting({
-				type: "select_activity",
-				activity: "editor",
-			});
 			await this.syncEditorView();
 			this.bringToFront();
 			return `${target.path} is open in DevHub.`;
@@ -1816,10 +1838,6 @@ export class AppController {
 		await this.dispatchAwaiting({
 			type: "select_context",
 			context: { kind: "workspace", workspaceId: workspace.id },
-		});
-		await this.dispatchAwaiting({
-			type: "select_activity",
-			activity: "editor",
 		});
 		await this.syncEditorView();
 		openFileInWorkbench(await this.workbenchWindow(root), target, position);
@@ -1927,9 +1945,8 @@ export class AppController {
 			profileId: agentProfileId(profileId),
 			extraArgs: args,
 		});
-		// Creating an Agent selects it; the Activity is the half the model does
-		// not choose, and showing the Agent is the whole point of the command.
-		await this.dispatchAwaiting({ type: "select_activity", activity: "agent" });
+		// Creating an Agent selects it, and selecting an Agent is a split with
+		// its pane in it — so there is nothing left for this to choose.
 		this.bringToFront();
 		const context = this.coordinator.model.selection.context;
 		const agent =
@@ -2046,13 +2063,11 @@ export class AppController {
 	}
 
 	private async syncEditorView(): Promise<void> {
-		const snapshot = this.coordinator.snapshot();
-		if (snapshot.selection.activity !== "editor") return;
-		const active = snapshot.activities.find(
-			(activity) => activity.activity === "editor",
-		);
-		if (active?.resolution.kind !== "enabled") return;
-		await this.revealEditorFor(surfaceKeyName(active.resolution.surfaceKey));
+		const surfaceKey = this.selectedEditorSurfaceKey();
+		// A Workspace that cannot be shown has no workbench to reveal; the page
+		// draws the reason from the Workspace's own state.
+		if (surfaceKey === undefined) return;
+		await this.revealEditorFor(surfaceKey);
 	}
 
 	private async pickFolder(): Promise<string | undefined> {

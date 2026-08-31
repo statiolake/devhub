@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { resolveChord, type ChordAction } from "./chords.js";
 import type {
-	ActivityName,
 	AgentWire,
 	AppSnapshotWire,
 	NavigationContext,
@@ -37,29 +36,21 @@ function workspace(id: string, agentIds: readonly string[]): WorkspaceWire {
 function snapshotOf({
 	workspaces = [],
 	context = { kind: "global" } as NavigationContext,
-	activity = "editor" as ActivityName,
-	enabled = ["editor", "agent", "terminal"] as readonly ActivityName[],
 	expanded = true,
 }: {
 	workspaces?: readonly WorkspaceWire[];
 	context?: NavigationContext;
-	activity?: ActivityName;
-	enabled?: readonly ActivityName[];
 	expanded?: boolean;
 } = {}): AppSnapshotWire {
 	return {
-		activities: (["editor", "agent", "terminal"] as const).map((name) => ({
-			activity: name,
-			resolution: enabled.includes(name)
-				? { kind: "enabled", surfaceKey: name }
-				: { kind: "disabled", reason: "workspace-unavailable" },
-		})),
 		editorHost: { status: "ready" },
+		layout: { kind: "workbench", editorKey: "global-editor" },
 		readiness: "ready",
 		revision: 1,
 		schemaVersion: 1,
-		selection: { activity, context },
+		selection: { context },
 		sidebar: { width: 248, expanded },
+		splitRatio: 0.55,
 		workspaces,
 	};
 }
@@ -197,37 +188,14 @@ describe("the agent cycle", () => {
 	});
 });
 
-describe("the activity cycle", () => {
-	it("runs Editor to Agent to Terminal and wraps", () => {
-		expect(run({ kind: "cycle-activity", step: 1 }, snapshotOf())).toEqual({
-			kind: "select-activity",
-			activity: "agent",
+describe("the terminal", () => {
+	it("asks the workbench on screen to toggle its own terminal", () => {
+		// There is nothing to resolve against the model: the terminal belongs to
+		// whichever workbench is showing, and which one that is is not this
+		// function's question.
+		expect(run({ kind: "toggle-terminal" }, snapshotOf())).toEqual({
+			kind: "toggle-terminal",
 		});
-		expect(
-			run(
-				{ kind: "cycle-activity", step: 1 },
-				snapshotOf({ activity: "terminal" }),
-			),
-		).toEqual({ kind: "select-activity", activity: "editor" });
-		expect(run({ kind: "cycle-activity", step: -1 }, snapshotOf())).toEqual({
-			kind: "select-activity",
-			activity: "terminal",
-		});
-	});
-
-	it("skips an activity that is disabled here rather than erroring into it", () => {
-		expect(
-			run(
-				{ kind: "cycle-activity", step: 1 },
-				snapshotOf({ enabled: ["editor", "terminal"] }),
-			),
-		).toEqual({ kind: "select-activity", activity: "terminal" });
-	});
-
-	it("does nothing when no activity is available", () => {
-		expect(
-			run({ kind: "cycle-activity", step: 1 }, snapshotOf({ enabled: [] })),
-		).toBeUndefined();
 	});
 });
 

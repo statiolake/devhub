@@ -8,8 +8,7 @@
  *
  * The menu is rebuilt whenever the model changes, because a menu item has to
  * say what is true now — Close Workspace is only meaningful with a workspace
- * selected, Collapse Sidebar becomes Expand Sidebar, and an activity that is not
- * available in the current context is not a choice.
+ * selected, and Collapse Sidebar becomes Expand Sidebar.
  *
  * **Nothing here has an accelerator, deliberately.** A menu accelerator is a
  * key taken away from whatever is focused, and DevHub's surfaces are whole
@@ -23,7 +22,6 @@
 
 import { electron } from "../electron.js";
 import type { AppSnapshotWire } from "../../ipc/appShell.js";
-import type { Activity } from "../../model/domain.js";
 
 export interface MenuHost {
 	/** The model as the page sees it, or nothing before the first projection. */
@@ -36,7 +34,8 @@ export interface MenuHost {
 	 * while the main window is.
 	 */
 	focusedWindow(): "shell" | "settings" | "none";
-	selectActivity(activity: Activity): void;
+	/** Show or hide the integrated terminal in the workbench on screen. */
+	toggleIntegratedTerminal(): void;
 	setSidebarExpanded(expanded: boolean): void;
 	closeWorkspace(workspaceId: string): void;
 	openWorkspacePicker(): void;
@@ -44,15 +43,6 @@ export interface MenuHost {
 }
 
 let host: MenuHost | undefined;
-
-const ACTIVITY_ITEMS: readonly {
-	readonly activity: Activity;
-	readonly label: string;
-}[] = [
-	{ activity: "editor", label: "Editor" },
-	{ activity: "agent", label: "Agent" },
-	{ activity: "terminal", label: "Terminal" },
-];
 
 /**
  * The workspace the selection is in, or nothing when it is Global.
@@ -165,19 +155,15 @@ function template(menuHost: MenuHost): Electron.MenuItemConstructorOptions[] {
 		{
 			label: "View",
 			submenu: [
-				...ACTIVITY_ITEMS.map(
-					({ activity, label }): Electron.MenuItemConstructorOptions => ({
-						label,
-						type: "checkbox",
-						checked: snapshot?.selection.activity === activity,
-						enabled:
-							snapshot?.activities.find((entry) => entry.activity === activity)
-								?.resolution.kind === "enabled",
-						click: () => {
-							menuHost.selectActivity(activity);
-						},
-					}),
-				),
+				{
+					// Not a checkbox: whether the panel is up is the workbench's own
+					// state, and a checkmark drawn from a fact DevHub does not hold
+					// would be right only by luck.
+					label: "Toggle Integrated Terminal",
+					click: () => {
+						menuHost.toggleIntegratedTerminal();
+					},
+				},
 				{ type: "separator" },
 				{
 					// Collapsed is the icon rail, not nothing, so the item says what

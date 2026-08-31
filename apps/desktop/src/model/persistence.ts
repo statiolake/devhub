@@ -49,9 +49,24 @@ import {
   type AgentStatus,
   type RuntimeHealth,
 } from "./domain.js";
-import { AppModel, SIDEBAR_DEFAULT_WIDTH } from "./appModel.js";
+import {
+  AppModel,
+  SIDEBAR_DEFAULT_WIDTH,
+  SPLIT_DEFAULT_RATIO,
+  SPLIT_MAX_RATIO,
+  SPLIT_MIN_RATIO,
+} from "./appModel.js";
 
-export const STATE_SCHEMA_VERSION = 1;
+/**
+ * Version 2 retired `navigation.activity` and added `split`.
+ *
+ * A version-1 file still loads: the activity is a field this build has no use
+ * for and drops on the next save, and a missing `split` is the default ratio.
+ * The bump is for the other direction — an older DevHub reading a file written
+ * here would find no activity to restore and would have to invent one, and
+ * refusing is the guarantee this number exists to make.
+ */
+export const STATE_SCHEMA_VERSION = 2;
 export { SIDEBAR_DEFAULT_WIDTH };
 
 const MIN_SIDEBAR_WIDTH = 200;
@@ -111,8 +126,6 @@ export type NavigationContextRecord =
   | { kind: "global" }
   | { kind: "workspace"; workspace_id: string }
   | { kind: "agent"; agent_id: string };
-
-export type ActivityRecord = "editor" | "agent" | "terminal";
 
 export interface WindowFrame {
   x: number;
@@ -200,7 +213,11 @@ export interface WorkspaceStateRecord {
 
 export interface NavigationState {
   context: NavigationContextRecord;
-  activity: ActivityRecord;
+}
+
+/** Where the divider sits when an Agent is selected. */
+export interface SplitState {
+  ratio: number;
 }
 
 export interface WindowState {
@@ -285,6 +302,7 @@ export interface PersistedAppState {
   workspaces: WorkspaceStateRecord[];
   navigation: NavigationState;
   sidebar: SidebarState;
+  split: SplitState;
   window: WindowState;
   tmux: TmuxState;
   shutdown: ShutdownMetadata;
@@ -294,11 +312,12 @@ export function freshState(): PersistedAppState {
   return {
     schema_version: STATE_SCHEMA_VERSION,
     workspaces: [],
-    navigation: { context: { kind: "global" }, activity: "terminal" },
+    navigation: { context: { kind: "global" } },
     sidebar: {
       width: SIDEBAR_DEFAULT_WIDTH,
       expanded: true,
     },
+    split: { ratio: SPLIT_DEFAULT_RATIO },
     window: {
       frame: {
         x: 0,
@@ -649,7 +668,9 @@ export function validateState(state: PersistedAppState): void {
   }
   if (
     state.sidebar.width < MIN_SIDEBAR_WIDTH ||
-    state.sidebar.width > MAX_SIDEBAR_WIDTH
+    state.sidebar.width > MAX_SIDEBAR_WIDTH ||
+    state.split.ratio < SPLIT_MIN_RATIO ||
+    state.split.ratio > SPLIT_MAX_RATIO
   ) {
     fail("STATE_INVALID");
   }
@@ -830,6 +851,7 @@ export function hydrateModel(
 
   try {
     model.restoreSidebar(state.sidebar.width, state.sidebar.expanded ?? true);
+    model.restoreSplitRatio(state.split.ratio);
   } catch {
     return fail("STATE_INVALID");
   }
@@ -856,18 +878,11 @@ export function hydrateModel(
   } catch {
     return fail("STATE_INVALID");
   }
-  if (
-    model.resolveSurface(model.selection.context, navigation.activity).kind ===
-    "enabled"
-  ) {
-    model.selectActivity(navigation.activity);
-  }
   return model;
 }
 
 export interface NavigationRestore {
   readonly context: NavigationContextRecord;
-  readonly activity: ActivityRecord;
   readonly changed: boolean;
 }
 
@@ -896,20 +911,19 @@ export function restoreNavigation(
     );
   const global: NavigationRestore = {
     context: { kind: "global" },
-    activity: "terminal",
     changed: true,
   };
   const context = state.navigation.context;
   switch (context.kind) {
     case "global":
-      return { ...global, changed: false, activity: state.navigation.activity };
+      return { ...global, changed: false };
     case "workspace":
       return workspaces.has(context.workspace_id)
-        ? { context, activity: state.navigation.activity, changed: false }
+        ? { context, changed: false }
         : global;
     case "agent": {
       if (agents.has(context.agent_id)) {
-        return { context, activity: state.navigation.activity, changed: false };
+        return { context, changed: false };
       }
       const owner = state.workspaces.find((workspace) =>
         workspace.agents.some((agent) => agent.agent_id === context.agent_id),
@@ -924,14 +938,9 @@ export function restoreNavigation(
         .slice(index + 1)
         .find((agent) => agents.has(agent.agent_id));
       return next
-        ? {
-            context: { kind: "agent", agent_id: next.agent_id },
-            activity: "agent",
-            changed: true,
-          }
+        ? { context: { kind: "agent", agent_id: next.agent_id }, changed: true }
         : {
             context: { kind: "workspace", workspace_id: owner.workspace_id },
-            activity: "editor",
             changed: true,
           };
     }
@@ -967,14 +976,12 @@ export function stateFromSnapshot(
         control_state: controlStateTo(agent.controlState),
       })),
     })),
-    navigation: {
-      context: contextRecord(snapshot.selection.context),
-      activity: snapshot.selection.activity,
-    },
+    navigation: { context: contextRecord(snapshot.selection.context) },
     sidebar: {
       width: snapshot.sidebar.width,
       expanded: snapshot.sidebar.expanded,
     },
+    split: { ratio: snapshot.splitRatio },
   };
   validateState(state);
   return state;
@@ -1007,6 +1014,7 @@ export function applySnapshot(
     workspaces: projected.workspaces,
     navigation: projected.navigation,
     sidebar: projected.sidebar,
+    split: projected.split,
   };
   validateState(next);
   return next;
@@ -1156,6 +1164,7 @@ function decodeState(
     navigation:
       (object["navigation"] as NavigationState | undefined) ?? fresh.navigation,
     sidebar: (object["sidebar"] as SidebarState | undefined) ?? fresh.sidebar,
+    split: (object["split"] as SplitState | undefined) ?? fresh.split,
     window: (object["window"] as WindowState | undefined) ?? fresh.window,
     tmux: (object["tmux"] as TmuxState | undefined) ?? fresh.tmux,
     shutdown:

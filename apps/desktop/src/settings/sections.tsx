@@ -8,10 +8,18 @@
  * while everything else about the terminal sat in "Appearance". Anyone looking
  * for something about their terminal had to know which of the two to open.
  *
+ * "Terminal" is smaller than it was, and deliberately: font, size, line height
+ * and inset moved to General, under "Agent panes", because they no longer
+ * describe a terminal. A DevHub terminal is the workbench's integrated
+ * terminal, styled by the workbench's own settings; the one text surface DevHub
+ * still draws is an Agent's pane. What is left here is the part that is still
+ * DevHub's — the socket its sessions live on, and the flags its client runs
+ * with.
+ *
  *   General    what DevHub does for the whole app
  *   Workspaces where the workspace picker looks       (a collection)
  *   Agents     what can be launched in a workspace    (a collection)
- *   Terminal   how DevHub's terminals look and where they live
+ *   Terminal   where DevHub's terminal sessions live
  *   Advanced   the programs DevHub runs, and diagnostics
  *
  * The two collections are list–detail, the rest are forms. Nothing here opens a
@@ -100,6 +108,74 @@ export function GeneralSection({
               update({
                 ...config,
                 appearance: { ...config.appearance, sidebarDensity },
+              });
+            }}
+          />
+        </Row>
+      </Group>
+
+      <Group
+        heading="Agent panes"
+        note="The workbench's own terminal is styled by the workbench's settings, not by these: DevHub's terminals are the integrated terminal now, and an Agent's pane is the one text surface DevHub still draws itself."
+      >
+        <Row label="Font">
+          <TextField
+            label="Agent pane font family"
+            value={config.appearance.terminalFontFamily}
+            placeholder="ui-monospace"
+            mono
+            validate={(next) =>
+              isValidFontFamily(next) ? undefined : FONT_FAMILY_RULE
+            }
+            onCommit={(terminalFontFamily) => {
+              update({
+                ...config,
+                appearance: { ...config.appearance, terminalFontFamily },
+              });
+            }}
+          />
+        </Row>
+        <Row label="Size">
+          <NumberField
+            label="Agent pane font size"
+            value={config.appearance.terminalFontSize}
+            min={9}
+            max={24}
+            unit="pt"
+            onCommit={(terminalFontSize) => {
+              update({
+                ...config,
+                appearance: { ...config.appearance, terminalFontSize },
+              });
+            }}
+          />
+        </Row>
+        <Row label="Line height">
+          <NumberField
+            label="Agent pane line height"
+            value={config.appearance.terminalLineHeight}
+            min={1}
+            max={2}
+            unit="×"
+            onCommit={(terminalLineHeight) => {
+              update({
+                ...config,
+                appearance: { ...config.appearance, terminalLineHeight },
+              });
+            }}
+          />
+        </Row>
+        <Row label="Inset" help="Space between the text and the pane's edge.">
+          <NumberField
+            label="Agent pane margin"
+            value={config.appearance.terminalMargin}
+            min={0}
+            max={64}
+            unit="px"
+            onCommit={(terminalMargin) => {
+              update({
+                ...config,
+                appearance: { ...config.appearance, terminalMargin },
               });
             }}
           />
@@ -729,10 +805,6 @@ export function TerminalSection({
   readonly effectiveSocket: string;
   readonly busy: boolean;
 }) {
-  const appearance = config.appearance;
-  const set = (patch: Partial<SettingsConfig["appearance"]>) => {
-    update({ ...config, appearance: { ...appearance, ...patch } });
-  };
   const args = config.runtimes.tmuxArgs;
   const setArgs = (option: "-u" | "-2", on: boolean) => {
     update({
@@ -750,59 +822,6 @@ export function TerminalSection({
 
   return (
     <Form>
-      <Group heading="Text">
-        <Row label="Font">
-          <TextField
-            label="Terminal font family"
-            value={appearance.terminalFontFamily}
-            placeholder="ui-monospace"
-            mono
-            validate={(next) =>
-              isValidFontFamily(next) ? undefined : FONT_FAMILY_RULE
-            }
-            onCommit={(terminalFontFamily) => {
-              set({ terminalFontFamily });
-            }}
-          />
-        </Row>
-        <Row label="Size">
-          <NumberField
-            label="Terminal font size"
-            value={appearance.terminalFontSize}
-            min={9}
-            max={24}
-            unit="pt"
-            onCommit={(terminalFontSize) => {
-              set({ terminalFontSize });
-            }}
-          />
-        </Row>
-        <Row label="Line height">
-          <NumberField
-            label="Terminal line height"
-            value={appearance.terminalLineHeight}
-            min={1}
-            max={2}
-            unit="×"
-            onCommit={(terminalLineHeight) => {
-              set({ terminalLineHeight });
-            }}
-          />
-        </Row>
-        <Row label="Inset" help="Space between the text and the pane's edge.">
-          <NumberField
-            label="Terminal margin"
-            value={appearance.terminalMargin}
-            min={0}
-            max={64}
-            unit="px"
-            onCommit={(terminalMargin) => {
-              set({ terminalMargin });
-            }}
-          />
-        </Row>
-      </Group>
-
       {/*
         The one setting in this window that is a decision rather than a value.
         Everything above applies where it is typed; DevHub's live sessions are

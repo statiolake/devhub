@@ -1,10 +1,12 @@
 /**
  * DevHub's App Shell: the thing outside VS Code.
  *
- * A Sidebar of Workspaces and their Agents, an Activity control in the title
- * bar, and one Surface viewport. The viewport is deliberately a hole for the
- * Editor activity: main lays a workbench `WebContentsView` over it. Everything
- * else on this page is DOM.
+ * A Sidebar of Workspaces and their Agents, and the content area beside it.
+ * There is no title bar and no activity switcher: a Workspace *is* its
+ * workbench, full height and full width, and an Agent is that workbench with
+ * the Agent's pane beside it. The content area is deliberately a hole — main
+ * lays a workbench `WebContentsView` over it — and everything else on this page
+ * is DOM, the window's drag handle included, which is now the Sidebar.
  */
 
 import { useCallback } from "react";
@@ -12,7 +14,6 @@ import { AppShellProvider } from "./AppShellContext";
 import { devhub, type AppShellClient } from "./client";
 import { useAppShell } from "./useAppShell";
 import { Sidebar } from "./components/sidebar/Sidebar";
-import { TitlebarActivities } from "./components/shell/TitlebarActivities";
 import { SurfaceViewport } from "./components/shell/SurfaceViewport";
 import type { AppError } from "../ipc/appShell";
 import { Failure, Waiting } from "./components/shell/SurfaceState";
@@ -99,7 +100,6 @@ function Workbench() {
   if (state.status === "loading") {
     return (
       <main className="app-shell app-shell-state">
-        <div className="titlebar titlebar-state" />
         <section
           className="surface"
           aria-label="Surface"
@@ -115,7 +115,6 @@ function Workbench() {
   if (state.status === "error") {
     return (
       <main className="app-shell app-shell-state">
-        <div className="titlebar titlebar-state" />
         <ErrorSurface
           error={state.error}
           retry={retry}
@@ -158,18 +157,12 @@ function Workbench() {
       <div className="app-shell-content">
         {/* Always: collapsed, the Sidebar is an icon rail, and which of its
             two forms is on screen is the Sidebar's own business. */}
-        <Sidebar snapshot={state.snapshot} />
-        <div className="workbench">
-          <TitlebarActivities
-            snapshot={state.snapshot}
-            onDispatch={onDispatch}
-          />
-          <SurfaceViewport
-            snapshot={state.snapshot}
-            intentError={intentError ?? undefined}
-            appearance={appearance}
-          />
-        </div>
+        <Sidebar snapshot={state.snapshot} onDispatch={onDispatch} />
+        <SurfaceViewport
+          snapshot={state.snapshot}
+          intentError={intentError ?? undefined}
+          appearance={appearance}
+        />
       </div>
     </main>
   );
