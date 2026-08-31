@@ -58,6 +58,13 @@ export interface AgentWiringOptions {
 	readonly journalPath: string;
 	readonly configuredHerdr: string;
 	readonly home: string;
+	/**
+	 * The one environment every DevHub child is launched with, resolved once at
+	 * startup (see `loginEnvironment.ts`). Herdr and the agent it starts see the
+	 * same PATH the terminals do, which is what makes "it works in a terminal
+	 * but not as an agent" impossible rather than merely unlikely.
+	 */
+	readonly environment: Readonly<Record<string, string | undefined>>;
 	readonly model: () => AppModel;
 	/**
 	 * The adapter saw something on its own — an attach that read a status, or a
@@ -73,6 +80,7 @@ export function wireAgents(options: AgentWiringOptions): AgentService {
 		journalPath: options.journalPath,
 		configuredHerdr: options.configuredHerdr,
 		home: options.home,
+		environment: options.environment,
 		onSurfaceFailure: () => {
 			// A dead control stream is a health fact, not a row change: the model
 			// learns it by reconciling, which is the one path that can also decide

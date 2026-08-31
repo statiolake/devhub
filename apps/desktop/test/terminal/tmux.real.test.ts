@@ -58,7 +58,10 @@ function fixture(label: string, environment?: Record<string, string>): Fixture {
 			home,
 			environment: { ...process.env, ...environment },
 		},
-		tmux: { path: TMUX as string, basename: "tmux" },
+		tmux: {
+			kind: "resolved",
+			value: { path: TMUX as string, basename: "tmux" },
+		},
 		shell: { path: "/bin/zsh", basename: "zsh" },
 		tmuxArgs: [],
 		effectiveSocketName: socket,

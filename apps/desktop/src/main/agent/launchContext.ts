@@ -21,6 +21,7 @@ import {
 } from "node:child_process";
 import { accessSync, constants as fsConstants, statSync } from "node:fs";
 import { delimiter, isAbsolute, join } from "node:path";
+import { runtimeUnavailableMessage } from "../../ipc/settings.js";
 
 export enum RuntimeErrorCode {
 	InvalidHome = "invalidHome",
@@ -33,12 +34,19 @@ export enum RuntimeErrorCode {
 
 export class RuntimeError extends Error {
 	readonly code: RuntimeErrorCode;
+	/**
+	 * The sentence naming what was looked for and where, when the failure was a
+	 * lookup. It is composed by `runtimeUnavailableMessage`, the same function
+	 * the Settings window renders, so the two never word this differently.
+	 */
+	readonly detail: string | undefined;
 
-	constructor(code: RuntimeErrorCode) {
-		super(code);
+	constructor(code: RuntimeErrorCode, detail?: string) {
+		super(detail ?? code);
 		this.name = "RuntimeError";
 		this.code = code;
-		this.stack = `RuntimeError: ${code}`;
+		this.detail = detail;
+		this.stack = `RuntimeError: ${detail ?? code}`;
 	}
 }
 
@@ -114,27 +122,27 @@ export class RuntimeLaunchContext {
 			throw new RuntimeError(RuntimeErrorCode.InvalidExecutable);
 		}
 		if (configured === "~" || configured.startsWith("~/")) {
-			return this.#inspect(
-				join(this.#home, configured.slice(1)),
-				ResolutionMode.ExplicitPath,
-			);
+			return this.#explicit(configured, join(this.#home, configured.slice(1)));
 		}
 		if (configured.startsWith("/")) {
-			return this.#inspect(configured, ResolutionMode.ExplicitPath);
+			return this.#explicit(configured, configured);
 		}
 		if (configured.includes("/")) {
 			throw new RuntimeError(RuntimeErrorCode.InvalidExecutable);
 		}
 		const path = this.#environment.get("PATH");
 		if (path === undefined) {
-			throw new RuntimeError(RuntimeErrorCode.MissingPath);
+			throw new RuntimeError(
+				RuntimeErrorCode.MissingPath,
+				lookupMessage(configured, []),
+			);
 		}
+		const directories = path
+			.split(delimiter)
+			.filter((entry) => entry.length > 0 && isAbsolute(entry));
 		let sawNonExecutable = false;
 		let sawNonRegular = false;
-		for (const entry of path.split(delimiter)) {
-			if (entry.length === 0 || !isAbsolute(entry)) {
-				continue;
-			}
+		for (const entry of directories) {
 			try {
 				return this.#inspect(
 					join(entry, configured),
@@ -151,13 +159,33 @@ export class RuntimeLaunchContext {
 				}
 			}
 		}
+		const message = lookupMessage(configured, directories);
 		if (sawNonExecutable) {
-			throw new RuntimeError(RuntimeErrorCode.NotExecutable);
+			throw new RuntimeError(RuntimeErrorCode.NotExecutable, message);
 		}
 		if (sawNonRegular) {
-			throw new RuntimeError(RuntimeErrorCode.NotRegularFile);
+			throw new RuntimeError(RuntimeErrorCode.NotRegularFile, message);
 		}
-		throw new RuntimeError(RuntimeErrorCode.MissingExecutable);
+		throw new RuntimeError(RuntimeErrorCode.MissingExecutable, message);
+	}
+
+	/**
+	 * A configured path names its own single location, so its failure says so
+	 * rather than listing a search that never happened.
+	 */
+	#explicit(configured: string, path: string): ResolvedExecutable {
+		try {
+			return this.#inspect(path, ResolutionMode.ExplicitPath);
+		} catch (error) {
+			throw new RuntimeError(
+				(error as RuntimeError).code,
+				runtimeUnavailableMessage({
+					kind: "unavailable",
+					configured,
+					lookup: { kind: "explicit", path },
+				}),
+			);
+		}
 	}
 
 	#inspect(path: string, mode: ResolutionMode): ResolvedExecutable {
@@ -203,4 +231,15 @@ function isDirectory(path: string): boolean {
 	} catch {
 		return false;
 	}
+}
+
+function lookupMessage(
+	configured: string,
+	directories: readonly string[],
+): string | undefined {
+	return runtimeUnavailableMessage({
+		kind: "unavailable",
+		configured,
+		lookup: { kind: "path", directories },
+	});
 }

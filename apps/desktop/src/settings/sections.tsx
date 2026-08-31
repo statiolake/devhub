@@ -21,6 +21,7 @@
  */
 
 import { useState } from "react";
+import { runtimeUnavailableMessage } from "../ipc/settings";
 import type {
   SettingsAgentProfileWire,
   SettingsConfig,
@@ -62,13 +63,20 @@ type Update = (next: SettingsConfig) => void;
 export function GeneralSection({
   config,
   update,
+  runtime,
 }: {
   readonly config: SettingsConfig;
   readonly update: Update;
+  /**
+   * Only for the environment status: the option above says what DevHub should
+   * do, and this says what happened when it did it. Reading one without the
+   * other is how a failed import looks like a missing tmux.
+   */
+  readonly runtime: SettingsRuntimeWire;
 }) {
   return (
     <Form>
-      <Group heading="Environment">
+      <Group heading="Environment" note={runtime.loginEnvironment}>
         <SwitchRow
           label="Login shell"
           help="Use your login shell's environment when DevHub launches terminals and agents."
@@ -846,7 +854,14 @@ function ResolvedValue({
   readonly value: SettingsRuntimeWire["resolved"]["shell"];
 }) {
   if (value.kind === "unavailable") {
-    return <span className="sf-badge warning">Not found</span>;
+    // "Not found" alone left a person with nothing to act on: it named neither
+    // the program nor the search. The sentence is composed in one place for
+    // every surface that reports a missing runtime.
+    return (
+      <span className="sf-badge warning sf-resolved-missing">
+        {runtimeUnavailableMessage(value)}
+      </span>
+    );
   }
   return <code className="mac-mono sf-resolved">{value.value}</code>;
 }

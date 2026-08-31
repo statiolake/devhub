@@ -339,6 +339,19 @@ body {
   color: var(--waiting);
 }
 
+/*
+ * A missing program is a sentence, not a chip: it names the program and every
+ * directory that was searched. Left as a pill it wrapped into two broken
+ * lozenges, so it keeps the warning colour and drops the pill shape.
+ */
+.sf-resolved-missing {
+  display: block;
+  padding: 3px 7px;
+  border-radius: 5px;
+  line-height: 1.45;
+  text-wrap: pretty;
+}
+
 .sf-resolved {
   overflow: hidden;
   flex: none;

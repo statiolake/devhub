@@ -62,7 +62,12 @@ export function devhubTerminal(): TerminalTransport {
 
 function unwrap<T>(result: TerminalResult<T>): T {
   if (result.ok) return result.value;
-  throw new TerminalFailure(result.error.code);
+  // The summary comes back from the wire rather than being looked up again
+  // from the code: the main process may have said something the code cannot,
+  // and a second derivation here is how that sentence gets thrown away.
+  throw new TerminalFailure(result.error.code, {
+    summary: result.error.summary,
+  });
 }
 
 /** A fresh identity for one mounted surface. */
@@ -118,14 +123,15 @@ export function terminalInputChunks(
   return chunks;
 }
 
+/**
+ * The sentence a caught terminal failure is drawn as.
+ *
+ * A `TerminalFailure` already carries the words the main process chose — the
+ * contract's stock summary for its code, or the named one it composed for a
+ * missing executable. Rendering its code instead produced "Terminal
+ * unavailable (runtime unavailable)", which says the same nothing twice.
+ */
 export function terminalErrorSummary(error: unknown): string {
-  if (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    typeof error.code === "string"
-  ) {
-    return `Terminal unavailable (${error.code.replaceAll("_", " ")}).`;
-  }
+  if (error instanceof TerminalFailure) return error.summary;
   return "The terminal connection is unavailable.";
 }

@@ -97,6 +97,33 @@ const ERROR_SUMMARIES: Readonly<Record<TerminalErrorCode, string>> = {
 };
 
 const ERROR_CODES = new Set<string>(Object.keys(ERROR_SUMMARIES));
+
+/**
+ * Fit a summary inside the frame budget the decoder enforces.
+ *
+ * A search list is as long as the user's PATH, and a sentence the wire refuses
+ * would turn a legible failure into an unrelated framing error — the failure
+ * about the failure, which is the worst outcome of the three.
+ */
+function boundedSummary(summary: string): string {
+	const encoder = new TextEncoder();
+	if (encoder.encode(summary).byteLength <= MAX_ERROR_SUMMARY_BYTES) {
+		return summary;
+	}
+	const ellipsis = "…";
+	const budget = MAX_ERROR_SUMMARY_BYTES - encoder.encode(ellipsis).byteLength;
+	let kept = "";
+	let bytes = 0;
+	// Whole code points, so the truncation can never split one and produce a
+	// string whose byte length the decoder measures differently.
+	for (const character of summary) {
+		const width = encoder.encode(character).byteLength;
+		if (bytes + width > budget) break;
+		kept += character;
+		bytes += width;
+	}
+	return kept + ellipsis;
+}
 const EXIT_REASONS = new Set<string>(["eof", "detached", "childExited"]);
 
 /**
@@ -106,17 +133,30 @@ const EXIT_REASONS = new Set<string>(["eof", "detached", "childExited"]);
  * handler, and it carries the wire code so the page can render exactly what the
  * main process decided instead of re-deriving a reason from a message.
  */
+export interface TerminalFailureOptions extends ErrorOptions {
+	/**
+	 * A sentence that replaces the code's stock summary on the wire.
+	 *
+	 * Only for a failure whose stock words leave out the whole diagnostic — a
+	 * runtime that is unavailable because a *named* executable was not found in
+	 * *named* directories. It is composed from DevHub's own configuration, never
+	 * from provider output; see `PortFailure.detail`.
+	 */
+	readonly summary?: string;
+}
+
 export class TerminalFailure extends Error {
 	readonly code: TerminalErrorCode;
 	readonly summary: string;
 
-	constructor(code: TerminalErrorCode, options?: ErrorOptions) {
+	constructor(code: TerminalErrorCode, options?: TerminalFailureOptions) {
 		// The wire carries only the code and its summary. The cause stays on
 		// this side, where the log and the root handler can still read why.
-		super(ERROR_SUMMARIES[code], options);
+		const summary = boundedSummary(options?.summary ?? ERROR_SUMMARIES[code]);
+		super(summary, { cause: options?.cause });
 		this.name = "TerminalFailure";
 		this.code = code;
-		this.summary = ERROR_SUMMARIES[code];
+		this.summary = summary;
 	}
 
 	/** The wire projection: exactly the two fields an Error frame carries. */

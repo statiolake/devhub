@@ -117,6 +117,11 @@ import { wireAgents } from "./agentWiring.js";
 import { AgentReconciler } from "./agentReconciler.js";
 import { MainServicesGate, type MainServices } from "./mainServices.js";
 import { resolveRuntimes } from "./runtimes.js";
+import {
+	launchEnvironment,
+	resolveLoginEnvironment,
+	type LoginEnvironment,
+} from "./loginEnvironment.js";
 import type { AgentService } from "../agent/index.js";
 import { startWorkspacePicker } from "./workspacePicker.js";
 import { installMenu, refreshMenu } from "./menu.js";
@@ -181,6 +186,17 @@ export class AppController {
 	private readonly pendingRequests = new Map<OperationId, PendingRequest>();
 	private terminalsWiring: TerminalWiring | undefined;
 	private agentService: AgentService | undefined;
+	/**
+	 * What became of the login-shell environment import, and the environment it
+	 * produced. Both are answered once, at `startRuntimes`, and every executable
+	 * lookup and every child DevHub starts uses that one answer — see
+	 * `loginEnvironment.ts`. The Settings window shows the first so a failed
+	 * import is a sentence somebody can read rather than a PATH that is
+	 * mysteriously short.
+	 */
+	private loginEnvironment: LoginEnvironment = { kind: "disabled" };
+	private launchEnvironment: Readonly<Record<string, string | undefined>> =
+		process.env;
 	/**
 	 * The one thing that keeps every Agent's status and existence true.
 	 *
@@ -264,6 +280,16 @@ export class AppController {
 		return this.previousExitValue;
 	}
 
+	/** The environment every executable lookup and every child DevHub starts uses. */
+	launchEnvironmentValue(): Readonly<Record<string, string | undefined>> {
+		return this.launchEnvironment;
+	}
+
+	/** What became of the login-shell import that built it. */
+	loginEnvironmentValue(): LoginEnvironment {
+		return this.loginEnvironment;
+	}
+
 	/**
 	 * Bring up the terminal and Agent runtimes.
 	 *
@@ -288,6 +314,19 @@ export class AppController {
 			this.state.tmux.effective_socket_name = configuredSocket;
 			await this.stateStore.saveState(this.state);
 		}
+		// The environment is resolved before anything is looked up in it, and
+		// once. A DevHub launched from Finder inherits launchd's four-entry PATH,
+		// so without this the lookups below would find neither the user's tmux
+		// nor their Herdr, and the terminals and agents launched with it would
+		// not find their tools either. One environment, one resolution: what
+		// DevHub can find and what a shell inside it can find cannot disagree.
+		this.loginEnvironment = await resolveLoginEnvironment({
+			enabled: config?.general.import_login_environment ?? true,
+		});
+		this.launchEnvironment = launchEnvironment(
+			process.env,
+			this.loginEnvironment,
+		);
 		const resolved = await resolveRuntimes(
 			config?.runtimes ?? {
 				shell: "/bin/zsh",
@@ -297,10 +336,12 @@ export class AppController {
 				tmux_socket_name: "devhub",
 				tmux_args: [],
 			},
+			this.launchEnvironment["PATH"] ?? "",
 		);
 		this.terminalsWiring = wireTerminals({
 			config,
 			resolved: { tmux: resolved.tmux, shell: resolved.shell },
+			environment: this.launchEnvironment,
 			effectiveSocketName: this.state.tmux.effective_socket_name,
 			userDataPath,
 			model: () => this.coordinator.model,
@@ -309,6 +350,7 @@ export class AppController {
 			journalPath: join(userDataPath, "devhub", "agents.journal"),
 			configuredHerdr: config?.runtimes.herdr ?? "herdr",
 			home: homedir(),
+			environment: this.launchEnvironment,
 			model: () => this.coordinator.model,
 			onObserved: () => {
 				this.agentReconciler.wake();

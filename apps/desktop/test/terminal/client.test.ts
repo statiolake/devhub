@@ -154,12 +154,49 @@ describe("terminal client transport", () => {
     expect(Uint8Array.from(chunks.flat())).toEqual(input);
   });
 
-  it("names the wire code in what the pane shows", () => {
+  it("shows the words the main process chose, not the code again", () => {
+    // The contract's own summary for a code that has one...
     expect(terminalErrorSummary(new TerminalFailure("stale_target"))).toBe(
-      "Terminal unavailable (stale target).",
+      "The terminal target is stale.",
     );
+    // ...and, where the main process said something the code cannot, that.
+    // Re-deriving here produced "Terminal unavailable (runtime unavailable)",
+    // which named neither the missing program nor where DevHub looked for it.
+    const named =
+      "DevHub could not find 'tmux' on PATH (looked in: /usr/bin, /bin).";
+    expect(
+      terminalErrorSummary(
+        new TerminalFailure("runtime_unavailable", { summary: named }),
+      ),
+    ).toBe(named);
     expect(terminalErrorSummary(new Error("boom"))).toBe(
       "The terminal connection is unavailable.",
+    );
+  });
+
+  it("carries the wire's summary into the failure it throws", async () => {
+    const named = "DevHub could not find 'herdr' at /opt/nothing/bin/herdr.";
+    const harness = transportHarness(
+      new TerminalFailure("runtime_unavailable", { summary: named }),
+    );
+    await expect(
+      harness.client.attach(
+        {
+          schemaVersion: TERMINAL_PROTOCOL_VERSION,
+          surfaceKey: "global-terminal",
+          targetGeneration: 0,
+          cols: 80,
+          rows: 24,
+          pixelWidth: 0,
+          pixelHeight: 0,
+        },
+        vi.fn(),
+      ),
+    ).rejects.toThrowError(
+      expect.objectContaining({
+        code: "runtime_unavailable",
+        summary: named,
+      }) as unknown as Error,
     );
   });
 });

@@ -126,7 +126,7 @@ export class AgentRuntimeError extends Error {
 	}
 
 	toPortError(): PortError {
-		return new PortError(this.portCode);
+		return new PortError(this.portCode, this.detail);
 	}
 }
 

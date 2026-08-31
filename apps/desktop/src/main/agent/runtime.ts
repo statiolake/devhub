@@ -39,6 +39,7 @@ import {
 import {
 	RuntimeLaunchContext,
 	type ResolvedExecutable,
+	type RuntimeError,
 } from "./launchContext.js";
 import {
 	AgentRuntimeHealth,
@@ -177,6 +178,7 @@ interface RuntimeOptions {
 	readonly transport: ProviderTransport;
 	readonly journalPath: string;
 	readonly executable: ResolvedExecutable | undefined;
+	readonly missingExecutableReason?: string;
 	readonly verifyExecutable: boolean;
 }
 
@@ -198,10 +200,17 @@ export class HerdrAgentRuntime {
 	#subscription: SubscriptionHandle | undefined;
 	#journalLoaded = false;
 	#lastLaunchFailure: AgentLaunchFailure | undefined;
+	/**
+	 * Why there is no executable, in the words the Settings window uses. It is
+	 * kept from construction because the failure is reported much later, at the
+	 * first attach, where the search that failed is no longer in reach.
+	 */
+	readonly #missingExecutableReason: string | undefined;
 
 	private constructor(options: RuntimeOptions) {
 		this.#context = options.context;
 		this.#executable = options.executable;
+		this.#missingExecutableReason = options.missingExecutableReason;
 		this.#transport = options.transport;
 		this.#journalPath = options.journalPath;
 		this.#verifyExecutable = options.verifyExecutable;
@@ -225,12 +234,16 @@ export class HerdrAgentRuntime {
 		journalPath?: string,
 	): HerdrAgentRuntime {
 		let executable: ResolvedExecutable | undefined;
+		let missingExecutableReason: string | undefined;
 		try {
 			executable = context.resolve(configuredHerdr);
-		} catch {
+		} catch (error) {
 			// A missing Herdr is a visible health state, not a construction
-			// failure: Settings must be able to show why agents are off.
+			// failure: Settings must be able to show why agents are off. What is
+			// kept is the sentence naming it — the health code alone says only
+			// that some executable is missing, which is the fact nobody needs.
 			executable = undefined;
+			missingExecutableReason = (error as RuntimeError).detail;
 		}
 		const xdg = context.environmentValue("XDG_CONFIG_HOME");
 		// Not caught, unlike a missing executable: a Herdr that is not installed
@@ -242,6 +255,7 @@ export class HerdrAgentRuntime {
 		return new HerdrAgentRuntime({
 			context,
 			executable,
+			missingExecutableReason,
 			transport: new HerdrTransport(socketPath),
 			journalPath:
 				journalPath ??
@@ -371,7 +385,7 @@ export class HerdrAgentRuntime {
 					this.#health = AgentRuntimeHealth.unavailable(
 						AgentRuntimeErrorCode.MissingExecutable,
 					);
-					throw unavailablePort();
+					throw unavailablePort(this.#missingExecutableReason);
 				}
 				try {
 					await this.#verifyCliVersion(this.#executable, cancel);

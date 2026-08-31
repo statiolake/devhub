@@ -43,21 +43,44 @@ async function resolveOne(
 	if (isAbsolute(expanded)) {
 		return (await isExecutableFile(expanded))
 			? { kind: "absolute_path", value: expanded }
-			: { kind: "unavailable" };
+			: {
+					kind: "unavailable",
+					configured: value,
+					lookup: { kind: "explicit", path: expanded },
+				};
 	}
-	for (const directory of searchPath.split(delimiter)) {
-		if (directory.length === 0) continue;
+	// The directories are kept whether the lookup succeeds or not: on failure
+	// they are the whole diagnostic, and a search nobody can see is a search
+	// nobody can correct.
+	const directories = searchPath
+		.split(delimiter)
+		.filter((directory) => directory.length > 0);
+	for (const directory of directories) {
 		const candidate = join(directory, expanded);
 		if (await isExecutableFile(candidate)) {
 			return { kind: "absolute_path", value: candidate };
 		}
 	}
-	return { kind: "unavailable" };
+	return {
+		kind: "unavailable",
+		configured: value,
+		lookup: { kind: "path", directories },
+	};
 }
 
+/**
+ * Look every configured runtime up in `searchPath`.
+ *
+ * `searchPath` is not defaulted to `process.env.PATH`. A DevHub launched from
+ * Finder has `launchd`'s four-entry PATH and nothing a developer installed, so
+ * a default that quietly used it would make this resolution depend on how the
+ * app happened to be started — the exact bug this signature exists to prevent.
+ * The caller passes the PATH from the launch environment (see
+ * `loginEnvironment.ts`), which is the same PATH the terminals and agents get.
+ */
 export async function resolveRuntimes(
 	runtimes: RuntimeConfig,
-	searchPath: string = process.env["PATH"] ?? "",
+	searchPath: string,
 ): Promise<SettingsResolvedRuntimeConfigWire> {
 	const [shell, git, tmux, herdr] = await Promise.all([
 		resolveOne(runtimes.shell, searchPath),

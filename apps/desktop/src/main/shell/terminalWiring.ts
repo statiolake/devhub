@@ -21,7 +21,10 @@ import {
 	workspaceTarget,
 	type TerminalTarget,
 } from "../terminal/ports.js";
-import { TmuxTerminalRuntime } from "../terminal/tmux.js";
+import {
+	TmuxTerminalRuntime,
+	type RuntimeExecutable,
+} from "../terminal/tmux.js";
 import {
 	registerTerminalService,
 	type TerminalService,
@@ -29,38 +32,36 @@ import {
 import type { Config } from "../../model/config.js";
 import type { AppModel } from "../../model/appModel.js";
 import { workspaceId as parseWorkspaceId } from "../../model/domain.js";
-import type { SettingsResolvedRuntimeWire } from "../../ipc/settings.js";
+import {
+	runtimeUnavailableMessage,
+	type SettingsResolvedRuntimeWire,
+} from "../../ipc/settings.js";
 import { registerTerminalAdapter } from "./adapters.js";
 
-/** An executable the runtime can launch, or nothing if it was not found. */
+/**
+ * An executable the runtime can launch, or the sentence saying why not.
+ *
+ * The reason is kept rather than reduced to `undefined`: a pane that refuses
+ * to attach an hour later has no other way to say which executable was missing
+ * and where DevHub looked for it.
+ */
 function executable(
 	resolved: SettingsResolvedRuntimeWire,
 	configured: string,
-): { path: string; basename: string } | undefined {
-	if (resolved.kind === "unavailable") return undefined;
-	const path = resolved.value;
-	return { path, basename: configured.split("/").at(-1) ?? configured };
-}
-
-/**
- * The environment every DevHub child is launched with, frozen at startup.
- *
- * The terminal must not observe an environment that changed under it, and the
- * shell inside tmux inherits exactly this. `import_login_environment` is the
- * user's say over whether their login shell's environment is part of it; when
- * it is off, a child gets only what this process was started with.
- */
-export function launchEnvironment(
-	config: Config | undefined,
-): Readonly<Record<string, string | undefined>> {
-	const environment = { ...process.env };
-	if (config && !config.general.import_login_environment) {
-		// Nothing to strip: this process is what it is. The flag is honoured by
-		// *not* going out to a login shell for more, which is the only thing the
-		// option could mean for a process that is already running.
-		return Object.freeze(environment);
+): RuntimeExecutable {
+	if (resolved.kind === "unavailable") {
+		return {
+			kind: "unavailable",
+			reason: runtimeUnavailableMessage(resolved),
+		};
 	}
-	return Object.freeze(environment);
+	return {
+		kind: "resolved",
+		value: {
+			path: resolved.value,
+			basename: configured.split("/").at(-1) ?? configured,
+		},
+	};
 }
 
 export interface TerminalWiringOptions {
@@ -69,6 +70,14 @@ export interface TerminalWiringOptions {
 		readonly tmux: SettingsResolvedRuntimeWire;
 		readonly shell: SettingsResolvedRuntimeWire;
 	};
+	/**
+	 * The one environment every DevHub child is launched with, resolved once at
+	 * startup (see `loginEnvironment.ts`). The terminal must not observe an
+	 * environment that changed under it, and the shell inside tmux inherits
+	 * exactly this — the same environment the executables above were resolved
+	 * in, so a tmux DevHub found is a tmux the shell can find too.
+	 */
+	readonly environment: Readonly<Record<string, string | undefined>>;
 	readonly effectiveSocketName: string;
 	readonly userDataPath: string;
 	/** The live model, for turning a workspace id into its canonical root. */
@@ -91,13 +100,10 @@ export function wireTerminals(options: TerminalWiringOptions): TerminalWiring {
 	const runtime = new TmuxTerminalRuntime({
 		context: {
 			home: homedir(),
-			environment: launchEnvironment(config),
+			environment: options.environment,
 		},
 		tmux: executable(options.resolved.tmux, config?.runtimes.tmux ?? "tmux"),
-		shell: executable(
-			options.resolved.shell,
-			config?.runtimes.shell ?? "/bin/zsh",
-		),
+		shell: shellExecutable(options.resolved.shell, config),
 		tmuxArgs: config?.runtimes.tmux_args ?? [],
 		effectiveSocketName: options.effectiveSocketName,
 		bootstrapDirectory: options.userDataPath,
@@ -151,6 +157,23 @@ export function wireTerminals(options: TerminalWiringOptions): TerminalWiring {
 	});
 
 	return { runtime, service };
+}
+
+/**
+ * The shell is used for its basename only — tmux is told which shell to start,
+ * and inspection reads it back — so an unresolved one is simply absent. It has
+ * no failure of its own to report: nothing attaches to a shell.
+ */
+function shellExecutable(
+	resolved: SettingsResolvedRuntimeWire,
+	config: Config | undefined,
+): { path: string; basename: string } | undefined {
+	if (resolved.kind === "unavailable") return undefined;
+	const configured = config?.runtimes.shell ?? "/bin/zsh";
+	return {
+		path: resolved.value,
+		basename: configured.split("/").at(-1) ?? configured,
+	};
 }
 
 export { socketName };

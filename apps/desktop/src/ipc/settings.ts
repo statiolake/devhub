@@ -110,10 +110,58 @@ export interface SettingsConfigWire {
 	readonly agentProfiles: readonly SettingsAgentProfileWire[];
 }
 
+/**
+ * How a configured runtime was looked for. It travels with the failure because
+ * "unavailable" on its own is the least useful thing DevHub can say about a
+ * missing executable: it names neither the tool nor the search that failed, so
+ * a person cannot tell a typo from a PATH that never reached their Homebrew.
+ */
+export type SettingsRuntimeLookupWire =
+	/** A command name, searched for in these absolute PATH directories, in order. */
+	| { readonly kind: "path"; readonly directories: readonly string[] }
+	/** An absolute or `~` path, which names its own single location. */
+	| { readonly kind: "explicit"; readonly path: string };
+
+export interface SettingsUnavailableRuntimeWire {
+	readonly kind: "unavailable";
+	/** The configured value, verbatim: a command name or a path. */
+	readonly configured: string;
+	readonly lookup: SettingsRuntimeLookupWire;
+}
+
 export type SettingsResolvedRuntimeWire =
 	| { readonly kind: "absolute_path"; readonly value: string }
 	| { readonly kind: "command_name"; readonly value: string }
-	| { readonly kind: "unavailable" };
+	| SettingsUnavailableRuntimeWire;
+
+/** How many search directories one message may name before it summarises. */
+export const MAX_SEARCHED_DIRECTORIES = 12;
+
+/**
+ * The sentence a missing runtime is always shown as, wherever it is shown.
+ *
+ * Every caller — the Settings window's Runtimes section, the terminal failure
+ * surface, the agent failure surface — renders this exact string, so a person
+ * who reads one and then another is not left wondering whether they are two
+ * different problems.
+ */
+export function runtimeUnavailableMessage(
+	resolved: SettingsUnavailableRuntimeWire,
+): string {
+	const name = `'${resolved.configured}'`;
+	if (resolved.lookup.kind === "explicit") {
+		return `DevHub could not find ${name} at ${resolved.lookup.path}.`;
+	}
+	const directories = resolved.lookup.directories;
+	if (directories.length === 0) {
+		return `DevHub could not find ${name} on PATH (PATH is empty).`;
+	}
+	const shown = directories.slice(0, MAX_SEARCHED_DIRECTORIES);
+	const more = directories.length - shown.length;
+	const where =
+		shown.join(", ") + (more > 0 ? `, and ${String(more)} more` : "");
+	return `DevHub could not find ${name} on PATH (looked in: ${where}).`;
+}
 
 export interface SettingsResolvedRuntimeConfigWire {
 	readonly shell: SettingsResolvedRuntimeWire;
@@ -143,6 +191,16 @@ export interface SettingsRuntimeWire {
 	readonly effective: SettingsRuntimeConfigWire;
 	readonly health: SettingsRuntimeHealthWire;
 	readonly restartRequired: boolean;
+	/**
+	 * What became of the login-shell environment import, in a sentence.
+	 *
+	 * It lives beside the resolutions rather than beside the checkbox that
+	 * controls it because it is the same fact: this is the environment every
+	 * lookup above was made in. An import that failed and a PATH that is missing
+	 * the user's Homebrew are one story, and reading them apart is how a person
+	 * concludes DevHub simply cannot find tmux.
+	 */
+	readonly loginEnvironment: string;
 }
 
 export type SettingsPreviousExitWire = "clean" | "unclean" | "unknown";

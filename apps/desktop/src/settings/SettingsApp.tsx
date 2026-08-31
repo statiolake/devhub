@@ -450,7 +450,11 @@ export function SettingsApp({ client }: { readonly client?: SettingsClient }) {
         aria-labelledby={`settings-tab-${section}`}
       >
         {section === "General" ? (
-          <GeneralSection config={draft} update={update} />
+          <GeneralSection
+            config={draft}
+            update={update}
+            runtime={snapshot.runtime}
+          />
         ) : null}
         {section === "Workspaces" ? (
           <WorkspacesSection config={draft} update={update} />

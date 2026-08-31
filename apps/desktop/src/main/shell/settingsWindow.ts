@@ -31,6 +31,10 @@ import {
 	type WorkspaceSource,
 } from "../../model/config.js";
 import { resolveRuntimes, runtimeHealth } from "./runtimes.js";
+import {
+	loginEnvironmentSummary,
+	type LoginEnvironment,
+} from "./loginEnvironment.js";
 import { SHELL_ORIGIN } from "./shellPageProtocol.js";
 
 interface SettingsHost {
@@ -38,6 +42,14 @@ interface SettingsHost {
 	readonly logDirectory: string;
 	readonly preloadPath: string;
 	previousExit(): "clean" | "unclean" | "unknown";
+	/**
+	 * The one environment DevHub resolves its runtimes and launches its children
+	 * in, and what became of the login-shell import that built it. Settings looks
+	 * runtimes up in exactly this, so what it shows as resolved is what the app
+	 * actually uses — not what a shell would find for the person reading it.
+	 */
+	launchEnvironment(): Readonly<Record<string, string | undefined>>;
+	loginEnvironment(): LoginEnvironment;
 	/** Told when a save changed the config, so the shell re-projects it. */
 	adopt(config: Config): void;
 	/** What the socket a person wants to move to looks like right now. */
@@ -229,7 +241,10 @@ function fromWireConfig(wire: SettingsConfigWire): Config {
 async function buildSnapshot(): Promise<SettingsSnapshotWire> {
 	const settings = requireHost();
 	const loaded = settings.store.current() ?? (await settings.store.load());
-	const resolved = await resolveRuntimes(loaded.config.runtimes);
+	const resolved = await resolveRuntimes(
+		loaded.config.runtimes,
+		settings.launchEnvironment()["PATH"] ?? "",
+	);
 	sequence += 1;
 	const diagnostic = settings.store.lastDiagnostic();
 	return {
@@ -246,6 +261,7 @@ async function buildSnapshot(): Promise<SettingsSnapshotWire> {
 			effective: toWireConfig(loaded.config).runtimes,
 			health: runtimeHealth(resolved),
 			restartRequired: false,
+			loginEnvironment: loginEnvironmentSummary(settings.loginEnvironment()),
 		},
 		diagnostics: {
 			sessionId,

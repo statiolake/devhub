@@ -157,7 +157,7 @@ test(
 		await withSocketGuard(socket, async () => {
 		const runtime = new TmuxTerminalRuntime({
 			context: { home, environment: { ...process.env } },
-			tmux: { path: TMUX, basename: "tmux" },
+			tmux: { kind: "resolved", value: { path: TMUX, basename: "tmux" } },
 			shell: { path: "/bin/sh", basename: "sh" },
 			tmuxArgs: [],
 			effectiveSocketName: socket,

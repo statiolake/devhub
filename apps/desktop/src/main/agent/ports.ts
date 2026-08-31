@@ -36,14 +36,24 @@ export enum PortErrorCode {
 	Cancelled = "cancelled",
 }
 
-/** The only error the core sees from a port. It carries no provider text. */
+/**
+ * The only error the core sees from a port. It carries no provider text.
+ *
+ * `detail` is the one thing it may carry besides its code, under exactly the
+ * rule `AgentRuntimeError.detail` states: a sentence DevHub composed from its
+ * own configuration before it spoke to any provider — which executable was
+ * configured, and where it was looked for. Never provider output, never agent
+ * content, never a command line.
+ */
 export class PortError extends Error {
 	readonly code: PortErrorCode;
+	readonly detail: string | undefined;
 
-	constructor(code: PortErrorCode) {
-		super(code);
+	constructor(code: PortErrorCode, detail?: string) {
+		super(detail ?? code);
 		this.name = "PortError";
 		this.code = code;
+		this.detail = detail;
 	}
 }
 
@@ -51,8 +61,8 @@ export function failedPort(): PortError {
 	return new PortError(PortErrorCode.Failed);
 }
 
-export function unavailablePort(): PortError {
-	return new PortError(PortErrorCode.Unavailable);
+export function unavailablePort(detail?: string): PortError {
+	return new PortError(PortErrorCode.Unavailable, detail);
 }
 
 export function gonePort(): PortError {

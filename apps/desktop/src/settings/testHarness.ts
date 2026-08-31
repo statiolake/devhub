@@ -85,6 +85,7 @@ export function testSnapshot(
         inspectionAvailable: true,
       },
       restartRequired: false,
+      loginEnvironment: "Imported from /bin/zsh.",
     },
     diagnostics: {
       sessionId: "session",

@@ -26,23 +26,40 @@ export type PortErrorCode =
 /**
  * A runtime failure.
  *
- * It carries a code and nothing else: provider stdout, stderr, session names
- * and paths are deliberately not part of it, so no error path can leak the
- * inventory of a foreign tmux server into a diagnostic or a UI string.
+ * It carries a code, and one optional `detail`: provider stdout, stderr,
+ * session names and discovered paths are deliberately not part of it, so no
+ * error path can leak the inventory of a foreign tmux server into a diagnostic
+ * or a UI string.
+ *
+ * `detail` is bound by that same rule and is not an exception to it. It may
+ * only hold a sentence DevHub composed from its **own configuration** before it
+ * spoke to any provider — which executable was configured and where it was
+ * looked for. Without it a missing tmux reaches the pane as "runtime
+ * unavailable", which names neither the tool nor the search, and is the one
+ * failure whose whole diagnostic is those two facts.
  */
 export class PortFailure extends Error {
 	readonly code: PortErrorCode;
+	readonly detail: string | undefined;
 
-	constructor(code: PortErrorCode, options?: ErrorOptions) {
-		super(`terminal runtime ${code.replaceAll("_", " ")}`, options);
+	constructor(code: PortErrorCode, options?: PortFailureOptions) {
+		super(options?.detail ?? `terminal runtime ${code.replaceAll("_", " ")}`, {
+			cause: options?.cause,
+		});
 		this.name = "PortFailure";
 		this.code = code;
+		this.detail = options?.detail;
 	}
+}
+
+export interface PortFailureOptions extends ErrorOptions {
+	/** A sentence about DevHub's own configuration. Never provider output. */
+	readonly detail?: string;
 }
 
 export function portFailure(
 	code: PortErrorCode,
-	options?: ErrorOptions,
+	options?: PortFailureOptions,
 ): PortFailure {
 	return new PortFailure(code, options);
 }

@@ -25,6 +25,7 @@ import type {
   TerminalClient,
   TerminalInputRequest,
 } from "../../src/shell/terminal/client";
+import { TerminalFailure } from "../../src/ipc/terminal";
 import type { TerminalAppearance } from "../../src/shell/terminal/theme";
 import { TerminalSurface } from "../../src/shell/terminal/TerminalSurface";
 
@@ -170,7 +171,10 @@ function appearanceFixture(): TerminalAppearance {
     terminalFontSize: 13,
     terminalLineHeight: 1.2,
     terminalMargin: 4,
-    terminalTheme: { light: PALETTE, dark: { ...PALETTE, background: "#121314" } },
+    terminalTheme: {
+      light: PALETTE,
+      dark: { ...PALETTE, background: "#121314" },
+    },
   };
 }
 
@@ -364,6 +368,30 @@ describe("TerminalSurface lifecycle", () => {
     expect(harness.client.detach).not.toHaveBeenCalled();
   });
 
+  it("names the missing executable the main process could not find", async () => {
+    // The whole point of the wire's summary: what reaches the pane is what the
+    // main process said, not a second sentence re-derived from the code here.
+    // "Terminal unavailable (runtime unavailable)" named neither the program
+    // nor the search, and was what a packaged DevHub showed for a tmux that
+    // was simply not on launchd's PATH.
+    const summary =
+      "DevHub could not find 'tmux' on PATH (looked in: /usr/bin, /bin, /usr/sbin, /sbin).";
+    const harness = clientHarness();
+    harness.client.attach = vi.fn(async () => {
+      throw new TerminalFailure("runtime_unavailable", { summary });
+    });
+    render(
+      <TerminalSurface
+        surfaceKey="global-terminal"
+        surfaceLabel="Scratch"
+        client={harness.client}
+      />,
+    );
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(/terminal session is not connected/i);
+    expect(alert).toHaveTextContent(summary);
+  });
+
   it("keeps the handshake timeout until a pre-receipt Started has a receipt", async () => {
     vi.useFakeTimers();
     const harness = clientHarness();
@@ -431,7 +459,9 @@ describe("TerminalSurface lifecycle", () => {
         client={harness.client}
       />,
     );
-    await waitFor(() => expect(mocks.terminals[0].writes).toEqual(["buffered"]));
+    await waitFor(() =>
+      expect(mocks.terminals[0].writes).toEqual(["buffered"]),
+    );
     await waitFor(() =>
       expect(harness.client.acknowledge).toHaveBeenCalledWith(
         expect.objectContaining({

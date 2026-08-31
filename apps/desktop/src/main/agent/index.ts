@@ -37,6 +37,8 @@ export interface AgentServiceOptions {
 	/** The configured Herdr command: a path, a `~` path, or a PATH name. */
 	readonly configuredHerdr: string;
 	readonly home: string;
+	/** The startup-frozen launch environment; see `loginEnvironment.ts`. */
+	readonly environment: Readonly<Record<string, string | undefined>>;
 	/** Called when a live control stream fails; health is reconciled, not the row. */
 	readonly onSurfaceFailure: (agentId: AgentId) => void;
 }
@@ -54,7 +56,7 @@ export class AgentService {
 
 	constructor(options: AgentServiceOptions) {
 		this.runtime = HerdrAgentRuntime.create(
-			RuntimeLaunchContext.create(options.home, process.env),
+			RuntimeLaunchContext.create(options.home, options.environment),
 			options.configuredHerdr,
 			options.journalPath,
 		);

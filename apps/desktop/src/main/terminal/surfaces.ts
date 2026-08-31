@@ -43,17 +43,20 @@ export function terminalFailureFromPort(failure: unknown): TerminalFailure {
 	if (!(failure instanceof PortFailure)) {
 		return new TerminalFailure("internal", { cause: failure });
 	}
+	// The port's detail, where it has one, is the sentence: it names the
+	// executable and the search, which is what the code alone cannot say.
+	const options = { cause: failure, summary: failure.detail };
 	switch (failure.code) {
 		case "unavailable":
 		case "timed_out":
 		case "incompatible":
-			return new TerminalFailure("runtime_unavailable", { cause: failure });
+			return new TerminalFailure("runtime_unavailable", options);
 		case "conflict":
-			return new TerminalFailure("session_unavailable", { cause: failure });
+			return new TerminalFailure("session_unavailable", options);
 		case "cancelled":
-			return new TerminalFailure("stale_target", { cause: failure });
+			return new TerminalFailure("stale_target", options);
 		default:
-			return new TerminalFailure("internal", { cause: failure });
+			return new TerminalFailure("internal", options);
 	}
 }
 

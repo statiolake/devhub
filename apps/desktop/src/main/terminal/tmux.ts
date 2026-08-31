@@ -356,10 +356,22 @@ class BootstrapConfig {
 	}
 }
 
+/**
+ * A configured executable, or the sentence saying why there is none.
+ *
+ * The reason travels with the absence rather than being re-derived at the
+ * point of failure: by the time a pane refuses to attach, the search that
+ * failed is many frames away, and a refusal that cannot name it is a refusal
+ * nobody can act on.
+ */
+export type RuntimeExecutable =
+	| { readonly kind: "resolved"; readonly value: ResolvedExecutable }
+	| { readonly kind: "unavailable"; readonly reason: string };
+
 export interface TmuxTerminalRuntimeOptions {
 	readonly context: RuntimeLaunchContext;
-	/** The configured `runtimes.tmux`, already resolved; absent disables the runtime. */
-	readonly tmux: ResolvedExecutable | undefined;
+	/** The configured `runtimes.tmux`, already resolved; unavailable disables the runtime. */
+	readonly tmux: RuntimeExecutable;
 	/** The configured `runtimes.shell`; only its basename is used, for inspection. */
 	readonly shell: ResolvedExecutable | undefined;
 	/** The configured `runtimes.tmux_args`. Anything unsafe disables the runtime. */
@@ -373,7 +385,7 @@ export interface TmuxTerminalRuntimeOptions {
 
 export class TmuxTerminalRuntime {
 	private readonly context: RuntimeLaunchContext;
-	private readonly tmux: ResolvedExecutable | undefined;
+	private readonly tmux: RuntimeExecutable;
 	private readonly shellName: string | undefined;
 	private readonly tmuxArgs: readonly string[];
 	private effectiveSocket: SocketName | undefined;
@@ -389,7 +401,13 @@ export class TmuxTerminalRuntime {
 		// out of it: a config that asked for something DevHub will not do must
 		// not be silently reinterpreted as one that did not ask.
 		const argumentsSafe = options.tmuxArgs.every(isSafeTmuxArgument);
-		this.tmux = argumentsSafe ? options.tmux : undefined;
+		this.tmux = argumentsSafe
+			? options.tmux
+			: {
+					kind: "unavailable",
+					reason:
+						"DevHub will not run tmux with the configured tmux_args: one of them is not an argument DevHub passes on.",
+				};
 		this.tmuxArgs = argumentsSafe ? [...options.tmuxArgs] : [];
 		this.shellName = options.shell?.basename;
 		this.effectiveSocket = isValidSocketName(options.effectiveSocketName)
@@ -401,7 +419,7 @@ export class TmuxTerminalRuntime {
 
 	/** True when a tmux executable and a usable socket name are both present. */
 	get adapterAvailable(): boolean {
-		return this.tmux !== undefined && this.effectiveSocket !== undefined;
+		return this.tmux.kind === "resolved" && this.effectiveSocket !== undefined;
 	}
 
 	get contextHome(): string {
@@ -413,8 +431,10 @@ export class TmuxTerminalRuntime {
 	}
 
 	private executable(): ResolvedExecutable {
-		if (!this.tmux) throw portFailure("unavailable");
-		return this.tmux;
+		if (this.tmux.kind === "unavailable") {
+			throw portFailure("unavailable", { detail: this.tmux.reason });
+		}
+		return this.tmux.value;
 	}
 
 	private socket(): SocketName {

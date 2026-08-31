@@ -15,7 +15,12 @@ import {
 	ProviderErrorCategory,
 	agentError,
 } from "./error.js";
-import { RuntimeLaunchContext } from "./launchContext.js";
+import { terminalErrorFromPort } from "./channel.js";
+import {
+	RuntimeLaunchContext,
+	RuntimeErrorCode,
+	type RuntimeError,
+} from "./launchContext.js";
 import {
 	AgentRuntimeHealthState,
 	EXIT_EVIDENCE_ROUNDS,
@@ -194,6 +199,50 @@ describe("the Herdr agent runtime", () => {
 		}
 		expect(thrown?.code).toBe(AgentRuntimeErrorCode.SocketPathTooLong);
 		expect(thrown?.message).toContain(longConfigHome);
+	});
+
+	it("names the Herdr it could not find, and where it looked", () => {
+		// The reason is composed where the search happens and reported at the
+		// first attach, far from it. "Agent runtime unavailable" was all that
+		// reached the surface before: it named neither the program nor the
+		// directories, on a machine whose PATH was simply launchd's.
+		const launch = RuntimeLaunchContext.create(scratchDir(), {
+			PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
+		});
+		let thrown: RuntimeError | undefined;
+		try {
+			launch.resolve("devhub-herdr-that-is-not-installed");
+		} catch (error) {
+			thrown = error as RuntimeError;
+		}
+		const named =
+			"DevHub could not find 'devhub-herdr-that-is-not-installed' on PATH " +
+			"(looked in: /usr/bin, /bin, /usr/sbin, /sbin).";
+		expect(thrown?.code).toBe(RuntimeErrorCode.MissingExecutable);
+		expect(thrown?.detail).toBe(named);
+
+		// And the surface renders exactly that, rather than the code's stock
+		// words: the runtime carries the reason from construction to the first
+		// bootstrap, which raises `unavailablePort(reason)`.
+		expect(
+			terminalErrorFromPort(new PortError(PortErrorCode.Unavailable, named))
+				.summary,
+		).toBe(named);
+	});
+
+	it("names the path a configured Herdr path pointed at", () => {
+		const launch = RuntimeLaunchContext.create(scratchDir(), {
+			PATH: "/usr/bin:/bin",
+		});
+		let thrown: RuntimeError | undefined;
+		try {
+			launch.resolve("/opt/nothing/bin/herdr");
+		} catch (error) {
+			thrown = error as RuntimeError;
+		}
+		expect(thrown?.detail).toBe(
+			"DevHub could not find '/opt/nothing/bin/herdr' at /opt/nothing/bin/herdr.",
+		);
 	});
 
 	it("bootstraps without mutating anything and installs one subscription", async () => {

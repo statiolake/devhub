@@ -21,6 +21,7 @@ import {
 import {
   MAX_TARGET_GENERATION,
   TERMINAL_PROTOCOL_VERSION,
+  TerminalFailure,
   TerminalFrameDecoder,
   type StartedFrame,
   type TerminalFrame,
@@ -284,7 +285,9 @@ export function TerminalSurface({
               .catch((ackError: unknown) => fail(serial, ackError));
           });
         } else if (frame.type === "error") {
-          throw new Error(frame.error.summary);
+          throw new TerminalFailure(frame.error.code, {
+            summary: frame.error.summary,
+          });
         } else if (frame.type === "exited") {
           setConnection("disconnected");
           setError("The terminal session disconnected. Retry to reconnect.");
@@ -314,7 +317,9 @@ export function TerminalSurface({
           }
           if (!returnedReceipt) {
             if (frame.type === "error") {
-              throw new Error(frame.error.summary);
+              throw new TerminalFailure(frame.error.code, {
+                summary: frame.error.summary,
+              });
             }
             if (
               bufferedFrames.length >= MAX_HANDSHAKE_BUFFER_FRAMES ||

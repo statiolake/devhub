@@ -120,12 +120,19 @@ export class TerminalError extends Error {
 	readonly code: TerminalErrorCode;
 	readonly summary: string;
 
-	constructor(code: TerminalErrorCode) {
-		super(SUMMARIES[code]);
+	/**
+	 * `detail` replaces the code's fixed summary, and only ever holds a
+	 * sentence DevHub composed from its own configuration — which executable
+	 * was configured and where it was looked for. It is never a provider
+	 * message; see `PortError.detail`. Without one the stock summary is still
+	 * the answer, so a code with no detail reads as it always did.
+	 */
+	constructor(code: TerminalErrorCode, detail?: string) {
+		super(detail ?? SUMMARIES[code]);
 		this.name = "TerminalError";
 		this.code = code;
-		this.summary = SUMMARIES[code];
-		this.stack = `TerminalError: ${SUMMARIES[code]}`;
+		this.summary = detail ?? SUMMARIES[code];
+		this.stack = `TerminalError: ${this.summary}`;
 	}
 
 	get body(): TerminalErrorBody {
@@ -133,8 +140,11 @@ export class TerminalError extends Error {
 	}
 }
 
-export function terminalError(code: TerminalErrorCode): TerminalError {
-	return new TerminalError(code);
+export function terminalError(
+	code: TerminalErrorCode,
+	detail?: string,
+): TerminalError {
+	return new TerminalError(code, detail);
 }
 
 /**
@@ -177,6 +187,17 @@ export interface AgentFailure {
 	readonly code: AppErrorCodeWire;
 	readonly summary: string;
 	readonly detail: string;
+}
+
+/**
+ * The words a decoded body is shown as: the ones it came with, when it has
+ * them. Falling back to the code's stock summary here — as this did — silently
+ * discarded whatever the main process had taken the trouble to say.
+ */
+function summaryOfBody(body: TerminalErrorBody): string {
+	return typeof body.summary === "string" && body.summary.length > 0
+		? body.summary
+		: SUMMARIES[body.code];
 }
 
 function isTerminalErrorBody(value: unknown): value is TerminalErrorBody {
@@ -222,7 +243,7 @@ function agentErrorBody(error: unknown): TerminalErrorBody {
 		return error.body;
 	}
 	if (isTerminalErrorBody(error)) {
-		return { code: error.code, summary: SUMMARIES[error.code] };
+		return { code: error.code, summary: summaryOfBody(error) };
 	}
 	if (error instanceof Error) {
 		const start = error.message.indexOf("{");
@@ -230,7 +251,7 @@ function agentErrorBody(error: unknown): TerminalErrorBody {
 			try {
 				const decoded: unknown = JSON.parse(error.message.slice(start));
 				if (isTerminalErrorBody(decoded)) {
-					return { code: decoded.code, summary: SUMMARIES[decoded.code] };
+					return { code: decoded.code, summary: summaryOfBody(decoded) };
 				}
 			} catch {
 				// Not a structured body. It is still a failure, and it is still

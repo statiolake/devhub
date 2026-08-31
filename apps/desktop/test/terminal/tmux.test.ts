@@ -55,6 +55,7 @@ afterEach(() => {
 function runtime(overrides: {
 	home?: string;
 	tmux?: { path: string; basename: string };
+
 	shell?: { path: string; basename: string };
 	tmuxArgs?: readonly string[];
 	socket?: string;
@@ -67,7 +68,13 @@ function runtime(overrides: {
 			home: root,
 			environment: overrides.environment ?? { PATH: "/usr/bin:/bin" },
 		},
-		tmux: overrides.tmux,
+		tmux:
+			overrides.tmux === undefined
+				? {
+						kind: "unavailable",
+						reason: "DevHub could not find 'tmux' on PATH (looked in: /usr/bin, /bin).",
+					}
+				: { kind: "resolved", value: overrides.tmux },
 		shell: overrides.shell,
 		tmuxArgs: overrides.tmuxArgs ?? [],
 		effectiveSocketName: overrides.socket ?? "devhub",

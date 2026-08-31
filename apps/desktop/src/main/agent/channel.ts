@@ -75,25 +75,28 @@ export function terminalErrorFromPort(error: unknown): TerminalError {
 	if (!(error instanceof PortError)) {
 		return terminalError(TerminalErrorCode.Internal);
 	}
+	// The port's detail, where it has one, is the sentence: it names the
+	// executable and the search, which is what the code alone cannot say.
+	const detail = error.detail;
 	switch (error.code) {
 		case PortErrorCode.Unavailable:
-			return terminalError(TerminalErrorCode.SurfaceUnavailable);
+			return terminalError(TerminalErrorCode.SurfaceUnavailable, detail);
 		// The Agent's runtime is not missing an answer, it is missing. Saying
 		// "not connected" here would invite a retry of something that has
 		// nothing left to connect to, and would hide the one fact that matters
 		// while the reconciler removes the row.
 		case PortErrorCode.Gone:
-			return terminalError(TerminalErrorCode.SessionUnavailable);
+			return terminalError(TerminalErrorCode.SessionUnavailable, detail);
 		case PortErrorCode.Conflict:
-			return terminalError(TerminalErrorCode.AttachmentLimit);
+			return terminalError(TerminalErrorCode.AttachmentLimit, detail);
 		case PortErrorCode.TimedOut:
-			return terminalError(TerminalErrorCode.TimedOut);
+			return terminalError(TerminalErrorCode.TimedOut, detail);
 		case PortErrorCode.Cancelled:
-			return terminalError(TerminalErrorCode.SurfaceUnavailable);
+			return terminalError(TerminalErrorCode.SurfaceUnavailable, detail);
 		case PortErrorCode.Incompatible:
-			return terminalError(TerminalErrorCode.RuntimeUnavailable);
+			return terminalError(TerminalErrorCode.RuntimeUnavailable, detail);
 		case PortErrorCode.Failed:
-			return terminalError(TerminalErrorCode.RuntimeUnavailable);
+			return terminalError(TerminalErrorCode.RuntimeUnavailable, detail);
 	}
 }
 
