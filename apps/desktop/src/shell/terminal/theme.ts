@@ -65,20 +65,52 @@ const GENERIC_FAMILIES = new Set([
   "fantasy",
 ]);
 
-function quoted(family: string): string {
-  const name = family.trim();
-  if (GENERIC_FAMILIES.has(name)) return name;
-  return /^[\w-]+$/u.test(name) ? name : `"${name.replaceAll('"', "")}"`;
+/**
+ * One entry of a configured list, as a bare family name.
+ *
+ * The value is a CSS `font-family` value, and in CSS a name may be written
+ * quoted — `'Cascadia Code NF'` and `"Cascadia Code NF"` both name the family
+ * `Cascadia Code NF`. The quotes are syntax, not part of the name, so they come
+ * off here. Carrying them through is not a cosmetic slip: a family called
+ * `'Cascadia Code NF'`, apostrophes included, matches no installed font, so the
+ * whole stack silently resolves to its last generic and the viewer's chosen
+ * font never appears.
+ */
+function bareFamily(part: string): string {
+  const trimmed = part.trim();
+  const quote = trimmed[0];
+  if (
+    trimmed.length >= 2 &&
+    (quote === '"' || quote === "'") &&
+    trimmed.endsWith(quote)
+  ) {
+    return trimmed.slice(1, -1).replaceAll(/\\(.)/gu, "$1").trim();
+  }
+  return trimmed;
 }
 
 /**
- * The chosen family first, then the fallbacks it does not already name.
- * Accepts a comma-separated list, so a viewer can spell out their own stack.
+ * One bare family name, written the way CSS wants it back.
+ *
+ * An identifier goes unquoted, everything else is quoted, and a generic is
+ * never quoted or it would be read as the name of a font.
+ */
+function quoted(name: string): string {
+  if (GENERIC_FAMILIES.has(name)) return name;
+  return /^[A-Za-z_-][\w-]*$/u.test(name)
+    ? name
+    : `"${name.replaceAll("\\", "").replaceAll('"', "")}"`;
+}
+
+/**
+ * The chosen families first, then the fallbacks they do not already name.
+ * Accepts a comma-separated list, quoted or not, so a viewer can spell out
+ * their own stack exactly as they would in CSS.
  */
 export function terminalFontStack(family: string | undefined): string {
   const chosen = (family ?? "")
     .split(",")
-    .map((part) => part.trim())
+    .map(bareFamily)
     .filter((part) => part.length > 0);
   const seen = new Set(chosen.map((part) => part.toLowerCase()));
   return [

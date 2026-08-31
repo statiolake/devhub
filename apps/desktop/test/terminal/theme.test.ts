@@ -61,6 +61,39 @@ describe("terminal font stack", () => {
       'Menlo, "SF Mono", ui-monospace, SFMono-Regular, monospace',
     );
   });
+
+  it("reads a quoted name as CSS does, whichever quote was typed", () => {
+    // The reported failure: a viewer wrote the CSS they know —
+    // `'Cascadia Code NF', 'Noto Sans JP'` — and got a terminal in neither
+    // font. The apostrophes survived into the family name, so the stack asked
+    // for a font called `'Cascadia Code NF'` that no system has, and every
+    // entry fell through to the trailing generic.
+    const expected =
+      '"Cascadia Code NF", "Noto Sans JP", ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace';
+    expect(terminalFontStack("'Cascadia Code NF', 'Noto Sans JP'")).toBe(
+      expected,
+    );
+    expect(terminalFontStack('"Cascadia Code NF", "Noto Sans JP"')).toBe(
+      expected,
+    );
+    expect(terminalFontStack("Cascadia Code NF, Noto Sans JP")).toBe(expected);
+    // Whatever the quoting, no quote character may reach the family name.
+    for (const written of [
+      "'Cascadia Code NF', 'Noto Sans JP'",
+      '"Cascadia Code NF", "Noto Sans JP"',
+    ]) {
+      expect(terminalFontStack(written)).not.toContain("'");
+    }
+  });
+
+  it("still recognises a generic and a duplicate through the quotes", () => {
+    expect(terminalFontStack("'monospace'")).toBe(
+      'monospace, ui-monospace, SFMono-Regular, "SF Mono", Menlo',
+    );
+    expect(terminalFontStack("'Menlo'")).toBe(
+      'Menlo, ui-monospace, SFMono-Regular, "SF Mono", monospace',
+    );
+  });
 });
 
 describe("terminal palette projection", () => {
@@ -97,9 +130,9 @@ describe("terminal surface custom properties", () => {
     // `--terminal-margin: undefinedpx` is set, not unset, so `var()` would not
     // reach its fallback and the padding would compute to zero.
     for (const missing of [undefined, Number.NaN]) {
-      expect(terminalSurfaceStyle(undefined, missing)["--terminal-margin"]).toBe(
-        `${DEFAULT_TERMINAL_MARGIN}px`,
-      );
+      expect(
+        terminalSurfaceStyle(undefined, missing)["--terminal-margin"],
+      ).toBe(`${DEFAULT_TERMINAL_MARGIN}px`);
     }
   });
 
