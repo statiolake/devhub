@@ -40,6 +40,7 @@ import {
   defaultAgentSurfaceClient,
   type AgentSurfaceClient,
 } from "./client.js";
+import { WheelAccumulator } from "./wheel.js";
 import { APP_ERROR_SUMMARY } from "../../ipc/appShell.js";
 import { Failure, Waiting } from "../components/shell/SurfaceState";
 import {
@@ -213,6 +214,41 @@ export function AgentSurfaceView({
       }
     };
 
+    // Herdr renders the agent's grid and sends it as a repaint, so this
+    // emulator never accumulates a scrollback of its own and its wheel
+    // handling has nothing to move — which is exactly what "scrolling does
+    // not respond at all" was. The gesture is a request to the provider
+    // instead, and the emulator's own handling is declined so the two can
+    // never both act on one notch.
+    const wheel = new WheelAccumulator();
+    const sendScroll = (event: WheelEvent): boolean => {
+      if (receipt === undefined) {
+        return false;
+      }
+      const box = host.getBoundingClientRect();
+      const scroll = wheel.take(event, {
+        left: box.left,
+        top: box.top,
+        width: box.width,
+        height: box.height,
+        cols: session?.terminal.cols ?? 0,
+        rows: session?.terminal.rows ?? 0,
+      });
+      if (scroll === undefined) {
+        return false;
+      }
+      void surfaceClient
+        .scroll({
+          schemaVersion: TERMINAL_PROTOCOL_VERSION,
+          surfaceKey,
+          attachmentId: receipt.attachmentId,
+          targetGeneration: receipt.targetGeneration,
+          ...scroll,
+        })
+        .catch(report);
+      return false;
+    };
+
     const reportGeometry = (geometry: SurfaceGeometry): void => {
       if (receipt === undefined || hiddenRef.current) {
         return;
@@ -243,6 +279,7 @@ export function AgentSurfaceView({
         }
         sessionRef.current = session;
         session.terminal.onData(sendInput);
+        session.terminal.attachCustomWheelEventHandler(sendScroll);
         const geometry = hiddenRef.current
           ? FALLBACK_GEOMETRY
           : session.geometry;

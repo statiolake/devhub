@@ -39,6 +39,24 @@ export class AgentSurface {
 		this.#runtime.surfaceResize(this.agentId, this.surfaceKey, cols, rows);
 	}
 
+	scroll(
+		direction: "up" | "down",
+		lines: number,
+		column: number,
+		row: number,
+		modifiers: number,
+	): void {
+		this.#runtime.surfaceScroll(
+			this.agentId,
+			this.surfaceKey,
+			direction,
+			lines,
+			column,
+			row,
+			modifiers,
+		);
+	}
+
 	async readRecent(): Promise<Buffer> {
 		return this.#runtime.surfaceReadRecent(this.agentId, this.surfaceKey);
 	}

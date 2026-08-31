@@ -45,6 +45,9 @@ function fakeApi(): AgentApi & {
     async resize() {
       calls.push("resize");
     },
+    async scroll() {
+      calls.push("scroll");
+    },
     async acknowledge() {
       calls.push("acknowledge");
     },

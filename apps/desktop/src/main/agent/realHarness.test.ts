@@ -30,7 +30,8 @@ import { chmodSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 
-import { delay } from "./api.js";
+import { clientSocketPath, delay, sessionSocketPath } from "./api.js";
+import { HerdrTerminalControl } from "./control.js";
 import { HERDR_SESSION_NAME } from "./contract.js";
 import { RuntimeLaunchContext } from "./launchContext.js";
 import { HerdrAgentRuntime } from "./runtime.js";
@@ -49,6 +50,27 @@ const WORKSPACE_ID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const READY_MARKER = "DEVHUB_HERDR_CODEX_READY";
 const EXIT_MARKER = "DEVHUB_HERDR_HARNESS_EXIT";
 const DEADLINE_MS = 30_000;
+/** Comfortably more than the 24-row grid the surface below reports. */
+const OVERFLOW_LINES = 200;
+/** Long enough for a burst of repaints to finish arriving. */
+const SETTLE_MS = 700;
+/** The pane every fresh Herdr session opens: one shell, no agent. */
+const PANE = "w1:p1";
+
+/** Reads until the stream goes quiet, and answers with everything it read. */
+async function settle(read: () => Promise<string>): Promise<string> {
+	let text = "";
+	const deadline = Date.now() + DEADLINE_MS;
+	for (;;) {
+		const chunk = await read();
+		text += chunk;
+		if (chunk.length === 0 && text.length > 0) {
+			return text;
+		}
+		expect(Date.now()).toBeLessThan(deadline);
+		await delay(SETTLE_MS);
+	}
+}
 
 /** Scratch lives under `.spike/`, never `$TMPDIR`, and never in a commit. */
 const SPIKE_ROOT = resolve(import.meta.dirname, "../../../../../.spike");
@@ -60,6 +82,16 @@ function token(seed: number): CancellationToken {
 		`cccccccc-cccc-4ccc-8ccc-${seed.toString(16).padStart(12, "0")}`,
 	);
 }
+
+/** The stand-in agent of the lifecycle test: announce, then wait to be told to go. */
+const WAITING_AGENT = [
+	"#!/bin/sh",
+	`echo ${READY_MARKER}`,
+	"while IFS= read -r line; do",
+	`  case "$line" in *${EXIT_MARKER}*) exit 0;; esac`,
+	"done",
+	"",
+].join("\n");
 
 function provision(): {
 	context: RuntimeLaunchContext;
@@ -80,20 +112,8 @@ function provision(): {
 	for (const dir of [home, config, bin, workspace]) {
 		mkdirSync(dir, { recursive: true });
 	}
-	// A deterministic stand-in for the real agent: it announces itself, then
-	// stays in the foreground until the surface sends the exit marker.
 	const agent = join(bin, "codex");
-	writeFileSync(
-		agent,
-		[
-			"#!/bin/sh",
-			`echo ${READY_MARKER}`,
-			"while IFS= read -r line; do",
-			`  case "$line" in *${EXIT_MARKER}*) exit 0;; esac`,
-			"done",
-			"",
-		].join("\n"),
-	);
+	writeFileSync(agent, WAITING_AGENT);
 	chmodSync(agent, 0o755);
 
 	const context = RuntimeLaunchContext.create(home, {
@@ -230,6 +250,74 @@ describe.skipIf(!ENABLED)("the real Herdr agent runtime lifecycle", () => {
 			false,
 		);
 		await runtime.shutdown();
+	}, 120_000);
+});
+
+describe.skipIf(!ENABLED)("scrolling a Herdr terminal", () => {
+	/**
+	 * The reported bug, at the layer that caused it.
+	 *
+	 * The wheel was dead over every Agent surface, and nothing was eating the
+	 * event: Herdr renders the pane itself and sends the result as a
+	 * cursor-addressed repaint, so the emulator's buffer is only ever one
+	 * screen tall and its own wheel handling has nothing to move. The lines
+	 * that scrolled away are Herdr's, and the only thing that moves them is
+	 * asking Herdr to.
+	 *
+	 * Asserted against a real server on a plain shell rather than through an
+	 * Agent, because the agent binary a launch resolves is the machine's, and
+	 * what has to be true here is true of any terminal Herdr renders.
+	 */
+	it("moves the provider's viewport, which input bytes cannot", async () => {
+		const { context, workspace, journal } = provision();
+		const runtime = HerdrAgentRuntime.create(context, "herdr", journal);
+		// Bootstrap is what starts the isolated session server; the surface
+		// below then speaks its binary control protocol directly.
+		expect((await runtime.bootstrap(token(1))).isReady).toBe(true);
+		const socket = clientSocketPath(
+			sessionSocketPath(join(root!, "home"), join(root!, "config")),
+		);
+		const control = await HerdrTerminalControl.open(socket, PANE, false, {
+			cols: 80,
+			rows: 24,
+		});
+
+		/** Everything Herdr has sent since the last call, as text. */
+		const read = async (): Promise<string> =>
+			(await control.readRecent()).toString("latin1");
+
+		try {
+			await control.sendText(`cd ${workspace} && clear\n`);
+			await settle(read);
+			// Far more than the 24 rows the surface reports, so most of it is
+			// only in Herdr's scrollback by the time the prompt comes back.
+			await control.sendText(
+				`i=1; while [ $i -le ${OVERFLOW_LINES} ]; do echo LINE-$i; i=$((i+1)); done\n`,
+			);
+			const painted = await settle(read);
+			expect(painted).toContain(`LINE-${OVERFLOW_LINES}`);
+			expect(painted).not.toContain("LINE-1\r");
+
+			// The wheel encoded as an SGR mouse report and sent as input — what
+			// a mouse-reporting passthrough would do. A shell has no use for it,
+			// and the screen does not move: this is the bug, reproduced.
+			await control.sendText("\u001b[<64;10;10M");
+			await delay(SETTLE_MS);
+			expect(await read()).toBe("");
+
+			// The same gesture as a scroll. Herdr moves its viewport and
+			// repaints, so lines that had left the screen come back.
+			control.scroll("up", 10, 10, 10, 0);
+			await delay(SETTLE_MS);
+			expect((await read()).length).toBeGreaterThan(0);
+
+			control.scroll("down", 10, 10, 10, 0);
+			await delay(SETTLE_MS);
+			expect((await read()).length).toBeGreaterThan(0);
+		} finally {
+			control.detach();
+			await runtime.shutdown();
+		}
 	}, 120_000);
 });
 

@@ -39,7 +39,12 @@ const CLIENT_HELLO = 0;
 const CLIENT_INPUT = 1;
 const CLIENT_RESIZE = 3;
 const CLIENT_DETACH = 4;
+const CLIENT_ATTACH_SCROLL = 6;
 const CLIENT_CONTROL_TERMINAL = 9;
+
+/** `AttachScrollSource::Wheel`; the page-key source is not sent from here. */
+const SCROLL_SOURCE_WHEEL = 0;
+const SCROLL_DIRECTION = { up: 0, down: 1 } as const;
 
 export function pushVarint(payload: number[], value: number): void {
 	if (value < 251) {
@@ -191,6 +196,38 @@ export function encodeResize(
 
 export function encodeDetach(): Buffer {
 	return Buffer.from([CLIENT_DETACH]);
+}
+
+/**
+ * Ask Herdr to scroll the terminal this connection controls.
+ *
+ * Herdr renders the pane and sends the result as a repaint, so the bytes that
+ * scroll off never reach the client: the scrollback is Herdr's, and only Herdr
+ * can move it. It also owns the decision of what a wheel notch means — an
+ * agent whose TUI asked for mouse reporting is sent an encoded wheel event at
+ * this cell, one on the alternate screen without it is sent arrow keys, and a
+ * plain shell moves Herdr's own viewport. Sending the encoded mouse bytes as
+ * input instead would only ever reach the first of those three, which is why
+ * the wheel did nothing at all over ordinary output.
+ */
+export function encodeScroll(
+	direction: "up" | "down",
+	lines: number,
+	column: number,
+	row: number,
+	modifiers: number,
+): Buffer {
+	const payload: number[] = [];
+	pushVarint(payload, CLIENT_ATTACH_SCROLL);
+	pushVarint(payload, SCROLL_SOURCE_WHEEL);
+	pushVarint(payload, SCROLL_DIRECTION[direction]);
+	pushVarint(payload, lines);
+	pushVarint(payload, 1); // Some(column)
+	pushVarint(payload, column);
+	pushVarint(payload, 1); // Some(row)
+	pushVarint(payload, row);
+	payload.push(modifiers); // u8, not a varint
+	return Buffer.from(payload);
 }
 
 export function encodeControlTerminal(
@@ -383,6 +420,14 @@ export class NoopTerminalControl implements TerminalControl {
 
 	resize(_cols: number, _rows: number): void {}
 
+	scroll(
+		_direction: "up" | "down",
+		_lines: number,
+		_column: number,
+		_row: number,
+		_modifiers: number,
+	): void {}
+
 	async readRecent(): Promise<Buffer> {
 		return Buffer.alloc(0);
 	}
@@ -464,6 +509,19 @@ export class HerdrTerminalControl implements TerminalControl {
 			throw agentError(AgentRuntimeErrorCode.Disconnected);
 		}
 		this.#socket.write(encodeResize(cols, rows, 0, 0));
+	}
+
+	scroll(
+		direction: "up" | "down",
+		lines: number,
+		column: number,
+		row: number,
+		modifiers: number,
+	): void {
+		if (this.#detached) {
+			throw agentError(AgentRuntimeErrorCode.Disconnected);
+		}
+		this.#socket.write(encodeScroll(direction, lines, column, row, modifiers));
 	}
 
 	async readRecent(): Promise<Buffer> {

@@ -33,12 +33,14 @@ import {
 	validateInputSequence,
 	validatePtySize,
 	validateSchema,
+	validateScroll,
 	type AckRequest,
 	type AttachReceipt,
 	type AttachRequest,
 	type DetachRequest,
 	type InputRequest,
 	type ResizeRequest,
+	type ScrollRequest,
 	type TerminalFrame,
 } from "../../ipc/agent.js";
 import { delay } from "./api.js";
@@ -429,6 +431,30 @@ export class AgentSurfaceManager {
 		// drawn at the 80x24 the handshake announced, whatever size it is.
 		try {
 			attachment.surface.resize(request.cols, request.rows);
+		} catch (error) {
+			throw terminalErrorFromPort(error);
+		}
+	}
+
+	async scroll(viewLabel: string, request: ScrollRequest): Promise<void> {
+		validateSchema(request.schemaVersion);
+		validateAgentSurfaceKey(request.surfaceKey);
+		validateAttachmentId(request.attachmentId);
+		validateScroll(request);
+		const attachment = this.#owned(
+			request.attachmentId,
+			viewLabel,
+			request.surfaceKey,
+			request.targetGeneration,
+		);
+		try {
+			attachment.surface.scroll(
+				request.direction,
+				request.lines,
+				request.column,
+				request.row,
+				request.modifiers,
+			);
 		} catch (error) {
 			throw terminalErrorFromPort(error);
 		}

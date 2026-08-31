@@ -39,6 +39,13 @@ export const MIN_ROWS = 1;
 export const MAX_ROWS = 500;
 export const MAX_PIXEL = 10_000;
 /**
+ * The most rows one wheel notch may move. A gesture that asks for more than a
+ * screenful is a bug in the caller's delta arithmetic, not a scroll.
+ */
+export const MAX_SCROLL_LINES = MAX_ROWS;
+/** Shift | Ctrl | Alt, as the provider's modifier bitset numbers them. */
+export const MAX_SCROLL_MODIFIERS = 0b111;
+/**
  * Input, output, and cumulative ACK sequences cross the JavaScript Number
  * boundary and therefore share the exact safe-integer ceiling.
  */
@@ -307,6 +314,56 @@ export interface ResizeRequest {
 	readonly pixelHeight: number;
 }
 
+/**
+ * One wheel gesture over the surface, as a scroll rather than as bytes.
+ *
+ * The agent's terminal is not this emulator: the provider renders the grid and
+ * sends it as a repaint, so nothing ever leaves the top of the local
+ * scrollback and the emulator's own wheel handling has nothing to move. The
+ * scrollback that does exist is the provider's, and asking it to move is a
+ * request of its own — the same shape as a resize, and validated the same way.
+ *
+ * `column` and `row` are the cell the pointer was over. An agent whose TUI
+ * asks for mouse reporting is sent a wheel event at that cell; one that does
+ * not is scrolled through the provider's scrollback instead. Which of the two
+ * happens is the provider's decision, not this contract's.
+ */
+export interface ScrollRequest {
+	readonly schemaVersion: number;
+	readonly surfaceKey: string;
+	readonly attachmentId: string;
+	readonly targetGeneration: number;
+	readonly direction: ScrollDirection;
+	readonly lines: number;
+	readonly column: number;
+	readonly row: number;
+	/** Shift = 1, Ctrl = 2, Alt = 4. */
+	readonly modifiers: number;
+}
+
+export type ScrollDirection = "up" | "down";
+
+export function validateScroll(request: ScrollRequest): ScrollRequest {
+	if (
+		(request.direction !== "up" && request.direction !== "down") ||
+		!Number.isInteger(request.lines) ||
+		request.lines < 1 ||
+		request.lines > MAX_SCROLL_LINES ||
+		!Number.isInteger(request.column) ||
+		request.column < 0 ||
+		request.column > MAX_COLS ||
+		!Number.isInteger(request.row) ||
+		request.row < 0 ||
+		request.row > MAX_ROWS ||
+		!Number.isInteger(request.modifiers) ||
+		request.modifiers < 0 ||
+		request.modifiers > MAX_SCROLL_MODIFIERS
+	) {
+		throw terminalError(TerminalErrorCode.InvalidRequest);
+	}
+	return request;
+}
+
 export interface DetachRequest {
 	readonly schemaVersion: number;
 	readonly surfaceKey: string;
@@ -509,6 +566,7 @@ export const AGENT_CHANNELS = {
 	attach: "devhub:agent-surface-attach",
 	input: "devhub:agent-surface-input",
 	resize: "devhub:agent-surface-resize",
+	scroll: "devhub:agent-surface-scroll",
 	acknowledge: "devhub:agent-surface-acknowledge",
 	detach: "devhub:agent-surface-detach",
 	frame: "devhub:agent-surface-frame",
@@ -519,6 +577,7 @@ export interface AgentApi {
 	attach(request: AttachRequest): Promise<AttachReceipt>;
 	input(request: InputRequest): Promise<void>;
 	resize(request: ResizeRequest): Promise<void>;
+	scroll(request: ScrollRequest): Promise<void>;
 	acknowledge(request: AckRequest): Promise<void>;
 	detach(request: DetachRequest): Promise<void>;
 	/** Every frame for every attachment; the client routes by attachment id. */

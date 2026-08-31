@@ -1550,6 +1550,23 @@ export class HerdrAgentRuntime {
 		}
 	}
 
+	surfaceScroll(
+		agentId: AgentId,
+		surfaceKey: string,
+		direction: "up" | "down",
+		lines: number,
+		column: number,
+		row: number,
+		modifiers: number,
+	): void {
+		const control = this.#ownedControl(agentId, surfaceKey);
+		try {
+			control.scroll(direction, lines, column, row, modifiers);
+		} catch (error) {
+			throw asAgentError(error).toPortError();
+		}
+	}
+
 	async surfaceReadRecent(
 		agentId: AgentId,
 		surfaceKey: string,

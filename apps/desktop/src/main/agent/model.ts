@@ -715,6 +715,17 @@ export interface TerminalControl {
 	sendText(text: string): Promise<void>;
 	/** Tell the provider the surface's grid, so the agent lays out to it. */
 	resize(cols: number, rows: number): void;
+	/**
+	 * Move the provider's scrollback, or hand the agent a wheel event — the
+	 * provider decides which, from what its TUI has asked for.
+	 */
+	scroll(
+		direction: "up" | "down",
+		lines: number,
+		column: number,
+		row: number,
+		modifiers: number,
+	): void;
 	readRecent(): Promise<Buffer>;
 	detach(): void;
 }

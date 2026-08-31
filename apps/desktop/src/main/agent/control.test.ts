@@ -6,6 +6,7 @@ import {
 	appendTerminalBytes,
 	encodeControlTerminal,
 	encodeHello,
+	encodeScroll,
 	pushBytes,
 	pushVarint,
 	serverTag,
@@ -23,6 +24,25 @@ describe("the Herdr control protocol", () => {
 		// keybindings, launch mode = TerminalAttach (2).
 		const hello = encodeHello();
 		expect([...hello]).toEqual([0, 20, 80, 24, 0, 0, 1, 0, 2]);
+	});
+
+	it("asks Herdr to scroll rather than sending the wheel as input", () => {
+		// AttachScroll: tag 6, source Wheel (0), direction, lines, Some(column),
+		// Some(row), then the modifier bitset as a single byte. Herdr decides
+		// from there whether the notch reaches the agent as a mouse report, as
+		// arrow keys, or as a move of its own scrollback — which is why this is
+		// a frame of its own and not encoded mouse bytes on the input path.
+		expect([...encodeScroll("up", 3, 12, 7, 0)]).toEqual([
+			6, 0, 0, 3, 1, 12, 1, 7, 0,
+		]);
+		expect([...encodeScroll("down", 1, 0, 0, 0b111)]).toEqual([
+			6, 0, 1, 1, 1, 0, 1, 0, 0b111,
+		]);
+		// A count past the one-byte varint boundary still encodes as a varint,
+		// while the modifiers stay one raw byte.
+		expect([...encodeScroll("down", 300, 0, 0, 2)]).toEqual([
+			6, 0, 1, 251, 44, 1, 1, 0, 1, 0, 2,
+		]);
 	});
 
 	it("accepts only a protocol-twenty ANSI welcome", () => {

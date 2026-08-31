@@ -21,6 +21,7 @@ import {
 	type DetachRequest,
 	type InputRequest,
 	type ResizeRequest,
+	type ScrollRequest,
 } from "../ipc/agent.js";
 
 export const agentApi: AgentApi = {
@@ -35,6 +36,9 @@ export const agentApi: AgentApi = {
 
 	resize: (request: ResizeRequest) =>
 		ipcRenderer.invoke(AGENT_CHANNELS.resize, request) as Promise<void>,
+
+	scroll: (request: ScrollRequest) =>
+		ipcRenderer.invoke(AGENT_CHANNELS.scroll, request) as Promise<void>,
 
 	acknowledge: (request: AckRequest) =>
 		ipcRenderer.invoke(AGENT_CHANNELS.acknowledge, request) as Promise<void>,

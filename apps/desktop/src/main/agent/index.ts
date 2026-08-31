@@ -2,7 +2,7 @@
  * The Agent Surface's main-process entry point.
  *
  * This is the only file in the adapter that knows about Electron. It binds the
- * five requests on `AGENT_CHANNELS` to `AgentSurfaceManager` and pushes frames
+ * six requests on `AGENT_CHANNELS` to `AgentSurfaceManager` and pushes frames
  * back to the requesting page's `webContents`. Every failure is thrown across
  * IPC as a `TerminalError` body — nothing here turns a failure into a default.
  *
@@ -28,6 +28,7 @@ import {
 	type DetachRequest,
 	type InputRequest,
 	type ResizeRequest,
+	type ScrollRequest,
 } from "../../ipc/agent.js";
 import { AgentSurfaceManager, type FrameSink } from "./channel.js";
 import { RuntimeLaunchContext } from "./launchContext.js";
@@ -93,6 +94,9 @@ export class AgentService {
 		handle(AGENT_CHANNELS.resize, (event, request: ResizeRequest) =>
 			this.surfaces.resize(viewLabel(event.sender), request),
 		);
+		handle(AGENT_CHANNELS.scroll, (event, request: ScrollRequest) =>
+			this.surfaces.scroll(viewLabel(event.sender), request),
+		);
 		handle(AGENT_CHANNELS.acknowledge, (event, request: AckRequest) =>
 			this.surfaces.acknowledge(viewLabel(event.sender), request),
 		);
@@ -108,6 +112,7 @@ export class AgentService {
 				AGENT_CHANNELS.attach,
 				AGENT_CHANNELS.input,
 				AGENT_CHANNELS.resize,
+				AGENT_CHANNELS.scroll,
 				AGENT_CHANNELS.acknowledge,
 				AGENT_CHANNELS.detach,
 			]) {

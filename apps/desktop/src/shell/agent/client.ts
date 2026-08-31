@@ -3,7 +3,7 @@
  *
  * Ported from the Tauri app's `src/agent/client.ts`. The transport was a Tauri
  * `invoke` plus a per-attach `Channel`; it is now `window.devhub.agent`, backed
- * by Electron IPC. The shape is unchanged: five bounded semantic requests and
+ * by Electron IPC. The shape is unchanged: six bounded semantic requests and
  * one stream of frames.
  *
  * Main pushes every attachment's frames on one channel, so this client routes
@@ -23,6 +23,7 @@ import {
   type DetachRequest,
   type InputRequest,
   type ResizeRequest,
+  type ScrollRequest,
   type TerminalFrame,
 } from "../../ipc/agent.js";
 
@@ -35,6 +36,7 @@ export interface AgentSurfaceClient {
   ): Promise<AttachReceipt>;
   input(request: InputRequest): Promise<void>;
   resize(request: ResizeRequest): Promise<void>;
+  scroll(request: ScrollRequest): Promise<void>;
   acknowledge(request: AckRequest): Promise<void>;
   detach(request: DetachRequest): Promise<void>;
 }
@@ -109,6 +111,9 @@ export function createAgentSurfaceClient(api: AgentApi): AgentSurfaceClient {
     },
     async resize(request) {
       await api.resize(request);
+    },
+    async scroll(request) {
+      await api.scroll(request);
     },
     async acknowledge(request) {
       await api.acknowledge(request);
