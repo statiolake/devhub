@@ -63,11 +63,66 @@ fi
 export PATH="$NODE_HOME/bin:$PATH"
 
 # --- 3. VS Code's own dependencies -----------------------------------------
+# "Installed" is not one directory. `npm ci` in vscode/ installs the root tree
+# and then runs a postinstall that installs a *nested* node_modules in every
+# directory `build/npm/dirs.ts` names. Two of those groups are what the rest of
+# this script and the packaging script consume: `build/` is where `npm run
+# gulp`, `npm run compile` and `npm run electron` resolve their tooling, and
+# `extensions/*/` is what `compile-extensions-build` compiles against.
+#
+# Those nested trees are 3.4 GB and are therefore not in CI's cache, which
+# holds vscode/node_modules, vscode/out, vscode/.build and the toolchain. A
+# cache hit restored a tree that passed the old single-directory check and
+# could not build: the nightly died in packaging on `Cannot find package
+# 'ternary-stream'`, a build/ dependency. So the check asks for the directories
+# the consumers need and names the ones that are missing.
+#
+# The repair for a partial tree is VS Code's own postinstall on its own — the
+# root install is already there, and the nested installs are minutes where a
+# full `npm ci` is tens of them. Two things about invoking it:
+#
+#   * it short-circuits on a state file it keeps *inside* the cached root
+#     node_modules, which a cache hit restores, so it has to be told the tree
+#     is not up to date. VSCODE_FORCE_INSTALL is upstream's own flag for that.
+#   * it is run as `node build/npm/postinstall.ts`, not `npm run postinstall`.
+#     The script takes the npm subcommand to use from `$npm_command`, and npm
+#     sets that to `run-script` for the script it is running — so through `npm
+#     run` it obediently runs `npm run-script` in all 54 directories, prints
+#     each one's list of available scripts, installs nothing, and exits 0.
+vscode_dirs_without_node_modules() {
+	(cd "$VSCODE_DIR" && node -e '
+		const fs = require("fs"), path = require("path");
+		import("./build/npm/dirs.ts").then(({ dirs }) => {
+			for (const dir of dirs) {
+				if (!/^(build|extensions)(\/|$)/.test(dir)) continue;
+				if (fs.existsSync(path.join(dir, "package.json")) && !fs.existsSync(path.join(dir, "node_modules"))) {
+					console.log(dir);
+				}
+			}
+		});
+	')
+}
+
 step "npm ci in vscode/"
 if [ "$FORCE" = 1 ] || [ ! -d "$VSCODE_DIR/node_modules/electron" ]; then
 	(cd "$VSCODE_DIR" && npm ci)
 else
-	echo "vscode/node_modules already installed"
+	INCOMPLETE="$(vscode_dirs_without_node_modules)"
+	if [ -n "$INCOMPLETE" ]; then
+		echo "vscode/node_modules is there, but these have none:"
+		echo "$INCOMPLETE" | sed 's/^/  /'
+		echo "running VS Code's own nested installs"
+		(cd "$VSCODE_DIR" && VSCODE_FORCE_INSTALL=1 node build/npm/postinstall.ts)
+	else
+		echo "vscode/node_modules already installed"
+	fi
+fi
+
+INCOMPLETE="$(vscode_dirs_without_node_modules)"
+if [ -n "$INCOMPLETE" ]; then
+	echo "the install left these directories without a node_modules:" >&2
+	echo "$INCOMPLETE" | sed 's/^/  /' >&2
+	exit 1
 fi
 
 # --- 3b. the patches DevHub cannot avoid ------------------------------------
