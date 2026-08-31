@@ -138,10 +138,13 @@ describe("completing a chord", () => {
 			kind: "run",
 			action: { kind: "open-settings" },
 		});
-		expect(complete(stroke("z"))).toEqual({
-			kind: "run",
-			action: { kind: "toggle-sidebar" },
-		});
+	});
+
+	it("cancels on a key the table has no row for", () => {
+		// `Z` used to collapse the sidebar. The sidebar has one form now, so the
+		// row is gone and the key falls through to the same cancellation any
+		// other unbound key gets.
+		expect(complete(stroke("z"))).toEqual({ kind: "cancelled" });
 	});
 
 	it("selects the Nth sidebar entry by its digit", () => {

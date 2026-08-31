@@ -36,11 +36,9 @@ function workspace(id: string, agentIds: readonly string[]): WorkspaceWire {
 function snapshotOf({
 	workspaces = [],
 	context = { kind: "global" } as NavigationContext,
-	expanded = true,
 }: {
 	workspaces?: readonly WorkspaceWire[];
 	context?: NavigationContext;
-	expanded?: boolean;
 } = {}): AppSnapshotWire {
 	return {
 		editorHost: { status: "ready" },
@@ -49,7 +47,7 @@ function snapshotOf({
 		revision: 1,
 		schemaVersion: 1,
 		selection: { context },
-		sidebar: { width: 248, expanded },
+		sidebar: { width: 248 },
 		splitRatio: 0.55,
 		workspaces,
 	};
@@ -200,16 +198,6 @@ describe("the terminal", () => {
 });
 
 describe("the window commands", () => {
-	it("toggles the sidebar to whichever form it is not in", () => {
-		expect(run({ kind: "toggle-sidebar" }, snapshotOf())).toEqual({
-			kind: "set-sidebar-expanded",
-			expanded: false,
-		});
-		expect(
-			run({ kind: "toggle-sidebar" }, snapshotOf({ expanded: false })),
-		).toEqual({ kind: "set-sidebar-expanded", expanded: true });
-	});
-
 	it("opens the picker and the settings window", () => {
 		expect(run({ kind: "add-workspace" }, snapshotOf())).toEqual({
 			kind: "open-workspace-picker",

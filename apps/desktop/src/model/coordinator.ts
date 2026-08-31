@@ -553,9 +553,6 @@ export class AppCoordinator {
       case "resize_sidebar":
         this.model.setSidebarWidth(intent.width);
         return this.transitionOutcome(beforeRevision, id);
-      case "set_sidebar_expanded":
-        this.model.setSidebarExpanded(intent.expanded);
-        return this.transitionOutcome(beforeRevision, id);
       case "open_folder":
         return this.beginWorkspaceResolution(intent.path, id);
       case "new_window": {

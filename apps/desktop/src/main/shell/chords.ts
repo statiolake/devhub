@@ -25,7 +25,6 @@
  * | `Cmd+Q Shift+C`             | Add Workspace (the picker)                     | `new_workspace`           |
  * | `Cmd+Q Shift+,`             | DevHub Settings                                | `settings`                |
  * | `Cmd+Q 1`…`Cmd+Q 9`         | select the Nth sidebar entry (Scratch = 1)     | extension (tmux idiom)    |
- * | `Cmd+Q Z`                   | toggle the sidebar between pane and icon rail  | `zoom`, reinterpreted     |
  *
  * ## The decisions behind that table
  *
@@ -92,8 +91,7 @@ export type ChordAction =
 	/** One-based, as it is typed: 1 is Scratch. */
 	| { readonly kind: "select-entry"; readonly ordinal: number }
 	| { readonly kind: "add-workspace" }
-	| { readonly kind: "open-settings" }
-	| { readonly kind: "toggle-sidebar" };
+	| { readonly kind: "open-settings" };
 
 /**
  * One row of the table: the key that completes the chord, and what it does.
@@ -147,8 +145,6 @@ export const DEFAULT_CHORDS: readonly ChordBinding[] = [
 	{ key: "<", shift: true, action: { kind: "open-settings" } },
 	{ key: ",", shift: true, action: { kind: "open-settings" } },
 
-	{ key: "z", action: { kind: "toggle-sidebar" } },
-
 	...DIGIT_CHORDS,
 ];
 
@@ -187,7 +183,6 @@ export function matchChord(
 export type ChordEffect =
 	| { readonly kind: "select-context"; readonly context: NavigationContext }
 	| { readonly kind: "toggle-terminal" }
-	| { readonly kind: "set-sidebar-expanded"; readonly expanded: boolean }
 	| { readonly kind: "open-workspace-picker" }
 	| { readonly kind: "open-settings" };
 
@@ -253,12 +248,6 @@ export function resolveChord(
 
 		case "toggle-terminal":
 			return { kind: "toggle-terminal" };
-
-		case "toggle-sidebar":
-			return {
-				kind: "set-sidebar-expanded",
-				expanded: !snapshot.sidebar.expanded,
-			};
 
 		case "select-entry": {
 			const entries = sidebarEntries(snapshot);

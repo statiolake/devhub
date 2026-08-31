@@ -37,7 +37,6 @@ export interface ChordHost {
 	selectContext(context: NavigationContext): void;
 	/** Show or hide the integrated terminal in the workbench on screen. */
 	toggleIntegratedTerminal(): void;
-	setSidebarExpanded(expanded: boolean): void;
 	openWorkspacePicker(): void;
 	openSettings(): void;
 }
@@ -63,9 +62,6 @@ function perform(host: ChordHost, effect: ChordEffect): void {
 			return;
 		case "toggle-terminal":
 			host.toggleIntegratedTerminal();
-			return;
-		case "set-sidebar-expanded":
-			host.setSidebarExpanded(effect.expanded);
 			return;
 		case "open-workspace-picker":
 			host.openWorkspacePicker();

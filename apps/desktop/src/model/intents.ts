@@ -190,7 +190,6 @@ export type UserIntent =
   | { readonly type: "select_context"; readonly context: NavigationContext }
   | { readonly type: "resize_sidebar"; readonly width: number }
   | { readonly type: "resize_split"; readonly ratio: number }
-  | { readonly type: "set_sidebar_expanded"; readonly expanded: boolean }
   | { readonly type: "open_folder"; readonly path: RequestedPath }
   | { readonly type: "new_window"; readonly path?: RequestedPath }
   | { readonly type: "retry_workspace"; readonly workspaceId: WorkspaceId }

@@ -82,16 +82,6 @@ export function sameSelection(
 
 export interface SidebarSnapshot {
   readonly width: number;
-  /**
-   * Whether the sidebar is the full pane rather than the icon rail.
-   *
-   * The sidebar is never absent: collapsed, it is a rail of one glyph per
-   * Workspace, so this says which of its two forms is on screen and not
-   * whether it exists. Separate from the width on purpose: collapsing must not
-   * forget how wide the person made the pane, and a width of zero is not a
-   * legal width.
-   */
-  readonly expanded: boolean;
 }
 
 export interface AgentSnapshot {
@@ -179,7 +169,6 @@ export class AppModel {
   private selectionValue: NavigationSelection = { context: GLOBAL_CONTEXT };
   private sidebarWidthValue = SIDEBAR_DEFAULT_WIDTH;
   private splitRatioValue = SPLIT_DEFAULT_RATIO;
-  private sidebarExpandedValue = true;
   private editorHost: EditorHostState = { kind: "starting" };
   private revision = 0;
 
@@ -190,10 +179,7 @@ export class AppModel {
       selection: this.selectionValue,
       layout: this.resolveLayout(this.selectionValue.context),
       workspaces: this.workspaceSnapshots(),
-      sidebar: {
-        width: this.sidebarWidthValue,
-        expanded: this.sidebarExpandedValue,
-      },
+      sidebar: { width: this.sidebarWidthValue },
       splitRatio: this.splitRatioValue,
       editorHost: this.editorHost,
     };
@@ -223,19 +209,16 @@ export class AppModel {
     return this.workspaceList;
   }
 
-  restoreSidebar(width: number, expanded = true): boolean {
+  restoreSidebar(width: number): boolean {
     if (width < SIDEBAR_MIN_WIDTH || width > SIDEBAR_MAX_WIDTH) {
       fail(DomainErrorCode.InvalidSidebarWidth);
     }
-    const changed =
-      this.sidebarWidthValue !== width ||
-      this.sidebarExpandedValue !== expanded;
-    if (changed) {
-      this.sidebarWidthValue = width;
-      this.sidebarExpandedValue = expanded;
-      this.bumpRevision();
+    if (this.sidebarWidthValue === width) {
+      return false;
     }
-    return changed;
+    this.sidebarWidthValue = width;
+    this.bumpRevision();
+    return true;
   }
 
   setSidebarWidth(width: number): boolean {
@@ -274,19 +257,6 @@ export class AppModel {
   /** Restoring is setting, minus the revision bump on an unchanged value. */
   restoreSplitRatio(ratio: number): boolean {
     return this.setSplitRatio(ratio);
-  }
-
-  get sidebarExpanded(): boolean {
-    return this.sidebarExpandedValue;
-  }
-
-  setSidebarExpanded(expanded: boolean): boolean {
-    if (this.sidebarExpandedValue === expanded) {
-      return false;
-    }
-    this.sidebarExpandedValue = expanded;
-    this.bumpRevision();
-    return true;
   }
 
   registerRepository(repository: Repository): void {

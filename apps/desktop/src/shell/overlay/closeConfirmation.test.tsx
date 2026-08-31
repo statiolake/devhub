@@ -42,7 +42,7 @@ function snapshotWith(agents: boolean): AppSnapshot {
     selection: {
       context: { kind: "agent", agentId: AGENT_ID },
     } as AppSnapshot["selection"],
-    sidebar: { expanded: true, width: 240 } as AppSnapshot["sidebar"],
+    sidebar: { width: 240 } as AppSnapshot["sidebar"],
     splitRatio: 0.55,
     workspaces: [
       {

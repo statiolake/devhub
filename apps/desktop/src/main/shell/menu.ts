@@ -8,7 +8,7 @@
  *
  * The menu is rebuilt whenever the model changes, because a menu item has to
  * say what is true now — Close Workspace is only meaningful with a workspace
- * selected, and Collapse Sidebar becomes Expand Sidebar.
+ * selected, and it names the workspace it would close.
  *
  * **Nothing here has an accelerator, deliberately.** A menu accelerator is a
  * key taken away from whatever is focused, and DevHub's surfaces are whole
@@ -36,7 +36,6 @@ export interface MenuHost {
 	focusedWindow(): "shell" | "settings" | "none";
 	/** Show or hide the integrated terminal in the workbench on screen. */
 	toggleIntegratedTerminal(): void;
-	setSidebarExpanded(expanded: boolean): void;
 	closeWorkspace(workspaceId: string): void;
 	openWorkspacePicker(): void;
 	openSettings(): void;
@@ -69,7 +68,6 @@ function selectedWorkspace(
 function template(menuHost: MenuHost): Electron.MenuItemConstructorOptions[] {
 	const snapshot = menuHost.snapshot();
 	const workspace = selectedWorkspace(snapshot);
-	const sidebarExpanded = snapshot?.sidebar.expanded ?? true;
 
 	return [
 		{
@@ -162,15 +160,6 @@ function template(menuHost: MenuHost): Electron.MenuItemConstructorOptions[] {
 					label: "Toggle Integrated Terminal",
 					click: () => {
 						menuHost.toggleIntegratedTerminal();
-					},
-				},
-				{ type: "separator" },
-				{
-					// Collapsed is the icon rail, not nothing, so the item says what
-					// it does: the sidebar is there either way.
-					label: sidebarExpanded ? "Collapse Sidebar" : "Expand Sidebar",
-					click: () => {
-						menuHost.setSidebarExpanded(!sidebarExpanded);
 					},
 				},
 				{ type: "separator" },

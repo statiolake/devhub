@@ -65,6 +65,13 @@ import {
  * The bump is for the other direction — an older DevHub reading a file written
  * here would find no activity to restore and would have to invent one, and
  * refusing is the guarantee this number exists to make.
+ *
+ * `sidebar.expanded` was retired *without* a bump, for the same reason the
+ * activity needed one and this does not. It is read like the activity — a
+ * field this build has no use for, ignored on load and dropped on the next
+ * save — and in the other direction a build that still collapses the sidebar
+ * finds the field missing, which it already reads as "expanded", the only
+ * state there is now. Nothing has to be invented, so nothing has to refuse.
  */
 export const STATE_SCHEMA_VERSION = 2;
 export { SIDEBAR_DEFAULT_WIDTH };
@@ -137,12 +144,6 @@ export interface WindowFrame {
 
 export interface SidebarState {
   width: number;
-  /**
-   * Whether the sidebar is the full pane rather than the icon rail. A state
-   * file written before this was a setting says nothing about it, and a
-   * sidebar nobody collapsed is an expanded one.
-   */
-  expanded?: boolean;
 }
 
 export interface ShutdownMetadata {
@@ -313,10 +314,7 @@ export function freshState(): PersistedAppState {
     schema_version: STATE_SCHEMA_VERSION,
     workspaces: [],
     navigation: { context: { kind: "global" } },
-    sidebar: {
-      width: SIDEBAR_DEFAULT_WIDTH,
-      expanded: true,
-    },
+    sidebar: { width: SIDEBAR_DEFAULT_WIDTH },
     split: { ratio: SPLIT_DEFAULT_RATIO },
     window: {
       frame: {
@@ -850,7 +848,7 @@ export function hydrateModel(
   }
 
   try {
-    model.restoreSidebar(state.sidebar.width, state.sidebar.expanded ?? true);
+    model.restoreSidebar(state.sidebar.width);
     model.restoreSplitRatio(state.split.ratio);
   } catch {
     return fail("STATE_INVALID");
@@ -977,10 +975,7 @@ export function stateFromSnapshot(
       })),
     })),
     navigation: { context: contextRecord(snapshot.selection.context) },
-    sidebar: {
-      width: snapshot.sidebar.width,
-      expanded: snapshot.sidebar.expanded,
-    },
+    sidebar: { width: snapshot.sidebar.width },
     split: { ratio: snapshot.splitRatio },
   };
   validateState(state);

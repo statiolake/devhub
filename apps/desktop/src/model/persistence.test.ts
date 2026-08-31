@@ -285,6 +285,29 @@ describe("store", () => {
     expect(load.state.split.ratio).toBe(SPLIT_DEFAULT_RATIO);
   });
 
+  it("loads a file that still says the sidebar is collapsed", async () => {
+    // `sidebar.expanded` is retired: there is one sidebar form now. A file that
+    // says it was collapsed still loads, and the field it says it with is
+    // ignored on load and gone from the next save.
+    const collapsed = {
+      ...freshState(),
+      sidebar: { width: 321, expanded: false },
+    };
+    await writeFile(path, JSON.stringify(collapsed), { mode: 0o600 });
+    const store = new JsonStateStore(path);
+    const load = await store.loadState();
+    expect(load.state.sidebar.width).toBe(321);
+
+    const model = hydrateModel(load.state, []);
+    expect(model.snapshot().sidebar.width).toBe(321);
+
+    await store.saveState(stateFromSnapshot(model.snapshot()));
+    const written: Record<string, unknown> = JSON.parse(
+      await readFile(path, "utf8"),
+    ) as Record<string, unknown>;
+    expect(written["sidebar"]).toEqual({ width: 321 });
+  });
+
   it("round-trips an interrupted socket transition", async () => {
     const state = stateFromSnapshot(populatedModel().snapshot());
     state.tmux = {

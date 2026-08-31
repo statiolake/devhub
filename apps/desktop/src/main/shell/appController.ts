@@ -394,9 +394,6 @@ export class AppController {
 			toggleIntegratedTerminal: () => {
 				this.toggleIntegratedTerminal();
 			},
-			setSidebarExpanded: (expanded) => {
-				this.dispatchOwn({ type: "set_sidebar_expanded", expanded });
-			},
 			closeWorkspace: (workspaceId) => {
 				// A menu command has no caller waiting on its answer, so its
 				// failure goes to the error surface like every other one.
@@ -431,9 +428,6 @@ export class AppController {
 			},
 			toggleIntegratedTerminal: () => {
 				this.toggleIntegratedTerminal();
-			},
-			setSidebarExpanded: (expanded) => {
-				this.dispatchOwn({ type: "set_sidebar_expanded", expanded });
 			},
 			openWorkspacePicker: () => {
 				this.send(CHANNELS.menuCommand, "open_workspace_picker");

@@ -157,7 +157,6 @@ export type AppIntentWire =
 	| { readonly context: ContextWire; readonly type: "select_context" }
 	| { readonly type: "resize_sidebar"; readonly width: number }
 	| { readonly ratio: number; readonly type: "resize_split" }
-	| { readonly expanded: boolean; readonly type: "set_sidebar_expanded" }
 	| { readonly type: "open_workspace_picker" }
 	| {
 			readonly profileId: string;
@@ -303,13 +302,6 @@ export interface SelectionWire {
 }
 export interface SidebarWire {
 	readonly width: number;
-	/**
-	 * Whether the sidebar is the full pane rather than the icon rail.
-	 *
-	 * The sidebar is never absent: collapsed, it is a rail of one glyph per
-	 * Workspace. This says which of its two forms is on screen.
-	 */
-	readonly expanded: boolean;
 }
 export interface TerminalPaletteWire {
 	readonly ansi: readonly string[];

@@ -285,10 +285,7 @@ export function snapshotWire(
     selection: { context: contextWire(snapshot.selection.context) },
     layout: layoutWire(snapshot.layout),
     workspaces,
-    sidebar: {
-      width: snapshot.sidebar.width,
-      expanded: snapshot.sidebar.expanded,
-    },
+    sidebar: { width: snapshot.sidebar.width },
     splitRatio: snapshot.splitRatio,
   };
   if (
@@ -631,11 +628,6 @@ export function intentFromWire(wire: AppIntentWire): UserIntent {
         invalid();
       }
       return { type: "resize_sidebar", width: wire.width };
-    case "set_sidebar_expanded":
-      if (typeof wire.expanded !== "boolean") {
-        invalid();
-      }
-      return { type: "set_sidebar_expanded", expanded: wire.expanded };
     case "open_workspace_picker":
       // The picker is a shell-side dialog; it never reaches the model.
       return invalid();
