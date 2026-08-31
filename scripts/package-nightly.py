@@ -160,8 +160,11 @@ def check_inputs() -> None:
 		["git", "-C", str(VSCODE_DIR), "rev-parse", "HEAD"],
 		capture_output=True, check=True, text=True,
 	).stdout
+	# The shell's command substitution strips trailing newlines before the
+	# shasum; reproduce that byte-for-byte or the two sides disagree forever.
+	source_state = (head.encode() + b"".join(p.read_bytes() for p in patches)).rstrip(b"\n")
 	state = subprocess.run(
-		["shasum"], input=head.encode() + b"".join(p.read_bytes() for p in patches),
+		["shasum"], input=source_state,
 		capture_output=True, check=True,
 	).stdout.split()[0].decode()
 	if not stamp.exists() or stamp.read_text().strip() != state:
