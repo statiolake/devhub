@@ -18,10 +18,53 @@ import { useCallback, useEffect, useState } from "react";
 import { useAppShell } from "../../useAppShell";
 import { Picker, type PickerItem } from "./Picker";
 import { PathLabel } from "./PathLabel";
+import { CloneProjectSheet, NewProjectSheet } from "./ProjectSheets";
 
 export interface WorkspacePickerProps {
   readonly onDismiss: () => void;
 }
+
+/**
+ * The two rows that are not workspaces.
+ *
+ * A path can never be one of these ids — a candidate's id is its absolute path
+ * — so the answer the picker gives back says which of the three things
+ * happened without anything having to be tagged.
+ */
+const NEW_PROJECT = "devhub:new-project";
+const CLONE_PROJECT = "devhub:clone-project";
+
+function PlusGlyph() {
+  return (
+    <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+      <path d="M8 3.6v8.8M3.6 8h8.8" />
+    </svg>
+  );
+}
+
+function CloneGlyph() {
+  return (
+    <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+      <path d="M5.6 2.6h5.2a1 1 0 0 1 1 1v6.2a1 1 0 0 1-1 1H5.6a1 1 0 0 1-1-1V3.6a1 1 0 0 1 1-1z" />
+      <path d="M3 5.2v7.2a1 1 0 0 0 1 1h5.4" />
+    </svg>
+  );
+}
+
+const ACTIONS: readonly PickerItem[] = [
+  {
+    id: NEW_PROJECT,
+    label: "New Project…",
+    detail: "Create a folder and open it",
+    glyph: <PlusGlyph />,
+  },
+  {
+    id: CLONE_PROJECT,
+    label: "Clone Project…",
+    detail: "Clone a Git repository and open it",
+    glyph: <CloneGlyph />,
+  },
+];
 
 function FolderGlyph() {
   return (
@@ -32,6 +75,10 @@ function FolderGlyph() {
 }
 
 export function WorkspacePicker({ onDismiss }: WorkspacePickerProps) {
+  // What this sheet is at the moment: the list, or one of the two things the
+  // list can start. One state, because they are one modal — the picker is not
+  // still standing behind a form it opened.
+  const [asking, setAsking] = useState<"pick" | "new" | "clone">("pick");
   const {
     pickerCandidates,
     pickerBusy,
@@ -80,11 +127,25 @@ export function WorkspacePicker({ onDismiss }: WorkspacePickerProps) {
     [cancelWorkspacePicker, onDismiss, reportFailure],
   );
 
+  // Leaving the list for a form ends the search behind it: nothing is going to
+  // read its results, and a source left running would answer into nowhere.
+  const ask = useCallback(
+    (next: "new" | "clone") => {
+      void cancelWorkspacePicker().catch(reportFailure);
+      setAsking(next);
+    },
+    [cancelWorkspacePicker, reportFailure],
+  );
+
+  if (asking === "new") return <NewProjectSheet onDismiss={onDismiss} />;
+  if (asking === "clone") return <CloneProjectSheet onDismiss={onDismiss} />;
+
   return (
     <Picker
       title="Open Workspace"
       placeholder="Open Workspace"
       items={pool}
+      pinned={ACTIONS}
       busy={pickerBusy}
       emptyNoMatch="No workspaces match."
       emptyNoItems="No workspaces found in the configured sources."
@@ -92,6 +153,14 @@ export function WorkspacePicker({ onDismiss }: WorkspacePickerProps) {
       // A workspace is a workbench and nothing else, so there is nothing for
       // the split modifier to mean here: both ways of choosing open it.
       onChoose={(choice) => {
+        if (choice.id === NEW_PROJECT) {
+          ask("new");
+          return;
+        }
+        if (choice.id === CLONE_PROJECT) {
+          ask("clone");
+          return;
+        }
         finish(() => selectWorkspacePicker(choice.id));
       }}
       onCancel={() => {

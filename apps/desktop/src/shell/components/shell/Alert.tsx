@@ -29,7 +29,12 @@ export interface AlertProps {
   readonly message?: string;
   /** Extra rows the person needs before deciding, as label/value pairs. */
   readonly detail?: readonly (readonly [string, string])[];
-  readonly tone?: "caution" | "danger";
+  /**
+   * `plain` is a sheet that asks for something rather than warning about it —
+   * a name, a path, a URL. It draws no caution mark, because a triangle on a
+   * form teaches that the triangle means nothing.
+   */
+  readonly tone?: "plain" | "caution" | "danger";
   readonly actions: readonly AlertAction[];
   /** Escape, and clicking outside. Cancelling is always available. */
   readonly onCancel: () => void;
@@ -127,12 +132,14 @@ export function Alert({
           }
         }}
       >
-        <div className="mac-alert-body">
-          <div
-            className={`mac-alert-icon${tone === "danger" ? " danger" : ""}`}
-          >
-            <CautionGlyph />
-          </div>
+        <div className={`mac-alert-body${tone === "plain" ? " plain" : ""}`}>
+          {tone === "plain" ? null : (
+            <div
+              className={`mac-alert-icon${tone === "danger" ? " danger" : ""}`}
+            >
+              <CautionGlyph />
+            </div>
+          )}
           <div className="mac-alert-text">
             <h2 className="mac-title" id="mac-alert-title">
               {title}

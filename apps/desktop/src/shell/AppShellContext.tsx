@@ -368,6 +368,40 @@ export function AppShellProvider({
     [transport],
   );
 
+  /**
+   * Start a workspace that does not exist yet.
+   *
+   * Neither of these reports its failure here. They are the act of one sheet,
+   * which is still on screen when they fail and is where the person is going
+   * to correct the URL or the path — so the sheet awaits the answer and shows
+   * it. What they do share with every other opening is the snapshot that comes
+   * back, which is applied the way the picker's own selection is.
+   */
+  const applyOpening = useCallback(
+    (outcome: AppOutcome) => {
+      applySnapshot(outcome.snapshot);
+      setPickerBusy(false);
+      return outcome;
+    },
+    [applySnapshot],
+  );
+
+  const createProject = useCallback(
+    async (path: string) => applyOpening(await transport.createProject(path)),
+    [applyOpening, transport],
+  );
+
+  const cloneProject = useCallback(
+    async (url: string, parentDirectory: string) =>
+      applyOpening(await transport.cloneProject(url, parentDirectory)),
+    [applyOpening, transport],
+  );
+
+  const projectDefaultDirectory = useCallback(
+    () => transport.projectDefaultDirectory(),
+    [transport],
+  );
+
   const confirmPending = useCallback(async () => {
     if (!pendingConfirmation || confirmationBusyRef.current) return;
     confirmationBusyRef.current = true;
@@ -447,6 +481,9 @@ export function AppShellProvider({
       cancelWorkspacePicker,
       selectWorkspacePicker,
       chooseWorkspaceFolder,
+      createProject,
+      cloneProject,
+      projectDefaultDirectory,
       agentProfiles,
       pendingConfirmation,
       confirmationBusy,
@@ -460,6 +497,9 @@ export function AppShellProvider({
       appearance,
       cancelWorkspacePicker,
       chooseWorkspaceFolder,
+      cloneProject,
+      createProject,
+      projectDefaultDirectory,
       confirmPending,
       confirmationBusy,
       dismissCloseConfirmation,

@@ -147,6 +147,20 @@ export interface DevhubApi {
 		listener: (event: WorkspacePickerEvent) => void,
 	): () => void;
 
+	/**
+	 * The two ways a workspace can start that are not "find one that exists".
+	 *
+	 * Both make a directory and then open it, in one call, because they are one
+	 * act: a folder created and not opened is litter, and a page that had to ask
+	 * for the second half could fail between them. A failure — the folder is
+	 * there already, git could not reach the URL — is thrown with what to do
+	 * about it, and the sheet that asked shows it and stays open.
+	 */
+	createProject(path: string): Promise<AppOutcome>;
+	cloneProject(url: string, parentDirectory: string): Promise<AppOutcome>;
+	/** Where a new project goes unless the person says otherwise. */
+	projectDefaultDirectory(): Promise<string>;
+
 	openSettings(): Promise<void>;
 	openExternalUrl(url: string): Promise<void>;
 
@@ -183,6 +197,9 @@ export const CHANNELS = {
 	startWorkspacePicker: "devhub:start-workspace-picker",
 	cancelWorkspacePicker: "devhub:cancel-workspace-picker",
 	selectWorkspacePicker: "devhub:select-workspace-picker",
+	createProject: "devhub:create-project",
+	cloneProject: "devhub:clone-project",
+	projectDefaultDirectory: "devhub:project-default-directory",
 	openSettings: "devhub:open-settings",
 	openExternalUrl: "devhub:open-external-url",
 	setContentRect: "devhub:set-content-rect",

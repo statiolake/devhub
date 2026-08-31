@@ -103,6 +103,16 @@ const devhub: DevhubApi = {
 			CHANNELS.selectWorkspacePicker,
 			path,
 		) as Promise<AppOutcome>,
+	createProject: (path: string) =>
+		ipcRenderer.invoke(CHANNELS.createProject, path) as Promise<AppOutcome>,
+	cloneProject: (url: string, parentDirectory: string) =>
+		ipcRenderer.invoke(
+			CHANNELS.cloneProject,
+			url,
+			parentDirectory,
+		) as Promise<AppOutcome>,
+	projectDefaultDirectory: () =>
+		ipcRenderer.invoke(CHANNELS.projectDefaultDirectory) as Promise<string>,
 
 	openSettings: () =>
 		ipcRenderer.invoke(CHANNELS.openSettings) as Promise<void>,

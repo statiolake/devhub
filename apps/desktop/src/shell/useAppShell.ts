@@ -30,6 +30,14 @@ export interface AppShellContextValue {
     path: string,
   ) => Promise<AppOutcome | undefined>;
   readonly chooseWorkspaceFolder: () => Promise<string | undefined>;
+  /** Make a folder and open it. Throws what to do about it when it cannot. */
+  readonly createProject: (path: string) => Promise<AppOutcome>;
+  /** Clone into `parentDirectory` and open what git made. Throws git's reason. */
+  readonly cloneProject: (
+    url: string,
+    parentDirectory: string,
+  ) => Promise<AppOutcome>;
+  readonly projectDefaultDirectory: () => Promise<string>;
   readonly agentProfiles: AgentProfiles;
   readonly pendingConfirmation: {
     readonly confirmationId: string;

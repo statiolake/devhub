@@ -45,6 +45,9 @@ export interface AppShellClient {
   startWorkspacePicker(query: string): Promise<string>;
   cancelWorkspacePicker(): Promise<void>;
   selectWorkspacePicker(path: string): Promise<AppOutcome>;
+  createProject(path: string): Promise<AppOutcome>;
+  cloneProject(url: string, parentDirectory: string): Promise<AppOutcome>;
+  projectDefaultDirectory(): Promise<string>;
   chooseWorkspaceFolder(): Promise<string | undefined>;
   openSettings(): Promise<void>;
   openExternalUrl(url: string): Promise<void>;
@@ -97,6 +100,10 @@ export function createShellClient(api: DevhubApi = devhub()): AppShellClient {
     startWorkspacePicker: (query) => api.startWorkspacePicker(query),
     cancelWorkspacePicker: () => api.cancelWorkspacePicker(),
     selectWorkspacePicker: (path) => api.selectWorkspacePicker(path),
+    createProject: (path) => api.createProject(path),
+    cloneProject: (url, parentDirectory) =>
+      api.cloneProject(url, parentDirectory),
+    projectDefaultDirectory: () => api.projectDefaultDirectory(),
     chooseWorkspaceFolder: () => api.chooseWorkspaceFolder(),
     openSettings: () => api.openSettings(),
     openExternalUrl: (url) => api.openExternalUrl(url),

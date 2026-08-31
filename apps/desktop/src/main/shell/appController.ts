@@ -2171,7 +2171,12 @@ export class AppController {
 			this.launchEnvironment["PATH"] ?? "",
 		);
 		if (git.kind === "unavailable") {
-			throw new Error(runtimeUnavailableMessage(git));
+			throw new TypedFailure(
+				withSummary(
+					errorWireAt("workspace_unavailable"),
+					runtimeUnavailableMessage(git),
+				),
+			);
 		}
 		return cloneProject({
 			url,
@@ -2235,17 +2240,28 @@ export class AppController {
 		handle(CHANNELS.projectDefaultDirectory, () =>
 			defaultProjectDirectory(this.config),
 		);
+		// A refusal travels the way every other one does — as the structured
+		// error inside the message — so the sheet that asked shows the sentence
+		// and not "the native app shell is unavailable".
 		handle(CHANNELS.createProject, async (_event, path: string) => {
 			this.cancelPicker?.();
 			this.cancelPicker = undefined;
-			return this.openFolder(await createProject(path));
+			try {
+				return this.openFolder(await createProject(path));
+			} catch (error: unknown) {
+				throw asIpcError(errorWire(error));
+			}
 		});
 		handle(
 			CHANNELS.cloneProject,
 			async (_event, url: string, parentDirectory: string) => {
 				this.cancelPicker?.();
 				this.cancelPicker = undefined;
-				return this.openFolder(await this.clone(url, parentDirectory));
+				try {
+					return this.openFolder(await this.clone(url, parentDirectory));
+				} catch (error: unknown) {
+					throw asIpcError(errorWire(error));
+				}
 			},
 		);
 
