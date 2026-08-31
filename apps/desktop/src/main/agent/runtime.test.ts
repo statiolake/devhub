@@ -201,6 +201,45 @@ describe("the Herdr agent runtime", () => {
 		expect(thrown?.message).toContain(longConfigHome);
 	});
 
+	it("tells every agent it launches that the surface renders true colour", async () => {
+		// An Agent's output is drawn by xterm.js, which renders 24-bit colour.
+		// A terminal is told so through tmux; Herdr does not use tmux, so an
+		// Agent was told only when `COLORTERM` happened to survive the login
+		// environment import — true of a shell-launched DevHub, not necessarily
+		// of one launched from Finder. The capability is a fact about the
+		// surface, so it is asserted rather than inherited.
+		const read = async (
+			environment: Record<string, string>,
+		): Promise<{ colorterm: string; term: string }> => {
+			const launch = RuntimeLaunchContext.create(scratchDir(), environment);
+			const child = launch.spawn(launch.resolve("/bin/sh"), [
+				"-c",
+				'printf "%s\\n%s" "$COLORTERM" "$TERM"',
+			]);
+			const chunks: Buffer[] = [];
+			child.stdout?.on("data", (chunk: Buffer) => chunks.push(chunk));
+			await new Promise((resolve) => child.on("close", resolve));
+			const [colorterm = "", term = ""] = Buffer.concat(chunks)
+				.toString("utf8")
+				.split("\n");
+			return { colorterm, term };
+		};
+
+		// Nothing in the login environment said so — a Finder launch.
+		expect((await read({ PATH: "/usr/bin:/bin" })).colorterm).toBe("truecolor");
+		// Something said something else. The surface's capability is not the
+		// launching terminal's, so it is not negotiated with it.
+		expect(
+			await read({ PATH: "/usr/bin:/bin", COLORTERM: "16", TERM: "vt100" }),
+		).toEqual({
+			colorterm: "truecolor",
+			// `TERM` is the user's own and is passed through: Herdr's control
+			// stream is not a terminfo consumer, so overriding it would take
+			// something away and give nothing.
+			term: "vt100",
+		});
+	});
+
 	it("names the Herdr it could not find, and where it looked", () => {
 		// The reason is composed where the search happens and reported at the
 		// first attach, far from it. "Agent runtime unavailable" was all that

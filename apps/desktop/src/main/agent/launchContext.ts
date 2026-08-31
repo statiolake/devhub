@@ -218,10 +218,39 @@ export class RuntimeLaunchContext {
 		return spawn(executable.path, [...args], {
 			...options,
 			cwd: this.#home,
-			env: Object.fromEntries(this.#environment),
+			env: this.#spawnEnvironment(),
 			shell: false,
 			detached: process.platform !== "win32",
 		});
+	}
+
+	/**
+	 * The launch environment, with the surface's colour capability stated.
+	 *
+	 * This is the Agent-side twin of `terminalEnvironment` in
+	 * `main/terminal/pty.ts`, and it exists for the same reason: an Agent's
+	 * output is drawn by xterm.js, which renders 24-bit colour, so the only
+	 * thing standing between an Agent and true colour is whether anything told
+	 * it so. `COLORTERM=truecolor` is the out-of-band channel invented for
+	 * exactly that, because terminfo cannot express 24-bit colour.
+	 *
+	 * A terminal gets it through tmux; Herdr does not use tmux, so an Agent got
+	 * it only when `COLORTERM` happened to be in the imported login
+	 * environment. That is true of a shell-launched DevHub and need not be true
+	 * of one launched from Finder, which made an Agent's colour depend on how
+	 * the app was started. Asserting it here makes the capability a fact about
+	 * the surface rather than an accident of the launch.
+	 *
+	 * `TERM` is deliberately not forced. A terminal's `TERM` is what tmux
+	 * negotiates its client with and had to be pinned; an Agent talks to
+	 * Herdr's control stream, which is not a terminfo consumer, so overriding
+	 * the user's own `TERM` here would take something away and give nothing.
+	 */
+	#spawnEnvironment(): Record<string, string> {
+		return {
+			...Object.fromEntries(this.#environment),
+			COLORTERM: "truecolor",
+		};
 	}
 }
 
