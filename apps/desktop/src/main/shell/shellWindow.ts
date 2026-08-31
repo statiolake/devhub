@@ -8,6 +8,7 @@
  */
 
 import { electron } from "../electron.js";
+import { sendLinksToTheBrowser } from "./externalLinks.js";
 import type { ContentRect } from "../../ipc/contract.js";
 import { WINDOW_TITLES } from "../../ipc/windowTitles.js";
 import { ModalOverlay } from "./modalOverlay.js";
@@ -88,6 +89,8 @@ export class ShellWindow {
 				nodeIntegration: false,
 			},
 		});
+
+		sendLinksToTheBrowser(this.window.webContents);
 
 		this.modals = new ModalOverlay(
 			{

@@ -21,6 +21,7 @@
 
 import { randomUUID } from "node:crypto";
 import { electron } from "../electron.js";
+import { sendLinksToTheBrowser } from "./externalLinks.js";
 import {
 	CHANNELS,
 	type ModalRequest,
@@ -236,6 +237,9 @@ export class ModalOverlay {
 		// The layer is a hole with modals in it: everything the person can see
 		// through it is a real, live workbench, not a picture of one.
 		view.setBackgroundColor("#00000000");
+		// The overlay draws DevHub's own page and nothing else; a link in a
+		// modal leaves through the browser like every other link.
+		sendLinksToTheBrowser(view.webContents);
 		view.webContents.on("did-finish-load", () => {
 			// The page starts empty and is told what to draw; a reload has to be
 			// told again, or the layer is up with nothing on it.

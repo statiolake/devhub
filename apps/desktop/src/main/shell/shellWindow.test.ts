@@ -44,6 +44,7 @@ class FakeView {
 			this.webContents.on(event, listener);
 		},
 		removeListener: () => undefined,
+		setWindowOpenHandler: () => undefined,
 		send: () => undefined,
 		focus: () => {
 			focused = this.webContents.id;
@@ -75,13 +76,32 @@ class FakeContentView {
 	}
 }
 
+/** What a page asked to open in a new window, in order. */
+type WindowOpenHandler = (details: {
+	url: string;
+}) => Electron.WindowOpenHandlerResponse;
+
 class FakeWindow {
 	readonly contentView = new FakeContentView();
+	windowOpenHandler: WindowOpenHandler | undefined;
+	readonly navigationListeners: ((
+		event: { preventDefault: () => void },
+		url: string,
+	) => void)[] = [];
 	readonly webContents = {
 		id: nextId(),
 		send: () => undefined,
 		focus: () => {
 			focused = this.webContents.id;
+		},
+		setWindowOpenHandler: (handler: WindowOpenHandler) => {
+			this.windowOpenHandler = handler;
+		},
+		on: (
+			event: string,
+			listener: (event: { preventDefault: () => void }, url: string) => void,
+		) => {
+			if (event === "will-navigate") this.navigationListeners.push(listener);
 		},
 	};
 	isDestroyed(): boolean {
@@ -96,10 +116,19 @@ class FakeWindow {
 	show(): void {}
 }
 
+/** Every URL handed to the system browser, in order. */
+const openedExternally: string[] = [];
+
 vi.mock("../electron.js", () => ({
 	electron: {
 		BrowserWindow: FakeWindow,
 		WebContentsView: FakeView,
+		shell: {
+			openExternal: (url: string) => {
+				openedExternally.push(url);
+				return Promise.resolve();
+			},
+		},
 	},
 }));
 
@@ -388,5 +417,51 @@ describe("the shell window's modal layer", () => {
 		const next = shell.modals.openModal({ kind: "workspace-picker" });
 		shell.modals.closeModal(next);
 		expect(focused).toBe(shell.window.webContents.id);
+	});
+});
+
+describe("links out of the App Shell page", () => {
+	let shell: ShellWindow;
+
+	beforeEach(() => {
+		openedExternally.length = 0;
+		shell = new ShellWindow(
+			"preload.js",
+			"devhub-app://shell/index.html",
+			undefined,
+		);
+	});
+
+	const fake = (): FakeWindow => shell.window as unknown as FakeWindow;
+
+	function navigate(url: string): boolean {
+		let prevented = false;
+		for (const listener of fake().navigationListeners) {
+			listener({ preventDefault: () => (prevented = true) }, url);
+		}
+		return prevented;
+	}
+
+	it("sends a page's window.open to the browser and mints no window", () => {
+		// xterm's stock OSC 8 handler is a `window.open`, and Electron's default
+		// answer to one is a new BrowserWindow wearing DevHub's preload with a
+		// stranger's page inside it. There is no such window.
+		const answer = fake().windowOpenHandler?.({
+			url: "https://example.com/docs",
+		});
+		expect(answer).toEqual({ action: "deny" });
+		expect(openedExternally).toEqual(["https://example.com/docs"]);
+	});
+
+	it("sends a navigation away from the shell's own scheme to the browser", () => {
+		expect(navigate("https://example.com/docs")).toBe(true);
+		expect(openedExternally).toEqual(["https://example.com/docs"]);
+	});
+
+	it("leaves the shell's own page alone", () => {
+		expect(navigate("devhub-app://shell/index.html?window=overlay")).toBe(
+			false,
+		);
+		expect(openedExternally).toEqual([]);
 	});
 });

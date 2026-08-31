@@ -18,6 +18,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
+import { devhub } from "../client";
 import {
   terminalFontStack,
   xtermTheme,
@@ -109,6 +110,34 @@ function attachRenderer(
   return "webgl";
 }
 
+/**
+ * What a hyperlink in a terminal does: it opens in the browser.
+ *
+ * xterm ships a default for OSC 8 links and it is wrong for a desktop app in
+ * two ways at once. It asks "Do you want to navigate to {uri}? WARNING: This
+ * link could potentially be dangerous" — a browser's question, in a browser's
+ * `confirm()`, about a link the person just deliberately clicked — and then it
+ * answers "yes" with `window.open()`. In a page inside Electron that mints a
+ * window: DevHub's preload, DevHub's title, somebody else's document, and no
+ * address bar, back button or reload to work it with. That is the small broken
+ * DevHub window the click produced.
+ *
+ * Neither half is a decision a surface should be making, so neither half is
+ * configurable: every terminal DevHub draws — a shell, an Agent — sends a link
+ * to the system browser on a plain left click, with nothing in between. The
+ * refusal path is the same as every other request to main: the rejection is
+ * left unhandled on purpose so the page's root failure handler draws it, in
+ * the one place the shell draws every other failure.
+ *
+ * `sendLinksToTheBrowser` in main is the backstop under this, for anything
+ * that reaches `window.open` without coming through here.
+ */
+const linkHandler = {
+  activate(_event: MouseEvent, uri: string): void {
+    void devhub().openExternalUrl(uri);
+  },
+};
+
 export interface XtermSessionOptions {
   readonly appearance?: TerminalAppearance;
   readonly palette?: TerminalPalette;
@@ -155,6 +184,7 @@ export function openXtermSession(
     convertEol: false,
     fontFamily: terminalFontStack(options.appearance?.terminalFontFamily),
     fontSize: options.appearance?.terminalFontSize ?? 13,
+    linkHandler,
     lineHeight: options.appearance?.terminalLineHeight ?? 1.2,
     scrollback: options.scrollback ?? 10_000,
     theme: options.palette ? xtermTheme(options.palette) : undefined,
