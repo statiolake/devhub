@@ -110,6 +110,16 @@ export type PtyFactory = (launch: PtyLaunch) => Pty;
  * capabilities the page does not have. `TMUX`/`TMUX_PANE` are removed because a
  * DevHub launched from inside a tmux pane must not let its client believe it is
  * nesting inside that server.
+ *
+ * `TERM` stays `xterm-256color` and `COLORTERM` says `truecolor`, which is the
+ * pair every modern terminal emulator sends and the pair every consumer of the
+ * two already knows how to read. They are not in tension: `TERM` names a
+ * terminfo entry that must exist on any machine (a `*-direct` entry does not),
+ * and `COLORTERM` is the out-of-band channel invented precisely because
+ * terminfo could not express 24-bit colour. tmux reads it from the attaching
+ * client and adds the `RGB` feature for that client on its own; programs that
+ * do not know tmux read it directly. xterm.js renders 24-bit already, so the
+ * page needs nothing — the whole of the fix is telling the truth about it here.
  */
 export function terminalEnvironment(
 	base: Readonly<Record<string, string | undefined>> = process.env,
@@ -118,6 +128,7 @@ export function terminalEnvironment(
 	delete env.TMUX;
 	delete env.TMUX_PANE;
 	env.TERM = "xterm-256color";
+	env.COLORTERM = "truecolor";
 	return env;
 }
 

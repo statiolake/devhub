@@ -107,6 +107,37 @@ const BOOTSTRAP_ENV_USER_CONFIG = "DEVHUB_USER_TMUX_CONFIG";
  */
 const BOOTSTRAP_CONFIG = [
 	'source-file -q "$DEVHUB_USER_TMUX_CONFIG"',
+	// Every client this server will ever have is an xterm.js in DevHub's own
+	// window, and xterm.js renders 24-bit colour. Saying so once, on the server,
+	// is what makes a pane's programs emit 24-bit sequences instead of asking
+	// terminfo and quantising to 256 — the visible symptom being a colour ramp
+	// that comes out in bands.
+	//
+	// `-a` appends to whatever the user's config just set, so a user who
+	// declares features for their own outside terminal keeps them; `-s` because
+	// `terminal-features` is a server option. The leading comma is the empty
+	// first entry of the list tmux parses, which is how a pattern:feature pair
+	// is spelled.
+	//
+	// No `terminal-overrides Tc` fallback: `terminal-features` arrived in tmux
+	// 3.2 and DevHub already refuses anything below 3.3 (`MIN_TMUX_MINOR`), so
+	// the older spelling is unreachable and would only be a second way to say
+	// the same thing.
+	"set -as terminal-features ',*:RGB'",
+	// The two variables above are DevHub's, not the user's, and a tmux server
+	// hands its whole environment to every shell it ever starts — so left in
+	// place they would show up in `env` in every pane, for the life of the
+	// server, long after the one command that needed them.
+	//
+	// Unsetting them here, *before* the session is created, is what keeps that
+	// out of the very first pane as well. It costs nothing: tmux expands `$VAR`
+	// in a config file from the environment the server was started with, not
+	// from the global environment this edits, so the `new-session` below still
+	// sees the root.
+	[
+		`set-environment -gu ${BOOTSTRAP_ENV_ROOT}`,
+		`set-environment -gu ${BOOTSTRAP_ENV_USER_CONFIG}`,
+	].join(" ; "),
 	[
 		`new-session -d -s ${SCRATCH_SESSION} -c "$${BOOTSTRAP_ENV_ROOT}"`,
 		`set-option -t ${SCRATCH_SESSION} ${CONTEXT_OPTION} ${GLOBAL_CONTEXT}`,

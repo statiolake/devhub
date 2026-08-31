@@ -143,6 +143,43 @@ describe.skipIf(TMUX === undefined)("the tmux runtime, for real", { timeout: 30_
 		expect(userConfig.stdout.toString("utf8")).toBe("home\n");
 	});
 
+	it("declares RGB on the server it creates, so colour is not quantised", async () => {
+		const test = fixture("truecolor");
+		await test.runtime.ensure(SCRATCH_TARGET);
+
+		const features = await test.runtime.runTmux(
+			test.socket,
+			["show-options", "-gqv", "terminal-features"],
+			test.home,
+			test.cancel,
+			deadline(test.runtime),
+		);
+		// Every client of this server is an xterm.js, which renders 24-bit.
+		// Without the declaration tmux asks terminfo instead and a colour ramp
+		// comes out in bands.
+		expect(features.stdout.toString("utf8")).toContain("*:RGB");
+	});
+
+	it("leaves none of its own bootstrap variables in the server's environment", async () => {
+		const test = fixture("bootenv");
+		await test.runtime.ensure(SCRATCH_TARGET);
+
+		const environment = await test.runtime.runTmux(
+			test.socket,
+			["show-environment", "-g"],
+			test.home,
+			test.cancel,
+			deadline(test.runtime),
+		);
+		// A tmux server hands its whole environment to every shell it starts.
+		// The two variables the bootstrap config needed are DevHub's own, and
+		// would otherwise appear in `env` in every pane for the life of the
+		// server.
+		const text = environment.stdout.toString("utf8");
+		expect(text).not.toContain("DEVHUB_BOOTSTRAP_ROOT");
+		expect(text).not.toContain("DEVHUB_USER_TMUX_CONFIG");
+	});
+
 	it("counts a foreign session, never names it, and never kills it", async () => {
 		const test = fixture("foreign-count");
 		await test.runtime.ensure(SCRATCH_TARGET);
