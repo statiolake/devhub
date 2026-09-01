@@ -19,7 +19,16 @@
  *    4. `IThemeMainService` is `DevHubThemeMainService`
  *       (./services/devhubThemeMainService.ts), which is upstream's service
  *       plus an announcement when a workbench saves its window splash.
- *    5. `--force-disable-user-env` is on, because DevHub resolves the login
+ *    5. `ILifecycleMainService` is `DevHubLifecycleMainService`
+ *       (./services/devhubLifecycleMainService.ts), which translates a
+ *       workbench's "restart" into DevHub's terms instead of taking the whole
+ *       application down with it. The substitution is here, at the
+ *       registration, and not in `DevHubApplication.initServices`: `startup()`
+ *       resolves `ILifecycleMainService` before `initServices` runs, so a
+ *       later substitution would leave two lifecycle services side by side.
+ *       For the same reason the startup-failure path below calls `app.exit`
+ *       itself rather than `lifecycleMainService.kill`.
+ *    6. `--force-disable-user-env` is on, because DevHub resolves the login
  *       shell's environment itself and upstream's copy would be a second
  *       answer to the same question. See `resolveArgs`.
  *
@@ -73,7 +82,7 @@ import { IInstantiationService, ServicesAccessor } from 'code-oss-dev/out/vs/pla
 import { InstantiationService } from 'code-oss-dev/out/vs/platform/instantiation/common/instantiationService.js';
 import { ServiceCollection } from 'code-oss-dev/out/vs/platform/instantiation/common/serviceCollection.js';
 import { ILaunchMainService } from 'code-oss-dev/out/vs/platform/launch/electron-main/launchMainService.js';
-import { ILifecycleMainService, LifecycleMainService } from 'code-oss-dev/out/vs/platform/lifecycle/electron-main/lifecycleMainService.js';
+import { ILifecycleMainService } from 'code-oss-dev/out/vs/platform/lifecycle/electron-main/lifecycleMainService.js';
 import { BufferLogger } from 'code-oss-dev/out/vs/platform/log/common/bufferLog.js';
 import { ConsoleMainLogger, getLogLevel, ILoggerService, ILogService, isDevConsoleLogForwardingEnabled, registerDevConsoleLogForwarder } from 'code-oss-dev/out/vs/platform/log/common/log.js';
 import product from 'code-oss-dev/out/vs/platform/product/common/product.js';
@@ -107,6 +116,7 @@ import { SaveStrategy, StateService } from 'code-oss-dev/out/vs/platform/state/n
 import { FileUserDataProvider } from 'code-oss-dev/out/vs/platform/userData/common/fileUserDataProvider.js';
 import { addUNCHostToAllowlist, getUNCHost } from 'code-oss-dev/out/vs/base/node/unc.js';
 import { DevHubThemeMainService } from './services/devhubThemeMainService.js';
+import { DevHubLifecycleMainService } from './services/devhubLifecycleMainService.js';
 import { LINUX_SYSTEM_POLICY_FILE_PATH } from 'code-oss-dev/out/vs/base/common/policy.js';
 
 /**
@@ -319,7 +329,7 @@ class CodeMain {
 		services.set(IConfigurationService, configurationService);
 
 		// Lifecycle
-		services.set(ILifecycleMainService, new SyncDescriptor(LifecycleMainService, undefined, false));
+		services.set(ILifecycleMainService, new SyncDescriptor(DevHubLifecycleMainService, undefined, false));
 
 		// Request
 		services.set(IRequestService, new SyncDescriptor(RequestService, undefined, true));
@@ -564,7 +574,6 @@ class CodeMain {
 
 	private quit(accessor: ServicesAccessor, reason?: ExpectedError | Error): void {
 		const logService = accessor.get(ILogService);
-		const lifecycleMainService = accessor.get(ILifecycleMainService);
 
 		let exitCode = 0;
 
@@ -584,7 +593,12 @@ class CodeMain {
 			}
 		}
 
-		lifecycleMainService.kill(exitCode);
+		// DevHub calls `app.exit` here rather than `lifecycleMainService.kill`.
+		// `kill` is the answer to "a workbench died", and DevHub's answer to
+		// that is to keep running and rebuild the workbench. This is the other
+		// case: DevHub itself never came up, so there is nothing to keep
+		// alive, and exiting is the whole of what has to happen.
+		app.exit(exitCode);
 	}
 
 	private async checkInnoSetupMutex(productService: IProductService, logService: ILogService): Promise<boolean> {

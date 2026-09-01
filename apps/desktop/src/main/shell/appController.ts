@@ -1946,6 +1946,19 @@ export class AppController {
 		return await this.workbenchWindow(SCRATCH_EDITOR);
 	}
 
+	/**
+	 * Every workbench VS Code currently has open.
+	 *
+	 * The lifecycle fence (`services/devhubLifecycleMainService.ts`) needs the
+	 * whole set rather than one folder's: a restart that a workbench asks for
+	 * is about the application's settings, so it reaches all of them or none.
+	 * Like everything else here it waits for VS Code rather than reporting an
+	 * empty world during startup.
+	 */
+	async workbenchWindows(): Promise<readonly ICodeWindow[]> {
+		return (await this.services()).windows().getWindows();
+	}
+
 	/** The `ICodeWindow` behind a folder's view; a missing one is a bug. */
 	private async workbenchWindow(folder: string): Promise<ICodeWindow> {
 		const viewId = this.viewsByFolder.get(folder);
