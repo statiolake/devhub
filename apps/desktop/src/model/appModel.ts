@@ -854,7 +854,7 @@ export class AppModel {
         profileId: agent.profile.id,
         profileKind: agent.profile.kind,
         profileDisplayName: agent.profile.displayName,
-        displayName: agent.displayName,
+        displayName: agentLabelFor(agent, workspace.agents),
         ordinal: agent.ordinal,
         status: agent.status,
         runtimeHealth: agent.runtimeHealth,
@@ -893,6 +893,38 @@ export class AppModel {
     }
     return `${basename} — ${workspace.root}`;
   }
+}
+
+/**
+ * The shortest name that tells two Agents in one Workspace apart.
+ *
+ * The same rule as `labelFor` one level down, and for the same reason: a name
+ * is as long as the collision makes it and no longer. The ordinal exists to
+ * separate siblings — "Codex 1" from "Codex 2" — so a Workspace holding one
+ * Codex has nothing to separate, and the number is a character every row of
+ * the Sidebar carries to say nothing.
+ *
+ * A name the person typed is theirs, and is neither shortened nor counted: an
+ * Agent renamed "Investigator" is not a second Codex the remaining one has to
+ * be numbered against.
+ *
+ * This is the name the whole application shows — the Sidebar row, the window
+ * title, the rename sheet — because it is computed where the snapshot is, and
+ * the snapshot is what every one of those reads. The Agent's own `displayName`
+ * is untouched; it is what gets written down, and a name that shortened itself
+ * on disk would come back different when a sibling arrived.
+ */
+function agentLabelFor(agent: Agent, siblings: readonly Agent[]): string {
+  const chosen = agent.temporaryName;
+  if (chosen !== undefined) return chosen;
+  const collisions = siblings.filter(
+    (candidate) =>
+      candidate.temporaryName === undefined &&
+      candidate.profile.id === agent.profile.id,
+  );
+  return collisions.length === 1
+    ? agent.profile.displayName
+    : agent.displayName;
 }
 
 function ordinalKey(owner: WorkspaceId, profile: AgentProfileId): string {

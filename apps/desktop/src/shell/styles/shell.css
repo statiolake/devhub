@@ -117,8 +117,15 @@
   list-style: none;
 }
 
-/* Rows are a single line with fixed leading columns, so no row can push the
-   Sidebar into horizontal overflow regardless of label or path length.
+/* A row is fixed leading columns and then a stack of one or two lines, so no
+   row can push the Sidebar into horizontal overflow regardless of label, branch
+   or path length.
+ *
+ * The height is a minimum rather than a fixture: the second line is drawn only
+ * when there is something for it, so a Workspace with no branch and an Agent
+ * that has not said anything are the single-line rows they always were, and the
+ * ones with more to say are taller. Every row is at least `--row-height`, which
+ * is what keeps a list of one-line rows on the density's own rhythm.
  *
  * A Workspace row is a `div` and the Scratch row is a `button`, and the user
  * agent pads a button by `1px 6px` while leaving a div alone. Left unstated,
@@ -129,14 +136,37 @@
   display: flex;
   overflow: hidden;
   width: 100%;
-  height: var(--row-height);
-  align-items: center;
+  flex-direction: column;
   padding: 0;
   border: 0;
   border-radius: var(--radius-row);
   background: transparent;
   color: var(--primary);
   text-align: left;
+  /* Where a row's text starts, measured from the row's leading edge: past the
+     rail, past the glyph column, past the gap between the glyph and the label.
+     The second line is indented to it so both lines share a left margin, and
+     it is derived rather than measured so it follows the density. */
+  --row-text-inset: calc(
+    var(--sidebar-rail-width) + var(--sidebar-glyph-width) + var(--space-2)
+  );
+}
+
+/*
+ * A row's first line: the rail, the glyph, the name, and every control the row
+ * has.
+ *
+ * The controls are here rather than on the row so that they take their width
+ * out of *this* line and no other. That is the whole trick of the second line:
+ * it is a sibling of this, so it starts where this starts and runs to the
+ * row's trailing edge, under the marks and the buttons rather than beside
+ * them.
+ */
+.row-head {
+  display: flex;
+  width: 100%;
+  min-height: var(--row-height);
+  align-items: center;
 }
 
 .sidebar-row:hover {
@@ -180,14 +210,39 @@
   text-align: left;
 }
 
-/* The leading rail every row reserves before its glyph. It carries nothing:
-   a Workspace is always open, so there is no disclosure to put in it, and the
-   rail is what keeps the glyph column off the Sidebar's edge. */
+/* The button is on the first line, but the row is what a person clicks: the
+   branch under the name is part of the same row and clicking it must select
+   the same thing. So the button's hit area is stretched over the whole row
+   rather than the second line being given a click handler of its own — one
+   target, and no second path to the same selection that could drift from it.
+
+   The row's own controls are raised above it, because they are the exception:
+   they are the parts of a row that mean something else. */
+.sidebar-context-button::after {
+  position: absolute;
+  content: "";
+  inset: 0;
+}
+
+.row-link-button,
+.row-action-button {
+  position: relative;
+  z-index: 1;
+}
+
+/* The leading rail every row reserves before its glyph.
+ *
+ * It is where a mark about the row as a whole goes, and there is exactly one:
+ * an Agent's unread dot. A Workspace is always open, so there is no disclosure
+ * to put here, and the rail is also what keeps the glyph column off the
+ * Sidebar's edge. */
 .row-rail {
   display: flex;
   width: var(--sidebar-rail-width);
-  height: 100%;
   flex: 0 0 var(--sidebar-rail-width);
+  align-self: stretch;
+  align-items: center;
+  justify-content: center;
 }
 
 .row-glyph {
@@ -217,10 +272,66 @@
   fill: color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
+/*
+ * A row's text: one line, or two.
+ *
+ * Everything a row has to say used to share one line, and everything on it
+ * fought for the same pixels. A branch name is long, and the part that
+ * identifies it is at the *end*, so what a person actually got was
+ * `feature/128-tidy-the…` — the half that says nothing — while the workspace
+ * name beside it shrank to make room. Shrink factors were tuned to decide who
+ * lost first, which is a way of choosing which of two unreadable things to
+ * show.
+ *
+ * So the row is a stack instead. The first line is what tells this row from
+ * the rows beside it; the second is the rest of what it has to say, small and
+ * dimmed, and drawn only when there is some. Nothing on either line competes
+ * with anything on the other, and each line has the row's whole width.
+ */
+.row-line {
+  display: flex;
+  overflow: hidden;
+  min-width: 0;
+  align-items: baseline;
+  gap: var(--space-2);
+  line-height: 1.25;
+}
+
+/* The whole of the second line is context, so the whole of it is dimmed and
+   set small. What is on it differs by row — a branch and an Issue for a
+   Workspace, the Agent's own name and its runtime note for an Agent — and
+   nothing about the line cares which.
+
+   It is indented to where the line above starts its text, so the two read as
+   one block, and it takes the row's whole remaining width: nothing on it is
+   competing with a control, because the controls are on the line above. */
+.row-line-secondary {
+  padding-block-end: 4px;
+  padding-inline: var(--row-text-inset) var(--space-2);
+  margin-block-start: -2px;
+  color: var(--tertiary);
+  font-size: 11px;
+  font-weight: 400;
+}
+
+/* Every part of a line shrinks in proportion to its own length, and ellipsises
+   what it cannot fit. No part is ranked above another, which is the rule that
+   replaced a set of tuned shrink factors deciding who lost first — a decision
+   that only had to be made because everything the row knew was on one line.
+   In a Sidebar too narrow for both, "feature/128-tidy…" and "Tidy the pic…" is
+   what a person gets, and neither field is gone. */
+.row-line > * {
+  overflow: hidden;
+  min-width: 0;
+  flex: 0 1 auto;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .row-label {
   overflow: hidden;
   min-width: 0;
-  flex: 1;
+  flex: 1 1 auto;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -233,87 +344,24 @@
   font-weight: 590;
 }
 
-/* The note is a qualifier on the name, so it is the part that gives way: a
-   row that drops the name to fit "Starting runtime" has told you nothing. */
+/* An Agent's own name, under what it is doing.
+ *
+ * "Codex 2" is the row's name and it is on the quiet line, which is the one
+ * inversion in the Sidebar and is deliberate. The Agents under one Workspace
+ * are told apart by what each one is on, not by their names — see
+ * `agentLabelFor`, which is the same observation one layer down, dropping the
+ * ordinal from a name that has nothing to be told apart from. */
+/* Why the row may not be doing what its status says: it is stopping, its
+   runtime is unavailable. In the stronger of the two dim inks, because it is
+   the one thing on this line that is not simply context. */
 .row-note {
-  overflow: hidden;
-  min-width: 0;
-  max-width: 50%;
-  flex: 0 1 auto;
   color: var(--secondary);
-  font-size: 11px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
-.row-label {
-  flex: 1 1 auto;
-}
-
-/* What an Agent is doing, in the words it used itself: dimmed and small,
-   trailing the name the row is called by, like a Workspace's branch.
-
-   The name is not negotiable and the word is. `flex: 1 1 0` gives the word the
-   space the name has not taken and no more, so a long sentence ellipsises
-   itself away rather than pushing "Titled 1" down to "Titl…" — a row that has
-   lost its own name cannot be told from the two beside it. The name gives way
-   only once there is nothing left to give. */
-.agent-row:has(.row-activity) .row-label {
-  overflow: hidden;
-  flex: 0 1 auto;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.row-activity {
-  overflow: hidden;
-  min-width: 0;
-  flex: 1 1 0;
-  margin-left: var(--space-1);
-  color: var(--tertiary);
-  font-size: 11px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* What a Workspace is working on: the branch, and what that branch is for.
-   Both dimmed, and both give way before the workspace's own name does — the
-   row is named by the workspace, and the rest is context. */
-.workspace-row:has(.row-branch, .row-issue) .row-label {
-  overflow: hidden;
-  min-width: 8ch;
-  flex: 0 1 auto;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.row-branch,
-.row-issue {
-  overflow: hidden;
-  min-width: 0;
-  margin-left: var(--space-1);
-  font-size: 11px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* Who gives way first, in a sidebar narrow enough that somebody must. The
-   name of the row goes last, the branch before it, and what the branch is for
-   first — the reverse of how much each one tells you about which row you are
-   looking at. Shrink factors rather than widths, so the order holds at any
-   width and at either density. */
-.row-branch {
-  flex: 0 8 auto;
-}
-
-.row-issue {
-  flex: 0 40 auto;
-}
-
-.row-branch {
-  color: var(--tertiary);
-}
-
+/* What a Workspace is working on: the branch, then what that branch is for.
+   The branch first, because it is the thing that changes under you and the
+   thing the report was about; the Issue title after it, in the stronger ink,
+   because it is the sentence a person actually reads. */
 .row-issue {
   color: var(--secondary);
 }
@@ -370,13 +418,21 @@
   font-size: 11px;
 }
 
-/* Agents sit one indent level in from their Workspace row: the rail and the
-   glyph column their Workspace's folder occupies, so the Agent's own mark
-   starts where its parent's label does. Derived rather than measured, so it
-   follows the glyph column at either density. */
+/* Agents sit one indent level in from their Workspace row, so the Agent's own
+   status mark starts where its parent's label does. The rail is a column of
+   the row itself — it carries the unread mark — so what the button adds is the
+   glyph column their Workspace's folder occupies, and no more. Derived rather
+   than measured, so it follows the glyph column at either density. */
 .agent-row .sidebar-context-button {
-  padding-left: calc(
-    var(--sidebar-rail-width) + var(--sidebar-glyph-width) + var(--space-1)
+  padding-left: calc(var(--sidebar-glyph-width) + var(--space-1));
+}
+
+/* An Agent's text starts one indent level further in than a Workspace's, so
+   its second line is indented to match. Same derivation, one term longer. */
+.agent-row {
+  --row-text-inset: calc(
+    var(--sidebar-rail-width) + var(--sidebar-glyph-width) + var(--space-1) +
+      var(--sidebar-glyph-width) + var(--space-2)
   );
 }
 
@@ -1143,18 +1199,23 @@ body.is-resizing-split {
 /*
  * An Agent asked for you and you have not been.
  *
- * A small filled disc trailing the label, in the same blue as the `waiting`
- * status mark, because it is the same fact one step later: the status says the
- * Agent is asking now, the dot says it asked and is still owed an answer. Two
- * marks rather than one, because an Agent can be idle and unread — it asked,
- * you never came, and it moved on — and that is exactly the case a single mark
- * would lose.
+ * A small filled disc in the row's leading rail, in the same blue as the
+ * `waiting` status mark, because it is the same fact one step later: the status
+ * says the Agent is asking now, the dot says it asked and is still owed an
+ * answer. Two marks rather than one, because an Agent can be idle and unread —
+ * it asked, you never came, and it moved on — and that is exactly the case a
+ * single mark would lose.
+ *
+ * Both marks are at the leading edge, in adjacent columns. The dot used to
+ * trail the row while the status glyph led it, which put two marks about one
+ * Agent at opposite ends of a row too narrow to read them together — and made
+ * the far end of the row mean something, so the eye had to sweep it. One end
+ * carries the marks now, and it is the end every row already starts at.
  */
 .row-unread {
   flex: none;
   width: 6px;
   height: 6px;
-  margin-inline-start: auto;
   border-radius: 50%;
   background: var(--status-waiting);
 }

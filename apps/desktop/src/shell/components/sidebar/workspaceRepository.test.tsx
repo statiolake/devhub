@@ -94,6 +94,24 @@ describe("a workspace row", () => {
     expect(screen.getByText("Tidy the picker")).toBeInTheDocument();
   });
 
+  it("puts the branch and the Issue on a line of their own, under the name", () => {
+    // The whole point of the second line: the branch is not competing with the
+    // workspace's name for the width of one row, so neither is ellipsised.
+    mount(WORKING_ON);
+    const row = document.querySelector(".workspace-row");
+    expect(row?.querySelector(".row-label")?.textContent).toBe("widget");
+    expect(row?.querySelector(".row-line-secondary")?.textContent).toBe(
+      "feature/128-tidyTidy the picker",
+    );
+  });
+
+  it("has no second line when there is nothing to put on it", () => {
+    mount({ sequence: 1, workspaces: [] });
+    const row = document.querySelector(".workspace-row");
+    expect(row?.querySelector(".row-label")?.textContent).toBe("widget");
+    expect(row?.querySelector(".row-line-secondary")).toBeNull();
+  });
+
   it("opens the Issue and the pull request on GitHub", () => {
     const { openExternalUrl } = mount(WORKING_ON);
 

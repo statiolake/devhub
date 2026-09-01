@@ -81,7 +81,9 @@ describe("projection", () => {
     const agent = restored.snapshot().workspaces[0].agents[0];
     expect(agent.status).toBe("waiting");
     expect(agent.runtimeHealth).toBe("unavailable");
-    expect(agent.displayName).toBe("Codex 1");
+    // The only Codex in its Workspace, so there is nothing for an ordinal to
+    // tell it apart from — see `agentLabelFor`.
+    expect(agent.displayName).toBe("Codex");
   });
 
   it("keeps the provider mapping the model does not own", () => {

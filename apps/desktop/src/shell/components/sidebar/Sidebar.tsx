@@ -115,106 +115,116 @@ function WorkspaceRow({
         className={`sidebar-row workspace-row${selected ? " is-selected" : ""}`}
         data-state={workspace.state}
       >
-        <span className="row-rail" aria-hidden="true" />
-        <button
-          className="sidebar-context-button"
-          type="button"
-          data-workspace-id={workspace.id}
-          data-tree-item-id={`workspace:${workspace.id}`}
-          tabIndex={selected ? 0 : -1}
-          aria-current={selected ? "page" : undefined}
-          // A Workspace has no status of its own. Its Agents each carry
-          // theirs on their own row, and rolling four of them into one mark
-          // only produced a fifth thing to read that named none of them.
-          aria-label={`${workspace.label} workspace, path ${workspace.root}`}
-          title={workspace.root}
-          onClick={() =>
-            dispatch({
-              type: "select_context",
-              context: { kind: "workspace", workspaceId: workspace.id },
-            })
-          }
-        >
-          <span className="row-glyph" aria-hidden="true">
-            <svg viewBox="0 0 14 14" focusable="false">
-              <path d="M1.5 3.5a1 1 0 0 1 1-1h3l1.4 1.6h4.6a1 1 0 0 1 1 1v5.4a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1z" />
-            </svg>
-          </span>
-          <span className="row-label">{workspace.label}</span>
-          {/* What it is working on, in the order a person reads it: which
-              branch, then what that branch is for. Both are dimmed, because
-              the row is still named by the workspace. */}
-          {repository?.branch ? (
-            <span className="row-branch" title={repository.branch}>
-              {repository.branch}
+        <div className="row-head">
+          <span className="row-rail" aria-hidden="true" />
+          <button
+            className="sidebar-context-button"
+            type="button"
+            data-workspace-id={workspace.id}
+            data-tree-item-id={`workspace:${workspace.id}`}
+            tabIndex={selected ? 0 : -1}
+            aria-current={selected ? "page" : undefined}
+            // A Workspace has no status of its own. Its Agents each carry
+            // theirs on their own row, and rolling four of them into one mark
+            // only produced a fifth thing to read that named none of them.
+            aria-label={`${workspace.label} workspace, path ${workspace.root}`}
+            title={workspace.root}
+            onClick={() =>
+              dispatch({
+                type: "select_context",
+                context: { kind: "workspace", workspaceId: workspace.id },
+              })
+            }
+          >
+            <span className="row-glyph" aria-hidden="true">
+              <svg viewBox="0 0 14 14" focusable="false">
+                <path d="M1.5 3.5a1 1 0 0 1 1-1h3l1.4 1.6h4.6a1 1 0 0 1 1 1v5.4a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1z" />
+              </svg>
             </span>
-          ) : null}
-          {repository?.issue ? (
-            <span className="row-issue" title={repository.issue.title}>
-              {repository.issue.title}
-            </span>
-          ) : null}
-        </button>
-        {/* The links trail the label rather than leading it, which is the one
+            <span className="row-label">{workspace.label}</span>
+          </button>
+          {/* The links trail the label rather than leading it, which is the one
             place this differs from the sketch: they are buttons, a button
             cannot go inside the row's own button, and putting them before it
             would move the glyph column that every other row lines up with. */}
-        {repository?.issue ? <IssueLinks repository={repository} /> : null}
-        {workspace.canCreateAgent && (
-          <button
-            className="row-action-button"
-            type="button"
-            aria-label={`Create agent in ${workspace.label}${agentProfilesAvailability === "unavailable" || agentProfiles.length === 0 ? ", unavailable" : ""}`}
-            title={
-              agentProfilesAvailability === "degraded"
-                ? "Agent profiles need attention"
-                : agentProfiles.length > 0
-                  ? "Create agent"
-                  : "No enabled agent profiles"
-            }
-            disabled={
-              agentProfilesAvailability === "unavailable" ||
-              agentProfiles.length === 0
-            }
-            onClick={() => onCreateAgent(workspace.id)}
-          >
-            <svg viewBox="0 0 14 14" aria-hidden="true" focusable="false">
-              <path d="M7 3.25v7.5M3.25 7h7.5" />
-            </svg>
-          </button>
-        )}
-        {/* One close, whatever state the Workspace is in: a close that failed
+          {repository?.issue ? <IssueLinks repository={repository} /> : null}
+          {workspace.canCreateAgent && (
+            <button
+              className="row-action-button"
+              type="button"
+              aria-label={`Create agent in ${workspace.label}${agentProfilesAvailability === "unavailable" || agentProfiles.length === 0 ? ", unavailable" : ""}`}
+              title={
+                agentProfilesAvailability === "degraded"
+                  ? "Agent profiles need attention"
+                  : agentProfiles.length > 0
+                    ? "Create agent"
+                    : "No enabled agent profiles"
+              }
+              disabled={
+                agentProfilesAvailability === "unavailable" ||
+                agentProfiles.length === 0
+              }
+              onClick={() => onCreateAgent(workspace.id)}
+            >
+              <svg viewBox="0 0 14 14" aria-hidden="true" focusable="false">
+                <path d="M7 3.25v7.5M3.25 7h7.5" />
+              </svg>
+            </button>
+          )}
+          {/* One close, whatever state the Workspace is in: a close that failed
             is retried by asking for the same thing again, not by a second
             icon that means the same thing. */}
-        {workspace.state !== "closing" && (
-          <button
-            className="row-action-button"
-            type="button"
-            aria-label={`Close ${workspace.label}`}
-            title={
-              workspace.state === "closing-failed"
-                ? "Retry close"
-                : "Close workspace"
-            }
-            onClick={() =>
-              dispatch(
+          {workspace.state !== "closing" && (
+            <button
+              className="row-action-button"
+              type="button"
+              aria-label={`Close ${workspace.label}`}
+              title={
                 workspace.state === "closing-failed"
-                  ? {
-                      type: "retry_close_workspace",
-                      workspaceId: workspace.id,
-                    }
-                  : {
-                      type: "request_close_workspace",
-                      workspaceId: workspace.id,
-                    },
-              )
-            }
-          >
-            <svg viewBox="0 0 14 14" aria-hidden="true" focusable="false">
-              <path d="M4 4l6 6M10 4l-6 6" />
-            </svg>
-          </button>
-        )}
+                  ? "Retry close"
+                  : "Close workspace"
+              }
+              onClick={() =>
+                dispatch(
+                  workspace.state === "closing-failed"
+                    ? {
+                        type: "retry_close_workspace",
+                        workspaceId: workspace.id,
+                      }
+                    : {
+                        type: "request_close_workspace",
+                        workspaceId: workspace.id,
+                      },
+                )
+              }
+            >
+              <svg viewBox="0 0 14 14" aria-hidden="true" focusable="false">
+                <path d="M4 4l6 6M10 4l-6 6" />
+              </svg>
+            </button>
+          )}
+        </div>
+        {/* What it is working on, in the order a person reads it: which branch,
+            then what that branch is for. Its own line, running the full width
+            of the row *under* the marks and the controls, which is the whole
+            reason it is a line and not a suffix: sharing the name's line it got
+            whatever the name and four trailing buttons left over, and a branch
+            name is long and ends in the part that identifies it, so what
+            survived was `feature/128-tidy-the…` — the half that says nothing. */}
+        {(repository?.branch ?? repository?.issue) ? (
+          <div className="row-line row-line-secondary">
+            {repository?.branch ? (
+              <span className="row-branch" title={repository.branch}>
+                {repository.branch}
+              </span>
+            ) : null}
+            {repository?.issue ? (
+              <span className="row-issue" title={repository.issue.title}>
+                {repository.issue.title}
+              </span>
+            ) : null}
+          </div>
+        ) : null}
       </div>
       {workspace.agents.length > 0 && (
         <ul
@@ -225,6 +235,30 @@ function WorkspaceRow({
           {workspace.agents.map((agent) => {
             const agentSelected = selectedAgentId === agent.id;
             const stopFailed = agent.controlState === "stop-failed";
+            const note =
+              agent.controlState === "stopping"
+                ? "Stopping"
+                : stopFailed
+                  ? "Stop failed"
+                  : agent.runtimeHealth === "healthy"
+                    ? undefined
+                    : runtimeHealthLabel(agent.runtimeHealth);
+            /**
+             * A row leads with whatever tells it from the rows beside it.
+             *
+             * For a Workspace that is its name. For an Agent it is not: the
+             * Agents under one Workspace are "Codex" and "Claude", and reading
+             * a column of those tells you nothing you did not already know
+             * from having started them. What tells them apart is what each one
+             * is doing, so that is what leads, at the size a row's own name is
+             * set in, and the name follows underneath it small and dimmed.
+             *
+             * An Agent that has not said anything yet leads with its name
+             * instead. The leading line is never empty: a row whose only text
+             * was 11px dimmed would be a row you cannot read the name of.
+             */
+            const leading = agent.activity ?? agent.displayName;
+            const naming = agent.activity ? agent.displayName : undefined;
             return (
               <li
                 key={agent.id}
@@ -243,85 +277,88 @@ function WorkspaceRow({
                     });
                   }}
                 >
-                  <button
-                    className="sidebar-context-button"
-                    type="button"
-                    data-tree-item-id={`agent:${agent.id}`}
-                    tabIndex={agentSelected ? 0 : -1}
-                    aria-current={agentSelected ? "page" : undefined}
-                    aria-label={`${agent.displayName}, ${statusLabel(agent.status)} agent, ${agent.controlState === "stopping" ? "Stopping" : stopFailed ? "Stop failed" : runtimeHealthLabel(agent.runtimeHealth)}${agent.unread ? ", unread" : ""}${agent.activity ? `, ${agent.activity}` : ""}`}
-                    disabled={agent.controlState === "stopping"}
-                    // Command-click opens the Agent beside its workbench; a
-                    // plain click gives it the whole content area. The same
-                    // pair as Return and Command-Return in the picker, because
-                    // it is the same choice, and it is stated in the intent
-                    // rather than applied afterwards.
-                    onClick={(event) =>
-                      dispatch({
-                        type: "select_context",
-                        context: { kind: "agent", agentId: agent.id },
-                        split: event.metaKey,
-                      })
-                    }
-                    // Renaming is what a source list does on a second click at
-                    // rest, and it stays off the row: an icon whose meaning has
-                    // to be guessed is worse than one that is not there.
-                    onDoubleClick={() => onRenameAgent(agent)}
-                  >
-                    {/* The leading glyph *is* the status. There is no second
+                  {/* The unread mark, in the same leading rail every row
+                      reserves — one column, at the leading edge, where Mail
+                      puts the same fact. It used to trail the row while the
+                      status glyph led it, which put two marks about one Agent
+                      at opposite ends of a row narrow enough that the two
+                      could not be read together.
+
+                      It is not a second status. It says the Agent asked for
+                      you and you have not been, which is a fact about the
+                      person and outlives whatever the Agent is doing now — an
+                      Agent can be idle and unread, and that is exactly the
+                      case one mark would lose. */}
+                  <div className="row-head">
+                    <span className="row-rail" aria-hidden="true">
+                      {agent.unread ? <span className="row-unread" /> : null}
+                    </span>
+                    <button
+                      className="sidebar-context-button"
+                      type="button"
+                      data-tree-item-id={`agent:${agent.id}`}
+                      tabIndex={agentSelected ? 0 : -1}
+                      aria-current={agentSelected ? "page" : undefined}
+                      aria-label={`${agent.displayName}, ${statusLabel(agent.status)} agent, ${note ?? runtimeHealthLabel(agent.runtimeHealth)}${agent.unread ? ", unread" : ""}${agent.activity ? `, ${agent.activity}` : ""}`}
+                      disabled={agent.controlState === "stopping"}
+                      // Command-click opens the Agent beside its workbench; a
+                      // plain click gives it the whole content area. The same
+                      // pair as Return and Command-Return in the picker, because
+                      // it is the same choice, and it is stated in the intent
+                      // rather than applied afterwards.
+                      onClick={(event) =>
+                        dispatch({
+                          type: "select_context",
+                          context: { kind: "agent", agentId: agent.id },
+                          split: event.metaKey,
+                        })
+                      }
+                      // Renaming is what a source list does on a second click at
+                      // rest, and it stays off the row: an icon whose meaning has
+                      // to be guessed is worse than one that is not there.
+                      onDoubleClick={() => onRenameAgent(agent)}
+                    >
+                      {/* The leading glyph *is* the status. There is no second
                         mark trailing the row saying the same thing in a
                         smaller size. */}
-                    <StatusMark status={agent.status} />
-                    <span className="row-label">{agent.displayName}</span>
-                    {/* What the Agent says it is doing, in its own words. It
-                        reads as the same kind of thing as a workspace's
-                        branch — dimmed context trailing the name the row is
-                        called by — because it is: the row is still named by
-                        the Agent, and this is what that Agent is on. */}
-                    {agent.activity ? (
-                      <span className="row-activity">{agent.activity}</span>
-                    ) : null}
-                    {/* The unread mark is not a second status. It says the
-                        Agent asked for you and you have not been, which is a
-                        fact about the person and outlives whatever the Agent
-                        is doing now. */}
-                    {agent.unread ? (
-                      <span className="row-unread" aria-hidden="true" />
-                    ) : null}
-                    {agent.controlState !== "running" ||
-                    agent.runtimeHealth !== "healthy" ? (
-                      <span className="row-note">
-                        {agent.controlState === "stopping"
-                          ? "Stopping"
-                          : stopFailed
-                            ? "Stop failed"
-                            : runtimeHealthLabel(agent.runtimeHealth)}
-                      </span>
-                    ) : null}
-                  </button>
-                  {agent.controlState === "stopping" ? null : (
-                    <button
-                      className="row-action-button agent-row-action"
-                      type="button"
-                      aria-label={`Stop ${agent.displayName}`}
-                      title={stopFailed ? "Retry stop" : "Stop agent"}
-                      onClick={() =>
-                        dispatch(
-                          stopFailed
-                            ? { type: "retry_stop_agent", agentId: agent.id }
-                            : { type: "stop_agent", agentId: agent.id },
-                        )
-                      }
-                    >
-                      <svg
-                        viewBox="0 0 14 14"
-                        aria-hidden="true"
-                        focusable="false"
-                      >
-                        <path d="M4 4l6 6M10 4l-6 6" />
-                      </svg>
+                      <StatusMark status={agent.status} />
+                      <span className="row-label">{leading}</span>
                     </button>
-                  )}
+                    {agent.controlState === "stopping" ? null : (
+                      <button
+                        className="row-action-button agent-row-action"
+                        type="button"
+                        aria-label={`Stop ${agent.displayName}`}
+                        title={stopFailed ? "Retry stop" : "Stop agent"}
+                        onClick={() =>
+                          dispatch(
+                            stopFailed
+                              ? { type: "retry_stop_agent", agentId: agent.id }
+                              : { type: "stop_agent", agentId: agent.id },
+                          )
+                        }
+                      >
+                        <svg
+                          viewBox="0 0 14 14"
+                          aria-hidden="true"
+                          focusable="false"
+                        >
+                          <path d="M4 4l6 6M10 4l-6 6" />
+                        </svg>
+                      </button>
+                    )}
+                  </div>
+                  {/* The Agent's own name, and why it may not be doing what its
+                      status says. The same second line a Workspace row has, and
+                      it runs the full width for the same reason. */}
+                  {(naming ?? note) ? (
+                    <div className="row-line row-line-secondary">
+                      {naming ? (
+                        <span className="row-name">{naming}</span>
+                      ) : null}
+                      {note ? <span className="row-note">{note}</span> : null}
+                    </div>
+                  ) : null}
                 </div>
               </li>
             );
@@ -460,19 +497,22 @@ function ScratchRow({
         onDispatch({ type: "select_context", context: { kind: "global" } })
       }
     >
-      <span className="row-rail" aria-hidden="true" />
-      {/* Mirrors a Workspace row's context button so the glyph, the label and
-          the trailing inset land on the same columns. */}
-      <span className="sidebar-context-button">
-        <span className="row-glyph" aria-hidden="true">
-          <svg viewBox="0 0 14 14" focusable="false">
-            {/* Drawn to the Workspace folder's own ink box — 1.5 to 12.5 of
+      {/* Mirrors a Workspace row's first line so the rail, the glyph and the
+          label land on the same columns. It has no second line: there is
+          nothing a Scratch terminal is working on. */}
+      <span className="row-head">
+        <span className="row-rail" aria-hidden="true" />
+        <span className="sidebar-context-button">
+          <span className="row-glyph" aria-hidden="true">
+            <svg viewBox="0 0 14 14" focusable="false">
+              {/* Drawn to the Workspace folder's own ink box — 1.5 to 12.5 of
                 the 14-unit viewBox — so the two glyphs share a leading edge
                 with no optical correction between them. */}
-            <path d="M1.5 3.6 L5.7 7 L1.5 10.4 M7.6 10.4 H12.5" />
-          </svg>
+              <path d="M1.5 3.6 L5.7 7 L1.5 10.4 M7.6 10.4 H12.5" />
+            </svg>
+          </span>
+          <span className="row-label">{SCRATCH_NAME}</span>
         </span>
-        <span className="row-label">{SCRATCH_NAME}</span>
       </span>
     </button>
   );

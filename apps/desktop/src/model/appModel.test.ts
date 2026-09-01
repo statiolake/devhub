@@ -218,6 +218,22 @@ describe("ordinals", () => {
     expect(model.agent(AG_A)?.displayName).toBe("Codex 1");
     expect(model.agent(AG_B)?.displayName).toBe("Codex 1");
   });
+
+  it("shows the number only once there are two of a profile to tell apart", () => {
+    const model = modelWith([WS_A, "/dev/a"]);
+    model.addAgent(WS_A, AG_A, codex);
+    const names = () =>
+      model.snapshot().workspaces[0].agents.map((agent) => agent.displayName);
+    expect(names()).toEqual(["Codex"]);
+
+    model.addAgent(WS_A, AG_B, codex);
+    expect(names()).toEqual(["Codex 1", "Codex 2"]);
+
+    // A name a person typed is theirs, and is not a second Codex the other one
+    // has to be numbered against.
+    model.renameAgent(AG_B, "Investigator");
+    expect(names()).toEqual(["Codex", "Investigator"]);
+  });
 });
 
 describe("labels", () => {
