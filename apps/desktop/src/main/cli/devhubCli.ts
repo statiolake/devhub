@@ -15,28 +15,34 @@
  * printed from somewhere other than the running app is a version of something
  * else. One front door, and it is the socket.
  *
- * When DevHub is not running the command says so and stops. Launching the app
- * from the CLI is a later feature; doing it badly — starting a second instance
- * against a user-data directory the first one owns — is the failure mode the
- * whole single-instance design exists to avoid.
+ * When DevHub is not running the command says so and stops — every command,
+ * `devhub` with nothing after it included. Launching the app from the CLI is a
+ * later feature; doing it badly — starting a second instance against a
+ * user-data directory the first one owns — is the failure mode the whole
+ * single-instance design exists to avoid.
  */
 
 import { connect } from "node:net";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseFileAndPosition, type FilePosition } from "./goto.js";
 import { expandPath } from "./resolve.js";
+import { spoolStdin, stdinSpoolPath } from "./stdin.js";
 import type { ControlRequest, ControlResponse } from "./protocol.js";
 
 export const USAGE = `devhub — drive the running DevHub from a terminal.
 
 usage:
+  devhub                           bring the running DevHub to the front
   devhub <folder>                  make the folder a workspace, show it, and
                                    bring DevHub to the front
   devhub <file>                    open the file in the workspace whose root
                                    contains it, or in the Scratch editor when
                                    no open workspace does
+  devhub -                         open what is piped in as an editor, the way
+                                   'code -' does; it lands in Scratch, like any
+                                   other file no open workspace contains
   devhub -g|--goto <file:line[:col]>
                                    open the file the same way and put the
                                    cursor on that line and column
@@ -71,6 +77,8 @@ const HINT = "Run 'devhub --help' to see what devhub takes.";
 
 export type Command =
 	| { readonly kind: "usage" }
+	| { readonly kind: "activate" }
+	| { readonly kind: "open-stdin" }
 	| { readonly kind: "invalid"; readonly message: string }
 	| {
 			readonly kind: "open";
@@ -111,9 +119,11 @@ export type Command =
  */
 export function parseArguments(argv: readonly string[]): Command {
 	const args = splitAssignments(argv);
-	if (args.length === 0) {
-		return { kind: "invalid", message: "devhub was not asked to do anything." };
-	}
+	// `devhub` on its own is not a mistake, it is the smallest thing the
+	// command can be asked for: put the app you already have in front of you.
+	// The refusal below it is for arguments that add up to nothing — `devhub
+	// --force` — which *is* a mistake, and a different one.
+	if (args.length === 0) return { kind: "activate" };
 	if (args[0] === "--help" || args[0] === "-h") return { kind: "usage" };
 	if (args[0] === "--agent") return parseAgent(args.slice(1));
 	return parseOptions(args);
@@ -166,6 +176,7 @@ function parseOptions(args: readonly string[]): Command {
 	const uninstall: string[] = [];
 	const paths: string[] = [];
 	let goto: string | undefined;
+	let stdin = false;
 	let force = false;
 	let list = false;
 	let showVersions = false;
@@ -225,6 +236,12 @@ function parseOptions(args: readonly string[]): Command {
 			case "-h":
 			case "--help":
 				return { kind: "usage" };
+			// A lone `-` is the pipe, not an option and not a file called `-`.
+			// It has to be caught before the rule below, which would otherwise
+			// refuse it as an option nobody has heard of.
+			case "-":
+				stdin = true;
+				continue;
 			default:
 				if (arg.startsWith("-")) {
 					return {
@@ -242,6 +259,7 @@ function parseOptions(args: readonly string[]): Command {
 		list,
 		version,
 		goto !== undefined,
+		stdin,
 		paths.length > 0,
 	].filter(Boolean).length;
 	if (modes === 0) {
@@ -262,6 +280,7 @@ function parseOptions(args: readonly string[]): Command {
 	}
 	if (list) return { kind: "list-extensions", showVersions };
 	if (version) return { kind: "version" };
+	if (stdin) return { kind: "open-stdin" };
 	if (goto !== undefined) {
 		try {
 			const { path, position } = parseFileAndPosition(goto);
@@ -292,6 +311,15 @@ export function requestFor(
 		case "usage":
 		case "invalid":
 			return undefined;
+		case "open-stdin":
+			// `main` spools stdin to a file and continues as an `open` of that
+			// file. Reaching here means that step was skipped, and the honest
+			// answer to "which file?" is that there is not one yet.
+			throw new Error(
+				"devhub -: stdin must be spooled to a file before the app is asked to open it",
+			);
+		case "activate":
+			return { kind: "activate" };
 		case "open":
 			return {
 				kind: "open",
@@ -374,14 +402,31 @@ function messageOf(error: unknown): string {
 }
 
 export async function main(argv: readonly string[]): Promise<number> {
-	const command = parseArguments(argv);
-	if (command.kind === "usage") {
+	const parsed = parseArguments(argv);
+	if (parsed.kind === "usage") {
 		console.log(USAGE);
 		return 0;
 	}
-	if (command.kind === "invalid") {
-		console.error(`devhub: ${command.message}\n${HINT}`);
+	if (parsed.kind === "invalid") {
+		console.error(`devhub: ${parsed.message}\n${HINT}`);
 		return 2;
+	}
+	// `devhub -` becomes `devhub <spool file>` here, and everything past this
+	// point is the ordinary open. A terminal on the other end of stdin means
+	// there is nothing to read and never will be; `code` drops the `-` and
+	// opens nothing at all, which leaves the person watching a command that
+	// appeared to work and did not.
+	let command: Command = parsed;
+	if (command.kind === "open-stdin") {
+		if (process.stdin.isTTY) {
+			console.error(
+				`devhub: 'devhub -' opens what is piped into it, and nothing is piped into this one. Try: echo hello | devhub -\n${HINT}`,
+			);
+			return 2;
+		}
+		const spool = stdinSpoolPath(tmpdir());
+		await spoolStdin(process.stdin, spool);
+		command = { kind: "open", path: spool, position: undefined };
 	}
 	const socketPath = process.env["DEVHUB_CONTROL_SOCKET"];
 	if (!socketPath) {

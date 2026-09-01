@@ -28,6 +28,46 @@ describe("what the devhub command was asked to do", () => {
 		});
 	});
 
+	/**
+	 * `devhub` with nothing after it is the smallest useful thing the command
+	 * does: it brings the app you already have to the front. It is deliberately
+	 * not the usage text — a bare command that prints a wall of help is a
+	 * command that made you read instead of doing the obvious thing.
+	 */
+	it("takes no arguments at all as a request to come to the front", () => {
+		expect(parseArguments([])).toEqual({ kind: "activate" });
+		expect(requestFor(parseArguments([]), "/work", "/home/d")).toEqual({
+			kind: "activate",
+		});
+		expect(USAGE).toContain("bring the running DevHub to the front");
+	});
+
+	/**
+	 * A lone `-` is the pipe. It must not be read as an option nobody knows,
+	 * and it must not be read as a file named `-`: both would report on
+	 * something the person never asked about.
+	 */
+	it("takes a lone dash as the pipe, and only on its own", () => {
+		expect(parseArguments(["-"])).toEqual({ kind: "open-stdin" });
+		expect(parseArguments(["-", "notes.md"])).toEqual({
+			kind: "invalid",
+			message: "devhub does one of these things at a time.",
+		});
+		expect(parseArguments(["-", "--version"]).kind).toBe("invalid");
+		expect(USAGE).toContain("devhub -  ");
+	});
+
+	/**
+	 * There is no file yet when `-` is parsed — `main` spools stdin to one and
+	 * carries on as an ordinary open of that file. A request built straight
+	 * from `open-stdin` would have to invent a path, so it refuses instead.
+	 */
+	it("has no request to send for a pipe it has not read yet", () => {
+		expect(() =>
+			requestFor(parseArguments(["-"]), "/work", "/home/d"),
+		).toThrowError(/spooled to a file/);
+	});
+
 	it("prints its usage on request", () => {
 		expect(parseArguments(["--help"])).toEqual({ kind: "usage" });
 		expect(parseArguments(["-h"])).toEqual({ kind: "usage" });
@@ -38,7 +78,9 @@ describe("what the devhub command was asked to do", () => {
 	});
 
 	it("says what is wrong rather than printing the whole usage at nothing", () => {
-		expect(parseArguments([])).toEqual({
+		// `devhub` alone is a request, not a mistake — see the activate test.
+		// Arguments that add up to no request still are one.
+		expect(parseArguments(["--force"])).toEqual({
 			kind: "invalid",
 			message: "devhub was not asked to do anything.",
 		});
@@ -239,7 +281,9 @@ describe("what the devhub command was asked to do", () => {
 	});
 
 	it("has nothing to send when there is nothing to do", () => {
-		expect(requestFor(parseArguments([]), "/work", "/home/d")).toBeUndefined();
+		expect(
+			requestFor(parseArguments(["--force"]), "/work", "/home/d"),
+		).toBeUndefined();
 		expect(
 			requestFor(parseArguments(["--help"]), "/work", "/home/d"),
 		).toBeUndefined();
