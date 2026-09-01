@@ -143,6 +143,30 @@ export class AgentSessions {
 	}
 
 	/**
+	 * Send one Agent a block of text, as though a person had pasted it.
+	 *
+	 * The decision to send is not made here — see `injection.ts` for the rule
+	 * about which screens may be typed into. This is only the delivery.
+	 */
+	async inject(
+		agentId: string,
+		workspaceId: string,
+		text: string,
+		cancel = new CancellationToken(),
+	): Promise<void> {
+		await this.#runtime.injectAgentText(
+			{
+				kind: "agent",
+				agentId,
+				workspaceId,
+				sessionName: agentSessionName(agentId),
+			},
+			text,
+			cancel,
+		);
+	}
+
+	/**
 	 * Kill every Agent session that no row can ever show.
 	 *
 	 * Run once, at startup, after the state file has been restored. A marked

@@ -1022,6 +1022,85 @@ export class TmuxTerminalRuntime {
 		}
 	}
 
+	/**
+	 * Type text into one Agent's prompt, as a paste, and submit it.
+	 *
+	 * The bytes are wrapped in the bracketed-paste markers a terminal sends
+	 * when a person pastes, because that is what tells the program on the other
+	 * end that a block of text arrived together. Without them a CLI reads the
+	 * line breaks as Enter and submits every line as its own message; with
+	 * them, a multi-line instruction lands in the prompt box as one message and
+	 * waits there. Verified against a real Claude Code: three lines went in as
+	 * one, and nothing was sent until the Enter that follows.
+	 *
+	 * The line breaks are carriage returns, not newlines. That is what a
+	 * terminal puts on the wire for the Return key, and it is what the program
+	 * inside a paste turns back into a line break — a bare newline is dropped,
+	 * which was three lines arriving as one run-on sentence until this was
+	 * measured.
+	 *
+	 * **Why the identity is read again first.** `captureAgent` reads and then
+	 * checks, which is safe for a read: a screen that turned out to be somebody
+	 * else's is discarded. This writes, and there is no discarding a keystroke
+	 * that has already been typed into the wrong pane. So the check comes
+	 * first, in the same held permit, in the same shape `closeOwnedSession`
+	 * uses before it destroys anything.
+	 */
+	async injectAgentText(
+		record: OwnedSessionRecord,
+		text: string,
+		cancel = new CancellationToken(),
+	): Promise<void> {
+		if (record.kind !== "agent") throw portFailure("failed");
+		if (text.trim().length === 0) throw portFailure("failed");
+		const release = await this.gate.acquireOperation(cancel);
+		try {
+			const socket = this.socket();
+			const deadline = OperationDeadline.in(this.timeoutMs);
+			const identity = await this.runTmux(
+				socket,
+				[
+					"display-message",
+					"-p",
+					"-t",
+					record.sessionName,
+					`#{${AGENT_ID_OPTION}}`,
+				],
+				this.contextHome,
+				cancel,
+				deadline,
+			);
+			if (!identity.success) throw portFailure("conflict");
+			if (parseCapture(identity.stdout).split("\n")[0] !== record.agentId) {
+				throw portFailure("conflict");
+			}
+			const body = text.replaceAll(/\r\n|\n/gu, "\r");
+			const paste = `\u001b[200~${body}\u001b[201~`;
+			const output = await this.runTmux(
+				socket,
+				[
+					"send-keys",
+					"-t",
+					record.sessionName,
+					"-l",
+					"--",
+					paste,
+					";",
+					"send-keys",
+					"-t",
+					record.sessionName,
+					"Enter",
+				],
+				this.contextHome,
+				cancel,
+				deadline,
+			);
+			if (!output.success) throw portFailure("failed");
+		} finally {
+			release();
+		}
+	}
+
 	/** Kill one Agent's session, by the same exact-record rule as any other. */
 	async closeAgent(
 		record: OwnedSessionRecord,

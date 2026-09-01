@@ -38,6 +38,12 @@ import {
   workspaceDigest,
 } from "../../src/main/terminal/tmux";
 import { AgentSessions } from "../../src/main/agent/sessions";
+import { AgentStatusDetector } from "../../src/main/agent/detect/detector";
+import {
+  AgentInjectionQueue,
+  IDLE_ROUNDS_BEFORE_SEND,
+} from "../../src/main/agent/injection";
+import { CLAUDE_IDLE } from "../../src/main/agent/detect/claudeScreens.fixture";
 import { scratchDirectory } from "./scratch";
 
 const TMUX_CANDIDATES = [
@@ -686,6 +692,125 @@ describe.skipIf(TMUX === undefined)(
       );
       expect(after.map((one) => one.name)).toContain(SCRATCH_SESSION);
       expect(after.map((one) => one.name)).toContain(workspaceSession);
+    });
+
+    /**
+     * Queued text reaches a real pane, and only once its prompt has settled.
+     *
+     * The Agent here is a script rather than Claude Code: it prints the very
+     * screen the fixtures captured from a real one — so the detector reads it
+     * as idle for the same reason it reads the real thing as idle — and then
+     * waits on a line of input and writes down exactly what arrived. That
+     * makes the whole path testable without a paid CLI: real tmux, real
+     * `send-keys`, real bracketed paste, the real detector and the real queue.
+     *
+     * The one thing a fake cannot prove is how Claude Code itself renders a
+     * paste, and that was measured by hand against 2.1.257: three lines went
+     * into the prompt box as one message and nothing was submitted until the
+     * Enter that follows.
+     */
+    it("types queued text into an Agent once its prompt has settled", async () => {
+      const test = fixture("inject");
+      const sessions = new AgentSessions(test.runtime);
+      const detector = new AgentStatusDetector();
+      const queue = new AgentInjectionQueue();
+      const agentId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa5";
+      const workspaceId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb5";
+      const landed = join(test.home, "received.txt");
+      const screenFile = join(test.home, "screen.txt");
+      const script = join(test.home, "fake-agent.py");
+      writeFileSync(screenFile, CLAUDE_IDLE.screen);
+      // Raw bytes, verbatim: a shell's `read` would eat the carriage returns
+      // that are the whole point, and the markers have to be seen as sent.
+      writeFileSync(
+        script,
+        [
+          "import os, select, sys, termios, time, tty",
+          // A TUI puts its terminal in raw mode; a cooked one would have the
+          // line discipline turn the carriage returns into newlines before
+          // the program ever saw them.
+          "tty.setraw(sys.stdin.fileno())",
+          "sys.stdout.write(open(sys.argv[1]).read())",
+          "sys.stdout.flush()",
+          "buf = b''",
+          "end = time.time() + 25",
+          "while time.time() < end:",
+          "    r, _, _ = select.select([sys.stdin], [], [], 0.2)",
+          "    if r:",
+          "        chunk = os.read(sys.stdin.fileno(), 65536)",
+          "        if not chunk: break",
+          "        buf += chunk",
+          "        if b'\\x1b[201~' in buf: break",
+          "open(sys.argv[2], 'wb').write(buf)",
+          "time.sleep(30)",
+          "",
+        ].join("\n"),
+      );
+      await test.runtime.ensure(SCRATCH_TARGET);
+
+      await sessions.launch({
+        agentId,
+        workspaceId,
+        root: test.home,
+        command: {
+          file: "/usr/bin/python3",
+          args: [script, screenFile, landed],
+          env: {},
+        },
+      });
+
+      const text =
+        "First line.\nSecond line, which must not submit on its own.";
+      queue.queue(agentId, text);
+
+      let sends = 0;
+      for (let round = 0; round < 60; round += 1) {
+        const screen = await sessions
+          .screen(agentId, workspaceId)
+          .catch(() => undefined);
+        if (screen) {
+          const due = queue.due(agentId, detector.status("claude", screen));
+          if (due !== undefined) {
+            await sessions.inject(agentId, workspaceId, due);
+            queue.sent(agentId);
+            sends += 1;
+          }
+        }
+        if (existsSync(landed)) break;
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+
+      expect(existsSync(landed)).toBe(true);
+      const received = readFileSync(landed, "utf8");
+      // Wrapped as a paste, so the program on the other end knows the lines
+      // arrived together rather than as two submissions.
+      expect(received).toContain("\u001b[200~");
+      expect(received).toContain("\u001b[201~");
+      expect(received).toContain("First line.");
+      expect(received).toContain(
+        "Second line, which must not submit on its own.",
+      );
+      // A line break inside a paste travels as a carriage return; a bare
+      // newline is dropped, which is two lines arriving as one sentence.
+      expect(received).toContain("First line.\rSecond line");
+      // Once. The queue empties on the send, so a later idle round is not a
+      // second delivery.
+      expect(sends).toBe(1);
+    });
+
+    /** The gate itself, against the states a real Agent actually passes through. */
+    it("holds text back while an Agent is busy or asking", async () => {
+      const queue = new AgentInjectionQueue();
+      const agentId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa6";
+      queue.queue(agentId, "do the thing");
+      for (let round = 0; round < IDLE_ROUNDS_BEFORE_SEND * 3; round += 1) {
+        expect(queue.due(agentId, "working")).toBeUndefined();
+        expect(queue.due(agentId, "waiting")).toBeUndefined();
+        expect(queue.due(agentId, "unknown")).toBeUndefined();
+      }
+      expect(queue.state(agentId, "waiting").waitingFor.kind).toBe(
+        "agent_asking",
+      );
     });
 
     /**

@@ -51,6 +51,18 @@ export interface AgentAdapter {
 	reconcile(agentId?: AgentId): Promise<AgentReconciliationResult>;
 	/** Close every Agent belonging to a workspace. Resolves when they are gone. */
 	closeWorkspaceAgents(workspaceId: WorkspaceId): Promise<void>;
+	/**
+	 * Hold text for an Agent, to be sent the next time its prompt is free.
+	 *
+	 * It does not go now. The Agent may be mid-turn, or stopped on a question
+	 * that wants a keypress rather than a sentence, and the queue waits for a
+	 * settled idle prompt before typing anything — see `agent/injection.ts`.
+	 * Callers build the text; when it is delivered is not theirs to decide.
+	 *
+	 * Throws if the text is empty, which is a caller's bug rather than a state
+	 * of the world: a bare Enter into an Agent's prompt is not a no-op.
+	 */
+	queueInjection(agentId: AgentId, text: string): void;
 }
 
 export interface TerminalAdapter {

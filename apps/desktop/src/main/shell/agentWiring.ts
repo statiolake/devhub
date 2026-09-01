@@ -14,6 +14,7 @@
 
 import { AgentActivityReader } from "../agent/activity.js";
 import { AgentStatusDetector } from "../agent/detect/detector.js";
+import { AgentInjectionQueue } from "../agent/injection.js";
 import { AgentSessions } from "../agent/sessions.js";
 import type { AppModel } from "../../model/appModel.js";
 import type {
@@ -41,6 +42,7 @@ export function wireAgents(options: AgentWiringOptions): AgentSessions {
 	const sessions = new AgentSessions(options.runtime);
 	const detector = new AgentStatusDetector();
 	const activity = new AgentActivityReader();
+	const injections = new AgentInjectionQueue();
 
 	registerAgentAdapter({
 		async launch(
@@ -134,6 +136,14 @@ export function wireAgents(options: AgentWiringOptions): AgentSessions {
 					if (sessions.isLaunching(id)) continue;
 					detector.forget(id);
 					activity.forget(id);
+					// An Agent that ended takes with it anything it was never
+					// told. That is the one delivery failure nothing can retry,
+					// so it is said out loud rather than dropped in silence.
+					for (const undelivered of injections.forget(id)) {
+						console.error(
+							`[devhub] agent ${id} ended with text never delivered: ${undelivered.slice(0, 120)}`,
+						);
+					}
 					exited.push(id);
 					continue;
 				}
@@ -145,6 +155,17 @@ export function wireAgents(options: AgentWiringOptions): AgentSessions {
 					about.workspaceId,
 					about.kind,
 				);
+				// The send happens here, on the reading this round settled on,
+				// because this is the only place that knows the Agent is idle
+				// *now*. A queue that decided on its own clock would be acting
+				// on a status that was true when it was last told about it.
+				await deliver(
+					sessions,
+					injections,
+					id,
+					about.workspaceId,
+					reading.status,
+				);
 				observations.push({
 					agentId: id,
 					status: reading.status,
@@ -153,6 +174,10 @@ export function wireAgents(options: AgentWiringOptions): AgentSessions {
 				});
 			}
 			return { observations, exited };
+		},
+
+		queueInjection(agentId: AgentId, text: string): void {
+			injections.queue(agentId, text);
 		},
 
 		async closeWorkspaceAgents(workspaceId: WorkspaceId): Promise<void> {
@@ -206,6 +231,34 @@ async function observe(
 		status: detector.status(kind, screen),
 		activity: activity.activity(screen),
 	};
+}
+
+/**
+ * Send one Agent whatever is due for it, if anything is.
+ *
+ * A failure here is kept on the queue rather than thrown: the text is still
+ * undelivered, the Agent is still there, and the next round will try again —
+ * so the round that failed reports the Agent normally and the reason travels
+ * with the queue for the row to show.
+ */
+async function deliver(
+	sessions: AgentSessions,
+	injections: AgentInjectionQueue,
+	agentId: AgentId,
+	workspaceId: WorkspaceId,
+	status: AgentStatus,
+): Promise<void> {
+	const text = injections.due(agentId, status);
+	if (text === undefined) return;
+	try {
+		await sessions.inject(agentId, workspaceId, text);
+		injections.sent(agentId);
+	} catch (failure: unknown) {
+		injections.failed(
+			agentId,
+			failure instanceof Error ? failure.message : String(failure),
+		);
+	}
 }
 
 async function terminate(
