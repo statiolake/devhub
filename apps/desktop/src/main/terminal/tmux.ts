@@ -209,7 +209,9 @@ export interface TargetIdentity {
  * where they are. DevHub declares nothing about those, so whatever the user's
  * own config asked for is what they get.
  */
-function sessionOptions(context: string): readonly (readonly [string, string])[] {
+function sessionOptions(
+	context: string,
+): readonly (readonly [string, string])[] {
 	return context === AGENT_CONTEXT ? [["status", "off"]] : [];
 }
 
@@ -850,12 +852,7 @@ export class TmuxTerminalRuntime {
 			// The session is proven DevHub's, so its options are DevHub's to
 			// state. Re-stating them here is what migrates a session created by
 			// an older build, and it runs on the same path every open takes.
-			await this.applySessionOptions(
-				socket,
-				identity,
-				cancel,
-				deadline,
-			);
+			await this.applySessionOptions(socket, identity, cancel, deadline);
 			return;
 		}
 		if (target.kind === "agent") throw portFailure("conflict");

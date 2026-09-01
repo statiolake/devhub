@@ -219,10 +219,7 @@ export class TerminalSurfaces {
 	 * Letting tmux subtract its own chrome is the whole fix, and it is one rule
 	 * for a bar that is there and a bar that is not.
 	 */
-	async resize(
-		identity: RequestIdentity,
-		size: TerminalSize,
-	): Promise<void> {
+	async resize(identity: RequestIdentity, size: TerminalSize): Promise<void> {
 		this.attachments.resize(identity, size);
 	}
 
