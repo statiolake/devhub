@@ -39,7 +39,7 @@ describe("what the devhub command was asked to do", () => {
 		expect(requestFor(parseArguments([]), "/work", "/home/d")).toEqual({
 			kind: "activate",
 		});
-		expect(USAGE).toContain("bring the running DevHub to the front");
+		expect(USAGE).toContain("bring DevHub to the front, starting it if");
 	});
 
 	/**

@@ -15,11 +15,12 @@
  * printed from somewhere other than the running app is a version of something
  * else. One front door, and it is the socket.
  *
- * When DevHub is not running the command says so and stops — every command,
- * `devhub` with nothing after it included. Launching the app from the CLI is a
- * later feature; doing it badly — starting a second instance against a
- * user-data directory the first one owns — is the failure mode the whole
- * single-instance design exists to avoid.
+ * When DevHub is not running the command says so and stops. The one exception
+ * is a bare `devhub`, which starts it — see `launch.ts` for why that command
+ * and not the others. Nothing here ever starts a second instance against a
+ * user-data directory the first one owns, which is the failure mode the whole
+ * single-instance design exists to avoid: macOS is asked to open the installed
+ * bundle, and macOS raises the running one if there is one.
  */
 
 import { connect } from "node:net";
@@ -27,6 +28,7 @@ import { homedir, tmpdir } from "node:os";
 import { resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseFileAndPosition, type FilePosition } from "./goto.js";
+import { bundleLauncher, NotRunning, sendOrLaunch } from "./launch.js";
 import { expandPath } from "./resolve.js";
 import { spoolStdin, stdinSpoolPath } from "./stdin.js";
 import type { ControlRequest, ControlResponse } from "./protocol.js";
@@ -34,7 +36,8 @@ import type { ControlRequest, ControlResponse } from "./protocol.js";
 export const USAGE = `devhub — drive the running DevHub from a terminal.
 
 usage:
-  devhub                           bring the running DevHub to the front
+  devhub                           bring DevHub to the front, starting it if
+                                   it is not running
   devhub <folder>                  make the folder a workspace, show it, and
                                    bring DevHub to the front
   devhub <file>                    open the file in the workspace whose root
@@ -380,9 +383,7 @@ async function ask(
 		socket.on("error", (error: NodeJS.ErrnoException) => {
 			reject(
 				error.code === "ENOENT" || error.code === "ECONNREFUSED"
-					? new Error(
-							"DevHub is not running. Start DevHub and run this command again.",
-						)
+					? new NotRunning()
 					: error,
 			);
 		});
@@ -437,7 +438,18 @@ export async function main(argv: readonly string[]): Promise<number> {
 	}
 	const request = requestFor(command, process.cwd(), homedir());
 	if (!request) return 2;
-	const response = await ask(socketPath, request);
+	// Only a bare `devhub` starts DevHub. A command that carries something to
+	// do is answered by the DevHub that exists, or not at all; see `launch.ts`.
+	const response = await sendOrLaunch(
+		() => ask(socketPath, request),
+		command.kind === "activate" ? bundleLauncher(socketPath) : undefined,
+	);
+	if (response === undefined) {
+		// `open -b` brings the app forward on its way, so there is nothing left
+		// to ask for — and nothing was answered, so nothing is quoted.
+		console.log("DevHub was not running, so it was started.");
+		return 0;
+	}
 	if (response.ok) {
 		console.log(response.message);
 		return 0;
