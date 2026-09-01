@@ -109,14 +109,41 @@ def rebrand(app: Path, main_plist_extra: dict[str, str] | None = None) -> None:
 
 
 def sign(app: Path) -> None:
-	"""Replace the signature the rename invalidated.
+	"""Replace the signature the rename invalidated, under a stable identity.
 
 	Apple Silicon will not launch a bundle whose contents no longer match its
 	signature, and every rename above changed contents. Ad-hoc is the weakest
 	signature macOS accepts, and the strongest one available without a
 	certificate.
+
+	An ad-hoc signature's *designated requirement* is the code directory hash,
+	so it changes with every build. A macOS keychain ACL records the requirement
+	of whoever stored an item, which makes each rebuild of DevHub a stranger to
+	the item the previous one wrote: reading it needs the user's consent, and
+	Electron asks through a synchronous Security.framework call on the main
+	thread. Until that dialog is answered the main thread never returns, so
+	Electron never pumps libuv again — every timer, every socket and the control
+	socket with them go silent, and the app stands there answering nothing.
+
+	Naming the requirement after the bundle identifier pins the identity to
+	something every build shares, so one grant covers all of them. `--deep`
+	cannot carry it: the nested helpers have identifiers of their own, and a
+	requirement naming this one would contradict them. So the tree is signed
+	first and the outer bundle re-signed with the requirement afterwards.
 	"""
 	subprocess.run(["codesign", "--force", "--deep", "--sign", "-", str(app)], check=True)
+	subprocess.run(
+		[
+			"codesign",
+			"--force",
+			"--sign",
+			"-",
+			"-r",
+			f'=designated => identifier "{BUNDLE_IDENTIFIER}"',
+			str(app),
+		],
+		check=True,
+	)
 	subprocess.run(["codesign", "--verify", "--deep", "--strict", str(app)], check=True)
 
 
