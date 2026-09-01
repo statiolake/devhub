@@ -33,6 +33,7 @@ export interface ControlHandlers {
 		path: string,
 		cwd: string,
 		position: ControlPosition | undefined,
+		waitMarkerPath: string | undefined,
 	): Promise<string>;
 	addAgent(
 		profileId: string,
@@ -176,6 +177,7 @@ async function handle(
 						request.path,
 						request.cwd,
 						request.position,
+						request.waitMarkerPath,
 					),
 				};
 			case "add-agent":

@@ -2019,19 +2019,30 @@ export class AppController {
 		path: string,
 		_cwd: string,
 		position: ControlPosition | undefined,
+		waitMarkerPath: string | undefined,
 	): Promise<string> {
-		return asSentence(() => this.doOpenFromCli(path, position));
+		return asSentence(() => this.doOpenFromCli(path, position, waitMarkerPath));
 	}
 
 	private async doOpenFromCli(
 		path: string,
 		position: ControlPosition | undefined,
+		waitMarkerPath: string | undefined,
 	): Promise<string> {
 		const target = await canonicalise(path);
 		if (target.isDirectory) {
 			if (position) {
 				throw new Error(
 					`${target.path} is a folder, and a line and column belong to a file.`,
+				);
+			}
+			// A folder has no editor to close, and DevHub has one window rather
+			// than one per folder, so there is nothing here that `--wait` could
+			// wait for. Saying so beats waiting forever on a tab that will
+			// never exist.
+			if (waitMarkerPath) {
+				throw new Error(
+					`${target.path} is a folder, and --wait waits for an editor to be closed.`,
 				);
 			}
 			await this.openFolder(target.path);
@@ -2048,6 +2059,7 @@ export class AppController {
 				await this.workbenchWindow(SCRATCH_EDITOR),
 				target,
 				position,
+				waitMarkerPath,
 			);
 			this.bringToFront();
 			return `${target.path}${at(position)} is open in the Scratch editor: no open workspace contains it.`;
@@ -2065,7 +2077,12 @@ export class AppController {
 			presentation: "full",
 		});
 		await this.syncEditorView();
-		openFileInWorkbench(await this.workbenchWindow(root), target, position);
+		openFileInWorkbench(
+			await this.workbenchWindow(root),
+			target,
+			position,
+			waitMarkerPath,
+		);
 		this.bringToFront();
 		return `${target.path}${at(position)} is open in the workspace at ${root}.`;
 	}

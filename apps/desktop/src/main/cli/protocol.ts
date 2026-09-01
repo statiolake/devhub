@@ -72,6 +72,16 @@ export type ControlRequest =
 			readonly path: string;
 			readonly cwd: string;
 			readonly position?: ControlPosition;
+			/**
+			 * `--wait`: the file the CLI is holding a terminal open for.
+			 *
+			 * The workbench deletes this file once the editor is closed, and
+			 * the CLI returns when it goes. It rides along with the open for
+			 * the same reason a position does — it is a fact about *this*
+			 * open, and there is no waiting to be done for a file nobody
+			 * opened.
+			 */
+			readonly waitMarkerPath?: string;
 	  }
 	| {
 			/**
@@ -164,6 +174,14 @@ export function parseControlRequest(line: string): ControlRequest {
 				...(record["position"] === undefined
 					? {}
 					: { position: requirePosition(record["position"]) }),
+				...(record["waitMarkerPath"] === undefined
+					? {}
+					: {
+							waitMarkerPath: requireAbsolute(
+								record["waitMarkerPath"],
+								"waitMarkerPath",
+							),
+						}),
 			};
 		case "install-extensions":
 			return {

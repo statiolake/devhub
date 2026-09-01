@@ -123,7 +123,8 @@ export async function bootstrapShell(
 	const socketPath = controlSocketPath(userDataPath);
 	const control = await startControlServer(socketPath, {
 		activate: () => controller.activateFromCli(),
-		open: (path, cwd, position) => controller.openFromCli(path, cwd, position),
+		open: (path, cwd, position, waitMarkerPath) =>
+			controller.openFromCli(path, cwd, position, waitMarkerPath),
 		addAgent: (profileId, args, cwd) =>
 			controller.addAgentFromCli(profileId, args, cwd),
 		installExtensions: (targets, force, cwd) =>

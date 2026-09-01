@@ -65,9 +65,9 @@ describe("the DevHub control socket", () => {
 				calls.push("activate");
 				return Promise.resolve("DevHub is in front.");
 			},
-			open: (path, cwd, position) => {
+			open: (path, cwd, position, waitMarkerPath) => {
 				calls.push(
-					`open ${path} ${cwd}${position ? ` @${position.line}:${position.column}` : ""}`,
+					`open ${path} ${cwd}${position ? ` @${position.line}:${position.column}` : ""}${waitMarkerPath ? ` wait=${waitMarkerPath}` : ""}`,
 				);
 				return Promise.resolve(`opened ${path}`);
 			},
@@ -140,6 +140,39 @@ describe("the DevHub control socket", () => {
 		);
 		expect(answer).toEqual({ ok: true, message: "opened /work/a/f.txt" });
 		expect(calls).toEqual(["open /work/a/f.txt /work/a"]);
+	});
+
+	/** `--wait` reaches the app as part of the open it belongs to. */
+	it("carries a wait marker through to the handler", async () => {
+		const answer = await ask(
+			socketPath,
+			`${JSON.stringify({
+				kind: "open",
+				path: "/work/a/COMMIT_EDITMSG",
+				cwd: "/work/a",
+				waitMarkerPath: "/tmp/devhub-wait-abc/marker",
+			})}\n`,
+		);
+		expect(answer.ok).toBe(true);
+		expect(calls).toEqual([
+			"open /work/a/COMMIT_EDITMSG /work/a wait=/tmp/devhub-wait-abc/marker",
+		]);
+	});
+
+	/** A marker that is not an absolute path is not a marker this app made. */
+	it("refuses a wait marker that is not an absolute path", async () => {
+		const answer = await ask(
+			socketPath,
+			`${JSON.stringify({
+				kind: "open",
+				path: "/work/a/f.txt",
+				cwd: "/work/a",
+				waitMarkerPath: "marker",
+			})}\n`,
+		);
+		expect(answer.ok).toBe(false);
+		expect(answer.message).toMatch(/waitMarkerPath must be an absolute path/);
+		expect(calls).toEqual([]);
 	});
 
 	it("carries the agent's own arguments through untouched", async () => {

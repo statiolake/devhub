@@ -31,6 +31,12 @@ import { parseFileAndPosition, type FilePosition } from "./goto.js";
 import { bundleLauncher, NotRunning, sendOrLaunch } from "./launch.js";
 import { expandPath } from "./resolve.js";
 import { spoolStdin, stdinSpoolPath } from "./stdin.js";
+import {
+	createMarker,
+	markerWorld,
+	removeMarker,
+	waitForClose,
+} from "./wait.js";
 import type { ControlRequest, ControlResponse } from "./protocol.js";
 
 export const USAGE = `devhub — drive the running DevHub from a terminal.
@@ -46,6 +52,9 @@ usage:
   devhub -                         open what is piped in as an editor, the way
                                    'code -' does; it lands in Scratch, like any
                                    other file no open workspace contains
+  devhub -w|--wait <file>          open the file and do not return until its
+                                   editor is closed again, so that this can be
+                                   your EDITOR; combines with - and --goto
   devhub -g|--goto <file:line[:col]>
                                    open the file the same way and put the
                                    cursor on that line and column
@@ -81,12 +90,13 @@ const HINT = "Run 'devhub --help' to see what devhub takes.";
 export type Command =
 	| { readonly kind: "usage" }
 	| { readonly kind: "activate" }
-	| { readonly kind: "open-stdin" }
+	| { readonly kind: "open-stdin"; readonly wait: boolean }
 	| { readonly kind: "invalid"; readonly message: string }
 	| {
 			readonly kind: "open";
 			readonly path: string;
 			readonly position: FilePosition | undefined;
+			readonly wait: boolean;
 	  }
 	| {
 			readonly kind: "add-agent";
@@ -180,6 +190,7 @@ function parseOptions(args: readonly string[]): Command {
 	const paths: string[] = [];
 	let goto: string | undefined;
 	let stdin = false;
+	let wait = false;
 	let force = false;
 	let list = false;
 	let showVersions = false;
@@ -226,6 +237,13 @@ function parseOptions(args: readonly string[]): Command {
 			case "--force":
 				force = true;
 				continue;
+			// A modifier rather than a mode: `--wait` says how to open, not
+			// what to open, so it is gathered like `--force` and never counted
+			// among the things devhub does one of at a time.
+			case "-w":
+			case "--wait":
+				wait = true;
+				continue;
 			case "--list-extensions":
 				list = true;
 				continue;
@@ -266,7 +284,12 @@ function parseOptions(args: readonly string[]): Command {
 		paths.length > 0,
 	].filter(Boolean).length;
 	if (modes === 0) {
-		return { kind: "invalid", message: "devhub was not asked to do anything." };
+		return {
+			kind: "invalid",
+			message: wait
+				? "--wait waits for a file to be closed, so it needs a file to open."
+				: "devhub was not asked to do anything.",
+		};
 	}
 	if (modes > 1) {
 		return {
@@ -283,11 +306,11 @@ function parseOptions(args: readonly string[]): Command {
 	}
 	if (list) return { kind: "list-extensions", showVersions };
 	if (version) return { kind: "version" };
-	if (stdin) return { kind: "open-stdin" };
+	if (stdin) return { kind: "open-stdin", wait };
 	if (goto !== undefined) {
 		try {
 			const { path, position } = parseFileAndPosition(goto);
-			return { kind: "open", path, position };
+			return { kind: "open", path, position, wait };
 		} catch (error) {
 			return { kind: "invalid", message: messageOf(error) };
 		}
@@ -298,7 +321,7 @@ function parseOptions(args: readonly string[]): Command {
 			message: "devhub opens one path at a time.",
 		};
 	}
-	return { kind: "open", path: paths[0] ?? "", position: undefined };
+	return { kind: "open", path: paths[0] ?? "", position: undefined, wait };
 }
 
 function needsValue(option: string, what: string): Command {
@@ -309,6 +332,7 @@ export function requestFor(
 	command: Command,
 	cwd: string,
 	home: string,
+	waitMarkerPath?: string,
 ): ControlRequest | undefined {
 	switch (command.kind) {
 		case "usage":
@@ -331,6 +355,7 @@ export function requestFor(
 				...(command.position === undefined
 					? {}
 					: { position: command.position }),
+				...(waitMarkerPath === undefined ? {} : { waitMarkerPath }),
 			};
 		case "add-agent":
 			return {
@@ -427,7 +452,12 @@ export async function main(argv: readonly string[]): Promise<number> {
 		}
 		const spool = stdinSpoolPath(tmpdir());
 		await spoolStdin(process.stdin, spool);
-		command = { kind: "open", path: spool, position: undefined };
+		command = {
+			kind: "open",
+			path: spool,
+			position: undefined,
+			wait: command.wait,
+		};
 	}
 	const socketPath = process.env["DEVHUB_CONTROL_SOCKET"];
 	if (!socketPath) {
@@ -436,7 +466,33 @@ export async function main(argv: readonly string[]): Promise<number> {
 		);
 		return 1;
 	}
-	const request = requestFor(command, process.cwd(), homedir());
+	// The marker exists before the request that names it, because the workbench
+	// deletes it to say the editor was closed — and a file that is not there
+	// yet cannot be deleted, which would read as "closed already".
+	const marker =
+		command.kind === "open" && command.wait
+			? await createMarker(tmpdir())
+			: undefined;
+	try {
+		return await run(command, socketPath, marker);
+	} finally {
+		if (marker !== undefined) await removeMarker(marker);
+	}
+}
+
+/**
+ * Send the command, print the answer, and — for `--wait` — hold the terminal
+ * until the editor is closed.
+ *
+ * Split out so that the marker made for a `--wait` is cleared up however this
+ * ends, including on the way out of a failure.
+ */
+async function run(
+	command: Command,
+	socketPath: string,
+	marker: string | undefined,
+): Promise<number> {
+	const request = requestFor(command, process.cwd(), homedir(), marker);
 	if (!request) return 2;
 	// Only a bare `devhub` starts DevHub. A command that carries something to
 	// do is answered by the DevHub that exists, or not at all; see `launch.ts`.
@@ -450,12 +506,19 @@ export async function main(argv: readonly string[]): Promise<number> {
 		console.log("DevHub was not running, so it was started.");
 		return 0;
 	}
-	if (response.ok) {
+	if (!response.ok) {
+		console.error(response.message);
+		return 1;
+	}
+	if (marker === undefined) {
 		console.log(response.message);
 		return 0;
 	}
-	console.error(response.message);
-	return 1;
+	// Nothing is printed for a `--wait`: this command is somebody's EDITOR, and
+	// an EDITOR that writes to stdout writes into whatever is reading it. The
+	// report is the exit status, and the file.
+	await waitForClose(markerWorld(marker, socketPath));
+	return 0;
 }
 
 // `import.meta.url` is the module's own path; `process.argv[1]` is the script

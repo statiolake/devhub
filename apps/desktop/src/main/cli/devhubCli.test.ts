@@ -7,6 +7,7 @@ describe("what the devhub command was asked to do", () => {
 			kind: "open",
 			path: "src/main.ts",
 			position: undefined,
+			wait: false,
 		});
 	});
 
@@ -48,7 +49,7 @@ describe("what the devhub command was asked to do", () => {
 	 * something the person never asked about.
 	 */
 	it("takes a lone dash as the pipe, and only on its own", () => {
-		expect(parseArguments(["-"])).toEqual({ kind: "open-stdin" });
+		expect(parseArguments(["-"])).toEqual({ kind: "open-stdin", wait: false });
 		expect(parseArguments(["-", "notes.md"])).toEqual({
 			kind: "invalid",
 			message: "devhub does one of these things at a time.",
@@ -66,6 +67,79 @@ describe("what the devhub command was asked to do", () => {
 		expect(() =>
 			requestFor(parseArguments(["-"]), "/work", "/home/d"),
 		).toThrowError(/spooled to a file/);
+	});
+
+	/**
+	 * `--wait` says how to open, not what to open, so it rides along with a
+	 * path, a pipe or a `--goto` rather than competing with them. That is what
+	 * makes `EDITOR='devhub --wait'` a thing you can set once.
+	 */
+	it("takes --wait as a way of opening, not a thing to open", () => {
+		expect(parseArguments(["--wait", "notes.md"])).toEqual({
+			kind: "open",
+			path: "notes.md",
+			position: undefined,
+			wait: true,
+		});
+		expect(parseArguments(["-w", "notes.md"])).toEqual({
+			kind: "open",
+			path: "notes.md",
+			position: undefined,
+			wait: true,
+		});
+		// Order is not meaning, as it is not for --force.
+		expect(parseArguments(["notes.md", "--wait"])).toEqual({
+			kind: "open",
+			path: "notes.md",
+			position: undefined,
+			wait: true,
+		});
+		expect(parseArguments(["--wait", "-g", "a.ts:9:2"])).toEqual({
+			kind: "open",
+			path: "a.ts",
+			position: { line: 9, column: 2 },
+			wait: true,
+		});
+		expect(parseArguments(["--wait", "-"])).toEqual({
+			kind: "open-stdin",
+			wait: true,
+		});
+	});
+
+	/** Waiting for nothing is a wait that never ends, so it is refused. */
+	it("refuses a --wait with nothing to wait for", () => {
+		expect(parseArguments(["--wait"])).toEqual({
+			kind: "invalid",
+			message:
+				"--wait waits for a file to be closed, so it needs a file to open.",
+		});
+	});
+
+	/**
+	 * The marker is made by `main` before the request is built, because the
+	 * workbench deletes it to say the editor closed. It reaches the app as part
+	 * of the open, since there is no waiting to be done for a file nobody
+	 * opened.
+	 */
+	it("sends the wait marker along with the file it belongs to", () => {
+		expect(
+			requestFor(
+				parseArguments(["--wait", "notes.md"]),
+				"/work/a",
+				"/home/d",
+				"/tmp/devhub-wait-abc/marker",
+			),
+		).toEqual({
+			kind: "open",
+			path: "/work/a/notes.md",
+			cwd: "/work/a",
+			waitMarkerPath: "/tmp/devhub-wait-abc/marker",
+		});
+		// Without --wait there is no marker, and the message is byte for byte
+		// the one devhub has always sent.
+		expect(
+			requestFor(parseArguments(["notes.md"]), "/work/a", "/home/d"),
+		).toEqual({ kind: "open", path: "/work/a/notes.md", cwd: "/work/a" });
 	});
 
 	it("prints its usage on request", () => {
@@ -128,24 +202,28 @@ describe("what the devhub command was asked to do", () => {
 			kind: "open",
 			path: "src/a.ts",
 			position: { line: 42, column: 7 },
+			wait: false,
 		});
 		// A line without a column is the start of the line.
 		expect(parseArguments(["-g", "src/a.ts:42"])).toEqual({
 			kind: "open",
 			path: "src/a.ts",
 			position: { line: 42, column: 1 },
+			wait: false,
 		});
 		// No position at all is a plain open, as `code --goto file` is.
 		expect(parseArguments(["--goto", "src/a.ts"])).toEqual({
 			kind: "open",
 			path: "src/a.ts",
 			position: undefined,
+			wait: false,
 		});
 		// A colon can be part of a path; only trailing numbers are a position.
 		expect(parseArguments(["--goto", "/w/a:b/c.ts:3"])).toEqual({
 			kind: "open",
 			path: "/w/a:b/c.ts",
 			position: { line: 3, column: 1 },
+			wait: false,
 		});
 	});
 

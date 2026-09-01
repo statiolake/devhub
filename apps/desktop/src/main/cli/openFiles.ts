@@ -33,16 +33,27 @@ import type { ICodeWindow } from "code-oss-dev/out/vs/platform/window/electron-m
 import type { ResolvedPath } from "./canonical.js";
 import type { ControlPosition } from "./protocol.js";
 
-/** Ask a running workbench to open one file, optionally at a position. */
+/**
+ * Ask a running workbench to open one file, optionally at a position, and
+ * optionally holding a `--wait` marker open until it is closed again.
+ *
+ * `filesToWait` is upstream's field and upstream's behaviour: `onOpenFiles`
+ * watches the editors it just opened and deletes the marker when they close —
+ * or deletes it immediately if none of them opened, so a file that cannot be
+ * opened ends the CLI's wait instead of hanging it forever. DevHub adds
+ * nothing to that; it only says which file, and where the marker is.
+ */
 export function openFileInWorkbench(
 	window: ICodeWindow,
 	file: ResolvedPath,
 	position: ControlPosition | undefined,
+	waitMarkerPath: string | undefined,
 ): void {
+	const fileUri = URI.file(file.path);
 	window.sendWhenReady("vscode:openFiles", CancellationToken.None, {
 		filesToOpenOrCreate: [
 			{
-				fileUri: URI.file(file.path),
+				fileUri,
 				exists: file.exists,
 				type: FileType.File,
 				// Omitted rather than `undefined` when there is no position, so
@@ -60,5 +71,15 @@ export function openFileInWorkbench(
 						}),
 			},
 		],
+		// Omitted for the same reason, so that an open without `--wait` is the
+		// message it has always been.
+		...(waitMarkerPath === undefined
+			? {}
+			: {
+					filesToWait: {
+						paths: [{ fileUri }],
+						waitMarkerFileUri: URI.file(waitMarkerPath),
+					},
+				}),
 	});
 }
