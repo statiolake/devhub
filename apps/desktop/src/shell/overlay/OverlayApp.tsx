@@ -18,6 +18,7 @@ import type { OpenModal } from "../../ipc/contract";
 import { WorkspacePicker } from "../components/shell/WorkspacePicker";
 import { ViewScopedAlert } from "../components/shell/ViewScopedAlert";
 import { AgentPickerSheet } from "./AgentPickerSheet";
+import { IssueAssignmentSheet } from "./IssueAssignmentSheet";
 import { AgentRenameAlert } from "./AgentRenameAlert";
 import { CloseConfirmationAlert } from "./CloseConfirmationAlert";
 
@@ -71,6 +72,14 @@ function Modal({ modal }: { readonly modal: OpenModal }) {
       return (
         <AgentPickerSheet
           workspaceId={request.workspaceId}
+          onDismiss={() => {
+            close(id);
+          }}
+        />
+      );
+    case "issue-assignment":
+      return (
+        <IssueAssignmentSheet
           onDismiss={() => {
             close(id);
           }}

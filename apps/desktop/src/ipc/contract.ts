@@ -24,6 +24,30 @@ import type {
 	ReplayWire,
 } from "./appShell.js";
 
+/** One clone of the repository an Issue lives in. */
+export interface IssueClone {
+	readonly path: string;
+	/** What is checked out there, so two worktrees can be told apart. */
+	readonly branch?: string;
+	/** The repository itself, rather than one of its worktrees. */
+	readonly isMainWorktree: boolean;
+}
+
+/** Everything the Issue flow asked, once it has all the answers. */
+export interface IssueAssignment {
+	readonly issueUrl: string;
+	/** The clone to work in. */
+	readonly directory: string;
+	/**
+	 * The branch to make a worktree for. Absent means the person chose to work
+	 * in the clone itself, which is a workspace they may already have open.
+	 */
+	readonly branch?: string;
+	readonly profileId: string;
+	/** The agent beside the editor rather than over it — ⌘Return, as ever. */
+	readonly split: boolean;
+}
+
 /** The rectangle, in page CSS pixels, that workbench views must cover. */
 export interface ContentRect {
 	readonly x: number;
@@ -161,6 +185,25 @@ export interface DevhubApi {
 	/** Where a new project goes unless the person says otherwise. */
 	projectDefaultDirectory(): Promise<string>;
 
+	/**
+	 * Assigning an Issue, one question at a time.
+	 *
+	 * Four calls rather than one, and the seams are where the flow's questions
+	 * are: each can fail, and each failure is answered by re-asking the question
+	 * that led to it — a URL git could not reach is corrected in the field that
+	 * asked for the parent folder, not in the branch picker three steps later.
+	 * A single call would have one failure for five questions.
+	 */
+	findIssueClones(issueUrl: string): Promise<readonly IssueClone[]>;
+	/** Clone, and answer with the directory git made. Opens nothing. */
+	cloneRepository(url: string, parentDirectory: string): Promise<string>;
+	listBranches(directory: string): Promise<readonly string[]>;
+	/**
+	 * Do what the answers add up to: make the worktree if one was asked for,
+	 * open it, write the Issue down against it, and start the agent.
+	 */
+	assignIssue(request: IssueAssignment): Promise<AppOutcome>;
+
 	openSettings(): Promise<void>;
 	openExternalUrl(url: string): Promise<void>;
 
@@ -198,6 +241,10 @@ export const CHANNELS = {
 	cancelWorkspacePicker: "devhub:cancel-workspace-picker",
 	selectWorkspacePicker: "devhub:select-workspace-picker",
 	createProject: "devhub:create-project",
+	findIssueClones: "devhub:find-issue-clones",
+	cloneRepository: "devhub:clone-repository",
+	listBranches: "devhub:list-branches",
+	assignIssue: "devhub:assign-issue",
 	cloneProject: "devhub:clone-project",
 	projectDefaultDirectory: "devhub:project-default-directory",
 	openSettings: "devhub:open-settings",
@@ -241,6 +288,7 @@ export const CHANNELS = {
 export type ModalRequest =
 	| { readonly kind: "workspace-picker" }
 	| { readonly kind: "agent-picker"; readonly workspaceId: string }
+	| { readonly kind: "issue-assignment" }
 	| { readonly kind: "agent-rename"; readonly agentId: string }
 	| {
 			readonly kind: "close-confirmation";

@@ -8,7 +8,11 @@ import type {
   AppOutcome,
   ConfirmationPurposeWire,
 } from "../ipc/appShell";
-import type { WorkspacePickerCandidate } from "./client";
+import type {
+  IssueAssignment,
+  IssueClone,
+  WorkspacePickerCandidate,
+} from "./client";
 
 export interface AppShellContextValue {
   readonly state: AppLoadState;
@@ -38,6 +42,20 @@ export interface AppShellContextValue {
     parentDirectory: string,
   ) => Promise<AppOutcome>;
   readonly projectDefaultDirectory: () => Promise<string>;
+  /**
+   * The four steps of assigning an Issue. Each throws what to do about it when
+   * it fails, because each is answered by re-asking the question that led to
+   * it — which is the wizard's rule, not a special case for these.
+   */
+  readonly findIssueClones: (
+    issueUrl: string,
+  ) => Promise<readonly IssueClone[]>;
+  readonly cloneRepository: (
+    url: string,
+    parentDirectory: string,
+  ) => Promise<string>;
+  readonly listBranches: (directory: string) => Promise<readonly string[]>;
+  readonly assignIssue: (request: IssueAssignment) => Promise<AppOutcome>;
   readonly agentProfiles: AgentProfiles;
   readonly pendingConfirmation: {
     readonly confirmationId: string;

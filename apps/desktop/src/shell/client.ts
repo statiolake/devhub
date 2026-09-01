@@ -18,12 +18,19 @@ import type {
 } from "../ipc/appShell";
 import type {
   DevhubApi,
+  IssueAssignment,
+  IssueClone,
   ModalRequest,
   WorkspacePickerCandidate,
   WorkspacePickerEvent,
 } from "../ipc/contract";
 
-export type { WorkspacePickerCandidate, WorkspacePickerEvent };
+export type {
+  IssueAssignment,
+  IssueClone,
+  WorkspacePickerCandidate,
+  WorkspacePickerEvent,
+};
 
 export interface AppShellClient {
   getSnapshot(): Promise<AppSnapshot>;
@@ -48,6 +55,10 @@ export interface AppShellClient {
   createProject(path: string): Promise<AppOutcome>;
   cloneProject(url: string, parentDirectory: string): Promise<AppOutcome>;
   projectDefaultDirectory(): Promise<string>;
+  findIssueClones(issueUrl: string): Promise<readonly IssueClone[]>;
+  cloneRepository(url: string, parentDirectory: string): Promise<string>;
+  listBranches(directory: string): Promise<readonly string[]>;
+  assignIssue(request: IssueAssignment): Promise<AppOutcome>;
   chooseWorkspaceFolder(): Promise<string | undefined>;
   openSettings(): Promise<void>;
   openExternalUrl(url: string): Promise<void>;
@@ -104,6 +115,11 @@ export function createShellClient(api: DevhubApi = devhub()): AppShellClient {
     cloneProject: (url, parentDirectory) =>
       api.cloneProject(url, parentDirectory),
     projectDefaultDirectory: () => api.projectDefaultDirectory(),
+    findIssueClones: (issueUrl) => api.findIssueClones(issueUrl),
+    cloneRepository: (url, parentDirectory) =>
+      api.cloneRepository(url, parentDirectory),
+    listBranches: (directory) => api.listBranches(directory),
+    assignIssue: (request) => api.assignIssue(request),
     chooseWorkspaceFolder: () => api.chooseWorkspaceFolder(),
     openSettings: () => api.openSettings(),
     openExternalUrl: (url) => api.openExternalUrl(url),

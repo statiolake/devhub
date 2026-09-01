@@ -425,6 +425,12 @@ export function Sidebar({ snapshot, onDispatch }: SidebarProps) {
   const openPicker = useCallback(() => {
     void devhub().openModal({ kind: "workspace-picker" });
   }, []);
+  // Assigning an Issue is a way of starting work, so it stands beside the way
+  // of opening one — same heading, same kind of request to main, and the
+  // wizard it opens is drawn on the same layer as every other modal.
+  const openIssueAssignment = useCallback(() => {
+    void devhub().openModal({ kind: "issue-assignment" });
+  }, []);
   // File ▸ Add Workspace… is the same command as the sidebar's +, so it opens
   // the same picker rather than a second way of adding a workspace.
   useEffect(
@@ -529,18 +535,37 @@ export function Sidebar({ snapshot, onDispatch }: SidebarProps) {
         <ScratchRow snapshot={snapshot} onDispatch={onDispatch} />
         <div className="sidebar-section-heading">
           <h2>Workspaces</h2>
-          <button
-            ref={pickerTriggerRef}
-            className="section-action-button"
-            type="button"
-            aria-label="Open workspace picker"
-            title="Open workspace picker"
-            onClick={openPicker}
-          >
-            <svg viewBox="0 0 14 14" aria-hidden="true" focusable="false">
-              <path d="M7 3.25v7.5M3.25 7h7.5" />
-            </svg>
-          </button>
+          {/* The two ways to start work, kept together at the trailing edge:
+              open a workspace you have, or take an Issue and let DevHub make
+              one. */}
+          <span className="sidebar-section-actions">
+            <button
+              className="section-action-button"
+              type="button"
+              aria-label="Assign issue"
+              title="Assign issue"
+              onClick={openIssueAssignment}
+            >
+              {/* An issue: a circle with a bar and a dot, the way GitHub draws
+                one, so the row and this button say the same thing. */}
+              <svg viewBox="0 0 14 14" aria-hidden="true" focusable="false">
+                <circle cx="7" cy="7" r="4.6" />
+                <path d="M7 4.6v2.6M7 9.2v.3" />
+              </svg>
+            </button>
+            <button
+              ref={pickerTriggerRef}
+              className="section-action-button"
+              type="button"
+              aria-label="Open workspace picker"
+              title="Open workspace picker"
+              onClick={openPicker}
+            >
+              <svg viewBox="0 0 14 14" aria-hidden="true" focusable="false">
+                <path d="M7 3.25v7.5M3.25 7h7.5" />
+              </svg>
+            </button>
+          </span>
         </div>
         {snapshot.workspaces.length > 0 ? (
           <ul

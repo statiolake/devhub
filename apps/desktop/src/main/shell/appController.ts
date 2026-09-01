@@ -28,6 +28,7 @@ import { UnloadReason } from "code-oss-dev/out/vs/platform/window/electron-main/
 import {
 	CHANNELS,
 	type ContentRect,
+	type IssueAssignment,
 	type ModalRequest,
 	type WorkspacePickerEvent,
 } from "../../ipc/contract.js";
@@ -138,7 +139,14 @@ import {
 	createProject,
 	defaultProjectDirectory,
 } from "./projects.js";
-import type { GitCommand } from "./git.js";
+import {
+	ensureWorktree,
+	listBranches,
+	workspaceFailure,
+	type GitCommand,
+} from "./git.js";
+import { findClones } from "./issues.js";
+import { parseIssueUrl } from "../../model/github.js";
 import { installMenu, refreshMenu } from "./menu.js";
 import { installKeyboard } from "./keyboard.js";
 import {
@@ -2182,6 +2190,59 @@ export class AppController {
 		return { git: git.value, environment: this.launchEnvironment };
 	}
 
+	/**
+	 * Carry out everything the Issue flow asked for, in one act.
+	 *
+	 * The worktree, if one was asked for; the folder opened; the Issue written
+	 * down against the workspace that opening produced; the agent started in it.
+	 * They are one act because a half-done one is worse than none: a worktree
+	 * nothing opened is litter, and a workspace opened for an Issue it does not
+	 * know about is the exact confusion the record exists to prevent.
+	 *
+	 * Which workspace it is comes from the selection rather than from matching
+	 * the path back, because opening a folder *is* selecting it — for a folder
+	 * already open as much as for a new one — and re-deriving it from a path
+	 * would be a second answer to a question the model has already answered.
+	 */
+	private async assignIssue(request: IssueAssignment): Promise<AppOutcomeWire> {
+		const issue = parseIssueUrl(request.issueUrl);
+		if (!issue) {
+			throw workspaceFailure("That is not a GitHub Issue URL.");
+		}
+		const target = request.branch
+			? await ensureWorktree(
+					await this.gitCommand(),
+					request.directory,
+					request.branch,
+				)
+			: request.directory;
+
+		await this.openFolder(target);
+		const context = this.coordinator.model.selection.context;
+		if (context.kind !== "workspace") {
+			// Opening a folder selects its workspace. If it did not, the model and
+			// this call disagree about what just happened, and going on would
+			// attach the Issue and the agent to whatever else was selected.
+			throw new Error(
+				`opening ${target} did not select a workspace; selection is ${context.kind}`,
+			);
+		}
+		const workspaceId = context.workspaceId;
+		await this.dispatchAwaiting({
+			type: "associate_issue",
+			workspaceId,
+			issue,
+		});
+		const settled = await this.dispatchAwaiting({
+			type: "create_agent",
+			workspaceId,
+			profileId: agentProfileId(request.profileId),
+			presentation: request.split ? "beside" : "full",
+		});
+		await this.syncEditorView();
+		return outcomeWire(settled, this.coordinator.readiness);
+	}
+
 	private async clone(url: string, parentDirectory: string): Promise<string> {
 		return cloneProject({
 			url,
@@ -2268,6 +2329,52 @@ export class AppController {
 				}
 			},
 		);
+
+		// Assigning an Issue is four calls because it is four questions, and a
+		// failure has to be answerable by re-asking the one that led to it.
+		handle(CHANNELS.findIssueClones, async (_event, issueUrl: string) => {
+			const config = this.config;
+			const issue = parseIssueUrl(issueUrl);
+			if (!config || !issue) {
+				throw asIpcError(
+					errorWire(workspaceFailure("That is not a GitHub Issue URL.")),
+				);
+			}
+			try {
+				return await findClones(
+					config,
+					await this.gitCommand(),
+					issue,
+					this.coordinator.snapshot().workspaces.map((w) => w.root),
+				);
+			} catch (error: unknown) {
+				throw asIpcError(errorWire(error));
+			}
+		});
+		handle(
+			CHANNELS.cloneRepository,
+			async (_event, url: string, parentDirectory: string) => {
+				try {
+					return await this.clone(url, parentDirectory);
+				} catch (error: unknown) {
+					throw asIpcError(errorWire(error));
+				}
+			},
+		);
+		handle(CHANNELS.listBranches, async (_event, directory: string) => {
+			try {
+				return await listBranches(await this.gitCommand(), directory);
+			} catch (error: unknown) {
+				throw asIpcError(errorWire(error));
+			}
+		});
+		handle(CHANNELS.assignIssue, async (_event, request: IssueAssignment) => {
+			try {
+				return await this.assignIssue(request);
+			} catch (error: unknown) {
+				throw asIpcError(errorWire(error));
+			}
+		});
 
 		handle(CHANNELS.openSettings, () => {
 			openSettingsWindow();

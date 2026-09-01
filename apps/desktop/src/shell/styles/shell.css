@@ -97,6 +97,11 @@
 /* The band owns the layout; the heading element owns only the text. Left to
    the user agent an `h2` arrives at 1.5em bold with 0.83em of vertical margin,
    which both oversizes the label and eats the gap before the first row. */
+.sidebar-section-actions {
+  display: flex;
+  align-items: center;
+}
+
 .sidebar-section-heading h2 {
   margin: 0;
   font-size: 11px;

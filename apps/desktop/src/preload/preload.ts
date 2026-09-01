@@ -24,6 +24,8 @@ import {
 	type OpenModal,
 	type ContentRect,
 	type DevhubApi,
+	type IssueAssignment,
+	type IssueClone,
 	type WorkspacePickerEvent,
 } from "../ipc/contract.js";
 import type { ShellPalette } from "../ipc/palette.js";
@@ -113,6 +115,23 @@ const devhub: DevhubApi = {
 		) as Promise<AppOutcome>,
 	projectDefaultDirectory: () =>
 		ipcRenderer.invoke(CHANNELS.projectDefaultDirectory) as Promise<string>,
+
+	findIssueClones: (issueUrl: string) =>
+		ipcRenderer.invoke(CHANNELS.findIssueClones, issueUrl) as Promise<
+			readonly IssueClone[]
+		>,
+	cloneRepository: (url: string, parentDirectory: string) =>
+		ipcRenderer.invoke(
+			CHANNELS.cloneRepository,
+			url,
+			parentDirectory,
+		) as Promise<string>,
+	listBranches: (directory: string) =>
+		ipcRenderer.invoke(CHANNELS.listBranches, directory) as Promise<
+			readonly string[]
+		>,
+	assignIssue: (request: IssueAssignment) =>
+		ipcRenderer.invoke(CHANNELS.assignIssue, request) as Promise<AppOutcome>,
 
 	openSettings: () =>
 		ipcRenderer.invoke(CHANNELS.openSettings) as Promise<void>,

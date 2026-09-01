@@ -19,6 +19,7 @@ import type {
 import {
   createShellClient,
   type AppShellClient,
+  type IssueAssignment,
   type WorkspacePickerCandidate,
   type WorkspacePickerEvent,
 } from "./client";
@@ -402,6 +403,37 @@ export function AppShellProvider({
     [transport],
   );
 
+  /**
+   * The Issue flow's four steps.
+   *
+   * None of them reports its own failure, for the same reason the two project
+   * sheets do not: the wizard is still on screen, and a failure there is
+   * answered by re-asking the question that caused it. The one that changes the
+   * app — `assignIssue` — hands its snapshot on the way every other opening
+   * does.
+   */
+  const findIssueClones = useCallback(
+    (issueUrl: string) => transport.findIssueClones(issueUrl),
+    [transport],
+  );
+
+  const cloneRepository = useCallback(
+    (url: string, parentDirectory: string) =>
+      transport.cloneRepository(url, parentDirectory),
+    [transport],
+  );
+
+  const listBranches = useCallback(
+    (directory: string) => transport.listBranches(directory),
+    [transport],
+  );
+
+  const assignIssue = useCallback(
+    async (request: IssueAssignment) =>
+      applyOpening(await transport.assignIssue(request)),
+    [applyOpening, transport],
+  );
+
   const confirmPending = useCallback(async () => {
     if (!pendingConfirmation || confirmationBusyRef.current) return;
     confirmationBusyRef.current = true;
@@ -484,6 +516,10 @@ export function AppShellProvider({
       createProject,
       cloneProject,
       projectDefaultDirectory,
+      findIssueClones,
+      cloneRepository,
+      listBranches,
+      assignIssue,
       agentProfiles,
       pendingConfirmation,
       confirmationBusy,
@@ -500,6 +536,10 @@ export function AppShellProvider({
       cloneProject,
       createProject,
       projectDefaultDirectory,
+      findIssueClones,
+      cloneRepository,
+      listBranches,
+      assignIssue,
       confirmPending,
       confirmationBusy,
       dismissCloseConfirmation,
