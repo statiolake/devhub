@@ -1,3 +1,10 @@
+/* eslint-disable no-irregular-whitespace --
+ * These screens contain the no-break spaces Claude Code actually drew. They
+ * are transcripts, and their whole value is being byte-for-byte what the
+ * detector will be handed at runtime, so replacing those with ordinary spaces
+ * would quietly make the tests describe a screen that never appears.
+ */
+
 /**
  * Real Claude Code screens, captured from a running v2.1.257.
  *
