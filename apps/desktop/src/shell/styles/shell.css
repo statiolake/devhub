@@ -333,24 +333,31 @@
   border: 0;
   border-radius: 4px;
   background: transparent;
+  /* The state is carried as `color` on the button rather than as a fill on the
+     paths, so one rule per state colours a mark whatever shape it turned out to
+     be — and a draft, which has no state rule of its own, is the grey the
+     button already sits at. */
+  color: var(--tertiary);
 }
 
+/* GitHub's marks are Octicons, and an Octicon is a solid shape: it is filled,
+   never stroked. Stroking one draws the outline of an outline. */
 .row-link-button svg {
   width: 13px;
   height: 13px;
-  fill: none;
-  stroke: var(--tertiary);
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  stroke-width: 1.4;
+  fill: currentcolor;
 }
 
-.row-link-button.is-open svg {
-  stroke: var(--status-idle);
+/* The green is `--status-idle`, which is the green an idle Agent wears. That is
+   deliberate and is stated at the token: both mean "nothing is wrong here", and
+   a second green in the same window would only invite the question of how the
+   two differ. */
+.row-link-button.is-open {
+  color: var(--status-idle);
 }
 
-.row-link-button.is-closed svg {
-  stroke: var(--status-issue-closed);
+.row-link-button.is-closed {
+  color: var(--status-issue-closed);
 }
 
 /* Why the marks above may be out of date. It is not an error the person did
