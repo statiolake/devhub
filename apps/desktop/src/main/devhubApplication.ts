@@ -3,7 +3,8 @@
  *
  * This is composition, not a copy: `CodeApplication` runs exactly as upstream
  * wrote it, and the only difference is which class answers for
- * `IWindowsMainService` and `IDialogMainService`.
+ * `IWindowsMainService`, `IDialogMainService` and
+ * `IWorkspacesHistoryMainService`.
  *
  * `initServices` is `private` upstream. TypeScript privacy is not runtime
  * privacy, so the override is installed on the prototype through the typed
@@ -24,6 +25,8 @@ import { ILifecycleMainService } from "code-oss-dev/out/vs/platform/lifecycle/el
 import type { Client as MessagePortClient } from "code-oss-dev/out/vs/base/parts/ipc/electron-main/ipc.mp.js";
 import { DevHubWindowsMainService } from "./services/devhubWindowsMainService.js";
 import { DevHubDialogMainService } from "./services/devhubDialogMainService.js";
+import { IWorkspacesHistoryMainService } from "code-oss-dev/out/vs/platform/workspaces/electron-main/workspacesHistoryMainService.js";
+import { DevHubWorkspacesHistoryMainService } from "./services/devhubWorkspacesHistoryMainService.js";
 import { appController } from "./shell/appController.js";
 import { createExtensionSupport } from "./cli/extensionServices.js";
 
@@ -117,6 +120,13 @@ const upstreamInitServices = (
 	services.set(
 		IDialogMainService,
 		instantiationService.createInstance(DevHubDialogMainService),
+	);
+	// Upstream registers `WorkspacesHistoryMainService` here too. DevHub's
+	// sidebar and workspace picker are the history, so VS Code's copy of it is
+	// replaced by one that is always empty — see the service's own file.
+	services.set(
+		IWorkspacesHistoryMainService,
+		new DevHubWorkspacesHistoryMainService(),
 	);
 
 	// Extension management for the `devhub` command. Built here because this is
