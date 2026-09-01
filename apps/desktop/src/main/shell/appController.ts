@@ -1969,6 +1969,22 @@ export class AppController {
 	//#region the devhub command line
 
 	/**
+	 * `devhub`, with nothing after it.
+	 *
+	 * There is nothing to open and nothing to choose, so nothing is chosen: the
+	 * context the person left is the context they come back to. Every other
+	 * command on this socket finishes by bringing DevHub forward, because a
+	 * command that acts somewhere you cannot see has not acted; this one is
+	 * that finish with nothing in front of it.
+	 */
+	activateFromCli(): Promise<string> {
+		return asSentence(() => {
+			this.bringToFront();
+			return Promise.resolve("DevHub is in front.");
+		});
+	}
+
+	/**
 	 * `devhub <path>`.
 	 *
 	 * A folder is a Workspace: opening one that DevHub already knows selects

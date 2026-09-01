@@ -50,6 +50,18 @@ export interface ControlPosition {
 export type ControlRequest =
 	| {
 			/**
+			 * `devhub`, with nothing after it: bring DevHub to the front.
+			 *
+			 * It is a request of its own rather than an `open` with no path
+			 * because it is not an open — nothing is chosen, nothing is
+			 * revealed, and the selection the person left is the selection
+			 * they come back to. Every other request here ends by bringing
+			 * DevHub forward; this one is that ending on its own.
+			 */
+			readonly kind: "activate";
+	  }
+	| {
+			/**
 			 * A folder or a file the person asked DevHub to open, and — for
 			 * `--goto` — where in it. A position is part of an open rather than
 			 * a request of its own because it *is* one: the same ancestor walk
@@ -142,6 +154,8 @@ export function parseControlRequest(line: string): ControlRequest {
 	}
 	const record = value as Record<string, unknown>;
 	switch (record["kind"]) {
+		case "activate":
+			return { kind: "activate" };
 		case "open":
 			return {
 				kind: "open",

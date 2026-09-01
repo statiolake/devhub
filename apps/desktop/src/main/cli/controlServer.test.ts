@@ -21,6 +21,7 @@ import type { ControlResponse } from "./protocol.js";
 /** A server for the tests that are about the socket rather than the handlers. */
 function everythingSaysOk(): ControlHandlers {
 	return {
+		activate: () => Promise.resolve("ok"),
 		open: () => Promise.resolve("ok"),
 		addAgent: () => Promise.resolve("ok"),
 		installExtensions: () => Promise.resolve("ok"),
@@ -60,6 +61,10 @@ describe("the DevHub control socket", () => {
 		socketPath = join(scratch, "c.sock");
 		calls = [];
 		server = await startControlServer(socketPath, {
+			activate: () => {
+				calls.push("activate");
+				return Promise.resolve("DevHub is in front.");
+			},
 			open: (path, cwd, position) => {
 				calls.push(
 					`open ${path} ${cwd}${position ? ` @${position.line}:${position.column}` : ""}`,
@@ -116,6 +121,16 @@ describe("the DevHub control socket", () => {
 
 	it("is readable by its owner and nobody else", () => {
 		expect(statSync(socketPath).mode & 0o777).toBe(0o600);
+	});
+
+	/** `devhub` on its own: the one request that carries nothing with it. */
+	it("answers a bare activate request", async () => {
+		const answer = await ask(
+			socketPath,
+			`${JSON.stringify({ kind: "activate" })}\n`,
+		);
+		expect(answer).toEqual({ ok: true, message: "DevHub is in front." });
+		expect(calls).toEqual(["activate"]);
 	});
 
 	it("answers an open request with one line and closes", async () => {

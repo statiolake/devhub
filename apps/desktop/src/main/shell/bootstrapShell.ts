@@ -122,6 +122,7 @@ export async function bootstrapShell(
 	// worse than one that says DevHub is not running.
 	const socketPath = controlSocketPath(userDataPath);
 	const control = await startControlServer(socketPath, {
+		activate: () => controller.activateFromCli(),
 		open: (path, cwd, position) => controller.openFromCli(path, cwd, position),
 		addAgent: (profileId, args, cwd) =>
 			controller.addAgentFromCli(profileId, args, cwd),

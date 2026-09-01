@@ -26,6 +26,8 @@ import {
 const MAX_REQUEST_BYTES = 64 * 1024;
 
 export interface ControlHandlers {
+	/** Bring DevHub to the front, and change nothing else. */
+	activate(): Promise<string>;
 	/** A folder or a file. Answers with the text the CLI prints. */
 	open(
 		path: string,
@@ -165,6 +167,8 @@ async function handle(
 	}
 	try {
 		switch (request.kind) {
+			case "activate":
+				return { ok: true, message: await handlers.activate() };
 			case "open":
 				return {
 					ok: true,
