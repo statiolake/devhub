@@ -61,8 +61,11 @@ script neither signs with a real identity, notarises, nor publishes anything;
 it only fetches what VS Code's own extension build fetches.
 
 `scripts/package-icon.sh` regenerates `distribution/DevHub.icns` from
-`assets/icon-master.svg`. Run it when the icon changes and commit the result —
-packaging uses the committed file.
+`assets/icon-master.svg` and `assets/icon-master-small.svg` — the second is the
+same mark redrawn for 16 and 32 px, where the first collapses. Run it when the
+icon changes and commit the result: packaging uses the committed file, and so
+does the bundle a source run boots. It needs ImageMagick (`brew install
+imagemagick`) alongside macOS's own `qlmanage` and `iconutil`.
 
 ## What is inside
 

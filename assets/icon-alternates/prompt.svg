@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  DevHub app icon — the prompt alternate (not shipped).
+
+  A chevron and a caret. It survives small sizes better than the hub does and
+  it is unmistakably a developer tool, which is also the objection: it is the
+  icon every terminal already ships, so it identifies the category and not
+  the app. It says terminal, and DevHub is the thing the terminal runs in.
+
+  Kept so the decision stays re-openable: point scripts/package-icon.sh at one
+  of these to try it. It renders on the same 1024 grid as the master.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-labelledby="title">
+  <title id="title">DevHub — prompt</title>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#5C7CF2"/>
+      <stop offset="1" stop-color="#1E2A72"/>
+    </linearGradient>
+    <radialGradient id="sheen" cx="0.5" cy="0" r="0.75">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.30"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="lift" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="12" stdDeviation="16" flood-color="#0B1030" flood-opacity="0.30"/>
+    </filter>
+  </defs>
+
+  <rect width="1024" height="1024" rx="234" fill="url(#bg)"/>
+  <rect width="1024" height="1024" rx="234" fill="url(#sheen)"/>
+
+  <g filter="url(#lift)" transform="translate(-64,0)">
+    <path d="M300 300 L536 512 L300 724"
+          fill="none" stroke="#FFFFFF" stroke-width="88" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="596" y="636" width="300" height="88" rx="44" fill="#FFB74A"/>
+  </g>
+</svg>
