@@ -80,6 +80,8 @@ export function ruleMessage(code: SettingsDiagnosticCodeWire): string {
       return "A source looks for folders or for Git checkouts, not both, and it has to look for something.";
     case "invalid_profile":
       return "An agent profile needs a name, and its arguments cannot contain a null character.";
+    case "unknown_action":
+      return "That is not an action DevHub has. Actions are built in; only their wording is configured.";
     case "invalid_profile_kind":
       return "An agent profile runs either Codex or Claude.";
     case "invalid_appearance":

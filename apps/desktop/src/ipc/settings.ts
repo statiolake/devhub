@@ -120,6 +120,12 @@ export type SettingsWorkspaceSourceWire =
 			readonly createIfMissing: boolean;
 	  };
 
+/** One of DevHub's own actions, and the wording it is sent with. */
+export interface SettingsAgentActionWire {
+	readonly id: string;
+	readonly template: string;
+}
+
 export interface SettingsConfigWire {
 	readonly version: number;
 	readonly general: SettingsGeneralWire;
@@ -127,6 +133,7 @@ export interface SettingsConfigWire {
 	readonly appearance: SettingsAppearanceWire;
 	readonly workspaceSources: readonly SettingsWorkspaceSourceWire[];
 	readonly agentProfiles: readonly SettingsAgentProfileWire[];
+	readonly agentActions: readonly SettingsAgentActionWire[];
 }
 
 /**
@@ -281,6 +288,7 @@ export type SettingsDiagnosticCodeWire =
 	| "invalid_timeout"
 	| "invalid_profile"
 	| "invalid_profile_kind"
+	| "unknown_action"
 	| "invalid_environment_key"
 	| "conflict"
 	| "serialization";

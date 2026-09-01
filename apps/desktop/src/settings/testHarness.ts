@@ -17,6 +17,7 @@ import type {
   SettingsTerminalPaletteWire,
 } from "../ipc/settings";
 import { SETTINGS_SCHEMA_VERSION } from "../ipc/settings";
+import { AGENT_ACTIONS } from "../model/agentActions";
 import type { SettingsClient } from "./client";
 
 const PALETTE: SettingsTerminalPaletteWire = {
@@ -53,6 +54,11 @@ export function testConfig(
     },
     workspaceSources: [],
     agentProfiles: [],
+    // Every action DevHub has, exactly as a real config always carries them.
+    agentActions: AGENT_ACTIONS.map((action) => ({
+      id: action.id,
+      template: action.defaultTemplate,
+    })),
     ...patch,
   };
 }

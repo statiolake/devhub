@@ -1,6 +1,7 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { AGENT_ACTIONS } from "./agentActions.js";
 import {
   ConfigError,
   ConfigStore,
@@ -93,6 +94,46 @@ describe("parsing", () => {
       "",
     ].join("\n");
     expect(codeOf(() => parseConfig(source))).toBe("invalid_date_template");
+  });
+
+  it("carries every action DevHub has, whether or not the file mentions one", () => {
+    // Which actions exist is the program's business; a file only ever holds
+    // wording. So a config that names none still has all of them.
+    expect(
+      parseConfig(MINIMAL).agentActions.map((action) => action.id),
+    ).toEqual(AGENT_ACTIONS.map((action) => action.id));
+  });
+
+  it("takes the wording from the file and keeps DevHub's order", () => {
+    const source = [
+      "version = 1",
+      "",
+      "[[agent_actions]]",
+      'id = "issue_assignment"',
+      'template = "read {{ISSUE_URL}} please"',
+      "",
+    ].join("\n");
+    const actions = parseConfig(source).agentActions;
+    expect(actions).toEqual([
+      { id: "issue_assignment", template: "read {{ISSUE_URL}} please" },
+    ]);
+    expect(parseConfig(configToToml(parseConfig(source)))).toEqual(
+      parseConfig(source),
+    );
+  });
+
+  it("refuses an action DevHub does not have", () => {
+    // Nothing would ever send it, so accepting it would leave somebody looking
+    // at wording that is never used with no way to tell.
+    const source = [
+      "version = 1",
+      "",
+      "[[agent_actions]]",
+      'id = "commit_everything"',
+      'template = "go"',
+      "",
+    ].join("\n");
+    expect(codeOf(() => parseConfig(source))).toBe("unknown_action");
   });
 
   it("refuses an unknown key rather than ignoring a typo", () => {

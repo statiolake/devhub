@@ -38,6 +38,7 @@ import type {
   SettingsWorkspaceSourceWire,
 } from "../ipc/settings";
 import { FONT_FAMILY_RULE, isValidFontFamily } from "../model/fontFamily";
+import { AGENT_ACTIONS } from "../model/agentActions";
 import { Collection } from "./Collection";
 import {
   Group,
@@ -45,6 +46,7 @@ import {
   Popup,
   Row,
   SwitchRow,
+  TextArea,
   TextField,
   TokenList,
   WideRow,
@@ -1095,5 +1097,125 @@ function Form({ children }: { readonly children: React.ReactNode }) {
     <div className="sf-form">
       <div className="sf-column">{children}</div>
     </div>
+  );
+}
+
+function ActionGlyph() {
+  return (
+    <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+      <path d="M8.6 1.8 3.2 9.2h3.4l-1 5 5.4-7.4H7.6z" />
+    </svg>
+  );
+}
+
+/**
+ * What DevHub says to an agent when it starts work on the person's behalf.
+ *
+ * A list of DevHub's own actions, one to a row, with the wording on the right.
+ * It is a collection with no plus and no minus, and that is the point of the
+ * design rather than a gap in it: DevHub decides which actions exist and when
+ * they fire — an action somebody invented would have nothing to trigger it —
+ * and what a person owns is what gets said. The commit and push buttons that
+ * are coming are rows here; nothing about this screen changes to hold them.
+ */
+export function ActionsSection({
+  config,
+  update,
+}: {
+  readonly config: SettingsConfig;
+  readonly update: Update;
+}) {
+  const actions = config.agentActions;
+  const [wanted, setWanted] = useState(0);
+  const selected =
+    actions.length === 0 ? undefined : Math.min(wanted, actions.length - 1);
+  const action = selected === undefined ? undefined : actions[selected];
+  const definition = AGENT_ACTIONS.find((entry) => entry.id === action?.id);
+
+  return (
+    <Collection
+      label="Agent actions"
+      entries={actions.map((item) => {
+        const known = AGENT_ACTIONS.find((entry) => entry.id === item.id);
+        return {
+          key: item.id,
+          title: known?.displayName ?? item.id,
+          // The first line of the wording, which is what tells two prompts
+          // apart at a glance far better than the name of the action does.
+          note: item.template.split("\n")[0],
+          glyph: <ActionGlyph />,
+        };
+      })}
+      selected={selected}
+      onSelect={setWanted}
+      empty={{
+        title: "No agent actions",
+        message: "DevHub has no actions to send in this version.",
+      }}
+    >
+      {action && definition ? (
+        <>
+          <Group heading="Action" note={definition.description}>
+            {/* Shown, not editable. The name is DevHub's — it is what fires the
+                action — so a field here would be a field that cannot be typed
+                in, which is worse than a line that never looked like one. */}
+            <Row label="In config.toml">
+              <span className="sf-static sf-mono-field">
+                {`[[agent_actions]] id = "${action.id}"`}
+              </span>
+            </Row>
+          </Group>
+
+          <Group
+            heading="Message"
+            note={`${definition.variables
+              .map((name) => `{{${name}}}`)
+              .join(
+                " and ",
+              )} are replaced when it is sent. A line starting $name runs a skill: Claude Code is sent /name, Codex is sent $name, and an agent DevHub has no manifest for is sent the line as written.`}
+          >
+            <WideRow>
+              <TextArea
+                label="Agent action message"
+                value={action.template}
+                placeholder={definition.defaultTemplate}
+                onCommit={(template) => {
+                  update({
+                    ...config,
+                    agentActions: actions.map((item, position) =>
+                      position === selected ? { ...item, template } : item,
+                    ),
+                  });
+                }}
+              />
+            </WideRow>
+            <WideRow>
+              {/* Sized to its words rather than to the row: a button that
+                  stretched the width of a prompt would read as the prompt's
+                  own edge. */}
+              <div className="sf-line">
+                <button
+                  type="button"
+                  className="mac-button"
+                  disabled={action.template === definition.defaultTemplate}
+                  onClick={() => {
+                    update({
+                      ...config,
+                      agentActions: actions.map((item, position) =>
+                        position === selected
+                          ? { ...item, template: definition.defaultTemplate }
+                          : item,
+                      ),
+                    });
+                  }}
+                >
+                  Restore Default
+                </button>
+              </div>
+            </WideRow>
+          </Group>
+        </>
+      ) : null}
+    </Collection>
   );
 }

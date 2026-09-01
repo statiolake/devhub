@@ -26,6 +26,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { AGENT_ACTIONS, isAgentActionId } from "./agentActions.js";
 import { dateTemplateBracketsBalance } from "./dateTemplate.js";
 import { isValidFontFamily } from "./fontFamily.js";
 import {
@@ -118,6 +119,19 @@ export type WorkspaceSource = FilesystemSource | CommandSource | DateSource;
 
 export type AgentProfileKind = "codex" | "claude" | "custom";
 
+/**
+ * What DevHub says to an Agent when it takes an action on the person's behalf.
+ *
+ * The `id` names one of DevHub's own actions — it is not a name somebody
+ * invents, because an invented action would have nothing to trigger it — and
+ * the template is the wording. See `model/agentActions.ts` for the actions
+ * themselves, the variables each one offers and the skill notation.
+ */
+export interface ConfiguredAgentAction {
+  readonly id: string;
+  readonly template: string;
+}
+
 export interface ConfiguredAgentProfile {
   readonly id: string;
   readonly display_name: string;
@@ -200,6 +214,7 @@ export interface Config {
   readonly appearance: AppearanceConfig;
   readonly workspaceSources: readonly WorkspaceSource[];
   readonly agentProfiles: readonly ConfiguredAgentProfile[];
+  readonly agentActions: readonly ConfiguredAgentAction[];
 }
 
 export function defaultTerminalLight(): TerminalPalette {
@@ -351,6 +366,21 @@ export function defaultAgentProfiles(): ConfiguredAgentProfile[] {
   ];
 }
 
+/**
+ * Every action DevHub has, with the wording it ships.
+ *
+ * All of them, not the ones somebody has edited: a file that mentions no
+ * actions still has all of them, and an action added in a later version arrives
+ * with its default wording rather than as a gap. What a config *stores* is the
+ * wording; which actions exist is the program's business.
+ */
+export function defaultAgentActions(): ConfiguredAgentAction[] {
+  return AGENT_ACTIONS.map((action) => ({
+    id: action.id,
+    template: action.defaultTemplate,
+  }));
+}
+
 export function defaultConfig(): Config {
   return {
     version: CONFIG_SCHEMA_VERSION,
@@ -359,6 +389,7 @@ export function defaultConfig(): Config {
     appearance: defaultAppearance(),
     workspaceSources: defaultWorkspaceSources(),
     agentProfiles: defaultAgentProfiles(),
+    agentActions: defaultAgentActions(),
   };
 }
 
@@ -388,6 +419,7 @@ export type ValidationCode =
   | "invalid_timeout"
   | "invalid_profile"
   | "invalid_profile_kind"
+  | "unknown_action"
   | "invalid_environment_key"
   | "conflict"
   | "serialization";
@@ -824,6 +856,7 @@ const TOP_LEVEL_KEYS = [
   "appearance",
   "workspace_sources",
   "agent_profiles",
+  "agent_actions",
 ] as const;
 
 function workspaceSourceFromTable(
@@ -902,6 +935,40 @@ function workspaceSourceFromTable(
     };
   }
   return fail("invalid_type", `${prefix}.type`);
+}
+
+/**
+ * The file's wording, over DevHub's, for every action there is.
+ *
+ * The list is always complete and always in DevHub's own order, so Settings
+ * shows every action whether or not the file has an opinion about it, and the
+ * order of a hand-edited file cannot rearrange the window.
+ */
+function mergeAgentActions(
+  configured: readonly ConfiguredAgentAction[],
+): ConfiguredAgentAction[] {
+  const written = new Map(configured.map((action) => [action.id, action]));
+  return AGENT_ACTIONS.map((action) => ({
+    id: action.id,
+    template: written.get(action.id)?.template ?? action.defaultTemplate,
+  }));
+}
+
+function agentActionFromTable(
+  value: unknown,
+  index: number,
+): ConfiguredAgentAction {
+  const prefix = `agent_actions[${String(index)}]`;
+  const table = requireTable(value, prefix);
+  checkKeys(table, ["id", "template"], prefix);
+  const id = optionalString(table, "id", prefix, "");
+  if (!isAgentActionId(id)) {
+    // A name DevHub does not have is a typo, not a new feature: nothing would
+    // ever send it, so accepting it would leave somebody looking at wording
+    // that is never used and no way to tell.
+    fail("unknown_action", `${prefix}.id`);
+  }
+  return { id, template: optionalString(table, "template", prefix, "") };
 }
 
 function agentProfileFromTable(
@@ -1002,6 +1069,10 @@ export function parseConfig(input: string): Config {
   if (rawSources !== undefined && !Array.isArray(rawSources)) {
     fail("invalid_type", "workspace_sources");
   }
+  const rawActions = table["agent_actions"];
+  if (rawActions !== undefined && !Array.isArray(rawActions)) {
+    fail("invalid_type", "agent_actions");
+  }
   const rawProfiles = table["agent_profiles"];
   if (rawProfiles !== undefined && !Array.isArray(rawProfiles)) {
     fail("invalid_type", "agent_profiles");
@@ -1087,6 +1158,11 @@ export function parseConfig(input: string): Config {
       rawProfiles === undefined
         ? defaults.agentProfiles
         : rawProfiles.map(agentProfileFromTable),
+    // An action the file does not mention keeps the wording DevHub ships, so a
+    // config written before an action existed is not a config missing one.
+    agentActions: mergeAgentActions(
+      rawActions === undefined ? [] : rawActions.map(agentActionFromTable),
+    ),
   };
 
   validateConfig(config);
@@ -1159,6 +1235,10 @@ export function configDocument(config: Config): Record<string, TomlValue> {
       },
     },
     workspace_sources: config.workspaceSources.map(sourceToTable),
+    agent_actions: config.agentActions.map((action) => ({
+      id: action.id,
+      template: action.template,
+    })),
     agent_profiles: config.agentProfiles.map((profile) => ({
       id: profile.id,
       display_name: profile.display_name,

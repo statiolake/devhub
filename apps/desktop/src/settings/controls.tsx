@@ -245,6 +245,61 @@ export function TextField({
 }
 
 /**
+ * Several lines of text: a prompt, a message, anything written rather than
+ * chosen.
+ *
+ * A `TextField` with a different key rule, and that is the whole difference.
+ * Return commits a field; here Return is a *newline*, because the value is
+ * prose and a person writing the second line of it has not finished. So it
+ * commits when it is left, the way a Mac text area does, and Escape puts back
+ * what was there before.
+ *
+ * Which means there is no "press Return" prompt under it. The unapplied note
+ * would be telling somebody to do the one thing that will not apply it.
+ */
+export function TextArea({
+  label,
+  value,
+  placeholder,
+  rows = 8,
+  onCommit,
+}: {
+  readonly label: string;
+  readonly value: string;
+  readonly placeholder?: string;
+  readonly rows?: number;
+  readonly onCommit: (next: string) => void;
+}) {
+  const [pending, setPending] = useState<string>();
+  const text = pending ?? value;
+
+  return (
+    <div className="sf-stack">
+      <textarea
+        className="mac-field sf-textarea sf-mono-field"
+        aria-label={label}
+        placeholder={placeholder}
+        rows={rows}
+        value={text}
+        onChange={(event) => {
+          setPending(event.target.value);
+        }}
+        onBlur={() => {
+          if (pending === undefined) return;
+          setPending(undefined);
+          if (pending !== value) onCommit(pending);
+        }}
+        onKeyDown={(event) => {
+          if (event.key !== "Escape") return;
+          event.preventDefault();
+          setPending(undefined);
+        }}
+      />
+    </div>
+  );
+}
+
+/**
  * A number, typed rather than stepped.
  *
  * It is a `TextField` because a number is typed the same way a word is: 13 is

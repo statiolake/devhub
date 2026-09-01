@@ -46,6 +46,7 @@ import {
 import { errorMessage, fileDiagnosticMessage } from "./errorMessage";
 import {
   AdvancedSection,
+  ActionsSection,
   AgentsSection,
   GeneralSection,
   TerminalSection,
@@ -66,6 +67,7 @@ const SECTIONS = [
   "General",
   "Workspaces",
   "Agents",
+  "Actions",
   "Terminal",
   "Advanced",
 ] as const;
@@ -95,6 +97,11 @@ const SECTION_GLYPHS: Readonly<Record<Section, ReactNode>> = {
       <circle cx="7.6" cy="10.6" r="1" />
       <circle cx="12.4" cy="10.6" r="1" />
       <path d="M10 2.6v3" />
+    </svg>
+  ),
+  Actions: (
+    <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+      <path d="M10.8 2.4 4.2 11.4h4.2l-1.2 6.2 6.6-9h-4.2z" />
     </svg>
   ),
   Terminal: (
@@ -461,6 +468,9 @@ export function SettingsApp({ client }: { readonly client?: SettingsClient }) {
         ) : null}
         {section === "Agents" ? (
           <AgentsSection config={draft} update={update} />
+        ) : null}
+        {section === "Actions" ? (
+          <ActionsSection config={draft} update={update} />
         ) : null}
         {section === "Terminal" ? (
           <TerminalSection

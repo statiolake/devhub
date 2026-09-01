@@ -161,6 +161,10 @@ function toWireConfig(config: Config): SettingsConfigWire {
 			terminalTheme: config.appearance.terminalTheme,
 		},
 		workspaceSources: config.workspaceSources.map(toWireSource),
+		agentActions: config.agentActions.map((action) => ({
+			id: action.id,
+			template: action.template,
+		})),
 		agentProfiles: config.agentProfiles.map((profile) => ({
 			id: profile.id,
 			displayName: profile.display_name,
@@ -267,6 +271,10 @@ function fromWireConfig(wire: SettingsConfigWire): Config {
 			terminalTheme: wire.appearance.terminalTheme,
 		},
 		workspaceSources: wire.workspaceSources.map(fromWireSource),
+		agentActions: wire.agentActions.map((action) => ({
+			id: action.id,
+			template: action.template,
+		})),
 		agentProfiles: wire.agentProfiles.map((profile) => ({
 			id: profile.id,
 			display_name: profile.displayName,

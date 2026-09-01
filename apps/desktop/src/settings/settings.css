@@ -293,6 +293,25 @@ body {
   font-size: 12px;
 }
 
+/* A value the window states rather than asks for: the same line height as a
+   field so a row of them lines up with the rows that are editable. */
+.sf-static {
+  align-self: center;
+  color: var(--secondary);
+}
+
+/* A prompt is written, read back and edited, so it gets room to be read in and
+   grows no further on its own: a field that resized as it was typed into would
+   move everything under it on every keystroke. */
+.sf-textarea {
+  width: 100%;
+  min-height: 8lh;
+  padding: var(--space-2);
+  line-height: 1.45;
+  resize: vertical;
+  white-space: pre-wrap;
+}
+
 .sf-note {
   margin: 0;
 }

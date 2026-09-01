@@ -312,3 +312,48 @@ describe("a collection of agent profiles", () => {
     expect(screen.getByText("No agent profiles")).toBeInTheDocument();
   });
 });
+
+describe("the actions an agent is sent", () => {
+  it("lists what DevHub has, with no way to add or remove one", async () => {
+    // The membership is not the person's: an action somebody invented would
+    // have nothing to trigger it. So there is no plus and no minus — not a
+    // disabled pair, which would say "not now" about something that is never.
+    await open("Actions", testConfig({}));
+
+    expect(selected()).toHaveTextContent("Issue assignment");
+    expect(
+      screen.queryByRole("button", { name: /Add/u }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Remove/u }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("saves the wording, and puts DevHub's back on request", async () => {
+    const { saves } = await open("Actions", testConfig({}));
+    const field = screen.getByLabelText("Agent action message");
+    const shipped = (field as HTMLTextAreaElement).value;
+
+    fireEvent.change(field, { target: { value: "read {{ISSUE_URL}}" } });
+    fireEvent.blur(field);
+    await vi.waitFor(() => {
+      expect(saves.at(-1)?.agentActions[0]?.template).toBe(
+        "read {{ISSUE_URL}}",
+      );
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Restore Default" }));
+    await vi.waitFor(() => {
+      expect(saves.at(-1)?.agentActions[0]?.template).toBe(shipped);
+    });
+  });
+
+  it("says which variables the message may use, and what $name does", async () => {
+    await open("Actions", testConfig({}));
+    // On the group the message sits in, not only inside the message itself.
+    const note = screen.getByText(/are replaced when it is sent/u);
+    expect(note).toHaveTextContent("{{ISSUE_URL}}");
+    expect(note).toHaveTextContent("{{ISSUE_NO}}");
+    expect(note).toHaveTextContent(/Claude Code is sent \/name/u);
+  });
+});

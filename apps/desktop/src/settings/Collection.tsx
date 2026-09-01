@@ -43,10 +43,18 @@ export function Collection({
   /** The selected position, or nothing when the collection is empty. */
   readonly selected: number | undefined;
   readonly onSelect: (index: number) => void;
-  readonly addLabel: string;
-  readonly onAdd: () => void;
-  readonly removeLabel: string;
-  readonly onRemove: () => void;
+  /**
+   * Adding and removing, when the membership is the person's to change.
+   *
+   * Absent for a collection that lists what DevHub *has* rather than what
+   * somebody made: the actions an agent can be sent are built in, so there is
+   * no plus and no minus, and the buttons are not merely disabled — a disabled
+   * control says "not now", and the right answer here is "not ever".
+   */
+  readonly addLabel?: string;
+  readonly onAdd?: () => void;
+  readonly removeLabel?: string;
+  readonly onRemove?: () => void;
   readonly empty: { readonly title: string; readonly message: string };
   /** The inspector for the selected entry. */
   readonly children: ReactNode;
@@ -121,27 +129,29 @@ export function Collection({
         </div>
         {/* The two actions sit under the list they act on, joined, the way a
             Mac's list controls do — not scattered at the end of a form. */}
-        <div className="sf-list-actions">
-          <button
-            type="button"
-            className="sf-list-action"
-            aria-label={addLabel}
-            title={addLabel}
-            onClick={onAdd}
-          >
-            <PlusGlyph />
-          </button>
-          <button
-            type="button"
-            className="sf-list-action"
-            aria-label={removeLabel}
-            title={removeLabel}
-            disabled={selected === undefined}
-            onClick={onRemove}
-          >
-            <MinusGlyph />
-          </button>
-        </div>
+        {onAdd && onRemove ? (
+          <div className="sf-list-actions">
+            <button
+              type="button"
+              className="sf-list-action"
+              aria-label={addLabel}
+              title={addLabel}
+              onClick={onAdd}
+            >
+              <PlusGlyph />
+            </button>
+            <button
+              type="button"
+              className="sf-list-action"
+              aria-label={removeLabel}
+              title={removeLabel}
+              disabled={selected === undefined}
+              onClick={onRemove}
+            >
+              <MinusGlyph />
+            </button>
+          </div>
+        ) : null}
       </div>
 
       <div className={`sf-detail${selected === undefined ? " is-empty" : ""}`}>
@@ -155,15 +165,17 @@ export function Collection({
             </span>
             <p className="mac-empty-title">{empty.title}</p>
             <p className="mac-empty-message">{empty.message}</p>
-            <div className="mac-empty-actions">
-              <button
-                type="button"
-                className="mac-button default"
-                onClick={onAdd}
-              >
-                {addLabel}
-              </button>
-            </div>
+            {onAdd ? (
+              <div className="mac-empty-actions">
+                <button
+                  type="button"
+                  className="mac-button default"
+                  onClick={onAdd}
+                >
+                  {addLabel}
+                </button>
+              </div>
+            ) : null}
           </div>
         ) : (
           <div className="sf-detail-column">{children}</div>
