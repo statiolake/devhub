@@ -157,9 +157,15 @@ export function Picker({
       const value = score(item.searchText ?? item.label, query);
       return value === 0 ? [] : [{ item, value }];
     });
-    // A stable order under a query that ranks everything the same: the caller's
-    // order is the one the person already saw, and re-sorting equal rows on
-    // every keystroke moves the selection out from under them.
+    // A stable order within every band of equal score: the caller's order is
+    // the order the person arranged — for workspaces it is `workspace_sources`
+    // read from the top — and it is also the order they were just looking at,
+    // so re-sorting rows the query cannot tell apart would both discard the
+    // arrangement and move the selection out from under them.
+    //
+    // The index is carried explicitly rather than relying on the sort being
+    // stable, because "equal score keeps the caller's order" is the guarantee
+    // this control makes and it should be readable as one.
     return scored
       .map((entry, index) => ({ ...entry, index }))
       .sort((left, right) =>

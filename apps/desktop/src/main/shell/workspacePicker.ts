@@ -68,29 +68,49 @@ export function startWorkspacePicker(
 
 	emit({ kind: "started", operationId, sequence: next() });
 
-	const seen = new Set<string>();
-	const offer = (path: string, label: string) => {
-		if (state.cancelled || seen.has(path)) return;
-		if (state.candidateCount >= MAX_CANDIDATES) {
-			state.truncated = true;
-			return;
-		}
-		const value = score(path, query);
-		if (value === 0) return;
-		seen.add(path);
-		state.candidateCount += 1;
-		emit({
-			kind: "candidate",
-			operationId,
-			sequence: next(),
-			label,
-			searchText: path,
-			path,
-			score: value,
-		});
+	/**
+	 * What one source offers, tagged with which source it was.
+	 *
+	 * The `seen` set is per source rather than shared across all of them, and
+	 * that is the whole of what makes the merged list reproducible. A path two
+	 * sources both name used to be attributed to whichever source happened to
+	 * reach it first, which is a race between a command and a directory walk —
+	 * so the same path landed in a different place in the list on different
+	 * runs. Now both sources offer it, both say who they are, and the rule for
+	 * which one it belongs to is applied where the list is assembled: the first
+	 * source in Settings that names a path is the source it came from.
+	 */
+	const offerFrom = (source: WorkspaceSource, sourceRank: number) => {
+		const seen = new Set<string>();
+		return (path: string, label: string) => {
+			if (state.cancelled || seen.has(path)) return;
+			if (state.candidateCount >= MAX_CANDIDATES) {
+				state.truncated = true;
+				return;
+			}
+			const value = score(path, query);
+			if (value === 0) return;
+			seen.add(path);
+			state.candidateCount += 1;
+			emit({
+				kind: "candidate",
+				operationId,
+				sequence: next(),
+				label,
+				searchText: path,
+				path,
+				score: value,
+				sourceId: source.id,
+				sourceRank,
+			});
+		};
 	};
 
-	const runSource = async (source: WorkspaceSource): Promise<void> => {
+	const runSource = async (
+		source: WorkspaceSource,
+		sourceRank: number,
+	): Promise<void> => {
+		const offer = offerFrom(source, sourceRank);
 		try {
 			if (source.type === "filesystem") {
 				await walkFilesystemSource(source, state, offer);
@@ -122,7 +142,11 @@ export function startWorkspacePicker(
 		});
 	};
 
-	void Promise.all(config.workspaceSources.map(runSource)).then(() => {
+	// `map` hands `runSource` each source's index, which *is* its rank: the
+	// order of `workspace_sources` is the order the person wrote in Settings.
+	void Promise.all(
+		config.workspaceSources.map((source, rank) => runSource(source, rank)),
+	).then(() => {
 		if (state.cancelled) {
 			emit({ kind: "cancelled", operationId, sequence: next() });
 			return;

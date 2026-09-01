@@ -24,6 +24,11 @@ export interface WorkspacePickerProps {
   readonly onDismiss: () => void;
 }
 
+/** A candidate row, and which source in Settings it came from. */
+interface PoolItem extends PickerItem {
+  readonly sourceRank: number;
+}
+
 /**
  * The two rows that are not workspaces.
  *
@@ -89,24 +94,58 @@ export function WorkspacePicker({ onDismiss }: WorkspacePickerProps) {
     reportFailure,
   } = useAppShell();
 
-  // Everything any round of this sheet has found, by path. Not derived from
-  // `pickerCandidates`, which is one round's answer and is emptied when the
-  // next round starts.
-  const [pool, setPool] = useState<readonly PickerItem[]>([]);
+  /**
+   * Everything any round of this sheet has found, in the order Settings put
+   * its sources in.
+   *
+   * Not derived from `pickerCandidates`, which is one round's answer and is
+   * emptied when the next round starts — the pool only ever grows for as long
+   * as the sheet stands.
+   *
+   * The order is the source's rank and nothing else. Sources run concurrently
+   * in main, so what arrives first is a race between a command that answers in
+   * a millisecond and a directory walk that takes a second, and a list in
+   * arrival order is a list whose top row changes between two identical runs.
+   * Sorting by rank alone — and letting the sort's own stability keep each
+   * source's rows in the order that source produced them — is the whole rule:
+   * the list reads down `workspace_sources` from the top, exactly as it is
+   * written in Settings, and `Picker` then re-ranks it by the query without
+   * disturbing rows the query scores the same.
+   *
+   * A path two sources both name belongs to the earlier one, which is why the
+   * rank is lowered rather than a second row being added.
+   */
+  const [pool, setPool] = useState<readonly PoolItem[]>([]);
   useEffect(() => {
     if (pickerCandidates.length === 0) return;
     setPool((current) => {
-      const known = new Set(current.map((item) => item.id));
-      const added = pickerCandidates
-        .filter((candidate) => !known.has(candidate.path))
-        .map((candidate) => ({
-          id: candidate.path,
-          label: candidate.label,
-          searchText: candidate.path,
-          detail: <PathLabel path={candidate.path} />,
-          glyph: <FolderGlyph />,
-        }));
-      return added.length === 0 ? current : [...current, ...added];
+      const byPath = new Map(current.map((item) => [item.id, item]));
+      let changed = false;
+      for (const candidate of pickerCandidates) {
+        const known = byPath.get(candidate.path);
+        if (known === undefined) {
+          byPath.set(candidate.path, {
+            id: candidate.path,
+            label: candidate.label,
+            searchText: candidate.path,
+            detail: <PathLabel path={candidate.path} />,
+            glyph: <FolderGlyph />,
+            sourceRank: candidate.sourceRank,
+          });
+          changed = true;
+        } else if (candidate.sourceRank < known.sourceRank) {
+          byPath.set(candidate.path, {
+            ...known,
+            sourceRank: candidate.sourceRank,
+          });
+          changed = true;
+        }
+      }
+      return changed
+        ? [...byPath.values()].sort(
+            (left, right) => left.sourceRank - right.sourceRank,
+          )
+        : current;
     });
   }, [pickerCandidates]);
 

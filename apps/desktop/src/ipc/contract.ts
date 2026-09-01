@@ -108,6 +108,13 @@ export interface ContentRect {
  * One candidate the workspace picker found. `searchText` is what the filter
  * matches against and `score` is the rank main assigned, so two sources that
  * disagree about ordering still merge into one list.
+ *
+ * `sourceRank` is where the source that named it sits in `workspace_sources`,
+ * and it is what puts the merged list back in the order the person wrote in
+ * Settings. Sources are run concurrently and answer at whatever speed they
+ * answer, so arrival order is a race between a command and a directory walk —
+ * which is why the rank travels with the candidate rather than the list being
+ * assumed to arrive in it.
  */
 export interface WorkspacePickerCandidate {
 	readonly operationId: string;
@@ -116,6 +123,9 @@ export interface WorkspacePickerCandidate {
 	readonly searchText: string;
 	readonly path: string;
 	readonly score: number;
+	readonly sourceId: string;
+	/** The source's index in `config.workspace_sources`, from the top. */
+	readonly sourceRank: number;
 }
 
 /** Streamed progress for one picker run. */

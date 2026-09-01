@@ -215,6 +215,28 @@ describe("the picker", () => {
     });
   });
 
+  it("keeps the caller's order among rows the query cannot tell apart", () => {
+    // The caller's order is an arrangement — for workspaces it is
+    // `workspace_sources` read from the top — so rows the scorer gives the same
+    // value to must come out in the order they went in, whatever that order was
+    // and however many keystrokes have been typed over them.
+    const ordered: readonly PickerItem[] = [
+      { id: "daily", label: "0901", searchText: "/daily/2026/0901" },
+      { id: "devhub", label: "devhub", searchText: "/code/devhub" },
+      { id: "widget", label: "widget", searchText: "/code/widget" },
+    ];
+    renderPicker({ items: ordered });
+    const shown = () =>
+      screen.getAllByRole("option").map((row) => row.textContent);
+
+    expect(shown()).toEqual(["0901", "devhub", "widget"]);
+
+    // "d" is a subsequence of all three and in the last component of two, so
+    // the scorer separates those two from the first and orders neither pair.
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "d" } });
+    expect(shown()).toEqual(["devhub", "widget", "0901"]);
+  });
+
   it("cancels on Escape", () => {
     const { onCancel } = renderPicker({});
     fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
