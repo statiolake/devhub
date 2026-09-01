@@ -30,6 +30,9 @@
 
 import { WindowsMainService } from "code-oss-dev/out/vs/platform/windows/electron-main/windowsMainService.js";
 import type { ICodeWindow } from "code-oss-dev/out/vs/platform/window/electron-main/window.js";
+import type { IOpenEmptyConfiguration } from "code-oss-dev/out/vs/platform/windows/electron-main/windows.js";
+import { OpenContext } from "code-oss-dev/out/vs/platform/windows/electron-main/windows.js";
+import type { IOpenEmptyWindowOptions } from "code-oss-dev/out/vs/platform/window/common/window.js";
 import { isSingleFolderWorkspaceIdentifier } from "code-oss-dev/out/vs/platform/workspace/common/workspace.js";
 import { Schemas } from "code-oss-dev/out/vs/base/common/network.js";
 import { appController } from "../shell/appController.js";
@@ -47,7 +50,40 @@ interface OpenBrowserWindowOptions {
 	readonly filesToOpen?: unknown;
 }
 
-export class DevHubWindowsMainService extends WindowsMainService {}
+export class DevHubWindowsMainService extends WindowsMainService {
+	/**
+	 * The Dock icon has one answer, and it is DevHub's.
+	 *
+	 * Clicking a Mac app's Dock icon when it has no visible window means "show
+	 * me the application". DevHub answers that in `bootstrapShell.ts`: the App
+	 * Shell window comes back, with every workspace, terminal and Agent still
+	 * in it. VS Code answers the same event by opening an empty window, and
+	 * because DevHub's shell window hides rather than closes, Electron reports
+	 * no visible windows and both answers ran — so a click meant to bring the
+	 * app back also grew a Scratch workbench nobody asked for.
+	 *
+	 * Two answers to one question is the problem, not which of them is nicer,
+	 * so this drops VS Code's. `OpenContext.DOCK` is the Dock talking, and the
+	 * Dock talks to DevHub. Every other context — the menu, the CLI, the API —
+	 * goes through untouched.
+	 *
+	 * A VS Code bump has to re-check that `app.on('activate')` still asks for
+	 * `openEmptyWindow({ context: OpenContext.DOCK })` and nothing else. The
+	 * other `DOCK` caller is upstream's own Dock menu (`menubar.ts`), whose
+	 * "New Window" item this therefore also drops — DevHub's Dock menu is not
+	 * VS Code's to write, and taking it back is the `app` fence's job.
+	 */
+	override openEmptyWindow(
+		openConfig: IOpenEmptyConfiguration,
+		options?: IOpenEmptyWindowOptions,
+	): Promise<ICodeWindow[]> {
+		if (openConfig.context === OpenContext.DOCK) {
+			console.log("[devhub] open: the Dock icon is the App Shell's to answer");
+			return Promise.resolve([]);
+		}
+		return super.openEmptyWindow(openConfig, options);
+	}
+}
 
 const upstreamOpenInBrowserWindow = (
 	WindowsMainService.prototype as unknown as WindowsMainServiceInternals
