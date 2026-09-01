@@ -165,6 +165,16 @@ export type WorkspacePickerEvent =
 			readonly kind: "started";
 			readonly operationId: string;
 			readonly sequence: number;
+			/**
+			 * How many sources this run has to ask.
+			 *
+			 * Zero is a different sentence from "found nothing": a person with no
+			 * `workspace_sources` has not searched an empty machine, they have not
+			 * said where to look yet, and the sheet has to say which of the two it
+			 * is. It travels on `started` so the sheet knows before any source has
+			 * answered, rather than inferring it from a run that produced nothing.
+			 */
+			readonly sourceCount: number;
 	  }
 	| ({ readonly kind: "candidate" } & WorkspacePickerCandidate)
 	| {
@@ -291,6 +301,11 @@ export interface DevhubApi {
 	findIssueClones(issueUrl: string): Promise<readonly IssueClone[]>;
 	/** Clone, and answer with the directory git made. Opens nothing. */
 	cloneRepository(url: string, parentDirectory: string): Promise<string>;
+	/**
+	 * The folders a clone could go into: the parents of everything the workspace
+	 * sources find, in the sources' own order. Answers once, with all of them.
+	 */
+	cloneParentDirectories(): Promise<readonly string[]>;
 	listBranches(directory: string): Promise<readonly string[]>;
 	/**
 	 * Do what the answers add up to: make the worktree if one was asked for,
@@ -342,6 +357,7 @@ export const CHANNELS = {
 	getRepositoryStatus: "devhub:get-repository-status",
 	cloneProject: "devhub:clone-project",
 	projectDefaultDirectory: "devhub:project-default-directory",
+	cloneParentDirectories: "devhub:clone-parent-directories",
 	openSettings: "devhub:open-settings",
 	openExternalUrl: "devhub:open-external-url",
 	setContentRect: "devhub:set-content-rect",

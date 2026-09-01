@@ -237,6 +237,23 @@ describe("the picker", () => {
     expect(shown()).toEqual(["devhub", "widget", "0901"]);
   });
 
+  it("holds back a pinned row that means what was typed, until something is", () => {
+    // Pinned rows lead while nothing is typed, so a row meaning "use the field"
+    // would otherwise be the row Return takes the instant the sheet opens —
+    // ahead of every real answer, and able only to fail.
+    const typed = { id: "typed", label: "Use what I typed", needsQuery: true };
+    renderPicker({ pinned: [typed] });
+    const shown = () =>
+      screen.getAllByRole("option").map((row) => row.textContent);
+
+    expect(shown()).toEqual(["Claude", "Codex"]);
+
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "c" } });
+    // And once there is something, it is last: the candidates are the answer
+    // and this is the way out of them.
+    expect(shown().at(-1)).toBe("Use what I typed");
+  });
+
   it("cancels on Escape", () => {
     const { onCancel } = renderPicker({});
     fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });

@@ -142,7 +142,10 @@ import {
 	type LoginEnvironment,
 } from "./loginEnvironment.js";
 import type { AgentSessions } from "../agent/sessions.js";
-import { startWorkspacePicker } from "./workspacePicker.js";
+import {
+	collectParentDirectories,
+	startWorkspacePicker,
+} from "./workspacePicker.js";
 import {
 	cloneProject,
 	createProject,
@@ -2467,6 +2470,17 @@ export class AppController {
 		handle(CHANNELS.projectDefaultDirectory, () =>
 			defaultProjectDirectory(this.config),
 		);
+		// The folders a clone can go into: the parents the sources imply, or —
+		// when they imply none, which is what a configuration with no sources
+		// means — the one folder DevHub would otherwise have guessed. The list is
+		// never empty, so the sheet always has something to take with Return
+		// rather than a blank field to compose a path in.
+		handle(CHANNELS.cloneParentDirectories, async () => {
+			const config = this.config;
+			const parents =
+				config === undefined ? [] : await collectParentDirectories(config);
+			return parents.length > 0 ? parents : [defaultProjectDirectory(config)];
+		});
 		// A refusal travels the way every other one does — as the structured
 		// error inside the message — so the sheet that asked shows the sentence
 		// and not "the native app shell is unavailable".

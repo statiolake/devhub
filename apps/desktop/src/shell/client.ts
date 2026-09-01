@@ -62,6 +62,7 @@ export interface AppShellClient {
   createProject(path: string): Promise<AppOutcome>;
   cloneProject(url: string, parentDirectory: string): Promise<AppOutcome>;
   projectDefaultDirectory(): Promise<string>;
+  cloneParentDirectories(): Promise<readonly string[]>;
   findIssueClones(issueUrl: string): Promise<readonly IssueClone[]>;
   cloneRepository(url: string, parentDirectory: string): Promise<string>;
   listBranches(directory: string): Promise<readonly string[]>;
@@ -125,6 +126,7 @@ export function createShellClient(api: DevhubApi = devhub()): AppShellClient {
     cloneProject: (url, parentDirectory) =>
       api.cloneProject(url, parentDirectory),
     projectDefaultDirectory: () => api.projectDefaultDirectory(),
+    cloneParentDirectories: () => api.cloneParentDirectories(),
     findIssueClones: (issueUrl) => api.findIssueClones(issueUrl),
     cloneRepository: (url, parentDirectory) =>
       api.cloneRepository(url, parentDirectory),

@@ -16,10 +16,16 @@
  */
 
 import { useEffect, useRef, useState } from "react";
-import { cloneDirectoryName, joinPath } from "../../../model/projects";
+import { cloneDirectoryName } from "../../../model/projects";
 import { toAppError } from "../../failure";
 import { useAppShell } from "../../useAppShell";
 import { Alert } from "./Alert";
+import {
+  CLONE_INTO_TYPED,
+  cloneParentItems,
+  cloneTypedItem,
+} from "./cloneDestination";
+import { Picker } from "./Picker";
 
 /** What went wrong, in the words whoever refused it used. */
 function reasonOf(error: unknown): string {
@@ -123,11 +129,23 @@ export function NewProjectSheet({ onDismiss }: ProjectSheetProps) {
   );
 }
 
+/**
+ * Clone: the URL, then where it goes.
+ *
+ * Two questions in two steps rather than two fields in one sheet, because the
+ * second one has an answer DevHub already knows — the folders this person keeps
+ * projects in — and a list of those is a better question than an empty field
+ * with a guess in it. It is the same step, drawn by the same picker with the
+ * same rows, as the Issue assignment wizard's; see `cloneDestination.ts`.
+ *
+ * The typed row is what is left of the field: somebody cloning into a folder no
+ * source knows about types the path and takes it.
+ */
 export function CloneProjectSheet({ onDismiss }: ProjectSheetProps) {
-  const { cloneProject } = useAppShell();
-  const defaultDirectory = useDefaultDirectory();
+  const { cloneProject, cloneParentDirectories, reportFailure } = useAppShell();
   const [url, setUrl] = useState("");
-  const [typedParent, setTypedParent] = useState<string>();
+  const [asking, setAsking] = useState<"url" | "where">("url");
+  const [parents, setParents] = useState<readonly string[]>();
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string>();
   const urlField = useRef<HTMLInputElement | null>(null);
@@ -136,19 +154,63 @@ export function CloneProjectSheet({ onDismiss }: ProjectSheetProps) {
     urlField.current?.focus();
   }, []);
 
-  const parent = typedParent ?? defaultDirectory ?? "";
-  const name = cloneDirectoryName(url);
-  const ready = name !== undefined && parent.trim().length > 0;
+  // Asked for once, when the sheet opens, rather than when the second step is
+  // reached: the person is typing a URL for those seconds, and a list that is
+  // already there is a list that does not make them wait for it.
+  useEffect(() => {
+    let live = true;
+    void cloneParentDirectories().then((found) => {
+      if (live) setParents(found);
+    }, reportFailure);
+    return () => {
+      live = false;
+    };
+  }, [cloneParentDirectories, reportFailure]);
 
-  const clone = () => {
-    if (busy || !ready) return;
+  const name = cloneDirectoryName(url);
+
+  const clone = (parent: string) => {
+    if (busy) return;
+    // A blank folder is not guarded against here: main refuses it with a
+    // sentence ("Enter a path for the folder."), and that sentence under the
+    // still-open list is worth more than a click that silently does nothing.
     setBusy(true);
     setFailure(undefined);
     void cloneProject(url, parent).then(onDismiss, (error: unknown) => {
       setBusy(false);
       setFailure(reasonOf(error));
+      // The reason is about the destination, so the question about the
+      // destination is the one asked again — with the reason under it.
+      setAsking("where");
     });
   };
+
+  if (asking === "where") {
+    return (
+      <Picker
+        title={`Clone ${name ?? "repository"}`}
+        placeholder="Parent folder"
+        // No starting value: the field filters the rows, so a path put there
+        // first would hide the list it is meant to search. Where projects go
+        // is a row — main adds it when the sources imply no folders.
+        items={cloneParentItems(parents ?? [], name)}
+        pinned={[cloneTypedItem(name)]}
+        busy={parents === undefined || busy}
+        note={failure}
+        emptyNoItems="Type the folder the clone should go into."
+        emptyNoMatch="No folder matches. Type one instead."
+        onChoose={(choice) => {
+          clone(choice.id === CLONE_INTO_TYPED ? choice.query : choice.id);
+        }}
+        onCancel={() => {
+          // Back to the URL, not out of the sheet: the person answered one
+          // question and is being asked the next, and Escape undoes the step.
+          setFailure(undefined);
+          setAsking("url");
+        }}
+      />
+    );
+  }
 
   return (
     <Alert
@@ -159,10 +221,13 @@ export function CloneProjectSheet({ onDismiss }: ProjectSheetProps) {
       actions={[
         { label: "Cancel", run: onDismiss, disabled: busy },
         {
-          label: busy ? "Cloning…" : "Clone",
+          label: "Continue",
           isDefault: true,
-          disabled: busy || !ready,
-          run: clone,
+          disabled: busy || name === undefined,
+          run: () => {
+            setFailure(undefined);
+            setAsking("where");
+          },
         },
       ]}
     >
@@ -179,20 +244,10 @@ export function CloneProjectSheet({ onDismiss }: ProjectSheetProps) {
           setFailure(undefined);
         }}
       />
-      <input
-        className="mac-field mac-alert-field"
-        aria-label="Parent folder"
-        value={parent}
-        disabled={busy || defaultDirectory === undefined}
-        onChange={(event) => {
-          setTypedParent(event.target.value);
-          setFailure(undefined);
-        }}
-      />
-      {/* Where it is going to land, computed by the rule main clones with, so
-          the line is a preview and not a guess. */}
+      {/* What it will be called, by the rule main clones with, so the line is a
+          preview and not a guess. Where it lands is the next question. */}
       <p className="mac-caption project-destination">
-        {name ? joinPath(parent, name) : "Enter a repository URL."}
+        {name ? `Clones as ${name}` : "Enter a repository URL."}
       </p>
       {failure ? (
         <p className="mac-message" role="alert">

@@ -29,6 +29,8 @@ export interface AppShellContextValue {
   readonly openSettings: () => Promise<void>;
   readonly pickerCandidates: readonly WorkspacePickerCandidate[];
   readonly pickerBusy: boolean;
+  /** How many sources the last picker run asked; undefined before the first. */
+  readonly pickerSourceCount: number | undefined;
   readonly startWorkspacePicker: (query?: string) => Promise<void>;
   readonly cancelWorkspacePicker: () => Promise<void>;
   /**
@@ -48,6 +50,8 @@ export interface AppShellContextValue {
     parentDirectory: string,
   ) => Promise<AppOutcome>;
   readonly projectDefaultDirectory: () => Promise<string>;
+  /** Where a clone could go: the parents of everything the sources find. */
+  readonly cloneParentDirectories: () => Promise<readonly string[]>;
   /**
    * The four steps of assigning an Issue. Each throws what to do about it when
    * it fails, because each is answered by re-asking the question that led to

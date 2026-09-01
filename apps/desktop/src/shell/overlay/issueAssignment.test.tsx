@@ -42,6 +42,9 @@ function mount(overrides: Partial<AppShellContextValue> = {}) {
     cloneRepository,
     assignIssue,
     projectDefaultDirectory: vi.fn().mockResolvedValue("/projects"),
+    cloneParentDirectories: vi
+      .fn()
+      .mockResolvedValue(["/projects", "/code/github"]),
     ...overrides,
   } as unknown as AppShellContextValue;
   render(
@@ -67,6 +70,7 @@ function mountFor(agentProfiles: AppShellContextValue["agentProfiles"]) {
     cloneRepository: vi.fn().mockResolvedValue("/projects/widget"),
     assignIssue: vi.fn().mockResolvedValue(undefined),
     projectDefaultDirectory: vi.fn().mockResolvedValue("/projects"),
+    cloneParentDirectories: vi.fn().mockResolvedValue([]),
   } as unknown as AppShellContextValue;
   const view = render(
     <AppShellContext.Provider value={value}>
@@ -254,17 +258,44 @@ describe("assigning an Issue", () => {
     await answer(/Agent for/u);
     // The only row is "Clone…", because nothing was found.
     await answer(/Where to work on/u);
-    await answer(/Clone example\/widget/u, "/projects");
+    // The folders this person keeps projects in, offered as rows: the parents
+    // of everything the workspace sources find.
+    await choose(/Clone example\/widget/u, /\/code\/github/u);
     await choose(/Work on example\/widget#128/u, /In this workspace/u);
 
     await vi.waitFor(() => {
       expect(cloneRepository).toHaveBeenCalledWith(
         "https://github.com/example/widget.git",
-        "/projects",
+        "/code/github",
       );
     });
     await vi.waitFor(() => {
       expect(assignIssue).toHaveBeenCalled();
+    });
+  });
+
+  it("clones into a folder no source knows about, when one is typed", async () => {
+    // The escape hatch, and the whole of what is left of the field this
+    // replaced: a path nobody offered, typed, and taken by the pinned row.
+    const { cloneRepository } = mount({
+      findIssueClones: vi.fn().mockResolvedValue([]),
+    } as unknown as Partial<AppShellContextValue>);
+
+    await answer("Assign Issue", ISSUE);
+    await answer(/Agent for/u);
+    await answer(/Where to work on/u);
+    await screen.findByRole("dialog", { name: /Clone example\/widget/u });
+    fireEvent.change(screen.getByRole("textbox"), {
+      target: { value: "/elsewhere/scratch" },
+    });
+    fireEvent.click(screen.getByRole("option", { name: /typed above/u }));
+    await choose(/Work on example\/widget#128/u, /In this workspace/u);
+
+    await vi.waitFor(() => {
+      expect(cloneRepository).toHaveBeenCalledWith(
+        "https://github.com/example/widget.git",
+        "/elsewhere/scratch",
+      );
     });
   });
 });

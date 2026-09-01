@@ -16,7 +16,7 @@
 import { spawn } from "node:child_process";
 import { readdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import type {
 	CommandSource,
 	Config,
@@ -76,7 +76,12 @@ export function startWorkspacePicker(
 
 	const next = () => (state.sequence += 1);
 
-	emit({ kind: "started", operationId, sequence: next() });
+	emit({
+		kind: "started",
+		operationId,
+		sequence: next(),
+		sourceCount: config.workspaceSources.length,
+	});
 
 	/**
 	 * What one source offers, tagged with which source it was.
@@ -329,5 +334,63 @@ function runCommandSource(
 			}
 			finish();
 		});
+	});
+}
+
+/**
+ * Every folder a workspace could be created *beside*, from the same sources.
+ *
+ * The list a clone is given to choose from, and it is derived rather than
+ * configured: the folders a person keeps projects in are the parents of the
+ * projects the picker already finds. `~/dev/github/devhub` is a workspace, so
+ * `~/dev/github` is somewhere a repository goes. Nobody has to write the second
+ * list down, and it cannot drift from the first.
+ *
+ * One search of every source, with no query, gathered rather than streamed:
+ * this answers a modal question that is not re-asked as the person types —
+ * `Picker` filters what it is given locally — so a single call is the whole of
+ * it. The order is the sources' own (see `sourceRank`), and a parent named by
+ * two sources keeps the place the earlier one gave it.
+ */
+export function collectParentDirectories(
+	config: Config,
+	now: () => Date = () => new Date(),
+): Promise<readonly string[]> {
+	return new Promise((resolve) => {
+		const found: { path: string; rank: number; sequence: number }[] = [];
+		startWorkspacePicker(
+			config,
+			"",
+			"parents",
+			(event) => {
+				if (event.kind === "candidate") {
+					found.push({
+						path: event.path,
+						rank: event.sourceRank,
+						sequence: event.sequence,
+					});
+					return;
+				}
+				if (event.kind !== "completed") return;
+				const ordered = found.toSorted((left, right) =>
+					left.rank === right.rank
+						? left.sequence - right.sequence
+						: left.rank - right.rank,
+				);
+				const parents: string[] = [];
+				const seen = new Set<string>();
+				for (const candidate of ordered) {
+					const parent = dirname(candidate.path);
+					// `dirname("/")` is `"/"`. A workspace at the root has no folder
+					// above it to clone into, and offering the root as one is offering
+					// somewhere nobody can write.
+					if (parent === candidate.path || seen.has(parent)) continue;
+					seen.add(parent);
+					parents.push(parent);
+				}
+				resolve(parents);
+			},
+			now,
+		);
 	});
 }

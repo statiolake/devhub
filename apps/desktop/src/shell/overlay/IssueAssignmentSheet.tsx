@@ -29,6 +29,11 @@ import type {
   WizardPrompt,
   WizardStep,
 } from "../components/shell/wizardFlow";
+import {
+  CLONE_INTO_TYPED,
+  cloneParentItems,
+  cloneTypedItem,
+} from "../components/shell/cloneDestination";
 import type { IssueClone } from "../client";
 import { toAppError } from "../failure";
 import { useAppShell } from "../useAppShell";
@@ -66,7 +71,7 @@ export function IssueAssignmentSheet({ onDismiss }: IssueAssignmentSheetProps) {
     cloneRepository,
     listBranches,
     assignIssue,
-    projectDefaultDirectory,
+    cloneParentDirectories,
   } = useAppShell();
 
   /**
@@ -90,14 +95,14 @@ export function IssueAssignmentSheet({ onDismiss }: IssueAssignmentSheetProps) {
         cloneRepository,
         listBranches,
         assignIssue,
-        projectDefaultDirectory,
+        cloneParentDirectories,
       }),
     [
       assignIssue,
+      cloneParentDirectories,
       cloneRepository,
       findIssueClones,
       listBranches,
-      projectDefaultDirectory,
     ],
   );
 
@@ -117,7 +122,7 @@ interface FlowServices {
     readonly split: boolean;
     readonly allowStaleBase?: boolean;
   }) => Promise<unknown>;
-  readonly projectDefaultDirectory: () => Promise<string>;
+  readonly cloneParentDirectories: () => Promise<readonly string[]>;
 }
 
 /**
@@ -245,25 +250,29 @@ function cloneDestinationStep(
   agent: AgentChoice,
 ): WizardStep {
   return async (input) => {
-    const parent = await input.working("Reading settings…", () =>
-      services.projectDefaultDirectory(),
+    // The folders this person already keeps projects in, and where they were
+    // last told new ones go. The same rows the "Clone Project…" sheet offers,
+    // built by the same function, because it is the same question.
+    const parents = await input.working("Reading folders…", () =>
+      services.cloneParentDirectories(),
     );
     const answer = await input.ask({
       ...SHEET,
       title: `Clone ${issue.owner}/${issue.repository}`,
       placeholder: "Parent folder",
-      initialQuery: parent,
-      items: [],
-      pinned: [
-        {
-          id: ACCEPT_TYPED,
-          label: "Clone into this folder",
-          detail: `The clone lands in this folder as ${issue.repository}`,
-        },
-      ],
-      emptyNoItems: "Where should the clone go?",
-      emptyNoMatch: "Where should the clone go?",
+      // No starting value: the field is a filter over the rows now, and a path
+      // typed into it before anything is chosen would hide the list it is
+      // meant to search. Where projects go is a *row* — main puts it there when
+      // the sources imply no folders of their own.
+      items: cloneParentItems(parents, issue.repository),
+      pinned: [cloneTypedItem(issue.repository)],
+      emptyNoItems: "Type the folder the clone should go into.",
+      emptyNoMatch: "No folder matches. Type one instead.",
     });
+    // A row names its own folder; the typed row means the field. One or the
+    // other, decided here, so `cloneRepository` is only ever handed a path.
+    const destination =
+      answer.id === CLONE_INTO_TYPED ? answer.query : answer.id;
     // A URL rather than the SSH form: it is the one that works without the
     // person's keys being set up, and git rewrites it if their config says to.
     const directory = await input.working(
@@ -271,7 +280,7 @@ function cloneDestinationStep(
       () =>
         services.cloneRepository(
           `https://github.com/${issue.owner}/${issue.repository}.git`,
-          answer.query,
+          destination,
         ),
     );
     return arrangementStep(services, issue, agent, directory);

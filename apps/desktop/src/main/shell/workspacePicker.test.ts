@@ -16,7 +16,10 @@ import type { WorkspacePickerEvent } from "../../ipc/contract.js";
 import type { Config, WorkspaceSource } from "../../model/config.js";
 import { defaultConfig } from "../../model/config.js";
 import { makeScratchDir, removeScratchDir } from "../../model/testScratch.js";
-import { startWorkspacePicker } from "./workspacePicker.js";
+import {
+	collectParentDirectories,
+	startWorkspacePicker,
+} from "./workspacePicker.js";
 
 let root: string;
 
@@ -208,15 +211,69 @@ describe("a date source", () => {
 });
 
 describe("the default configuration's sources", () => {
-	it("names nothing that has to already exist on the machine", () => {
-		// A default has to mean something on a computer that has only just run
-		// DevHub. A command source names a program that may not be installed, and
-		// a filesystem source below the home directory names a folder that may not
-		// be there — either one turns a new installation's first picker into an
-		// error.
-		for (const source of defaultConfig().workspaceSources) {
-			expect(source.type).not.toBe("command");
-			if (source.type === "filesystem") expect(source.path).toBe("~");
-		}
+	it("has none, because where somebody keeps projects is not guessable", () => {
+		// Every default this ever had was one person's layout, and a source whose
+		// root is not there *fails* rather than going quiet — so a shipped guess
+		// opens a new installation's first picker onto errors about folders the
+		// person has never heard of. The picker says so instead.
+		expect(defaultConfig().workspaceSources).toEqual([]);
+	});
+});
+
+describe("the folders a clone could go into", () => {
+	it("is the parents of what the sources find, deduplicated", async () => {
+		// Two projects side by side and one somewhere else: two parents, not
+		// three, and the shared one named once.
+		await mkdir(join(root, "code", "alpha"), { recursive: true });
+		await mkdir(join(root, "code", "beta"), { recursive: true });
+		await mkdir(join(root, "work", "gamma"), { recursive: true });
+
+		const source: WorkspaceSource = {
+			type: "filesystem",
+			id: "all",
+			path: root,
+			min_depth: 2,
+			max_depth: 2,
+			kinds: ["directory"],
+			include_hidden: false,
+			exclude_names: [],
+		};
+		const parents = await collectParentDirectories(configWith([source]));
+
+		expect([...parents].sort()).toEqual([
+			join(root, "code"),
+			join(root, "work"),
+		]);
+	});
+
+	it("reads down the sources in the order Settings lists them", async () => {
+		await mkdir(join(root, "second", "b"), { recursive: true });
+		await mkdir(join(root, "first", "a"), { recursive: true });
+
+		const at = (id: string, path: string): WorkspaceSource => ({
+			type: "filesystem",
+			id,
+			path,
+			min_depth: 1,
+			max_depth: 1,
+			kinds: ["directory"],
+			include_hidden: false,
+			exclude_names: [],
+		});
+		const parents = await collectParentDirectories(
+			configWith([
+				at("one", join(root, "first")),
+				at("two", join(root, "second")),
+			]),
+		);
+
+		expect(parents).toEqual([join(root, "first"), join(root, "second")]);
+	});
+
+	it("offers nothing when no source names anything", async () => {
+		// What a configuration with no sources produces. The fallback to somewhere
+		// a clone can actually go is the controller's, not this function's — this
+		// one answers only for the sources.
+		expect(await collectParentDirectories(configWith([]))).toEqual([]);
 	});
 });

@@ -46,6 +46,18 @@ export interface PickerItem {
   /** What the query matches. The label, when a row is only its name. */
   readonly searchText?: string;
   readonly glyph?: ReactNode;
+  /**
+   * A pinned row that means *what was typed*, and so is not offered until
+   * something has been.
+   *
+   * "Clone into the folder typed above" with an empty field is a row that can
+   * only fail, and pinned rows lead the list while nothing is typed — so
+   * without this it is the row Return takes the instant the sheet opens, ahead
+   * of every real answer. With it the list opens on its candidates, and the row
+   * appears the moment the field stops being empty, which is the moment it
+   * starts meaning something.
+   */
+  readonly needsQuery?: boolean;
 }
 
 /**
@@ -184,11 +196,12 @@ export function Picker({
    * click and the scroll-into-view are one implementation and cannot disagree
    * about what "the row you are on" means.
    */
-  const rows = useMemo(
-    () =>
-      query.length === 0 ? [...pinned, ...ranked] : [...ranked, ...pinned],
-    [pinned, query.length, ranked],
-  );
+  const rows = useMemo(() => {
+    if (query.length > 0) return [...ranked, ...pinned];
+    // Nothing typed: the pinned rows are the menu of what one can do here, and
+    // a row that means "what was typed" is not one of them yet.
+    return [...pinned.filter((item) => !item.needsQuery), ...ranked];
+  }, [pinned, query.length, ranked]);
 
   const focusField = useCallback(() => {
     const field = input.current;

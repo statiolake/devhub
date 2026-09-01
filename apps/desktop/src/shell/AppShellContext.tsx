@@ -92,6 +92,14 @@ export function AppShellProvider({
   const [repositoryStatus, setRepositoryStatus] =
     useState<RepositoryStatusWire>({ sequence: 0, workspaces: [] });
   const [pickerBusy, setPickerBusy] = useState(false);
+  /**
+   * How many sources the last run had to ask.
+   *
+   * Kept because "no sources are configured" and "the sources found nothing"
+   * are different things to tell somebody, and the sheet cannot tell them apart
+   * from an empty list. `undefined` until a run has started and said.
+   */
+  const [pickerSourceCount, setPickerSourceCount] = useState<number>();
   const [pendingConfirmation, setPendingConfirmation] =
     useState<PendingConfirmation | null>(null);
   const [confirmationBusy, setConfirmationBusy] = useState(false);
@@ -170,6 +178,7 @@ export function AppShellProvider({
       if (event.kind === "started") {
         pickerSequence.current = event.sequence;
         setPickerCandidates([]);
+        setPickerSourceCount(event.sourceCount);
         setPickerBusy(true);
         return;
       }
@@ -424,6 +433,11 @@ export function AppShellProvider({
     [applyOpening, transport],
   );
 
+  const cloneParentDirectories = useCallback(
+    () => transport.cloneParentDirectories(),
+    [transport],
+  );
+
   const projectDefaultDirectory = useCallback(
     () => transport.projectDefaultDirectory(),
     [transport],
@@ -535,6 +549,7 @@ export function AppShellProvider({
       openSettings,
       pickerCandidates,
       pickerBusy,
+      pickerSourceCount,
       startWorkspacePicker,
       cancelWorkspacePicker,
       selectWorkspacePicker,
@@ -542,6 +557,7 @@ export function AppShellProvider({
       createProject,
       cloneProject,
       projectDefaultDirectory,
+      cloneParentDirectories,
       findIssueClones,
       cloneRepository,
       listBranches,
@@ -563,6 +579,7 @@ export function AppShellProvider({
       cloneProject,
       createProject,
       projectDefaultDirectory,
+      cloneParentDirectories,
       findIssueClones,
       cloneRepository,
       listBranches,
@@ -578,6 +595,7 @@ export function AppShellProvider({
       pendingConfirmation,
       pickerBusy,
       pickerCandidates,
+      pickerSourceCount,
       reportFailure,
       repositoryStatus,
       retry,

@@ -114,6 +114,10 @@ const devhub: DevhubApi = {
 			path,
 			create,
 		) as Promise<AppOutcome>,
+	cloneParentDirectories: () =>
+		ipcRenderer.invoke(CHANNELS.cloneParentDirectories) as Promise<
+			readonly string[]
+		>,
 	createProject: (path: string) =>
 		ipcRenderer.invoke(CHANNELS.createProject, path) as Promise<AppOutcome>,
 	cloneProject: (url: string, parentDirectory: string) =>
