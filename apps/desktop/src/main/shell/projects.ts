@@ -14,34 +14,17 @@
  * field that is already on screen.
  */
 
-import { spawn } from "node:child_process";
 import { mkdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import type { Config } from "../../model/config.js";
 import { cloneDirectoryName, joinPath } from "../../model/projects.js";
-import { errorWireAt, TypedFailure, withSummary } from "../../model/wire.js";
-
-/**
- * A refusal in the words it should be read in.
- *
- * "That folder already exists" and "Repository not found" are the whole value
- * of these two operations failing: a person can act on either. Thrown as a
- * plain `Error` they would arrive at the page as "the native app shell is
- * unavailable" with the real sentence buried in a detail nothing draws, which
- * is the same as not saying it. `TypedFailure` is what the codebase already
- * has for a failure it means to show.
- */
-function projectFailure(summary: string): TypedFailure {
-	return new TypedFailure(
-		withSummary(errorWireAt("workspace_unavailable"), summary),
-	);
-}
-
-/** How long `git clone` gets before DevHub stops waiting for it. */
-const CLONE_TIMEOUT_MS = 10 * 60 * 1000;
-/** Enough of git's complaint to act on, and not a whole console of it. */
-const MAX_STDERR_BYTES = 8 * 1024;
+import {
+	NETWORK_TIMEOUT_MS,
+	runGit,
+	workspaceFailure as projectFailure,
+	type GitCommand,
+} from "./git.js";
 
 export function expandHome(path: string): string {
 	if (path === "~") return homedir();
@@ -102,8 +85,7 @@ export interface CloneRequest {
 	readonly url: string;
 	readonly parentDirectory: string;
 	/** The resolved `git`, from the same lookup every other runtime goes through. */
-	readonly git: string;
-	readonly environment: Readonly<Record<string, string | undefined>>;
+	readonly command: GitCommand;
 }
 
 /** Clone into `<parent>/<name>`, and answer with the directory git created. */
@@ -116,53 +98,9 @@ export async function cloneProject(request: CloneRequest): Promise<string> {
 	const target = joinPath(parent, name);
 	await refuseIfPresent(target);
 	await mkdir(parent, { recursive: true });
-	await runGitClone(request, target);
-	return target;
-}
-
-function runGitClone(request: CloneRequest, target: string): Promise<void> {
-	return new Promise<void>((resolve, reject) => {
-		const child = spawn(
-			request.git,
-			// `--` so a URL that begins with a dash is a URL and not an option.
-			["clone", "--", request.url.trim(), target],
-			{
-				// The environment DevHub resolved at startup, so the clone finds the
-				// same credential helper and the same ssh the person's shell would.
-				env: request.environment as NodeJS.ProcessEnv,
-				stdio: ["ignore", "ignore", "pipe"],
-			},
-		);
-		let stderr = "";
-		child.stderr.on("data", (chunk: Buffer) => {
-			if (stderr.length < MAX_STDERR_BYTES) stderr += chunk.toString("utf8");
-		});
-		const timer = setTimeout(() => {
-			child.kill("SIGKILL");
-		}, CLONE_TIMEOUT_MS);
-		child.once("error", (failure: Error) => {
-			clearTimeout(timer);
-			reject(projectFailure(failure.message));
-		});
-		child.once("close", (code, signal) => {
-			clearTimeout(timer);
-			if (code === 0) {
-				resolve();
-				return;
-			}
-			// git says why on stderr and DevHub has nothing to add: passing its own
-			// last line through is the difference between "clone failed" and
-			// "Repository not found", and only one of those can be acted on.
-			const said = stderr.trim().split("\n").at(-1)?.trim();
-			reject(
-				projectFailure(
-					said && said.length > 0
-						? said
-						: signal
-							? `git clone was stopped (${signal}).`
-							: `git clone failed (exit ${String(code ?? "unknown")}).`,
-				),
-			);
-		});
+	// `--` so a URL that begins with a dash is a URL and not an option.
+	await runGit(request.command, ["clone", "--", request.url.trim(), target], {
+		timeoutMs: NETWORK_TIMEOUT_MS,
 	});
+	return target;
 }

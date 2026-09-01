@@ -138,6 +138,7 @@ import {
 	createProject,
 	defaultProjectDirectory,
 } from "./projects.js";
+import type { GitCommand } from "./git.js";
 import { installMenu, refreshMenu } from "./menu.js";
 import { installKeyboard } from "./keyboard.js";
 import {
@@ -2164,7 +2165,7 @@ export class AppController {
 	 * terminals and Agents get, so a clone can only fail for reasons the person
 	 * can see — and "there is no git here" is one of them, said plainly.
 	 */
-	private async clone(url: string, parentDirectory: string): Promise<string> {
+	private async gitCommand(): Promise<GitCommand> {
 		const configured = this.config?.runtimes.git ?? "git";
 		const git = await resolveExecutable(
 			configured,
@@ -2178,11 +2179,14 @@ export class AppController {
 				),
 			);
 		}
+		return { git: git.value, environment: this.launchEnvironment };
+	}
+
+	private async clone(url: string, parentDirectory: string): Promise<string> {
 		return cloneProject({
 			url,
 			parentDirectory,
-			git: git.value,
-			environment: this.launchEnvironment,
+			command: await this.gitCommand(),
 		});
 	}
 
