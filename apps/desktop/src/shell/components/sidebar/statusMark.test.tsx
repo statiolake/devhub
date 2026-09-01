@@ -71,19 +71,28 @@ describe("the Agent status mark", () => {
     }
   });
 
-  it("uses the codicons the extension uses, not lookalikes", () => {
-    // The opening move of each codicon's own path data. A silhouette that
-    // drifted from the extension's would fail here rather than in someone's
-    // eyes a month later.
+  it("draws every status on the Sidebar's own grid, so the column is one column", () => {
+    // The marks used to be codicon outlines on a 16-unit box, next to stroked
+    // 14-unit glyphs, next to filled Octicons — three conventions inside two
+    // hundred pixels, which is what made the column unreadable. There is one
+    // convention now and it is `sidebar-glyph`; a mark that stopped carrying
+    // it would be a mark drawing itself its own way again.
+    for (const status of STATUSES) {
+      cleanup();
+      const { container } = render(<StatusMark status={status} />);
+      const svg = container.querySelector("svg");
+      expect(svg).toHaveClass("sidebar-glyph");
+      expect(svg).toHaveClass("status-glyph");
+      expect(svg).toHaveAttribute("viewBox", "0 0 16 16");
+    }
+  });
+
+  it("keeps the unread dot's silhouette to the unread dot", () => {
+    // `waiting` was a filled disc and the unread mark in the same row's rail
+    // is a filled disc, sixteen pixels apart in the same blue: one drawing,
+    // two meanings, on one row. Whatever `waiting` becomes, it is not a disc.
     cleanup();
-    expect(pathOf("working")).toMatch(/^M13\.5 8\.5C/); // loading
-    cleanup();
-    expect(pathOf("waiting")).toMatch(/^M8 4C/); // circle-filled
-    cleanup();
-    expect(pathOf("idle")).toMatch(/^M13\.6572 3\.13573C/); // check
-    cleanup();
-    expect(pathOf("error")).toMatch(/^M14\.831 11\.965L/); // warning
-    cleanup();
-    expect(pathOf("unknown")).toMatch(/^M8 11C/); // question
+    const { container } = render(<StatusMark status="waiting" />);
+    expect(container.querySelector("circle")).toBeNull();
   });
 });

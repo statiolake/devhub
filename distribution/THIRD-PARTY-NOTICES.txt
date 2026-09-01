@@ -36,14 +36,6 @@ Ported source
   `src/detect/manifests/codex.toml` 2026.08.09.1). Each ported file names herdr
   and this licence in its header. herdr ships no NOTICE file, so there is no
   attribution notice to reproduce beyond this entry and the licence text.
-* Octicons 19.33.0 (GitHub Inc.) — MIT; see `licenses/Octicons-MIT.txt`. The
-  Octicons package is not a dependency and none of it is installed or linked.
-  DevHub's Sidebar carries four of its icon outlines verbatim as inline SVG
-  path data — `issue-opened-16`, `issue-closed-16`, `git-pull-request-16` and
-  `git-pull-request-draft-16` — in
-  `apps/desktop/src/shell/components/sidebar/Sidebar.tsx`, which names Octicons
-  and this licence where they appear.
-
 Build-only tools — Vite, TypeScript, ESLint, Prettier, esbuild and the rest of
 the toolchain — are not part of the bundle and are not represented here.
 
@@ -65,4 +57,3 @@ Upstream source references
 * https://github.com/facebook/react
 * https://github.com/xtermjs/xterm.js
 * https://github.com/herdrdev/herdr
-* https://github.com/primer/octicons

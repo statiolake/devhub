@@ -114,7 +114,7 @@
    * sibling extension `vscode-herdr-switcher` (`src/agentPresentation.ts`) so
    * that one Agent reads the same in both places. This block is the whole of
    * the translation from a VS Code theme colour key to DevHub ink; the shapes
-   * that go with them are in `StatusMark.tsx`. */
+   * that go with them are in `icons.tsx`, with every other Sidebar mark. */
   --status-working: light-dark(#b25000, #ff9f0a); /* charts.yellow */
   --status-waiting: light-dark(#0a66d0, #0a84ff); /* charts.blue */
   --status-idle: light-dark(#1d7f36, #30d158); /* testing.iconPassed */
@@ -229,6 +229,11 @@
   --row-height: 28px;
   --sidebar-glyph-width: 16px;
   --sidebar-glyph-ink: 14px;
+  /* On the 16-unit box every Sidebar mark is drawn on, scaled to this
+     density's ink size. Both densities land on 1.5 device pixels — 16/14 ×
+     1.5 here, 16/16 × 1.5 there — so a mark weighs the same in both and only
+     grows, which is what the Finder control this setting imitates does. */
+  --sidebar-glyph-stroke: 1.71;
   --sidebar-row-gap: var(--space-1);
   --sidebar-section-gap: var(--space-3);
   --sidebar-scroll-inset: var(--space-2);
@@ -238,6 +243,7 @@
   --row-height: 34px;
   --sidebar-glyph-width: 18px;
   --sidebar-glyph-ink: 16px;
+  --sidebar-glyph-stroke: 1.5;
   --sidebar-row-gap: var(--space-2);
   --sidebar-section-gap: var(--space-5);
   --sidebar-scroll-inset: var(--space-3);

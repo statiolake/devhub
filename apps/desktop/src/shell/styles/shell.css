@@ -230,6 +230,39 @@
   z-index: 1;
 }
 
+/*
+ * ------------------------------------------------------------ sidebar marks
+ *
+ * Every mark the Sidebar draws, drawn one way.
+ *
+ * There used to be three ways inside two hundred pixels: a stroked 14-unit
+ * folder at 1.3, a filled 16-unit codicon whose outline read as about a pixel,
+ * and a filled 16-unit Octicon whose outline read as about one and a half. A
+ * column of marks that disagree about how thick a line is does not read as a
+ * column, and the thinnest of them — the spinner on the busiest status in the
+ * app — did not read at all.
+ *
+ * So: one 16-unit box, stroked, never filled, at one weight. The shapes are in
+ * `icons.tsx`; the weight, the caps and the colour are here. Only the size and
+ * the ink change from one place a mark appears to another, which is the whole
+ * of what those places are allowed to differ about.
+ */
+.sidebar-glyph {
+  display: block;
+  fill: none;
+  stroke: currentcolor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: var(--sidebar-glyph-stroke);
+}
+
+/* The one exception, and it is a small one: a dot. An outline of a dot at this
+   size is a dot with a hole in it, or a smudge, depending on the display. */
+.sidebar-glyph .glyph-fill {
+  fill: currentcolor;
+  stroke: none;
+}
+
 /* The leading rail every row reserves before its glyph.
  *
  * It is where a mark about the row as a whole goes, and there is exactly one:
@@ -245,12 +278,21 @@
   justify-content: center;
 }
 
+/* Finder's source-list icons are accented on every row, not only the selected
+   one — the accent names the column, and selection is carried by the row fill
+   and the label weight. The colour is set here and the drawing obeys it,
+   because `.sidebar-glyph` strokes `currentcolor` and nothing else.
+
+   The folder used to carry an 18% accent wash as well, which made it the one
+   solid block in a column of lines — the single loudest thing in the Sidebar,
+   and about a fact (this is a folder) nobody needed shouted. */
 .row-glyph {
   display: flex;
   width: var(--sidebar-glyph-width);
   flex: 0 0 var(--sidebar-glyph-width);
   align-items: center;
   justify-content: center;
+  color: var(--accent);
   /* Level with the label, not with the label's box — see the token. */
   transform: translateY(var(--sidebar-glyph-optical-shift));
 }
@@ -258,18 +300,6 @@
 .row-glyph svg {
   width: var(--sidebar-glyph-ink);
   height: var(--sidebar-glyph-ink);
-  fill: none;
-  /* Finder's source-list icons are accented on every row, not only the
-     selected one — the accent names the column, and selection is carried by
-     the fill and the label weight. */
-  stroke: var(--accent);
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  stroke-width: 1.3;
-}
-
-.workspace-row .row-glyph svg {
-  fill: color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
 /*
@@ -388,12 +418,11 @@
   color: var(--tertiary);
 }
 
-/* GitHub's marks are Octicons, and an Octicon is a solid shape: it is filled,
-   never stroked. Stroking one draws the outline of an outline. */
+/* The same size a row's own controls take, so the trailing edge of a row is
+   one row of marks and not two. */
 .row-link-button svg {
-  width: 13px;
-  height: 13px;
-  fill: currentcolor;
+  width: 14px;
+  height: 14px;
 }
 
 /* The green is `--status-idle`, which is the green an idle Agent wears. That is
@@ -461,17 +490,16 @@
   border-radius: 4px;
   margin-right: 2px;
   background: transparent;
+  color: var(--secondary);
   opacity: 0;
 }
 
+/* A row's own controls sit a size below its leading mark — they are what the
+   row can do, not what it is — but they are drawn at the same weight, because
+   a lighter line here is just a fainter line. */
 .row-action-button svg {
-  width: 13px;
-  height: 13px;
-  fill: none;
-  stroke: var(--secondary);
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  stroke-width: 1.4;
+  width: 14px;
+  height: 14px;
 }
 
 .sidebar-row:hover .row-action-button,
@@ -482,10 +510,7 @@
 
 .row-action-button:hover:not(:disabled) {
   background: var(--wash-strong);
-}
-
-.row-action-button:hover:not(:disabled) svg {
-  stroke: var(--primary);
+  color: var(--primary);
 }
 
 .row-action-button:disabled {
@@ -507,15 +532,14 @@
   border: 0;
   border-radius: 4px;
   background: transparent;
+  /* Stated rather than inherited: the heading around it is `--tertiary`, and a
+     control is a step stronger than the label it sits beside. */
+  color: var(--secondary);
 }
 
 .section-action-button svg {
-  width: 13px;
-  height: 13px;
-  fill: none;
-  stroke: var(--secondary);
-  stroke-linecap: round;
-  stroke-width: 1.4;
+  width: 14px;
+  height: 14px;
 }
 
 .section-action-button:hover {
@@ -582,16 +606,14 @@ body.is-resizing-sidebar {
   transform: translateY(var(--sidebar-glyph-optical-shift));
 }
 
-/* Codicon outlines are filled shapes on a 16-unit box; they carry their whole
-   silhouette in the path, so shape survives greyscale, Increase Contrast and a
-   colour-blind reader and the colour is the second telling, never the only
-   one. */
+/* The status is a silhouette before it is a colour — a ring, a bubble, a
+   check, a triangle and a dash — so it survives greyscale, Increase Contrast
+   and a colour-blind reader, and the colour is the second telling and never
+   the only one. Weight, caps and colour come from `.sidebar-glyph`; what is
+   left here is the size and the origin the spin turns about. */
 .status-glyph {
-  display: block;
   width: var(--sidebar-glyph-ink);
   height: var(--sidebar-glyph-ink);
-  fill: currentcolor;
-  stroke: none;
   transform-origin: 50% 50%;
 }
 

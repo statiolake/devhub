@@ -21,6 +21,7 @@ import type { WorkspaceRepositoryWire } from "../../../ipc/contract";
 import { useAppShell } from "../../useAppShell";
 import { devhub } from "../../client";
 import { isImeComposing } from "../../accessibility/ime";
+import { Glyph } from "./icons";
 import { RowMenu, type RowMenuItem } from "./RowMenu";
 import { SidebarHeader } from "./SidebarHeader";
 import { StatusMark } from "./StatusMark";
@@ -137,9 +138,7 @@ function WorkspaceRow({
             }
           >
             <span className="row-glyph" aria-hidden="true">
-              <svg viewBox="0 0 14 14" focusable="false">
-                <path d="M1.5 3.5a1 1 0 0 1 1-1h3l1.4 1.6h4.6a1 1 0 0 1 1 1v5.4a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1z" />
-              </svg>
+              <Glyph name="folder" />
             </span>
             <span className="row-label">{workspace.label}</span>
           </button>
@@ -166,9 +165,7 @@ function WorkspaceRow({
               }
               onClick={() => onCreateAgent(workspace.id)}
             >
-              <svg viewBox="0 0 14 14" aria-hidden="true" focusable="false">
-                <path d="M7 3.25v7.5M3.25 7h7.5" />
-              </svg>
+              <Glyph name="plus" />
             </button>
           )}
           {/* One close, whatever state the Workspace is in: a close that failed
@@ -198,9 +195,7 @@ function WorkspaceRow({
                 )
               }
             >
-              <svg viewBox="0 0 14 14" aria-hidden="true" focusable="false">
-                <path d="M4 4l6 6M10 4l-6 6" />
-              </svg>
+              <Glyph name="close" />
             </button>
           )}
         </div>
@@ -338,13 +333,7 @@ function WorkspaceRow({
                           )
                         }
                       >
-                        <svg
-                          viewBox="0 0 14 14"
-                          aria-hidden="true"
-                          focusable="false"
-                        >
-                          <path d="M4 4l6 6M10 4l-6 6" />
-                        </svg>
+                        <Glyph name="close" />
                       </button>
                     )}
                   </div>
@@ -370,71 +359,24 @@ function WorkspaceRow({
 }
 
 /**
- * GitHub's own marks, as GitHub draws them.
- *
- * The path data is Octicons 19.33.0 (`issue-opened-16`, `issue-closed-16`,
- * `git-pull-request-16`, `git-pull-request-draft-16`), MIT, © GitHub Inc. —
- * taken verbatim on its own 16-unit box, the same way `StatusMark` carries
- * codicon outlines, and credited in `distribution/THIRD-PARTY-NOTICES.txt`.
- *
- * Verbatim rather than approximated, because the whole job of these marks is
- * recognition. What was here before was a pair of concentric circles and three
- * dots joined by a line: shapes that mean "issue" and "pull request" only to
- * somebody who already knew which one they were looking at. These are the
- * silhouettes the person has been reading on github.com all day, so the row
- * says which state it is in before it is read at all.
- *
- * They are filled, not stroked. An Octicon is a solid shape and stroking its
- * outline draws the outline of the outline.
- */
-function IssueOpenedGlyph() {
-  return (
-    <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
-      <path d="M8 9.5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3Z" />
-      <path d="M8 0a8 8 0 1 1 0 16A8 8 0 0 1 8 0ZM1.5 8a6.5 6.5 0 1 0 13 0 6.5 6.5 0 0 0-13 0Z" />
-    </svg>
-  );
-}
-
-function IssueClosedGlyph() {
-  return (
-    <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
-      <path d="M11.28 6.78a.75.75 0 0 0-1.06-1.06L7.25 8.69 5.78 7.22a.75.75 0 0 0-1.06 1.06l2 2a.75.75 0 0 0 1.06 0l3.5-3.5Z" />
-      <path d="M16 8A8 8 0 1 1 0 8a8 8 0 0 1 16 0Zm-1.5 0a6.5 6.5 0 1 0-13 0 6.5 6.5 0 0 0 13 0Z" />
-    </svg>
-  );
-}
-
-function PullRequestGlyph() {
-  return (
-    <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
-      <path d="M1.5 3.25a2.25 2.25 0 1 1 3 2.122v5.256a2.251 2.251 0 1 1-1.5 0V5.372A2.25 2.25 0 0 1 1.5 3.25Zm5.677-.177L9.573.677A.25.25 0 0 1 10 .854V2.5h1A2.5 2.5 0 0 1 13.5 5v5.628a2.251 2.251 0 1 1-1.5 0V5a1 1 0 0 0-1-1h-1v1.646a.25.25 0 0 1-.427.177L7.177 3.427a.25.25 0 0 1 0-.354ZM3.75 2.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm0 9.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm8.25.75a.75.75 0 1 0 1.5 0 .75.75 0 0 0-1.5 0Z" />
-    </svg>
-  );
-}
-
-function PullRequestDraftGlyph() {
-  return (
-    <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
-      <path d="M3.25 1A2.25 2.25 0 0 1 4 5.372v5.256a2.251 2.251 0 1 1-1.5 0V5.372A2.251 2.251 0 0 1 3.25 1Zm9.5 14a2.25 2.25 0 1 1 0-4.5 2.25 2.25 0 0 1 0 4.5ZM2.5 3.25a.75.75 0 1 0 1.5 0 .75.75 0 0 0-1.5 0ZM3.25 12a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm9.5 0a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5ZM14 7.5a1.25 1.25 0 1 1-2.5 0 1.25 1.25 0 0 1 2.5 0Zm0-4.25a1.25 1.25 0 1 1-2.5 0 1.25 1.25 0 0 1 2.5 0Z" />
-    </svg>
-  );
-}
-
-/**
  * The Issue this workspace is for, and the pull request that says it closes
  * it, as two marks that open GitHub.
  *
  * They are marks rather than words because the row already has words. What
- * each one says is its colour and its shape — GitHub's own: an open issue is
- * green and a closed one purple, an open pull request is green and a draft is
- * grey — and what it says in full is in its label, for anyone who cannot use
- * either.
+ * each one says is its shape and then its colour — GitHub's own: an open issue
+ * is green and a closed one purple, an open pull request is green and a draft
+ * is grey — and what it says in full is in its label, for anyone who cannot
+ * use either.
  *
  * There is no mark for a closed or merged pull request, because there is no
  * such fact to draw: `WorkspaceRepositoryWire.pullRequest` is *the open pull
  * request* that says it closes the Issue, so `open` and `draft` are the whole
  * of what can arrive here. A third state would be a mark that never appears.
+ *
+ * And there is one pull-request drawing rather than two. `open` and `draft`
+ * differ by colour and by their label; a second silhouette that differs from
+ * the first by one node is a difference nobody can see at thirteen pixels, and
+ * the pair of them was two more things for this column to fail to agree with.
  */
 function IssueLinks({
   repository,
@@ -457,11 +399,7 @@ function IssueLinks({
             openExternalUrl(pullRequest.url);
           }}
         >
-          {pullRequest.state === "draft" ? (
-            <PullRequestDraftGlyph />
-          ) : (
-            <PullRequestGlyph />
-          )}
+          <Glyph name="pullRequest" />
         </button>
       ) : null}
       <button
@@ -473,7 +411,7 @@ function IssueLinks({
           openExternalUrl(issue.url);
         }}
       >
-        {issue.state === "closed" ? <IssueClosedGlyph /> : <IssueOpenedGlyph />}
+        <Glyph name={issue.state === "closed" ? "issueClosed" : "issueOpen"} />
       </button>
     </>
   );
@@ -504,12 +442,7 @@ function ScratchRow({
         <span className="row-rail" aria-hidden="true" />
         <span className="sidebar-context-button">
           <span className="row-glyph" aria-hidden="true">
-            <svg viewBox="0 0 14 14" focusable="false">
-              {/* Drawn to the Workspace folder's own ink box — 1.5 to 12.5 of
-                the 14-unit viewBox — so the two glyphs share a leading edge
-                with no optical correction between them. */}
-              <path d="M1.5 3.6 L5.7 7 L1.5 10.4 M7.6 10.4 H12.5" />
-            </svg>
+            <Glyph name="terminal" />
           </span>
           <span className="row-label">{SCRATCH_NAME}</span>
         </span>
@@ -735,12 +668,9 @@ export function Sidebar({ snapshot, onDispatch }: SidebarProps) {
               title="Assign issue"
               onClick={openIssueAssignment}
             >
-              {/* An issue: a circle with a bar and a dot, the way GitHub draws
-                one, so the row and this button say the same thing. */}
-              <svg viewBox="0 0 14 14" aria-hidden="true" focusable="false">
-                <circle cx="7" cy="7" r="4.6" />
-                <path d="M7 4.6v2.6M7 9.2v.3" />
-              </svg>
+              {/* The same mark an open Issue wears on a Workspace row, so the
+                button and the thing it produces say one thing. */}
+              <Glyph name="issueOpen" />
             </button>
             <button
               ref={pickerTriggerRef}
@@ -750,9 +680,7 @@ export function Sidebar({ snapshot, onDispatch }: SidebarProps) {
               title="Open workspace picker"
               onClick={openPicker}
             >
-              <svg viewBox="0 0 14 14" aria-hidden="true" focusable="false">
-                <path d="M7 3.25v7.5M3.25 7h7.5" />
-              </svg>
+              <Glyph name="plus" />
             </button>
           </span>
         </div>
