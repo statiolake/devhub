@@ -9,7 +9,10 @@ import {
 	resolveLoginEnvironment,
 } from "./loginEnvironment.js";
 import { resolveRuntimes } from "./runtimes.js";
-import { runtimeUnavailableMessage } from "../../ipc/settings.js";
+import {
+	executableMissingMessage,
+	runtimeUnavailableMessage,
+} from "../../ipc/settings.js";
 
 /**
  * The environment a Finder-launched macOS app inherits from launchd, and the
@@ -326,5 +329,46 @@ describe("runtime resolution in the imported environment", () => {
 			`${directory}:${LAUNCHD_PATH}`,
 		);
 		expect(imported.tmux).toEqual({ kind: "absolute_path", value: tool });
+	});
+});
+
+describe("why an executable could not be found", () => {
+	const runtimes = {
+		shell: "/bin/sh",
+		git: "git",
+		tmux: "tmux",
+		tmux_socket_name: "devhub",
+		tmux_args: [],
+	};
+
+	/**
+	 * The failure the user actually reported: an Agent that is "unavailable"
+	 * on a day the shell profile was slow. The tool is installed; the PATH
+	 * that was searched is the one launchd hands a Finder launch, because the
+	 * login shell did not answer in time. Saying only that the tool was not
+	 * found sends the person hunting for a tool that is already there.
+	 */
+	it("names the failed import as the reason the PATH was short", async () => {
+		const resolved = await resolveRuntimes(runtimes, LAUNCHD_PATH);
+		expect(resolved.tmux.kind).toBe("unavailable");
+		if (resolved.tmux.kind !== "unavailable") return;
+		const timedOut = loginEnvironmentSummary({
+			kind: "failed",
+			shell: "/bin/zsh",
+			reason: "it did not answer within 10 seconds.",
+		});
+		const message = executableMissingMessage(resolved.tmux, timedOut);
+		// Both facts, in one sentence: what was not found, and why not.
+		expect(message).toContain("could not find 'tmux' on PATH");
+		expect(message).toContain("/bin/zsh");
+		expect(message).toContain("did not answer within 10 seconds");
+	});
+
+	it("says only what it knows when the import is not the reason", async () => {
+		const resolved = await resolveRuntimes(runtimes, LAUNCHD_PATH);
+		if (resolved.tmux.kind !== "unavailable") return;
+		expect(executableMissingMessage(resolved.tmux, undefined)).toBe(
+			runtimeUnavailableMessage(resolved.tmux),
+		);
 	});
 });

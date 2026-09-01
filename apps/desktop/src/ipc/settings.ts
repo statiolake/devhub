@@ -164,6 +164,29 @@ export function runtimeUnavailableMessage(
 	return `DevHub could not find ${name} on PATH (looked in: ${where}).`;
 }
 
+/**
+ * The same failure, with the reason the PATH was short when there is one.
+ *
+ * A lookup searches the environment DevHub ended up with, and that environment
+ * is the user's login one *unless the import failed* — a shell profile slower
+ * than the timeout leaves DevHub running on the four directories launchd hands
+ * a Finder launch. The lookup then fails for a reason that has nothing to do
+ * with the tool being missing, and saying only "could not find 'claude' on
+ * PATH" sends the person looking for a tool that is installed.
+ *
+ * So the two are one sentence. `loginFailure` is required rather than optional
+ * because a caller that has the fact and forgets to pass it produces exactly
+ * the message this exists to prevent; passing `undefined` is a caller saying
+ * the import is not why, which is a claim worth making on purpose.
+ */
+export function executableMissingMessage(
+	resolved: SettingsUnavailableRuntimeWire,
+	loginFailure: string | undefined,
+): string {
+	const lookup = runtimeUnavailableMessage(resolved);
+	return loginFailure === undefined ? lookup : `${lookup} ${loginFailure}`;
+}
+
 export interface SettingsResolvedRuntimeConfigWire {
 	readonly shell: SettingsResolvedRuntimeWire;
 	readonly git: SettingsResolvedRuntimeWire;

@@ -129,10 +129,14 @@ import { wireAgents } from "./agentWiring.js";
 import { AgentReconciler } from "./agentReconciler.js";
 import { MainServicesGate, type MainServices } from "./mainServices.js";
 import { resolveExecutable, resolveRuntimes } from "./runtimes.js";
-import { runtimeUnavailableMessage } from "../../ipc/settings.js";
+import {
+	executableMissingMessage,
+	type SettingsUnavailableRuntimeWire,
+} from "../../ipc/settings.js";
 import {
 	adoptLoginEnvironment,
 	launchEnvironment,
+	loginEnvironmentSummary,
 	resolveLoginEnvironment,
 	type LoginEnvironment,
 } from "./loginEnvironment.js";
@@ -323,6 +327,32 @@ export class AppController {
 	/** What became of the login-shell import that built it. */
 	loginEnvironmentValue(): LoginEnvironment {
 		return this.loginEnvironment;
+	}
+
+	/**
+	 * Why an executable could not be found, in terms that name the cause.
+	 *
+	 * Two facts decide this, and they are learned in different places. One is
+	 * that the lookup failed. The other is that the PATH it searched is the
+	 * short one DevHub was started with, because the login shell did not answer
+	 * in time — a profile slower than `LOGIN_ENVIRONMENT_TIMEOUT_MS` is slow
+	 * rather than broken, so this happens on some launches and not others.
+	 *
+	 * Kept apart they are two small mysteries: an Agent that is "unavailable"
+	 * today and fine tomorrow, and a sentence about the environment in a
+	 * Settings window nobody had a reason to open. The second fact is the cause
+	 * of the first, so it is said in the same breath — and said here, once,
+	 * rather than at each place that reports a lookup.
+	 */
+	private executableMissingMessage(
+		resolved: SettingsUnavailableRuntimeWire,
+	): string {
+		return executableMissingMessage(
+			resolved,
+			this.loginEnvironment.kind === "failed"
+				? loginEnvironmentSummary(this.loginEnvironment)
+				: undefined,
+		);
 	}
 
 	/**
@@ -1210,7 +1240,7 @@ export class AppController {
 			this.launchEnvironment["PATH"] ?? "",
 		);
 		if (resolved.kind === "unavailable") {
-			this.failOperation(token, runtimeUnavailableMessage(resolved));
+			this.failOperation(token, this.executableMissingMessage(resolved));
 			return;
 		}
 		this.accept({
@@ -2259,7 +2289,7 @@ export class AppController {
 			throw new TypedFailure(
 				withSummary(
 					errorWireAt("workspace_unavailable"),
-					runtimeUnavailableMessage(git),
+					this.executableMissingMessage(git),
 				),
 			);
 		}
