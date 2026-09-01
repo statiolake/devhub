@@ -161,6 +161,46 @@ def toolchain_node_bin() -> Path:
 	return home
 
 
+def _newest_mtime(root: Path) -> float:
+	"""The most recently written file anywhere under `root`, or 0 if there is none."""
+	newest = 0.0
+	for path in root.rglob("*"):
+		if path.is_file():
+			newest = max(newest, path.stat().st_mtime)
+	return newest
+
+
+def check_compiled_output_is_current() -> None:
+	"""Refuse to ship a compile older than the source it was made from.
+
+	`out/` and `dist/` are build output that packaging copies verbatim; nothing
+	here rebuilds them. So an edit that was never compiled ships as the
+	*previous* compile, and nothing about the result says so — the app starts,
+	the smoke test passes, and only whatever the change was supposed to do is
+	quietly missing. That is how a packaged build once shipped without the
+	workbench default that turns off extension signature verification, and
+	answered every gallery install with "Signature verification was not
+	executed".
+
+	Comparing timestamps is coarse, and it will occasionally ask for a rebuild
+	that changes nothing. That is the cheap side of the trade: a rebuild costs
+	seconds, and shipping yesterday's compile costs however long it takes
+	someone to stop believing the source in front of them.
+	"""
+	for source, built, command in (
+		(DESKTOP_DIR / "src", DESKTOP_DIR / "out", "pnpm --filter @devhub/desktop build"),
+		(DESKTOP_DIR / "src", DESKTOP_DIR / "dist", "pnpm --filter @devhub/desktop build"),
+		(BRIDGE_DIR / "src", BRIDGE_DIR / "dist", "pnpm --filter @devhub/bridge build"),
+	):
+		if not source.is_dir() or not built.is_dir():
+			continue
+		if _newest_mtime(source) > _newest_mtime(built):
+			fail(
+				f"{built} is older than {source}\n"
+				f"       it would ship the previous compile — rebuild with: {command}"
+			)
+
+
 def check_inputs() -> None:
 	required = [
 		(BASE_APP, "scripts/provision-vscode.sh"),
@@ -173,6 +213,8 @@ def check_inputs() -> None:
 	for path, command in required:
 		if not path.exists():
 			fail(f"missing {path}\n       produce it with: {command}")
+
+	check_compiled_output_is_current()
 
 	# The same state provision-vscode.sh stamps: the submodule HEAD plus the
 	# patch contents, so a bumped submodule with unchanged patches is stale too.
