@@ -1,0 +1,41 @@
+diff --git a/src/vs/platform/product/common/product.ts b/src/vs/platform/product/common/product.ts
+index 3af87ba6..0d6e8746 100644
+--- a/src/vs/platform/product/common/product.ts
++++ b/src/vs/platform/product/common/product.ts
+@@ -3,7 +3,6 @@
+  *  Licensed under the MIT License. See License.txt in the project root for license information.
+  *--------------------------------------------------------------------------------------------*/
+ 
+-import { env } from '../../../base/common/process.js';
+ import { IProductConfiguration } from '../../../base/common/product.js';
+ import { ISandboxConfiguration } from '../../../base/parts/sandbox/common/sandboxTypes.js';
+ 
+@@ -29,15 +28,19 @@ else if (globalThis._VSCODE_PRODUCT_JSON && globalThis._VSCODE_PACKAGE_JSON) {
+ 	// Obtain values from product.json and package.json-data
+ 	product = globalThis._VSCODE_PRODUCT_JSON as unknown as IProductConfiguration;
+ 
+-	// Running out of sources
+-	if (env['VSCODE_DEV']) {
+-		Object.assign(product, {
+-			nameShort: `${product.nameShort} Dev`,
+-			nameLong: `${product.nameLong} Dev`,
+-			dataFolderName: `${product.dataFolderName}-dev`,
+-			serverDataFolderName: product.serverDataFolderName ? `${product.serverDataFolderName}-dev` : undefined
+-		});
+-	}
++	// DevHub: upstream renames the product and its data folder here when
++	// `VSCODE_DEV` is set, reasoning that only a developer's source checkout
++	// runs out of sources. That reasoning does not hold for DevHub. DevHub
++	// ships the unbundled compile, and the packaged app sets `VSCODE_DEV`
++	// itself (scripts/package-nightly.py) so VS Code can find its modules — so
++	// for DevHub the flag says "the code is laid out this way", never "this is
++	// a development build". Every DevHub that exists sets it, which is why the
++	// nightly on GitHub introduced itself as "DevHub Dev" exactly as loudly as
++	// a `dev.sh` run did: one wrong inference, not two bugs.
++	//
++	// There is no DevHub build the suffix would be true of, so there is nothing
++	// to keep on the other side of a condition. The name and the data folder
++	// are what product.json says they are.
+ 
+ 	// Version is added during built time, but we still
+ 	// want to have it running out of sources so we
