@@ -2289,17 +2289,28 @@ export class AppController {
 				)
 			: request.directory;
 
+		// Which workspace the opening produced is a fact the model states, and it
+		// states it in one of two ways: a folder that was not open is *added*,
+		// and a folder that was becomes the *selection*. Deriving it from the
+		// path instead would be a third answer — the root is canonicalised on the
+		// way in, so it is not the string this call was given.
+		const before = new Set(this.coordinator.model.workspaces.map((w) => w.id));
 		await this.openFolder(target);
+		const added = this.coordinator.model.workspaces.find(
+			(workspace) => !before.has(workspace.id),
+		);
 		const context = this.coordinator.model.selection.context;
-		if (context.kind !== "workspace") {
-			// Opening a folder selects its workspace. If it did not, the model and
-			// this call disagree about what just happened, and going on would
-			// attach the Issue and the agent to whatever else was selected.
+		const workspaceId =
+			added?.id ??
+			(context.kind === "workspace" ? context.workspaceId : undefined);
+		if (workspaceId === undefined) {
+			// Neither happened, so the model and this call disagree about what just
+			// took place; going on would attach the Issue and the agent to whatever
+			// else was selected.
 			throw new Error(
-				`opening ${target} did not select a workspace; selection is ${context.kind}`,
+				`opening ${target} neither added a workspace nor selected one`,
 			);
 		}
-		const workspaceId = context.workspaceId;
 		await this.dispatchAwaiting({
 			type: "associate_issue",
 			workspaceId,

@@ -145,10 +145,14 @@ function WorkspaceRow({
               branch, then what that branch is for. Both are dimmed, because
               the row is still named by the workspace. */}
           {repository?.branch ? (
-            <span className="row-branch">{repository.branch}</span>
+            <span className="row-branch" title={repository.branch}>
+              {repository.branch}
+            </span>
           ) : null}
           {repository?.issue ? (
-            <span className="row-issue">{repository.issue.title}</span>
+            <span className="row-issue" title={repository.issue.title}>
+              {repository.issue.title}
+            </span>
           ) : null}
         </button>
         {/* The links trail the label rather than leading it, which is the one

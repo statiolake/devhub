@@ -58,6 +58,33 @@ function mount(overrides: Partial<AppShellContextValue> = {}) {
   };
 }
 
+/** The same, for a test that has to change the context after mounting. */
+function mountFor(agentProfiles: AppShellContextValue["agentProfiles"]) {
+  const value = {
+    agentProfiles,
+    findIssueClones: vi.fn().mockResolvedValue([]),
+    listBranches: vi.fn().mockResolvedValue([]),
+    cloneRepository: vi.fn().mockResolvedValue("/projects/widget"),
+    assignIssue: vi.fn().mockResolvedValue(undefined),
+    projectDefaultDirectory: vi.fn().mockResolvedValue("/projects"),
+  } as unknown as AppShellContextValue;
+  const view = render(
+    <AppShellContext.Provider value={value}>
+      <IssueAssignmentSheet onDismiss={vi.fn()} />
+    </AppShellContext.Provider>,
+  );
+  return {
+    value,
+    rerender: (next: AppShellContextValue) => {
+      view.rerender(
+        <AppShellContext.Provider value={next}>
+          <IssueAssignmentSheet onDismiss={vi.fn()} />
+        </AppShellContext.Provider>,
+      );
+    },
+  };
+}
+
 /**
  * Take the row that names something, rather than the pinned action.
  *
@@ -120,6 +147,34 @@ describe("assigning an Issue", () => {
       });
     });
     expect(listBranches).not.toHaveBeenCalled();
+  });
+
+  it("offers the profiles that arrived after the flow started", async () => {
+    // The profiles are a projection: at the moment the sheet mounts there are
+    // none, and they land a beat later. The flow is built once and walked over
+    // several seconds, so a step that closed over the value asked "which
+    // agent?" over an empty list and answered "profiles are unavailable" —
+    // true at mount, false by the time anyone read it.
+    const empty = {
+      sequence: 1,
+      availability: "unavailable",
+      profiles: [],
+    } as unknown as AppShellContextValue["agentProfiles"];
+    const { rerender, value } = mountFor(empty);
+
+    rerender({
+      ...value,
+      agentProfiles: {
+        sequence: 2,
+        availability: "available",
+        profiles: [{ id: "claude", displayName: "Claude", kind: "claude" }],
+      } as unknown as AppShellContextValue["agentProfiles"],
+    });
+    await answer("Assign Issue", ISSUE);
+
+    expect(
+      await screen.findByRole("option", { name: /Claude/u }),
+    ).toBeInTheDocument();
   });
 
   it("asks again, keeping what was typed, when the URL is not an Issue", async () => {

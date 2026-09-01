@@ -15,7 +15,7 @@
  * it back to whichever step caused it.
  */
 
-import { useMemo } from "react";
+import { useMemo, useRef } from "react";
 import type { AgentProfilesWire } from "../../ipc/appShell";
 import {
   branchNameForIssue,
@@ -69,10 +69,23 @@ export function IssueAssignmentSheet({ onDismiss }: IssueAssignmentSheetProps) {
     projectDefaultDirectory,
   } = useAppShell();
 
+  /**
+   * The profiles as they are *now*, not as they were when the flow started.
+   *
+   * The flow is built once and walked over several seconds; the profiles are a
+   * projection that arrives after the page mounts. Closing over the value
+   * caught the sheet asking "which agent?" over an empty list and answering
+   * "profiles are unavailable" — true at mount, false by the time anyone read
+   * it. Everything else the flow needs is a stable callback, so this is the
+   * only reading that has to be taken late.
+   */
+  const profiles = useRef(agentProfiles);
+  profiles.current = agentProfiles;
+
   const start = useMemo<WizardStep>(
     () =>
       issueUrlStep({
-        agentProfiles,
+        agentProfiles: () => profiles.current,
         findIssueClones,
         cloneRepository,
         listBranches,
@@ -80,7 +93,6 @@ export function IssueAssignmentSheet({ onDismiss }: IssueAssignmentSheetProps) {
         projectDefaultDirectory,
       }),
     [
-      agentProfiles,
       assignIssue,
       cloneRepository,
       findIssueClones,
@@ -93,7 +105,7 @@ export function IssueAssignmentSheet({ onDismiss }: IssueAssignmentSheetProps) {
 }
 
 interface FlowServices {
-  readonly agentProfiles: AgentProfilesWire;
+  readonly agentProfiles: () => AgentProfilesWire;
   readonly findIssueClones: (url: string) => Promise<readonly IssueClone[]>;
   readonly cloneRepository: (url: string, parent: string) => Promise<string>;
   readonly listBranches: (directory: string) => Promise<readonly string[]>;
@@ -156,14 +168,14 @@ function agentStep(services: FlowServices, issue: IssueReference): WizardStep {
       ...SHEET,
       title: `Agent for ${issueLabel(issue)}`,
       placeholder: "Agent",
-      items: services.agentProfiles.profiles.map((profile) => ({
+      items: services.agentProfiles().profiles.map((profile) => ({
         id: profile.id,
         label: profile.displayName,
         searchText: `${profile.displayName} ${profile.kind}`,
       })),
       note: "⌘Return opens the agent beside the editor.",
       emptyNoItems:
-        services.agentProfiles.availability === "unavailable"
+        services.agentProfiles().availability === "unavailable"
           ? "Agent profiles are unavailable until the configuration is readable again."
           : "No agent profiles are enabled.",
       emptyNoMatch: "No agent profiles match.",

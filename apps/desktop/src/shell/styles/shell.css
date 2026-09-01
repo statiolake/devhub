@@ -250,9 +250,14 @@
   flex: 1 1 auto;
 }
 
-/* What an Agent is doing, in the words it used itself. Same shape and the
-   same dimming as a Workspace's branch, because it is the same kind of thing:
-   context trailing the name the row is called by. */
+/* What an Agent is doing, in the words it used itself: dimmed and small,
+   trailing the name the row is called by, like a Workspace's branch.
+
+   The name is not negotiable and the word is. `flex: 1 1 0` gives the word the
+   space the name has not taken and no more, so a long sentence ellipsises
+   itself away rather than pushing "Titled 1" down to "Titl…" — a row that has
+   lost its own name cannot be told from the two beside it. The name gives way
+   only once there is nothing left to give. */
 .agent-row:has(.row-activity) .row-label {
   overflow: hidden;
   flex: 0 1 auto;
@@ -263,7 +268,7 @@
 .row-activity {
   overflow: hidden;
   min-width: 0;
-  flex: 0 1 auto;
+  flex: 1 1 0;
   margin-left: var(--space-1);
   color: var(--tertiary);
   font-size: 11px;
@@ -276,6 +281,7 @@
    row is named by the workspace, and the rest is context. */
 .workspace-row:has(.row-branch, .row-issue) .row-label {
   overflow: hidden;
+  min-width: 8ch;
   flex: 0 1 auto;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -285,11 +291,23 @@
 .row-issue {
   overflow: hidden;
   min-width: 0;
-  flex: 0 1 auto;
   margin-left: var(--space-1);
   font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Who gives way first, in a sidebar narrow enough that somebody must. The
+   name of the row goes last, the branch before it, and what the branch is for
+   first — the reverse of how much each one tells you about which row you are
+   looking at. Shrink factors rather than widths, so the order holds at any
+   width and at either density. */
+.row-branch {
+  flex: 0 8 auto;
+}
+
+.row-issue {
+  flex: 0 40 auto;
 }
 
 .row-branch {
