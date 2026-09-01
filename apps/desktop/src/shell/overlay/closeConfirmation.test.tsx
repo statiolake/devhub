@@ -109,6 +109,8 @@ function client(snapshot: AppSnapshot): AppShellClient {
     subscribeAgentProfiles: () => () => undefined,
     subscribeNativeError: () => () => undefined,
     subscribeWorkspacePicker: () => () => undefined,
+    getRepositoryStatus: () => later({ sequence: 0, workspaces: [] }),
+    subscribeRepositoryStatus: () => () => undefined,
     startWorkspacePicker: async () => "",
     cancelWorkspacePicker: async () => undefined,
     selectWorkspacePicker: async () => ({}) as never,

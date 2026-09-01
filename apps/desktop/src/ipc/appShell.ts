@@ -103,7 +103,16 @@ export type AppErrorCodeWire =
 	/** The Agent Surface asked to attach and got no answer in time. */
 	| "agent_attach_timed_out"
 	/** A request DevHub accepted never reached an answer. */
-	| "operation_timed_out";
+	| "operation_timed_out"
+	/**
+	 * A branch was going to start from the remote's default branch, and the
+	 * fetch that makes that current did not work.
+	 *
+	 * Its own code because it is the one failure here with a second answer: the
+	 * copy of `origin` already on disk is usable, and whether to start from
+	 * something that may be days old is the person's decision, not DevHub's.
+	 */
+	| "git_fetch_failed";
 
 /**
  * The sentence each failure is shown as.
@@ -133,6 +142,7 @@ export const APP_ERROR_SUMMARY: Readonly<Record<AppErrorCodeWire, string>> = {
 	agent_exited: "The agent has exited.",
 	agent_runtime_unavailable: "The agent runtime is unavailable.",
 	agent_attach_timed_out: "The agent surface did not connect in time.",
+	git_fetch_failed: "The latest changes could not be fetched from the remote.",
 };
 export type AppErrorModuleWire =
 	| "app"

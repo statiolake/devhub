@@ -21,6 +21,7 @@ import type {
   IssueAssignment,
   IssueClone,
   ModalRequest,
+  RepositoryStatusWire,
   WorkspacePickerCandidate,
   WorkspacePickerEvent,
 } from "../ipc/contract";
@@ -28,6 +29,7 @@ import type {
 export type {
   IssueAssignment,
   IssueClone,
+  RepositoryStatusWire,
   WorkspacePickerCandidate,
   WorkspacePickerEvent,
 };
@@ -48,6 +50,10 @@ export interface AppShellClient {
   subscribeNativeError(listener: (error: AppError) => void): () => void;
   subscribeWorkspacePicker(
     listener: (event: WorkspacePickerEvent) => void,
+  ): () => void;
+  getRepositoryStatus(): Promise<RepositoryStatusWire>;
+  subscribeRepositoryStatus(
+    listener: (status: RepositoryStatusWire) => void,
   ): () => void;
   startWorkspacePicker(query: string): Promise<string>;
   cancelWorkspacePicker(): Promise<void>;
@@ -108,6 +114,8 @@ export function createShellClient(api: DevhubApi = devhub()): AppShellClient {
     subscribeAgentProfiles: (listener) => api.onAgentProfiles(listener),
     subscribeNativeError: (listener) => api.onNativeError(listener),
     subscribeWorkspacePicker: (listener) => api.onWorkspacePicker(listener),
+    getRepositoryStatus: () => api.getRepositoryStatus(),
+    subscribeRepositoryStatus: (listener) => api.onRepositoryStatus(listener),
     startWorkspacePicker: (query) => api.startWorkspacePicker(query),
     cancelWorkspacePicker: () => api.cancelWorkspacePicker(),
     selectWorkspacePicker: (path) => api.selectWorkspacePicker(path),

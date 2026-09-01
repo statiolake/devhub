@@ -46,6 +46,54 @@ export interface IssueAssignment {
 	readonly profileId: string;
 	/** The agent beside the editor rather than over it — ⌘Return, as ever. */
 	readonly split: boolean;
+	/**
+	 * Start the branch from the `origin` already on disk, the fetch having
+	 * failed and the person having been asked and said to go on.
+	 *
+	 * Absent means no, which is what every first attempt sends: a stale base is
+	 * only ever used deliberately.
+	 */
+	readonly allowStaleBase?: boolean;
+}
+
+/**
+ * What one workspace is working on: the branch, and the Issue it is about.
+ *
+ * A separate projection from the snapshot, on its own clock, because it is the
+ * only thing in the window that is *observed* rather than decided — a branch
+ * changes because somebody ran git, and an Issue closes because somebody
+ * clicked a button on another continent. Folding it into the snapshot would
+ * make every poll a revision of the whole application state.
+ */
+export interface WorkspaceRepositoryWire {
+	readonly workspaceId: string;
+	/** What is checked out, or nothing when the workspace is not a repository. */
+	readonly branch?: string;
+	readonly issue?: {
+		readonly url: string;
+		readonly number: number;
+		readonly title: string;
+		readonly state: "open" | "closed";
+	};
+	/** The open pull request whose body says it closes that Issue. */
+	readonly pullRequest?: {
+		readonly number: number;
+		readonly url: string;
+		readonly state: "open" | "draft";
+	};
+}
+
+export interface RepositoryStatusWire {
+	readonly sequence: number;
+	readonly workspaces: readonly WorkspaceRepositoryWire[];
+	/**
+	 * Why the last look was incomplete, if it was.
+	 *
+	 * It travels *beside* what is still known rather than replacing it: a
+	 * network that dropped must not read as an Issue that closed. It is gone
+	 * when a later round succeeds, and by no other rule.
+	 */
+	readonly diagnostic?: string;
 }
 
 /** The rectangle, in page CSS pixels, that workbench views must cover. */
@@ -142,6 +190,11 @@ export interface DevhubApi {
 	onMenuCommand(listener: (command: MenuCommand) => void): () => void;
 	onEditorRestarting(
 		listener: (event: EditorRestartingWire) => void,
+	): () => void;
+	/** What each workspace is working on, re-read on its own clock. */
+	getRepositoryStatus(): Promise<RepositoryStatusWire>;
+	onRepositoryStatus(
+		listener: (status: RepositoryStatusWire) => void,
 	): () => void;
 
 	/**
@@ -245,6 +298,7 @@ export const CHANNELS = {
 	cloneRepository: "devhub:clone-repository",
 	listBranches: "devhub:list-branches",
 	assignIssue: "devhub:assign-issue",
+	getRepositoryStatus: "devhub:get-repository-status",
 	cloneProject: "devhub:clone-project",
 	projectDefaultDirectory: "devhub:project-default-directory",
 	openSettings: "devhub:open-settings",
@@ -269,6 +323,8 @@ export const CHANNELS = {
 	modalsChanged: "devhub:modals-changed",
 	/** A workbench died unasked and is being built again in the same slot. */
 	editorRestarting: "devhub:editor-restarting",
+	/** The branch, Issue and pull request each workspace is working on. */
+	repositoryStatusChanged: "devhub:repository-status-changed",
 } as const;
 
 /**

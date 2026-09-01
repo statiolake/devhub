@@ -127,6 +127,80 @@ describe("the worktree for a branch", () => {
 		expect(second).toBe(join(parent, "widget_fix_9-crash"));
 	});
 
+	it("starts a new branch from the remote's default branch, not from HEAD", async () => {
+		// Work on an Issue starts where everyone else starts. A worktree made while
+		// standing on somebody's half-finished branch would inherit it silently,
+		// which is the kind of mistake only review finds.
+		const origin = join(parent, "origin.git");
+		await runGit(command, ["init", "--bare", "-b", "main", origin]);
+		await runGit(command, ["remote", "add", "origin", origin], {
+			cwd: repository,
+		});
+		await runGit(command, ["push", "-u", "origin", "main"], {
+			cwd: repository,
+		});
+		await runGit(command, ["checkout", "-b", "side"], { cwd: repository });
+		await writeFile(join(repository, "SIDE"), "side\n");
+		await runGit(command, ["add", "SIDE"], { cwd: repository });
+		await runGit(command, ["commit", "-m", "side"], { cwd: repository });
+
+		const path = await ensureWorktree(command, repository, "feature/128-tidy");
+
+		const made = await runGit(command, ["rev-parse", "HEAD"], { cwd: path });
+		const wanted = await runGit(command, ["rev-parse", "origin/main"], {
+			cwd: repository,
+		});
+		expect(made.trim()).toBe(wanted.trim());
+	});
+
+	it("starts from the branch checked out when there is no remote at all", async () => {
+		const path = await ensureWorktree(command, repository, "feature/9-solo");
+		const made = await runGit(command, ["rev-parse", "HEAD"], { cwd: path });
+		const wanted = await runGit(command, ["rev-parse", "main"], {
+			cwd: repository,
+		});
+		expect(made.trim()).toBe(wanted.trim());
+	});
+
+	it("stops rather than branch from a stale copy when the fetch fails", async () => {
+		// Every new branch fetches first, and a fetch that fails is not worked
+		// around quietly: `origin` on disk may be days old, and starting there is a
+		// decision with consequences that belongs to the person.
+		await runGit(
+			command,
+			["remote", "add", "origin", join(parent, "gone.git")],
+			{
+				cwd: repository,
+			},
+		);
+		await expect(
+			ensureWorktree(command, repository, "feature/128-tidy"),
+		).rejects.toThrow(/could not be fetched/u);
+	});
+
+	it("branches from the copy on disk once it has been allowed to", async () => {
+		const origin = join(parent, "origin.git");
+		await runGit(command, ["init", "--bare", "-b", "main", origin]);
+		await runGit(command, ["remote", "add", "origin", origin], {
+			cwd: repository,
+		});
+		await runGit(command, ["push", "-u", "origin", "main"], {
+			cwd: repository,
+		});
+		const wanted = await runGit(command, ["rev-parse", "origin/main"], {
+			cwd: repository,
+		});
+		// The remote goes away; what was fetched from it stays.
+		await rm(origin, { recursive: true, force: true });
+
+		const path = await ensureWorktree(command, repository, "feature/128-tidy", {
+			allowStaleBase: true,
+		});
+
+		const made = await runGit(command, ["rev-parse", "HEAD"], { cwd: path });
+		expect(made.trim()).toBe(wanted.trim());
+	});
+
 	it("refuses a directory that is in the way and is not a worktree", async () => {
 		const occupied = join(parent, "widget_feature_128-tidy");
 		await mkdir(occupied);

@@ -95,6 +95,7 @@ describe("assigning an Issue", () => {
         branch: "feature/128-tidy",
         profileId: "claude",
         split: false,
+        allowStaleBase: false,
       });
     });
     expect(listBranches).toHaveBeenCalledWith("/projects/widget");
@@ -115,6 +116,7 @@ describe("assigning an Issue", () => {
         branch: undefined,
         profileId: "claude",
         split: false,
+        allowStaleBase: false,
       });
     });
     expect(listBranches).not.toHaveBeenCalled();
@@ -149,6 +151,43 @@ describe("assigning an Issue", () => {
       await screen.findByRole("dialog", { name: /Agent for/u }),
     ).toBeVisible();
     expect(assignIssue).not.toHaveBeenCalled();
+  });
+
+  it("asks before starting a branch from a copy the fetch could not refresh", async () => {
+    // The fetch failing is not the end of the flow and not a silent fallback:
+    // the reason is shown, and starting from what is on disk is a decision the
+    // person makes once, in words.
+    const failure = Object.assign(new Error("fetch"), {
+      code: "git_fetch_failed",
+      summary:
+        "The latest changes could not be fetched: Could not read origin.",
+      module: "app",
+      actions: [],
+    });
+    const assignIssue = vi
+      .fn()
+      .mockRejectedValueOnce(failure)
+      .mockResolvedValueOnce(undefined);
+    mount({ assignIssue } as unknown as Partial<AppShellContextValue>);
+
+    await answer("Assign Issue", ISSUE);
+    await answer(/Agent for/u);
+    await choose(/Where to work on/u, /\/projects\/widget/u);
+    await choose(/Work on example\/widget#128/u, /In a new worktree/u);
+    await answer(/Branch for/u, "feature/128-tidy");
+
+    expect(
+      await screen.findByText(
+        "The latest changes could not be fetched: Could not read origin.",
+      ),
+    ).toBeInTheDocument();
+    await choose(/remote could not be reached/u, /Start from the copy/u);
+
+    await vi.waitFor(() => {
+      expect(assignIssue).toHaveBeenLastCalledWith(
+        expect.objectContaining({ allowStaleBase: true }),
+      );
+    });
   });
 
   it("clones when there is no clone to work in", async () => {

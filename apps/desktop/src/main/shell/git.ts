@@ -19,7 +19,12 @@ import {
 	type RemoteIdentity,
 	DomainError,
 } from "../../model/domain.js";
-import { errorWireAt, TypedFailure, withSummary } from "../../model/wire.js";
+import {
+	errorWireAt,
+	TypedFailure,
+	withDetail,
+	withSummary,
+} from "../../model/wire.js";
 import { baseName, worktreeDirectory } from "../../model/worktrees.js";
 
 /**
@@ -34,6 +39,26 @@ import { baseName, worktreeDirectory } from "../../model/worktrees.js";
 export function workspaceFailure(summary: string): TypedFailure {
 	return new TypedFailure(
 		withSummary(errorWireAt("workspace_unavailable"), summary),
+	);
+}
+
+/**
+ * The fetch before a new branch did not work.
+ *
+ * Its own failure, and its own code, because it is the only one here that has a
+ * second answer: `origin` as of the last successful fetch is still on disk, and
+ * whether to start a branch from a copy that may be days old is the person's
+ * call. The reason travels as the detail so the question can quote it.
+ */
+export function fetchFailure(reason: string): TypedFailure {
+	return new TypedFailure(
+		withDetail(
+			withSummary(
+				errorWireAt("git_fetch_failed"),
+				`The latest changes could not be fetched: ${reason}`,
+			),
+			reason,
+		),
 	);
 }
 
@@ -259,12 +284,26 @@ export async function listBranches(
  * the same way: an existing worktree for the branch is switched to rather than
  * duplicated, a directory in the way that is not a worktree is refused rather
  * than written into, and a branch that exists locally or on `origin` is checked
- * out rather than forked from wherever HEAD happens to be.
+ * out rather than forked. A branch that does not exist yet starts from the
+ * remote's default branch — see `baseRef`, which is where the one exception to
+ * `gwt co` lives.
  */
+export interface WorktreeOptions {
+	/**
+	 * Go ahead from the `origin` already on disk when the fetch fails.
+	 *
+	 * Absent means no: a fetch that fails stops the worktree and is reported,
+	 * and this is set only when the person has been shown the reason and said
+	 * to carry on anyway.
+	 */
+	readonly allowStaleBase?: boolean;
+}
+
 export async function ensureWorktree(
 	command: GitCommand,
 	directory: string,
 	branch: string,
+	options: WorktreeOptions = {},
 ): Promise<string> {
 	const name = branch.trim();
 	if (name.length === 0) {
@@ -291,13 +330,97 @@ export async function ensureWorktree(
 
 	const args = (await branchExists(command, directory, name))
 		? ["worktree", "add", target, name]
-		: ["worktree", "add", "-b", name, target, repository.branch ?? "HEAD"];
+		: [
+				"worktree",
+				"add",
+				"-b",
+				name,
+				target,
+				await baseRef(command, directory, options),
+			];
 	await runGit(command, args, {
 		cwd: directory,
 		// Checking out a branch that only exists on `origin` fetches it.
 		timeoutMs: NETWORK_TIMEOUT_MS,
 	});
 	return target;
+}
+
+/**
+ * Where a new branch starts: the remote's default branch, brought up to date.
+ *
+ * Not the branch that happens to be checked out. Work on an Issue starts from
+ * what everyone else is starting from, and a worktree made while standing on
+ * somebody's half-finished branch would inherit it silently — which is the
+ * kind of mistake that is only discovered in review.
+ *
+ * `origin/HEAD` is what "the default branch" means locally; it is refreshed
+ * first, so a branch made today starts from what `origin` has today. A clone
+ * with no `origin` has no such answer, and the branch checked out in the main
+ * worktree is the closest thing the repository itself can say. When even that
+ * is missing — a repository with no commits, or a detached head — DevHub says
+ * so rather than picking something.
+ *
+ * The fetch happens every time, and a fetch that fails is not worked around
+ * quietly. It stops the worktree and is reported with git's own reason, and the
+ * step that asked for the branch offers the second answer: start from the
+ * `origin` already on disk anyway. That is a decision with consequences — work
+ * based on a copy that may be days old — so it is the person's to make, once,
+ * where they can read why they are being asked.
+ */
+async function baseRef(
+	command: GitCommand,
+	directory: string,
+	options: WorktreeOptions,
+): Promise<string> {
+	const hasOrigin =
+		(await ask(command, ["remote", "get-url", "origin"], directory).catch(
+			() => undefined,
+		)) !== undefined;
+	if (hasOrigin) {
+		const fetched = await runGit(command, ["fetch", "origin"], {
+			cwd: directory,
+			timeoutMs: NETWORK_TIMEOUT_MS,
+		}).then(
+			() => true,
+			(error: unknown) => {
+				// Not swallowed: without leave to go on, this is the answer, and the
+				// person is told what git said and asked what to do about it.
+				if (!options.allowStaleBase) {
+					throw fetchFailure(
+						error instanceof Error ? error.message : String(error),
+					);
+				}
+				return false;
+			},
+		);
+		const head = await runGit(
+			command,
+			["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+			{ cwd: directory },
+		).then(
+			(value) => value.trim(),
+			() => "",
+		);
+		if (head.length > 0) return head;
+		// A clone made with `--single-branch`, or one whose `origin/HEAD` was
+		// never set, has to be asked directly. This is the only place DevHub
+		// talks to the remote for an answer rather than for objects — so it is
+		// not attempted at all when the network has just been shown not to work.
+		if (fetched) {
+			const shown = await runGit(command, ["remote", "show", "origin"], {
+				cwd: directory,
+				timeoutMs: NETWORK_TIMEOUT_MS,
+			});
+			const named = /^\s*HEAD branch:\s*(\S+)\s*$/mu.exec(shown)?.[1];
+			if (named && named !== "(unknown)") return `origin/${named}`;
+		}
+	}
+	const local = await readRepository(command, directory);
+	if (local?.branch) return local.branch;
+	throw workspaceFailure(
+		"DevHub could not tell which branch a new branch should start from: this repository has no origin and no branch checked out.",
+	);
 }
 
 async function branchExists(

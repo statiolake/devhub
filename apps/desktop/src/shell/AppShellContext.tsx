@@ -20,6 +20,7 @@ import {
   createShellClient,
   type AppShellClient,
   type IssueAssignment,
+  type RepositoryStatusWire,
   type WorkspacePickerCandidate,
   type WorkspacePickerEvent,
 } from "./client";
@@ -88,6 +89,9 @@ export function AppShellProvider({
   const [pickerCandidates, setPickerCandidates] = useState<
     WorkspacePickerCandidate[]
   >([]);
+  const [repositoryStatus, setRepositoryStatus] = useState<RepositoryStatusWire>(
+    { sequence: 0, workspaces: [] },
+  );
   const [pickerBusy, setPickerBusy] = useState(false);
   const [pendingConfirmation, setPendingConfirmation] =
     useState<PendingConfirmation | null>(null);
@@ -208,6 +212,16 @@ export function AppShellProvider({
           }),
         );
         disposers.push(transport.subscribeAppearance(applyAppearanceIfActive));
+        disposers.push(
+          transport.subscribeRepositoryStatus((status) => {
+            // Ordered by the watcher's own sequence, not by arrival: a round
+            // that answered late must not replace a newer one.
+            if (!live()) return;
+            setRepositoryStatus((current) =>
+              status.sequence < current.sequence ? current : status,
+            );
+          }),
+        );
         disposers.push(transport.subscribeAgentProfiles(applyProfilesIfActive));
 
         // Appearance is a non-blocking projection — the shell is usable with
@@ -225,6 +239,19 @@ export function AppShellProvider({
           // Profile discovery failing is not the same as a config with no
           // profiles in it, and the picker must be able to tell them apart.
           markProfilesUnavailable();
+        }
+
+        // What the last round found, so a window that opened between two of
+        // them draws a branch name now rather than in a minute.
+        try {
+          const status = await transport.getRepositoryStatus();
+          if (live()) {
+            setRepositoryStatus((current) =>
+              status.sequence < current.sequence ? current : status,
+            );
+          }
+        } catch (error: unknown) {
+          reportFailure(error);
         }
 
         const replay = await transport.replay(lastEventCursor.current);
@@ -521,6 +548,7 @@ export function AppShellProvider({
       listBranches,
       assignIssue,
       agentProfiles,
+      repositoryStatus,
       pendingConfirmation,
       confirmationBusy,
       confirmPending,
@@ -552,6 +580,7 @@ export function AppShellProvider({
       pickerBusy,
       pickerCandidates,
       reportFailure,
+      repositoryStatus,
       retry,
       selectWorkspacePicker,
       startWorkspacePicker,

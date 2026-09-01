@@ -30,6 +30,7 @@ import {
 	type ContentRect,
 	type IssueAssignment,
 	type ModalRequest,
+	type RepositoryStatusWire,
 	type WorkspacePickerEvent,
 } from "../../ipc/contract.js";
 import type {
@@ -146,7 +147,8 @@ import {
 	type GitCommand,
 } from "./git.js";
 import { findClones } from "./issues.js";
-import { parseIssueUrl } from "../../model/github.js";
+import { issueUrl, parseIssueUrl } from "../../model/github.js";
+import { RepositoryStatusWatcher } from "./repositoryStatus.js";
 import { installMenu, refreshMenu } from "./menu.js";
 import { installKeyboard } from "./keyboard.js";
 import {
@@ -394,6 +396,7 @@ export class AppController {
 			}
 		}
 		this.agentReconciler.start();
+		this.repositoryStatus.start();
 	}
 
 	/**
@@ -644,6 +647,7 @@ export class AppController {
 		markCleanShutdown(this.state);
 		await this.stateStore.saveState(this.state);
 		this.agentReconciler.stop();
+		this.repositoryStatus.stop();
 		// Quitting detaches clients and leaves every session — an Agent's as
 		// much as a terminal's. That is the point of putting them on the same
 		// runtime: coming back finds the same work still running.
@@ -727,6 +731,10 @@ export class AppController {
 	 */
 	private projectionChanged(): void {
 		refreshMenu();
+		// A workspace that has just appeared, closed, or been given an Issue is
+		// the only thing here the watcher cares about; it compares before it
+		// looks, so this is a nudge and not a poll.
+		this.repositoryStatus.observe();
 		this.syncEditorViews();
 		// What is on screen follows the selection, wherever the selection
 		// changed — a menu command, a restored session, or the page.
@@ -749,6 +757,33 @@ export class AppController {
 	publishTheme(palette: ShellPalette): void {
 		this.send(CHANNELS.themeChanged, palette);
 	}
+
+	/**
+	 * The branch and Issue projection, and the watcher that keeps it true.
+	 *
+	 * Held here because the last one sent is the answer a page gets when it
+	 * asks — a window opened between two rounds must not have to wait a minute
+	 * to draw a branch name.
+	 */
+	private lastRepositoryStatus: RepositoryStatusWire = {
+		sequence: 0,
+		workspaces: [],
+	};
+
+	private readonly repositoryStatus = new RepositoryStatusWatcher({
+		gitCommand: () => this.gitCommand(),
+		environment: this.launchEnvironment,
+		workspaces: () =>
+			this.coordinator.model.workspaces.map((workspace) => ({
+				id: workspace.id,
+				root: workspace.root,
+				issueUrl: workspace.issue ? issueUrl(workspace.issue) : undefined,
+			})),
+		publish: (status) => {
+			this.lastRepositoryStatus = status;
+			this.send(CHANNELS.repositoryStatusChanged, status);
+		},
+	});
 
 	private publishProfiles(): void {
 		this.send(CHANNELS.agentProfilesChanged, this.agentProfiles());
@@ -2214,6 +2249,7 @@ export class AppController {
 					await this.gitCommand(),
 					request.directory,
 					request.branch,
+					{ allowStaleBase: request.allowStaleBase },
 				)
 			: request.directory;
 
@@ -2375,6 +2411,8 @@ export class AppController {
 				throw asIpcError(errorWire(error));
 			}
 		});
+
+		handle(CHANNELS.getRepositoryStatus, () => this.lastRepositoryStatus);
 
 		handle(CHANNELS.openSettings, () => {
 			openSettingsWindow();

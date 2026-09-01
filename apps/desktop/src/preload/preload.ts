@@ -26,6 +26,7 @@ import {
 	type DevhubApi,
 	type IssueAssignment,
 	type IssueClone,
+	type RepositoryStatusWire,
 	type WorkspacePickerEvent,
 } from "../ipc/contract.js";
 import type { ShellPalette } from "../ipc/palette.js";
@@ -82,6 +83,12 @@ const devhub: DevhubApi = {
 	onMenuCommand: (listener) => on<MenuCommand>(CHANNELS.menuCommand, listener),
 	onEditorRestarting: (listener) =>
 		on<EditorRestartingWire>(CHANNELS.editorRestarting, listener),
+	getRepositoryStatus: () =>
+		ipcRenderer.invoke(
+			CHANNELS.getRepositoryStatus,
+		) as Promise<RepositoryStatusWire>,
+	onRepositoryStatus: (listener) =>
+		on<RepositoryStatusWire>(CHANNELS.repositoryStatusChanged, listener),
 
 	openModal: (request: ModalRequest) =>
 		ipcRenderer.invoke(CHANNELS.openModal, request) as Promise<string>,

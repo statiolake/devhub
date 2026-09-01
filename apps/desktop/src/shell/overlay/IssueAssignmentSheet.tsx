@@ -30,6 +30,7 @@ import type {
   WizardStep,
 } from "../components/shell/wizardFlow";
 import type { IssueClone } from "../client";
+import { toAppError } from "../failure";
 import { useAppShell } from "../useAppShell";
 
 export interface IssueAssignmentSheetProps {
@@ -42,6 +43,7 @@ const ACCEPT_TYPED = "devhub:accept-typed";
 const SAME_WORKSPACE = "devhub:same-workspace";
 const NEW_WORKTREE = "devhub:new-worktree";
 const NEW_BRANCH = "devhub:new-branch";
+const USE_STALE_BASE = "devhub:use-stale-base";
 
 function Wrong({ what }: { readonly what: string }) {
   return <span className="picker-note-failure">{what}</span>;
@@ -101,6 +103,7 @@ interface FlowServices {
     readonly branch?: string;
     readonly profileId: string;
     readonly split: boolean;
+    readonly allowStaleBase?: boolean;
   }) => Promise<unknown>;
   readonly projectDefaultDirectory: () => Promise<string>;
 }
@@ -341,24 +344,72 @@ function branchStep(
   };
 }
 
-/** Everything the answers add up to, in one call to main. */
+/**
+ * Everything the answers add up to, in one call to main.
+ *
+ * With one question left in it. A new branch starts from the remote's default
+ * branch, which means fetching first, and a fetch can fail with the work still
+ * perfectly possible: `origin` as of the last successful fetch is on disk. That
+ * is a decision with consequences — a base that may be days old — so it is
+ * asked rather than assumed, with git's own reason quoted, and the same call is
+ * made again with the answer.
+ */
 function finishStep(
   services: FlowServices,
   issue: IssueReference,
   agent: AgentChoice,
   directory: string,
   branch: string | undefined,
+  allowStaleBase = false,
 ): WizardStep {
   return async (input) => {
-    await input.working(`Setting up ${issueLabel(issue)}…`, () =>
-      services.assignIssue({
-        issueUrl: issueUrl(issue),
-        directory,
-        branch,
-        profileId: agent.profileId,
-        split: agent.split,
-      }),
-    );
+    try {
+      await input.working(`Setting up ${issueLabel(issue)}…`, () =>
+        services.assignIssue({
+          issueUrl: issueUrl(issue),
+          directory,
+          branch,
+          profileId: agent.profileId,
+          split: agent.split,
+          allowStaleBase,
+        }),
+      );
+    } catch (error: unknown) {
+      if (toAppError(error).code !== "git_fetch_failed") throw error;
+      return staleBaseStep(services, issue, agent, directory, branch, error);
+    }
     return undefined;
+  };
+}
+
+/** The fetch failed: start from the copy on disk, or not at all. */
+function staleBaseStep(
+  services: FlowServices,
+  issue: IssueReference,
+  agent: AgentChoice,
+  directory: string,
+  branch: string | undefined,
+  failure: unknown,
+): WizardStep {
+  return async (input) => {
+    const answer = await input.ask({
+      ...SHEET,
+      title: "The remote could not be reached",
+      placeholder: "Start the branch anyway?",
+      items: [
+        {
+          id: USE_STALE_BASE,
+          label: "Start from the copy on this machine",
+          detail: `${branch ?? "The branch"} starts from origin as of the last successful fetch`,
+          searchText: "yes anyway offline stale local",
+        },
+      ],
+      note: <Wrong what={toAppError(failure).summary} />,
+    });
+    // Escape is the other answer, and it is the runner's: back to the branch,
+    // where a branch that already exists needs no fetch at all.
+    return answer.id === USE_STALE_BASE
+      ? finishStep(services, issue, agent, directory, branch, true)
+      : undefined;
   };
 }

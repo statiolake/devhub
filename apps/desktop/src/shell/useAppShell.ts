@@ -11,6 +11,7 @@ import type {
 import type {
   IssueAssignment,
   IssueClone,
+  RepositoryStatusWire,
   WorkspacePickerCandidate,
 } from "./client";
 
@@ -57,6 +58,13 @@ export interface AppShellContextValue {
   readonly listBranches: (directory: string) => Promise<readonly string[]>;
   readonly assignIssue: (request: IssueAssignment) => Promise<AppOutcome>;
   readonly agentProfiles: AgentProfiles;
+  /**
+   * What each workspace is working on, as of the last look.
+   *
+   * A projection of its own, on its own clock: it is observed rather than
+   * decided, so it does not move with the snapshot's revision.
+   */
+  readonly repositoryStatus: RepositoryStatusWire;
   readonly pendingConfirmation: {
     readonly confirmationId: string;
     readonly purpose: ConfirmationPurposeWire;
