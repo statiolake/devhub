@@ -57,17 +57,11 @@ jobs:
           cache-dependency-path: pnpm-lock.yaml
 
       # The expensive half of what scripts/provision-vscode.sh produces, under
-      # one key: a miss costs the full npm ci and both compiles. Deliberately
-      # not here are the nested node_modules that VS Code's postinstall creates
+      # one key: a miss costs the full npm ci and compile. Deliberately not
+      # here are the nested node_modules that VS Code's postinstall creates
       # under build/ and extensions/* — 3.4 GB, more than this cache should
       # carry. Provisioning notices they are missing on a hit and reinstalls
       # just those, which is minutes; see the script.
-      #
-      # `out-vscode-min` is the bundled tree the packaged app ships and is
-      # cached beside `out` because the stamp covers both: a hit that restored
-      # only one of them would find the stamp current, the other tree missing,
-      # and rebuild both. `out-build` is not cached — it is an intermediate
-      # `core-ci` regenerates in the same minute it would take to restore.
       - name: Restore the provisioned VS Code build
         id: vscode-cache
         uses: actions/cache@v4
@@ -76,7 +70,6 @@ jobs:
             vscode-toolchain
             vscode/node_modules
             vscode/out
-            vscode/out-vscode-min
             vscode/.build
           key: >-
             vscode-${{ runner.os }}-${{ runner.arch }}-${{ steps.meta.outputs.vscode_sha }}-${{
