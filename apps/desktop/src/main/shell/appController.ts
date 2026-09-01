@@ -29,6 +29,7 @@ import { UnloadReason } from "code-oss-dev/out/vs/platform/window/electron-main/
 import {
 	CHANNELS,
 	type ContentRect,
+	type ContentSurfaceWire,
 	type IssueAssignment,
 	type ModalRequest,
 	type RepositoryStatusWire,
@@ -2505,22 +2506,25 @@ export class AppController {
 		handle(CHANNELS.setContentRect, (_event, rect: ContentRect) => {
 			shellWindow().setContentRect(rect);
 		});
-		handle(CHANNELS.setSurfaceVisible, async (_event, visible: boolean) => {
-			// Being asked to show a workbench that no longer exists is a broken
-			// invariant, not a state to accommodate: the page only says this when
-			// the Editor activity resolved to a surface, and every surface it can
-			// resolve to has a view. Answering it by quietly showing nothing —
-			// or by handing a destroyed view to Electron — turns a bug here into
-			// a blank pane over there.
-			//
-			// A workbench that has not been built *yet* is a different fact, and
-			// at launch it is the normal one: the restored selection is asked for
-			// before the eager open for that folder has finished. So the reveal
-			// joins the open already in flight and answers when the view is on
-			// screen.
-			if (visible) await this.revealSelectedEditor();
-			shellWindow().setNativeSurfaceVisible(visible);
-		});
+		handle(
+			CHANNELS.setContentSurface,
+			async (_event, surface: ContentSurfaceWire) => {
+				// Being asked to show a workbench that no longer exists is a broken
+				// invariant, not a state to accommodate: the page only says this when
+				// the Editor activity resolved to a surface, and every surface it can
+				// resolve to has a view. Answering it by quietly showing nothing —
+				// or by handing a destroyed view to Electron — turns a bug here into
+				// a blank pane over there.
+				//
+				// A workbench that has not been built *yet* is a different fact, and
+				// at launch it is the normal one: the restored selection is asked for
+				// before the eager open for that folder has finished. So the reveal
+				// joins the open already in flight and answers when the view is on
+				// screen.
+				if (surface !== "page") await this.revealSelectedEditor();
+				shellWindow().setContentSurface(surface);
+			},
+		);
 		// One way in and one way out for every modal DevHub shows. Main owns the
 		// set that is open because the overlay view is a fact about the window,
 		// not about whichever page happened to ask.

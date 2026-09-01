@@ -16,6 +16,7 @@ import {
   type AppSnapshot,
   type WorkspaceSnapshot,
 } from "../../../ipc/appShell";
+import type { ContentSurfaceWire } from "../../../ipc/contract";
 import { useAppShell } from "../../useAppShell";
 import { devhub } from "../../client";
 import { runningAgentSurfaces } from "./surfacePool";
@@ -322,7 +323,15 @@ export function SurfaceViewport({
   let agentPresentation: "full" | "beside" = "beside";
   let agentKey: string | undefined;
   let editorKey: string | undefined;
-  let workbenchOnScreen = false;
+  /**
+   * What this page has put in the content area, as main needs to know it.
+   *
+   * One word rather than a visibility flag, because main asks two things of it
+   * — whether to draw the native workbench view, and whether that view is what
+   * the person is typing into — and in a split those have different answers.
+   * See `ContentSurfaceWire`.
+   */
+  let contentSurface: ContentSurfaceWire = "page";
   // Only the transient states announce themselves; a workbench speaks for
   // itself, and `aria-live` on it would narrate every frame of output.
   let announce = true;
@@ -350,12 +359,15 @@ export function SurfaceViewport({
   } else {
     surfaceState = layout.kind;
     editorKey = layout.editorKey;
-    workbenchOnScreen = true;
+    contentSurface = "workbench";
     announce = false;
     if (layout.kind === "split") {
       split = true;
       agentPresentation = "beside";
       agentKey = layout.agentKey;
+      // Both are drawn, and the Agent is the one that was selected — a split is
+      // only ever entered by asking for an Agent beside its editor.
+      contentSurface = "split";
     }
   }
 
@@ -385,10 +397,10 @@ export function SurfaceViewport({
     };
   }, [reportFailure]);
 
-  // One flag, sent whenever it changes: does a workbench belong on screen?
+  // One word, sent whenever it changes: what is in the content area.
   useEffect(() => {
-    void devhub().setSurfaceVisible(workbenchOnScreen).catch(reportFailure);
-  }, [workbenchOnScreen, reportFailure]);
+    void devhub().setContentSurface(contentSurface).catch(reportFailure);
+  }, [contentSurface, reportFailure]);
 
   return (
     <section

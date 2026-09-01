@@ -96,6 +96,29 @@ export interface RepositoryStatusWire {
 	readonly diagnostic?: string;
 }
 
+/**
+ * What the page has put in the content area.
+ *
+ * Two things depend on this and they are not the same question, which is why
+ * it is one word rather than a flag. *Is the native workbench view drawn?* —
+ * yes for `workbench` and for `split`, where the workbench has part of the
+ * area and an Agent has the rest. *Does the workbench hold the keyboard?* —
+ * only for `workbench`: in a split the person selected an Agent and asked for
+ * it beside its editor, so the Agent is what they are typing into.
+ *
+ * It used to be a boolean meaning "is a workbench visible", and main answered
+ * both questions with it. So opening an Agent beside its workbench and then
+ * clicking back onto DevHub put the keyboard in the editor, every time, on
+ * every window focus — the Agent was on screen and selected, and the keys went
+ * somewhere else.
+ *
+ * `page` covers everything the page draws for itself: an Agent with the whole
+ * area, a message while a workspace is unavailable or an editor is restarting,
+ * the wait before the model is ready. Main does not distinguish them, because
+ * the answer to both questions is the same for all of them.
+ */
+export type ContentSurfaceWire = "workbench" | "split" | "page";
+
 /** The rectangle, in page CSS pixels, that workbench views must cover. */
 export interface ContentRect {
 	readonly x: number;
@@ -272,8 +295,8 @@ export interface DevhubApi {
 
 	/** Where main must lay the selected workspace's workbench view. */
 	setContentRect(rect: ContentRect): Promise<void>;
-	/** Whether a DOM surface is on screen, so the native view can hide. */
-	setSurfaceVisible(visible: boolean): Promise<void>;
+	/** What the page has put in the content area. */
+	setContentSurface(surface: ContentSurfaceWire): Promise<void>;
 
 	/**
 	 * The Surface runtime.
@@ -314,7 +337,7 @@ export const CHANNELS = {
 	openSettings: "devhub:open-settings",
 	openExternalUrl: "devhub:open-external-url",
 	setContentRect: "devhub:set-content-rect",
-	setSurfaceVisible: "devhub:set-surface-visible",
+	setContentSurface: "devhub:set-content-surface",
 
 	snapshotChanged: "devhub:snapshot-changed",
 	appearanceChanged: "devhub:appearance-changed",

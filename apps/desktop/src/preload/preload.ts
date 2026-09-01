@@ -23,6 +23,7 @@ import {
 	type ModalRequest,
 	type OpenModal,
 	type ContentRect,
+	type ContentSurfaceWire,
 	type DevhubApi,
 	type IssueAssignment,
 	type IssueClone,
@@ -147,8 +148,8 @@ const devhub: DevhubApi = {
 
 	setContentRect: (rect: ContentRect) =>
 		ipcRenderer.invoke(CHANNELS.setContentRect, rect) as Promise<void>,
-	setSurfaceVisible: (visible: boolean) =>
-		ipcRenderer.invoke(CHANNELS.setSurfaceVisible, visible) as Promise<void>,
+	setContentSurface: (surface: ContentSurfaceWire) =>
+		ipcRenderer.invoke(CHANNELS.setContentSurface, surface) as Promise<void>,
 
 	terminal: terminalApi,
 };

@@ -17,6 +17,7 @@ import type {
   ReplayWire,
 } from "../ipc/appShell";
 import type {
+  ContentSurfaceWire,
   DevhubApi,
   IssueAssignment,
   IssueClone,
@@ -74,7 +75,7 @@ export interface AppShellClient {
     width: number;
     height: number;
   }): Promise<void>;
-  setSurfaceVisible(visible: boolean): Promise<void>;
+  setContentSurface(surface: ContentSurfaceWire): Promise<void>;
   /** Put a modal on the overlay layer; the id is what takes it off again. */
   openModal(request: ModalRequest): Promise<string>;
   closeModal(id: string, response?: number): Promise<void>;
@@ -132,7 +133,7 @@ export function createShellClient(api: DevhubApi = devhub()): AppShellClient {
     openSettings: () => api.openSettings(),
     openExternalUrl: (url) => api.openExternalUrl(url),
     setContentRect: (rect) => api.setContentRect(rect),
-    setSurfaceVisible: (visible) => api.setSurfaceVisible(visible),
+    setContentSurface: (surface) => api.setContentSurface(surface),
     openModal: (request) => api.openModal(request),
     closeModal: (id, response) => api.closeModal(id, response),
   };

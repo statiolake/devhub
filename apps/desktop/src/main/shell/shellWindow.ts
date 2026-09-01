@@ -9,7 +9,7 @@
 
 import { electron } from "../electron.js";
 import { sendLinksToTheBrowser } from "./externalLinks.js";
-import type { ContentRect } from "../../ipc/contract.js";
+import type { ContentRect, ContentSurfaceWire } from "../../ipc/contract.js";
 import { WINDOW_TITLES } from "../../ipc/windowTitles.js";
 import { ModalOverlay } from "./modalOverlay.js";
 import { shellTheme } from "./shellTheme.js";
@@ -23,14 +23,16 @@ export class ShellWindow {
 	private revealed: WorkbenchView | undefined;
 	private contentRect: ContentRect | undefined;
 	/**
-	 * Whether the native view is the thing on screen.
+	 * What the page has put in the content area, as the page last said.
 	 *
-	 * The viewport hosts two kinds of Surface and only one mechanism can be on
-	 * top: a terminal or an Agent is DOM inside the page, and a native view over
-	 * the same rectangle would cover it. The page says which it is showing, and
-	 * this is that answer.
+	 * The viewport hosts two kinds of Surface, and a native view over the same
+	 * rectangle would cover DOM: this is what says whether the workbench view is
+	 * drawn at all, and — separately — whether it is the thing being typed into.
+	 * See `ContentSurfaceWire`: they are two questions, and answering both with
+	 * "is a workbench visible" is what took the keyboard away from an Agent
+	 * opened beside its editor.
 	 */
-	private nativeSurfaceVisible = true;
+	private contentSurface: ContentSurfaceWire = "workbench";
 	/**
 	 * The layer every DevHub modal is drawn on.
 	 *
@@ -302,12 +304,25 @@ export class ShellWindow {
 	}
 
 	/**
-	 * The contents the keyboard belongs to: the workbench that is on screen, or
-	 * the App Shell page — which is where a terminal and an Agent surface live,
-	 * so "no workbench on screen" and "the page has it" are the same fact.
+	 * The contents the keyboard belongs to: the workbench the person is working
+	 * in, or the App Shell page — which is where a terminal and an Agent surface
+	 * live, so "the workbench is not what was selected" and "the page has it" are
+	 * the same fact.
+	 *
+	 * This is *not* "the workbench that is drawn", which is what it used to ask.
+	 * In a split both are drawn — that is what a split is — and the one the
+	 * person selected is the Agent, because a split is only ever entered by
+	 * asking for an Agent beside its editor. Reading visibility gave the
+	 * keyboard to the workbench on every reveal and on every window focus, so
+	 * coming back to DevHub with an Agent open beside its editor put the keys in
+	 * the editor. `ContentSurfaceWire` is the page's answer to which of the two
+	 * it is, and this is the only place that reads that half of it.
 	 */
 	focusTarget(): Electron.WebContents {
-		return this.onScreenView()?.webContents ?? this.window.webContents;
+		const asking = this.askingView();
+		if (asking) return asking.webContents;
+		if (this.contentSurface !== "workbench") return this.window.webContents;
+		return this.liveRevealed()?.webContents ?? this.window.webContents;
 	}
 
 	/** The view on screen, if there is one and it still exists. */
@@ -329,12 +344,12 @@ export class ShellWindow {
 		this.layout();
 	}
 
-	/** The page says whether the workbench view is the Surface on screen. */
-	setNativeSurfaceVisible(visible: boolean): void {
-		if (this.nativeSurfaceVisible === visible) {
+	/** The page says what it has put in the content area. */
+	setContentSurface(surface: ContentSurfaceWire): void {
+		if (this.contentSurface === surface) {
 			return;
 		}
-		this.nativeSurfaceVisible = visible;
+		this.contentSurface = surface;
 		this.layout();
 		// Revealing a surface is a request to type into it. The page focuses
 		// the xterm inside itself; only main can take the keyboard off the
@@ -407,17 +422,27 @@ export class ShellWindow {
 	 * showing a Surface of its own over the same rectangle.
 	 */
 	private onScreenView(): WorkbenchView | undefined {
-		const asking = this.modals.askingSurfaceKey();
-		if (asking !== undefined) {
-			const view = this.views.find(
-				(candidate) =>
-					!candidate.isDestroyed() &&
-					this.surfaceKeyOfView(candidate) === asking,
-			);
-			if (view) return view;
-		}
-		if (!this.nativeSurfaceVisible) return undefined;
+		const asking = this.askingView();
+		if (asking) return asking;
+		if (this.contentSurface === "page") return undefined;
 		return this.liveRevealed();
+	}
+
+	/**
+	 * The workbench that has stopped to ask the person something, if one has.
+	 *
+	 * It outranks both the layout and the selection, and it does so for the same
+	 * reason in both: a question about *that* workbench has to be shown against
+	 * it and answered into it. Every other rule about what is on screen and
+	 * where the keyboard is starts by asking this.
+	 */
+	private askingView(): WorkbenchView | undefined {
+		const asking = this.modals.askingSurfaceKey();
+		if (asking === undefined) return undefined;
+		return this.views.find(
+			(candidate) =>
+				!candidate.isDestroyed() && this.surfaceKeyOfView(candidate) === asking,
+		);
 	}
 
 	layout(): void {

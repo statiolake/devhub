@@ -192,10 +192,10 @@ describe("the shell window's workbench views", () => {
 
 	it("shows nothing while the page's own surface is the one on screen", () => {
 		shell.reveal(a);
-		shell.setNativeSurfaceVisible(false);
+		shell.setContentSurface("page");
 		invariantHolds(undefined);
 
-		shell.setNativeSurfaceVisible(true);
+		shell.setContentSurface("workbench");
 		invariantHolds(a);
 	});
 
@@ -249,7 +249,7 @@ describe("the shell window's workbench views", () => {
 			// The page is where a terminal and an Agent surface live, so this is
 			// what makes typing go straight into the xterm with no click.
 			shell.reveal(a);
-			shell.setNativeSurfaceVisible(false);
+			shell.setContentSurface("page");
 			expect(focused).toBe(page());
 		});
 
@@ -258,9 +258,9 @@ describe("the shell window's workbench views", () => {
 			// report says cannot be used twice in a row.
 			shell.reveal(a);
 			for (let round = 0; round < 3; round += 1) {
-				shell.setNativeSurfaceVisible(false);
+				shell.setContentSurface("page");
 				expect(focused).toBe(page());
-				shell.setNativeSurfaceVisible(true);
+				shell.setContentSurface("workbench");
 				expect(focused).toBe(contentsOf(a));
 			}
 		});
@@ -268,17 +268,59 @@ describe("the shell window's workbench views", () => {
 		it("leaves a workbench alone while the page's surface is on screen", () => {
 			// A projection change re-reveals the selected Editor even while the
 			// Terminal is showing. That must not pull the keyboard out of it.
-			shell.setNativeSurfaceVisible(false);
+			shell.setContentSurface("page");
 			focused = undefined;
 			shell.reveal(a);
 			expect(focused).toBe(page());
+		});
+
+		/**
+		 * An Agent opened beside its editor keeps the keyboard.
+		 *
+		 * ⌘-clicking an Agent puts it next to the workbench rather than over it,
+		 * so both are on screen — and the one the person chose is the Agent,
+		 * because that is the only way a split is ever entered. Main used to
+		 * read "is a workbench visible" for this and answered yes, so the editor
+		 * took the keys: on the reveal, and again on every window focus, which
+		 * is what made it look like the editor was stealing focus at random.
+		 */
+		it("leaves the keyboard with the page when an Agent is beside a workbench", () => {
+			shell.reveal(a);
+			expect(focused).toBe(contentsOf(a));
+
+			shell.setContentSurface("split");
+			expect(focused).toBe(page());
+
+			// The workbench is still drawn — that is what a split is.
+			invariantHolds(a);
+
+			// And asking again does not hand it over either. This is the path the
+			// report was about: the app was already arranged correctly, and every
+			// window focus asks this same question again.
+			focused = undefined;
+			shell.focusSurface();
+			expect(focused).toBe(page());
+
+			// A projection change re-reveals the selected editor; that must not
+			// pull the keyboard out of the Agent beside it either.
+			focused = undefined;
+			shell.reveal(a);
+			expect(focused).toBe(page());
+		});
+
+		it("gives it back to the workbench when the split is closed", () => {
+			shell.reveal(a);
+			shell.setContentSurface("split");
+			expect(focused).toBe(page());
+			shell.setContentSurface("workbench");
+			expect(focused).toBe(contentsOf(a));
 		});
 
 		it("does not take the keyboard out of an open modal", () => {
 			shell.reveal(a);
 			shell.modals.openModal({ kind: "workspace-picker" });
 			focused = undefined;
-			shell.setNativeSurfaceVisible(false);
+			shell.setContentSurface("page");
 			shell.reveal(b);
 			// A dialog no key reaches is a dialog nobody can answer.
 			expect(focused).toBeUndefined();
@@ -385,7 +427,7 @@ describe("the shell window's modal layer", () => {
 
 		// Even when the page says its own surface is the one in the viewport:
 		// a question with no workbench under it cannot be answered.
-		shell.setNativeSurfaceVisible(false);
+		shell.setContentSurface("page");
 		expect(shell.visibleViews()).toEqual([editor]);
 	});
 
@@ -417,7 +459,7 @@ describe("the shell window's modal layer", () => {
 		expect(focused).toBe(editor.webContents.id);
 
 		// And to the page when the page is what is showing.
-		shell.setNativeSurfaceVisible(false);
+		shell.setContentSurface("page");
 		const next = shell.modals.openModal({ kind: "workspace-picker" });
 		shell.modals.closeModal(next);
 		expect(focused).toBe(shell.window.webContents.id);

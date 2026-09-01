@@ -119,7 +119,7 @@ function client(snapshot: AppSnapshot): AppShellClient {
     openSettings: async () => undefined,
     openExternalUrl: async () => undefined,
     setContentRect: async () => undefined,
-    setSurfaceVisible: async () => undefined,
+    setContentSurface: async () => undefined,
     openModal: async () => "",
     closeModal: async () => undefined,
   } as unknown as AppShellClient;
