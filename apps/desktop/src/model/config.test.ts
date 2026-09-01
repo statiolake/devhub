@@ -261,7 +261,30 @@ describe("round trip", () => {
   });
 
   it("empties a collection and fills it again, re-parsing each time", () => {
-    const full = configToToml(defaultConfig());
+    // Sources of its own rather than the defaults': the subject is the round
+    // trip through an emptied collection, and the default list is empty on
+    // purpose, so borrowing it would leave nothing to empty.
+    const full = configToToml({
+      ...defaultConfig(),
+      workspaceSources: [
+        {
+          type: "filesystem",
+          id: "dev",
+          path: "~/dev",
+          min_depth: 1,
+          max_depth: 2,
+          kinds: ["git_repository"],
+          include_hidden: false,
+          exclude_names: [],
+        },
+        {
+          type: "date",
+          id: "daily",
+          path: "~/daily/YYYY/MMDD",
+          create_if_missing: true,
+        },
+      ],
+    });
     const config = parseConfig(full);
     expect(config.workspaceSources.length).toBeGreaterThan(0);
 

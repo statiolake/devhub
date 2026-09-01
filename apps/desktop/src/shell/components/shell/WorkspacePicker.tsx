@@ -89,6 +89,7 @@ export function WorkspacePicker({ onDismiss }: WorkspacePickerProps) {
   const {
     pickerCandidates,
     pickerBusy,
+    pickerSourceCount,
     startWorkspacePicker,
     cancelWorkspacePicker,
     selectWorkspacePicker,
@@ -199,7 +200,15 @@ export function WorkspacePicker({ onDismiss }: WorkspacePickerProps) {
       pinned={ACTIONS}
       busy={pickerBusy}
       emptyNoMatch="No workspaces match."
-      emptyNoItems="No workspaces found in the configured sources."
+      // Two different things to say, and an empty list cannot tell them apart.
+      // Somebody with no sources has not searched an empty machine — they have
+      // not said where to look, which is the one thing DevHub cannot work out
+      // for them, and the default configuration deliberately does not guess.
+      emptyNoItems={
+        pickerSourceCount === 0
+          ? "No workspace sources yet. Add one in Settings to search your folders — or make a project with the rows below."
+          : "No workspaces found in the configured sources."
+      }
       onQueryChange={search}
       // A workspace is a workbench and nothing else, so there is nothing for
       // the split modifier to mean here: both ways of choosing open it.

@@ -264,48 +264,28 @@ export function defaultRuntimes(): RuntimeConfig {
 }
 
 /**
- * Where DevHub looks for a workspace when nobody has said.
+ * Where DevHub looks for a workspace when nobody has said: nowhere.
  *
- * A default has to mean something on a computer that has only just run DevHub
- * for the first time, and that is the whole of what shapes this list. What was
- * here before did not: it ran `workspace_path -d`, a program that exists on one
- * developer's machine, and it walked `~/dev` and `~/workspace/work`, two
- * folders that exist on the same one — a source whose root is missing is a
- * source that fails, so a new installation opened its picker onto errors.
+ * Empty, and deliberately. Every default this ever had was one person's
+ * layout — a program that prints today's folder, `~/dev`, `~/workspace/work` —
+ * and none of them is true of the next machine. A source whose root is not
+ * there is a source that *fails*, so a shipped guess does not degrade into
+ * silence; it opens a new installation's first picker onto errors about folders
+ * the person has never heard of.
  *
- * Two sources, and nothing about either is specific to a machine:
+ * There is no guess that is better than no guess here, because where somebody
+ * keeps their projects is not something DevHub can work out. So the picker
+ * starts with the two things that do not need to be configured — New Project
+ * and Clone Project — and says, where the list would be, that no sources have
+ * been added yet. That sentence is the default: it asks the one question DevHub
+ * cannot answer, at the moment the answer would be useful.
  *
- * - **Today's workspace**, named by the date rather than found by a program.
- *   `create_if_missing` is what makes it work anywhere: the folder does not
- *   have to be there, and choosing the row is what makes it.
- * - **Git checkouts under the home directory**, which is the one folder every
- *   machine has. Three levels down, because a repository is usually kept two
- *   or three folders in (`~/dev/github/thing`) rather than loose in `~`.
- *
- * `~/dev` used to be walked separately and is not any more: it is inside the
- * home directory, so the two sources found the same repositories twice, and
- * which of them a repository was attributed to came down to which finished
- * first.
+ * A person who wants today's dated folder or a walk of their home directory has
+ * both available (`type = "date"`, `type = "filesystem"`); what changed is that
+ * DevHub no longer assumes it.
  */
 export function defaultWorkspaceSources(): WorkspaceSource[] {
-  return [
-    {
-      type: "date",
-      id: "daily",
-      path: "~/workspace/daily/YYYY/MMDD",
-      create_if_missing: true,
-    },
-    {
-      type: "filesystem",
-      id: "home-git",
-      path: "~",
-      min_depth: 1,
-      max_depth: 3,
-      kinds: ["git_repository", "git_worktree"],
-      include_hidden: false,
-      exclude_names: [...DEFAULT_EXCLUDE_NAMES],
-    },
-  ];
+  return [];
 }
 
 export function defaultAgentProfiles(): ConfiguredAgentProfile[] {
