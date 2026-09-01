@@ -200,27 +200,30 @@ export class TerminalSurfaces {
 	}
 
 	/**
-	 * Resize the client PTY and the session's window.
+	 * Resize the client PTY, and only the client PTY.
 	 *
-	 * tmux keeps a detached session's window at its old dimensions even after
-	 * an attached client reports a new size, so resizing only the PTY would
-	 * leave the shell believing it is still the size it was.
+	 * The PTY is the tmux client's terminal, and its size is the one fact tmux
+	 * needs: under the default `window-size latest` the window follows the
+	 * client that last used it, on attach and on every SIGWINCH after.
+	 *
+	 * It is important that DevHub does *not* also `resize-window` to the same
+	 * numbers, which it used to. A window is the client minus the rows tmux
+	 * draws itself in, so on a session with a status bar a client of 30 rows
+	 * gives a 29-row window. Forcing the window to 30 told the program in the
+	 * pane it had a row that the status bar was standing on — the bottom line
+	 * of a full-screen TUI, drawn where nothing could show it. Worse, an
+	 * explicit `resize-window` latches the window to `window-size manual` for
+	 * good, so tmux stopped following the client at all and every later resize
+	 * only made the discrepancy visible for the instant before it was reapplied.
+	 *
+	 * Letting tmux subtract its own chrome is the whole fix, and it is one rule
+	 * for a bar that is there and a bar that is not.
 	 */
 	async resize(
 		identity: RequestIdentity,
-		target: TerminalTarget,
 		size: TerminalSize,
-		cancel = new CancellationToken(),
 	): Promise<void> {
-		const release = await this.runtime.acquireOperation(cancel);
-		try {
-			this.attachments.resize(identity, size);
-			await this.runtime.resizeOwnedWindow(target, size, cancel);
-		} catch (failure: unknown) {
-			throw terminalFailureFromPort(failure);
-		} finally {
-			release();
-		}
+		this.attachments.resize(identity, size);
 	}
 
 	detach(identity: RequestIdentity): void {

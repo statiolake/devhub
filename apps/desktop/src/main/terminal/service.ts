@@ -220,11 +220,7 @@ export function registerTerminalService(
 			try {
 				channel(channelId);
 				const request = validateResizeRequest(payload);
-				await surfaces.resize(
-					identityOf(event, request),
-					targetFor(request.surfaceKey),
-					request.size,
-				);
+				await surfaces.resize(identityOf(event, request), request.size);
 				return ok(undefined);
 			} catch (failure: unknown) {
 				return refuse(terminalFailureFromPort(failure));

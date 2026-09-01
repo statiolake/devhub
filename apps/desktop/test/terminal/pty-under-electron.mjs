@@ -237,38 +237,91 @@ test(
 		type("printf 'DEVHUB_PTY_''ROUNDTRIP\\n'\r");
 		await waitForText("DEVHUB_PTY_ROUNDTRIP", "the pane to echo the marker");
 
-		await surfaces.resize(identity, SCRATCH_TARGET, {
+		await surfaces.resize(identity, {
 			cols: 100,
 			rows: 30,
 			pixelWidth: 0,
 			pixelHeight: 0,
 		});
-		// tmux keeps a detached window at its old size, so the resize has to
-		// reach the session's window, not only the client's PTY.
-		const resizeDeadline = Date.now() + 15_000;
-		let resized = false;
-		while (Date.now() < resizeDeadline && !resized) {
-			const pane = await runtime.runTmux(
+
+		/**
+		 * The pane must fill the client exactly — no more.
+		 *
+		 * A window is the client minus the rows tmux draws itself in, so on a
+		 * session with a status bar a 30-row client gives a 29-row window. The
+		 * pane may never be told it is taller than that: the extra row would be
+		 * where the status bar is, and a full-screen TUI's bottom line would be
+		 * drawn there and never seen. DevHub used to force exactly that by
+		 * calling `resize-window` with the client's own rows.
+		 *
+		 * The expectation is computed from tmux's own chrome rather than
+		 * written as a number, so this holds for a status bar that is there and
+		 * one that is not.
+		 */
+		const geometry = async () => {
+			const message = await runtime.runTmux(
 				socket,
 				[
 					"display-message",
 					"-p",
 					"-t",
 					"scratch:0.0",
-					"#{pane_width}x#{pane_height}",
+					"#{pane_width} #{pane_height} #{client_height} #{status} #{window-size}",
 				],
 				home,
 				new CancellationToken(),
 				OperationDeadline.in(15_000),
 			);
-			resized = pane.stdout.toString("utf8").includes("100x30");
-			if (!resized) await sleep(20);
+			const [width, height, client, status, mode] = message.stdout
+				.toString("utf8")
+				.trim()
+				.split(/\s+/);
+			// tmux spells the status bar as off, on, or a count of lines.
+			const lines = status === "off" ? 0 : status === "on" ? 1 : Number(status);
+			assert.ok(
+				Number.isInteger(lines),
+				`tmux reported a status bar this test cannot read: ${status}`,
+			);
+			return {
+				width: Number(width),
+				height: Number(height),
+				client: Number(client),
+				status: lines,
+				mode,
+			};
+		};
+
+		const resizeDeadline = Date.now() + 15_000;
+		let pane = await geometry();
+		while (
+			Date.now() < resizeDeadline &&
+			!(pane.width === 100 && pane.client === 30)
+		) {
+			await sleep(20);
+			pane = await geometry();
 		}
-		assert.ok(resized, "the owned tmux pane must observe the requested geometry");
+		assert.equal(pane.width, 100, "the pane must observe the requested width");
+		assert.equal(pane.client, 30, "the client must observe the requested rows");
+		assert.equal(
+			pane.height,
+			30 - pane.status,
+			"the pane must be the client's rows minus tmux's own status lines",
+		);
+		// Left at its default, the window keeps following the client. An
+		// explicit `resize-window` latches it to `manual` for good, and tmux
+		// then ignores every later resize.
+		assert.equal(
+			pane.mode,
+			"latest",
+			"the window must keep following the client",
+		);
 
 		await sleep(250);
 		type("printf 'DEVHUB_PTY_''SIZE:'; stty size; printf '\\n'\r");
-		await waitForText("30 100", "the shell to observe its new size");
+		await waitForText(
+			`${30 - pane.status} 100`,
+			"the shell to observe the size it can actually draw in",
+		);
 
 		surfaces.detach(identity);
 		assert.equal(surfaces.attachmentCount, 0);

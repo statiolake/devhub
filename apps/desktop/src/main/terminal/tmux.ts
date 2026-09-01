@@ -1291,49 +1291,6 @@ export class TmuxTerminalRuntime {
 	}
 
 	/**
-	 * tmux keeps a detached session's window at its previous dimensions even
-	 * after an attached client reports a new size. Resize the exact marked
-	 * target too, so the interactive pane — not only the client PTY — observes
-	 * the request.
-	 */
-	async resizeOwnedWindow(
-		target: TerminalTarget,
-		size: { readonly cols: number; readonly rows: number },
-		cancel: CancellationToken,
-	): Promise<void> {
-		const socket = this.socket();
-		const deadline = OperationDeadline.in(this.timeoutMs);
-		await this.ensureVersion(socket, cancel, deadline);
-		if ((await this.markerState(socket, cancel, deadline)) !== "owned") {
-			throw portFailure("conflict");
-		}
-		const sessions = await this.listSessions(socket, cancel, deadline);
-		const identity = this.targetIdentity(target, sessions);
-		const exact = sessions.find(
-			(session) =>
-				session.name === identity.sessionName &&
-				sessionMatches(session, identity),
-		);
-		if (!exact) throw portFailure("conflict");
-		const output = await this.runTmux(
-			socket,
-			[
-				"resize-window",
-				"-t",
-				exact.name,
-				"-x",
-				String(size.cols),
-				"-y",
-				String(size.rows),
-			],
-			identity.root,
-			cancel,
-			deadline,
-		);
-		if (!output.success) throw portFailure("failed");
-	}
-
-	/**
 	 * Bring the socket up, and do it once at a time.
 	 *
 	 * Attaching takes a *shared* permit, because two surfaces attaching at once
