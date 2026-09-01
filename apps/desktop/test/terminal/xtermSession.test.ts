@@ -211,6 +211,73 @@ describe("the shared xterm session", () => {
     session.dispose();
   });
 
+  /**
+   * The reported gesture: type Japanese, press Cmd+Left, type Japanese again,
+   * and the second input came out as the tail of the first.
+   *
+   * xterm decides what a composition produced by slicing its textarea from the
+   * offset it recorded when the composition began, which assumes the caret is
+   * at the end. Cmd+Left is a key xterm has no binding for, so the browser
+   * moved the caret in the textarea and the offset sliced from the wrong
+   * place. What this pins is the repair: nothing is left in the textarea
+   * between compositions, so no caret position in it can mean anything.
+   */
+  it("leaves nothing in the IME scratch pad for a caret move to strand", async () => {
+    const host = document.createElement("div");
+    document.body.append(host);
+    const session = openXtermSession(host, {
+      inputLabel: "Example terminal input",
+      isHidden: () => false,
+      onGeometry: () => undefined,
+    });
+    const area = host.querySelector("textarea") as HTMLTextAreaElement;
+
+    // What the IME leaves behind when a composition is committed.
+    area.dispatchEvent(
+      new CompositionEvent("compositionstart", { bubbles: true }),
+    );
+    area.value = "\u65e5\u672c\u8a9e";
+    area.selectionStart = area.selectionEnd = 3;
+    area.dispatchEvent(
+      new CompositionEvent("compositionend", {
+        bubbles: true,
+        data: "\u65e5\u672c\u8a9e",
+      }),
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // Emptied, so Cmd+Left has no stale text to strand the next composition on.
+    expect(area.value).toBe("");
+    expect(area.selectionStart).toBe(0);
+    session.dispose();
+  });
+
+  it("keeps the scratch pad alone while a composition is still in flight", async () => {
+    const host = document.createElement("div");
+    document.body.append(host);
+    const session = openXtermSession(host, {
+      inputLabel: "Example terminal input",
+      isHidden: () => false,
+      onGeometry: () => undefined,
+    });
+    const area = host.querySelector("textarea") as HTMLTextAreaElement;
+
+    area.dispatchEvent(
+      new CompositionEvent("compositionstart", { bubbles: true }),
+    );
+    area.value = "\u306b\u307b";
+    area.dispatchEvent(
+      new InputEvent("input", { bubbles: true, isComposing: true }),
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // Still being composed: emptying it here would destroy the input.
+    expect(area.value).toBe("\u306b\u307b");
+    session.dispose();
+  });
+
   it("keeps the font a CSS value when the appearance changes later", () => {
     const session = open("Menlo");
     session.applyAppearance({

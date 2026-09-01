@@ -258,6 +258,57 @@ export function openXtermSession(
       input.setAttribute("aria-describedby", options.describedBy);
     }
   }
+
+  /**
+   * Leave nothing in the IME's scratch pad once it has been read.
+   *
+   * That textarea is where the IME assembles a composition, and xterm decides
+   * what to send from *where the caret is in it*: at `compositionstart` it
+   * records the length of the value, and when the composition finishes it
+   * sends everything from that offset on. The assumption is that a composition
+   * is appended to the end — true only while nothing else moves the caret.
+   *
+   * Nothing stopped that. xterm sends what a composition produced but does not
+   * empty the textarea, so the text of the last Japanese input stayed in it,
+   * and Cmd+Left is a key xterm has no binding for: it is not turned into
+   * terminal input and its default action is not prevented, so the browser
+   * did what it does to a focused textarea and moved the caret to the front.
+   * The next composition was then inserted at the front, and the offset — the
+   * length of what was left behind — sliced from the wrong place. Typing あ
+   * after 日本語 sent 語: the tail of the previous input, one character for one
+   * character, which is exactly what the pane appeared to garble.
+   *
+   * Clearing it is the general repair rather than a rule about one key. The
+   * scratch pad holds nothing between compositions, so no caret position in it
+   * is meaningful and no later gesture — Cmd+Left, Cmd+A, any of their
+   * siblings — has stale text to make xterm slice from. The clear is deferred
+   * so it lands after xterm's own deferred read of the value, and it is
+   * skipped while a composition is in flight, which is the one time the
+   * content is still being used.
+   */
+  let composing = false;
+  const clearWhenIdle = (): void => {
+    setTimeout(() => {
+      if (composing || disposed || !input) return;
+      input.value = "";
+      input.selectionStart = 0;
+      input.selectionEnd = 0;
+    }, 0);
+  };
+  const onCompositionStart = (): void => {
+    composing = true;
+  };
+  const onCompositionEnd = (): void => {
+    composing = false;
+    clearWhenIdle();
+  };
+  const onInput = (): void => {
+    if (composing) return;
+    clearWhenIdle();
+  };
+  input?.addEventListener("compositionstart", onCompositionStart);
+  input?.addEventListener("compositionend", onCompositionEnd);
+  input?.addEventListener("input", onInput);
   terminal.attachCustomKeyEventHandler(() => true);
 
   let geometry = FALLBACK_GEOMETRY;
@@ -362,6 +413,9 @@ export function openXtermSession(
     },
     dispose() {
       disposed = true;
+      input?.removeEventListener("compositionstart", onCompositionStart);
+      input?.removeEventListener("compositionend", onCompositionEnd);
+      input?.removeEventListener("input", onInput);
       observer?.disconnect();
       if (timer !== undefined) clearTimeout(timer);
       timer = undefined;
