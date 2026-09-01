@@ -43,17 +43,28 @@ export interface SettingsTerminalThemeWire {
 }
 
 /**
- * There is no colour scheme here on purpose.
+ * There is still no colour scheme here, and `mode` is not one.
  *
- * DevHub's chrome takes its colours from the active VS Code theme, so "light or
- * dark" is already answered — by the theme the person chose in the workbench.
- * A DevHub-level scheme would be a second answer to the same question, and the
- * two would disagree the first time somebody changed one of them. There is no
- * `appearance.color_scheme` in the config either: the loader still accepts the
- * key so an older file keeps loading, but it is retired — read nowhere, and
+ * DevHub's chrome takes its colours from the active VS Code theme, so "what
+ * colour is this window" is already answered — by the theme the person chose in
+ * the workbench. A DevHub-level palette would be a second answer to the same
+ * question, and the two would disagree the first time somebody changed one of
+ * them. That is why `appearance.color_scheme` is retired: the loader still
+ * accepts the key so an older file keeps loading, but it is read nowhere and
  * dropped from the document on the next save.
+ *
+ * `mode` answers a different question — *which appearance is this process in*,
+ * which is the OS's question and used to be answered by whichever workbench
+ * wrote `nativeTheme.themeSource` last (see `main/shell/appFence.ts`). Choosing
+ * light or dark here does not paint anything directly: it changes what the OS
+ * appearance is reported to be, each workbench with
+ * `window.autoDetectColorScheme` picks its theme from that, and DevHub's chrome
+ * follows that theme exactly as before. One answer still, and this sits
+ * upstream of it rather than beside it.
  */
 export interface SettingsAppearanceWire {
+	/** `auto`, `light` or `dark` — see `model/config.ts`. */
+	readonly mode: string;
 	readonly sidebarDensity: string;
 	readonly terminalFontFamily: string;
 	readonly terminalFontSize: number;

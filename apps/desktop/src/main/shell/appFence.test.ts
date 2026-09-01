@@ -137,6 +137,36 @@ describe("the fence around the process's idea of the OS colour scheme", () => {
 		).toThrow(/no such member/u);
 	});
 
+	it("hands the owner a way through the fence it just put up", () => {
+		// The point of the fence is not that the value is frozen — it is that
+		// DevHub is the only one who can move it. See `appearanceMode.ts`.
+		const nativeTheme = nativeThemeLike("system");
+		const write = fenceProperty(
+			nativeTheme,
+			"themeSource",
+			"owned.themeSource",
+		);
+		write("dark");
+		expect(nativeTheme.themeSource).toBe("dark");
+		expect(nativeTheme.written()).toBe("dark");
+		// And the fence is still standing for everybody else.
+		nativeTheme.themeSource = "light";
+		expect(nativeTheme.themeSource).toBe("dark");
+	});
+
+	it("refuses a property it could read but never write", () => {
+		// A getter-only accessor would make the owner's writer a no-op, which is
+		// the silent-failure shape this whole file exists to avoid.
+		const target = {};
+		Object.defineProperty(target, "themeSource", {
+			get: () => "system",
+			configurable: true,
+		});
+		expect(() =>
+			fenceProperty(target, "themeSource", "nativeTheme.themeSource"),
+		).toThrow(/not an accessor/u);
+	});
+
 	it("refuses a property that is a plain value rather than an accessor", () => {
 		// If a bump turns the accessor into a data property, reads would stop
 		// passing through and the fence would freeze a stale value instead.

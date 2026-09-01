@@ -42,6 +42,7 @@
  */
 
 import { electron } from "../electron.js";
+import { appearanceMode } from "./appearanceMode.js";
 
 /** A call that was refused, with what asked for it. */
 export interface DroppedProcessSetting {
@@ -173,7 +174,8 @@ export function fenceMember(
 }
 
 /**
- * Replace one settable property so that reads pass through and writes stop.
+ * Replace one settable property so that reads pass through and writes stop,
+ * and hand back the one way through.
  *
  * The methods above say "this did not happen" by returning a refusal. A
  * property cannot: whatever was assigned is read back by the next reader, so
@@ -181,19 +183,26 @@ export function fenceMember(
  * upstream logs `themeSource` back and must not be lied to — and the setter
  * only records.
  *
+ * A fenced property that nobody can write would be a constant, and DevHub
+ * wants this one: the returned function is the original setter, and holding it
+ * is what "DevHub owns this" means in code. It is returned rather than exported
+ * so that the only way to write the property is to have been the one who
+ * fenced it.
+ *
  * Exported for the test, for the same reason `fenceMember` is.
  */
 export function fenceProperty(
 	target: object,
 	member: string,
 	what: string,
-): void {
+): (value: unknown) => void {
 	const descriptor = describe(target, member);
 	if (!descriptor) {
 		throw new Error(`DevHub cannot fence ${what}: there is no such member`);
 	}
 	const read = descriptor.get;
-	if (!read) {
+	const write = descriptor.set;
+	if (!read || !write) {
 		throw new Error(`DevHub cannot fence ${what}: it is not an accessor`);
 	}
 	if (!descriptor.configurable) {
@@ -205,6 +214,9 @@ export function fenceProperty(
 		get: () => read.call(target),
 		set: () => refuse(what),
 	});
+	return (value: unknown) => {
+		write.call(target, value);
+	};
 }
 
 export function installAppFence(): void {
@@ -243,12 +255,18 @@ export function installAppFence(): void {
 	// reverts every light theme the person picks. The loop closes on itself and
 	// there is no way out from the settings side.
 	//
-	// So the OS is the OS. DevHub sets `'system'` — the only setting under which
-	// Electron reports what the OS actually is — and holds it there. If DevHub
-	// ever offers a "force dark" of its own, this line is where it is written,
-	// and it stays the only one.
-	electron.nativeTheme.themeSource = "system";
-	fenceProperty(electron.nativeTheme, "themeSource", "nativeTheme.themeSource");
+	// So the OS is the OS, and if it is to be overruled DevHub is the one who
+	// does it. The write is fenced off from every workbench and the one way
+	// through is handed to `appearanceMode.ts`, which is where DevHub's own
+	// Auto / Light / Dark setting arrives. Until the config has been read that
+	// module answers `auto`, which is `'system'` — Electron reporting the truth.
+	appearanceMode().own(
+		fenceProperty(
+			electron.nativeTheme,
+			"themeSource",
+			"nativeTheme.themeSource",
+		),
+	);
 
 	// Not under `app`, but the same sentence: one workbench's password-store
 	// argument would drop the encryption backing every secret in the process to

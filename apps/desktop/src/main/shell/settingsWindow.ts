@@ -152,6 +152,7 @@ function toWireConfig(config: Config): SettingsConfigWire {
 			tmuxArgs: [...config.runtimes.tmux_args],
 		},
 		appearance: {
+			mode: config.appearance.mode,
 			sidebarDensity: config.appearance.sidebarDensity,
 			terminalFontFamily: config.appearance.terminalFontFamily,
 			terminalFontSize: config.appearance.terminalFontSize,
@@ -257,6 +258,7 @@ function fromWireConfig(wire: SettingsConfigWire): Config {
 			tmux_args: [...wire.runtimes.tmuxArgs],
 		},
 		appearance: {
+			mode: wire.appearance.mode,
 			sidebarDensity: wire.appearance.sidebarDensity,
 			terminalFontFamily: wire.appearance.terminalFontFamily,
 			terminalFontSize: wire.appearance.terminalFontSize,

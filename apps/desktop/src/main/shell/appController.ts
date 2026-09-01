@@ -113,6 +113,7 @@ import {
 } from "../../model/wire.js";
 import { shellWindow } from "./shellWindow.js";
 import { shellTheme } from "./shellTheme.js";
+import { appearanceMode } from "./appearanceMode.js";
 import { editorElement, shellTitleFor } from "./shellTitle.js";
 import type { ShellPalette } from "../../ipc/palette.js";
 import type { WorkbenchView } from "./workbenchView.js";
@@ -275,6 +276,11 @@ export class AppController {
 	) {
 		this.state = state;
 		this.config = config;
+		if (config) {
+			// The same call `adoptConfig` makes, for the config this run started
+			// with. Without it DevHub would run in `auto` until the first save.
+			appearanceMode().apply(config.appearance.mode);
+		}
 		this.coordinator = new AppCoordinator(model);
 		// The overlay has to know whether the workbench a question belongs to is
 		// the one on screen. Views are the window's; surface keys are the
@@ -2264,6 +2270,10 @@ export class AppController {
 
 	adoptConfig(config: Config): void {
 		this.config = config;
+		// Before the pages are told, because this one is not a message to a page:
+		// it changes what the OS appearance is for the whole process, and every
+		// workbench and the shell's own chrome follow from that.
+		appearanceMode().apply(config.appearance.mode);
 		this.publishAppearance();
 		this.publishProfiles();
 	}

@@ -163,7 +163,28 @@ export interface TerminalThemeConfig {
   readonly dark: TerminalPalette;
 }
 
+/**
+ * The three appearances DevHub can run in, and the only values `appearance.mode`
+ * takes.
+ *
+ * One list, exported, because three places have to agree on it: the config
+ * validator, the Settings popup that offers the choice, and the main-process
+ * mapping onto Electron's `themeSource`. A fourth spelling of the same three
+ * words is how a value becomes selectable in the UI and rejected by the loader.
+ */
+export const APPEARANCE_MODES: readonly string[] = ["auto", "light", "dark"];
+
 export interface AppearanceConfig {
+  /**
+   * Which appearance DevHub runs in: `auto`, `light` or `dark`.
+   *
+   * Not a palette. This is the answer DevHub gives the OS — it decides what
+   * Electron reports the system appearance to be, for every native surface in
+   * the process and for `window.autoDetectColorScheme` in each workbench. The
+   * colours themselves still come from the workbench's own theme, which is why
+   * `appearance.color_scheme` stayed retired. See `shell/appearanceMode.ts`.
+   */
+  readonly mode: string;
   readonly terminalFontFamily: string;
   readonly terminalFontSize: number;
   readonly terminalLineHeight: number;
@@ -241,6 +262,7 @@ export function defaultTerminalDark(): TerminalPalette {
 
 export function defaultAppearance(): AppearanceConfig {
   return {
+    mode: "auto",
     terminalFontFamily: DEFAULT_FONT_FAMILY,
     terminalFontSize: 13,
     terminalLineHeight: 1.2,
@@ -447,7 +469,7 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
  */
 const RETIRED_KEYS: Readonly<Record<string, string>> = {
   "appearance.color_scheme":
-    "the shell follows the active VS Code theme, so DevHub has no colour scheme of its own",
+    "the shell follows the active VS Code theme, so DevHub has no colour scheme of its own; to choose light or dark for DevHub itself, use `appearance.mode`",
   "runtimes.herdr":
     "an Agent is now a tmux session on DevHub's own socket, so there is no separate Agent runtime to point at; the program to run is each profile's own `command`",
 };
@@ -675,6 +697,7 @@ function validateAppearance(appearance: AppearanceConfig): void {
     !Number.isFinite(appearance.terminalLineHeight) ||
     appearance.terminalLineHeight < 1 ||
     appearance.terminalLineHeight > 2 ||
+    !APPEARANCE_MODES.includes(appearance.mode) ||
     (appearance.sidebarDensity !== "compact" &&
       appearance.sidebarDensity !== "comfortable") ||
     appearance.terminalMargin > MAX_TERMINAL_MARGIN ||
@@ -959,6 +982,7 @@ export function parseConfig(input: string): Config {
   checkKeys(
     appearanceTable,
     [
+      "mode",
       "terminal_font_family",
       "terminal_font_size",
       "terminal_line_height",
@@ -1029,6 +1053,7 @@ export function parseConfig(input: string): Config {
         "appearance",
         1.2,
       ),
+      mode: optionalString(appearanceTable, "mode", "appearance", "auto"),
       sidebarDensity: optionalString(
         appearanceTable,
         "sidebar_density",
@@ -1122,6 +1147,7 @@ export function configDocument(config: Config): Record<string, TomlValue> {
       tmux_args: [...config.runtimes.tmux_args],
     },
     appearance: {
+      mode: config.appearance.mode,
       terminal_font_family: config.appearance.terminalFontFamily,
       terminal_font_size: config.appearance.terminalFontSize,
       terminal_line_height: config.appearance.terminalLineHeight,

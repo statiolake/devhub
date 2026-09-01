@@ -96,6 +96,29 @@ export function GeneralSection({
         />
       </Group>
 
+      <Group
+        heading="Appearance"
+        note="Light and Dark tell the system DevHub is in that appearance, rather than painting it: an editor follows with the theme it has chosen for light or dark, and DevHub's own chrome follows that editor. An editor that has turned off `window.autoDetectColorScheme` keeps the theme it was told to use, and only the window frames and dialogs change."
+      >
+        <Row label="Mode" help="Auto follows the system appearance.">
+          <Popup
+            label="Appearance mode"
+            value={config.appearance.mode}
+            options={[
+              ["auto", "Auto"],
+              ["light", "Light"],
+              ["dark", "Dark"],
+            ]}
+            onChange={(mode) => {
+              update({
+                ...config,
+                appearance: { ...config.appearance, mode },
+              });
+            }}
+          />
+        </Row>
+      </Group>
+
       <Group heading="Sidebar">
         <Row label="Density" help="How much room a workspace row takes.">
           <Popup

@@ -174,6 +174,42 @@ describe("parsing", () => {
         parseConfig('version = 1\n[appearance]\nsidebar_density = "roomy"\n'),
       ),
     ).toBe("invalid_appearance");
+    expect(
+      codeOf(() =>
+        parseConfig('version = 1\n[appearance]\nmode = "midnight"\n'),
+      ),
+    ).toBe("invalid_appearance");
+  });
+
+  it("carries the three appearances, and defaults to following the OS", () => {
+    expect(defaultConfig().appearance.mode).toBe("auto");
+    for (const mode of ["auto", "light", "dark"]) {
+      const parsed = parseConfig(
+        `version = 1\n[appearance]\nmode = "${mode}"\n`,
+      );
+      expect(parsed.appearance.mode).toBe(mode);
+      // A save has to state it, or choosing Light would last until the next one.
+      expect(configOntoDocument("version = 1\n", parsed)).toContain(
+        `mode = "${mode}"`,
+      );
+    }
+  });
+
+  it("keeps the retired colour scheme retired, now that a mode exists", () => {
+    // The two are not the same setting: `color_scheme` asked what colour DevHub
+    // should paint itself, which the workbench theme answers, and `mode` asks
+    // which appearance the process runs in. An old file must not have its dead
+    // key quietly revived as the new one.
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    try {
+      const parsed = parseConfig(
+        'version = 1\n[appearance]\ncolor_scheme = "dark"\n',
+      );
+      expect(parsed.appearance.mode).toBe("auto");
+      expect(info.mock.calls[0][0]).toContain("appearance.mode");
+    } finally {
+      info.mockRestore();
+    }
   });
 
   it("takes any font family CSS would take", () => {

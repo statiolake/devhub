@@ -43,6 +43,7 @@ export function testConfig(
       tmuxArgs: [],
     },
     appearance: {
+      mode: "auto",
       sidebarDensity: "compact",
       terminalFontFamily: "SF Mono",
       terminalFontSize: 13,
