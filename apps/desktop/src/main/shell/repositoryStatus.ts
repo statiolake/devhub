@@ -176,7 +176,10 @@ export class RepositoryStatusWatcher {
 					MAX_ISSUES_PER_ROUND,
 				)) {
 					try {
-						this.known.set(issueKey(issue), await readIssueStatus(issue, token));
+						this.known.set(
+							issueKey(issue),
+							await readIssueStatus(issue, token),
+						);
 					} catch (error: unknown) {
 						// Only GitHub's own refusals are reported this way. Anything
 						// else is a bug in DevHub, and it goes to the root handler

@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type PointerEvent as ReactPointerEvent,
@@ -15,6 +16,7 @@ import {
   type WorkspaceSnapshot,
 } from "../../../ipc/appShell";
 import { clampSidebarWidth } from "../../../ipc/appShell";
+import type { WorkspaceRepositoryWire } from "../../../ipc/contract";
 import { useAppShell } from "../../useAppShell";
 import { devhub } from "../../client";
 import { isImeComposing } from "../../accessibility/ime";
@@ -62,6 +64,7 @@ function setTreeTabStop(
 
 function WorkspaceRow({
   workspace,
+  repository,
   snapshot,
   onDispatch,
   agentProfiles,
@@ -71,6 +74,8 @@ function WorkspaceRow({
   onAgentMenu,
 }: {
   readonly workspace: WorkspaceSnapshot;
+  /** What it is working on, as of the last look. Absent until the first one. */
+  readonly repository: WorkspaceRepositoryWire | undefined;
   readonly snapshot: AppSnapshot;
   readonly onDispatch: (intent: AppIntent) => void;
   readonly agentProfiles: readonly AgentProfile[];
@@ -135,7 +140,21 @@ function WorkspaceRow({
             </svg>
           </span>
           <span className="row-label">{workspace.label}</span>
+          {/* What it is working on, in the order a person reads it: which
+              branch, then what that branch is for. Both are dimmed, because
+              the row is still named by the workspace. */}
+          {repository?.branch ? (
+            <span className="row-branch">{repository.branch}</span>
+          ) : null}
+          {repository?.issue ? (
+            <span className="row-issue">{repository.issue.title}</span>
+          ) : null}
         </button>
+        {/* The links trail the label rather than leading it, which is the one
+            place this differs from the sketch: they are buttons, a button
+            cannot go inside the row's own button, and putting them before it
+            would move the glyph column that every other row lines up with. */}
+        {repository?.issue ? <IssueLinks repository={repository} /> : null}
         {workspace.canCreateAgent && (
           <button
             className="row-action-button"
@@ -300,6 +319,63 @@ function WorkspaceRow({
   );
 }
 
+/**
+ * The Issue this workspace is for, and the pull request that says it closes
+ * it, as two marks that open GitHub.
+ *
+ * They are marks rather than words because the row already has words. What
+ * each one says is its colour and its shape — GitHub's own: an open issue is
+ * green and a closed one purple, an open pull request is green and a draft is
+ * grey — and what it says in full is in its label, for anyone who cannot use
+ * either.
+ */
+function IssueLinks({
+  repository,
+}: {
+  readonly repository: WorkspaceRepositoryWire;
+}) {
+  const { openExternalUrl } = useAppShell();
+  const issue = repository.issue;
+  if (!issue) return null;
+  const pullRequest = repository.pullRequest;
+  return (
+    <>
+      {pullRequest ? (
+        <button
+          className={`row-link-button is-${pullRequest.state}`}
+          type="button"
+          aria-label={`Pull request #${String(pullRequest.number)}, ${pullRequest.state}`}
+          title={`Pull request #${String(pullRequest.number)} (${pullRequest.state})`}
+          onClick={() => {
+            openExternalUrl(pullRequest.url);
+          }}
+        >
+          <svg viewBox="0 0 14 14" aria-hidden="true" focusable="false">
+            <circle cx="4" cy="10.4" r="1.6" />
+            <circle cx="4" cy="3.6" r="1.6" />
+            <circle cx="10" cy="10.4" r="1.6" />
+            <path d="M4 5.2v3.6M10 8.8V5.2a1.6 1.6 0 0 0-1.6-1.6H6.4" />
+          </svg>
+        </button>
+      ) : null}
+      <button
+        className={`row-link-button is-${issue.state}`}
+        type="button"
+        aria-label={`Issue #${String(issue.number)}, ${issue.state}: ${issue.title}`}
+        title={`Issue #${String(issue.number)} (${issue.state})`}
+        onClick={() => {
+          openExternalUrl(issue.url);
+        }}
+      >
+        <svg viewBox="0 0 14 14" aria-hidden="true" focusable="false">
+          <circle cx="7" cy="7" r="4.6" />
+          <circle cx="7" cy="7" r="1.4" />
+        </svg>
+      </button>
+    </>
+  );
+}
+
 function ScratchRow({
   snapshot,
   onDispatch,
@@ -418,7 +494,14 @@ function SidebarResizeHandle({
 }
 
 export function Sidebar({ snapshot, onDispatch }: SidebarProps) {
-  const { dispatch, agentProfiles } = useAppShell();
+  const { dispatch, agentProfiles, repositoryStatus } = useAppShell();
+  const repositories = useMemo(
+    () =>
+      new Map(
+        repositoryStatus.workspaces.map((entry) => [entry.workspaceId, entry]),
+      ),
+    [repositoryStatus],
+  );
   // The sidebar draws no modals. Every one of them lives on the overlay layer
   // above the workbench views, so opening one is a request to main and nothing
   // more — there is no local "is it open" to keep in step with anything.
@@ -655,6 +738,7 @@ export function Sidebar({ snapshot, onDispatch }: SidebarProps) {
               <WorkspaceRow
                 key={workspace.id}
                 workspace={workspace}
+                repository={repositories.get(workspace.id)}
                 snapshot={snapshot}
                 onDispatch={onDispatch}
                 agentProfiles={agentProfiles.profiles}
@@ -668,6 +752,15 @@ export function Sidebar({ snapshot, onDispatch }: SidebarProps) {
         ) : (
           <p className="sidebar-empty">No workspaces open</p>
         )}
+        {/* Why what is on the rows may be out of date. It stands beside what
+            is still known rather than replacing it, and it goes when a later
+            look succeeds — a network that dropped must not read as an issue
+            that closed. */}
+        {repositoryStatus.diagnostic ? (
+          <p className="sidebar-status-note" role="status">
+            {repositoryStatus.diagnostic}
+          </p>
+        ) : null}
       </div>
       <SidebarResizeHandle
         width={renderedWidth}

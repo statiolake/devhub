@@ -172,10 +172,7 @@ export async function readIssueStatus(
 	};
 }
 
-async function post(
-	body: unknown,
-	token: string,
-): Promise<GraphQlAnswer> {
+async function post(body: unknown, token: string): Promise<GraphQlAnswer> {
 	const controller = new AbortController();
 	const timer = setTimeout(() => {
 		controller.abort();
@@ -210,9 +207,7 @@ async function post(
 		);
 	}
 	if (!response.ok) {
-		throw new GitHubUnavailable(
-			`GitHub answered ${String(response.status)}.`,
-		);
+		throw new GitHubUnavailable(`GitHub answered ${String(response.status)}.`);
 	}
 	return (await response.json()) as GraphQlAnswer;
 }

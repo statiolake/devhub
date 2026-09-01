@@ -89,9 +89,8 @@ export function AppShellProvider({
   const [pickerCandidates, setPickerCandidates] = useState<
     WorkspacePickerCandidate[]
   >([]);
-  const [repositoryStatus, setRepositoryStatus] = useState<RepositoryStatusWire>(
-    { sequence: 0, workspaces: [] },
-  );
+  const [repositoryStatus, setRepositoryStatus] =
+    useState<RepositoryStatusWire>({ sequence: 0, workspaces: [] });
   const [pickerBusy, setPickerBusy] = useState(false);
   const [pendingConfirmation, setPendingConfirmation] =
     useState<PendingConfirmation | null>(null);

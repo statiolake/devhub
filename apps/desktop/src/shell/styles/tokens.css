@@ -119,6 +119,10 @@
   --status-waiting: light-dark(#0a66d0, #0a84ff); /* charts.blue */
   --status-idle: light-dark(#1d7f36, #30d158); /* testing.iconPassed */
   --status-error: var(--danger); /* testing.iconFailed */
+  /* GitHub's own two: an open issue is green, a closed one purple. The green
+     is the same one an idle Agent wears, because both mean "nothing is wrong
+     here", and a second green would only invite the question of why. */
+  --status-issue-closed: light-dark(#8250df, #a371f7);
 
   /* Separators. */
   --ink-line: 14%;

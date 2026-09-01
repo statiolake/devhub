@@ -250,6 +250,80 @@
   flex: 1 1 auto;
 }
 
+/* What a Workspace is working on: the branch, and what that branch is for.
+   Both dimmed, and both give way before the workspace's own name does — the
+   row is named by the workspace, and the rest is context. */
+.workspace-row:has(.row-branch, .row-issue) .row-label {
+  overflow: hidden;
+  flex: 0 1 auto;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row-branch,
+.row-issue {
+  overflow: hidden;
+  min-width: 0;
+  flex: 0 1 auto;
+  margin-left: var(--space-1);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row-branch {
+  color: var(--tertiary);
+}
+
+.row-issue {
+  color: var(--secondary);
+}
+
+/* A link out to GitHub. Shaped like the row's other trailing controls, but
+   always visible: it is not an action on the row, it is the row saying what
+   state its issue is in, and a state you have to hover to see is not one you
+   can scan a list for. */
+.row-link-button {
+  display: flex;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+}
+
+.row-link-button svg {
+  width: 13px;
+  height: 13px;
+  fill: none;
+  stroke: var(--tertiary);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.4;
+}
+
+.row-link-button.is-open svg {
+  stroke: var(--status-idle);
+}
+
+.row-link-button.is-closed svg {
+  stroke: var(--status-issue-closed);
+}
+
+/* Why the marks above may be out of date. It is not an error the person did
+   anything to cause, so it is a caption and not an alert — but it stays until
+   a later look succeeds, which is the whole point of drawing it. */
+.sidebar-status-note {
+  padding: var(--space-1) var(--space-3);
+  margin: 0;
+  color: var(--secondary);
+  font-size: 11px;
+}
+
 /* Agents sit one indent level in from their Workspace row: the rail and the
    glyph column their Workspace's folder occupies, so the Agent's own mark
    starts where its parent's label does. Derived rather than measured, so it
