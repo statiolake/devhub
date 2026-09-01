@@ -1,15 +1,15 @@
 # The bundled packaging, and the stall that was never its fault
 
-This branch (`bundled-packaging`) holds the work that makes the packaged app a
-real bundled build instead of a zipped source checkout. It is **not on `main`**:
-it was reverted there because it could not be verified end to end, not because
-it is wrong.
+This is the record of the work that makes the packaged app a real bundled build
+instead of a zipped source checkout, and of the stall that once kept it off
+`main`. **Both are on `main` now**: the stall is fixed at its cause, and the
+bundling was reapplied on top of that fix.
 
-**The stall that stopped that verification is solved, and the fix is on `main`.**
-It had nothing to do with bundling, nothing to do with this branch, and nothing
-to do with Electron's libuv integration. It was the code signature.
+The stall had nothing to do with bundling, nothing to do with the branch it was
+blamed on, and nothing to do with Electron's libuv integration. It was the code
+signature.
 
-## What the branch does
+## What the bundling change does
 
 `08d086e` — *ship the packaged app as a real build, not a zipped checkout*.
 Provisioning builds `out-vscode-min/` beside `out/` under one stamp,
@@ -139,6 +139,19 @@ memory — a difference between two runs is not yet a difference between two
 configurations. Count several runs per configuration, and prefer an experiment
 you can reverse and re-run, like the cdhash table above.
 
+There is a second reason this particular state moves, and it is worth naming
+because it caught two investigations in a row: **the consent is granted by a
+person who has to be at the machine to see the dialog.** A build that hangs
+does so because it is waiting to be let in, and whether it is ever let in
+depends on whether somebody was there. So the same bundle can answer in the
+morning and hang in the afternoon with nothing about it having changed.
+
+When reading a run, separate the two questions. *Did it block?* is the one that
+says something about the signature: a build that has to ask at all still has an
+identity the keychain does not recognise. *Was it allowed through?* says only
+who was in the room. A hang is therefore not a failure of the feature being
+tested — it is the identity problem, still there.
+
 ## The fix
 
 On `main`, `ee4a2ec` — *give every DevHub bundle one identity across builds*.
@@ -157,22 +170,48 @@ changes still waits for consent, because the existing item's ACL still records
 the old requirement. That is a one-time transition, not a per-build tax. How to
 handle the stale item for people who already have one is still open.
 
-## Picking this branch back up
+## Reintroduced
 
-The blocker is gone; this branch's own work is what remains. Nothing in the
-stall was caused by bundling, so nothing here needs to be redesigned around it.
+The bundling is back on `main`, on top of the signing fix, and this time it was
+carried all the way through the verification it could never previously survive.
 
-`b8be089` adds the check that would have caught it in minutes, and packaging now
-runs it: the packaged bundle is started against a throwaway user-data directory
-and asked for its `version` over the control socket, and packaging fails if no
-reply comes. Neither the socket file appearing nor a successful `connect` counts
-— a stalled app lets the kernel accept a connection it will never read — so only
-a reply does. It also stands alone, for CI or for a downloaded build:
+- `ee4a2ec` — the signing fix, which is what made any of the rest possible.
+- `b8be089` — the start-up smoke test, now run by packaging itself.
+- The merge of the write-up, and the reapplied
+  *ship the packaged app as a real build, not a zipped checkout*.
+- A follow-up to `_stamp_state` in `scripts/darwin_bundle.py`, below.
+
+What the bundled artifact was actually made to do, rather than merely build:
+
+| check | result |
+| --- | --- |
+| control socket answers (`version`) | 6 launches, 6 answers |
+| integrated terminal profile | resolves to `tmux -L devhub attach-session -t scratch` |
+| extension host / pty host / shared process / agent host | all four running, `exthost.log` written |
+| install from Open VSX | `pkief.material-icon-theme` v5.38.1 installed and listed |
+
+### Two things the verification caught
+
+**The stamp did not cover the recipe.** `_stamp_state` hashed the Electron
+version and `product-overrides.json`, but not `darwin_bundle.py` itself — so
+changing how bundles are *signed* did not invalidate the stamp, the branded
+clone from before the fix was kept, and the fix silently did not apply to it.
+That is why the keychain kept asking after the fix had supposedly landed. The
+file now hashes itself into its own stamp.
+
+**Packaging ships `apps/desktop/out` without rebuilding it.** The reapplied
+change added `extensions.verifySignature: false` to the workbench defaults, but
+the packaged app shipped the *previous* compile, so the setting was missing and
+every gallery install failed with "Signature verification was not executed" —
+the exact wall the setting exists to remove. A stale compile is invisible: the
+app starts, the smoke test passes, and only a deeper action fails. Build
+`apps/desktop` before packaging.
+
+The smoke test is the floor, not the ceiling. It proves the event loop is alive,
+which is the property that kept breaking; it does not prove the app can install
+an extension. Both were checked here, and a stale compile passes the first while
+failing the second.
 
 ```
 scripts/smoke_packaged_app.py path/to/DevHub.app
 ```
-
-So the bar for resuming is simply: rebase on `main`, finish the branch, and get
-that smoke test passing on the bundled artifact. A bundled tree that boots and
-answers is the thing this branch could never previously demonstrate.
