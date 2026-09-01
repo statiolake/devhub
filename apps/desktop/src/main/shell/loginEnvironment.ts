@@ -25,6 +25,17 @@
  *  - A failure is a *value*, not a silent empty result. "Your terminals have no
  *    Homebrew on PATH because your shell profile errors out" is a sentence
  *    somebody must be able to read; see `LoginEnvironment`.
+ *
+ * The answer lands in `process.env` (`adoptLoginEnvironment`) rather than in a
+ * value passed around. DevHub spawns some of its children itself — terminals,
+ * Agents, `git` — but most of them are VS Code's: the workbench windows, the
+ * extension host, the pty host, the shared process. Those descend from
+ * `process.env` and nothing DevHub hands out reaches them, which is how a
+ * Finder launch came to run the git extension's `gpg` on launchd's four-entry
+ * PATH while a DevHub terminal beside it had the user's whole toolchain. One
+ * import, into the one environment they all descend from, is what makes the
+ * two agree. Upstream's own resolution is turned off for the same reason —
+ * see `--force-disable-user-env` in `codeMain.ts`.
  */
 
 import { spawn } from "node:child_process";
@@ -122,9 +133,9 @@ function isDevHubRuntimeVariable(name: string): boolean {
 /**
  * The process environment with DevHub's own runtime taken out of it.
  *
- * Both users of the rule go through here, and they must: the login shell is a
- * *child of DevHub*, so asking it for its environment from DevHub's own
- * environment gets DevHub's own environment back. A profile does not delete
+ * Asking the shell and launching a child both go through here, and they must:
+ * the login shell is a *child of DevHub*, so asking it for its environment from
+ * DevHub's own environment gets DevHub's own environment back. A profile does not delete
  * `VSCODE_DEV`; it inherits it, reacts to it, and prints it out again — which
  * is how a strip applied only to the merge came to be undone by the merge's
  * other half, with the user's `.zshrc` running the real VS Code CLI in the
@@ -147,33 +158,56 @@ export function withoutDevHubRuntime(
 }
 
 /**
- * The environment DevHub's children are launched with.
+ * Put the login shell's environment into DevHub's own process.
  *
- * DevHub's own runtime variables are dropped from the process environment
- * first, then the login shell's values are laid over what is left: a variable
- * the user's profile sets is the one they meant, and a variable only the launch
- * context has (the user-data dir, `XDG_CONFIG_HOME`) survives because the shell
- * never mentions it.
+ * This is the import, and it happens once: `process.env` is what every process
+ * DevHub does not spawn itself descends from, so writing it here is what gets
+ * the user's PATH to the extension host and to the `git` an extension runs.
+ * Everything else in this file reads the result rather than the login value —
+ * `launchEnvironment` included.
  *
- * The order matters and is the whole of the rule. Stripping happens on the
- * *process* layer only, so a `VSCODE_`- or `NODE_ENV`-something the user's own
- * profile exports comes back with the login import: it is theirs, and DevHub
- * has no business deleting it. There is no per-variable exception anywhere —
- * where a value came from is what decides, and that is a fact the two layers
- * already carry, because `readShellEnvironment` asks the shell from a stripped
- * environment as well. Both halves clean, or neither is.
+ * DevHub's own runtime layer is never written over. `VSCODE_IPC_HOOK`,
+ * `VSCODE_PORTABLE`, `NODE_ENV` and their families are true statements about
+ * *this running process*, and a profile that exports one of them is describing
+ * some other VS Code; letting the import win there would move the user-data
+ * directory or flip a source build into production halfway through startup.
+ * That is the same rule `launchEnvironment` applies from the other side, and
+ * the only one either of them has: the families in `DEVHUB_RUNTIME_PREFIXES`
+ * belong to DevHub's runtime and to nothing else — in this process they stay
+ * as they are, in a child they go.
+ */
+export function adoptLoginEnvironment(
+	target: Record<string, string | undefined>,
+	login: LoginEnvironment,
+): void {
+	if (login.kind !== "imported") return;
+	for (const [name, value] of Object.entries(login.variables)) {
+		if (isDevHubRuntimeVariable(name)) continue;
+		target[name] = value;
+	}
+}
+
+/**
+ * The environment the children DevHub spawns itself are launched with.
+ *
+ * The login shell's values are not laid over anything here: they are already
+ * *in* the process environment, put there by `adoptLoginEnvironment`, which is
+ * the whole point of importing into the process rather than into a value only
+ * some callers hold. A terminal, an Agent and the extension host read one
+ * environment, so what DevHub can find and what a shell inside it can find
+ * cannot disagree.
+ *
+ * What is left to do is the one thing a child must not inherit: the variables
+ * that describe DevHub's own process. A `.zshrc` that sees `VSCODE_DEV`
+ * reasonably concludes it is running inside VS Code's integrated terminal and
+ * behaves accordingly. A variable only the launch context has — the user-data
+ * dir, `XDG_CONFIG_HOME` — survives, because the rule is about the families,
+ * not about where a value came from.
  */
 export function launchEnvironment(
 	processEnvironment: Readonly<Record<string, string | undefined>>,
-	login: LoginEnvironment,
 ): Readonly<Record<string, string | undefined>> {
-	const merged = withoutDevHubRuntime(processEnvironment);
-	if (login.kind === "imported") {
-		for (const [name, value] of Object.entries(login.variables)) {
-			merged[name] = value;
-		}
-	}
-	return Object.freeze(merged);
+	return Object.freeze(withoutDevHubRuntime(processEnvironment));
 }
 
 /** The status line the Settings window shows under the option. */

@@ -19,6 +19,9 @@
  *    4. `IThemeMainService` is `DevHubThemeMainService`
  *       (./services/devhubThemeMainService.ts), which is upstream's service
  *       plus an announcement when a workbench saves its window splash.
+ *    5. `--force-disable-user-env` is on, because DevHub resolves the login
+ *       shell's environment itself and upstream's copy would be a second
+ *       answer to the same question. See `resolveArgs`.
  *
  *  Everything else is upstream, including the copyright below.
  *--------------------------------------------------------------------------------------------*/
@@ -625,6 +628,15 @@ class CodeMain {
 
 		// Parse arguments
 		const args = this.validatePaths(parseMainProcessArgv(process.argv));
+
+		// DevHub: DevHub imports the login shell's environment itself, before
+		// `startup()`, and puts it on `process.env` — see
+		// `shell/loginEnvironment.ts`. Upstream would spawn a second login shell
+		// to reach the same answer, ask it from an environment still carrying
+		// `VSCODE_DEV`, and skip the whole thing whenever `VSCODE_CLI` is set,
+		// which `dev.sh` sets on every source run. One import means one answer,
+		// so upstream's is turned off rather than left to disagree with DevHub's.
+		args['force-disable-user-env'] = true;
 
 		if (args.wait && !args.waitMarkerFilePath) {
 			// If we are started with --wait create a random temporary file

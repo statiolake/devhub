@@ -131,6 +131,7 @@ import { MainServicesGate, type MainServices } from "./mainServices.js";
 import { resolveExecutable, resolveRuntimes } from "./runtimes.js";
 import { runtimeUnavailableMessage } from "../../ipc/settings.js";
 import {
+	adoptLoginEnvironment,
 	launchEnvironment,
 	resolveLoginEnvironment,
 	type LoginEnvironment,
@@ -359,10 +360,14 @@ export class AppController {
 		this.loginEnvironment = await resolveLoginEnvironment({
 			enabled: config?.general.import_login_environment ?? true,
 		});
-		this.launchEnvironment = launchEnvironment(
-			process.env,
-			this.loginEnvironment,
-		);
+		// It lands in DevHub's own process, which is what makes "one
+		// environment" true of VS Code's side as well: the workbench windows,
+		// the extension host and the `git` an extension runs are children of
+		// this process and of nothing DevHub hands out. `startRuntimes` is
+		// awaited from `bootstrapShell`, which the entry point awaits before
+		// `CodeApplication.startup()`, so none of them exists yet.
+		adoptLoginEnvironment(process.env, this.loginEnvironment);
+		this.launchEnvironment = launchEnvironment(process.env);
 		const resolved = await resolveRuntimes(
 			config?.runtimes ?? {
 				shell: "/bin/zsh",
