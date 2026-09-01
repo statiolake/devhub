@@ -687,8 +687,110 @@ describe.skipIf(TMUX === undefined)(
       expect(after.map((one) => one.name)).toContain(SCRATCH_SESSION);
       expect(after.map((one) => one.name)).toContain(workspaceSession);
     });
+
+    /**
+     * An Agent session is not a tmux the user drives, so it carries no status
+     * bar; the sessions the user *does* drive are left as their own config
+     * made them.
+     */
+    it("turns the status bar off for an Agent, and leaves it alone elsewhere", async () => {
+      const test = fixture("agentstatus");
+      const sessions = new AgentSessions(test.runtime);
+      const agentId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa7";
+      const workspaceId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb7";
+      await test.runtime.ensure(SCRATCH_TARGET);
+      await test.runtime.ensure(workspaceTarget(workspaceId, test.home));
+
+      await sessions.launch({
+        agentId,
+        workspaceId,
+        root: test.home,
+        command: { file: "/bin/sh", args: ["-c", "sleep 30"], env: {} },
+      });
+
+      expect(sessionStatus(test.socket, agentSessionName(agentId))).toBe("off");
+      // Scratch and the workspace terminal are the user's own tmux. DevHub
+      // sets nothing on them — an unset session option reads as empty — so
+      // whatever the user's own config asked for is what they get, which with
+      // no config of their own is tmux's default of a visible bar.
+      expect(sessionStatus(test.socket, SCRATCH_SESSION)).toBe("");
+      expect(
+        sessionStatus(
+          test.socket,
+          `ws-${workspaceDigest(test.home).slice(0, 20)}`,
+        ),
+      ).toBe("");
+      expect(effectiveStatus(test.socket, SCRATCH_SESSION)).toBe("on");
+    });
+
+    /**
+     * The rule is stated wherever ownership is proven, not only at creation,
+     * so an Agent session left over from a build that did not know about it is
+     * corrected the next time DevHub opens it.
+     */
+    it("takes the status bar off an Agent session an older build created", async () => {
+      const test = fixture("agentmigrate");
+      const sessions = new AgentSessions(test.runtime);
+      const agentId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa8";
+      const workspaceId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb8";
+      await test.runtime.ensure(SCRATCH_TARGET);
+      await sessions.launch({
+        agentId,
+        workspaceId,
+        root: test.home,
+        command: { file: "/bin/sh", args: ["-c", "sleep 30"], env: {} },
+      });
+
+      // Put the session back into the state an older build would have left it.
+      tmuxOutside(test.socket, [
+        "set-option",
+        "-t",
+        agentSessionName(agentId),
+        "status",
+        "on",
+      ]);
+      expect(sessionStatus(test.socket, agentSessionName(agentId))).toBe("on");
+
+      // The path every open takes.
+      await test.runtime.ensure({
+        kind: "agent",
+        agentId,
+        workspaceId,
+        root: test.home,
+      });
+
+      expect(sessionStatus(test.socket, agentSessionName(agentId))).toBe("off");
+    });
   },
 );
+
+function showOption(
+  socket: string,
+  session: string,
+  args: readonly string[],
+): string {
+  return execFileSync(
+    TMUX as string,
+    ["-L", socket, "show-options", "-t", session, ...args, "status"],
+    {
+      encoding: "utf8",
+      env: { ...process.env, TMUX: undefined, TMUX_PANE: undefined } as never,
+    },
+  ).trim();
+}
+
+/**
+ * What the session itself says about its status bar — empty when it says
+ * nothing, which is how "DevHub declared nothing here" is spelled.
+ */
+function sessionStatus(socket: string, session: string): string {
+  return showOption(socket, session, ["-v"]);
+}
+
+/** What the session ends up with, inherited values included. */
+function effectiveStatus(socket: string, session: string): string {
+  return showOption(socket, session, ["-A", "-v"]);
+}
 
 async function untilGone(
   sessions: AgentSessions,

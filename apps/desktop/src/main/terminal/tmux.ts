@@ -194,6 +194,25 @@ export interface TargetIdentity {
 	readonly agentId: string;
 }
 
+/**
+ * The tmux options a session carries because of what it is.
+ *
+ * An Agent session is not a tmux the user drives. Nothing in it switches
+ * windows, and its single pane is the Agent's own process, so tmux's status
+ * bar is a row of chrome for controls that do not apply — and a row the pane
+ * does not get to draw in. It is turned off, and DevHub says so both when it
+ * creates the session and every time it proves it still owns it, so a session
+ * created by an older build is corrected the next time it is opened.
+ *
+ * Every other session — a workspace's integrated terminal, Scratch — *is* the
+ * user's tmux: they may split it, switch windows, and want the bar that says
+ * where they are. DevHub declares nothing about those, so whatever the user's
+ * own config asked for is what they get.
+ */
+function sessionOptions(context: string): readonly (readonly [string, string])[] {
+	return context === AGENT_CONTEXT ? [["status", "off"]] : [];
+}
+
 /** An Agent session's name is its id, so it is findable after a restart. */
 export function agentSessionName(agentId: string): string {
 	return `ag-${agentId}`;
@@ -827,8 +846,17 @@ export class TmuxTerminalRuntime {
 			(session) => session.name === identity.sessionName,
 		);
 		if (existing) {
-			if (sessionMatches(existing, identity)) return;
-			throw portFailure("conflict");
+			if (!sessionMatches(existing, identity)) throw portFailure("conflict");
+			// The session is proven DevHub's, so its options are DevHub's to
+			// state. Re-stating them here is what migrates a session created by
+			// an older build, and it runs on the same path every open takes.
+			await this.applySessionOptions(
+				socket,
+				identity,
+				cancel,
+				deadline,
+			);
+			return;
 		}
 		if (target.kind === "agent") throw portFailure("conflict");
 		await this.createSession(
@@ -1518,6 +1546,33 @@ export class TmuxTerminalRuntime {
 		throw portFailure("conflict");
 	}
 
+	/** State a marked session's own options on a session already proven owned. */
+	private async applySessionOptions(
+		socket: SocketName,
+		identity: TargetIdentity,
+		cancel: CancellationToken,
+		deadline: OperationDeadline,
+	): Promise<void> {
+		const options = sessionOptions(identity.context);
+		if (options.length === 0) return;
+		const args = options.flatMap(([option, value], index) => [
+			...(index === 0 ? [] : [";"]),
+			"set-option",
+			"-t",
+			identity.sessionName,
+			option,
+			value,
+		]);
+		const output = await this.runTmux(
+			socket,
+			args,
+			this.contextHome,
+			cancel,
+			deadline,
+		);
+		if (!output.success) throw portFailure("failed");
+	}
+
 	private async createSession(
 		socket: SocketName,
 		spec: SessionSpec,
@@ -1577,6 +1632,16 @@ export class TmuxTerminalRuntime {
 			spec.name,
 			AGENT_ID_OPTION,
 			spec.agentId,
+			// The session's own options join the same sequence, so a session is
+			// never observed owned but not yet configured.
+			...sessionOptions(spec.context).flatMap(([option, value]) => [
+				";",
+				"set-option",
+				"-t",
+				spec.name,
+				option,
+				value,
+			]),
 		];
 		// The last read before creating a session. The earlier check protects
 		// path validation; this one keeps a server that changed marker state
