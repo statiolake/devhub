@@ -159,7 +159,7 @@ function openBundle(): Promise<void> {
  * accepted means a DevHub is serving there. Nothing is sent, so a DevHub that
  * is midway through starting is not handed a request it is not ready for.
  */
-function socketAnswers(socketPath: string): Promise<boolean> {
+export function socketAnswers(socketPath: string): Promise<boolean> {
 	return new Promise((resolve) => {
 		const probe = connect(socketPath);
 		probe.once("connect", () => {
