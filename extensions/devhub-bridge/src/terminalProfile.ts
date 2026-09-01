@@ -18,6 +18,17 @@
  * A window with no DevHub behind it — this extension is built in, so that is
  * possible — contributes nothing and leaves the person with VS Code's own
  * profiles, which is the honest answer rather than a profile that fails to run.
+ *
+ * The manifest also turns `terminal.integrated.enablePersistentSessions` off,
+ * and it is this file's reasoning that puts it there. That setting exists to
+ * solve a problem DevHub does not have: upstream persists a terminal's tab and
+ * replays its scrollback because closing the window would otherwise kill the
+ * shell. Here the shell is in tmux and outlives everything, so the tab restored
+ * on the next launch is a second, empty client for a session that is already
+ * running — chrome describing a terminal rather than the terminal. Opening a
+ * terminal reattaches to the same session with its history intact, which is the
+ * restoration the person actually wanted, and it is the one this profile
+ * already performs.
  */
 
 import { connect } from "node:net";
