@@ -88,7 +88,7 @@ export function GeneralSection({
       <Group heading="Environment" note={runtime.loginEnvironment}>
         <SwitchRow
           label="Login shell"
-          help="Use your login shell's environment when DevHub launches terminals and agents."
+          help="Use your login shell's environment for everything DevHub runs — the editor and its extensions as well as terminals and agents. Takes effect the next time DevHub starts."
           checked={config.general.importLoginEnvironment}
           onChange={(importLoginEnvironment) => {
             update({ ...config, general: { importLoginEnvironment } });
