@@ -1,9 +1,18 @@
-# The packaged bundle stalls its own main process
+# The bundled packaging, and the stall that is not its fault
 
 This branch (`bundled-packaging`) holds the work that makes the packaged app a
 real bundled build instead of a zipped source checkout. It is **not on `main`**:
-the commit was reverted there because the app it produces has a main process
-that stops answering, and the CLI is the visible casualty.
+it was reverted there because it could not be verified end to end, not because
+it is wrong.
+
+**Read this first.** The stall described below — the one that stopped the
+verification — turned out to be **pre-existing and unrelated to bundling**.
+Building the packaged app at `046e2a9~1`, before any of this branch's work,
+reproduces it exactly, and so does the packaging path on `main` today. It is
+deterministic (3 of 3 runs) and `pnpm dev` is unaffected. So there are two
+separate pieces of work here: finishing this branch, and fixing the packaged
+app's main process. The second is the urgent one — it means the `devhub`
+command does not work in the shipped app.
 
 This file is the investigation, written down so restarting it costs an hour
 rather than a day.
@@ -42,7 +51,7 @@ A second instance launched against the same `--user-data-dir` **never exited**
 DevHub's control socket. Two independent IPC paths, both accepted and never
 answered, is what rules out the measurement and the harness.
 
-## The one switch
+## A switch that turned out not to be one
 
 The same packaged `DevHub.app`, same files, differing only in the environment:
 
@@ -51,10 +60,15 @@ The same packaged `DevHub.app`, same files, differing only in the environment:
 | `VSCODE_DEV=1` | 47 | answers |
 | (unset) | 5, then silence | no reply |
 
-`VSCODE_CLI=1` does **not** substitute — it stalls. So the trigger is
-`VSCODE_DEV`, which is to say the `isBuilt` path inside VS Code, not the
-bundling. **The bundle is innocent**: with the flag set it is a fully working
-app.
+This looked decisive at the time and it is **wrong**, or at best incomplete.
+The packaging on `main` sets `VSCODE_DEV=1` in its entry shim and stalls
+anyway, three runs out of three. Whatever this table measured, it was not
+`VSCODE_DEV`; something else varies between runs and was not controlled for.
+
+Treat the table as a lead about *nondeterminism*, not as a cause. The one
+thing it does establish is that the bundle can run correctly — in that
+configuration the app answered, installed an extension from Open VSX and
+resolved its tmux terminal profile.
 
 ## Ruled out, by measurement
 
@@ -75,15 +89,15 @@ Each of these was tested and did **not** change the outcome:
 
 ## What is not known
 
-The mechanism. Something on the `isBuilt` path stops Electron's integration
-between Chromium's message loop and Node's event loop, and none of the obvious
-consumers of `isBuilt` above is responsible.
+The mechanism. Something stops Electron's integration between Chromium's
+message loop and Node's event loop in the packaged app, and none of the
+candidates above is responsible.
 
-One loose end worth keeping: the app **did** work end to end once, early on —
+The loose end that matters most: the app **did** work end to end early on —
 control socket, `--install-extension` from Open VSX, the tmux terminal profile
-— in the same configuration that later stalled every time. Either something
-about that run differed in a way not captured here, or the stall is not fully
-deterministic. Assume the latter until shown otherwise.
+— in a configuration that later stalled every time. So the stall is either
+nondeterministic or depends on something not yet identified, and any future
+bisect has to control for that before trusting a single run.
 
 ## Where to pick it up
 
@@ -91,7 +105,11 @@ The cheapest reproduction is the heartbeat: add a `setInterval` in
 `apps/desktop/src/main/main.ts` that appends to a file, package, launch, and
 count the lines. Toggling `VSCODE_DEV` on the same bundle flips it.
 
-The next thing to try is bisecting `isBuilt` itself — patch
-`environmentMainService.isBuilt` to return `false` in a packaged build and see
-whether the loop survives. That separates "something reads `isBuilt`" from
-"something reads `VSCODE_DEV` directly", which no experiment here has done.
+Bisect on `main`'s own packaging first, not on this branch: the stall lives
+there, the tree is smaller, and a fix belongs there anyway. Because a single
+run cannot be trusted, count several per configuration.
+
+The obvious first cut is when the packaged app last worked at all — if it
+ever did — since `pnpm dev` is unaffected and the two differ almost entirely
+in the entry shim (`ENTRY_SOURCE` in scripts/package-nightly.py) and in
+running from a materialised tree rather than the checkout.
