@@ -42,6 +42,13 @@ export class ShellWindow {
 	/** How the surface key of the workbench on screen is looked up. */
 	private surfaceKeyOfView: (view: WorkbenchView) => string | undefined = () =>
 		undefined;
+	/**
+	 * Told when anything this class knows that the window's name depends on has
+	 * moved: which workbench is on screen, and what a workbench calls itself.
+	 * The rest of the name comes from the model, so the name itself is composed
+	 * by whoever has both (`shellTitle.ts`).
+	 */
+	private titleChanged: () => void = () => undefined;
 
 	/**
 	 * The App Shell page's URL, held until `openPage` runs it.
@@ -91,6 +98,15 @@ export class ShellWindow {
 		});
 
 		sendLinksToTheBrowser(this.window.webContents);
+
+		// DevHub names this window, and only DevHub. Electron hands a page's
+		// `document.title` to its window by default, which would let the App
+		// Shell page — served from the same `index.html` as the Settings
+		// window, and with no idea what is on screen — overwrite a name that
+		// says which Workspace and which file are being worked on.
+		this.window.on("page-title-updated", (event) => {
+			event.preventDefault();
+		});
 
 		this.modals = new ModalOverlay(
 			{
@@ -187,6 +203,11 @@ export class ShellWindow {
 		view.webContents.once("destroyed", () => {
 			this.detach(view);
 		});
+		// A workbench renames itself whenever its active editor changes; that
+		// is the Editor's half of the window's name arriving.
+		view.webContents.on("page-title-updated", () => {
+			this.titleChanged();
+		});
 	}
 
 	detach(view: WorkbenchView): void {
@@ -201,6 +222,7 @@ export class ShellWindow {
 			// Not "some other view": nothing is on screen until the selection
 			// says what is, exactly as at startup.
 			this.revealed = undefined;
+			this.titleChanged();
 		}
 		this.layout();
 	}
@@ -228,6 +250,8 @@ export class ShellWindow {
 		if (!this.views.includes(view) || view.isDestroyed()) return;
 		this.revealed = view;
 		this.layout();
+		// A different workbench on screen is a different file in the name.
+		this.titleChanged();
 		// Which workbench is on screen is which theme the shell wears.
 		shellTheme().selectionChanged();
 		this.focusSurface();
@@ -316,6 +340,16 @@ export class ShellWindow {
 		// the xterm inside itself; only main can take the keyboard off the
 		// workbench view that had it.
 		this.focusSurface();
+	}
+
+	/** Register the one reader of "the window may need a new name". */
+	onTitleChanged(changed: () => void): void {
+		this.titleChanged = changed;
+	}
+
+	/** What the workbench on screen calls itself, if there is one. */
+	revealedTitle(): string | undefined {
+		return this.revealedView()?.webContents.getTitle();
 	}
 
 	/**

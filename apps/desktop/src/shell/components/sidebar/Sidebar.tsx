@@ -16,6 +16,7 @@ import {
   type WorkspaceSnapshot,
 } from "../../../ipc/appShell";
 import { clampSidebarWidth } from "../../../ipc/appShell";
+import { SCRATCH_NAME } from "../../../ipc/windowTitles";
 import type { WorkspaceRepositoryWire } from "../../../ipc/contract";
 import { useAppShell } from "../../useAppShell";
 import { devhub } from "../../client";
@@ -414,7 +415,7 @@ function ScratchRow({
             <path d="M1.5 3.6 L5.7 7 L1.5 10.4 M7.6 10.4 H12.5" />
           </svg>
         </span>
-        <span className="row-label">Scratch</span>
+        <span className="row-label">{SCRATCH_NAME}</span>
       </span>
     </button>
   );

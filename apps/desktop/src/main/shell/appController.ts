@@ -18,6 +18,7 @@ import { randomUUID } from "node:crypto";
 import { access, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import vscodeProduct from "code-oss-dev/out/vs/platform/product/common/product.js";
 import { electron } from "../electron.js";
 import { URI } from "code-oss-dev/out/vs/base/common/uri.js";
 import { CancellationToken as VSCancellationToken } from "code-oss-dev/out/vs/base/common/cancellation.js";
@@ -111,6 +112,7 @@ import {
 } from "../../model/wire.js";
 import { shellWindow } from "./shellWindow.js";
 import { shellTheme } from "./shellTheme.js";
+import { editorElement, shellTitleFor } from "./shellTitle.js";
 import type { ShellPalette } from "../../ipc/palette.js";
 import type { WorkbenchView } from "./workbenchView.js";
 import { agents, inspectWorkspaceResources, terminals } from "./adapters.js";
@@ -270,6 +272,12 @@ export class AppController {
 		shellWindow().setSurfaceKeyResolver((view) =>
 			this.editorSurfaceKeyForView(view.id),
 		);
+		// The window's name is a function of the model and of what the
+		// workbench on screen calls itself. The model half is pushed from
+		// `projectionChanged`; this is the other half arriving on its own.
+		shellWindow().onTitleChanged(() => {
+			this.refreshWindowTitle();
+		});
 		this.registerIpc();
 		this.watchConfig();
 	}
@@ -731,6 +739,10 @@ export class AppController {
 	 */
 	private projectionChanged(): void {
 		refreshMenu();
+		// The window's name says which Workspace, and what in it, so it moves
+		// whenever the projection does — here rather than at each place that
+		// changes a selection, for the same reason the menu is rebuilt here.
+		this.refreshWindowTitle();
 		// A workspace that has just appeared, closed, or been given an Issue is
 		// the only thing here the watcher cares about; it compares before it
 		// looks, so this is a nudge and not a poll.
@@ -739,6 +751,30 @@ export class AppController {
 		// What is on screen follows the selection, wherever the selection
 		// changed — a menu command, a restored session, or the page.
 		this.syncEditorViewInBackground();
+	}
+
+	/**
+	 * Say what this window is, now.
+	 *
+	 * Every part of the answer is read at the moment it is asked for: the model
+	 * for the Workspace and the Agent's word, the window for what the workbench
+	 * on screen calls itself. Nothing is cached, so there is no second copy to
+	 * go stale, and calling this more often than necessary costs a string.
+	 */
+	private refreshWindowTitle(): void {
+		const shell = shellWindow();
+		if (shell.window.isDestroyed()) return;
+		const snapshot = this.coordinator.snapshot();
+		shell.window.setTitle(
+			shellTitleFor({
+				selection: snapshot.selection,
+				workspaces: snapshot.workspaces,
+				editorElement: editorElement(
+					shell.revealedTitle(),
+					vscodeProduct.nameLong,
+				),
+			}),
+		);
 	}
 
 	private publishAppearance(): void {

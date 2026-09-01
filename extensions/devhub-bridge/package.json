@@ -23,6 +23,7 @@
   ],
   "contributes": {
     "configurationDefaults": {
+      "window.title": "${dirty}${activeEditorShort}",
       "window.commandCenter": false,
       "workbench.layoutControl.enabled": false,
       "terminal.integrated.defaultProfile.osx": "DevHub"
