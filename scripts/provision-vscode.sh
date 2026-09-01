@@ -155,15 +155,35 @@ for patch in "$REPO_ROOT"/patches/vscode/*.patch; do
 done
 
 # --- 4. compile ------------------------------------------------------------
+# Two trees come out of this step, and the stamp covers both.
+#
+#   out/              the module-by-module compile. `pnpm dev` runs on it:
+#                     VSCODE_DEV is set, VS Code loads its source graph file by
+#                     file, and a change is one `npm run compile` away.
+#   out-vscode-min/   the bundled tree, one file per process. The packaged app
+#                     runs on it, with VSCODE_DEV unset, because that is what
+#                     makes it a built product rather than a checkout that
+#                     happens to be zipped. See scripts/package-nightly.py.
+#
+# One stamp for both: a tree that agrees with the source and a tree beside it
+# that does not is the state the stamp exists to make impossible, and "which of
+# the two is stale" is not a question anybody should have to ask.
 step "compile vscode/"
 if [ "$FORCE" = 1 ] \
 	|| [ ! -f "$VSCODE_DIR/out/vs/code/electron-main/main.js" ] \
+	|| [ ! -f "$VSCODE_DIR/out-vscode-min/main.js" ] \
 	|| [ "$(cat "$SOURCE_STAMP" 2>/dev/null)" != "$SOURCE_STATE" ]; then
 	(cd "$VSCODE_DIR" && npm run compile)
+	# Upstream's own CI path. It transpiles with esbuild rather than tsc, which
+	# is both faster and the only one that completes here: the tsc path stops on
+	# a declaration-portability error in upstream's own Copilot agent-host
+	# source, which the dev compile never emits declarations for and so never
+	# sees.
+	(cd "$VSCODE_DIR" && npm run core-ci)
 	mkdir -p "$(dirname "$SOURCE_STAMP")"
 	printf '%s' "$SOURCE_STATE" > "$SOURCE_STAMP"
 else
-	echo "vscode/out already compiled from this commit and these patches"
+	echo "vscode/out and vscode/out-vscode-min already built from this commit and these patches"
 fi
 
 # --- 5. the Electron our main process runs in ------------------------------
