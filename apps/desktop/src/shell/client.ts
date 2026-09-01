@@ -58,7 +58,7 @@ export interface AppShellClient {
   ): () => void;
   startWorkspacePicker(query: string): Promise<string>;
   cancelWorkspacePicker(): Promise<void>;
-  selectWorkspacePicker(path: string): Promise<AppOutcome>;
+  selectWorkspacePicker(path: string, create: boolean): Promise<AppOutcome>;
   createProject(path: string): Promise<AppOutcome>;
   cloneProject(url: string, parentDirectory: string): Promise<AppOutcome>;
   projectDefaultDirectory(): Promise<string>;
@@ -119,7 +119,8 @@ export function createShellClient(api: DevhubApi = devhub()): AppShellClient {
     subscribeRepositoryStatus: (listener) => api.onRepositoryStatus(listener),
     startWorkspacePicker: (query) => api.startWorkspacePicker(query),
     cancelWorkspacePicker: () => api.cancelWorkspacePicker(),
-    selectWorkspacePicker: (path) => api.selectWorkspacePicker(path),
+    selectWorkspacePicker: (path, create) =>
+      api.selectWorkspacePicker(path, create),
     createProject: (path) => api.createProject(path),
     cloneProject: (url, parentDirectory) =>
       api.cloneProject(url, parentDirectory),

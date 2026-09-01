@@ -20,9 +20,11 @@ import { basename, join } from "node:path";
 import type {
 	CommandSource,
 	Config,
+	DateSource,
 	FilesystemSource,
 	WorkspaceSource,
 } from "../../model/config.js";
+import { expandDateTemplate } from "../../model/dateTemplate.js";
 import type { WorkspacePickerEvent } from "../../ipc/contract.js";
 import { score } from "../../model/fuzzy.js";
 
@@ -53,6 +55,14 @@ export function startWorkspacePicker(
 	query: string,
 	operationId: string,
 	emit: PickerEmit,
+	/**
+	 * What day it is, for the sources that name one.
+	 *
+	 * A parameter so a test can say. It is read once per run rather than once
+	 * per source, so a search that starts a second before midnight offers one
+	 * day's folder and not two.
+	 */
+	now: () => Date = () => new Date(),
 ): () => void {
 	const state: RunState = {
 		operationId,
@@ -82,7 +92,7 @@ export function startWorkspacePicker(
 	 */
 	const offerFrom = (source: WorkspaceSource, sourceRank: number) => {
 		const seen = new Set<string>();
-		return (path: string, label: string) => {
+		return (path: string, label: string, missing = false) => {
 			if (state.cancelled || seen.has(path)) return;
 			if (state.candidateCount >= MAX_CANDIDATES) {
 				state.truncated = true;
@@ -102,6 +112,7 @@ export function startWorkspacePicker(
 				score: value,
 				sourceId: source.id,
 				sourceRank,
+				missing,
 			});
 		};
 	};
@@ -114,6 +125,8 @@ export function startWorkspacePicker(
 		try {
 			if (source.type === "filesystem") {
 				await walkFilesystemSource(source, state, offer);
+			} else if (source.type === "date") {
+				await runDateSource(source, now(), offer);
 			} else {
 				await runCommandSource(source, state, offer);
 			}
@@ -193,6 +206,35 @@ async function matchesKind(
 	} catch {
 		return false;
 	}
+}
+
+/**
+ * The one folder a date source names, today.
+ *
+ * There is no walk and no program: the template says which folder, and the
+ * clock says which day. That is the whole reason this kind of source exists —
+ * "today's workspace" used to be an external command, which meant the default
+ * configuration only worked on a machine that already had that command
+ * installed, and a default has to mean something on a computer that has just
+ * run DevHub for the first time.
+ *
+ * A folder that is not there yet is offered anyway when the source says so,
+ * marked as missing. That is not an oversight to be tidied: the moment a person
+ * wants today's folder is the moment before anything has made it, and a source
+ * that went quiet exactly then would be quiet on every day that matters.
+ */
+async function runDateSource(
+	source: DateSource,
+	now: Date,
+	offer: (path: string, label: string, missing?: boolean) => void,
+): Promise<void> {
+	const path = expandHome(expandDateTemplate(source.path, now));
+	const label = basename(path) || path;
+	if (await isDirectory(path)) {
+		offer(path, label);
+		return;
+	}
+	if (source.create_if_missing) offer(path, label, true);
 }
 
 async function walkFilesystemSource(

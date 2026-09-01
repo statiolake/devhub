@@ -27,6 +27,8 @@ export interface WorkspacePickerProps {
 /** A candidate row, and which source in Settings it came from. */
 interface PoolItem extends PickerItem {
   readonly sourceRank: number;
+  /** The folder is not there yet, and choosing this row makes it. */
+  readonly missing: boolean;
 }
 
 /**
@@ -128,9 +130,19 @@ export function WorkspacePicker({ onDismiss }: WorkspacePickerProps) {
             id: candidate.path,
             label: candidate.label,
             searchText: candidate.path,
-            detail: <PathLabel path={candidate.path} />,
+            detail: candidate.missing ? (
+              // The row is an offer to make it, so it says so where every
+              // other row says where it is. A path that is not there yet,
+              // shown as though it were, is a row that fails when chosen.
+              <>
+                <PathLabel path={candidate.path} /> — not created yet
+              </>
+            ) : (
+              <PathLabel path={candidate.path} />
+            ),
             glyph: <FolderGlyph />,
             sourceRank: candidate.sourceRank,
+            missing: candidate.missing,
           });
           changed = true;
         } else if (candidate.sourceRank < known.sourceRank) {
@@ -200,7 +212,13 @@ export function WorkspacePicker({ onDismiss }: WorkspacePickerProps) {
           ask("clone");
           return;
         }
-        finish(() => selectWorkspacePicker(choice.id));
+        // Only a row that said it is missing may make a folder, and the row
+        // said it because the source it came from said so. Nothing here
+        // decides it, and nothing here looks at the disk to second-guess it.
+        const chosen = pool.find((item) => item.id === choice.id);
+        finish(() =>
+          selectWorkspacePicker(choice.id, chosen?.missing ?? false),
+        );
       }}
       onCancel={() => {
         finish();
@@ -210,7 +228,9 @@ export function WorkspacePicker({ onDismiss }: WorkspacePickerProps) {
         run: () => {
           finish(async () => {
             const path = await chooseWorkspaceFolder();
-            if (path) await selectWorkspacePicker(path);
+            // A folder the person picked in the native chooser is one that
+            // exists; there is nothing to make.
+            if (path) await selectWorkspacePicker(path, false);
           });
         },
       }}

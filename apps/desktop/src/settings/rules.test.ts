@@ -22,12 +22,14 @@ import {
   validateConfig,
   type Config,
   type ConfiguredAgentProfile,
+  type DateSource,
   type FilesystemSource,
   type WorkspaceKind,
 } from "../model/config.js";
 import {
   argumentProblem,
   choiceOf,
+  dateTemplateProblem,
   displayNameProblem,
   environmentNameProblem,
   excludeNameProblem,
@@ -61,6 +63,9 @@ const CORPUS = [
   "node_modules",
   "*.log",
   "a[1]",
+  "~/YYYY/[DD]",
+  "~/YYYY/[DD",
+  "~/YYYY/DD]",
   "a{b}",
   "a?b",
   "a\\b",
@@ -83,6 +88,13 @@ const SOURCE: FilesystemSource = {
   kinds: ["git_repository"],
   include_hidden: false,
   exclude_names: [],
+};
+
+const DATED: DateSource = {
+  type: "date",
+  id: "daily",
+  path: "~/workspace/daily/YYYY/MMDD",
+  create_if_missing: true,
 };
 
 const PROFILE: ConfiguredAgentProfile = {
@@ -173,6 +185,13 @@ describe("what the Settings fields refuse", () => {
     agree("workspace source path", workspacePathProblem, (path) => ({
       ...base(),
       workspaceSources: [{ ...SOURCE, path }],
+    }));
+  });
+
+  it("matches the loader on a dated source's folder", () => {
+    agree("date source path", dateTemplateProblem, (path) => ({
+      ...base(),
+      workspaceSources: [{ ...DATED, path }],
     }));
   });
 

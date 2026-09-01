@@ -147,6 +147,7 @@ import {
 	cloneProject,
 	createProject,
 	defaultProjectDirectory,
+	ensureWorkspaceFolder,
 } from "./projects.js";
 import {
 	ensureWorktree,
@@ -2414,11 +2415,24 @@ export class AppController {
 		});
 		// Picking a candidate is the same act as opening a folder, so it takes the
 		// same path through the model: one way to add a Workspace, not two.
-		handle(CHANNELS.selectWorkspacePicker, async (_event, path: string) => {
-			this.cancelPicker?.();
-			this.cancelPicker = undefined;
-			return this.openFolder(path);
-		});
+		handle(
+			CHANNELS.selectWorkspacePicker,
+			async (_event, path: string, create: boolean) => {
+				this.cancelPicker?.();
+				this.cancelPicker = undefined;
+				// A date source offers today's folder before anything has made it —
+				// see `ensureWorkspaceFolder`, which is the making, and is separate
+				// from `createProject` because the two want opposite answers to "it
+				// is already there".
+				try {
+					return this.openFolder(
+						create ? await ensureWorkspaceFolder(path) : path,
+					);
+				} catch (error: unknown) {
+					throw asIpcError(errorWire(error));
+				}
+			},
+		);
 		// Creating and cloning end where picking does — `openFolder` — because
 		// they differ only in how the directory came to exist.
 		handle(CHANNELS.projectDefaultDirectory, () =>

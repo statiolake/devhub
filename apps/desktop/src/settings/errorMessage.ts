@@ -33,6 +33,7 @@ import {
   ID_RULE,
   RUNTIME_RULE,
   SOCKET_RULE,
+  DATE_TEMPLATE_RULE,
   TMUX_ARGUMENT_RULE,
   WORKSPACE_PATH_RULE,
 } from "./rules";
@@ -61,6 +62,8 @@ export function ruleMessage(code: SettingsDiagnosticCodeWire): string {
       return DUPLICATE_RULE;
     case "invalid_workspace_path":
       return WORKSPACE_PATH_RULE;
+    case "invalid_date_template":
+      return DATE_TEMPLATE_RULE;
     case "invalid_exclusion":
       return EXCLUDE_NAME_RULE;
     case "invalid_environment_key":

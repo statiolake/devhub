@@ -100,6 +100,13 @@ export type SettingsWorkspaceSourceWire =
 			readonly id: string;
 			readonly command: readonly string[];
 			readonly timeoutMs: number;
+	  }
+	| {
+			readonly type: "date";
+			readonly id: string;
+			/** A path with date tokens in it — see `model/dateTemplate.ts`. */
+			readonly path: string;
+			readonly createIfMissing: boolean;
 	  };
 
 export interface SettingsConfigWire {
@@ -257,6 +264,7 @@ export type SettingsDiagnosticCodeWire =
 	| "invalid_workspace_path"
 	| "invalid_workspace_depth"
 	| "invalid_workspace_kind"
+	| "invalid_date_template"
 	| "invalid_exclusion"
 	| "invalid_command"
 	| "invalid_timeout"

@@ -81,6 +81,23 @@ export async function createProject(path: string): Promise<string> {
 	return target;
 }
 
+/**
+ * Make sure the folder is there, and say where it is.
+ *
+ * The other half of `createProject`, and deliberately not the same function
+ * with a flag. "New Project" must refuse a folder that already exists, because
+ * pointing it at somebody's work looks like it worked and is not what was
+ * asked for. This is the opposite act: a date source's row says "today's
+ * workspace", and today's workspace is the same folder whether or not anything
+ * has made it yet — so a folder that turned up between the search and the
+ * choice is the answer, not a collision.
+ */
+export async function ensureWorkspaceFolder(path: string): Promise<string> {
+	const target = requireAbsolute(path);
+	await mkdir(target, { recursive: true });
+	return target;
+}
+
 export interface CloneRequest {
 	readonly url: string;
 	readonly parentDirectory: string;

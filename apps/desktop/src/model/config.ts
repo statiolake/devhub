@@ -26,6 +26,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { dateTemplateBracketsBalance } from "./dateTemplate.js";
 import { isValidFontFamily } from "./fontFamily.js";
 import {
   parseTomlValue,
@@ -93,7 +94,27 @@ export interface CommandSource {
   readonly timeout_ms: number;
 }
 
-export type WorkspaceSource = FilesystemSource | CommandSource;
+/**
+ * One folder, named by today's date: `~/workspace/daily/YYYY/MMDD`.
+ *
+ * The tokens and their meanings are in `model/dateTemplate.ts`. There is no
+ * depth and no walk, because there is nothing to search: the template names
+ * exactly one folder, and that folder is today's.
+ *
+ * `create_if_missing` is what makes it useful on the day it matters. A daily
+ * folder does not exist until something makes it, and the moment a person
+ * wants it is the moment before it exists — so the row is offered anyway, and
+ * choosing it makes the folder. Turned off, the source is simply silent on any
+ * day the folder is not there yet.
+ */
+export interface DateSource {
+  readonly type: "date";
+  readonly id: string;
+  readonly path: string;
+  readonly create_if_missing: boolean;
+}
+
+export type WorkspaceSource = FilesystemSource | CommandSource | DateSource;
 
 export type AgentProfileKind = "codex" | "claude" | "custom";
 
@@ -242,40 +263,44 @@ export function defaultRuntimes(): RuntimeConfig {
   };
 }
 
+/**
+ * Where DevHub looks for a workspace when nobody has said.
+ *
+ * A default has to mean something on a computer that has only just run DevHub
+ * for the first time, and that is the whole of what shapes this list. What was
+ * here before did not: it ran `workspace_path -d`, a program that exists on one
+ * developer's machine, and it walked `~/dev` and `~/workspace/work`, two
+ * folders that exist on the same one — a source whose root is missing is a
+ * source that fails, so a new installation opened its picker onto errors.
+ *
+ * Two sources, and nothing about either is specific to a machine:
+ *
+ * - **Today's workspace**, named by the date rather than found by a program.
+ *   `create_if_missing` is what makes it work anywhere: the folder does not
+ *   have to be there, and choosing the row is what makes it.
+ * - **Git checkouts under the home directory**, which is the one folder every
+ *   machine has. Three levels down, because a repository is usually kept two
+ *   or three folders in (`~/dev/github/thing`) rather than loose in `~`.
+ *
+ * `~/dev` used to be walked separately and is not any more: it is inside the
+ * home directory, so the two sources found the same repositories twice, and
+ * which of them a repository was attributed to came down to which finished
+ * first.
+ */
 export function defaultWorkspaceSources(): WorkspaceSource[] {
   return [
     {
-      type: "command",
+      type: "date",
       id: "daily",
-      command: ["workspace_path", "-d"],
-      timeout_ms: 2000,
-    },
-    {
-      type: "filesystem",
-      id: "dev-git",
-      path: "~/dev",
-      min_depth: 1,
-      max_depth: 4,
-      kinds: ["git_repository", "git_worktree"],
-      include_hidden: false,
-      exclude_names: [...DEFAULT_EXCLUDE_NAMES],
-    },
-    {
-      type: "filesystem",
-      id: "work",
-      path: "~/workspace/work",
-      min_depth: 1,
-      max_depth: 1,
-      kinds: ["directory"],
-      include_hidden: false,
-      exclude_names: [...DEFAULT_EXCLUDE_NAMES],
+      path: "~/workspace/daily/YYYY/MMDD",
+      create_if_missing: true,
     },
     {
       type: "filesystem",
       id: "home-git",
       path: "~",
       min_depth: 1,
-      max_depth: 2,
+      max_depth: 3,
       kinds: ["git_repository", "git_worktree"],
       include_hidden: false,
       exclude_names: [...DEFAULT_EXCLUDE_NAMES],
@@ -355,6 +380,7 @@ export type ValidationCode =
   | "invalid_workspace_path"
   | "invalid_workspace_depth"
   | "invalid_workspace_kind"
+  | "invalid_date_template"
   | "invalid_exclusion"
   | "invalid_command"
   | "invalid_timeout"
@@ -719,6 +745,14 @@ function validateWorkspaceSources(sources: readonly WorkspaceSource[]): void {
           );
         }
       });
+    } else if (source.type === "date") {
+      validatePath(source.path, `${prefix}.path`);
+      // The one thing about a template that can be wrong without knowing what
+      // day it is. Taking the rest of the path literally instead would offer a
+      // folder nobody named, on a path nobody would recognise as the mistake.
+      if (!dateTemplateBracketsBalance(source.path)) {
+        fail("invalid_date_template", `${prefix}.path`);
+      }
     } else {
       if (
         source.command.length === 0 ||
@@ -796,6 +830,20 @@ function workspaceSourceFromTable(
   const prefix = `workspace_sources[${String(index)}]`;
   const table = requireTable(value, prefix);
   const type = table["type"];
+  if (type === "date") {
+    checkKeys(table, ["id", "type", "path", "create_if_missing"], prefix);
+    return {
+      type: "date",
+      id: optionalString(table, "id", prefix, ""),
+      path: optionalString(table, "path", prefix, ""),
+      create_if_missing: optionalBoolean(
+        table,
+        "create_if_missing",
+        prefix,
+        true,
+      ),
+    };
+  }
   if (type === "command") {
     checkKeys(table, ["id", "type", "command", "timeout_ms"], prefix);
     return {
@@ -1040,6 +1088,45 @@ export function parseConfig(input: string): Config {
   return config;
 }
 
+/**
+ * One workspace source, as the file spells it.
+ *
+ * A function with a switch rather than a chain of conditionals in the middle of
+ * `configDocument`: each kind's keys are written out in one place, and adding a
+ * fourth kind is a case rather than another branch nested inside two others.
+ */
+function sourceToTable(source: WorkspaceSource): Record<string, TomlValue> {
+  switch (source.type) {
+    case "date":
+      return {
+        type: source.type,
+        id: source.id,
+        path: source.path,
+        create_if_missing: source.create_if_missing,
+      };
+    case "command":
+      return {
+        type: source.type,
+        id: source.id,
+        command: [...source.command],
+        timeout_ms: source.timeout_ms,
+      };
+    case "filesystem":
+      return {
+        type: source.type,
+        id: source.id,
+        path: source.path,
+        min_depth: source.min_depth,
+        ...(source.max_depth === undefined
+          ? {}
+          : { max_depth: source.max_depth }),
+        kinds: [...source.kinds],
+        include_hidden: source.include_hidden,
+        exclude_names: [...source.exclude_names],
+      };
+  }
+}
+
 /** The on-disk shape of a config: what the file is expected to say. */
 export function configDocument(config: Config): Record<string, TomlValue> {
   return {
@@ -1065,27 +1152,7 @@ export function configDocument(config: Config): Record<string, TomlValue> {
         dark: paletteToTable(config.appearance.terminalTheme.dark),
       },
     },
-    workspace_sources: config.workspaceSources.map((source) =>
-      source.type === "filesystem"
-        ? {
-            type: source.type,
-            id: source.id,
-            path: source.path,
-            min_depth: source.min_depth,
-            ...(source.max_depth === undefined
-              ? {}
-              : { max_depth: source.max_depth }),
-            kinds: [...source.kinds],
-            include_hidden: source.include_hidden,
-            exclude_names: [...source.exclude_names],
-          }
-        : {
-            type: source.type,
-            id: source.id,
-            command: [...source.command],
-            timeout_ms: source.timeout_ms,
-          },
-    ),
+    workspace_sources: config.workspaceSources.map(sourceToTable),
     agent_profiles: config.agentProfiles.map((profile) => ({
       id: profile.id,
       display_name: profile.display_name,

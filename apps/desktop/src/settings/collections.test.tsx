@@ -50,6 +50,17 @@ const SOURCES: SettingsConfig["workspaceSources"] = [
   },
 ];
 
+/** The same list with a date source after it, for the tests about that form. */
+const WITH_DATED: SettingsConfig["workspaceSources"] = [
+  ...SOURCES,
+  {
+    type: "date",
+    id: "daily",
+    path: "~/workspace/daily/YYYY/MMDD",
+    createIfMissing: true,
+  },
+];
+
 async function open(section: string, config: SettingsConfig) {
   const { saves, client } = testClient(config);
   render(<SettingsApp client={client} />);
@@ -93,6 +104,45 @@ describe("a collection of workspace sources", () => {
 
     fireEvent.keyDown(list(), { key: "ArrowUp" });
     expect(selected()).toHaveTextContent("personal");
+  });
+
+  it("shows a date source as its own form, and saves what is typed there", async () => {
+    // A third kind of source, not a folder source with the depth fields
+    // hidden: what it needs is a template and one switch.
+    const { saves } = await open(
+      "Workspaces",
+      testConfig({ workspaceSources: WITH_DATED }),
+    );
+    fireEvent.keyDown(list(), { key: "ArrowDown" });
+    fireEvent.keyDown(list(), { key: "ArrowDown" });
+    expect(selected()).toHaveTextContent("daily");
+    expect(screen.queryByLabelText("Command timeout")).not.toBeInTheDocument();
+    expect(
+      screen.queryByLabelText("Workspace root path"),
+    ).not.toBeInTheDocument();
+
+    const field = screen.getByLabelText("Dated workspace path");
+    expect(field).toHaveValue("~/workspace/daily/YYYY/MMDD");
+    fireEvent.change(field, { target: { value: "~/notes/YYYY-MM-DD" } });
+    fireEvent.blur(field);
+
+    await vi.waitFor(() => {
+      const saved = saves.at(-1)?.workspaceSources.at(2);
+      expect(saved?.type === "date" ? saved.path : undefined).toBe(
+        "~/notes/YYYY-MM-DD",
+      );
+    });
+  });
+
+  it("refuses a template whose brackets do not close", async () => {
+    await open("Workspaces", testConfig({ workspaceSources: WITH_DATED }));
+    fireEvent.keyDown(list(), { key: "ArrowDown" });
+    fireEvent.keyDown(list(), { key: "ArrowDown" });
+
+    const field = screen.getByLabelText("Dated workspace path");
+    fireEvent.change(field, { target: { value: "~/notes/[YYYY" } });
+    fireEvent.blur(field);
+    expect(field).toBeInvalid();
   });
 
   it("appends a source, selects it, and gives it an identifier nobody has", async () => {

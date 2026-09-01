@@ -31,8 +31,13 @@ export interface AppShellContextValue {
   readonly pickerBusy: boolean;
   readonly startWorkspacePicker: (query?: string) => Promise<void>;
   readonly cancelWorkspacePicker: () => Promise<void>;
+  /**
+   * Open the folder a picker row named — making it first when the row said it
+   * is not there yet, which only a date source's row ever does.
+   */
   readonly selectWorkspacePicker: (
     path: string,
+    create: boolean,
   ) => Promise<AppOutcome | undefined>;
   readonly chooseWorkspaceFolder: () => Promise<string | undefined>;
   /** Make a folder and open it. Throws what to do about it when it cannot. */

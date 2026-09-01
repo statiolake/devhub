@@ -381,8 +381,8 @@ export function AppShellProvider({
   }, [transport, reportFailure]);
 
   const selectWorkspacePicker = useCallback(
-    async (path: string) => {
-      const outcome = await transport.selectWorkspacePicker(path);
+    async (path: string, create: boolean) => {
+      const outcome = await transport.selectWorkspacePicker(path, create);
       applySnapshot(outcome.snapshot);
       setPickerBusy(false);
       return outcome;

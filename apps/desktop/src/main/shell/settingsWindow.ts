@@ -19,6 +19,7 @@ import {
 	SETTINGS_CHANNELS,
 	SETTINGS_SCHEMA_VERSION,
 	type SettingsConfigWire,
+	type SettingsWorkspaceSourceWire,
 	type SettingsErrorWire,
 	type SettingsSaveRequestWire,
 	type SettingsSnapshotWire,
@@ -158,25 +159,7 @@ function toWireConfig(config: Config): SettingsConfigWire {
 			terminalMargin: config.appearance.terminalMargin,
 			terminalTheme: config.appearance.terminalTheme,
 		},
-		workspaceSources: config.workspaceSources.map((source) =>
-			source.type === "filesystem"
-				? {
-						type: "filesystem" as const,
-						id: source.id,
-						path: source.path,
-						minDepth: source.min_depth,
-						maxDepth: source.max_depth ?? null,
-						kinds: [...source.kinds],
-						includeHidden: source.include_hidden,
-						excludeNames: [...source.exclude_names],
-					}
-				: {
-						type: "command" as const,
-						id: source.id,
-						command: [...source.command],
-						timeoutMs: source.timeout_ms,
-					},
-		),
+		workspaceSources: config.workspaceSources.map(toWireSource),
 		agentProfiles: config.agentProfiles.map((profile) => ({
 			id: profile.id,
 			displayName: profile.display_name,
@@ -186,6 +169,73 @@ function toWireConfig(config: Config): SettingsConfigWire {
 			env: { ...profile.env },
 		})),
 	};
+}
+
+/**
+ * One workspace source, each way across the seam.
+ *
+ * A switch per direction rather than a conditional inside the config mapping:
+ * the two are exact mirrors, they are next to each other, and a fourth kind of
+ * source is a case in each rather than a branch nested in a chain.
+ */
+function toWireSource(source: WorkspaceSource): SettingsWorkspaceSourceWire {
+	switch (source.type) {
+		case "date":
+			return {
+				type: "date",
+				id: source.id,
+				path: source.path,
+				createIfMissing: source.create_if_missing,
+			};
+		case "command":
+			return {
+				type: "command",
+				id: source.id,
+				command: [...source.command],
+				timeoutMs: source.timeout_ms,
+			};
+		case "filesystem":
+			return {
+				type: "filesystem",
+				id: source.id,
+				path: source.path,
+				minDepth: source.min_depth,
+				maxDepth: source.max_depth ?? null,
+				kinds: [...source.kinds],
+				includeHidden: source.include_hidden,
+				excludeNames: [...source.exclude_names],
+			};
+	}
+}
+
+function fromWireSource(source: SettingsWorkspaceSourceWire): WorkspaceSource {
+	switch (source.type) {
+		case "date":
+			return {
+				type: "date",
+				id: source.id,
+				path: source.path,
+				create_if_missing: source.createIfMissing,
+			};
+		case "command":
+			return {
+				type: "command",
+				id: source.id,
+				command: [...source.command],
+				timeout_ms: source.timeoutMs,
+			};
+		case "filesystem":
+			return {
+				type: "filesystem",
+				id: source.id,
+				path: source.path,
+				min_depth: source.minDepth,
+				max_depth: source.maxDepth ?? undefined,
+				kinds: [...source.kinds],
+				include_hidden: source.includeHidden,
+				exclude_names: [...source.excludeNames],
+			};
+	}
 }
 
 /**
@@ -214,26 +264,7 @@ function fromWireConfig(wire: SettingsConfigWire): Config {
 			terminalMargin: wire.appearance.terminalMargin,
 			terminalTheme: wire.appearance.terminalTheme,
 		},
-		workspaceSources: wire.workspaceSources.map(
-			(source): WorkspaceSource =>
-				source.type === "filesystem"
-					? {
-							type: "filesystem",
-							id: source.id,
-							path: source.path,
-							min_depth: source.minDepth,
-							max_depth: source.maxDepth ?? undefined,
-							kinds: [...source.kinds],
-							include_hidden: source.includeHidden,
-							exclude_names: [...source.excludeNames],
-						}
-					: {
-							type: "command",
-							id: source.id,
-							command: [...source.command],
-							timeout_ms: source.timeoutMs,
-						},
-		),
+		workspaceSources: wire.workspaceSources.map(fromWireSource),
 		agentProfiles: wire.agentProfiles.map((profile) => ({
 			id: profile.id,
 			display_name: profile.displayName,

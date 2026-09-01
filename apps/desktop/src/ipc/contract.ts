@@ -149,6 +149,14 @@ export interface WorkspacePickerCandidate {
 	readonly sourceId: string;
 	/** The source's index in `config.workspace_sources`, from the top. */
 	readonly sourceRank: number;
+	/**
+	 * The folder is not there yet, and choosing this row makes it.
+	 *
+	 * Only a date source that says `create_if_missing` produces one. Everything
+	 * else offers folders it found, so this is false for them and there is no
+	 * arrangement in which a row about a folder that exists is marked missing.
+	 */
+	readonly missing: boolean;
 }
 
 /** Streamed progress for one picker run. */
@@ -252,7 +260,7 @@ export interface DevhubApi {
 	chooseWorkspaceFolder(): Promise<string | undefined>;
 	startWorkspacePicker(query: string): Promise<string>;
 	cancelWorkspacePicker(): Promise<void>;
-	selectWorkspacePicker(path: string): Promise<AppOutcome>;
+	selectWorkspacePicker(path: string, create: boolean): Promise<AppOutcome>;
 	onWorkspacePicker(
 		listener: (event: WorkspacePickerEvent) => void,
 	): () => void;

@@ -58,6 +58,43 @@ describe("parsing", () => {
     ]);
   });
 
+  it("reads a dated source, and defaults it to offering today before it exists", () => {
+    const source = [
+      "version = 1",
+      "",
+      "[[workspace_sources]]",
+      'type = "date"',
+      'id = "daily"',
+      'path = "~/workspace/daily/YYYY/MMDD"',
+      "",
+    ].join("\n");
+    expect(parseConfig(source).workspaceSources).toEqual([
+      {
+        type: "date",
+        id: "daily",
+        path: "~/workspace/daily/YYYY/MMDD",
+        create_if_missing: true,
+      },
+    ]);
+    // And it survives being written back out.
+    expect(parseConfig(configToToml(parseConfig(source)))).toEqual(
+      parseConfig(source),
+    );
+  });
+
+  it("refuses a dated source whose brackets do not close", () => {
+    const source = [
+      "version = 1",
+      "",
+      "[[workspace_sources]]",
+      'type = "date"',
+      'id = "daily"',
+      'path = "~/[YYYY"',
+      "",
+    ].join("\n");
+    expect(codeOf(() => parseConfig(source))).toBe("invalid_date_template");
+  });
+
   it("refuses an unknown key rather than ignoring a typo", () => {
     expect(codeOf(() => parseConfig("version = 1\nnonsense = true\n"))).toBe(
       "unknown_key",

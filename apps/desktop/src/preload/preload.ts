@@ -108,10 +108,11 @@ const devhub: DevhubApi = {
 		ipcRenderer.invoke(CHANNELS.startWorkspacePicker, query) as Promise<string>,
 	cancelWorkspacePicker: () =>
 		ipcRenderer.invoke(CHANNELS.cancelWorkspacePicker) as Promise<void>,
-	selectWorkspacePicker: (path: string) =>
+	selectWorkspacePicker: (path: string, create: boolean) =>
 		ipcRenderer.invoke(
 			CHANNELS.selectWorkspacePicker,
 			path,
+			create,
 		) as Promise<AppOutcome>,
 	createProject: (path: string) =>
 		ipcRenderer.invoke(CHANNELS.createProject, path) as Promise<AppOutcome>,

@@ -60,6 +60,7 @@ import {
   MATCH_CHOICES,
   runtimeProblem,
   socketProblem,
+  dateTemplateProblem,
   workspacePathProblem,
   type MatchChoice,
 } from "./rules";
@@ -255,8 +256,8 @@ export function WorkspacesSection({
       entries={sources.map((item) => ({
         key: item.id,
         title: item.id,
-        note: item.type === "filesystem" ? item.path : item.command.join(" "),
-        glyph: item.type === "filesystem" ? <FolderGlyph /> : <CommandGlyph />,
+        note: sourceNote(item),
+        glyph: item.type === "command" ? <CommandGlyph /> : <FolderGlyph />,
       }))}
       selected={selected}
       onSelect={setWanted}
@@ -267,19 +268,13 @@ export function WorkspacesSection({
           ...config,
           workspaceSources: [
             ...sources,
-            {
-              type: "filesystem",
-              id: freeId(
+            emptySourceOfKind(
+              "filesystem",
+              freeId(
                 "source",
                 sources.map((item) => item.id),
               ),
-              path: "~",
-              minDepth: 1,
-              maxDepth: 2,
-              kinds: ["git_repository"],
-              includeHidden: false,
-              excludeNames: [],
-            },
+            ),
           ],
         });
       }}
@@ -322,35 +317,11 @@ export function WorkspacesSection({
                 value={source.type}
                 options={[
                   ["filesystem", "Folder"],
+                  ["date", "Date"],
                   ["command", "Command"],
                 ]}
                 onChange={(type) => {
-                  replace(
-                    type === "command"
-                      ? {
-                          type: "command",
-                          id: source.id,
-                          // One empty argument, not none. A command source with
-                          // no command at all is a config the loader refuses,
-                          // so switching the popup used to be a change that
-                          // could not be saved: the file kept the folder source
-                          // while the window showed a command form. One blank
-                          // argument is what the loader calls a command source,
-                          // and it is a row visibly waiting to be typed into.
-                          command: [""],
-                          timeoutMs: 2000,
-                        }
-                      : {
-                          type: "filesystem",
-                          id: source.id,
-                          path: "~",
-                          minDepth: 1,
-                          maxDepth: 2,
-                          kinds: ["git_repository"],
-                          includeHidden: false,
-                          excludeNames: [],
-                        },
-                  );
+                  replace(emptySourceOfKind(type, source.id));
                 }}
               />
             </Row>
@@ -413,6 +384,32 @@ export function WorkspacesSection({
                 </WideRow>
               </Group>
             </>
+          ) : source.type === "date" ? (
+            <Group
+              heading="Where to look"
+              note="A path with today's date in it. YYYY, YY, MM, DD and MMDD are the year, the month and the day; HH, mm and ss are the time. Text in [brackets] is used as written, which is how a folder called DDta keeps its name."
+            >
+              <Row label="Folder">
+                <TextField
+                  label="Dated workspace path"
+                  value={source.path}
+                  mono
+                  placeholder="~/workspace/daily/YYYY/MMDD"
+                  validate={dateTemplateProblem}
+                  onCommit={(path) => {
+                    replace({ ...source, path });
+                  }}
+                />
+              </Row>
+              <SwitchRow
+                label="Offer it before it exists"
+                help="Today's folder is usually made the moment you first want it. With this on the picker offers it anyway, and choosing it makes the folder."
+                checked={source.createIfMissing}
+                onChange={(createIfMissing) => {
+                  replace({ ...source, createIfMissing });
+                }}
+              />
+            </Group>
           ) : (
             <>
               <Group
@@ -455,6 +452,59 @@ export function WorkspacesSection({
       ) : null}
     </Collection>
   );
+}
+
+/**
+ * What a source's row says under its name: the thing it is about.
+ *
+ * A path for the two kinds that name one, and the command line for the kind
+ * that runs a program. The date source shows its template unexpanded, because
+ * the template is what the person wrote and what they would edit; the row is
+ * about the setting, not about today.
+ */
+function sourceNote(source: SettingsWorkspaceSourceWire): string {
+  return source.type === "command" ? source.command.join(" ") : source.path;
+}
+
+/**
+ * A source of a given kind, with nothing filled in but something valid in
+ * every field.
+ *
+ * One function for both places a source appears from nothing — the Add button
+ * and the kind popup — so a source added and a source switched to are the same
+ * source. And every field starts at a value the loader takes: switching the
+ * popup used to leave a command source with no command at all, which is a
+ * config that cannot be saved, so the file kept the old source while the
+ * window showed the new form.
+ */
+function emptySourceOfKind(
+  type: SettingsWorkspaceSourceWire["type"],
+  id: string,
+): SettingsWorkspaceSourceWire {
+  switch (type) {
+    case "command":
+      // One blank argument rather than none: a row visibly waiting to be typed
+      // into, and the shortest thing the loader calls a command source.
+      return { type: "command", id, command: [""], timeoutMs: 2000 };
+    case "date":
+      return {
+        type: "date",
+        id,
+        path: "~/workspace/daily/YYYY/MMDD",
+        createIfMissing: true,
+      };
+    case "filesystem":
+      return {
+        type: "filesystem",
+        id,
+        path: "~",
+        minDepth: 1,
+        maxDepth: 2,
+        kinds: ["git_repository"],
+        includeHidden: false,
+        excludeNames: [],
+      };
+  }
 }
 
 /**
