@@ -599,9 +599,6 @@ export class AppCoordinator {
           intent.presentation,
           id,
         );
-      case "associate_issue":
-        this.model.associateIssue(intent.workspaceId, intent.issue);
-        return this.transitionOutcome(beforeRevision, id);
       case "rename_agent":
         this.model.renameAgent(intent.agentId, intent.displayName);
         return this.transitionOutcome(beforeRevision, id);

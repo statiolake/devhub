@@ -49,7 +49,6 @@ import {
   type AgentStatus,
   type RuntimeHealth,
 } from "./domain.js";
-import { issueUrl, parseIssueUrl } from "./github.js";
 import {
   AppModel,
   SIDEBAR_DEFAULT_WIDTH,
@@ -210,13 +209,18 @@ export interface WorkspaceStateRecord {
   canonical_path: string;
   repository_id?: string;
   /**
-   * The Issue this workspace was started for, as its URL.
+   * There is deliberately no `issue_url` here any more.
    *
-   * A URL rather than the parsed reference: it is what the person pasted, it
-   * is what a human reading `state.json` can follow, and it is what the shared
-   * parser turns back into owner, repository and number on load.
+   * DevHub used to write down which Issue a workspace was assigned. A record
+   * cannot follow a checkout, so a workspace assigned Issue 128 and then
+   * switched to `master` went on claiming 128 — wrong at exactly the moment
+   * somebody needed it right. The branch that is checked out is the fact now,
+   * read fresh every poll, and nothing about the link is stored.
+   *
+   * A `state.json` written by an older DevHub still has the key. It is not
+   * read and not validated, so it is ignored on load and simply absent from
+   * the next file written — no migration, because there is nothing to carry.
    */
-  issue_url?: string;
   lifecycle: WorkspaceLifecycleRecord;
   agents: AgentStateRecord[];
 }
@@ -467,12 +471,6 @@ function validateWorkspaceRecord(record: WorkspaceStateRecord): void {
   validateAbsolutePath(record.canonical_path);
   if (record.repository_id !== undefined) {
     validateUuid(record.repository_id);
-  }
-  if (record.issue_url !== undefined && !parseIssueUrl(record.issue_url)) {
-    // A record DevHub cannot read back is a record it would have to guess at,
-    // and guessing which Issue a workspace is about is the thing writing it
-    // down was for.
-    fail("STATE_INVALID");
   }
   const ids = new Set<string>();
   for (const agent of record.agents) {
@@ -808,16 +806,7 @@ export function hydrateModel(
       return fail("STATE_INVALID");
     }
     try {
-      model.addWorkspace(
-        new Workspace(
-          id,
-          root,
-          selected,
-          undefined,
-          undefined,
-          record.issue_url ? parseIssueUrl(record.issue_url) : undefined,
-        ),
-      );
+      model.addWorkspace(new Workspace(id, root, selected));
     } catch {
       return fail("STATE_INVALID");
     }
@@ -980,7 +969,6 @@ export function stateFromSnapshot(
       selected_path: workspace.selectedPath,
       canonical_path: workspace.root,
       repository_id: workspace.repositoryId,
-      issue_url: workspace.issue ? issueUrl(workspace.issue) : undefined,
       lifecycle: lifecycleFrom(workspace.state),
       agents: workspace.agents.map((agent) => ({
         agent_id: agent.id,

@@ -374,15 +374,6 @@ export interface WorkspaceWire {
 	readonly label: string;
 	readonly root: string;
 	readonly selectedPath: string;
-	/**
-	 * The Issue this workspace was started for, when DevHub started it for one.
-	 *
-	 * The record, not a guess: the page reads it to know which Issue to name on
-	 * an Agent's row. A workspace whose branch merely *looks* like an Issue
-	 * branch has nothing here, and is recognised by the naming convention
-	 * instead — one fallback, in one place.
-	 */
-	readonly issueUrl?: string;
 	readonly state: WorkspaceStateWire;
 	/**
 	 * Why the workspace is not available, when it is not.

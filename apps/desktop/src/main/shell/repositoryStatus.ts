@@ -16,7 +16,7 @@
  */
 
 import type { IssueReference } from "../../model/github.js";
-import { issueNumberFromBranch, parseIssueUrl } from "../../model/github.js";
+import { issueNumberFromBranch } from "../../model/github.js";
 import type {
 	RepositoryStatusWire,
 	WorkspaceRepositoryWire,
@@ -33,8 +33,6 @@ import {
 export interface WatchedWorkspace {
 	readonly id: string;
 	readonly root: string;
-	/** The Issue recorded against it, when the person assigned one. */
-	readonly issueUrl: string | undefined;
 }
 
 export interface RepositoryStatusDeps {
@@ -54,10 +52,18 @@ function issueKey(issue: IssueReference): string {
 }
 
 /**
- * The Issue a workspace is about, when nobody wrote one down.
+ * The Issue a workspace is about: the one its checked-out branch names.
  *
- * The branch name convention, and only against a GitHub remote — the number in
- * `feature/128-tidy` means nothing without knowing whose 128 it is.
+ * The only way a workspace is linked to an Issue. DevHub used to prefer a
+ * record written when the person assigned one, and fall back to this — but a
+ * record cannot follow a checkout, so a workspace assigned Issue 128 and then
+ * switched to `master` kept claiming 128. The branch is read every round, so
+ * switching branches moves the Issue with it, and a workspace sitting on
+ * `master` is linked to nothing, which is the true answer.
+ *
+ * Only against a GitHub remote: the number in `feature/128-tidy` means nothing
+ * without knowing whose 128 it is, and the branch cannot say. That is why the
+ * remote is still read from git rather than derived alongside it.
  */
 function issueFromConvention(
 	remote: string | undefined,
@@ -111,7 +117,7 @@ export class RepositoryStatusWatcher {
 	observe(): void {
 		const signature = this.deps
 			.workspaces()
-			.map((workspace) => `${workspace.id}:${workspace.issueUrl ?? ""}`)
+			.map((workspace) => workspace.id)
 			.join("\n");
 		if (signature === this.watching) return;
 		this.watching = signature;
@@ -149,13 +155,10 @@ export class RepositoryStatusWatcher {
 				const facts = command
 					? await readRepository(command, workspace.root).catch(() => undefined)
 					: undefined;
-				const recorded = workspace.issueUrl
-					? parseIssueUrl(workspace.issueUrl)
-					: undefined;
 				return {
 					workspace,
 					branch: facts?.branch,
-					issue: recorded ?? issueFromConvention(facts?.remote, facts?.branch),
+					issue: issueFromConvention(facts?.remote, facts?.branch),
 				};
 			}),
 		);

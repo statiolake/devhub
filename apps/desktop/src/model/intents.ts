@@ -35,7 +35,6 @@ import {
   isCanonicalUuid,
 } from "./domain.js";
 import type { AppSnapshot } from "./appModel.js";
-import type { IssueReference } from "./github.js";
 
 /** Native application lifecycle readiness owned by the coordinator. */
 export type AppReadiness = "starting" | "ready" | "unavailable";
@@ -235,18 +234,6 @@ export type UserIntent =
        * seen as a jump.
        */
       readonly presentation: SurfacePresentation;
-    }
-  /**
-   * Write down which Issue a workspace was started for.
-   *
-   * Said once, by the flow that started it, and true from then on. It is an
-   * intent like any other so that it is persisted, projected and replayed the
-   * way every other fact about a workspace is.
-   */
-  | {
-      readonly type: "associate_issue";
-      readonly workspaceId: WorkspaceId;
-      readonly issue: IssueReference | undefined;
     }
   | {
       readonly type: "rename_agent";

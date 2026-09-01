@@ -159,7 +159,7 @@ import {
 	type GitCommand,
 } from "./git.js";
 import { findClones } from "./issues.js";
-import { issueUrl, parseIssueUrl } from "../../model/github.js";
+import { parseIssueUrl } from "../../model/github.js";
 import { RepositoryStatusWatcher } from "./repositoryStatus.js";
 import { installMenu, refreshMenu } from "./menu.js";
 import { installKeyboard } from "./keyboard.js";
@@ -853,7 +853,6 @@ export class AppController {
 			this.coordinator.model.workspaces.map((workspace) => ({
 				id: workspace.id,
 				root: workspace.root,
-				issueUrl: workspace.issue ? issueUrl(workspace.issue) : undefined,
 			})),
 		publish: (status) => {
 			this.lastRepositoryStatus = status;
@@ -2380,11 +2379,12 @@ export class AppController {
 				`opening ${target} neither added a workspace nor selected one`,
 			);
 		}
-		await this.dispatchAwaiting({
-			type: "associate_issue",
-			workspaceId,
-			issue,
-		});
+		// Nothing is written down about which Issue this workspace is for. The
+		// branch the flow just made carries the number (`feature/128-…`), and the
+		// branch is the whole of the link — so a worktree made for the Issue shows
+		// it, and "in this workspace" on a branch that says nothing about an Issue
+		// shows nothing, which is the point: a record would have claimed the Issue
+		// while `master` was checked out.
 		const settled = await this.dispatchAwaiting({
 			type: "create_agent",
 			workspaceId,

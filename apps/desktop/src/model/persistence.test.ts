@@ -96,34 +96,28 @@ describe("projection", () => {
     expect(next.workspaces[0].agents[1].provider_mapping).toBeUndefined();
   });
 
-  it("keeps the Issue a workspace was started for", () => {
-    // The record is the whole point: a branch can be renamed, and a workspace
-    // that survived a restart must still know what it is about.
-    const model = populatedModel();
-    model.associateIssue(WS_A, {
-      owner: "example",
-      repository: "widget",
-      number: 128,
-    });
-    const state = stateFromSnapshot(model.snapshot());
-    expect(state.workspaces[0].issue_url).toBe(
-      "https://github.com/example/widget/issues/128",
-    );
-    expect(hydrateModel(state, [codex]).snapshot().workspaces[0].issue).toEqual(
-      {
-        owner: "example",
-        repository: "widget",
-        number: 128,
-      },
-    );
+  it("writes nothing down about which Issue a workspace is for", () => {
+    // A record cannot follow a checkout, so there is no record: the branch that
+    // is checked out is the link, read fresh on every poll. See
+    // `issueNumberFromBranch` and `RepositoryStatusWatcher`.
+    const state = stateFromSnapshot(populatedModel().snapshot());
+    expect(state.workspaces[0]).not.toHaveProperty("issue_url");
   });
 
-  it("refuses a state whose Issue link cannot be read back", () => {
+  it("ignores the Issue an older DevHub wrote down", () => {
+    // Files written before the link moved to the branch still carry the key.
+    // It is not read and not validated, so it neither refuses the file nor
+    // survives into the next one.
     const state = stateFromSnapshot(populatedModel().snapshot());
-    state.workspaces[0].issue_url = "https://example.com/not-an-issue";
+    (state.workspaces[0] as unknown as Record<string, unknown>)["issue_url"] =
+      "https://example.com/not-an-issue";
     expect(() => {
       validateState(state);
-    }).toThrow();
+    }).not.toThrow();
+    const rewritten = stateFromSnapshot(
+      hydrateModel(state, [codex]).snapshot(),
+    );
+    expect(rewritten.workspaces[0]).not.toHaveProperty("issue_url");
   });
 });
 
