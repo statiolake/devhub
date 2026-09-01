@@ -210,17 +210,25 @@ export function launchEnvironment(
 	return Object.freeze(withoutDevHubRuntime(processEnvironment));
 }
 
-/** The status line the Settings window shows under the option. */
+/**
+ * What became of the import, in a sentence.
+ *
+ * Shown as the status line under the Settings option, and — when the import
+ * failed — folded into the message a runtime lookup fails with, because a
+ * short PATH and an import that did not happen are the same fact twice. So it
+ * has to read in both places, which is why it names the consequence rather
+ * than the setting.
+ */
 export function loginEnvironmentSummary(login: LoginEnvironment): string {
 	switch (login.kind) {
 		case "imported":
 			return `Imported from ${login.shell}.`;
 		case "disabled":
-			return "Not imported. DevHub launches terminals and agents with the environment it was started with.";
+			return "Not imported. Everything DevHub runs, including the editor and its extensions, uses the environment DevHub was started with.";
 		case "unsupported":
 			return "Not imported: this platform has no login shell to read.";
 		case "failed":
-			return `DevHub could not read the environment from ${login.shell}: ${login.reason} Terminals and agents run with the environment DevHub was started with, which may not have your tools on PATH.`;
+			return `DevHub could not read the environment from ${login.shell}: ${login.reason} Everything DevHub runs, including the editor and its extensions, falls back to the environment DevHub was started with, which may not have your tools on PATH.`;
 	}
 }
 
