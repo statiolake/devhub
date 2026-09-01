@@ -43,6 +43,38 @@ export const CLAUDE: Manifest = {
 			regex: [/^[⠀-⣿◐-◓] /u],
 		},
 		{
+			/**
+			 * The footer that offers to interrupt — the durable "it is busy".
+			 *
+			 * Added by DevHub, not carried from herdr. Up to v2.1.227 Claude
+			 * Code spun a braille wheel in its title and `osc_title_working`
+			 * above was the whole of how working was told from idle. Current
+			 * versions put a static marker and the branch in the title in every
+			 * state, so that rule cannot fire and nothing else said "working" —
+			 * the row read idle for the entire length of a turn.
+			 *
+			 * The screen still says it, in the one place that has stayed put
+			 * across the redesigns: while a turn is running the footer offers
+			 * `esc to interrupt`, and when it is over it offers shortcuts
+			 * instead. That is chrome about the live turn rather than text that
+			 * scrolled by, which is what makes it safe to read.
+			 *
+			 * It outranks `live_prompt_box` because the prompt box is now drawn
+			 * and typeable *while* the Agent works — a person can queue their
+			 * next message — so "there is a prompt box" stopped meaning idle.
+			 * It stays below the blocked rules, and refuses outright on a
+			 * screen that is asking a question, because a turn that has paused
+			 * for a person is not a turn that is running.
+			 */
+			id: "screen_working_footer",
+			state: "working",
+			priority: 960,
+			region: bottomNonEmptyLines(5),
+			visibleWorking: true,
+			contains: ["esc to interrupt"],
+			not: [{ contains: ["do you want to"] }],
+		},
+		{
 			id: "btw_overlay_working",
 			state: "working",
 			priority: 975,
@@ -102,6 +134,9 @@ export const CLAUDE: Manifest = {
 			visibleIdle: true,
 			lineRegex: [/^\s*❯/u],
 			not: [
+				// The box is drawn and typeable while the Agent works, so its
+				// presence is no longer evidence of anything on its own.
+				{ contains: ["esc to interrupt"] },
 				{ contains: ["enter to select"] },
 				{ contains: ["esc to cancel"] },
 				{ contains: ["tab/arrow keys"] },
@@ -164,6 +199,44 @@ export const CLAUDE: Manifest = {
 			],
 		},
 		{
+			/**
+			 * A numbered question, whatever it is asking about.
+			 *
+			 * Added by DevHub. The two rules above were written for the one
+			 * wording they knew — "Do you want to proceed?" with "esc to
+			 * cancel" — and a current Claude Code asks in that shape for a
+			 * command but in others elsewhere: a network request asks "Do you
+			 * want to allow this connection?" over a numbered list and offers
+			 * no "esc to cancel" line at all. Those screens fell through to
+			 * `legacy_no_prompt_blocker`, which does say blocked, but carries
+			 * no `visibleBlocker` — so the row waited out the full debounce
+			 * before admitting that an Agent had stopped for a person, and
+			 * nothing downstream could tell a live question from a sentence in
+			 * the scrollback that happened to read like one.
+			 *
+			 * What is actually common to all of them is the shape rather than
+			 * the wording: a question, and directly under it a numbered list
+			 * whose first option is yes. That is live chrome — it is below the
+			 * last rule the screen drew — so it is declared visible, and it
+			 * outranks the working footer because a turn that has paused for an
+			 * answer is not a turn that is running.
+			 */
+			id: "numbered_permission_prompt",
+			state: "blocked",
+			priority: 990,
+			region: "after_last_horizontal_rule",
+			visibleBlocker: true,
+			contains: ["do you want to"],
+			all: [
+				{
+					any: [
+						{ lineRegex: [/^\s*❯?\s*1\.\s*yes\b/iu] },
+						{ lineRegex: [/^\s*❯?\s*\d\.\s*no\b/iu] },
+					],
+				},
+			],
+		},
+		{
 			id: "legacy_no_prompt_blocker",
 			state: "blocked",
 			priority: 300,
@@ -187,14 +260,26 @@ export const CLAUDE: Manifest = {
 			],
 			not: [{ lineRegex: [/^\s*❯\s*$/u] }],
 		},
-		{
-			id: "osc_title_idle",
-			state: "idle",
-			priority: 250,
-			region: "osc_title",
-			visibleIdle: true,
-			regex: [/^✳ /u],
-		},
+		/*
+		 * herdr's `osc_title_idle` — an idle claim on a title beginning `✳ ` —
+		 * is deliberately not here.
+		 *
+		 * That marker used to mean idle because the title carried a spinner
+		 * while working. It now sits in the title in *every* state, so the rule
+		 * matched always and, being the lowest-priority thing in the manifest,
+		 * it decided every screen no other rule recognised. A stale manifest
+		 * therefore did not degrade to "I cannot tell" — it reported, with no
+		 * hedge, that the Agent was done and waiting for you.
+		 *
+		 * That is the worst direction to fail in. Idle is the actionable state:
+		 * it is what the row invites you to act on and what the injection queue
+		 * waits for before it sends an Agent its next instruction. A wrong
+		 * `working` costs a moment of patience; a wrong `idle` types into a
+		 * running turn. So idle is claimed only from the live prompt box, which
+		 * is positive evidence on the screen, and a screen the rules do not
+		 * describe now reads `unknown` — which the sidebar draws as `?` and the
+		 * queue refuses to send on.
+		 */
 		{
 			id: "osc_progress_idle",
 			state: "idle",
