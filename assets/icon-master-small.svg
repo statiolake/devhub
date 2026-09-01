@@ -4,13 +4,17 @@
 
   Same mark as icon-master.svg, redrawn for the sizes where that one stops
   working. Downscaling the master to 16 px leaves a white blob with an orange
-  speck: the stroke lands on 1.75 px, the counter closes up, and the bowl's
-  curve is gone. So here the D is larger on the canvas, the stroke is 150 rather
-  than 112, and the counter and core are opened up until they still read as a
-  counter and a core after the resampler has had its way with them.
+  speck: the stroke lands on 1.4 px, the counter closes up, and the bowl's curve
+  is gone. So here the D is larger on the canvas, the stroke is 150 rather than
+  112, and the counter and core are opened up until they still read as a counter
+  and a core after the resampler has had its way with them.
 
-  The sheen and the drop shadow are gone too. Below 32 px a 16 px blur is a
-  smear across a third of the icon, and the highlight only greys the top edge.
+  The sheen and the mark's drop shadow are gone too. Below 32 px a 16 px blur is
+  a smear across a third of the icon, and the highlight only greys the top edge.
+  The tile's own geometry is not negotiable in the same way: it comes from
+  Apple's grid — an 824 tile centred on 1024, corner radius 185.4, transparent
+  margin — and the two masters have to agree about it or DevHub would change
+  size between 32 and 64 px.
 
   An .icns holds a separate image per size, which is what makes this possible;
   scripts/package-icon.sh renders 16 and 32 from here and everything else from
@@ -24,12 +28,17 @@
       <stop offset="0" stop-color="#5C7CF2"/>
       <stop offset="1" stop-color="#1E2A72"/>
     </linearGradient>
+    <filter id="tile-shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="10" stdDeviation="10" flood-color="#000000" flood-opacity="0.25"/>
+    </filter>
   </defs>
 
-  <rect width="1024" height="1024" rx="234" fill="url(#bg)"/>
+  <rect x="100" y="100" width="824" height="824" rx="185.4" fill="url(#bg)" filter="url(#tile-shadow)"/>
 
-  <path fill="#FFFFFF" fill-rule="evenodd"
-        d="M256 172 H472 A340 340 0 0 1 472 852 H256 A44 44 0 0 1 212 808 V216 A44 44 0 0 1 256 172 Z
-           M362 322 H472 A190 190 0 0 1 472 702 H362 Z"/>
-  <circle cx="512" cy="512" r="112" fill="#FFB74A"/>
+  <g transform="translate(100,100) scale(0.8046875)">
+    <path fill="#FFFFFF" fill-rule="evenodd"
+          d="M256 172 H472 A340 340 0 0 1 472 852 H256 A44 44 0 0 1 212 808 V216 A44 44 0 0 1 256 172 Z
+             M362 322 H472 A190 190 0 0 1 472 702 H362 Z"/>
+    <circle cx="512" cy="512" r="112" fill="#FFB74A"/>
+  </g>
 </svg>
