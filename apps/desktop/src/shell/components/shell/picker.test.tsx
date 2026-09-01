@@ -55,7 +55,11 @@ describe("the picker", () => {
   it("reports a plain Return as a plain choice", () => {
     const { onChoose } = renderPicker({});
     fireEvent.keyDown(screen.getByRole("dialog"), { key: "Enter" });
-    expect(onChoose).toHaveBeenCalledWith({ id: "claude", split: false });
+    expect(onChoose).toHaveBeenCalledWith({
+      id: "claude",
+      split: false,
+      query: "",
+    });
   });
 
   it("reports Command-Return as the split choice", () => {
@@ -64,7 +68,11 @@ describe("the picker", () => {
       key: "Enter",
       metaKey: true,
     });
-    expect(onChoose).toHaveBeenCalledWith({ id: "claude", split: true });
+    expect(onChoose).toHaveBeenCalledWith({
+      id: "claude",
+      split: true,
+      query: "",
+    });
   });
 
   it("carries the modifier from a click too", () => {
@@ -72,7 +80,11 @@ describe("the picker", () => {
     fireEvent.click(screen.getByRole("option", { name: /Codex/ }), {
       metaKey: true,
     });
-    expect(onChoose).toHaveBeenCalledWith({ id: "codex", split: true });
+    expect(onChoose).toHaveBeenCalledWith({
+      id: "codex",
+      split: true,
+      query: "",
+    });
   });
 
   it("filters what it was given without asking anyone", () => {
@@ -168,7 +180,39 @@ describe("the picker", () => {
       pinned: [{ id: "new", label: "New Project…" }],
     });
     fireEvent.keyDown(screen.getByRole("dialog"), { key: "Enter" });
-    expect(onChoose).toHaveBeenCalledWith({ id: "new", split: false });
+    expect(onChoose).toHaveBeenCalledWith({
+      id: "new",
+      split: false,
+      query: "",
+    });
+  });
+
+  it("starts on a value the caller supplied, with the caret after it", () => {
+    // A branch name that is going to begin `feature/128-` however it ends: the
+    // person types the rest, and a caret at the start would have them typing
+    // the prefix again in the middle of their own words.
+    renderPicker({ initialQuery: "feature/128-" });
+    const field = screen.getByRole("textbox") as HTMLInputElement;
+    expect(field.value).toBe("feature/128-");
+    expect(field.selectionStart).toBe("feature/128-".length);
+  });
+
+  it("reports what was typed along with the row", () => {
+    // The whole point of a "New Branch…" row: the answer is the typing, and
+    // the caller reads it from the choice rather than from a second copy of
+    // the field it does not own.
+    const { onChoose } = renderPicker({
+      pinned: [{ id: "new", label: "New Branch…" }],
+    });
+    fireEvent.change(screen.getByRole("textbox"), {
+      target: { value: "feature/128-tidy" },
+    });
+    fireEvent.click(screen.getByRole("option", { name: /New Branch/ }));
+    expect(onChoose).toHaveBeenCalledWith({
+      id: "new",
+      split: false,
+      query: "feature/128-tidy",
+    });
   });
 
   it("cancels on Escape", () => {

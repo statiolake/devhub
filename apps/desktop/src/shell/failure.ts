@@ -66,29 +66,44 @@ function isAppError(value: unknown): value is AppError {
  * either as itself or wrapped in a message. Both are unwrapped here, once.
  */
 export function toAppError(error: unknown): AppError {
+  return spokenFailure(error) ?? unspokenFailure(error);
+}
+
+function unspokenFailure(error: unknown): AppError {
+  return error instanceof Error && error.message.length > 0
+    ? { ...FALLBACK_ERROR, detail: error.message }
+    : FALLBACK_ERROR;
+}
+
+/**
+ * The failure as its raiser worded it, or nothing when it has no words.
+ *
+ * The difference matters wherever a failure can be answered on the spot. "That
+ * folder already exists" and git's own complaint about a URL were written for
+ * the person who is about to correct the field they are looking at; a
+ * `TypeError` from a bug here was not, and putting it under the field would
+ * teach the person to retype a URL that was never the problem. So a caller
+ * that shows a failure in place shows only these, and hands everything else to
+ * the root — where an unexplained failure is exactly what a person needs to
+ * see to know the app, and not their typing, is what went wrong.
+ */
+export function spokenFailure(error: unknown): AppError | undefined {
   if (error instanceof UserFacingFailure) {
     return { ...FALLBACK_ERROR, summary: error.message, detail: error.detail };
   }
-  if (isAppError(error)) {
-    return error;
-  }
+  if (isAppError(error)) return error;
   if (error instanceof Error && error.message.length > 0) {
     const start = error.message.indexOf("{");
-    if (start >= 0) {
-      try {
-        const decoded: unknown = JSON.parse(error.message.slice(start));
-        if (isAppError(decoded)) {
-          return decoded;
-        }
-      } catch {
-        // Not a structured payload. An internal message is not something the
-        // reader can act on, so it becomes the detail under a stable summary
-        // rather than the summary itself.
-      }
+    if (start < 0) return undefined;
+    try {
+      const decoded: unknown = JSON.parse(error.message.slice(start));
+      if (isAppError(decoded)) return decoded;
+    } catch {
+      // Not a structured payload, so the message is internal: it is not this
+      // function's to speak, and `toAppError` puts it in a detail instead.
     }
-    return { ...FALLBACK_ERROR, detail: error.message };
   }
-  return FALLBACK_ERROR;
+  return undefined;
 }
 
 /**

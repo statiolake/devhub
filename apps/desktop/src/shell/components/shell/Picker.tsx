@@ -59,12 +59,27 @@ export interface PickerItem {
 export interface PickerChoice {
   readonly id: string;
   readonly split: boolean;
+  /**
+   * What was in the field when the row was taken.
+   *
+   * Reported for every choice, like `split`, and for the same reason: a row
+   * that means "make the thing I just typed" — "New Branch…", "Use this URL" —
+   * needs the typing, and a caller that had to reach for it separately would be
+   * reading a second copy of the field's state.
+   */
+  readonly query: string;
 }
 
 export interface PickerProps {
   /** Names the dialog for assistive technology; not drawn. */
   readonly title: string;
   readonly placeholder: string;
+  /**
+   * What the field starts with, for a question whose answer is mostly known —
+   * a branch name that is going to begin `feature/128-` whatever else it says.
+   * The caret starts after it, so the person types the rest and nothing else.
+   */
+  readonly initialQuery?: string;
   readonly items: readonly PickerItem[];
   /**
    * Rows that are not candidates: they *do* something rather than name
@@ -117,6 +132,7 @@ const NO_PINNED: readonly PickerItem[] = [];
 export function Picker({
   title,
   placeholder,
+  initialQuery = "",
   items,
   pinned = NO_PINNED,
   busy = false,
@@ -129,7 +145,7 @@ export function Picker({
   onCancel,
   extraAction,
 }: PickerProps) {
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(initialQuery);
   const [active, setActive] = useState(0);
   const composing = useRef(false);
   const input = useRef<HTMLInputElement | null>(null);
@@ -176,11 +192,17 @@ export function Picker({
   useEffect(() => {
     restoreTo.current = document.activeElement as HTMLElement | null;
     focusField();
+    // A starting value is a prefix to be typed on, not a selection to be
+    // replaced: the caret goes after it.
+    const field = input.current;
+    if (field && initialQuery.length > 0) {
+      field.setSelectionRange(initialQuery.length, initialQuery.length);
+    }
     return () => {
       const target = restoreTo.current;
       if (target?.isConnected) target.focus();
     };
-  }, [focusField]);
+  }, [focusField, initialQuery]);
 
   // There is deliberately no "take the keyboard back whenever this window is
   // focused" rule here. It was written, and it made the app unusable: every
@@ -225,9 +247,9 @@ export function Picker({
 
   const choose = useCallback(
     (id: string, split: boolean) => {
-      onChoose({ id, split });
+      onChoose({ id, split, query });
     },
-    [onChoose],
+    [onChoose, query],
   );
 
   const onKeyDown = (event: React.KeyboardEvent) => {

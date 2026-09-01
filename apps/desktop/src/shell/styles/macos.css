@@ -739,6 +739,22 @@
   color: var(--secondary);
 }
 
+/* Why the last answer did not work. It sits where the note sits, because it is
+   the same line of the sheet saying something about the question — and it is
+   the one thing there that is not guidance, so it is the one thing coloured. */
+.picker-note-failure {
+  color: var(--danger);
+}
+
+/* A step that is doing rather than asking: the spinner and what it is doing,
+   in the sheet the questions were asked in, so nothing jumps between them. */
+.wizard-working {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-4);
+}
+
 .picker-actions {
   display: flex;
   justify-content: space-between;
