@@ -250,6 +250,27 @@
   flex: 1 1 auto;
 }
 
+/* What an Agent is doing, in the words it used itself. Same shape and the
+   same dimming as a Workspace's branch, because it is the same kind of thing:
+   context trailing the name the row is called by. */
+.agent-row:has(.row-activity) .row-label {
+  overflow: hidden;
+  flex: 0 1 auto;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row-activity {
+  overflow: hidden;
+  min-width: 0;
+  flex: 0 1 auto;
+  margin-left: var(--space-1);
+  color: var(--tertiary);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* What a Workspace is working on: the branch, and what that branch is for.
    Both dimmed, and both give way before the workspace's own name does — the
    row is named by the workspace, and the rest is context. */

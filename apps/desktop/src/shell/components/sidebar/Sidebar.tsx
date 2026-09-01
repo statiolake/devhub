@@ -244,7 +244,7 @@ function WorkspaceRow({
                     data-tree-item-id={`agent:${agent.id}`}
                     tabIndex={agentSelected ? 0 : -1}
                     aria-current={agentSelected ? "page" : undefined}
-                    aria-label={`${agent.displayName}, ${statusLabel(agent.status)} agent, ${agent.controlState === "stopping" ? "Stopping" : stopFailed ? "Stop failed" : runtimeHealthLabel(agent.runtimeHealth)}${agent.unread ? ", unread" : ""}`}
+                    aria-label={`${agent.displayName}, ${statusLabel(agent.status)} agent, ${agent.controlState === "stopping" ? "Stopping" : stopFailed ? "Stop failed" : runtimeHealthLabel(agent.runtimeHealth)}${agent.unread ? ", unread" : ""}${agent.activity ? `, ${agent.activity}` : ""}`}
                     disabled={agent.controlState === "stopping"}
                     // Command-click opens the Agent beside its workbench; a
                     // plain click gives it the whole content area. The same
@@ -268,6 +268,14 @@ function WorkspaceRow({
                         smaller size. */}
                     <StatusMark status={agent.status} />
                     <span className="row-label">{agent.displayName}</span>
+                    {/* What the Agent says it is doing, in its own words. It
+                        reads as the same kind of thing as a workspace's
+                        branch — dimmed context trailing the name the row is
+                        called by — because it is: the row is still named by
+                        the Agent, and this is what that Agent is on. */}
+                    {agent.activity ? (
+                      <span className="row-activity">{agent.activity}</span>
+                    ) : null}
                     {/* The unread mark is not a second status. It says the
                         Agent asked for you and you have not been, which is a
                         fact about the person and outlives whatever the Agent

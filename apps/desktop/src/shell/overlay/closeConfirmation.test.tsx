@@ -62,6 +62,7 @@ function snapshotWith(agents: boolean): AppSnapshot {
                 ordinal: 1,
                 status: "working",
                 unread: false,
+                activity: undefined,
                 controlState: { kind: "running" } as never,
                 runtimeHealth: { kind: "healthy" } as never,
               },
