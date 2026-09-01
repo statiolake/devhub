@@ -22,6 +22,7 @@ import {
   Workspace,
   type AgentControlState,
   type AgentId,
+  type AgentInjection,
   type AgentProfileId,
   type AgentReconciliation,
   type AgentRestoreRecord,
@@ -108,6 +109,7 @@ export interface AgentSnapshot {
   readonly unread: boolean;
   /** What the Agent says it is doing, or nothing if it has not said. */
   readonly activity: string | undefined;
+  readonly injection: AgentInjection;
 }
 
 export interface WorkspaceSnapshot {
@@ -449,6 +451,12 @@ export class AppModel {
   }
 
   /** What the Agent says it is doing, as of the round that read its pane. */
+  setAgentInjection(id: AgentId, injection: AgentInjection): void {
+    if (this.requireAgent(id).setInjection(injection)) {
+      this.bumpRevision();
+    }
+  }
+
   setAgentActivity(id: AgentId, activity: string | undefined): void {
     if (this.requireAgent(id).setActivity(activity)) {
       this.bumpRevision();
@@ -479,6 +487,7 @@ export class AppModel {
       }
       this.setAgentStatus(observation.agentId, observation.status);
       this.setAgentActivity(observation.agentId, observation.activity);
+      this.setAgentInjection(observation.agentId, observation.injection);
       this.setAgentRuntimeHealth(
         observation.agentId,
         observation.runtimeHealth,
@@ -840,6 +849,7 @@ export class AppModel {
         controlState: agent.controlState,
         unread: agent.unread,
         activity: agent.activity,
+        injection: agent.injection,
       })),
     }));
   }

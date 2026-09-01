@@ -262,6 +262,7 @@ function agentWire(agent: AgentSnapshot): AgentWire {
     controlState: agent.controlState.kind,
     unread: agent.unread,
     activity: agent.activity,
+    injection: agent.injection,
   };
 }
 

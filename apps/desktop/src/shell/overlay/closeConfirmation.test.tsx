@@ -63,6 +63,11 @@ function snapshotWith(agents: boolean): AppSnapshot {
                 status: "working",
                 unread: false,
                 activity: undefined,
+                injection: {
+                  queued: 0,
+                  waitingFor: "nothing_queued",
+                  lastFailure: undefined,
+                },
                 controlState: { kind: "running" } as never,
                 runtimeHealth: { kind: "healthy" } as never,
               },

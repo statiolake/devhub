@@ -29,13 +29,9 @@ export interface AgentProfileWire {
 	readonly kind: AgentProfileKindWire;
 }
 export type AgentProfilesAvailabilityWire =
-	| "available"
-	| "degraded"
-	| "unavailable";
+	"available" | "degraded" | "unavailable";
 export type AgentProfilesDiagnosticWire =
-	| "configuration_invalid"
-	| "configuration_conflict"
-	| "projection_unavailable";
+	"configuration_invalid" | "configuration_conflict" | "projection_unavailable";
 export interface AgentProfilesWire {
 	readonly availability: AgentProfilesAvailabilityWire;
 	readonly diagnostic?: AgentProfilesDiagnosticWire | null;
@@ -49,6 +45,19 @@ export type AgentStatusWire =
 	| "error"
 	/** No detector for this Agent's kind; nobody has read its screen. */
 	| "unknown";
+export type AgentInjectionWaitWire =
+	| "nothing_queued"
+	| "settling"
+	| "agent_busy"
+	| "agent_asking"
+	| "agent_unreadable";
+
+export interface AgentInjectionWire {
+	readonly queued: number;
+	readonly waitingFor: AgentInjectionWaitWire;
+	readonly lastFailure: string | undefined;
+}
+
 export interface AgentWire {
 	readonly controlState: AgentControlStateWire;
 	readonly displayName: string;
@@ -67,6 +76,15 @@ export interface AgentWire {
 	 * for what counts as saying something.
 	 */
 	readonly activity: string | undefined;
+	/**
+	 * Text DevHub is holding for this Agent, and why it has not gone yet.
+	 *
+	 * `queued` is how many instructions are waiting; `waitingFor` is the reason
+	 * the first of them has not been typed into the pane — the Agent is busy,
+	 * or stopped on a question, or showing a screen nothing can read. See
+	 * `main/agent/injection.ts`.
+	 */
+	readonly injection: AgentInjectionWire;
 	readonly workspaceId: string;
 }
 /**
@@ -322,10 +340,7 @@ export type EditorHostWire =
 			readonly summary: string;
 	  };
 export type ReplayEventKindWire =
-	| "snapshot"
-	| "noop"
-	| "error"
-	| "operation_completed";
+	"snapshot" | "noop" | "error" | "operation_completed";
 export interface ReplayEventWire {
 	readonly kind: ReplayEventKindWire;
 	readonly sequence: number;
@@ -337,11 +352,7 @@ export interface ReplayWire {
 	readonly snapshot: AppSnapshotWire;
 }
 export type RuntimeHealthWire =
-	| "starting"
-	| "healthy"
-	| "degraded"
-	| "unavailable"
-	| "failed";
+	"starting" | "healthy" | "degraded" | "unavailable" | "failed";
 export interface SelectionWire {
 	readonly context: ContextWire;
 	readonly presentation: SurfacePresentationWire;
@@ -363,10 +374,7 @@ export interface TerminalThemeWire {
 	readonly light: TerminalPaletteWire;
 }
 export type WorkspaceStateWire =
-	| "available"
-	| "unavailable"
-	| "closing"
-	| "closing-failed";
+	"available" | "unavailable" | "closing" | "closing-failed";
 export interface WorkspaceWire {
 	readonly agents: readonly AgentWire[];
 	readonly canCreateAgent: boolean;

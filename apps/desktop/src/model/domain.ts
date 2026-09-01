@@ -384,11 +384,7 @@ export class AgentProfile {
  */
 export type AgentStatus = "working" | "waiting" | "idle" | "error" | "unknown";
 export type RuntimeHealth =
-  | "starting"
-  | "healthy"
-  | "degraded"
-  | "unavailable"
-  | "failed";
+  "starting" | "healthy" | "degraded" | "unavailable" | "failed";
 
 /**
  * Why a Workspace is unavailable, or cannot finish cleanup. These are the only
@@ -434,7 +430,39 @@ export interface AgentObservation {
    * said something.
    */
   readonly activity: string | undefined;
+  /** What DevHub is holding for this Agent, and why it has not gone yet. */
+  readonly injection: AgentInjection;
 }
+
+/**
+ * Why text DevHub means to send an Agent has not been sent.
+ *
+ * Held here so a row can say it. A queue that waits without saying what it is
+ * waiting for is indistinguishable from a queue that has forgotten, and the
+ * reason is always known — see `main/agent/injection.ts` for the rule.
+ */
+export type AgentInjectionWait =
+  | "nothing_queued"
+  /** The prompt is free; the queue is making sure it stays that way. */
+  | "settling"
+  | "agent_busy"
+  /** Stopped on a question. That screen wants a keypress, never a sentence. */
+  | "agent_asking"
+  /** A screen no manifest describes, so no keystroke has a known meaning. */
+  | "agent_unreadable";
+
+export interface AgentInjection {
+  readonly queued: number;
+  readonly waitingFor: AgentInjectionWait;
+  /** The last send that failed, kept until one succeeds. */
+  readonly lastFailure: string | undefined;
+}
+
+export const NO_INJECTION: AgentInjection = {
+  queued: 0,
+  waitingFor: "nothing_queued",
+  lastFailure: undefined,
+};
 
 /**
  * A complete provider reconciliation. Missing provider Agents are represented
@@ -487,6 +515,7 @@ export class Agent {
    * one, which is the same thing `status` does with `unknown`.
    */
   private activityValue: string | undefined;
+  private injectionValue: AgentInjection = NO_INJECTION;
 
   private constructor(
     readonly id: AgentId,
@@ -560,6 +589,7 @@ export class Agent {
       this.unreadValue,
     );
     copy.activityValue = this.activityValue;
+    copy.injectionValue = this.injectionValue;
     return copy;
   }
 
@@ -580,6 +610,11 @@ export class Agent {
   /** What the Agent says it is doing, in its own words, or nothing. */
   get activity(): string | undefined {
     return this.activityValue;
+  }
+
+  /** What DevHub is holding for this Agent, and why. */
+  get injection(): AgentInjection {
+    return this.injectionValue;
   }
 
   get runtimeHealth(): RuntimeHealth {
@@ -632,6 +667,19 @@ export class Agent {
       return false;
     }
     this.statusValue = status;
+    return true;
+  }
+
+  setInjection(injection: AgentInjection): boolean {
+    const current = this.injectionValue;
+    if (
+      current.queued === injection.queued &&
+      current.waitingFor === injection.waitingFor &&
+      current.lastFailure === injection.lastFailure
+    ) {
+      return false;
+    }
+    this.injectionValue = injection;
     return true;
   }
 

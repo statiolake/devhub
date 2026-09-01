@@ -104,14 +104,12 @@ describe("the Agent injection queue", () => {
 
 	it("says why it is holding text, in the Agent's own terms", () => {
 		const queue = new AgentInjectionQueue();
-		expect(queue.state(AGENT, "idle").waitingFor.kind).toBe("nothing_queued");
+		expect(queue.state(AGENT, "idle").waitingFor).toBe("nothing_queued");
 		queue.queue(AGENT, "do the thing");
-		expect(queue.state(AGENT, "working").waitingFor.kind).toBe("agent_busy");
-		expect(queue.state(AGENT, "waiting").waitingFor.kind).toBe("agent_asking");
-		expect(queue.state(AGENT, "unknown").waitingFor.kind).toBe(
-			"agent_unreadable",
-		);
-		expect(queue.state(AGENT, "idle").waitingFor.kind).toBe("settling");
+		expect(queue.state(AGENT, "working").waitingFor).toBe("agent_busy");
+		expect(queue.state(AGENT, "waiting").waitingFor).toBe("agent_asking");
+		expect(queue.state(AGENT, "unknown").waitingFor).toBe("agent_unreadable");
+		expect(queue.state(AGENT, "idle").waitingFor).toBe("settling");
 	});
 
 	/** An ended Agent's undelivered text is handed back, never dropped quietly. */

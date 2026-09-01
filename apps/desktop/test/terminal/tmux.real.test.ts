@@ -808,9 +808,7 @@ describe.skipIf(TMUX === undefined)(
         expect(queue.due(agentId, "waiting")).toBeUndefined();
         expect(queue.due(agentId, "unknown")).toBeUndefined();
       }
-      expect(queue.state(agentId, "waiting").waitingFor.kind).toBe(
-        "agent_asking",
-      );
+      expect(queue.state(agentId, "waiting").waitingFor).toBe("agent_asking");
     });
 
     /**

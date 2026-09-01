@@ -10,6 +10,7 @@ import {
   workspaceId,
   workspaceRoot,
   type CloseInspectionInputs,
+  NO_INJECTION,
 } from "./domain.js";
 import {
   AppError,
@@ -652,6 +653,7 @@ describe("reconciling agents", () => {
             status: "working",
             runtimeHealth: "healthy",
             activity: undefined,
+            injection: NO_INJECTION,
           },
         ],
         exited: [],
@@ -683,6 +685,7 @@ describe("reconciling agents", () => {
               status: "working",
               runtimeHealth: "healthy",
               activity,
+              injection: NO_INJECTION,
             },
           ],
           exited: [],

@@ -33,38 +33,22 @@
  * sends and reports back, so the rule can be tested without a terminal.
  */
 
-import type { AgentStatus } from "../../model/domain.js";
+import {
+	NO_INJECTION,
+	type AgentInjection,
+	type AgentInjectionWait,
+	type AgentStatus,
+} from "../../model/domain.js";
 
 /** Consecutive idle rounds required before anything is sent. */
 export const IDLE_ROUNDS_BEFORE_SEND = 3;
 
-/**
- * Why a queued text has not gone yet — the Agent's side of the answer.
- *
- * This exists to be shown. A queue that holds text without saying why is the
- * thing a person reads as "DevHub did nothing", and the reason is always known
- * here, so it is always available to say.
+/*
+ * The shape a row reads — `AgentInjection` in `model/domain.ts` — is the one
+ * this returns. There is no second vocabulary for the same fact here: a queue
+ * state that had to be translated on the way out would be two descriptions of
+ * one thing, and one of them would drift.
  */
-export type InjectionWait =
-	| { readonly kind: "nothing_queued" }
-	| { readonly kind: "settling"; readonly rounds: number }
-	| { readonly kind: "agent_busy" }
-	| { readonly kind: "agent_asking" }
-	| { readonly kind: "agent_unreadable" };
-
-export interface InjectionState {
-	/** How many texts are waiting for this Agent. */
-	readonly queued: number;
-	readonly waitingFor: InjectionWait;
-	/** The last send that failed, kept until one succeeds. */
-	readonly lastFailure: string | undefined;
-}
-
-const NOTHING: InjectionState = {
-	queued: 0,
-	waitingFor: { kind: "nothing_queued" },
-	lastFailure: undefined,
-};
 
 interface Entry {
 	readonly texts: string[];
@@ -146,12 +130,12 @@ export class AgentInjectionQueue {
 	}
 
 	/** What this Agent's queue is doing, for the row to show. */
-	state(agentId: string, status: AgentStatus): InjectionState {
+	state(agentId: string, status: AgentStatus): AgentInjection {
 		const entry = this.#entries.get(agentId);
-		if (entry === undefined || entry.texts.length === 0) return NOTHING;
+		if (entry === undefined || entry.texts.length === 0) return NO_INJECTION;
 		return {
 			queued: entry.texts.length,
-			waitingFor: waitFor(status, entry.idleRounds),
+			waitingFor: waitFor(status),
 			lastFailure: entry.lastFailure,
 		};
 	}
@@ -171,15 +155,15 @@ export class AgentInjectionQueue {
 	}
 }
 
-function waitFor(status: AgentStatus, idleRounds: number): InjectionWait {
+function waitFor(status: AgentStatus): AgentInjectionWait {
 	switch (status) {
 		case "idle":
-			return { kind: "settling", rounds: idleRounds };
+			return "settling";
 		case "working":
-			return { kind: "agent_busy" };
+			return "agent_busy";
 		case "waiting":
-			return { kind: "agent_asking" };
+			return "agent_asking";
 		default:
-			return { kind: "agent_unreadable" };
+			return "agent_unreadable";
 	}
 }

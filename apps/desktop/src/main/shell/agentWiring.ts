@@ -19,6 +19,7 @@ import { AgentSessions } from "../agent/sessions.js";
 import type { AppModel } from "../../model/appModel.js";
 import type {
 	AgentId,
+	AgentInjection,
 	AgentProfile,
 	AgentReconciliation,
 	AgentStatus,
@@ -125,6 +126,7 @@ export function wireAgents(options: AgentWiringOptions): AgentSessions {
 				status: AgentStatus;
 				runtimeHealth: RuntimeHealth;
 				activity: string | undefined;
+				injection: AgentInjection;
 			}[] = [];
 			const exited: AgentId[] = [];
 			for (const [id, about] of asked) {
@@ -171,6 +173,7 @@ export function wireAgents(options: AgentWiringOptions): AgentSessions {
 					status: reading.status,
 					activity: reading.activity,
 					runtimeHealth: health,
+					injection: injections.state(id, reading.status),
 				});
 			}
 			return { observations, exited };
