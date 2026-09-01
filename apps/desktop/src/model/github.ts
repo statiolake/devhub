@@ -51,9 +51,22 @@ export function issueUrl(issue: IssueReference): string {
  * outside DevHub — by hand, by an agent, on another machine — can still be
  * recognised. It is a guess, and it is only ever consulted when there is no
  * record to read instead.
+ *
+ * The shape is a prefix, then the number, then a dash: `feature/128-…`. Three
+ * things about the prefix are deliberately loose, because a branch made outside
+ * DevHub was named by a person and not by this file. The prefix may be several
+ * segments deep (`alice/fix/128-…`), since that is how a shared remote is
+ * usually laid out. The number may be written `#128`, since that is how a
+ * person writing about an Issue writes one. And a segment may be empty, so a
+ * name that starts at the slash is read the same way as one that does not.
+ *
+ * What stays fixed is the rest: there is a slash before the number, and a dash
+ * after it. Those are what separate "this branch is for Issue 128" from a
+ * branch that merely has a number in its name, and dropping either would make
+ * `v2-rewrite` an Issue.
  */
 export function issueNumberFromBranch(branch: string): number | undefined {
-  const match = /^[^/]+\/(\d+)-/u.exec(branch);
+  const match = /^(?:[^/]*\/)+#?(\d+)-/u.exec(branch);
   const digits = match?.[1];
   return digits === undefined ? undefined : Number(digits);
 }

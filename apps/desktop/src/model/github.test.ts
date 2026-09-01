@@ -54,10 +54,27 @@ describe("the branch naming convention", () => {
     expect(issueNumberFromBranch("fix/9-crash")).toBe(9);
   });
 
+  it("reads a prefix that is several segments deep", () => {
+    expect(issueNumberFromBranch("alice/fix/128-crash")).toBe(128);
+    expect(issueNumberFromBranch("team/alice/feature/9-thing")).toBe(9);
+  });
+
+  it("reads the number whether or not it is written as an Issue", () => {
+    expect(issueNumberFromBranch("feature/#128-tidy-the-picker")).toBe(128);
+    expect(issueNumberFromBranch("alice/fix/#9-crash")).toBe(9);
+  });
+
+  it("reads a name that starts at the slash", () => {
+    expect(issueNumberFromBranch("/128-tidy")).toBe(128);
+    expect(issueNumberFromBranch("/#128-tidy")).toBe(128);
+  });
+
   it("does not read a number that is not the convention", () => {
     expect(issueNumberFromBranch("feature/tidy-128")).toBeUndefined();
     expect(issueNumberFromBranch("128-tidy")).toBeUndefined();
     expect(issueNumberFromBranch("feature/128")).toBeUndefined();
+    expect(issueNumberFromBranch("v2-rewrite")).toBeUndefined();
+    expect(issueNumberFromBranch("feature/#128")).toBeUndefined();
   });
 });
 
