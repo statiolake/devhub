@@ -43,6 +43,21 @@ describe("parsing", () => {
     expect(config).toEqual(defaultConfig());
   });
 
+  it("offers the three agents DevHub knows how to start", () => {
+    expect(
+      defaultConfig().agentProfiles.map((profile) => [
+        profile.id,
+        profile.kind,
+        profile.command,
+      ]),
+    ).toEqual([
+      ["codex", "codex", "codex"],
+      ["claude", "claude", "claude"],
+      // No screen manifest, so no claim about what it is doing.
+      ["cursor", "custom", "cursor-agent"],
+    ]);
+  });
+
   it("refuses an unknown key rather than ignoring a typo", () => {
     expect(codeOf(() => parseConfig("version = 1\nnonsense = true\n"))).toBe(
       "unknown_key",

@@ -301,6 +301,26 @@ export function defaultAgentProfiles(): ConfiguredAgentProfile[] {
       args: [],
       env: {},
     },
+    // `custom` is the truthful kind, and it is the reason this profile can be
+    // here at all: DevHub has no screen manifest for Cursor, so it cannot say
+    // what the Agent is doing and its rows carry the `unknown` mark. That is a
+    // correct permanent answer rather than a stage on the way to another one.
+    // A kind of `codex` or `claude` would be a claim DevHub cannot make, and
+    // the status it produced would be wrong rather than absent.
+    //
+    // The command is `cursor-agent` and nothing checks for it here. A profile
+    // naming a command that is not installed already fails where it is run,
+    // visibly, and a second check at the point the default is written would be
+    // the same question answered twice — differently, the first time somebody
+    // installs it while DevHub is open.
+    {
+      id: "cursor",
+      display_name: "Cursor",
+      kind: "custom",
+      command: "cursor-agent",
+      args: [],
+      env: {},
+    },
   ];
 }
 
