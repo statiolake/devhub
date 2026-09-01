@@ -40,6 +40,7 @@ import {
   type WorkspaceRoot,
   type WorkspaceState,
 } from "./domain.js";
+import type { IssueReference } from "./github.js";
 
 export const APP_SNAPSHOT_SCHEMA_VERSION = 1;
 export const SIDEBAR_MIN_WIDTH = 200;
@@ -114,6 +115,8 @@ export interface WorkspaceSnapshot {
   readonly root: WorkspaceRoot;
   readonly selectedPath: DisplayPath;
   readonly repositoryId: RepositoryId | undefined;
+  /** The Issue this workspace was started for, when DevHub started it for one. */
+  readonly issue: IssueReference | undefined;
   readonly state: WorkspaceState;
   readonly agents: readonly AgentSnapshot[];
   readonly canCreateAgent: boolean;
@@ -331,6 +334,23 @@ export class AppModel {
       fail(DomainErrorCode.UnknownWorkspace);
     }
     if (workspace.setRepositoryId(repository)) {
+      this.bumpRevision();
+    }
+  }
+
+  /**
+   * Write down which Issue a workspace was started for.
+   *
+   * Said once, when the person assigns the Issue, and true from then on. It is
+   * not derived from the branch name, because a branch can be renamed and a
+   * derivation would then quietly change what the workspace is about.
+   */
+  associateIssue(id: WorkspaceId, issue: IssueReference | undefined): void {
+    const workspace = this.workspace(id);
+    if (!workspace) {
+      fail(DomainErrorCode.UnknownWorkspace);
+    }
+    if (workspace.setIssue(issue)) {
       this.bumpRevision();
     }
   }
@@ -814,6 +834,7 @@ export class AppModel {
       root: workspace.root,
       selectedPath: workspace.selectedPath,
       repositoryId: workspace.repositoryId,
+      issue: workspace.issue,
       state: workspace.state,
       canCreateAgent: isWorkspaceAvailable(workspace.state),
       agents: workspace.agents.map((agent) => ({

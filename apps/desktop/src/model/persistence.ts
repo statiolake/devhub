@@ -49,6 +49,7 @@ import {
   type AgentStatus,
   type RuntimeHealth,
 } from "./domain.js";
+import { issueUrl, parseIssueUrl } from "./github.js";
 import {
   AppModel,
   SIDEBAR_DEFAULT_WIDTH,
@@ -208,6 +209,14 @@ export interface WorkspaceStateRecord {
   selected_path: string;
   canonical_path: string;
   repository_id?: string;
+  /**
+   * The Issue this workspace was started for, as its URL.
+   *
+   * A URL rather than the parsed reference: it is what the person pasted, it
+   * is what a human reading `state.json` can follow, and it is what the shared
+   * parser turns back into owner, repository and number on load.
+   */
+  issue_url?: string;
   lifecycle: WorkspaceLifecycleRecord;
   agents: AgentStateRecord[];
 }
@@ -458,6 +467,12 @@ function validateWorkspaceRecord(record: WorkspaceStateRecord): void {
   validateAbsolutePath(record.canonical_path);
   if (record.repository_id !== undefined) {
     validateUuid(record.repository_id);
+  }
+  if (record.issue_url !== undefined && !parseIssueUrl(record.issue_url)) {
+    // A record DevHub cannot read back is a record it would have to guess at,
+    // and guessing which Issue a workspace is about is the thing writing it
+    // down was for.
+    fail("STATE_INVALID");
   }
   const ids = new Set<string>();
   for (const agent of record.agents) {
@@ -793,7 +808,16 @@ export function hydrateModel(
       return fail("STATE_INVALID");
     }
     try {
-      model.addWorkspace(new Workspace(id, root, selected));
+      model.addWorkspace(
+        new Workspace(
+          id,
+          root,
+          selected,
+          undefined,
+          undefined,
+          record.issue_url ? parseIssueUrl(record.issue_url) : undefined,
+        ),
+      );
     } catch {
       return fail("STATE_INVALID");
     }
@@ -956,6 +980,7 @@ export function stateFromSnapshot(
       selected_path: workspace.selectedPath,
       canonical_path: workspace.root,
       repository_id: workspace.repositoryId,
+      issue_url: workspace.issue ? issueUrl(workspace.issue) : undefined,
       lifecycle: lifecycleFrom(workspace.state),
       agents: workspace.agents.map((agent) => ({
         agent_id: agent.id,

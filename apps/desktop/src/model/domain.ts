@@ -11,6 +11,8 @@
  * wire without a conversion step.
  */
 
+import type { IssueReference } from "./github.js";
+
 export enum DomainErrorCode {
   InvalidId = "INVALID_ID",
   InvalidPath = "INVALID_PATH",
@@ -755,6 +757,18 @@ function sameWorkspaceState(
  * A Workspace is an open context rooted at one canonical folder. Repository
  * identity is optional and never replaces Workspace identity.
  */
+function sameIssue(
+  left: IssueReference | undefined,
+  right: IssueReference | undefined,
+): boolean {
+  if (!left || !right) return left === right;
+  return (
+    left.owner === right.owner &&
+    left.repository === right.repository &&
+    left.number === right.number
+  );
+}
+
 export class Workspace {
   private readonly agentList: Agent[] = [];
 
@@ -764,6 +778,16 @@ export class Workspace {
     private selectedPathValue: DisplayPath,
     private repositoryIdValue: RepositoryId | undefined = undefined,
     private stateValue: WorkspaceState = AVAILABLE,
+    /**
+     * The Issue this workspace was started for, when DevHub started it.
+     *
+     * Written down at the moment the person assigned the Issue, because a
+     * record is the only thing that stays true: the branch name convention
+     * that would let it be guessed can be renamed, and a worktree can outlive
+     * whatever it was originally about. The convention is still read, but only
+     * where there is no record — for a branch made outside DevHub.
+     */
+    private issueValue: IssueReference | undefined = undefined,
   ) {}
 
   clone(): Workspace {
@@ -773,6 +797,7 @@ export class Workspace {
       this.selectedPathValue,
       this.repositoryIdValue,
       this.stateValue,
+      this.issueValue,
     );
     for (const agent of this.agentList) {
       copy.agentList.push(agent.clone());
@@ -802,6 +827,16 @@ export class Workspace {
 
   get canCreateAgent(): boolean {
     return isWorkspaceAvailable(this.stateValue);
+  }
+
+  get issue(): IssueReference | undefined {
+    return this.issueValue;
+  }
+
+  setIssue(next: IssueReference | undefined): boolean {
+    if (sameIssue(this.issueValue, next)) return false;
+    this.issueValue = next;
+    return true;
   }
 
   setRepositoryId(next: RepositoryId | undefined): boolean {

@@ -7,6 +7,7 @@
  * contract has exactly one place to be wrong.
  */
 
+import { issueUrl } from "./github.js";
 import {
   agentId as parseAgentId,
   agentProfileId as parseAgentProfileId,
@@ -287,6 +288,7 @@ export function snapshotWire(
     label: workspace.label,
     root: workspace.root,
     selectedPath: workspace.selectedPath,
+    issueUrl: workspace.issue ? issueUrl(workspace.issue) : undefined,
     state: workspaceStateName(workspace.state),
     stateDiagnostic: workspaceStateDiagnostic(workspace.state),
     agents: workspace.agents.map(agentWire),

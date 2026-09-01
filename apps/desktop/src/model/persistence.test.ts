@@ -93,6 +93,36 @@ describe("projection", () => {
     expect(next.workspaces[0].agents[0].provider_mapping).toBe("session-42");
     expect(next.workspaces[0].agents[1].provider_mapping).toBeUndefined();
   });
+
+  it("keeps the Issue a workspace was started for", () => {
+    // The record is the whole point: a branch can be renamed, and a workspace
+    // that survived a restart must still know what it is about.
+    const model = populatedModel();
+    model.associateIssue(WS_A, {
+      owner: "example",
+      repository: "widget",
+      number: 128,
+    });
+    const state = stateFromSnapshot(model.snapshot());
+    expect(state.workspaces[0].issue_url).toBe(
+      "https://github.com/example/widget/issues/128",
+    );
+    expect(hydrateModel(state, [codex]).snapshot().workspaces[0].issue).toEqual(
+      {
+        owner: "example",
+        repository: "widget",
+        number: 128,
+      },
+    );
+  });
+
+  it("refuses a state whose Issue link cannot be read back", () => {
+    const state = stateFromSnapshot(populatedModel().snapshot());
+    state.workspaces[0].issue_url = "https://example.com/not-an-issue";
+    expect(() => {
+      validateState(state);
+    }).toThrow();
+  });
 });
 
 describe("navigation restore", () => {
