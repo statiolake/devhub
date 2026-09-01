@@ -12,6 +12,7 @@
  * that is converted here, once.
  */
 
+import { AgentActivityReader } from "../agent/activity.js";
 import { AgentStatusDetector } from "../agent/detect/detector.js";
 import { AgentSessions } from "../agent/sessions.js";
 import type { AppModel } from "../../model/appModel.js";
@@ -39,6 +40,7 @@ export interface AgentWiringOptions {
 export function wireAgents(options: AgentWiringOptions): AgentSessions {
 	const sessions = new AgentSessions(options.runtime);
 	const detector = new AgentStatusDetector();
+	const activity = new AgentActivityReader();
 
 	registerAgentAdapter({
 		async launch(
@@ -120,6 +122,7 @@ export function wireAgents(options: AgentWiringOptions): AgentSessions {
 				agentId: AgentId;
 				status: AgentStatus;
 				runtimeHealth: RuntimeHealth;
+				activity: string | undefined;
 			}[] = [];
 			const exited: AgentId[] = [];
 			for (const [id, about] of asked) {
@@ -130,18 +133,22 @@ export function wireAgents(options: AgentWiringOptions): AgentSessions {
 				if (!live.has(id)) {
 					if (sessions.isLaunching(id)) continue;
 					detector.forget(id);
+					activity.forget(id);
 					exited.push(id);
 					continue;
 				}
+				const reading = await observe(
+					sessions,
+					detector,
+					activity,
+					id,
+					about.workspaceId,
+					about.kind,
+				);
 				observations.push({
 					agentId: id,
-					status: await status(
-						sessions,
-						detector,
-						id,
-						about.workspaceId,
-						about.kind,
-					),
+					status: reading.status,
+					activity: reading.activity,
 					runtimeHealth: health,
 				});
 			}
@@ -161,26 +168,44 @@ export function wireAgents(options: AgentWiringOptions): AgentSessions {
 }
 
 /**
- * One Agent's status this round.
+ * One Agent's status this round, and what it says it is doing.
+ *
+ * Both come off the same capture, because they are two readings of one moment:
+ * `capture-pane` returns the screen and the pane title in a single tmux
+ * command, and asking for them separately would let a row show a status from
+ * one instant beside a sentence from another.
  *
  * A capture that fails is not a status: the Agent's session is there — it was
  * in the list a moment ago — and DevHub could not read its screen. Claiming
  * `error` would report the Agent as broken for a failure of DevHub's own, so
  * the reading is simply not taken and the row keeps what it had until the next
  * round, which is the same thing a screen the manifest does not describe does.
+ * Its word keeps what it had for the same reason, by the same call shape.
  */
-async function status(
+async function observe(
 	sessions: AgentSessions,
 	detector: AgentStatusDetector,
+	activity: AgentActivityReader,
 	agentId: AgentId,
 	workspaceId: WorkspaceId,
 	kind: string,
-): Promise<AgentStatus> {
+): Promise<{
+	readonly status: AgentStatus;
+	readonly activity: string | undefined;
+}> {
 	const screen = await sessions
 		.screen(agentId, workspaceId)
 		.catch(() => undefined);
-	if (screen === undefined) return detector.showing(agentId);
-	return detector.status(kind, screen);
+	if (screen === undefined) {
+		return {
+			status: detector.showing(agentId),
+			activity: activity.showing(agentId),
+		};
+	}
+	return {
+		status: detector.status(kind, screen),
+		activity: activity.activity(screen),
+	};
 }
 
 async function terminate(

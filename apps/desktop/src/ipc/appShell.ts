@@ -59,6 +59,14 @@ export interface AgentWire {
 	readonly status: AgentStatusWire;
 	/** The Agent asked for attention and nobody has opened it since. */
 	readonly unread: boolean;
+	/**
+	 * What the Agent says it is doing, in its own words.
+	 *
+	 * The pane title its program set, read on the reconcile cadence beside its
+	 * status. Absent until it has said something — see `main/agent/activity.ts`
+	 * for what counts as saying something.
+	 */
+	readonly activity: string | undefined;
 	readonly workspaceId: string;
 }
 /**

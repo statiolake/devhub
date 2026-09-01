@@ -9,6 +9,7 @@ import type {
 
 function agent(id: string, workspaceId: string, ordinal: number): AgentWire {
 	return {
+		activity: undefined,
 		controlState: "running",
 		displayName: id,
 		id,

@@ -427,6 +427,15 @@ export interface AgentObservation {
   readonly agentId: AgentId;
   readonly status: AgentStatus;
   readonly runtimeHealth: RuntimeHealth;
+  /**
+   * What the Agent says it is doing, or nothing if it has not said.
+   *
+   * A reading, exactly like `status`: the round that took it carries it, and a
+   * round that could not read the Agent's pane repeats the last one rather
+   * than clearing it. `main/agent/activity.ts` decides what counts as having
+   * said something.
+   */
+  readonly activity: string | undefined;
 }
 
 /**
@@ -470,6 +479,16 @@ export function agentRestoreRecord(
 /** Agent resource owned by exactly one Workspace. */
 export class Agent {
   private nameOverride: string | undefined;
+  /**
+   * What this Agent last said it was doing.
+   *
+   * Deliberately not part of `AgentRestoreRecord`. It is a reading of a pane
+   * that is being taken again 300ms from now, so a value restored from disk
+   * would be a sentence the Agent said before DevHub last closed, shown as
+   * though it had just said it. The row is wordless until the reconciler reads
+   * one, which is the same thing `status` does with `unknown`.
+   */
+  private activityValue: string | undefined;
 
   private constructor(
     readonly id: AgentId,
@@ -531,7 +550,7 @@ export class Agent {
   }
 
   clone(): Agent {
-    return new Agent(
+    const copy = new Agent(
       this.id,
       this.workspaceId,
       this.profile,
@@ -542,6 +561,8 @@ export class Agent {
       this.controlStateValue,
       this.unreadValue,
     );
+    copy.activityValue = this.activityValue;
+    return copy;
   }
 
   get displayName(): string {
@@ -556,6 +577,11 @@ export class Agent {
 
   get status(): AgentStatus {
     return this.statusValue;
+  }
+
+  /** What the Agent says it is doing, in its own words, or nothing. */
+  get activity(): string | undefined {
+    return this.activityValue;
   }
 
   get runtimeHealth(): RuntimeHealth {
@@ -608,6 +634,14 @@ export class Agent {
       return false;
     }
     this.statusValue = status;
+    return true;
+  }
+
+  setActivity(activity: string | undefined): boolean {
+    if (this.activityValue === activity) {
+      return false;
+    }
+    this.activityValue = activity;
     return true;
   }
 

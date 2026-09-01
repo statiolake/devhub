@@ -107,6 +107,8 @@ export interface AgentSnapshot {
   readonly controlState: AgentControlState;
   /** The Agent asked for attention and nobody has opened it since. */
   readonly unread: boolean;
+  /** What the Agent says it is doing, or nothing if it has not said. */
+  readonly activity: string | undefined;
 }
 
 export interface WorkspaceSnapshot {
@@ -466,6 +468,13 @@ export class AppModel {
     return context.kind === "agent" && context.agentId === id;
   }
 
+  /** What the Agent says it is doing, as of the round that read its pane. */
+  setAgentActivity(id: AgentId, activity: string | undefined): void {
+    if (this.requireAgent(id).setActivity(activity)) {
+      this.bumpRevision();
+    }
+  }
+
   setAgentRuntimeHealth(id: AgentId, health: RuntimeHealth): void {
     if (this.requireAgent(id).setRuntimeHealth(health)) {
       this.bumpRevision();
@@ -489,6 +498,7 @@ export class AppModel {
         continue;
       }
       this.setAgentStatus(observation.agentId, observation.status);
+      this.setAgentActivity(observation.agentId, observation.activity);
       this.setAgentRuntimeHealth(
         observation.agentId,
         observation.runtimeHealth,
@@ -850,6 +860,7 @@ export class AppModel {
         runtimeHealth: agent.runtimeHealth,
         controlState: agent.controlState,
         unread: agent.unread,
+        activity: agent.activity,
       })),
     }));
   }

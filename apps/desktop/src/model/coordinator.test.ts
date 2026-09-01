@@ -647,7 +647,12 @@ describe("reconciling agents", () => {
       token,
       reconciliation: {
         observations: [
-          { agentId: AG_A, status: "working", runtimeHealth: "healthy" },
+          {
+            agentId: AG_A,
+            status: "working",
+            runtimeHealth: "healthy",
+            activity: undefined,
+          },
         ],
         exited: [],
       },
@@ -655,6 +660,42 @@ describe("reconciling agents", () => {
     const agent = driver.coordinator.snapshot().workspaces[0].agents[0];
     expect(agent.status).toBe("working");
     expect(agent.runtimeHealth).toBe("healthy");
+  });
+
+  it("carries what the Agent says it is doing onto its row", () => {
+    const driver = withAgent();
+    const said = (activity: string | undefined): string | undefined => {
+      driver.dispatch({ type: "reconcile_agents" });
+      const effect = driver
+        .drainEffects()
+        .find((candidate) => candidate.kind === "reconcile_agents");
+      if (effect?.kind !== "reconcile_agents") {
+        throw new Error("the coordinator did not ask for a reconcile");
+      }
+      const token = effect.token;
+      driver.accept({
+        type: "agents_reconciled",
+        token,
+        reconciliation: {
+          observations: [
+            {
+              agentId: AG_A,
+              status: "working",
+              runtimeHealth: "healthy",
+              activity,
+            },
+          ],
+          exited: [],
+        },
+      });
+      return driver.coordinator.snapshot().workspaces[0].agents[0].activity;
+    };
+    expect(said("Reading agentReconciler.ts")).toBe(
+      "Reading agentReconciler.ts",
+    );
+    // And a round that reports nothing takes the word away rather than
+    // leaving the row saying something the Agent has stopped saying.
+    expect(said(undefined)).toBeUndefined();
   });
 
   it("takes the row away when the provider says the agent is gone", () => {
