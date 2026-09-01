@@ -28,7 +28,11 @@
  *       later substitution would leave two lifecycle services side by side.
  *       For the same reason the startup-failure path below calls `app.exit`
  *       itself rather than `lifecycleMainService.kill`.
- *    6. `--force-disable-user-env` is on, because DevHub resolves the login
+ *    6. `installAppFence()` runs before `startup()`, so the process settings
+ *       VS Code writes straight onto `electron.app` — the proxy, the OS recent
+ *       items, the Dock badge and menu, the protocol registration, the update
+ *       path — stop at DevHub instead. See `shell/appFence.ts`.
+ *    7. `--force-disable-user-env` is on, because DevHub resolves the login
  *       shell's environment itself and upstream's copy would be a second
  *       answer to the same question. See `resolveArgs`.
  *
@@ -64,6 +68,7 @@ import { Client as NodeIPCClient } from 'code-oss-dev/out/vs/base/parts/ipc/comm
 import { connect as nodeIPCConnect, serve as nodeIPCServe, Server as NodeIPCServer, XDG_RUNTIME_DIR } from 'code-oss-dev/out/vs/base/parts/ipc/node/ipc.net.js';
 import { DevHubApplication } from './devhubApplication.js';
 import { bootstrapShell } from './shell/bootstrapShell.js';
+import { installAppFence } from './shell/appFence.js';
 import { appController } from './shell/appController.js';
 import { localize } from 'code-oss-dev/out/vs/nls.js';
 import { IConfigurationService } from 'code-oss-dev/out/vs/platform/configuration/common/configuration.js';
@@ -131,6 +136,11 @@ class CodeMain {
 
 	main(): void {
 		try {
+			// DevHub: from here on the process belongs to the workbench world,
+			// and the workbench world does not get to write DevHub's process
+			// settings. DevHub's own `app.setPath` calls are in `main.ts`,
+			// which has finished by the time this module is imported.
+			installAppFence();
 			this.startup();
 		} catch (error) {
 			console.error(error.message);
