@@ -154,15 +154,29 @@ def sign(app: Path) -> None:
 
 
 def _stamp_state() -> str:
-	"""What the branded clone was made from: the Electron and the names.
+	"""What the branded clone was made from: the Electron, the names, and this file.
 
-	Both belong in the stamp. The Electron is restaged by a VS Code bump, and
-	the names change whenever `product-overrides.json` does; a stamp over
-	either alone leaves the other's change silently ignored.
+	All three belong in the stamp. The Electron is restaged by a VS Code bump,
+	the names change whenever `product-overrides.json` does, and this file holds
+	both how a bundle is renamed and how it is signed — a change here is exactly
+	as much a reason to rebuild as a change to either of the others.
+
+	Leaving this file out is how a fix to `sign()` came to land with no effect:
+	the stamp still matched, so the clone from before the fix was kept, and it
+	kept the signature the fix existed to replace. The bundle then went on
+	asking the keychain for consent it had already been given under a name it no
+	longer used.
+
+	Hashing the file rather than tracking a scheme version means nobody has to
+	remember to bump anything, at the cost of rebranding after edits that change
+	nothing observable. That is the cheap side of the trade: the clone is an
+	APFS copy-on-write and costs almost no disk or time, while a stamp that
+	misses a real change costs an afternoon of not believing your own build.
 	"""
 	electron_version = (BASE_APP.parent / "version").read_text().strip()
 	overrides = PRODUCT_OVERRIDES_FILE.read_bytes()
-	return hashlib.sha256(electron_version.encode() + overrides).hexdigest()
+	recipe = Path(__file__).read_bytes()
+	return hashlib.sha256(electron_version.encode() + overrides + recipe).hexdigest()
 
 
 def clone_and_rebrand(destination: Path) -> Path:
