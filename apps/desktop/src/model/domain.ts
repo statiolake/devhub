@@ -384,7 +384,11 @@ export class AgentProfile {
  */
 export type AgentStatus = "working" | "waiting" | "idle" | "error" | "unknown";
 export type RuntimeHealth =
-  "starting" | "healthy" | "degraded" | "unavailable" | "failed";
+  | "starting"
+  | "healthy"
+  | "degraded"
+  | "unavailable"
+  | "failed";
 
 /**
  * Why a Workspace is unavailable, or cannot finish cleanup. These are the only

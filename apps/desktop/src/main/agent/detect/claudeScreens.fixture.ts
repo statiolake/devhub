@@ -99,4 +99,3 @@ export const CLAUDE_WAITING: ClaudeScreen = {
      2. Yes, and don't ask again for example.com
      3. No, and tell Claude what to do differently (esc)`,
 };
-
