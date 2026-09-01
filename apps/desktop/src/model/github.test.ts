@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   bodyClosesIssue,
-  branchNameForIssue,
+  wipBranchForIssue,
   issueNumberFromBranch,
   issueUrl,
   parseIssueUrl,
@@ -45,8 +45,11 @@ describe("an Issue URL", () => {
 });
 
 describe("the branch naming convention", () => {
-  it("offers the Issue number and lets the person finish the name", () => {
-    expect(branchNameForIssue(128)).toBe("feature/128-");
+  it("starts an Issue on a branch that says the work is not named yet", () => {
+    // And that DevHub's own branch is recognised by DevHub's own convention,
+    // so the workspace is linked to the Issue from the first second.
+    expect(wipBranchForIssue(128)).toBe("feature/128-wip");
+    expect(issueNumberFromBranch(wipBranchForIssue(128))).toBe(128);
   });
 
   it("recognises an Issue in a branch made outside DevHub", () => {

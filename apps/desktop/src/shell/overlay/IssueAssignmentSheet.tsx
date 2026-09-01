@@ -18,7 +18,7 @@
 import { useMemo, useRef } from "react";
 import type { AgentProfilesWire } from "../../ipc/appShell";
 import {
-  branchNameForIssue,
+  wipBranchForIssue,
   issueUrl,
   parseIssueUrl,
   type IssueReference,
@@ -47,7 +47,6 @@ const CLONE_ELSEWHERE = "devhub:clone-elsewhere";
 const ACCEPT_TYPED = "devhub:accept-typed";
 const SAME_WORKSPACE = "devhub:same-workspace";
 const NEW_WORKTREE = "devhub:new-worktree";
-const NEW_BRANCH = "devhub:new-branch";
 const USE_STALE_BASE = "devhub:use-stale-base";
 
 function Wrong({ what }: { readonly what: string }) {
@@ -69,7 +68,6 @@ export function IssueAssignmentSheet({ onDismiss }: IssueAssignmentSheetProps) {
     agentProfiles,
     findIssueClones,
     cloneRepository,
-    listBranches,
     assignIssue,
     cloneParentDirectories,
   } = useAppShell();
@@ -93,17 +91,10 @@ export function IssueAssignmentSheet({ onDismiss }: IssueAssignmentSheetProps) {
         agentProfiles: () => profiles.current,
         findIssueClones,
         cloneRepository,
-        listBranches,
         assignIssue,
         cloneParentDirectories,
       }),
-    [
-      assignIssue,
-      cloneParentDirectories,
-      cloneRepository,
-      findIssueClones,
-      listBranches,
-    ],
+    [assignIssue, cloneParentDirectories, cloneRepository, findIssueClones],
   );
 
   return <Wizard start={start} onFinished={onDismiss} />;
@@ -113,7 +104,6 @@ interface FlowServices {
   readonly agentProfiles: () => AgentProfilesWire;
   readonly findIssueClones: (url: string) => Promise<readonly IssueClone[]>;
   readonly cloneRepository: (url: string, parent: string) => Promise<string>;
-  readonly listBranches: (directory: string) => Promise<readonly string[]>;
   readonly assignIssue: (request: {
     readonly issueUrl: string;
     readonly directory: string;
@@ -200,10 +190,16 @@ interface AgentChoice {
 /**
  * Which clone of the repository.
  *
- * Always a question, even when there is exactly one answer or none at all. A
- * step that decided for itself when to appear would be a step Escape could not
- * come back to: the person would press it and land two questions earlier, or
- * on the same question again, depending on something they cannot see.
+ * Asked only when there is something to ask. One clone is not a choice — a
+ * picker with a single row is a keystroke asking the person to confirm what
+ * DevHub already knows — so it is taken and the flow moves on. Nought or
+ * several is a real question, and it is put.
+ *
+ * This used to always ask, on the reasoning that a step which decides for
+ * itself is a step Escape cannot come back to. That was true of the runner and
+ * is not any more: a step that asks nothing is no longer a place the stack
+ * remembers, so Escape from the question after this one reaches the question
+ * before it. See `runWizard`.
  */
 function cloneStep(
   services: FlowServices,
@@ -215,6 +211,8 @@ function cloneStep(
       `Looking for ${issue.owner}/${issue.repository}…`,
       () => services.findIssueClones(issueUrl(issue)),
     );
+    const only = clones.length === 1 ? clones[0] : undefined;
+    if (only) return arrangementStep(services, issue, agent, only.path);
     const answer = await input.ask({
       ...SHEET,
       title: `Where to work on ${issueLabel(issue)}`,
@@ -314,54 +312,19 @@ function arrangementStep(
         },
       ],
     });
-    return answer.id === NEW_WORKTREE
-      ? branchStep(services, issue, agent, directory)
-      : finishStep(services, issue, agent, directory, undefined);
-  };
-}
-
-/**
- * Which branch the worktree holds.
- *
- * The field starts at `feature/{issue}-` and the person types the rest, which
- * is the naming convention the sidebar reads back for branches DevHub did not
- * make. Taking an existing branch checks it out; taking "New Branch…" makes
- * one named whatever is in the field.
- */
-function branchStep(
-  services: FlowServices,
-  issue: IssueReference,
-  agent: AgentChoice,
-  directory: string,
-): WizardStep {
-  return async (input) => {
-    const branches = await input.working("Reading branches…", () =>
-      services.listBranches(directory),
+    return finishStep(
+      services,
+      issue,
+      agent,
+      directory,
+      // The branch is not asked for. It is `feature/128-wip`, made now so work
+      // can start now, and the agent is told to rename it once it knows what
+      // the work is — that instruction is in the action's message, which is a
+      // setting (see `model/agentActions.ts`). A picker of branch names here
+      // was a question nobody could answer yet: the good name is the one you
+      // have after reading the Issue, not before.
+      answer.id === NEW_WORKTREE ? wipBranchForIssue(issue.number) : undefined,
     );
-    const suggested = branchNameForIssue(issue.number);
-    const answer = await input.ask({
-      ...SHEET,
-      title: `Branch for ${issueLabel(issue)}`,
-      placeholder: "Branch",
-      initialQuery: suggested,
-      items: branches.map((branch) => ({ id: branch, label: branch })),
-      pinned: [
-        {
-          id: NEW_BRANCH,
-          label: "New Branch…",
-          detail: "Create the branch named in the field",
-        },
-      ],
-      // Where it lands is `{repo}_{branch}` beside the repository, but the
-      // repository here may itself be a worktree — the folder is measured from
-      // the main one — so the note says the rule rather than a path that could
-      // be wrong.
-      note: "The worktree goes beside the repository, named for the branch.",
-      emptyNoItems: "This repository has no branches yet.",
-      emptyNoMatch: "No branch matches. Return makes one with this name.",
-    });
-    const branch = answer.id === NEW_BRANCH ? answer.query : answer.id;
-    return finishStep(services, issue, agent, directory, branch);
   };
 }
 

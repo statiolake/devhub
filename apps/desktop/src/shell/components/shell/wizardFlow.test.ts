@@ -146,6 +146,38 @@ describe("the wizard runner", () => {
     expect(asked.at(-1)).toEqual({ title: "branch", failure: undefined });
   });
 
+  it("goes back past a step that decided instead of asking", async () => {
+    // The repository step skips itself when there is exactly one clone. Escape
+    // from the question after it must reach the question *before* it — coming
+    // back to a step that asks nothing would re-run it, it would decide the
+    // same way again, and the person would land where they started.
+    const { presenter, asked } = scripted(["a", WIZARD_BACK, "a", "b"]);
+    let decisions = 0;
+    const third: WizardStep = async (input) => {
+      await input.ask({ ...EMPTY, title: "worktree" });
+      return undefined;
+    };
+    const decided: WizardStep = () => {
+      decisions += 1;
+      return Promise.resolve(third);
+    };
+    const first: WizardStep = async (input) => {
+      await input.ask({ ...EMPTY, title: "agent" });
+      return decided;
+    };
+
+    await runWizard(first, presenter);
+
+    expect(asked.map((entry) => entry.title)).toEqual([
+      "agent",
+      "worktree",
+      "agent",
+      "worktree",
+    ]);
+    // Walked forward twice, so decided twice — and never became a destination.
+    expect(decisions).toBe(2);
+  });
+
   it("lets a failure with no words for the person out of the wizard", async () => {
     const { presenter, asked } = scripted(["a"]);
     const first: WizardStep = async (input) => {

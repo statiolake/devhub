@@ -71,9 +71,22 @@ export function issueNumberFromBranch(branch: string): number | undefined {
   return digits === undefined ? undefined : Number(digits);
 }
 
-/** The branch name the Issue flow offers before the person edits it. */
-export function branchNameForIssue(issueNumber: number): string {
-  return `feature/${String(issueNumber)}-`;
+/**
+ * The branch DevHub starts an Issue on, before anybody knows what to call it.
+ *
+ * `feature/128-wip`. The flow does not ask for a branch name, because the good
+ * name is the one you have *after* reading the Issue and this is the moment
+ * before: asking produced either a considered answer nobody could give yet or
+ * a placeholder typed to get past the question. So DevHub types the
+ * placeholder, work starts immediately, and the agent is asked to rename it —
+ * which is a sentence in a template the person owns, not a rule in here.
+ *
+ * It matches `issueNumberFromBranch`, so a workspace on it is linked to its
+ * Issue from the first second, and stays linked through the rename as long as
+ * the new name keeps the number.
+ */
+export function wipBranchForIssue(issueNumber: number): string {
+  return `feature/${String(issueNumber)}-wip`;
 }
 
 /**

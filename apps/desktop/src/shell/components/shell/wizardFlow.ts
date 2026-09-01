@@ -97,8 +97,16 @@ export async function runWizard(
   let failure: string | undefined;
 
   while (step) {
+    // Whether this step actually put a question on screen. A step that decides
+    // for itself — "there is exactly one clone, so use it" — is not somewhere
+    // Escape can come back *to*: coming back would re-run it, it would decide
+    // the same way again, and the person would land on the question they were
+    // trying to leave. So it is taken off the stack once it is done, and going
+    // back reaches the last question that was really asked.
+    let asked = false;
     const input: WizardInput = {
       ask: async (prompt) => {
+        asked = true;
         const answer = await presenter.prompt(prompt, failure);
         // The reason belongs to the attempt that failed. Once the person has
         // answered the re-asked question it is history, and carrying it into
@@ -110,7 +118,11 @@ export async function runWizard(
     };
     walked.push(step);
     try {
-      step = await step(input);
+      const next = await step(input);
+      // Only on the way forward. A step that failed stays on the stack because
+      // the failure is answered by re-running it, with the reason attached.
+      if (!asked) walked.pop();
+      step = next;
     } catch (error: unknown) {
       if (error === WIZARD_CANCELLED) return;
       if (error === WIZARD_BACK) {

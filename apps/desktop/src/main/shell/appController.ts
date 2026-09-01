@@ -160,7 +160,9 @@ import {
 	type GitCommand,
 } from "./git.js";
 import { findClones } from "./issues.js";
-import { parseIssueUrl } from "../../model/github.js";
+import { issueUrl, parseIssueUrl } from "../../model/github.js";
+import type { IssueReference } from "../../model/github.js";
+import { renderAgentAction } from "../../model/agentActions.js";
 import { RepositoryStatusWatcher } from "./repositoryStatus.js";
 import { installMenu, refreshMenu } from "./menu.js";
 import { installKeyboard } from "./keyboard.js";
@@ -1204,6 +1206,50 @@ export class AppController {
 		} catch {
 			this.accept({ type: "operation_failed", token });
 		}
+	}
+
+	/**
+	 * Tell the Agent that was just started what it is for.
+	 *
+	 * The wording is a setting — `agent_actions`, see `model/agentActions.ts` —
+	 * so this fills in the Issue and translates the skill notation for whichever
+	 * agent it is being said to, and leaves the text where the idle detector
+	 * will find it. It is queued rather than sent because the Agent's program is
+	 * still starting: keys typed into a terminal that has not drawn its prompt
+	 * land in nothing.
+	 *
+	 * A message that cannot be composed is not an error worth stopping for. The
+	 * workspace is open and the Agent is running, which is the whole of what the
+	 * flow was for; the person types the URL themselves and nothing is lost.
+	 *
+	 * Queued, not sent: the Agent's program has not drawn its prompt yet, and
+	 * keys typed into a terminal that is still starting land in nothing. When it
+	 * goes is `agent/injection.ts`'s decision — it waits for a settled idle
+	 * screen — and this side only ever says what.
+	 */
+	private queueIssuePrompt(
+		before: ReadonlySet<string>,
+		issue: IssueReference,
+	): void {
+		const started = this.coordinator.model.workspaces
+			.flatMap((workspace) => workspace.agents)
+			.find((agent) => !before.has(agent.id));
+		if (!started) return;
+		const template = this.config?.agentActions.find(
+			(action) => action.id === "issue_assignment",
+		)?.template;
+		if (template === undefined) return;
+		agents()?.queueInjection(
+			started.id,
+			renderAgentAction(
+				template,
+				{
+					ISSUE_URL: issueUrl(issue),
+					ISSUE_NO: String(issue.number),
+				},
+				started.profile.kind,
+			),
+		);
 	}
 
 	/**
@@ -2412,12 +2458,18 @@ export class AppController {
 		// it, and "in this workspace" on a branch that says nothing about an Issue
 		// shows nothing, which is the point: a record would have claimed the Issue
 		// while `master` was checked out.
+		const agentsBefore = new Set(
+			this.coordinator.model.workspaces.flatMap((workspace) =>
+				workspace.agents.map((agent) => agent.id),
+			),
+		);
 		const settled = await this.dispatchAwaiting({
 			type: "create_agent",
 			workspaceId,
 			profileId: agentProfileId(request.profileId),
 			presentation: request.split ? "beside" : "full",
 		});
+		this.queueIssuePrompt(agentsBefore, issue);
 		await this.syncEditorView();
 		return outcomeWire(settled, this.coordinator.readiness);
 	}

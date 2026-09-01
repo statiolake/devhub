@@ -110,34 +110,55 @@ async function answer(name: string | RegExp, text?: string) {
 }
 
 describe("assigning an Issue", () => {
-  it("asks its five questions and sends what they add up to", async () => {
-    const { assignIssue, listBranches } = mount();
+  it("asks three questions and sends what they add up to", async () => {
+    // The Issue, the agent, and how to work on it. The repository is not asked
+    // because there is exactly one clone, and the branch is not asked at all:
+    // DevHub makes `feature/128-wip` and the agent is told to rename it.
+    const { assignIssue } = mount();
 
     await answer("Assign Issue", ISSUE);
     await answer(/Agent for example\/widget#128/u);
-    await choose(/Where to work on/u, /\/projects\/widget/u);
     await choose(/Work on example\/widget#128/u, /In a new worktree/u);
-    await answer(/Branch for/u, "feature/128-tidy");
 
     await vi.waitFor(() => {
       expect(assignIssue).toHaveBeenCalledWith({
         issueUrl: ISSUE,
         directory: "/projects/widget",
-        branch: "feature/128-tidy",
+        branch: "feature/128-wip",
         profileId: "claude",
         split: false,
         allowStaleBase: false,
       });
     });
-    expect(listBranches).toHaveBeenCalledWith("/projects/widget");
   });
 
-  it("does not ask for a branch when the work stays in the workspace", async () => {
-    const { assignIssue, listBranches } = mount();
+  it("asks which clone when there is more than one", async () => {
+    const { assignIssue } = mount({
+      findIssueClones: vi.fn().mockResolvedValue([
+        { path: "/projects/widget", branch: "main", isMainWorktree: true },
+        { path: "/other/widget", branch: "main", isMainWorktree: true },
+      ]),
+    } as unknown as Partial<AppShellContextValue>);
 
     await answer("Assign Issue", ISSUE);
     await answer(/Agent for/u);
-    await choose(/Where to work on/u, /\/projects\/widget/u);
+    await choose(/Where to work on/u, /\/other\/widget/u);
+    await choose(/Work on example\/widget#128/u, /In this workspace/u);
+
+    await vi.waitFor(() => {
+      expect(assignIssue).toHaveBeenCalledWith(
+        expect.objectContaining({ directory: "/other/widget" }),
+      );
+    });
+  });
+
+  it("makes no branch when the work stays in the workspace", async () => {
+    // Which also means it is linked to no Issue unless the branch already
+    // happens to name one — see the branch-only linking rule.
+    const { assignIssue } = mount();
+
+    await answer("Assign Issue", ISSUE);
+    await answer(/Agent for/u);
     await choose(/Work on example\/widget#128/u, /In this workspace/u);
 
     await vi.waitFor(() => {
@@ -150,7 +171,6 @@ describe("assigning an Issue", () => {
         allowStaleBase: false,
       });
     });
-    expect(listBranches).not.toHaveBeenCalled();
   });
 
   it("offers the profiles that arrived after the flow started", async () => {
@@ -199,8 +219,11 @@ describe("assigning an Issue", () => {
 
     await answer("Assign Issue", ISSUE);
     await answer(/Agent for/u);
+    // Escape from the question *after* the repository step, which decided for
+    // itself and asked nothing. It must reach the agent question rather than
+    // the step that would only decide the same way again.
     fireEvent.keyDown(
-      await screen.findByRole("dialog", { name: /Where to work on/u }),
+      await screen.findByRole("dialog", { name: /Work on example/u }),
       {
         key: "Escape",
       },
@@ -231,9 +254,7 @@ describe("assigning an Issue", () => {
 
     await answer("Assign Issue", ISSUE);
     await answer(/Agent for/u);
-    await choose(/Where to work on/u, /\/projects\/widget/u);
     await choose(/Work on example\/widget#128/u, /In a new worktree/u);
-    await answer(/Branch for/u, "feature/128-tidy");
 
     expect(
       await screen.findByText(
