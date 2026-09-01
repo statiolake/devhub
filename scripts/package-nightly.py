@@ -1,14 +1,35 @@
 #!/usr/bin/env python3
 """Assemble a runnable, unsigned DevHub.app for macOS Apple Silicon.
 
-DevHub is not built the way VS Code is built. VS Code's own release pipeline
-(`gulp vscode-darwin-arm64`) *bundles* `out/` into a handful of minified files,
-and DevHub's main process imports deep module paths out of that tree
-(`code-oss-dev/out/vs/platform/.../windows.js`), which the bundled build does
-not have. So the packaged app ships the same unbundled `out/` compile that
-`apps/desktop/scripts/dev.sh` runs against, and runs it in the same mode
-(`VSCODE_DEV=1`). Packaging is therefore a *materialisation* of the developer
-tree, not a different build of it: what ships is what was verified locally.
+DevHub is built the way VS Code is built, and this is the one place the two
+layouts are written down side by side. Everything that differs between a
+`pnpm dev` run and the app this script produces follows from one flag.
+
+    dev (apps/desktop/scripts/dev.sh)   packaged (this script)
+    ---------------------------------   ----------------------------------
+    VSCODE_DEV=1                        unset
+    vscode/out/, module by module       vscode/out-vscode-min/, one bundle
+                                        per process
+    apps/desktop/out/main/main.js       the same, esbuild-bundled into
+    imports 94 deep module paths        code-oss-dev/out/main.js
+    product.json + product.overrides    product.json alone, written by
+    merged at runtime by bootstrap-     write_product_json
+    meta.ts (it reads VSCODE_DEV)
+    isBuilt false                       isBuilt true
+    named "DevHub Dev", per upstream    named "DevHub"
+
+The last line is the reason the rest exists. Upstream renames the product when
+`VSCODE_DEV` is set, on the reasoning that only a developer's checkout runs out
+of sources — and that reasoning is right. What was wrong was DevHub shipping a
+checkout: the packaged app set `VSCODE_DEV` itself so VS Code could find its
+modules, and inherited a name that was then true of the nightly too.
+
+The obstacle to bundling was never the pipeline. It was that DevHub's main
+process imports deep module paths (`code-oss-dev/out/vs/platform/.../windows.js`)
+which a bundled tree does not have. But upstream's `src/main.ts` is a bundle
+entry point for exactly the same reason, and DevHub's `main.ts` is that file's
+replacement — so it is bundled the same way and put in the same place. See
+`bundle_main_process`.
 
 The layout inside the bundle, and why:
 
@@ -143,7 +164,7 @@ def toolchain_node_bin() -> Path:
 def check_inputs() -> None:
 	required = [
 		(BASE_APP, "scripts/provision-vscode.sh"),
-		(VSCODE_DIR / "out" / "vs" / "code" / "electron-main" / "main.js", "scripts/provision-vscode.sh"),
+		(VSCODE_DIR / "out-vscode-min" / "main.js", "scripts/provision-vscode.sh"),
 		(VSCODE_DIR / "node_modules" / "electron", "scripts/provision-vscode.sh"),
 		(DESKTOP_DIR / "out" / "main" / "main.js", "pnpm --filter @devhub/desktop build"),
 		(DESKTOP_DIR / "dist" / "shell" / "index.html", "pnpm --filter @devhub/desktop build"),
@@ -396,6 +417,45 @@ def write_licenses(app: Path) -> None:
 		shutil.copyfile(text, licenses / text.name)
 
 
+def bundle_main_process(target: Path) -> None:
+	"""DevHub's main process, bundled the way upstream bundles its own.
+
+	Upstream's `src/main.ts` is a bundle entry point (`bootstrapEntryPoints` in
+	build/gulpfile.vscode.ts): everything the main process imports is folded
+	into one `out/main.js`, which is why a shipped VS Code has 25 files under
+	`out/vs` and not seven thousand. DevHub's `main.ts` is that file's
+	replacement, so it is bundled the same way and lands in the same place.
+
+	The place is load-bearing, not cosmetic. VS Code computes its own roots
+	from wherever the running bundle sits — `appRoot` is the parent of
+	`import.meta.dirname` (bootstrap-node.ts), `_VSCODE_FILE_ROOT` is that
+	directory itself (bootstrap-esm.ts), and `NODE_MODULES_PATH` hangs off it
+	too. Put DevHub's bundle at upstream's own `out/main.js` and every one of
+	those resolves exactly as upstream means it to, because it *is* upstream's
+	path. Put it anywhere else and each of them would need its own correction.
+
+	Externals are the packages, not the modules: the app ships `node_modules`,
+	so bare specifiers stay requires, while `code-oss-dev/...` is aliased to
+	the submodule so the VS Code half is what gets folded in.
+	"""
+	esbuild = VSCODE_DIR / "build" / "node_modules" / ".bin" / "esbuild"
+	if not esbuild.exists():
+		fail(f"missing {esbuild}\n       produce it with: scripts/provision-vscode.sh")
+	target.parent.mkdir(parents=True, exist_ok=True)
+	run([
+		str(esbuild),
+		str(DESKTOP_DIR / "out" / "main" / "main.js"),
+		"--bundle",
+		"--format=esm",
+		"--platform=node",
+		"--target=node22",
+		"--packages=external",
+		f"--alias:code-oss-dev={VSCODE_DIR}",
+		f"--outfile={target}",
+	])
+	print(f"    bundled the main process into {target.name} ({target.stat().st_size / 1e6:.1f} MB)")
+
+
 def write_product_json(target: Path) -> None:
 	"""VS Code's product metadata, saying DevHub where it says Code - OSS."""
 	product = json.loads((VSCODE_DIR / "product.json").read_text())
@@ -410,9 +470,11 @@ ENTRY_SOURCE = '''\
  * `apps/desktop/scripts/dev.sh` hands VS Code's Electron an environment and a
  * set of directories before it runs DevHub's main process. A double-clicked
  * app has neither a shell to set them nor arguments to carry them, so the
- * packaged bundle sets exactly the same ones here, before the first VS Code
- * module is loaded — `VSCODE_DEV` is read at module scope, so the import of
- * the real main has to come last.
+ * packaged bundle sets exactly the same directories here.
+ *
+ * What it does not set is `VSCODE_DEV`, and that is the whole difference
+ * between this app and a `dev.sh` run. See "the two layouts" at the top of
+ * scripts/package-nightly.py.
  *
  * Explicit arguments still win, so a scratch run can point the app at a
  * throwaway user-data directory the way a test needs.
@@ -421,22 +483,7 @@ ENTRY_SOURCE = '''\
  */
 
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
-
-/**
- * Dev mode reads argv as `Electron <app location> …` and drops the first
- * argument that is not an option (`stripAppPath` in VS Code's argvHelper). A
- * double-clicked bundle has no such argument, so without this the first real
- * one is eaten instead — the value of `--user-data-dir`, or the folder someone
- * dropped on the icon. Putting the app's own location where dev mode expects
- * it makes the packaged argv the shape the code already understands.
- */
-process.argv.splice(1, 0, dirname(fileURLToPath(import.meta.url)));
-
-/** The packaged `out/` is the unbundled dev compile, so it runs in dev mode. */
-process.env["VSCODE_DEV"] ??= "1";
-process.env["VSCODE_CLI"] ??= "1";
+import { join } from "node:path";
 
 /** DevHub's own state, beside the user's real VS Code state, never inside it. */
 const state = join(homedir(), "Library", "Application Support", "DevHub");
@@ -453,7 +500,11 @@ for (const [flag, value] of [
 \t}
 }
 
-await import("./out/main/main.js");
+// The bundled main process, at upstream's own entry path. `out/main/` beside
+// this file is the module-by-module compile the bundle was built from; it
+// still ships, because the preload script, the App Shell page and the `devhub`
+// CLI are loaded from it by path, but nothing imports it.
+await import("./node_modules/code-oss-dev/out/main.js");
 '''
 
 
@@ -487,10 +538,22 @@ def assemble_app_directory(app: Path, version: str, staged_extensions: Path) -> 
 
 	code_oss = resources / "node_modules" / "code-oss-dev"
 
-	step("vscode/out")
-	copy_tree(VSCODE_DIR / "out", code_oss / "out", ignore=ignore_tests)
-	touched, saved = strip_inline_source_maps(code_oss / "out")
-	print(f"    stripped inline source maps from {touched} files ({saved / 1e6:.0f} MB)")
+	step("vscode/out-vscode-min")
+	# The bundled tree, not the module-by-module compile: one file per process
+	# instead of the whole source graph. Source maps are external here rather
+	# than inline, so they are simply not copied.
+	copy_tree(
+		VSCODE_DIR / "out-vscode-min",
+		code_oss / "out",
+		ignore=lambda d, names: ignore_tests(d, names)
+		| {n for n in names if n.endswith(".map")},
+	)
+	print(f"    {directory_size(code_oss / 'out') / 1e6:.0f} MB bundled")
+
+	step("DevHub's main process")
+	# Overwrites upstream's own bundled entry: DevHub's main.ts *is* the
+	# replacement for the src/main.ts that produced it. See the function.
+	bundle_main_process(code_oss / "out" / "main.js")
 
 	step("vscode metadata")
 	shutil.copyfile(VSCODE_DIR / "package.json", code_oss / "package.json")
@@ -513,10 +576,18 @@ def assemble_app_directory(app: Path, version: str, staged_extensions: Path) -> 
 	step("vscode production dependencies")
 	skipped = 0
 	for module in production_dependencies():
-		# The Copilot extension is not part of the built-in set this app ships
-		# (it is a marketplace VSIX upstream downloads at release time), and its
-		# native payload is a quarter of the whole bundle.
-		if "@github" in module.parts and "copilot" in module.name:
+		# The Copilot *runtime binary* is a quarter of the whole bundle and
+		# nothing in DevHub starts it: the extension that would is a marketplace
+		# VSIX upstream downloads at release time, not part of the built-in set.
+		#
+		# Its SDK is a different matter, and the bundled build is why. Unbundled,
+		# `copilotAgent.js` was a module the agent host loaded only if it got
+		# that far, so a missing `@github/copilot-sdk` was a path never taken.
+		# Bundling folds the whole import graph into `agentHostMain.js`, which
+		# turns that into a require at load — and the agent host died on startup
+		# with ERR_MODULE_NOT_FOUND. Eight megabytes is the honest price of a
+		# static dependency; the 253 MB platform binary is still not one.
+		if "@github" in module.parts and module.name not in ("copilot", "copilot-sdk"):
 			skipped += 1
 			continue
 		relative = module.relative_to(VSCODE_DIR)

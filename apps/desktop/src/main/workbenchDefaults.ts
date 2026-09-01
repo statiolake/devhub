@@ -41,11 +41,27 @@
  *   has one answer and asking it is the whole of why `devhub <file>` appeared
  *   to do nothing. A person who wants the prompt back sets this to `prompt` and
  *   gets upstream's behaviour unchanged.
+ * - **Extension signature verification.** Upstream requires a Microsoft
+ *   signature on every gallery install, but only once `isBuilt` is true — a
+ *   source run skips the check entirely
+ *   (`extensionManagementService.ts#downloadExtension`). DevHub's packaged app
+ *   is a built product, so the check turns itself on there and nowhere else,
+ *   and it then fails every install with "Signature verification was not
+ *   executed": the verifier is `@vscode/vsce-sign`, which Microsoft ships from
+ *   a private feed and which is not in this checkout at all.
+ *
+ *   Shipping it is not an option, and it would answer the wrong question
+ *   anyway. DevHub's gallery is Open VSX, whose extensions carry no Microsoft
+ *   signature to verify; a check that can only ever say "unsigned" is not
+ *   protection, it is a wall in front of the only gallery DevHub has. Turning
+ *   it off says what is true — DevHub does not verify Microsoft signatures —
+ *   instead of a packaged build that cannot install anything.
  */
 export const WORKBENCH_DEFAULTS: Readonly<Record<string, string | boolean>> = {
 	"window.titleBarStyle": "native",
 	"window.customTitleBarVisibility": "never",
 	"security.workspace.trust.untrustedFiles": "open",
+	"extensions.verifySignature": false,
 };
 
 /**
