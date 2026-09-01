@@ -7,8 +7,10 @@
  * every service into `electron.app` to set the proxy for all of DevHub's
  * traffic, to fill the OS "recent items" with the files one editor opened, to
  * bounce the Dock, to replace the Dock menu, to claim `code-oss://` for the
- * DevHub binary, to point the updater at VS Code's own feed — each of them a
- * decision about DevHub made by something that has never heard of it.
+ * DevHub binary, to point the updater at VS Code's own feed, and — through
+ * `electron.nativeTheme` — to tell the whole process the OS is dark because one
+ * workbench is. Each of them a decision about DevHub made by something that has
+ * never heard of it.
  *
  * So those calls stop here. This is the same move `shell/menu.ts` makes for
  * `Menu.setApplicationMenu`: the method on the live object is replaced, and
@@ -24,6 +26,10 @@
  * arrives unnoticed rather than warned about, and the mitigation is below:
  * every name is asserted to exist before it is replaced, so a rename in a VS
  * Code or Electron bump fails at startup rather than quietly reopening a hole.
+ *
+ * Most of the names are methods, and a fenced method answers its caller. One is
+ * a property — `nativeTheme.themeSource` — and a property cannot answer, only
+ * be read back, so that one is fenced as an accessor: see `fenceProperty`.
  *
  * **What is not here.** `quit`, `exit` and `relaunch` are translated where
  * they mean something — `services/devhubLifecycleMainService.ts` — and not
@@ -97,6 +103,46 @@ const DOCK_MEMBERS: Readonly<Record<string, () => unknown>> = {
 	setBadge: () => undefined,
 };
 
+/** Note a refusal, and say so the first time. */
+function refuse(what: string): void {
+	if (!dropped.some((call) => call.member === what)) {
+		// Once per member: the first time says the fence is doing something,
+		// and the hundredth would only bury it.
+		console.info(
+			`[devhub] the workbench asked for ${what} — not DevHub's to give`,
+		);
+	}
+	dropped.push({ member: what, at: new Date() });
+}
+
+/**
+ * The property descriptor for a member, wherever on the chain it is defined.
+ *
+ * Where Electron defines a member is Electron's business and it is not the
+ * same everywhere: on Electron 42 `app`'s methods and `nativeTheme`'s accessors
+ * are both own properties, but these are native `EventEmitter` subclasses whose
+ * shape a bump can move onto a prototype without it being a breaking change.
+ * Since a member that is not found is fatal here — see `fenceMember` on why —
+ * looking only at own properties would turn that move into a startup crash for
+ * no reason.
+ */
+function describe(
+	target: object,
+	member: string,
+): PropertyDescriptor | undefined {
+	for (
+		let at: object | null = target;
+		at !== null;
+		at = Object.getPrototypeOf(at)
+	) {
+		const descriptor = Object.getOwnPropertyDescriptor(at, member);
+		if (descriptor) {
+			return descriptor;
+		}
+	}
+	return undefined;
+}
+
 /**
  * Replace one member with DevHub's answer to it.
  *
@@ -109,7 +155,7 @@ export function fenceMember(
 	answer: () => unknown,
 	what: string,
 ): void {
-	const descriptor = Object.getOwnPropertyDescriptor(target, member);
+	const descriptor = describe(target, member);
 	if (!descriptor) {
 		// Loud, because the alternative is a fence with a hole in it that
 		// nothing will ever point at. A bump that renames the member has to be
@@ -121,16 +167,44 @@ export function fenceMember(
 	}
 	(target as Record<string, unknown>)[member] = (...args: unknown[]) => {
 		void args;
-		if (!dropped.some((call) => call.member === what)) {
-			// Once per member: the first time says the fence is doing something,
-			// and the hundredth would only bury it.
-			console.info(
-				`[devhub] the workbench asked for ${what} — not DevHub's to give`,
-			);
-		}
-		dropped.push({ member: what, at: new Date() });
+		refuse(what);
 		return answer();
 	};
+}
+
+/**
+ * Replace one settable property so that reads pass through and writes stop.
+ *
+ * The methods above say "this did not happen" by returning a refusal. A
+ * property cannot: whatever was assigned is read back by the next reader, so
+ * the fence has to be the property itself. The getter still reports the truth —
+ * upstream logs `themeSource` back and must not be lied to — and the setter
+ * only records.
+ *
+ * Exported for the test, for the same reason `fenceMember` is.
+ */
+export function fenceProperty(
+	target: object,
+	member: string,
+	what: string,
+): void {
+	const descriptor = describe(target, member);
+	if (!descriptor) {
+		throw new Error(`DevHub cannot fence ${what}: there is no such member`);
+	}
+	const read = descriptor.get;
+	if (!read) {
+		throw new Error(`DevHub cannot fence ${what}: it is not an accessor`);
+	}
+	if (!descriptor.configurable) {
+		throw new Error(`DevHub cannot fence ${what}: it is read-only`);
+	}
+	Object.defineProperty(target, member, {
+		configurable: true,
+		enumerable: descriptor.enumerable,
+		get: () => read.call(target),
+		set: () => refuse(what),
+	});
 }
 
 export function installAppFence(): void {
@@ -149,6 +223,32 @@ export function installAppFence(): void {
 			fenceMember(dock, member, answer, `app.dock.${member}`);
 		}
 	}
+
+	// Not under `app`, and not a call, but the same sentence — and the one that
+	// was doing visible damage.
+	//
+	// `nativeTheme.themeSource` decides, for the whole process, whether Electron
+	// reports the OS as light or dark: every page's `prefers-color-scheme`, every
+	// native dialog and decoration, and `shouldUseDarkColors`, which is how
+	// anyone asks what the OS is set to. VS Code's `ThemeMainService` writes it
+	// from `window.systemColorTheme`, whose `'auto'` means "make the native
+	// chrome match the workbench's colour theme" — so a dark workbench tells
+	// Electron the OS is dark. In VS Code that is a harmless white lie, because
+	// the workbench it describes is the whole application.
+	//
+	// In DevHub it is neither harmless nor true. It repaints the App Shell and
+	// every other workbench, and it destroys the only answer to "what is the OS
+	// set to": `window.autoDetectColorScheme` then reads back the workbench's own
+	// theme as though it were the system's, concludes dark under a light OS, and
+	// reverts every light theme the person picks. The loop closes on itself and
+	// there is no way out from the settings side.
+	//
+	// So the OS is the OS. DevHub sets `'system'` — the only setting under which
+	// Electron reports what the OS actually is — and holds it there. If DevHub
+	// ever offers a "force dark" of its own, this line is where it is written,
+	// and it stays the only one.
+	electron.nativeTheme.themeSource = "system";
+	fenceProperty(electron.nativeTheme, "themeSource", "nativeTheme.themeSource");
 
 	// Not under `app`, but the same sentence: one workbench's password-store
 	// argument would drop the encryption backing every secret in the process to

@@ -31,7 +31,10 @@
  *    6. `installAppFence()` runs before `startup()`, so the process settings
  *       VS Code writes straight onto `electron.app` — the proxy, the OS recent
  *       items, the Dock badge and menu, the protocol registration, the update
- *       path — stop at DevHub instead. See `shell/appFence.ts`.
+ *       path — stop at DevHub instead. See `shell/appFence.ts`. The order
+ *       matters most for `nativeTheme.themeSource`, which `ThemeMainService`
+ *       writes from its constructor during `initServices`: that is inside
+ *       `startup()`, so the fence is already standing when it runs.
  *    7. `--force-disable-user-env` is on, because DevHub resolves the login
  *       shell's environment itself and upstream's copy would be a second
  *       answer to the same question. See `resolveArgs`.
