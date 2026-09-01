@@ -38,6 +38,10 @@ export async function askToRestartDevHub(): Promise<boolean> {
 		cancelId: CANCEL,
 		noLink: true,
 	};
+	// The question itself is worth a line: a person who says no leaves no other
+	// trace, and "an editor asked to restart DevHub and was refused" is exactly
+	// what someone reading the log after the fact is looking for.
+	console.info("[devhub] asking whether all of DevHub may restart");
 	const shell = shellWindowIfCreated();
 	// No shell window means the ask arrived before DevHub had one, which is
 	// early enough that there is no workspace behind it to protect; the sheet
