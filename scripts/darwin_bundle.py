@@ -48,6 +48,10 @@ PRODUCT_OVERRIDES = json.loads(PRODUCT_OVERRIDES_FILE.read_text())
 APP_NAME = PRODUCT_OVERRIDES["nameShort"]
 BUNDLE_IDENTIFIER = PRODUCT_OVERRIDES["darwinBundleIdentifier"]
 
+# Rendered from assets/icon-master.svg by scripts/package-icon.sh and committed;
+# that script says why it is committed rather than built here.
+ICON_FILE = REPO_ROOT / "distribution" / f"{APP_NAME}.icns"
+
 # The `Code - OSS` names come from VS Code's own Electron staging step
 # (`npm run electron`), which renames the prebuilt Electron bundle after its
 # product. Ours renames it once more.
@@ -71,10 +75,21 @@ def rebrand(app: Path, main_plist_extra: dict[str, str] | None = None) -> None:
 	renamed in the same pass as the plist. Renaming one without the other
 	produces an app that dies at startup with "Unable to find helper app".
 
+	The icon is part of the rename for the same reason the name is. A bundle that
+	says DevHub in the menu bar and shows Electron's default icon in the Dock is
+	branded in one place and not the other, and that is exactly the drift this
+	function exists to prevent — it is how a source run came to sit in the Dock
+	as a bare Electron tile while the packaged app had DevHub's icon. Both
+	callers want the same icon, so neither is asked for it.
+
 	`main_plist_extra` is for what only one caller knows — the packaged app's
-	version and icon — so that the names themselves stay stated once, here.
+	version — so that the names themselves stay stated once, here.
 	"""
 	contents = app / "Contents"
+
+	if not ICON_FILE.exists():
+		raise FileNotFoundError(f"missing {ICON_FILE}; produce it with: scripts/package-icon.sh")
+	shutil.copyfile(ICON_FILE, contents / "Resources" / ICON_FILE.name)
 
 	executable = contents / "MacOS" / BASE_PRODUCT_NAME
 	executable.rename(contents / "MacOS" / APP_NAME)
@@ -103,6 +118,7 @@ def rebrand(app: Path, main_plist_extra: dict[str, str] | None = None) -> None:
 			"CFBundleName": APP_NAME,
 			"CFBundleDisplayName": APP_NAME,
 			"CFBundleIdentifier": BUNDLE_IDENTIFIER,
+			"CFBundleIconFile": ICON_FILE.name,
 			**(main_plist_extra or {}),
 		},
 	)
@@ -154,12 +170,13 @@ def sign(app: Path) -> None:
 
 
 def _stamp_state() -> str:
-	"""What the branded clone was made from: the Electron, the names, and this file.
+	"""What the branded clone was made from: the Electron, the names, the icon, and this file.
 
-	All three belong in the stamp. The Electron is restaged by a VS Code bump,
-	the names change whenever `product-overrides.json` does, and this file holds
-	both how a bundle is renamed and how it is signed — a change here is exactly
-	as much a reason to rebuild as a change to either of the others.
+	All four belong in the stamp. The Electron is restaged by a VS Code bump,
+	the names change whenever `product-overrides.json` does, the icon changes
+	whenever `scripts/package-icon.sh` is re-run, and this file holds both how a
+	bundle is renamed and how it is signed — a change to any one of them is
+	exactly as much a reason to rebuild as a change to any other.
 
 	Leaving this file out is how a fix to `sign()` came to land with no effect:
 	the stamp still matched, so the clone from before the fix was kept, and it
@@ -175,8 +192,9 @@ def _stamp_state() -> str:
 	"""
 	electron_version = (BASE_APP.parent / "version").read_text().strip()
 	overrides = PRODUCT_OVERRIDES_FILE.read_bytes()
+	icon = ICON_FILE.read_bytes()
 	recipe = Path(__file__).read_bytes()
-	return hashlib.sha256(electron_version.encode() + overrides + recipe).hexdigest()
+	return hashlib.sha256(electron_version.encode() + overrides + icon + recipe).hexdigest()
 
 
 def clone_and_rebrand(destination: Path) -> Path:

@@ -38,7 +38,10 @@ The layout inside the bundle, and why:
       Frameworks/DevHub Helper*.app renamed with it — Electron finds its child
                                     processes by the main bundle's name, so the
                                     two names cannot drift apart
-      Resources/DevHub.icns         rasterised from assets/icon-master.svg
+      Resources/DevHub.icns         rendered from assets/icon-master.svg, and
+                                    installed by the same rename that gives the
+                                    bundle its name — a source run's bundle gets
+                                    it from there too
       Resources/app/                what Electron loads
         package.json                "main" -> devhub-main.js
         devhub-main.js              generated entry: the environment and the
@@ -412,30 +415,17 @@ def rename_bundle(app: Path, version: str) -> None:
 	"""Make the Electron bundle DevHub's, and say which DevHub it is.
 
 	The rename itself is `darwin_bundle.rebrand`, shared with the source run's
-	bundle so that the two cannot come to disagree about what DevHub is called.
-	What only a release knows is added here: the icon and the version.
+	bundle so that the two cannot come to disagree about what DevHub is called
+	or what it looks like — the icon travels with the rename, in there. What
+	only a release knows is added here: the version.
 	"""
 	rebrand(
 		app,
 		{
-			"CFBundleIconFile": f"{APP_NAME}.icns",
 			"CFBundleShortVersionString": version,
 			"CFBundleVersion": f"{version}.{date.today():%Y%m%d}",
 		},
 	)
-
-
-def write_icon(app: Path) -> None:
-	"""Put DevHub's icon in the bundle.
-
-	The .icns is committed rather than rendered here; scripts/package-icon.sh
-	says why. Missing it is a hard error: an app whose icon quietly stayed VS
-	Code's would ship looking like VS Code.
-	"""
-	icon = REPO_ROOT / "distribution" / f"{APP_NAME}.icns"
-	if not icon.exists():
-		fail(f"missing {icon}\n       produce it with: scripts/package-icon.sh")
-	shutil.copyfile(icon, app / "Contents" / "Resources" / f"{APP_NAME}.icns")
 
 
 def write_licenses(app: Path) -> None:
@@ -691,7 +681,6 @@ def main() -> int:
 
 	step("bundle identity")
 	rename_bundle(app, version)
-	write_icon(app)
 	write_licenses(app)
 
 	assemble_app_directory(app, version, staged)
