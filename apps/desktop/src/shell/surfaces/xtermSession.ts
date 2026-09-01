@@ -16,7 +16,7 @@
 
 import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
-import { Terminal } from "@xterm/xterm";
+import { Terminal, type ITheme } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import "./xtermSession.css";
 import { devhub } from "../client";
@@ -172,13 +172,51 @@ export interface XtermSession {
   readonly geometry: SurfaceGeometry;
   /** Fit to the host now, and report the result unless the surface is hidden. */
   remeasure(): void;
-  /** Adopt a changed configuration or system appearance, then refit. */
-  applyAppearance(
-    appearance: TerminalAppearance | undefined,
-    palette: TerminalPalette | undefined,
-  ): void;
+  /** Adopt a changed configuration — fonts and metrics — then refit. */
+  applyAppearance(appearance: TerminalAppearance | undefined): void;
+  /**
+   * Adopt the colours in force now: a configured palette, or the ground the
+   * pane is painted when there is none.
+   *
+   * Called for a changed palette *and* for a changed scheme, because with no
+   * configured theme the palette stays undefined while the colours move.
+   */
+  applyTheme(palette: TerminalPalette | undefined): void;
   focus(): void;
   dispose(): void;
+}
+
+/**
+ * The colours to hand xterm, from whichever source is actually in force.
+ *
+ * A configured palette is the answer when there is one. When there is not,
+ * the pane is still painted — `--terminal-background` falls back to the app's
+ * own `--surface`, which follows the scheme — and xterm has to be told what
+ * that colour is rather than left on its built-in black.
+ *
+ * This is not only about how it looks. A program in the pane asks what it is
+ * drawing on with OSC 11, and xterm answers from this theme; tmux forwards the
+ * question out to DevHub and relays the answer back in, so the reply is what a
+ * TUI uses to decide whether it is on a light or a dark terminal. Left
+ * untold, xterm reported black on a light pane and Claude Code chose its dark
+ * colours for a white background. The colour it names has to be the colour it
+ * paints, so both are read from the one place that decides it.
+ */
+function themeInForce(
+  host: HTMLElement,
+  palette: TerminalPalette | undefined,
+): ITheme {
+  if (palette) return xtermTheme(palette);
+  const painted = getComputedStyle(host);
+  // A window that has never had layout can answer with the empty string;
+  // xterm keeps its own default for a colour it is not given, which is the
+  // same place it would have been without this.
+  const background = painted.backgroundColor;
+  const foreground = painted.color;
+  return {
+    ...(background ? { background } : {}),
+    ...(foreground ? { foreground } : {}),
+  };
 }
 
 /**
@@ -200,7 +238,7 @@ export function openXtermSession(
     linkHandler,
     lineHeight: options.appearance?.terminalLineHeight ?? 1.2,
     scrollback: options.scrollback ?? 10_000,
-    theme: options.palette ? xtermTheme(options.palette) : undefined,
+    theme: themeInForce(host, options.palette),
   });
   const fit = new FitAddon();
   terminal.loadAddon(fit);
@@ -305,7 +343,7 @@ export function openXtermSession(
       return geometry;
     },
     remeasure,
-    applyAppearance(appearance, palette) {
+    applyAppearance(appearance) {
       if (appearance) {
         terminal.options.fontFamily = terminalFontStack(
           appearance.terminalFontFamily,
@@ -313,7 +351,10 @@ export function openXtermSession(
         terminal.options.fontSize = appearance.terminalFontSize;
         terminal.options.lineHeight = appearance.terminalLineHeight;
       }
-      if (palette) terminal.options.theme = xtermTheme(palette);
+      remeasure();
+    },
+    applyTheme(palette) {
+      terminal.options.theme = themeInForce(host, palette);
       remeasure();
     },
     focus() {

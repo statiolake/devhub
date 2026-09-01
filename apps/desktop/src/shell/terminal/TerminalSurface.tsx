@@ -140,9 +140,13 @@ export function TerminalSurface({
   const palette = activePalette(appearance, scheme === "dark");
   const paletteRef = useRef(palette);
   paletteRef.current = palette;
+  // The scheme is a dependency in its own right: with no configured theme the
+  // palette stays undefined while the colours the pane is painted still move,
+  // and the emulator has to be told, or it goes on naming the old ground to
+  // anything that asks with OSC 11.
   useEffect(() => {
-    sessionRef.current?.applyAppearance(undefined, palette);
-  }, [palette]);
+    sessionRef.current?.applyTheme(palette);
+  }, [palette, scheme]);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -501,7 +505,7 @@ export function TerminalSurface({
   useEffect(() => {
     // Appearance is a projection, not a surface identity. Update the live
     // xterm options and geometry without tearing down the PTY attachment.
-    sessionRef.current?.applyAppearance(appearance, undefined);
+    sessionRef.current?.applyAppearance(appearance);
   }, [appearance]);
 
   return (

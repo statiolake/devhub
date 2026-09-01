@@ -146,16 +146,78 @@ describe("the shared xterm session", () => {
     session.dispose();
   });
 
+  /**
+   * A program in the pane asks what it is drawing on with OSC 11, and xterm
+   * answers from its theme. With no configured palette xterm used to keep its
+   * built-in black while CSS painted the pane the app's own ground, so a light
+   * pane reported itself dark and a TUI chose the wrong colours for it.
+   */
+  it("names the ground it is painted when no palette is configured", () => {
+    const host = document.createElement("div");
+    host.style.backgroundColor = "rgb(255, 255, 255)";
+    host.style.color = "rgb(0, 0, 0)";
+    document.body.append(host);
+    const session = openXtermSession(host, {
+      inputLabel: "Example terminal input",
+      isHidden: () => false,
+      onGeometry: () => undefined,
+    });
+    const theme = session.terminal.options.theme as Record<string, string>;
+    expect(theme.background).toBe("rgb(255, 255, 255)");
+    expect(theme.foreground).toBe("rgb(0, 0, 0)");
+    session.dispose();
+  });
+
+  it("follows the ground when the scheme moves under an unconfigured pane", () => {
+    const host = document.createElement("div");
+    host.style.backgroundColor = "rgb(255, 255, 255)";
+    document.body.append(host);
+    const session = openXtermSession(host, {
+      inputLabel: "Example terminal input",
+      isHidden: () => false,
+      onGeometry: () => undefined,
+    });
+    // The palette stays undefined across a scheme change when no theme is
+    // configured, which is exactly the case that used to go unreported.
+    host.style.backgroundColor = "rgb(30, 30, 30)";
+    session.applyTheme(undefined);
+    expect(
+      (session.terminal.options.theme as Record<string, string>).background,
+    ).toBe("rgb(30, 30, 30)");
+    session.dispose();
+  });
+
+  it("prefers a configured palette over the painted ground", () => {
+    const host = document.createElement("div");
+    host.style.backgroundColor = "rgb(255, 255, 255)";
+    document.body.append(host);
+    const session = openXtermSession(host, {
+      inputLabel: "Example terminal input",
+      isHidden: () => false,
+      onGeometry: () => undefined,
+    });
+    session.applyTheme({
+      background: "#123456",
+      foreground: "#abcdef",
+      cursor: "#ffffff",
+      cursorText: "#000000",
+      selectionBackground: "#333333",
+      selectionForeground: "#ffffff",
+      ansi: Array.from({ length: 16 }, () => "#010101"),
+    });
+    expect(
+      (session.terminal.options.theme as Record<string, string>).background,
+    ).toBe("#123456");
+    session.dispose();
+  });
+
   it("keeps the font a CSS value when the appearance changes later", () => {
     const session = open("Menlo");
-    session.applyAppearance(
-      {
-        terminalFontFamily: "'Cascadia Code NF'",
-        terminalFontSize: 14,
-        terminalLineHeight: 1.3,
-      } as never,
-      undefined,
-    );
+    session.applyAppearance({
+      terminalFontFamily: "'Cascadia Code NF'",
+      terminalFontSize: 14,
+      terminalLineHeight: 1.3,
+    } as never);
     expect(String(session.terminal.options.fontFamily)).not.toContain("'");
     expect(String(session.terminal.options.fontFamily)).toContain(
       '"Cascadia Code NF"',
