@@ -86,6 +86,8 @@ export function WorkspacePicker({ onDismiss }: WorkspacePickerProps) {
   // list can start. One state, because they are one modal — the picker is not
   // still standing behind a form it opened.
   const [asking, setAsking] = useState<"pick" | "new" | "clone">("pick");
+  /** What was typed here, for whichever sheet is asked for next. */
+  const [typedQuery, setTypedQuery] = useState("");
   const {
     pickerCandidates,
     pickerBusy,
@@ -181,16 +183,26 @@ export function WorkspacePicker({ onDismiss }: WorkspacePickerProps) {
 
   // Leaving the list for a form ends the search behind it: nothing is going to
   // read its results, and a source left running would answer into nowhere.
+  // What was typed travels with the question. Somebody who typed a name and
+  // found no workspace by it, then took "Clone Project…", has already said
+  // what they want — and the row they took is the one that said their typing
+  // meant something. Handing the next sheet an empty field would ask them for
+  // it twice.
   const ask = useCallback(
-    (next: "new" | "clone") => {
+    (next: "new" | "clone", query: string) => {
       void cancelWorkspacePicker().catch(reportFailure);
+      setTypedQuery(query);
       setAsking(next);
     },
     [cancelWorkspacePicker, reportFailure],
   );
 
-  if (asking === "new") return <NewProjectSheet onDismiss={onDismiss} />;
-  if (asking === "clone") return <CloneProjectSheet onDismiss={onDismiss} />;
+  if (asking === "new")
+    return <NewProjectSheet initialQuery={typedQuery} onDismiss={onDismiss} />;
+  if (asking === "clone")
+    return (
+      <CloneProjectSheet initialQuery={typedQuery} onDismiss={onDismiss} />
+    );
 
   return (
     <Picker
@@ -214,11 +226,11 @@ export function WorkspacePicker({ onDismiss }: WorkspacePickerProps) {
       // the split modifier to mean here: both ways of choosing open it.
       onChoose={(choice) => {
         if (choice.id === NEW_PROJECT) {
-          ask("new");
+          ask("new", choice.query);
           return;
         }
         if (choice.id === CLONE_PROJECT) {
-          ask("clone");
+          ask("clone", choice.query);
           return;
         }
         // Only a row that said it is missing may make a folder, and the row

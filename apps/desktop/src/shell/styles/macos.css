@@ -489,14 +489,6 @@
   margin-top: var(--space-3);
 }
 
-/* Where a clone is going to land: the sheet showing its own arithmetic, so
-   nobody has to run it in their head from two fields. */
-.project-destination {
-  margin: var(--space-2) 0 0;
-  color: var(--secondary);
-  word-break: break-all;
-}
-
 /*
  * An alert that belongs to one workbench.
  *
