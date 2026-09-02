@@ -1,9 +1,9 @@
 /**
  * What GitHub is asked, and how DevHub is allowed to ask it.
  *
- * One GraphQL query per Issue DevHub is watching, built here rather than
+ * One GraphQL query per branch DevHub is watching, built here rather than
  * shelled out to `gh`: the CLI's own queries fetch far more than a title and a
- * handful of pull request bodies, and this runs every minute.
+ * pull request's state, and this runs every minute.
  *
  * The token is read from `gh auth token` and used. It is never written to a
  * config file, never logged, and never put in an error message — a failure says
@@ -11,21 +11,51 @@
  */
 
 import { spawn } from "node:child_process";
-import { bodyClosesIssue, type IssueReference } from "../../model/github.js";
 
-/** What DevHub shows about an Issue and whatever pull request is closing it. */
-export interface IssueStatus {
-	readonly issue: IssueReference;
-	readonly title: string;
-	readonly state: "open" | "closed";
-	readonly url: string;
+/**
+ * A workspace's checked-out branch, as GitHub names the things it is about.
+ *
+ * The branch is the subject and the Issue is optional, which is the opposite of
+ * how this used to read. A branch always has a pull request question to ask —
+ * *is there one out from here?* — and only some branches name an Issue.
+ */
+export interface BranchReference {
+	readonly owner: string;
+	readonly repository: string;
+	/** The short name, as git reports it: `feature/128-wip`, not a `refs/` path. */
+	readonly branch: string;
+	/** The Issue the branch names, by DevHub's convention, when it names one. */
+	readonly issueNumber?: number;
+}
+
+/** What GitHub says a branch is about. Either half may be absent. */
+export interface BranchStatus {
+	readonly issue?: IssueStatus;
 	readonly pullRequest?: PullRequestStatus;
 }
 
+export interface IssueStatus {
+	readonly number: number;
+	readonly title: string;
+	readonly state: "open" | "closed";
+	readonly url: string;
+}
+
+/**
+ * The pull request out from this branch.
+ *
+ * All four states, because all four are now reachable. DevHub used to find a
+ * pull request by parsing closing keywords out of the bodies of a repository's
+ * *open* pull requests, so `open` and `draft` were the whole of what could
+ * arrive; asking the branch directly answers about the merged and closed ones
+ * too, and "this branch has already landed" is the single most useful thing a
+ * workspace row can say about a branch nobody has deleted yet.
+ */
 export interface PullRequestStatus {
 	readonly number: number;
 	readonly url: string;
-	readonly state: "open" | "draft";
+	readonly title: string;
+	readonly state: "open" | "draft" | "closed" | "merged";
 }
 
 /** A failure with words: shown as itself, and never carrying the token. */
@@ -40,21 +70,39 @@ const ENDPOINT = "https://api.github.com/graphql";
 const GH_TIMEOUT_MS = 10 * 1000;
 const REQUEST_TIMEOUT_MS = 20 * 1000;
 /**
- * How many open pull requests are read per Issue.
+ * How many of a branch's pull requests are read.
  *
- * Only their bodies are wanted, and only to find the one that says it closes
- * this Issue. A repository with more open pull requests than this has a
- * different problem than DevHub can solve, and the query has to stay small
- * enough to run every minute.
+ * Only ever a handful: these are the pull requests whose *head* is this one
+ * branch, and the ordinary answer is nought or one. A few are asked for so the
+ * rule below has something to choose between when a branch has been reopened
+ * onto a second pull request, and no more, because the query runs every minute.
  */
-const MAX_PULL_REQUESTS = 50;
+const MAX_PULL_REQUESTS = 10;
 
-const QUERY = `query($owner:String!,$name:String!,$number:Int!,$prs:Int!){
+/**
+ * What a branch is about, in one round trip.
+ *
+ * The pull request is asked for by the branch itself — `ref` is the branch and
+ * `associatedPullRequests` is what is out from it — rather than found by
+ * reading the bodies of a repository's open pull requests for a closing
+ * keyword. The old way could only see pull requests that were still open, could
+ * only see them in repositories small enough to page through, and depended on a
+ * person having written `Closes #128` at all. A branch knows what is out from
+ * it whatever anybody wrote.
+ *
+ * The Issue is on the same query and skipped when the branch does not name one,
+ * so a branch is one request whether or not it is about an Issue. `$number` is
+ * still declared and still sent when skipped, because GraphQL validates a
+ * variable's type whether or not the field that uses it is included.
+ */
+const QUERY = `query($owner:String!,$name:String!,$ref:String!,$number:Int!,$wantIssue:Boolean!,$prs:Int!){
   repository(owner:$owner,name:$name){
-    issue(number:$number){ number title state url }
-    pullRequests(states:OPEN, first:$prs, orderBy:{field:UPDATED_AT,direction:DESC}){
-      nodes{ number url isDraft body }
+    ref(qualifiedName:$ref){
+      associatedPullRequests(first:$prs, orderBy:{field:UPDATED_AT,direction:DESC}){
+        nodes{ number url title state isDraft }
+      }
     }
+    issue(number:$number) @include(if:$wantIssue){ number title state url }
   }
 }`;
 
@@ -208,16 +256,20 @@ interface GraphQlIssue {
 interface GraphQlPullRequest {
 	readonly number: number;
 	readonly url: string;
+	readonly title: string;
+	/** GitHub's own enum: `OPEN`, `CLOSED` or `MERGED`. */
+	readonly state: string;
 	readonly isDraft: boolean;
-	readonly body: string | null;
 }
 
 interface GraphQlAnswer {
 	readonly data?: {
 		readonly repository?: {
 			readonly issue?: GraphQlIssue | null;
-			readonly pullRequests?: {
-				readonly nodes?: readonly (GraphQlPullRequest | null)[] | null;
+			readonly ref?: {
+				readonly associatedPullRequests?: {
+					readonly nodes?: readonly (GraphQlPullRequest | null)[] | null;
+				} | null;
 			} | null;
 		} | null;
 	} | null;
@@ -225,25 +277,71 @@ interface GraphQlAnswer {
 }
 
 /**
- * Read one Issue, and whichever open pull request says it closes it.
+ * Which of a branch's pull requests the row is about.
  *
- * "Says it closes it" is read from the body, not from GitHub's own
- * `closingIssuesReferences`: that field answers what would close on a merge
- * into the *default* branch, so work that lands on a release branch — or in a
- * repository whose default branch is not where work lands — would read as
- * having no pull request at all.
+ * A branch usually has nought or one, and then there is nothing to decide. It
+ * has more when one was closed and another opened from the same head — a
+ * rebase somebody gave up on, a pull request retargeted by closing and
+ * reopening — and the rule is: **a live pull request outranks a finished one,
+ * and among equals the most recently updated wins.**
+ *
+ * Live first because that is the one a person can still act on: a branch with
+ * an abandoned pull request from March and an open one from this morning is a
+ * branch with an open pull request, and saying "closed" because the closed one
+ * was touched last would report the row as finished work that is still in
+ * review. `orderBy: UPDATED_AT DESC` is what makes "among equals" decidable
+ * without a second sort here, so the first match in either pass is the answer.
  */
-export async function readIssueStatus(
-	issue: IssueReference,
+function chosenPullRequest(
+	nodes: readonly (GraphQlPullRequest | null)[],
+): GraphQlPullRequest | undefined {
+	const present = nodes.filter((node): node is GraphQlPullRequest => !!node);
+	return (
+		present.find((node) => node.state.toUpperCase() === "OPEN") ?? present[0]
+	);
+}
+
+/**
+ * What a pull request's two GitHub fields mean together.
+ *
+ * `isDraft` is only a distinction while it is open — GitHub keeps the flag set
+ * on a draft that was closed without ever being marked ready, and a row that
+ * called that one "draft" would report work nobody is going to finish as work
+ * in progress.
+ */
+function pullRequestState(
+	node: GraphQlPullRequest,
+): PullRequestStatus["state"] {
+	switch (node.state.toUpperCase()) {
+		case "MERGED":
+			return "merged";
+		case "CLOSED":
+			return "closed";
+		default:
+			return node.isDraft ? "draft" : "open";
+	}
+}
+
+/**
+ * Read what a branch is about: the pull request out from it, and the Issue it
+ * names, if it names one.
+ */
+export async function readBranchStatus(
+	reference: BranchReference,
 	token: string,
-): Promise<IssueStatus> {
+): Promise<BranchStatus> {
+	const wantIssue = reference.issueNumber !== undefined;
 	const answer = await post(
 		{
 			query: QUERY,
 			variables: {
-				owner: issue.owner,
-				name: issue.repository,
-				number: issue.number,
+				owner: reference.owner,
+				name: reference.repository,
+				ref: `refs/heads/${reference.branch}`,
+				// Sent whether or not it is used: the field is skipped, the variable
+				// is still type-checked. Zero is never a real Issue number.
+				number: reference.issueNumber ?? 0,
+				wantIssue,
 				prs: MAX_PULL_REQUESTS,
 			},
 		},
@@ -251,25 +349,39 @@ export async function readIssueStatus(
 	);
 	const complaint = answer.errors?.[0]?.message;
 	if (complaint) throw new GitHubUnavailable(complaint);
-	const found = answer.data?.repository?.issue;
-	if (!found) {
+	const repository = answer.data?.repository;
+	if (!repository) {
 		throw new GitHubUnavailable(
-			`GitHub has no issue ${issue.owner}/${issue.repository}#${String(issue.number)}.`,
+			`GitHub has no repository ${reference.owner}/${reference.repository}.`,
 		);
 	}
-	const closing = (answer.data?.repository?.pullRequests?.nodes ?? []).find(
-		(node) => node && bodyClosesIssue(node.body ?? "", issue.number),
+	// A branch that is not on the remote has no `ref` and therefore no pull
+	// request, which is a fact and not a failure: it is what every branch looks
+	// like before it is first pushed.
+	const chosen = chosenPullRequest(
+		repository.ref?.associatedPullRequests?.nodes ?? [],
 	);
+	const issue = repository.issue;
+	if (wantIssue && !issue) {
+		throw new GitHubUnavailable(
+			`GitHub has no issue ${reference.owner}/${reference.repository}#${String(reference.issueNumber)}.`,
+		);
+	}
 	return {
-		issue,
-		title: found.title,
-		state: found.state.toUpperCase() === "CLOSED" ? "closed" : "open",
-		url: found.url,
-		pullRequest: closing
+		issue: issue
 			? {
-					number: closing.number,
-					url: closing.url,
-					state: closing.isDraft ? "draft" : "open",
+					number: issue.number,
+					title: issue.title,
+					state: issue.state.toUpperCase() === "CLOSED" ? "closed" : "open",
+					url: issue.url,
+				}
+			: undefined,
+		pullRequest: chosen
+			? {
+					number: chosen.number,
+					url: chosen.url,
+					title: chosen.title,
+					state: pullRequestState(chosen),
 				}
 			: undefined,
 	};

@@ -102,22 +102,3 @@ export function issueNumberFromBranch(branch: string): number | undefined {
 export function wipBranchForIssue(issueNumber: number): string {
   return `feature/${String(issueNumber)}-wip`;
 }
-
-/**
- * Does this pull request body say it closes that Issue?
- *
- * GitHub's own `closingIssuesReferences` answers a narrower question — what
- * would close on a merge into the *default* branch — so a PR onto a release
- * branch, or a repository whose default branch is not where work lands, reads
- * as having no Issue at all. The keywords in the body are what the person
- * actually wrote, so that is what is read.
- *
- * The keyword list is GitHub's own, and so is the shape: a keyword, optional
- * whitespace and colon, then `#<number>`.
- */
-export function bodyClosesIssue(body: string, issueNumber: number): boolean {
-  return new RegExp(
-    `\\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\\b\\s*:?\\s*#${String(issueNumber)}\\b`,
-    "iu",
-  ).test(body);
-}

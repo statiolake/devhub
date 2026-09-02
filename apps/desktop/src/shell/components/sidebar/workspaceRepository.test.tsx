@@ -81,6 +81,7 @@ const WORKING_ON: RepositoryStatusWire = {
       pullRequest: {
         number: 210,
         url: "https://github.com/example/widget/pull/210",
+        title: "Tidy the picker, at last",
         state: "draft",
       },
     },

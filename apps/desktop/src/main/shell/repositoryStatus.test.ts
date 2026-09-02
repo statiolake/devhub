@@ -1,12 +1,17 @@
 /**
- * Which Issue a workspace is about, and what makes it change.
+ * What a workspace is working on, and what makes it change.
  *
  * The whole of the link is the branch that is checked out. DevHub used to
  * prefer a record written when the person assigned an Issue and fall back to
  * the branch name — but a record cannot follow a checkout, so a workspace
  * assigned Issue 128 and then switched to `master` went on claiming 128. These
- * pin the replacement: the branch decides, every round, and a workspace on a
- * branch that says nothing about an Issue is about no Issue.
+ * pin the replacement: the branch decides, every round.
+ *
+ * And the branch is now the whole of the *remote* question too. GitHub is asked
+ * what is out from this branch, rather than being asked about an Issue and then
+ * searched for a pull request whose body mentions it — so a workspace on a
+ * branch that names no Issue can still have a pull request, and a pull request
+ * that has been merged or closed is still something the row can say.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -15,7 +20,7 @@ import type { RepositoryStatusWire } from "../../ipc/contract.js";
 const readRepository = vi.fn();
 const readBranch = vi.fn();
 const readDirty = vi.fn();
-const readIssueStatus = vi.fn();
+const readBranchStatus = vi.fn();
 const readGitHubToken = vi.fn();
 
 vi.mock("./git.js", () => ({
@@ -26,7 +31,7 @@ vi.mock("./git.js", () => ({
 vi.mock("./github.js", async (importOriginal) => ({
 	...(await importOriginal<Record<string, unknown>>()),
 	readGitHubToken: (...args: unknown[]) => readGitHubToken(...args),
-	readIssueStatus: (...args: unknown[]) => readIssueStatus(...args),
+	readBranchStatus: (...args: unknown[]) => readBranchStatus(...args),
 }));
 
 const { BRANCH_POLL_INTERVAL_MS, RepositoryStatusWatcher } = await import(
@@ -71,12 +76,22 @@ async function round(): Promise<RepositoryStatusWire> {
 
 beforeEach(() => {
 	readGitHubToken.mockResolvedValue({ kind: "token", token: "token" });
-	readIssueStatus.mockImplementation(
-		(issue: { owner: string; repository: string; number: number }) => ({
-			issue,
-			title: `Issue ${String(issue.number)}`,
-			state: "open",
-			url: `https://github.com/${issue.owner}/${issue.repository}/issues/${String(issue.number)}`,
+	readBranchStatus.mockImplementation(
+		(reference: {
+			owner: string;
+			repository: string;
+			branch: string;
+			issueNumber?: number;
+		}) => ({
+			issue:
+				reference.issueNumber === undefined
+					? undefined
+					: {
+							number: reference.issueNumber,
+							title: `Issue ${String(reference.issueNumber)}`,
+							state: "open",
+							url: `https://github.com/${reference.owner}/${reference.repository}/issues/${String(reference.issueNumber)}`,
+						},
 		}),
 	);
 });
@@ -117,8 +132,13 @@ describe("what a workspace is about", () => {
 		checkedOut("step/feature/#1234-issue-body");
 		const status = await round();
 		expect(status.workspaces[0]?.issue?.number).toBe(1234);
-		expect(readIssueStatus).toHaveBeenCalledWith(
-			{ owner: "example", repository: "widget", number: 1234 },
+		expect(readBranchStatus).toHaveBeenCalledWith(
+			{
+				owner: "example",
+				repository: "widget",
+				branch: "step/feature/#1234-issue-body",
+				issueNumber: 1234,
+			},
 			"token",
 		);
 	});
@@ -129,7 +149,7 @@ describe("what a workspace is about", () => {
 		// Issue at all. Both facts are now on the row that has them.
 		const { GitHubUnavailable } = await import("./github.js");
 		checkedOut("feature/128-tidy");
-		readIssueStatus.mockRejectedValue(
+		readBranchStatus.mockRejectedValue(
 			new GitHubUnavailable("GitHub has no issue example/widget#128."),
 		);
 
@@ -150,7 +170,7 @@ describe("what a workspace is about", () => {
 
 		const status = await round();
 		expect(status.workspaces[0]?.unavailable?.reason).toMatch(/gh auth login/u);
-		expect(readIssueStatus).not.toHaveBeenCalled();
+		expect(readBranchStatus).not.toHaveBeenCalled();
 	});
 
 	it("tells somebody with no `gh` to install it, not to log in", async () => {
@@ -195,7 +215,7 @@ describe("what a workspace is about", () => {
 		expect(published.at(-1)?.workspaces[0]?.issue?.number).toBe(128);
 
 		// A second look, asked for the way a projection change asks for one.
-		readIssueStatus.mockRejectedValue(
+		readBranchStatus.mockRejectedValue(
 			new GitHubUnavailable("GitHub answered 502."),
 		);
 		watched = [WORKSPACE, { id: "w-2", root: "/projects/other" }];
@@ -228,12 +248,44 @@ describe("what a workspace is about", () => {
 			});
 			expect(published.at(-1)?.workspaces[0]?.branch).toBe("feature/128-tidy");
 
-			// Somebody runs `git switch`. Only the cheap question is re-asked.
+			// Somebody runs `git switch`, and GitHub stops answering at the same
+			// moment. The branch must still appear: it is a local command, and
+			// nothing about it waits on the round trip.
+			readBranchStatus.mockImplementation(() => new Promise(() => undefined));
 			readBranch.mockResolvedValue("master");
+			readRepository.mockResolvedValue({
+				mainWorktree: "/projects/widget",
+				branch: "master",
+				remote: "github.com/example/widget",
+			});
+			const before = published.length;
 			await vi.advanceTimersByTimeAsync(BRANCH_POLL_INTERVAL_MS);
 
-			expect(published.at(-1)?.workspaces[0]?.branch).toBe("master");
-			// And the whole repository was not re-read to find that out.
+			// The very next publish is the fast clock's own, made out of one local
+			// command while GitHub is still being waited on.
+			expect(published[before]?.workspaces[0]?.branch).toBe("master");
+			running.stop();
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("does not re-read the repository while the branch stays put", async () => {
+		// What makes the fast clock cheap: one local command per workspace, and
+		// nothing else unless the answer actually changed. Without this it would
+		// be a full round every two seconds, which is the poll this file is
+		// written to avoid.
+		vi.useFakeTimers();
+		try {
+			checkedOut("feature/128-tidy");
+			const published: RepositoryStatusWire[] = [];
+			const running = watcher(published);
+			running.start();
+			await vi.waitFor(() => {
+				expect(published.length).toBeGreaterThan(0);
+			});
+
+			await vi.advanceTimersByTimeAsync(BRANCH_POLL_INTERVAL_MS * 3);
 			expect(readRepository).toHaveBeenCalledTimes(1);
 			running.stop();
 		} finally {
@@ -247,7 +299,7 @@ describe("what a workspace is about", () => {
 		// branch that is about no Issue.
 		checkedOut("feature/128-tidy");
 		let answer: (value: unknown) => void = () => undefined;
-		readIssueStatus.mockImplementation(
+		readBranchStatus.mockImplementation(
 			() =>
 				new Promise((resolve) => {
 					answer = resolve;
@@ -261,23 +313,12 @@ describe("what a workspace is about", () => {
 			expect(published.length).toBeGreaterThan(0);
 		});
 		running.stop();
-		answer({
-			issue: { owner: "example", repository: "widget", number: 128 },
-			title: "Tidy",
-			state: "open",
-			url: "u",
-		});
+		answer({ issue: { number: 128, title: "Tidy", state: "open", url: "u" } });
 
 		const row = published.at(-1)?.workspaces[0];
 		expect(row?.pending).toEqual({ number: 128 });
 		expect(row?.issue).toBeUndefined();
 		expect(row?.unavailable).toBeUndefined();
-	});
-
-	it("asks GitHub about nothing when the branch names no Issue", async () => {
-		checkedOut("master");
-		await round();
-		expect(readIssueStatus).not.toHaveBeenCalled();
 	});
 
 	it("says which remote it could not read as a GitHub repository", async () => {
@@ -297,7 +338,7 @@ describe("what a workspace is about", () => {
 		expect(row?.issue).toBeUndefined();
 		expect(row?.unavailable?.number).toBe(128);
 		expect(row?.unavailable?.reason).toMatch(/github-alt\/example\/widget/u);
-		expect(readIssueStatus).not.toHaveBeenCalled();
+		expect(readBranchStatus).not.toHaveBeenCalled();
 	});
 
 	it("says so when the branch names an Issue and there is no remote at all", async () => {
@@ -311,11 +352,14 @@ describe("what a workspace is about", () => {
 		expect(status.workspaces[0]?.unavailable?.reason).toMatch(/`origin`/u);
 	});
 
-	it("says nothing at all when the branch names no Issue", async () => {
+	it("says nothing at all when a branch that names no Issue has nothing out from it", async () => {
 		// The one blank that is a fact rather than a failure, and it has to stay
 		// blank: a reason on every `master` would be noise on most of the list.
 		checkedOut("master");
 		const status = await round();
+		expect(status.workspaces[0]?.issue).toBeUndefined();
+		expect(status.workspaces[0]?.pullRequest).toBeUndefined();
+		expect(status.workspaces[0]?.pending).toBeUndefined();
 		expect(status.workspaces[0]?.unavailable).toBeUndefined();
 		expect(status.diagnostic).toBeUndefined();
 	});
@@ -328,6 +372,7 @@ describe("what a workspace is about", () => {
 		expect(status.workspaces[0]?.branch).toBeUndefined();
 		expect(status.workspaces[0]?.unavailable).toBeUndefined();
 		expect(status.diagnostic).toBeUndefined();
+		expect(readBranchStatus).not.toHaveBeenCalled();
 	});
 
 	it("says on the row when git refused to read the repository", async () => {
@@ -354,6 +399,106 @@ describe("what a workspace is about", () => {
 		// And the Sidebar's note carries it too: one workspace whose git is broken
 		// is usually every workspace.
 		expect(status.diagnostic).toMatch(/dubious ownership/u);
-		expect(readIssueStatus).not.toHaveBeenCalled();
+		expect(readBranchStatus).not.toHaveBeenCalled();
+	});
+});
+
+/**
+ * The pull request, which is now a question about the branch rather than a
+ * search of the repository.
+ *
+ * The old way asked GitHub for an Issue, pulled down the bodies of up to fifty
+ * open pull requests, and looked for one that said `Closes #128`. That could
+ * only find a pull request that was still open, only in a repository small
+ * enough to page through, and only where somebody had written the keyword. The
+ * branch knows what is out from it regardless.
+ */
+describe("the pull request out from a branch", () => {
+	it("is asked for on a branch that names no Issue at all", async () => {
+		// The case the old design could not express: there was no Issue to key the
+		// question by, so a workspace on `spike/rework` with a pull request open
+		// had nothing to show.
+		checkedOut("spike/rework");
+		readBranchStatus.mockResolvedValue({
+			pullRequest: {
+				number: 7,
+				url: "https://github.com/example/widget/pull/7",
+				title: "Rework the picker",
+				state: "open",
+			},
+		});
+
+		const status = await round();
+		expect(readBranchStatus).toHaveBeenCalledWith(
+			{ owner: "example", repository: "widget", branch: "spike/rework" },
+			"token",
+		);
+		const row = status.workspaces[0];
+		expect(row?.issue).toBeUndefined();
+		expect(row?.pullRequest).toEqual({
+			number: 7,
+			url: "https://github.com/example/widget/pull/7",
+			title: "Rework the picker",
+			state: "open",
+		});
+	});
+
+	it("is still there after it is merged", async () => {
+		// The other thing the old design could not express: it only ever looked at
+		// open pull requests, so the moment work landed the row went blank — at
+		// exactly the moment "this has landed" is the most useful thing it could
+		// say about a branch nobody has deleted yet.
+		checkedOut("feature/128-tidy");
+		readBranchStatus.mockResolvedValue({
+			issue: { number: 128, title: "Tidy", state: "closed", url: "u" },
+			pullRequest: {
+				number: 9,
+				url: "p",
+				title: "Tidy the picker",
+				state: "merged",
+			},
+		});
+
+		const row = (await round()).workspaces[0];
+		expect(row?.pullRequest?.state).toBe("merged");
+		expect(row?.issue?.state).toBe("closed");
+	});
+
+	it("does not put a reason on a row that was never expecting an answer", async () => {
+		// Every branch in a GitHub repository is asked about now, including the
+		// ones that will never have a pull request. Surfacing GitHub's failure on
+		// all of them would put a red line on every row in the window whenever the
+		// network drops, to say once per row what the Sidebar's foot says once.
+		// A branch that *names* an Issue is making a claim the row cannot back up,
+		// and that one still says so — the test above pins it.
+		const { GitHubUnavailable } = await import("./github.js");
+		checkedOut("master");
+		readBranchStatus.mockRejectedValue(
+			new GitHubUnavailable("GitHub answered 502."),
+		);
+
+		const status = await round();
+		expect(status.workspaces[0]?.unavailable).toBeUndefined();
+		// Not swallowed: it is at the foot of the Sidebar, where one network
+		// failure is said once.
+		expect(status.diagnostic).toBe("GitHub answered 502.");
+	});
+
+	it("does not say it is asking on a branch that names no Issue", async () => {
+		// A spinner is suspense, and there is nothing to be in suspense about: the
+		// ordinary answer for `master` is "there is no pull request", and drawing
+		// that as a pending row on every workspace every minute would be noise on
+		// most of the list.
+		checkedOut("master");
+		readBranchStatus.mockImplementation(() => new Promise(() => undefined));
+		const published: RepositoryStatusWire[] = [];
+		const running = watcher(published);
+		running.start();
+		await vi.waitFor(() => {
+			expect(published.length).toBeGreaterThan(0);
+		});
+		running.stop();
+
+		expect(published.at(-1)?.workspaces[0]?.pending).toBeUndefined();
 	});
 });

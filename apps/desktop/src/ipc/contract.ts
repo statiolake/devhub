@@ -149,11 +149,20 @@ export interface WorkspaceRepositoryWire {
 		readonly title: string;
 		readonly state: "open" | "closed";
 	};
-	/** The open pull request whose body says it closes that Issue. */
+	/**
+	 * The pull request out from the checked-out branch.
+	 *
+	 * Found by asking the branch what is out from it, not by reading closing
+	 * keywords out of open pull request bodies — so it is here for a branch that
+	 * names no Issue at all, and it is here after the pull request is merged or
+	 * closed. Where a branch has more than one, it is the live one, and the most
+	 * recently updated of those.
+	 */
 	readonly pullRequest?: {
 		readonly number: number;
 		readonly url: string;
-		readonly state: "open" | "draft";
+		readonly title: string;
+		readonly state: "open" | "draft" | "closed" | "merged";
 	};
 	/**
 	 * Why this row cannot say what the workspace is working on.

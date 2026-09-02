@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  bodyClosesIssue,
   wipBranchForIssue,
   issueNumberFromBranch,
   issueUrl,
@@ -99,36 +98,5 @@ describe("the branch naming convention", () => {
     expect(issueNumberFromBranch("feature/128")).toBeUndefined();
     expect(issueNumberFromBranch("v2-rewrite")).toBeUndefined();
     expect(issueNumberFromBranch("release/2024")).toBeUndefined();
-  });
-});
-
-describe("a pull request body", () => {
-  it("closes an Issue by any of GitHub's keywords", () => {
-    for (const keyword of [
-      "Closes",
-      "closed",
-      "close",
-      "Fixes",
-      "fixed",
-      "fix",
-      "Resolves",
-      "resolved",
-      "resolve",
-    ]) {
-      expect(bodyClosesIssue(`${keyword} #128`, 128)).toBe(true);
-    }
-  });
-
-  it("reads the colon form too", () => {
-    expect(bodyClosesIssue("Closes: #128", 128)).toBe(true);
-  });
-
-  it("does not read a bare mention as a closing reference", () => {
-    expect(bodyClosesIssue("Related to #128", 128)).toBe(false);
-    expect(bodyClosesIssue("See #128 for context", 128)).toBe(false);
-  });
-
-  it("does not confuse one number for another that starts the same", () => {
-    expect(bodyClosesIssue("Closes #1280", 128)).toBe(false);
   });
 });

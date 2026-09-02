@@ -1,22 +1,25 @@
 /**
- * What asking `gh` anything can come to, and why it is three answers.
+ * What DevHub asks GitHub, and what the answers can come to.
  *
- * "There is no token" used to cover both a `gh` that is not installed and a
- * `gh` that is installed and logged out. One answer meant one sentence, and the
- * sentence told a person with no GitHub CLI at all to run `gh auth login` —
- * advice that cannot work, for a reason that was never the reason.
+ * Two subjects, because there are two ways this file talks to GitHub and they
+ * fail differently. Asking `gh` for a token is a process that may not exist;
+ * asking the API what a branch is about is a round trip that may be refused.
  *
- * These run a real `gh` off a real PATH rather than a mock, because the whole
- * distinction lives in how the process fails: a spawn that never starts and a
- * process that starts and exits non-zero are different events, and a stub that
- * resolves a value tests neither.
+ * The `gh` tests run a real `gh` off a real PATH rather than a mock, because
+ * the whole distinction lives in how the process fails: a spawn that never
+ * starts and a process that starts and exits non-zero are different events, and
+ * a stub that resolves a value tests neither.
  */
 
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { readGitHubLogin, readGitHubToken } from "./github.js";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+	readBranchStatus,
+	readGitHubLogin,
+	readGitHubToken,
+} from "./github.js";
 
 let directory: string;
 
@@ -32,8 +35,15 @@ beforeEach(async () => {
 
 afterEach(async () => {
 	await rm(directory, { recursive: true, force: true });
+	vi.unstubAllGlobals();
 });
 
+/**
+ * "There is no token" used to cover both a `gh` that is not installed and a
+ * `gh` that is installed and logged out. One answer meant one sentence, and the
+ * sentence told a person with no GitHub CLI at all to run `gh auth login` —
+ * advice that cannot work, for a reason that was never the reason.
+ */
 describe("reading the GitHub token", () => {
 	it("is the token when `gh` is holding one", async () => {
 		await fakeGh('echo "gho_example"');
@@ -96,5 +106,201 @@ describe("reading who GitHub says this machine is", () => {
 			kind: "unknown",
 			reason: "there is no `gh` on DevHub's PATH",
 		});
+	});
+});
+
+const REFERENCE = {
+	owner: "example",
+	repository: "widget",
+	branch: "feature/128-tidy",
+	issueNumber: 128,
+};
+
+/** GitHub's answer, as the one round trip returns it. */
+function answers(body: unknown) {
+	const fetchMock = vi.fn().mockResolvedValue({
+		ok: true,
+		status: 200,
+		json: () => Promise.resolve(body),
+	});
+	vi.stubGlobal("fetch", fetchMock);
+	return fetchMock;
+}
+
+/** The pull requests a branch has, newest first, as the query orders them. */
+function withPullRequests(
+	nodes: readonly unknown[],
+	issue: unknown = { number: 128, title: "Tidy", state: "OPEN", url: "i" },
+) {
+	return answers({
+		data: {
+			repository: {
+				issue,
+				ref: { associatedPullRequests: { nodes } },
+			},
+		},
+	});
+}
+
+function pullRequest(over: Record<string, unknown>) {
+	return {
+		number: 1,
+		url: "p",
+		title: "Tidy the picker",
+		state: "OPEN",
+		isDraft: false,
+		...over,
+	};
+}
+
+/**
+ * The query asks the branch what is out from it —
+ * `ref(...).associatedPullRequests` — rather than asking a repository for its
+ * open pull requests and reading their bodies for a closing keyword. That is
+ * what makes a merged pull request, a closed one, and a pull request on a
+ * branch that names no Issue all visible; these are the small decisions that
+ * answer leaves open.
+ */
+describe("the pull request a branch is about", () => {
+	it("is the one out from the branch, whatever its body says", async () => {
+		// The whole point of the change: nothing is parsed. A pull request that
+		// never wrote `Closes #128` is still this branch's pull request.
+		withPullRequests([pullRequest({ number: 7 })]);
+		const status = await readBranchStatus(REFERENCE, "token");
+		expect(status.pullRequest).toEqual({
+			number: 7,
+			url: "p",
+			title: "Tidy the picker",
+			state: "open",
+		});
+	});
+
+	it("asks about the branch as a fully qualified ref", async () => {
+		// `ref(qualifiedName:)` takes a `refs/heads/…` path. A short name happens
+		// to resolve too, but only by GitHub guessing between heads and tags, and
+		// a branch and a tag of the same name are not the same thing.
+		const fetchMock = withPullRequests([]);
+		await readBranchStatus(REFERENCE, "token");
+		const sent = JSON.parse(
+			(fetchMock.mock.calls[0]?.[1] as { body: string }).body,
+		) as { variables: Record<string, unknown> };
+		expect(sent.variables.ref).toBe("refs/heads/feature/128-tidy");
+		expect(sent.variables.wantIssue).toBe(true);
+	});
+
+	it("is nothing at all when the branch has never been pushed", async () => {
+		// No ref on the remote, so no pull request. It is what every branch looks
+		// like before its first push, and it is a fact rather than a failure.
+		answers({
+			data: {
+				repository: {
+					issue: { number: 128, title: "Tidy", state: "OPEN", url: "i" },
+					ref: null,
+				},
+			},
+		});
+		const status = await readBranchStatus(REFERENCE, "token");
+		expect(status.pullRequest).toBeUndefined();
+		expect(status.issue?.number).toBe(128);
+	});
+
+	it("reports a merged pull request as merged", async () => {
+		withPullRequests([pullRequest({ state: "MERGED" })]);
+		expect(
+			(await readBranchStatus(REFERENCE, "token")).pullRequest?.state,
+		).toBe("merged");
+	});
+
+	it("reports a closed pull request as closed", async () => {
+		withPullRequests([pullRequest({ state: "CLOSED" })]);
+		expect(
+			(await readBranchStatus(REFERENCE, "token")).pullRequest?.state,
+		).toBe("closed");
+	});
+
+	it("reports an open draft as a draft", async () => {
+		withPullRequests([pullRequest({ state: "OPEN", isDraft: true })]);
+		expect(
+			(await readBranchStatus(REFERENCE, "token")).pullRequest?.state,
+		).toBe("draft");
+	});
+
+	it("does not call a closed draft a draft", async () => {
+		// GitHub keeps `isDraft` set on a draft that was closed without ever being
+		// marked ready. Reading the flag first would report work nobody is going
+		// to finish as work in progress.
+		withPullRequests([pullRequest({ state: "CLOSED", isDraft: true })]);
+		expect(
+			(await readBranchStatus(REFERENCE, "token")).pullRequest?.state,
+		).toBe("closed");
+	});
+
+	it("prefers a live pull request to a more recently touched dead one", async () => {
+		// A branch has more than one when somebody closed a pull request and
+		// opened another from the same head. The nodes arrive most-recently-updated
+		// first, so taking the first would report the row as finished work while a
+		// pull request from it is still in review.
+		withPullRequests([
+			pullRequest({ number: 4, state: "CLOSED" }),
+			pullRequest({ number: 5, state: "OPEN" }),
+		]);
+		const status = await readBranchStatus(REFERENCE, "token");
+		expect(status.pullRequest?.number).toBe(5);
+		expect(status.pullRequest?.state).toBe("open");
+	});
+
+	it("takes the most recently updated when none of them are live", async () => {
+		// Nothing to prefer, so the ordering the query asked for decides.
+		withPullRequests([
+			pullRequest({ number: 4, state: "MERGED" }),
+			pullRequest({ number: 3, state: "CLOSED" }),
+		]);
+		expect(
+			(await readBranchStatus(REFERENCE, "token")).pullRequest?.number,
+		).toBe(4);
+	});
+});
+
+describe("the Issue a branch names", () => {
+	it("is not asked for when the branch names none", async () => {
+		// One request per branch either way: the field is skipped rather than the
+		// query being a second round trip.
+		const fetchMock = withPullRequests([], null);
+		await readBranchStatus(
+			{ owner: "example", repository: "widget", branch: "spike/rework" },
+			"token",
+		);
+		const sent = JSON.parse(
+			(fetchMock.mock.calls[0]?.[1] as { body: string }).body,
+		) as { variables: Record<string, unknown> };
+		expect(sent.variables.wantIssue).toBe(false);
+	});
+
+	it("is a failure when the branch names one GitHub does not have", async () => {
+		// The branch is making a claim the row cannot back up, and a person who
+		// mistyped a number needs to be told rather than shown a blank.
+		withPullRequests([], null);
+		await expect(readBranchStatus(REFERENCE, "token")).rejects.toThrow(
+			/no issue example\/widget#128/u,
+		);
+	});
+});
+
+describe("a refusal", () => {
+	it("is reported as GitHub's own words", async () => {
+		answers({ errors: [{ message: "API rate limit exceeded." }] });
+		await expect(readBranchStatus(REFERENCE, "token")).rejects.toThrow(
+			"API rate limit exceeded.",
+		);
+	});
+
+	it("never carries the token", async () => {
+		vi.stubGlobal(
+			"fetch",
+			vi.fn().mockResolvedValue({ ok: false, status: 500, json: () => ({}) }),
+		);
+		await expect(readBranchStatus(REFERENCE, "secret-token")).rejects.toThrow(
+			/^GitHub answered 500\.$/u,
+		);
 	});
 });
