@@ -26,6 +26,7 @@ import { RowMenu, type RowMenuItem } from "./RowMenu";
 import { SidebarHeader } from "./SidebarHeader";
 import { StatusMark } from "./StatusMark";
 import { statusLabel } from "./status";
+import { orderWorkspaces } from "./workspaceOrder";
 
 function runtimeHealthLabel(health: AgentSnapshot["runtimeHealth"]): string {
   switch (health) {
@@ -605,6 +606,18 @@ export function Sidebar({ snapshot, onDispatch }: SidebarProps) {
       ),
     [repositoryStatus],
   );
+  // Worktrees under the repository they came from, everything else by name.
+  // The identity is git's — see `orderWorkspaces` — and it arrives with the
+  // rest of what each row knows, so the order settles as the first poll lands
+  // rather than being guessed from folder names.
+  const workspaces = useMemo(
+    () =>
+      orderWorkspaces(
+        snapshot.workspaces,
+        (workspace) => repositories.get(workspace.id)?.mainWorktree,
+      ),
+    [repositories, snapshot.workspaces],
+  );
   // The sidebar draws no modals. Every one of them lives on the overlay layer
   // above the workbench views, so opening one is a request to main and nothing
   // more — there is no local "is it open" to keep in step with anything.
@@ -832,7 +845,7 @@ export function Sidebar({ snapshot, onDispatch }: SidebarProps) {
               }
             }}
           >
-            {snapshot.workspaces.map((workspace) => (
+            {workspaces.map((workspace) => (
               <WorkspaceRow
                 key={workspace.id}
                 workspace={workspace}

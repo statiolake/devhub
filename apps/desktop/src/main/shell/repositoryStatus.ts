@@ -145,6 +145,8 @@ function issueFromConvention(
 interface LocalReading {
 	readonly workspace: WatchedWorkspace;
 	readonly branch?: string;
+	/** The repository this workspace is a checkout of, as git identifies it. */
+	readonly mainWorktree?: string;
 	/** The repository's page, when `origin` is one DevHub can name a page for. */
 	readonly repositoryUrl?: string;
 	readonly issue?: IssueReference;
@@ -267,6 +269,7 @@ export class RepositoryStatusWatcher {
 				return {
 					workspace,
 					branch: facts?.branch,
+					mainWorktree: facts?.mainWorktree,
 					repositoryUrl: repositoryUrl(facts?.remote),
 					...(reading.kind === "issue" ? { issue: reading.issue } : {}),
 					...(reading.kind === "unresolved"
@@ -353,6 +356,7 @@ export class RepositoryStatusWatcher {
 			return {
 				workspaceId: entry.workspace.id,
 				branch: entry.branch,
+				mainWorktree: entry.mainWorktree,
 				repositoryUrl: entry.repositoryUrl,
 				issue: status
 					? {

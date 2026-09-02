@@ -92,6 +92,16 @@ export interface WorkspaceRepositoryWire {
 	/** What is checked out, or nothing when the workspace is not a repository. */
 	readonly branch?: string;
 	/**
+	 * The repository this workspace belongs to: its main worktree's path.
+	 *
+	 * The identity git itself answers with, and the only honest way to tell that
+	 * two open workspaces are the same repository in two places. The Sidebar
+	 * sorts by it — worktrees under the repository they came from — because a
+	 * flat list in the order folders happened to be opened puts a worktree three
+	 * rows from the repository it is a worktree of.
+	 */
+	readonly mainWorktree?: string;
+	/**
 	 * The repository's page, for a workspace whose `origin` is on GitHub.
 	 *
 	 * Only GitHub: a URL is built from a remote, and github.com is the only host
