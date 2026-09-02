@@ -3,10 +3,10 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ConfigError,
+  type ConfigPaths,
   ConfigStore,
   configOntoDocument,
   configToToml,
-  contentRevision,
   defaultConfig,
   isSafeTmuxArgument,
   isValidSocketName,
@@ -548,10 +548,12 @@ describe("round trip", () => {
 describe("store", () => {
   let directory: string;
   let path: string;
+  let paths: ConfigPaths;
 
   beforeEach(() => {
     directory = makeScratchDir("config");
-    path = join(directory, "config.toml");
+    path = join(directory, "settings.local.toml");
+    paths = { global: join(directory, "settings.toml"), local: path };
   });
 
   afterEach(() => {
@@ -559,21 +561,21 @@ describe("store", () => {
   });
 
   it("writes the defaults when there is no file yet", async () => {
-    const store = new ConfigStore(path);
+    const store = new ConfigStore(paths);
     const loaded = await store.load();
     expect(loaded.config).toEqual(defaultConfig());
     expect(parseConfig(await readFile(path, "utf8"))).toEqual(defaultConfig());
   });
 
   it("reports an unchanged file without re-adopting it", async () => {
-    const store = new ConfigStore(path);
+    const store = new ConfigStore(paths);
     await store.load();
     const outcome = await store.reload();
     expect(outcome.kind).toBe("unchanged");
   });
 
   it("adopts an external edit and reports it applied", async () => {
-    const store = new ConfigStore(path);
+    const store = new ConfigStore(paths);
     await store.load();
     await writeFile(
       path,
@@ -586,7 +588,7 @@ describe("store", () => {
   });
 
   it("keeps the last good config and records the diagnostic when the file breaks", async () => {
-    const store = new ConfigStore(path);
+    const store = new ConfigStore(paths);
     const good = await store.load();
     await writeFile(path, "version = 1\nnonsense = true\n");
     await expect(store.reload()).rejects.toBeInstanceOf(ConfigError);
@@ -595,7 +597,7 @@ describe("store", () => {
   });
 
   it("refuses a save over a file that changed underneath it", async () => {
-    const store = new ConfigStore(path);
+    const store = new ConfigStore(paths);
     const loaded = await store.load();
     await writeFile(
       path,
@@ -610,7 +612,7 @@ describe("store", () => {
   });
 
   it("saves over the revision it was given and returns the new one", async () => {
-    const store = new ConfigStore(path);
+    const store = new ConfigStore(paths);
     const loaded = await store.load();
     const next = {
       ...loaded.config,
@@ -618,17 +620,20 @@ describe("store", () => {
     };
     const saved = await store.save(loaded.revision, next);
     expect(saved.config.appearance.terminalFontSize).toBe(16);
-    expect(saved.revision).toBe(contentRevision(await readFile(path)));
+    // The revision names the pair of files, so reading them fresh agrees.
+    expect(saved.revision).toBe((await new ConfigStore(paths).load()).revision);
   });
 });
 
 describe("saving over a hand-written file", () => {
   let directory: string;
   let path: string;
+  let paths: ConfigPaths;
 
   beforeEach(() => {
     directory = makeScratchDir("config-roundtrip");
-    path = join(directory, "config.toml");
+    path = join(directory, "settings.local.toml");
+    paths = { global: join(directory, "settings.toml"), local: path };
   });
 
   afterEach(() => {
@@ -651,7 +656,7 @@ describe("saving over a hand-written file", () => {
     ].join("\n");
     await writeFile(path, handWritten, { mode: 0o600 });
 
-    const store = new ConfigStore(path);
+    const store = new ConfigStore(paths);
     const loaded = await store.load();
     await store.save(loaded.revision, {
       ...loaded.config,
@@ -702,7 +707,7 @@ describe("saving over a hand-written file", () => {
       '"Fira Code"',
     ]) {
       await writeFile(path, handWritten, { mode: 0o600 });
-      const store = new ConfigStore(path);
+      const store = new ConfigStore(paths);
       const loaded = await store.load();
       const saved = await store.save(loaded.revision, {
         ...loaded.config,
@@ -719,5 +724,222 @@ describe("saving over a hand-written file", () => {
       // name only survives if the escaping and the parsing agree.
       expect(parseConfig(text).appearance.terminalFontFamily).toBe(family);
     }
+  });
+});
+
+describe("two scopes", () => {
+  let directory: string;
+  let paths: ConfigPaths;
+
+  beforeEach(() => {
+    directory = makeScratchDir("config-scopes");
+    paths = {
+      global: join(directory, "settings.toml"),
+      local: join(directory, "settings.local.toml"),
+      legacy: join(directory, "config.toml"),
+    };
+  });
+
+  afterEach(() => {
+    removeScratchDir(directory);
+  });
+
+  it("runs on both files, with the local one having the last word", async () => {
+    await writeFile(
+      paths.global,
+      'version = 1\n[appearance]\nterminal_font_size = 12\nsidebar_density = "comfortable"\n',
+    );
+    await writeFile(
+      paths.local,
+      "version = 1\n[appearance]\nterminal_font_size = 20\n",
+    );
+
+    const loaded = await new ConfigStore(paths).load();
+    expect(loaded.config.appearance.terminalFontSize).toBe(20);
+    expect(loaded.config.appearance.sidebarDensity).toBe("comfortable");
+  });
+
+  it("does not let a default in one file beat a value in the other", async () => {
+    // The local file says nothing about the font, so the shared file's answer
+    // has to survive — which it only does if the two are merged before the
+    // defaults are filled in.
+    await writeFile(
+      paths.global,
+      'version = 1\n[appearance]\nterminal_font_family = "SF Mono"\n',
+    );
+    await writeFile(
+      paths.local,
+      'version = 1\n[runtimes]\nshell = "/bin/bash"\n',
+    );
+
+    const loaded = await new ConfigStore(paths).load();
+    expect(loaded.config.appearance.terminalFontFamily).toBe("SF Mono");
+    expect(loaded.config.runtimes.shell).toBe("/bin/bash");
+  });
+
+  it("writes a save to the local file and never to the shared one", async () => {
+    const shared = "version = 1\n[appearance]\nterminal_font_size = 12\n";
+    await writeFile(paths.global, shared);
+    await writeFile(paths.local, "");
+
+    const store = new ConfigStore(paths);
+    const loaded = await store.load();
+    await store.save(loaded.revision, {
+      ...loaded.config,
+      runtimes: { ...loaded.config.runtimes, shell: "/bin/bash" },
+    });
+
+    expect(await readFile(paths.global, "utf8")).toBe(shared);
+    expect(await readFile(paths.local, "utf8")).toContain("/bin/bash");
+  });
+
+  it("leaves out of the local file what the shared file already says", async () => {
+    await writeFile(
+      paths.global,
+      "version = 1\n[appearance]\nterminal_font_size = 12\nterminal_line_height = 1.2\n",
+    );
+    await writeFile(paths.local, "");
+
+    const store = new ConfigStore(paths);
+    const loaded = await store.load();
+    await store.save(loaded.revision, loaded.config);
+
+    const local = await readFile(paths.local, "utf8");
+    expect(local).not.toContain("terminal_font_size");
+    expect(local).not.toContain("terminal_line_height");
+  });
+
+  it("drops a local value once the shared file starts saying the same thing", async () => {
+    // The operation this whole arrangement is for: a person copies a block
+    // into the shared file, and the next save takes the local copy out rather
+    // than leaving two spellings to drift apart.
+    await writeFile(paths.global, "version = 1\n");
+    await writeFile(paths.local, "[appearance]\nterminal_font_size = 17\n");
+    const first = new ConfigStore(paths);
+    const loaded = await first.load();
+    expect(loaded.config.appearance.terminalFontSize).toBe(17);
+
+    await writeFile(
+      paths.global,
+      "version = 1\n[appearance]\nterminal_font_size = 17\n",
+    );
+    const second = new ConfigStore(paths);
+    const again = await second.load();
+    await second.save(again.revision, again.config);
+
+    expect(await readFile(paths.local, "utf8")).not.toContain(
+      "terminal_font_size",
+    );
+    expect(
+      (await new ConfigStore(paths).load()).config.appearance.terminalFontSize,
+    ).toBe(17);
+  });
+
+  it("refuses a save made against a shared file that has since moved", async () => {
+    await writeFile(
+      paths.global,
+      "version = 1\n[appearance]\nterminal_font_size = 12\n",
+    );
+    await writeFile(paths.local, "");
+    const store = new ConfigStore(paths);
+    const loaded = await store.load();
+
+    await writeFile(
+      paths.global,
+      "version = 1\n[appearance]\nterminal_font_size = 13\n",
+    );
+
+    const failure = await store.save(loaded.revision, loaded.config).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    expect((failure as ConfigError).code).toBe("conflict");
+  });
+
+  it("notices an edit to the shared file the same as one to the local file", async () => {
+    await writeFile(
+      paths.global,
+      "version = 1\n[appearance]\nterminal_font_size = 12\n",
+    );
+    await writeFile(paths.local, "");
+    const store = new ConfigStore(paths);
+    await store.load();
+
+    await writeFile(
+      paths.global,
+      "version = 1\n[appearance]\nterminal_font_size = 19\n",
+    );
+    const outcome = await store.reload();
+    expect(outcome.kind).toBe("applied");
+    if (outcome.kind !== "applied") return;
+    expect(outcome.loaded.config.appearance.terminalFontSize).toBe(19);
+  });
+
+  it("says which file a bad key is in", async () => {
+    await writeFile(paths.global, "version = 1\nnonsense = true\n");
+    await writeFile(paths.local, "");
+    const store = new ConfigStore(paths);
+    await expect(store.load()).rejects.toBeInstanceOf(ConfigError);
+    expect(store.lastDiagnostic()).toBeUndefined();
+
+    const failure = await new ConfigStore(paths).load().then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    expect((failure as ConfigError).diagnostic.code).toBe("unknown_key");
+    expect((failure as ConfigError).diagnostic.scope).toBe("global");
+  });
+
+  it("blames the local file for a value the local file wrote", async () => {
+    await writeFile(
+      paths.global,
+      "version = 1\n[appearance]\nterminal_font_size = 12\n",
+    );
+    await writeFile(
+      paths.local,
+      'version = 1\n[appearance]\nmode = "sideways"\n',
+    );
+    const failure = await new ConfigStore(paths).load().then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    expect((failure as ConfigError).diagnostic.scope).toBe("local");
+  });
+
+  it("takes the pre-split file over as the local one, once", async () => {
+    await writeFile(
+      paths.legacy as string,
+      "version = 1\n[appearance]\nterminal_font_size = 21\n",
+    );
+
+    const loaded = await new ConfigStore(paths).load();
+    expect(loaded.config.appearance.terminalFontSize).toBe(21);
+    expect(await readFile(paths.local, "utf8")).toContain(
+      "terminal_font_size = 21",
+    );
+    // Gone, rather than left behind for DevHub to keep half-reading.
+    await expect(readFile(paths.legacy as string, "utf8")).rejects.toThrow();
+  });
+
+  it("leaves the pre-split file alone once there is a local file", async () => {
+    await writeFile(
+      paths.legacy as string,
+      "version = 1\n[appearance]\nterminal_font_size = 21\n",
+    );
+    await writeFile(
+      paths.local,
+      "version = 1\n[appearance]\nterminal_font_size = 9\n",
+    );
+
+    const loaded = await new ConfigStore(paths).load();
+    expect(loaded.config.appearance.terminalFontSize).toBe(9);
+    expect(await readFile(paths.legacy as string, "utf8")).toContain("21");
+  });
+
+  it("writes only the defaults the shared file does not already give", async () => {
+    await writeFile(paths.global, configToToml(defaultConfig()));
+    const loaded = await new ConfigStore(paths).load();
+    expect(loaded.config).toEqual(defaultConfig());
+    expect((await readFile(paths.local, "utf8")).trim()).toBe("");
   });
 });

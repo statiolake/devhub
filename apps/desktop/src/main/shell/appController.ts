@@ -84,7 +84,7 @@ import {
 import { AppModel } from "../../model/appModel.js";
 import {
 	ConfigStore,
-	defaultConfigPath,
+	defaultConfigPaths,
 	type Config,
 } from "../../model/config.js";
 import {
@@ -2982,7 +2982,7 @@ export async function createAppController(
 	}
 	setRuntimeVersion(electron.app.getVersion());
 
-	const configStore = new ConfigStore(defaultConfigPath(homedir()));
+	const configStore = new ConfigStore(defaultConfigPaths(homedir()));
 	let config: Config | undefined;
 	try {
 		config = (await configStore.load()).config;

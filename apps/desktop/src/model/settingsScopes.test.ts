@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { mergeScopes, subtractScope } from "./settingsScopes.js";
+import type { TomlValue } from "./tomlDocument.js";
 
 describe("mergeScopes", () => {
   it("takes a key only one scope has from that scope", () => {
@@ -128,8 +129,8 @@ describe("the two together", () => {
    */
   const cases: readonly {
     readonly name: string;
-    readonly global: Record<string, unknown>;
-    readonly desired: Record<string, unknown>;
+    readonly global: Record<string, TomlValue>;
+    readonly desired: Record<string, TomlValue>;
   }[] = [
     { name: "nothing shared", global: {}, desired: { a: 1, b: { c: 2 } } },
     {

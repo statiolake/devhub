@@ -1,5 +1,6 @@
 /**
- * The user's configuration file: `~/.config/devhub/config.toml`.
+ * The user's configuration: `~/.config/devhub/settings.toml` and
+ * `settings.local.toml`.
  *
  * A port of `crates/devhub-app-core/src/config/mod.rs`. The rules that matter
  * are kept exactly: unknown keys are an error rather than an ignored typo, the
@@ -7,6 +8,14 @@
  * the file changed underneath it, and the last file that parsed stays in
  * effect while a broken one is on disk — with the diagnostic kept, so "still
  * running on the old config" is a state the app can show rather than a silence.
+ *
+ * What is new is that "the file" is two of them. `settings.toml` is the shared
+ * half, kept in a dotfiles repository and identical on every machine;
+ * `settings.local.toml` is what is only true here — the shell's path, where
+ * this machine keeps its repositories. They are read as one, with local's word
+ * over global's, and a save writes only local. `settingsScopes.ts` has the
+ * merge rules and the reasoning; everything above this module still sees one
+ * configuration.
  *
  * A save keeps the document the person wrote: `tomlDocument.ts` rewrites only
  * the spans whose values actually changed, so comments, grouping, key order and
@@ -29,6 +38,7 @@ import { dirname, join } from "node:path";
 import { BUILT_IN_ACTIONS } from "./agentActions.js";
 import { dateTemplateBracketsBalance } from "./dateTemplate.js";
 import { isValidFontFamily } from "./fontFamily.js";
+import { mergeScopes, subtractScope } from "./settingsScopes.js";
 import {
   parseTomlValue,
   renderTomlDocument,
@@ -38,25 +48,76 @@ import {
 } from "./tomlDocument.js";
 
 export const CONFIG_SCHEMA_VERSION = 1;
-export const CONFIG_RELATIVE_PATH = ".config/devhub/config.toml";
+
+export const GLOBAL_CONFIG_FILE_NAME = "settings.toml";
+export const LOCAL_CONFIG_FILE_NAME = "settings.local.toml";
+/** The single file DevHub kept before the settings were split in two. */
+export const LEGACY_CONFIG_FILE_NAME = "config.toml";
 
 /**
- * Where the config lives.
+ * The two files one configuration is spread across, and the one it came from.
  *
- * `~/.config/devhub/config.toml`, unless `XDG_CONFIG_HOME` says otherwise —
- * which is the convention for everything else under `~/.config`, and is what
- * lets a test or a second instance be pointed somewhere else without moving
- * `HOME` and taking the Keychain, the caches and the app's whole identity
- * with it.
+ * `global` is the shared half — meant to be a symlink into a dotfiles
+ * repository, and never written by DevHub. `local` is this machine's half, and
+ * the only file a save touches. `legacy` is the pre-split `config.toml`, which
+ * `load` renames into place once and then never looks at again.
  */
-export function defaultConfigPath(
+export interface ConfigPaths {
+  readonly global: string;
+  readonly local: string;
+  readonly legacy?: string;
+}
+
+/** Both files as they were last read; `global` absent means there is no file. */
+interface ScopeText {
+  readonly global: string | undefined;
+  readonly local: string;
+}
+
+/**
+ * The identity of the pair.
+ *
+ * Both files go into it because a save has to be refused when *either* has
+ * moved: an open Settings window that saved against a stale shared file would
+ * subtract against answers that are no longer there and write a local file
+ * that means something else.
+ */
+function scopeRevision(scopes: ScopeText): ContentRevision {
+  return contentRevision(
+    `${contentRevision(scopes.global ?? "")}:${contentRevision(scopes.local)}`,
+  );
+}
+
+function decodeUtf8(bytes: Buffer, scope: ConfigScope): string {
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    throw new ConfigError({ code: "invalid_utf8", scope });
+  }
+}
+
+/**
+ * Where the settings live.
+ *
+ * `~/.config/devhub/`, unless `XDG_CONFIG_HOME` says otherwise — which is the
+ * convention for everything else under `~/.config`, and is what lets a test or
+ * a second instance be pointed somewhere else without moving `HOME` and taking
+ * the Keychain, the caches and the app's whole identity with it.
+ */
+export function defaultConfigPaths(
   home: string,
   environment: Readonly<Record<string, string | undefined>> = process.env,
-): string {
+): ConfigPaths {
   const xdg = environment["XDG_CONFIG_HOME"];
-  return xdg !== undefined && xdg.startsWith("/")
-    ? join(xdg, "devhub", "config.toml")
-    : join(home, CONFIG_RELATIVE_PATH);
+  const directory =
+    xdg !== undefined && xdg.startsWith("/")
+      ? join(xdg, "devhub")
+      : join(home, ".config", "devhub");
+  return {
+    global: join(directory, GLOBAL_CONFIG_FILE_NAME),
+    local: join(directory, LOCAL_CONFIG_FILE_NAME),
+    legacy: join(directory, LEGACY_CONFIG_FILE_NAME),
+  };
 }
 
 export const DEFAULT_EXCLUDE_NAMES: readonly string[] = [
@@ -458,10 +519,21 @@ export interface SourceLocation {
   readonly column: number;
 }
 
+/**
+ * Which of the two files a problem is in.
+ *
+ * Worth carrying because the fix differs: a broken `settings.local.toml` is
+ * fixed here, while a broken `settings.toml` is fixed in the dotfiles
+ * repository it is a symlink into — and telling a person only that "the
+ * settings are broken" sends them to open the wrong file first.
+ */
+export type ConfigScope = "global" | "local";
+
 export interface ConfigDiagnostic {
   readonly code: ValidationCode;
   readonly path?: string;
   readonly location?: SourceLocation;
+  readonly scope?: ConfigScope;
 }
 
 export class ConfigError extends Error {
@@ -1054,11 +1126,19 @@ function agentProfileFromTable(
   };
 }
 
-/** Decode one config document. Anything the shape does not allow throws. */
-export function parseConfig(input: string): Config {
-  let document: unknown;
+/**
+ * What one file literally says, before any of it means anything.
+ *
+ * Kept apart from `interpretConfig` because a configuration is read from two
+ * files, and the two have to be combined at exactly this point: after the TOML
+ * is understood, before the defaults are filled in. Merge later — once each
+ * side is a finished `Config` — and a default the local file never wrote is
+ * indistinguishable from a value it did, so it wins over the shared file's real
+ * one. See `settingsScopes.ts`.
+ */
+export function parseConfigText(input: string): Record<string, unknown> {
   try {
-    document = parseTomlValue(input);
+    return parseTomlValue(input);
   } catch (error) {
     throw new ConfigError({
       code: "parse",
@@ -1070,6 +1150,15 @@ export function parseConfig(input: string): Config {
           : undefined,
     });
   }
+}
+
+/** Decode one config document. Anything the shape does not allow throws. */
+export function parseConfig(input: string): Config {
+  return interpretConfig(parseConfigText(input));
+}
+
+/** The same, from a table that has already been read (and possibly merged). */
+export function interpretConfig(document: unknown): Config {
   const table = requireTable(document, "");
   checkKeys(table, TOP_LEVEL_KEYS, "");
 
@@ -1326,15 +1415,54 @@ function paletteToTable(palette: TerminalPalette) {
 
 // -------------------------------------------------------------------- store
 
-function ioError(error: unknown): ConfigError {
+function ioError(error: unknown, scope?: ConfigScope): ConfigError {
   if (
     error instanceof Error &&
     "code" in error &&
     (error as { code: unknown }).code === "ENOENT"
   ) {
-    return new ConfigError({ code: "io", path: "ENOENT" });
+    return new ConfigError({ code: "io", path: "ENOENT", scope });
   }
-  return new ConfigError({ code: "io" });
+  return new ConfigError({ code: "io", scope });
+}
+
+/** The same error, said about a particular file. */
+function inScope(error: unknown, scope: ConfigScope): unknown {
+  return error instanceof ConfigError
+    ? new ConfigError(
+        { ...error.diagnostic, scope },
+        error.expectedRevision,
+        error.actualRevision,
+      )
+    : error;
+}
+
+/**
+ * Whether this scope is the one that spelled the value a diagnostic names.
+ *
+ * A validation failure happens on the merged table, which belongs to neither
+ * file, so the file to blame has to be found again from the key path. The walk
+ * stops at the first thing that is not a table, because a scope that supplies
+ * an array supplies all of it (see `settingsScopes.ts`) — a complaint about
+ * `workspace_sources[2].path` is a complaint about whoever wrote the list.
+ */
+function definesPath(table: Readonly<Record<string, unknown>>, path: string) {
+  let current: unknown = table;
+  for (const segment of path.split(".")) {
+    // `runtimes.tmux_args[0]` names a key; so does `[1].id (also 0)`.
+    const key = segment.replace(/\[.*$/, "").replace(/ .*$/, "");
+    if (key === "") {
+      return true;
+    }
+    if (!isPlainObject(current) || !(key in current)) {
+      return false;
+    }
+    current = current[key];
+    if (!isPlainObject(current)) {
+      return true;
+    }
+  }
+  return true;
 }
 
 function isNotFound(error: unknown): boolean {
@@ -1346,52 +1474,71 @@ function isNotFound(error: unknown): boolean {
 }
 
 /**
- * The one owner of `config.toml` in this process.
+ * The one owner of DevHub's settings files in this process.
  *
- * `load` adopts the file (writing the defaults when there is none); `reload`
- * adopts a newer one, or keeps the last good config and records the diagnostic;
- * `save` writes atomically and only over the revision it was given.
+ * There are two of them — `settings.toml`, shared and read-only here, and
+ * `settings.local.toml`, this machine's and the only one DevHub writes — and
+ * the store's job is that nothing above it has to know that. `load` adopts
+ * them; `reload` adopts newer ones, or keeps the last good config and records
+ * the diagnostic; `save` writes the local file atomically and only over the
+ * revision it was given. A revision names the pair, so an edit to *either*
+ * file underneath an open Settings window is the refusal it always was.
  */
 export class ConfigStore {
   private active: LoadedConfig | undefined;
   private diagnostic: ConfigDiagnostic | undefined;
+  /** The shared file as last read, to subtract the next save against. */
+  private globalRaw: Readonly<Record<string, unknown>> = {};
 
-  constructor(readonly path: string) {}
+  constructor(readonly paths: ConfigPaths) {}
 
   async load(): Promise<LoadedConfig> {
-    let bytes: Buffer;
+    await this.adoptLegacyFile();
+    let scopes: ScopeText;
     try {
-      bytes = await readFile(this.path);
+      scopes = await this.read();
     } catch (error) {
-      if (!isNotFound(error)) {
-        throw ioError(error);
+      if (!(error instanceof ConfigError && error.code === "io")) {
+        throw error;
       }
-      const text = configToToml(defaultConfig());
+      if (error.diagnostic.path !== "ENOENT") {
+        throw error;
+      }
+      // No local file yet. Write down the defaults the shared file does not
+      // already give — which is all of them when there is no shared file, and
+      // none of them when it happens to give everything.
+      const global = await this.readGlobal();
+      const globalRaw =
+        global === undefined ? {} : this.parseScope(global, "global");
+      const text = renderTomlDocument(
+        subtractScope(configDocument(defaultConfig()), globalRaw),
+      );
       await this.atomicWrite(text);
-      bytes = Buffer.from(text, "utf8");
+      scopes = { global, local: text };
     }
-    const loaded = this.decode(bytes);
+    const loaded = this.decode(scopes);
     this.active = loaded;
     this.diagnostic = undefined;
     return loaded;
   }
 
   async reload(): Promise<ReloadOutcome> {
-    let bytes: Buffer;
+    let scopes: ScopeText;
     try {
-      bytes = await readFile(this.path);
+      scopes = await this.read();
     } catch (error) {
-      const failure = ioError(error);
-      this.diagnostic = failure.diagnostic;
-      throw failure;
+      if (error instanceof ConfigError) {
+        this.diagnostic = error.diagnostic;
+      }
+      throw error;
     }
-    const revision = contentRevision(bytes);
+    const revision = scopeRevision(scopes);
     if (this.active?.revision === revision) {
       return { kind: "unchanged", revision };
     }
     let loaded: LoadedConfig;
     try {
-      loaded = this.decode(bytes);
+      loaded = this.decode(scopes);
     } catch (error) {
       if (error instanceof ConfigError) {
         this.diagnostic = error.diagnostic;
@@ -1411,26 +1558,42 @@ export class ConfigStore {
     return this.diagnostic;
   }
 
+  /**
+   * Write a whole configuration down as the part of it that is local.
+   *
+   * The Settings window edits everything at once, so what arrives here is the
+   * complete config — but writing all of it locally would shadow the shared
+   * file entirely on the first save and never read it again. So the shared
+   * file's answers are subtracted first, and only what is left is written.
+   *
+   * The shared file is never written. It is somebody's dotfiles repository,
+   * usually reached through a symlink, and a DevHub that wrote to it would be
+   * committing to that repository on a person's behalf. Moving a setting into
+   * it stays a thing a person (or an agent) does deliberately.
+   */
   async save(
     expectedRevision: ContentRevision,
     config: Config,
   ): Promise<LoadedConfig> {
     validateConfig(config);
-    let currentBytes: Buffer;
-    try {
-      currentBytes = await readFile(this.path);
-    } catch (error) {
-      throw ioError(error);
-    }
-    const actual = contentRevision(currentBytes);
+    const scopes = await this.read();
+    const actual = scopeRevision(scopes);
     if (actual !== expectedRevision) {
       throw new ConfigError({ code: "conflict" }, expectedRevision, actual);
     }
+    const globalRaw =
+      scopes.global === undefined
+        ? {}
+        : this.parseScope(scopes.global, "global");
     // Written over the document that is there, not in place of it: the file
     // keeps its comments, its grouping and its order.
-    const output = configOntoDocument(currentBytes.toString("utf8"), config);
-    const loaded = this.decode(Buffer.from(output, "utf8"));
-    await this.atomicWrite(output, expectedRevision);
+    const output = updateTomlDocument(
+      scopes.local,
+      subtractScope(configDocument(config), globalRaw),
+    );
+    const written: ScopeText = { global: scopes.global, local: output };
+    const loaded = this.decode(written);
+    await this.atomicWrite(output, contentRevision(scopes.local));
     this.active = loaded;
     this.diagnostic = undefined;
     return loaded;
@@ -1472,14 +1635,107 @@ export class ConfigStore {
     };
   }
 
-  private decode(bytes: Buffer): LoadedConfig {
-    let text: string;
+  /** The shared file's text, or `undefined` when there is not one. */
+  private async readGlobal(): Promise<string | undefined> {
     try {
-      text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-    } catch {
-      throw new ConfigError({ code: "invalid_utf8" });
+      return decodeUtf8(await readFile(this.paths.global), "global");
+    } catch (error) {
+      if (isNotFound(error)) {
+        return undefined;
+      }
+      throw error instanceof ConfigError ? error : ioError(error, "global");
     }
-    return { config: parseConfig(text), revision: contentRevision(bytes) };
+  }
+
+  /** Both files as text. A missing local file is the `ENOENT` io error. */
+  private async read(): Promise<ScopeText> {
+    const global = await this.readGlobal();
+    let local: string;
+    try {
+      local = decodeUtf8(await readFile(this.paths.local), "local");
+    } catch (error) {
+      throw error instanceof ConfigError ? error : ioError(error, "local");
+    }
+    return { global, local };
+  }
+
+  private parseScope(
+    text: string,
+    scope: ConfigScope,
+  ): Readonly<Record<string, unknown>> {
+    try {
+      return parseConfigText(text);
+    } catch (error) {
+      throw inScope(error, scope);
+    }
+  }
+
+  /**
+   * The two files, read as one configuration.
+   *
+   * They are merged as raw tables and interpreted once, rather than each being
+   * interpreted and the results combined — see `parseConfigText`. A validation
+   * failure therefore belongs to the merged table, so the file to blame is
+   * looked up again from the key path the failure names.
+   */
+  private decode(scopes: ScopeText): LoadedConfig {
+    const globalRaw =
+      scopes.global === undefined
+        ? {}
+        : this.parseScope(scopes.global, "global");
+    const localRaw = this.parseScope(scopes.local, "local");
+    let config: Config;
+    try {
+      config = interpretConfig(mergeScopes(globalRaw, localRaw));
+    } catch (error) {
+      const path =
+        error instanceof ConfigError ? error.diagnostic.path : undefined;
+      throw path === undefined
+        ? error
+        : inScope(
+            error,
+            definesPath(localRaw, path) || !definesPath(globalRaw, path)
+              ? "local"
+              : "global",
+          );
+    }
+    this.globalRaw = globalRaw;
+    return { config, revision: scopeRevision(scopes) };
+  }
+
+  /** The keys the shared file answers, for a window that wants to say so. */
+  sharedKeys(): Readonly<Record<string, unknown>> {
+    return this.globalRaw;
+  }
+
+  /**
+   * Take the pre-split `config.toml` over as this machine's local file.
+   *
+   * A rename rather than a copy, and only when there is no local file yet:
+   * either the old file is the local one now or it is gone, so there is never
+   * a moment where two files both look like the settings and DevHub is quietly
+   * reading one of them.
+   */
+  private async adoptLegacyFile(): Promise<void> {
+    const legacy = this.paths.legacy;
+    if (legacy === undefined) {
+      return;
+    }
+    const present = await stat(this.paths.local).then(
+      () => true,
+      () => false,
+    );
+    if (present) {
+      return;
+    }
+    try {
+      await mkdir(dirname(this.paths.local), { recursive: true });
+      await rename(legacy, this.paths.local);
+    } catch (error) {
+      if (!isNotFound(error)) {
+        throw ioError(error, "local");
+      }
+    }
   }
 
   /**
@@ -1491,22 +1747,22 @@ export class ConfigStore {
     text: string,
     expectedRevision?: ContentRevision,
   ): Promise<void> {
-    const parent = dirname(this.path);
+    const parent = dirname(this.paths.local);
     await mkdir(parent, { recursive: true });
     if (expectedRevision !== undefined) {
-      const current = await readFile(this.path);
+      const current = await readFile(this.paths.local);
       const actual = contentRevision(current);
       if (actual !== expectedRevision) {
         throw new ConfigError({ code: "conflict" }, expectedRevision, actual);
       }
     }
-    const existingMode = await stat(this.path).then(
+    const existingMode = await stat(this.paths.local).then(
       (stats) => stats.mode & 0o777,
       () => undefined,
     );
     const temporary = join(
       parent,
-      `.${this.path.split("/").at(-1) ?? "config.toml"}.devhub-${String(process.pid)}-${String(Date.now())}.tmp`,
+      `.${this.paths.local.split("/").at(-1) ?? "settings.local.toml"}.devhub-${String(process.pid)}-${String(Date.now())}.tmp`,
     );
     const handle = await open(
       temporary,
@@ -1523,7 +1779,7 @@ export class ConfigStore {
       if (existingMode !== undefined) {
         await chmod(temporary, existingMode);
       }
-      await rename(temporary, this.path);
+      await rename(temporary, this.paths.local);
     } catch (error) {
       await unlink(temporary).catch(() => undefined);
       throw ioError(error);
