@@ -79,12 +79,26 @@ describe("the branch naming convention", () => {
     expect(issueNumberFromBranch("/#128-tidy")).toBe(128);
   });
 
-  it("does not read a number that is not the convention", () => {
+  it("reads `#` wherever a person put it", () => {
+    // `#` means an Issue in a branch name and means nothing else, so the sigil
+    // is the whole of the evidence. These are the names the report was about:
+    // a branch that names its Issue as plainly as a branch can, which the old
+    // pattern read as naming none because the sigil was optional decoration on
+    // a shape the *ambiguous* form needs.
+    expect(issueNumberFromBranch("feature/#1234")).toBe(1234);
+    expect(issueNumberFromBranch("step/feature/#1234")).toBe(1234);
+    expect(issueNumberFromBranch("feature/fix-#1234-crash")).toBe(1234);
+    expect(issueNumberFromBranch("#1234")).toBe(1234);
+  });
+
+  it("does not read a bare number that is not the convention", () => {
+    // A bare number is usually not an Issue, so it still has to look like the
+    // name DevHub would have made: first in its segment, and a dash after it.
     expect(issueNumberFromBranch("feature/tidy-128")).toBeUndefined();
     expect(issueNumberFromBranch("128-tidy")).toBeUndefined();
     expect(issueNumberFromBranch("feature/128")).toBeUndefined();
     expect(issueNumberFromBranch("v2-rewrite")).toBeUndefined();
-    expect(issueNumberFromBranch("feature/#128")).toBeUndefined();
+    expect(issueNumberFromBranch("release/2024")).toBeUndefined();
   });
 });
 

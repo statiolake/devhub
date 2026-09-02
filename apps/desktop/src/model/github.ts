@@ -52,23 +52,37 @@ export function issueUrl(issue: IssueReference): string {
  * recognised. It is a guess, and it is only ever consulted when there is no
  * record to read instead.
  *
- * The shape is a prefix, then the number, then a dash: `feature/128-…`. Three
- * things about the prefix are deliberately loose, because a branch made outside
- * DevHub was named by a person and not by this file. The prefix may be several
- * segments deep (`alice/fix/128-…`), since that is how a shared remote is
- * usually laid out. The number may be written `#128`, since that is how a
- * person writing about an Issue writes one. And a segment may be empty, so a
- * name that starts at the slash is read the same way as one that does not.
+ * Two ways of writing it, because there are two things to tell apart and only
+ * one of them is ambiguous.
  *
- * What stays fixed is the rest: there is a slash before the number, and a dash
- * after it. Those are what separate "this branch is for Issue 128" from a
- * branch that merely has a number in its name, and dropping either would make
- * `v2-rewrite` an Issue.
+ * `#128` is read wherever it appears. In a branch name `#` means an Issue and
+ * means nothing else — no other convention puts one there — so the sigil is the
+ * whole of the evidence and nothing about the surroundings has to agree with
+ * anything. `feature/#128`, `step/feature/#128-body` and `feature/fix-#128-crash`
+ * are all Issue 128, and so is a name that puts it somewhere this file did not
+ * think of.
+ *
+ * A bare `128` has to look like the name DevHub itself would have made:
+ * `feature/128-…`, the number first in its path segment and a dash after it.
+ * Both halves are load-bearing, because a bare number in a branch name is
+ * usually not an Issue — dropping the slash makes `v2-rewrite` an Issue, and
+ * dropping the dash makes `release/2024` one. The prefix stays deliberately
+ * loose: several segments deep (`alice/fix/128-…`) is how a shared remote is
+ * usually laid out, and a segment may be empty, so a name that starts at the
+ * slash reads the same as one that does not.
+ *
+ * The sigil used to be optional decoration on the strict shape — `#?` inside
+ * the one pattern — which meant writing the number the clearest way a person
+ * can still had to satisfy every rule the ambiguous way needs. `feature/#1234`
+ * named an Issue as plainly as a branch can and was read as naming none, in
+ * silence, while `release/2024-q1` was read as Issue 2024. That is backwards,
+ * and it is what splitting them fixes.
  */
 export function issueNumberFromBranch(branch: string): number | undefined {
-  const match = /^(?:[^/]*\/)+#?(\d+)-/u.exec(branch);
-  const digits = match?.[1];
-  return digits === undefined ? undefined : Number(digits);
+  const sigil = /#(\d+)/u.exec(branch)?.[1];
+  if (sigil !== undefined) return Number(sigil);
+  const bare = /^(?:[^/]*\/)+(\d+)-/u.exec(branch)?.[1];
+  return bare === undefined ? undefined : Number(bare);
 }
 
 /**
