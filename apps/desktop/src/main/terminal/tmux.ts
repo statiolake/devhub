@@ -100,6 +100,27 @@ const MAX_WINDOWS = 256;
 const MAX_PANES = 1024;
 const POLL_INTERVAL_MS = 5;
 const DEFAULT_TIMEOUT_MS = 3_000;
+/**
+ * How long to wait between finishing a paste and pressing Return.
+ *
+ * Not a guess, and not the "about a second" it feels like it should be. A TUI
+ * that does not receive the bracketed-paste markers — some terminals never
+ * send them — has to work out for itself whether a fast run of characters was
+ * typed or pasted, and it does that on a timer. Codex's is in the open:
+ * `PASTE_ENTER_SUPPRESS_WINDOW` in `tui/src/bottom_pane/paste_burst.rs` is
+ * 120ms, and while that window is open a Return *inserts a newline instead of
+ * submitting*. Worse for a multi-line instruction, each newline that lands
+ * during the burst re-arms the window, so it runs from the last line rather
+ * than the first — which is exactly the report: the text arrived, the Return
+ * only added a blank line, and nothing was sent.
+ *
+ * So the wait has to clear that window with room for scheduling jitter, and
+ * nothing is gained by making it longer: this is a race against a heuristic,
+ * not against the Agent. Twice the documented window is the value, and when
+ * the markers *do* arrive it costs a quarter second and changes nothing —
+ * Codex clears its burst state outright on an explicit paste.
+ */
+const PASTE_SUBMIT_DELAY_MS = 250;
 const BOOTSTRAP_ENV_ROOT = "DEVHUB_BOOTSTRAP_ROOT";
 const BOOTSTRAP_ENV_USER_CONFIG = "DEVHUB_USER_TMUX_CONFIG";
 
@@ -1060,6 +1081,9 @@ export class TmuxTerminalRuntime {
 	 * which was three lines arriving as one run-on sentence until this was
 	 * measured.
 	 *
+	 * The Return goes separately, a beat later — see `PASTE_SUBMIT_DELAY_MS`
+	 * for the measured reason it cannot ride along in the same command.
+	 *
 	 * **Why the identity is read again first.** `captureAgent` reads and then
 	 * checks, which is safe for a read: a screen that turned out to be somebody
 	 * else's is discarded. This writes, and there is no discarding a keystroke
@@ -1097,26 +1121,28 @@ export class TmuxTerminalRuntime {
 			}
 			const body = text.replaceAll(/\r\n|\n/gu, "\r");
 			const paste = `\u001b[200~${body}\u001b[201~`;
-			const output = await this.runTmux(
+			const typed = await this.runTmux(
 				socket,
-				[
-					"send-keys",
-					"-t",
-					record.sessionName,
-					"-l",
-					"--",
-					paste,
-					";",
-					"send-keys",
-					"-t",
-					record.sessionName,
-					"Enter",
-				],
+				["send-keys", "-t", record.sessionName, "-l", "--", paste],
 				this.contextHome,
 				cancel,
 				deadline,
 			);
-			if (!output.success) throw portFailure("failed");
+			if (!typed.success) throw portFailure("failed");
+			// The Return is a separate command a moment later, not the second
+			// half of this one. See `PASTE_SUBMIT_DELAY_MS`.
+			await new Promise((resolve) =>
+				setTimeout(resolve, PASTE_SUBMIT_DELAY_MS),
+			);
+			cancel.check();
+			const submitted = await this.runTmux(
+				socket,
+				["send-keys", "-t", record.sessionName, "Enter"],
+				this.contextHome,
+				cancel,
+				deadline,
+			);
+			if (!submitted.success) throw portFailure("failed");
 		} finally {
 			release();
 		}

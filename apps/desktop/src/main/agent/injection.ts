@@ -40,8 +40,29 @@ import {
 	type AgentStatus,
 } from "../../model/domain.js";
 
-/** Consecutive idle rounds required before anything is sent. */
-export const IDLE_ROUNDS_BEFORE_SEND = 3;
+/**
+ * How long a prompt must have been continuously idle before anything is sent.
+ *
+ * A clock rather than a count of rounds. The reconcile cadence is an
+ * implementation detail that has changed before, and "three readings" means a
+ * different amount of patience at 300ms than at 50ms — but what the Agent
+ * needs is *time*: a CLI that is starting up flickers through screens, and a
+ * prompt that has looked free for a full second is one that is actually free
+ * rather than one caught between two frames.
+ */
+export const IDLE_SETTLE_MS = 1_000;
+
+/**
+ * And it has to have been *watched* for that second, not merely dated.
+ *
+ * Elapsed time alone is a reading about the clock, not about the Agent. If the
+ * rounds stop — the app is suspended, the machine sleeps, a capture hangs —
+ * and one idle frame arrives ten seconds after the last one, the wall clock
+ * says "idle for ten seconds" about nine seconds nobody looked at. So the
+ * settle window must also contain at least two observations, which is what
+ * makes "continuously idle" a statement about the screen.
+ */
+export const IDLE_READINGS_BEFORE_SEND = 2;
 
 /*
  * The shape a row reads — `AgentInjection` in `model/domain.ts` — is the one
@@ -52,7 +73,10 @@ export const IDLE_ROUNDS_BEFORE_SEND = 3;
 
 interface Entry {
 	readonly texts: string[];
-	idleRounds: number;
+	/** When the current unbroken run of idle readings began. */
+	idleSince: number | undefined;
+	/** How many idle readings that run contains. */
+	idleReadings: number;
 	lastFailure: string | undefined;
 }
 
@@ -77,7 +101,8 @@ export class AgentInjectionQueue {
 		}
 		this.#entries.set(agentId, {
 			texts: [text],
-			idleRounds: 0,
+			idleSince: undefined,
+			idleReadings: 0,
 			lastFailure: undefined,
 		});
 	}
@@ -89,17 +114,24 @@ export class AgentInjectionQueue {
 	 * settled on. Returns the text the caller should send; the caller then says
 	 * whether it went, because only the caller knows.
 	 */
-	due(agentId: string, status: AgentStatus): string | undefined {
+	due(
+		agentId: string,
+		status: AgentStatus,
+		now: number = Date.now(),
+	): string | undefined {
 		const entry = this.#entries.get(agentId);
 		if (entry === undefined) return undefined;
 		if (status !== "idle") {
-			// Any reading that is not idle restarts the count. The Agent has to
-			// be *continuously* idle, not idle as often as not.
-			entry.idleRounds = 0;
+			// Any reading that is not idle starts the wait over. The Agent has
+			// to be *continuously* idle, not idle as often as not.
+			entry.idleSince = undefined;
+			entry.idleReadings = 0;
 			return undefined;
 		}
-		entry.idleRounds += 1;
-		if (entry.idleRounds < IDLE_ROUNDS_BEFORE_SEND) return undefined;
+		entry.idleSince ??= now;
+		entry.idleReadings += 1;
+		if (entry.idleReadings < IDLE_READINGS_BEFORE_SEND) return undefined;
+		if (now - entry.idleSince < IDLE_SETTLE_MS) return undefined;
 		return entry.texts[0];
 	}
 
@@ -110,8 +142,10 @@ export class AgentInjectionQueue {
 		entry.texts.shift();
 		entry.lastFailure = undefined;
 		// The next text does not follow immediately: the Agent has just been
-		// given something to do, so it has to be seen idle again on its own.
-		entry.idleRounds = 0;
+		// given something to do, so it has to be seen idle again on its own,
+		// for the whole settle window.
+		entry.idleSince = undefined;
+		entry.idleReadings = 0;
 		if (entry.texts.length === 0) this.#entries.delete(agentId);
 	}
 
@@ -126,7 +160,8 @@ export class AgentInjectionQueue {
 		const entry = this.#entries.get(agentId);
 		if (entry === undefined) return;
 		entry.lastFailure = reason;
-		entry.idleRounds = 0;
+		entry.idleSince = undefined;
+		entry.idleReadings = 0;
 	}
 
 	/** What this Agent's queue is doing, for the row to show. */

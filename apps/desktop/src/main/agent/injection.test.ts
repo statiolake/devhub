@@ -7,98 +7,149 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { AgentInjectionQueue, IDLE_ROUNDS_BEFORE_SEND } from "./injection.js";
+import {
+	AgentInjectionQueue,
+	IDLE_READINGS_BEFORE_SEND,
+	IDLE_SETTLE_MS,
+} from "./injection.js";
 
 const AGENT = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1";
 
-/** Run `rounds` reconcile rounds at one status, returning what came due. */
-function rounds(
-	queue: AgentInjectionQueue,
-	status: Parameters<AgentInjectionQueue["due"]>[1],
-	count: number,
-): (string | undefined)[] {
-	return Array.from({ length: count }, () => queue.due(AGENT, status));
+/**
+ * Reconcile rounds on a clock the test controls, at the real cadence.
+ *
+ * The clock is explicit because the rule is about time. A test that leaned on
+ * the real one would either sleep for whole seconds or pass for the wrong
+ * reason on a slow machine.
+ */
+class Rounds {
+	now = 1_000_000;
+	constructor(readonly queue: AgentInjectionQueue) {}
+	step(
+		status: Parameters<AgentInjectionQueue["due"]>[1],
+		count = 1,
+		everyMs = 300,
+	): (string | undefined)[] {
+		return Array.from({ length: count }, () => {
+			this.now += everyMs;
+			return this.queue.due(AGENT, status, this.now);
+		});
+	}
 }
 
+/** Enough rounds at the real cadence to cover the settle window. */
+const ENOUGH = Math.ceil(IDLE_SETTLE_MS / 300) + 1;
+
 describe("the Agent injection queue", () => {
-	it("sends nothing until the prompt has been idle for several rounds", () => {
+	it("sends nothing until the prompt has been idle for a whole second", () => {
+		const queue = new AgentInjectionQueue();
+		const rounds = new Rounds(queue);
+		queue.queue(AGENT, "do the thing");
+		const seen = rounds.step("idle", ENOUGH);
+		const sentAt = seen.findIndex((one) => one !== undefined);
+		expect(seen[sentAt]).toBe("do the thing");
+		// Nothing went out before the window had actually elapsed.
+		expect((sentAt + 1) * 300).toBeGreaterThanOrEqual(IDLE_SETTLE_MS);
+	});
+
+	/**
+	 * Why this is a clock and not a count of rounds: a CLI that is starting up
+	 * flickers through screens, and a burst of quick frames must never add up
+	 * to a prompt that is free.
+	 */
+	it("is not satisfied by readings that arrive faster than the window", () => {
 		const queue = new AgentInjectionQueue();
 		queue.queue(AGENT, "do the thing");
-		const seen = rounds(queue, "idle", IDLE_ROUNDS_BEFORE_SEND);
-		expect(seen.slice(0, -1).every((one) => one === undefined)).toBe(true);
-		expect(seen.at(-1)).toBe("do the thing");
+		expect(
+			new Rounds(queue).step("idle", 20, 10).every((o) => o === undefined),
+		).toBe(true);
+	});
+
+	/**
+	 * And not by a clock that ran while nobody was looking. If the rounds stop
+	 * — the app is suspended, a capture hangs — and one idle frame arrives long
+	 * after the last, that is one reading, not a second of watching.
+	 */
+	it("is not satisfied by a single reading long after the last", () => {
+		const queue = new AgentInjectionQueue();
+		queue.queue(AGENT, "do the thing");
+		expect(new Rounds(queue).step("idle", 1, 60_000).at(-1)).toBeUndefined();
+		expect(IDLE_READINGS_BEFORE_SEND).toBeGreaterThan(1);
 	});
 
 	it("never types into a turn that is running", () => {
 		const queue = new AgentInjectionQueue();
 		queue.queue(AGENT, "do the thing");
-		expect(rounds(queue, "working", 20).every((o) => o === undefined)).toBe(
-			true,
-		);
+		expect(
+			new Rounds(queue).step("working", 30).every((o) => o === undefined),
+		).toBe(true);
 	});
 
 	/**
 	 * The sharpest case. That screen is a menu: free text does not answer it,
-	 * and the first character may be taken as the answer.
+	 * and the first character may be taken as the answer — which is how an
+	 * instruction meant for the Agent becomes a reply to "trust this folder?".
 	 */
 	it("never types into an Agent that has stopped to ask a question", () => {
 		const queue = new AgentInjectionQueue();
 		queue.queue(AGENT, "do the thing");
-		expect(rounds(queue, "waiting", 20).every((o) => o === undefined)).toBe(
-			true,
-		);
+		expect(
+			new Rounds(queue).step("waiting", 30).every((o) => o === undefined),
+		).toBe(true);
 	});
 
 	it("never types into a screen it cannot read", () => {
 		const queue = new AgentInjectionQueue();
 		queue.queue(AGENT, "do the thing");
-		expect(rounds(queue, "unknown", 20).every((o) => o === undefined)).toBe(
-			true,
-		);
+		expect(
+			new Rounds(queue).step("unknown", 30).every((o) => o === undefined),
+		).toBe(true);
 	});
 
-	/** Idle has to be continuous. A flicker mid-turn is not a free prompt. */
-	it("starts the count again when the Agent stops being idle", () => {
+	it("starts the wait again when the Agent stops being idle", () => {
 		const queue = new AgentInjectionQueue();
+		const rounds = new Rounds(queue);
 		queue.queue(AGENT, "do the thing");
-		rounds(queue, "idle", IDLE_ROUNDS_BEFORE_SEND - 1);
-		expect(queue.due(AGENT, "working")).toBeUndefined();
-		const seen = rounds(queue, "idle", IDLE_ROUNDS_BEFORE_SEND);
-		expect(seen.slice(0, -1).every((one) => one === undefined)).toBe(true);
-		expect(seen.at(-1)).toBe("do the thing");
+		rounds.step("idle", ENOUGH - 1);
+		rounds.step("working");
+		// The window restarts here, so the next idle round is not enough.
+		expect(rounds.step("idle").at(-1)).toBeUndefined();
+		expect(rounds.step("idle", ENOUGH).some((o) => o !== undefined)).toBe(true);
 	});
 
 	it("sends one text once, and not again", () => {
 		const queue = new AgentInjectionQueue();
+		const rounds = new Rounds(queue);
 		queue.queue(AGENT, "do the thing");
-		rounds(queue, "idle", IDLE_ROUNDS_BEFORE_SEND);
+		rounds.step("idle", ENOUGH);
 		queue.sent(AGENT);
-		expect(rounds(queue, "idle", 20).every((o) => o === undefined)).toBe(true);
+		expect(rounds.step("idle", 30).every((o) => o === undefined)).toBe(true);
 	});
 
-	/** The Agent has just been given work; it must be seen idle again on its own. */
+	/** The Agent has just been given work; it must be seen settled again. */
 	it("makes a second text wait for its own settled prompt", () => {
 		const queue = new AgentInjectionQueue();
+		const rounds = new Rounds(queue);
 		queue.queue(AGENT, "first");
 		queue.queue(AGENT, "second");
-		rounds(queue, "idle", IDLE_ROUNDS_BEFORE_SEND);
+		rounds.step("idle", ENOUGH);
 		queue.sent(AGENT);
-		const seen = rounds(queue, "idle", IDLE_ROUNDS_BEFORE_SEND);
-		expect(seen.slice(0, -1).every((one) => one === undefined)).toBe(true);
-		expect(seen.at(-1)).toBe("second");
+		expect(rounds.step("idle").at(-1)).toBeUndefined();
+		expect(rounds.step("idle", ENOUGH).some((o) => o === "second")).toBe(true);
 	});
 
 	it("keeps text that failed to send, with the reason, and tries again", () => {
 		const queue = new AgentInjectionQueue();
+		const rounds = new Rounds(queue);
 		queue.queue(AGENT, "do the thing");
-		rounds(queue, "idle", IDLE_ROUNDS_BEFORE_SEND);
+		rounds.step("idle", ENOUGH);
 		queue.failed(AGENT, "the session went away");
 		expect(queue.state(AGENT, "idle").lastFailure).toBe(
 			"the session went away",
 		);
 		expect(queue.state(AGENT, "idle").queued).toBe(1);
-		expect(rounds(queue, "idle", IDLE_ROUNDS_BEFORE_SEND).at(-1)).toBe(
-			"do the thing",
+		expect(rounds.step("idle", ENOUGH).some((o) => o === "do the thing")).toBe(
+			true,
 		);
 	});
 

@@ -41,7 +41,7 @@ import { AgentSessions } from "../../src/main/agent/sessions";
 import { AgentStatusDetector } from "../../src/main/agent/detect/detector";
 import {
   AgentInjectionQueue,
-  IDLE_ROUNDS_BEFORE_SEND,
+  IDLE_SETTLE_MS,
 } from "../../src/main/agent/injection";
 import { CLAUDE_IDLE } from "../../src/main/agent/detect/claudeScreens.fixture";
 import { scratchDirectory } from "./scratch";
@@ -734,14 +734,21 @@ describe.skipIf(TMUX === undefined)(
           "sys.stdout.flush()",
           "buf = b''",
           "end = time.time() + 25",
+          "closed_at = None",
+          "enter_at = None",
           "while time.time() < end:",
-          "    r, _, _ = select.select([sys.stdin], [], [], 0.2)",
+          "    r, _, _ = select.select([sys.stdin], [], [], 0.05)",
           "    if r:",
           "        chunk = os.read(sys.stdin.fileno(), 65536)",
           "        if not chunk: break",
           "        buf += chunk",
-          "        if b'\\x1b[201~' in buf: break",
-          "open(sys.argv[2], 'wb').write(buf)",
+          "        if closed_at is None and b'\\x1b[201~' in buf:",
+          "            closed_at = time.time()",
+          "        elif closed_at is not None and b'\\r' in chunk:",
+          "            enter_at = time.time()",
+          "            break",
+          "gap = -1 if (closed_at is None or enter_at is None) else int((enter_at - closed_at) * 1000)",
+          "open(sys.argv[2], 'wb').write(buf + b'\\n--GAP--' + str(gap).encode())",
           "time.sleep(30)",
           "",
         ].join("\n"),
@@ -764,21 +771,32 @@ describe.skipIf(TMUX === undefined)(
       queue.queue(agentId, text);
 
       let sends = 0;
-      for (let round = 0; round < 60; round += 1) {
+      const firstIdleAt = { at: 0 };
+      let sentAt = 0;
+      for (let round = 0; round < 80; round += 1) {
         const screen = await sessions
           .screen(agentId, workspaceId)
           .catch(() => undefined);
         if (screen) {
-          const due = queue.due(agentId, detector.status("claude", screen));
+          const status = detector.status("claude", screen);
+          if (status === "idle" && firstIdleAt.at === 0) {
+            firstIdleAt.at = Date.now();
+          }
+          const due = queue.due(agentId, status);
           if (due !== undefined) {
             await sessions.inject(agentId, workspaceId, due);
             queue.sent(agentId);
             sends += 1;
+            sentAt = Date.now();
           }
         }
         if (existsSync(landed)) break;
         await new Promise((resolve) => setTimeout(resolve, 100));
       }
+
+      // The prompt had to look free for a whole second before anything went
+      // into it — the real clock, not a count of rounds.
+      expect(sentAt - firstIdleAt.at).toBeGreaterThanOrEqual(IDLE_SETTLE_MS);
 
       expect(existsSync(landed)).toBe(true);
       const received = readFileSync(landed, "utf8");
@@ -796,6 +814,20 @@ describe.skipIf(TMUX === undefined)(
       // Once. The queue empties on the send, so a later idle round is not a
       // second delivery.
       expect(sends).toBe(1);
+
+      /*
+       * And the Return came well after the paste finished.
+       *
+       * A TUI that never saw the bracketed-paste markers decides for itself
+       * whether a fast run of characters was typed or pasted, and while it
+       * thinks a paste is in progress a Return inserts a newline instead of
+       * submitting. Codex's window for that is 120ms
+       * (`PASTE_ENTER_SUPPRESS_WINDOW`), so the gap has to clear it — which is
+       * the difference between the instruction being sent and it sitting in
+       * the box with a blank line under it.
+       */
+      const gap = Number(received.split("--GAP--").at(-1));
+      expect(gap).toBeGreaterThan(120);
     });
 
     /** The gate itself, against the states a real Agent actually passes through. */
@@ -803,7 +835,7 @@ describe.skipIf(TMUX === undefined)(
       const queue = new AgentInjectionQueue();
       const agentId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa6";
       queue.queue(agentId, "do the thing");
-      for (let round = 0; round < IDLE_ROUNDS_BEFORE_SEND * 3; round += 1) {
+      for (let round = 0; round < 30; round += 1) {
         expect(queue.due(agentId, "working")).toBeUndefined();
         expect(queue.due(agentId, "waiting")).toBeUndefined();
         expect(queue.due(agentId, "unknown")).toBeUndefined();
@@ -831,7 +863,15 @@ describe.skipIf(TMUX === undefined)(
       const session = `ws-${workspaceDigest(test.home).slice(0, 20)}`;
 
       // Exactly what the old build did on every client resize.
-      tmuxOutside(test.socket, ["resize-window", "-t", session, "-x", "80", "-y", "24"]);
+      tmuxOutside(test.socket, [
+        "resize-window",
+        "-t",
+        session,
+        "-x",
+        "80",
+        "-y",
+        "24",
+      ]);
       expect(windowSize(test.socket, session)).toBe("manual");
 
       // The path every open takes.
