@@ -73,11 +73,6 @@ function itemLabel(item: GitHubItem): string {
   return `${item.owner}/${item.repository}#${String(item.number)}`;
 }
 
-/** "Issue" or "pull request", for a sentence that has to name which. */
-function itemNoun(item: GitHubItem): string {
-  return item.kind === "pull" ? "pull request" : "Issue";
-}
-
 export function IssueAssignmentSheet({ onDismiss }: IssueAssignmentSheetProps) {
   const {
     agentProfiles,
@@ -384,7 +379,10 @@ function locationStep(
     const answer = await input.ask({
       ...SHEET,
       title: `Where to work on ${itemLabel(item)}`,
-      question: `Choose the checkout of ${repository.mainWorktree} the agent works in — the repository itself, a worktree it already has, or a new one.`,
+      // The repository by its folder name, as the rows below name theirs. Its
+      // path is on the row that is the repository, which is where somebody who
+      // wants to know exactly which clone this is will look.
+      question: `Choose the checkout of ${folderName(repository.mainWorktree)} the agent works in — the repository itself, a worktree it already has, or a new one.`,
       items: checkoutRows(repository),
       pinned: [
         {
@@ -397,8 +395,8 @@ function locationStep(
           // about branches, which is why nothing else here mentions one.
           detail:
             item.kind === "pull"
-              ? `${itemNoun(item)} ${itemLabel(item)}'s own branch, checked out in a folder beside ${repository.mainWorktree}`
-              : `A branch of its own, in a folder beside ${repository.mainWorktree}`,
+              ? `The pull request's own branch, checked out beside ${folderName(repository.mainWorktree)}`
+              : `A branch of its own, in a folder beside ${folderName(repository.mainWorktree)}`,
         },
       ],
       emptyNoItems: "This repository is checked out nowhere.",
