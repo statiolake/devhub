@@ -28,6 +28,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import platform
 import shutil
 import signal
 import socket
@@ -80,19 +82,26 @@ FETCHED_ASSETS = (
 	"@vscode/tree-sitter-wasm/wasm/tree-sitter.wasm",
 )
 
-# The resource path of an `app.asar` archive's contents, as `nodeModulesPath`
-# and its two deleted siblings compile to. DevHub ships no archive — see
-# patches/vscode/0002-no-node-modules-asar.patch, and "Nothing here is an
-# `app.asar` either" in package-nightly.py — so any code that builds this path
-# is asking for a file that cannot exist, and will 404 in the packaged app
-# while working perfectly in a source run.
-ARCHIVE_RESOURCE_PATH = "vs/../../node_modules.asar"
+# What the app starts as a process, rather than importing. Same silence as the
+# fetched assets: search returns nothing, or a terminal never opens, and the
+# window is otherwise perfectly healthy.
+SPAWNED_BINARIES = (
+	f"@vscode/ripgrep-universal/bin/darwin-{'arm64' if platform.machine() == 'arm64' else 'x64'}/rg",
+	"node-pty/build/Release/spawn-helper",
+)
+
+# A built workbench does not fetch the assets above out of `node_modules`. It
+# computes `node_modules.asar.unpacked`, because a fetch wants a real file and
+# the archive is where those files are *not*. Which of the two names it compiles
+# to is decided by `isBuilt`, so this is precisely the difference a source run
+# cannot show you: in `pnpm dev` every one of these paths resolves either way.
+UNPACKED_DIR = "node_modules.asar.unpacked"
 
 
 def check_bundle_layout(app: Path) -> list[str]:
 	"""Faults that a running app would not report, so the app cannot be asked.
 
-	Both checks below are about the same failure: a file the workbench fetches
+	Every check below is about the same failure: a file the workbench fetches
 	from a path it computes. Nothing throws when that path is wrong — the fetch
 	404s inside the feature that wanted it, the feature turns itself off, and
 	the app looks healthy. So the bundle is inspected instead of interrogated.
@@ -100,17 +109,27 @@ def check_bundle_layout(app: Path) -> list[str]:
 	faults = []
 	code_oss = app / "Contents" / "Resources" / "app" / "node_modules" / "code-oss-dev"
 
-	for asset in FETCHED_ASSETS:
-		if not (code_oss / "node_modules" / asset).is_file():
-			faults.append(f"the workbench fetches {asset}, and it is not in the bundle")
+	# The archive and its sidecar are a pair; neither is meaningful alone. A
+	# missing sidecar in particular is silent — every module still imports, and
+	# only the spawned and fetched things break.
+	if not (code_oss / "node_modules.asar").is_file():
+		faults.append("node_modules.asar is missing: the app has no modules to resolve")
+	if not (code_oss / UNPACKED_DIR).is_dir():
+		faults.append(f"{UNPACKED_DIR} is missing: nothing spawnable or fetchable survived packing")
 
-	offenders = sorted(
-		path.relative_to(code_oss).as_posix()
-		for path in (code_oss / "out").rglob("*.js")
-		if ARCHIVE_RESOURCE_PATH in path.read_text(errors="replace")
-	)
-	for offender in offenders:
-		faults.append(f"{offender} resolves resources inside an asar archive DevHub does not ship")
+	for asset in FETCHED_ASSETS:
+		if not (code_oss / UNPACKED_DIR / asset).is_file():
+			faults.append(f"the workbench fetches {asset}, and it is not in {UNPACKED_DIR}")
+
+	# Everything the app spawns has to be a real file: Electron's asar layer is
+	# in its file system, not in its process spawner, so an executable left
+	# inside the archive fails with ENOTDIR at the moment the feature is used.
+	for spawned in SPAWNED_BINARIES:
+		path = code_oss / UNPACKED_DIR / spawned
+		if not path.is_file():
+			faults.append(f"the app spawns {spawned}, and it is not in {UNPACKED_DIR}")
+		elif not os.access(path, os.X_OK):
+			faults.append(f"the app spawns {spawned}, and it is not executable")
 
 	return faults
 
@@ -126,7 +145,10 @@ def smoke(app: Path, timeout: float) -> int:
 		for fault in faults:
 			print(f"    {fault}", file=sys.stderr)
 		return 1
-	print(f"    the fetched assets are all present ({len(FETCHED_ASSETS)} checked)")
+	print(
+		f"    the archive is paired with its sidecar, and everything the app "
+		f"fetches or spawns is in it ({len(FETCHED_ASSETS) + len(SPAWNED_BINARIES)} checked)"
+	)
 
 	state = Path(tempfile.mkdtemp(prefix="devhub-smoke-"))
 	user_data = state / "editor"

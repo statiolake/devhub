@@ -62,30 +62,46 @@ The layout inside the bundle, and why:
                                     where VS Code looks for built-ins, so the
                                     packaged app needs no `--builtin-
                                     extensions-dir` the way dev.sh does
-            node_modules/           VS Code's *production* dependency closure,
+            node_modules.asar       VS Code's *production* dependency closure,
                                     copied from the tree npm already built for
-                                    this Electron (native modules included)
+                                    this Electron, then collapsed into one
+                                    archive
+            node_modules.asar.unpacked
+                                    the part of that closure that has to stay
+                                    real files: native addons, spawned
+                                    executables, `.wasm`
+            node_modules/           what is left out of the archive entirely —
+                                    see pack_node_modules_asar.mjs
 
 Nothing here is a symlink: a link into the developer's checkout would leave the
 zip working only on the machine that made it.
 
-Nothing here is an `app.asar` either, and that is not an oversight. Collapsing
-`Resources/app` into one archive takes the bundle from 20,081 files to 1,985
-and the app does start from it — Electron's fs, its ESM loader and VS Code's
-own fork of `out/bootstrap-fork.js` all read straight out of the archive. What
-does not work is `spawn`: Electron's asar layer is in its file system, not in
-its process spawner, so an executable inside the archive fails with ENOTDIR
-even when `--unpack` has written a real copy to `app.asar.unpacked`. VS Code
-spawns several — ripgrep for search and for the dev-mode CSS scan, node-pty's
-`spawn-helper` for terminals — and it reaches them by paths it computes itself
-from `__dirname`. Upstream's answer is a convention its source hard-codes at
-every such place: rewrite the segment `node_modules.asar` in the computed path
-to `node_modules.asar.unpacked`. That fires only for an archive with that exact
-name, and Electron 39 no longer resolves modules out of one at all — neither
-`import` nor `require` finds a package inside a sibling `node_modules.asar`
-(measured). So the two halves do not meet: the archive shape VS Code knows how
-to spawn out of is the one this Electron cannot import from. The bundle stays a
-directory tree until that changes.
+`code-oss-dev/node_modules` is an archive, the same one upstream ships and by
+the same rules: `node_modules.asar` for what can be read out of an archive, and
+`node_modules.asar.unpacked` for what cannot. See
+scripts/pack_node_modules_asar.mjs for the three sets and why each exists.
+
+The line that has to hold for this to work is `spawn`. Electron's asar layer is
+in its file system, not in its process spawner, so an executable inside the
+archive fails with ENOTDIR. VS Code spawns several — ripgrep for search,
+node-pty's `spawn-helper` for terminals — and reaches them by paths it computes
+itself from `__dirname`; upstream's answer is a convention its source hard-codes
+at every such place, rewriting the segment `node_modules.asar` in the computed
+path to `node_modules.asar.unpacked`. That is why the archive has to be named
+exactly that, and why the unpack list is not a tuning knob: a spawned file
+missing from it is a feature that fails at runtime, not a bigger archive.
+
+An earlier round of this work recorded the opposite conclusion — that Electron
+"no longer resolves modules out of a sibling `node_modules.asar`", making the
+archive unusable. That is not the case on Electron 42, and probably never was
+the whole story: Node's own resolver indeed cannot see into the archive, but
+resolving out of it was never Node's job. Upstream installs an ESM resolution
+hook (`enableASARSupport` in `src/bootstrap-esm.ts`) that locates the package
+inside the archive and re-runs resolution rooted there. Measured on 42.7.0 with
+the hook wired: `fs` reads, `require`, and bare `import` all resolve out of the
+archive; `spawn` works from `.unpacked` and fails from inside, exactly as the
+design assumes. The earlier measurement was almost certainly taken with that
+hook disabled, which was the state DevHub's own patch had left it in.
 
 Usage:
     scripts/package-nightly.py [--out-dir DIR] [--zip] [--zip-name NAME]
@@ -672,6 +688,16 @@ def assemble_app_directory(app: Path, version: str, staged_extensions: Path) -> 
 		relative = module.relative_to(VSCODE_DIR)
 		copy_tree(module, code_oss / relative, ignore=lambda d, names: {"node_modules"})
 	print(f"    copied the production closure, minus {skipped} Copilot packages")
+
+	step("node_modules.asar")
+	run(
+		[
+			str(toolchain_node_bin() / "node"),
+			str(REPO_ROOT / "scripts" / "pack_node_modules_asar.mjs"),
+			str(code_oss / "node_modules"),
+			str(VSCODE_DIR),
+		]
+	)
 
 
 # --- entry point -----------------------------------------------------------
