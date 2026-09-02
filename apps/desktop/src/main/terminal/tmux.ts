@@ -197,22 +197,43 @@ export interface TargetIdentity {
 /**
  * The tmux options a session carries because of what it is.
  *
- * An Agent session is not a tmux the user drives. Nothing in it switches
- * windows, and its single pane is the Agent's own process, so tmux's status
- * bar is a row of chrome for controls that do not apply — and a row the pane
- * does not get to draw in. It is turned off, and DevHub says so both when it
- * creates the session and every time it proves it still owns it, so a session
- * created by an older build is corrected the next time it is opened.
+ * **The window follows its client.** `window-size latest` is tmux's own
+ * default, and DevHub says it out loud because DevHub is the reason a window
+ * might not have it. An earlier build resized the session's window explicitly
+ * on every client resize, and an explicit `resize-window` latches that window
+ * to `window-size manual` for good. The call is gone, but the latch it left
+ * is not: it lives in the tmux server, and the server outlives the app. So a
+ * window that was ever resized by that build stayed frozen at the size the
+ * last DevHub happened to be — a person closed the app, reopened it larger,
+ * and got the old geometry with the shell drawing into part of the pane.
+ *
+ * That is not a preference of the user's being overridden. It is DevHub
+ * clearing a value DevHub itself wrote, which is why it is stated for every
+ * session rather than only the ones DevHub owns outright, and why it is
+ * re-stated on every open rather than only at creation.
+ *
+ * **An Agent has no status bar.** An Agent session is not a tmux the user
+ * drives. Nothing in it switches windows, and its single pane is the Agent's
+ * own process, so tmux's status bar is a row of chrome for controls that do
+ * not apply — and a row the pane does not get to draw in.
  *
  * Every other session — a workspace's integrated terminal, Scratch — *is* the
  * user's tmux: they may split it, switch windows, and want the bar that says
- * where they are. DevHub declares nothing about those, so whatever the user's
- * own config asked for is what they get.
+ * where they are. DevHub declares nothing about *those*, so whatever the
+ * user's own config asked for is what they get.
+ *
+ * tmux resolves an option's scope from its name, so a window option and a
+ * session option are set the same way here.
  */
 function sessionOptions(
 	context: string,
 ): readonly (readonly [string, string])[] {
-	return context === AGENT_CONTEXT ? [["status", "off"]] : [];
+	return [
+		["window-size", "latest"],
+		...(context === AGENT_CONTEXT
+			? ([["status", "off"]] as const)
+			: ([] as const)),
+	];
 }
 
 /** An Agent session's name is its id, so it is findable after a restart. */

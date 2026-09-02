@@ -812,6 +812,35 @@ describe.skipIf(TMUX === undefined)(
     });
 
     /**
+     * The size latch an earlier build left behind, cleared on the next open.
+     *
+     * That build resized the session's window explicitly whenever its client
+     * resized, and an explicit `resize-window` pins the window to
+     * `window-size manual` permanently. Removing the call does not undo the
+     * pin: it is held in the tmux server, and the server outlives the app — so
+     * a person who closed DevHub and reopened it at a different size kept
+     * getting the old one. The repair has to happen on a session that already
+     * exists, which is every session a person actually has.
+     */
+    it("frees a window an older build pinned to a fixed size", async () => {
+      const test = fixture("windowsize");
+      const workspaceId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb4";
+      const target = workspaceTarget(workspaceId, test.home);
+      await test.runtime.ensure(SCRATCH_TARGET);
+      await test.runtime.ensure(target);
+      const session = `ws-${workspaceDigest(test.home).slice(0, 20)}`;
+
+      // Exactly what the old build did on every client resize.
+      tmuxOutside(test.socket, ["resize-window", "-t", session, "-x", "80", "-y", "24"]);
+      expect(windowSize(test.socket, session)).toBe("manual");
+
+      // The path every open takes.
+      await test.runtime.ensure(target);
+
+      expect(windowSize(test.socket, session)).toBe("latest");
+    });
+
+    /**
      * An Agent session is not a tmux the user drives, so it carries no status
      * bar; the sessions the user *does* drive are left as their own config
      * made them.
@@ -946,4 +975,16 @@ async function untilFile(path: string): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   throw new Error("the Agent never wrote its marker file");
+}
+
+/** Whether a window still follows its client, read from outside. */
+function windowSize(socket: string, session: string): string {
+  return execFileSync(
+    TMUX as string,
+    ["-L", socket, "display-message", "-p", "-t", session, "#{window-size}"],
+    {
+      encoding: "utf8",
+      env: { ...process.env, TMUX: undefined, TMUX_PANE: undefined } as never,
+    },
+  ).trim();
 }
