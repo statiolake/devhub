@@ -19,9 +19,9 @@ import { useMemo, useRef } from "react";
 import type { AgentProfilesWire } from "../../ipc/appShell";
 import {
   wipBranchForIssue,
-  issueUrl,
-  parseIssueUrl,
-  type IssueReference,
+  gitHubItemUrl,
+  parseGitHubItemUrl,
+  type GitHubItem,
 } from "../../model/github";
 import type { PickerItem } from "../components/shell/Picker";
 import { Wizard } from "../components/shell/Wizard";
@@ -62,8 +62,20 @@ const SHEET: Pick<WizardPrompt, "emptyNoMatch" | "emptyNoItems"> = {
   emptyNoItems: "Nothing to choose from.",
 };
 
-function issueLabel(issue: IssueReference): string {
-  return `${issue.owner}/${issue.repository}#${String(issue.number)}`;
+/**
+ * `owner/repo#128` — how an Issue or a pull request is named on screen.
+ *
+ * The same shape for both, because GitHub numbers them together and a person
+ * reading `example/widget#128` in a heading knows which one they just pasted.
+ * Where the difference matters the sentence says so in words.
+ */
+function itemLabel(item: GitHubItem): string {
+  return `${item.owner}/${item.repository}#${String(item.number)}`;
+}
+
+/** "Issue" or "pull request", for a sentence that has to name which. */
+function itemNoun(item: GitHubItem): string {
+  return item.kind === "pull" ? "pull request" : "Issue";
 }
 
 export function IssueAssignmentSheet({ onDismiss }: IssueAssignmentSheetProps) {
@@ -73,6 +85,7 @@ export function IssueAssignmentSheet({ onDismiss }: IssueAssignmentSheetProps) {
     cloneRepository,
     assignIssue,
     cloneParentDirectories,
+    pullRequestHeadBranch,
     agentActions,
   } = useAppShell();
 
@@ -97,6 +110,7 @@ export function IssueAssignmentSheet({ onDismiss }: IssueAssignmentSheetProps) {
         cloneRepository,
         assignIssue,
         cloneParentDirectories,
+        pullRequestHeadBranch,
         agentActions,
       }),
     [
@@ -105,6 +119,7 @@ export function IssueAssignmentSheet({ onDismiss }: IssueAssignmentSheetProps) {
       cloneParentDirectories,
       cloneRepository,
       findIssueRepositories,
+      pullRequestHeadBranch,
     ],
   );
 
@@ -127,6 +142,7 @@ interface FlowServices {
     readonly allowStaleBase?: boolean;
   }) => Promise<unknown>;
   readonly cloneParentDirectories: () => Promise<readonly string[]>;
+  readonly pullRequestHeadBranch: (url: string) => Promise<string>;
   readonly agentActions: () => Promise<readonly AgentActionWire[]>;
 }
 
@@ -154,12 +170,12 @@ function issueUrlStep(services: FlowServices): WizardStep {
     const answer = await input.ask({
       title: "Assign Issue",
       question:
-        "Paste the GitHub Issue to work on, then choose what the agent should do with it.",
+        "Paste the GitHub Issue or pull request to work on, then choose what the agent should do with it.",
       // The one field here worth an example: it shows where the number goes,
       // which the heading cannot. There are deliberately no empty-list
       // messages — the Issue is typed rather than chosen, so the list is empty
       // every time and a caption about it would only repeat the heading.
-      placeholder: "https://github.com/owner/repo/issues/128",
+      placeholder: "https://github.com/owner/repo/issues/128 or /pull/128",
       initialQuery: typed,
       items: [],
       pinned:
@@ -175,21 +191,21 @@ function issueUrlStep(services: FlowServices): WizardStep {
           : [
               {
                 id: ACCEPT_TYPED,
-                label: "Use this Issue",
+                label: "Use this URL",
                 detail:
                   "No actions are configured, so the agent starts and is told nothing",
               },
             ],
       note: wrong ? (
-        <Wrong what="That is not a GitHub Issue URL." />
+        <Wrong what="That is not a GitHub Issue or pull request URL." />
       ) : undefined,
     });
-    const issue = parseIssueUrl(answer.query);
-    if (!issue) return ask(input, answer.query, true);
+    const item = parseGitHubItemUrl(answer.query);
+    if (!item) return ask(input, answer.query, true);
     const actionId = answer.id.startsWith(ACTION_PREFIX)
       ? answer.id.slice(ACTION_PREFIX.length)
       : undefined;
-    return agentStep(services, issue, actionId);
+    return agentStep(services, item, actionId);
   };
   return (input) => ask(input, "", false);
 }
@@ -197,14 +213,14 @@ function issueUrlStep(services: FlowServices): WizardStep {
 /** Which agent starts on it. */
 function agentStep(
   services: FlowServices,
-  issue: IssueReference,
+  item: GitHubItem,
   actionId: string | undefined,
 ): WizardStep {
   return async (input) => {
     const answer = await input.ask({
       ...SHEET,
-      title: `Agent for ${issueLabel(issue)}`,
-      question: `Which agent should start on ${issueLabel(issue)}?`,
+      title: `Agent for ${itemLabel(item)}`,
+      question: `Which agent should start on ${itemLabel(item)}?`,
       items: services.agentProfiles().profiles.map((profile) => ({
         id: profile.id,
         label: profile.displayName,
@@ -217,7 +233,7 @@ function agentStep(
           : "No agent profiles are enabled.",
       emptyNoMatch: "No agent profiles match.",
     });
-    return repositoryStep(services, issue, {
+    return repositoryStep(services, item, {
       profileId: answer.id,
       split: answer.split,
       actionId,
@@ -251,23 +267,23 @@ interface AgentChoice {
  */
 function repositoryStep(
   services: FlowServices,
-  issue: IssueReference,
+  item: GitHubItem,
   agent: AgentChoice,
 ): WizardStep {
   return async (input) => {
     const repositories = await input.working(
-      `Looking for ${issue.owner}/${issue.repository}…`,
-      () => services.findIssueRepositories(issueUrl(issue)),
+      `Looking for ${item.owner}/${item.repository}…`,
+      () => services.findIssueRepositories(gitHubItemUrl(item)),
     );
     if (repositories.length === 0) {
-      return cloneDestinationStep(services, issue, agent, nothingCloned(issue));
+      return cloneDestinationStep(services, item, agent, nothingCloned(item));
     }
     const only = repositories.length === 1 ? repositories[0] : undefined;
-    if (only) return locationStep(services, issue, agent, only);
+    if (only) return locationStep(services, item, agent, only);
     const answer = await input.ask({
       ...SHEET,
-      title: `Which ${issue.owner}/${issue.repository}`,
-      question: `This machine has more than one clone of ${issue.owner}/${issue.repository}. Choose the one to work in, or clone it again somewhere else.`,
+      title: `Which ${item.owner}/${item.repository}`,
+      question: `This machine has more than one clone of ${item.owner}/${item.repository}. Choose the one to work in, or clone it again somewhere else.`,
       items: repositories.map((repository) => ({
         id: repository.mainWorktree,
         label: repository.mainWorktree,
@@ -278,26 +294,26 @@ function repositoryStep(
         {
           id: CLONE_ELSEWHERE,
           label: "Clone…",
-          detail: `Clone ${issue.owner}/${issue.repository} again, somewhere else`,
+          detail: `Clone ${item.owner}/${item.repository} again, somewhere else`,
         },
       ],
-      emptyNoItems: `No clone of ${issue.owner}/${issue.repository} was found.`,
+      emptyNoItems: `No clone of ${item.owner}/${item.repository} was found.`,
       emptyNoMatch: "No repository matches.",
     });
     if (answer.id === CLONE_ELSEWHERE) {
       return cloneDestinationStep(
         services,
-        issue,
+        item,
         agent,
-        `${issue.owner}/${issue.repository} is being cloned again rather than worked on where it already is.`,
+        `${item.owner}/${item.repository} is being cloned again rather than worked on where it already is.`,
       );
     }
     const chosen = repositories.find(
       (repository) => repository.mainWorktree === answer.id,
     );
     return chosen
-      ? locationStep(services, issue, agent, chosen)
-      : cloneDestinationStep(services, issue, agent, nothingCloned(issue));
+      ? locationStep(services, item, agent, chosen)
+      : cloneDestinationStep(services, item, agent, nothingCloned(item));
   };
 }
 
@@ -336,8 +352,8 @@ function checkoutRows(repository: IssueRepository): readonly PickerItem[] {
 
 /** "the repository itself", "and 2 worktrees" — what a repository row says. */
 /** Why a clone is being asked about when nobody asked for one. */
-function nothingCloned(issue: IssueReference): string {
-  return `No clone of ${issue.owner}/${issue.repository} was found on this machine, so it has to be cloned before the agent can start.`;
+function nothingCloned(item: GitHubItem): string {
+  return `No clone of ${item.owner}/${item.repository} was found on this machine, so it has to be cloned before the agent can start.`;
 }
 
 function worktreeCount(places: number): string {
@@ -360,21 +376,29 @@ function worktreeCount(places: number): string {
  */
 function locationStep(
   services: FlowServices,
-  issue: IssueReference,
+  item: GitHubItem,
   agent: AgentChoice,
   repository: IssueRepository,
 ): WizardStep {
   return async (input) => {
     const answer = await input.ask({
       ...SHEET,
-      title: `Where to work on ${issueLabel(issue)}`,
+      title: `Where to work on ${itemLabel(item)}`,
       question: `Choose the checkout of ${repository.mainWorktree} the agent works in — the repository itself, a worktree it already has, or a new one.`,
       items: checkoutRows(repository),
       pinned: [
         {
           id: NEW_WORKTREE,
           label: "New worktree",
-          detail: `A branch of its own, in a folder beside ${repository.mainWorktree}`,
+          // A new worktree is the only answer that decides a branch, so it is
+          // the only row that reads differently for the two kinds: an Issue's
+          // branch is made here, a pull request's is fetched and checked out.
+          // Every other answer opens a checkout as it stands and says nothing
+          // about branches, which is why nothing else here mentions one.
+          detail:
+            item.kind === "pull"
+              ? `${itemNoun(item)} ${itemLabel(item)}'s own branch, checked out in a folder beside ${repository.mainWorktree}`
+              : `A branch of its own, in a folder beside ${repository.mainWorktree}`,
         },
       ],
       emptyNoItems: "This repository is checked out nowhere.",
@@ -382,7 +406,7 @@ function locationStep(
     });
     return finishStep(
       services,
-      issue,
+      item,
       agent,
       // A new worktree is measured from the repository; an existing one is
       // simply opened where it is.
@@ -393,9 +417,35 @@ function locationStep(
       // setting (see `model/agentActions.ts`). A picker of branch names here
       // was a question nobody could answer yet: the good name is the one you
       // have after reading the Issue, not before.
-      answer.id === NEW_WORKTREE ? wipBranchForIssue(issue.number) : undefined,
+      answer.id === NEW_WORKTREE
+        ? await newWorktreeBranch(services, input, item)
+        : undefined,
     );
   };
+}
+
+/**
+ * The branch a new worktree is made on, which is where the two kinds differ.
+ *
+ * An Issue has no branch yet, so DevHub makes one — `feature/128-wip`, named so
+ * work can start before anybody knows what to call it, and renamed by the agent
+ * once it does. A pull request *is* a branch, and it is the one being reviewed:
+ * making a second one beside it would produce an empty worktree under a name
+ * that promised somebody else's work.
+ *
+ * This is the only place the flow asks which kind it is holding. Everywhere
+ * else the two are the same three fields answering the same questions, which is
+ * why they travel as one reference rather than as two flows.
+ */
+async function newWorktreeBranch(
+  services: FlowServices,
+  input: WizardInput,
+  item: GitHubItem,
+): Promise<string> {
+  if (item.kind === "issue") return wipBranchForIssue(item.number);
+  return input.working(`Reading ${itemLabel(item)}…`, () =>
+    services.pullRequestHeadBranch(gitHubItemUrl(item)),
+  );
 }
 
 /**
@@ -411,7 +461,7 @@ function locationStep(
  */
 function cloneDestinationStep(
   services: FlowServices,
-  issue: IssueReference,
+  item: GitHubItem,
   agent: AgentChoice,
   reason: string,
 ): WizardStep {
@@ -424,14 +474,14 @@ function cloneDestinationStep(
     );
     const answer = await input.ask({
       ...SHEET,
-      title: `Clone ${issue.owner}/${issue.repository}`,
+      title: `Clone ${item.owner}/${item.repository}`,
       question: `${reason} Choose the folder to clone it into.`,
       // No starting value: the field is a filter over the rows now, and a path
       // typed into it before anything is chosen would hide the list it is
       // meant to search. Where projects go is a *row* — main puts it there when
       // the sources imply no folders of their own.
-      items: cloneParentItems(parents, issue.repository),
-      pinned: [cloneTypedItem(issue.repository)],
+      items: cloneParentItems(parents, item.repository),
+      pinned: [cloneTypedItem(item.repository)],
       emptyNoItems: "Type the folder the clone should go into.",
       emptyNoMatch: "No folder matches. Type one instead.",
     });
@@ -443,7 +493,7 @@ function cloneDestinationStep(
     // Project sheet, rather than composed here: a URL rather than the SSH form,
     // because it is the one that works without the person's keys being set up
     // and git rewrites it if their config says to.
-    const target = githubCloneTarget(issue.owner, issue.repository);
+    const target = githubCloneTarget(item.owner, item.repository);
     // The owner and name came out of an Issue URL that parsed, so a name GitHub
     // could not have is DevHub having got its own parsing wrong. It goes to the
     // root handler rather than being turned into something to retype.
@@ -453,14 +503,14 @@ function cloneDestinationStep(
       );
     }
     const directory = await input.working(
-      `Cloning ${issue.owner}/${issue.repository}…`,
+      `Cloning ${item.owner}/${item.repository}…`,
       () => services.cloneRepository(target.url, destination),
     );
     // A repository that has just been cloned is checked out in exactly one
     // place, so the location question is asked over that one place and a new
     // worktree — which is the same question everybody else gets, from the same
     // step, rather than a second arrangement of it.
-    return locationStep(services, issue, agent, {
+    return locationStep(services, item, agent, {
       mainWorktree: directory,
       worktrees: [{ path: directory, isMainWorktree: true }],
     });
@@ -479,7 +529,7 @@ function cloneDestinationStep(
  */
 function finishStep(
   services: FlowServices,
-  issue: IssueReference,
+  item: GitHubItem,
   agent: AgentChoice,
   directory: string,
   branch: string | undefined,
@@ -487,9 +537,9 @@ function finishStep(
 ): WizardStep {
   return async (input) => {
     try {
-      await input.working(`Setting up ${issueLabel(issue)}…`, () =>
+      await input.working(`Setting up ${itemLabel(item)}…`, () =>
         services.assignIssue({
-          issueUrl: issueUrl(issue),
+          issueUrl: gitHubItemUrl(item),
           directory,
           branch,
           profileId: agent.profileId,
@@ -500,7 +550,7 @@ function finishStep(
       );
     } catch (error: unknown) {
       if (toAppError(error).code !== "git_fetch_failed") throw error;
-      return staleBaseStep(services, issue, agent, directory, branch, error);
+      return staleBaseStep(services, item, agent, directory, branch, error);
     }
     return undefined;
   };
@@ -509,7 +559,7 @@ function finishStep(
 /** The fetch failed: start from the copy on disk, or not at all. */
 function staleBaseStep(
   services: FlowServices,
-  issue: IssueReference,
+  item: GitHubItem,
   agent: AgentChoice,
   directory: string,
   branch: string | undefined,
@@ -533,7 +583,7 @@ function staleBaseStep(
     // Escape is the other answer, and it is the runner's: back to the branch,
     // where a branch that already exists needs no fetch at all.
     return answer.id === USE_STALE_BASE
-      ? finishStep(services, issue, agent, directory, branch, true)
+      ? finishStep(services, item, agent, directory, branch, true)
       : undefined;
   };
 }

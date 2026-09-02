@@ -161,9 +161,13 @@ import {
 	type GitCommand,
 } from "./git.js";
 import { findClones } from "./issues.js";
-import { readGitHubLogin } from "./github.js";
-import { issueUrl, parseIssueUrl } from "../../model/github.js";
-import type { IssueReference } from "../../model/github.js";
+import {
+	readGitHubLogin,
+	readGitHubToken,
+	readPullRequestHead,
+} from "./github.js";
+import { gitHubItemUrl, parseGitHubItemUrl } from "../../model/github.js";
+import type { GitHubItem } from "../../model/github.js";
 import { renderAgentAction } from "../../model/agentActions.js";
 import { RepositoryStatusWatcher } from "./repositoryStatus.js";
 import { installMenu, refreshMenu } from "./menu.js";
@@ -1289,7 +1293,7 @@ export class AppController {
 	 */
 	private queueIssuePrompt(
 		before: ReadonlySet<string>,
-		issue: IssueReference,
+		item: GitHubItem,
 		actionId: string | undefined,
 	): void {
 		const started = this.coordinator.model.workspaces
@@ -1308,9 +1312,14 @@ export class AppController {
 			started.id,
 			renderAgentAction(
 				template,
+				// One pair of names for either kind. A person's actions are their own
+				// wording, written before pull requests were accepted at all, and a
+				// second pair meaning the same thing would make every template that
+				// wanted to work for both say everything twice. `{{ISSUE_URL}}` is
+				// the URL of the thing that was assigned, whichever it was.
 				{
-					ISSUE_URL: issueUrl(issue),
-					ISSUE_NO: String(issue.number),
+					ISSUE_URL: gitHubItemUrl(item),
+					ISSUE_NO: String(item.number),
 				},
 				started.profile.kind,
 			),
@@ -2482,16 +2491,23 @@ export class AppController {
 	 * would be a second answer to a question the model has already answered.
 	 */
 	private async assignIssue(request: IssueAssignment): Promise<AppOutcomeWire> {
-		const issue = parseIssueUrl(request.issueUrl);
-		if (!issue) {
-			throw workspaceFailure("That is not a GitHub Issue URL.");
+		const item = parseGitHubItemUrl(request.issueUrl);
+		if (!item) {
+			throw workspaceFailure("That is not a GitHub Issue or pull request URL.");
 		}
 		const target = request.branch
 			? await ensureWorktree(
 					await this.gitCommand(),
 					request.directory,
 					request.branch,
-					{ allowStaleBase: request.allowStaleBase },
+					{
+						allowStaleBase: request.allowStaleBase,
+						// A pull request's branch is work that exists already; an
+						// Issue's is one being started now. Which it is follows from
+						// the URL rather than from a second field beside it, because
+						// two facts saying the same thing can disagree.
+						branchExistsAlready: item.kind === "pull",
+					},
 				)
 			: request.directory;
 
@@ -2534,7 +2550,7 @@ export class AppController {
 			profileId: agentProfileId(request.profileId),
 			presentation: request.split ? "beside" : "full",
 		});
-		this.queueIssuePrompt(agentsBefore, issue, request.actionId);
+		this.queueIssuePrompt(agentsBefore, item, request.actionId);
 		await this.syncEditorView();
 		return outcomeWire(settled, this.coordinator.readiness);
 	}
@@ -2629,6 +2645,28 @@ export class AppController {
 		// kept: a login that was switched or logged out of should stop being
 		// DevHub's answer the moment it stops being true.
 		handle(CHANNELS.githubLogin, () => readGitHubLogin(this.launchEnvironment));
+		// The branch a pull request is asking to merge. A refusal travels as the
+		// structured error inside the message, so the step that asked shows
+		// GitHub's own sentence and not "the native app shell is unavailable".
+		handle(CHANNELS.pullRequestHeadBranch, async (_event, url: string) => {
+			try {
+				const item = parseGitHubItemUrl(url);
+				if (item?.kind !== "pull") {
+					throw workspaceFailure("That is not a pull request URL.");
+				}
+				const credentials = await readGitHubToken(this.launchEnvironment);
+				if (credentials.kind !== "token") {
+					throw workspaceFailure(
+						credentials.kind === "unauthenticated"
+							? "DevHub is not signed in to GitHub. Run `gh auth login` and try again."
+							: `DevHub could not ask GitHub about the pull request: ${credentials.reason}.`,
+					);
+				}
+				return await readPullRequestHead(item, credentials.token);
+			} catch (error: unknown) {
+				throw asIpcError(errorWire(error));
+			}
+		});
 		// A refusal travels the way every other one does — as the structured
 		// error inside the message — so the sheet that asked shows the sentence
 		// and not "the native app shell is unavailable".
@@ -2658,10 +2696,14 @@ export class AppController {
 		// failure has to be answerable by re-asking the one that led to it.
 		handle(CHANNELS.findIssueRepositories, async (_event, issueUrl: string) => {
 			const config = this.config;
-			const issue = parseIssueUrl(issueUrl);
+			// Either kind: which clones a repository has is a question about the
+			// repository, and an Issue and a pull request name theirs the same way.
+			const issue = parseGitHubItemUrl(issueUrl);
 			if (!config || !issue) {
 				throw asIpcError(
-					errorWire(workspaceFailure("That is not a GitHub Issue URL.")),
+					errorWire(
+						workspaceFailure("That is not a GitHub Issue or pull request URL."),
+					),
 				);
 			}
 			try {

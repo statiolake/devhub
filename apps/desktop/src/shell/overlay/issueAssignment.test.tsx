@@ -20,6 +20,7 @@ Element.prototype.scrollIntoView = vi.fn();
 afterEach(cleanup);
 
 const ISSUE = "https://github.com/example/widget/issues/128";
+const PULL_REQUEST = "https://github.com/example/widget/pull/128";
 
 function mount(overrides: Partial<AppShellContextValue> = {}) {
   const assignIssue = vi.fn().mockResolvedValue(undefined);
@@ -34,6 +35,9 @@ function mount(overrides: Partial<AppShellContextValue> = {}) {
   ]);
   const listBranches = vi.fn().mockResolvedValue(["main", "release"]);
   const cloneRepository = vi.fn().mockResolvedValue("/projects/widget");
+  const pullRequestHeadBranch = vi
+    .fn()
+    .mockResolvedValue("alice/fix-the-crash");
   const onDismiss = vi.fn();
   const value = {
     agentProfiles: {
@@ -49,6 +53,7 @@ function mount(overrides: Partial<AppShellContextValue> = {}) {
     cloneParentDirectories: vi
       .fn()
       .mockResolvedValue(["/projects", "/code/github"]),
+    pullRequestHeadBranch,
     // The URL step's rows are the person's own actions.
     agentActions: vi
       .fn()
@@ -65,6 +70,7 @@ function mount(overrides: Partial<AppShellContextValue> = {}) {
     findIssueRepositories,
     listBranches,
     cloneRepository,
+    pullRequestHeadBranch,
     onDismiss,
   };
 }
@@ -271,7 +277,9 @@ describe("assigning an Issue", () => {
     await answer("Assign Issue", "https://example.com/nope");
 
     expect(
-      await screen.findByText("That is not a GitHub Issue URL."),
+      await screen.findByText(
+        "That is not a GitHub Issue or pull request URL.",
+      ),
     ).toBeInTheDocument();
     // The typing survives, because retyping a URL is the one thing a person
     // who mistyped a URL should not have to do.
@@ -288,10 +296,54 @@ describe("assigning an Issue", () => {
     const field = await screen.findByRole("textbox");
     expect(field).toHaveAttribute(
       "placeholder",
-      "https://github.com/owner/repo/issues/128",
+      "https://github.com/owner/repo/issues/128 or /pull/128",
     );
     expect(screen.queryByText(/Paste an Issue URL/u)).toBeNull();
     expect(document.querySelector(".picker-empty")).toBeNull();
+  });
+
+  it("makes a pull request's worktree on the branch it is asking to merge", async () => {
+    // An Issue has no branch yet, so DevHub makes one. A pull request *is* a
+    // branch, and it is the one being reviewed — a new `feature/128-wip` beside
+    // it would be an empty worktree under a name promising somebody's work.
+    const { assignIssue, pullRequestHeadBranch } = mount();
+
+    await answer("Assign Issue", PULL_REQUEST);
+    await answer(/Agent for example\/widget#128/u);
+    await choose(/Where to work on example\/widget#128/u, /New worktree/u);
+
+    await vi.waitFor(() => {
+      expect(assignIssue).toHaveBeenCalledWith(
+        expect.objectContaining({
+          issueUrl: PULL_REQUEST,
+          directory: "/projects/widget",
+          branch: "alice/fix-the-crash",
+        }),
+      );
+    });
+    expect(pullRequestHeadBranch).toHaveBeenCalledWith(PULL_REQUEST);
+  });
+
+  it("checks nothing out when the work stays in the repository itself", async () => {
+    // The agent is handed the repository as it stands. Which branch to look at
+    // is then the agent's business, and DevHub moving somebody's checkout out
+    // from under them would be the wrong kind of helpful.
+    const { assignIssue, pullRequestHeadBranch } = mount();
+
+    await answer("Assign Issue", PULL_REQUEST);
+    await answer(/Agent for/u);
+    await choose(/Where to work on/u, /Repository Root/u);
+
+    await vi.waitFor(() => {
+      expect(assignIssue).toHaveBeenCalledWith(
+        expect.objectContaining({
+          issueUrl: PULL_REQUEST,
+          directory: "/projects/widget",
+          branch: undefined,
+        }),
+      );
+    });
+    expect(pullRequestHeadBranch).not.toHaveBeenCalled();
   });
 
   it("offers a new worktree, then the ones there are, then the repository", async () => {

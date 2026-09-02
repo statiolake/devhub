@@ -11,6 +11,7 @@
  */
 
 import { spawn } from "node:child_process";
+import type { IssueReference } from "../../model/github.js";
 
 /**
  * A workspace's checked-out branch, as GitHub names the things it is about.
@@ -286,6 +287,7 @@ interface GraphQlAnswer {
 	readonly data?: {
 		readonly repository?: {
 			readonly issue?: GraphQlIssue | null;
+			readonly pullRequest?: { readonly headRefName?: string | null } | null;
 			readonly pullRequests?: {
 				readonly nodes?: readonly (GraphQlPullRequest | null)[] | null;
 			} | null;
@@ -413,6 +415,48 @@ export async function readBranchStatus(
 				}
 			: undefined,
 	};
+}
+
+/**
+ * The branch a pull request is asking to merge.
+ *
+ * Asked once, when somebody assigns a pull request and wants a worktree for it
+ * — not polled. The watcher's questions are about what changed since last time;
+ * this one has a single answer that was fixed when the pull request was opened,
+ * so it is its own small query rather than a field bolted onto a query that
+ * runs every minute for every workspace.
+ *
+ * `headRefName` is the branch's name on whichever repository it lives in. For a
+ * pull request from a fork that name is not on `origin` at all, and the failure
+ * to check it out is git's to report: DevHub asking for a branch that is not
+ * there says so, where inventing an empty branch of the same name would not.
+ */
+export async function readPullRequestHead(
+	pullRequest: IssueReference,
+	token: string,
+): Promise<string> {
+	const answer = await post(
+		{
+			query: `query($owner:String!,$name:String!,$number:Int!){
+  repository(owner:$owner,name:$name){ pullRequest(number:$number){ headRefName } }
+}`,
+			variables: {
+				owner: pullRequest.owner,
+				name: pullRequest.repository,
+				number: pullRequest.number,
+			},
+		},
+		token,
+	);
+	const failed = answer.errors?.[0]?.message;
+	if (failed !== undefined) throw new GitHubUnavailable(failed);
+	const branch = answer.data?.repository?.pullRequest?.headRefName ?? undefined;
+	if (branch === undefined || branch.length === 0) {
+		throw new GitHubUnavailable(
+			`GitHub did not say which branch ${pullRequest.owner}/${pullRequest.repository}#${String(pullRequest.number)} is from.`,
+		);
+	}
+	return branch;
 }
 
 async function post(body: unknown, token: string): Promise<GraphQlAnswer> {

@@ -440,6 +440,11 @@ export function AppShellProvider({
 
   const githubLogin = useCallback(() => transport.githubLogin(), [transport]);
 
+  const pullRequestHeadBranch = useCallback(
+    (url: string) => transport.pullRequestHeadBranch(url),
+    [transport],
+  );
+
   const agentActions = useCallback(() => transport.agentActions(), [transport]);
 
   const removeWorktree = useCallback(
@@ -572,6 +577,7 @@ export function AppShellProvider({
       projectDefaultDirectory,
       cloneParentDirectories,
       githubLogin,
+      pullRequestHeadBranch,
       agentActions,
       removeWorktree,
       findIssueRepositories,
@@ -597,6 +603,7 @@ export function AppShellProvider({
       projectDefaultDirectory,
       cloneParentDirectories,
       githubLogin,
+      pullRequestHeadBranch,
       agentActions,
       removeWorktree,
       findIssueRepositories,

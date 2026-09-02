@@ -68,6 +68,7 @@ export interface AppShellClient {
   projectDefaultDirectory(): Promise<string>;
   cloneParentDirectories(): Promise<readonly string[]>;
   githubLogin(): Promise<GitHubLoginWire>;
+  pullRequestHeadBranch(url: string): Promise<string>;
   agentActions(): Promise<readonly AgentActionWire[]>;
   removeWorktree(workspaceId: string, force: boolean): Promise<AppOutcome>;
   findIssueRepositories(issueUrl: string): Promise<readonly IssueRepository[]>;
@@ -135,6 +136,7 @@ export function createShellClient(api: DevhubApi = devhub()): AppShellClient {
     projectDefaultDirectory: () => api.projectDefaultDirectory(),
     cloneParentDirectories: () => api.cloneParentDirectories(),
     githubLogin: () => api.githubLogin(),
+    pullRequestHeadBranch: (url) => api.pullRequestHeadBranch(url),
     agentActions: () => api.agentActions(),
     removeWorktree: (workspaceId, force) =>
       api.removeWorktree(workspaceId, force),

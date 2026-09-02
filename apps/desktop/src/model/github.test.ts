@@ -1,10 +1,53 @@
 import { describe, expect, it } from "vitest";
 import {
   wipBranchForIssue,
+  gitHubItemUrl,
   issueNumberFromBranch,
   issueUrl,
+  parseGitHubItemUrl,
   parseIssueUrl,
 } from "./github.js";
+
+describe("an Issue or pull request URL", () => {
+  it("reads which of the two a URL names", () => {
+    expect(
+      parseGitHubItemUrl("https://github.com/example/widget/issues/128"),
+    ).toEqual({
+      owner: "example",
+      repository: "widget",
+      number: 128,
+      kind: "issue",
+    });
+    // The same number, a different thing. GitHub numbers them together, so the
+    // path is the only evidence there is.
+    expect(
+      parseGitHubItemUrl("https://github.com/example/widget/pull/128"),
+    ).toEqual({
+      owner: "example",
+      repository: "widget",
+      number: 128,
+      kind: "pull",
+    });
+  });
+
+  it("is not read as an Issue when it is a pull request", () => {
+    // What the poller and the sidebar read: both ask Issue questions of what
+    // they get, and a pull request would be the wrong answer to all of them.
+    expect(
+      parseIssueUrl("https://github.com/example/widget/pull/128"),
+    ).toBeUndefined();
+  });
+
+  it("writes back the URL it came from", () => {
+    for (const url of [
+      "https://github.com/example/widget/issues/128",
+      "https://github.com/example/widget/pull/128",
+    ]) {
+      const item = parseGitHubItemUrl(url);
+      expect(item && gitHubItemUrl(item)).toBe(url);
+    }
+  });
+});
 
 describe("an Issue URL", () => {
   it("is read as owner, repository and number", () => {

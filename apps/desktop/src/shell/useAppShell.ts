@@ -60,6 +60,8 @@ export interface AppShellContextValue {
    * rather than throwing when it cannot say.
    */
   readonly githubLogin: () => Promise<GitHubLoginWire>;
+  /** The branch a pull request is asking to merge. Throws GitHub's reason. */
+  readonly pullRequestHeadBranch: (url: string) => Promise<string>;
   /** The ways of starting an agent on an Issue, as Settings lists them. */
   readonly agentActions: () => Promise<readonly AgentActionWire[]>;
   /**

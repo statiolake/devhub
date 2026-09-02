@@ -157,6 +157,16 @@ export interface WorkspaceRepositoryWire {
 	 * safe branch, and DevHub not knowing is not a reason to skip it.
 	 */
 	readonly dirty?: boolean;
+	/**
+	 * Commits here that the branch's upstream does not have.
+	 *
+	 * `0` when the branch is level with what it tracks, and absent when there is
+	 * nothing to compare against — a branch nobody has pushed, or a repository
+	 * with no remotes. Absent is not zero: "there is nothing to push" and "there
+	 * is nowhere to push it" are different answers, and only one of them means a
+	 * push would help.
+	 */
+	readonly ahead?: number;
 	readonly issue?: {
 		readonly url: string;
 		readonly number: number;
@@ -470,6 +480,15 @@ export interface DevhubApi {
 	 * the sheet can say while it stands there.
 	 */
 	githubLogin(): Promise<GitHubLoginWire>;
+	/**
+	 * The branch a pull request is asking to merge.
+	 *
+	 * Asked when somebody assigns a pull request and a worktree is being made
+	 * for it: the worktree is that branch, checked out, rather than a new one.
+	 * Throws what to do about it — no token, no such pull request — because the
+	 * step that asked is the step that shows the reason.
+	 */
+	pullRequestHeadBranch(url: string): Promise<string>;
 	listBranches(directory: string): Promise<readonly string[]>;
 	/**
 	 * Do what the answers add up to: make the worktree if one was asked for,
@@ -526,6 +545,7 @@ export const CHANNELS = {
 	projectDefaultDirectory: "devhub:project-default-directory",
 	cloneParentDirectories: "devhub:clone-parent-directories",
 	githubLogin: "devhub:github-login",
+	pullRequestHeadBranch: "devhub:pull-request-head-branch",
 	removeWorktree: "devhub:remove-worktree",
 	agentActions: "devhub:agent-actions",
 	openSettings: "devhub:open-settings",

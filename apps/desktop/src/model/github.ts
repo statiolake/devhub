@@ -21,26 +21,78 @@ export interface IssueReference {
 const OWNER = "[A-Za-z0-9._-]+";
 
 /**
- * `https://github.com/owner/repo/issues/128`, and nothing else.
+ * Which of GitHub's two numbered things a reference names.
  *
- * A pull request URL is deliberately not an Issue URL here even though GitHub
- * numbers them together: the flow assigns work from an Issue, and quietly
- * accepting a PR would start a branch for something that already has one.
+ * They share one sequence per repository — #128 is an Issue or a pull request
+ * and never both — so the number alone cannot say, and every reference that
+ * travels has to carry which it was.
  */
-export function parseIssueUrl(url: string): IssueReference | undefined {
+export type GitHubItemKind = "issue" | "pull";
+
+/**
+ * An Issue or a pull request: the two things DevHub can be pointed at.
+ *
+ * The flow that assigns work takes either. They differ in exactly one way that
+ * matters to it — an Issue has no branch yet and a pull request is a branch
+ * that already exists — and that difference is what `kind` is for. Everything
+ * else about them is the same three fields, which is why this extends the
+ * reference rather than being a second kind of thing beside it.
+ */
+export interface GitHubItem extends IssueReference {
+  readonly kind: GitHubItemKind;
+}
+
+/**
+ * `https://github.com/owner/repo/issues/128`, or `.../pull/128`.
+ *
+ * The shape of the URL is the whole of the evidence. GitHub numbers Issues and
+ * pull requests together, so `/issues/128` and `/pull/128` are different things
+ * with the same number, and nothing but the path can tell them apart.
+ */
+export function parseGitHubItemUrl(url: string): GitHubItem | undefined {
   const match = new RegExp(
-    `^https?://(?:www\\.)?github\\.com/(${OWNER})/(${OWNER})/issues/(\\d+)(?:[/?#].*)?$`,
+    `^https?://(?:www\\.)?github\\.com/(${OWNER})/(${OWNER})/(issues|pull)/(\\d+)(?:[/?#].*)?$`,
     "u",
   ).exec(url.trim());
   if (!match) return undefined;
-  const [, owner, repository, number] = match;
-  if (!owner || !repository || !number) return undefined;
-  return { owner, repository, number: Number(number) };
+  const [, owner, repository, section, number] = match;
+  if (!owner || !repository || !section || !number) return undefined;
+  return {
+    owner,
+    repository,
+    number: Number(number),
+    kind: section === "pull" ? "pull" : "issue",
+  };
+}
+
+/**
+ * `https://github.com/owner/repo/issues/128`, and nothing else.
+ *
+ * A pull request URL is deliberately not an Issue URL *here*: this is what the
+ * poller and the sidebar read, and both ask Issue questions of what they get.
+ * The flow that assigns work uses `parseGitHubItemUrl` instead, which takes
+ * either and says which it was. One pattern underneath, so the two can never
+ * come to disagree about what a GitHub URL looks like.
+ */
+export function parseIssueUrl(url: string): IssueReference | undefined {
+  const item = parseGitHubItemUrl(url);
+  if (item?.kind !== "issue") return undefined;
+  return {
+    owner: item.owner,
+    repository: item.repository,
+    number: item.number,
+  };
 }
 
 /** The URL an Issue is read at, from the reference DevHub kept. */
 export function issueUrl(issue: IssueReference): string {
   return `https://github.com/${issue.owner}/${issue.repository}/issues/${String(issue.number)}`;
+}
+
+/** The URL an Issue or a pull request is read at. */
+export function gitHubItemUrl(item: GitHubItem): string {
+  const section = item.kind === "pull" ? "pull" : "issues";
+  return `https://github.com/${item.owner}/${item.repository}/${section}/${String(item.number)}`;
 }
 
 /**
