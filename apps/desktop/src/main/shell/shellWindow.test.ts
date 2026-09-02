@@ -111,12 +111,33 @@ class FakeWindow {
 	isDestroyed(): boolean {
 		return false;
 	}
+	/**
+	 * Whether DevHub is the app in front. It is half of what decides whether a
+	 * workbench has the keyboard — see `ShellWindow.isSurfaceFocused` — and it
+	 * is true here because these tests are all about a window being worked in.
+	 */
+	inFront = true;
+	isFocused(): boolean {
+		return this.inFront;
+	}
 	getContentSize(): [number, number] {
 		return [1440, 900];
 	}
 	loadURL(): void {}
 	once(): void {}
-	on(): void {}
+	/**
+	 * Recorded rather than dropped, so a test can fire what Electron fires.
+	 * The window's own `focus` and `blur` are how DevHub learns it has come
+	 * forward or gone away, and a fake that swallowed them left the one
+	 * transition that matters untestable.
+	 */
+	readonly listeners = new Map<string, (() => void)[]>();
+	on(event: string, listener: () => void): void {
+		this.listeners.set(event, [...(this.listeners.get(event) ?? []), listener]);
+	}
+	emit(event: string): void {
+		for (const listener of this.listeners.get(event) ?? []) listener();
+	}
 	show(): void {}
 }
 
@@ -127,6 +148,14 @@ vi.mock("../electron.js", () => ({
 	electron: {
 		BrowserWindow: FakeWindow,
 		WebContentsView: FakeView,
+		// Attaching and detaching a view move the listener ceiling on `app`
+		// (see `appListenerCeiling.ts`). The number is that module's business
+		// and is tested there; what this mock owes is an `app` to set it on,
+		// without which every test that attaches a view throws before it
+		// starts.
+		app: {
+			setMaxListeners: () => undefined,
+		},
 		shell: {
 			openExternal: (url: string) => {
 				openedExternally.push(url);
@@ -517,5 +546,90 @@ describe("links out of the App Shell page", () => {
 			false,
 		);
 		expect(openedExternally).toEqual([]);
+	});
+});
+
+/**
+ * What the shell tells its workbenches about who has the keyboard.
+ *
+ * `WorkbenchView` holds the value and emits the transitions; this is the other
+ * half — that the shell asks it to look again from every place that can change
+ * the answer. The bug was never in the arithmetic. It was that nothing ever
+ * did the asking, so `hostService.hasFocus` answered from whatever the view's
+ * `webContents` happened to believe, which across an app switch was a stale
+ * `true` that no event ever corrected — and a workspace trust prompt, which
+ * waits for its window to have focus, waited.
+ */
+describe("the shell window's focus reporting", () => {
+	let shell: ShellWindow;
+	let window: FakeWindow;
+	let a: WorkbenchView;
+	let b: WorkbenchView;
+
+	beforeEach(() => {
+		shell = new ShellWindow(
+			"preload.js",
+			"devhub-app://shell/index.html",
+			undefined,
+		);
+		shell.setContentRect({ x: 248, y: 38, width: 1192, height: 837 });
+		window = shell.window as unknown as FakeWindow;
+		a = new WorkbenchView(shell, {});
+		b = new WorkbenchView(shell, {});
+		for (const view of [a, b]) shell.attach(view);
+	});
+
+	it("gives focus to the workbench it reveals, and to no other", () => {
+		shell.reveal(a);
+		expect(a.isFocused()).toBe(true);
+		expect(b.isFocused()).toBe(false);
+
+		shell.reveal(b);
+		expect(a.isFocused()).toBe(false);
+		expect(b.isFocused()).toBe(true);
+	});
+
+	it("tells a workbench when DevHub goes away, and when it comes back", () => {
+		const events: string[] = [];
+		a.on("focus", () => events.push("focus"));
+		a.on("blur", () => events.push("blur"));
+
+		shell.reveal(a);
+		expect(events).toEqual(["focus"]);
+
+		// The app switch. Nothing about the view's own contents changes here,
+		// which is exactly why this had to be reported by the window.
+		window.inFront = false;
+		window.emit("blur");
+		expect(a.isFocused()).toBe(false);
+		expect(events).toEqual(["focus", "blur"]);
+
+		window.inFront = true;
+		window.emit("focus");
+		expect(a.isFocused()).toBe(true);
+		expect(events).toEqual(["focus", "blur", "focus"]);
+	});
+
+	it("takes focus off every workbench while the page's own surface is on screen", () => {
+		shell.reveal(a);
+		expect(a.isFocused()).toBe(true);
+
+		// A terminal or an Agent lives in the page, not in a workbench.
+		shell.setContentSurface("page");
+		expect(a.isFocused()).toBe(false);
+		expect(b.isFocused()).toBe(false);
+
+		shell.setContentSurface("workbench");
+		expect(a.isFocused()).toBe(true);
+	});
+
+	it("leaves a detached workbench believing nothing", () => {
+		shell.reveal(a);
+		expect(a.isFocused()).toBe(true);
+
+		shell.detach(a);
+		// It is off the table, so nothing will ever ask it again. If it kept the
+		// `true` it had, it would keep it for the rest of its life.
+		expect(a.isFocused()).toBe(false);
 	});
 });

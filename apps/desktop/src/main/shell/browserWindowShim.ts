@@ -116,9 +116,14 @@ export function installBrowserWindowShim(): void {
 		if (!shell || window !== shell.window) {
 			return window;
 		}
-		const view = shell
-			.getViews()
-			.find((candidate) => candidate.webContents.isFocused());
+		// The view's own answer, not its `webContents`'. A `WebContentsView`
+		// holds DOM focus whether or not it is the surface on screen and
+		// whether or not DevHub is the app in front, so asking the contents
+		// here returned a deselected workbench — the first one that had ever
+		// been focused — as "the window the person is working in". `isFocused`
+		// is composed from the state that actually decides it; see
+		// `ShellWindow.isSurfaceFocused`.
+		const view = shell.getViews().find((candidate) => candidate.isFocused());
 		return view ? asBrowserWindow(view) : null;
 	};
 

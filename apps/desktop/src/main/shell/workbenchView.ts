@@ -30,7 +30,24 @@ export function unimplementedMembers(): readonly string[] {
  * rest — maximize, full screen, move, resize — are facts about the shell, and
  * a workbench is entitled to hear them because they are true of it too.
  */
-const VIEW_EVENTS = new Set(["focus", "blur", "responsive", "unresponsive"]);
+const VIEW_EVENTS = new Set(["responsive", "unresponsive"]);
+
+/**
+ * Focus is neither the view's own nor the window's, so it is emitted here.
+ *
+ * `webContents`' `focus` and `blur` are about DOM focus inside one set of
+ * contents, and the window's are about the window; a workbench needs the
+ * conjunction — DevHub is in front *and* this view is where `focusSurface` put
+ * the keyboard — and neither emitter can say that. Routed to either one, the
+ * answer was wrong in both directions: a deselected workbench claimed focus
+ * because its DOM focus had never moved, and coming back to DevHub emitted
+ * nothing at all because, from `webContents`' side, nothing had changed.
+ *
+ * That is what `hostService.hasFocus` is built on, and what made a trust
+ * prompt wait: VS Code holds it until the window it belongs to has focus, and
+ * the event that would have said so never came.
+ */
+const FOCUS_EVENTS = new Set(["focus", "blur"]);
 
 /**
  * Events about this window's *lifetime*, which are nobody else's.
@@ -76,6 +93,21 @@ export class WorkbenchView {
 	 * view's: an ending is about exactly one window.
 	 */
 	private readonly lifetime = new EventEmitter();
+	/** This view's `focus`/`blur`, which are nobody else's either. */
+	private readonly focusEvents = new EventEmitter();
+	/**
+	 * Whether this workbench has the keyboard, as of the last time anything
+	 * that decides it moved.
+	 *
+	 * It is cached rather than computed on demand so that there is something to
+	 * compare against: an event is only worth emitting when the answer actually
+	 * changed, and `hasFocus` asked twice for the same state must not look like
+	 * a workbench that lost focus and got it back.
+	 *
+	 * False to begin with, which is true: a view that has just been constructed
+	 * has not been attached, let alone revealed.
+	 */
+	private focused = false;
 
 	constructor(
 		private readonly shell: ShellWindow,
@@ -104,6 +136,7 @@ export class WorkbenchView {
 
 	private emitterFor(event: string): NodeJS.EventEmitter {
 		if (event === "closed") return this.view.webContents;
+		if (FOCUS_EVENTS.has(event)) return this.focusEvents;
 		if (VIEW_EVENTS.has(event)) return this.view.webContents;
 		if (LIFETIME_EVENTS.has(event)) return this.lifetime;
 		return this.shell.window;
@@ -224,8 +257,33 @@ export class WorkbenchView {
 		return !this.isDestroyed() && !this.hidden;
 	}
 
+	/**
+	 * The same value the `focus` and `blur` events last reported.
+	 *
+	 * Read back from the cache rather than recomputed, deliberately. The
+	 * workbench uses both — `hostService.hasFocus` is this, and the events are
+	 * what tell it to look again — and a poll that could disagree with the last
+	 * event is how a listener ends up acting on a focus it was never told
+	 * about. One value, one answer, whichever way it is asked.
+	 */
 	isFocused(): boolean {
-		return this.shell.window.isFocused() && this.view.webContents.isFocused();
+		return this.focused;
+	}
+
+	/**
+	 * Look again at whether this view has the keyboard, and say so if it moved.
+	 *
+	 * Only `ShellWindow` calls this, from everywhere that can change the
+	 * answer. The view cannot notice any of it for itself: being deselected,
+	 * the app going to the background, a modal standing up in front of it — all
+	 * of those are facts about the window, and none of them disturb the DOM
+	 * focus this used to be read from.
+	 */
+	focusStateChanged(): void {
+		const next = this.shell.isSurfaceFocused(this);
+		if (next === this.focused) return;
+		this.focused = next;
+		this.focusEvents.emit(next ? "focus" : "blur");
 	}
 
 	//#endregion

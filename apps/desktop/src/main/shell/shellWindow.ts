@@ -118,6 +118,10 @@ export class ShellWindow {
 				focusTarget: () => this.focusTarget(),
 				modalsChanged: () => {
 					this.layout();
+					// A modal owns the keyboard while it stands, so every
+					// workbench loses focus when one opens and the one on
+					// screen gets it back when the last one goes.
+					this.publishFocus();
 				},
 			},
 			preloadPath,
@@ -137,6 +141,17 @@ export class ShellWindow {
 		// already the one answer to that question, so it is asked again here
 		// rather than a second rule being written for this case.
 		this.window.on("focus", () => this.focusSurface());
+
+		// Going away is as much a fact about a workbench's focus as coming back,
+		// and it is the half nothing was reporting. A `WebContentsView` keeps
+		// its DOM focus when the window behind it is deactivated, so the
+		// workbench went on believing it had the keyboard for as long as DevHub
+		// was in the background — which is what made a workbench act on a focus
+		// it did not have, and made coming back emit nothing, because as far as
+		// the workbench was concerned nothing had changed. `focusSurface` is not
+		// the right answer here: the keyboard should stay exactly where it is
+		// while the app is away, and only the *reporting* of it changes.
+		this.window.on("blur", () => this.publishFocus());
 
 		// macOS convention: closing the window does not end the app, and here it
 		// must not even end the window. Every workbench, terminal and agent lives
@@ -232,6 +247,11 @@ export class ShellWindow {
 			this.titleChanged();
 		}
 		this.layout();
+		// The view that left is told too, and told first: it is off the table
+		// now, so nothing else would ever ask it again, and a workbench that
+		// was detached while it held the keyboard would keep believing it does.
+		view.focusStateChanged();
+		this.publishFocus();
 	}
 
 	getViews(): readonly WorkbenchView[] {
@@ -291,6 +311,11 @@ export class ShellWindow {
 	 */
 	focusSurface(): void {
 		if (this.window.isDestroyed()) return;
+		// Before the early returns below, not after. Each of them is a case
+		// where the keyboard stays where it is *and the workbenches still need
+		// to be told* — a modal standing up is precisely when every workbench
+		// stops having focus, and it is the case that returns earliest.
+		this.publishFocus();
 		// An open Web Inspector keeps the keyboard. It is a window onto these
 		// same contents, so unlike the Settings window it is not protected by
 		// simply belonging to somebody else — and a rule that quietly pulled
@@ -328,6 +353,49 @@ export class ShellWindow {
 		if (asking) return asking.webContents;
 		if (this.contentSurface !== "workbench") return this.window.webContents;
 		return this.liveRevealed()?.webContents ?? this.window.webContents;
+	}
+
+	/**
+	 * Whether a workbench is the one being typed into — the whole question, and
+	 * the only place it is answered.
+	 *
+	 * A workbench is a `WebContentsView`, not a window, so `webContents`'
+	 * own idea of focus is about DOM focus inside itself and knows nothing
+	 * about the two facts that actually decide it: whether DevHub is the app in
+	 * front, and which of this window's several contents `focusSurface` put the
+	 * keyboard in. Asked on its own it says "focused" for a workbench sitting
+	 * behind an Agent's terminal, and for one in a window the person switched
+	 * away from an hour ago.
+	 *
+	 * So it is composed from the same state the focus itself is a function of.
+	 * `focusTarget` is already the single answer to "where do the keys go", and
+	 * this is the same answer read back — which is what makes "the workbench
+	 * believes it has focus" and "the workbench has focus" the same sentence
+	 * rather than two that drift.
+	 *
+	 * A modal takes it from everybody: it owns the keyboard for as long as it
+	 * stands, which is exactly what `focusSurface` refuses to override.
+	 */
+	isSurfaceFocused(view: WorkbenchView): boolean {
+		if (this.window.isDestroyed() || view.isDestroyed()) return false;
+		if (!this.window.isFocused()) return false;
+		if (this.modals.isPresent()) return false;
+		return this.focusTarget() === view.webContents;
+	}
+
+	/**
+	 * Tell every workbench to look again at whether it has the keyboard.
+	 *
+	 * Called from everywhere that can change the answer, rather than from the
+	 * places that happen to be convenient: the window coming forward or going
+	 * away, the surface moving, a modal opening or closing, a view leaving. A
+	 * workbench cannot see any of those for itself — that is the whole reason
+	 * `hostService.hasFocus` was wrong — so nothing may quietly skip this.
+	 */
+	private publishFocus(): void {
+		for (const view of [...this.views]) {
+			view.focusStateChanged();
+		}
 	}
 
 	/** The view on screen, if there is one and it still exists. */
