@@ -8,6 +8,9 @@
 	"darwinBundleIdentifier": "dev.devhub.app",
 	"urlProtocol": "devhub",
 	"win32MutexName": "devhub",
+	"extensionEnabledApiProposals": {
+		"vscode.mermaid-markdown-features": ["chatOutputRenderer", "chatParticipantPrivate"]
+	},
 	"extensionsGallery": {
 		"serviceUrl": "https://open-vsx.org/vscode/gallery",
 		"itemUrl": "https://open-vsx.org/vscode/item",
