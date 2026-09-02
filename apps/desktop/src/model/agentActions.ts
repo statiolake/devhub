@@ -23,19 +23,17 @@
 
 import type { AgentProfileKind } from "./config.js";
 
-/** The actions DevHub knows how to take. One, so far. */
-export type AgentActionId = "issue_assignment";
-
-export interface AgentActionDefinition {
-  readonly id: AgentActionId;
-  /** What the Settings list calls it. */
-  readonly displayName: string;
-  /** When DevHub sends it, in one sentence. */
-  readonly description: string;
-  /** The names a template may use, without the braces. */
-  readonly variables: readonly string[];
-  readonly defaultTemplate: string;
-}
+/**
+ * The action DevHub ships, and the id it ships it under.
+ *
+ * One, and it is a *default* rather than a fixed set: a person who works two
+ * ways — implement it, review it — writes two actions and picks between them
+ * where the flow asks. What makes that possible is that the actions all have
+ * the same trigger. The Issue flow asks which one to start with, so an action
+ * somebody invents has somewhere to be chosen, which is exactly what a name
+ * DevHub had never heard of used to lack.
+ */
+export const DEFAULT_ACTION_ID = "issue_assignment";
 
 /**
  * The Issue assignment prompt.
@@ -53,27 +51,19 @@ const ISSUE_ASSIGNMENT_TEMPLATE = `このIssueを読み、実装をしてくだ�
 feature/{{ISSUE_NO}}-wip となっている場合は、適切な名前に変えてください。
 `;
 
-export const AGENT_ACTIONS: readonly AgentActionDefinition[] = [
-  {
-    id: "issue_assignment",
-    displayName: "Issue assignment",
-    description:
-      "Sent to the agent that Assign Issue starts, once its workspace is open.",
-    variables: ["ISSUE_URL", "ISSUE_NO"],
-    defaultTemplate: ISSUE_ASSIGNMENT_TEMPLATE,
-  },
-];
+export const DEFAULT_ACTION_NAME = "Work on the Issue";
 
-export function agentAction(
-  id: AgentActionId,
-): AgentActionDefinition | undefined {
-  return AGENT_ACTIONS.find((action) => action.id === id);
-}
+export const DEFAULT_ACTION_TEMPLATE = ISSUE_ASSIGNMENT_TEMPLATE;
 
-/** Is this one of the actions DevHub has, rather than a typo in the file? */
-export function isAgentActionId(value: string): value is AgentActionId {
-  return AGENT_ACTIONS.some((action) => action.id === value);
-}
+/**
+ * The names a template may use, without the braces.
+ *
+ * Every action is started from an Issue, so every action gets the same two.
+ * They are listed here rather than per action because there is one trigger:
+ * the day a second trigger exists, this becomes a property of it and not of
+ * the wording somebody wrote.
+ */
+export const ACTION_VARIABLES: readonly string[] = ["ISSUE_URL", "ISSUE_NO"];
 
 /**
  * `{{NAME}}`, replaced.

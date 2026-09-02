@@ -49,6 +49,10 @@ function mount(overrides: Partial<AppShellContextValue> = {}) {
     cloneParentDirectories: vi
       .fn()
       .mockResolvedValue(["/projects", "/code/github"]),
+    // The URL step's rows are the person's own actions.
+    agentActions: vi
+      .fn()
+      .mockResolvedValue([{ id: "implement", displayName: "Work on it" }]),
     ...overrides,
   } as unknown as AppShellContextValue;
   render(
@@ -75,6 +79,9 @@ function mountFor(agentProfiles: AppShellContextValue["agentProfiles"]) {
     assignIssue: vi.fn().mockResolvedValue(undefined),
     projectDefaultDirectory: vi.fn().mockResolvedValue("/projects"),
     cloneParentDirectories: vi.fn().mockResolvedValue([]),
+    agentActions: vi
+      .fn()
+      .mockResolvedValue([{ id: "implement", displayName: "Work on it" }]),
   } as unknown as AppShellContextValue;
   const view = render(
     <AppShellContext.Provider value={value}>
@@ -130,6 +137,7 @@ describe("assigning an Issue", () => {
         directory: "/projects/widget",
         branch: "feature/128-wip",
         profileId: "claude",
+        actionId: "implement",
         split: false,
         allowStaleBase: false,
       });
@@ -222,6 +230,7 @@ describe("assigning an Issue", () => {
         directory: "/projects/widget",
         branch: undefined,
         profileId: "claude",
+        actionId: "implement",
         split: false,
         allowStaleBase: false,
       });

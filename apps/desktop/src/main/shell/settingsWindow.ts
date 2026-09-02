@@ -163,6 +163,7 @@ function toWireConfig(config: Config): SettingsConfigWire {
 		workspaceSources: config.workspaceSources.map(toWireSource),
 		agentActions: config.agentActions.map((action) => ({
 			id: action.id,
+			displayName: action.display_name,
 			template: action.template,
 		})),
 		agentProfiles: config.agentProfiles.map((profile) => ({
@@ -273,6 +274,7 @@ function fromWireConfig(wire: SettingsConfigWire): Config {
 		workspaceSources: wire.workspaceSources.map(fromWireSource),
 		agentActions: wire.agentActions.map((action) => ({
 			id: action.id,
+			display_name: action.displayName,
 			template: action.template,
 		})),
 		agentProfiles: wire.agentProfiles.map((profile) => ({

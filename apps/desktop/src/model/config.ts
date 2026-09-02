@@ -26,7 +26,11 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { AGENT_ACTIONS, isAgentActionId } from "./agentActions.js";
+import {
+  DEFAULT_ACTION_ID,
+  DEFAULT_ACTION_NAME,
+  DEFAULT_ACTION_TEMPLATE,
+} from "./agentActions.js";
 import { dateTemplateBracketsBalance } from "./dateTemplate.js";
 import { isValidFontFamily } from "./fontFamily.js";
 import {
@@ -129,6 +133,7 @@ export type AgentProfileKind = "codex" | "claude" | "custom";
  */
 export interface ConfiguredAgentAction {
   readonly id: string;
+  readonly display_name: string;
   readonly template: string;
 }
 
@@ -367,18 +372,22 @@ export function defaultAgentProfiles(): ConfiguredAgentProfile[] {
 }
 
 /**
- * Every action DevHub has, with the wording it ships.
+ * The one action DevHub ships.
  *
- * All of them, not the ones somebody has edited: a file that mentions no
- * actions still has all of them, and an action added in a later version arrives
- * with its default wording rather than as a gap. What a config *stores* is the
- * wording; which actions exist is the program's business.
+ * A default, not a fixed set. Actions are how a person starts an agent on an
+ * Issue — implement it, review it, whatever else they do — so the list is
+ * theirs to write, and this is a first entry to edit rather than a rule. Every
+ * action has the same trigger (the Issue flow asks which one), which is what
+ * gives an action somebody invented somewhere to be chosen from.
  */
 export function defaultAgentActions(): ConfiguredAgentAction[] {
-  return AGENT_ACTIONS.map((action) => ({
-    id: action.id,
-    template: action.defaultTemplate,
-  }));
+  return [
+    {
+      id: DEFAULT_ACTION_ID,
+      display_name: DEFAULT_ACTION_NAME,
+      template: DEFAULT_ACTION_TEMPLATE,
+    },
+  ];
 }
 
 export function defaultConfig(): Config {
@@ -419,7 +428,6 @@ export type ValidationCode =
   | "invalid_timeout"
   | "invalid_profile"
   | "invalid_profile_kind"
-  | "unknown_action"
   | "invalid_environment_key"
   | "conflict"
   | "serialization";
@@ -802,6 +810,31 @@ function validateWorkspaceSources(sources: readonly WorkspaceSource[]): void {
   });
 }
 
+/**
+ * The actions, as a set rather than one at a time.
+ *
+ * Ids follow the same rule every other identifier in this file follows, because
+ * they are the same kind of thing: what the config calls an entry, and what the
+ * flow's answer names. Two actions with one id would make the flow's answer
+ * ambiguous, so the second is refused the way a duplicate source is.
+ */
+function validateAgentActions(actions: readonly ConfiguredAgentAction[]): void {
+  const seen = new Map<string, number>();
+  actions.forEach((action, index) => {
+    const prefix = `agent_actions[${String(index)}]`;
+    const previous = seen.get(action.id);
+    if (previous !== undefined) {
+      fail("duplicate_identity", `${prefix}.id (also ${String(previous)})`);
+    }
+    seen.set(action.id, index);
+    validateId(action.id, `${prefix}.id`);
+    // A nameless action is a row in the flow with nothing written on it.
+    if (action.display_name.trim().length === 0) {
+      fail("invalid_profile", `${prefix}.display_name`);
+    }
+  });
+}
+
 function validateAgentProfiles(
   profiles: readonly ConfiguredAgentProfile[],
 ): void {
@@ -845,6 +878,7 @@ export function validateConfig(config: Config): void {
   validateAppearance(config.appearance);
   validateWorkspaceSources(config.workspaceSources);
   validateAgentProfiles(config.agentProfiles);
+  validateAgentActions(config.agentActions);
 }
 
 // ------------------------------------------------------------------ parsing
@@ -937,38 +971,18 @@ function workspaceSourceFromTable(
   return fail("invalid_type", `${prefix}.type`);
 }
 
-/**
- * The file's wording, over DevHub's, for every action there is.
- *
- * The list is always complete and always in DevHub's own order, so Settings
- * shows every action whether or not the file has an opinion about it, and the
- * order of a hand-edited file cannot rearrange the window.
- */
-function mergeAgentActions(
-  configured: readonly ConfiguredAgentAction[],
-): ConfiguredAgentAction[] {
-  const written = new Map(configured.map((action) => [action.id, action]));
-  return AGENT_ACTIONS.map((action) => ({
-    id: action.id,
-    template: written.get(action.id)?.template ?? action.defaultTemplate,
-  }));
-}
-
 function agentActionFromTable(
   value: unknown,
   index: number,
 ): ConfiguredAgentAction {
   const prefix = `agent_actions[${String(index)}]`;
   const table = requireTable(value, prefix);
-  checkKeys(table, ["id", "template"], prefix);
-  const id = optionalString(table, "id", prefix, "");
-  if (!isAgentActionId(id)) {
-    // A name DevHub does not have is a typo, not a new feature: nothing would
-    // ever send it, so accepting it would leave somebody looking at wording
-    // that is never used and no way to tell.
-    fail("unknown_action", `${prefix}.id`);
-  }
-  return { id, template: optionalString(table, "template", prefix, "") };
+  checkKeys(table, ["id", "display_name", "template"], prefix);
+  return {
+    id: optionalString(table, "id", prefix, ""),
+    display_name: optionalString(table, "display_name", prefix, ""),
+    template: optionalString(table, "template", prefix, ""),
+  };
 }
 
 function agentProfileFromTable(
@@ -1158,11 +1172,14 @@ export function parseConfig(input: string): Config {
       rawProfiles === undefined
         ? defaults.agentProfiles
         : rawProfiles.map(agentProfileFromTable),
-    // An action the file does not mention keeps the wording DevHub ships, so a
-    // config written before an action existed is not a config missing one.
-    agentActions: mergeAgentActions(
-      rawActions === undefined ? [] : rawActions.map(agentActionFromTable),
-    ),
+    // The file's list is the list. A file that mentions none has none, which
+    // is a person who has decided not to have DevHub say anything — and is
+    // different from a file that has not been written yet, which gets the
+    // default from `defaults`.
+    agentActions:
+      rawActions === undefined
+        ? defaults.agentActions
+        : rawActions.map(agentActionFromTable),
   };
 
   validateConfig(config);
@@ -1237,6 +1254,7 @@ export function configDocument(config: Config): Record<string, TomlValue> {
     workspace_sources: config.workspaceSources.map(sourceToTable),
     agent_actions: config.agentActions.map((action) => ({
       id: action.id,
+      display_name: action.display_name,
       template: action.template,
     })),
     agent_profiles: config.agentProfiles.map((profile) => ({

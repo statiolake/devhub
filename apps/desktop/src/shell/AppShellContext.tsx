@@ -438,6 +438,8 @@ export function AppShellProvider({
     [transport],
   );
 
+  const agentActions = useCallback(() => transport.agentActions(), [transport]);
+
   const projectDefaultDirectory = useCallback(
     () => transport.projectDefaultDirectory(),
     [transport],
@@ -558,6 +560,7 @@ export function AppShellProvider({
       cloneProject,
       projectDefaultDirectory,
       cloneParentDirectories,
+      agentActions,
       findIssueRepositories,
       cloneRepository,
       listBranches,
@@ -580,6 +583,7 @@ export function AppShellProvider({
       createProject,
       projectDefaultDirectory,
       cloneParentDirectories,
+      agentActions,
       findIssueRepositories,
       cloneRepository,
       listBranches,

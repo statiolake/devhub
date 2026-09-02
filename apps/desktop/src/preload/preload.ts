@@ -22,6 +22,7 @@ import {
 	type EditorRestartingWire,
 	type ModalRequest,
 	type OpenModal,
+	type AgentActionWire,
 	type ContentRect,
 	type ContentSurfaceWire,
 	type DevhubApi,
@@ -117,6 +118,10 @@ const devhub: DevhubApi = {
 	cloneParentDirectories: () =>
 		ipcRenderer.invoke(CHANNELS.cloneParentDirectories) as Promise<
 			readonly string[]
+		>,
+	agentActions: () =>
+		ipcRenderer.invoke(CHANNELS.agentActions) as Promise<
+			readonly AgentActionWire[]
 		>,
 	createProject: (path: string) =>
 		ipcRenderer.invoke(CHANNELS.createProject, path) as Promise<AppOutcome>,

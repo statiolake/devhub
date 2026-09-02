@@ -35,10 +35,14 @@ import type {
   SettingsConfig,
   SettingsRuntimeWire,
   SettingsSnapshot,
+  SettingsAgentActionWire,
   SettingsWorkspaceSourceWire,
 } from "../ipc/settings";
 import { FONT_FAMILY_RULE, isValidFontFamily } from "../model/fontFamily";
-import { AGENT_ACTIONS } from "../model/agentActions";
+import {
+  ACTION_VARIABLES,
+  DEFAULT_ACTION_TEMPLATE,
+} from "../model/agentActions";
 import { Collection } from "./Collection";
 import {
   Group,
@@ -1111,12 +1115,14 @@ function ActionGlyph() {
 /**
  * What DevHub says to an agent when it starts work on the person's behalf.
  *
- * A list of DevHub's own actions, one to a row, with the wording on the right.
- * It is a collection with no plus and no minus, and that is the point of the
- * design rather than a gap in it: DevHub decides which actions exist and when
- * they fire — an action somebody invented would have nothing to trigger it —
- * and what a person owns is what gets said. The commit and push buttons that
- * are coming are rows here; nothing about this screen changes to hold them.
+ * A list of actions, one to a row, with the wording on the right. They are the
+ * person's own — "work on it", "review it" — and they are a list rather than a
+ * fixed pair because how somebody starts work is not something DevHub knows.
+ *
+ * What makes a list possible is that they all have one trigger: the Issue flow
+ * asks which action to start with, so an action somebody adds here has
+ * somewhere to be chosen from. That is the whole of why this screen has a plus
+ * and the earlier version of it did not.
  */
 export function ActionsSection({
   config,
@@ -1130,88 +1136,107 @@ export function ActionsSection({
   const selected =
     actions.length === 0 ? undefined : Math.min(wanted, actions.length - 1);
   const action = selected === undefined ? undefined : actions[selected];
-  const definition = AGENT_ACTIONS.find((entry) => entry.id === action?.id);
+
+  const replace = (next: SettingsAgentActionWire) => {
+    update({
+      ...config,
+      agentActions: actions.map((item, position) =>
+        position === selected ? next : item,
+      ),
+    });
+  };
+
+  const otherIds = actions
+    .filter((_, position) => position !== selected)
+    .map((item) => item.id);
 
   return (
     <Collection
       label="Agent actions"
-      entries={actions.map((item) => {
-        const known = AGENT_ACTIONS.find((entry) => entry.id === item.id);
-        return {
-          key: item.id,
-          title: known?.displayName ?? item.id,
-          // The first line of the wording, which is what tells two prompts
-          // apart at a glance far better than the name of the action does.
-          note: item.template.split("\n")[0],
-          glyph: <ActionGlyph />,
-        };
-      })}
+      entries={actions.map((item) => ({
+        key: item.id,
+        title: item.displayName,
+        // The first line of the wording, which tells two actions apart at a
+        // glance far better than their names do.
+        note: item.template.split("\n")[0],
+        glyph: <ActionGlyph />,
+      }))}
       selected={selected}
       onSelect={setWanted}
+      addLabel="Add Action"
+      onAdd={() => {
+        setWanted(actions.length);
+        const id = freeId(
+          "action",
+          actions.map((item) => item.id),
+        );
+        update({
+          ...config,
+          agentActions: [
+            ...actions,
+            { id, displayName: "New action", template: "{{ISSUE_URL}}\n" },
+          ],
+        });
+      }}
+      removeLabel="Remove Action"
+      onRemove={() => {
+        update({
+          ...config,
+          agentActions: actions.filter((_, position) => position !== selected),
+        });
+      }}
       empty={{
         title: "No agent actions",
-        message: "DevHub has no actions to send in this version.",
+        message:
+          "An action is what DevHub says to an agent when it starts it on an Issue. With none, the Issue flow starts the agent and says nothing.",
       }}
     >
-      {action && definition ? (
+      {action ? (
         <>
-          <Group heading="Action" note={definition.description}>
-            {/* Shown, not editable. The name is DevHub's — it is what fires the
-                action — so a field here would be a field that cannot be typed
-                in, which is worse than a line that never looked like one. */}
-            <Row label="In config.toml">
-              <span className="sf-static sf-mono-field">
-                {`[[agent_actions]] id = "${action.id}"`}
-              </span>
+          <Group heading="Action">
+            <Row label="Name">
+              <TextField
+                label="Agent action name"
+                value={action.displayName}
+                placeholder="Work on the Issue"
+                validate={displayNameProblem}
+                onCommit={(displayName) => {
+                  replace({ ...action, displayName });
+                }}
+              />
+            </Row>
+            <Row label="Identifier" help="What config.toml calls it.">
+              <TextField
+                label="Agent action identifier"
+                value={action.id}
+                mono
+                validate={(next) =>
+                  otherIds.includes(next)
+                    ? "Another action already has that identifier."
+                    : idProblem(next)
+                }
+                onCommit={(id) => {
+                  replace({ ...action, id });
+                }}
+              />
             </Row>
           </Group>
 
           <Group
             heading="Message"
-            note={`${definition.variables
-              .map((name) => `{{${name}}}`)
-              .join(
-                " and ",
-              )} are replaced when it is sent. A line starting $name runs a skill: Claude Code is sent /name, Codex is sent $name, and an agent DevHub has no manifest for is sent the line as written.`}
+            note={`${ACTION_VARIABLES.map((name) => `{{${name}}}`).join(
+              " and ",
+            )} are replaced when it is sent. A line starting $name runs a skill: Claude Code is sent /name, Codex is sent $name, and an agent DevHub has no manifest for is sent the line as written.`}
           >
             <WideRow>
               <TextArea
                 label="Agent action message"
                 value={action.template}
-                placeholder={definition.defaultTemplate}
+                placeholder={DEFAULT_ACTION_TEMPLATE}
                 onCommit={(template) => {
-                  update({
-                    ...config,
-                    agentActions: actions.map((item, position) =>
-                      position === selected ? { ...item, template } : item,
-                    ),
-                  });
+                  replace({ ...action, template });
                 }}
               />
-            </WideRow>
-            <WideRow>
-              {/* Sized to its words rather than to the row: a button that
-                  stretched the width of a prompt would read as the prompt's
-                  own edge. */}
-              <div className="sf-line">
-                <button
-                  type="button"
-                  className="mac-button"
-                  disabled={action.template === definition.defaultTemplate}
-                  onClick={() => {
-                    update({
-                      ...config,
-                      agentActions: actions.map((item, position) =>
-                        position === selected
-                          ? { ...item, template: definition.defaultTemplate }
-                          : item,
-                      ),
-                    });
-                  }}
-                >
-                  Restore Default
-                </button>
-              </div>
             </WideRow>
           </Group>
         </>

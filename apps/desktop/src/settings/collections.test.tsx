@@ -314,43 +314,64 @@ describe("a collection of agent profiles", () => {
 });
 
 describe("the actions an agent is sent", () => {
-  it("lists what DevHub has, with no way to add or remove one", async () => {
-    // The membership is not the person's: an action somebody invented would
-    // have nothing to trigger it. So there is no plus and no minus — not a
-    // disabled pair, which would say "not now" about something that is never.
-    await open("Actions", testConfig({}));
+  it("lists the person's own actions, and lets them add and remove one", async () => {
+    // The membership *is* theirs now: every action has the same trigger — the
+    // Issue flow asks which one to start with — so an action somebody adds has
+    // somewhere to be chosen from, which is what a fixed set could not offer.
+    const { saves } = await open("Actions", testConfig({}));
 
-    expect(selected()).toHaveTextContent("Issue assignment");
-    expect(
-      screen.queryByRole("button", { name: /Add/u }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: /Remove/u }),
-    ).not.toBeInTheDocument();
+    expect(selected()).toHaveTextContent("Work on the Issue");
+    fireEvent.click(screen.getByRole("button", { name: "Add Action" }));
+
+    await vi.waitFor(() => {
+      expect(saves.at(-1)?.agentActions).toHaveLength(2);
+    });
+    expect(saves.at(-1)?.agentActions[1]?.id).toBe("action-1");
+
+    fireEvent.click(screen.getByRole("button", { name: "Remove Action" }));
+    await vi.waitFor(() => {
+      expect(saves.at(-1)?.agentActions).toHaveLength(1);
+    });
   });
 
-  it("saves the wording, and puts DevHub's back on request", async () => {
+  it("saves the name and the wording", async () => {
     const { saves } = await open("Actions", testConfig({}));
-    const field = screen.getByLabelText("Agent action message");
-    const shipped = (field as HTMLTextAreaElement).value;
 
-    fireEvent.change(field, { target: { value: "read {{ISSUE_URL}}" } });
-    fireEvent.blur(field);
+    const name = screen.getByLabelText("Agent action name");
+    fireEvent.change(name, { target: { value: "Review it" } });
+    fireEvent.blur(name);
+    await vi.waitFor(() => {
+      expect(saves.at(-1)?.agentActions[0]?.displayName).toBe("Review it");
+    });
+
+    const message = screen.getByLabelText("Agent action message");
+    fireEvent.change(message, { target: { value: "review {{ISSUE_URL}}" } });
+    fireEvent.blur(message);
     await vi.waitFor(() => {
       expect(saves.at(-1)?.agentActions[0]?.template).toBe(
-        "read {{ISSUE_URL}}",
+        "review {{ISSUE_URL}}",
       );
     });
+  });
 
-    fireEvent.click(screen.getByRole("button", { name: "Restore Default" }));
-    await vi.waitFor(() => {
-      expect(saves.at(-1)?.agentActions[0]?.template).toBe(shipped);
-    });
+  it("refuses two actions with one identifier", async () => {
+    await open(
+      "Actions",
+      testConfig({
+        agentActions: [
+          { id: "implement", displayName: "Work on it", template: "a" },
+          { id: "review", displayName: "Review it", template: "b" },
+        ],
+      }),
+    );
+    const id = screen.getByLabelText("Agent action identifier");
+    fireEvent.change(id, { target: { value: "review" } });
+    fireEvent.blur(id);
+    expect(id).toBeInvalid();
   });
 
   it("says which variables the message may use, and what $name does", async () => {
     await open("Actions", testConfig({}));
-    // On the group the message sits in, not only inside the message itself.
     const note = screen.getByText(/are replaced when it is sent/u);
     expect(note).toHaveTextContent("{{ISSUE_URL}}");
     expect(note).toHaveTextContent("{{ISSUE_NO}}");

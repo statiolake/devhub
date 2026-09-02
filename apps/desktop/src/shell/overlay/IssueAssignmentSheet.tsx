@@ -34,7 +34,7 @@ import {
   cloneParentItems,
   cloneTypedItem,
 } from "../components/shell/cloneDestination";
-import type { IssueRepository } from "../client";
+import type { AgentActionWire, IssueRepository } from "../client";
 import { toAppError } from "../failure";
 import { useAppShell } from "../useAppShell";
 
@@ -45,6 +45,8 @@ export interface IssueAssignmentSheetProps {
 /** Rows that do something rather than name something that already exists. */
 const CLONE_ELSEWHERE = "devhub:clone-elsewhere";
 const ACCEPT_TYPED = "devhub:accept-typed";
+/** A row that is one of the person's own actions, by its id. */
+const ACTION_PREFIX = "devhub:action:";
 const NEW_WORKTREE = "devhub:new-worktree";
 const USE_STALE_BASE = "devhub:use-stale-base";
 
@@ -69,6 +71,7 @@ export function IssueAssignmentSheet({ onDismiss }: IssueAssignmentSheetProps) {
     cloneRepository,
     assignIssue,
     cloneParentDirectories,
+    agentActions,
   } = useAppShell();
 
   /**
@@ -92,8 +95,10 @@ export function IssueAssignmentSheet({ onDismiss }: IssueAssignmentSheetProps) {
         cloneRepository,
         assignIssue,
         cloneParentDirectories,
+        agentActions,
       }),
     [
+      agentActions,
       assignIssue,
       cloneParentDirectories,
       cloneRepository,
@@ -115,10 +120,12 @@ interface FlowServices {
     readonly directory: string;
     readonly branch?: string;
     readonly profileId: string;
+    readonly actionId?: string;
     readonly split: boolean;
     readonly allowStaleBase?: boolean;
   }) => Promise<unknown>;
   readonly cloneParentDirectories: () => Promise<readonly string[]>;
+  readonly agentActions: () => Promise<readonly AgentActionWire[]>;
 }
 
 /**
@@ -134,19 +141,35 @@ function issueUrlStep(services: FlowServices): WizardStep {
     typed: string,
     wrong: boolean,
   ): Promise<WizardStep | undefined> => {
+    // The actions are the rows here rather than a step of their own, because
+    // "which Issue" and "to do what with it" are one thought: a person pastes a
+    // URL because they have already decided whether they are implementing it or
+    // reviewing it. A single row that said "Use this Issue" was a keystroke
+    // asking them to confirm the only thing they could have meant.
+    const actions = await input.working("Reading settings…", () =>
+      services.agentActions(),
+    );
     const answer = await input.ask({
       ...SHEET,
       title: "Assign Issue",
       placeholder: "Issue URL",
       initialQuery: typed,
       items: [],
-      pinned: [
-        {
-          id: ACCEPT_TYPED,
-          label: "Use this Issue",
-          detail: "Paste the URL of the GitHub Issue to work on",
-        },
-      ],
+      pinned:
+        actions.length > 0
+          ? actions.map((action) => ({
+              id: `${ACTION_PREFIX}${action.id}`,
+              label: action.displayName,
+              detail: "Paste the URL of the GitHub Issue, then take this row",
+            }))
+          : [
+              {
+                id: ACCEPT_TYPED,
+                label: "Use this Issue",
+                detail:
+                  "No actions are configured, so the agent starts and is told nothing",
+              },
+            ],
       note: wrong ? (
         <Wrong what="That is not a GitHub Issue URL." />
       ) : (
@@ -157,13 +180,20 @@ function issueUrlStep(services: FlowServices): WizardStep {
     });
     const issue = parseIssueUrl(answer.query);
     if (!issue) return ask(input, answer.query, true);
-    return agentStep(services, issue);
+    const actionId = answer.id.startsWith(ACTION_PREFIX)
+      ? answer.id.slice(ACTION_PREFIX.length)
+      : undefined;
+    return agentStep(services, issue, actionId);
   };
   return (input) => ask(input, "", false);
 }
 
 /** Which agent starts on it. */
-function agentStep(services: FlowServices, issue: IssueReference): WizardStep {
+function agentStep(
+  services: FlowServices,
+  issue: IssueReference,
+  actionId: string | undefined,
+): WizardStep {
   return async (input) => {
     const answer = await input.ask({
       ...SHEET,
@@ -184,6 +214,7 @@ function agentStep(services: FlowServices, issue: IssueReference): WizardStep {
     return repositoryStep(services, issue, {
       profileId: answer.id,
       split: answer.split,
+      actionId,
     });
   };
 }
@@ -191,6 +222,8 @@ function agentStep(services: FlowServices, issue: IssueReference): WizardStep {
 interface AgentChoice {
   readonly profileId: string;
   readonly split: boolean;
+  /** Which of the person's actions the agent is being started for. */
+  readonly actionId: string | undefined;
 }
 
 /**
@@ -400,6 +433,7 @@ function finishStep(
           directory,
           branch,
           profileId: agent.profileId,
+          actionId: agent.actionId,
           split: agent.split,
           allowStaleBase,
         }),

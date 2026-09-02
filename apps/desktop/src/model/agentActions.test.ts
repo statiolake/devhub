@@ -8,31 +8,19 @@
 
 import { describe, expect, it } from "vitest";
 import {
-  AGENT_ACTIONS,
-  agentAction,
+  ACTION_VARIABLES,
   applySkillNotation,
+  DEFAULT_ACTION_TEMPLATE,
   fillVariables,
-  isAgentActionId,
   renderAgentAction,
 } from "./agentActions.js";
 
-describe("the actions DevHub has", () => {
-  it("knows the Issue assignment, and only names it has", () => {
-    expect(isAgentActionId("issue_assignment")).toBe(true);
-    expect(isAgentActionId("commit")).toBe(false);
-    expect(agentAction("issue_assignment")?.variables).toEqual([
-      "ISSUE_URL",
-      "ISSUE_NO",
-    ]);
-  });
-
-  it("ships a message that uses every variable it offers", () => {
-    // A variable an action advertises and never uses is one the Settings note
-    // invites somebody to type into a template where it means nothing.
-    for (const action of AGENT_ACTIONS) {
-      for (const name of action.variables) {
-        expect(action.defaultTemplate).toContain(`{{${name}}}`);
-      }
+describe("the action DevHub ships", () => {
+  it("uses every variable an action is offered", () => {
+    // A variable the Settings note advertises and the shipped wording never
+    // uses is one it invites somebody to type where it means nothing.
+    for (const name of ACTION_VARIABLES) {
+      expect(DEFAULT_ACTION_TEMPLATE).toContain(`{{${name}}}`);
     }
   });
 });

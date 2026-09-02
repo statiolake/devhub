@@ -1,7 +1,6 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { AGENT_ACTIONS } from "./agentActions.js";
 import {
   ConfigError,
   ConfigStore,
@@ -96,44 +95,67 @@ describe("parsing", () => {
     expect(codeOf(() => parseConfig(source))).toBe("invalid_date_template");
   });
 
-  it("carries every action DevHub has, whether or not the file mentions one", () => {
-    // Which actions exist is the program's business; a file only ever holds
-    // wording. So a config that names none still has all of them.
-    expect(
-      parseConfig(MINIMAL).agentActions.map((action) => action.id),
-    ).toEqual(AGENT_ACTIONS.map((action) => action.id));
+  it("ships one action, and it is a default rather than a fixed set", () => {
+    const actions = parseConfig(MINIMAL).agentActions;
+    expect(actions).toHaveLength(1);
+    expect(actions[0]?.id).toBe("issue_assignment");
+    expect(actions[0]?.display_name.length).toBeGreaterThan(0);
   });
 
-  it("takes the wording from the file and keeps DevHub's order", () => {
+  it("takes the actions the file lists, in the file's own order", () => {
     const source = [
       "version = 1",
       "",
       "[[agent_actions]]",
-      'id = "issue_assignment"',
-      'template = "read {{ISSUE_URL}} please"',
+      'id = "implement"',
+      'display_name = "Work on it"',
+      'template = "read {{ISSUE_URL}}"',
+      "",
+      "[[agent_actions]]",
+      'id = "review"',
+      'display_name = "Review it"',
+      'template = "review {{ISSUE_URL}}"',
       "",
     ].join("\n");
-    const actions = parseConfig(source).agentActions;
-    expect(actions).toEqual([
-      { id: "issue_assignment", template: "read {{ISSUE_URL}} please" },
-    ]);
+    expect(
+      parseConfig(source).agentActions.map((action) => action.display_name),
+    ).toEqual(["Work on it", "Review it"]);
     expect(parseConfig(configToToml(parseConfig(source)))).toEqual(
       parseConfig(source),
     );
   });
 
-  it("refuses an action DevHub does not have", () => {
-    // Nothing would ever send it, so accepting it would leave somebody looking
-    // at wording that is never used with no way to tell.
+  it("refuses two actions with one identifier", () => {
+    // The flow's answer names an action by its id; two of them would make the
+    // answer ambiguous.
     const source = [
       "version = 1",
       "",
       "[[agent_actions]]",
-      'id = "commit_everything"',
-      'template = "go"',
+      'id = "same"',
+      'display_name = "One"',
+      'template = "a"',
+      "",
+      "[[agent_actions]]",
+      'id = "same"',
+      'display_name = "Two"',
+      'template = "b"',
       "",
     ].join("\n");
-    expect(codeOf(() => parseConfig(source))).toBe("unknown_action");
+    expect(codeOf(() => parseConfig(source))).toBe("duplicate_identity");
+  });
+
+  it("refuses an action with no name to show", () => {
+    const source = [
+      "version = 1",
+      "",
+      "[[agent_actions]]",
+      'id = "nameless"',
+      'display_name = "  "',
+      'template = "a"',
+      "",
+    ].join("\n");
+    expect(codeOf(() => parseConfig(source))).toBe("invalid_profile");
   });
 
   it("refuses an unknown key rather than ignoring a typo", () => {

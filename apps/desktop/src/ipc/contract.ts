@@ -55,6 +55,12 @@ export interface IssueRepository {
 	readonly worktrees: readonly IssueWorktree[];
 }
 
+/** One way of starting an agent on an Issue, as the flow offers it. */
+export interface AgentActionWire {
+	readonly id: string;
+	readonly displayName: string;
+}
+
 /** Everything the Issue flow asked, once it has all the answers. */
 export interface IssueAssignment {
 	readonly issueUrl: string;
@@ -66,6 +72,13 @@ export interface IssueAssignment {
 	 */
 	readonly branch?: string;
 	readonly profileId: string;
+	/**
+	 * Which action to start the agent with, from `agent_actions`.
+	 *
+	 * Absent when there are none configured, which is a person who has decided
+	 * DevHub should start the agent and say nothing.
+	 */
+	readonly actionId?: string;
 	/** The agent beside the editor rather than over it — ⌘Return, as ever. */
 	readonly split: boolean;
 	/**
@@ -403,6 +416,9 @@ export interface DevhubApi {
 	 */
 	assignIssue(request: IssueAssignment): Promise<AppOutcome>;
 
+	/** The ways of starting an agent on an Issue, in the order Settings lists. */
+	agentActions(): Promise<readonly AgentActionWire[]>;
+
 	openSettings(): Promise<void>;
 	openExternalUrl(url: string): Promise<void>;
 
@@ -448,6 +464,7 @@ export const CHANNELS = {
 	cloneProject: "devhub:clone-project",
 	projectDefaultDirectory: "devhub:project-default-directory",
 	cloneParentDirectories: "devhub:clone-parent-directories",
+	agentActions: "devhub:agent-actions",
 	openSettings: "devhub:open-settings",
 	openExternalUrl: "devhub:open-external-url",
 	setContentRect: "devhub:set-content-rect",

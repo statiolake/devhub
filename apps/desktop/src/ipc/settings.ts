@@ -123,6 +123,7 @@ export type SettingsWorkspaceSourceWire =
 /** One of DevHub's own actions, and the wording it is sent with. */
 export interface SettingsAgentActionWire {
 	readonly id: string;
+	readonly displayName: string;
 	readonly template: string;
 }
 

@@ -9,6 +9,7 @@ import type {
   ConfirmationPurposeWire,
 } from "../ipc/appShell";
 import type {
+  AgentActionWire,
   IssueAssignment,
   IssueRepository,
   RepositoryStatusWire,
@@ -52,6 +53,8 @@ export interface AppShellContextValue {
   readonly projectDefaultDirectory: () => Promise<string>;
   /** Where a clone could go: the parents of everything the sources find. */
   readonly cloneParentDirectories: () => Promise<readonly string[]>;
+  /** The ways of starting an agent on an Issue, as Settings lists them. */
+  readonly agentActions: () => Promise<readonly AgentActionWire[]>;
   /**
    * The four steps of assigning an Issue. Each throws what to do about it when
    * it fails, because each is answered by re-asking the question that led to

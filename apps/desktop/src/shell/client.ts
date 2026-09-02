@@ -17,6 +17,7 @@ import type {
   ReplayWire,
 } from "../ipc/appShell";
 import type {
+  AgentActionWire,
   ContentSurfaceWire,
   DevhubApi,
   IssueAssignment,
@@ -28,6 +29,7 @@ import type {
 } from "../ipc/contract";
 
 export type {
+  AgentActionWire,
   IssueAssignment,
   IssueRepository,
   RepositoryStatusWire,
@@ -63,6 +65,7 @@ export interface AppShellClient {
   cloneProject(url: string, parentDirectory: string): Promise<AppOutcome>;
   projectDefaultDirectory(): Promise<string>;
   cloneParentDirectories(): Promise<readonly string[]>;
+  agentActions(): Promise<readonly AgentActionWire[]>;
   findIssueRepositories(issueUrl: string): Promise<readonly IssueRepository[]>;
   cloneRepository(url: string, parentDirectory: string): Promise<string>;
   listBranches(directory: string): Promise<readonly string[]>;
@@ -127,6 +130,7 @@ export function createShellClient(api: DevhubApi = devhub()): AppShellClient {
       api.cloneProject(url, parentDirectory),
     projectDefaultDirectory: () => api.projectDefaultDirectory(),
     cloneParentDirectories: () => api.cloneParentDirectories(),
+    agentActions: () => api.agentActions(),
     findIssueRepositories: (issueUrl) => api.findIssueRepositories(issueUrl),
     cloneRepository: (url, parentDirectory) =>
       api.cloneRepository(url, parentDirectory),

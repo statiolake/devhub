@@ -1230,13 +1230,18 @@ export class AppController {
 	private queueIssuePrompt(
 		before: ReadonlySet<string>,
 		issue: IssueReference,
+		actionId: string | undefined,
 	): void {
 		const started = this.coordinator.model.workspaces
 			.flatMap((workspace) => workspace.agents)
 			.find((agent) => !before.has(agent.id));
 		if (!started) return;
+		// The action the person chose in the flow, and nothing else. No action
+		// means they have none configured, which is a decision — the agent starts
+		// and DevHub says nothing — rather than a gap to fill with a default.
+		if (actionId === undefined) return;
 		const template = this.config?.agentActions.find(
-			(action) => action.id === "issue_assignment",
+			(action) => action.id === actionId,
 		)?.template;
 		if (template === undefined) return;
 		agents()?.queueInjection(
@@ -2469,7 +2474,7 @@ export class AppController {
 			profileId: agentProfileId(request.profileId),
 			presentation: request.split ? "beside" : "full",
 		});
-		this.queueIssuePrompt(agentsBefore, issue);
+		this.queueIssuePrompt(agentsBefore, issue, request.actionId);
 		await this.syncEditorView();
 		return outcomeWire(settled, this.coordinator.readiness);
 	}
@@ -2633,6 +2638,12 @@ export class AppController {
 
 		handle(CHANNELS.getRepositoryStatus, () => this.lastRepositoryStatus);
 
+		handle(CHANNELS.agentActions, () =>
+			(this.config?.agentActions ?? []).map((action) => ({
+				id: action.id,
+				displayName: action.display_name,
+			})),
+		);
 		handle(CHANNELS.openSettings, () => {
 			openSettingsWindow();
 		});
