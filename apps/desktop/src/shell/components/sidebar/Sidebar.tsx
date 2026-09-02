@@ -223,6 +223,7 @@ function WorkspaceRow({
             a branch name a person got to see. */}
         {(repository?.repositoryUrl ??
         repository?.issue ??
+        repository?.pending ??
         repository?.unavailable) ? (
           <div className="row-line row-line-links">
             <RepositoryLinks repository={repository} />
@@ -234,6 +235,22 @@ function WorkspaceRow({
                 <span className="row-issue" title={repository.issue.title}>
                   {repository.issue.title}
                 </span>
+              </>
+            ) : null}
+            {/* Asking. The branch is read every couple of seconds and GitHub
+                once a minute, so a branch just switched to is on screen well
+                before what it is about — and without this the gap looks
+                exactly like a branch that is about no Issue. */}
+            {repository?.pending ? (
+              <>
+                <span className="row-issue-number">
+                  {`#${String(repository.pending.number)}`}
+                </span>
+                <span
+                  className="mac-spinner row-issue-spinner"
+                  role="status"
+                  aria-label={`Reading Issue #${String(repository.pending.number)}`}
+                />
               </>
             ) : null}
             {/* The row cannot say what it is working on, and this is why.

@@ -13,11 +13,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { RepositoryStatusWire } from "../../ipc/contract.js";
 
 const readRepository = vi.fn();
+const readBranch = vi.fn();
 const readIssueStatus = vi.fn();
 const readGitHubToken = vi.fn();
 
 vi.mock("./git.js", () => ({
 	readRepository: (...args: unknown[]) => readRepository(...args),
+	readBranch: (...args: unknown[]) => readBranch(...args),
 }));
 vi.mock("./github.js", async (importOriginal) => ({
 	...(await importOriginal<Record<string, unknown>>()),
@@ -25,7 +27,9 @@ vi.mock("./github.js", async (importOriginal) => ({
 	readIssueStatus: (...args: unknown[]) => readIssueStatus(...args),
 }));
 
-const { RepositoryStatusWatcher } = await import("./repositoryStatus.js");
+const { BRANCH_POLL_INTERVAL_MS, RepositoryStatusWatcher } = await import(
+	"./repositoryStatus.js"
+);
 
 const WORKSPACE = { id: "w-1", root: "/projects/widget" };
 
@@ -36,6 +40,9 @@ function checkedOut(branch: string | undefined) {
 		branch,
 		remote: "github.com/example/widget",
 	});
+	// The fast clock asks the cheap question; it must agree with the slow one
+	// until a test says otherwise.
+	readBranch.mockResolvedValue(branch);
 }
 
 function watcher(published: RepositoryStatusWire[]) {
@@ -180,25 +187,88 @@ describe("what a workspace is about", () => {
 		});
 		running.start();
 		await vi.waitFor(() => {
-			expect(published).toHaveLength(1);
+			expect(published.length).toBeGreaterThanOrEqual(2);
 		});
-		expect(published[0]?.workspaces[0]?.issue?.number).toBe(128);
+		expect(published.at(-1)?.workspaces[0]?.issue?.number).toBe(128);
 
 		// A second look, asked for the way a projection change asks for one.
 		readIssueStatus.mockRejectedValue(
 			new GitHubUnavailable("GitHub answered 502."),
 		);
 		watched = [WORKSPACE, { id: "w-2", root: "/projects/other" }];
+		const before = published.length;
 		running.observe();
 		await vi.waitFor(() => {
-			expect(published).toHaveLength(2);
+			expect(published.length).toBeGreaterThanOrEqual(before + 2);
 		});
 		running.stop();
 
-		const after = published[1]?.workspaces[0];
+		const after = published.at(-1)?.workspaces[0];
 		expect(after?.issue?.number).toBe(128);
 		expect(after?.unavailable).toBeUndefined();
-		expect(published[1]?.diagnostic).toBe("GitHub answered 502.");
+		expect(published.at(-1)?.diagnostic).toBe("GitHub answered 502.");
+	});
+
+	it("shows a branch it has just switched to without waiting for GitHub", async () => {
+		// Two clocks, and this is why: the branch is one local command and
+		// changes while somebody watches; what GitHub says is a round trip and
+		// changes when somebody on another continent clicks a button. On one
+		// clock a branch you had just changed took up to a minute to appear.
+		vi.useFakeTimers();
+		try {
+			checkedOut("feature/128-tidy");
+			const published: RepositoryStatusWire[] = [];
+			const running = watcher(published);
+			running.start();
+			await vi.waitFor(() => {
+				expect(published.length).toBeGreaterThan(0);
+			});
+			expect(published.at(-1)?.workspaces[0]?.branch).toBe("feature/128-tidy");
+
+			// Somebody runs `git switch`. Only the cheap question is re-asked.
+			readBranch.mockResolvedValue("master");
+			await vi.advanceTimersByTimeAsync(BRANCH_POLL_INTERVAL_MS);
+
+			expect(published.at(-1)?.workspaces[0]?.branch).toBe("master");
+			// And the whole repository was not re-read to find that out.
+			expect(readRepository).toHaveBeenCalledTimes(1);
+			running.stop();
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("says it is asking while it has a number and no answer", async () => {
+		// The gap the fast clock created: the branch is on screen a second or
+		// two before GitHub answers, and a blank there would look exactly like a
+		// branch that is about no Issue.
+		checkedOut("feature/128-tidy");
+		let answer: (value: unknown) => void = () => undefined;
+		readIssueStatus.mockImplementation(
+			() =>
+				new Promise((resolve) => {
+					answer = resolve;
+				}),
+		);
+		const published: RepositoryStatusWire[] = [];
+		const running = watcher(published);
+		running.start();
+		// The local half, published before GitHub has been heard from at all.
+		await vi.waitFor(() => {
+			expect(published.length).toBeGreaterThan(0);
+		});
+		running.stop();
+		answer({
+			issue: { owner: "example", repository: "widget", number: 128 },
+			title: "Tidy",
+			state: "open",
+			url: "u",
+		});
+
+		const row = published.at(-1)?.workspaces[0];
+		expect(row?.pending).toEqual({ number: 128 });
+		expect(row?.issue).toBeUndefined();
+		expect(row?.unavailable).toBeUndefined();
 	});
 
 	it("asks GitHub about nothing when the branch names no Issue", async () => {

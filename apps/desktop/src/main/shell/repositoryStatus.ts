@@ -15,13 +15,14 @@
  * look like an Issue that was closed.
  */
 
+import type { RemoteIdentity } from "../../model/domain.js";
 import type { IssueReference } from "../../model/github.js";
 import { issueNumberFromBranch } from "../../model/github.js";
 import type {
 	RepositoryStatusWire,
 	WorkspaceRepositoryWire,
 } from "../../ipc/contract.js";
-import { readRepository, type GitCommand } from "./git.js";
+import { readBranch, readRepository, type GitCommand } from "./git.js";
 import { TypedFailure } from "../../model/wire.js";
 import {
 	GitHubUnavailable,
@@ -45,6 +46,8 @@ export interface RepositoryStatusDeps {
 
 /** How often the branch and the Issue are looked at again. */
 export const POLL_INTERVAL_MS = 60 * 1000;
+/** How often the branch alone is re-read. One local command per workspace. */
+export const BRANCH_POLL_INTERVAL_MS = 2 * 1000;
 /** How many Issues one round is allowed to ask GitHub about. */
 const MAX_ISSUES_PER_ROUND = 16;
 
@@ -147,6 +150,8 @@ interface LocalReading {
 	readonly branch?: string;
 	/** The repository this workspace is a checkout of, as git identifies it. */
 	readonly mainWorktree?: string;
+	/** `origin`, kept so the fast clock can re-read an Issue from a new branch. */
+	readonly remote?: RemoteIdentity;
 	/** The repository's page, when `origin` is one DevHub can name a page for. */
 	readonly repositoryUrl?: string;
 	readonly issue?: IssueReference;
@@ -176,6 +181,16 @@ export class RepositoryStatusWatcher {
 	private watching: string | undefined;
 	/** The last answer for each Issue, kept so a failed round shows something. */
 	private readonly known = new Map<string, IssueStatus>();
+	/** The fast clock: what is checked out, which changes while you watch. */
+	private branchTimer: ReturnType<typeof setInterval> | undefined;
+	/** The last full local reading, one entry per workspace, in row order. */
+	private local: LocalReading[] = [];
+	/** Why each Issue could not be read, by Issue. Rebuilt each slow round. */
+	private readonly unreadable = new Map<string, string>();
+	/** The last round's note for the foot of the Sidebar. */
+	private lastDiagnostic: string | undefined;
+	/** git, as the last round resolved it, so the fast clock need not re-look. */
+	private command: GitCommand | undefined;
 
 	constructor(private readonly deps: RepositoryStatusDeps) {}
 
@@ -184,12 +199,25 @@ export class RepositoryStatusWatcher {
 		this.timer = setInterval(() => {
 			void this.refresh();
 		}, POLL_INTERVAL_MS);
+		// The fast clock, and the whole reason there are two. Which branch is
+		// checked out changes while somebody watches — they run `git switch` and
+		// look at the Sidebar — and it costs one local command to answer. What
+		// GitHub says about an Issue costs a round trip and changes when somebody
+		// on another continent clicks a button. Putting both on the slow clock
+		// meant a branch you had just changed took up to a minute to appear.
+		this.branchTimer = setInterval(() => {
+			void this.refreshBranches();
+		}, BRANCH_POLL_INTERVAL_MS);
 		// Not `unref`'d: this is a projection the window is drawing, and the
 		// interval is the only thing keeping it true.
 		void this.refresh();
 	}
 
 	stop(): void {
+		if (this.branchTimer) {
+			clearInterval(this.branchTimer);
+			this.branchTimer = undefined;
+		}
 		if (!this.timer) return;
 		clearInterval(this.timer);
 		this.timer = undefined;
@@ -230,6 +258,65 @@ export class RepositoryStatusWatcher {
 		}
 	}
 
+	/**
+	 * What is checked out, re-read and published at once.
+	 *
+	 * One command per workspace and nothing else: the remote and the main
+	 * worktree are read on the slow clock because they are the same as they were
+	 * an hour ago, and the Issue is asked about on the slow clock because that
+	 * is a round trip. So a branch a person has just switched appears within a
+	 * couple of seconds, and what the new branch is *about* fills in behind it.
+	 *
+	 * A branch that names an Issue nobody has asked about yet does not wait for
+	 * the minute to be up: the slow round is asked for immediately, and until it
+	 * answers the row says it is asking.
+	 */
+	private async refreshBranches(): Promise<void> {
+		const command = this.command;
+		if (!command || this.running || this.local.length === 0) return;
+		let moved = false;
+		let wantsIssue = false;
+		const next = await Promise.all(
+			this.local.map(async (entry): Promise<LocalReading> => {
+				// A row that could not be read at all is the slow round's problem:
+				// re-running one command against a repository git refused would only
+				// produce the same refusal, without the reason it collected.
+				if (entry.reason !== undefined && entry.branch === undefined) {
+					return entry;
+				}
+				const branch = await readBranch(command, entry.workspace.root).catch(
+					() => entry.branch,
+				);
+				if (branch === entry.branch) return entry;
+				moved = true;
+				const reading = issueFromConvention(entry.remote, branch);
+				if (
+					reading.kind === "issue" &&
+					!this.known.has(issueKey(reading.issue))
+				) {
+					wantsIssue = true;
+				}
+				return {
+					workspace: entry.workspace,
+					branch,
+					mainWorktree: entry.mainWorktree,
+					remote: entry.remote,
+					repositoryUrl: entry.repositoryUrl,
+					...(reading.kind === "issue" ? { issue: reading.issue } : {}),
+					...(reading.kind === "unresolved"
+						? { number: reading.number, reason: reading.reason }
+						: {}),
+				};
+			}),
+		);
+		if (!moved) return;
+		this.local = next;
+		this.deps.publish(this.project());
+		// The branch is on screen; what it is about is now worth asking for
+		// rather than waiting the rest of the minute out.
+		if (wantsIssue) void this.refresh();
+	}
+
 	private async read(): Promise<RepositoryStatusWire> {
 		const workspaces = this.deps.workspaces();
 		let diagnostic: string | undefined;
@@ -238,6 +325,7 @@ export class RepositoryStatusWatcher {
 			diagnostic = error instanceof Error ? error.message : String(error);
 			return undefined;
 		});
+		this.command = command;
 
 		const local = await Promise.all(
 			workspaces.map(async (workspace): Promise<LocalReading> => {
@@ -270,6 +358,7 @@ export class RepositoryStatusWatcher {
 					workspace,
 					branch: facts?.branch,
 					mainWorktree: facts?.mainWorktree,
+					remote: facts?.remote,
 					repositoryUrl: repositoryUrl(facts?.remote),
 					...(reading.kind === "issue" ? { issue: reading.issue } : {}),
 					...(reading.kind === "unresolved"
@@ -278,6 +367,14 @@ export class RepositoryStatusWatcher {
 				};
 			}),
 		);
+
+		this.local = local;
+		this.lastDiagnostic = diagnostic;
+		// The local half is done and costs nothing to show, so it is shown now
+		// rather than after a round trip to GitHub. Branches, and the reasons a
+		// row cannot name one, are on screen while the Issues are still being
+		// asked about; the rows that are waiting say so.
+		this.deps.publish(this.project());
 
 		const wanted = new Map<string, IssueReference>();
 		for (const entry of local) {
@@ -293,7 +390,12 @@ export class RepositoryStatusWatcher {
 		 * them. A round that succeeds for one Issue and fails for another now
 		 * says which was which.
 		 */
-		const unreadable = new Map<string, string>();
+		// Not cleared: a reason from the last round is what was last known about
+		// that Issue, and blanking it for the length of a round trip would make a
+		// persistent failure flicker between its reason and a spinner every
+		// minute. Entries are replaced when a look fails again, dropped when one
+		// succeeds, and pruned below once the round knows what is still wanted.
+		const unreadable = this.unreadable;
 		if (wanted.size > 0) {
 			const credentials = await readGitHubToken(this.deps.environment);
 			if (credentials.kind !== "token") {
@@ -338,7 +440,25 @@ export class RepositoryStatusWatcher {
 			}
 		}
 
-		const projected: WorkspaceRepositoryWire[] = local.map((entry) => {
+		// Reasons for Issues nothing is about any more: the rows that carried
+		// them have gone or moved to another branch.
+		for (const key of [...unreadable.keys()]) {
+			if (!wanted.has(key)) unreadable.delete(key);
+		}
+		this.lastDiagnostic = diagnostic;
+		return this.project();
+	}
+
+	/**
+	 * The rows, from everything currently known.
+	 *
+	 * Built from state rather than from one round's locals, because two clocks
+	 * publish it: the fast one that has just re-read a branch, and the slow one
+	 * that has just heard back from GitHub. One projection means the two cannot
+	 * draw a row differently.
+	 */
+	private project(): RepositoryStatusWire {
+		const projected: WorkspaceRepositoryWire[] = this.local.map((entry) => {
 			const key = entry.issue ? issueKey(entry.issue) : undefined;
 			const status = key === undefined ? undefined : this.known.get(key);
 			// What was last known outranks a look that failed — the same rule the
@@ -351,7 +471,7 @@ export class RepositoryStatusWatcher {
 			const reason = status
 				? undefined
 				: (entry.reason ??
-					(key === undefined ? undefined : unreadable.get(key)));
+					(key === undefined ? undefined : this.unreadable.get(key)));
 			const number = entry.issue?.number ?? entry.number;
 			return {
 				workspaceId: entry.workspace.id,
@@ -367,6 +487,15 @@ export class RepositoryStatusWatcher {
 						}
 					: undefined,
 				pullRequest: status?.pullRequest,
+				// Known which Issue, no answer yet, nothing wrong: the row says it
+				// is asking rather than showing the blank that means "about
+				// nothing". Only ever one of the three.
+				pending:
+					status === undefined &&
+					reason === undefined &&
+					entry.issue !== undefined
+						? { number: entry.issue.number }
+						: undefined,
 				unavailable:
 					reason === undefined
 						? undefined
@@ -380,7 +509,7 @@ export class RepositoryStatusWatcher {
 		return {
 			sequence: this.sequence,
 			workspaces: projected,
-			diagnostic,
+			diagnostic: this.lastDiagnostic,
 		};
 	}
 }

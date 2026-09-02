@@ -413,6 +413,14 @@
 /* Which Issue, before what it is called. Four characters that never shrink:
    the number is the identifier, the title is the description, and a line too
    narrow for both should lose the description's tail rather than the name. */
+/* Small enough to sit on a caption's line without pushing it about. */
+.row-issue-spinner {
+  width: 10px;
+  height: 10px;
+  flex: none;
+  border-width: 1.5px;
+}
+
 .row-issue-number {
   flex: none;
   color: var(--secondary);

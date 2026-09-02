@@ -149,6 +149,22 @@ export interface WorkspaceRepositoryWire {
 	 * only when there is nothing known to show instead, and it is replaced the
 	 * moment a later look succeeds.
 	 */
+	/**
+	 * DevHub knows which Issue this is and has not heard back yet.
+	 *
+	 * The third answer to "what is this working on?", and it needs to exist
+	 * because the branch is now read on a much faster clock than GitHub is
+	 * asked. A branch you have just switched to appears at once; for the second
+	 * or two before GitHub answers, the row would otherwise look like a branch
+	 * that is about no Issue — the same blank that used to hide every failure,
+	 * arriving now on every successful switch.
+	 *
+	 * Never present alongside `issue` or `unavailable`: those are answers, and
+	 * this is the state of having none yet.
+	 */
+	readonly pending?: {
+		readonly number: number;
+	};
 	readonly unavailable?: {
 		/** The Issue the branch named, when the branch got far enough to name one. */
 		readonly number?: number;

@@ -176,6 +176,32 @@ export interface RepositoryFacts {
  * Read the repository a directory belongs to, or nothing when it is a plain
  * folder.
  */
+/**
+ * Just the branch, in one command.
+ *
+ * The cheap half of `readRepository`, split out because it is the half that
+ * *changes*: somebody runs `git switch` and the Sidebar should say so at once,
+ * while the remote and the main worktree are the same as they were an hour ago.
+ * Asking every couple of seconds is affordable exactly because it is one
+ * command and not three.
+ *
+ * `undefined` means the same thing it means there: no branch to report, either
+ * because this is not a repository or because the head is detached.
+ */
+export async function readBranch(
+	command: GitCommand,
+	directory: string,
+): Promise<string | undefined> {
+	const branch = await ask(
+		command,
+		["rev-parse", "--abbrev-ref", "HEAD"],
+		directory,
+	);
+	return branch === undefined || branch.length === 0 || branch === "HEAD"
+		? undefined
+		: branch;
+}
+
 export async function readRepository(
 	command: GitCommand,
 	directory: string,
