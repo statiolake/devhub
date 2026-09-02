@@ -20,6 +20,7 @@ import { Terminal, type ITheme } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import "./xtermSession.css";
 import { devhub } from "../client";
+import { editingSequence } from "./keys";
 import {
   terminalFontStack,
   xtermTheme,
@@ -332,7 +333,27 @@ export function openXtermSession(
   input?.addEventListener("compositionstart", onCompositionStart);
   input?.addEventListener("compositionend", onCompositionEnd);
   input?.addEventListener("input", onInput);
-  terminal.attachCustomKeyEventHandler(() => true);
+  /**
+   * Answer the Mac's own editing chords; leave everything else alone.
+   *
+   * The handler used to say yes to every key, which meant Cmd+Left and its
+   * relatives were neither turned into terminal input nor stopped — so the
+   * browser did what it does to a focused textarea and moved a caret in xterm's
+   * hidden IME scratch pad. Now each chord DevHub answers is written to the
+   * pane as the bytes a program expects, and the browser never sees it.
+   *
+   * Returning false is what tells xterm to keep its hands off a key this has
+   * already dealt with. Everything else still returns true, so Cmd+C, Cmd+V and
+   * the rest reach the browser and DevHub's menus exactly as before.
+   */
+  terminal.attachCustomKeyEventHandler((event) => {
+    if (event.type !== "keydown") return true;
+    const sequence = editingSequence(event);
+    if (sequence === undefined) return true;
+    event.preventDefault();
+    terminal.input(sequence, true);
+    return false;
+  });
 
   let geometry = FALLBACK_GEOMETRY;
   let pending: SurfaceGeometry | undefined;

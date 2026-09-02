@@ -44,7 +44,14 @@ vi.mock("@xterm/xterm", () => {
       element.append(document.createElement("textarea"));
       host.append(element);
     }
-    attachCustomKeyEventHandler() {}
+    readonly sent: string[] = [];
+    keyHandler: ((event: KeyboardEvent) => boolean) | undefined;
+    attachCustomKeyEventHandler(handler: (event: KeyboardEvent) => boolean) {
+      this.keyHandler = handler;
+    }
+    input(data: string) {
+      this.sent.push(data);
+    }
     focus() {}
     dispose() {}
   }
@@ -312,6 +319,64 @@ describe("the shared xterm session", () => {
 
     // Still being composed: emptying it here would destroy the input.
     expect(area.value).toBe("\u306b\u307b");
+    session.dispose();
+  });
+
+  /**
+   * The rule is tested on its own in `keys.test.ts`; what is pinned here is
+   * that the session actually hands it to xterm, and what it does with the
+   * answer.
+   *
+   * Three things have to hold together for Cmd+Left to reach the program in
+   * the pane and nothing else: the bytes go in as terminal input, the browser's
+   * own default — the caret move in the hidden textarea — is prevented, and
+   * xterm is told to stop, so it does not also spell the key its own way.
+   */
+  it("answers a Mac editing chord as terminal input and stops there", () => {
+    const session = open();
+    const terminal = session.terminal as unknown as {
+      keyHandler: (event: KeyboardEvent) => boolean;
+      sent: string[];
+    };
+    const event = new KeyboardEvent("keydown", {
+      key: "ArrowLeft",
+      metaKey: true,
+      cancelable: true,
+    });
+
+    expect(terminal.keyHandler(event)).toBe(false);
+    expect(terminal.sent).toEqual(["\u0001"]);
+    expect(event.defaultPrevented).toBe(true);
+    session.dispose();
+  });
+
+  /**
+   * Cmd+C has to keep reaching the browser and DevHub's menus. Returning true
+   * without touching the event is what leaves it alone; a keyup is left alone
+   * for the same reason, since the chord was already answered on the way down.
+   */
+  it("leaves a key that is not ours to xterm and to the browser", () => {
+    const session = open();
+    const terminal = session.terminal as unknown as {
+      keyHandler: (event: KeyboardEvent) => boolean;
+      sent: string[];
+    };
+    const copy = new KeyboardEvent("keydown", {
+      key: "c",
+      metaKey: true,
+      cancelable: true,
+    });
+    const release = new KeyboardEvent("keyup", {
+      key: "ArrowLeft",
+      metaKey: true,
+      cancelable: true,
+    });
+
+    expect(terminal.keyHandler(copy)).toBe(true);
+    expect(terminal.keyHandler(release)).toBe(true);
+    expect(terminal.sent).toEqual([]);
+    expect(copy.defaultPrevented).toBe(false);
+    expect(release.defaultPrevented).toBe(false);
     session.dispose();
   });
 
