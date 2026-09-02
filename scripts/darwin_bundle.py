@@ -34,7 +34,6 @@ macOS can open it. See `install_dev_launcher`.
 from __future__ import annotations
 
 import hashlib
-import json
 import plistlib
 import shlex
 import shutil
@@ -42,12 +41,11 @@ import subprocess
 import sys
 from pathlib import Path
 
+from product_metadata import PRODUCT_OVERRIDES, PRODUCT_OVERRIDES_FILE
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 VSCODE_DIR = REPO_ROOT / "vscode"
 DESKTOP_DIR = REPO_ROOT / "apps" / "desktop"
-
-PRODUCT_OVERRIDES_FILE = DESKTOP_DIR / "product-overrides.json"
-PRODUCT_OVERRIDES = json.loads(PRODUCT_OVERRIDES_FILE.read_text())
 
 APP_NAME = PRODUCT_OVERRIDES["nameShort"]
 BUNDLE_IDENTIFIER = PRODUCT_OVERRIDES["darwinBundleIdentifier"]
@@ -61,6 +59,21 @@ ICON_FILE = REPO_ROOT / "distribution" / f"{APP_NAME}.icns"
 # product. Ours renames it once more.
 BASE_PRODUCT_NAME = "Code - OSS"
 BASE_APP = VSCODE_DIR / ".build" / "electron" / f"{BASE_PRODUCT_NAME}.app"
+
+# What "About DevHub" says about who made it. The macOS About panel reads this
+# key straight from the running bundle, and Electron's own bundle arrives with
+# Microsoft's — so an unbranded DevHub credits Microsoft alone for a product
+# they did not make, and drops the DevHub half entirely.
+#
+# Both halves stay. Naming Code - OSS is not politeness: the MIT licence
+# requires the notice to travel with the copies (the full texts ride along in
+# `Contents/Resources/licenses`, written by package-nightly.py), and a user
+# reading this panel should be able to tell what DevHub is built out of.
+COPYRIGHT = (
+	"Copyright (C) 2026 DevHub contributors. "
+	"Based on Code - OSS, Copyright (C) Microsoft Corporation. "
+	"MIT licensed."
+)
 
 
 def patch_plist(path: Path, values: dict[str, str]) -> None:
@@ -86,8 +99,11 @@ def rebrand(app: Path, main_plist_extra: dict[str, str] | None = None) -> None:
 	as a bare Electron tile while the packaged app had DevHub's icon. Both
 	callers want the same icon, so neither is asked for it.
 
-	`main_plist_extra` is for what only one caller knows — the packaged app's
-	version — so that the names themselves stay stated once, here.
+	The copyright is part of the rename for the same reason: "About DevHub" is
+	branding, and a source run and a nightly must not answer it differently.
+
+	`main_plist_extra` is for what only one caller knows — which build this is —
+	so that the names themselves stay stated once, here.
 	"""
 	contents = app / "Contents"
 
@@ -123,6 +139,7 @@ def rebrand(app: Path, main_plist_extra: dict[str, str] | None = None) -> None:
 			"CFBundleDisplayName": APP_NAME,
 			"CFBundleIdentifier": BUNDLE_IDENTIFIER,
 			"CFBundleIconFile": ICON_FILE.name,
+			"NSHumanReadableCopyright": COPYRIGHT,
 			**(main_plist_extra or {}),
 		},
 	)

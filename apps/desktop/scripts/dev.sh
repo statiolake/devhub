@@ -49,7 +49,10 @@ fi
 # extension host — which is exactly the reach the gallery needs. The file is
 # gitignored inside the submodule and rewritten here on every run, so the
 # submodule stays unedited and can never hold a stale copy.
-cp "$APP_DIR/product-overrides.json" "$VSCODE_DIR/product.overrides.json"
+# The commit rides along with the names, so a source run can say which DevHub
+# it is too — see scripts/product_metadata.py, which the packaged build writes
+# its product.json from as well.
+"$REPO_ROOT/scripts/product_metadata.py" "$VSCODE_DIR/product.overrides.json"
 
 # DevHub's own state, beside the user's real VS Code state and never inside it.
 DEVHUB_DATA="$HOME/Library/Application Support/DevHub"

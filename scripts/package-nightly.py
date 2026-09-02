@@ -113,10 +113,11 @@ DESKTOP_DIR = REPO_ROOT / "apps" / "desktop"
 BRIDGE_DIR = REPO_ROOT / "extensions" / "devhub-bridge"
 
 # Everything DevHub says about itself that VS Code reads out of product.json —
-# its name, its data folders, its extension gallery — lives in this one file.
-# The packaged app gets it merged into product.json below; a source run gets it
-# through vscode/product.overrides.json, which apps/desktop/scripts/dev.sh
-# writes from the same file. Neither path restates a value the other one owns.
+# its name, its data folders, its extension gallery, and which build this is —
+# comes from product_metadata.py. The packaged app gets it merged into
+# product.json below; a source run gets it through vscode/product.overrides.json,
+# which apps/desktop/scripts/dev.sh writes by running that same module. Neither
+# path restates a value the other one owns.
 #
 # Renaming the Electron bundle after those same names is a source run's problem
 # too — macOS names an application from the bundle it runs in — so that rename
@@ -124,10 +125,10 @@ BRIDGE_DIR = REPO_ROOT / "extensions" / "devhub-bridge"
 from darwin_bundle import (  # noqa: E402
 	APP_NAME,
 	BASE_APP,
-	PRODUCT_OVERRIDES,
 	rebrand,
 	sign,
 )
+from product_metadata import devhub_commit, product_metadata  # noqa: E402
 from smoke_packaged_app import smoke  # noqa: E402
 
 # The inline `//# sourceMappingURL=data:...` tail every file of the dev compile
@@ -417,13 +418,19 @@ def rename_bundle(app: Path, version: str) -> None:
 	The rename itself is `darwin_bundle.rebrand`, shared with the source run's
 	bundle so that the two cannot come to disagree about what DevHub is called
 	or what it looks like — the icon travels with the rename, in there. What
-	only a release knows is added here: the version.
+	only a release knows is added here: which build this is.
+
+	"About DevHub" is the macOS About panel — `{ role: "about" }` in the App
+	Shell's menu — and it reads these two keys, not anything the workbench
+	knows. So the build's commit goes here as well as into product.json: a
+	nightly that cannot be told from the one before it is a bug report nobody
+	can act on. The panel renders them as `Version <short> (<version>)`.
 	"""
 	rebrand(
 		app,
 		{
 			"CFBundleShortVersionString": version,
-			"CFBundleVersion": f"{version}.{date.today():%Y%m%d}",
+			"CFBundleVersion": f"{version}.{date.today():%Y%m%d}+{devhub_commit()[:10]}",
 		},
 	)
 
@@ -489,9 +496,15 @@ def bundle_main_process(target: Path) -> None:
 
 
 def write_product_json(target: Path) -> None:
-	"""VS Code's product metadata, saying DevHub where it says Code - OSS."""
+	"""VS Code's product metadata, saying DevHub where it says Code - OSS.
+
+	`product_metadata` carries the build's commit as well as DevHub's names, so
+	the packaged app can say which DevHub it is — in About, in the issue
+	reporter, and to `devhub --version`. A source run gets the same two values
+	through `vscode/product.overrides.json`, from the same function.
+	"""
 	product = json.loads((VSCODE_DIR / "product.json").read_text())
-	product.update(PRODUCT_OVERRIDES)
+	product.update(product_metadata())
 	target.write_text(json.dumps(product, indent="\t") + "\n")
 
 
