@@ -346,12 +346,13 @@ describe("assigning an Issue", () => {
     expect(pullRequestHeadBranch).not.toHaveBeenCalled();
   });
 
-  it("offers a new worktree, then the ones there are, then the repository", async () => {
-    // Read top to bottom that is the order a person considers it in, and the
-    // repository itself comes last because it is the one that is nobody's
-    // feature branch. Each row is named by its folder — what a person
-    // recognises — with the path underneath to tell two of them apart, except
-    // the repository, which is named for what it is rather than where.
+  it("offers the repository, then a new worktree, then the ones there are", async () => {
+    // Read top to bottom that is the order the decision is considered in, and
+    // the repository leads because it is the answer that needs nothing
+    // arranged — so it is also what Return takes on a sheet nobody has typed
+    // into. Each row is named by its folder — what a person recognises — with
+    // the path underneath to tell two of them apart, except the repository,
+    // which is named for what it is rather than where.
     mount({
       findIssueRepositories: vi.fn().mockResolvedValue([
         {
@@ -376,12 +377,20 @@ describe("assigning an Issue", () => {
       screen
         .getAllByRole("option")
         .map((row) => row.querySelector(".mac-list-title")?.textContent),
-    ).toEqual(["New worktree", "widget_128-wip", "Repository Root"]);
+    ).toEqual(["Repository Root", "New worktree", "widget_128-wip"]);
     // The path is demoted, not lost: it is what tells two folders of the same
     // name apart, and it is still what the field searches.
     expect(
       screen.getByRole("option", { name: /Repository Root/u }),
     ).toHaveTextContent("/projects/widget");
+    // The two standing answers survive a query that matches no worktree: they
+    // are pinned, so "nothing matches" is still a screen with answers on it.
+    fireEvent.change(screen.getByRole("textbox"), {
+      target: { value: "nothing-like-this" },
+    });
+    expect(
+      screen.getAllByRole("option").map((row) => row.textContent),
+    ).toHaveLength(2);
   });
 
   it("says why a clone is being asked about when nobody asked for one", async () => {

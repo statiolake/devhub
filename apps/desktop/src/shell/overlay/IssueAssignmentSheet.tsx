@@ -313,12 +313,19 @@ function repositoryStep(
 }
 
 /**
- * The places a repository is checked out, as rows, worktrees first.
+ * Where the work goes, as rows: the two standing answers, then the worktrees.
  *
- * Read top to bottom the list is now an answer to "where does this work go?"
- * in the order a person considers it: make a new one, use one of the ones I
- * made, or — last, because it is the one that is nobody's feature branch —
- * work in the repository itself.
+ * Read top to bottom the list is the order the decision is considered in.
+ * **Repository Root** leads, because it is the answer that needs nothing
+ * arranged — the clone is already there, and it is what Return takes when
+ * somebody opens the sheet and presses it. Then **New worktree**, for work that
+ * wants a folder of its own. Then the worktrees there already are.
+ *
+ * The first two are `pinned` and the worktrees are not, which is the picker's
+ * own distinction and not a layout trick: pinned rows are never filtered out.
+ * Typing narrows the worktrees you have, and the two answers that do not depend
+ * on having any survive whatever is typed — which is what makes "nothing
+ * matches" still a screen with answers on it.
  *
  * A row is named by its folder rather than its path. The path is what tells
  * two checkouts apart and the name is what a person recognises, and there is
@@ -328,12 +335,8 @@ function repositoryStep(
  * a person is choosing, and its path was the longest and least distinguishing
  * string on the sheet.
  */
-function checkoutRows(repository: IssueRepository): readonly PickerItem[] {
-  const root = repository.worktrees.filter((place) => place.isMainWorktree);
-  const worktrees = repository.worktrees.filter(
-    (place) => !place.isMainWorktree,
-  );
-  return [...worktrees, ...root].map((place) => ({
+function checkoutRow(place: IssueRepository["worktrees"][number]): PickerItem {
+  return {
     id: place.path,
     label: place.isMainWorktree ? "Repository Root" : folderName(place.path),
     // The path is still searched even where it is no longer the label: a
@@ -342,7 +345,14 @@ function checkoutRows(repository: IssueRepository): readonly PickerItem[] {
       place.isMainWorktree ? "repository root" : ""
     }`,
     detail: `${place.branch ?? "detached"} · ${place.path}`,
-  }));
+  };
+}
+
+/** The worktrees the repository already has, which is what the field filters. */
+function worktreeRows(repository: IssueRepository): readonly PickerItem[] {
+  return repository.worktrees
+    .filter((place) => !place.isMainWorktree)
+    .map(checkoutRow);
 }
 
 /** "the repository itself", "and 2 worktrees" — what a repository row says. */
@@ -382,9 +392,14 @@ function locationStep(
       // The repository by its folder name, as the rows below name theirs. Its
       // path is on the row that is the repository, which is where somebody who
       // wants to know exactly which clone this is will look.
-      question: `Choose the checkout of ${folderName(repository.mainWorktree)} the agent works in — the repository itself, a worktree it already has, or a new one.`,
-      items: checkoutRows(repository),
+      question: `Choose the checkout of ${folderName(repository.mainWorktree)} the agent works in — the repository itself, a new worktree, or one it already has.`,
+      items: worktreeRows(repository),
       pinned: [
+        // The repository itself leads, and so is what Return takes on a sheet
+        // nobody has typed into: it is the answer that needs nothing arranged.
+        ...repository.worktrees
+          .filter((place) => place.isMainWorktree)
+          .map(checkoutRow),
         {
           id: NEW_WORKTREE,
           label: "New worktree",
@@ -399,8 +414,10 @@ function locationStep(
               : `A branch of its own, in a folder beside ${folderName(repository.mainWorktree)}`,
         },
       ],
-      emptyNoItems: "This repository is checked out nowhere.",
-      emptyNoMatch: "Nowhere matches. A new worktree is still an answer.",
+      // About the worktrees, which are the only rows the field filters. The
+      // repository itself and a new worktree are above whatever it says.
+      emptyNoItems: "No worktrees yet.",
+      emptyNoMatch: "No worktree matches.",
     });
     return finishStep(
       services,

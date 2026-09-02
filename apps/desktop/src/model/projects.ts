@@ -47,8 +47,17 @@ export function folderName(path: string): string {
   return name.length > 0 ? name : path;
 }
 
-/** `parent` and `name`, joined the way a path is, with no doubled separator. */
+/**
+ * `parent` and `name`, joined the way a path is, with no doubled separator.
+ *
+ * A name that is already a path from the root *is* the answer, and joining it
+ * onto anything would be nonsense — `/projects//tmp/thing` names nowhere. This
+ * is the rule every path library has, and it is here because somebody who
+ * types an absolute path into the workspace picker and then asks for a new
+ * project has said exactly where they want it.
+ */
 export function joinPath(parent: string, name: string): string {
+  if (name.startsWith("/") || name.startsWith("~")) return name;
   return `${parent.replace(/\/+$/u, "")}/${name}`;
 }
 

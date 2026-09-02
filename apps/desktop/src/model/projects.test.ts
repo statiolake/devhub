@@ -52,6 +52,13 @@ describe("the name a clone lands under", () => {
     expect(joinPath("/a/b", "repo")).toBe("/a/b/repo");
     expect(joinPath("/a/b/", "repo")).toBe("/a/b/repo");
   });
+
+  it("leaves a name that is already a path alone", () => {
+    // Somebody who typed a whole path has said where they want it, and
+    // `/a/b//tmp/thing` names nowhere.
+    expect(joinPath("/a/b", "/tmp/thing")).toBe("/tmp/thing");
+    expect(joinPath("/a/b", "~/thing")).toBe("~/thing");
+  });
 });
 
 /**

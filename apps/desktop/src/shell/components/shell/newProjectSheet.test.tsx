@@ -55,6 +55,16 @@ describe("the new project sheet", () => {
     });
   });
 
+  it("carries a typed path through untouched", async () => {
+    // What was typed is not transformed on the way in. A name becomes the name
+    // of a folder where projects go; a path that already says where it wants to
+    // be is left exactly as it was typed.
+    mount("/tmp/somewhere/else");
+    await vi.waitFor(() => {
+      expect(field()).toHaveValue("/tmp/somewhere/else");
+    });
+  });
+
   it("creates what the field says when the row is taken", async () => {
     const createProject = vi.fn().mockResolvedValue(undefined);
     mount("widget", createProject);

@@ -117,12 +117,22 @@ describe("the clone sheet reading what was typed", () => {
     // Project…". They have already said what they want.
     const { cloneProject } = mount(SIGNED_IN, "devhub");
 
+    // Verbatim: the field holds what was typed, not what it resolves to. The
+    // `gh` rule is a preview on the row that clones, and it does not reach back
+    // into the field and rewrite the person's typing.
     expect(repositoryField()).toHaveValue("devhub");
     await takeCloneRow(/Clones https:\/\/github\.com\/octocat\/devhub\.git/u);
     await cloneInto();
     expect(cloneProject).toHaveBeenCalledWith(
       "https://github.com/octocat/devhub.git",
       "/projects",
+    );
+  });
+
+  it("carries a URL through untouched too", async () => {
+    mount(SIGNED_IN, "https://gitlab.example/group/thing.git");
+    expect(repositoryField()).toHaveValue(
+      "https://gitlab.example/group/thing.git",
     );
   });
 
