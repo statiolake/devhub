@@ -88,7 +88,12 @@ function repositoryUrl(remote: string | undefined): string | undefined {
  * most one and most branches name none.
  */
 function branchKey(reference: BranchReference): string {
-	return `${reference.owner}/${reference.repository}@${reference.headOwner}:${reference.branch}`;
+	// Keyed by the name on the remote, because that is the question being
+	// asked: two workspaces whose local branches are called different things
+	// but push to the same remote branch are asking about the same pull
+	// request, and one whose local name matches another's but pushes elsewhere
+	// is not.
+	return `${reference.owner}/${reference.repository}@${reference.headOwner}:${reference.remoteBranch}`;
 }
 
 /**
@@ -156,6 +161,7 @@ function branchFromLocal(
 	remote: string | undefined,
 	upstream: string | undefined,
 	branch: string | undefined,
+	pushBranch: string | undefined,
 ): BranchReading {
 	if (branch === undefined) return { kind: "none" };
 	const number = issueNumberFromBranch(branch);
@@ -193,6 +199,11 @@ function branchFromLocal(
 			repository: item.repository,
 			headOwner: head.owner,
 			branch,
+			// The name on the remote when git knows one, and the local name when
+			// it does not. One rule, and the fallback is not a guess: a branch
+			// with no push destination has not been pushed, and the name it will
+			// have the first time somebody pushes it is the one it has here.
+			remoteBranch: pushBranch ?? branch,
 			...(number === undefined ? {} : { issueNumber: number }),
 		},
 	};
@@ -214,6 +225,8 @@ interface LocalReading {
 	readonly dirty?: boolean;
 	/** Commits the branch's upstream does not have, as of the last look. */
 	readonly ahead?: number;
+	/** What the branch is called on the remote, when git knows a push target. */
+	readonly pushBranch?: string;
 	/** What `origin` calls its default branch, when the clone knows. */
 	readonly defaultBranch?: string;
 	/** The repository's page, when `origin` is one DevHub can name a page for. */
@@ -354,7 +367,17 @@ export class RepositoryStatusWatcher {
 				);
 				if (branch === entry.branch) return entry;
 				moved = true;
-				const reading = branchFromLocal(entry.remote, entry.upstream, branch);
+				// The push name belongs to the branch that has just been left, so it
+				// is dropped rather than carried onto the new one. Until the slow
+				// round reads it again the new branch is asked about under its
+				// local name — the same fallback a branch nobody has pushed gets
+				// — and the round is asked for immediately below.
+				const reading = branchFromLocal(
+					entry.remote,
+					entry.upstream,
+					branch,
+					undefined,
+				);
 				if (
 					reading.kind === "branch" &&
 					!this.known.has(branchKey(reading.reference))
@@ -368,6 +391,7 @@ export class RepositoryStatusWatcher {
 					worktree: entry.worktree,
 					remote: entry.remote,
 					upstream: entry.upstream,
+					pushBranch: undefined,
 					repositoryUrl: entry.repositoryUrl,
 					// The fast clock asks one question and this is not it; what the
 					// slow clock last saw stands until it looks again.
@@ -431,6 +455,7 @@ export class RepositoryStatusWatcher {
 					facts?.remote,
 					facts?.upstream,
 					facts?.branch,
+					facts?.pushBranch,
 				);
 				// Only where it can mean something. A workspace that is not a
 				// repository has nothing to be dirty about, and asking anyway would
@@ -451,6 +476,7 @@ export class RepositoryStatusWatcher {
 					worktree: facts?.worktree,
 					remote: facts?.remote,
 					upstream: facts?.upstream,
+					pushBranch: facts?.pushBranch,
 					repositoryUrl: repositoryUrl(facts?.remote),
 					...(reading.kind === "branch"
 						? { reference: reading.reference }
@@ -619,7 +645,27 @@ export class RepositoryStatusWatcher {
 		return {
 			sequence: this.sequence,
 			workspaces: projected,
-			diagnostic: this.lastDiagnostic,
+			// The note carries only what no row carried.
+			//
+			// It used to carry everything, so the ordinary failure — GitHub would
+			// not answer about this branch's Issue — was written twice: in red on
+			// the row it belongs to, and again in grey at the foot of the list,
+			// where it named no row at all. Two places saying one thing is worse
+			// than either alone: the second is read as a second problem, and the
+			// one that is easier to write drifts.
+			//
+			// It is not deleted, because a reason can still be collected that no
+			// row is able to show — `gh` missing on a machine whose workspaces are
+			// all on branches that name no Issue is the real one. That failure has
+			// nowhere else to go, and a failure with nowhere to go is the thing
+			// this whole file is written to avoid. So the rule is not "never show
+			// it" but "show it exactly once", and the note is where once means
+			// when no row can.
+			diagnostic:
+				this.lastDiagnostic !== undefined &&
+				projected.some((row) => row.unavailable?.reason === this.lastDiagnostic)
+					? undefined
+					: this.lastDiagnostic,
 		};
 	}
 }

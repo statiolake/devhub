@@ -34,6 +34,19 @@ export interface BranchReference {
 	readonly headOwner: string;
 	/** The short name, as git reports it: `feature/128-wip`, not a `refs/` path. */
 	readonly branch: string;
+	/**
+	 * What that branch is called on the remote, which is what a pull request's
+	 * head actually is.
+	 *
+	 * Usually the same string as `branch`, and the two are separate because
+	 * "usually" is not "always": a branch pushed with `HEAD:release-2`, or one
+	 * whose `branch.<name>.merge` was written by hand, has a different name at
+	 * each end. Searching by the local name finds nothing for exactly the people
+	 * who arranged that on purpose. It falls back to the local name for a branch
+	 * with no push destination, which is what that branch will be called the
+	 * first time anybody pushes it.
+	 */
+	readonly remoteBranch: string;
 	/** The Issue the branch names, by DevHub's convention, when it names one. */
 	readonly issueNumber?: number;
 }
@@ -101,6 +114,10 @@ const MAX_PULL_REQUESTS = 10;
  * attached to a ref in the fork. `headRefName` matches across repositories, and
  * `headRepositoryOwner` is what makes the match exact rather than a match on
  * everybody who happened to call their branch `patch-1`.
+ *
+ * The name searched for is the branch's name *on the remote*. `headRefName` is
+ * a fact about the pull request's head ref, which lives on GitHub, so a branch
+ * whose local and remote names differ is found only by the second of the two.
  *
  * One query for both cases rather than one each. Somebody working in a fork and
  * somebody working directly in a repository are asking the same question, and a
@@ -367,7 +384,7 @@ export async function readBranchStatus(
 			variables: {
 				owner: reference.owner,
 				name: reference.repository,
-				branch: reference.branch,
+				branch: reference.remoteBranch,
 				// Sent whether or not it is used: the field is skipped, the variable
 				// is still type-checked. Zero is never a real Issue number.
 				number: reference.issueNumber ?? 0,

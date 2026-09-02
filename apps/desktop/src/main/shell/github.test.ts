@@ -114,6 +114,7 @@ const REFERENCE = {
 	repository: "widget",
 	headOwner: "example",
 	branch: "feature/128-tidy",
+	remoteBranch: "feature/128-tidy",
 	issueNumber: 128,
 };
 
@@ -123,6 +124,7 @@ const FORKED = {
 	repository: "widget",
 	headOwner: "contributor",
 	branch: "feature/128-tidy",
+	remoteBranch: "feature/128-tidy",
 	issueNumber: 128,
 };
 
@@ -179,6 +181,22 @@ describe("the pull request a branch is about", () => {
 			title: "Tidy the picker",
 			state: "open",
 		});
+	});
+
+	it("searches for the branch's name on the remote, not its name here", async () => {
+		// A pull request's head is a ref on GitHub, so `headRefName` is the remote
+		// name. Somebody who pushed with `HEAD:release-2` has a branch with a
+		// different name at each end, and searching by the local one finds
+		// nothing at all — for exactly the person who arranged that deliberately.
+		const fetchMock = withPullRequests([]);
+		await readBranchStatus(
+			{ ...REFERENCE, branch: "local-name", remoteBranch: "release-2" },
+			"token",
+		);
+		const sent = JSON.parse(
+			(fetchMock.mock.calls[0]?.[1] as { body: string }).body,
+		) as { variables: Record<string, unknown> };
+		expect(sent.variables.branch).toBe("release-2");
 	});
 
 	it("asks the repository the numbers live in, by branch name", async () => {
@@ -327,6 +345,7 @@ describe("the Issue a branch names", () => {
 				repository: "widget",
 				headOwner: "example",
 				branch: "spike/rework",
+				remoteBranch: "spike/rework",
 			},
 			"token",
 		);

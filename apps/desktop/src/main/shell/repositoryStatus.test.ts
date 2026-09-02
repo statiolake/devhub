@@ -48,6 +48,7 @@ function checkedOut(branch: string | undefined) {
 		mainWorktree: "/projects/widget",
 		worktree: "/projects/widget",
 		branch,
+		pushBranch: branch,
 		remote: "github.com/example/widget",
 	});
 	// The fast clock asks the cheap question; it must agree with the slow one
@@ -143,6 +144,7 @@ describe("what a workspace is about", () => {
 				repository: "widget",
 				headOwner: "example",
 				branch: "step/feature/#1234-issue-body",
+				remoteBranch: "step/feature/#1234-issue-body",
 				issueNumber: 1234,
 			},
 			"token",
@@ -166,8 +168,11 @@ describe("what a workspace is about", () => {
 			number: 128,
 			reason: "GitHub has no issue example/widget#128.",
 		});
-		// And the Sidebar's own note still carries it, as it always did.
-		expect(status.diagnostic).toBe("GitHub has no issue example/widget#128.");
+		// And the Sidebar's note does *not* repeat it. It used to, so the ordinary
+		// failure was written twice — in red on the row it belongs to, and again
+		// in grey at the foot where it named no row at all. The second reads as a
+		// second problem.
+		expect(status.diagnostic).toBeUndefined();
 	});
 
 	it("says so on every row when `gh` is there and holds no token", async () => {
@@ -194,7 +199,8 @@ describe("what a workspace is about", () => {
 		expect(reason).toMatch(/no `gh` on DevHub's PATH/u);
 		expect(reason).toMatch(/Install the GitHub CLI/u);
 		expect(reason).not.toMatch(/gh auth login/u);
-		expect(status.diagnostic).toBe(reason);
+		// Said once. The row is showing it, so the foot stays quiet.
+		expect(status.diagnostic).toBeUndefined();
 	});
 
 	it("keeps what it last knew rather than the reason it could not refresh it", async () => {
@@ -402,9 +408,8 @@ describe("what a workspace is about", () => {
 		const row = status.workspaces[0];
 		expect(row?.unavailable?.reason).toMatch(/dubious ownership/u);
 		expect(row?.unavailable?.number).toBeUndefined();
-		// And the Sidebar's note carries it too: one workspace whose git is broken
-		// is usually every workspace.
-		expect(status.diagnostic).toMatch(/dubious ownership/u);
+		// The row is saying it, so the foot does not say it again.
+		expect(status.diagnostic).toBeUndefined();
 		expect(readBranchStatus).not.toHaveBeenCalled();
 	});
 });
@@ -441,6 +446,7 @@ describe("the pull request out from a branch", () => {
 				repository: "widget",
 				headOwner: "example",
 				branch: "spike/rework",
+				remoteBranch: "spike/rework",
 			},
 			"token",
 		);
@@ -504,6 +510,7 @@ describe("the pull request out from a branch", () => {
 			mainWorktree: "/projects/widget",
 			worktree: "/projects/widget",
 			branch: "feature/128-tidy",
+			pushBranch: "feature/128-tidy",
 			remote: "github.com/contributor/widget",
 			upstream: "github.com/example/widget",
 		});
@@ -518,8 +525,54 @@ describe("the pull request out from a branch", () => {
 				repository: "widget",
 				headOwner: "contributor",
 				branch: "feature/128-tidy",
+				remoteBranch: "feature/128-tidy",
 				issueNumber: 128,
 			},
+			"token",
+		);
+	});
+
+	it("asks about the branch's name on the remote, not its name here", async () => {
+		// `git push origin HEAD:release-2` leaves a branch called one thing here
+		// and another there. A pull request's head is the remote name, so that is
+		// what is searched for — the row is still about the local branch.
+		readRepository.mockResolvedValue({
+			mainWorktree: "/projects/widget",
+			worktree: "/projects/widget",
+			branch: "feature/128-tidy",
+			pushBranch: "release-2",
+			remote: "github.com/example/widget",
+		});
+		readBranch.mockResolvedValue("feature/128-tidy");
+		readDirty.mockResolvedValue(false);
+
+		await round();
+		expect(readBranchStatus).toHaveBeenCalledWith(
+			expect.objectContaining({
+				branch: "feature/128-tidy",
+				remoteBranch: "release-2",
+			}),
+			"token",
+		);
+	});
+
+	it("falls back to the local name for a branch nobody has pushed", async () => {
+		// No push destination, so no remote name to read. The local name is not a
+		// guess here: it is what the branch will be called the first time
+		// somebody pushes it.
+		readRepository.mockResolvedValue({
+			mainWorktree: "/projects/widget",
+			worktree: "/projects/widget",
+			branch: "spike/rework",
+			pushBranch: undefined,
+			remote: "github.com/example/widget",
+		});
+		readBranch.mockResolvedValue("spike/rework");
+		readDirty.mockResolvedValue(false);
+
+		await round();
+		expect(readBranchStatus).toHaveBeenCalledWith(
+			expect.objectContaining({ remoteBranch: "spike/rework" }),
 			"token",
 		);
 	});
@@ -531,6 +584,22 @@ describe("the pull request out from a branch", () => {
 			expect.objectContaining({ owner: "example", headOwner: "example" }),
 			"token",
 		);
+	});
+
+	it("puts a failure no row can show at the foot of the list", async () => {
+		// The reason the note is not simply deleted. Every workspace here is on a
+		// branch that names no Issue, so no row is making a claim it cannot back
+		// up and no row draws a reason — and without the note, `gh` being missing
+		// would produce a window that silently never shows a pull request.
+		checkedOut("master");
+		readGitHubToken.mockResolvedValue({
+			kind: "unrunnable",
+			reason: "there is no `gh` on DevHub's PATH",
+		});
+
+		const status = await round();
+		expect(status.workspaces[0]?.unavailable).toBeUndefined();
+		expect(status.diagnostic).toMatch(/Install the GitHub CLI/u);
 	});
 
 	it("does not say it is asking on a branch that names no Issue", async () => {

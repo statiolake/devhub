@@ -182,6 +182,23 @@ export interface RepositoryFacts {
 	readonly worktree: string;
 	/** The branch checked out here, or nothing when the head is detached. */
 	readonly branch: string | undefined;
+	/**
+	 * What this branch is called on the remote it is pushed to.
+	 *
+	 * Not always the local name. `git push origin HEAD:release-2` and a
+	 * `branch.<name>.merge` written by hand both leave a branch whose local and
+	 * remote names differ, and a pull request's head is the *remote* one — so
+	 * searching for pull requests by the local name finds nothing at all for
+	 * exactly the people who set this up deliberately.
+	 *
+	 * `%(push:strip=3)` is git's own answer to "where does this branch push
+	 * to", so it follows `push.default`, `remote.pushDefault` and
+	 * `branch.<name>.pushRemote` without any of them being read here. Absent
+	 * when the branch has no push destination — nobody has pushed it yet — and
+	 * the caller falls back to the local name, which is what the branch will be
+	 * called the first time somebody does.
+	 */
+	readonly pushBranch: string | undefined;
 	/** `origin`, normalised so an HTTPS and an SSH clone compare equal. */
 	readonly remote: RemoteIdentity | undefined;
 	/**
@@ -348,6 +365,20 @@ export async function readRepository(
 		["rev-parse", "--abbrev-ref", "HEAD"],
 		directory,
 	);
+	// The name this branch has on the remote, which is not always the one it has
+	// here. `strip=3` takes `refs/remotes/origin/` off the front, leaving the
+	// branch — including the slashes in a name like `feature/128-tidy`, because
+	// it strips leading components and not every one.
+	const pushed =
+		branch === undefined || branch === "HEAD"
+			? undefined
+			: await ask(
+					command,
+					["for-each-ref", "--format=%(push:strip=3)", `refs/heads/${branch}`],
+					directory,
+				).catch(() => undefined);
+	const pushBranch =
+		pushed !== undefined && pushed.length > 0 ? pushed : undefined;
 	const remote = await remoteNamed(command, directory, "origin");
 	const upstream = await remoteNamed(command, directory, "upstream");
 	// `origin/main`, trimmed to `main`. A clone that has never been told what
@@ -364,6 +395,7 @@ export async function readRepository(
 		defaultBranch,
 		mainWorktree,
 		worktree,
+		pushBranch,
 		upstream,
 		branch: branch === undefined || branch === "HEAD" ? undefined : branch,
 		remote,
