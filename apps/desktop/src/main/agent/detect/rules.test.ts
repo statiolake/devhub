@@ -113,9 +113,18 @@ describe("the Codex manifest", () => {
 		expect(reading.visibleBlocker).toBe(true);
 	});
 
-	it("reads a plain title as idle", () => {
-		const reading = read(CODEX, input("", "codex — devhub"));
-		expect(reading.state).toBe("idle");
+	/**
+	 * A title on its own says nothing about Codex.
+	 *
+	 * This used to assert the opposite, because the manifest did: any non-empty
+	 * title that was not a spinner meant idle. Codex does not set its title
+	 * until it has started, so that rule was reading the person's shell — and
+	 * calling a trust question a free prompt. See `codexScreens.test.ts` for
+	 * the captured screens that settled it.
+	 */
+	it("does not read a title alone as idle", () => {
+		const reading = read(CODEX, input("", "codex — a-project"));
+		expect(reading.state).toBe("unknown");
 	});
 });
 

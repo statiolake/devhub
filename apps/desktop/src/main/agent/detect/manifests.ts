@@ -384,15 +384,65 @@ export const CODEX: Manifest = {
 			not: [{ contains: ["■ conversation interrupted"] }],
 		},
 		{
-			id: "osc_title_idle",
+			/**
+			 * A numbered menu waiting for a choice, whatever it is asking.
+			 *
+			 * Added by DevHub. Codex asks more than one question this way
+			 * before it is ready — whether to install an update, whether the
+			 * directory is trusted — and the answer is a keypress. The update
+			 * one's first option runs `curl … | sh`, so a screen like this is
+			 * the last place anything should be typed.
+			 *
+			 * Recognised by its shape rather than its words, because the words
+			 * differ per question and the shape does not: a numbered list, and
+			 * a line telling the person to press Return.
+			 */
+			id: "numbered_choice_prompt",
+			state: "blocked",
+			priority: 700,
+			region: "whole_recent",
+			visibleBlocker: true,
+			contains: ["press enter to continue"],
+			all: [
+				{
+					any: [
+						{ lineRegex: [/^\s*›\s*\d+\.\s/u] },
+						{ lineRegex: [/^\s*\d+\.\s/u] },
+					],
+				},
+			],
+		},
+		{
+			/**
+			 * Idle, read off the screen — and only when Codex is really ready.
+			 *
+			 * This replaces herdr's `osc_title_idle`, which claimed idle for
+			 * *any* non-empty title that was not a spinner. Codex takes its
+			 * title over only once it has started, so before that the title is
+			 * whatever the person's shell last set — a hostname, a path — and
+			 * that rule read every startup screen, and both of the questions
+			 * above, as an Agent sitting at a free prompt. For a sidebar that
+			 * is a wrong word; for the injection queue, which sends on idle,
+			 * it is an instruction typed into a menu.
+			 *
+			 * So idle is claimed from the composer, and only with the three
+			 * things that mean it is not ready ruled out. Each of them is a
+			 * screen that was captured: a turn still running, a model still
+			 * loading, a question still waiting. When a person has typed
+			 * something themselves the placeholder is gone and this does not
+			 * match, which is the right answer twice over — DevHub does not
+			 * know that screen, and it must not type over their draft.
+			 */
+			id: "live_composer_idle",
 			state: "idle",
-			priority: 100,
-			region: "osc_title",
+			priority: 400,
+			region: "whole_recent",
 			visibleIdle: true,
-			regex: [/\S/u],
+			lineRegex: [/^\s*›\s+Ask Codex to do anything\s*$/u],
 			not: [
-				{ regex: [/(?:^| )[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏](?: |$)/u] },
-				{ contains: ["action required"] },
+				{ contains: ["esc to interrupt"] },
+				{ regex: [/\bmodel:\s+loading\b/u] },
+				{ contains: ["press enter to continue"] },
 			],
 		},
 	],
