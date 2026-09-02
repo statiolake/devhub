@@ -1660,7 +1660,7 @@ export class TmuxTerminalRuntime {
 		deadline: OperationDeadline,
 	): Promise<void> {
 		if (!existsSync(spec.root) || !statSync(spec.root).isDirectory()) {
-			throw portFailure("unavailable");
+			throw portFailure("root_missing");
 		}
 		if ((await this.markerState(socket, cancel, deadline)) !== "owned") {
 			throw portFailure("conflict");
@@ -1669,7 +1669,7 @@ export class TmuxTerminalRuntime {
 		try {
 			canonical = realpathSync(spec.root);
 		} catch (failure: unknown) {
-			throw portFailure("unavailable", { cause: failure });
+			throw portFailure("root_inaccessible", { cause: failure });
 		}
 		// The root is identity. A path that canonicalises to somewhere else is
 		// a different directory, and the session must not claim to be its.

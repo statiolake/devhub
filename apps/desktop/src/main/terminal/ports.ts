@@ -21,6 +21,12 @@ export type PortErrorCode =
 	| "cancelled"
 	| "timed_out"
 	| "incompatible"
+	// A workspace whose directory has been renamed or deleted. Its own
+	// condition, because the runtime is not the thing that is wrong: saying
+	// "the runtime is unavailable" for a removed worktree sends a reader to
+	// look at tmux, which is working perfectly.
+	| "root_missing"
+	| "root_inaccessible"
 	| "failed";
 
 /**

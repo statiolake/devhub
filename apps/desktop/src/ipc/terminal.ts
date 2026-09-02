@@ -70,6 +70,10 @@ export type TerminalErrorCode =
 	| "channel_closed"
 	| "backpressure"
 	| "runtime_unavailable"
+	| "runtime_timed_out"
+	| "runtime_incompatible"
+	| "workspace_root_missing"
+	| "workspace_root_inaccessible"
 	| "internal";
 
 export interface TerminalError {
@@ -93,6 +97,10 @@ const ERROR_SUMMARIES: Readonly<Record<TerminalErrorCode, string>> = {
 	channel_closed: "The terminal view is disconnected.",
 	backpressure: "Terminal output exceeded the view buffer.",
 	runtime_unavailable: "The terminal runtime is unavailable.",
+	runtime_timed_out: "The terminal runtime did not answer in time.",
+	runtime_incompatible: "This version of tmux is not supported.",
+	workspace_root_missing: "The workspace folder no longer exists.",
+	workspace_root_inaccessible: "The workspace folder cannot be read.",
 	internal: "The terminal runtime could not complete the request.",
 };
 

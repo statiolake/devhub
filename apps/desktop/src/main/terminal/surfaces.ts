@@ -48,9 +48,23 @@ export function terminalFailureFromPort(failure: unknown): TerminalFailure {
 	const options = { cause: failure, summary: failure.detail };
 	switch (failure.code) {
 		case "unavailable":
-		case "timed_out":
-		case "incompatible":
 			return new TerminalFailure("runtime_unavailable", options);
+		// Not "unavailable". A command that ran out of its budget says nothing
+		// about whether the runtime is there — it is usually there and busy —
+		// and a reader told the runtime is unavailable goes looking for a tmux
+		// that is running fine. The same is true of a version DevHub cannot
+		// work with: that runtime is present and answering.
+		case "timed_out":
+			return new TerminalFailure("runtime_timed_out", options);
+		case "incompatible":
+			return new TerminalFailure("runtime_incompatible", options);
+		// The workspace's own folder, not the runtime. Closing a workspace
+		// whose worktree has just been removed used to report the runtime as
+		// unavailable, which is the wrong thing to go and check.
+		case "root_missing":
+			return new TerminalFailure("workspace_root_missing", options);
+		case "root_inaccessible":
+			return new TerminalFailure("workspace_root_inaccessible", options);
 		case "conflict":
 			return new TerminalFailure("session_unavailable", options);
 		case "cancelled":

@@ -24,10 +24,12 @@ import {
 	isSafeTmuxArgument,
 	isValidSocketName,
 	requiredTerminalSet,
+	portFailure,
 	socketName,
 	terminalPreflight,
 	workspaceTarget,
 } from "../../src/main/terminal/ports";
+import { terminalFailureFromPort } from "../../src/main/terminal/surfaces";
 import {
 	TmuxTerminalRuntime,
 	isMarked,
@@ -520,5 +522,64 @@ describe("the absent-server classification", () => {
 		]) {
 			expect(isNoServerError(Buffer.from(stderr, "utf8"))).toBe(false);
 		}
+	});
+});
+
+/**
+ * What a failure is *called* when it reaches a person.
+ *
+ * This is the one place a provider-level reason becomes the wire's vocabulary,
+ * so it is the one place a condition can be given the wrong name — and a wrong
+ * name here is expensive in a way a wrong message usually is not. Somebody told
+ * "the terminal runtime is unavailable" goes and looks at tmux. If what
+ * actually happened is that their worktree folder was removed, or that a
+ * command ran out of its three seconds while the runtime answered every other
+ * one, they are looking in a place where nothing is wrong.
+ */
+describe("naming a runtime failure for the person who reads it", () => {
+	it("blames the folder, not the runtime, when the root is gone", () => {
+		expect(terminalFailureFromPort(portFailure("root_missing")).code).toBe(
+			"workspace_root_missing",
+		);
+		expect(terminalFailureFromPort(portFailure("root_inaccessible")).code).toBe(
+			"workspace_root_inaccessible",
+		);
+	});
+
+	/**
+	 * Removing a worktree deletes the folder before the workspace it held is
+	 * closed, so for a moment the workspace is open and its root is not there.
+	 * A terminal operation landing in that window is what produced the report:
+	 * an error, on a close that worked, naming the runtime.
+	 */
+	it("does not call a missing folder an unavailable runtime", () => {
+		expect(terminalFailureFromPort(portFailure("root_missing")).code).not.toBe(
+			"runtime_unavailable",
+		);
+	});
+
+	it("keeps a timeout apart from a runtime that is not there", () => {
+		expect(terminalFailureFromPort(portFailure("timed_out")).code).toBe(
+			"runtime_timed_out",
+		);
+		expect(terminalFailureFromPort(portFailure("unavailable")).code).toBe(
+			"runtime_unavailable",
+		);
+	});
+
+	it("says a version it cannot work with is a version, not an absence", () => {
+		expect(terminalFailureFromPort(portFailure("incompatible")).code).toBe(
+			"runtime_incompatible",
+		);
+	});
+
+	/** Unchanged, and the reason lifecycle code can still tell an abort apart. */
+	it("still reports a cancelled operation as a stale target", () => {
+		expect(terminalFailureFromPort(portFailure("cancelled")).code).toBe(
+			"stale_target",
+		);
+		expect(terminalFailureFromPort(portFailure("conflict")).code).toBe(
+			"session_unavailable",
+		);
 	});
 });
