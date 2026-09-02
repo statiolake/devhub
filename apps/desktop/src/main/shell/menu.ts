@@ -18,9 +18,15 @@
  * click. The keys stay with the surfaces; the menu stays the place commands
  * can be found and clicked. Quitting is the Quit item, or the Command-Q chord
  * (see `keyRouter.ts`), which is the one key DevHub does interpret.
+ *
+ * The Edit menu's items still *show* their Mac shortcuts, because that is what
+ * a role's default accelerator draws and those keys really do work — but they
+ * are not registered here either. What answers them is `editingCommands.ts`,
+ * per surface, which is why the same list builds this submenu.
  */
 
 import { electron } from "../electron.js";
+import { EDITING_COMMAND_GROUPS } from "./editingCommands.js";
 import type { AppSnapshotWire } from "../../ipc/appShell.js";
 
 export interface MenuHost {
@@ -65,6 +71,28 @@ function selectedWorkspace(
 	);
 	if (!workspace) return undefined;
 	return { id: workspace.id, label: workspace.label };
+}
+
+/**
+ * The Edit menu, read from the one list of editing commands.
+ *
+ * Written from `EDITING_COMMAND_GROUPS` rather than by hand so that the menu
+ * and the keys cannot come to disagree about what DevHub can edit with. The
+ * groups are what the separators separate, so the shape of the menu is in the
+ * list too.
+ */
+function editSubmenu(): Electron.MenuItemConstructorOptions[] {
+	return EDITING_COMMAND_GROUPS.flatMap((group, index) => [
+		...(index === 0
+			? []
+			: [{ type: "separator" } as Electron.MenuItemConstructorOptions]),
+		...group.map(
+			(command): Electron.MenuItemConstructorOptions => ({
+				role: command.role,
+				registerAccelerator: false,
+			}),
+		),
+	]);
 }
 
 function template(menuHost: MenuHost): Electron.MenuItemConstructorOptions[] {
@@ -136,17 +164,7 @@ function template(menuHost: MenuHost): Electron.MenuItemConstructorOptions[] {
 		},
 		{
 			label: "Edit",
-			submenu: [
-				{ role: "undo", registerAccelerator: false },
-				{ role: "redo", registerAccelerator: false },
-				{ type: "separator" },
-				{ role: "cut", registerAccelerator: false },
-				{ role: "copy", registerAccelerator: false },
-				{ role: "paste", registerAccelerator: false },
-				{ role: "pasteAndMatchStyle", registerAccelerator: false },
-				{ role: "delete", registerAccelerator: false },
-				{ role: "selectAll", registerAccelerator: false },
-			],
+			submenu: editSubmenu(),
 		},
 		{
 			label: "View",

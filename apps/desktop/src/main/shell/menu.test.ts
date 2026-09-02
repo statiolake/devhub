@@ -14,6 +14,8 @@ interface FakeItemOptions {
 	readonly id?: string;
 	readonly label?: string;
 	readonly type?: string;
+	readonly role?: string;
+	readonly registerAccelerator?: boolean;
 	readonly submenu?: FakeMenu;
 	readonly click?: () => void;
 }
@@ -22,12 +24,16 @@ class FakeMenuItem {
 	readonly id: string | undefined;
 	readonly label: string | undefined;
 	readonly type: string | undefined;
+	readonly role: string | undefined;
+	readonly registerAccelerator: boolean | undefined;
 	readonly submenu: FakeMenu | undefined;
 	readonly click: (() => void) | undefined;
 	constructor(options: FakeItemOptions) {
 		this.id = options.id;
 		this.label = options.label;
 		this.type = options.type;
+		this.role = options.role;
+		this.registerAccelerator = options.registerAccelerator;
 		this.submenu = options.submenu;
 		this.click = options.click;
 	}
@@ -70,6 +76,7 @@ vi.mock("../electron.js", () => ({
 }));
 
 const { installMenu } = await import("./menu.js");
+const { EDITING_COMMAND_GROUPS } = await import("./editingCommands.js");
 const { electron } = await import("../electron.js");
 
 let settingsOpened = 0;
@@ -160,5 +167,46 @@ describe("the permanent application-menu items", () => {
 		// menu to merge into, and inventing one would put a bar back.
 		electron.Menu.setApplicationMenu(null);
 		expect(applied).toBeNull();
+	});
+});
+
+describe("the Edit menu", () => {
+	/** The Edit menu of the bar DevHub built itself. */
+	function editItems() {
+		return (
+			applied?.items.find((item) => item.label === "Edit")?.submenu?.items ?? []
+		);
+	}
+
+	it("is built from the one list of editing commands", () => {
+		expect(
+			editItems()
+				.filter((item) => item.type !== "separator")
+				.map((item) => item.role),
+		).toEqual(EDITING_COMMAND_GROUPS.flat().map((command) => command.role));
+	});
+
+	it("separates the groups the list is written in", () => {
+		expect(editItems().map((item) => item.type ?? item.role)).toEqual([
+			"undo",
+			"redo",
+			"separator",
+			"cut",
+			"copy",
+			"paste",
+			"pasteAndMatchStyle",
+			"delete",
+			"selectAll",
+		]);
+	});
+
+	it("registers none of the accelerators it shows", () => {
+		// A role draws its Mac shortcut next to the item, which is right — those
+		// keys work. Registering them would take them from every surface at
+		// once; `editingCommands.ts` answers them per surface instead.
+		for (const item of editItems()) {
+			if (item.type === "separator") continue;
+			expect(item.registerAccelerator).toBe(false);
+		}
 	});
 });

@@ -12,6 +12,12 @@
  * workbench or an xterm has to be caught before that surface sees it, and only
  * the main process sits in front of every surface at once.
  *
+ * Sitting in front of every surface is also what lets this module answer the
+ * Mac's editing keys for the one surface that cannot answer them itself. See
+ * `editingCommands.ts`: Cmd+A in a Settings text box is decided here, per web
+ * contents, because a menu accelerator would decide it for the whole
+ * application and take Select All away from the editor.
+ *
  * There is no on-screen hint that the prefix is armed. The App Shell page has
  * no status bar to put one in, and the page is covered by a workbench view for
  * most of a session, so a hint drawn there would be invisible exactly when it
@@ -20,6 +26,7 @@
  */
 
 import { electron } from "../electron.js";
+import { editingCommandFor } from "./editingCommands.js";
 import { resolveChord, type ChordEffect } from "./chords.js";
 import { KeyRouter, type KeyStroke } from "./keyRouter.js";
 import type { AppSnapshotWire, NavigationContext } from "../../ipc/appShell.js";
@@ -75,11 +82,24 @@ function perform(host: ChordHost, effect: ChordEffect): void {
 function attach(contents: Electron.WebContents, host: ChordHost): void {
 	contents.on("before-input-event", (event, input) => {
 		if (input.type !== "keyDown") return;
-		const decision = router.route(strokeOf(input), Date.now());
+		const stroke = strokeOf(input);
+		const decision = router.route(stroke, Date.now());
 		// `forward` and `pass` both mean the same thing to Electron: leave the
 		// event alone and let the surface have it. They are separate decisions
 		// because they mean different things to a reader.
-		if (decision.kind === "forward" || decision.kind === "pass") return;
+		if (decision.kind === "forward") return;
+		if (decision.kind === "pass") {
+			// The chord layer wants nothing from this key. It may still be one of
+			// the Mac's editing keys landing on a surface that has no way to
+			// answer it — DevHub's own chrome — in which case this layer answers
+			// it, and only for that surface. Anywhere else the key travels on
+			// untouched, which is what leaves Cmd+A to Monaco.
+			const command = editingCommandFor(contents.getURL(), stroke);
+			if (!command) return;
+			event.preventDefault();
+			contents[command.role]();
+			return;
+		}
 		event.preventDefault();
 		if (decision.kind !== "run") return;
 		// Before the first projection there is no model to resolve against, and
