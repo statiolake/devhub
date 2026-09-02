@@ -195,6 +195,7 @@ export function WorkspacePicker({ onDismiss }: WorkspacePickerProps) {
   return (
     <Picker
       title="Open Workspace"
+      question="Which workspace should this window open? Type to search the folders your sources cover."
       placeholder="Open Workspace"
       items={pool}
       pinned={ACTIONS}

@@ -189,6 +189,7 @@ export function CloneProjectSheet({ onDismiss }: ProjectSheetProps) {
     return (
       <Picker
         title={`Clone ${name ?? "repository"}`}
+        question={`The repository is cloned and then opened as a workspace. Choose the folder ${name ?? "it"} should be cloned into.`}
         placeholder="Parent folder"
         // No starting value: the field filters the rows, so a path put there
         // first would hide the list it is meant to search. Where projects go

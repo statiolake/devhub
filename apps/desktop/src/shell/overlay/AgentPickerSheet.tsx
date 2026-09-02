@@ -30,6 +30,7 @@ export function AgentPickerSheet({
   return (
     <Picker
       title="New Agent"
+      question="Which agent profile should the new agent start from?"
       placeholder="New Agent"
       items={agentProfiles.profiles.map((profile) => {
         const kind = kindLabel(profile.kind);

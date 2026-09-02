@@ -278,6 +278,30 @@ describe("assigning an Issue", () => {
     expect(screen.getByRole("textbox")).toHaveValue("https://example.com/nope");
   });
 
+  it("says why a clone is being asked about when nobody asked for one", async () => {
+    // The sheet the complaint was about. A flow that started at "assign this
+    // Issue" puts up a list of folders, and without this the person has to
+    // work out from the rows alone that the repository was not found and that
+    // they are being asked where a clone should go.
+    mount({
+      findIssueRepositories: vi.fn().mockResolvedValue([]),
+    } as unknown as Partial<AppShellContextValue>);
+
+    await answer("Assign Issue", ISSUE);
+    await answer(/Agent for/u);
+
+    expect(
+      await screen.findByRole("dialog", { name: "Clone example/widget" }),
+    ).toBeVisible();
+    expect(
+      screen.getByText(
+        /No clone of example\/widget was found on this machine, so it has to be cloned before the agent can start\. Choose the folder to clone it into\./u,
+      ),
+    ).toBeVisible();
+    // And it is the third question, not the first: Escape has somewhere to go.
+    expect(screen.getByText("Step 3")).toBeVisible();
+  });
+
   it("takes Escape back to the question before, with its answers still true", async () => {
     const { assignIssue } = mount();
 

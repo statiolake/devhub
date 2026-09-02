@@ -152,6 +152,8 @@ function issueUrlStep(services: FlowServices): WizardStep {
     const answer = await input.ask({
       ...SHEET,
       title: "Assign Issue",
+      question:
+        "Paste the GitHub Issue to work on, then choose what the agent should do with it.",
       placeholder: "Issue URL",
       initialQuery: typed,
       items: [],
@@ -198,6 +200,7 @@ function agentStep(
     const answer = await input.ask({
       ...SHEET,
       title: `Agent for ${issueLabel(issue)}`,
+      question: `Which agent should start on ${issueLabel(issue)}?`,
       placeholder: "Agent",
       items: services.agentProfiles().profiles.map((profile) => ({
         id: profile.id,
@@ -254,13 +257,14 @@ function repositoryStep(
       () => services.findIssueRepositories(issueUrl(issue)),
     );
     if (repositories.length === 0) {
-      return cloneDestinationStep(services, issue, agent);
+      return cloneDestinationStep(services, issue, agent, nothingCloned(issue));
     }
     const only = repositories.length === 1 ? repositories[0] : undefined;
     if (only) return locationStep(services, issue, agent, only);
     const answer = await input.ask({
       ...SHEET,
       title: `Which ${issue.owner}/${issue.repository}`,
+      question: `This machine has more than one clone of ${issue.owner}/${issue.repository}. Choose the one to work in, or clone it again somewhere else.`,
       placeholder: "Repository",
       items: repositories.map((repository) => ({
         id: repository.mainWorktree,
@@ -279,18 +283,28 @@ function repositoryStep(
       emptyNoMatch: "No repository matches.",
     });
     if (answer.id === CLONE_ELSEWHERE) {
-      return cloneDestinationStep(services, issue, agent);
+      return cloneDestinationStep(
+        services,
+        issue,
+        agent,
+        `${issue.owner}/${issue.repository} is being cloned again rather than worked on where it already is.`,
+      );
     }
     const chosen = repositories.find(
       (repository) => repository.mainWorktree === answer.id,
     );
     return chosen
       ? locationStep(services, issue, agent, chosen)
-      : cloneDestinationStep(services, issue, agent);
+      : cloneDestinationStep(services, issue, agent, nothingCloned(issue));
   };
 }
 
 /** "the repository itself", "and 2 worktrees" — what a repository row says. */
+/** Why a clone is being asked about when nobody asked for one. */
+function nothingCloned(issue: IssueReference): string {
+  return `No clone of ${issue.owner}/${issue.repository} was found on this machine, so it has to be cloned before the agent can start.`;
+}
+
 function worktreeCount(places: number): string {
   const others = places - 1;
   if (others <= 0) return "No worktrees";
@@ -319,6 +333,7 @@ function locationStep(
     const answer = await input.ask({
       ...SHEET,
       title: `Where to work on ${issueLabel(issue)}`,
+      question: `Choose the checkout of ${repository.mainWorktree} the agent works in — the repository itself, a worktree it already has, or a new one.`,
       placeholder: "Where to work",
       items: repository.worktrees.map((worktree) => ({
         id: worktree.path,
@@ -356,11 +371,22 @@ function locationStep(
   };
 }
 
-/** Where a clone goes, and then the clone itself. */
+/**
+ * Where a clone goes, and then the clone itself.
+ *
+ * `reason` is the sentence that says how the person got here, and it is a
+ * parameter because there are two ways and they are not the same news. One is
+ * a step they took — "Clone…" from the list of clones. The other is a question
+ * they never asked for: the repository is nowhere on this machine, so a flow
+ * about assigning an Issue has put up a list of folders. That was the whole of
+ * the confusion this step used to cause, and a step that told both people the
+ * same thing would still be causing half of it.
+ */
 function cloneDestinationStep(
   services: FlowServices,
   issue: IssueReference,
   agent: AgentChoice,
+  reason: string,
 ): WizardStep {
   return async (input) => {
     // The folders this person already keeps projects in, and where they were
@@ -372,6 +398,7 @@ function cloneDestinationStep(
     const answer = await input.ask({
       ...SHEET,
       title: `Clone ${issue.owner}/${issue.repository}`,
+      question: `${reason} Choose the folder to clone it into.`,
       placeholder: "Parent folder",
       // No starting value: the field is a filter over the rows now, and a path
       // typed into it before anything is chosen would hide the list it is
@@ -459,6 +486,7 @@ function staleBaseStep(
     const answer = await input.ask({
       ...SHEET,
       title: "The remote could not be reached",
+      question: `${branch ?? "The branch"} cannot be started from the latest origin, because the fetch failed. Start it from the copy on this machine, or press Escape to go back.`,
       placeholder: "Start the branch anyway?",
       items: [
         {

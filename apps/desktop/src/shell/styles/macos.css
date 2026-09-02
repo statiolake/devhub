@@ -631,8 +631,8 @@
 /* ------------------------------------------------------- workspace picker */
 
 /*
- * A picker is a stack of bands: the search field, the list (or what stands in
- * for it), a note when there is one, the footer.
+ * A picker is a stack of bands: what is being asked, the search field, the list
+ * (or what stands in for it), a note when there is one, the footer.
  *
  * **A rule stands between two bands, and this is the only place that says so.**
  * Every band used to draw its own edge — the field a bottom, the list a top and
@@ -651,6 +651,47 @@
 
 .picker > * + * {
   border-top: 1px solid var(--line-soft);
+}
+
+/* The top band: the question, in the sheet's own voice. It is the first thing
+   read, so it is the first thing drawn — a person who did not open this sheet
+   themselves has nowhere else to learn what it wants. */
+.picker-header {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-3) var(--space-4);
+  background: var(--chrome);
+}
+
+/* The title and, for one question out of several, where in the flow it is. */
+.picker-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.picker-title {
+  margin: 0;
+  min-width: 0;
+  color: var(--primary);
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.picker-step {
+  flex: none;
+  color: var(--tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.picker-question {
+  margin: 0;
+  color: var(--secondary);
 }
 
 .picker-search {

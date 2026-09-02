@@ -36,6 +36,16 @@ export const WIZARD_CANCELLED = Symbol("wizard:cancelled");
 /** One question, in the terms the picker draws it. */
 export interface WizardPrompt {
   readonly title: string;
+  /**
+   * What this step is asking, and why it is being asked now.
+   *
+   * A wizard is the one place a person can arrive at a question they never
+   * went looking for — the clone folder they are shown because no clone of the
+   * repository was found — so this is where saying so matters most. It is
+   * required for the same reason it is required of the picker: a step that
+   * cannot say what it wants has not decided what it wants.
+   */
+  readonly question: string;
   readonly placeholder: string;
   readonly initialQuery?: string;
   readonly items: readonly PickerItem[];
@@ -74,13 +84,26 @@ export type WizardStep = (
   input: WizardInput,
 ) => Promise<WizardStep | undefined>;
 
+/** Everything about a question that is the runner's to know, not the step's. */
+export interface WizardAsking {
+  /** Why the last attempt at this step failed, if there was one. */
+  readonly failure: string | undefined;
+  /**
+   * Which question this is, counting from one.
+   *
+   * The depth of the stack, so going back counts *down*: the person who
+   * escapes off the third question is on the second, and a header that said
+   * "Step 4" because four questions had been drawn would be describing the
+   * drawing rather than the flow. Steps that decided for themselves are not on
+   * the stack and so are not counted — they are not questions, and Escape
+   * cannot come back to them.
+   */
+  readonly step: number;
+}
+
 /** What the runner needs from whoever is drawing. */
 export interface WizardPresenter {
-  /** Draw the prompt, with the reason the last attempt failed, if there was one. */
-  prompt(
-    prompt: WizardPrompt,
-    failure: string | undefined,
-  ): Promise<WizardAnswer>;
+  prompt(prompt: WizardPrompt, asking: WizardAsking): Promise<WizardAnswer>;
   working<T>(message: string, task: () => Promise<T>): Promise<T>;
 }
 
@@ -107,7 +130,13 @@ export async function runWizard(
     const input: WizardInput = {
       ask: async (prompt) => {
         asked = true;
-        const answer = await presenter.prompt(prompt, failure);
+        // The step is already on the stack, so its depth is the stack's — and
+        // a step that asks twice over (a URL that did not parse) is still the
+        // same question, at the same depth, which is what the person sees.
+        const answer = await presenter.prompt(prompt, {
+          failure,
+          step: walked.length,
+        });
         // The reason belongs to the attempt that failed. Once the person has
         // answered the re-asked question it is history, and carrying it into
         // the next step would report a failure that step never had.

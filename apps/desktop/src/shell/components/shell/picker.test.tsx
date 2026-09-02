@@ -31,6 +31,7 @@ function renderPicker(overrides: Partial<React.ComponentProps<typeof Picker>>) {
   render(
     <Picker
       title="New Agent"
+      question="Which agent profile should the new agent start from?"
       placeholder="New Agent"
       items={ITEMS}
       emptyNoMatch="No agent profiles match."
@@ -297,5 +298,38 @@ describe("the picker", () => {
     const { onCancel } = renderPicker({});
     fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
     expect(onCancel).toHaveBeenCalled();
+  });
+
+  it("says what it is asking, and why, above the field", () => {
+    // The whole of the complaint this answers: a sheet of folders came up on
+    // its own and there was nothing on it saying what it wanted. The heading
+    // and the sentence under it are on screen, and they are what names the
+    // dialog rather than a label only a screen reader could hear.
+    renderPicker({
+      title: "Clone owner/repo",
+      question:
+        "No clone of owner/repo was found on this machine, so it has to be cloned first.",
+    });
+
+    expect(
+      screen.getByRole("heading", { name: "Clone owner/repo" }),
+    ).toBeVisible();
+    expect(
+      screen.getByText(
+        "No clone of owner/repo was found on this machine, so it has to be cloned first.",
+      ),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("dialog", { name: "Clone owner/repo" }),
+    ).toBeVisible();
+  });
+
+  it("numbers a question that is one of several, and only then", () => {
+    renderPicker({ step: 3 });
+    expect(screen.getByText("Step 3")).toBeVisible();
+
+    cleanup();
+    renderPicker({});
+    expect(screen.queryByText(/^Step /)).toBeNull();
   });
 });

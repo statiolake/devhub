@@ -1,9 +1,10 @@
 /**
  * Open Quickly, for anything.
  *
- * One control answers every "which one?" DevHub asks: a search field, a ranked
- * list, and a footer. Typing filters, the arrows move, Return chooses, Escape
- * cancels — and Command-Return chooses the same row the other way, which is the
+ * One control answers every "which one?" DevHub asks: a heading that says what
+ * is being asked, a search field, a ranked list, and a footer. Typing filters,
+ * the arrows move, Return chooses, Escape cancels or goes back a question —
+ * and Command-Return chooses the same row the other way, which is the
  * only thing a caller may vary. There used to be two of these, a searchable one
  * for workspaces and a plain list for agent profiles, and the second was a
  * different control answering the same question with different keys. A person
@@ -28,6 +29,7 @@
 import {
   useCallback,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
@@ -83,8 +85,30 @@ export interface PickerChoice {
 }
 
 export interface PickerProps {
-  /** Names the dialog for assistive technology; not drawn. */
+  /** What is being chosen, drawn across the top and read as the dialog's name. */
   readonly title: string;
+  /**
+   * The sentence under the title: what this list is for, and — when the person
+   * did not ask for it — how they got here.
+   *
+   * Required, and deliberately. A picker that came up on its own because a
+   * repository could not be found is a list of folders with no visible reason
+   * to exist, and the person is left reverse-engineering the question from the
+   * rows. Every caller has to answer "what am I asking, and why now?", because
+   * the one that does not is exactly the one that needed to.
+   */
+  readonly question: string;
+  /**
+   * How many questions have been asked, for a picker that is one of several.
+   *
+   * There is no total. A flow's length is not known until it is walked — the
+   * Issue wizard asks about a clone only when there are several, and about
+   * where to clone only when there are none — so "Step 2 of 5" would be a
+   * number this cannot know and would sometimes be wrong. What the ordinal
+   * says is true and is the part that matters: this is not the only question,
+   * and there is something behind it for Escape to go back to.
+   */
+  readonly step?: number;
   readonly placeholder: string;
   /**
    * What the field starts with, for a question whose answer is mostly known —
@@ -143,6 +167,8 @@ const NO_PINNED: readonly PickerItem[] = [];
 
 export function Picker({
   title,
+  question,
+  step,
   placeholder,
   initialQuery = "",
   items,
@@ -159,6 +185,8 @@ export function Picker({
 }: PickerProps) {
   const [query, setQuery] = useState(initialQuery);
   const [active, setActive] = useState(0);
+  const headingId = useId();
+  const questionId = useId();
   const composing = useRef(false);
   const input = useRef<HTMLInputElement | null>(null);
   const listRef = useRef<HTMLUListElement | null>(null);
@@ -345,13 +373,37 @@ export function Picker({
         className="mac-sheet picker"
         role="dialog"
         aria-modal="true"
-        aria-label={title}
+        // Named by the heading that is now on screen rather than by a label
+        // only assistive technology could read: one title, in one place, so it
+        // cannot say one thing to the eye and another to a screen reader.
+        aria-labelledby={headingId}
+        aria-describedby={questionId}
         onKeyDown={onKeyDown}
         // A click inside the sheet acts, it does not move the keyboard. The
         // field keeps it whatever was pressed, which is what makes the sheet
         // still answer Return after a row was clicked and missed.
         onMouseDown={focusField}
       >
+        {/* What is being asked, and why. One band, not two: the title and the
+            sentence under it are one statement, and the stack's rule goes
+            between bands — a seam drawn between a heading and its own
+            subtitle would read as two unrelated things. */}
+        <header className="picker-header">
+          <div className="picker-heading">
+            <h2 className="picker-title" id={headingId}>
+              {title}
+            </h2>
+            {step === undefined ? null : (
+              <span className="picker-step mac-caption">
+                Step {String(step)}
+              </span>
+            )}
+          </div>
+          <p className="picker-question mac-caption" id={questionId}>
+            {question}
+          </p>
+        </header>
+
         <div className="picker-search">
           <SearchGlyph />
           <input

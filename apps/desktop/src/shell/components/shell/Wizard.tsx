@@ -29,6 +29,9 @@ export interface WizardProps {
 type Screen =
   | {
       readonly kind: "prompt";
+      /** Which drawing this is: the picker's identity, so a new one remounts. */
+      readonly drawing: number;
+      /** Which question this is, counting from one and counting back down. */
       readonly step: number;
       readonly prompt: WizardPrompt;
       readonly failure: string | undefined;
@@ -45,19 +48,26 @@ export function Wizard({ start, onFinished }: WizardProps) {
   const finish = useRef(onFinished);
   finish.current = onFinished;
 
+  // How many questions have been drawn, which is not the same as which
+  // question is on screen: going back re-draws an earlier one. The picker is
+  // remounted per drawing — that is what clears the field — and numbered per
+  // question, so the two are counted separately and neither has to stand in
+  // for the other.
+  const drawn = useRef(0);
+
   useEffect(() => {
     if (started.current) return;
     started.current = true;
-    let step = 0;
     void runWizard(start, {
-      prompt: (prompt, failure) =>
+      prompt: (prompt, asking) =>
         new Promise<WizardAnswer>((resolve, reject) => {
-          step += 1;
+          drawn.current += 1;
           setScreen({
             kind: "prompt",
-            step,
+            drawing: drawn.current,
+            step: asking.step,
             prompt,
-            failure,
+            failure: asking.failure,
             answer: resolve,
             back: () => {
               reject(WIZARD_BACK);
@@ -102,8 +112,10 @@ export function Wizard({ start, onFinished }: WizardProps) {
       // A new question is a new field: the remount is what clears what was
       // typed into the last one, and what puts the caret after a starting
       // value the new step supplied.
-      key={screen.step}
+      key={screen.drawing}
       title={screen.prompt.title}
+      question={screen.prompt.question}
+      step={screen.step}
       placeholder={screen.prompt.placeholder}
       initialQuery={screen.prompt.initialQuery}
       items={screen.prompt.items}

@@ -23,6 +23,7 @@ import {
 } from "./wizardFlow";
 
 const EMPTY: Omit<WizardPrompt, "title"> = {
+  question: "",
   placeholder: "",
   items: [],
   emptyNoMatch: "",
@@ -38,11 +39,15 @@ function answer(id: string): WizardAnswer {
  * was asked. `back` in the script is the person pressing Escape.
  */
 function scripted(script: readonly (string | typeof WIZARD_BACK)[]) {
-  const asked: { title: string; failure: string | undefined }[] = [];
+  const asked: {
+    title: string;
+    failure: string | undefined;
+    step: number;
+  }[] = [];
   let next = 0;
   const presenter: WizardPresenter = {
-    prompt: (prompt, failure) => {
-      asked.push({ title: prompt.title, failure });
+    prompt: (prompt, asking) => {
+      asked.push({ title: prompt.title, ...asking });
       const reply = script[next++];
       if (reply === undefined) throw new Error("the flow asked one too many");
       return reply === WIZARD_BACK
@@ -119,8 +124,8 @@ describe("the wizard runner", () => {
     await runWizard(first, presenter);
 
     expect(asked).toEqual([
-      { title: "url", failure: undefined },
-      { title: "url", failure: "Repository not found." },
+      { title: "url", failure: undefined, step: 1 },
+      { title: "url", failure: "Repository not found.", step: 1 },
     ]);
     expect(clone).toHaveBeenCalledTimes(2);
   });
@@ -143,7 +148,11 @@ describe("the wizard runner", () => {
 
     await runWizard(first, presenter);
 
-    expect(asked.at(-1)).toEqual({ title: "branch", failure: undefined });
+    expect(asked.at(-1)).toEqual({
+      title: "branch",
+      failure: undefined,
+      step: 2,
+    });
   });
 
   it("goes back past a step that decided instead of asking", async () => {

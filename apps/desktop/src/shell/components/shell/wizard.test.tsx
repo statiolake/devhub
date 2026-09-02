@@ -18,6 +18,7 @@ afterEach(cleanup);
 function prompt(title: string, ...labels: string[]) {
   return {
     title,
+    question: `Pick a ${title.toLowerCase()}.`,
     placeholder: title,
     items: labels.map((label) => ({ id: label, label })),
     emptyNoMatch: "Nothing matches.",
@@ -85,6 +86,32 @@ describe("the wizard on screen", () => {
     await vi.waitFor(() => {
       expect(onFinished).toHaveBeenCalled();
     });
+  });
+
+  it("numbers the question by where it is, so Escape counts back down", async () => {
+    // Not by how many pickers have been drawn. Going back to the first
+    // question and being told it is "Step 3" describes the drawing rather than
+    // the flow, and tells the person there is more behind them than there is.
+    const second: WizardStep = async (input) => {
+      await input.ask(prompt("Branch", "main"));
+      return undefined;
+    };
+    const first: WizardStep = async (input) => {
+      await input.ask(prompt("Agent", "Claude"));
+      return second;
+    };
+
+    render(<Wizard start={first} onFinished={vi.fn()} />);
+    expect(await screen.findByRole("dialog", { name: "Agent" })).toBeVisible();
+    expect(screen.getByText("Step 1")).toBeVisible();
+
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Enter" });
+    expect(await screen.findByRole("dialog", { name: "Branch" })).toBeVisible();
+    expect(screen.getByText("Step 2")).toBeVisible();
+
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    expect(await screen.findByRole("dialog", { name: "Agent" })).toBeVisible();
+    expect(screen.getByText("Step 1")).toBeVisible();
   });
 
   it("says what it is doing while a slow step runs", async () => {
