@@ -456,6 +456,23 @@ export function AppShellProvider({
     [applySnapshot, transport],
   );
 
+  /**
+   * Say a configured action to an agent.
+   *
+   * The snapshot comes back because queueing changes the agent's `injection`,
+   * which is what the shortcut buttons read to say a message is waiting. The
+   * failure is reported rather than swallowed: a button that silently does
+   * nothing is the worst of the three things it could do.
+   */
+  const runAgentAction = useCallback(
+    async (agentId: string, actionId: string) => {
+      const outcome = await transport.runAgentAction(agentId, actionId);
+      applySnapshot(outcome.snapshot);
+      return outcome;
+    },
+    [applySnapshot, transport],
+  );
+
   const projectDefaultDirectory = useCallback(
     () => transport.projectDefaultDirectory(),
     [transport],
@@ -580,6 +597,7 @@ export function AppShellProvider({
       pullRequestHeadBranch,
       agentActions,
       removeWorktree,
+      runAgentAction,
       findIssueRepositories,
       cloneRepository,
       listBranches,
@@ -606,6 +624,7 @@ export function AppShellProvider({
       pullRequestHeadBranch,
       agentActions,
       removeWorktree,
+      runAgentAction,
       findIssueRepositories,
       cloneRepository,
       listBranches,

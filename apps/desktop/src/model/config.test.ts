@@ -96,11 +96,22 @@ describe("parsing", () => {
     expect(codeOf(() => parseConfig(source))).toBe("invalid_date_template");
   });
 
-  it("ships one action, and it is a default rather than a fixed set", () => {
+  it("ships one action per thing that can fire one", () => {
+    // Defaults rather than a fixed set: the wording is the person's, and a file
+    // that lists actions replaces this list entirely. What DevHub decides is
+    // that these four things can happen — assigning an Issue, and the three
+    // shortcuts a workspace offers while work is under way.
     const actions = parseConfig(MINIMAL).agentActions;
-    expect(actions).toHaveLength(1);
-    expect(actions[0]?.id).toBe("issue_assignment");
-    expect(actions[0]?.display_name.length).toBeGreaterThan(0);
+    expect(actions.map((action) => action.id)).toEqual([
+      "issue_assignment",
+      "commit_changes",
+      "push_commits",
+      "open_pull_request",
+    ]);
+    for (const action of actions) {
+      expect(action.display_name.length).toBeGreaterThan(0);
+      expect(action.template.length).toBeGreaterThan(0);
+    }
   });
 
   it("takes the actions the file lists, in the file's own order", () => {

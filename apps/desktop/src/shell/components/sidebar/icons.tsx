@@ -47,6 +47,8 @@ export type GlyphName =
   | "issueClosed"
   | "pullRequest"
   | "pullRequestMerged"
+  | "commit"
+  | "push"
   | "statusWorking"
   | "statusWaiting"
   | "statusIdle"
@@ -174,6 +176,31 @@ const GLYPHS: Record<GlyphName, ReactNode> = {
     <>
       <path d="M4.25 2.75v10.5M11.75 13.25V7.6a2.35 2.35 0 0 0-2.35-2.35H5.6" />
       <circle className="glyph-fill" cx="4.25" cy="5.25" r="1.35" />
+    </>
+  ),
+
+  /* The three shortcuts a workspace offers while work is under way. They are
+     drawn on the same grid as everything else here because they appear beside
+     a label rather than alone, and a mark that disagreed with the column would
+     be the one thing in the window drawn to a different rule.
+
+     Commit: a node on a line, which is what a commit is in every graph git has
+     ever been drawn as. Push: the same line with the node leaving it, arrow
+     first — the difference between the two is direction, which is exactly the
+     difference between the two acts. There is no third: opening a pull request
+     is `pullRequest`, the mark the Sidebar already uses for one. */
+  commit: (
+    <>
+      <path d="M8 2.75v2.6M8 10.65v2.6" />
+      <circle cx="8" cy="8" r="2.65" />
+    </>
+  ),
+
+  push: (
+    <>
+      <path d="M8 13.25V5.4" />
+      <path d="M4.9 8.5 8 5.4l3.1 3.1" />
+      <path d="M4.4 2.75h7.2" />
     </>
   ),
 

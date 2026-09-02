@@ -1,0 +1,186 @@
+// @vitest-environment jsdom
+
+/**
+ * The shortcuts as a person meets them: what is on screen, what pressing one
+ * does, and what the pane says afterwards.
+ *
+ * Pressing a shortcut does not run git and does not talk to GitHub. It asks
+ * main to say a sentence to the agent, and the sentence waits for the agent's
+ * screen to settle — so what this pins is that the button *queues* and that the
+ * pane says the message is waiting rather than claiming it was sent.
+ */
+
+import "@testing-library/jest-dom/vitest";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type { AgentSnapshot } from "../../../ipc/appShell";
+import type { WorkspaceRepositoryWire } from "../../../ipc/contract";
+import type { AppShellContextValue } from "../../useAppShell";
+import { AppShellContext } from "../../useAppShell";
+import { AgentShortcuts } from "./AgentShortcuts";
+
+afterEach(cleanup);
+
+const ACTIONS = [
+  {
+    id: "issue_assignment",
+    displayName: "Work on the Issue",
+    trigger: "issue",
+  },
+  {
+    id: "commit_changes",
+    displayName: "Commit the changes",
+    trigger: "commit",
+  },
+  { id: "push_commits", displayName: "Push the commits", trigger: "push" },
+  {
+    id: "open_pull_request",
+    displayName: "Open a pull request",
+    trigger: "pull_request",
+  },
+] as const;
+
+function agent(over: Partial<AgentSnapshot> = {}): AgentSnapshot {
+  return {
+    id: "a-1",
+    displayName: "Claude 1",
+    workspaceId: "w-1",
+    status: "idle",
+    injection: {
+      queued: 0,
+      waitingFor: "nothing_queued",
+      lastFailure: undefined,
+    },
+    ...over,
+  } as unknown as AgentSnapshot;
+}
+
+function mount(
+  repository: WorkspaceRepositoryWire | undefined,
+  over: Partial<AgentSnapshot> = {},
+) {
+  const runAgentAction = vi.fn(() => Promise.resolve({}));
+  const reportFailure = vi.fn();
+  const value = {
+    agentActions: () => Promise.resolve(ACTIONS),
+    runAgentAction,
+    reportFailure,
+  } as unknown as AppShellContextValue;
+  render(
+    <AppShellContext.Provider value={value}>
+      <AgentShortcuts agent={agent(over)} repository={repository} />
+    </AppShellContext.Provider>,
+  );
+  return { runAgentAction, reportFailure };
+}
+
+const DIRTY: WorkspaceRepositoryWire = {
+  workspaceId: "w-1",
+  branch: "feature/128-tidy",
+  defaultBranch: "main",
+  dirty: true,
+  ahead: 0,
+};
+
+describe("the shortcut buttons", () => {
+  it("draws the wording the person configured, not DevHub's own", async () => {
+    // The whole extension point: DevHub decides there is a commit shortcut,
+    // the configuration decides what it is called and what it says.
+    mount(DIRTY);
+    expect(
+      await screen.findByRole("button", { name: /Commit the changes/u }),
+    ).toBeInTheDocument();
+  });
+
+  it("draws nothing when no condition holds", async () => {
+    mount({ ...DIRTY, dirty: false, defaultBranch: "feature/128-tidy" });
+    await waitFor(() => {
+      expect(document.querySelector(".agent-shortcuts")).toBeNull();
+    });
+  });
+
+  it("queues the action rather than running anything", async () => {
+    const { runAgentAction } = mount(DIRTY);
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Commit the changes/u }),
+    );
+    expect(runAgentAction).toHaveBeenCalledWith("a-1", "commit_changes");
+  });
+
+  it("reports a refusal instead of doing nothing visible", async () => {
+    // A button that silently fails is the worst of the three things it could
+    // do, so the failure goes to the one place the shell shows them.
+    const refusal = new Error("That agent is not running.");
+    const { runAgentAction, reportFailure } = mount(DIRTY);
+    runAgentAction.mockReturnValue(Promise.reject(refusal) as never);
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Commit the changes/u }),
+    );
+    await waitFor(() => {
+      expect(reportFailure).toHaveBeenCalledWith(refusal);
+    });
+  });
+
+  it("is offered but disabled for an agent whose screen nothing can read", async () => {
+    // Cursor, and anything else with no manifest. There is no idle to wait for,
+    // so a message queued for it would never go — and a button that vanished
+    // for that reason would take the explanation with it.
+    mount(DIRTY, { status: "unknown" });
+    const button = await screen.findByRole("button", {
+      name: /Commit the changes/u,
+    });
+    expect(button).toBeDisabled();
+    expect(button.getAttribute("title")).toMatch(/cannot read this agent/u);
+  });
+
+  it("says a message is waiting rather than that it was sent", async () => {
+    // It is queued for a settled idle screen. Claiming it was sent would be a
+    // claim about where the text is that the queue can contradict.
+    mount(DIRTY, {
+      injection: {
+        queued: 1,
+        waitingFor: "agent_busy",
+        lastFailure: undefined,
+      },
+    } as Partial<AgentSnapshot>);
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      /Waiting for a prompt/u,
+    );
+  });
+
+  it("keeps a failed send on screen", async () => {
+    mount(DIRTY, {
+      injection: {
+        queued: 0,
+        waitingFor: "nothing_queued",
+        lastFailure: "The pane closed before the text could be typed.",
+      },
+    } as Partial<AgentSnapshot>);
+    expect(await screen.findByRole("alert")).toHaveTextContent(/pane closed/u);
+  });
+
+  it("offers no shortcut the configuration has no wording for", async () => {
+    // A person who deleted the commit action has decided DevHub should not
+    // offer it. A button with nothing to say would fail when pressed.
+    const value = {
+      agentActions: () =>
+        Promise.resolve(ACTIONS.filter((a) => a.trigger !== "commit")),
+      runAgentAction: vi.fn(),
+      reportFailure: vi.fn(),
+    } as unknown as AppShellContextValue;
+    render(
+      <AppShellContext.Provider value={value}>
+        <AgentShortcuts agent={agent()} repository={DIRTY} />
+      </AppShellContext.Provider>,
+    );
+    await waitFor(() => {
+      expect(document.querySelector(".agent-shortcuts")).toBeNull();
+    });
+  });
+});

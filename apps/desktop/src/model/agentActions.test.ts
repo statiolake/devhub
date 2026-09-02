@@ -10,17 +10,43 @@ import { describe, expect, it } from "vitest";
 import {
   ACTION_VARIABLES,
   applySkillNotation,
-  DEFAULT_ACTION_TEMPLATE,
+  BUILT_IN_ACTIONS,
   fillVariables,
   renderAgentAction,
+  triggerOf,
 } from "./agentActions.js";
 
-describe("the action DevHub ships", () => {
-  it("uses every variable an action is offered", () => {
+describe("the actions DevHub ships", () => {
+  it("uses every variable its own trigger is offered", () => {
     // A variable the Settings note advertises and the shipped wording never
-    // uses is one it invites somebody to type where it means nothing.
-    for (const name of ACTION_VARIABLES) {
-      expect(DEFAULT_ACTION_TEMPLATE).toContain(`{{${name}}}`);
+    // uses is one it invites somebody to type where it means nothing. Read per
+    // trigger now that there is more than one: a commit button is not offered
+    // an Issue URL, and would have no way to fill one in.
+    for (const action of BUILT_IN_ACTIONS) {
+      for (const name of ACTION_VARIABLES[action.trigger]) {
+        expect(action.template).toContain(`{{${name}}}`);
+      }
+    }
+  });
+
+  it("says what fires each of them, and calls anything else an Issue action", () => {
+    // The extension point: an id DevHub has never heard of is wording somebody
+    // wrote for the Issue flow, which is the one trigger that has a picker.
+    expect(triggerOf("issue_assignment")).toBe("issue");
+    expect(triggerOf("commit_changes")).toBe("commit");
+    expect(triggerOf("push_commits")).toBe("push");
+    expect(triggerOf("open_pull_request")).toBe("pull_request");
+    expect(triggerOf("review_it_instead")).toBe("issue");
+  });
+
+  it("ships exactly one action per shortcut", () => {
+    // Each of the three buttons fires one action and has no picker, so a
+    // second action with the same trigger would be a message that can never
+    // be sent.
+    for (const trigger of ["commit", "push", "pull_request"] as const) {
+      expect(
+        BUILT_IN_ACTIONS.filter((action) => action.trigger === trigger),
+      ).toHaveLength(1);
     }
   });
 });

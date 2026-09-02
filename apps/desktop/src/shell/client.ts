@@ -71,6 +71,7 @@ export interface AppShellClient {
   pullRequestHeadBranch(url: string): Promise<string>;
   agentActions(): Promise<readonly AgentActionWire[]>;
   removeWorktree(workspaceId: string, force: boolean): Promise<AppOutcome>;
+  runAgentAction(agentId: string, actionId: string): Promise<AppOutcome>;
   findIssueRepositories(issueUrl: string): Promise<readonly IssueRepository[]>;
   cloneRepository(url: string, parentDirectory: string): Promise<string>;
   listBranches(directory: string): Promise<readonly string[]>;
@@ -140,6 +141,8 @@ export function createShellClient(api: DevhubApi = devhub()): AppShellClient {
     agentActions: () => api.agentActions(),
     removeWorktree: (workspaceId, force) =>
       api.removeWorktree(workspaceId, force),
+    runAgentAction: (agentId, actionId) =>
+      api.runAgentAction(agentId, actionId),
     findIssueRepositories: (issueUrl) => api.findIssueRepositories(issueUrl),
     cloneRepository: (url, parentDirectory) =>
       api.cloneRepository(url, parentDirectory),

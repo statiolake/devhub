@@ -24,6 +24,7 @@ import { closeDiagnosticLabel } from "./diagnosticLabel";
 import { Failure, Waiting } from "./SurfaceState";
 import { useRestartingEditors } from "./workbenchDialogs";
 import { TerminalSurface } from "../../terminal/TerminalSurface";
+import { AgentShortcuts } from "./AgentShortcuts";
 
 export interface SurfaceViewportProps {
   readonly snapshot: AppSnapshot;
@@ -172,7 +173,20 @@ function AgentPane({
   readonly activeKey: string | undefined;
   readonly presentation: "full" | "beside";
 }) {
+  const { repositoryStatus } = useAppShell();
   const pool = useMemo(() => runningAgentSurfaces(snapshot), [snapshot]);
+  // The shortcuts belong to the Agent on screen and to no other. The pool
+  // keeps every running Agent mounted so that coming back to one is unhiding a
+  // pane, and a set of buttons per hidden pane would be three more things
+  // reading the projection for a workspace nobody is looking at.
+  const active = snapshot.workspaces
+    .flatMap((workspace) => workspace.agents)
+    .find((agent) => `agent:${agent.id}` === activeKey);
+  const repository = active
+    ? repositoryStatus.workspaces.find(
+        (entry) => entry.workspaceId === active.workspaceId,
+      )
+    : undefined;
   return (
     <div
       className="agent-pane"
@@ -196,6 +210,9 @@ function AgentPane({
           />
         </div>
       ))}
+      {active ? (
+        <AgentShortcuts agent={active} repository={repository} />
+      ) : null}
     </div>
   );
 }

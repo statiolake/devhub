@@ -30,6 +30,7 @@ import type {
 	WorkspaceRepositoryWire,
 } from "../../ipc/contract.js";
 import {
+	readAhead,
 	readBranch,
 	readDirty,
 	readRepository,
@@ -211,6 +212,10 @@ interface LocalReading {
 	readonly upstream?: RemoteIdentity;
 	/** Work here that removing the folder would destroy, as of the last look. */
 	readonly dirty?: boolean;
+	/** Commits the branch's upstream does not have, as of the last look. */
+	readonly ahead?: number;
+	/** What `origin` calls its default branch, when the clone knows. */
+	readonly defaultBranch?: string;
 	/** The repository's page, when `origin` is one DevHub can name a page for. */
 	readonly repositoryUrl?: string;
 	/** What GitHub is asked about, when there is a GitHub repository to ask. */
@@ -367,6 +372,8 @@ export class RepositoryStatusWatcher {
 					// The fast clock asks one question and this is not it; what the
 					// slow clock last saw stands until it looks again.
 					dirty: entry.dirty,
+					ahead: entry.ahead,
+					defaultBranch: entry.defaultBranch,
 					...(reading.kind === "branch"
 						? { reference: reading.reference }
 						: {}),
@@ -431,10 +438,15 @@ export class RepositoryStatusWatcher {
 				const dirty = facts
 					? await readDirty(command, workspace.root)
 					: undefined;
+				const ahead = facts
+					? await readAhead(command, workspace.root)
+					: undefined;
 				return {
 					workspace,
 					branch: facts?.branch,
 					dirty,
+					ahead,
+					defaultBranch: facts?.defaultBranch,
 					mainWorktree: facts?.mainWorktree,
 					worktree: facts?.worktree,
 					remote: facts?.remote,
@@ -575,6 +587,8 @@ export class RepositoryStatusWatcher {
 				worktree: entry.worktree,
 				repositoryUrl: entry.repositoryUrl,
 				dirty: entry.dirty,
+				ahead: entry.ahead,
+				defaultBranch: entry.defaultBranch,
 				issue: status?.issue,
 				pullRequest: status?.pullRequest,
 				// Known which Issue, no answer yet, nothing wrong: the row says it

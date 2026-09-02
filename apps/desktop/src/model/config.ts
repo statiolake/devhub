@@ -26,11 +26,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import {
-  DEFAULT_ACTION_ID,
-  DEFAULT_ACTION_NAME,
-  DEFAULT_ACTION_TEMPLATE,
-} from "./agentActions.js";
+import { BUILT_IN_ACTIONS } from "./agentActions.js";
 import { dateTemplateBracketsBalance } from "./dateTemplate.js";
 import { isValidFontFamily } from "./fontFamily.js";
 import {
@@ -398,22 +394,21 @@ export function defaultAgentProfiles(): ConfiguredAgentProfile[] {
 }
 
 /**
- * The one action DevHub ships.
+ * The actions DevHub ships: the Issue flow's, and one per shortcut button.
  *
- * A default, not a fixed set. Actions are how a person starts an agent on an
- * Issue — implement it, review it, whatever else they do — so the list is
- * theirs to write, and this is a first entry to edit rather than a rule. Every
- * action has the same trigger (the Issue flow asks which one), which is what
- * gives an action somebody invented somewhere to be chosen from.
+ * Defaults, not a fixed set. What fires an action is DevHub's and what it says
+ * is the person's, and this list is where the second half starts — so a file
+ * that mentions no actions has none, which is somebody who has decided DevHub
+ * should say nothing. An action whose id DevHub does not ship is an Issue
+ * action, which is how "implement it" and "review it" both get somewhere to be
+ * chosen from.
  */
 export function defaultAgentActions(): ConfiguredAgentAction[] {
-  return [
-    {
-      id: DEFAULT_ACTION_ID,
-      display_name: DEFAULT_ACTION_NAME,
-      template: DEFAULT_ACTION_TEMPLATE,
-    },
-  ];
+  return BUILT_IN_ACTIONS.map((action) => ({
+    id: action.id,
+    display_name: action.displayName,
+    template: action.template,
+  }));
 }
 
 export function defaultConfig(): Config {

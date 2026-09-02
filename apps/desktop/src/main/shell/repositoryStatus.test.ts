@@ -20,6 +20,7 @@ import type { RepositoryStatusWire } from "../../ipc/contract.js";
 const readRepository = vi.fn();
 const readBranch = vi.fn();
 const readDirty = vi.fn();
+const readAhead = vi.fn();
 const readBranchStatus = vi.fn();
 const readGitHubToken = vi.fn();
 
@@ -27,6 +28,7 @@ vi.mock("./git.js", () => ({
 	readRepository: (...args: unknown[]) => readRepository(...args),
 	readBranch: (...args: unknown[]) => readBranch(...args),
 	readDirty: (...args: unknown[]) => readDirty(...args),
+	readAhead: (...args: unknown[]) => readAhead(...args),
 }));
 vi.mock("./github.js", async (importOriginal) => ({
 	...(await importOriginal<Record<string, unknown>>()),
@@ -52,6 +54,7 @@ function checkedOut(branch: string | undefined) {
 	// until a test says otherwise.
 	readBranch.mockResolvedValue(branch);
 	readDirty.mockResolvedValue(false);
+	readAhead.mockResolvedValue(0);
 }
 
 function watcher(published: RepositoryStatusWire[]) {
@@ -76,6 +79,7 @@ async function round(): Promise<RepositoryStatusWire> {
 }
 
 beforeEach(() => {
+	readAhead.mockResolvedValue(0);
 	readGitHubToken.mockResolvedValue({ kind: "token", token: "token" });
 	readBranchStatus.mockImplementation(
 		(reference: {
@@ -505,6 +509,7 @@ describe("the pull request out from a branch", () => {
 		});
 		readBranch.mockResolvedValue("feature/128-tidy");
 		readDirty.mockResolvedValue(false);
+		readAhead.mockResolvedValue(0);
 
 		await round();
 		expect(readBranchStatus).toHaveBeenCalledWith(

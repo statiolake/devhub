@@ -130,6 +130,12 @@ const devhub: DevhubApi = {
 			workspaceId,
 			force,
 		) as Promise<AppOutcome>,
+	runAgentAction: (agentId: string, actionId: string) =>
+		ipcRenderer.invoke(
+			CHANNELS.runAgentAction,
+			agentId,
+			actionId,
+		) as Promise<AppOutcome>,
 	agentActions: () =>
 		ipcRenderer.invoke(CHANNELS.agentActions) as Promise<
 			readonly AgentActionWire[]

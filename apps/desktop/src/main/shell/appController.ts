@@ -168,7 +168,7 @@ import {
 } from "./github.js";
 import { gitHubItemUrl, parseGitHubItemUrl } from "../../model/github.js";
 import type { GitHubItem } from "../../model/github.js";
-import { renderAgentAction } from "../../model/agentActions.js";
+import { renderAgentAction, triggerOf } from "../../model/agentActions.js";
 import { RepositoryStatusWatcher } from "./repositoryStatus.js";
 import { installMenu, refreshMenu } from "./menu.js";
 import { installKeyboard } from "./keyboard.js";
@@ -1270,6 +1270,60 @@ export class AppController {
 			workspaceId: workspace.id,
 		});
 		return outcomeWire(settled, this.coordinator.readiness);
+	}
+
+	/**
+	 * Say one of the configured actions to an Agent that is already running.
+	 *
+	 * The same machinery as the Issue flow's first message and deliberately so:
+	 * the wording is the person's, the variables are filled in here, the skill
+	 * notation is translated for whichever agent is being spoken to, and the
+	 * text is queued for the idle detector rather than typed at a terminal that
+	 * may be mid-output. What differs is only what fired it.
+	 *
+	 * Every way this can fail is a refusal with words, because the alternative
+	 * is a button that does nothing and says nothing. An agent that has gone, an
+	 * id the config does not mention — a person editing `agent_actions` by hand
+	 * can produce that — and a workspace whose branch cannot be read all say so
+	 * where the button was pressed.
+	 */
+	private async runAgentAction(
+		agentId: string,
+		actionId: string,
+	): Promise<AppOutcomeWire> {
+		const agent = this.coordinator.model.workspaces
+			.flatMap((workspace) => workspace.agents)
+			.find((candidate) => candidate.id === agentId);
+		if (!agent) throw workspaceFailure("That agent is not running.");
+		const action = this.config?.agentActions.find(
+			(candidate) => candidate.id === actionId,
+		);
+		if (!action) {
+			throw workspaceFailure(
+				`There is no agent action called \`${actionId}\` in the configuration.`,
+			);
+		}
+		// The branch is the one variable a shortcut knows, and it comes from the
+		// same projection the buttons were drawn from — so the message names the
+		// branch the person was looking at when they pressed it.
+		const branch = this.lastRepositoryStatus.workspaces.find(
+			(entry) => entry.workspaceId === agent.workspaceId,
+		)?.branch;
+		agents()?.queueInjection(
+			agent.id,
+			renderAgentAction(
+				action.template,
+				branch === undefined ? {} : { BRANCH: branch },
+				agent.profile.kind,
+			),
+		);
+		// Queueing changed the Agent's `injection`, which is what the buttons read
+		// to say a message is waiting — so the page is handed the snapshot that
+		// says so, rather than finding out on the next poll.
+		return outcomeWire(
+			{ kind: "updated", snapshot: this.coordinator.model.snapshot() },
+			this.coordinator.readiness,
+		);
 	}
 
 	/**
@@ -2747,6 +2801,18 @@ export class AppController {
 		// Destructive. `force` says the page already asked and was told to go
 		// ahead; without it git is left to refuse, which is what happens for the
 		// removals that were never worth asking about.
+		// The shortcut buttons. A refusal reaches the page as words, because a
+		// button that quietly does nothing is the one outcome nobody can act on.
+		handle(
+			CHANNELS.runAgentAction,
+			async (_event, agentId: string, actionId: string) => {
+				try {
+					return await this.runAgentAction(agentId, actionId);
+				} catch (error: unknown) {
+					throw asIpcError(errorWire(error));
+				}
+			},
+		);
 		handle(
 			CHANNELS.removeWorktree,
 			async (_event, workspaceId: string, force: boolean) => {
@@ -2759,6 +2825,7 @@ export class AppController {
 		);
 		handle(CHANNELS.agentActions, () =>
 			(this.config?.agentActions ?? []).map((action) => ({
+				trigger: triggerOf(action.id),
 				id: action.id,
 				displayName: action.display_name,
 			})),

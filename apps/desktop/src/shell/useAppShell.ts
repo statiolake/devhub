@@ -76,6 +76,11 @@ export interface AppShellContextValue {
     workspaceId: string,
     force: boolean,
   ) => Promise<AppOutcome>;
+  /** Say one of the configured actions to a running agent. Queued, not sent. */
+  readonly runAgentAction: (
+    agentId: string,
+    actionId: string,
+  ) => Promise<AppOutcome>;
   /**
    * The four steps of assigning an Issue. Each throws what to do about it when
    * it fails, because each is answered by re-asking the question that led to

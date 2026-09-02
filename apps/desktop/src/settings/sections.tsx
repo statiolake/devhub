@@ -41,7 +41,9 @@ import type {
 import { FONT_FAMILY_RULE, isValidFontFamily } from "../model/fontFamily";
 import {
   ACTION_VARIABLES,
+  BUILT_IN_ACTIONS,
   DEFAULT_ACTION_TEMPLATE,
+  triggerOf,
 } from "../model/agentActions";
 import { Collection } from "./Collection";
 import {
@@ -1225,15 +1227,35 @@ export function ActionsSection({
 
           <Group
             heading="Message"
-            note={`${ACTION_VARIABLES.map((name) => `{{${name}}}`).join(
-              " and ",
-            )} are replaced when it is sent. A line starting $name runs a skill: Claude Code is sent /name, Codex is sent $name, and an agent DevHub has no manifest for is sent the line as written.`}
+            // Which names are offered depends on what fires this action, and
+            // it has to: an action fired from a workspace row knows the branch
+            // it is standing on and has no Issue to name, so advertising
+            // `{{ISSUE_URL}}` on it would be inviting somebody to type a hole
+            // that is never filled. An action with no variables at all says so
+            // rather than printing an empty sentence.
+            note={`${
+              ACTION_VARIABLES[triggerOf(action.id)].length === 0
+                ? "This message takes no variables."
+                : `${ACTION_VARIABLES[triggerOf(action.id)]
+                    .map((name) => `{{${name}}}`)
+                    .join(" and ")} ${
+                    ACTION_VARIABLES[triggerOf(action.id)].length === 1
+                      ? "is"
+                      : "are"
+                  } replaced when it is sent.`
+            } A line starting $name runs a skill: Claude Code is sent /name, Codex is sent $name, and an agent DevHub has no manifest for is sent the line as written.`}
           >
             <WideRow>
               <TextArea
                 label="Agent action message"
                 value={action.template}
-                placeholder={DEFAULT_ACTION_TEMPLATE}
+                // The wording DevHub ships for *this* action, so an emptied
+                // message shows what it would go back to rather than what the
+                // Issue flow's would.
+                placeholder={
+                  BUILT_IN_ACTIONS.find((built) => built.id === action.id)
+                    ?.template ?? DEFAULT_ACTION_TEMPLATE
+                }
                 onCommit={(template) => {
                   replace({ ...action, template });
                 }}

@@ -24,14 +24,24 @@
 import type { AgentProfileKind } from "./config.js";
 
 /**
- * The action DevHub ships, and the id it ships it under.
+ * What makes DevHub say an action.
  *
- * One, and it is a *default* rather than a fixed set: a person who works two
- * ways — implement it, review it — writes two actions and picks between them
- * where the flow asks. What makes that possible is that the actions all have
- * the same trigger. The Issue flow asks which one to start with, so an action
- * somebody invents has somewhere to be chosen, which is exactly what a name
- * DevHub had never heard of used to lack.
+ * There used to be one trigger — the Issue flow — and so there was one list of
+ * actions and one set of variables, and neither had to say which was which.
+ * There are four now: assigning an Issue, and the three shortcuts a workspace
+ * offers while work is under way. A trigger is the thing that fires, the
+ * wording is the thing a person owns, and the pair is the whole extension
+ * point.
+ *
+ * `issue` is also what an action DevHub has never heard of is treated as.
+ * A person who works two ways — implement it, review it — writes a second
+ * action and picks between them where the Issue flow asks; the shortcuts have
+ * no picker, because a button *is* the choice.
+ */
+export type AgentActionTrigger = "issue" | "commit" | "push" | "pull_request";
+
+/**
+ * The action DevHub ships for the Issue flow, and the id it ships it under.
  */
 export const DEFAULT_ACTION_ID = "issue_assignment";
 
@@ -56,14 +66,100 @@ export const DEFAULT_ACTION_NAME = "Work on the Issue";
 export const DEFAULT_ACTION_TEMPLATE = ISSUE_ASSIGNMENT_TEMPLATE;
 
 /**
- * The names a template may use, without the braces.
+ * The names a template may use, without the braces, per trigger.
  *
- * Every action is started from an Issue, so every action gets the same two.
- * They are listed here rather than per action because there is one trigger:
- * the day a second trigger exists, this becomes a property of it and not of
- * the wording somebody wrote.
+ * A property of the trigger and not of the wording, which is what the single
+ * global list was waiting to become: the Issue flow knows a URL and a number,
+ * and a shortcut fired from a workspace row knows the branch it is standing on.
+ * Offering `{{ISSUE_URL}}` on a commit button would be offering a hole that is
+ * never filled.
+ *
+ * Committing is offered nothing, and that is not an oversight: it happens
+ * entirely inside the working tree, and the branch's name is not a fact the
+ * sentence needs. Naming a variable that the shipped wording has no use for
+ * would be advertising a hole for somebody to type.
  */
-export const ACTION_VARIABLES: readonly string[] = ["ISSUE_URL", "ISSUE_NO"];
+export const ACTION_VARIABLES: Readonly<
+  Record<AgentActionTrigger, readonly string[]>
+> = {
+  issue: ["ISSUE_URL", "ISSUE_NO"],
+  commit: [],
+  push: ["BRANCH"],
+  pull_request: ["BRANCH"],
+};
+
+/**
+ * The wording DevHub ships for the three shortcuts.
+ *
+ * Short, and in the language the Issue default is written in, because they say
+ * one thing each and the person reading them is an agent already standing in
+ * the repository. Everything about *when* to offer them is decided by the
+ * workspace's own state, so none of these has to describe a condition — the
+ * button was only drawn because the condition held.
+ */
+const COMMIT_TEMPLATE = `ここまでの変更をコミットしてください。
+関連する変更ごとに、意味のある単位に分けてください。
+`;
+
+const PUSH_TEMPLATE = `コミット済みの変更を {{BRANCH}} にプッシュしてください。
+`;
+
+const PULL_REQUEST_TEMPLATE = `{{BRANCH}} からプルリクエストを作成してください。
+タイトルと説明は、このブランチでの変更内容から書いてください。
+`;
+
+/**
+ * Every action DevHub ships, with what fires it.
+ *
+ * The list the config's defaults are built from and the list a trigger is
+ * looked up in, so a built-in action cannot exist in one and not the other.
+ * An id that is not here is an Issue action somebody wrote, which is the
+ * extension point working as intended.
+ */
+export const BUILT_IN_ACTIONS: readonly {
+  readonly id: string;
+  readonly displayName: string;
+  readonly template: string;
+  readonly trigger: AgentActionTrigger;
+}[] = [
+  {
+    id: DEFAULT_ACTION_ID,
+    displayName: "Work on the Issue",
+    template: ISSUE_ASSIGNMENT_TEMPLATE,
+    trigger: "issue",
+  },
+  {
+    id: "commit_changes",
+    displayName: "Commit the changes",
+    template: COMMIT_TEMPLATE,
+    trigger: "commit",
+  },
+  {
+    id: "push_commits",
+    displayName: "Push the commits",
+    template: PUSH_TEMPLATE,
+    trigger: "push",
+  },
+  {
+    id: "open_pull_request",
+    displayName: "Open a pull request",
+    template: PULL_REQUEST_TEMPLATE,
+    trigger: "pull_request",
+  },
+];
+
+/**
+ * What fires this action.
+ *
+ * An id DevHub does not ship is an Issue action: that is the one trigger a
+ * person can write for, and treating an unknown id as anything else would put
+ * somebody's wording behind a button that never appears.
+ */
+export function triggerOf(id: string): AgentActionTrigger {
+  return (
+    BUILT_IN_ACTIONS.find((action) => action.id === id)?.trigger ?? "issue"
+  );
+}
 
 /**
  * `{{NAME}}`, replaced.

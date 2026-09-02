@@ -66,11 +66,23 @@ export type GitHubLoginWire =
 	| { readonly kind: "login"; readonly login: string }
 	| { readonly kind: "unknown"; readonly reason: string };
 
-/** One way of starting an agent on an Issue, as the flow offers it. */
+/** One thing DevHub can say to an agent, and what makes it say it. */
 export interface AgentActionWire {
 	readonly id: string;
 	readonly displayName: string;
+	/**
+	 * What fires it. The Issue flow offers every `issue` action as a choice; the
+	 * three shortcuts each fire the one action with their own trigger, so the
+	 * page reads this to know whether a button has any wording behind it.
+	 */
+	readonly trigger: AgentActionTriggerWire;
 }
+
+export type AgentActionTriggerWire =
+	| "issue"
+	| "commit"
+	| "push"
+	| "pull_request";
 
 /** Everything the Issue flow asked, once it has all the answers. */
 export interface IssueAssignment {
@@ -167,6 +179,14 @@ export interface WorkspaceRepositoryWire {
 	 * push would help.
 	 */
 	readonly ahead?: number;
+	/**
+	 * What `origin` calls its default branch, when the clone knows.
+	 *
+	 * Absent means not knowing, and the shortcut that reads it stays quiet then:
+	 * it is how "this branch is the trunk" is decided, and offering to open a
+	 * pull request from the trunk is a button with nothing to do.
+	 */
+	readonly defaultBranch?: string;
 	readonly issue?: {
 		readonly url: string;
 		readonly number: number;
@@ -463,6 +483,15 @@ export interface DevhubApi {
 	 * carries out the answer.
 	 */
 	removeWorktree(workspaceId: string, force: boolean): Promise<AppOutcome>;
+	/**
+	 * Say one of the configured actions to a running agent.
+	 *
+	 * Queued rather than sent, on the same terms as the Issue flow's first
+	 * message: the injection waits for a settled idle screen, so a shortcut
+	 * pressed while the agent is working lands when the agent is next listening
+	 * rather than into the middle of its output.
+	 */
+	runAgentAction(agentId: string, actionId: string): Promise<AppOutcome>;
 	/** Clone, and answer with the directory git made. Opens nothing. */
 	cloneRepository(url: string, parentDirectory: string): Promise<string>;
 	/**
@@ -547,6 +576,7 @@ export const CHANNELS = {
 	githubLogin: "devhub:github-login",
 	pullRequestHeadBranch: "devhub:pull-request-head-branch",
 	removeWorktree: "devhub:remove-worktree",
+	runAgentAction: "devhub:run-agent-action",
 	agentActions: "devhub:agent-actions",
 	openSettings: "devhub:open-settings",
 	openExternalUrl: "devhub:open-external-url",

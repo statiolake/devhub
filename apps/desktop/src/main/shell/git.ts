@@ -185,6 +185,16 @@ export interface RepositoryFacts {
 	/** `origin`, normalised so an HTTPS and an SSH clone compare equal. */
 	readonly remote: RemoteIdentity | undefined;
 	/**
+	 * What `origin` says its default branch is, when the clone knows.
+	 *
+	 * `refs/remotes/origin/HEAD`, which a normal clone sets and a repository
+	 * somebody built up by hand may not have. Absent is *not knowing*, and the
+	 * one thing that reads it treats not knowing as a reason to stay quiet: it
+	 * decides whether this branch is the trunk, and offering to open a pull
+	 * request from the trunk is a button that cannot do anything useful.
+	 */
+	readonly defaultBranch: string | undefined;
+	/**
 	 * `upstream`, when the clone has one — the repository this one was forked
 	 * from, by the name `gh repo fork` gives it.
 	 *
@@ -250,6 +260,36 @@ export async function readDirty(
 }
 
 /**
+ * How many commits are here that the branch's upstream does not have.
+ *
+ * `0` for a branch that is level with what it tracks, and `undefined` for a
+ * branch with nothing to compare against — one nobody has pushed yet, or a
+ * repository with no remotes. Those two are one answer here because they are
+ * one answer to the question being asked: *is there anything to push?* is
+ * unanswerable without an upstream, and a number invented for that case would
+ * be a button offered for work that has nowhere to go.
+ *
+ * `@{u}` is git's own name for "whatever this branch tracks", so the comparison
+ * follows a branch that was pushed somewhere other than `origin` and a fork
+ * whose upstream is the fork. Reading it fails loudly for a repository git
+ * cannot run in and quietly for a branch with no upstream, which is the same
+ * split `ask` makes everywhere else.
+ */
+export async function readAhead(
+	command: GitCommand,
+	directory: string,
+): Promise<number | undefined> {
+	const count = await ask(
+		command,
+		["rev-list", "--count", "@{u}..HEAD"],
+		directory,
+	).catch(() => undefined);
+	if (count === undefined) return undefined;
+	const ahead = Number.parseInt(count, 10);
+	return Number.isNaN(ahead) ? undefined : ahead;
+}
+
+/**
  * Remove a worktree. Let git refuse, unless the person has already been asked.
  *
  * Without `force`, git declines to remove a worktree with changes in it, and
@@ -310,7 +350,18 @@ export async function readRepository(
 	);
 	const remote = await remoteNamed(command, directory, "origin");
 	const upstream = await remoteNamed(command, directory, "upstream");
+	// `origin/main`, trimmed to `main`. A clone that has never been told what
+	// `origin`'s HEAD is answers nothing, which is not the same as `main`.
+	const head = await ask(
+		command,
+		["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+		directory,
+	).catch(() => undefined);
+	const defaultBranch = head?.startsWith("origin/")
+		? head.slice("origin/".length)
+		: undefined;
 	return {
+		defaultBranch,
 		mainWorktree,
 		worktree,
 		upstream,
