@@ -20,10 +20,13 @@
  * about. `errorMessage.test.ts` walks every code and asserts as much.
  */
 
-import type {
-  SettingsDiagnosticCodeWire,
-  SettingsDiagnosticWire,
-  SettingsError,
+import {
+  GLOBAL_SETTINGS_FILE_NAME,
+  LOCAL_SETTINGS_FILE_NAME,
+  type SettingsDiagnosticCodeWire,
+  type SettingsDiagnosticWire,
+  type SettingsError,
+  type SettingsScopeWire,
 } from "../ipc/settings";
 import { FONT_FAMILY_RULE } from "../model/fontFamily";
 import {
@@ -39,13 +42,31 @@ import {
 } from "./rules";
 
 /**
+ * The file a message is about.
+ *
+ * DevHub reads two, and only ever writes one, so the default is the local
+ * file: everything a save can go wrong about happened there. A scope only
+ * arrives on a problem found while *reading*, which is the one case where the
+ * shared file can be the answer.
+ */
+export function settingsFileName(scope: SettingsScopeWire | undefined): string {
+  return scope === "global"
+    ? GLOBAL_SETTINGS_FILE_NAME
+    : LOCAL_SETTINGS_FILE_NAME;
+}
+
+/**
  * The rule the value broke, in the words the field itself uses.
  *
  * Where a field states a rule (`rules.ts`), that same sentence is used here, so
  * a rule is never described one way while you are typing and another way once
  * the save comes back.
  */
-export function ruleMessage(code: SettingsDiagnosticCodeWire): string {
+export function ruleMessage(
+  code: SettingsDiagnosticCodeWire,
+  scope?: SettingsScopeWire,
+): string {
+  const file = settingsFileName(scope);
   switch (code) {
     // The rules a field states while you type.
     case "invalid_font_family":
@@ -91,9 +112,9 @@ export function ruleMessage(code: SettingsDiagnosticCodeWire): string {
 
     // Things about the file rather than a value in it.
     case "parse":
-      return "config.toml is not valid TOML at that point.";
+      return `${file} is not valid TOML at that point.`;
     case "invalid_utf8":
-      return "config.toml is not valid UTF-8.";
+      return `${file} is not valid UTF-8.`;
     case "unknown_key":
       return "DevHub does not know that key. Check it for a typo — an unknown key is refused rather than ignored, so a misspelling never silently does nothing.";
     case "missing_required_field":
@@ -101,15 +122,15 @@ export function ruleMessage(code: SettingsDiagnosticCodeWire): string {
     case "invalid_type":
       return "That key holds a value of the wrong kind.";
     case "unsupported_version":
-      return "config.toml states a schema version this DevHub does not read.";
+      return `${file} states a schema version this DevHub does not read.`;
     case "io":
-      return "config.toml could not be read or written.";
+      return `${file} could not be read or written.`;
     case "state_unavailable":
       return "DevHub could not reach the file.";
     case "serialization":
       return "DevHub could not write the file.";
     case "conflict":
-      return "config.toml changed after this window read it.";
+      return `${file} changed after this window read it.`;
   }
 }
 
@@ -136,13 +157,13 @@ function where(diagnostic: SettingsDiagnosticWire): string {
 export function fileDiagnosticMessage(
   diagnostic: SettingsDiagnosticWire,
 ): string {
-  return `config.toml has a problem DevHub could not read, so it is running on the last version that parsed. ${ruleMessage(diagnostic.code)} (${where(diagnostic)})`;
+  return `${settingsFileName(diagnostic.scope)} has a problem DevHub could not read, so it is running on the last version that parsed. ${ruleMessage(diagnostic.code, diagnostic.scope)} (${where(diagnostic)})`;
 }
 
 export function errorMessage(error: SettingsError): string {
   switch (error.code) {
     case "external_edit_conflict":
-      return "config.toml changed outside Settings. Reload to see the new file.";
+      return `${settingsFileName(error.diagnostic?.scope)} changed outside Settings. Reload to see the new file.`;
     case "invalid_config": {
       // Every refusal names its field and its code, whatever came back. A
       // diagnostic with neither a path nor a position is still a diagnostic
@@ -154,10 +175,10 @@ export function errorMessage(error: SettingsError): string {
       const field = diagnostic.path
         ? `${diagnostic.path} was not saved.`
         : "That change was not saved.";
-      return `${field} ${ruleMessage(diagnostic.code)} (${where(diagnostic)})`;
+      return `${field} ${ruleMessage(diagnostic.code, diagnostic.scope)} (${where(diagnostic)})`;
     }
     case "invalid_file":
-      return "config.toml could not be read or written.";
+      return `${settingsFileName(error.diagnostic?.scope)} could not be read or written.`;
     case "runtime_unavailable":
       return "DevHub could not inspect the runtimes.";
     case "permission_denied":

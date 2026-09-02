@@ -298,8 +298,23 @@ export type SettingsDiagnosticCodeWire =
 	| "conflict"
 	| "serialization";
 
+/**
+ * Which of the two settings files a problem is in.
+ *
+ * The fix differs by file: a broken `settings.local.toml` is fixed on this
+ * machine, while a broken `settings.toml` is fixed in the dotfiles repository
+ * it is usually a symlink into. A message that says only "the settings are
+ * broken" sends a person to open the wrong one first.
+ */
+export type SettingsScopeWire = "global" | "local";
+
+export const GLOBAL_SETTINGS_FILE_NAME = "settings.toml";
+export const LOCAL_SETTINGS_FILE_NAME = "settings.local.toml";
+
 export interface SettingsDiagnosticWire {
 	readonly code: SettingsDiagnosticCodeWire;
+	/** Absent when the problem is not about one file — a save is always local. */
+	readonly scope?: SettingsScopeWire;
 	readonly path?: string;
 	readonly line?: number;
 	readonly column?: number;
