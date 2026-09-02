@@ -24,13 +24,35 @@ import type {
 	ReplayWire,
 } from "./appShell.js";
 
-/** One clone of the repository an Issue lives in. */
-export interface IssueClone {
+/** One place work can happen: a repository itself, or one of its worktrees. */
+export interface IssueWorktree {
 	readonly path: string;
 	/** What is checked out there, so two worktrees can be told apart. */
 	readonly branch?: string;
 	/** The repository itself, rather than one of its worktrees. */
 	readonly isMainWorktree: boolean;
+}
+
+/**
+ * One clone of the repository an Issue lives in, with everywhere it is checked
+ * out.
+ *
+ * A repository and its worktrees used to arrive as a flat list of equals, and
+ * the flow asked about them in two goes: which of these, then worktree or not.
+ * That reads as two questions and is really one — worktrees of one repository
+ * are not *different repositories*, they are the same repository in several
+ * places, and asking somebody to pick one and then asking whether they wanted a
+ * different one is asking twice.
+ *
+ * So the grouping happens where the facts are. The identity is the main
+ * worktree's path, which is what git itself answers with, so two directories
+ * are the same repository exactly when git says they are.
+ */
+export interface IssueRepository {
+	/** The repository's own directory, and its identity. */
+	readonly mainWorktree: string;
+	/** Everywhere it is checked out, the repository itself first. */
+	readonly worktrees: readonly IssueWorktree[];
 }
 
 /** Everything the Issue flow asked, once it has all the answers. */
@@ -298,7 +320,7 @@ export interface DevhubApi {
 	 * asked for the parent folder, not in the branch picker three steps later.
 	 * A single call would have one failure for five questions.
 	 */
-	findIssueClones(issueUrl: string): Promise<readonly IssueClone[]>;
+	findIssueRepositories(issueUrl: string): Promise<readonly IssueRepository[]>;
 	/** Clone, and answer with the directory git made. Opens nothing. */
 	cloneRepository(url: string, parentDirectory: string): Promise<string>;
 	/**
@@ -350,7 +372,7 @@ export const CHANNELS = {
 	cancelWorkspacePicker: "devhub:cancel-workspace-picker",
 	selectWorkspacePicker: "devhub:select-workspace-picker",
 	createProject: "devhub:create-project",
-	findIssueClones: "devhub:find-issue-clones",
+	findIssueRepositories: "devhub:find-issue-repositories",
 	cloneRepository: "devhub:clone-repository",
 	listBranches: "devhub:list-branches",
 	assignIssue: "devhub:assign-issue",

@@ -34,7 +34,7 @@ import {
   cloneParentItems,
   cloneTypedItem,
 } from "../components/shell/cloneDestination";
-import type { IssueClone } from "../client";
+import type { IssueRepository } from "../client";
 import { toAppError } from "../failure";
 import { useAppShell } from "../useAppShell";
 
@@ -45,7 +45,6 @@ export interface IssueAssignmentSheetProps {
 /** Rows that do something rather than name something that already exists. */
 const CLONE_ELSEWHERE = "devhub:clone-elsewhere";
 const ACCEPT_TYPED = "devhub:accept-typed";
-const SAME_WORKSPACE = "devhub:same-workspace";
 const NEW_WORKTREE = "devhub:new-worktree";
 const USE_STALE_BASE = "devhub:use-stale-base";
 
@@ -66,7 +65,7 @@ function issueLabel(issue: IssueReference): string {
 export function IssueAssignmentSheet({ onDismiss }: IssueAssignmentSheetProps) {
   const {
     agentProfiles,
-    findIssueClones,
+    findIssueRepositories,
     cloneRepository,
     assignIssue,
     cloneParentDirectories,
@@ -89,12 +88,17 @@ export function IssueAssignmentSheet({ onDismiss }: IssueAssignmentSheetProps) {
     () =>
       issueUrlStep({
         agentProfiles: () => profiles.current,
-        findIssueClones,
+        findIssueRepositories,
         cloneRepository,
         assignIssue,
         cloneParentDirectories,
       }),
-    [assignIssue, cloneParentDirectories, cloneRepository, findIssueClones],
+    [
+      assignIssue,
+      cloneParentDirectories,
+      cloneRepository,
+      findIssueRepositories,
+    ],
   );
 
   return <Wizard start={start} onFinished={onDismiss} />;
@@ -102,7 +106,9 @@ export function IssueAssignmentSheet({ onDismiss }: IssueAssignmentSheetProps) {
 
 interface FlowServices {
   readonly agentProfiles: () => AgentProfilesWire;
-  readonly findIssueClones: (url: string) => Promise<readonly IssueClone[]>;
+  readonly findIssueRepositories: (
+    url: string,
+  ) => Promise<readonly IssueRepository[]>;
   readonly cloneRepository: (url: string, parent: string) => Promise<string>;
   readonly assignIssue: (request: {
     readonly issueUrl: string;
@@ -175,7 +181,7 @@ function agentStep(services: FlowServices, issue: IssueReference): WizardStep {
           : "No agent profiles are enabled.",
       emptyNoMatch: "No agent profiles match.",
     });
-    return cloneStep(services, issue, {
+    return repositoryStep(services, issue, {
       profileId: answer.id,
       split: answer.split,
     });
@@ -188,12 +194,15 @@ interface AgentChoice {
 }
 
 /**
- * Which clone of the repository.
+ * Which clone of the repository — asked only when there is more than one.
  *
- * Asked only when there is something to ask. One clone is not a choice — a
- * picker with a single row is a keystroke asking the person to confirm what
- * DevHub already knows — so it is taken and the flow moves on. Nought or
- * several is a real question, and it is put.
+ * A *repository*, not a directory. Its worktrees are the same repository in
+ * several places, so they are one row here and the choice between them is the
+ * next question. Asking somebody to pick a worktree and then asking whether
+ * they wanted a different one was asking the same thing twice.
+ *
+ * One repository is not a choice, so it is taken and the flow moves on. None is
+ * a real question with one answer — clone it — and that is where it goes.
  *
  * This used to always ask, on the reasoning that a step which decides for
  * itself is a step Escape cannot come back to. That was true of the runner and
@@ -201,43 +210,116 @@ interface AgentChoice {
  * remembers, so Escape from the question after this one reaches the question
  * before it. See `runWizard`.
  */
-function cloneStep(
+function repositoryStep(
   services: FlowServices,
   issue: IssueReference,
   agent: AgentChoice,
 ): WizardStep {
   return async (input) => {
-    const clones = await input.working(
+    const repositories = await input.working(
       `Looking for ${issue.owner}/${issue.repository}…`,
-      () => services.findIssueClones(issueUrl(issue)),
+      () => services.findIssueRepositories(issueUrl(issue)),
     );
-    const only = clones.length === 1 ? clones[0] : undefined;
-    if (only) return arrangementStep(services, issue, agent, only.path);
+    if (repositories.length === 0) {
+      return cloneDestinationStep(services, issue, agent);
+    }
+    const only = repositories.length === 1 ? repositories[0] : undefined;
+    if (only) return locationStep(services, issue, agent, only);
     const answer = await input.ask({
       ...SHEET,
-      title: `Where to work on ${issueLabel(issue)}`,
+      title: `Which ${issue.owner}/${issue.repository}`,
       placeholder: "Repository",
-      items: clones.map((clone) => ({
-        id: clone.path,
-        label: clone.path,
-        searchText: clone.path,
-        detail: clone.isMainWorktree
-          ? clone.branch
-          : `worktree · ${clone.branch ?? "detached"}`,
+      items: repositories.map((repository) => ({
+        id: repository.mainWorktree,
+        label: repository.mainWorktree,
+        searchText: repository.mainWorktree,
+        detail: worktreeCount(repository.worktrees.length),
       })),
       pinned: [
         {
           id: CLONE_ELSEWHERE,
           label: "Clone…",
-          detail: `Clone ${issue.owner}/${issue.repository} and work in it`,
+          detail: `Clone ${issue.owner}/${issue.repository} again, somewhere else`,
         },
       ],
       emptyNoItems: `No clone of ${issue.owner}/${issue.repository} was found.`,
-      emptyNoMatch: "No clone matches.",
+      emptyNoMatch: "No repository matches.",
     });
-    return answer.id === CLONE_ELSEWHERE
-      ? cloneDestinationStep(services, issue, agent)
-      : arrangementStep(services, issue, agent, answer.id);
+    if (answer.id === CLONE_ELSEWHERE) {
+      return cloneDestinationStep(services, issue, agent);
+    }
+    const chosen = repositories.find(
+      (repository) => repository.mainWorktree === answer.id,
+    );
+    return chosen
+      ? locationStep(services, issue, agent, chosen)
+      : cloneDestinationStep(services, issue, agent);
+  };
+}
+
+/** "the repository itself", "and 2 worktrees" — what a repository row says. */
+function worktreeCount(places: number): string {
+  const others = places - 1;
+  if (others <= 0) return "No worktrees";
+  return others === 1 ? "1 worktree" : `${String(others)} worktrees`;
+}
+
+/**
+ * Where in the repository the work happens.
+ *
+ * One question with every answer in it: the repository itself, each worktree it
+ * already has, and a new worktree. They belong together because they are the
+ * same decision — *which checkout do I want* — and a person who keeps three
+ * worktrees of one repository was previously asked to pick one directory and
+ * then, separately, whether they wanted a different one.
+ *
+ * The worktrees are git's list rather than the search's, so one made by hand in
+ * a folder no source looks at is offered like any other.
+ */
+function locationStep(
+  services: FlowServices,
+  issue: IssueReference,
+  agent: AgentChoice,
+  repository: IssueRepository,
+): WizardStep {
+  return async (input) => {
+    const answer = await input.ask({
+      ...SHEET,
+      title: `Where to work on ${issueLabel(issue)}`,
+      placeholder: "Where to work",
+      items: repository.worktrees.map((worktree) => ({
+        id: worktree.path,
+        label: worktree.path,
+        searchText: `${worktree.path} ${worktree.branch ?? ""}`,
+        detail: worktree.isMainWorktree
+          ? `The repository · ${worktree.branch ?? "detached"}`
+          : `Worktree · ${worktree.branch ?? "detached"}`,
+      })),
+      pinned: [
+        {
+          id: NEW_WORKTREE,
+          label: "New worktree",
+          detail: `A branch of its own, in a folder beside ${repository.mainWorktree}`,
+        },
+      ],
+      emptyNoItems: "This repository is checked out nowhere.",
+      emptyNoMatch: "Nowhere matches. A new worktree is still an answer.",
+    });
+    return finishStep(
+      services,
+      issue,
+      agent,
+      // A new worktree is measured from the repository; an existing one is
+      // simply opened where it is.
+      answer.id === NEW_WORKTREE ? repository.mainWorktree : answer.id,
+      // The branch is not asked for. It is `feature/128-wip`, made now so work
+      // can start now, and the agent is told to rename it once it knows what
+      // the work is — that instruction is in the action's message, which is a
+      // setting (see `model/agentActions.ts`). A picker of branch names here
+      // was a question nobody could answer yet: the good name is the one you
+      // have after reading the Issue, not before.
+      answer.id === NEW_WORKTREE ? wipBranchForIssue(issue.number) : undefined,
+    );
   };
 }
 
@@ -281,50 +363,14 @@ function cloneDestinationStep(
           destination,
         ),
     );
-    return arrangementStep(services, issue, agent, directory);
-  };
-}
-
-/** This workspace, or a worktree of it. */
-function arrangementStep(
-  services: FlowServices,
-  issue: IssueReference,
-  agent: AgentChoice,
-  directory: string,
-): WizardStep {
-  return async (input) => {
-    const answer = await input.ask({
-      ...SHEET,
-      title: `Work on ${issueLabel(issue)}`,
-      placeholder: "How to work on it",
-      items: [
-        {
-          id: SAME_WORKSPACE,
-          label: "In this workspace",
-          detail: directory,
-          searchText: "workspace here same",
-        },
-        {
-          id: NEW_WORKTREE,
-          label: "In a new worktree",
-          detail: "A branch of its own, in a folder beside the repository",
-          searchText: "worktree branch new",
-        },
-      ],
+    // A repository that has just been cloned is checked out in exactly one
+    // place, so the location question is asked over that one place and a new
+    // worktree — which is the same question everybody else gets, from the same
+    // step, rather than a second arrangement of it.
+    return locationStep(services, issue, agent, {
+      mainWorktree: directory,
+      worktrees: [{ path: directory, isMainWorktree: true }],
     });
-    return finishStep(
-      services,
-      issue,
-      agent,
-      directory,
-      // The branch is not asked for. It is `feature/128-wip`, made now so work
-      // can start now, and the agent is told to rename it once it knows what
-      // the work is — that instruction is in the action's message, which is a
-      // setting (see `model/agentActions.ts`). A picker of branch names here
-      // was a question nobody could answer yet: the good name is the one you
-      // have after reading the Issue, not before.
-      answer.id === NEW_WORKTREE ? wipBranchForIssue(issue.number) : undefined,
-    );
   };
 }
 

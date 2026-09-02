@@ -2587,7 +2587,7 @@ export class AppController {
 
 		// Assigning an Issue is four calls because it is four questions, and a
 		// failure has to be answerable by re-asking the one that led to it.
-		handle(CHANNELS.findIssueClones, async (_event, issueUrl: string) => {
+		handle(CHANNELS.findIssueRepositories, async (_event, issueUrl: string) => {
 			const config = this.config;
 			const issue = parseIssueUrl(issueUrl);
 			if (!config || !issue) {

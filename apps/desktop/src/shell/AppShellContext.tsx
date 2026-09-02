@@ -452,8 +452,8 @@ export function AppShellProvider({
    * app — `assignIssue` — hands its snapshot on the way every other opening
    * does.
    */
-  const findIssueClones = useCallback(
-    (issueUrl: string) => transport.findIssueClones(issueUrl),
+  const findIssueRepositories = useCallback(
+    (issueUrl: string) => transport.findIssueRepositories(issueUrl),
     [transport],
   );
 
@@ -558,7 +558,7 @@ export function AppShellProvider({
       cloneProject,
       projectDefaultDirectory,
       cloneParentDirectories,
-      findIssueClones,
+      findIssueRepositories,
       cloneRepository,
       listBranches,
       assignIssue,
@@ -580,7 +580,7 @@ export function AppShellProvider({
       createProject,
       projectDefaultDirectory,
       cloneParentDirectories,
-      findIssueClones,
+      findIssueRepositories,
       cloneRepository,
       listBranches,
       assignIssue,

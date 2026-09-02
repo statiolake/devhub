@@ -20,7 +20,7 @@ import type {
   ContentSurfaceWire,
   DevhubApi,
   IssueAssignment,
-  IssueClone,
+  IssueRepository,
   ModalRequest,
   RepositoryStatusWire,
   WorkspacePickerCandidate,
@@ -29,7 +29,7 @@ import type {
 
 export type {
   IssueAssignment,
-  IssueClone,
+  IssueRepository,
   RepositoryStatusWire,
   WorkspacePickerCandidate,
   WorkspacePickerEvent,
@@ -63,7 +63,7 @@ export interface AppShellClient {
   cloneProject(url: string, parentDirectory: string): Promise<AppOutcome>;
   projectDefaultDirectory(): Promise<string>;
   cloneParentDirectories(): Promise<readonly string[]>;
-  findIssueClones(issueUrl: string): Promise<readonly IssueClone[]>;
+  findIssueRepositories(issueUrl: string): Promise<readonly IssueRepository[]>;
   cloneRepository(url: string, parentDirectory: string): Promise<string>;
   listBranches(directory: string): Promise<readonly string[]>;
   assignIssue(request: IssueAssignment): Promise<AppOutcome>;
@@ -127,7 +127,7 @@ export function createShellClient(api: DevhubApi = devhub()): AppShellClient {
       api.cloneProject(url, parentDirectory),
     projectDefaultDirectory: () => api.projectDefaultDirectory(),
     cloneParentDirectories: () => api.cloneParentDirectories(),
-    findIssueClones: (issueUrl) => api.findIssueClones(issueUrl),
+    findIssueRepositories: (issueUrl) => api.findIssueRepositories(issueUrl),
     cloneRepository: (url, parentDirectory) =>
       api.cloneRepository(url, parentDirectory),
     listBranches: (directory) => api.listBranches(directory),

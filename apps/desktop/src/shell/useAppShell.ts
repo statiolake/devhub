@@ -10,7 +10,7 @@ import type {
 } from "../ipc/appShell";
 import type {
   IssueAssignment,
-  IssueClone,
+  IssueRepository,
   RepositoryStatusWire,
   WorkspacePickerCandidate,
 } from "./client";
@@ -57,9 +57,9 @@ export interface AppShellContextValue {
    * it fails, because each is answered by re-asking the question that led to
    * it — which is the wizard's rule, not a special case for these.
    */
-  readonly findIssueClones: (
+  readonly findIssueRepositories: (
     issueUrl: string,
-  ) => Promise<readonly IssueClone[]>;
+  ) => Promise<readonly IssueRepository[]>;
   readonly cloneRepository: (
     url: string,
     parentDirectory: string,

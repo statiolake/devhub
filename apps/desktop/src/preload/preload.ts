@@ -26,7 +26,7 @@ import {
 	type ContentSurfaceWire,
 	type DevhubApi,
 	type IssueAssignment,
-	type IssueClone,
+	type IssueRepository,
 	type RepositoryStatusWire,
 	type WorkspacePickerEvent,
 } from "../ipc/contract.js";
@@ -129,9 +129,9 @@ const devhub: DevhubApi = {
 	projectDefaultDirectory: () =>
 		ipcRenderer.invoke(CHANNELS.projectDefaultDirectory) as Promise<string>,
 
-	findIssueClones: (issueUrl: string) =>
-		ipcRenderer.invoke(CHANNELS.findIssueClones, issueUrl) as Promise<
-			readonly IssueClone[]
+	findIssueRepositories: (issueUrl: string) =>
+		ipcRenderer.invoke(CHANNELS.findIssueRepositories, issueUrl) as Promise<
+			readonly IssueRepository[]
 		>,
 	cloneRepository: (url: string, parentDirectory: string) =>
 		ipcRenderer.invoke(

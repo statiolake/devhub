@@ -23,11 +23,15 @@ const ISSUE = "https://github.com/example/widget/issues/128";
 
 function mount(overrides: Partial<AppShellContextValue> = {}) {
   const assignIssue = vi.fn().mockResolvedValue(undefined);
-  const findIssueClones = vi
-    .fn()
-    .mockResolvedValue([
-      { path: "/projects/widget", branch: "main", isMainWorktree: true },
-    ]);
+  // One repository, checked out in one place: the shape most of these walk.
+  const findIssueRepositories = vi.fn().mockResolvedValue([
+    {
+      mainWorktree: "/projects/widget",
+      worktrees: [
+        { path: "/projects/widget", branch: "main", isMainWorktree: true },
+      ],
+    },
+  ]);
   const listBranches = vi.fn().mockResolvedValue(["main", "release"]);
   const cloneRepository = vi.fn().mockResolvedValue("/projects/widget");
   const onDismiss = vi.fn();
@@ -37,7 +41,7 @@ function mount(overrides: Partial<AppShellContextValue> = {}) {
       availability: "available",
       profiles: [{ id: "claude", displayName: "Claude", kind: "claude" }],
     },
-    findIssueClones,
+    findIssueRepositories,
     listBranches,
     cloneRepository,
     assignIssue,
@@ -54,7 +58,7 @@ function mount(overrides: Partial<AppShellContextValue> = {}) {
   );
   return {
     assignIssue,
-    findIssueClones,
+    findIssueRepositories,
     listBranches,
     cloneRepository,
     onDismiss,
@@ -65,7 +69,7 @@ function mount(overrides: Partial<AppShellContextValue> = {}) {
 function mountFor(agentProfiles: AppShellContextValue["agentProfiles"]) {
   const value = {
     agentProfiles,
-    findIssueClones: vi.fn().mockResolvedValue([]),
+    findIssueRepositories: vi.fn().mockResolvedValue([]),
     listBranches: vi.fn().mockResolvedValue([]),
     cloneRepository: vi.fn().mockResolvedValue("/projects/widget"),
     assignIssue: vi.fn().mockResolvedValue(undefined),
@@ -118,7 +122,7 @@ describe("assigning an Issue", () => {
 
     await answer("Assign Issue", ISSUE);
     await answer(/Agent for example\/widget#128/u);
-    await choose(/Work on example\/widget#128/u, /In a new worktree/u);
+    await choose(/Where to work on example\/widget#128/u, /New worktree/u);
 
     await vi.waitFor(() => {
       expect(assignIssue).toHaveBeenCalledWith({
@@ -132,22 +136,73 @@ describe("assigning an Issue", () => {
     });
   });
 
-  it("asks which clone when there is more than one", async () => {
+  it("asks which repository only when there are two of them", async () => {
     const { assignIssue } = mount({
-      findIssueClones: vi.fn().mockResolvedValue([
-        { path: "/projects/widget", branch: "main", isMainWorktree: true },
-        { path: "/other/widget", branch: "main", isMainWorktree: true },
+      findIssueRepositories: vi.fn().mockResolvedValue([
+        {
+          mainWorktree: "/projects/widget",
+          worktrees: [
+            { path: "/projects/widget", branch: "main", isMainWorktree: true },
+          ],
+        },
+        {
+          mainWorktree: "/other/widget",
+          worktrees: [
+            { path: "/other/widget", branch: "main", isMainWorktree: true },
+          ],
+        },
       ]),
     } as unknown as Partial<AppShellContextValue>);
 
     await answer("Assign Issue", ISSUE);
     await answer(/Agent for/u);
-    await choose(/Where to work on/u, /\/other\/widget/u);
-    await choose(/Work on example\/widget#128/u, /In this workspace/u);
+    await choose(/Which example\/widget/u, /\/other\/widget/u);
+    await choose(/Where to work on/u, /The repository/u);
 
     await vi.waitFor(() => {
       expect(assignIssue).toHaveBeenCalledWith(
-        expect.objectContaining({ directory: "/other/widget" }),
+        expect.objectContaining({
+          directory: "/other/widget",
+          branch: undefined,
+        }),
+      );
+    });
+  });
+
+  it("offers every worktree of one repository as one question", async () => {
+    // Worktrees of a repository are not different repositories, so there is no
+    // "which of these?" followed by "did you want a different one?" — the
+    // repository, its worktrees and a new one are the same question.
+    const { assignIssue } = mount({
+      findIssueRepositories: vi.fn().mockResolvedValue([
+        {
+          mainWorktree: "/projects/widget",
+          worktrees: [
+            { path: "/projects/widget", branch: "main", isMainWorktree: true },
+            {
+              path: "/projects/widget_feature_9-old",
+              branch: "feature/9-old",
+              isMainWorktree: false,
+            },
+          ],
+        },
+      ]),
+    } as unknown as Partial<AppShellContextValue>);
+
+    await answer("Assign Issue", ISSUE);
+    await answer(/Agent for/u);
+    // One repository, so it is not asked about at all.
+    expect(
+      screen.queryByRole("dialog", { name: /Which example/u }),
+    ).not.toBeInTheDocument();
+    await choose(/Where to work on/u, /feature\/9-old/u);
+
+    await vi.waitFor(() => {
+      expect(assignIssue).toHaveBeenCalledWith(
+        expect.objectContaining({
+          directory: "/projects/widget_feature_9-old",
+          branch: undefined,
+        }),
       );
     });
   });
@@ -159,7 +214,7 @@ describe("assigning an Issue", () => {
 
     await answer("Assign Issue", ISSUE);
     await answer(/Agent for/u);
-    await choose(/Work on example\/widget#128/u, /In this workspace/u);
+    await choose(/Where to work on/u, /The repository/u);
 
     await vi.waitFor(() => {
       expect(assignIssue).toHaveBeenCalledWith({
@@ -223,7 +278,7 @@ describe("assigning an Issue", () => {
     // itself and asked nothing. It must reach the agent question rather than
     // the step that would only decide the same way again.
     fireEvent.keyDown(
-      await screen.findByRole("dialog", { name: /Work on example/u }),
+      await screen.findByRole("dialog", { name: /Where to work on/u }),
       {
         key: "Escape",
       },
@@ -254,7 +309,7 @@ describe("assigning an Issue", () => {
 
     await answer("Assign Issue", ISSUE);
     await answer(/Agent for/u);
-    await choose(/Work on example\/widget#128/u, /In a new worktree/u);
+    await choose(/Where to work on example\/widget#128/u, /New worktree/u);
 
     expect(
       await screen.findByText(
@@ -272,17 +327,18 @@ describe("assigning an Issue", () => {
 
   it("clones when there is no clone to work in", async () => {
     const { cloneRepository, assignIssue } = mount({
-      findIssueClones: vi.fn().mockResolvedValue([]),
+      findIssueRepositories: vi.fn().mockResolvedValue([]),
     } as unknown as Partial<AppShellContextValue>);
 
     await answer("Assign Issue", ISSUE);
     await answer(/Agent for/u);
-    // The only row is "Clone…", because nothing was found.
-    await answer(/Where to work on/u);
-    // The folders this person keeps projects in, offered as rows: the parents
-    // of everything the workspace sources find.
+    // Nothing was found, so the repository question has no answers to put and
+    // is skipped: cloning is where the flow goes. The folders offered are the
+    // parents of everything the workspace sources find.
     await choose(/Clone example\/widget/u, /\/code\/github/u);
-    await choose(/Work on example\/widget#128/u, /In this workspace/u);
+    // A fresh clone is checked out in one place, and that place plus a new
+    // worktree is the same location question everybody else gets.
+    await choose(/Where to work on/u, /The repository/u);
 
     await vi.waitFor(() => {
       expect(cloneRepository).toHaveBeenCalledWith(
@@ -299,18 +355,17 @@ describe("assigning an Issue", () => {
     // The escape hatch, and the whole of what is left of the field this
     // replaced: a path nobody offered, typed, and taken by the pinned row.
     const { cloneRepository } = mount({
-      findIssueClones: vi.fn().mockResolvedValue([]),
+      findIssueRepositories: vi.fn().mockResolvedValue([]),
     } as unknown as Partial<AppShellContextValue>);
 
     await answer("Assign Issue", ISSUE);
     await answer(/Agent for/u);
-    await answer(/Where to work on/u);
     await screen.findByRole("dialog", { name: /Clone example\/widget/u });
     fireEvent.change(screen.getByRole("textbox"), {
       target: { value: "/elsewhere/scratch" },
     });
     fireEvent.click(screen.getByRole("option", { name: /typed above/u }));
-    await choose(/Work on example\/widget#128/u, /In this workspace/u);
+    await choose(/Where to work on/u, /The repository/u);
 
     await vi.waitFor(() => {
       expect(cloneRepository).toHaveBeenCalledWith(
