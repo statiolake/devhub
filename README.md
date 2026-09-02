@@ -157,9 +157,18 @@ not know is refused with a sentence — it is never quietly treated as a path.
 
 ## Configuration
 
-One `~/.config/devhub/config.toml` (or `$XDG_CONFIG_HOME/devhub/config.toml`),
-safe to symlink from dotfiles. Native Settings edits the same file. The
-workbench's own settings are VS Code's, on disk under the app's user-data
+Two files in `~/.config/devhub/` (or `$XDG_CONFIG_HOME/devhub/`), read as one.
+`settings.toml` is the shared half — meant to be a symlink from dotfiles, and
+never written by DevHub. `settings.local.toml` is what is only true of this
+machine, and the only file a save touches: Settings edits there, writing down
+just what the shared file does not already say.
+
+Tables merge key by key, so the shared file can hold `[appearance]` while a
+machine overrides nothing but the font; everything else, arrays included, the
+local file replaces whole. A pre-split `config.toml` is renamed to
+`settings.local.toml` on first launch.
+
+The workbench's own settings are VS Code's, on disk under the app's user-data
 directory. Runtime state lives separately under Application Support.
 
 ## Not now
