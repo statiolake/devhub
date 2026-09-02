@@ -69,38 +69,28 @@ export function Alert({
     );
     // The default action holds focus, so Return works without a Tab first.
     (buttons?.[buttons.length - 1] ?? buttons?.[0])?.focus();
-
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (isImeComposing(event)) return;
-      if (event.key === "Escape") {
-        event.preventDefault();
-        onCancel();
-        return;
-      }
-      if (event.key !== "Tab") return;
-      const focusable = [
-        ...(dialog.current?.querySelectorAll<HTMLElement>(
-          "button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex='-1'])",
-        ) ?? []),
-      ];
-      if (focusable.length === 0) return;
-      const index = focusable.indexOf(document.activeElement as HTMLElement);
-      const next = event.shiftKey
-        ? index <= 0
-          ? focusable.length - 1
-          : index - 1
-        : (index + 1) % focusable.length;
-      event.preventDefault();
-      focusable[next]?.focus();
-    };
-
-    document.addEventListener("keydown", onKeyDown);
     return () => {
-      document.removeEventListener("keydown", onKeyDown);
       const target = restoreTo.current;
       if (target?.isConnected) target.focus();
     };
-  }, [onCancel]);
+  }, []);
+
+  /** Move the focus round the ring the alert traps it in. */
+  const step = (backwards: boolean) => {
+    const focusable = [
+      ...(dialog.current?.querySelectorAll<HTMLElement>(
+        "button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex='-1'])",
+      ) ?? []),
+    ];
+    if (focusable.length === 0) return;
+    const index = focusable.indexOf(document.activeElement as HTMLElement);
+    const next = backwards
+      ? index <= 0
+        ? focusable.length - 1
+        : index - 1
+      : (index + 1) % focusable.length;
+    focusable[next]?.focus();
+  };
 
   return createPortal(
     <div
@@ -117,10 +107,31 @@ export function Alert({
         aria-labelledby="mac-alert-title"
         aria-describedby={message ? "mac-alert-message" : undefined}
         ref={dialog}
+        // Every key this alert answers, answered here — on the alert itself,
+        // the way the picker answers its own.
+        //
+        // Escape and Tab used to be a listener on `document`, and that is not a
+        // smaller version of this: a sheet that hands over to another sheet
+        // does so *while the key that dismissed it is still travelling*, so the
+        // arriving alert's listener went on `document` in time to catch the
+        // very Escape that summoned it and cancelled itself. Escape out of the
+        // clone folder list closed the whole sheet instead of going back to the
+        // repository. A handler on the element cannot be reached by a key
+        // pressed inside something else.
         onKeyDown={(event) => {
+          if (isImeComposing(event.nativeEvent)) return;
+          if (event.key === "Escape") {
+            event.preventDefault();
+            onCancel();
+            return;
+          }
+          if (event.key === "Tab") {
+            event.preventDefault();
+            step(event.shiftKey);
+            return;
+          }
           if (
             event.key === "Enter" &&
-            !isImeComposing(event.nativeEvent) &&
             event.target instanceof HTMLElement &&
             event.target.tagName !== "BUTTON"
           ) {

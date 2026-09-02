@@ -104,6 +104,24 @@ describe("the clone sheet reading what was typed", () => {
     );
   });
 
+  it("takes Escape back to the repository, not out of the sheet", async () => {
+    // Escape is one step back wherever DevHub asks more than one question, and
+    // this is the step where it used to be one step too many. The alert
+    // answered keys on `document`, so it went up while the Escape that
+    // summoned it was still travelling, caught that same Escape, and cancelled
+    // itself — the whole sheet vanished on a keystroke that meant "go back".
+    mount();
+    await type("example/widget");
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+
+    fireEvent.keyDown(await screen.findByRole("dialog"), { key: "Escape" });
+
+    expect(
+      await screen.findByRole("textbox", { name: "Repository" }),
+    ).toHaveValue("example/widget");
+    expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled();
+  });
+
   it("says why a bare name cannot be read, rather than cloning a guess", async () => {
     // Nobody signed in. The one form that needs an owner DevHub has to go and
     // ask for is the one form that can fail here, and it fails in words with
