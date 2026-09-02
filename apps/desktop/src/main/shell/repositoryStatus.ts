@@ -87,7 +87,7 @@ function repositoryUrl(remote: string | undefined): string | undefined {
  * most one and most branches name none.
  */
 function branchKey(reference: BranchReference): string {
-	return `${reference.owner}/${reference.repository}@${reference.branch}`;
+	return `${reference.owner}/${reference.repository}@${reference.headOwner}:${reference.branch}`;
 }
 
 /**
@@ -138,19 +138,28 @@ type BranchReading =
  * folding aliases is ever wanted it belongs in `remoteIdentity`, once, for
  * every caller at the same time.
  */
-function branchFromLocal(
+/** `github.com/owner/repo`, split, or nothing when it is any other shape. */
+function gitHubRepository(
 	remote: string | undefined,
-	branch: string | undefined,
-): BranchReading {
-	if (branch === undefined) return { kind: "none" };
-	const number = issueNumberFromBranch(branch);
+): { readonly owner: string; readonly repository: string } | undefined {
 	const match =
 		remote === undefined
 			? undefined
 			: /^github\.com\/([^/]+)\/([^/]+)$/u.exec(remote);
 	const owner = match?.[1];
 	const repository = match?.[2];
-	if (!owner || !repository) {
+	return owner && repository ? { owner, repository } : undefined;
+}
+
+function branchFromLocal(
+	remote: string | undefined,
+	upstream: string | undefined,
+	branch: string | undefined,
+): BranchReading {
+	if (branch === undefined) return { kind: "none" };
+	const number = issueNumberFromBranch(branch);
+	const head = gitHubRepository(remote);
+	if (!head) {
 		// Nothing to ask, and whether that is worth saying depends entirely on
 		// whether the branch was making a claim. `spike/rework` on a self-hosted
 		// remote is a workspace with nothing to show and no problem;
@@ -166,11 +175,22 @@ function branchFromLocal(
 					: `\`origin\` is \`${remote}\`, which DevHub cannot read as a github.com repository, so it cannot tell whose issue this is.`,
 		};
 	}
+	// Where the numbers live. In a fork the branch is in `origin` and the Issue
+	// it names is in `upstream`: a fork's own Issues are either turned off or
+	// numbered independently, so asking `origin` about `#128` answers about a
+	// different Issue or about none. `upstream` is the name `gh repo fork`
+	// gives it, which is what makes this a rule rather than a guess.
+	//
+	// An `upstream` DevHub cannot read as a github.com repository is ignored
+	// rather than reported: it is a remote the person added for their own
+	// reasons, and `origin` is still a perfectly good answer.
+	const item = gitHubRepository(upstream) ?? head;
 	return {
 		kind: "branch",
 		reference: {
-			owner,
-			repository,
+			owner: item.owner,
+			repository: item.repository,
+			headOwner: head.owner,
 			branch,
 			...(number === undefined ? {} : { issueNumber: number }),
 		},
@@ -187,6 +207,8 @@ interface LocalReading {
 	readonly worktree?: string;
 	/** `origin`, kept so the fast clock can re-key a new branch without git. */
 	readonly remote?: RemoteIdentity;
+	/** `upstream`, kept for the same reason: it decides where to ask. */
+	readonly upstream?: RemoteIdentity;
 	/** Work here that removing the folder would destroy, as of the last look. */
 	readonly dirty?: boolean;
 	/** The repository's page, when `origin` is one DevHub can name a page for. */
@@ -327,7 +349,7 @@ export class RepositoryStatusWatcher {
 				);
 				if (branch === entry.branch) return entry;
 				moved = true;
-				const reading = branchFromLocal(entry.remote, branch);
+				const reading = branchFromLocal(entry.remote, entry.upstream, branch);
 				if (
 					reading.kind === "branch" &&
 					!this.known.has(branchKey(reading.reference))
@@ -340,6 +362,7 @@ export class RepositoryStatusWatcher {
 					mainWorktree: entry.mainWorktree,
 					worktree: entry.worktree,
 					remote: entry.remote,
+					upstream: entry.upstream,
 					repositoryUrl: entry.repositoryUrl,
 					// The fast clock asks one question and this is not it; what the
 					// slow clock last saw stands until it looks again.
@@ -397,7 +420,11 @@ export class RepositoryStatusWatcher {
 					diagnostic ??= reason;
 					return { workspace, reason };
 				}
-				const reading = branchFromLocal(facts?.remote, facts?.branch);
+				const reading = branchFromLocal(
+					facts?.remote,
+					facts?.upstream,
+					facts?.branch,
+				);
 				// Only where it can mean something. A workspace that is not a
 				// repository has nothing to be dirty about, and asking anyway would
 				// be one more command per row per minute for an answer nobody reads.
@@ -411,6 +438,7 @@ export class RepositoryStatusWatcher {
 					mainWorktree: facts?.mainWorktree,
 					worktree: facts?.worktree,
 					remote: facts?.remote,
+					upstream: facts?.upstream,
 					repositoryUrl: repositoryUrl(facts?.remote),
 					...(reading.kind === "branch"
 						? { reference: reading.reference }

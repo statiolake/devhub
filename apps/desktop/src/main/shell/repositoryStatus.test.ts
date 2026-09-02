@@ -44,6 +44,7 @@ const WORKSPACE = { id: "w-1", root: "/projects/widget" };
 function checkedOut(branch: string | undefined) {
 	readRepository.mockResolvedValue({
 		mainWorktree: "/projects/widget",
+		worktree: "/projects/widget",
 		branch,
 		remote: "github.com/example/widget",
 	});
@@ -136,6 +137,7 @@ describe("what a workspace is about", () => {
 			{
 				owner: "example",
 				repository: "widget",
+				headOwner: "example",
 				branch: "step/feature/#1234-issue-body",
 				issueNumber: 1234,
 			},
@@ -430,7 +432,12 @@ describe("the pull request out from a branch", () => {
 
 		const status = await round();
 		expect(readBranchStatus).toHaveBeenCalledWith(
-			{ owner: "example", repository: "widget", branch: "spike/rework" },
+			{
+				owner: "example",
+				repository: "widget",
+				headOwner: "example",
+				branch: "spike/rework",
+			},
 			"token",
 		);
 		const row = status.workspaces[0];
@@ -482,6 +489,43 @@ describe("the pull request out from a branch", () => {
 		// Not swallowed: it is at the foot of the Sidebar, where one network
 		// failure is said once.
 		expect(status.diagnostic).toBe("GitHub answered 502.");
+	});
+
+	it("asks upstream about a fork's branch, and keeps the branch as the fork's", async () => {
+		// The rule for a fork: the numbers live in `upstream`, the branch lives in
+		// `origin`. Asking `origin` about `#128` answers about a different Issue
+		// or about none, because a fork's Issues are turned off or numbered on
+		// their own.
+		readRepository.mockResolvedValue({
+			mainWorktree: "/projects/widget",
+			worktree: "/projects/widget",
+			branch: "feature/128-tidy",
+			remote: "github.com/contributor/widget",
+			upstream: "github.com/example/widget",
+		});
+		readBranch.mockResolvedValue("feature/128-tidy");
+		readDirty.mockResolvedValue(false);
+
+		await round();
+		expect(readBranchStatus).toHaveBeenCalledWith(
+			{
+				owner: "example",
+				repository: "widget",
+				headOwner: "contributor",
+				branch: "feature/128-tidy",
+				issueNumber: 128,
+			},
+			"token",
+		);
+	});
+
+	it("stays on origin when there is no upstream to prefer", async () => {
+		checkedOut("feature/128-tidy");
+		await round();
+		expect(readBranchStatus).toHaveBeenCalledWith(
+			expect.objectContaining({ owner: "example", headOwner: "example" }),
+			"token",
+		);
 	});
 
 	it("does not say it is asking on a branch that names no Issue", async () => {

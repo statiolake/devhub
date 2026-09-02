@@ -184,6 +184,17 @@ export interface RepositoryFacts {
 	readonly branch: string | undefined;
 	/** `origin`, normalised so an HTTPS and an SSH clone compare equal. */
 	readonly remote: RemoteIdentity | undefined;
+	/**
+	 * `upstream`, when the clone has one — the repository this one was forked
+	 * from, by the name `gh repo fork` gives it.
+	 *
+	 * Read because Issues and pull requests do not live where the branch does in
+	 * a fork. `origin` is the person's own fork: its Issues are either turned off
+	 * or independently numbered, so `#128` in a branch name means an Issue in
+	 * `upstream` and asking `origin` about it answers about the wrong repository
+	 * or about nothing at all.
+	 */
+	readonly upstream: RemoteIdentity | undefined;
 }
 
 /**
@@ -297,24 +308,33 @@ export async function readRepository(
 		["rev-parse", "--abbrev-ref", "HEAD"],
 		directory,
 	);
-	const remote = await originIdentity(command, directory);
+	const remote = await remoteNamed(command, directory, "origin");
+	const upstream = await remoteNamed(command, directory, "upstream");
 	return {
 		mainWorktree,
 		worktree,
+		upstream,
 		branch: branch === undefined || branch === "HEAD" ? undefined : branch,
 		remote,
 	};
 }
 
-async function originIdentity(
+/**
+ * One named remote, normalised, or nothing when the clone has no such remote.
+ *
+ * By name rather than by position, because the two names DevHub reads mean
+ * different things: `origin` is where the branch is pushed and `upstream` is
+ * where the work is discussed. A clone with neither is answered `undefined`
+ * twice, which is what a repository with no remotes is.
+ */
+async function remoteNamed(
 	command: GitCommand,
 	directory: string,
+	name: string,
 ): Promise<RemoteIdentity | undefined> {
-	const url = await ask(
-		command,
-		["remote", "get-url", "origin"],
-		directory,
-	).catch(() => undefined);
+	const url = await ask(command, ["remote", "get-url", name], directory).catch(
+		() => undefined,
+	);
 	if (url === undefined || url.length === 0) return undefined;
 	try {
 		return remoteIdentity(url);
@@ -399,6 +419,17 @@ export interface WorktreeOptions {
 	 * to carry on anyway.
 	 */
 	readonly allowStaleBase?: boolean;
+	/**
+	 * The branch is work that already exists somewhere else — a pull request's
+	 * head — rather than a new one to start.
+	 *
+	 * It changes two things. The remote is fetched *before* the branch is looked
+	 * for, because a pull request opened since the last fetch is a branch this
+	 * clone has never heard of; and a name that is still nowhere afterwards is a
+	 * failure rather than a branch to create, because creating it would hand
+	 * somebody an empty branch under the name of the work they asked to review.
+	 */
+	readonly branchExistsAlready?: boolean;
 }
 
 export async function ensureWorktree(
@@ -423,6 +454,13 @@ export async function ensureWorktree(
 	).find((record) => record.branch === name);
 	if (existing) return existing.path;
 
+	// Somebody else's branch: bring it here before asking whether it is here.
+	// `branchExists` reads `refs/remotes/origin/…`, which is only as current as
+	// the last fetch, so without this a pull request opened five minutes ago
+	// looks like a branch that does not exist and would be created empty.
+	if (options.branchExistsAlready)
+		await fetchOrigin(command, directory, options);
+
 	const target = worktreeDirectory(repository.mainWorktree, name);
 	if (await exists(target)) {
 		throw workspaceFailure(
@@ -430,7 +468,13 @@ export async function ensureWorktree(
 		);
 	}
 
-	const args = (await branchExists(command, directory, name))
+	const here = await branchExists(command, directory, name);
+	if (options.branchExistsAlready && !here) {
+		throw workspaceFailure(
+			`${name} is on neither this machine nor origin. A pull request from a fork has its branch on the fork, which this clone cannot see.`,
+		);
+	}
+	const args = here
 		? ["worktree", "add", target, name]
 		: [
 				"worktree",
@@ -480,22 +524,7 @@ async function baseRef(
 			() => undefined,
 		)) !== undefined;
 	if (hasOrigin) {
-		const fetched = await runGit(command, ["fetch", "origin"], {
-			cwd: directory,
-			timeoutMs: NETWORK_TIMEOUT_MS,
-		}).then(
-			() => true,
-			(error: unknown) => {
-				// Not swallowed: without leave to go on, this is the answer, and the
-				// person is told what git said and asked what to do about it.
-				if (!options.allowStaleBase) {
-					throw fetchFailure(
-						error instanceof Error ? error.message : String(error),
-					);
-				}
-				return false;
-			},
-		);
+		const fetched = await fetchOrigin(command, directory, options);
 		const head = await runGit(
 			command,
 			["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
@@ -522,6 +551,45 @@ async function baseRef(
 	if (local?.branch) return local.branch;
 	throw workspaceFailure(
 		"DevHub could not tell which branch a new branch should start from: this repository has no origin and no branch checked out.",
+	);
+}
+
+/**
+ * Bring `origin` up to date, or say why not.
+ *
+ * One implementation for the two reasons DevHub fetches — to start a branch
+ * from what everyone else is starting from, and to find a branch somebody else
+ * pushed — because they want the same thing from a failure: without leave to go
+ * on it stops the worktree and is reported in git's own words, and with leave
+ * it answers that the copy on disk is what there is.
+ *
+ * A repository with no `origin` has nothing to fetch and nothing to report.
+ */
+async function fetchOrigin(
+	command: GitCommand,
+	directory: string,
+	options: WorktreeOptions,
+): Promise<boolean> {
+	const hasOrigin =
+		(await ask(command, ["remote", "get-url", "origin"], directory).catch(
+			() => undefined,
+		)) !== undefined;
+	if (!hasOrigin) return false;
+	return runGit(command, ["fetch", "origin"], {
+		cwd: directory,
+		timeoutMs: NETWORK_TIMEOUT_MS,
+	}).then(
+		() => true,
+		(error: unknown) => {
+			// Not swallowed: without leave to go on, this is the answer, and the
+			// person is told what git said and asked what to do about it.
+			if (!options.allowStaleBase) {
+				throw fetchFailure(
+					error instanceof Error ? error.message : String(error),
+				);
+			}
+			return false;
+		},
 	);
 }
 

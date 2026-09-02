@@ -18,10 +18,19 @@ import { spawn } from "node:child_process";
  * The branch is the subject and the Issue is optional, which is the opposite of
  * how this used to read. A branch always has a pull request question to ask —
  * *is there one out from here?* — and only some branches name an Issue.
+ *
+ * Two repositories, because in a fork they are two. The Issue and the pull
+ * request live in `owner/repository` — `upstream`, where the work is discussed
+ * — and the branch lives in `headOwner`'s copy of it, which is the person's own
+ * fork. They are the same for everybody not working in a fork, and nothing
+ * downstream of here branches on which case it is.
  */
 export interface BranchReference {
+	/** Where Issues and pull requests are numbered: `upstream`, or `origin`. */
 	readonly owner: string;
 	readonly repository: string;
+	/** Who owns the branch — the fork, when the work is being done in one. */
+	readonly headOwner: string;
 	/** The short name, as git reports it: `feature/128-wip`, not a `refs/` path. */
 	readonly branch: string;
 	/** The Issue the branch names, by DevHub's convention, when it names one. */
@@ -82,25 +91,34 @@ const MAX_PULL_REQUESTS = 10;
 /**
  * What a branch is about, in one round trip.
  *
- * The pull request is asked for by the branch itself — `ref` is the branch and
- * `associatedPullRequests` is what is out from it — rather than found by
- * reading the bodies of a repository's open pull requests for a closing
- * keyword. The old way could only see pull requests that were still open, could
- * only see them in repositories small enough to page through, and depended on a
- * person having written `Closes #128` at all. A branch knows what is out from
- * it whatever anybody wrote.
+ * The pull request is asked for by the branch's *name*, against the repository
+ * pull requests are numbered in, and then narrowed to the ones whose head is the
+ * branch's own owner. That is not the obvious spelling — `ref(qualifiedName:)`
+ * has an `associatedPullRequests` that reads better — but the obvious spelling
+ * cannot answer for a fork: the ref would have to be looked up in `upstream`,
+ * where the branch does not exist, because a pull request out of a fork is
+ * attached to a ref in the fork. `headRefName` matches across repositories, and
+ * `headRepositoryOwner` is what makes the match exact rather than a match on
+ * everybody who happened to call their branch `patch-1`.
+ *
+ * One query for both cases rather than one each. Somebody working in a fork and
+ * somebody working directly in a repository are asking the same question, and a
+ * second query shape would be a second thing to keep true.
+ *
+ * Either way it beats what this replaced: reading the bodies of a repository's
+ * open pull requests for a closing keyword, which could only see pull requests
+ * still open, only in repositories small enough to page through, and only where
+ * somebody had written `Closes #128` at all.
  *
  * The Issue is on the same query and skipped when the branch does not name one,
  * so a branch is one request whether or not it is about an Issue. `$number` is
  * still declared and still sent when skipped, because GraphQL validates a
  * variable's type whether or not the field that uses it is included.
  */
-const QUERY = `query($owner:String!,$name:String!,$ref:String!,$number:Int!,$wantIssue:Boolean!,$prs:Int!){
+const QUERY = `query($owner:String!,$name:String!,$branch:String!,$number:Int!,$wantIssue:Boolean!,$prs:Int!){
   repository(owner:$owner,name:$name){
-    ref(qualifiedName:$ref){
-      associatedPullRequests(first:$prs, orderBy:{field:UPDATED_AT,direction:DESC}){
-        nodes{ number url title state isDraft }
-      }
+    pullRequests(headRefName:$branch, first:$prs, orderBy:{field:UPDATED_AT,direction:DESC}){
+      nodes{ number url title state isDraft headRepositoryOwner{ login } }
     }
     issue(number:$number) @include(if:$wantIssue){ number title state url }
   }
@@ -260,16 +278,16 @@ interface GraphQlPullRequest {
 	/** GitHub's own enum: `OPEN`, `CLOSED` or `MERGED`. */
 	readonly state: string;
 	readonly isDraft: boolean;
+	/** Whose copy of the repository the branch is in. Null once a fork is gone. */
+	readonly headRepositoryOwner: { readonly login: string } | null;
 }
 
 interface GraphQlAnswer {
 	readonly data?: {
 		readonly repository?: {
 			readonly issue?: GraphQlIssue | null;
-			readonly ref?: {
-				readonly associatedPullRequests?: {
-					readonly nodes?: readonly (GraphQlPullRequest | null)[] | null;
-				} | null;
+			readonly pullRequests?: {
+				readonly nodes?: readonly (GraphQlPullRequest | null)[] | null;
 			} | null;
 		} | null;
 	} | null;
@@ -294,8 +312,18 @@ interface GraphQlAnswer {
  */
 function chosenPullRequest(
 	nodes: readonly (GraphQlPullRequest | null)[],
+	headOwner: string,
 ): GraphQlPullRequest | undefined {
-	const present = nodes.filter((node): node is GraphQlPullRequest => !!node);
+	// The query matched on the branch's *name*, which is not an identity: an
+	// open-source repository has a dozen pull requests from a dozen forks whose
+	// branch is called `patch-1`, and only the one out of this workspace's own
+	// remote is this row's. A fork that has since been deleted has no owner to
+	// compare, and is nobody's.
+	const present = nodes.filter(
+		(node): node is GraphQlPullRequest =>
+			!!node &&
+			node.headRepositoryOwner?.login.toLowerCase() === headOwner.toLowerCase(),
+	);
 	return (
 		present.find((node) => node.state.toUpperCase() === "OPEN") ?? present[0]
 	);
@@ -337,7 +365,7 @@ export async function readBranchStatus(
 			variables: {
 				owner: reference.owner,
 				name: reference.repository,
-				ref: `refs/heads/${reference.branch}`,
+				branch: reference.branch,
 				// Sent whether or not it is used: the field is skipped, the variable
 				// is still type-checked. Zero is never a real Issue number.
 				number: reference.issueNumber ?? 0,
@@ -355,11 +383,11 @@ export async function readBranchStatus(
 			`GitHub has no repository ${reference.owner}/${reference.repository}.`,
 		);
 	}
-	// A branch that is not on the remote has no `ref` and therefore no pull
-	// request, which is a fact and not a failure: it is what every branch looks
-	// like before it is first pushed.
+	// No match is a fact and not a failure: it is what every branch looks like
+	// before anybody opens a pull request from it.
 	const chosen = chosenPullRequest(
-		repository.ref?.associatedPullRequests?.nodes ?? [],
+		repository.pullRequests?.nodes ?? [],
+		reference.headOwner,
 	);
 	const issue = repository.issue;
 	if (wantIssue && !issue) {

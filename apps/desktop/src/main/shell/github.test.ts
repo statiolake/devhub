@@ -112,6 +112,16 @@ describe("reading who GitHub says this machine is", () => {
 const REFERENCE = {
 	owner: "example",
 	repository: "widget",
+	headOwner: "example",
+	branch: "feature/128-tidy",
+	issueNumber: 128,
+};
+
+/** The same workspace, done in a fork: the branch is mine, the Issue is theirs. */
+const FORKED = {
+	owner: "example",
+	repository: "widget",
+	headOwner: "contributor",
 	branch: "feature/128-tidy",
 	issueNumber: 128,
 };
@@ -133,12 +143,7 @@ function withPullRequests(
 	issue: unknown = { number: 128, title: "Tidy", state: "OPEN", url: "i" },
 ) {
 	return answers({
-		data: {
-			repository: {
-				issue,
-				ref: { associatedPullRequests: { nodes } },
-			},
-		},
+		data: { repository: { issue, pullRequests: { nodes } } },
 	});
 }
 
@@ -149,6 +154,7 @@ function pullRequest(over: Record<string, unknown>) {
 		title: "Tidy the picker",
 		state: "OPEN",
 		isDraft: false,
+		headRepositoryOwner: { login: "example" },
 		...over,
 	};
 }
@@ -175,33 +181,46 @@ describe("the pull request a branch is about", () => {
 		});
 	});
 
-	it("asks about the branch as a fully qualified ref", async () => {
-		// `ref(qualifiedName:)` takes a `refs/heads/…` path. A short name happens
-		// to resolve too, but only by GitHub guessing between heads and tags, and
-		// a branch and a tag of the same name are not the same thing.
+	it("asks the repository the numbers live in, by branch name", async () => {
 		const fetchMock = withPullRequests([]);
 		await readBranchStatus(REFERENCE, "token");
 		const sent = JSON.parse(
 			(fetchMock.mock.calls[0]?.[1] as { body: string }).body,
 		) as { variables: Record<string, unknown> };
-		expect(sent.variables.ref).toBe("refs/heads/feature/128-tidy");
+		expect(sent.variables.owner).toBe("example");
+		expect(sent.variables.branch).toBe("feature/128-tidy");
 		expect(sent.variables.wantIssue).toBe(true);
 	});
 
-	it("is nothing at all when the branch has never been pushed", async () => {
-		// No ref on the remote, so no pull request. It is what every branch looks
-		// like before its first push, and it is a fact rather than a failure.
-		answers({
-			data: {
-				repository: {
-					issue: { number: 128, title: "Tidy", state: "OPEN", url: "i" },
-					ref: null,
-				},
-			},
-		});
+	it("is nothing at all when nobody has opened one", async () => {
+		// A fact rather than a failure: it is what every branch looks like before
+		// somebody opens a pull request from it.
+		withPullRequests([]);
 		const status = await readBranchStatus(REFERENCE, "token");
 		expect(status.pullRequest).toBeUndefined();
 		expect(status.issue?.number).toBe(128);
+	});
+
+	it("ignores a pull request from somebody else's branch of the same name", async () => {
+		// The query matches on the branch's *name*, which is not an identity: an
+		// open-source repository has a dozen `patch-1` pull requests from a dozen
+		// forks. Only the one out of this workspace's own remote is this row's.
+		withPullRequests([
+			pullRequest({
+				number: 99,
+				headRepositoryOwner: { login: "somebody-else" },
+			}),
+		]);
+		expect(
+			(await readBranchStatus(REFERENCE, "token")).pullRequest,
+		).toBeUndefined();
+	});
+
+	it("ignores a pull request whose fork has been deleted", async () => {
+		withPullRequests([pullRequest({ headRepositoryOwner: null })]);
+		expect(
+			(await readBranchStatus(REFERENCE, "token")).pullRequest,
+		).toBeUndefined();
 	});
 
 	it("reports a merged pull request as merged", async () => {
@@ -261,13 +280,54 @@ describe("the pull request a branch is about", () => {
 	});
 });
 
+/**
+ * Working in a fork: the branch is in one repository and everything it is about
+ * is in another.
+ */
+describe("a branch in a fork", () => {
+	it("asks upstream, and takes the pull request out of the fork", async () => {
+		// The pull request is attached to a ref in the fork and numbered in
+		// upstream. Looking the ref up in upstream — which is what the obvious
+		// query shape does — asks for a branch that is not there.
+		const fetchMock = withPullRequests([
+			pullRequest({
+				number: 12,
+				headRepositoryOwner: { login: "contributor" },
+			}),
+		]);
+		const status = await readBranchStatus(FORKED, "token");
+		const sent = JSON.parse(
+			(fetchMock.mock.calls[0]?.[1] as { body: string }).body,
+		) as { variables: Record<string, unknown> };
+		// Asked of upstream, not of the fork.
+		expect(sent.variables.owner).toBe("example");
+		expect(status.pullRequest?.number).toBe(12);
+		// And the Issue is upstream's, which is the whole reason to ask there.
+		expect(status.issue?.number).toBe(128);
+	});
+
+	it("does not take a pull request from a different fork of the same branch", async () => {
+		withPullRequests([
+			pullRequest({ number: 5, headRepositoryOwner: { login: "example" } }),
+		]);
+		expect(
+			(await readBranchStatus(FORKED, "token")).pullRequest,
+		).toBeUndefined();
+	});
+});
+
 describe("the Issue a branch names", () => {
 	it("is not asked for when the branch names none", async () => {
 		// One request per branch either way: the field is skipped rather than the
 		// query being a second round trip.
 		const fetchMock = withPullRequests([], null);
 		await readBranchStatus(
-			{ owner: "example", repository: "widget", branch: "spike/rework" },
+			{
+				owner: "example",
+				repository: "widget",
+				headOwner: "example",
+				branch: "spike/rework",
+			},
 			"token",
 		);
 		const sent = JSON.parse(
