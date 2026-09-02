@@ -113,6 +113,78 @@ describe("what a workspace is about", () => {
 		);
 	});
 
+	it("says on the row which Issue it is about when the look failed", async () => {
+		// The reason used to be one line at the foot of the whole Sidebar, so a
+		// row whose Issue could not be read looked exactly like a row about no
+		// Issue at all. Both facts are now on the row that has them.
+		const { GitHubUnavailable } = await import("./github.js");
+		checkedOut("feature/128-tidy");
+		readIssueStatus.mockRejectedValue(
+			new GitHubUnavailable("GitHub has no issue example/widget#128."),
+		);
+
+		const status = await round();
+		const row = status.workspaces[0];
+		expect(row?.issue).toBeUndefined();
+		expect(row?.issueUnavailable).toEqual({
+			number: 128,
+			reason: "GitHub has no issue example/widget#128.",
+		});
+		// And the Sidebar's own note still carries it, as it always did.
+		expect(status.diagnostic).toBe("GitHub has no issue example/widget#128.");
+	});
+
+	it("says so on every row when there are no credentials at all", async () => {
+		checkedOut("feature/128-tidy");
+		readGitHubToken.mockResolvedValue(undefined);
+
+		const status = await round();
+		expect(status.workspaces[0]?.issueUnavailable?.reason).toMatch(
+			/gh auth login/u,
+		);
+		expect(readIssueStatus).not.toHaveBeenCalled();
+	});
+
+	it("keeps what it last knew rather than the reason it could not refresh it", async () => {
+		// The rule the Sidebar's note already followed: a network that dropped
+		// must not read as an Issue that closed. So a row that has an answer
+		// keeps showing it, and the reason travels beside it rather than on it.
+		//
+		// One watcher across both rounds, because what is being tested is the
+		// answer it remembers — a second watcher would start knowing nothing.
+		const { GitHubUnavailable } = await import("./github.js");
+		checkedOut("feature/128-tidy");
+		const published: RepositoryStatusWire[] = [];
+		let watched: readonly { id: string; root: string }[] = [WORKSPACE];
+		const running = new RepositoryStatusWatcher({
+			gitCommand: () => Promise.resolve({} as never),
+			environment: {},
+			workspaces: () => watched,
+			publish: (status) => published.push(status),
+		});
+		running.start();
+		await vi.waitFor(() => {
+			expect(published).toHaveLength(1);
+		});
+		expect(published[0]?.workspaces[0]?.issue?.number).toBe(128);
+
+		// A second look, asked for the way a projection change asks for one.
+		readIssueStatus.mockRejectedValue(
+			new GitHubUnavailable("GitHub answered 502."),
+		);
+		watched = [WORKSPACE, { id: "w-2", root: "/projects/other" }];
+		running.observe();
+		await vi.waitFor(() => {
+			expect(published).toHaveLength(2);
+		});
+		running.stop();
+
+		const after = published[1]?.workspaces[0];
+		expect(after?.issue?.number).toBe(128);
+		expect(after?.issueUnavailable).toBeUndefined();
+		expect(published[1]?.diagnostic).toBe("GitHub answered 502.");
+	});
+
 	it("asks GitHub about nothing when the branch names no Issue", async () => {
 		checkedOut("master");
 		await round();

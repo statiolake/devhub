@@ -103,6 +103,27 @@ export interface WorkspaceRepositoryWire {
 		readonly url: string;
 		readonly state: "open" | "draft";
 	};
+	/**
+	 * The Issue this branch names, when DevHub has nothing to say about it.
+	 *
+	 * A branch called `feature/128-…` is a workspace that *is* about Issue 128
+	 * whether or not GitHub answered. Without this the row looked exactly like a
+	 * branch that names no Issue at all, and the reason — a number that is
+	 * really a pull request, a private repository, a token without the scope,
+	 * a rate limit — was one line at the foot of the whole Sidebar, attached to
+	 * nothing. Two different facts drawn identically, with the explanation kept
+	 * somewhere else, is how "it just does not link" becomes unanswerable.
+	 *
+	 * It is never present alongside `issue`: what was last known outranks a look
+	 * that failed, which is the same rule `diagnostic` follows. So this appears
+	 * only when there is nothing known to show instead, and it is replaced the
+	 * moment a later look succeeds.
+	 */
+	readonly issueUnavailable?: {
+		readonly number: number;
+		/** GitHub's own words, or DevHub's about not having asked. */
+		readonly reason: string;
+	};
 }
 
 export interface RepositoryStatusWire {

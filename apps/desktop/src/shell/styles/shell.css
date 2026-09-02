@@ -396,6 +396,21 @@
   color: var(--secondary);
 }
 
+/* Why the row can say which Issue it is about and nothing more. It is a
+   failure and reads as one — the same ink every other failure in this window
+   uses — because a reason drawn in the caption grey beside an Issue title is a
+   reason that looks like an Issue title. */
+.row-issue-unavailable {
+  color: var(--danger);
+  /* The one part of a line that gives way before the others, and the only one
+     with a reason to: it is a sentence, not an identifier. The branch beside it
+     is what tells this row from the next, and the whole of this text is in the
+     row's tooltip and at the foot of the Sidebar — so losing its tail costs
+     nothing that is not said twice elsewhere, while losing the branch's tail
+     costs the row its name. */
+  flex-shrink: 6;
+}
+
 /* A link out to GitHub. Shaped like the row's other trailing controls, but
    always visible: it is not an action on the row, it is the row saying what
    state its issue is in, and a state you have to hover to see is not one you

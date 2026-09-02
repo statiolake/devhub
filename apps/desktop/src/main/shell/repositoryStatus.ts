@@ -168,36 +168,62 @@ export class RepositoryStatusWatcher {
 			if (entry.issue) wanted.set(issueKey(entry.issue), entry.issue);
 		}
 
+		/**
+		 * Why each Issue could not be read this round, for the rows that are
+		 * about them.
+		 *
+		 * The same reasons the Sidebar's foot has said all along, kept against
+		 * the Issue they belong to instead of only in one line that names none of
+		 * them. A round that succeeds for one Issue and fails for another now
+		 * says which was which.
+		 */
+		const unreadable = new Map<string, string>();
 		if (wanted.size > 0) {
 			const token = await readGitHubToken(this.deps.environment);
 			if (!token) {
 				diagnostic =
 					"DevHub has no GitHub credentials. Run `gh auth login` to show issue and pull request status.";
+				// Not one Issue's problem: none of them were asked about, so every
+				// row that is about one says so.
+				for (const key of wanted.keys()) unreadable.set(key, diagnostic);
 			} else {
-				for (const issue of [...wanted.values()].slice(
-					0,
-					MAX_ISSUES_PER_ROUND,
-				)) {
-					try {
-						this.known.set(
-							issueKey(issue),
-							await readIssueStatus(issue, token),
+				const asking = [...wanted.values()];
+				for (const [index, issue] of asking.entries()) {
+					const key = issueKey(issue);
+					if (index >= MAX_ISSUES_PER_ROUND) {
+						// Over the round's budget. A row left blank because DevHub ran
+						// out of requests is indistinguishable from one that failed,
+						// unless it says which it is.
+						unreadable.set(
+							key,
+							`DevHub asks GitHub about ${String(MAX_ISSUES_PER_ROUND)} issues a round; this one is in the next.`,
 						);
+						continue;
+					}
+					try {
+						this.known.set(key, await readIssueStatus(issue, token));
+						unreadable.delete(key);
 					} catch (error: unknown) {
 						// Only GitHub's own refusals are reported this way. Anything
 						// else is a bug in DevHub, and it goes to the root handler
 						// rather than being drawn as a status line.
 						if (!(error instanceof GitHubUnavailable)) throw error;
 						diagnostic = error.message;
+						unreadable.set(key, error.message);
 					}
 				}
 			}
 		}
 
 		const projected: WorkspaceRepositoryWire[] = local.map((entry) => {
-			const status = entry.issue
-				? this.known.get(issueKey(entry.issue))
-				: undefined;
+			const key = entry.issue ? issueKey(entry.issue) : undefined;
+			const status = key === undefined ? undefined : this.known.get(key);
+			// What was last known outranks a look that failed — the same rule the
+			// Sidebar's own note follows, so a network that dropped never reads as
+			// an Issue that closed. The reason is drawn on the row only when there
+			// is nothing known to draw instead.
+			const reason =
+				status || key === undefined ? undefined : unreadable.get(key);
 			return {
 				workspaceId: entry.workspace.id,
 				branch: entry.branch,
@@ -210,6 +236,10 @@ export class RepositoryStatusWatcher {
 						}
 					: undefined,
 				pullRequest: status?.pullRequest,
+				issueUnavailable:
+					reason === undefined || entry.issue === undefined
+						? undefined
+						: { number: entry.issue.number, reason },
 			};
 		});
 

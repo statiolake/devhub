@@ -137,6 +137,34 @@ describe("a workspace row", () => {
     expect(screen.queryByRole("button", { name: /Issue #/u })).toBeNull();
   });
 
+  it("says which Issue it is about, and why, when the look failed", () => {
+    // A branch called feature/128-… is about Issue 128 whether or not GitHub
+    // answered. Before this the row was indistinguishable from one about no
+    // Issue at all, and the reason sat at the foot of the Sidebar naming none
+    // of the rows it belonged to.
+    mount({
+      sequence: 1,
+      workspaces: [
+        {
+          workspaceId: "w-1",
+          branch: "feature/128-tidy",
+          issueUnavailable: {
+            number: 128,
+            reason: "GitHub has no issue example/widget#128.",
+          },
+        },
+      ],
+    });
+    const row = document.querySelector(".workspace-row");
+    expect(row?.querySelector(".row-issue-unavailable")).toHaveTextContent(
+      "#128 · GitHub has no issue example/widget#128.",
+    );
+    // The branch is still said; it is the fact this row is named by.
+    expect(screen.getByText("feature/128-tidy")).toBeInTheDocument();
+    // And no Issue mark, because DevHub does not know the state to draw.
+    expect(screen.queryByRole("button", { name: /Issue #/u })).toBeNull();
+  });
+
   it("keeps what it knows when a look fails, and says why beside it", () => {
     // A network that dropped must not read as an issue that closed.
     mount({ ...WORKING_ON, diagnostic: "GitHub answered 502." });

@@ -206,7 +206,9 @@ function WorkspaceRow({
             whatever the name and four trailing buttons left over, and a branch
             name is long and ends in the part that identifies it, so what
             survived was `feature/128-tidy-the…` — the half that says nothing. */}
-        {(repository?.branch ?? repository?.issue) ? (
+        {(repository?.branch ??
+        repository?.issue ??
+        repository?.issueUnavailable) ? (
           <div className="row-line row-line-secondary">
             {repository?.branch ? (
               <span className="row-branch" title={repository.branch}>
@@ -216,6 +218,21 @@ function WorkspaceRow({
             {repository?.issue ? (
               <span className="row-issue" title={repository.issue.title}>
                 {repository.issue.title}
+              </span>
+            ) : null}
+            {/* The branch names an Issue and GitHub said nothing usable about
+                it. Without this the row looked exactly like a branch that is
+                about no Issue, while the reason sat at the foot of the Sidebar
+                attached to nothing — so "it just does not link" had no answer
+                on screen. The number says which Issue, the reason says why,
+                and the whole of it is in the tooltip because a Sidebar this
+                narrow will always cut a sentence from GitHub. */}
+            {repository?.issueUnavailable ? (
+              <span
+                className="row-issue-unavailable"
+                title={`Issue #${String(repository.issueUnavailable.number)}: ${repository.issueUnavailable.reason}`}
+              >
+                {`#${String(repository.issueUnavailable.number)} · ${repository.issueUnavailable.reason}`}
               </span>
             ) : null}
           </div>
