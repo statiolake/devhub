@@ -149,6 +149,55 @@ describe("a workspace row", () => {
     expect(screen.queryByRole("button", { name: /on GitHub/u })).toBeNull();
   });
 
+  describe("removing a worktree", () => {
+    const worktree = (dirty: boolean | undefined) => ({
+      sequence: 1,
+      workspaces: [
+        {
+          workspaceId: "w-1",
+          branch: "feature/128-tidy",
+          // The row is /projects/widget; the repository is somewhere else, so
+          // this workspace is a worktree of it.
+          mainWorktree: "/projects/other",
+          ...(dirty === undefined ? {} : { dirty }),
+        },
+      ],
+    });
+    const button = () =>
+      screen.queryByRole("button", { name: /Remove the worktree/u });
+
+    it("is offered for a clean worktree", () => {
+      mount(worktree(false));
+      expect(button()).toBeInTheDocument();
+    });
+
+    it("is not offered while there is work in it to lose", () => {
+      mount(worktree(true));
+      expect(button()).toBeNull();
+    });
+
+    it("is not offered when DevHub cannot tell", () => {
+      // Not knowing is not the same as clean. Nothing destructive on a maybe.
+      mount(worktree(undefined));
+      expect(button()).toBeNull();
+    });
+
+    it("is not offered for the repository itself", () => {
+      mount({
+        sequence: 1,
+        workspaces: [
+          {
+            workspaceId: "w-1",
+            branch: "main",
+            mainWorktree: "/projects/widget",
+            dirty: false,
+          },
+        ],
+      });
+      expect(button()).toBeNull();
+    });
+  });
+
   it("opens the Issue and the pull request on GitHub", () => {
     const { openExternalUrl } = mount(WORKING_ON);
 

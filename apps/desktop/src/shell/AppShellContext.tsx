@@ -440,6 +440,15 @@ export function AppShellProvider({
 
   const agentActions = useCallback(() => transport.agentActions(), [transport]);
 
+  const removeWorktree = useCallback(
+    async (workspaceId: string) => {
+      const outcome = await transport.removeWorktree(workspaceId);
+      applySnapshot(outcome.snapshot);
+      return outcome;
+    },
+    [applySnapshot, transport],
+  );
+
   const projectDefaultDirectory = useCallback(
     () => transport.projectDefaultDirectory(),
     [transport],
@@ -561,6 +570,7 @@ export function AppShellProvider({
       projectDefaultDirectory,
       cloneParentDirectories,
       agentActions,
+      removeWorktree,
       findIssueRepositories,
       cloneRepository,
       listBranches,
@@ -584,6 +594,7 @@ export function AppShellProvider({
       projectDefaultDirectory,
       cloneParentDirectories,
       agentActions,
+      removeWorktree,
       findIssueRepositories,
       cloneRepository,
       listBranches,

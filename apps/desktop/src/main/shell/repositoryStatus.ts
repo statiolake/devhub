@@ -22,7 +22,12 @@ import type {
 	RepositoryStatusWire,
 	WorkspaceRepositoryWire,
 } from "../../ipc/contract.js";
-import { readBranch, readRepository, type GitCommand } from "./git.js";
+import {
+	readBranch,
+	readDirty,
+	readRepository,
+	type GitCommand,
+} from "./git.js";
 import { TypedFailure } from "../../model/wire.js";
 import {
 	GitHubUnavailable,
@@ -152,6 +157,8 @@ interface LocalReading {
 	readonly mainWorktree?: string;
 	/** `origin`, kept so the fast clock can re-read an Issue from a new branch. */
 	readonly remote?: RemoteIdentity;
+	/** Work here that removing the folder would destroy, as of the last look. */
+	readonly dirty?: boolean;
 	/** The repository's page, when `origin` is one DevHub can name a page for. */
 	readonly repositoryUrl?: string;
 	readonly issue?: IssueReference;
@@ -302,6 +309,9 @@ export class RepositoryStatusWatcher {
 					mainWorktree: entry.mainWorktree,
 					remote: entry.remote,
 					repositoryUrl: entry.repositoryUrl,
+					// The fast clock asks one question and this is not it; what the
+					// slow clock last saw stands until it looks again.
+					dirty: entry.dirty,
 					...(reading.kind === "issue" ? { issue: reading.issue } : {}),
 					...(reading.kind === "unresolved"
 						? { number: reading.number, reason: reading.reason }
@@ -354,9 +364,16 @@ export class RepositoryStatusWatcher {
 					return { workspace, reason };
 				}
 				const reading = issueFromConvention(facts?.remote, facts?.branch);
+				// Only where it can mean something. A workspace that is not a
+				// repository has nothing to be dirty about, and asking anyway would
+				// be one more command per row per minute for an answer nobody reads.
+				const dirty = facts
+					? await readDirty(command, workspace.root)
+					: undefined;
 				return {
 					workspace,
 					branch: facts?.branch,
+					dirty,
 					mainWorktree: facts?.mainWorktree,
 					remote: facts?.remote,
 					repositoryUrl: repositoryUrl(facts?.remote),
@@ -478,6 +495,7 @@ export class RepositoryStatusWatcher {
 				branch: entry.branch,
 				mainWorktree: entry.mainWorktree,
 				repositoryUrl: entry.repositoryUrl,
+				dirty: entry.dirty,
 				issue: status
 					? {
 							url: status.url,

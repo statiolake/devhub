@@ -40,6 +40,7 @@ export type GlyphName =
   | "terminal"
   | "plus"
   | "close"
+  | "trash"
   | "repository"
   | "issueOpen"
   | "issueClosed"
@@ -51,6 +52,14 @@ export type GlyphName =
   | "statusUnknown";
 
 const GLYPHS: Record<GlyphName, ReactNode> = {
+  /* Removing a worktree. A bin rather than an X, because the two things a row
+     can do to itself are not alike: closing puts a workspace away, and this
+     deletes a folder. A shape that says which is the difference between a
+     mis-click you shrug at and one you cannot undo. */
+  trash: (
+    <path d="M2.86 4.57h10.28M6.29 4.57V3.43c0-.32.25-.57.57-.57h2.28c.32 0 .58.25.58.57v1.14M4 4.57l.57 7.72c.02.3.27.53.57.53h5.72c.3 0 .55-.23.57-.53l.57-7.72" />
+  ),
+
   /* The repository on GitHub: a book, which is what a repository is called
      everywhere else in git's own vocabulary. Drawn open rather than closed so
      it does not read as a second folder in a column that already has one. */

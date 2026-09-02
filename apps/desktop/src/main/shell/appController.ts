@@ -155,6 +155,7 @@ import {
 } from "./projects.js";
 import {
 	ensureWorktree,
+	removeWorktree,
 	listBranches,
 	workspaceFailure,
 	type GitCommand,
@@ -1206,6 +1207,49 @@ export class AppController {
 		} catch {
 			this.accept({ type: "operation_failed", token });
 		}
+	}
+
+	/**
+	 * Remove a worktree's folder, then close the workspace that was in it.
+	 *
+	 * **The branch is not touched.** A worktree is a *place*; a branch is
+	 * *work*. Removing the place must not destroy the work — the branch may be
+	 * pushed, may have a pull request open against it, and is the whole of what
+	 * links a workspace to its Issue. It is one rule with no option beside it,
+	 * because an option here is a checkbox whose wrong setting loses commits;
+	 * somebody who wants the branch gone runs `git branch -d`, where git refuses
+	 * if it is unmerged. A second, weaker copy of that check does not belong
+	 * here.
+	 *
+	 * git first, then the close. If git refuses — changes in the worktree, a
+	 * lock — nothing has happened and the refusal is git's own words, shown
+	 * where the question was asked. Only once the folder is gone is the
+	 * workspace closed, and that is best-effort: the destructive half has
+	 * already succeeded, and a workspace left pointing at a missing folder is a
+	 * state DevHub already draws.
+	 */
+	private async removeWorktree(workspaceId: string): Promise<AppOutcomeWire> {
+		const workspace = this.coordinator.model.workspaces.find(
+			(candidate) => candidate.id === workspaceId,
+		);
+		if (!workspace) throw workspaceFailure("That workspace is not open.");
+		const repository = this.lastRepositoryStatus.workspaces.find(
+			(entry) => entry.workspaceId === workspaceId,
+		);
+		const mainWorktree = repository?.mainWorktree;
+		if (mainWorktree === undefined || mainWorktree === workspace.root) {
+			// The repository itself, or a folder DevHub has not read yet. Removing
+			// a repository is not what this is for, and guessing is not either.
+			throw workspaceFailure(
+				"This workspace is not a worktree of a repository DevHub can see.",
+			);
+		}
+		await removeWorktree(await this.gitCommand(), mainWorktree, workspace.root);
+		const settled = await this.dispatchAwaiting({
+			type: "request_close_workspace",
+			workspaceId: workspace.id,
+		});
+		return outcomeWire(settled, this.coordinator.readiness);
 	}
 
 	/**
@@ -2638,6 +2682,15 @@ export class AppController {
 
 		handle(CHANNELS.getRepositoryStatus, () => this.lastRepositoryStatus);
 
+		// Destructive, and asked about before it gets here: the page raises the
+		// question, this carries out the answer.
+		handle(CHANNELS.removeWorktree, async (_event, workspaceId: string) => {
+			try {
+				return await this.removeWorktree(workspaceId);
+			} catch (error: unknown) {
+				throw asIpcError(errorWire(error));
+			}
+		});
 		handle(CHANNELS.agentActions, () =>
 			(this.config?.agentActions ?? []).map((action) => ({
 				id: action.id,

@@ -21,6 +21,7 @@ import { AgentPickerSheet } from "./AgentPickerSheet";
 import { IssueAssignmentSheet } from "./IssueAssignmentSheet";
 import { AgentRenameAlert } from "./AgentRenameAlert";
 import { CloseConfirmationAlert } from "./CloseConfirmationAlert";
+import { WorktreeRemovalAlert } from "./WorktreeRemovalAlert";
 
 /** Take one modal off screen, with the answer if it asked for one. */
 function close(id: string, response?: number): void {
@@ -89,6 +90,15 @@ function Modal({ modal }: { readonly modal: OpenModal }) {
       return (
         <AgentRenameAlert
           agentId={request.agentId}
+          onDismiss={() => {
+            close(id);
+          }}
+        />
+      );
+    case "worktree-removal":
+      return (
+        <WorktreeRemovalAlert
+          request={request}
           onDismiss={() => {
             close(id);
           }}

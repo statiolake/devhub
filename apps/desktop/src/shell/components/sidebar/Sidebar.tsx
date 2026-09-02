@@ -73,6 +73,7 @@ function WorkspaceRow({
   agentProfiles,
   agentProfilesAvailability,
   onCreateAgent,
+  onRemoveWorktree,
   onRenameAgent,
   onAgentMenu,
 }: {
@@ -84,6 +85,7 @@ function WorkspaceRow({
   readonly agentProfiles: readonly AgentProfile[];
   readonly agentProfilesAvailability: AgentProfilesAvailabilityWire;
   readonly onCreateAgent: (workspaceId: string) => void;
+  readonly onRemoveWorktree: (workspace: WorkspaceSnapshot) => void;
   readonly onRenameAgent: (agent: AgentSnapshot) => void;
   readonly onAgentMenu: (
     agent: AgentSnapshot,
@@ -198,6 +200,26 @@ function WorkspaceRow({
               <Glyph name="close" />
             </button>
           )}
+          {/* Only a worktree, and only when there is nothing in it to lose.
+            A worktree is a place the repository is also checked out; the
+            repository itself is not something this row deletes. "Nothing to
+            lose" is a poll up to a minute old, so it decides whether to offer
+            the button and never whether the removal is safe — git is asked
+            again when it runs, and its refusal is the authority. DevHub not
+            knowing is not the same as clean, so the button is not offered. */}
+          {repository?.mainWorktree !== undefined &&
+          repository.mainWorktree !== workspace.root &&
+          repository.dirty === false ? (
+            <button
+              className="row-action-button"
+              type="button"
+              aria-label={`Remove the worktree ${workspace.label}`}
+              title="Remove worktree"
+              onClick={() => onRemoveWorktree(workspace)}
+            >
+              <Glyph name="trash" />
+            </button>
+          ) : null}
         </div>
         {/* Line two: the branch, and nothing else on it.
             
@@ -638,6 +660,20 @@ export function Sidebar({ snapshot, onDispatch }: SidebarProps) {
   // The sidebar draws no modals. Every one of them lives on the overlay layer
   // above the workbench views, so opening one is a request to main and nothing
   // more — there is no local "is it open" to keep in step with anything.
+  // The question is raised on the modal layer, like every other destructive
+  // one: the row asks, the alert confirms, main carries it out.
+  const askRemoveWorktree = useCallback(
+    (workspace: WorkspaceSnapshot) => {
+      void devhub().openModal({
+        kind: "worktree-removal",
+        workspaceId: workspace.id,
+        label: workspace.label,
+        branch: repositories.get(workspace.id)?.branch,
+      });
+    },
+    [repositories],
+  );
+
   const openPicker = useCallback(() => {
     void devhub().openModal({ kind: "workspace-picker" });
   }, []);
@@ -872,6 +908,7 @@ export function Sidebar({ snapshot, onDispatch }: SidebarProps) {
                 agentProfiles={agentProfiles.profiles}
                 agentProfilesAvailability={agentProfiles.availability}
                 onCreateAgent={openAgentPicker}
+                onRemoveWorktree={askRemoveWorktree}
                 onRenameAgent={openRename}
                 onAgentMenu={openAgentMenu}
               />

@@ -119,6 +119,11 @@ const devhub: DevhubApi = {
 		ipcRenderer.invoke(CHANNELS.cloneParentDirectories) as Promise<
 			readonly string[]
 		>,
+	removeWorktree: (workspaceId: string) =>
+		ipcRenderer.invoke(
+			CHANNELS.removeWorktree,
+			workspaceId,
+		) as Promise<AppOutcome>,
 	agentActions: () =>
 		ipcRenderer.invoke(CHANNELS.agentActions) as Promise<
 			readonly AgentActionWire[]

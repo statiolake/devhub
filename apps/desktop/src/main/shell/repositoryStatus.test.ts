@@ -14,12 +14,14 @@ import type { RepositoryStatusWire } from "../../ipc/contract.js";
 
 const readRepository = vi.fn();
 const readBranch = vi.fn();
+const readDirty = vi.fn();
 const readIssueStatus = vi.fn();
 const readGitHubToken = vi.fn();
 
 vi.mock("./git.js", () => ({
 	readRepository: (...args: unknown[]) => readRepository(...args),
 	readBranch: (...args: unknown[]) => readBranch(...args),
+	readDirty: (...args: unknown[]) => readDirty(...args),
 }));
 vi.mock("./github.js", async (importOriginal) => ({
 	...(await importOriginal<Record<string, unknown>>()),
@@ -43,6 +45,7 @@ function checkedOut(branch: string | undefined) {
 	// The fast clock asks the cheap question; it must agree with the slow one
 	// until a test says otherwise.
 	readBranch.mockResolvedValue(branch);
+	readDirty.mockResolvedValue(false);
 }
 
 function watcher(published: RepositoryStatusWire[]) {

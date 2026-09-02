@@ -202,6 +202,47 @@ export async function readBranch(
 		: branch;
 }
 
+/**
+ * Is there work here that removing this folder would destroy?
+ *
+ * `git status --porcelain` with untracked files included, because an untracked
+ * file is work too: it is the thing somebody has written and not yet added, and
+ * a folder deleted out from under it is the one way to lose it with no reflog
+ * to go back to.
+ *
+ * `undefined` means DevHub could not tell — git would not answer — which is
+ * deliberately different from "clean". Nothing destructive is offered on a
+ * maybe.
+ */
+export async function readDirty(
+	command: GitCommand,
+	directory: string,
+): Promise<boolean | undefined> {
+	const status = await ask(command, ["status", "--porcelain"], directory).catch(
+		() => undefined,
+	);
+	return status === undefined ? undefined : status.length > 0;
+}
+
+/**
+ * Remove a worktree, and let git refuse.
+ *
+ * No `--force`. git already declines to remove a worktree with changes in it,
+ * and that refusal is the last check standing between somebody and work they
+ * cannot get back — DevHub's own idea of "clean" is a poll up to a minute old,
+ * so it is a hint for the button and never the authority. The branch is not
+ * touched: see `removeWorktree` in the controller for why.
+ */
+export async function removeWorktree(
+	command: GitCommand,
+	mainWorktree: string,
+	worktree: string,
+): Promise<void> {
+	await runGit(command, ["worktree", "remove", worktree], {
+		cwd: mainWorktree,
+	});
+}
+
 export async function readRepository(
 	command: GitCommand,
 	directory: string,

@@ -122,6 +122,16 @@ export interface WorkspaceRepositoryWire {
 	 * here rather than a guess that leads somewhere wrong.
 	 */
 	readonly repositoryUrl?: string;
+	/**
+	 * Work here that removing the folder would destroy, as of the last look.
+	 *
+	 * Tracked changes and untracked files alike. Absent when DevHub could not
+	 * tell, which is not the same as clean: nothing destructive is offered on a
+	 * maybe. It is a poll up to a minute old, so it decides whether the button
+	 * is offered and never whether the removal is safe — git is asked again at
+	 * the moment it matters, and its refusal is the authority.
+	 */
+	readonly dirty?: boolean;
 	readonly issue?: {
 		readonly url: string;
 		readonly number: number;
@@ -402,6 +412,13 @@ export interface DevhubApi {
 	 * A single call would have one failure for five questions.
 	 */
 	findIssueRepositories(issueUrl: string): Promise<readonly IssueRepository[]>;
+	/**
+	 * Remove a worktree's folder and close its workspace.
+	 *
+	 * Destructive, and asked about first: the page raises the question, this
+	 * carries out the answer.
+	 */
+	removeWorktree(workspaceId: string): Promise<AppOutcome>;
 	/** Clone, and answer with the directory git made. Opens nothing. */
 	cloneRepository(url: string, parentDirectory: string): Promise<string>;
 	/**
@@ -464,6 +481,7 @@ export const CHANNELS = {
 	cloneProject: "devhub:clone-project",
 	projectDefaultDirectory: "devhub:project-default-directory",
 	cloneParentDirectories: "devhub:clone-parent-directories",
+	removeWorktree: "devhub:remove-worktree",
 	agentActions: "devhub:agent-actions",
 	openSettings: "devhub:open-settings",
 	openExternalUrl: "devhub:open-external-url",
@@ -510,6 +528,13 @@ export type ModalRequest =
 	| { readonly kind: "agent-picker"; readonly workspaceId: string }
 	| { readonly kind: "issue-assignment" }
 	| { readonly kind: "agent-rename"; readonly agentId: string }
+	| {
+			readonly kind: "worktree-removal";
+			readonly workspaceId: string;
+			/** What the row calls it, so the question names what it is about. */
+			readonly label: string;
+			readonly branch?: string;
+	  }
 	| {
 			readonly kind: "close-confirmation";
 			readonly confirmationId: string;
