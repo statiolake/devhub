@@ -416,9 +416,13 @@ describe("a workspace row, continued", () => {
       // failure in, so it goes to the one place the shell shows them. Without
       // this the poll being a minute stale is a button that silently does
       // nothing.
+      // Rejected when the mock is *called*, not when it is set up: a promise
+      // built here and rejected before anything attaches a handler is an
+      // unhandled rejection, and it would be reported against whichever test
+      // happened to be running when the microtask queue next drained.
       const refusal = new Error("fatal: '…' contains modified files");
       const { removeWorktree, reportFailure } = mount(worktree(false));
-      removeWorktree.mockReturnValue(Promise.reject(refusal) as never);
+      removeWorktree.mockImplementation(() => Promise.reject(refusal));
       fireEvent.click(button() as HTMLElement);
       return Promise.resolve().then(() => {
         expect(reportFailure).toHaveBeenCalledWith(refusal);

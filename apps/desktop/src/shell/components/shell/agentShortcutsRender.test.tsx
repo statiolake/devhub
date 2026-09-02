@@ -116,12 +116,25 @@ describe("the shortcut buttons", () => {
   it("reports a refusal instead of doing nothing visible", async () => {
     // A button that silently fails is the worst of the three things it could
     // do, so the failure goes to the one place the shell shows them.
+    //
+    // The rejection is made *when the mock is called*, not when it is set up.
+    // `mockReturnValue(Promise.reject(…))` builds a rejected promise here and
+    // now, and the `await` below then yields several times before anything
+    // attaches a handler to it — which is an unhandled rejection, reported
+    // against a test that passed. Building it inside the implementation keeps
+    // the handler in the same tick as the promise.
+    //
+    // That is also what keeps this test honest: the component attaches its
+    // `.catch` synchronously to whatever the call returns, so if it ever
+    // stopped doing so the unhandled rejection would come back and fail the
+    // run rather than the failure quietly going nowhere.
     const refusal = new Error("That agent is not running.");
     const { runAgentAction, reportFailure } = mount(DIRTY);
-    runAgentAction.mockReturnValue(Promise.reject(refusal) as never);
-    fireEvent.click(
-      await screen.findByRole("button", { name: /Commit the changes/u }),
-    );
+    const button = await screen.findByRole("button", {
+      name: /Commit the changes/u,
+    });
+    runAgentAction.mockImplementation(() => Promise.reject(refusal));
+    fireEvent.click(button);
     await waitFor(() => {
       expect(reportFailure).toHaveBeenCalledWith(refusal);
     });
