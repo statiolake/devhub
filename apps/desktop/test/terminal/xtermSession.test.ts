@@ -332,7 +332,7 @@ describe("the shared xterm session", () => {
    * own default — the caret move in the hidden textarea — is prevented, and
    * xterm is told to stop, so it does not also spell the key its own way.
    */
-  it("answers a Mac editing chord as terminal input and stops there", () => {
+  it("encodes a Cmd-held arrow as terminal input and stops there", () => {
     const session = open();
     const terminal = session.terminal as unknown as {
       keyHandler: (event: KeyboardEvent) => boolean;
@@ -345,14 +345,15 @@ describe("the shared xterm session", () => {
     });
 
     expect(terminal.keyHandler(event)).toBe(false);
-    expect(terminal.sent).toEqual(["\u0001"]);
+    expect(terminal.sent).toEqual(["\u001b[1;9D"]);
     expect(event.defaultPrevented).toBe(true);
     session.dispose();
   });
 
   /**
-   * Cmd+C has to keep reaching the browser and DevHub's menus. Returning true
-   * without touching the event is what leaves it alone; a keyup is left alone
+   * Cmd+C has to keep reaching the browser and DevHub's menus, and Option with
+   * an arrow has to stay with xterm, which already encodes it. Returning true
+   * without touching the event is what leaves both alone; a keyup is left alone
    * for the same reason, since the chord was already answered on the way down.
    */
   it("leaves a key that is not ours to xterm and to the browser", () => {
@@ -371,9 +372,16 @@ describe("the shared xterm session", () => {
       metaKey: true,
       cancelable: true,
     });
+    const word = new KeyboardEvent("keydown", {
+      key: "ArrowLeft",
+      altKey: true,
+      cancelable: true,
+    });
 
     expect(terminal.keyHandler(copy)).toBe(true);
     expect(terminal.keyHandler(release)).toBe(true);
+    expect(terminal.keyHandler(word)).toBe(true);
+    expect(word.defaultPrevented).toBe(false);
     expect(terminal.sent).toEqual([]);
     expect(copy.defaultPrevented).toBe(false);
     expect(release.defaultPrevented).toBe(false);

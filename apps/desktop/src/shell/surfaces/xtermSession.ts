@@ -334,16 +334,18 @@ export function openXtermSession(
   input?.addEventListener("compositionend", onCompositionEnd);
   input?.addEventListener("input", onInput);
   /**
-   * Answer the Mac's own editing chords; leave everything else alone.
+   * Encode the cursor keys xterm refuses to encode; leave everything else.
    *
-   * The handler used to say yes to every key, which meant Cmd+Left and its
-   * relatives were neither turned into terminal input nor stopped — so the
-   * browser did what it does to a focused textarea and moved a caret in xterm's
-   * hidden IME scratch pad. Now each chord DevHub answers is written to the
-   * pane as the bytes a program expects, and the browser never sees it.
+   * The handler used to say yes to every key, and xterm's own encoder bails out
+   * of its arrow cases the moment Command is held. So Cmd+Left was neither
+   * turned into terminal input nor stopped, and the browser did what it does to
+   * a focused textarea: it moved a caret in xterm's hidden IME scratch pad.
+   * Now the sequence xterm would have written is written here instead, and the
+   * browser never sees the key at all.
    *
    * Returning false is what tells xterm to keep its hands off a key this has
-   * already dealt with. Everything else still returns true, so Cmd+C, Cmd+V and
+   * already dealt with. Everything else still returns true, so Option with an
+   * arrow keeps the encoding xterm gets right on its own, and Cmd+C, Cmd+V and
    * the rest reach the browser and DevHub's menus exactly as before.
    */
   terminal.attachCustomKeyEventHandler((event) => {

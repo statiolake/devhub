@@ -1,11 +1,12 @@
 /**
- * The Mac editing chords, and the bytes they become.
+ * The arrow keys held with Command, and the bytes they become.
  *
- * The point of pinning the exact sequences is that they are not ours to choose:
- * they are what readline, zsh and Claude Code's prompt already listen for, and
- * a chord that sends something almost right does nothing at all. Each of these
- * was measured against a real zsh and a real Claude Code under a pty before it
- * was written down — see the note in `keys.ts` for what was tried and rejected.
+ * These sequences are not ours to choose. They are the xterm convention for a
+ * modified cursor key, they are what Ghostty emits from its own table — read
+ * out of `src/input/function_keys.zig`, where a left arrow is
+ * `ESC [ 1 ; {mods} D` and Super is modifier 9 — and they are what xterm.js's
+ * own encoder computes before its arrow cases throw the result away. Claude
+ * Code's prompt was measured decoding all four of them under a pty.
  */
 
 import { describe, expect, it } from "vitest";
@@ -25,75 +26,62 @@ function chord(key: string, held: Partial<EditingChord> = {}): EditingChord {
   };
 }
 
-describe("the Mac editing chords a terminal answers", () => {
-  /**
-   * Not the bytes a Home key sends. A stock zsh binds none of the escape
-   * spellings of Home — it swallows the escape and the next character with
-   * it — while every line editor there is, Claude Code's prompt included,
-   * moves to the ends of the line on these two.
-   */
-  it("sends Cmd+Left and Cmd+Right as beginning- and end-of-line", () => {
+describe("a cursor key held with Command", () => {
+  it("says Command and which arrow it was", () => {
     expect(editingSequence(chord("ArrowLeft", { metaKey: true }))).toBe(
-      "\u0001",
+      "\u001b[1;9D",
     );
     expect(editingSequence(chord("ArrowRight", { metaKey: true }))).toBe(
-      "\u0005",
+      "\u001b[1;9C",
     );
-  });
-
-  it("sends Cmd+Backspace as the delete a Mac terminal sends", () => {
-    expect(editingSequence(chord("Backspace", { metaKey: true }))).toBe(
-      "\u0015",
+    expect(editingSequence(chord("ArrowUp", { metaKey: true }))).toBe(
+      "\u001b[1;9A",
     );
-  });
-
-  it("sends Option with an arrow as a word motion", () => {
-    expect(editingSequence(chord("ArrowLeft", { altKey: true }))).toBe(
-      "\u001bb",
-    );
-    expect(editingSequence(chord("ArrowRight", { altKey: true }))).toBe(
-      "\u001bf",
+    expect(editingSequence(chord("ArrowDown", { metaKey: true }))).toBe(
+      "\u001b[1;9B",
     );
   });
 
   /**
-   * Everything the system and DevHub's own menus own. Claiming any of these
-   * would break copy, paste and select-all in a terminal.
+   * The point of encoding a key rather than translating it: a chord that holds
+   * more than Command still says so, and the program decides what it means.
+   * These numbers are the same ones Ghostty's table holds for the same
+   * combinations — Shift+Super is 10, Alt+Super 11, Ctrl+Super 13.
    */
-  it("leaves the system shortcuts alone", () => {
-    for (const key of ["c", "v", "a", "n", "w", "t", "z"]) {
-      expect(editingSequence(chord(key, { metaKey: true }))).toBeUndefined();
-    }
-  });
-
-  it("leaves a bare arrow to xterm", () => {
-    expect(editingSequence(chord("ArrowLeft"))).toBeUndefined();
-    expect(editingSequence(chord("ArrowRight"))).toBeUndefined();
-    expect(editingSequence(chord("Backspace"))).toBeUndefined();
-  });
-
-  /** A terminal has no way to say "select to here", so the key is not taken. */
-  it("does not claim a chord that is asking for a selection", () => {
+  it("keeps saying which other modifiers were held", () => {
     expect(
       editingSequence(chord("ArrowLeft", { metaKey: true, shiftKey: true })),
-    ).toBeUndefined();
+    ).toBe("\u001b[1;10D");
     expect(
-      editingSequence(chord("ArrowLeft", { altKey: true, shiftKey: true })),
-    ).toBeUndefined();
-  });
-
-  /** Control is the terminal's own modifier; xterm already spells those. */
-  it("leaves anything held with Control to xterm", () => {
+      editingSequence(chord("ArrowLeft", { metaKey: true, altKey: true })),
+    ).toBe("\u001b[1;11D");
     expect(
       editingSequence(chord("ArrowLeft", { metaKey: true, ctrlKey: true })),
+    ).toBe("\u001b[1;13D");
+  });
+
+  /**
+   * Everything xterm already encodes correctly is left to it. Option with an
+   * arrow is the word motion, `ESC [ 1 ; 3 D`, and it reaches the pty today;
+   * claiming it here would be a second path saying the same thing.
+   */
+  it("leaves a chord xterm already encodes alone", () => {
+    expect(editingSequence(chord("ArrowLeft", { altKey: true }))).toBeUndefined();
+    expect(
+      editingSequence(chord("ArrowRight", { altKey: true })),
     ).toBeUndefined();
+    expect(editingSequence(chord("ArrowLeft"))).toBeUndefined();
     expect(editingSequence(chord("ArrowLeft", { ctrlKey: true }))).toBeUndefined();
   });
 
-  /** Both modifiers at once is not a chord anyone means; leave it. */
-  it("does not guess at Cmd and Option together", () => {
-    expect(
-      editingSequence(chord("ArrowLeft", { metaKey: true, altKey: true })),
-    ).toBeUndefined();
+  /**
+   * Cmd+Backspace already sends DEL, which is what Ghostty sends for it too,
+   * and Cmd+C and its relatives belong to the browser and DevHub's menus.
+   */
+  it("claims nothing but a cursor key", () => {
+    expect(editingSequence(chord("Backspace", { metaKey: true }))).toBeUndefined();
+    for (const key of ["c", "v", "a", "n", "w", "t", "z", "Home", "End"]) {
+      expect(editingSequence(chord(key, { metaKey: true }))).toBeUndefined();
+    }
   });
 });

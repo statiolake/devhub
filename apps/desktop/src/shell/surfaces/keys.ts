@@ -1,48 +1,37 @@
 /**
- * The macOS text-editing chords a terminal is expected to understand.
+ * The arrow keys held with Command, which xterm drops on the floor.
  *
- * A Mac terminal is not just a grid: people arrive with the system's editing
- * keys in their fingers, and iTerm and Ghostty both answer them. Cmd+Left and
- * Cmd+Right go to the beginning and end of the line, Cmd+Backspace deletes back
- * to the beginning, and Option with an arrow moves by a word. None of these
- * exist in a terminal's own vocabulary — there is no "Cmd" on the wire — so
- * each one has to be translated into bytes the program on the other end
- * already knows.
+ * A terminal has no "Cmd" on the wire, but it does have a way to say "this
+ * key, with these modifiers held": the xterm convention writes a cursor key as
+ * `CSI 1 ; <modifiers> <letter>`, where the modifier number is one plus a
+ * bitmask of Shift, Alt, Control and Super. Cmd+Left is `CSI 1;9D` — 1 plus 8
+ * for Super — and that is exactly what Ghostty emits for it, from the same
+ * table it uses for every other modified cursor key. A program that decodes
+ * modified arrows gets a real Cmd+Left and decides for itself what that means.
  *
- * Translating them settles something else too. A chord DevHub does not answer
- * is a chord the browser answers instead, on the hidden textarea xterm keeps
- * for IME input, by moving a caret nothing else can see. That is what turned
- * Japanese input into the tail of the previous Japanese input; that is fixed at
- * its own root now, but a chord claimed here can never reach the textarea at
- * all.
+ * xterm.js already computes this. Its keyboard encoder builds the very same
+ * number, including 8 for `metaKey`, and then the arrow cases begin with an
+ * early `if (ev.metaKey) break`, which throws the result away and emits
+ * nothing at all. That is the whole defect: not a missing translation, a
+ * discarded one. What this module does is reproduce the encoding xterm.js
+ * would have emitted had it not bailed out, so DevHub's panes speak the same
+ * bytes as every other Mac terminal.
  *
- * What is deliberately *not* claimed: Cmd+C, Cmd+V, Cmd+A and every other
- * system shortcut, which belong to the browser and to DevHub's own menus; and
- * anything with Shift, because a terminal has no way to express a selection and
- * guessing at one would be worse than leaving the key alone.
+ * Nothing else here needs a rule, and adding one would be inventing behaviour
+ * rather than restoring it. Option with an arrow is already encoded correctly —
+ * `CSI 1;3D`, the word motion — because that path has no bail-out. Cmd with
+ * Backspace already sends `DEL`, which is what Ghostty sends for it too.
  *
- * ## Why these bytes and not the Home and End keys
+ * ## What this does and does not fix, measured
  *
- * The obvious translation of Cmd+Left is whatever a Home key sends, and it does
- * not work. Measured against a real zsh under a real pty: `ESC [ H`, `ESC O H`
- * and `ESC [ 1 ~` all leave the cursor where it was, because a stock zsh binds
- * none of them — the escape is swallowed and so is the next character typed.
- * Claude Code's prompt accepts all of them and also accepts `C-a`, so `C-a` and
- * `C-e` are the only spelling that works in both places, and they work in bash,
- * readline and every other line editor besides. Choosing them also removes a
- * question that would otherwise have to be answered on every press: the two
- * escape spellings of Home differ by the terminal's cursor-key mode, and
- * `C-a` does not have two spellings.
- *
- * The price is honest and worth stating. `C-a` is a popular tmux prefix, and a
- * pane running under a tmux configured that way will take Cmd+Left as the
- * prefix. That is the same price iTerm and Ghostty charge for the same chord.
- *
- * `C-u` is the same kind of compromise. On a Mac, Cmd+Backspace deletes what is
- * behind the cursor and keeps the rest; Claude Code's prompt does exactly that,
- * while zsh reads `C-u` as "kill the whole line" and drops what was ahead of
- * the cursor too. No byte means delete-to-start everywhere, `C-u` is what a Mac
- * terminal sends, and a shell that wants the Mac behaviour can bind it.
+ * Claude Code's prompt decodes all four modified arrows: `CSI 1;9D` and
+ * `CSI 1;9C` move to the ends of the line, `CSI 1;3D` and `CSI 1;3C` move by a
+ * word. A stock zsh decodes none of them — it binds no modified arrow at all,
+ * so Cmd+Left leaves the tail of the sequence in the line buffer. That is not
+ * a gap to paper over here: Ghostty emits the same bytes and a zsh under
+ * Ghostty behaves the same way, with no shell integration of its own to make up
+ * the difference. A shell that wants these keys binds them, and the terminal's
+ * job is to report the key that was pressed.
  */
 
 /** Just enough of a keyboard event to decide, so the rule can be tested. */
@@ -54,25 +43,30 @@ export interface EditingChord {
   readonly shiftKey: boolean;
 }
 
-/** The bytes for one chord, or nothing when the chord is not ours. */
+/** The final byte of the CSI sequence for each cursor key. */
+const CURSOR_KEYS: Readonly<Record<string, string>> = {
+  ArrowUp: "A",
+  ArrowDown: "B",
+  ArrowRight: "C",
+  ArrowLeft: "D",
+};
+
+/**
+ * The bytes for one chord, or nothing when xterm already encodes it.
+ *
+ * Only a cursor key held with Command is claimed, because that is the only one
+ * xterm refuses to encode. The modifier number is xterm.js's own formula, so a
+ * chord that also holds Shift or Control keeps saying so.
+ */
 export function editingSequence(chord: EditingChord): string | undefined {
-  // Shift means a selection, which a terminal cannot express; Control is the
-  // terminal's own modifier and xterm already spells those.
-  if (chord.shiftKey || chord.ctrlKey) return undefined;
-  if (chord.metaKey && !chord.altKey) {
-    // SOH and ENQ: beginning-of-line and end-of-line to every line editor.
-    if (chord.key === "ArrowLeft") return "\u0001";
-    if (chord.key === "ArrowRight") return "\u0005";
-    // NAK: what a Mac terminal sends for Cmd+Backspace.
-    if (chord.key === "Backspace") return "\u0015";
-    return undefined;
-  }
-  if (chord.altKey && !chord.metaKey) {
-    // The Emacs-style word motions a Mac terminal sends, and the ones
-    // readline and zsh bind by default.
-    if (chord.key === "ArrowLeft") return "\u001bb";
-    if (chord.key === "ArrowRight") return "\u001bf";
-    return undefined;
-  }
-  return undefined;
+  if (!chord.metaKey) return undefined;
+  const final = CURSOR_KEYS[chord.key];
+  if (final === undefined) return undefined;
+  const modifiers =
+    1 +
+    (chord.shiftKey ? 1 : 0) +
+    (chord.altKey ? 2 : 0) +
+    (chord.ctrlKey ? 4 : 0) +
+    8;
+  return `\u001b[1;${modifiers}${final}`;
 }
