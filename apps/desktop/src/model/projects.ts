@@ -32,6 +32,21 @@ export function cloneDirectoryName(url: string): string | undefined {
   return name;
 }
 
+/**
+ * What a folder is called: the last segment of its path.
+ *
+ * The name is what a person recognises a checkout by — `128-wip` rather than
+ * the eight directories above it — so it is what a list of them is labelled
+ * with. A path that is all separators has no name and answers with itself,
+ * because a blank row would be worse than a long one.
+ */
+export function folderName(path: string): string {
+  const trimmed = path.replace(/\/+$/u, "");
+  const cut = trimmed.lastIndexOf("/");
+  const name = cut < 0 ? trimmed : trimmed.slice(cut + 1);
+  return name.length > 0 ? name : path;
+}
+
 /** `parent` and `name`, joined the way a path is, with no doubled separator. */
 export function joinPath(parent: string, name: string): string {
   return `${parent.replace(/\/+$/u, "")}/${name}`;

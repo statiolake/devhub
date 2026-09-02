@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest";
 import {
   cloneDirectoryName,
   cloneTarget,
+  folderName,
   joinPath,
   type GitHubLogin,
 } from "./projects.js";
@@ -37,6 +38,14 @@ describe("the name a clone lands under", () => {
     expect(cloneDirectoryName("")).toBeUndefined();
     expect(cloneDirectoryName("   ")).toBeUndefined();
     expect(cloneDirectoryName("https://example.com/../")).toBeUndefined();
+  });
+
+  it("is the last segment of a path, whatever follows it", () => {
+    expect(folderName("/projects/widget_128-wip")).toBe("widget_128-wip");
+    expect(folderName("/projects/widget/")).toBe("widget");
+    expect(folderName("widget")).toBe("widget");
+    // Nothing to name: the whole string beats a blank row.
+    expect(folderName("/")).toBe("/");
   });
 
   it("joins without doubling the separator", () => {

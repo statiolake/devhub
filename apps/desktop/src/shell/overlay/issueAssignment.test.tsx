@@ -165,7 +165,7 @@ describe("assigning an Issue", () => {
     await answer("Assign Issue", ISSUE);
     await answer(/Agent for/u);
     await choose(/Which example\/widget/u, /\/other\/widget/u);
-    await choose(/Where to work on/u, /The repository/u);
+    await choose(/Where to work on/u, /Repository Root/u);
 
     await vi.waitFor(() => {
       expect(assignIssue).toHaveBeenCalledWith(
@@ -222,7 +222,7 @@ describe("assigning an Issue", () => {
 
     await answer("Assign Issue", ISSUE);
     await answer(/Agent for/u);
-    await choose(/Where to work on/u, /The repository/u);
+    await choose(/Where to work on/u, /Repository Root/u);
 
     await vi.waitFor(() => {
       expect(assignIssue).toHaveBeenCalledWith({
@@ -292,6 +292,44 @@ describe("assigning an Issue", () => {
     );
     expect(screen.queryByText(/Paste an Issue URL/u)).toBeNull();
     expect(document.querySelector(".picker-empty")).toBeNull();
+  });
+
+  it("offers a new worktree, then the ones there are, then the repository", async () => {
+    // Read top to bottom that is the order a person considers it in, and the
+    // repository itself comes last because it is the one that is nobody's
+    // feature branch. Each row is named by its folder — what a person
+    // recognises — with the path underneath to tell two of them apart, except
+    // the repository, which is named for what it is rather than where.
+    mount({
+      findIssueRepositories: vi.fn().mockResolvedValue([
+        {
+          mainWorktree: "/projects/widget",
+          worktrees: [
+            { path: "/projects/widget", branch: "main", isMainWorktree: true },
+            {
+              path: "/projects/widget_128-wip",
+              branch: "feature/128-wip",
+              isMainWorktree: false,
+            },
+          ],
+        },
+      ]),
+    } as unknown as Partial<AppShellContextValue>);
+
+    await answer("Assign Issue", ISSUE);
+    await answer(/Agent for/u);
+    await screen.findByRole("dialog", { name: /Where to work on/u });
+
+    expect(
+      screen
+        .getAllByRole("option")
+        .map((row) => row.querySelector(".mac-list-title")?.textContent),
+    ).toEqual(["New worktree", "widget_128-wip", "Repository Root"]);
+    // The path is demoted, not lost: it is what tells two folders of the same
+    // name apart, and it is still what the field searches.
+    expect(
+      screen.getByRole("option", { name: /Repository Root/u }),
+    ).toHaveTextContent("/projects/widget");
   });
 
   it("says why a clone is being asked about when nobody asked for one", async () => {
@@ -387,7 +425,7 @@ describe("assigning an Issue", () => {
     await choose(/Clone example\/widget/u, /\/code\/github/u);
     // A fresh clone is checked out in one place, and that place plus a new
     // worktree is the same location question everybody else gets.
-    await choose(/Where to work on/u, /The repository/u);
+    await choose(/Where to work on/u, /Repository Root/u);
 
     await vi.waitFor(() => {
       expect(cloneRepository).toHaveBeenCalledWith(
@@ -414,7 +452,7 @@ describe("assigning an Issue", () => {
       target: { value: "/elsewhere/scratch" },
     });
     fireEvent.click(screen.getByRole("option", { name: /typed above/u }));
-    await choose(/Where to work on/u, /The repository/u);
+    await choose(/Where to work on/u, /Repository Root/u);
 
     await vi.waitFor(() => {
       expect(cloneRepository).toHaveBeenCalledWith(

@@ -23,6 +23,7 @@ import {
   parseIssueUrl,
   type IssueReference,
 } from "../../model/github";
+import type { PickerItem } from "../components/shell/Picker";
 import { Wizard } from "../components/shell/Wizard";
 import type {
   WizardInput,
@@ -35,7 +36,7 @@ import {
   cloneTypedItem,
 } from "../components/shell/cloneDestination";
 import type { AgentActionWire, IssueRepository } from "../client";
-import { githubCloneTarget } from "../../model/projects";
+import { folderName, githubCloneTarget } from "../../model/projects";
 import { toAppError } from "../failure";
 import { useAppShell } from "../useAppShell";
 
@@ -300,6 +301,39 @@ function repositoryStep(
   };
 }
 
+/**
+ * The places a repository is checked out, as rows, worktrees first.
+ *
+ * Read top to bottom the list is now an answer to "where does this work go?"
+ * in the order a person considers it: make a new one, use one of the ones I
+ * made, or — last, because it is the one that is nobody's feature branch —
+ * work in the repository itself.
+ *
+ * A row is named by its folder rather than its path. The path is what tells
+ * two checkouts apart and the name is what a person recognises, and there is
+ * only one of those a list can lead with; the path goes underneath, where it
+ * settles the question when two folders share a name. The repository itself is
+ * named for what it is rather than where it is: "Repository Root" is the thing
+ * a person is choosing, and its path was the longest and least distinguishing
+ * string on the sheet.
+ */
+function checkoutRows(repository: IssueRepository): readonly PickerItem[] {
+  const root = repository.worktrees.filter((place) => place.isMainWorktree);
+  const worktrees = repository.worktrees.filter(
+    (place) => !place.isMainWorktree,
+  );
+  return [...worktrees, ...root].map((place) => ({
+    id: place.path,
+    label: place.isMainWorktree ? "Repository Root" : folderName(place.path),
+    // The path is still searched even where it is no longer the label: a
+    // person who knows where a checkout lives should be able to type that.
+    searchText: `${place.path} ${place.branch ?? ""} ${
+      place.isMainWorktree ? "repository root" : ""
+    }`,
+    detail: `${place.branch ?? "detached"} · ${place.path}`,
+  }));
+}
+
 /** "the repository itself", "and 2 worktrees" — what a repository row says. */
 /** Why a clone is being asked about when nobody asked for one. */
 function nothingCloned(issue: IssueReference): string {
@@ -335,14 +369,7 @@ function locationStep(
       ...SHEET,
       title: `Where to work on ${issueLabel(issue)}`,
       question: `Choose the checkout of ${repository.mainWorktree} the agent works in — the repository itself, a worktree it already has, or a new one.`,
-      items: repository.worktrees.map((worktree) => ({
-        id: worktree.path,
-        label: worktree.path,
-        searchText: `${worktree.path} ${worktree.branch ?? ""}`,
-        detail: worktree.isMainWorktree
-          ? `The repository · ${worktree.branch ?? "detached"}`
-          : `Worktree · ${worktree.branch ?? "detached"}`,
-      })),
+      items: checkoutRows(repository),
       pinned: [
         {
           id: NEW_WORKTREE,
