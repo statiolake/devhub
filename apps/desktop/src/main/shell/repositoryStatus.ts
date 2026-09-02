@@ -48,6 +48,20 @@ export const POLL_INTERVAL_MS = 60 * 1000;
 /** How many Issues one round is allowed to ask GitHub about. */
 const MAX_ISSUES_PER_ROUND = 16;
 
+/**
+ * The page a remote's repository is at, when DevHub can name one.
+ *
+ * `github.com/owner/repo` is the only shape it knows, so anything else — a
+ * self-hosted remote, a host with a different URL scheme — gets nothing rather
+ * than a link that goes somewhere wrong.
+ */
+function repositoryUrl(remote: string | undefined): string | undefined {
+	if (!remote) return undefined;
+	return /^github\.com\/[^/]+\/[^/]+$/u.test(remote)
+		? `https://${remote}`
+		: undefined;
+}
+
 function issueKey(issue: IssueReference): string {
 	return `${issue.owner}/${issue.repository}#${String(issue.number)}`;
 }
@@ -131,6 +145,8 @@ function issueFromConvention(
 interface LocalReading {
 	readonly workspace: WatchedWorkspace;
 	readonly branch?: string;
+	/** The repository's page, when `origin` is one DevHub can name a page for. */
+	readonly repositoryUrl?: string;
 	readonly issue?: IssueReference;
 	/** The Issue the branch named, when it named one nothing could be read for. */
 	readonly number?: number;
@@ -251,6 +267,7 @@ export class RepositoryStatusWatcher {
 				return {
 					workspace,
 					branch: facts?.branch,
+					repositoryUrl: repositoryUrl(facts?.remote),
 					...(reading.kind === "issue" ? { issue: reading.issue } : {}),
 					...(reading.kind === "unresolved"
 						? { number: reading.number, reason: reading.reason }
@@ -336,6 +353,7 @@ export class RepositoryStatusWatcher {
 			return {
 				workspaceId: entry.workspace.id,
 				branch: entry.branch,
+				repositoryUrl: entry.repositoryUrl,
 				issue: status
 					? {
 							url: status.url,

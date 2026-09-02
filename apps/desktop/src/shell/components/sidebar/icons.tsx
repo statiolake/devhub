@@ -40,6 +40,7 @@ export type GlyphName =
   | "terminal"
   | "plus"
   | "close"
+  | "repository"
   | "issueOpen"
   | "issueClosed"
   | "pullRequest"
@@ -50,6 +51,13 @@ export type GlyphName =
   | "statusUnknown";
 
 const GLYPHS: Record<GlyphName, ReactNode> = {
+  /* The repository on GitHub: a book, which is what a repository is called
+     everywhere else in git's own vocabulary. Drawn open rather than closed so
+     it does not read as a second folder in a column that already has one. */
+  repository: (
+    <path d="M3.14 2.29h3.15c.63 0 1.14.51 1.14 1.14v9.14a1.14 1.14 0 0 0-1.14-1.14H3.14a.57.57 0 0 1-.57-.57V2.86c0-.32.25-.57.57-.57ZM12.86 2.29H9.71c-.63 0-1.14.51-1.14 1.14v9.14c0-.63.51-1.14 1.14-1.14h3.15c.31 0 .57-.26.57-.57V2.86a.57.57 0 0 0-.57-.57Z" />
+  ),
+
   /* A Workspace. The silhouette is the one the Sidebar already had — it was
      never the problem — moved onto the shared box and stripped of the accent
      tint that made it the one solid block in a column of lines. */

@@ -335,13 +335,27 @@
    It is indented to where the line above starts its text, so the two read as
    one block, and it takes the row's whole remaining width: nothing on it is
    competing with a control, because the controls are on the line above. */
-.row-line-secondary {
-  padding-block-end: 4px;
+.row-line-secondary,
+.row-line-links {
   padding-inline: var(--row-text-inset) var(--space-2);
-  margin-block-start: -2px;
   color: var(--tertiary);
   font-size: 11px;
   font-weight: 400;
+}
+
+.row-line-secondary {
+  margin-block-start: -2px;
+}
+
+/* What GitHub says, on a line of its own: the marks and then the words about
+   the same subject. The marks are the line's leading edge rather than the
+   row's trailing one — they belong to the sentence beside them — and the line
+   is centred on them rather than on its text, because a 20px control and an
+   11px caption share no baseline worth aligning to. */
+.row-line-links {
+  padding-block-end: 3px;
+  align-items: center;
+  gap: var(--space-1);
 }
 
 /* Every part of a line shrinks in proportion to its own length, and ellipsises
@@ -394,6 +408,15 @@
    because it is the sentence a person actually reads. */
 .row-issue {
   color: var(--secondary);
+}
+
+/* Which Issue, before what it is called. Four characters that never shrink:
+   the number is the identifier, the title is the description, and a line too
+   narrow for both should lose the description's tail rather than the name. */
+.row-issue-number {
+  flex: none;
+  color: var(--secondary);
+  font-variant-numeric: tabular-nums;
 }
 
 /* Why the row can say which Issue it is about and nothing more. It is a
@@ -523,9 +546,26 @@
   opacity: 1;
 }
 
-.row-action-button:hover:not(:disabled) {
+/* Every icon button in the Sidebar says the same thing under the pointer: a
+   soft fill and full-strength ink, which is what a flat button on a Mac does
+   instead of a border. The link buttons had none, so a control that is always
+   visible looked like a mark that merely happened to be shaped like one. One
+   rule for both, because they are the same control in two places. */
+.row-action-button:hover:not(:disabled),
+.row-link-button:hover:not(:disabled) {
   background: var(--wash-strong);
+}
+
+/* Only the neutral controls take the ink as well. A link button's colour is
+   what it is *saying* — green for open, purple for closed — so brightening it
+   on hover would have the pointer change the state the mark reports. */
+.row-action-button:hover:not(:disabled) {
   color: var(--primary);
+}
+
+.row-action-button:active:not(:disabled),
+.row-link-button:active:not(:disabled) {
+  background: var(--selection);
 }
 
 .row-action-button:disabled {

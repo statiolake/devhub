@@ -146,7 +146,6 @@ function WorkspaceRow({
             place this differs from the sketch: they are buttons, a button
             cannot go inside the row's own button, and putting them before it
             would move the glyph column that every other row lines up with. */}
-          {repository?.issue ? <IssueLinks repository={repository} /> : null}
           {workspace.canCreateAgent && (
             <button
               className="row-action-button"
@@ -199,26 +198,42 @@ function WorkspaceRow({
             </button>
           )}
         </div>
-        {/* What it is working on, in the order a person reads it: which branch,
-            then what that branch is for. Its own line, running the full width
-            of the row *under* the marks and the controls, which is the whole
-            reason it is a line and not a suffix: sharing the name's line it got
-            whatever the name and four trailing buttons left over, and a branch
-            name is long and ends in the part that identifies it, so what
-            survived was `feature/128-tidy-the…` — the half that says nothing. */}
-        {(repository?.branch ??
+        {/* Line two: the branch, and nothing else on it.
+            
+            It is alone because it is long, it ends in the part that identifies
+            it, and it is the fact that changes under you — sharing a line it
+            got whatever the neighbours left over, and what survived was
+            `feature/128-tidy-the…`, the half that says nothing. */}
+        {repository?.branch ? (
+          <div className="row-line row-line-secondary">
+            <span className="row-branch" title={repository.branch}>
+              {repository.branch}
+            </span>
+          </div>
+        ) : null}
+        {/* Line three: what GitHub says about it — the repository, the pull
+            request, the Issue, and what that Issue is called.
+
+            The marks lead the line rather than trailing the name, which is the
+            one place this differs from the row above: they are about the same
+            subject as the words beside them, so they read as a sentence
+            starting with its icons. Nothing here is on the name's line any
+            more, which is what stopped four buttons from deciding how much of
+            a branch name a person got to see. */}
+        {(repository?.repositoryUrl ??
         repository?.issue ??
         repository?.unavailable) ? (
-          <div className="row-line row-line-secondary">
-            {repository?.branch ? (
-              <span className="row-branch" title={repository.branch}>
-                {repository.branch}
-              </span>
-            ) : null}
+          <div className="row-line row-line-links">
+            <RepositoryLinks repository={repository} />
             {repository?.issue ? (
-              <span className="row-issue" title={repository.issue.title}>
-                {repository.issue.title}
-              </span>
+              <>
+                <span className="row-issue-number">
+                  {`#${String(repository.issue.number)}`}
+                </span>
+                <span className="row-issue" title={repository.issue.title}>
+                  {repository.issue.title}
+                </span>
+              </>
             ) : null}
             {/* The row cannot say what it is working on, and this is why.
                 Without it the row looked exactly like a branch that is about
@@ -386,7 +401,7 @@ function WorkspaceRow({
 
 /**
  * The Issue this workspace is for, and the pull request that says it closes
- * it, as two marks that open GitHub.
+ * it, as marks that open GitHub.
  *
  * They are marks rather than words because the row already has words. What
  * each one says is its shape and then its colour — GitHub's own: an open issue
@@ -404,17 +419,36 @@ function WorkspaceRow({
  * the first by one node is a difference nobody can see at thirteen pixels, and
  * the pair of them was two more things for this column to fail to agree with.
  */
-function IssueLinks({
+function RepositoryLinks({
   repository,
 }: {
-  readonly repository: WorkspaceRepositoryWire;
+  readonly repository: WorkspaceRepositoryWire | undefined;
 }) {
   const { openExternalUrl } = useAppShell();
+  if (!repository) return null;
   const issue = repository.issue;
-  if (!issue) return null;
   const pullRequest = repository.pullRequest;
+  const url = repository.repositoryUrl;
   return (
     <>
+      {url ? (
+        // The repository itself. It leads the line because it is the thing the
+        // other two are inside, and it is here whether or not there is an
+        // Issue: "take me to this on GitHub" is a question a workspace can
+        // always answer, and it was previously answerable only by finding the
+        // remote by hand.
+        <button
+          className="row-link-button is-repository"
+          type="button"
+          aria-label={`Open ${url.replace("https://github.com/", "")} on GitHub`}
+          title={`Open ${url.replace("https://github.com/", "")} on GitHub`}
+          onClick={() => {
+            openExternalUrl(url);
+          }}
+        >
+          <Glyph name="repository" />
+        </button>
+      ) : null}
       {pullRequest ? (
         <button
           className={`row-link-button is-${pullRequest.state}`}
@@ -428,17 +462,21 @@ function IssueLinks({
           <Glyph name="pullRequest" />
         </button>
       ) : null}
-      <button
-        className={`row-link-button is-${issue.state}`}
-        type="button"
-        aria-label={`Issue #${String(issue.number)}, ${issue.state}: ${issue.title}`}
-        title={`Issue #${String(issue.number)} (${issue.state})`}
-        onClick={() => {
-          openExternalUrl(issue.url);
-        }}
-      >
-        <Glyph name={issue.state === "closed" ? "issueClosed" : "issueOpen"} />
-      </button>
+      {issue ? (
+        <button
+          className={`row-link-button is-${issue.state}`}
+          type="button"
+          aria-label={`Issue #${String(issue.number)}, ${issue.state}: ${issue.title}`}
+          title={`Issue #${String(issue.number)} (${issue.state})`}
+          onClick={() => {
+            openExternalUrl(issue.url);
+          }}
+        >
+          <Glyph
+            name={issue.state === "closed" ? "issueClosed" : "issueOpen"}
+          />
+        </button>
+      ) : null}
     </>
   );
 }

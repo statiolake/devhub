@@ -94,14 +94,22 @@ describe("a workspace row", () => {
     expect(screen.getByText("Tidy the picker")).toBeInTheDocument();
   });
 
-  it("puts the branch and the Issue on a line of their own, under the name", () => {
-    // The whole point of the second line: the branch is not competing with the
-    // workspace's name for the width of one row, so neither is ellipsised.
+  it("gives the name, the branch and GitHub a line each", () => {
+    // Three lines because they are three subjects. The branch is long and ends
+    // in the part that identifies it, so it shares with nothing; what GitHub
+    // says — the marks, the number, the title — is one sentence and sits
+    // together on the last line.
     mount(WORKING_ON);
     const row = document.querySelector(".workspace-row");
     expect(row?.querySelector(".row-label")?.textContent).toBe("widget");
     expect(row?.querySelector(".row-line-secondary")?.textContent).toBe(
-      "feature/128-tidyTidy the picker",
+      "feature/128-tidy",
+    );
+    expect(row?.querySelector(".row-line-links")?.textContent).toContain(
+      "#128",
+    );
+    expect(row?.querySelector(".row-line-links")?.textContent).toContain(
+      "Tidy the picker",
     );
   });
 
@@ -110,6 +118,35 @@ describe("a workspace row", () => {
     const row = document.querySelector(".workspace-row");
     expect(row?.querySelector(".row-label")?.textContent).toBe("widget");
     expect(row?.querySelector(".row-line-secondary")).toBeNull();
+  });
+
+  it("opens the repository on GitHub, Issue or no Issue", () => {
+    // "Take me to this on GitHub" is a question a workspace can always answer,
+    // and it was previously answerable only by finding the remote by hand.
+    const { openExternalUrl } = mount({
+      sequence: 1,
+      workspaces: [
+        {
+          workspaceId: "w-1",
+          branch: "main",
+          repositoryUrl: "https://github.com/example/widget",
+        },
+      ],
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: /Open example\/widget on GitHub/u }),
+    );
+    expect(openExternalUrl).toHaveBeenCalledWith(
+      "https://github.com/example/widget",
+    );
+  });
+
+  it("offers no repository button for a remote it cannot name a page for", () => {
+    mount({
+      sequence: 1,
+      workspaces: [{ workspaceId: "w-1", branch: "main" }],
+    });
+    expect(screen.queryByRole("button", { name: /on GitHub/u })).toBeNull();
   });
 
   it("opens the Issue and the pull request on GitHub", () => {

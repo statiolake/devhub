@@ -91,6 +91,14 @@ export interface WorkspaceRepositoryWire {
 	readonly workspaceId: string;
 	/** What is checked out, or nothing when the workspace is not a repository. */
 	readonly branch?: string;
+	/**
+	 * The repository's page, for a workspace whose `origin` is on GitHub.
+	 *
+	 * Only GitHub: a URL is built from a remote, and github.com is the only host
+	 * DevHub knows the shape of. A remote it cannot build a page for has nothing
+	 * here rather than a guess that leads somewhere wrong.
+	 */
+	readonly repositoryUrl?: string;
 	readonly issue?: {
 		readonly url: string;
 		readonly number: number;
