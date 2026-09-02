@@ -264,14 +264,39 @@ export function Picker({
       ?.scrollIntoView({ block: "nearest" });
   }, [activeId]);
 
+  /**
+   * The row that was taken, once one has been.
+   *
+   * A choice is not instant: the caller goes away and clones, or makes a
+   * worktree, and the sheet stands there for that second or two. It used to
+   * stand there *live* — the arrows still moved the selection, Return still
+   * fired — so the person who pressed Return twice had asked for two things,
+   * and the row they were looking at when it finally closed was not the row
+   * they had chosen. Once a row is taken the sheet stops listening: no second
+   * choice, no moving underneath the answer.
+   *
+   * It stays on screen rather than closing, because a caller that fails
+   * re-asks this same question with the reason under the field, and a sheet
+   * that had already gone would have nowhere to put it.
+   */
+  const [taken, setTaken] = useState<string>();
+
   const choose = useCallback(
     (id: string, split: boolean) => {
+      if (taken !== undefined) return;
+      setTaken(id);
       onChoose({ id, split, query });
     },
-    [onChoose, query],
+    [onChoose, query, taken],
   );
 
   const onKeyDown = (event: React.KeyboardEvent) => {
+    // Answered. The keyboard is no longer this sheet's to act on — including
+    // Escape, which would otherwise cancel a clone that is already running.
+    if (taken !== undefined) {
+      event.preventDefault();
+      return;
+    }
     if (isImeComposing(event.nativeEvent, composing.current)) {
       if (event.key === "Enter" || event.key === "Escape") {
         event.preventDefault();
@@ -336,6 +361,9 @@ export function Picker({
             aria-label={title}
             placeholder={placeholder}
             value={query}
+            // Answered: the field keeps the keyboard so nothing else grabs it,
+            // and takes nothing.
+            readOnly={taken !== undefined}
             onCompositionStart={() => {
               composing.current = true;
             }}
@@ -366,9 +394,10 @@ export function Picker({
             </p>
           ) : null}
           <ul
-            className="mac-list picker-results"
+            className={`mac-list picker-results${taken === undefined ? "" : " is-answered"}`}
             role="listbox"
             aria-label={title}
+            aria-busy={taken === undefined ? undefined : true}
             ref={listRef}
             hidden={rows.length === 0}
           >
@@ -386,9 +415,13 @@ export function Picker({
                     event.preventDefault();
                   }}
                   onMouseEnter={() => {
-                    setActive(index);
+                    if (taken === undefined) setActive(index);
                   }}
                   onClick={(event) => {
+                    // The row taken is the row shown as taken: the spinner and
+                    // the selection must not end up on two different rows when
+                    // one was clicked while another was under the arrows.
+                    setActive(index);
                     choose(item.id, event.metaKey);
                   }}
                 >
@@ -403,6 +436,15 @@ export function Picker({
                       </span>
                     ) : null}
                   </span>
+                  {/* On the row that was taken, so the wait is attached to the
+                      answer rather than floating at the top of the sheet. */}
+                  {taken === item.id ? (
+                    <span
+                      className="mac-spinner"
+                      role="status"
+                      aria-label="Working"
+                    />
+                  ) : null}
                 </button>
               </li>
             ))}

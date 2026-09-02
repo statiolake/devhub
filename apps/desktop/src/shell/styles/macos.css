@@ -742,6 +742,15 @@
 /* Why the last answer did not work. It sits where the note sits, because it is
    the same line of the sheet saying something about the question — and it is
    the one thing there that is not guidance, so it is the one thing coloured. */
+/* Answered: the list is what was chosen and a spinner, not a menu. The rows
+   stop responding to the pointer for the same reason the keyboard stops being
+   read — the question has been answered, and the only thing left to do with it
+   is wait. They stay legible rather than dimming, because what is on screen is
+   still true. */
+.picker-results.is-answered .mac-list-row {
+  pointer-events: none;
+}
+
 .picker-note-failure {
   color: var(--danger);
 }

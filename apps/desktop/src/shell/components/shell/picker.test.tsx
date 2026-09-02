@@ -254,6 +254,45 @@ describe("the picker", () => {
     expect(shown().at(-1)).toBe("Use what I typed");
   });
 
+  it("stops listening once a row is taken", () => {
+    // A choice is not instant — the caller clones, or makes a worktree — and
+    // the sheet used to stand there live for that second or two. Return twice
+    // was two requests, and the arrows moved the selection out from under the
+    // answer before it closed.
+    const { onChoose, onCancel } = renderPicker({});
+    const dialog = screen.getByRole("dialog");
+
+    fireEvent.keyDown(dialog, { key: "Enter" });
+    expect(onChoose).toHaveBeenCalledTimes(1);
+
+    fireEvent.keyDown(dialog, { key: "Enter" });
+    fireEvent.keyDown(dialog, { key: "ArrowDown" });
+    fireEvent.keyDown(dialog, { key: "Enter" });
+    expect(onChoose).toHaveBeenCalledTimes(1);
+
+    // Escape included: it would cancel work that is already running.
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    expect(onCancel).not.toHaveBeenCalled();
+
+    // And the wait is attached to the row that was taken.
+    expect(screen.getByRole("status", { name: "Working" })).toBeInTheDocument();
+    expect(
+      screen.getAllByRole("option")[0]?.querySelector(".mac-spinner"),
+    ).not.toBeNull();
+  });
+
+  it("does not take a second row that is clicked while one is running", () => {
+    const { onChoose } = renderPicker({});
+    fireEvent.click(screen.getByRole("option", { name: "Claude" }));
+    fireEvent.click(screen.getByRole("option", { name: "Codex" }));
+    expect(onChoose).toHaveBeenCalledTimes(1);
+    expect(onChoose).toHaveBeenCalledWith({
+      id: "claude",
+      split: false,
+      query: "",
+    });
+  });
+
   it("cancels on Escape", () => {
     const { onCancel } = renderPicker({});
     fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
