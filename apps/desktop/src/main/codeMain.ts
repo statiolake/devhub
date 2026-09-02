@@ -2,7 +2,7 @@
  *  DevHub's copy of VS Code's main-process entry point.
  *
  *  Upstream: vscode/src/vs/code/electron-main/main.ts
- *  Pinned at: microsoft/vscode 8a7abeba6e03ea3af87bfbce9a1b7e48fed567b8 (tag 1.129.1)
+ *  Pinned at: microsoft/vscode 3a03d6f72d628a7741c29f456b4ddbb5ae68502c (tag 1.131.0)
  *
  *  This file exists to substitute two things and nothing else. Keep it as close
  *  to upstream as possible; a VS Code bump re-applies exactly this list:
@@ -107,6 +107,7 @@ import { IStateReadService, IStateService } from 'code-oss-dev/out/vs/platform/s
 import { NullTelemetryService } from 'code-oss-dev/out/vs/platform/telemetry/common/telemetryUtils.js';
 import { IThemeMainService } from 'code-oss-dev/out/vs/platform/theme/electron-main/themeMainService.js';
 import { IUserDataProfilesMainService, UserDataProfilesMainService } from 'code-oss-dev/out/vs/platform/userDataProfile/electron-main/userDataProfile.js';
+import { isInnoSetupInstall } from 'code-oss-dev/out/vs/platform/update/electron-main/win32UpdateType.js';
 import { IPolicyService, NullPolicyService } from 'code-oss-dev/out/vs/platform/policy/common/policy.js';
 import { NativePolicyService } from 'code-oss-dev/out/vs/platform/policy/node/nativePolicyService.js';
 import { FilePolicyService } from 'code-oss-dev/out/vs/platform/policy/common/filePolicyService.js';
@@ -119,7 +120,7 @@ import { IUriIdentityService } from 'code-oss-dev/out/vs/platform/uriIdentity/co
 import { UriIdentityService } from 'code-oss-dev/out/vs/platform/uriIdentity/common/uriIdentityService.js';
 import { ILoggerMainService, LoggerMainService } from 'code-oss-dev/out/vs/platform/log/electron-main/loggerService.js';
 import { LogService } from 'code-oss-dev/out/vs/platform/log/common/logService.js';
-import { massageMessageBoxOptions } from 'code-oss-dev/out/vs/platform/dialogs/common/dialogs.js';
+import { massageMessageBoxOptions } from 'code-oss-dev/out/vs/platform/dialogs/electron-main/dialogMainUtils.js';
 import { SaveStrategy, StateService } from 'code-oss-dev/out/vs/platform/state/node/stateService.js';
 import { FileUserDataProvider } from 'code-oss-dev/out/vs/platform/userData/common/fileUserDataProvider.js';
 import { addUNCHostToAllowlist, getUNCHost } from 'code-oss-dev/out/vs/base/node/unc.js';
@@ -615,7 +616,7 @@ class CodeMain {
 	}
 
 	private async checkInnoSetupMutex(productService: IProductService, logService: ILogService): Promise<boolean> {
-		if (!(isWindows && productService.win32MutexName && productService.win32VersionedUpdate)) {
+		if (!(isWindows && productService.win32MutexName && productService.win32VersionedUpdate && isInnoSetupInstall())) {
 			return false;
 		}
 
