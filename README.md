@@ -1,9 +1,9 @@
 # DevHub
 
-DevHub is not VS Code wrapped in Tauri. It is a workspace- and agent-centred
-development environment, closer to the Codex App or the Cursor agent window,
-in which a real VS Code editor is one surface among several rather than the
-centre of the product.
+DevHub is a workspace- and agent-centred development environment for macOS, in
+which a real VS Code editor is one surface among several rather than the centre
+of the product. It ships that editor: VS Code's own desktop workbench, built
+from a pinned submodule, running inside DevHub's window.
 
 ```text
 DevHub
@@ -61,7 +61,7 @@ Workspace is the top concept, and it is deliberately none of the things it
 resembles:
 
 ```text
-DevHub Workspace != Herdr Space != VS Code window != Git repository
+DevHub Workspace != VS Code window != Git repository
 ```
 
 A Workspace is a folder root — the same granularity as a VS Code window. A
@@ -74,29 +74,54 @@ URL and start working" flow can resolve which checkout to open.
 
 ## Subsystems
 
-**Editor** — a browser VS Code workbench embedded in a child WebView. One
-server process serves every Workspace's editor. The workbench is upstream and
-unforked. DevHub uses the VS Code you already installed rather than shipping
-one, which also means it rides your own updates.
+**Editor** — VS Code's desktop workbench, from the pinned `vscode/` submodule,
+built and shipped with DevHub. Each Workspace's workbench is one VS Code window
+in every sense the workbench itself can observe, laid into DevHub's single
+window as a `WebContentsView`. Extensions, settings, the integrated terminal
+and the extension host are the real ones, on disk, with no "remote" semantics
+anywhere.
 
-**Agents** — Herdr runs them, behind an `AgentRuntime` seam that exposes only
-list/start/stop/status/read/attach. Herdr's own Space, Workspace, and Tab
-concepts never reach the DevHub UI. DevHub uses a fixed `devhub-session` so a
-bare `herdr` lands in your default session and cannot disturb DevHub's agents.
-Herdr is expected to be replaceable later by a Claude SDK or Codex Server
-runtime.
+**Agents** — an Agent is a tmux session, with no runtime in between. It lives
+on DevHub's own tmux socket, carries DevHub's own markers, and is attached by
+the same `tmux attach-session` over the same PTY as every Workspace terminal,
+so scrollback, copy mode, resize and byte-for-byte input are the terminal's
+rather than an imitation of one. See
+[`src/main/agent/sessions.ts`](apps/desktop/src/main/agent/sessions.ts).
 
-**Terminal** — tmux, not the VS Code integrated terminal and not Herdr. One
-persistent session per Workspace, plus a global Scratch session. The VS Code
-integrated terminal stays available inside the workbench; DevHub does not
-police it.
+**Terminal** — tmux. One persistent session per Workspace, plus a global
+Scratch session. The workbench's own integrated terminal is attached to that
+same session, so quitting DevHub does not end it.
+
+## Architecture
+
+VS Code is **consumed, never edited**. The whole of the integration is three
+kinds of thing, and each has a rule:
+
+- **Two entry points, copied.** `apps/desktop/src/main/main.ts` and
+  `codeMain.ts` are adapted copies of upstream's `src/main.ts` and
+  `src/vs/code/electron-main/main.ts`. Each carries a header listing every
+  substitution it makes, so a VS Code bump is "re-apply exactly this list"
+  rather than a diff nobody can read.
+- **Composition, everywhere else.** DevHub subclasses and registers VS Code's
+  own main-process services (`src/main/services/`), replaces the `BrowserWindow`
+  constructor VS Code reaches for, and fences the process-wide `electron.app`
+  calls a workbench is not entitled to make
+  ([`shell/appFence.ts`](apps/desktop/src/main/shell/appFence.ts)).
+- **Patches, only for what none of that can reach.**
+  [`patches/vscode/`](patches/vscode) is the exception, and every patch states
+  its own reason in its body. There are two.
+
+DevHub's own integration ships as a built-in extension,
+[`extensions/devhub-bridge`](extensions/devhub-bridge), so that its workbench
+defaults are in effect and cannot be uninstalled. The narrow protocol between
+them is schema-checked: see [`contracts/bridge/`](contracts/bridge).
 
 ## Lifecycle
 
-Window Close leaves the process, the agents, and the tmux sessions running.
-Quit stops DevHub and its editor server but still leaves agents and tmux
-alive. Closing an Agent destroys its session; an Agent that exits on its own
-disappears from the tree immediately.
+Window Close leaves the process, the agents and the tmux sessions running.
+Quit stops DevHub but still leaves agents and tmux alive. Closing an Agent
+destroys its session; an Agent that exits on its own disappears from the tree
+immediately.
 
 `Command+Q` is the only key DevHub takes from the workbench, as a prefix:
 press it twice to quit. Everything else is forwarded to VS Code.
@@ -112,6 +137,8 @@ first one's back is the state the single-instance design exists to prevent.
 ```sh
 devhub <folder>                      # open it as a Workspace and show it
 devhub <file>                        # open it in the Workspace that contains it
+devhub -                             # open what is piped in, the way 'code -' does
+devhub -w|--wait <file>              # ...and wait for its editor to close
 devhub -g|--goto <file:line[:col]>   # ...with the cursor there
 devhub --agent <profile> [-- <args>] # start an Agent in this directory's Workspace
 devhub --install-extension <id|vsix> [--force]
@@ -130,9 +157,10 @@ not know is refused with a sentence — it is never quietly treated as a path.
 
 ## Configuration
 
-One `~/.config/devhub/config.toml`, safe to symlink from dotfiles. Native
-Settings edits the same file. Runtime state lives separately under
-Application Support.
+One `~/.config/devhub/config.toml` (or `$XDG_CONFIG_HOME/devhub/config.toml`),
+safe to symlink from dotfiles. Native Settings edits the same file. The
+workbench's own settings are VS Code's, on disk under the app's user-data
+directory. Runtime state lives separately under Application Support.
 
 ## Not now
 
@@ -142,17 +170,30 @@ third development; the seams exist, the features do not.
 
 ## Development
 
-Rust `1.97.1`, Node `22.21.1`, pnpm `11.20.0`.
+pnpm `11.20.0`. The Node the VS Code build requires is fetched into a
+gitignored toolchain directory by provisioning; the machine default is not
+used for it.
 
 ```sh
 CI=true pnpm install --frozen-lockfile
-pnpm dev          # run the app
-pnpm run check    # format, lint, types, tests
-pnpm run build
+pnpm run provision   # submodule, toolchain, patches, compile, Electron
+pnpm dev             # build apps/desktop and run it
+pnpm run check       # bridge contract, format, lint, types, tests
 ```
 
-The Rust-owned App Shell contract is generated from the native wire types in
-[`contracts/app-shell/`](contracts/app-shell/). Run `pnpm run app-shell:generate`
-after changing that seam; `pnpm run check` detects drift.
+Provisioning is idempotent and stamped over the submodule commit *and* the
+patches, so a bump or a patch edit recompiles and nothing else does. `--force`
+redoes every step.
+
+A signed macOS app bundle comes from `scripts/package-nightly.py`. DevHub's
+product identity is stated once, in
+[`apps/desktop/product-overrides.json`](apps/desktop/product-overrides.json),
+and merged into `product.json` by
+[`scripts/product_metadata.py`](scripts/product_metadata.py) for both the source
+run and the packaged app.
+
+The bridge protocol's checked-in artifacts are generated: run
+`pnpm run bridge:generate` after changing that seam, and `pnpm run check`
+detects drift.
 
 DevHub is distributed under the [MIT License](LICENSE).
