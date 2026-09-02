@@ -13,6 +13,12 @@ directory, sends the `version` request the `devhub` CLI sends, and requires a
 reply. A reply means the main process is still running its event loop after
 startup, which is the property that keeps breaking.
 
+It also reads the bundle before starting it, for the faults a reply cannot
+rule out. An asset the workbench fetches by path — a wasm file, say — going
+missing takes one feature down and leaves the rest of the app answering
+normally, so no question asked of a running DevHub would ever find it. See
+`check_bundle_layout`.
+
 Run it standalone against any bundle:
 
     scripts/smoke_packaged_app.py path/to/DevHub.app
@@ -65,11 +71,62 @@ def probe(socket_path: Path, deadline: float) -> dict:
 	raise TimeoutError(last_error)
 
 
+# What the workbench fetches by absolute resource path, rather than importing.
+# A missing module fails loudly at startup; these fail quietly and late, in the
+# one feature that needed them — which is how a nightly shipped with syntax
+# highlighting entirely gone and nothing in the app to say so.
+FETCHED_ASSETS = (
+	"vscode-oniguruma/release/onig.wasm",
+	"@vscode/tree-sitter-wasm/wasm/tree-sitter.wasm",
+)
+
+# The resource path of an `app.asar` archive's contents, as `nodeModulesPath`
+# and its two deleted siblings compile to. DevHub ships no archive — see
+# patches/vscode/0002-no-node-modules-asar.patch, and "Nothing here is an
+# `app.asar` either" in package-nightly.py — so any code that builds this path
+# is asking for a file that cannot exist, and will 404 in the packaged app
+# while working perfectly in a source run.
+ARCHIVE_RESOURCE_PATH = "vs/../../node_modules.asar"
+
+
+def check_bundle_layout(app: Path) -> list[str]:
+	"""Faults that a running app would not report, so the app cannot be asked.
+
+	Both checks below are about the same failure: a file the workbench fetches
+	from a path it computes. Nothing throws when that path is wrong — the fetch
+	404s inside the feature that wanted it, the feature turns itself off, and
+	the app looks healthy. So the bundle is inspected instead of interrogated.
+	"""
+	faults = []
+	code_oss = app / "Contents" / "Resources" / "app" / "node_modules" / "code-oss-dev"
+
+	for asset in FETCHED_ASSETS:
+		if not (code_oss / "node_modules" / asset).is_file():
+			faults.append(f"the workbench fetches {asset}, and it is not in the bundle")
+
+	offenders = sorted(
+		path.relative_to(code_oss).as_posix()
+		for path in (code_oss / "out").rglob("*.js")
+		if ARCHIVE_RESOURCE_PATH in path.read_text(errors="replace")
+	)
+	for offender in offenders:
+		faults.append(f"{offender} resolves resources inside an asar archive DevHub does not ship")
+
+	return faults
+
+
 def smoke(app: Path, timeout: float) -> int:
 	executable = app / "Contents" / "MacOS" / "DevHub"
 	if not executable.is_file():
 		print(f"not a DevHub bundle: {executable} does not exist", file=sys.stderr)
 		return 1
+
+	faults = check_bundle_layout(app)
+	if faults:
+		for fault in faults:
+			print(f"    {fault}", file=sys.stderr)
+		return 1
+	print(f"    the fetched assets are all present ({len(FETCHED_ASSETS)} checked)")
 
 	state = Path(tempfile.mkdtemp(prefix="devhub-smoke-"))
 	user_data = state / "editor"
