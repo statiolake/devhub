@@ -1,12 +1,17 @@
 /**
- * Cmd+Left and Cmd+Right, and the keys they are reported as.
+ * The Mac editing chords, and the bytes they become.
  *
- * Every one of these was measured rather than reasoned about, in the
- * arrangement a pane actually uses — Claude Code running inside tmux, driven
- * through a pty. Home and End move to the ends of the line there. The modified
- * arrow Ghostty sends, `CSI 1;9D`, does not: tmux has no Super modifier and
- * folds it into Meta on the way in, so it reaches the program as `CSI 1;3D`
- * and moves by a word. See the note in `keys.ts` for the whole finding.
+ * These are not ours to choose and they are not derived from anything: they are
+ * the five default keybinds Ghostty installs on macOS, copied from `Config.zig`
+ * — `super+left` sends `\x01`, `super+right` `\x05`, `super+backspace` `\x15`,
+ * and `alt` with an arrow sends `ESC b` or `ESC f`. Ghostty's own comment calls
+ * them the "natural text editing" keybinds and notes that they deliberately
+ * bypass its key encoder.
+ *
+ * That bypass is the whole point. The encoded form of Cmd+Left, `CSI 1;9D`,
+ * cannot reach a program through tmux: tmux has no Super modifier and folds it
+ * into Meta, so it arrives as Option+Left and moves by a word. A single byte
+ * has no modifier to lose.
  */
 
 import { describe, expect, it } from "vitest";
@@ -26,74 +31,68 @@ function chord(key: string, held: Partial<EditingChord> = {}): EditingChord {
   };
 }
 
-describe("Cmd with a left or right arrow", () => {
-  it("is reported as the Home and End keys", () => {
-    expect(editingSequence(chord("ArrowLeft", { metaKey: true }), false)).toBe(
-      "\u001b[H",
-    );
-    expect(editingSequence(chord("ArrowRight", { metaKey: true }), false)).toBe(
-      "\u001b[F",
-    );
+describe("the Mac editing chords a terminal answers", () => {
+  it("sends Cmd+Left and Cmd+Right the bytes Ghostty binds them to", () => {
+    expect(editingSequence(chord("ArrowLeft", { metaKey: true }))).toBe("\u0001");
+    expect(editingSequence(chord("ArrowRight", { metaKey: true }))).toBe("\u0005");
+  });
+
+  it("sends Cmd+Backspace the byte Ghostty binds it to", () => {
+    expect(editingSequence(chord("Backspace", { metaKey: true }))).toBe("\u0015");
   });
 
   /**
-   * The two spellings are not a preference. A program that asked for
-   * application cursor keys reads the SS3 form and does not recognise the CSI
-   * one, and this is the same choice xterm makes for a real Home key.
+   * Ghostty binds these too, as `esc b` and `esc f`, rather than leaving them
+   * to the encoder — which would send `CSI 1;3D`. Matching Ghostty means
+   * claiming them here even though xterm would encode something workable.
    */
-  it("uses the SS3 spelling when the program asked for application keys", () => {
-    expect(editingSequence(chord("ArrowLeft", { metaKey: true }), true)).toBe(
-      "\u001bOH",
-    );
-    expect(editingSequence(chord("ArrowRight", { metaKey: true }), true)).toBe(
-      "\u001bOF",
-    );
+  it("sends Option with an arrow as the word motion Ghostty binds", () => {
+    expect(editingSequence(chord("ArrowLeft", { altKey: true }))).toBe("\u001bb");
+    expect(editingSequence(chord("ArrowRight", { altKey: true }))).toBe("\u001bf");
   });
 
   /**
-   * Option with an arrow is already the word motion, `CSI 1;3D`, encoded by
-   * xterm and passed through tmux intact. Claiming it here would be a second
-   * path saying the same thing.
+   * Everything the system and DevHub's own menus own. Claiming any of these
+   * would break copy, paste and select-all in a terminal.
    */
-  it("leaves Option with an arrow to xterm", () => {
-    expect(
-      editingSequence(chord("ArrowLeft", { altKey: true }), false),
-    ).toBeUndefined();
-    expect(
-      editingSequence(chord("ArrowRight", { altKey: true }), false),
-    ).toBeUndefined();
-  });
-
-  it("leaves a bare arrow to xterm", () => {
-    expect(editingSequence(chord("ArrowLeft"), false)).toBeUndefined();
-    expect(editingSequence(chord("ArrowRight"), false)).toBeUndefined();
-  });
-
-  /** A terminal has no way to say "select to here", so the key is not taken. */
-  it("does not claim a chord that is asking for a selection", () => {
-    expect(
-      editingSequence(chord("ArrowLeft", { metaKey: true, shiftKey: true }), false),
-    ).toBeUndefined();
-  });
-
-  /** Control and Option are the terminal's own modifiers; xterm spells those. */
-  it("does not claim Command held with another modifier", () => {
-    expect(
-      editingSequence(chord("ArrowLeft", { metaKey: true, ctrlKey: true }), false),
-    ).toBeUndefined();
-    expect(
-      editingSequence(chord("ArrowLeft", { metaKey: true, altKey: true }), false),
-    ).toBeUndefined();
-  });
-
-  /**
-   * Cmd+Up and Cmd+Down mean the ends of the document, which a line editor has
-   * no key for; Cmd+Backspace already sends DEL, as it does in Ghostty; and
-   * Cmd+C and its relatives belong to the browser and DevHub's own menus.
-   */
-  it("claims nothing but the two horizontal arrows", () => {
-    for (const key of ["ArrowUp", "ArrowDown", "Backspace", "c", "v", "a", "z"]) {
-      expect(editingSequence(chord(key, { metaKey: true }), false)).toBeUndefined();
+  it("leaves the system shortcuts alone", () => {
+    for (const key of ["c", "v", "a", "n", "w", "t", "z"]) {
+      expect(editingSequence(chord(key, { metaKey: true }))).toBeUndefined();
     }
+  });
+
+  it("leaves a bare arrow and a bare Backspace to xterm", () => {
+    expect(editingSequence(chord("ArrowLeft"))).toBeUndefined();
+    expect(editingSequence(chord("ArrowRight"))).toBeUndefined();
+    expect(editingSequence(chord("Backspace"))).toBeUndefined();
+  });
+
+  /**
+   * Ghostty's bindings match a modifier set exactly, so a chord holding
+   * anything extra falls through to its encoder — which is what xterm does
+   * here on its own.
+   */
+  it("does not claim a chord holding an extra modifier", () => {
+    expect(
+      editingSequence(chord("ArrowLeft", { metaKey: true, shiftKey: true })),
+    ).toBeUndefined();
+    expect(
+      editingSequence(chord("ArrowLeft", { altKey: true, shiftKey: true })),
+    ).toBeUndefined();
+    expect(
+      editingSequence(chord("ArrowLeft", { metaKey: true, ctrlKey: true })),
+    ).toBeUndefined();
+    expect(
+      editingSequence(chord("ArrowLeft", { metaKey: true, altKey: true })),
+    ).toBeUndefined();
+  });
+
+  /** Ghostty binds no vertical arrow, so neither does this. */
+  it("claims no vertical arrow", () => {
+    expect(editingSequence(chord("ArrowUp", { metaKey: true }))).toBeUndefined();
+    expect(
+      editingSequence(chord("ArrowDown", { metaKey: true })),
+    ).toBeUndefined();
+    expect(editingSequence(chord("ArrowUp", { altKey: true }))).toBeUndefined();
   });
 });

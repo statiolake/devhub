@@ -334,27 +334,24 @@ export function openXtermSession(
   input?.addEventListener("compositionend", onCompositionEnd);
   input?.addEventListener("input", onInput);
   /**
-   * Report Cmd+Left and Cmd+Right as the keys they mean; leave everything else.
+   * Answer the Mac editing chords the way Ghostty does; leave everything else.
    *
    * The handler used to say yes to every key, and xterm's own encoder bails out
    * of its arrow cases the moment Command is held. So Cmd+Left was neither
    * turned into terminal input nor stopped, and the browser did what it does to
    * a focused textarea: it moved a caret in xterm's hidden IME scratch pad.
-   * Now the pane sends Home or End, spelled for the cursor-key mode the
-   * terminal is in at the moment of the press, and the browser never sees the
-   * key at all.
+   * Now the byte Ghostty's own keybind would have sent goes to the pane, and
+   * the browser never sees the key at all.
    *
    * Returning false is what tells xterm to keep its hands off a key this has
-   * already dealt with. Everything else still returns true, so Option with an
-   * arrow keeps the encoding xterm gets right on its own, and Cmd+C, Cmd+V and
-   * the rest reach the browser and DevHub's menus exactly as before.
+   * already dealt with — including Option with an arrow, which xterm would
+   * otherwise encode as `CSI 1;3D` rather than the byte Ghostty binds it to.
+   * Everything else still returns true, so Cmd+C, Cmd+V and the rest reach the
+   * browser and DevHub's menus exactly as before.
    */
   terminal.attachCustomKeyEventHandler((event) => {
     if (event.type !== "keydown") return true;
-    const sequence = editingSequence(
-      event,
-      terminal.modes.applicationCursorKeysMode,
-    );
+    const sequence = editingSequence(event);
     if (sequence === undefined) return true;
     event.preventDefault();
     terminal.input(sequence, true);
