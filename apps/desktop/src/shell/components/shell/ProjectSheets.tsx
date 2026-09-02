@@ -87,6 +87,12 @@ function useGitHubLogin(): GitHubLogin {
           : { kind: "unknown", reason: answer.reason },
       );
     });
+    // The answer can arrive after the sheet is gone — `gh` takes as long as it
+    // takes — and a hook that set state then would be answering a question
+    // nobody is still asking.
+    return () => {
+      live = false;
+    };
   }, [githubLogin]);
   return login;
 }
@@ -225,7 +231,6 @@ export function CloneProjectSheet({ onDismiss }: ProjectSheetProps) {
       <Picker
         title={`Clone ${name ?? "repository"}`}
         question={`The repository is cloned and then opened as a workspace. Choose the folder ${name ?? "it"} should be cloned into.`}
-        placeholder="Parent folder"
         // No starting value: the field filters the rows, so a path put there
         // first would hide the list it is meant to search. Where projects go
         // is a row — main adds it when the sources imply no folders.

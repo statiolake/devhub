@@ -278,6 +278,22 @@ describe("assigning an Issue", () => {
     expect(screen.getByRole("textbox")).toHaveValue("https://example.com/nope");
   });
 
+  it("asks for the Issue once, and shows the shape of one", async () => {
+    // The heading asks the question. The placeholder is the only thing on the
+    // sheet that is not the question — an example, showing where the number
+    // goes — and the caption that used to say "Paste an Issue URL" under a
+    // heading already saying so is gone.
+    mount();
+
+    const field = await screen.findByRole("textbox");
+    expect(field).toHaveAttribute(
+      "placeholder",
+      "https://github.com/owner/repo/issues/128",
+    );
+    expect(screen.queryByText(/Paste an Issue URL/u)).toBeNull();
+    expect(document.querySelector(".picker-empty")).toBeNull();
+  });
+
   it("says why a clone is being asked about when nobody asked for one", async () => {
     // The sheet the complaint was about. A flow that started at "assign this
     // Issue" puts up a list of folders, and without this the person has to

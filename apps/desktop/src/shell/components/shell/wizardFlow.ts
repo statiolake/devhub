@@ -46,14 +46,15 @@ export interface WizardPrompt {
    * cannot say what it wants has not decided what it wants.
    */
   readonly question: string;
-  readonly placeholder: string;
+  /** An example of the shape of an answer, where one is worth showing. */
+  readonly placeholder?: string;
   readonly initialQuery?: string;
   readonly items: readonly PickerItem[];
   readonly pinned?: readonly PickerItem[];
   readonly busy?: boolean;
   readonly note?: ReactNode;
-  readonly emptyNoMatch: string;
-  readonly emptyNoItems: string;
+  readonly emptyNoMatch?: string;
+  readonly emptyNoItems?: string;
 }
 
 /** A row taken, and the field it was taken from. */

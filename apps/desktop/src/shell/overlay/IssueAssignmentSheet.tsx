@@ -151,19 +151,25 @@ function issueUrlStep(services: FlowServices): WizardStep {
       services.agentActions(),
     );
     const answer = await input.ask({
-      ...SHEET,
       title: "Assign Issue",
       question:
         "Paste the GitHub Issue to work on, then choose what the agent should do with it.",
-      placeholder: "Issue URL",
+      // The one field here worth an example: it shows where the number goes,
+      // which the heading cannot. There are deliberately no empty-list
+      // messages — the Issue is typed rather than chosen, so the list is empty
+      // every time and a caption about it would only repeat the heading.
+      placeholder: "https://github.com/owner/repo/issues/128",
       initialQuery: typed,
       items: [],
       pinned:
         actions.length > 0
-          ? actions.map((action) => ({
+          ? // No second line: "paste the URL, then take this row" was the
+            // heading again, once per row. What is left is the person's own
+            // names for the things they start agents to do, which is what the
+            // question is asking them to choose between.
+            actions.map((action) => ({
               id: `${ACTION_PREFIX}${action.id}`,
               label: action.displayName,
-              detail: "Paste the URL of the GitHub Issue, then take this row",
             }))
           : [
               {
@@ -175,11 +181,7 @@ function issueUrlStep(services: FlowServices): WizardStep {
             ],
       note: wrong ? (
         <Wrong what="That is not a GitHub Issue URL." />
-      ) : (
-        "For example https://github.com/owner/repo/issues/128"
-      ),
-      emptyNoItems: "Paste an Issue URL.",
-      emptyNoMatch: "Paste an Issue URL.",
+      ) : undefined,
     });
     const issue = parseIssueUrl(answer.query);
     if (!issue) return ask(input, answer.query, true);
@@ -202,7 +204,6 @@ function agentStep(
       ...SHEET,
       title: `Agent for ${issueLabel(issue)}`,
       question: `Which agent should start on ${issueLabel(issue)}?`,
-      placeholder: "Agent",
       items: services.agentProfiles().profiles.map((profile) => ({
         id: profile.id,
         label: profile.displayName,
@@ -266,7 +267,6 @@ function repositoryStep(
       ...SHEET,
       title: `Which ${issue.owner}/${issue.repository}`,
       question: `This machine has more than one clone of ${issue.owner}/${issue.repository}. Choose the one to work in, or clone it again somewhere else.`,
-      placeholder: "Repository",
       items: repositories.map((repository) => ({
         id: repository.mainWorktree,
         label: repository.mainWorktree,
@@ -335,7 +335,6 @@ function locationStep(
       ...SHEET,
       title: `Where to work on ${issueLabel(issue)}`,
       question: `Choose the checkout of ${repository.mainWorktree} the agent works in — the repository itself, a worktree it already has, or a new one.`,
-      placeholder: "Where to work",
       items: repository.worktrees.map((worktree) => ({
         id: worktree.path,
         label: worktree.path,
@@ -400,7 +399,6 @@ function cloneDestinationStep(
       ...SHEET,
       title: `Clone ${issue.owner}/${issue.repository}`,
       question: `${reason} Choose the folder to clone it into.`,
-      placeholder: "Parent folder",
       // No starting value: the field is a filter over the rows now, and a path
       // typed into it before anything is chosen would hide the list it is
       // meant to search. Where projects go is a *row* — main puts it there when
@@ -495,7 +493,6 @@ function staleBaseStep(
       ...SHEET,
       title: "The remote could not be reached",
       question: `${branch ?? "The branch"} cannot be started from the latest origin, because the fetch failed. Start it from the copy on this machine, or press Escape to go back.`,
-      placeholder: "Start the branch anyway?",
       items: [
         {
           id: USE_STALE_BASE,

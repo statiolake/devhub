@@ -32,7 +32,6 @@ function renderPicker(overrides: Partial<React.ComponentProps<typeof Picker>>) {
     <Picker
       title="New Agent"
       question="Which agent profile should the new agent start from?"
-      placeholder="New Agent"
       items={ITEMS}
       emptyNoMatch="No agent profiles match."
       emptyNoItems="No agent profiles are enabled."
@@ -321,6 +320,25 @@ describe("the picker", () => {
     ).toBeVisible();
     expect(
       screen.getByRole("dialog", { name: "Clone owner/repo" }),
+    ).toBeVisible();
+  });
+
+  it("says nothing about an empty list when it never had one", () => {
+    // The Issue URL step: the answer is typed, not chosen, so the list is
+    // empty every time it is drawn. A caption under the heading saying "Paste
+    // an Issue URL" was the heading again, in smaller type, for a list nobody
+    // was reading. A list that can empty out still says why — that is what the
+    // two messages are for — but a question that never had one says nothing.
+    renderPicker({
+      items: [],
+      emptyNoMatch: undefined,
+      emptyNoItems: undefined,
+      pinned: [{ id: "use", label: "Use this Issue" }],
+    });
+
+    expect(document.querySelector(".picker-empty")).toBeNull();
+    expect(
+      screen.getByRole("option", { name: "Use this Issue" }),
     ).toBeVisible();
   });
 

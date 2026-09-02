@@ -109,7 +109,17 @@ export interface PickerProps {
    * and there is something behind it for Escape to go back to.
    */
   readonly step?: number;
-  readonly placeholder: string;
+  /**
+   * An example of what the field takes — and only ever an example.
+   *
+   * The heading above says what is being asked, so a placeholder that says it
+   * again ("Agent" under "Which agent should start on this Issue?") is the
+   * same sentence twice in two type sizes. What a placeholder can say that the
+   * heading cannot is the *shape* of an answer: a whole Issue URL, so a person
+   * can see where the number goes. Most fields here filter a list that is
+   * already on screen and have no shape to demonstrate, so most pass nothing.
+   */
+  readonly placeholder?: string;
   /**
    * What the field starts with, for a question whose answer is mostly known —
    * a branch name that is going to begin `feature/128-` whatever else it says.
@@ -133,10 +143,19 @@ export interface PickerProps {
   readonly pinned?: readonly PickerItem[];
   /** A source is still answering. Shown as a spinner, never as an empty list. */
   readonly busy?: boolean;
-  /** Nothing matches what was typed. */
-  readonly emptyNoMatch: string;
-  /** Nothing to pick from at all, before anything was typed. */
-  readonly emptyNoItems: string;
+  /**
+   * Nothing matches what was typed, and nothing to pick from at all — the two
+   * ways of having no rows, which are different news and so are two messages.
+   *
+   * Both optional, and omitted together by a question that never had
+   * candidates to run out of: the Issue URL is typed, not chosen, so its list
+   * is empty every time it is drawn and "Paste an Issue URL" under the
+   * heading that just said so was a caption for a list nobody was reading.
+   * A list that can empty out says why; a question that never had one says
+   * nothing.
+   */
+  readonly emptyNoMatch?: string;
+  readonly emptyNoItems?: string;
   /** A caveat about the list itself, under it. */
   readonly note?: ReactNode;
   /** A slow source's cue to go and look for more. Optional. */
@@ -360,6 +379,9 @@ export function Picker({
       : query.length > 0
         ? emptyNoMatch
         : emptyNoItems;
+  // Both the rows and the message can be missing, and then the band is empty
+  // rather than holding a paragraph with nothing in it.
+  const showEmpty = ranked.length === 0 && emptyMessage !== undefined;
 
   return createPortal(
     <div
@@ -440,7 +462,7 @@ export function Picker({
             here at once — nothing you typed exists yet, but "New Project…"
             still does — so the sheet's seams do not move with its state. */}
         <div className="picker-body">
-          {ranked.length === 0 ? (
+          {showEmpty ? (
             <p className="picker-empty mac-caption" role="status">
               {emptyMessage}
             </p>
