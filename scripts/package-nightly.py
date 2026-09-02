@@ -284,8 +284,6 @@ def production_dependencies() -> list[Path]:
 	return modules
 
 
-BARE_IMPORT = re.compile(r"""(?:from|import)\s*\(?\s*["']([^."'][^"']*)["']""")
-
 # Everything the packaged app gets from somewhere other than node_modules:
 # Node's own builtins, Electron's, and the submodule, which is materialised by
 # hand a few steps further down.
@@ -297,9 +295,41 @@ NOT_A_DEPENDENCY = {"electron", "original-fs", "fs", "code-oss-dev"}
 # Any *other* unresolvable import is a packaging bug and stops the build.
 WINDOWS_ONLY = {"@vscode/windows-mutex", "windows-foreground-love"}
 
-# What npm accepts as a package name; the import scan sees the odd fragment of
-# a template literal, and this is what tells a name from one.
-PACKAGE_NAME = re.compile(r"^(?:@[a-z0-9][\w.-]*/)?[a-z0-9][\w.-]*$")
+# What the compiled main process imports, according to a parser rather than a
+# pattern. `preProcessFile` is TypeScript's own module scanner: it reads static
+# imports, dynamic `import()`, re-exports and `require`, and it knows the
+# difference between code and the comments and string literals around it.
+#
+# A regex could not. It read the words `from "clean"` out of a sentence in a doc
+# comment and spent the rest of the build looking for a package by that name.
+# The scan decides what gets copied into the app, so anything it gets wrong is
+# either a missing dependency at runtime or a build that stops — and it cannot
+# tell prose from code without parsing it.
+SCAN_HELPER = """
+const fs = require('node:fs');
+const path = require('node:path');
+const { createRequire } = require('node:module');
+
+const [base, root] = process.argv.slice(1);
+const ts = createRequire(path.join(base, 'resolve.js'))('typescript');
+
+const specifiers = new Set();
+(function walk(directory) {
+	for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+		const full = path.join(directory, entry.name);
+		if (entry.isDirectory()) {
+			walk(full);
+		} else if (entry.name.endsWith('.js')) {
+			const source = fs.readFileSync(full, 'utf8');
+			for (const { fileName } of ts.preProcessFile(source, true, true).importedFiles) {
+				specifiers.add(fileName);
+			}
+		}
+	}
+})(root);
+console.log(JSON.stringify([...specifiers].sort()));
+"""
+
 
 # The helper below is Node's own resolver, which is the only thing that
 # understands pnpm's store layout. `<pkg>/package.json` is not always exported,
@@ -354,19 +384,23 @@ def main_process_dependencies(out_dir: Path) -> dict[str, Path]:
 	here), and a package built from the manifest would launch and then fail on
 	the first configuration read.
 	"""
+	scan = subprocess.run(
+		["node", "-e", SCAN_HELPER, str(DESKTOP_DIR), str(out_dir)],
+		cwd=DESKTOP_DIR, capture_output=True, text=True,
+	)
+	if scan.returncode != 0:
+		fail(f"could not read the main process's imports:\n{scan.stderr}")
+
 	specifiers: set[str] = set()
-	for path in out_dir.rglob("*.js"):
-		for specifier in BARE_IMPORT.findall(path.read_text(errors="ignore")):
-			if specifier.startswith("node:"):
-				continue
-			# A deep import (`pkg/sub.js`) still means the package.
-			parts = specifier.split("/")
-			name = "/".join(parts[:2]) if specifier.startswith("@") else parts[0]
-			if name in NOT_A_DEPENDENCY or name in WINDOWS_ONLY:
-				continue
-			if not PACKAGE_NAME.match(name):
-				continue
-			specifiers.add(name)
+	for specifier in json.loads(scan.stdout):
+		if specifier.startswith(".") or specifier.startswith("node:"):
+			continue
+		# A deep import (`pkg/sub.js`) still means the package.
+		parts = specifier.split("/")
+		name = "/".join(parts[:2]) if specifier.startswith("@") else parts[0]
+		if name in NOT_A_DEPENDENCY or name in WINDOWS_ONLY:
+			continue
+		specifiers.add(name)
 
 	result = subprocess.run(
 		["node", "-e", RESOLVE_HELPER, str(DESKTOP_DIR), *sorted(specifiers)],
