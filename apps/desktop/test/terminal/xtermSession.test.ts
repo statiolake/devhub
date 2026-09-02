@@ -74,9 +74,8 @@ vi.mock("@xterm/addon-webgl", () => ({
   },
 }));
 
-const { openXtermSession } = await import(
-  "../../src/shell/surfaces/xtermSession"
-);
+const { openXtermSession } =
+  await import("../../src/shell/surfaces/xtermSession");
 
 function open(terminalFontFamily?: string) {
   const host = document.createElement("div");
@@ -184,6 +183,44 @@ describe("the shared xterm session", () => {
     expect(
       (session.terminal.options.theme as Record<string, string>).background,
     ).toBe("rgb(30, 30, 30)");
+    session.dispose();
+  });
+
+  /**
+   * Re-applying the same colours must not repaint the screen.
+   *
+   * `options.theme` takes an object and xterm cannot compare two equal ones, so
+   * every assignment rebuilds the colour set and repaints — cursor included.
+   * Under a cursor an application has asked to keep steady, a repaint is
+   * indistinguishable from a blink, so "the colours did not change" has to mean
+   * "nothing happened".
+   */
+  it("does not hand xterm a theme it is already using", () => {
+    const host = document.createElement("div");
+    host.style.backgroundColor = "rgb(255, 255, 255)";
+    document.body.append(host);
+    const session = openXtermSession(host, {
+      inputLabel: "Example terminal input",
+      isHidden: () => false,
+      onGeometry: () => undefined,
+    });
+    const palette = {
+      background: "#123456",
+      foreground: "#abcdef",
+      cursor: "#ffffff",
+      cursorText: "#000000",
+      selectionBackground: "#333333",
+      selectionForeground: "#ffffff",
+      ansi: Array.from({ length: 16 }, () => "#010101"),
+    };
+    session.applyTheme(palette);
+    const applied = session.terminal.options.theme;
+    // An equal palette, built separately: the same colours, a different object.
+    session.applyTheme({ ...palette, ansi: [...palette.ansi] });
+    expect(session.terminal.options.theme).toBe(applied);
+    // A real change still gets through.
+    session.applyTheme({ ...palette, background: "#654321" });
+    expect(session.terminal.options.theme).not.toBe(applied);
     session.dispose();
   });
 

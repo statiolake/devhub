@@ -251,6 +251,29 @@ export function openXtermSession(
   // xterm owns a hidden native textarea for keyboard and IME input. Keep that
   // responder discoverable to VoiceOver without adding a second visible
   // control or intercepting composition events in React.
+  /**
+   * Give xterm a theme only when the colours have actually changed.
+   *
+   * `options.theme` takes an object, and xterm cannot tell two equal ones
+   * apart: assigning it rebuilds the colour set and repaints the screen, cursor
+   * included, every single time. Measured against a real emulator, an
+   * assignment of an identical theme costs a repaint while assigning an
+   * unchanged `fontSize`, an unchanged `fontFamily`, a `fit()` that does not
+   * change the grid, and a `focus()` all cost nothing — xterm compares those by
+   * value and does nothing.
+   *
+   * A repaint under a cursor that has been told not to blink looks exactly like
+   * a cursor that blinked, which is why an idempotent call has to actually be
+   * idempotent here rather than merely harmless.
+   */
+  let appliedTheme = JSON.stringify(themeInForce(host, options.palette));
+  const setTheme = (next: ITheme): void => {
+    const serialised = JSON.stringify(next);
+    if (serialised === appliedTheme) return;
+    appliedTheme = serialised;
+    terminal.options.theme = next;
+  };
+
   const input = host.querySelector<HTMLTextAreaElement>("textarea");
   if (input) {
     input.setAttribute("aria-label", options.inputLabel);
@@ -405,7 +428,7 @@ export function openXtermSession(
       remeasure();
     },
     applyTheme(palette) {
-      terminal.options.theme = themeInForce(host, palette);
+      setTheme(themeInForce(host, palette));
       remeasure();
     },
     focus() {
