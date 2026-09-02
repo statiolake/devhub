@@ -573,11 +573,103 @@
   );
 }
 
+/* A workspace that is not simply open reads as secondary ink, and nothing
+   more. It used to be italic as well; italic is for a word being *mentioned*
+   rather than used, and none of these are that — they are ordinary rows in a
+   less-than-ordinary state, which the colour already says. */
 .workspace-row[data-state="unavailable"] .row-label,
 .workspace-row[data-state="closing"] .row-label,
 .workspace-row[data-state="closing-failed"] .row-label {
   color: var(--secondary);
-  font-style: italic;
+}
+
+/* ------------------------------------------------------- closing a row */
+
+/*
+ * A workspace on its way out: greyed, inert, and visibly working.
+ *
+ * The grey is the same 0.55 a stopping Agent wears, because they are the same
+ * statement — this row is busy ending and there is nothing to do to it. The
+ * inertness is real and not a look: `closing` is a state the model refuses
+ * operations in, and `pointer-events: none` is only what keeps a pointer from
+ * asking a question that is going to be answered "no". Focus is taken away
+ * for the same reason, in `Sidebar.tsx`, where the row stops being a tab
+ * stop; a row nobody can click but everybody can Tab into is half-disabled.
+ */
+.sidebar-tree-item.is-closing {
+  animation: row-closing-breathe 1.8s ease-in-out infinite;
+  pointer-events: none;
+}
+
+/*
+ * The pulse rides on the grey rather than on the colour: a row that changed
+ * hue while it closed would be a fifth status to learn, and the only thing
+ * this has to say is "still going". It breathes between two dimnesses, which
+ * at this amplitude reads as activity at the edge of vision and never pulls
+ * the eye off whatever the person is actually doing.
+ */
+@keyframes row-closing-breathe {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
+
+/*
+ * Reduce Motion keeps the statement and drops the motion — the row is still
+ * plainly dimmed, which is the half that carries the meaning. Same rule as
+ * the attention glow below.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .sidebar-tree-item.is-closing {
+    animation: none;
+    opacity: 0.55;
+  }
+}
+
+/*
+ * The row's exit.
+ *
+ * A workspace that finished closing is gone from the projection, so without
+ * this the row would vanish between two frames and the list would jump. The
+ * ghost is rendered for exactly as long as this animation runs (see
+ * `CLOSING_EXIT_MS` in `Sidebar.tsx`, which is the same number) and holds no
+ * state of its own: it is the row's last frame, fading and collapsing out of
+ * the way so the rows below arrive where the eye can follow them.
+ */
+.sidebar-tree-item.is-exiting {
+  overflow: hidden;
+  animation: row-exit 180ms ease-in forwards;
+  pointer-events: none;
+}
+
+/* The start height is stated rather than measured: `max-height` cannot
+   animate out of `none`, and a row — one line or two — is never near 6rem, so
+   the value clamps nothing and the collapse still ends at zero. */
+@keyframes row-exit {
+  0% {
+    max-height: 6rem;
+    opacity: 0.55;
+  }
+  100% {
+    max-height: 0;
+    opacity: 0;
+  }
+}
+
+/*
+ * Reduce Motion removes the collapse, not the row's departure: it still goes,
+ * it simply goes at once instead of sliding. A held `max-height: 0` with no
+ * transition is the same end state the animation reaches.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .sidebar-tree-item.is-exiting {
+    animation: none;
+    display: none;
+  }
 }
 
 .sidebar-row[data-control-state="stopping"] {
@@ -870,6 +962,101 @@ body.is-resizing-sidebar {
   min-width: 0;
   min-height: 0;
   background: var(--terminal-background, var(--surface));
+}
+
+/*
+ * The shortcuts a workspace offers the Agent on screen.
+ *
+ * Over the terminal rather than beside it, in the corner furthest from where
+ * anything is being read: a terminal writes from the top and its prompt sits at
+ * the bottom-left, so the bottom-right is the one region a pane is least often
+ * saying something in. It is `position: absolute` inside the pane, which the
+ * pane can afford because it is the page's own DOM — the Agent is xterm and not
+ * a native view, so there is nothing here that paints over the page.
+ *
+ * They are drawn only when their conditions hold, so this stack is usually
+ * empty and usually invisible. It never grows a background of its own for that
+ * reason: a permanent panel that is empty most of the time is a permanent
+ * subtraction from the terminal.
+ *
+ * `align-items: end` keeps every button as wide as its own label instead of as
+ * wide as the widest, so a column of one, two or three of them has a ragged
+ * left edge and a straight right one — against the corner it is pinned to.
+ */
+.agent-shortcuts {
+  position: absolute;
+  z-index: 2;
+  right: var(--space-3);
+  bottom: var(--space-3);
+  display: flex;
+  max-width: calc(100% - var(--space-6));
+  flex-direction: column;
+  align-items: end;
+  gap: var(--space-1);
+  pointer-events: none;
+}
+
+/* The buttons take the pointer back; the stack itself does not, so the terminal
+   under the gaps between them is still selectable. */
+.agent-shortcuts > * {
+  pointer-events: auto;
+}
+
+/* A floating control over a surface that may be any colour, so it carries its
+   own ground rather than relying on the one behind it — the one place in this
+   window where a button cannot inherit its contrast from its container. */
+.agent-shortcut {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 5px var(--space-2) 5px var(--space-1);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-row);
+  background: var(--chrome);
+  box-shadow: 0 1px 3px rgb(0 0 0 / 22%);
+  color: var(--primary);
+  font-size: 11px;
+  font-weight: 510;
+  white-space: nowrap;
+}
+
+.agent-shortcut svg {
+  width: 13px;
+  height: 13px;
+  flex: none;
+  color: var(--accent);
+}
+
+.agent-shortcut:hover:not(:disabled) {
+  background: var(--wash-strong);
+}
+
+.agent-shortcut:active:not(:disabled) {
+  background: var(--selection);
+}
+
+/* Dimmed and still there, with the reason in its tooltip. An agent whose screen
+   nothing can read cannot be typed into safely, and a button that vanished for
+   that would take the explanation with it. */
+.agent-shortcut:disabled {
+  opacity: 0.45;
+}
+
+.agent-shortcuts-note,
+.agent-shortcuts-failure {
+  max-width: 100%;
+  padding: 0 2px;
+  margin: 0;
+  font-size: 11px;
+  text-align: right;
+}
+
+.agent-shortcuts-note {
+  color: var(--secondary);
+}
+
+.agent-shortcuts-failure {
+  color: var(--danger);
 }
 
 /* An Agent on its own covers the whole content area, hole included.

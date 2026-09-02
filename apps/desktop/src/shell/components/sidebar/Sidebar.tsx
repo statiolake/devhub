@@ -27,6 +27,7 @@ import { SidebarHeader } from "./SidebarHeader";
 import { StatusMark } from "./StatusMark";
 import { statusLabel } from "./status";
 import { orderWorkspaces } from "./workspaceOrder";
+import { mergeExitingRows, useClosingExit } from "./closingExit";
 
 function runtimeHealthLabel(health: AgentSnapshot["runtimeHealth"]): string {
   switch (health) {
@@ -105,12 +106,21 @@ function WorkspaceRow({
     [onDispatch],
   );
 
+  // A Workspace on its way out takes no instructions. This is the view half
+  // of a state the model already enforces — `closing` refuses the operations
+  // underneath anyway — and it is here so that the refusal is never something
+  // a person has to run into: the row goes quiet at the same moment it stops
+  // being able to answer. It covers the Agents as well as the Workspace
+  // because they are going with it.
+  const closing = workspace.state === "closing";
+
   return (
     <li
-      className="sidebar-tree-item"
+      className={`sidebar-tree-item${closing ? " is-closing" : ""}`}
       role="treeitem"
       aria-level={1}
       aria-selected={selected}
+      aria-busy={closing || undefined}
       // A Workspace is always open. The attribute states that, and there is
       // nothing that can change it.
       aria-expanded={workspace.agents.length > 0 ? true : undefined}
@@ -131,7 +141,12 @@ function WorkspaceRow({
             type="button"
             data-workspace-id={workspace.id}
             data-tree-item-id={`workspace:${workspace.id}`}
-            tabIndex={selected ? 0 : -1}
+            // `disabled` and not merely un-clickable: the Sidebar's arrow-key
+            // walk selects on `[data-tree-item-id]:not([disabled])`, so this
+            // is also what takes a closing row out of the keyboard's path
+            // instead of leaving a stop that goes nowhere.
+            disabled={closing}
+            tabIndex={selected && !closing ? 0 : -1}
             aria-current={selected ? "page" : undefined}
             // A Workspace has no status of its own. Its Agents each carry
             // theirs on their own row, and rolling four of them into one mark
@@ -218,7 +233,8 @@ function WorkspaceRow({
             `worktree/packages/app` would offer a button that deletes the whole
             checkout around it — which is not what the row names, and is not
             recoverable. */}
-          {repository?.mainWorktree !== undefined &&
+          {!closing &&
+          repository?.mainWorktree !== undefined &&
           repository.worktree !== undefined &&
           repository.worktree !== repository.mainWorktree &&
           repository.worktree === workspace.root ? (
@@ -707,6 +723,30 @@ function SidebarResizeHandle({
   );
 }
 
+/**
+ * A row that has finished closing, on its way off the list.
+ *
+ * Deliberately not a `treeitem`: it is not an item, it is the picture of one
+ * that has just stopped existing, and putting it in the tree would give a
+ * screen reader a row to land on that answers nothing. `aria-hidden` says so,
+ * and the tree's own arrow-key walk skips it for the same reason — it carries
+ * no `data-tree-item-id`.
+ */
+function ClosingGhostRow({ label }: { label: string }) {
+  return (
+    <li className="sidebar-tree-item is-exiting" aria-hidden="true">
+      <div className="sidebar-row workspace-row" data-state="closing">
+        <div className="row-head">
+          <span className="row-rail" />
+          <span className="sidebar-context-button">
+            <span className="row-label">{label}</span>
+          </span>
+        </div>
+      </div>
+    </li>
+  );
+}
+
 export function Sidebar({ snapshot, onDispatch }: SidebarProps) {
   const {
     dispatch,
@@ -733,6 +773,13 @@ export function Sidebar({ snapshot, onDispatch }: SidebarProps) {
         (workspace) => repositories.get(workspace.id)?.mainWorktree,
       ),
     [repositories, snapshot.workspaces],
+  );
+  // Rows that have finished closing, still on screen for as long as it takes
+  // them to leave. See `closingExit.ts`.
+  const exiting = useClosingExit(workspaces);
+  const rows = useMemo(
+    () => mergeExitingRows(workspaces, exiting),
+    [workspaces, exiting],
   );
   // The sidebar draws no modals. Every one of them lives on the overlay layer
   // above the workbench views, so opening one is a request to main and nothing
@@ -917,7 +964,11 @@ export function Sidebar({ snapshot, onDispatch }: SidebarProps) {
             </button>
           </span>
         </div>
-        {snapshot.workspaces.length > 0 ? (
+        {/* `rows` and not the snapshot: the last Workspace to close still has
+            a ghost fading in its place, and swapping the whole list for "No
+            workspaces open" underneath it is exactly the jump the ghost is
+            there to prevent. */}
+        {rows.length > 0 ? (
           <ul
             ref={workspaceTreeRef}
             className="workspace-tree"
@@ -1001,21 +1052,25 @@ export function Sidebar({ snapshot, onDispatch }: SidebarProps) {
               }
             }}
           >
-            {workspaces.map((workspace) => (
-              <WorkspaceRow
-                key={workspace.id}
-                workspace={workspace}
-                repository={repositories.get(workspace.id)}
-                snapshot={snapshot}
-                onDispatch={onDispatch}
-                agentProfiles={agentProfiles.profiles}
-                agentProfilesAvailability={agentProfiles.availability}
-                onCreateAgent={openAgentPicker}
-                onRemoveWorktree={askRemoveWorktree}
-                onRenameAgent={openRename}
-                onAgentMenu={openAgentMenu}
-              />
-            ))}
+            {rows.map((entry) =>
+              entry.kind === "exiting" ? (
+                <ClosingGhostRow key={entry.row.id} label={entry.row.label} />
+              ) : (
+                <WorkspaceRow
+                  key={entry.workspace.id}
+                  workspace={entry.workspace}
+                  repository={repositories.get(entry.workspace.id)}
+                  snapshot={snapshot}
+                  onDispatch={onDispatch}
+                  agentProfiles={agentProfiles.profiles}
+                  agentProfilesAvailability={agentProfiles.availability}
+                  onCreateAgent={openAgentPicker}
+                  onRemoveWorktree={askRemoveWorktree}
+                  onRenameAgent={openRename}
+                  onAgentMenu={openAgentMenu}
+                />
+              ),
+            )}
           </ul>
         ) : (
           <p className="sidebar-empty">No workspaces open</p>
