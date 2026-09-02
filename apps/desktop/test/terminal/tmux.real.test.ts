@@ -304,6 +304,132 @@ describe.skipIf(TMUX === undefined)(
       expect(afterClose.map((entry) => entry.name)).toEqual([SCRATCH_SESSION]);
     });
 
+    /**
+     * Closing a workspace on purpose ends its work, all of it.
+     *
+     * A DevHub session outliving the app is the point of the runtime, but that
+     * is about *quitting* — see the case below. Closing one particular
+     * workspace is the opposite instruction: the person is done with it, and
+     * leaving its shell and its Agents running on the socket means they are
+     * still there, still holding their directory, at the next launch of an app
+     * that no longer has a row for them.
+     *
+     * The Scratch and a session belonging to another workspace are the control:
+     * "close this workspace" must reach exactly this workspace's sessions.
+     */
+    it("takes a workspace's Agents with it when the workspace is closed", async () => {
+      const test = fixture("closeagents");
+      mkdirSync(join(test.home, "workspace"), { recursive: true });
+      const root = realpathSync(join(test.home, "workspace"));
+      const workspaceId = "00000000-0000-4000-8000-000000000044";
+      const agentId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa9";
+      // Another workspace, which nothing here may touch.
+      mkdirSync(join(test.home, "other"), { recursive: true });
+      const otherRoot = realpathSync(join(test.home, "other"));
+      const otherId = "00000000-0000-4000-8000-000000000045";
+
+      const sessions = new AgentSessions(test.runtime);
+      await test.runtime.ensure(SCRATCH_TARGET);
+      await test.runtime.ensure(workspaceTarget(workspaceId, root));
+      await test.runtime.ensure(workspaceTarget(otherId, otherRoot));
+      await sessions.launch({
+        agentId,
+        workspaceId,
+        root,
+        command: { file: "/bin/sh", args: ["-c", "sleep 30"], env: {} },
+      });
+
+      const before = await test.runtime.listSessions(
+        test.socket,
+        test.cancel,
+        deadline(test.runtime),
+      );
+      expect(before).toHaveLength(4);
+
+      // What an explicit close does, in the order the app does it: the Agents
+      // first, then the workspace's own terminal.
+      await sessions.terminate(agentId);
+      await test.runtime.closeWorkspace({ workspaceId, root });
+
+      const after = await test.runtime.listSessions(
+        test.socket,
+        test.cancel,
+        deadline(test.runtime),
+      );
+      expect(after.map((entry) => entry.name).sort()).toEqual(
+        [
+          SCRATCH_SESSION,
+          `ws-${workspaceDigest(otherRoot).slice(0, 20)}`,
+        ].sort(),
+      );
+      expect(await sessions.list()).toEqual([]);
+    });
+
+    /**
+     * The other half of the pair above: what a close ends, a quit keeps.
+     *
+     * Quitting detaches clients and kills nothing, so the sessions are still
+     * on the socket afterwards and the next launch adopts them rather than
+     * building new ones — which is what makes coming back find the same shells
+     * with the same scrollback and the same Agents mid-turn.
+     *
+     * That quitting takes no other route is pinned in `surfaces.test.ts`,
+     * where `detachAll` is shown never to reach the runtime at all. What is
+     * proved here is the end of it that a person would notice: a second
+     * runtime on the same socket finds everything, including which Agent
+     * belongs to which workspace.
+     */
+    it("leaves its sessions on the socket for the next launch to adopt", async () => {
+      const test = fixture("quitkeeps");
+      mkdirSync(join(test.home, "workspace"), { recursive: true });
+      const root = realpathSync(join(test.home, "workspace"));
+      const workspaceId = "00000000-0000-4000-8000-000000000046";
+      const agentId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaab0";
+
+      const sessions = new AgentSessions(test.runtime);
+      await test.runtime.ensure(SCRATCH_TARGET);
+      await test.runtime.ensure(workspaceTarget(workspaceId, root));
+      await sessions.launch({
+        agentId,
+        workspaceId,
+        root,
+        command: { file: "/bin/sh", args: ["-c", "sleep 30"], env: {} },
+      });
+
+      // A fresh runtime on the same socket is what the next launch is: it
+      // adopts what is there rather than rebuilding it, which is only true if
+      // quitting left it there.
+      const relaunched = fixture("quitkeeps2");
+      const adopted = new TmuxTerminalRuntime({
+        context: { home: test.home, environment: { ...process.env } },
+        tmux: {
+          kind: "resolved",
+          value: { path: TMUX as string, basename: "tmux" },
+        },
+        shell: { path: "/bin/zsh", basename: "zsh" },
+        tmuxArgs: [],
+        effectiveSocketName: test.socket,
+        timeoutMs: 10_000,
+        bootstrapDirectory: relaunched.home,
+      });
+
+      const after = await adopted.listSessions(
+        test.socket,
+        test.cancel,
+        deadline(adopted),
+      );
+      expect(after.map((entry) => entry.name).sort()).toEqual(
+        [
+          SCRATCH_SESSION,
+          agentSessionName(agentId),
+          `ws-${workspaceDigest(root).slice(0, 20)}`,
+        ].sort(),
+      );
+      expect(await new AgentSessions(adopted).list()).toEqual([
+        { agentId, workspaceId },
+      ]);
+    });
+
     it("reports what a workspace terminal would destroy", async () => {
       const test = fixture("inspect");
       mkdirSync(join(test.home, "workspace"), { recursive: true });
