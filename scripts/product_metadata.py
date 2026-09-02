@@ -5,7 +5,8 @@ VS Code reads everything it knows about its own product out of `product.json` �
 its name, its data folders, its gallery, and which build it is. DevHub states
 the first three in `apps/desktop/product-overrides.json`, a static file, and the
 fourth here, because it is not static: it is whatever commit the repository is
-on when the metadata is written.
+on when the metadata is written, and whatever version `apps/desktop/package.json`
+states at the same moment.
 
 Three callers, one rule between them:
 
@@ -67,10 +68,30 @@ def devhub_commit() -> str:
 	).stdout.strip()
 
 
+def devhub_version() -> str:
+	"""Which DevHub this is, in the form a person reads.
+
+	`apps/desktop/package.json` is where it is stated, once, and every consumer
+	reads it from there: the bundle's `CFBundleShortVersionString`, and
+	`hostVersion` below.
+
+	It is deliberately *not* `product.json`'s `version`. That field is the
+	version of the VS Code inside DevHub, and it is not decoration: it is what
+	every `engines.vscode` range in every extension is validated against
+	(`extensionManagementService.ts` and `extensionGalleryService.ts` both call
+	`isEngineValid(..., productService.version, ...)`). Answering "1.131.0" there
+	is the truth. `hostVersion` is the other question — which DevHub is this? —
+	and the About dialog is the one place both need an answer at once, which is
+	what patches/vscode/0002 exists for.
+	"""
+	return json.loads((DESKTOP_DIR / "package.json").read_text())["version"]
+
+
 def product_metadata() -> dict[str, str]:
 	"""DevHub's product identity plus the build it was made from."""
 	return {
 		**PRODUCT_OVERRIDES,
+		"hostVersion": devhub_version(),
 		"commit": devhub_commit(),
 		# About shows this beside the commit. Without it the line reads
 		# "Date: Unknown" next to a hash that could be any age.

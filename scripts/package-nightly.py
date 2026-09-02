@@ -144,7 +144,7 @@ from darwin_bundle import (  # noqa: E402
 	rebrand,
 	sign,
 )
-from product_metadata import devhub_commit, product_metadata  # noqa: E402
+from product_metadata import devhub_commit, devhub_version, product_metadata  # noqa: E402
 from smoke_packaged_app import smoke  # noqa: E402
 
 # The inline `//# sourceMappingURL=data:...` tail every file of the dev compile
@@ -462,13 +462,14 @@ def directory_size(root: Path) -> int:
 # --- the bundle ------------------------------------------------------------
 
 
-def rename_bundle(app: Path, version: str) -> None:
+def rename_bundle(app: Path) -> None:
 	"""Make the Electron bundle DevHub's, and say which DevHub it is.
 
 	The rename itself is `darwin_bundle.rebrand`, shared with the source run's
-	bundle so that the two cannot come to disagree about what DevHub is called
-	or what it looks like — the icon travels with the rename, in there. What
-	only a release knows is added here: which build this is.
+	bundle so that the two cannot come to disagree about what DevHub is called,
+	what it looks like or what version it is — the icon and
+	`CFBundleShortVersionString` travel with the rename, in there. What only a
+	release knows is added here: which build this is.
 
 	"About DevHub" is the macOS About panel — `{ role: "about" }` in the App
 	Shell's menu — and it reads these two keys, not anything the workbench
@@ -479,8 +480,7 @@ def rename_bundle(app: Path, version: str) -> None:
 	rebrand(
 		app,
 		{
-			"CFBundleShortVersionString": version,
-			"CFBundleVersion": f"{version}.{date.today():%Y%m%d}+{devhub_commit()[:10]}",
+			"CFBundleVersion": f"{devhub_version()}.{date.today():%Y%m%d}+{devhub_commit()[:10]}",
 		},
 	)
 
@@ -731,7 +731,7 @@ def main() -> int:
 
 	step("inputs")
 	check_inputs()
-	version = json.loads((DESKTOP_DIR / "package.json").read_text())["version"]
+	version = devhub_version()
 	print(f"    DevHub {version}")
 
 	step("built-in extension set")
@@ -753,7 +753,7 @@ def main() -> int:
 	run(["ditto", str(BASE_APP), str(app)])
 
 	step("bundle identity")
-	rename_bundle(app, version)
+	rename_bundle(app)
 	write_licenses(app)
 
 	assemble_app_directory(app, version, staged)

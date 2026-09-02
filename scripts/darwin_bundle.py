@@ -41,7 +41,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from product_metadata import PRODUCT_OVERRIDES, PRODUCT_OVERRIDES_FILE
+from product_metadata import PRODUCT_OVERRIDES, PRODUCT_OVERRIDES_FILE, devhub_version
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 VSCODE_DIR = REPO_ROOT / "vscode"
@@ -102,8 +102,15 @@ def rebrand(app: Path, main_plist_extra: dict[str, str] | None = None) -> None:
 	The copyright is part of the rename for the same reason: "About DevHub" is
 	branding, and a source run and a nightly must not answer it differently.
 
-	`main_plist_extra` is for what only one caller knows — which build this is —
-	so that the names themselves stay stated once, here.
+	So is the version. `CFBundleShortVersionString` is the number the macOS
+	About panel puts under the name, and left alone it is Electron's — a source
+	run called itself "Version 42.7.0" while the nightly beside it said "0.1.0",
+	and neither agreed with the workbench's own About dialog. Both callers want
+	the same answer, so neither is asked for it.
+
+	`main_plist_extra` is for what only one caller knows — *which* build this
+	is, as opposed to which version — so that everything both callers share
+	stays stated once, here.
 	"""
 	contents = app / "Contents"
 
@@ -140,6 +147,7 @@ def rebrand(app: Path, main_plist_extra: dict[str, str] | None = None) -> None:
 			"CFBundleIdentifier": BUNDLE_IDENTIFIER,
 			"CFBundleIconFile": ICON_FILE.name,
 			"NSHumanReadableCopyright": COPYRIGHT,
+			"CFBundleShortVersionString": devhub_version(),
 			**(main_plist_extra or {}),
 		},
 	)
@@ -269,10 +277,12 @@ def install_dev_launcher(app: Path) -> None:
 
 
 def _stamp_state() -> str:
-	"""What the branded clone was made from: the Electron, the names, the icon, the checkout, and this file.
+	"""What the branded clone was made from: the Electron, DevHub's version, the names, the icon, the checkout, and this file.
 
-	All five belong in the stamp. The Electron is restaged by a VS Code bump,
-	the names change whenever `product-overrides.json` does, the icon changes
+	All of them belong in the stamp. The Electron is restaged by a VS Code bump,
+	DevHub's version is now written into the plist and so a bumped version with
+	a kept clone is a bundle claiming the version before it, the names change
+	whenever `product-overrides.json` does, the icon changes
 	whenever `scripts/package-icon.sh` is re-run, the checkout's path is written
 	into the launcher and so a clone carried to a new path is a clone pointing
 	at a checkout that is no longer there, and this file holds how a bundle is
@@ -297,7 +307,12 @@ def _stamp_state() -> str:
 	checkout = str(REPO_ROOT).encode()
 	recipe = Path(__file__).read_bytes()
 	return hashlib.sha256(
-		electron_version.encode() + overrides + icon + checkout + recipe
+		electron_version.encode()
+		+ devhub_version().encode()
+		+ overrides
+		+ icon
+		+ checkout
+		+ recipe
 	).hexdigest()
 
 
