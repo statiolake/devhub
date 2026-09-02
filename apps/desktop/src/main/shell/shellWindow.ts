@@ -8,6 +8,7 @@
  */
 
 import { electron } from "../electron.js";
+import { allowListenersFor } from "./appListenerCeiling.js";
 import { sendLinksToTheBrowser } from "./externalLinks.js";
 import type { ContentRect, ContentSurfaceWire } from "../../ipc/contract.js";
 import { WINDOW_TITLES } from "../../ipc/windowTitles.js";
@@ -194,6 +195,9 @@ export class ShellWindow {
 	 */
 	attach(view: WorkbenchView): void {
 		this.views.push(view);
+		// A workbench arrives with helper processes of its own, and each of
+		// those puts a listener on `electron.app`. See `appListenerCeiling`.
+		allowListenersFor(this.views.length);
 		this.window.contentView.addChildView(view.view);
 		view.view.setBounds(this.currentRect());
 		view.view.setVisible(false);
@@ -218,6 +222,7 @@ export class ShellWindow {
 			return;
 		}
 		this.views.splice(index, 1);
+		allowListenersFor(this.views.length);
 		this.window.contentView.removeChildView(view.view);
 		shellTheme().forgetWindow(view.id);
 		if (this.revealed === view) {
