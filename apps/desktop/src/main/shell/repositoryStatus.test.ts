@@ -60,7 +60,7 @@ async function round(): Promise<RepositoryStatusWire> {
 }
 
 beforeEach(() => {
-	readGitHubToken.mockResolvedValue("token");
+	readGitHubToken.mockResolvedValue({ kind: "token", token: "token" });
 	readIssueStatus.mockImplementation(
 		(issue: { owner: string; repository: string; number: number }) => ({
 			issue,
@@ -126,7 +126,7 @@ describe("what a workspace is about", () => {
 		const status = await round();
 		const row = status.workspaces[0];
 		expect(row?.issue).toBeUndefined();
-		expect(row?.issueUnavailable).toEqual({
+		expect(row?.unavailable).toEqual({
 			number: 128,
 			reason: "GitHub has no issue example/widget#128.",
 		});
@@ -134,15 +134,31 @@ describe("what a workspace is about", () => {
 		expect(status.diagnostic).toBe("GitHub has no issue example/widget#128.");
 	});
 
-	it("says so on every row when there are no credentials at all", async () => {
+	it("says so on every row when `gh` is there and holds no token", async () => {
 		checkedOut("feature/128-tidy");
-		readGitHubToken.mockResolvedValue(undefined);
+		readGitHubToken.mockResolvedValue({ kind: "unauthenticated" });
 
 		const status = await round();
-		expect(status.workspaces[0]?.issueUnavailable?.reason).toMatch(
-			/gh auth login/u,
-		);
+		expect(status.workspaces[0]?.unavailable?.reason).toMatch(/gh auth login/u);
 		expect(readIssueStatus).not.toHaveBeenCalled();
+	});
+
+	it("tells somebody with no `gh` to install it, not to log in", async () => {
+		// The two used to be one answer, and the one sentence it produced told a
+		// person with no GitHub CLI to run `gh auth login` — advice that cannot
+		// work, for a reason that was never the reason.
+		checkedOut("feature/128-tidy");
+		readGitHubToken.mockResolvedValue({
+			kind: "unrunnable",
+			reason: "there is no `gh` on DevHub's PATH",
+		});
+
+		const status = await round();
+		const reason = status.workspaces[0]?.unavailable?.reason ?? "";
+		expect(reason).toMatch(/no `gh` on DevHub's PATH/u);
+		expect(reason).toMatch(/Install the GitHub CLI/u);
+		expect(reason).not.toMatch(/gh auth login/u);
+		expect(status.diagnostic).toBe(reason);
 	});
 
 	it("keeps what it last knew rather than the reason it could not refresh it", async () => {
@@ -181,7 +197,7 @@ describe("what a workspace is about", () => {
 
 		const after = published[1]?.workspaces[0];
 		expect(after?.issue?.number).toBe(128);
-		expect(after?.issueUnavailable).toBeUndefined();
+		expect(after?.unavailable).toBeUndefined();
 		expect(published[1]?.diagnostic).toBe("GitHub answered 502.");
 	});
 
@@ -191,16 +207,80 @@ describe("what a workspace is about", () => {
 		expect(readIssueStatus).not.toHaveBeenCalled();
 	});
 
-	it("says nothing about an Issue when the remote is not GitHub", async () => {
-		// The branch carries a number and the remote is what says whose. Without
-		// one there is no Issue to name, only a branch.
+	it("says which remote it could not read as a GitHub repository", async () => {
+		// The branch carries a number and the remote is what says whose. A remote
+		// that normalises perfectly well but is not github.com — an SSH alias out
+		// of `~/.ssh/config`, a host on a non-default port, an Enterprise install
+		// — used to fail this test silently, so a person with a working `gh` and
+		// a branch named exactly right got a blank line and nothing to read.
+		readRepository.mockResolvedValue({
+			mainWorktree: "/projects/widget",
+			branch: "feature/128-tidy",
+			remote: "github-alt/example/widget",
+		});
+		const status = await round();
+		const row = status.workspaces[0];
+		expect(row?.branch).toBe("feature/128-tidy");
+		expect(row?.issue).toBeUndefined();
+		expect(row?.unavailable?.number).toBe(128);
+		expect(row?.unavailable?.reason).toMatch(/github-alt\/example\/widget/u);
+		expect(readIssueStatus).not.toHaveBeenCalled();
+	});
+
+	it("says so when the branch names an Issue and there is no remote at all", async () => {
 		readRepository.mockResolvedValue({
 			mainWorktree: "/projects/widget",
 			branch: "feature/128-tidy",
 			remote: undefined,
 		});
 		const status = await round();
-		expect(status.workspaces[0]?.branch).toBe("feature/128-tidy");
-		expect(status.workspaces[0]?.issue).toBeUndefined();
+		expect(status.workspaces[0]?.unavailable?.number).toBe(128);
+		expect(status.workspaces[0]?.unavailable?.reason).toMatch(/`origin`/u);
+	});
+
+	it("says nothing at all when the branch names no Issue", async () => {
+		// The one blank that is a fact rather than a failure, and it has to stay
+		// blank: a reason on every `master` would be noise on most of the list.
+		checkedOut("master");
+		const status = await round();
+		expect(status.workspaces[0]?.unavailable).toBeUndefined();
+		expect(status.diagnostic).toBeUndefined();
+	});
+
+	it("says nothing at all when the workspace is not a repository", async () => {
+		// `readRepository` answers `undefined` for a plain folder, and that is the
+		// only `undefined` that means "nothing is wrong".
+		readRepository.mockResolvedValue(undefined);
+		const status = await round();
+		expect(status.workspaces[0]?.branch).toBeUndefined();
+		expect(status.workspaces[0]?.unavailable).toBeUndefined();
+		expect(status.diagnostic).toBeUndefined();
+	});
+
+	it("says on the row when git refused to read the repository", async () => {
+		// This was swallowed whole by a `.catch(() => undefined)`: a timeout, a
+		// permission, a broken index or a repository owned by somebody else all
+		// left the row with no branch, no Issue and no reason — identical to a
+		// workspace nobody had started work in. It is the failure DevHub can
+		// guess at least and the one most worth reading.
+		const { TypedFailure } = await import("../../model/wire.js");
+		const { errorWireAt, withSummary } = await import("../../model/wire.js");
+		readRepository.mockRejectedValue(
+			new TypedFailure(
+				withSummary(
+					errorWireAt("workspace_unavailable"),
+					"fatal: detected dubious ownership in repository at '/projects/widget'",
+				),
+			),
+		);
+
+		const status = await round();
+		const row = status.workspaces[0];
+		expect(row?.unavailable?.reason).toMatch(/dubious ownership/u);
+		expect(row?.unavailable?.number).toBeUndefined();
+		// And the Sidebar's note carries it too: one workspace whose git is broken
+		// is usually every workspace.
+		expect(status.diagnostic).toMatch(/dubious ownership/u);
+		expect(readIssueStatus).not.toHaveBeenCalled();
 	});
 });

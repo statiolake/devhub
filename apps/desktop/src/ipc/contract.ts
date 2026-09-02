@@ -104,7 +104,7 @@ export interface WorkspaceRepositoryWire {
 		readonly state: "open" | "draft";
 	};
 	/**
-	 * The Issue this branch names, when DevHub has nothing to say about it.
+	 * Why this row cannot say what the workspace is working on.
 	 *
 	 * A branch called `feature/128-…` is a workspace that *is* about Issue 128
 	 * whether or not GitHub answered. Without this the row looked exactly like a
@@ -114,14 +114,27 @@ export interface WorkspaceRepositoryWire {
 	 * nothing. Two different facts drawn identically, with the explanation kept
 	 * somewhere else, is how "it just does not link" becomes unanswerable.
 	 *
+	 * One field rather than one per failing step, because the row is asking a
+	 * single question — *what is this working on?* — and every way of failing to
+	 * answer it produces the same blank. A second channel for the failures that
+	 * happen before an Issue number is known would be a second way of saying the
+	 * one thing, and the two would drift: git refusing to run, an `origin` that
+	 * is not a GitHub repository, and GitHub declining to answer all leave the
+	 * person looking at the same empty line, and all of them belong here.
+	 *
+	 * `number` is present only when the branch actually named an Issue — the
+	 * failures upstream of that (no git, no repository, a remote DevHub cannot
+	 * resolve) know there is a question but not which one.
+	 *
 	 * It is never present alongside `issue`: what was last known outranks a look
 	 * that failed, which is the same rule `diagnostic` follows. So this appears
 	 * only when there is nothing known to show instead, and it is replaced the
 	 * moment a later look succeeds.
 	 */
-	readonly issueUnavailable?: {
-		readonly number: number;
-		/** GitHub's own words, or DevHub's about not having asked. */
+	readonly unavailable?: {
+		/** The Issue the branch named, when the branch got far enough to name one. */
+		readonly number?: number;
+		/** GitHub's own words, git's own words, or DevHub's about not having asked. */
 		readonly reason: string;
 	};
 }

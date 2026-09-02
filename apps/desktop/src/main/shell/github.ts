@@ -59,7 +59,27 @@ const QUERY = `query($owner:String!,$name:String!,$number:Int!,$prs:Int!){
 }`;
 
 /**
- * The token `gh` is holding, or nothing when it is not holding one.
+ * What came of asking `gh` for a token.
+ *
+ * Three outcomes, not two. "There is no token" used to cover both a `gh` that
+ * is not installed and a `gh` that is installed and logged out, and the one
+ * sentence the caller could write for them told a person with no `gh` at all to
+ * run `gh auth login` — advice that cannot work, given for a reason that was
+ * never the reason. They are different problems with different fixes, so they
+ * are different answers.
+ *
+ * `unrunnable` is every way DevHub failed to get an answer out of the binary —
+ * missing from PATH, not executable, too slow — and it carries git's own kind
+ * of detail: what was tried and what happened, in words the caller can put in
+ * front of a person.
+ */
+export type GitHubTokenResult =
+	| { readonly kind: "token"; readonly token: string }
+	| { readonly kind: "unrunnable"; readonly reason: string }
+	| { readonly kind: "unauthenticated" };
+
+/**
+ * The token `gh` is holding, or why DevHub does not have one.
  *
  * Read on every poll rather than kept: a token that was revoked, refreshed or
  * logged out of should stop working when it stops being valid, and a copy in
@@ -67,30 +87,51 @@ const QUERY = `query($owner:String!,$name:String!,$number:Int!,$prs:Int!){
  */
 export function readGitHubToken(
 	environment: Readonly<Record<string, string | undefined>>,
-): Promise<string | undefined> {
-	return new Promise<string | undefined>((resolve) => {
+): Promise<GitHubTokenResult> {
+	return new Promise<GitHubTokenResult>((resolve) => {
 		const child = spawn("gh", ["auth", "token"], {
 			env: environment as NodeJS.ProcessEnv,
 			stdio: ["ignore", "pipe", "ignore"],
 		});
 		let stdout = "";
+		let timedOut = false;
 		child.stdout.on("data", (chunk: Buffer) => {
 			stdout += chunk.toString("utf8");
 		});
 		const timer = setTimeout(() => {
+			timedOut = true;
 			child.kill("SIGKILL");
 		}, TOKEN_TIMEOUT_MS);
-		// `gh` missing, or holding no token, are the same answer here: DevHub has
-		// no way to ask GitHub anything. Which of the two it was is said by the
-		// caller, once, in words the person can act on.
-		child.once("error", () => {
+		// The binary could not be run at all. `ENOENT` is the common one and the
+		// only one worth its own sentence: there is no `gh` on the PATH DevHub
+		// was given, which is a different thing from a `gh` that refused.
+		child.once("error", (error: NodeJS.ErrnoException) => {
 			clearTimeout(timer);
-			resolve(undefined);
+			resolve({
+				kind: "unrunnable",
+				reason:
+					error.code === "ENOENT"
+						? "there is no `gh` on DevHub's PATH"
+						: error.message,
+			});
 		});
 		child.once("close", (code) => {
 			clearTimeout(timer);
+			if (timedOut) {
+				resolve({
+					kind: "unrunnable",
+					reason: `\`gh auth token\` did not answer within ${String(TOKEN_TIMEOUT_MS / 1000)} seconds`,
+				});
+				return;
+			}
 			const token = stdout.trim();
-			resolve(code === 0 && token.length > 0 ? token : undefined);
+			// `gh` ran and declined. It exits non-zero when it holds no token, and
+			// an empty answer with a zero exit means the same thing.
+			resolve(
+				code === 0 && token.length > 0
+					? { kind: "token", token }
+					: { kind: "unauthenticated" },
+			);
 		});
 	});
 }

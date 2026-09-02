@@ -22,6 +22,7 @@ import type {
 	WorkspaceRepositoryWire,
 } from "../../ipc/contract.js";
 import { readRepository, type GitCommand } from "./git.js";
+import { TypedFailure } from "../../model/wire.js";
 import {
 	GitHubUnavailable,
 	readGitHubToken,
@@ -52,6 +53,26 @@ function issueKey(issue: IssueReference): string {
 }
 
 /**
+ * What the branch says this workspace is about.
+ *
+ * Three answers, because there are three situations and only one of them is
+ * "nothing to show". A branch that names no Issue is a workspace about no
+ * Issue, and that is a fact, not a failure. A branch that *does* name one but
+ * whose remote cannot be turned into a GitHub repository is a failure, and it
+ * used to be drawn exactly like the fact — which is how a person on
+ * `feature/128-tidy` with a working `gh` was left with a blank line and nothing
+ * to read.
+ */
+type ConventionReading =
+	| { readonly kind: "none" }
+	| { readonly kind: "issue"; readonly issue: IssueReference }
+	| {
+			readonly kind: "unresolved";
+			readonly number: number;
+			readonly reason: string;
+	  };
+
+/**
  * The Issue a workspace is about: the one its checked-out branch names.
  *
  * The only way a workspace is linked to an Issue. DevHub used to prefer a
@@ -64,19 +85,69 @@ function issueKey(issue: IssueReference): string {
  * Only against a GitHub remote: the number in `feature/128-tidy` means nothing
  * without knowing whose 128 it is, and the branch cannot say. That is why the
  * remote is still read from git rather than derived alongside it.
+ *
+ * **An alias is not resolved here, and deliberately.** `remoteIdentity` already
+ * normalises a remote as far as it can be normalised without leaving the
+ * machine — credentials, scheme, trailing `.git` — and what is left is a host
+ * that is either `github.com` or is not. A `~/.ssh/config` alias (`git@gh:me/x`)
+ * and a non-default port both survive that as something this pattern rejects.
+ * Reading the SSH config to fold them in was considered and refused: the
+ * identity is what `Repository.matchesRemote` compares clones by, so a second
+ * rule that only this call site applies would make two remotes equal here and
+ * unequal there — one fact with two answers, which is the shape of bug this
+ * whole file exists to avoid. So the alias stays unresolved and says so, and if
+ * folding aliases is ever wanted it belongs in `remoteIdentity`, once, for
+ * every caller at the same time.
  */
 function issueFromConvention(
 	remote: string | undefined,
 	branch: string | undefined,
-): IssueReference | undefined {
-	if (!remote || !branch) return undefined;
+): ConventionReading {
+	if (branch === undefined) return { kind: "none" };
 	const number = issueNumberFromBranch(branch);
-	if (number === undefined) return undefined;
+	if (number === undefined) return { kind: "none" };
+	if (remote === undefined) {
+		return {
+			kind: "unresolved",
+			number,
+			reason:
+				"this branch names an issue, but the workspace has no `origin` remote to say whose.",
+		};
+	}
 	const match = /^github\.com\/([^/]+)\/([^/]+)$/u.exec(remote);
 	const owner = match?.[1];
 	const repository = match?.[2];
-	if (!owner || !repository) return undefined;
-	return { owner, repository, number };
+	if (!owner || !repository) {
+		return {
+			kind: "unresolved",
+			number,
+			reason: `\`origin\` is \`${remote}\`, which DevHub cannot read as a github.com repository, so it cannot tell whose issue this is.`,
+		};
+	}
+	return { kind: "issue", issue: { owner, repository, number } };
+}
+
+/** One workspace, as far as the local half of the round could get. */
+interface LocalReading {
+	readonly workspace: WatchedWorkspace;
+	readonly branch?: string;
+	readonly issue?: IssueReference;
+	/** The Issue the branch named, when it named one nothing could be read for. */
+	readonly number?: number;
+	/** Why this row cannot answer yet, when the local half already knows. */
+	readonly reason?: string;
+}
+
+/**
+ * git's own last line, for a person to read.
+ *
+ * A `TypedFailure` is already a sentence written to be shown — it is what the
+ * clone sheet puts in front of people — so it is used as it stands rather than
+ * re-worded here. Anything else is an unexpected shape and says what it says.
+ */
+function gitReason(error: unknown): string {
+	if (error instanceof TypedFailure) return error.wire.summary;
+	return error instanceof Error ? error.message : String(error);
 }
 
 export class RepositoryStatusWatcher {
@@ -151,14 +222,39 @@ export class RepositoryStatusWatcher {
 		});
 
 		const local = await Promise.all(
-			workspaces.map(async (workspace) => {
-				const facts = command
-					? await readRepository(command, workspace.root).catch(() => undefined)
-					: undefined;
+			workspaces.map(async (workspace): Promise<LocalReading> => {
+				// No git at all: every row is blocked by the one thing, and says so.
+				// The Sidebar's note carries it too, exactly as it always has.
+				if (!command) {
+					return { workspace, reason: diagnostic };
+				}
+				let facts;
+				try {
+					facts = await readRepository(command, workspace.root);
+				} catch (error: unknown) {
+					// `readRepository` answers `undefined` for the one case that is not
+					// a failure — a plain folder that is not a repository — so anything
+					// thrown here is git refusing: a timeout, a permission, a broken
+					// index, a repository owned by somebody else. This used to be
+					// swallowed whole, which left the row blank with no branch and no
+					// reason, indistinguishable from a workspace nobody had started
+					// work in. It is the failure this file is least able to guess at
+					// and the one most worth reading, so it is git's own last line.
+					const reason = `DevHub could not read this repository: ${gitReason(error)}`;
+					// It belongs in the Sidebar's note as well: one workspace whose git
+					// is broken is usually every workspace, and the note is where a
+					// person looks when the whole list has gone quiet.
+					diagnostic ??= reason;
+					return { workspace, reason };
+				}
+				const reading = issueFromConvention(facts?.remote, facts?.branch);
 				return {
 					workspace,
 					branch: facts?.branch,
-					issue: issueFromConvention(facts?.remote, facts?.branch),
+					...(reading.kind === "issue" ? { issue: reading.issue } : {}),
+					...(reading.kind === "unresolved"
+						? { number: reading.number, reason: reading.reason }
+						: {}),
 				};
 			}),
 		);
@@ -179,14 +275,21 @@ export class RepositoryStatusWatcher {
 		 */
 		const unreadable = new Map<string, string>();
 		if (wanted.size > 0) {
-			const token = await readGitHubToken(this.deps.environment);
-			if (!token) {
+			const credentials = await readGitHubToken(this.deps.environment);
+			if (credentials.kind !== "token") {
+				// Two problems with two fixes. Telling somebody who has no `gh` to
+				// run `gh auth login` is advice that cannot work, given for a reason
+				// that was never the reason — so each says what happened and what
+				// would change it.
 				diagnostic =
-					"DevHub has no GitHub credentials. Run `gh auth login` to show issue and pull request status.";
+					credentials.kind === "unrunnable"
+						? `DevHub could not run \`gh\` to get GitHub credentials: ${credentials.reason}. Install the GitHub CLI, or point DevHub's PATH at it, to show issue and pull request status.`
+						: "DevHub has no GitHub credentials. Run `gh auth login` to show issue and pull request status.";
 				// Not one Issue's problem: none of them were asked about, so every
 				// row that is about one says so.
 				for (const key of wanted.keys()) unreadable.set(key, diagnostic);
 			} else {
+				const token = credentials.token;
 				const asking = [...wanted.values()];
 				for (const [index, issue] of asking.entries()) {
 					const key = issueKey(issue);
@@ -222,8 +325,14 @@ export class RepositoryStatusWatcher {
 			// Sidebar's own note follows, so a network that dropped never reads as
 			// an Issue that closed. The reason is drawn on the row only when there
 			// is nothing known to draw instead.
-			const reason =
-				status || key === undefined ? undefined : unreadable.get(key);
+			// A reason the local half already found outranks anything GitHub could
+			// have said, because when it is set GitHub was never asked: there was no
+			// repository to read, or no Issue reference to ask about.
+			const reason = status
+				? undefined
+				: (entry.reason ??
+					(key === undefined ? undefined : unreadable.get(key)));
+			const number = entry.issue?.number ?? entry.number;
 			return {
 				workspaceId: entry.workspace.id,
 				branch: entry.branch,
@@ -236,10 +345,12 @@ export class RepositoryStatusWatcher {
 						}
 					: undefined,
 				pullRequest: status?.pullRequest,
-				issueUnavailable:
-					reason === undefined || entry.issue === undefined
+				unavailable:
+					reason === undefined
 						? undefined
-						: { number: entry.issue.number, reason },
+						: number === undefined
+							? { reason }
+							: { number, reason },
 			};
 		});
 

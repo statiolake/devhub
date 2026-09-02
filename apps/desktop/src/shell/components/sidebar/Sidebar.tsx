@@ -208,7 +208,7 @@ function WorkspaceRow({
             survived was `feature/128-tidy-the…` — the half that says nothing. */}
         {(repository?.branch ??
         repository?.issue ??
-        repository?.issueUnavailable) ? (
+        repository?.unavailable) ? (
           <div className="row-line row-line-secondary">
             {repository?.branch ? (
               <span className="row-branch" title={repository.branch}>
@@ -220,19 +220,28 @@ function WorkspaceRow({
                 {repository.issue.title}
               </span>
             ) : null}
-            {/* The branch names an Issue and GitHub said nothing usable about
-                it. Without this the row looked exactly like a branch that is
-                about no Issue, while the reason sat at the foot of the Sidebar
+            {/* The row cannot say what it is working on, and this is why.
+                Without it the row looked exactly like a branch that is about
+                no Issue, while the reason sat at the foot of the Sidebar
                 attached to nothing — so "it just does not link" had no answer
-                on screen. The number says which Issue, the reason says why,
-                and the whole of it is in the tooltip because a Sidebar this
-                narrow will always cut a sentence from GitHub. */}
-            {repository?.issueUnavailable ? (
+                on screen. The number says which Issue when the branch got far
+                enough to name one; the failures upstream of that — git that
+                would not run, a remote that is not a GitHub repository — have
+                no number to show and lead with the reason instead. The whole
+                of it is in the tooltip either way, because a Sidebar this
+                narrow will always cut a sentence. */}
+            {repository?.unavailable ? (
               <span
                 className="row-issue-unavailable"
-                title={`Issue #${String(repository.issueUnavailable.number)}: ${repository.issueUnavailable.reason}`}
+                title={
+                  repository.unavailable.number === undefined
+                    ? repository.unavailable.reason
+                    : `Issue #${String(repository.unavailable.number)}: ${repository.unavailable.reason}`
+                }
               >
-                {`#${String(repository.issueUnavailable.number)} · ${repository.issueUnavailable.reason}`}
+                {repository.unavailable.number === undefined
+                  ? repository.unavailable.reason
+                  : `#${String(repository.unavailable.number)} · ${repository.unavailable.reason}`}
               </span>
             ) : null}
           </div>

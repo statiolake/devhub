@@ -148,7 +148,7 @@ describe("a workspace row", () => {
         {
           workspaceId: "w-1",
           branch: "feature/128-tidy",
-          issueUnavailable: {
+          unavailable: {
             number: 128,
             reason: "GitHub has no issue example/widget#128.",
           },
@@ -163,6 +163,29 @@ describe("a workspace row", () => {
     expect(screen.getByText("feature/128-tidy")).toBeInTheDocument();
     // And no Issue mark, because DevHub does not know the state to draw.
     expect(screen.queryByRole("button", { name: /Issue #/u })).toBeNull();
+  });
+
+  it("gives the reason alone when the failure never reached an Issue number", () => {
+    // git that would not run, or a remote that is not a GitHub repository:
+    // there is a question and no number to put on it, so leading with `#undefined`
+    // would be worse than leading with the sentence.
+    mount({
+      sequence: 1,
+      workspaces: [
+        {
+          workspaceId: "w-1",
+          unavailable: {
+            reason:
+              "DevHub could not read this repository: fatal: detected dubious ownership",
+          },
+        },
+      ],
+    });
+    const note = document
+      .querySelector(".workspace-row")
+      ?.querySelector(".row-issue-unavailable");
+    expect(note).toHaveTextContent("detected dubious ownership");
+    expect(note?.textContent).not.toMatch(/undefined|^#/u);
   });
 
   it("keeps what it knows when a look fails, and says why beside it", () => {
