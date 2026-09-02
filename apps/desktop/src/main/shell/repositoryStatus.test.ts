@@ -99,6 +99,20 @@ describe("what a workspace is about", () => {
 		expect((await round()).workspaces[0]?.issue?.number).toBe(9);
 	});
 
+	it("reads a deep prefix with the number written as an Issue", async () => {
+		// The name from the report. Every step of the chain handles it: git
+		// reports it, the convention reads 1234 out of it, and the reference goes
+		// to GitHub — so a workspace on this branch that shows no Issue is a
+		// workspace whose *lookup* failed, not one that was never linked.
+		checkedOut("step/feature/#1234-issue-body");
+		const status = await round();
+		expect(status.workspaces[0]?.issue?.number).toBe(1234);
+		expect(readIssueStatus).toHaveBeenCalledWith(
+			{ owner: "example", repository: "widget", number: 1234 },
+			"token",
+		);
+	});
+
 	it("asks GitHub about nothing when the branch names no Issue", async () => {
 		checkedOut("master");
 		await round();

@@ -62,6 +62,13 @@ describe("the branch naming convention", () => {
     expect(issueNumberFromBranch("team/alice/feature/9-thing")).toBe(9);
   });
 
+  it("reads a prefix that is several segments deep with the number written as an Issue", () => {
+    // Reported as not linking, and it does: every part of this name is read
+    // here. What was wrong was somewhere else — see the note on
+    // `RepositoryStatusWatcher`.
+    expect(issueNumberFromBranch("step/feature/#1234-issue-body")).toBe(1234);
+  });
+
   it("reads the number whether or not it is written as an Issue", () => {
     expect(issueNumberFromBranch("feature/#128-tidy-the-picker")).toBe(128);
     expect(issueNumberFromBranch("alice/fix/#9-crash")).toBe(9);
