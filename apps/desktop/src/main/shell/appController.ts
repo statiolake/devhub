@@ -476,14 +476,7 @@ export class AppController {
 				this.toggleIntegratedTerminal();
 			},
 			closeWorkspace: (workspaceId) => {
-				// A menu command has no caller waiting on its answer, so its
-				// failure goes to the error surface like every other one.
-				void this.dispatchFromPage({
-					type: "request_close_workspace",
-					workspaceId,
-				}).catch((error: unknown) => {
-					this.publishError(errorWire(error));
-				});
+				this.requestCloseWorkspace(workspaceId);
 			},
 			openWorkspacePicker: () => {
 				this.send(CHANNELS.menuCommand, "open_workspace_picker");
@@ -539,9 +532,36 @@ export class AppController {
 			openWorkspacePicker: () => {
 				this.send(CHANNELS.menuCommand, "open_workspace_picker");
 			},
+			openAgentPicker: (workspaceId) => {
+				// The same door the sidebar's `+` goes through: it asks main to
+				// open this modal, and this *is* main.
+				shellWindow().modals.openModal({ kind: "agent-picker", workspaceId });
+			},
+			renameAgent: (agentId) => {
+				shellWindow().modals.openModal({ kind: "agent-rename", agentId });
+			},
+			closeWorkspace: (workspaceId) => {
+				this.requestCloseWorkspace(workspaceId);
+			},
 			openSettings: () => {
 				openSettingsWindow();
 			},
+		});
+	}
+
+	/**
+	 * Ask to close a workspace, from a command with nobody waiting on it.
+	 *
+	 * The menu item and the `Cmd+Q Shift+W` chord are the same command, so they
+	 * are the same line: one intent, and a failure that goes to the error
+	 * surface the way every other unwatched failure does.
+	 */
+	private requestCloseWorkspace(workspaceId: string): void {
+		void this.dispatchFromPage({
+			type: "request_close_workspace",
+			workspaceId,
+		}).catch((error: unknown) => {
+			this.publishError(errorWire(error));
 		});
 	}
 

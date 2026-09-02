@@ -45,6 +45,11 @@ export interface ChordHost {
 	/** Show or hide the integrated terminal in the workbench on screen. */
 	toggleIntegratedTerminal(): void;
 	openWorkspacePicker(): void;
+	/** Ask which Agent to start in this workspace — the sidebar's `+`. */
+	openAgentPicker(workspaceId: string): void;
+	/** Ask what this Agent should be called — the row's Rename. */
+	renameAgent(agentId: string): void;
+	closeWorkspace(workspaceId: string): void;
 	openSettings(): void;
 }
 
@@ -72,6 +77,15 @@ function perform(host: ChordHost, effect: ChordEffect): void {
 			return;
 		case "open-workspace-picker":
 			host.openWorkspacePicker();
+			return;
+		case "open-agent-picker":
+			host.openAgentPicker(effect.workspaceId);
+			return;
+		case "rename-agent":
+			host.renameAgent(effect.agentId);
+			return;
+		case "close-workspace":
+			host.closeWorkspace(effect.workspaceId);
 			return;
 		case "open-settings":
 			host.openSettings();

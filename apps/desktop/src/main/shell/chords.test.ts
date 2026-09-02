@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { resolveChord, type ChordAction } from "./chords.js";
+import {
+	DEFAULT_CHORDS,
+	matchChord,
+	resolveChord,
+	type ChordAction,
+	type KeyStroke,
+} from "./chords.js";
 import type {
 	AgentWire,
 	AppSnapshotWire,
@@ -27,10 +33,14 @@ function agent(id: string, workspaceId: string, ordinal: number): AgentWire {
 	};
 }
 
-function workspace(id: string, agentIds: readonly string[]): WorkspaceWire {
+function workspace(
+	id: string,
+	agentIds: readonly string[],
+	canCreateAgent = true,
+): WorkspaceWire {
 	return {
 		agents: agentIds.map((agentId, index) => agent(agentId, id, index)),
-		canCreateAgent: true,
+		canCreateAgent,
 		id,
 		label: id,
 		root: `/tmp/${id}`,
@@ -215,5 +225,102 @@ describe("the window commands", () => {
 
 	it("resolves the double prefix to nothing: the router forwards it", () => {
 		expect(run({ kind: "forward-prefix" }, snapshotOf())).toBeUndefined();
+	});
+});
+
+describe("the commands that act on what is selected", () => {
+	const inTwo = snapshotOf({
+		workspaces: [one, two],
+		context: { kind: "workspace", workspaceId: "two" },
+	});
+	const onAgent = snapshotOf({
+		workspaces: [one, two],
+		context: { kind: "agent", agentId: "a2" },
+	});
+
+	it("adds an agent to the selected workspace, from a row or its agent", () => {
+		expect(run({ kind: "add-agent" }, inTwo)).toEqual({
+			kind: "open-agent-picker",
+			workspaceId: "two",
+		});
+		expect(run({ kind: "add-agent" }, onAgent)).toEqual({
+			kind: "open-agent-picker",
+			workspaceId: "two",
+		});
+	});
+
+	it("does not add an agent on Scratch, or where one cannot start", () => {
+		expect(run({ kind: "add-agent" }, snapshotOf())).toBeUndefined();
+		expect(
+			run(
+				{ kind: "add-agent" },
+				snapshotOf({
+					workspaces: [workspace("shut", [], false)],
+					context: { kind: "workspace", workspaceId: "shut" },
+				}),
+			),
+		).toBeUndefined();
+	});
+
+	it("renames the selected agent, and nothing on a row", () => {
+		expect(run({ kind: "rename-agent" }, onAgent)).toEqual({
+			kind: "rename-agent",
+			agentId: "a2",
+		});
+		expect(run({ kind: "rename-agent" }, inTwo)).toBeUndefined();
+		expect(run({ kind: "rename-agent" }, snapshotOf())).toBeUndefined();
+	});
+
+	it("closes the workspace the selection is in, and nothing on Scratch", () => {
+		expect(run({ kind: "close-workspace" }, inTwo)).toEqual({
+			kind: "close-workspace",
+			workspaceId: "two",
+		});
+		expect(run({ kind: "close-workspace" }, onAgent)).toEqual({
+			kind: "close-workspace",
+			workspaceId: "two",
+		});
+		expect(run({ kind: "close-workspace" }, snapshotOf())).toBeUndefined();
+	});
+});
+
+describe("the default table", () => {
+	function press(
+		key: string,
+		modifiers: Partial<Omit<KeyStroke, "key" | "isAutoRepeat">> = {},
+	) {
+		return matchChord(DEFAULT_CHORDS, {
+			key,
+			command: false,
+			shift: false,
+			option: false,
+			control: false,
+			isAutoRepeat: false,
+			...modifiers,
+		})?.action;
+	}
+
+	it("reaches the picker by the finder key and by the new-session key", () => {
+		expect(press("f")).toEqual({ kind: "add-workspace" });
+		expect(press("C", { shift: true })).toEqual({ kind: "add-workspace" });
+	});
+
+	it("keeps the case rule: lower acts inside, upper makes a new one", () => {
+		expect(press("c")).toEqual({ kind: "add-agent" });
+		expect(press("w", { shift: true })).toEqual({ kind: "close-workspace" });
+		// Unshifted `w` is not a row: closing a workspace is not a key you can
+		// hit by missing Shift.
+		expect(press("w")).toBeUndefined();
+	});
+
+	it("separates rename from settings by Shift, as the multiplexer does", () => {
+		expect(press(",")).toEqual({ kind: "rename-agent" });
+		expect(press(",", { shift: true })).toEqual({ kind: "open-settings" });
+	});
+
+	it("toggles the terminal by its own key and by the multiplexer's", () => {
+		expect(press("t")).toEqual({ kind: "toggle-terminal" });
+		expect(press("j", { control: true })).toEqual({ kind: "toggle-terminal" });
+		expect(press("j")).toBeUndefined();
 	});
 });

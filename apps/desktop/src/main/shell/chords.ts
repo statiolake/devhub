@@ -22,7 +22,12 @@
  * | `Cmd+Q {`                   | previous agent in the current workspace        | `previous_agent`          |
  * | `Cmd+Q }`                   | next agent in the current workspace            | `next_agent`              |
  * | `Cmd+Q T`                   | toggle the workbench's integrated terminal     | DevHub                    |
- * | `Cmd+Q Shift+C`             | Add Workspace (the picker)                     | `new_workspace`           |
+ * | `Cmd+Q Ctrl+J`              | the same toggle, under the multiplexer's key   | tmux `bind C-j`           |
+ * | `Cmd+Q F`                   | Add Workspace (the picker)                     | `prefix+f` (`hp`)         |
+ * | `Cmd+Q Shift+C`             | Add Workspace (the same picker)                | `new_workspace`           |
+ * | `Cmd+Q C`                   | New Agent in the selected workspace            | `prefix+c` (new tab)      |
+ * | `Cmd+Q ,`                   | rename the selected agent                      | `rename_tab`              |
+ * | `Cmd+Q Shift+W`             | close the selected workspace                   | tmux `bind W` kill-session|
  * | `Cmd+Q Shift+,`             | DevHub Settings                                | `settings`                |
  * | `Cmd+Q 1`…`Cmd+Q 9`         | select the Nth sidebar entry (Scratch = 1)     | extension (tmux idiom)    |
  *
@@ -34,6 +39,26 @@
  * `Cmd+Q 1` disagree about what the list is. One list, one order: Scratch,
  * then the workspaces in sidebar order, wrapping at both ends.
  *
+ * **Lower case acts inside the selected workspace; upper case makes a new
+ * one.** That is the multiplexer's own rule — `prefix+c` opens a tab in this
+ * session, `prefix+Shift+C` opens a session — and DevHub keeps the shape with
+ * the nouns it has: `Cmd+Q C` adds an Agent to the workspace that is selected,
+ * `Cmd+Q Shift+C` adds a workspace. So the case of the key says how far the
+ * command reaches, and that holds without having to remember it per row.
+ *
+ * **`Cmd+Q F` and `Cmd+Q Shift+C` are one command with two keys.** In the
+ * multiplexer these were two things — a fuzzy finder over the project
+ * directories, and "make me a session" — and DevHub's workspace picker is
+ * already both: it searches the configured sources and offers to create what
+ * it did not find. Two rows onto one command is not two implementations, and
+ * dropping either would break muscle memory that really was two keys.
+ *
+ * **Rename means the selected Agent.** A workspace is named by the folder it
+ * is open on, so there is nothing about it to rename; an Agent has a display
+ * name a person chose, and it is the row `rename_tab` was reaching for. With a
+ * workspace row or Scratch selected the chord is a no-op, like every other
+ * chord with nothing to act on.
+ *
  * **There is no activity ring left to cycle.** `Cmd+Q P` / `Cmd+Q N` and their
  * Control variants cycled Editor → Agent → Terminal. A context is now one
  * arrangement — a workbench, or a workbench with an Agent's pane beside it —
@@ -41,21 +66,20 @@
  * given a new meaning. What is left of "show me the terminal" is `Cmd+Q T`,
  * which toggles the workbench's own integrated terminal: the terminal is
  * inside the workbench now, and the command that shows it is the workbench's.
- *
- * **Zoom is the sidebar toggle.** DevHub has no panes to zoom, so there is no
- * literal analogue. What `prefix+z` is *for* is "give the thing I am working
- * in the whole window, and give it back" — and the one piece of DevHub chrome
- * that can yield the window is the sidebar. So zoom collapses it to the icon
- * rail and back.
+ * `Cmd+Q Ctrl+J` is the same command under the key the multiplexer's
+ * VS-Code-shaped binding used, because that is the finger that expects a
+ * terminal to appear at the bottom of the window.
  *
  * **Not applicable, deliberately absent.** Panes (`focus_pane_*`,
- * `swap_pane_*`, `cycle_pane_next`), splits (`split_vertical`,
- * `split_horizontal`), `new_tab`, `rename_tab` and `detach` have no DevHub
- * concept behind them: DevHub's surfaces are not tiled, a workspace's tabs
- * belong to the workbench inside it, and there is no session to detach from a
- * client. They are left unbound rather than given invented meanings — an
- * unbound chord key cancels, so nothing surprising happens if one is typed out
- * of habit.
+ * `swap_pane_*`, `cycle_pane_next`, `zoom`), splits (`split_vertical`,
+ * `split_horizontal`), the pane-moving commands (`hpe`, `hpm`, break-pane),
+ * `previous_tab` / `next_tab`, `detach`, `reload_config` and the popup runners
+ * (`hcmd`, `hrun`) have no DevHub concept behind them: DevHub's surfaces are
+ * not tiled, a workspace's tabs belong to the VS Code workbench inside it and
+ * answer its own keys, there is no session to detach from a client, and the
+ * config file is re-read when it changes rather than on request. They are left
+ * unbound rather than given invented meanings — an unbound chord key cancels,
+ * so nothing surprising happens if one is typed out of habit.
  *
  * ## The rules
  *
@@ -91,6 +115,12 @@ export type ChordAction =
 	/** One-based, as it is typed: 1 is Scratch. */
 	| { readonly kind: "select-entry"; readonly ordinal: number }
 	| { readonly kind: "add-workspace" }
+	/** Add an Agent to whichever workspace is selected. */
+	| { readonly kind: "add-agent" }
+	/** Rename whichever Agent is selected. */
+	| { readonly kind: "rename-agent" }
+	/** Close whichever workspace is selected. */
+	| { readonly kind: "close-workspace" }
 	| { readonly kind: "open-settings" };
 
 /**
@@ -137,8 +167,17 @@ export const DEFAULT_CHORDS: readonly ChordBinding[] = [
 	{ key: "}", shift: true, action: { kind: "cycle-agent", step: 1 } },
 
 	{ key: "t", action: { kind: "toggle-terminal" } },
+	// The multiplexer's VS-Code-shaped binding for the same panel.
+	{ key: "j", control: true, action: { kind: "toggle-terminal" } },
 
 	{ key: "c", shift: true, action: { kind: "add-workspace" } },
+	// The fuzzy project finder and "make me a session" are one command here,
+	// because the picker both searches and creates.
+	{ key: "f", action: { kind: "add-workspace" } },
+
+	{ key: "c", action: { kind: "add-agent" } },
+	{ key: ",", action: { kind: "rename-agent" } },
+	{ key: "w", shift: true, action: { kind: "close-workspace" } },
 
 	// Shift-comma. Layouts disagree about whether the key that arrives is the
 	// shifted character or the unshifted one, so both spellings are rows.
@@ -184,6 +223,9 @@ export type ChordEffect =
 	| { readonly kind: "select-context"; readonly context: NavigationContext }
 	| { readonly kind: "toggle-terminal" }
 	| { readonly kind: "open-workspace-picker" }
+	| { readonly kind: "open-agent-picker"; readonly workspaceId: string }
+	| { readonly kind: "rename-agent"; readonly agentId: string }
+	| { readonly kind: "close-workspace"; readonly workspaceId: string }
 	| { readonly kind: "open-settings" };
 
 const GLOBAL: NavigationContext = { kind: "global" };
@@ -219,6 +261,15 @@ function selectedWorkspace(snapshot: AppSnapshotWire) {
 	);
 }
 
+/** The Agent the selection is on, or nothing when it is on a row. */
+function selectedAgent(snapshot: AppSnapshotWire) {
+	const context = snapshot.selection.context;
+	if (context.kind !== "agent") return undefined;
+	return snapshot.workspaces
+		.flatMap((workspace) => workspace.agents)
+		.find((agent) => agent.id === context.agentId);
+}
+
 function wrap(index: number, length: number): number {
 	return ((index % length) + length) % length;
 }
@@ -242,6 +293,27 @@ export function resolveChord(
 
 		case "add-workspace":
 			return { kind: "open-workspace-picker" };
+
+		case "add-agent": {
+			const workspace = selectedWorkspace(snapshot);
+			// Scratch has no workspace to add one to, and a workspace that says
+			// it cannot start an Agent — it is closing, or unavailable — is not
+			// asked to. Either way the chord is a no-op.
+			if (!workspace?.canCreateAgent) return undefined;
+			return { kind: "open-agent-picker", workspaceId: workspace.id };
+		}
+
+		case "rename-agent": {
+			const agent = selectedAgent(snapshot);
+			return agent ? { kind: "rename-agent", agentId: agent.id } : undefined;
+		}
+
+		case "close-workspace": {
+			const workspace = selectedWorkspace(snapshot);
+			return workspace
+				? { kind: "close-workspace", workspaceId: workspace.id }
+				: undefined;
+		}
 
 		case "open-settings":
 			return { kind: "open-settings" };
