@@ -161,6 +161,7 @@ import {
 	type GitCommand,
 } from "./git.js";
 import { findClones } from "./issues.js";
+import { readGitHubLogin } from "./github.js";
 import { issueUrl, parseIssueUrl } from "../../model/github.js";
 import type { IssueReference } from "../../model/github.js";
 import { renderAgentAction } from "../../model/agentActions.js";
@@ -2609,6 +2610,10 @@ export class AppController {
 				config === undefined ? [] : await collectParentDirectories(config);
 			return parents.length > 0 ? parents : [defaultProjectDirectory(config)];
 		});
+		// Who `gh` says this person is, asked when a sheet needs it rather than
+		// kept: a login that was switched or logged out of should stop being
+		// DevHub's answer the moment it stops being true.
+		handle(CHANNELS.githubLogin, () => readGitHubLogin(this.launchEnvironment));
 		// A refusal travels the way every other one does — as the structured
 		// error inside the message — so the sheet that asked shows the sentence
 		// and not "the native app shell is unavailable".

@@ -20,6 +20,7 @@ import type {
   AgentActionWire,
   ContentSurfaceWire,
   DevhubApi,
+  GitHubLoginWire,
   IssueAssignment,
   IssueRepository,
   ModalRequest,
@@ -30,6 +31,7 @@ import type {
 
 export type {
   AgentActionWire,
+  GitHubLoginWire,
   IssueAssignment,
   IssueRepository,
   RepositoryStatusWire,
@@ -65,6 +67,7 @@ export interface AppShellClient {
   cloneProject(url: string, parentDirectory: string): Promise<AppOutcome>;
   projectDefaultDirectory(): Promise<string>;
   cloneParentDirectories(): Promise<readonly string[]>;
+  githubLogin(): Promise<GitHubLoginWire>;
   agentActions(): Promise<readonly AgentActionWire[]>;
   removeWorktree(workspaceId: string): Promise<AppOutcome>;
   findIssueRepositories(issueUrl: string): Promise<readonly IssueRepository[]>;
@@ -131,6 +134,7 @@ export function createShellClient(api: DevhubApi = devhub()): AppShellClient {
       api.cloneProject(url, parentDirectory),
     projectDefaultDirectory: () => api.projectDefaultDirectory(),
     cloneParentDirectories: () => api.cloneParentDirectories(),
+    githubLogin: () => api.githubLogin(),
     agentActions: () => api.agentActions(),
     removeWorktree: (workspaceId) => api.removeWorktree(workspaceId),
     findIssueRepositories: (issueUrl) => api.findIssueRepositories(issueUrl),

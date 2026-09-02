@@ -26,6 +26,7 @@ import {
 	type ContentRect,
 	type ContentSurfaceWire,
 	type DevhubApi,
+	type GitHubLoginWire,
 	type IssueAssignment,
 	type IssueRepository,
 	type RepositoryStatusWire,
@@ -119,6 +120,8 @@ const devhub: DevhubApi = {
 		ipcRenderer.invoke(CHANNELS.cloneParentDirectories) as Promise<
 			readonly string[]
 		>,
+	githubLogin: () =>
+		ipcRenderer.invoke(CHANNELS.githubLogin) as Promise<GitHubLoginWire>,
 	removeWorktree: (workspaceId: string) =>
 		ipcRenderer.invoke(
 			CHANNELS.removeWorktree,

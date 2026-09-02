@@ -7,7 +7,12 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { cloneDirectoryName, joinPath } from "./projects.js";
+import {
+  cloneDirectoryName,
+  cloneTarget,
+  joinPath,
+  type GitHubLogin,
+} from "./projects.js";
 
 describe("the name a clone lands under", () => {
   it("is the last component, without .git", () => {
@@ -37,5 +42,78 @@ describe("the name a clone lands under", () => {
   it("joins without doubling the separator", () => {
     expect(joinPath("/a/b", "repo")).toBe("/a/b/repo");
     expect(joinPath("/a/b/", "repo")).toBe("/a/b/repo");
+  });
+});
+
+/**
+ * Reading what somebody typed, the way `gh repo clone` reads it.
+ *
+ * Three forms, and the person is told which one was understood before anything
+ * is cloned — so the interesting cases are the ones where the answer is *not*
+ * a clone: a bare name with nobody signed in, and a string that is neither a
+ * name nor a URL.
+ */
+describe("what a typed repository means", () => {
+  const SIGNED_IN: GitHubLogin = { kind: "known", login: "octocat" };
+
+  it("takes a bare name as this person's own repository", () => {
+    expect(cloneTarget("devhub", SIGNED_IN)).toEqual({
+      kind: "clone",
+      url: "https://github.com/octocat/devhub.git",
+      name: "devhub",
+    });
+  });
+
+  it("takes one slash as owner and repository on GitHub", () => {
+    expect(cloneTarget("example/widget", SIGNED_IN)).toEqual({
+      kind: "clone",
+      url: "https://github.com/example/widget.git",
+      name: "widget",
+    });
+    // git's own suffix is not part of the name either way it is written.
+    expect(cloneTarget("example/widget.git", SIGNED_IN)).toEqual({
+      kind: "clone",
+      url: "https://github.com/example/widget.git",
+      name: "widget",
+    });
+  });
+
+  it("clones a URL exactly as it was given", () => {
+    // Not rewritten, not normalised: a person who pasted an ssh remote, a
+    // host that is not GitHub, or a URL their git config rewrites has said
+    // what they want and DevHub is not the one to second-guess it.
+    for (const [url, name] of [
+      ["https://gitlab.example/group/thing.git", "thing"],
+      ["ssh://git@example.com:2222/owner/thing", "thing"],
+      ["git@github.com:example/widget.git", "widget"],
+    ] as const) {
+      expect(cloneTarget(url, SIGNED_IN)).toEqual({ kind: "clone", url, name });
+    }
+  });
+
+  it("says who it would have to be, rather than cloning nobody's repository", () => {
+    const target = cloneTarget("devhub", {
+      kind: "unknown",
+      reason: "there is no `gh` on DevHub's PATH",
+    });
+    expect(target.kind).toBe("unreadable");
+    expect(target.kind === "unreadable" && target.reason).toContain(
+      "there is no `gh` on DevHub's PATH",
+    );
+    // And it says what to type instead, which works with no `gh` at all.
+    expect(target.kind === "unreadable" && target.reason).toContain(
+      "owner/devhub",
+    );
+  });
+
+  it("waits rather than guessing while the login is still being read", () => {
+    expect(cloneTarget("devhub", { kind: "pending" }).kind).toBe("unreadable");
+  });
+
+  it("refuses what is neither a name nor a URL", () => {
+    expect(cloneTarget("", SIGNED_IN).kind).toBe("unreadable");
+    expect(cloneTarget("   ", SIGNED_IN).kind).toBe("unreadable");
+    expect(cloneTarget("a/b/c", SIGNED_IN).kind).toBe("unreadable");
+    expect(cloneTarget("../escape", SIGNED_IN).kind).toBe("unreadable");
   });
 });

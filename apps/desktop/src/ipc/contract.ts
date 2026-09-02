@@ -55,6 +55,17 @@ export interface IssueRepository {
 	readonly worktrees: readonly IssueWorktree[];
 }
 
+/**
+ * Who GitHub says this machine is, or why DevHub cannot say.
+ *
+ * Two answers and no default. A page that guessed an owner would clone
+ * somebody else's repository under a name the person recognised, which is the
+ * worst way to be wrong, so not knowing is carried as a reason to show.
+ */
+export type GitHubLoginWire =
+	| { readonly kind: "login"; readonly login: string }
+	| { readonly kind: "unknown"; readonly reason: string };
+
 /** One way of starting an agent on an Issue, as the flow offers it. */
 export interface AgentActionWire {
 	readonly id: string;
@@ -426,6 +437,16 @@ export interface DevhubApi {
 	 * sources find, in the sources' own order. Answers once, with all of them.
 	 */
 	cloneParentDirectories(): Promise<readonly string[]>;
+	/**
+	 * Which GitHub account this machine is signed in as, so a repository typed
+	 * as a bare name means the same thing to DevHub as to `gh repo clone`.
+	 *
+	 * Answers with the reason rather than throwing when it cannot say. Not
+	 * knowing is an ordinary state of the world — no `gh`, or a `gh` that is
+	 * logged out — and it is answered by typing the owner, which is something
+	 * the sheet can say while it stands there.
+	 */
+	githubLogin(): Promise<GitHubLoginWire>;
 	listBranches(directory: string): Promise<readonly string[]>;
 	/**
 	 * Do what the answers add up to: make the worktree if one was asked for,
@@ -481,6 +502,7 @@ export const CHANNELS = {
 	cloneProject: "devhub:clone-project",
 	projectDefaultDirectory: "devhub:project-default-directory",
 	cloneParentDirectories: "devhub:clone-parent-directories",
+	githubLogin: "devhub:github-login",
 	removeWorktree: "devhub:remove-worktree",
 	agentActions: "devhub:agent-actions",
 	openSettings: "devhub:open-settings",

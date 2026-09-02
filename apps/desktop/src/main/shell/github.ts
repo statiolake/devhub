@@ -37,7 +37,7 @@ export class GitHubUnavailable extends Error {
 }
 
 const ENDPOINT = "https://api.github.com/graphql";
-const TOKEN_TIMEOUT_MS = 10 * 1000;
+const GH_TIMEOUT_MS = 10 * 1000;
 const REQUEST_TIMEOUT_MS = 20 * 1000;
 /**
  * How many open pull requests are read per Issue.
@@ -59,11 +59,11 @@ const QUERY = `query($owner:String!,$name:String!,$number:Int!,$prs:Int!){
 }`;
 
 /**
- * What came of asking `gh` for a token.
+ * What came of running `gh`.
  *
- * Three outcomes, not two. "There is no token" used to cover both a `gh` that
+ * Three outcomes, not two. "There is no answer" used to cover both a `gh` that
  * is not installed and a `gh` that is installed and logged out, and the one
- * sentence the caller could write for them told a person with no `gh` at all to
+ * sentence a caller could write for them told a person with no `gh` at all to
  * run `gh auth login` — advice that cannot work, given for a reason that was
  * never the reason. They are different problems with different fixes, so they
  * are different answers.
@@ -73,23 +73,26 @@ const QUERY = `query($owner:String!,$name:String!,$number:Int!,$prs:Int!){
  * of detail: what was tried and what happened, in words the caller can put in
  * front of a person.
  */
-export type GitHubTokenResult =
-	| { readonly kind: "token"; readonly token: string }
+type GhResult =
+	| { readonly kind: "output"; readonly text: string }
 	| { readonly kind: "unrunnable"; readonly reason: string }
-	| { readonly kind: "unauthenticated" };
+	| { readonly kind: "refused" };
 
 /**
- * The token `gh` is holding, or why DevHub does not have one.
+ * Run `gh` and read what it said on stdout.
  *
- * Read on every poll rather than kept: a token that was revoked, refreshed or
- * logged out of should stop working when it stops being valid, and a copy in
- * this process is a copy that outlives the person's decision to end it.
+ * The one place in DevHub that starts the GitHub CLI. Everything DevHub asks
+ * `gh` — the token, who is signed in — is a short command whose whole answer is
+ * one line of stdout, and each having its own spawn meant each having its own
+ * timeout, its own idea of what a non-zero exit meant, and its own chance to
+ * get the environment wrong.
  */
-export function readGitHubToken(
+function runGh(
+	args: readonly string[],
 	environment: Readonly<Record<string, string | undefined>>,
-): Promise<GitHubTokenResult> {
-	return new Promise<GitHubTokenResult>((resolve) => {
-		const child = spawn("gh", ["auth", "token"], {
+): Promise<GhResult> {
+	return new Promise<GhResult>((resolve) => {
+		const child = spawn("gh", [...args], {
 			env: environment as NodeJS.ProcessEnv,
 			stdio: ["ignore", "pipe", "ignore"],
 		});
@@ -101,7 +104,7 @@ export function readGitHubToken(
 		const timer = setTimeout(() => {
 			timedOut = true;
 			child.kill("SIGKILL");
-		}, TOKEN_TIMEOUT_MS);
+		}, GH_TIMEOUT_MS);
 		// The binary could not be run at all. `ENOENT` is the common one and the
 		// only one worth its own sentence: there is no `gh` on the PATH DevHub
 		// was given, which is a different thing from a `gh` that refused.
@@ -120,20 +123,79 @@ export function readGitHubToken(
 			if (timedOut) {
 				resolve({
 					kind: "unrunnable",
-					reason: `\`gh auth token\` did not answer within ${String(TOKEN_TIMEOUT_MS / 1000)} seconds`,
+					reason: `\`gh ${args.join(" ")}\` did not answer within ${String(GH_TIMEOUT_MS / 1000)} seconds`,
 				});
 				return;
 			}
-			const token = stdout.trim();
-			// `gh` ran and declined. It exits non-zero when it holds no token, and
+			const text = stdout.trim();
+			// `gh` ran and declined. It exits non-zero when it cannot answer, and
 			// an empty answer with a zero exit means the same thing.
 			resolve(
-				code === 0 && token.length > 0
-					? { kind: "token", token }
-					: { kind: "unauthenticated" },
+				code === 0 && text.length > 0
+					? { kind: "output", text }
+					: { kind: "refused" },
 			);
 		});
 	});
+}
+
+/** The token, or why DevHub does not have one. */
+export type GitHubTokenResult =
+	| { readonly kind: "token"; readonly token: string }
+	| { readonly kind: "unrunnable"; readonly reason: string }
+	| { readonly kind: "unauthenticated" };
+
+/**
+ * The token `gh` is holding, or why DevHub does not have one.
+ *
+ * Read on every poll rather than kept: a token that was revoked, refreshed or
+ * logged out of should stop working when it stops being valid, and a copy in
+ * this process is a copy that outlives the person's decision to end it.
+ */
+export async function readGitHubToken(
+	environment: Readonly<Record<string, string | undefined>>,
+): Promise<GitHubTokenResult> {
+	const result = await runGh(["auth", "token"], environment);
+	switch (result.kind) {
+		case "output":
+			return { kind: "token", token: result.text };
+		case "unrunnable":
+			return { kind: "unrunnable", reason: result.reason };
+		case "refused":
+			return { kind: "unauthenticated" };
+	}
+}
+
+/**
+ * Which GitHub account this machine is signed in as, or why that is not known.
+ *
+ * Asked so that a repository typed as a bare name means the same thing here as
+ * it does to `gh repo clone`. There is no third answer and no default: a page
+ * that guessed an owner would clone somebody else's repository under a name the
+ * person did recognise, which is the worst way to be wrong.
+ */
+export type GitHubLoginResult =
+	| { readonly kind: "login"; readonly login: string }
+	| { readonly kind: "unknown"; readonly reason: string };
+
+export async function readGitHubLogin(
+	environment: Readonly<Record<string, string | undefined>>,
+): Promise<GitHubLoginResult> {
+	// `--jq` rather than parsing `gh auth status`, whose sentence is written for
+	// a person and has been reworded between releases. This asks for the one
+	// field and gets the one field.
+	const result = await runGh(["api", "user", "--jq", ".login"], environment);
+	switch (result.kind) {
+		case "output":
+			return { kind: "login", login: result.text };
+		case "unrunnable":
+			return { kind: "unknown", reason: result.reason };
+		case "refused":
+			return {
+				kind: "unknown",
+				reason: "`gh` is not signed in to GitHub — run `gh auth login`",
+			};
+	}
 }
 
 interface GraphQlIssue {

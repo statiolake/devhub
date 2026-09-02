@@ -16,7 +16,7 @@
  */
 
 import { useEffect, useRef, useState } from "react";
-import { cloneDirectoryName } from "../../../model/projects";
+import { cloneTarget, type GitHubLogin } from "../../../model/projects";
 import { toAppError } from "../../failure";
 import { useAppShell } from "../../useAppShell";
 import { Alert } from "./Alert";
@@ -64,6 +64,31 @@ function useCaretAtEnd(value: string | undefined) {
     element.setSelectionRange(value.length, value.length);
   }, [value]);
   return field;
+}
+
+/**
+ * Who GitHub says this person is, for as long as a sheet needs to know.
+ *
+ * Asked once when the sheet opens and never guessed at. Until the answer
+ * arrives the login is `pending`, which is a state the preview line can say
+ * something true about — a default of "not signed in" would put a sentence
+ * about `gh auth login` in front of somebody who is signed in perfectly well.
+ */
+function useGitHubLogin(): GitHubLogin {
+  const { githubLogin } = useAppShell();
+  const [login, setLogin] = useState<GitHubLogin>({ kind: "pending" });
+  useEffect(() => {
+    let live = true;
+    void githubLogin().then((answer) => {
+      if (!live) return;
+      setLogin(
+        answer.kind === "login"
+          ? { kind: "known", login: answer.login }
+          : { kind: "unknown", reason: answer.reason },
+      );
+    });
+  }, [githubLogin]);
+  return login;
 }
 
 export interface ProjectSheetProps {
@@ -140,10 +165,16 @@ export function NewProjectSheet({ onDismiss }: ProjectSheetProps) {
  *
  * The typed row is what is left of the field: somebody cloning into a folder no
  * source knows about types the path and takes it.
+ *
+ * What goes in the first field is read the way `gh repo clone` reads it — a
+ * bare name is this person's own repository, `owner/name` is GitHub's, and a
+ * URL is cloned as written — and the line under the field says which of the
+ * three was understood before anything is cloned.
  */
 export function CloneProjectSheet({ onDismiss }: ProjectSheetProps) {
   const { cloneProject, cloneParentDirectories, reportFailure } = useAppShell();
-  const [url, setUrl] = useState("");
+  const login = useGitHubLogin();
+  const [typed, setTyped] = useState("");
   const [asking, setAsking] = useState<"url" | "where">("url");
   const [parents, setParents] = useState<readonly string[]>();
   const [busy, setBusy] = useState(false);
@@ -167,16 +198,20 @@ export function CloneProjectSheet({ onDismiss }: ProjectSheetProps) {
     };
   }, [cloneParentDirectories, reportFailure]);
 
-  const name = cloneDirectoryName(url);
+  // What was typed, read the way `gh repo clone` reads it. The line under the
+  // field, the rows' "Lands as", and the call that clones are all this one
+  // value, so the sheet cannot promise one repository and clone another.
+  const target = cloneTarget(typed, login);
+  const name = target.kind === "clone" ? target.name : undefined;
 
   const clone = (parent: string) => {
-    if (busy) return;
+    if (busy || target.kind !== "clone") return;
     // A blank folder is not guarded against here: main refuses it with a
     // sentence ("Enter a path for the folder."), and that sentence under the
     // still-open list is worth more than a click that silently does nothing.
     setBusy(true);
     setFailure(undefined);
-    void cloneProject(url, parent).then(onDismiss, (error: unknown) => {
+    void cloneProject(target.url, parent).then(onDismiss, (error: unknown) => {
       setBusy(false);
       setFailure(reasonOf(error));
       // The reason is about the destination, so the question about the
@@ -217,14 +252,14 @@ export function CloneProjectSheet({ onDismiss }: ProjectSheetProps) {
     <Alert
       tone="plain"
       title="Clone Project"
-      message="The repository is cloned and opened as a workspace."
+      message="A name on its own is your own repository, owner/name is on GitHub, and a URL is cloned as it is written."
       onCancel={onDismiss}
       actions={[
         { label: "Cancel", run: onDismiss, disabled: busy },
         {
           label: "Continue",
           isDefault: true,
-          disabled: busy || name === undefined,
+          disabled: busy || target.kind !== "clone",
           run: () => {
             setFailure(undefined);
             setAsking("where");
@@ -235,20 +270,24 @@ export function CloneProjectSheet({ onDismiss }: ProjectSheetProps) {
       <input
         ref={urlField}
         className="mac-field mac-alert-field"
-        aria-label="Repository URL"
-        placeholder="https://github.com/owner/repo.git"
-        value={url}
+        aria-label="Repository"
+        placeholder="owner/repo"
+        value={typed}
         disabled={busy}
         aria-invalid={failure !== undefined}
         onChange={(event) => {
-          setUrl(event.target.value);
+          setTyped(event.target.value);
           setFailure(undefined);
         }}
       />
-      {/* What it will be called, by the rule main clones with, so the line is a
-          preview and not a guess. Where it lands is the next question. */}
+      {/* Which repository, spelled out, by the same rule that is about to
+          clone it — so the line is a preview and not a guess. A name on its
+          own is the form that can be read wrong most quietly, and this is
+          where it stops being quiet. Where it lands is the next question. */}
       <p className="mac-caption project-destination">
-        {name ? `Clones as ${name}` : "Enter a repository URL."}
+        {target.kind === "clone"
+          ? `Clones ${target.url} as ${target.name}`
+          : target.reason}
       </p>
       {failure ? (
         <p className="mac-message" role="alert">

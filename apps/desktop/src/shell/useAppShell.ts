@@ -10,6 +10,7 @@ import type {
 } from "../ipc/appShell";
 import type {
   AgentActionWire,
+  GitHubLoginWire,
   IssueAssignment,
   IssueRepository,
   RepositoryStatusWire,
@@ -53,6 +54,12 @@ export interface AppShellContextValue {
   readonly projectDefaultDirectory: () => Promise<string>;
   /** Where a clone could go: the parents of everything the sources find. */
   readonly cloneParentDirectories: () => Promise<readonly string[]>;
+  /**
+   * Which GitHub account this machine is signed in as, so a bare repository
+   * name means what `gh repo clone` would mean by it. Answers with the reason
+   * rather than throwing when it cannot say.
+   */
+  readonly githubLogin: () => Promise<GitHubLoginWire>;
   /** The ways of starting an agent on an Issue, as Settings lists them. */
   readonly agentActions: () => Promise<readonly AgentActionWire[]>;
   /** Remove a worktree's folder and close its workspace. Throws git's reason. */

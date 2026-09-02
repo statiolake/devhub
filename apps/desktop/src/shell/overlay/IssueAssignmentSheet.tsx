@@ -35,6 +35,7 @@ import {
   cloneTypedItem,
 } from "../components/shell/cloneDestination";
 import type { AgentActionWire, IssueRepository } from "../client";
+import { githubCloneTarget } from "../../model/projects";
 import { toAppError } from "../failure";
 import { useAppShell } from "../useAppShell";
 
@@ -413,15 +414,22 @@ function cloneDestinationStep(
     // other, decided here, so `cloneRepository` is only ever handed a path.
     const destination =
       answer.id === CLONE_INTO_TYPED ? answer.query : answer.id;
-    // A URL rather than the SSH form: it is the one that works without the
-    // person's keys being set up, and git rewrites it if their config says to.
+    // Built by the same rule as a repository somebody types into the Clone
+    // Project sheet, rather than composed here: a URL rather than the SSH form,
+    // because it is the one that works without the person's keys being set up
+    // and git rewrites it if their config says to.
+    const target = githubCloneTarget(issue.owner, issue.repository);
+    // The owner and name came out of an Issue URL that parsed, so a name GitHub
+    // could not have is DevHub having got its own parsing wrong. It goes to the
+    // root handler rather than being turned into something to retype.
+    if (target.kind !== "clone") {
+      throw new Error(
+        `the Issue's repository is not a name GitHub could have: ${target.reason}`,
+      );
+    }
     const directory = await input.working(
       `Cloning ${issue.owner}/${issue.repository}…`,
-      () =>
-        services.cloneRepository(
-          `https://github.com/${issue.owner}/${issue.repository}.git`,
-          destination,
-        ),
+      () => services.cloneRepository(target.url, destination),
     );
     // A repository that has just been cloned is checked out in exactly one
     // place, so the location question is asked over that one place and a new
