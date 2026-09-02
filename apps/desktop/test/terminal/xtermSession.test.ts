@@ -44,6 +44,7 @@ vi.mock("@xterm/xterm", () => {
       element.append(document.createElement("textarea"));
       host.append(element);
     }
+    readonly modes = { applicationCursorKeysMode: false };
     readonly sent: string[] = [];
     keyHandler: ((event: KeyboardEvent) => boolean) | undefined;
     attachCustomKeyEventHandler(handler: (event: KeyboardEvent) => boolean) {
@@ -332,7 +333,7 @@ describe("the shared xterm session", () => {
    * own default — the caret move in the hidden textarea — is prevented, and
    * xterm is told to stop, so it does not also spell the key its own way.
    */
-  it("encodes a Cmd-held arrow as terminal input and stops there", () => {
+  it("reports a Cmd-held arrow as terminal input and stops there", () => {
     const session = open();
     const terminal = session.terminal as unknown as {
       keyHandler: (event: KeyboardEvent) => boolean;
@@ -345,8 +346,35 @@ describe("the shared xterm session", () => {
     });
 
     expect(terminal.keyHandler(event)).toBe(false);
-    expect(terminal.sent).toEqual(["\u001b[1;9D"]);
+    expect(terminal.sent).toEqual(["\u001b[H"]);
     expect(event.defaultPrevented).toBe(true);
+    session.dispose();
+  });
+
+  /**
+   * Which spelling of Home is right is the terminal's to say, and it changes
+   * while a pane is open: a program that asked for application cursor keys
+   * reads the SS3 form and does not recognise the other. So the mode is read
+   * at the press rather than when the handler was attached.
+   */
+  it("reads the cursor-key mode at the moment the chord is pressed", () => {
+    const session = open();
+    const terminal = session.terminal as unknown as {
+      keyHandler: (event: KeyboardEvent) => boolean;
+      sent: string[];
+      modes: { applicationCursorKeysMode: boolean };
+    };
+
+    terminal.modes.applicationCursorKeysMode = true;
+    terminal.keyHandler(
+      new KeyboardEvent("keydown", {
+        key: "ArrowRight",
+        metaKey: true,
+        cancelable: true,
+      }),
+    );
+
+    expect(terminal.sent).toEqual(["\u001bOF"]);
     session.dispose();
   });
 

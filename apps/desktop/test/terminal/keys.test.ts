@@ -1,12 +1,12 @@
 /**
- * The arrow keys held with Command, and the bytes they become.
+ * Cmd+Left and Cmd+Right, and the keys they are reported as.
  *
- * These sequences are not ours to choose. They are the xterm convention for a
- * modified cursor key, they are what Ghostty emits from its own table — read
- * out of `src/input/function_keys.zig`, where a left arrow is
- * `ESC [ 1 ; {mods} D` and Super is modifier 9 — and they are what xterm.js's
- * own encoder computes before its arrow cases throw the result away. Claude
- * Code's prompt was measured decoding all four of them under a pty.
+ * Every one of these was measured rather than reasoned about, in the
+ * arrangement a pane actually uses — Claude Code running inside tmux, driven
+ * through a pty. Home and End move to the ends of the line there. The modified
+ * arrow Ghostty sends, `CSI 1;9D`, does not: tmux has no Super modifier and
+ * folds it into Meta on the way in, so it reaches the program as `CSI 1;3D`
+ * and moves by a word. See the note in `keys.ts` for the whole finding.
  */
 
 import { describe, expect, it } from "vitest";
@@ -26,62 +26,74 @@ function chord(key: string, held: Partial<EditingChord> = {}): EditingChord {
   };
 }
 
-describe("a cursor key held with Command", () => {
-  it("says Command and which arrow it was", () => {
-    expect(editingSequence(chord("ArrowLeft", { metaKey: true }))).toBe(
-      "\u001b[1;9D",
+describe("Cmd with a left or right arrow", () => {
+  it("is reported as the Home and End keys", () => {
+    expect(editingSequence(chord("ArrowLeft", { metaKey: true }), false)).toBe(
+      "\u001b[H",
     );
-    expect(editingSequence(chord("ArrowRight", { metaKey: true }))).toBe(
-      "\u001b[1;9C",
-    );
-    expect(editingSequence(chord("ArrowUp", { metaKey: true }))).toBe(
-      "\u001b[1;9A",
-    );
-    expect(editingSequence(chord("ArrowDown", { metaKey: true }))).toBe(
-      "\u001b[1;9B",
+    expect(editingSequence(chord("ArrowRight", { metaKey: true }), false)).toBe(
+      "\u001b[F",
     );
   });
 
   /**
-   * The point of encoding a key rather than translating it: a chord that holds
-   * more than Command still says so, and the program decides what it means.
-   * These numbers are the same ones Ghostty's table holds for the same
-   * combinations — Shift+Super is 10, Alt+Super 11, Ctrl+Super 13.
+   * The two spellings are not a preference. A program that asked for
+   * application cursor keys reads the SS3 form and does not recognise the CSI
+   * one, and this is the same choice xterm makes for a real Home key.
    */
-  it("keeps saying which other modifiers were held", () => {
-    expect(
-      editingSequence(chord("ArrowLeft", { metaKey: true, shiftKey: true })),
-    ).toBe("\u001b[1;10D");
-    expect(
-      editingSequence(chord("ArrowLeft", { metaKey: true, altKey: true })),
-    ).toBe("\u001b[1;11D");
-    expect(
-      editingSequence(chord("ArrowLeft", { metaKey: true, ctrlKey: true })),
-    ).toBe("\u001b[1;13D");
+  it("uses the SS3 spelling when the program asked for application keys", () => {
+    expect(editingSequence(chord("ArrowLeft", { metaKey: true }), true)).toBe(
+      "\u001bOH",
+    );
+    expect(editingSequence(chord("ArrowRight", { metaKey: true }), true)).toBe(
+      "\u001bOF",
+    );
   });
 
   /**
-   * Everything xterm already encodes correctly is left to it. Option with an
-   * arrow is the word motion, `ESC [ 1 ; 3 D`, and it reaches the pty today;
-   * claiming it here would be a second path saying the same thing.
+   * Option with an arrow is already the word motion, `CSI 1;3D`, encoded by
+   * xterm and passed through tmux intact. Claiming it here would be a second
+   * path saying the same thing.
    */
-  it("leaves a chord xterm already encodes alone", () => {
-    expect(editingSequence(chord("ArrowLeft", { altKey: true }))).toBeUndefined();
+  it("leaves Option with an arrow to xterm", () => {
     expect(
-      editingSequence(chord("ArrowRight", { altKey: true })),
+      editingSequence(chord("ArrowLeft", { altKey: true }), false),
     ).toBeUndefined();
-    expect(editingSequence(chord("ArrowLeft"))).toBeUndefined();
-    expect(editingSequence(chord("ArrowLeft", { ctrlKey: true }))).toBeUndefined();
+    expect(
+      editingSequence(chord("ArrowRight", { altKey: true }), false),
+    ).toBeUndefined();
+  });
+
+  it("leaves a bare arrow to xterm", () => {
+    expect(editingSequence(chord("ArrowLeft"), false)).toBeUndefined();
+    expect(editingSequence(chord("ArrowRight"), false)).toBeUndefined();
+  });
+
+  /** A terminal has no way to say "select to here", so the key is not taken. */
+  it("does not claim a chord that is asking for a selection", () => {
+    expect(
+      editingSequence(chord("ArrowLeft", { metaKey: true, shiftKey: true }), false),
+    ).toBeUndefined();
+  });
+
+  /** Control and Option are the terminal's own modifiers; xterm spells those. */
+  it("does not claim Command held with another modifier", () => {
+    expect(
+      editingSequence(chord("ArrowLeft", { metaKey: true, ctrlKey: true }), false),
+    ).toBeUndefined();
+    expect(
+      editingSequence(chord("ArrowLeft", { metaKey: true, altKey: true }), false),
+    ).toBeUndefined();
   });
 
   /**
-   * Cmd+Backspace already sends DEL, which is what Ghostty sends for it too,
-   * and Cmd+C and its relatives belong to the browser and DevHub's menus.
+   * Cmd+Up and Cmd+Down mean the ends of the document, which a line editor has
+   * no key for; Cmd+Backspace already sends DEL, as it does in Ghostty; and
+   * Cmd+C and its relatives belong to the browser and DevHub's own menus.
    */
-  it("claims nothing but a cursor key", () => {
-    expect(editingSequence(chord("Backspace", { metaKey: true }))).toBeUndefined();
-    for (const key of ["c", "v", "a", "n", "w", "t", "z", "Home", "End"]) {
-      expect(editingSequence(chord(key, { metaKey: true }))).toBeUndefined();
+  it("claims nothing but the two horizontal arrows", () => {
+    for (const key of ["ArrowUp", "ArrowDown", "Backspace", "c", "v", "a", "z"]) {
+      expect(editingSequence(chord(key, { metaKey: true }), false)).toBeUndefined();
     }
   });
 });

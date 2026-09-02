@@ -1,37 +1,55 @@
 /**
- * The arrow keys held with Command, which xterm drops on the floor.
+ * Cmd+Left and Cmd+Right, which a terminal has to spell as some other key.
  *
- * A terminal has no "Cmd" on the wire, but it does have a way to say "this
- * key, with these modifiers held": the xterm convention writes a cursor key as
- * `CSI 1 ; <modifiers> <letter>`, where the modifier number is one plus a
- * bitmask of Shift, Alt, Control and Super. Cmd+Left is `CSI 1;9D` — 1 plus 8
- * for Super — and that is exactly what Ghostty emits for it, from the same
- * table it uses for every other modified cursor key. A program that decodes
- * modified arrows gets a real Cmd+Left and decides for itself what that means.
+ * On a Mac these two mean "beginning of the line" and "end of the line" — the
+ * system's own editing keys, the ones people arrive with in their fingers. A
+ * terminal has no "Cmd" to put on the wire, so the question is only ever which
+ * key to report instead, and the answer here is the one macOS itself gives:
+ * Home and End. They go out spelled exactly as xterm spells them for the Home
+ * and End keys, cursor-key mode included, so a pane says nothing it would not
+ * have said had the keyboard carried those keys in the first place.
  *
- * xterm.js already computes this. Its keyboard encoder builds the very same
- * number, including 8 for `metaKey`, and then the arrow cases begin with an
- * early `if (ev.metaKey) break`, which throws the result away and emits
- * nothing at all. That is the whole defect: not a missing translation, a
- * discarded one. What this module does is reproduce the encoding xterm.js
- * would have emitted had it not bailed out, so DevHub's panes speak the same
- * bytes as every other Mac terminal.
+ * ## Why not the modified arrow Ghostty sends
  *
- * Nothing else here needs a rule, and adding one would be inventing behaviour
- * rather than restoring it. Option with an arrow is already encoded correctly —
- * `CSI 1;3D`, the word motion — because that path has no bail-out. Cmd with
- * Backspace already sends `DEL`, which is what Ghostty sends for it too.
+ * Ghostty reports Cmd+Left faithfully, as `CSI 1;9D` — a left arrow with the
+ * Super modifier, from the table in its `function_keys.zig`. That is the more
+ * honest encoding and it was tried first. It cannot work here, and the reason
+ * is not a matter of configuration.
  *
- * ## What this does and does not fix, measured
+ * Every DevHub pane is a tmux pane, and tmux has no Super. Its key type has
+ * three modifier bits, Meta, Ctrl and Shift (`tmux.h`), and its input parser
+ * folds the Super bit into Meta on the way in:
  *
- * Claude Code's prompt decodes all four modified arrows: `CSI 1;9D` and
- * `CSI 1;9C` move to the ends of the line, `CSI 1;3D` and `CSI 1;3C` move by a
- * word. A stock zsh decodes none of them — it binds no modified arrow at all,
- * so Cmd+Left leaves the tail of the sequence in the line buffer. That is not
- * a gap to paper over here: Ghostty emits the same bytes and a zsh under
- * Ghostty behaves the same way, with no shell integration of its own to make up
- * the difference. A shell that wants these keys binds them, and the terminal's
- * job is to report the key that was pressed.
+ *     if (modifiers & 2) nkey |= (KEYC_META|KEYC_IMPLIED_META); // Alt
+ *     if (modifiers & 8) nkey |= (KEYC_META|KEYC_IMPLIED_META); // Meta
+ *
+ * So `CSI 1;9D` and `CSI 1;3D` become the same key inside tmux — measured, the
+ * identical key code — and tmux hands the program `CSI 1;3D`, which is
+ * Option+Left, which is a word motion. That is exactly what a viewer saw: Cmd
+ * with an arrow moving by a word. It is not DevHub's bug to fix by
+ * configuration; every `extended-keys` and `terminal-features` combination was
+ * measured and none of them change it, because the modifier is discarded
+ * before any of those options are consulted. Ghostty is no exception: with the
+ * user's own tmux configuration and `TERM=xterm-ghostty`, Cmd+Left arrives at
+ * the program as `CSI 1;3D` too. What a viewer compares against is Ghostty
+ * *without* tmux, where nothing is in the way.
+ *
+ * Home and End have no modifier to lose, so they pass through tmux unchanged.
+ * Measured with Claude Code inside tmux, in the arrangement a pane actually
+ * uses: Cmd+Left moves to the start of the line and Cmd+Right to the end.
+ *
+ * ## What is deliberately left alone
+ *
+ * Option with an arrow is already encoded correctly by xterm as `CSI 1;3D`,
+ * the word motion, and survives tmux intact — so there is no rule for it here.
+ * Cmd+Backspace already sends `DEL`, which is what Ghostty sends for it too.
+ * Cmd+Up and Cmd+Down mean "the ends of the document", which a line editor has
+ * no key for, so nothing is invented for them. And Cmd+C, Cmd+V and Cmd+A
+ * belong to the browser and to DevHub's own menus.
+ *
+ * A stock zsh binds neither Home nor End and so ignores both. That is the same
+ * in every Mac terminal, Ghostty included, and a shell that wants these keys
+ * binds them.
  */
 
 /** Just enough of a keyboard event to decide, so the rule can be tested. */
@@ -43,30 +61,28 @@ export interface EditingChord {
   readonly shiftKey: boolean;
 }
 
-/** The final byte of the CSI sequence for each cursor key. */
-const CURSOR_KEYS: Readonly<Record<string, string>> = {
-  ArrowUp: "A",
-  ArrowDown: "B",
-  ArrowRight: "C",
-  ArrowLeft: "D",
-};
-
 /**
- * The bytes for one chord, or nothing when xterm already encodes it.
+ * The bytes for one chord, or nothing when the chord is not ours.
  *
- * Only a cursor key held with Command is claimed, because that is the only one
- * xterm refuses to encode. The modifier number is xterm.js's own formula, so a
- * chord that also holds Shift or Control keeps saying so.
+ * `applicationCursorKeys` is the terminal's current DECCKM state, and it
+ * decides which of the two spellings of Home and End is the right one — a
+ * program that asked for application cursor keys reads the SS3 form and does
+ * not recognise the CSI one. It is the caller's to pass because it is the
+ * terminal's to know, and it changes while a pane is open.
  */
-export function editingSequence(chord: EditingChord): string | undefined {
-  if (!chord.metaKey) return undefined;
-  const final = CURSOR_KEYS[chord.key];
-  if (final === undefined) return undefined;
-  const modifiers =
-    1 +
-    (chord.shiftKey ? 1 : 0) +
-    (chord.altKey ? 2 : 0) +
-    (chord.ctrlKey ? 4 : 0) +
-    8;
-  return `\u001b[1;${modifiers}${final}`;
+export function editingSequence(
+  chord: EditingChord,
+  applicationCursorKeys: boolean,
+): string | undefined {
+  // Only Command alone. A chord that also holds Shift is asking for a
+  // selection, which a terminal cannot express; Control and Option are the
+  // terminal's own modifiers and xterm already spells those.
+  if (!chord.metaKey || chord.shiftKey || chord.ctrlKey || chord.altKey) {
+    return undefined;
+  }
+  if (chord.key === "ArrowLeft")
+    return applicationCursorKeys ? "\u001bOH" : "\u001b[H";
+  if (chord.key === "ArrowRight")
+    return applicationCursorKeys ? "\u001bOF" : "\u001b[F";
+  return undefined;
 }

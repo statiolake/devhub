@@ -334,14 +334,15 @@ export function openXtermSession(
   input?.addEventListener("compositionend", onCompositionEnd);
   input?.addEventListener("input", onInput);
   /**
-   * Encode the cursor keys xterm refuses to encode; leave everything else.
+   * Report Cmd+Left and Cmd+Right as the keys they mean; leave everything else.
    *
    * The handler used to say yes to every key, and xterm's own encoder bails out
    * of its arrow cases the moment Command is held. So Cmd+Left was neither
    * turned into terminal input nor stopped, and the browser did what it does to
    * a focused textarea: it moved a caret in xterm's hidden IME scratch pad.
-   * Now the sequence xterm would have written is written here instead, and the
-   * browser never sees the key at all.
+   * Now the pane sends Home or End, spelled for the cursor-key mode the
+   * terminal is in at the moment of the press, and the browser never sees the
+   * key at all.
    *
    * Returning false is what tells xterm to keep its hands off a key this has
    * already dealt with. Everything else still returns true, so Option with an
@@ -350,7 +351,10 @@ export function openXtermSession(
    */
   terminal.attachCustomKeyEventHandler((event) => {
     if (event.type !== "keydown") return true;
-    const sequence = editingSequence(event);
+    const sequence = editingSequence(
+      event,
+      terminal.modes.applicationCursorKeysMode,
+    );
     if (sequence === undefined) return true;
     event.preventDefault();
     terminal.input(sequence, true);
