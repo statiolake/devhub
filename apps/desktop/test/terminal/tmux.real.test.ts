@@ -881,6 +881,39 @@ describe.skipIf(TMUX === undefined)(
     });
 
     /**
+     * An Agent's pane starts with nothing in its title.
+     *
+     * The whole of "has this Agent said anything?" rests on this: tmux gives a
+     * new pane the host name, and if that were left there DevHub would have to
+     * guess which titles were the Agent's own. It is blanked at creation, so
+     * an empty title means silence and anything else is the Agent speaking.
+     *
+     * A workspace session is left alone, because tmux names the person's own
+     * windows after the pane title and those names are theirs.
+     */
+    it("gives an Agent a blank pane title, and leaves a workspace's alone", async () => {
+      const test = fixture("panetitle");
+      const sessions = new AgentSessions(test.runtime);
+      const agentId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa3";
+      const workspaceId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb3";
+      await test.runtime.ensure(SCRATCH_TARGET);
+      await test.runtime.ensure(workspaceTarget(workspaceId, test.home));
+
+      await sessions.launch({
+        agentId,
+        workspaceId,
+        root: test.home,
+        command: { file: "/bin/sh", args: ["-c", "sleep 30"], env: {} },
+      });
+
+      expect(paneTitle(test.socket, agentSessionName(agentId))).toBe("");
+      // tmux's own default, untouched: the host name it gives every new pane.
+      expect(
+        paneTitle(test.socket, `ws-${workspaceDigest(test.home).slice(0, 20)}`),
+      ).not.toBe("");
+    });
+
+    /**
      * An Agent session is not a tmux the user drives, so it carries no status
      * bar; the sessions the user *does* drive are left as their own config
      * made them.
@@ -1015,6 +1048,18 @@ async function untilFile(path: string): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   throw new Error("the Agent never wrote its marker file");
+}
+
+/** One pane's title, read from outside the runtime under test. */
+function paneTitle(socket: string, session: string): string {
+  return execFileSync(
+    TMUX as string,
+    ["-L", socket, "display-message", "-p", "-t", session, "#{pane_title}"],
+    {
+      encoding: "utf8",
+      env: { ...process.env, TMUX: undefined, TMUX_PANE: undefined } as never,
+    },
+  ).trim();
 }
 
 /** Whether a window still follows its client, read from outside. */

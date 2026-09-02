@@ -1712,6 +1712,27 @@ export class TmuxTerminalRuntime {
 			spec.name,
 			AGENT_ID_OPTION,
 			spec.agentId,
+			// An Agent's pane starts with no title at all.
+			//
+			// tmux gives a new pane a default title — the host name — and the
+			// Agent's own words arrive later, as the OSC its program prints. So
+			// "has this Agent said anything?" used to be answered by comparing
+			// against whatever the title happened to be the first time DevHub
+			// looked, which is a race with the Agent's startup: read a moment
+			// early and the host name is the baseline, so everything the Agent
+			// ever sets counts as a word; read a moment late and the Agent's
+			// own first title becomes the baseline, so it is silent for the
+			// rest of its life. Same Agent, opposite behaviour, decided by
+			// timing — and re-decided on every restart.
+			//
+			// Blanking it here states the baseline instead of guessing it: an
+			// empty title is an Agent that has not spoken, and anything else is
+			// the Agent speaking. Only Agents, because a workspace's window
+			// name is `#{pane_title}` under tmux's `automatic-rename`, and the
+			// person's own terminals should keep the names tmux gives them.
+			...(spec.context === AGENT_CONTEXT
+				? [";", "select-pane", "-t", spec.name, "-T", ""]
+				: []),
 			// The session's own options join the same sequence, so a session is
 			// never observed owned but not yet configured.
 			...sessionOptions(spec.context).flatMap(([option, value]) => [

@@ -7,51 +7,57 @@ function screen(agentId: string, oscTitle: string): AgentScreen {
 }
 
 describe("what an Agent says it is doing", () => {
-	it("says nothing on the first reading, whatever the pane is called", () => {
+	/**
+	 * The rule, whole: an empty title is an Agent that has not spoken.
+	 *
+	 * DevHub blanks the title when it creates the session, so anything in it
+	 * afterwards was put there by the Agent. What this replaces was an
+	 * inference — the title at the first reading was taken to be that pane's
+	 * silence — which raced the Agent's own startup and answered differently
+	 * depending on when DevHub happened to look.
+	 */
+	it("says nothing while the title is empty", () => {
 		const reader = new AgentActivityReader();
-		// Whatever a shell's precmd or tmux itself put there; DevHub does not
-		// know the string and does not have to.
-		expect(reader.activity(screen("a", "some-machine.local"))).toBeUndefined();
+		expect(reader.activity(screen("a", ""))).toBeUndefined();
+		expect(reader.activity(screen("a", "   "))).toBeUndefined();
 	});
 
-	it("takes any later title as the Agent's own word", () => {
+	it("takes a title the Agent set as the Agent's own word", () => {
 		const reader = new AgentActivityReader();
-		reader.activity(screen("a", "some-machine.local"));
 		expect(reader.activity(screen("a", "Reading agentReconciler.ts"))).toBe(
 			"Reading agentReconciler.ts",
 		);
 	});
 
-	it("falls silent again when the pane goes back to what it was called", () => {
+	/**
+	 * The same answer on the first reading as on the hundredth. An Agent that
+	 * outlived DevHub is read mid-task, and what is in its title is its word —
+	 * not, as before, a baseline that silenced it for the rest of its life.
+	 */
+	it("reads a running Agent's title as a word, not as a baseline", () => {
 		const reader = new AgentActivityReader();
-		reader.activity(screen("a", "some-machine.local"));
+		expect(reader.activity(screen("restored", "Running the tests"))).toBe(
+			"Running the tests",
+		);
+	});
+
+	it("falls silent when the Agent clears its title", () => {
+		const reader = new AgentActivityReader();
 		reader.activity(screen("a", "Reading agentReconciler.ts"));
-		expect(reader.activity(screen("a", "some-machine.local"))).toBeUndefined();
+		expect(reader.activity(screen("a", ""))).toBeUndefined();
 	});
 
-	it("treats an empty title as silence", () => {
+	it("keeps each Agent's word to itself", () => {
 		const reader = new AgentActivityReader();
-		reader.activity(screen("a", "some-machine.local"));
-		expect(reader.activity(screen("a", "   "))).toBeUndefined();
-	});
-
-	it("keeps each Agent's silence to itself", () => {
-		const reader = new AgentActivityReader();
-		reader.activity(screen("a", "some-machine.local"));
-		// The second Agent's pane starts at the same string, and that string is
-		// its silence too — but only because its own first reading said so.
-		expect(reader.activity(screen("b", "some-machine.local"))).toBeUndefined();
+		reader.activity(screen("a", "Reading agentReconciler.ts"));
 		expect(reader.activity(screen("b", "Running the tests"))).toBe(
 			"Running the tests",
 		);
-		expect(reader.activity(screen("a", "Running the tests"))).toBe(
-			"Running the tests",
-		);
+		expect(reader.showing("a")).toBe("Reading agentReconciler.ts");
 	});
 
 	it("re-reports the last word for a round that read nothing", () => {
 		const reader = new AgentActivityReader();
-		reader.activity(screen("a", "some-machine.local"));
 		reader.activity(screen("a", "Reading agentReconciler.ts"));
 		expect(reader.showing("a")).toBe("Reading agentReconciler.ts");
 	});
@@ -60,14 +66,10 @@ describe("what an Agent says it is doing", () => {
 		expect(new AgentActivityReader().showing("a")).toBeUndefined();
 	});
 
-	it("forgets an Agent that ended, silence and all", () => {
+	it("forgets an Agent that ended", () => {
 		const reader = new AgentActivityReader();
-		reader.activity(screen("a", "some-machine.local"));
 		reader.activity(screen("a", "Reading agentReconciler.ts"));
 		reader.forget("a");
 		expect(reader.showing("a")).toBeUndefined();
-		// A new Agent that reuses the id starts over: its first reading is its
-		// own silence, not the dead one's word.
-		expect(reader.activity(screen("a", "some-machine.local"))).toBeUndefined();
 	});
 });
