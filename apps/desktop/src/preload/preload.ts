@@ -122,10 +122,11 @@ const devhub: DevhubApi = {
 		>,
 	githubLogin: () =>
 		ipcRenderer.invoke(CHANNELS.githubLogin) as Promise<GitHubLoginWire>,
-	removeWorktree: (workspaceId: string) =>
+	removeWorktree: (workspaceId: string, force: boolean) =>
 		ipcRenderer.invoke(
 			CHANNELS.removeWorktree,
 			workspaceId,
+			force,
 		) as Promise<AppOutcome>,
 	agentActions: () =>
 		ipcRenderer.invoke(CHANNELS.agentActions) as Promise<

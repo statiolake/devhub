@@ -62,8 +62,18 @@ export interface AppShellContextValue {
   readonly githubLogin: () => Promise<GitHubLoginWire>;
   /** The ways of starting an agent on an Issue, as Settings lists them. */
   readonly agentActions: () => Promise<readonly AgentActionWire[]>;
-  /** Remove a worktree's folder and close its workspace. Throws git's reason. */
-  readonly removeWorktree: (workspaceId: string) => Promise<AppOutcome>;
+  /**
+   * Remove a worktree's folder and close its workspace. Throws git's reason.
+   *
+   * `force` is only ever true after the person has been asked and has said to
+   * go ahead: it is what lets a worktree with uncommitted changes be removed at
+   * all. Without it git refuses such a removal, which is the check that makes
+   * the unasked removals safe.
+   */
+  readonly removeWorktree: (
+    workspaceId: string,
+    force: boolean,
+  ) => Promise<AppOutcome>;
   /**
    * The four steps of assigning an Issue. Each throws what to do about it when
    * it fails, because each is answered by re-asking the question that led to

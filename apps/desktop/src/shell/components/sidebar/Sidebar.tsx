@@ -21,7 +21,7 @@ import type { WorkspaceRepositoryWire } from "../../../ipc/contract";
 import { useAppShell } from "../../useAppShell";
 import { devhub } from "../../client";
 import { isImeComposing } from "../../accessibility/ime";
-import { Glyph } from "./icons";
+import { Glyph, type GlyphName } from "./icons";
 import { RowMenu, type RowMenuItem } from "./RowMenu";
 import { SidebarHeader } from "./SidebarHeader";
 import { StatusMark } from "./StatusMark";
@@ -121,6 +121,11 @@ function WorkspaceRow({
       >
         <div className="row-head">
           <span className="row-rail" aria-hidden="true" />
+          {/* Outside the row's own button, because when there is a GitHub page
+              for this workspace the mark is the link to it, and a button
+              cannot go inside a button. It keeps the glyph column either way:
+              a folder and a repository start at the same pixel. */}
+          <WorkspaceGlyph repository={repository} />
           <button
             className="sidebar-context-button"
             type="button"
@@ -140,9 +145,6 @@ function WorkspaceRow({
               })
             }
           >
-            <span className="row-glyph" aria-hidden="true">
-              <Glyph name="folder" />
-            </span>
             <span className="row-label">{workspace.label}</span>
           </button>
           {/* The links trail the label rather than leading it, which is the one
@@ -200,16 +202,26 @@ function WorkspaceRow({
               <Glyph name="close" />
             </button>
           )}
-          {/* Only a worktree, and only when there is nothing in it to lose.
-            A worktree is a place the repository is also checked out; the
-            repository itself is not something this row deletes. "Nothing to
-            lose" is a poll up to a minute old, so it decides whether to offer
-            the button and never whether the removal is safe — git is asked
-            again when it runs, and its refusal is the authority. DevHub not
-            knowing is not the same as clean, so the button is not offered. */}
+          {/* Only a worktree. A worktree is a place the repository is also
+            checked out; the repository itself is not something this row
+            deletes.
+
+            Offered whether or not there is anything in it to lose, which is
+            the change: the button used to appear only for a worktree DevHub
+            had seen to be clean, so a worktree with one stray file had no way
+            to be removed from DevHub at all — the control simply was not
+            there, and nothing said why. What "clean" decides now is whether
+            the removal is *asked about*, in `onRemoveWorktree`.
+
+            And only when the row *is* the worktree, not merely inside one.
+            `git worktree remove` takes the checkout's root, so a row on
+            `worktree/packages/app` would offer a button that deletes the whole
+            checkout around it — which is not what the row names, and is not
+            recoverable. */}
           {repository?.mainWorktree !== undefined &&
-          repository.mainWorktree !== workspace.root &&
-          repository.dirty === false ? (
+          repository.worktree !== undefined &&
+          repository.worktree !== repository.mainWorktree &&
+          repository.worktree === workspace.root ? (
             <button
               className="row-action-button"
               type="button"
@@ -234,8 +246,14 @@ function WorkspaceRow({
             </span>
           </div>
         ) : null}
-        {/* Line three: what GitHub says about it — the repository, the pull
-            request, the Issue, and what that Issue is called.
+        {/* Line three: what this branch is working on — the Issue, the pull
+            request out from it, and what the work is called.
+
+            It is drawn only when there is one of those to draw. It used to
+            appear for the repository link alone, which meant every workspace
+            in a GitHub repository spent a third of its height on a single icon
+            that said the same thing for all of them; that link is the row's
+            first mark now, and this line is back to being about the work.
 
             The marks lead the line rather than trailing the name, which is the
             one place this differs from the row above: they are about the same
@@ -243,21 +261,24 @@ function WorkspaceRow({
             starting with its icons. Nothing here is on the name's line any
             more, which is what stopped four buttons from deciding how much of
             a branch name a person got to see. */}
-        {(repository?.repositoryUrl ??
-        repository?.issue ??
+        {(repository?.issue ??
+        repository?.pullRequest ??
         repository?.pending ??
         repository?.unavailable) ? (
           <div className="row-line row-line-links">
             <RepositoryLinks repository={repository} />
-            {repository?.issue ? (
-              <>
-                <span className="row-issue-number">
-                  {`#${String(repository.issue.number)}`}
-                </span>
-                <span className="row-issue" title={repository.issue.title}>
-                  {repository.issue.title}
-                </span>
-              </>
+            {/* The Issue's title if there is an Issue, and the pull request's
+                if there is not. One line of words, whichever of the two is
+                carrying the meaning: a workspace with both is working on the
+                Issue and delivering it through the pull request, and the
+                Issue is the half that says what the work is. */}
+            {(repository?.issue?.title ?? repository?.pullRequest?.title) ? (
+              <span
+                className="row-issue"
+                title={repository.issue?.title ?? repository.pullRequest?.title}
+              >
+                {repository.issue?.title ?? repository.pullRequest?.title}
+              </span>
             ) : null}
             {/* Asking. The branch is read every couple of seconds and GitHub
                 once a minute, so a branch just switched to is on screen well
@@ -440,24 +461,87 @@ function WorkspaceRow({
 }
 
 /**
- * The Issue this workspace is for, and the pull request that says it closes
- * it, as marks that open GitHub.
+ * What a Workspace row begins with, and where clicking it goes.
+ *
+ * Three marks, and which one a row starts with is how a person tells the three
+ * kinds of Workspace apart at a glance: a plain folder, a repository, and a
+ * worktree of one. They are three silhouettes rather than one silhouette with
+ * a badge, because this column is scanned rather than read — see `icons.tsx`,
+ * where they are drawn together for exactly that reason.
+ *
+ * When there is a GitHub page for it, the mark *is* the link to it. It used to
+ * be a fourth button down on the third line, which meant a row with no Issue
+ * spent a whole line on a single icon — and it is the same question either
+ * way: *show me this on GitHub*. So the row's first mark answers it, and the
+ * third line is left for what the row is working on.
+ *
+ * A worktree keeps its own silhouette here and still links to the repository's
+ * page, because that is the page it has: a worktree is not a separate thing on
+ * GitHub, and a mark that led somewhere else would be inventing one.
+ */
+function WorkspaceGlyph({
+  repository,
+}: {
+  readonly repository: WorkspaceRepositoryWire | undefined;
+}) {
+  const { openExternalUrl } = useAppShell();
+  // `mainWorktree` is git's own answer to "which repository is this a checkout
+  // of", so its absence is the whole of what "not a repository" means here.
+  //
+  // Which *kind* of checkout is the two roots compared with each other, and
+  // never with the row's own path: a workspace opened at `repo/packages/app` is
+  // in the main worktree and is neither of them, and comparing it to
+  // `mainWorktree` answered "not the main worktree" — which is true, and is not
+  // the question. That is what drew a plain subdirectory as a worktree.
+  const name: GlyphName =
+    repository?.mainWorktree === undefined || repository.worktree === undefined
+      ? "folder"
+      : repository.worktree === repository.mainWorktree
+        ? "repository"
+        : "worktree";
+  const url = repository?.repositoryUrl;
+  if (url === undefined) {
+    return (
+      <span className="row-glyph" aria-hidden="true">
+        <Glyph name={name} />
+      </span>
+    );
+  }
+  const page = url.replace("https://github.com/", "");
+  return (
+    <button
+      className="row-glyph row-glyph-button"
+      type="button"
+      aria-label={`Open ${page} on GitHub`}
+      title={`Open ${page} on GitHub`}
+      onClick={() => {
+        openExternalUrl(url);
+      }}
+    >
+      <Glyph name={name} />
+    </button>
+  );
+}
+
+/**
+ * The Issue this workspace is for and the pull request out from its branch, as
+ * marks that open GitHub.
  *
  * They are marks rather than words because the row already has words. What
  * each one says is its shape and then its colour — GitHub's own: an open issue
- * is green and a closed one purple, an open pull request is green and a draft
- * is grey — and what it says in full is in its label, for anyone who cannot
- * use either.
+ * is green and a closed one purple; a pull request is green open, grey draft,
+ * red closed and purple merged — and what it says in full is in its label, for
+ * anyone who cannot use either.
  *
- * There is no mark for a closed or merged pull request, because there is no
- * such fact to draw: `WorkspaceRepositoryWire.pullRequest` is *the open pull
- * request* that says it closes the Issue, so `open` and `draft` are the whole
- * of what can arrive here. A third state would be a mark that never appears.
+ * The Issue leads, because the Issue is what the work is *for* and the pull
+ * request is how it is being delivered. The number is in the label rather than
+ * beside the mark: the line's words are the title, and a row that spent four
+ * characters on `#128` before every title was spending them on the part a
+ * person already knows.
  *
- * And there is one pull-request drawing rather than two. `open` and `draft`
- * differ by colour and by their label; a second silhouette that differs from
- * the first by one node is a difference nobody can see at thirteen pixels, and
- * the pair of them was two more things for this column to fail to agree with.
+ * Two pull-request drawings for four states, and the split is "did it land":
+ * `merged` gets the junction, the other three get the arrow and differ by
+ * colour. `icons.tsx` carries the argument.
  */
 function RepositoryLinks({
   repository,
@@ -468,43 +552,11 @@ function RepositoryLinks({
   if (!repository) return null;
   const issue = repository.issue;
   const pullRequest = repository.pullRequest;
-  const url = repository.repositoryUrl;
   return (
     <>
-      {url ? (
-        // The repository itself. It leads the line because it is the thing the
-        // other two are inside, and it is here whether or not there is an
-        // Issue: "take me to this on GitHub" is a question a workspace can
-        // always answer, and it was previously answerable only by finding the
-        // remote by hand.
-        <button
-          className="row-link-button is-repository"
-          type="button"
-          aria-label={`Open ${url.replace("https://github.com/", "")} on GitHub`}
-          title={`Open ${url.replace("https://github.com/", "")} on GitHub`}
-          onClick={() => {
-            openExternalUrl(url);
-          }}
-        >
-          <Glyph name="repository" />
-        </button>
-      ) : null}
-      {pullRequest ? (
-        <button
-          className={`row-link-button is-${pullRequest.state}`}
-          type="button"
-          aria-label={`Pull request #${String(pullRequest.number)}, ${pullRequest.state}`}
-          title={`Pull request #${String(pullRequest.number)} (${pullRequest.state})`}
-          onClick={() => {
-            openExternalUrl(pullRequest.url);
-          }}
-        >
-          <Glyph name="pullRequest" />
-        </button>
-      ) : null}
       {issue ? (
         <button
-          className={`row-link-button is-${issue.state}`}
+          className={`row-link-button is-issue-${issue.state}`}
           type="button"
           aria-label={`Issue #${String(issue.number)}, ${issue.state}: ${issue.title}`}
           title={`Issue #${String(issue.number)} (${issue.state})`}
@@ -514,6 +566,25 @@ function RepositoryLinks({
         >
           <Glyph
             name={issue.state === "closed" ? "issueClosed" : "issueOpen"}
+          />
+        </button>
+      ) : null}
+      {pullRequest ? (
+        <button
+          className={`row-link-button is-pr-${pullRequest.state}`}
+          type="button"
+          aria-label={`Pull request #${String(pullRequest.number)}, ${pullRequest.state}: ${pullRequest.title}`}
+          title={`Pull request #${String(pullRequest.number)} (${pullRequest.state})`}
+          onClick={() => {
+            openExternalUrl(pullRequest.url);
+          }}
+        >
+          <Glyph
+            name={
+              pullRequest.state === "merged"
+                ? "pullRequestMerged"
+                : "pullRequest"
+            }
           />
         </button>
       ) : null}
@@ -544,10 +615,10 @@ function ScratchRow({
           nothing a Scratch terminal is working on. */}
       <span className="row-head">
         <span className="row-rail" aria-hidden="true" />
+        <span className="row-glyph" aria-hidden="true">
+          <Glyph name="terminal" />
+        </span>
         <span className="sidebar-context-button">
-          <span className="row-glyph" aria-hidden="true">
-            <Glyph name="terminal" />
-          </span>
           <span className="row-label">{SCRATCH_NAME}</span>
         </span>
       </span>
@@ -637,7 +708,13 @@ function SidebarResizeHandle({
 }
 
 export function Sidebar({ snapshot, onDispatch }: SidebarProps) {
-  const { dispatch, agentProfiles, repositoryStatus } = useAppShell();
+  const {
+    dispatch,
+    agentProfiles,
+    repositoryStatus,
+    removeWorktree,
+    reportFailure,
+  } = useAppShell();
   const repositories = useMemo(
     () =>
       new Map(
@@ -660,18 +737,44 @@ export function Sidebar({ snapshot, onDispatch }: SidebarProps) {
   // The sidebar draws no modals. Every one of them lives on the overlay layer
   // above the workbench views, so opening one is a request to main and nothing
   // more — there is no local "is it open" to keep in step with anything.
-  // The question is raised on the modal layer, like every other destructive
-  // one: the row asks, the alert confirms, main carries it out.
+  //
+  /**
+   * Remove a worktree, asking first only when there is an answer worth asking
+   * for.
+   *
+   * A worktree with nothing uncommitted in it is a folder git can rebuild from
+   * the repository in a second. Confirming that was a question whose answer was
+   * always yes, put in front of somebody every single time — and a question
+   * like that is worse than none, because it is what teaches people to dismiss
+   * the ones that matter. So a clean worktree goes straight to git, without
+   * `--force`: DevHub's "clean" is a poll up to a minute old, and if it was
+   * stale git refuses and nothing has happened.
+   *
+   * Anything else is asked about on the modal layer, like every other
+   * destructive question, and answering it removes the worktree with `--force`
+   * — which is the only way a worktree with uncommitted work can be removed at
+   * all. "Anything else" includes DevHub not knowing: not knowing is not clean,
+   * and the question is the safe branch.
+   */
   const askRemoveWorktree = useCallback(
     (workspace: WorkspaceSnapshot) => {
+      const repository = repositories.get(workspace.id);
+      if (repository?.dirty === false) {
+        // Nothing to lose, so nothing to ask. The failure — git disagreeing
+        // about "clean", a lock, a permission — goes to the one place the
+        // shell shows failures, because this one has no sheet of its own.
+        void removeWorktree(workspace.id, false).catch(reportFailure);
+        return;
+      }
       void devhub().openModal({
         kind: "worktree-removal",
         workspaceId: workspace.id,
         label: workspace.label,
-        branch: repositories.get(workspace.id)?.branch,
+        root: workspace.root,
+        branch: repository?.branch,
       });
     },
-    [repositories],
+    [removeWorktree, reportFailure, repositories],
   );
 
   const openPicker = useCallback(() => {

@@ -126,6 +126,17 @@ export interface WorkspaceRepositoryWire {
 	 */
 	readonly mainWorktree?: string;
 	/**
+	 * The root of the checkout this workspace sits in.
+	 *
+	 * Equal to `mainWorktree` for the repository itself, different for one of its
+	 * worktrees — the pair is what says which of the two a row is. The workspace's
+	 * own path is neither when somebody opens a subdirectory, which is why this is
+	 * a field rather than a comparison against the row's root: doing that made
+	 * `repo/packages/app` read as a worktree of `repo`, drawn with a worktree's
+	 * mark and offered a button that would have deleted the checkout around it.
+	 */
+	readonly worktree?: string;
+	/**
 	 * The repository's page, for a workspace whose `origin` is on GitHub.
 	 *
 	 * Only GitHub: a URL is built from a remote, and github.com is the only host
@@ -137,10 +148,13 @@ export interface WorkspaceRepositoryWire {
 	 * Work here that removing the folder would destroy, as of the last look.
 	 *
 	 * Tracked changes and untracked files alike. Absent when DevHub could not
-	 * tell, which is not the same as clean: nothing destructive is offered on a
-	 * maybe. It is a poll up to a minute old, so it decides whether the button
-	 * is offered and never whether the removal is safe — git is asked again at
-	 * the moment it matters, and its refusal is the authority.
+	 * tell, which is not the same as clean.
+	 *
+	 * It decides whether removing the worktree is *asked about*, and never
+	 * whether the removal is safe: it is a poll up to a minute old, so a removal
+	 * DevHub believes is safe still goes to git without `--force` and git's
+	 * refusal is the authority. Absent is treated as dirty — the question is the
+	 * safe branch, and DevHub not knowing is not a reason to skip it.
 	 */
 	readonly dirty?: boolean;
 	readonly issue?: {
@@ -438,7 +452,7 @@ export interface DevhubApi {
 	 * Destructive, and asked about first: the page raises the question, this
 	 * carries out the answer.
 	 */
-	removeWorktree(workspaceId: string): Promise<AppOutcome>;
+	removeWorktree(workspaceId: string, force: boolean): Promise<AppOutcome>;
 	/** Clone, and answer with the directory git made. Opens nothing. */
 	cloneRepository(url: string, parentDirectory: string): Promise<string>;
 	/**
@@ -564,6 +578,16 @@ export type ModalRequest =
 			readonly workspaceId: string;
 			/** What the row calls it, so the question names what it is about. */
 			readonly label: string;
+			/**
+			 * The folder that is about to be deleted.
+			 *
+			 * The question is only ever asked when there is uncommitted work in it,
+			 * or when DevHub cannot say there is not — so it has to name the folder
+			 * and not only the label. Two worktrees of one repository are two rows
+			 * with different labels and the same everything else, and "widget_fix"
+			 * is not enough to check you are about to destroy the right one.
+			 */
+			readonly root: string;
 			readonly branch?: string;
 	  }
 	| {

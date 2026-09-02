@@ -443,8 +443,8 @@ export function AppShellProvider({
   const agentActions = useCallback(() => transport.agentActions(), [transport]);
 
   const removeWorktree = useCallback(
-    async (workspaceId: string) => {
-      const outcome = await transport.removeWorktree(workspaceId);
+    async (workspaceId: string, force: boolean) => {
+      const outcome = await transport.removeWorktree(workspaceId, force);
       applySnapshot(outcome.snapshot);
       return outcome;
     },

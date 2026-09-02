@@ -119,10 +119,16 @@
   --status-waiting: light-dark(#0a66d0, #0a84ff); /* charts.blue */
   --status-idle: light-dark(#1d7f36, #30d158); /* testing.iconPassed */
   --status-error: var(--danger); /* testing.iconFailed */
-  /* GitHub's own two: an open issue is green, a closed one purple. The green
-     is the same one an idle Agent wears, because both mean "nothing is wrong
-     here", and a second green would only invite the question of why. */
-  --status-issue-closed: light-dark(#8250df, #a371f7);
+  /* GitHub's own: green for what is open, purple for what is finished, red for
+     what was abandoned. The green is the same one an idle Agent wears, because
+     both mean "nothing is wrong here", and a second green would only invite the
+     question of why; the red is `--danger`, for the same reason.
+
+     Purple is one token and not two. A closed Issue and a merged pull request
+     are the same colour in GitHub's palette because they are the same fact —
+     this work is done — and naming it after either half would make the other
+     half look like a reuse. */
+  --status-done: light-dark(#8250df, #a371f7);
 
   /* Separators. */
   --ink-line: 14%;
@@ -227,6 +233,13 @@
  */
 .app-shell[data-sidebar-density="compact"] {
   --row-height: 28px;
+  /* The space above a row's content and below it, and it is the same value in
+     both places whatever the row has to say. It used to be whatever fell out
+     of a one-line row being centred in `--row-height`, which meant a row with
+     a branch under its name had a real gap above its text and none at all
+     below it. `--row-height` is still the floor, so a short row keeps the
+     density's rhythm — it only ever adds space, and adds it to both ends. */
+  --row-pad-block: 5px;
   --sidebar-glyph-width: 16px;
   --sidebar-glyph-ink: 14px;
   /* On the 16-unit box every Sidebar mark is drawn on, scaled to this
@@ -241,6 +254,7 @@
 
 .app-shell[data-sidebar-density="comfortable"] {
   --row-height: 34px;
+  --row-pad-block: 6px;
   --sidebar-glyph-width: 18px;
   --sidebar-glyph-ink: 16px;
   --sidebar-glyph-stroke: 1.5;

@@ -183,6 +183,8 @@ interface LocalReading {
 	readonly branch?: string;
 	/** The repository this workspace is a checkout of, as git identifies it. */
 	readonly mainWorktree?: string;
+	/** The root of the checkout it sits in, which may be neither of the above. */
+	readonly worktree?: string;
 	/** `origin`, kept so the fast clock can re-key a new branch without git. */
 	readonly remote?: RemoteIdentity;
 	/** Work here that removing the folder would destroy, as of the last look. */
@@ -336,6 +338,7 @@ export class RepositoryStatusWatcher {
 					workspace: entry.workspace,
 					branch,
 					mainWorktree: entry.mainWorktree,
+					worktree: entry.worktree,
 					remote: entry.remote,
 					repositoryUrl: entry.repositoryUrl,
 					// The fast clock asks one question and this is not it; what the
@@ -406,6 +409,7 @@ export class RepositoryStatusWatcher {
 					branch: facts?.branch,
 					dirty,
 					mainWorktree: facts?.mainWorktree,
+					worktree: facts?.worktree,
 					remote: facts?.remote,
 					repositoryUrl: repositoryUrl(facts?.remote),
 					...(reading.kind === "branch"
@@ -540,6 +544,7 @@ export class RepositoryStatusWatcher {
 				workspaceId: entry.workspace.id,
 				branch: entry.branch,
 				mainWorktree: entry.mainWorktree,
+				worktree: entry.worktree,
 				repositoryUrl: entry.repositoryUrl,
 				dirty: entry.dirty,
 				issue: status?.issue,

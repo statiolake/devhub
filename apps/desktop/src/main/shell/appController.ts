@@ -1229,7 +1229,10 @@ export class AppController {
 	 * already succeeded, and a workspace left pointing at a missing folder is a
 	 * state DevHub already draws.
 	 */
-	private async removeWorktree(workspaceId: string): Promise<AppOutcomeWire> {
+	private async removeWorktree(
+		workspaceId: string,
+		force: boolean,
+	): Promise<AppOutcomeWire> {
 		const workspace = this.coordinator.model.workspaces.find(
 			(candidate) => candidate.id === workspaceId,
 		);
@@ -1238,14 +1241,26 @@ export class AppController {
 			(entry) => entry.workspaceId === workspaceId,
 		);
 		const mainWorktree = repository?.mainWorktree;
-		if (mainWorktree === undefined || mainWorktree === workspace.root) {
-			// The repository itself, or a folder DevHub has not read yet. Removing
-			// a repository is not what this is for, and guessing is not either.
+		if (
+			mainWorktree === undefined ||
+			repository?.worktree === undefined ||
+			repository.worktree === mainWorktree ||
+			repository.worktree !== workspace.root
+		) {
+			// The repository itself, a folder DevHub has not read yet, or a
+			// subdirectory of a checkout rather than the checkout. Removing a
+			// repository is not what this is for, removing the checkout somebody's
+			// row happens to sit inside is not either, and guessing is not either.
 			throw workspaceFailure(
 				"This workspace is not a worktree of a repository DevHub can see.",
 			);
 		}
-		await removeWorktree(await this.gitCommand(), mainWorktree, workspace.root);
+		await removeWorktree(
+			await this.gitCommand(),
+			mainWorktree,
+			workspace.root,
+			force,
+		);
 		const settled = await this.dispatchAwaiting({
 			type: "request_close_workspace",
 			workspaceId: workspace.id,
@@ -2687,15 +2702,19 @@ export class AppController {
 
 		handle(CHANNELS.getRepositoryStatus, () => this.lastRepositoryStatus);
 
-		// Destructive, and asked about before it gets here: the page raises the
-		// question, this carries out the answer.
-		handle(CHANNELS.removeWorktree, async (_event, workspaceId: string) => {
-			try {
-				return await this.removeWorktree(workspaceId);
-			} catch (error: unknown) {
-				throw asIpcError(errorWire(error));
-			}
-		});
+		// Destructive. `force` says the page already asked and was told to go
+		// ahead; without it git is left to refuse, which is what happens for the
+		// removals that were never worth asking about.
+		handle(
+			CHANNELS.removeWorktree,
+			async (_event, workspaceId: string, force: boolean) => {
+				try {
+					return await this.removeWorktree(workspaceId, force);
+				} catch (error: unknown) {
+					throw asIpcError(errorWire(error));
+				}
+			},
+		);
 		handle(CHANNELS.agentActions, () =>
 			(this.config?.agentActions ?? []).map((action) => ({
 				id: action.id,

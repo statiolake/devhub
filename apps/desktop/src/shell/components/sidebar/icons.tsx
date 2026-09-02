@@ -42,9 +42,11 @@ export type GlyphName =
   | "close"
   | "trash"
   | "repository"
+  | "worktree"
   | "issueOpen"
   | "issueClosed"
   | "pullRequest"
+  | "pullRequestMerged"
   | "statusWorking"
   | "statusWaiting"
   | "statusIdle"
@@ -60,16 +62,59 @@ const GLYPHS: Record<GlyphName, ReactNode> = {
     <path d="M2.86 4.57h10.28M6.29 4.57V3.43c0-.32.25-.57.57-.57h2.28c.32 0 .58.25.58.57v1.14M4 4.57l.57 7.72c.02.3.27.53.57.53h5.72c.3 0 .55-.23.57-.53l.57-7.72" />
   ),
 
-  /* The repository on GitHub: a book, which is what a repository is called
-     everywhere else in git's own vocabulary. Drawn open rather than closed so
-     it does not read as a second folder in a column that already has one. */
+  /* ------------------------------------------------- what a row is made of
+   *
+   * Three marks share the leading column, and a row is identified by which of
+   * them starts it: a plain folder, a repository, and a worktree of one. They
+   * have to be told apart at thirteen pixels, in one glance, in a column where
+   * they sit directly above one another — so they are three different
+   * silhouettes rather than one silhouette with a detail added to it.
+   *
+   * The repository used to be an open book, which is the word git itself uses
+   * and the mark GitHub draws. It is gone at the person's request, and the
+   * replacement had to satisfy the harder half of the old brief anyway: a book
+   * at this size is a rectangle with a seam down it, and a folder is a
+   * rectangle, so the two were carrying the whole distinction on one interior
+   * stroke.
+   */
+
+  /* A repository: a box, seen as a solid. It has the mass a folder has — this
+     is the same column, and a mark that reads as lighter than its neighbours
+     reads as less important than them — and it is the one closed convex
+     silhouette in the set, so the difference from a folder is the outline
+     itself rather than anything drawn inside it. The three interior edges meet
+     at the centre at 120°, which is what makes it read as a solid instantly
+     and not as a hexagon.
+
+     The alternative, kept here because it was close: a commit graph — a trunk
+     with two nodes and a branch leaving it. It says "repository" at least as
+     well, and it was dropped because at thirteen pixels it is mostly the same
+     strokes as `pullRequest` two lines further down the same row. */
   repository: (
-    <path d="M3.14 2.29h3.15c.63 0 1.14.51 1.14 1.14v9.14a1.14 1.14 0 0 0-1.14-1.14H3.14a.57.57 0 0 1-.57-.57V2.86c0-.32.25-.57.57-.57ZM12.86 2.29H9.71c-.63 0-1.14.51-1.14 1.14v9.14c0-.63.51-1.14 1.14-1.14h3.15c.31 0 .57-.26.57-.57V2.86a.57.57 0 0 0-.57-.57Z" />
+    <>
+      <path d="M8 2.6 13.4 5.5v5L8 13.4 2.6 10.5v-5Z" />
+      <path d="M8 13.4V8M8 8 2.6 5.5M8 8l5.4-2.5" />
+    </>
   ),
 
-  /* A Workspace. The silhouette is the one the Sidebar already had — it was
-     never the problem — moved onto the shared box and stripped of the accent
-     tint that made it the one solid block in a column of lines. */
+  /* A worktree: the repository, checked out a second time. So it is two of the
+     same shape, one behind the other — the mark everything else uses for a
+     copy, which is exactly what a worktree is.
+
+     The one behind is drawn as three sides rather than a whole square, so the
+     two outlines never cross. A crossing is four line-ends meeting inside two
+     pixels, and at this size that is a blot. */
+  worktree: (
+    <>
+      <path d="M10 6V3.8c0-.66-.54-1.2-1.2-1.2H3.8c-.66 0-1.2.54-1.2 1.2v5c0 .66.54 1.2 1.2 1.2H6" />
+      <path d="M7.2 6h5c.66 0 1.2.54 1.2 1.2v5c0 .66-.54 1.2-1.2 1.2h-5A1.2 1.2 0 0 1 6 12.2v-5C6 6.54 6.54 6 7.2 6Z" />
+    </>
+  ),
+
+  /* A Workspace that is only a folder. The silhouette is the one the Sidebar
+     already had — it was never the problem — moved onto the shared box and
+     stripped of the accent tint that made it the one solid block in a column
+     of lines. */
   folder: (
     <path d="M1.71 4a1.14 1.14 0 0 1 1.15-1.14h3.43l1.6 1.83h5.26a1.14 1.14 0 0 1 1.14 1.14v6.17a1.14 1.14 0 0 1-1.14 1.14H2.86a1.14 1.14 0 0 1-1.15-1.14z" />
   ),
@@ -83,18 +128,25 @@ const GLYPHS: Record<GlyphName, ReactNode> = {
 
   close: <path d="M4.75 4.75l6.5 6.5M11.25 4.75l-6.5 6.5" />,
 
-  /* GitHub's two Issue states and the pull request that closes one.
+  /* GitHub's two Issue states, and the pull request out from the branch.
    *
    * A ring with something inside it, and what is inside says which: nothing
    * added for open, a check for closed. The ring is the recognition and the
    * interior is one stroke, which is all this size holds — the Octicon these
    * replace put a 3-unit dot inside a 13-pixel ring and it closed to a blob.
    *
-   * The pull request is a branch rejoining a trunk with an arrow on it. There
-   * is one drawing for it and not two: `open` and `draft` are the only states
-   * that reach the Sidebar, they differ by colour and by their label, and a
-   * second silhouette that differs from the first by one node is a difference
-   * nobody can see at this size and nobody needs to. */
+   * The pull request is a branch and a trunk, and there are two drawings for
+   * the four states — because there is exactly one question the shape answers:
+   * **did this land?**
+   *
+   * `open`, `draft` and `closed` are all "no", and they get the arrow: the
+   * branch proposed at the trunk, not touching it. `merged` is "yes", and the
+   * branch reaches the trunk and joins it at a node. What separates the three
+   * that did not land is colour and label — green, grey, red — the same way
+   * `open` and `draft` have always been separated, because a second silhouette
+   * differing from the first by one node is a difference nobody can see at
+   * thirteen pixels. Landing is not that kind of difference: it is the one
+   * fact a person scans this column for. */
   issueOpen: (
     <>
       <circle cx="8" cy="8" r="5.25" />
@@ -111,6 +163,18 @@ const GLYPHS: Record<GlyphName, ReactNode> = {
 
   pullRequest: (
     <path d="M4.25 2.75v10.5M11.75 13.25V7.6a2.35 2.35 0 0 0-2.35-2.35H6.6M8.85 3 6.6 5.25 8.85 7.5" />
+  ),
+
+  /* Merged: the same trunk and the same branch, with the arrow replaced by the
+     junction it was pointing at. The branch runs all the way in and a filled
+     node sits where it meets — a dot, and not an outline, for the reason the
+     other two dots in this file are dots: at this size a ring that small
+     closes to a smudge. */
+  pullRequestMerged: (
+    <>
+      <path d="M4.25 2.75v10.5M11.75 13.25V7.6a2.35 2.35 0 0 0-2.35-2.35H5.6" />
+      <circle className="glyph-fill" cx="4.25" cy="5.25" r="1.35" />
+    </>
   ),
 
   /* ------------------------------------------------------------- statuses */
@@ -169,11 +233,17 @@ export interface GlyphProps {
  * One Sidebar mark. The `svg` carries `sidebar-glyph`, which is where the
  * shared box, weight and colour rules live; everything a caller wants on top
  * of that goes in `className`.
+ *
+ * `data-glyph` names which mark it is. A glyph is `aria-hidden` — what it says
+ * is said in the label of whatever holds it — so it is otherwise invisible to
+ * anything reading the rendered row, and *which* mark a row starts with is
+ * exactly the fact the three Workspace kinds are told apart by.
  */
 export function Glyph({ name, className }: GlyphProps) {
   return (
     <svg
       className={className ? `sidebar-glyph ${className}` : "sidebar-glyph"}
+      data-glyph={name}
       viewBox="0 0 16 16"
       aria-hidden="true"
       focusable="false"

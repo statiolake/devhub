@@ -136,8 +136,22 @@
   display: flex;
   overflow: hidden;
   width: 100%;
+  min-height: var(--row-height);
   flex-direction: column;
-  padding: 0;
+  /* One value above the content and the same value below it, whatever the row
+     has to say. The row used to have no padding at all: a one-line row got its
+     breathing space from being centred inside `--row-height`, and a row with a
+     second line got that space above its text and nothing below it, because
+     the line stack simply ended. So a folder row and a repository row — the
+     two things sitting next to each other in this list — were padded
+     differently, and the difference was an accident of how many lines each
+     happened to have.
+
+     `justify-content` is what keeps it true at the floor: when a short row is
+     stretched to `--row-height`, the slack is split between the two ends
+     rather than falling to the bottom. */
+  justify-content: center;
+  padding-block: var(--row-pad-block);
   border: 0;
   border-radius: var(--radius-row);
   background: transparent;
@@ -162,10 +176,12 @@
  * row's trailing edge, under the marks and the buttons rather than beside
  * them.
  */
+/* No height of its own. The row carries the floor and the padding now; a
+   min-height here as well would be a second source of vertical space, and it
+   was the one that made a row's top and bottom disagree. */
 .row-head {
   display: flex;
   width: 100%;
-  min-height: var(--row-height);
   align-items: center;
 }
 
@@ -202,7 +218,13 @@
   height: 100%;
   flex: 1;
   align-items: center;
-  padding: 0 var(--space-2) 0 0;
+  /* The leading gap used to be this button's `gap`, between a glyph inside it
+     and the label. A Workspace's glyph is a sibling now — when there is a
+     GitHub page for the row it is the link to it, and a button cannot go
+     inside a button — so the space between the glyph column and the label is
+     this padding instead. The two are the same distance, so every row's label
+     still starts on one column. */
+  padding: 0 var(--space-2);
   border: 0;
   background: transparent;
   gap: var(--space-2);
@@ -224,6 +246,7 @@
   inset: 0;
 }
 
+.row-glyph-button,
 .row-link-button,
 .row-action-button {
   position: relative;
@@ -302,6 +325,29 @@
   height: var(--sidebar-glyph-ink);
 }
 
+/* The same mark, when it is also the way to the repository's page on GitHub.
+   It has to sit on the glyph column exactly where the plain one does — a row
+   whose first mark is a pixel off the row above it is a column that no longer
+   reads as one — so this only strips what a button brings with it and says,
+   under the pointer, that it is a control.
+
+   No colour of its own: what the mark means is which kind of Workspace this
+   is, and a row that happened to have a GitHub page is not a different kind. */
+.row-glyph-button {
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+}
+
+.row-glyph-button:hover {
+  background: var(--wash-strong);
+}
+
+.row-glyph-button:active {
+  background: var(--selection);
+}
+
 /*
  * A row's text: one line, or two.
  *
@@ -353,7 +399,6 @@
    is centred on them rather than on its text, because a 20px control and an
    11px caption share no baseline worth aligning to. */
 .row-line-links {
-  padding-block-end: 3px;
   align-items: center;
   gap: var(--space-1);
 }
@@ -471,16 +516,33 @@
   height: 14px;
 }
 
-/* The green is `--status-idle`, which is the green an idle Agent wears. That is
-   deliberate and is stated at the token: both mean "nothing is wrong here", and
-   a second green in the same window would only invite the question of how the
-   two differ. */
-.row-link-button.is-open {
+/* What each mark is saying, in GitHub's own colours.
+ *
+ * The state is named with the kind it belongs to — `is-issue-closed`, not
+ * `is-closed` — because "closed" is not one fact here. A closed Issue is work
+ * that is finished and wears the purple; a closed pull request is work that
+ * was abandoned and wears the red. One class for both would have had to pick
+ * one of those, and whichever it picked would have been wrong about the other
+ * every time it was drawn.
+ *
+ * The green is `--status-idle`, which is the green an idle Agent wears. That is
+ * deliberate and is stated at the token: both mean "nothing is wrong here", and
+ * a second green in the same window would only invite the question of how the
+ * two differ. A draft has no rule of its own — it is the grey the button
+ * already sits at, which is what "nobody is being asked to look at this yet"
+ * looks like. */
+.row-link-button.is-issue-open,
+.row-link-button.is-pr-open {
   color: var(--status-idle);
 }
 
-.row-link-button.is-closed {
-  color: var(--status-issue-closed);
+.row-link-button.is-issue-closed,
+.row-link-button.is-pr-merged {
+  color: var(--status-done);
+}
+
+.row-link-button.is-pr-closed {
+  color: var(--danger);
 }
 
 /* Why the marks above may be out of date. It is not an error the person did

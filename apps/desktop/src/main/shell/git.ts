@@ -166,6 +166,20 @@ async function ask(
 export interface RepositoryFacts {
 	/** The main worktree, whichever worktree was asked. */
 	readonly mainWorktree: string;
+	/**
+	 * The root of the checkout the directory is *in*.
+	 *
+	 * The same as `mainWorktree` for the repository itself, and a different path
+	 * for one of its worktrees — so the two together are what says which of the
+	 * two a directory belongs to.
+	 *
+	 * Read separately from the asked-for directory, because that directory is
+	 * often neither: a workspace opened at `repo/packages/app` is a subdirectory,
+	 * and comparing *it* to `mainWorktree` says "not the main worktree", which is
+	 * true and is not the question. That comparison is what made a plain
+	 * subdirectory read as a worktree, and offered to remove it as one.
+	 */
+	readonly worktree: string;
 	/** The branch checked out here, or nothing when the head is detached. */
 	readonly branch: string | undefined;
 	/** `origin`, normalised so an HTTPS and an SSH clone compare equal. */
@@ -225,22 +239,33 @@ export async function readDirty(
 }
 
 /**
- * Remove a worktree, and let git refuse.
+ * Remove a worktree. Let git refuse, unless the person has already been asked.
  *
- * No `--force`. git already declines to remove a worktree with changes in it,
- * and that refusal is the last check standing between somebody and work they
- * cannot get back — DevHub's own idea of "clean" is a poll up to a minute old,
- * so it is a hint for the button and never the authority. The branch is not
- * touched: see `removeWorktree` in the controller for why.
+ * Without `force`, git declines to remove a worktree with changes in it, and
+ * that refusal is the last check standing between somebody and work they cannot
+ * get back — DevHub's own idea of "clean" is a poll up to a minute old, so it is
+ * never the authority. This is the path a removal takes when DevHub believes the
+ * worktree is clean: nothing is confirmed, because there is nothing to lose, and
+ * if the poll was stale git says so and nothing has happened.
+ *
+ * `force` is the other path, and it is only ever reached through the question
+ * that names what will be destroyed. It exists because git's refusal is a dead
+ * end otherwise: a worktree with uncommitted changes could not be removed from
+ * DevHub at all, however sure the person was.
+ *
+ * The branch is not touched either way: see `removeWorktree` in the controller.
  */
 export async function removeWorktree(
 	command: GitCommand,
 	mainWorktree: string,
 	worktree: string,
+	force: boolean,
 ): Promise<void> {
-	await runGit(command, ["worktree", "remove", worktree], {
-		cwd: mainWorktree,
-	});
+	await runGit(
+		command,
+		["worktree", "remove", ...(force ? ["--force"] : []), worktree],
+		{ cwd: mainWorktree },
+	);
 }
 
 export async function readRepository(
@@ -258,6 +283,15 @@ export async function readRepository(
 	const mainWorktree = parseWorktrees(worktrees)[0]?.path;
 	if (mainWorktree === undefined) return undefined;
 
+	// Where this checkout starts, which is not where DevHub was asked to look:
+	// the workspace may be any directory inside it.
+	const worktree = await ask(
+		command,
+		["rev-parse", "--show-toplevel"],
+		directory,
+	);
+	if (worktree === undefined) return undefined;
+
 	const branch = await ask(
 		command,
 		["rev-parse", "--abbrev-ref", "HEAD"],
@@ -266,6 +300,7 @@ export async function readRepository(
 	const remote = await originIdentity(command, directory);
 	return {
 		mainWorktree,
+		worktree,
 		branch: branch === undefined || branch === "HEAD" ? undefined : branch,
 		remote,
 	};
