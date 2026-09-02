@@ -725,6 +725,7 @@ export function AgentsSection({
                 options={[
                   ["codex", "Codex"],
                   ["claude", "Claude"],
+                  ["cursor", "Cursor"],
                   ["custom", "Other (no status)"],
                 ]}
                 onChange={(kind) => {

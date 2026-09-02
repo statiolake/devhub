@@ -89,9 +89,17 @@ export function fillVariables(
  * it is DevHub's — a line beginning `$name` means "run the skill called name" —
  * and this is where it becomes the notation that agent actually reads. Claude
  * Code spells it `/name`; Codex spells it `$name`, which is where the notation
- * came from; an agent DevHub has no manifest for gets the line exactly as it
- * was written, because guessing a syntax for a program nobody has described is
- * how a prompt turns into a command that means something else.
+ * came from; every other agent gets the line exactly as it was written,
+ * because guessing a syntax for a program nobody has confirmed is how a prompt
+ * turns into a command that means something else.
+ *
+ * "Every other agent" is `custom` and `cursor`, and the two are here for
+ * different reasons. `custom` names a program DevHub knows nothing about.
+ * Cursor DevHub can now read the *screen* of, but reading a screen says nothing
+ * about how that CLI spells a skill, and this file has no capture to answer it
+ * from — so the safe answer is the literal one. Having a manifest is not the
+ * same as knowing the dialect, and the moment those two are treated as one
+ * question is the moment a sentence becomes a slash command.
  *
  * Only at the start of a line. `$HOME` in the middle of a sentence is a
  * variable somebody is talking about, and a price is not a skill.

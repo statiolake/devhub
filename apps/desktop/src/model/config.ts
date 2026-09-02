@@ -121,7 +121,27 @@ export interface DateSource {
 
 export type WorkspaceSource = FilesystemSource | CommandSource | DateSource;
 
-export type AgentProfileKind = "codex" | "claude" | "custom";
+export type AgentProfileKind = "codex" | "claude" | "cursor" | "custom";
+
+/**
+ * The program a known kind runs when the file does not name one.
+ *
+ * For Codex and Claude this is the kind's own name, which is why nobody has to
+ * write a `command` for them. Cursor is the reason this is a function rather
+ * than the identity: its kind is `cursor` and its program is `cursor-agent`.
+ *
+ * The distinction is not pedantic. `cursor` is itself a real command on any
+ * machine with the editor installed — it opens the editor — so defaulting to
+ * the kind's name would not have failed loudly with "command not found". It
+ * would have started the wrong program, only for the people who left the
+ * command out, and the pane would have shown something that was never an Agent
+ * while the sidebar waited for a screen the manifest describes.
+ */
+export function defaultCommandForKind(
+  kind: Exclude<AgentProfileKind, "custom">,
+): string {
+  return kind === "cursor" ? "cursor-agent" : kind;
+}
 
 /**
  * What DevHub says to an Agent when it takes an action on the person's behalf.
@@ -348,12 +368,18 @@ export function defaultAgentProfiles(): ConfiguredAgentProfile[] {
       args: [],
       env: {},
     },
-    // `custom` is the truthful kind, and it is the reason this profile can be
-    // here at all: DevHub has no screen manifest for Cursor, so it cannot say
-    // what the Agent is doing and its rows carry the `unknown` mark. That is a
-    // correct permanent answer rather than a stage on the way to another one.
-    // A kind of `codex` or `claude` would be a claim DevHub cannot make, and
-    // the status it produced would be wrong rather than absent.
+    // Cursor has a manifest now, so `custom` — which used to be the truthful
+    // kind here, because DevHub had no idea what a Cursor screen looked like —
+    // would understate what DevHub can say. `cursor` reads the two states the
+    // manifest is confident about: a turn running, and a turn stopped to ask.
+    //
+    // What it still will not say is `idle`. The manifest has no idle rule (see
+    // `agent/detect/manifests.ts` for why, and why that is the safe direction),
+    // so a Cursor row shows `working`, `waiting`, or `?`, and the injection
+    // queue — which sends only on `idle` — never types into a Cursor pane. The
+    // change from `custom` is therefore strictly additive: rows that used to be
+    // permanently `?` now light up while Cursor is busy or asking, and nothing
+    // that was previously not sent starts being sent.
     //
     // The command is `cursor-agent` and nothing checks for it here. A profile
     // naming a command that is not installed already fails where it is run,
@@ -363,7 +389,7 @@ export function defaultAgentProfiles(): ConfiguredAgentProfile[] {
     {
       id: "cursor",
       display_name: "Cursor",
-      kind: "custom",
+      kind: "cursor",
       command: "cursor-agent",
       args: [],
       env: {},
@@ -997,7 +1023,12 @@ function agentProfileFromTable(
     prefix,
   );
   const kind = table["kind"];
-  if (kind !== "codex" && kind !== "claude" && kind !== "custom") {
+  if (
+    kind !== "codex" &&
+    kind !== "claude" &&
+    kind !== "cursor" &&
+    kind !== "custom"
+  ) {
     fail("invalid_profile_kind", `${prefix}.kind`);
   }
   const rawEnv = table["env"];
@@ -1015,13 +1046,14 @@ function agentProfileFromTable(
     id: optionalString(table, "id", prefix, ""),
     display_name: optionalString(table, "display_name", prefix, ""),
     kind,
-    // A known kind's command defaults to its own name, which is what the two
-    // shipped profiles want and why nobody has to write it. `custom` has no
-    // such name: the whole of what it says is "run this", so it has to say it.
+    // A known kind's command defaults to the program that kind runs — see
+    // `defaultCommandForKind`, which is not always the kind's own name.
+    // `custom` has no such program: the whole of what it says is "run this",
+    // so it has to say it.
     command:
       kind === "custom"
         ? requiredString(table, "command", prefix)
-        : optionalString(table, "command", prefix, kind),
+        : optionalString(table, "command", prefix, defaultCommandForKind(kind)),
     args: optionalStringArray(table, "args", prefix, []),
     env,
   };

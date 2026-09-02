@@ -1,9 +1,10 @@
 /**
- * The screen manifests DevHub ships, for the two Agent kinds it knows.
+ * The screen manifests DevHub ships, for the Agent kinds it knows.
  *
  * Carried from the herdr project (https://github.com/herdrdev/herdr), files
- * `src/detect/manifests/claude.toml` (version 2026.08.13.1) and
- * `src/detect/manifests/codex.toml` (version 2026.08.09.1), licensed under the
+ * `src/detect/manifests/claude.toml` (version 2026.08.13.1),
+ * `src/detect/manifests/codex.toml` (version 2026.08.09.1) and
+ * `src/detect/manifests/cursor.toml` (version 2026.08.03.1), licensed under the
  * Apache License, Version 2.0. See `distribution/THIRD-PARTY-NOTICES.txt`.
  *
  * They are TypeScript rather than TOML on purpose. herdr's manifests are data
@@ -449,6 +450,103 @@ export const CODEX: Manifest = {
 };
 
 /**
+ * Cursor Agent (`cursor-agent`).
+ *
+ * Carried from herdr's `cursor.toml` 2026.08.03.1, rules unchanged.
+ *
+ * **This one has not been checked against a screen.** The Claude and Codex
+ * manifests above were rewritten against captures of a running CLI, and both
+ * needed it — Claude's title spinner had been retired and Codex's idle rule
+ * fired on a hostname. This manifest got none of that: running `cursor-agent`
+ * needs a Cursor subscription, which this project does not have, so every rule
+ * below is herdr's word and nothing more. Treat the version date as what it is
+ * — the last day somebody who could see the screen looked at it.
+ *
+ * **There is deliberately no idle rule.** herdr's manifest has none either,
+ * and that is not an oversight on their part: herdr's own changelog, for the
+ * release that added this file, says Cursor sessions "report working and
+ * blocked states". So a Cursor row here reads `working`, `waiting`, or `?` and
+ * never `idle`.
+ *
+ * That is the whole safety argument, and it is structural rather than careful.
+ * `idle` is the single state the injection queue sends on (`agent/injection.ts`
+ * — `unknown` is never typed into), so a manifest that cannot say the word
+ * cannot cause DevHub to type into a Cursor pane, whatever the screen turns
+ * out to look like. An unverified manifest is therefore safe to ship in a way
+ * an unverified *idle* rule would not be: the failure mode of every rule below
+ * going stale is that they stop matching and the row degrades to `?`, which
+ * costs a person a glance at the pane. The failure mode of a guessed idle rule
+ * is a sentence typed into a menu whose first option is "yes".
+ *
+ * If Cursor's screens have drifted since 2026.08, the fix is a capture and a
+ * rewrite, the way Claude and Codex got one — not a rule invented from memory.
+ */
+export const CURSOR: Manifest = {
+	id: "cursor",
+	version: "2026.08.03.1",
+	rules: [
+		{
+			id: "write_file_approval",
+			state: "blocked",
+			priority: 320,
+			region: bottomNonEmptyLines(8),
+			visibleBlocker: true,
+			contains: ["write to this file?", "proceed (y)"],
+			any: [
+				{ contains: ["reject & propose changes"] },
+				{ contains: ["esc or n or p"] },
+				{ contains: ["add write("] },
+			],
+		},
+		{
+			id: "approval_prompt",
+			state: "blocked",
+			priority: 300,
+			region: "whole_recent",
+			visibleBlocker: true,
+			any: [
+				{
+					contains: ["waiting for approval", "run this command?"],
+					any: [
+						{ contains: ["run (once) (y)"] },
+						{ contains: ["skip (esc or n)"] },
+					],
+				},
+				{ contains: ["(y) (enter)"] },
+				{ lineRegex: [/^\s*allow .*\(y\)/iu] },
+				{ contains: ["keep (n)"] },
+				{ contains: ["skip (esc or n)"] },
+				{ lineRegex: [/^\s*(?:→\s*)?run .*\(y\)/iu] },
+			],
+		},
+		{
+			id: "stop_hint_working",
+			state: "working",
+			priority: 100,
+			region: bottomNonEmptyLines(6),
+			visibleWorking: true,
+			contains: ["ctrl+c to stop"],
+		},
+		{
+			id: "background_task_status_working",
+			state: "working",
+			priority: 95,
+			region: bottomNonEmptyLines(5),
+			visibleWorking: true,
+			lineRegex: [/\b[1-9][0-9]*\s+background\s+tasks?\b/iu],
+		},
+		{
+			id: "spinner_working",
+			state: "working",
+			priority: 90,
+			region: bottomNonEmptyLines(8),
+			visibleWorking: true,
+			lineRegex: [/^\s*(?:⬡|⬢|[⠀-⣿]+)\s+\p{Alphabetic}+\w*ing\b/u],
+		},
+	],
+};
+
+/**
  * The manifest for a profile kind, or nothing.
  *
  * Nothing is the answer for `custom`, and it is a permanent one: a profile that
@@ -459,5 +557,6 @@ export const CODEX: Manifest = {
 export function manifestFor(kind: string): Manifest | undefined {
 	if (kind === "claude") return CLAUDE;
 	if (kind === "codex") return CODEX;
+	if (kind === "cursor") return CURSOR;
 	return undefined;
 }

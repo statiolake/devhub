@@ -290,7 +290,7 @@ export class Repository {
  * live pane with a `?` for a status, which is exactly what attaching an editor
  * or a plain command should get you.
  */
-export type AgentProfileKind = "codex" | "claude" | "custom";
+export type AgentProfileKind = "codex" | "claude" | "cursor" | "custom";
 
 export function validDisplayName(value: string): boolean {
   return value.trim().length > 0 && !value.includes("\0");

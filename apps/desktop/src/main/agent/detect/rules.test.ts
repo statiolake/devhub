@@ -9,8 +9,8 @@
 
 import { describe, expect, it } from "vitest";
 import { AgentStatusDetector, type AgentScreen } from "./detector.js";
-import { CLAUDE, CODEX, manifestFor } from "./manifests.js";
-import { read, region, type DetectionInput } from "./rules.js";
+import { CLAUDE, CODEX, CURSOR, manifestFor } from "./manifests.js";
+import { read, region, type DetectionInput, type Manifest } from "./rules.js";
 
 function input(
 	screen: string,
@@ -132,6 +132,28 @@ describe("a kind with no manifest", () => {
 	it("has none, permanently", () => {
 		expect(manifestFor("custom")).toBeUndefined();
 		expect(manifestFor("nothing-like-this")).toBeUndefined();
+	});
+});
+
+describe("the kinds that do have a manifest", () => {
+	it("hands each kind its own", () => {
+		expect(manifestFor("claude")).toBe(CLAUDE);
+		expect(manifestFor("codex")).toBe(CODEX);
+		expect(manifestFor("cursor")).toBe(CURSOR);
+	});
+
+	/**
+	 * Cursor's is the only shipped manifest that cannot say `idle`, which is
+	 * what makes it safe to ship without having seen the screens. Asserted
+	 * here, beside the other two, so the asymmetry is visible from the engine's
+	 * own tests rather than only from Cursor's.
+	 */
+	it("lets only the verified manifests claim a free prompt", () => {
+		const claimsIdle = (manifest: Manifest) =>
+			manifest.rules.some((rule) => rule.state === "idle");
+		expect(claimsIdle(CLAUDE)).toBe(true);
+		expect(claimsIdle(CODEX)).toBe(true);
+		expect(claimsIdle(CURSOR)).toBe(false);
 	});
 });
 

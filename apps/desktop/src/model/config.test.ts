@@ -53,8 +53,9 @@ describe("parsing", () => {
     ).toEqual([
       ["codex", "codex", "codex"],
       ["claude", "claude", "claude"],
-      // No screen manifest, so no claim about what it is doing.
-      ["cursor", "custom", "cursor-agent"],
+      // A screen manifest now, so a kind of its own — and a command that is
+      // deliberately not the kind's name, because `cursor` is the editor.
+      ["cursor", "cursor", "cursor-agent"],
     ]);
   });
 
@@ -401,6 +402,78 @@ describe("round trip", () => {
       workspaceSources: config.workspaceSources,
     });
     expect(parseConfig(refilled)).toEqual(config);
+  });
+
+  /**
+   * The one place `kind` and `command` are not interchangeable.
+   *
+   * Codex and Claude are run by a program with the kind's own name, so the
+   * defaulting rule reads as "the command is the kind" and nothing notices.
+   * Cursor breaks that: `cursor-agent` is the Agent, and `cursor` is the
+   * editor's launcher, which exists and starts successfully. Getting this
+   * wrong would not raise "command not found" — it would open an editor in a
+   * pane DevHub was watching for an Agent's screen.
+   */
+  it("defaults a cursor profile to cursor-agent, not cursor", () => {
+    const source = [
+      "version = 1",
+      "",
+      "[[agent_profiles]]",
+      'id = "cursor"',
+      'display_name = "Cursor"',
+      'kind = "cursor"',
+      "args = []",
+      "",
+      "[agent_profiles.env]",
+      "",
+    ].join("\n");
+    const parsed = parseConfig(source);
+    expect(parsed.agentProfiles[0]?.kind).toBe("cursor");
+    expect(parsed.agentProfiles[0]?.command).toBe("cursor-agent");
+  });
+
+  /** A command written down wins over the kind's default, as for any kind. */
+  it("lets a cursor profile name its own command", () => {
+    const source = [
+      "version = 1",
+      "",
+      "[[agent_profiles]]",
+      'id = "cursor"',
+      'display_name = "Cursor"',
+      'kind = "cursor"',
+      'command = "/opt/example/cursor-agent"',
+      "args = []",
+      "",
+      "[agent_profiles.env]",
+      "",
+    ].join("\n");
+    expect(parseConfig(source).agentProfiles[0]?.command).toBe(
+      "/opt/example/cursor-agent",
+    );
+  });
+
+  /**
+   * The user's existing config says `kind = "custom"` for Cursor. Adding the
+   * `cursor` kind must not make that file stop parsing: `custom` stays a real
+   * member, and a profile that names a command keeps working untouched.
+   */
+  it("still accepts a cursor profile left on the custom kind", () => {
+    const source = [
+      "version = 1",
+      "",
+      "[[agent_profiles]]",
+      'id = "cursor"',
+      'display_name = "Cursor"',
+      'kind = "custom"',
+      'command = "cursor-agent"',
+      "args = []",
+      "",
+      "[agent_profiles.env]",
+      "",
+    ].join("\n");
+    const parsed = parseConfig(source);
+    expect(parsed.agentProfiles[0]?.kind).toBe("custom");
+    expect(parsed.agentProfiles[0]?.command).toBe("cursor-agent");
   });
 
   it("switches a profile to a custom runtime and still re-parses", () => {

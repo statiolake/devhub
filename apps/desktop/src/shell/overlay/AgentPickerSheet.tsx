@@ -83,6 +83,12 @@ function kindLabel(kind: AgentProfileKindWire): string {
       return "Codex";
     case "claude":
       return "Claude";
+    // Deliberately narrower than "Cursor". DevHub reads Cursor's busy and
+    // waiting screens but never claims its prompt is free, so a person picking
+    // this profile should know the row will not go quiet-and-ready the way the
+    // other two do — it goes to `?` instead.
+    case "cursor":
+      return "Cursor — busy and waiting only";
     case "custom":
       return "Other — no status detection";
   }

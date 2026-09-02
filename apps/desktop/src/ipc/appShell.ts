@@ -22,7 +22,7 @@ export const MAX_SPLIT_RATIO = 0.85 as const;
 export const DEFAULT_SPLIT_RATIO = 0.55 as const;
 
 export type AgentControlStateWire = "running" | "stopping" | "stop-failed";
-export type AgentProfileKindWire = "codex" | "claude" | "custom";
+export type AgentProfileKindWire = "codex" | "claude" | "cursor" | "custom";
 export interface AgentProfileWire {
 	readonly displayName: string;
 	readonly id: string;

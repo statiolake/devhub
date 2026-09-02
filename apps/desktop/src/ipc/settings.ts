@@ -15,7 +15,11 @@
 
 export const SETTINGS_SCHEMA_VERSION = 1 as const;
 
-export type SettingsAgentProfileKindWire = "codex" | "claude" | "custom";
+export type SettingsAgentProfileKindWire =
+	| "codex"
+	| "claude"
+	| "cursor"
+	| "custom";
 
 export interface SettingsAgentProfileWire {
 	readonly id: string;

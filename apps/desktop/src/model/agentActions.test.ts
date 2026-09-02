@@ -58,6 +58,15 @@ describe("the skill notation", () => {
     expect(applySkillNotation("$solve-task", "custom")).toBe("$solve-task");
   });
 
+  /**
+   * Having a manifest is not knowing the dialect. DevHub can read Cursor's
+   * screen; nothing here has ever seen how Cursor spells a skill, so the line
+   * goes as written rather than as guessed.
+   */
+  it("is left as written for Cursor, whose notation nobody here has seen", () => {
+    expect(applySkillNotation("$solve-task", "cursor")).toBe("$solve-task");
+  });
+
   it("only translates at the start of a line", () => {
     // A variable being talked about, and a price, are not skills.
     expect(
