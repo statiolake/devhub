@@ -144,7 +144,7 @@ from darwin_bundle import (  # noqa: E402
 	rebrand,
 	sign,
 )
-from product_metadata import devhub_commit, devhub_version, product_metadata  # noqa: E402
+from product_metadata import devhub_commit, devhub_version, packaged_metadata  # noqa: E402
 from smoke_packaged_app import smoke  # noqa: E402
 
 # The inline `//# sourceMappingURL=data:...` tail every file of the dev compile
@@ -548,13 +548,14 @@ def bundle_main_process(target: Path) -> None:
 def write_product_json(target: Path) -> None:
 	"""VS Code's product metadata, saying DevHub where it says Code - OSS.
 
-	`product_metadata` carries the build's commit as well as DevHub's names, so
-	the packaged app can say which DevHub it is — in About, in the issue
-	reporter, and to `devhub --version`. A source run gets the same two values
-	through `vscode/product.overrides.json`, from the same function.
+	`packaged_metadata` carries DevHub's names, the build it was made from, and
+	`commit` — which VS Code reads as "this is a built layout", and which only
+	a packaged app may state. A source run gets everything but that field,
+	through `vscode/product.overrides.json`, from the same module. See the
+	docstring of scripts/product_metadata.py.
 	"""
 	product = json.loads((VSCODE_DIR / "product.json").read_text())
-	product.update(product_metadata())
+	product.update(packaged_metadata())
 	target.write_text(json.dumps(product, indent="\t") + "\n")
 
 

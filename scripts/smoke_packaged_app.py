@@ -131,6 +131,28 @@ def check_bundle_layout(app: Path) -> list[str]:
 		elif not os.access(path, os.X_OK):
 			faults.append(f"the app spawns {spawned}, and it is not executable")
 
+	# The archive is only reachable if product.json says this is a built app,
+	# and `commit` is what says it — `isBuilt = Boolean(commit)` in
+	# src/vs/amdX.ts. Without it the workbench resolves vscode-textmate,
+	# vscode-oniguruma and xterm out of a `node_modules` the bundle does not
+	# have, and highlighting and the terminal go quietly missing. The value has
+	# to be the VS Code the build was made from; DevHub's own hash answers a
+	# different question and belongs in `hostCommit`.
+	product_file = code_oss / "product.json"
+	product = json.loads(product_file.read_text()) if product_file.is_file() else {}
+	if not product.get("commit"):
+		faults.append(
+			"product.json states no commit: the workbench will look for its "
+			"modules outside node_modules.asar"
+		)
+	if not product.get("hostCommit"):
+		faults.append("product.json states no hostCommit: the app cannot say which DevHub it is")
+	if product.get("commit") == product.get("hostCommit") and product.get("commit"):
+		faults.append(
+			"product.json puts DevHub's own hash in commit: that field is the "
+			"VS Code the build was made from"
+		)
+
 	return faults
 
 

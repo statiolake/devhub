@@ -1,8 +1,8 @@
 diff --git a/src/vs/base/common/product.ts b/src/vs/base/common/product.ts
-index 46881e33054..d40105d9370 100644
+index 46881e33054..9ad31a38db3 100644
 --- a/src/vs/base/common/product.ts
 +++ b/src/vs/base/common/product.ts
-@@ -98,6 +98,10 @@ export interface IDictationRuntimeProductConfig {
+@@ -98,6 +98,16 @@ export interface IDictationRuntimeProductConfig {
  
  export interface IProductConfiguration {
  	readonly version: string;
@@ -10,14 +10,20 @@ index 46881e33054..d40105d9370 100644
 +	// above is the version of the VS Code inside it. Set by DevHub's
 +	// product.json; absent in stock builds, where the two are the same thing.
 +	readonly hostVersion?: string;
++	// DevHub: which DevHub this build is, where `commit` below is the VS Code
++	// it was built from. Set by DevHub's product.json on every build; absent in
++	// stock builds. `commit` is deliberately left to mean what VS Code means by
++	// it — the workbench reads it as "this is a packaged build" and resolves
++	// its dependencies out of node_modules.asar when it is set.
++	readonly hostCommit?: string;
  	readonly date?: string;
  	readonly quality?: string;
  	readonly commit?: string;
 diff --git a/src/vs/platform/dialogs/electron-browser/dialog.ts b/src/vs/platform/dialogs/electron-browser/dialog.ts
-index ec26804c300..f3c9b81c4d2 100644
+index ec26804c300..7c68f9ae125 100644
 --- a/src/vs/platform/dialogs/electron-browser/dialog.ts
 +++ b/src/vs/platform/dialogs/electron-browser/dialog.ts
-@@ -11,7 +11,13 @@ import { IProductService } from '../../product/common/productService.js';
+@@ -11,18 +11,32 @@ import { IProductService } from '../../product/common/productService.js';
  import { process } from '../../../base/parts/sandbox/electron-browser/globals.js';
  
  export function createNativeAboutDialogDetails(productService: IProductService, osProps: IOSProperties): { title: string; details: string; detailsToCopy: string } {
@@ -32,3 +38,23 @@ index ec26804c300..f3c9b81c4d2 100644
  	if (productService.target) {
  		version = `${version} (${productService.target} setup)`;
  	} else if (productService.darwinUniversalAssetId) {
+ 		version = `${version} (Universal)`;
+ 	}
+ 
++	// DevHub: the same split as the version above. `commit` is the VS Code the
++	// product was built from, and only a packaged build states one; `hostCommit`
++	// is which DevHub this is, and every build states it.
++	let commit = productService.hostCommit ?? productService.commit ?? 'Unknown';
++	if (productService.hostCommit && productService.commit) {
++		commit = `${productService.hostCommit} (VS Code ${productService.commit})`;
++	}
++
+ 	const getDetails = (useAgo: boolean): string => {
+ 		return localize({ key: 'aboutDetail', comment: ['Electron, Chromium, Node.js and V8 are product names that need no translation'] },
+ 			"Version: {0}\nCommit: {1}\nDate: {2}\nElectron: {3}\nElectronBuildId: {4}\nChromium: {5}\nNode.js: {6}\nV8: {7}\nOS: {8}",
+ 			version,
+-			productService.commit || 'Unknown',
++			commit,
+ 			productService.date ? `${productService.date}${useAgo ? ' (' + fromNow(new Date(productService.date), true) + ')' : ''}` : 'Unknown',
+ 			process.versions['electron'],
+ 			process.versions['microsoft-build'],

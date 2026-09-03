@@ -118,7 +118,13 @@ export function createExtensionSupport(
 			const product = services.invokeFunction((accessor) =>
 				accessor.get(IProductService),
 			);
-			return { vscodeVersion: product.version, commit: product.commit };
+			// `hostCommit` is which DevHub this is, and every build states it;
+			// `commit` is the VS Code it was built from, and only a packaged
+			// build has one. See scripts/product_metadata.py.
+			return {
+				vscodeVersion: product.version,
+				commit: product.hostCommit ?? product.commit,
+			};
 		},
 	};
 }

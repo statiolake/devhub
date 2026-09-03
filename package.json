@@ -10,7 +10,8 @@
     "fmt": "pnpm --filter @devhub/desktop fmt:check && pnpm --filter @devhub/bridge fmt:check",
     "lint": "pnpm --filter @devhub/desktop lint && pnpm --filter @devhub/bridge lint",
     "typecheck": "pnpm --filter @devhub/desktop typecheck && pnpm --filter @devhub/bridge typecheck",
-    "test": "pnpm --filter @devhub/desktop test && pnpm --filter @devhub/bridge test",
+    "test": "pnpm --filter @devhub/desktop test && pnpm --filter @devhub/bridge test && pnpm run test:scripts",
+    "test:scripts": "python3 -m unittest discover -s scripts -p '*_test.py'",
     "build": "pnpm --filter @devhub/desktop build && pnpm --filter @devhub/bridge build",
     "check": "pnpm run bridge:check && pnpm run fmt && pnpm run lint && pnpm run typecheck && pnpm run test"
   }
