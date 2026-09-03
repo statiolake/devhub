@@ -11,7 +11,7 @@ signature.
 
 ## What the bundling change does
 
-`08d086e` — *ship the packaged app as a real build, not a zipped checkout*.
+`e9647f5` — *ship the packaged app as a real build, not a zipped checkout*.
 Provisioning builds `out-vscode-min/` beside `out/` under one stamp,
 `package-nightly.py` ships the bundled tree, DevHub's own main process is
 esbuild-bundled to `code-oss-dev/out/main.js` (upstream's own entry path, which
@@ -154,7 +154,7 @@ tested — it is the identity problem, still there.
 
 ## The fix
 
-On `main`, `ee4a2ec` — *give every DevHub bundle one identity across builds*.
+On `main`, `d85799e` — *give every DevHub bundle one identity across builds*.
 
 `sign()` in `scripts/darwin_bundle.py` now names the designated requirement
 after the bundle identifier instead of leaving it as the per-build cdhash, so
@@ -175,8 +175,8 @@ handle the stale item for people who already have one is still open.
 The bundling is back on `main`, on top of the signing fix, and this time it was
 carried all the way through the verification it could never previously survive.
 
-- `ee4a2ec` — the signing fix, which is what made any of the rest possible.
-- `b8be089` — the start-up smoke test, now run by packaging itself.
+- `d85799e` — the signing fix, which is what made any of the rest possible.
+- `6d0499d` — the start-up smoke test, now run by packaging itself.
 - The merge of the write-up, and the reapplied
   *ship the packaged app as a real build, not a zipped checkout*.
 - A follow-up to `_stamp_state` in `scripts/darwin_bundle.py`, below.
