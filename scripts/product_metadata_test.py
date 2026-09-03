@@ -15,7 +15,14 @@ from __future__ import annotations
 
 import unittest
 
-from product_metadata import devhub_commit, packaged_metadata, product_metadata, vscode_commit
+from product_metadata import (
+	EXTENSION_ENABLED_API_PROPOSALS,
+	devhub_commit,
+	packaged_metadata,
+	product_metadata,
+	proposal_declaration_file,
+	vscode_commit,
+)
 
 
 class SourceRunMetadata(unittest.TestCase):
@@ -44,6 +51,32 @@ class PackagedMetadata(unittest.TestCase):
 		# — a tag, a `-dirty` suffix — is a path the app then cannot find.
 		commit = packaged_metadata()["commit"]
 		self.assertRegex(commit, r"^[0-9a-f]{40}$")
+
+
+class EnabledApiProposals(unittest.TestCase):
+	"""Which extensions may use which unfinished APIs.
+
+	The table is copied from each extension's own `enabledApiProposals`, and
+	the pinned VS Code is free to have renamed or finished any of those names
+	between releases. A name the submodule does not declare is not inert: the
+	workbench warns about an unknown proposal at startup, and the entry that
+	was supposed to unlock the extension unlocks nothing.
+	"""
+
+	def test_every_proposal_exists_in_the_pinned_vs_code(self) -> None:
+		for extension, proposals in EXTENSION_ENABLED_API_PROPOSALS.items():
+			for proposal in proposals:
+				with self.subTest(extension=extension, proposal=proposal):
+					self.assertTrue(
+						proposal_declaration_file(proposal).is_file(),
+						f"{extension} is granted {proposal}, which this VS Code does not declare",
+					)
+
+	def test_the_table_reaches_product_json(self) -> None:
+		self.assertEqual(
+			product_metadata()["extensionEnabledApiProposals"],
+			EXTENSION_ENABLED_API_PROPOSALS,
+		)
 
 
 if __name__ == "__main__":

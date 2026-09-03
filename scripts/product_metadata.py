@@ -4,9 +4,11 @@
 VS Code reads everything it knows about its own product out of `product.json` —
 its name, its data folders, its gallery, and which build it is. DevHub states
 the first three in `apps/desktop/product-overrides.json`, a static file, and the
-rest here, because they are not static: they are whatever commits the trees are
-on when the metadata is written, and whatever version `apps/desktop/package.json`
-states at the same moment.
+rest here: the commits the trees are on when the metadata is written, the
+version `apps/desktop/package.json` states at the same moment, and the table of
+which extensions may use which proposed APIs — that last one is static, but it
+is the one piece of DevHub's identity that needs its reasoning written beside
+it, and JSON has nowhere to put it.
 
 Three callers, one rule between them:
 
@@ -60,6 +62,73 @@ DESKTOP_DIR = REPO_ROOT / "apps" / "desktop"
 PRODUCT_OVERRIDES_FILE = DESKTOP_DIR / "product-overrides.json"
 PRODUCT_OVERRIDES = json.loads(PRODUCT_OVERRIDES_FILE.read_text())
 
+VSCODE_DIR = REPO_ROOT / "vscode"
+
+# Which extensions may use which unfinished APIs.
+#
+# A proposal is off unless product.json names the extension against it, and an
+# extension that asks for one it was not granted does not fail visibly: the
+# extension host logs "CANNOT use API proposal: <name>." and the feature that
+# needed it is simply absent. So this table is the whole of what makes an
+# extension work, and a missing entry looks like a broken extension.
+#
+# Upstream keeps the same table in the product.json of its *official builds* —
+# which is not the one in the vscode repository, so it cannot be read from
+# `https://raw.githubusercontent.com/microsoft/vscode/<tag>/product.json`. The
+# two places it can be read from are VSCodium's `product.json` and, the one
+# used here, the `enabledApiProposals` array in the installed extension's own
+# `package.json`. That array is the extension's statement of what it needs, so
+# it is the authority.
+#
+# To update after bumping an extension: read `enabledApiProposals` out of the
+# new version's `package.json` and reconcile it with the list below. Every name
+# must exist in the pinned submodule as
+# `vscode/src/vscode-dts/vscode.proposed.<name>.d.ts`, or the workbench warns
+# at startup about an unknown proposal; `product_metadata_test.py` fails on
+# names that do not. A proposal the submodule dropped is not substitutable —
+# leave it out and expect that part of the extension to stay dark until the
+# submodule catches up.
+EXTENSION_ENABLED_API_PROPOSALS: dict[str, list[str]] = {
+	"vscode.mermaid-markdown-features": ["chatOutputRenderer", "chatParticipantPrivate"],
+	# GitHub Pull Requests, Open VSX 0.162.0.
+	"GitHub.vscode-pull-request-github": [
+		"activeComment",
+		"chatContextProvider",
+		"chatParticipantAdditions",
+		"chatParticipantPrivate",
+		"chatSessionsProvider",
+		"codeActionRanges",
+		"codiconDecoration",
+		"commentReactor",
+		"commentReveal",
+		"commentThreadApplicability",
+		"commentingRangeHint",
+		"commentsDraftState",
+		"contribAccessibilityHelpContent",
+		"contribCommentEditorActionsMenu",
+		"contribCommentPeekContext",
+		"contribCommentThreadAdditionalMenu",
+		"contribCommentsViewThreadMenus",
+		"contribEditorContentMenu",
+		"contribShareMenu",
+		"diffCommand",
+		"languageModelToolResultAudience",
+		"markdownAlertSyntax",
+		"quickDiffProvider",
+		"remoteCodingAgents",
+		"shareProvider",
+		"tabInputMultiDiff",
+		"tokenInformation",
+		"treeItemMarkdownLabel",
+		"treeViewMarkdownMessage",
+	],
+}
+
+
+def proposal_declaration_file(proposal: str) -> Path:
+	"""Where the pinned VS Code declares a proposed API, if it has it at all."""
+	return VSCODE_DIR / "src" / "vscode-dts" / f"vscode.proposed.{proposal}.d.ts"
+
 
 def devhub_commit() -> str:
 	"""The DevHub commit this build is being made from.
@@ -111,7 +180,7 @@ def devhub_version() -> str:
 	return json.loads((DESKTOP_DIR / "package.json").read_text())["version"]
 
 
-def product_metadata() -> dict[str, str]:
+def product_metadata() -> dict[str, object]:
 	"""DevHub's product identity plus the build it was made from.
 
 	No `commit`: this is the set a source run gets, and there stating one would
@@ -119,6 +188,7 @@ def product_metadata() -> dict[str, str]:
 	"""
 	return {
 		**PRODUCT_OVERRIDES,
+		"extensionEnabledApiProposals": EXTENSION_ENABLED_API_PROPOSALS,
 		"hostVersion": devhub_version(),
 		"hostCommit": devhub_commit(),
 		# About shows this beside the commit. Without it the line reads
@@ -127,7 +197,7 @@ def product_metadata() -> dict[str, str]:
 	}
 
 
-def packaged_metadata() -> dict[str, str]:
+def packaged_metadata() -> dict[str, object]:
 	"""The same, for a build that really is packaged.
 
 	`commit` is the switch that sends the workbench to `node_modules.asar`, and
