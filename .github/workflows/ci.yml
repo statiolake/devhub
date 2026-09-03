@@ -22,15 +22,18 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v4
 
+      # pnpm has to exist before setup-node runs: `cache: pnpm` shells out to
+      # `pnpm store path` to find the cache directory, and a runner starts with
+      # no pnpm on its PATH. Corepack ships with the runner's default Node.
+      - name: Activate pinned pnpm
+        run: corepack enable && corepack prepare pnpm@11.20.0 --activate
+
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22.21.1
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
-
-      - name: Activate pinned pnpm
-        run: corepack enable && corepack prepare pnpm@11.20.0 --activate
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
