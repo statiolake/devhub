@@ -131,10 +131,10 @@ if [ -n "$INCOMPLETE" ]; then
 fi
 
 # --- 3b. the patches DevHub cannot avoid ------------------------------------
-# VS Code is consumed, never edited: everything DevHub needs is a subclass, a
-# service registration, or a replaced Electron static. patches/vscode/ is the
-# one exception, for what none of those can reach. Each patch says why in its
-# own body; the working tree is reset first so this stays idempotent.
+# Applying them is scripts/apply-vscode-patches.sh, because the VS Code bump
+# workflow needs the same step on its own to find out whether the patches still
+# apply to a newer tag. What belongs here and not there is the stamp: it is the
+# compile below that has to know what its source was.
 step "patches/vscode"
 # What `vscode/out` was built from: the submodule commit *and* the patches on
 # top of it. Both belong in the stamp — a stamp over the patches alone survives
@@ -147,12 +147,7 @@ SOURCE_STATE="$(
 	cat "$REPO_ROOT"/patches/vscode/*.patch 2>/dev/null
 	)"
 SOURCE_STATE="$(printf '%s' "$SOURCE_STATE" | shasum | cut -d' ' -f1)"
-git -C "$VSCODE_DIR" checkout -- .
-for patch in "$REPO_ROOT"/patches/vscode/*.patch; do
-	[ -e "$patch" ] || continue
-	echo "applying $(basename "$patch")"
-	git -C "$VSCODE_DIR" apply "$patch"
-done
+"$REPO_ROOT/scripts/apply-vscode-patches.sh"
 
 # --- 4. compile ------------------------------------------------------------
 # Two trees come out of this step, and the stamp covers both.

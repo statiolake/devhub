@@ -1,28 +1,51 @@
 name: CI
 
-# Runs only when asked. The job needs a macOS runner, which is billed at ten
-# times a Linux minute against a private repository's monthly allowance, so a
-# run on every push would spend the month on pushes nobody wanted checked here.
-# `pnpm run check` is the same verification, run locally before a push.
+# The deterministic checks, on every change that reaches main.
+#
+# The repository is public, so the standard runners cost nothing and there is no
+# reason to make a person remember to ask for a check. The job still needs a
+# macOS runner — the app is a macOS bundle and the packaging step signs it — so
+# it is not free of *time*: `concurrency` below cancels a branch's older run the
+# moment a newer commit lands on it, and the VS Code build cache keeps the
+# expensive half of the tree between runs.
+#
+# `pnpm run check` here is the same command a developer runs before pushing.
 on:
+  push:
+    branches: [main]
+  pull_request:
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  # One live run per branch. A superseded commit's result is not worth waiting
+  # for, and a pull request that is pushed to twice in a minute would otherwise
+  # hold two macOS runners to answer the same question.
+  group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   verify:
     runs-on: macos-15
-    timeout-minutes: 30
+    timeout-minutes: 60
     env:
       CI: "true"
     steps:
+      # The submodule is not optional here: `pnpm run check` reads it. The
+      # proposal test in scripts/product_metadata_test.py asserts that every
+      # API proposal DevHub grants is one this VS Code declares, which means
+      # opening files under vscode/src.
       - name: Check out source
         uses: actions/checkout@v4
+        with:
+          submodules: true
+          fetch-depth: 1
+
+      - name: Identify the pinned VS Code
+        id: meta
+        run: echo "vscode_sha=$(git -C vscode rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       # pnpm has to exist before setup-node runs: `cache: pnpm` shells out to
       # `pnpm store path` to find the cache directory, and a runner starts with
@@ -43,6 +66,22 @@ jobs:
           toolchain: 1.97.1
           components: rustfmt,clippy
 
+      # Keyed exactly as the nightly's is, so the two workflows share entries
+      # rather than each paying for its own first build of the same tree. See
+      # the nightly for what is in it and what deliberately is not.
+      - name: Restore the provisioned VS Code build
+        uses: actions/cache@v4
+        with:
+          path: |
+            vscode-toolchain
+            vscode/node_modules
+            vscode/out
+            vscode/out-vscode-min
+            vscode/.build
+          key: >-
+            vscode-${{ runner.os }}-${{ runner.arch }}-${{ steps.meta.outputs.vscode_sha }}-${{
+            hashFiles('vscode/package-lock.json', 'vscode/.nvmrc', 'patches/vscode/*.patch') }}
+
       - name: Install JavaScript dependencies
         run: pnpm install --frozen-lockfile
 
@@ -50,4 +89,9 @@ jobs:
         run: pnpm run check
 
       - name: Build the local workspace
+        env:
+          # The built-in extension set and the nested npm installs pull binaries
+          # from GitHub releases; unauthenticated requests from shared runner
+          # addresses hit the rate limit. The token is only there for that.
+          GITHUB_TOKEN: ${{ github.token }}
         run: pnpm run build

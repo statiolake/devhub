@@ -1,0 +1,150 @@
+name: VS Code bump
+
+# Follow upstream VS Code releases: when microsoft/vscode publishes a stable
+# release newer than the tag `vscode/` is pinned to, open a pull request that
+# moves the submodule, re-applies patches/vscode/*.patch and runs the checks.
+#
+# It never merges. A VS Code release can rename an API proposal, move a file a
+# patch reaches into, or change the workbench under DevHub's own subclasses, and
+# none of that is a bot's call. A failing bump is still worth a pull request —
+# as a draft with the failure in its body — because "the patches stopped
+# applying at 1.x" is exactly the thing that should be found by a machine at
+# 04:00 rather than by a person mid-task.
+#
+# The plan job is Linux and takes seconds. Only a day that actually has a new
+# release starts the macOS runner the checks need.
+on:
+  schedule:
+    # 19:00 UTC = 04:00 JST, an hour after the nightly, so the two do not
+    # contend for a runner and a bump lands on a main that has been packaged.
+    - cron: "0 19 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: vscode-bump
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    name: Is there a newer VS Code?
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      bump: ${{ steps.plan.outputs.bump }}
+      current: ${{ steps.plan.outputs.current }}
+      latest: ${{ steps.plan.outputs.latest }}
+      branch: ${{ steps.plan.outputs.branch }}
+    steps:
+      # No submodule: the plan reads the recorded gitlink and asks upstream
+      # which tag points at it. See scripts/vscode-bump-plan.sh.
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Plan
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/vscode-bump-plan.sh
+
+  bump:
+    name: Bump to ${{ needs.plan.outputs.latest }}
+    needs: plan
+    if: needs.plan.outputs.bump == 'true'
+    runs-on: macos-15
+    timeout-minutes: 90
+    env:
+      CI: "true"
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Activate pinned pnpm
+        run: corepack enable && corepack prepare pnpm@11.20.0 --activate
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.21.1
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.97.1
+          components: rustfmt,clippy
+
+      # Moves the submodule, re-applies the patches, runs the checks, and writes
+      # down what each of them did. It exits 0 even when they fail: the report
+      # is the deliverable, and the pull request below carries it.
+      - name: Bump the submodule and check it
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: scripts/vscode-bump-apply.sh "${{ needs.plan.outputs.latest }}" "$RUNNER_TEMP/bump-report"
+
+      - name: Read the outcome
+        id: outcome
+        run: cat "$RUNNER_TEMP/bump-report/outcome.env" >> "$GITHUB_OUTPUT"
+
+      - name: Commit the bump
+        env:
+          BRANCH: ${{ needs.plan.outputs.branch }}
+          OLD: ${{ needs.plan.outputs.current }}
+          NEW: ${{ needs.plan.outputs.latest }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$BRANCH"
+          # `vscode` is the only path staged; the patched working tree under it
+          # is untracked by design (.gitmodules marks the submodule `ignore =
+          # dirty`), so there is nothing else to leave behind.
+          git commit --only vscode -F - <<COMMIT
+          chore: follow VS Code $NEW
+
+          Moves the vscode/ submodule from $OLD to $NEW.
+          COMMIT
+          git push origin "$BRANCH"
+
+      # A pull request opened with GITHUB_TOKEN does not start any workflow —
+      # GitHub refuses, so that a workflow cannot trigger itself into a loop.
+      # The CI run is therefore asked for explicitly, on the branch, below.
+      - name: Open the pull request
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ needs.plan.outputs.branch }}
+          BASE: ${{ github.event.repository.default_branch }}
+          OLD: ${{ needs.plan.outputs.current }}
+          NEW: ${{ needs.plan.outputs.latest }}
+          PATCHES: ${{ steps.outcome.outputs.patches }}
+          CHECK: ${{ steps.outcome.outputs.check }}
+        run: |
+          set -euo pipefail
+          scripts/vscode-bump-body.sh "$OLD" "$NEW" "$RUNNER_TEMP/bump-report" > "$RUNNER_TEMP/body.md"
+          # Draft when anything went wrong: a pull request that says "ready"
+          # over a failing check is the one people learn to stop reading.
+          draft=()
+          if [ "$PATCHES" != ok ] || [ "$CHECK" != ok ]; then
+            draft=(--draft)
+          fi
+          gh pr create \
+            --base "$BASE" \
+            --head "$BRANCH" \
+            --title "chore: follow VS Code $NEW" \
+            --body-file "$RUNNER_TEMP/body.md" \
+            "${draft[@]}"
+
+      - name: Ask CI to run on the branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ needs.plan.outputs.branch }}
+        run: gh workflow run CI --ref "$BRANCH"

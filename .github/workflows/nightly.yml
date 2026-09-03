@@ -1,9 +1,12 @@
-# Package `main` on request and publish the result as a rolling prerelease.
+# Package `main` every night and publish the result as a rolling prerelease.
 #
-# There is no schedule: macOS runners are billed at ten times the Linux rate,
-# and the repository is private, so every run spends the month's minutes. A
-# build happens when someone asks for one (Actions -> Nightly -> Run workflow,
-# or `gh workflow run Nightly`), and never on its own.
+# 18:00 UTC is 03:00 the next morning in JST, so the build that runs is the one
+# for the day's work. A scheduled run first asks scripts/nightly-build-needed.sh
+# whether main has moved since the standing release was cut, and stops there if
+# it has not: rebuilding the same commit costs two hours of a macOS runner,
+# produces an equivalent app, and breaks every existing download link to publish
+# it. A run someone asks for by hand (Actions -> Nightly -> Run workflow, or
+# `gh workflow run Nightly`) always builds — asking for it is the point.
 #
 # The long pole is the VS Code submodule: `npm ci` and `npm run compile` in
 # vscode/ take the better part of half an hour, and they produce exactly the
@@ -18,6 +21,9 @@ name: Nightly
 
 on:
   workflow_dispatch:
+  schedule:
+    # 18:00 UTC = 03:00 JST.
+    - cron: "0 18 * * *"
 
 permissions:
   contents: write
@@ -28,8 +34,42 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # A minute of a Linux runner to decide whether to spend two hours of a macOS
+  # one. Nothing here needs the submodule or a build.
+  decide:
+    name: Is there anything new to package?
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      needed: ${{ steps.decision.outputs.needed }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Decide
+        id: decision
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          # Only the schedule is gated. Someone who opened the Actions tab and
+          # pressed the button has said what they want, and a workflow that
+          # answers "no thanks" to a direct request is a workflow people stop
+          # trusting; a rebuild of the same commit is what they get.
+          if [ "$EVENT" != "schedule" ]; then
+            echo "needed=true" >> "$GITHUB_OUTPUT"
+            echo "started by $EVENT, so building regardless"
+            exit 0
+          fi
+          scripts/nightly-build-needed.sh "$GITHUB_SHA"
+
   package:
     name: DevHub.app (darwin-arm64)
+    needs: decide
+    if: needs.decide.outputs.needed == 'true'
     runs-on: macos-15
     timeout-minutes: 120
     env:
@@ -44,9 +84,11 @@ jobs:
       - name: Describe this build
         id: meta
         run: |
-          echo "date=$(date -u +%Y%m%d)" >> "$GITHUB_OUTPUT"
-          echo "sha=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
-          echo "vscode_sha=$(git -C vscode rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          {
+            echo "date=$(date -u +%Y%m%d)"
+            echo "sha=$(git rev-parse --short HEAD)"
+            echo "vscode_sha=$(git -C vscode rev-parse HEAD)"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Activate pinned pnpm
         run: corepack enable && corepack prepare pnpm@11.20.0 --activate
