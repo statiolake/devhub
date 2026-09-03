@@ -22,6 +22,7 @@ REPORT="$3"
 # Named here so a report missing either half stops now, with a sentence, rather
 # than rendering a pull request body with an empty cell in the result table.
 PATCHES="${patches:?outcome.env recorded no patch result}"
+PROVISION="${provision:?outcome.env recorded no provision result}"
 CHECK="${check:?outcome.env recorded no check result}"
 
 verdict() {
@@ -48,11 +49,15 @@ Moves the \`vscode/\` submodule from **$OLD** to **$NEW**.
 | step | result |
 | --- | --- |
 | \`patches/vscode/*.patch\` | $(verdict "$PATCHES") |
+| \`scripts/provision-vscode.sh\` | $(verdict "$PROVISION") |
 | \`pnpm run check\` | $(verdict "$CHECK") |
 BODY
 
 if [ "$PATCHES" != ok ]; then
 	excerpt "Patch application" "$REPORT/patches.log"
+fi
+if [ "$PROVISION" = failed ]; then
+	excerpt "Provisioning" "$REPORT/provision.log"
 fi
 if [ "$CHECK" = failed ]; then
 	excerpt "pnpm run check" "$REPORT/check.log"

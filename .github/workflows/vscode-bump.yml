@@ -57,7 +57,10 @@ jobs:
     needs: plan
     if: needs.plan.outputs.bump == 'true'
     runs-on: macos-15
-    timeout-minutes: 90
+    # Provisioning a VS Code nobody has built here before is npm ci and both
+    # compiles from cold; there is no cache to hit, because the key is the tag
+    # that just changed.
+    timeout-minutes: 180
     env:
       CI: "true"
     steps:
@@ -82,9 +85,10 @@ jobs:
           toolchain: 1.97.1
           components: rustfmt,clippy
 
-      # Moves the submodule, re-applies the patches, runs the checks, and writes
-      # down what each of them did. It exits 0 even when they fail: the report
-      # is the deliverable, and the pull request below carries it.
+      # Moves the submodule, re-applies the patches, provisions the new VS Code
+      # and runs the checks, writing down what each of them did. It exits 0 even
+      # when they fail: the report is the deliverable, and the pull request below
+      # carries it.
       - name: Bump the submodule and check it
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -126,6 +130,7 @@ jobs:
           OLD: ${{ needs.plan.outputs.current }}
           NEW: ${{ needs.plan.outputs.latest }}
           PATCHES: ${{ steps.outcome.outputs.patches }}
+          PROVISION: ${{ steps.outcome.outputs.provision }}
           CHECK: ${{ steps.outcome.outputs.check }}
         run: |
           set -euo pipefail
@@ -133,7 +138,7 @@ jobs:
           # Draft when anything went wrong: a pull request that says "ready"
           # over a failing check is the one people learn to stop reading.
           draft=()
-          if [ "$PATCHES" != ok ] || [ "$CHECK" != ok ]; then
+          if [ "$PATCHES" != ok ] || [ "$PROVISION" != ok ] || [ "$CHECK" != ok ]; then
             draft=(--draft)
           fi
           gh pr create \

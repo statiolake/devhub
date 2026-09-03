@@ -85,6 +85,19 @@ jobs:
       - name: Install JavaScript dependencies
         run: pnpm install --frozen-lockfile
 
+      # A checked-out submodule is not a usable one, and `pnpm run check` needs
+      # a usable one twice over: typecheck resolves DevHub's main process against
+      # the types in vscode/node_modules, and the tests read fields that only
+      # exist once patches/vscode/*.patch is on the tree. Checking out the
+      # submodule without this step is how the first run of this workflow failed.
+      - name: Provision the VS Code submodule
+        env:
+          # The nested installs under build/ and extensions/* download prebuilt
+          # binaries from GitHub releases; unauthenticated requests from shared
+          # runner addresses hit the rate limit. The token is only for that.
+          GITHUB_TOKEN: ${{ github.token }}
+        run: scripts/provision-vscode.sh
+
       - name: Run deterministic checks
         run: pnpm run check
 
