@@ -96,19 +96,17 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: scripts/provision-vscode.sh
 
-      - name: Build DevHub
-        run: pnpm run build
-
-      - name: Package DevHub.app
+      # The same entry point a developer runs on their own Mac, so there is one
+      # build to keep working rather than a local one and a CI one. It repeats
+      # the install and the provision above, which are idempotent and cost
+      # seconds once the cache has been restored, and then builds DevHub's
+      # packages and assembles the bundle.
+      - name: Build DevHub.app
         env:
           # The built-in extension set pulls a handful of extensions from
           # GitHub releases; the token is only there for the rate limit.
           GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          scripts/package-nightly.py \
-            --out-dir dist \
-            --zip \
-            --zip-name "DevHub-darwin-arm64-${{ steps.meta.outputs.date }}-${{ steps.meta.outputs.sha }}.zip"
+        run: pnpm run build
 
       # The same zip, reachable without a release, for debugging a run.
       - name: Upload the zip as a workflow artifact

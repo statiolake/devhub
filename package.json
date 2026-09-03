@@ -12,7 +12,8 @@
     "typecheck": "pnpm --filter @devhub/desktop typecheck && pnpm --filter @devhub/bridge typecheck",
     "test": "pnpm --filter @devhub/desktop test && pnpm --filter @devhub/bridge test && pnpm run test:scripts",
     "test:scripts": "python3 -m unittest discover -s scripts -p '*_test.py'",
-    "build": "pnpm --filter @devhub/desktop build && pnpm --filter @devhub/bridge build",
+    "build": "scripts/build-app.sh",
+    "build:packages": "pnpm --filter @devhub/desktop build && pnpm --filter @devhub/bridge build",
     "check": "pnpm run bridge:check && pnpm run fmt && pnpm run lint && pnpm run typecheck && pnpm run test"
   }
 }

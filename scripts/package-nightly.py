@@ -442,6 +442,28 @@ def ignore_tests(directory: str, names: list[str]) -> set[str]:
 	return drop
 
 
+# node-gyp's own generated build files, as opposed to what it built. They are
+# named the same way in every native module: one `<target>.target.mk` per
+# target, the makefiles that drive them, and a `deps/` of more of the same.
+NODE_GYP_LEFTOVERS = ("Makefile", "binding.Makefile", "config.gypi", "gyp-mac-tool", "deps")
+
+
+def ignore_native_build_intermediates(directory: str, names: list[str]) -> set[str]:
+	"""node-gyp's leftovers, which spell out the machine that compiled them.
+
+	A native module's `build/` holds the linked addon in `Release/` and, beside
+	it, the makefiles node-gyp generated on the way there — and every one of
+	those repeats the compiling machine's home directory in its include flags
+	(`-I/Users/<someone>/Library/Caches/node-gyp/...`). Nothing at runtime opens
+	them, so shipping them only means a zip built on a laptop carries that
+	laptop's user name to whoever it is handed to. Drop them; keep `Release`,
+	which is the part that is actually loaded.
+	"""
+	if Path(directory).name != "build":
+		return set()
+	return {n for n in names if n.endswith((".target.mk", ".o")) or n in NODE_GYP_LEFTOVERS}
+
+
 def strip_inline_source_maps(root: Path) -> tuple[int, int]:
 	saved = 0
 	touched = 0
@@ -687,7 +709,11 @@ def assemble_app_directory(app: Path, version: str, staged_extensions: Path) -> 
 			skipped += 1
 			continue
 		relative = module.relative_to(VSCODE_DIR)
-		copy_tree(module, code_oss / relative, ignore=lambda d, names: {"node_modules"})
+		copy_tree(
+			module,
+			code_oss / relative,
+			ignore=lambda d, names: {"node_modules"} | ignore_native_build_intermediates(d, names),
+		)
 	print(f"    copied the production closure, minus {skipped} Copilot packages")
 
 	step("node_modules.asar")

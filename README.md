@@ -194,8 +194,44 @@ Provisioning is idempotent and stamped over the submodule commit *and* the
 patches, so a bump or a patch edit recompiles and nothing else does. `--force`
 redoes every step.
 
-A signed macOS app bundle comes from `scripts/package-nightly.py`. DevHub's
-product identity is stated once, in
+## Building the app
+
+```sh
+pnpm build
+```
+
+From a fresh clone that is the whole procedure: it installs the workspace,
+provisions the VS Code submodule (checkout, the Node the submodule's build
+pins, `npm ci`, DevHub's patches, both compiles, Electron) and assembles
+
+```text
+dist/DevHub.app
+dist/DevHub-darwin-arm64-<date>-<sha>.zip
+```
+
+signed ad-hoc — enough for macOS to run a modified bundle, not enough to skip
+`xattr -d com.apple.quarantine` on a bundle that has travelled. The build ends
+by starting the app and asking it something over its control socket, so a
+bundle that assembles but cannot run fails here rather than on a double-click.
+Run `scripts/smoke_packaged_app.py dist/DevHub.app` to repeat that check on its
+own.
+
+What has to be on the machine first: macOS on Apple Silicon, the Xcode command
+line tools (`xcode-select --install`), `python3`, Node, and pnpm `11.20.0`
+(`corepack enable && corepack prepare pnpm@11.20.0 --activate`). The machine's
+own Node version does not matter — the one VS Code's build insists on is
+fetched into `vscode-toolchain/`. Anything else missing, `pnpm build` produces
+rather than complains about.
+
+The first build is roughly **40–60 minutes**, nearly all of it VS Code's `npm
+ci` and its two compiles. Those are stamped, so a later build that changes only
+DevHub's own code is **about a minute**, and a submodule bump or a patch edit
+puts the long part back.
+
+The nightly workflow runs this same `pnpm build`; what it adds is a cache of
+the provisioned submodule, and publishing the zip.
+
+DevHub's product identity is stated once, in
 [`apps/desktop/product-overrides.json`](apps/desktop/product-overrides.json),
 and merged into `product.json` by
 [`scripts/product_metadata.py`](scripts/product_metadata.py) for both the source
