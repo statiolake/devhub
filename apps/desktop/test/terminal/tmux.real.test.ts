@@ -18,6 +18,7 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
@@ -60,14 +61,46 @@ interface Fixture {
   readonly runtime: TmuxTerminalRuntime;
   readonly socket: SocketName;
   readonly cancel: CancellationToken;
+  /** How many tmux processes this fixture's runtime has started so far. */
+  readonly tmuxRuns: () => number;
 }
 
 const fixtures: Fixture[] = [];
 
-function fixture(label: string, environment?: Record<string, string>): Fixture {
+/**
+ * A tmux that records every time it is run, and then is tmux.
+ *
+ * What an operation costs is not how long one command takes — on a quiet
+ * machine every one of them answers in single-digit milliseconds — but how
+ * many processes it starts. A cold start measured 2,235 tmux processes in 25
+ * seconds, and no single one of them was slow. Counting is therefore the only
+ * measurement that sees the problem, and this shim is how a test counts.
+ */
+function countingTmux(home: string): { path: string; runs: () => number } {
+  const log = join(home, "tmux-runs");
+  const path = join(home, "counting-tmux");
+  writeFileSync(
+    path,
+    `#!/bin/sh\nprintf 'x' >> ${JSON.stringify(log)}\nexec ${JSON.stringify(TMUX)} "$@"\n`,
+    { mode: 0o755 },
+  );
+  return {
+    path,
+    runs: () => (existsSync(log) ? statSync(log).size : 0),
+  };
+}
+
+function fixture(
+  label: string,
+  environment?: Record<string, string>,
+  options?: { readonly counting?: boolean },
+): Fixture {
   sequence += 1;
   const home = realpathSync(scratchDirectory(`tmux-${label}`));
   const socket = socketName(`dh${label}${process.pid}${sequence}`);
+  const counting = options?.counting
+    ? countingTmux(home)
+    : { path: TMUX as string, runs: () => 0 };
   const runtime = new TmuxTerminalRuntime({
     context: {
       home,
@@ -75,7 +108,7 @@ function fixture(label: string, environment?: Record<string, string>): Fixture {
     },
     tmux: {
       kind: "resolved",
-      value: { path: TMUX as string, basename: "tmux" },
+      value: { path: counting.path, basename: "tmux" },
     },
     shell: { path: "/bin/zsh", basename: "zsh" },
     tmuxArgs: [],
@@ -84,7 +117,13 @@ function fixture(label: string, environment?: Record<string, string>): Fixture {
     // Scratch stays inside the repository, never in the OS temp directory.
     bootstrapDirectory: home,
   });
-  const created = { home, runtime, socket, cancel: new CancellationToken() };
+  const created = {
+    home,
+    runtime,
+    socket,
+    cancel: new CancellationToken(),
+    tmuxRuns: counting.runs,
+  };
   fixtures.push(created);
   return created;
 }
@@ -443,6 +482,66 @@ describe.skipIf(TMUX === undefined)(
       const inspection = await test.runtime.inspect(target);
       expect(inspection.extraPanes).toEqual({ kind: "clean" });
       expect(inspection.extraWindows).toEqual({ kind: "clean" });
+    });
+
+    it("costs the same number of tmux processes whatever the session count", async () => {
+      const test = fixture("processes", undefined, { counting: true });
+      const targets = [];
+      for (let index = 0; index < 8; index += 1) {
+        const root = join(test.home, `workspace-${index}`);
+        mkdirSync(root, { recursive: true });
+        targets.push(
+          workspaceTarget(
+            `00000000-0000-4000-8000-00000000005${index}`,
+            realpathSync(root),
+          ),
+        );
+      }
+      await test.runtime.ensure(SCRATCH_TARGET);
+      for (const target of targets) await test.runtime.ensure(target);
+
+      // Nine marked sessions exist. Attaching to one that is already there
+      // takes a fixed five commands whatever the count is, because each of the
+      // two inventories it reads is a single `list-sessions`. Reading the
+      // markers a field at a time cost `4N` per inventory instead: the same
+      // attach measured 78 processes here, and grew by eight with every
+      // workspace the viewer had open.
+      const attachStart = test.tmuxRuns();
+      await test.runtime.ensure(targets[0]);
+      expect(test.tmuxRuns() - attachStart).toBe(5);
+
+      // An inspection reads the marker, the inventory, and both of its
+      // listings — the windows and the panes share one command. It measured
+      // 41 before.
+      const inspectStart = test.tmuxRuns();
+      const inspection = await test.runtime.inspect(targets[0]);
+      expect(inspection.extraPanes).toEqual({ kind: "clean" });
+      expect(test.tmuxRuns() - inspectStart).toBe(3);
+    });
+
+    it("keeps a root that contains a newline whole in the inventory", async () => {
+      const test = fixture("newline-root");
+      // The listing is delimited by DevHub's own record separator rather than
+      // by tmux's newline, so a path that contains a newline is still one
+      // marker and not two half-read sessions.
+      mkdirSync(join(test.home, "two\nlines"), { recursive: true });
+      const root = realpathSync(join(test.home, "two\nlines"));
+      const target = workspaceTarget(
+        "00000000-0000-4000-8000-000000000044",
+        root,
+      );
+      await test.runtime.ensure(target);
+
+      const sessions = await test.runtime.listSessions(
+        test.socket,
+        test.cancel,
+        deadline(test.runtime),
+      );
+      const created = sessions.find((session) => session.root === root);
+      expect(created).toBeDefined();
+      expect(created?.context).toBe("workspace");
+      // And the identity it read back is the one an attach accepts.
+      await test.runtime.ensure(target);
     });
 
     it("refuses a server whose marker is not DevHub's, and leaves it alone", async () => {

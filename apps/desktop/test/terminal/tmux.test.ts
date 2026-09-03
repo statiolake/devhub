@@ -15,6 +15,7 @@ import {
 	isNoServerError,
 	parseLines,
 	parseOptionValue,
+	parseRecords,
 	resolveExecutable,
 	runBounded,
 } from "../../src/main/terminal/command";
@@ -396,12 +397,11 @@ describe("the bounded runner", () => {
 	});
 
 	it("gives the next command a full budget once one has answered", async () => {
-		// The budget is a watchdog on silence, not a ration of commands.
-		// Resolving one session reads its marker with one `show-options` per
-		// field, so a single attach runs dozens of these; a cold start with
-		// several Agents ran hundreds, every one of them answering in
-		// milliseconds, and the operation still failed as "the terminal
-		// runtime did not answer in time".
+		// The budget is a watchdog on silence, not a ration of commands. An
+		// attach runs a sequence of these; a cold start with several Agents
+		// ran hundreds, every one of them answering in milliseconds, and the
+		// operation still failed as "the terminal runtime did not answer in
+		// time".
 		const deadline = OperationDeadline.in(300);
 		for (let round = 0; round < 6; round += 1) {
 			await new Promise((resolve) => setTimeout(resolve, 60));
@@ -466,6 +466,25 @@ describe("provider output parsing", () => {
 		// tmux always terminates the value; output without it is truncated.
 		expect(() => parseOptionValue(Buffer.from("/workspaces"))).toThrow();
 		expect(() => parseOptionValue(Buffer.from("/works\0paces\n"))).toThrow();
+	});
+
+	it("reads a listing by its record separator, not by tmux's newline", () => {
+		const field = "\u001f";
+		const record = "\u001e";
+		const listing =
+			`scratch${field}global${field}/a${record}\n` +
+			`ws${field}${field}/x\ny${record}\n`;
+		expect(parseRecords(Buffer.from(listing), 3)).toEqual([
+			["scratch", "global", "/a"],
+			// A value containing a newline stays one field of one record, and
+			// an unset marker is the empty string rather than a missing field.
+			["ws", "", "/x\ny"],
+		]);
+		// A record of the wrong width, and a listing that stops mid-record, are
+		// malformed answers rather than partial ones.
+		expect(() => parseRecords(Buffer.from(`a${field}b${record}\n`), 3)).toThrow();
+		expect(() => parseRecords(Buffer.from(`a${field}b${field}c\n`), 3)).toThrow();
+		expect(parseRecords(Buffer.from(""), 3)).toEqual([]);
 	});
 });
 

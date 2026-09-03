@@ -33,8 +33,7 @@ export const MAX_ROOT_METADATA_BYTES = 16 * 1024;
  *
  * It is a watchdog on *silence*, not a budget for the whole operation. The
  * distinction is the difference between a runtime that has stopped answering
- * and one that is merely being asked a lot: resolving a session reads its
- * marker with one `show-options` per field, so a single attach runs dozens of
+ * and one that is merely being asked a lot: an attach runs a sequence of
  * commands, and on a cold start several attaches and the Agent reconciler all
  * do it at once. Every one of those commands answered in milliseconds and the
  * operation still ran past a fixed three-second budget — which reported "the
@@ -267,6 +266,57 @@ export function parseLines(output: Buffer): string[] {
 		lines.push(line);
 	}
 	return lines;
+}
+
+/**
+ * The two bytes a tmux `-F` format uses to delimit what it answers.
+ *
+ * Neither can arrive from the values themselves: they are C0 control
+ * characters, and every field DevHub reads this way is either a tmux-generated
+ * name or a marker DevHub wrote. If one ever did appear inside a value, the
+ * record would fail to parse or fail to match, which is the fail-closed side.
+ */
+export const FIELD_SEPARATOR = "\u001f";
+export const RECORD_SEPARATOR = "\u001e";
+
+/**
+ * Parse the answer of one `-F` listing into records of fixed width.
+ *
+ * The newline tmux appends after each expanded format is *not* the record
+ * separator here — a marker value may contain newlines (a path legitimately
+ * can), and splitting on them would tear one session's identity into two
+ * half-read ones. The format itself ends with `RECORD_SEPARATOR`, so a record
+ * ends where DevHub said it ends and tmux's newline is only the byte that
+ * follows it.
+ *
+ * A record of the wrong width, a missing terminator or a NUL is malformed
+ * provider output, not a partial answer to be used anyway.
+ */
+export function parseRecords(output: Buffer, fieldCount: number): string[][] {
+	if (output.byteLength > MAX_OUTPUT_BYTES) throw portFailure("failed");
+	const text = decodeUtf8(output);
+	if (text.includes("\0")) throw portFailure("failed");
+	if (text.length === 0) return [];
+	const chunks = text.split(RECORD_SEPARATOR);
+	// Every record is terminated, so what follows the last one is exactly the
+	// newline tmux appended to it.
+	if (chunks.pop() !== "\n") throw portFailure("failed");
+	if (chunks.length > MAX_LINES) throw portFailure("failed");
+	const records: string[][] = [];
+	for (const [index, chunk] of chunks.entries()) {
+		if (index > 0 && !chunk.startsWith("\n")) throw portFailure("failed");
+		const fields = (index === 0 ? chunk : chunk.slice(1)).split(
+			FIELD_SEPARATOR,
+		);
+		if (fields.length !== fieldCount) throw portFailure("failed");
+		for (const field of fields) {
+			if (field.length > MAX_ROOT_METADATA_BYTES) {
+				throw portFailure("failed");
+			}
+		}
+		records.push(fields);
+	}
+	return records;
 }
 
 /**

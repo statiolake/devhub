@@ -47,12 +47,15 @@ import {
 	type ResourceInspection,
 } from "../../model/domain.js";
 import {
+	FIELD_SEPARATOR,
 	MAX_ROOT_METADATA_BYTES,
 	OperationDeadline,
+	RECORD_SEPARATOR,
 	isNoServerError,
 	parseLines,
 	parseOptionValue,
 	parseCapture,
+	parseRecords,
 	runBounded,
 	type CommandOutput,
 	type ResolvedExecutable,
@@ -95,6 +98,22 @@ const NO_AGENT = "none";
 export const SCRATCH_SESSION = "scratch";
 const MIN_TMUX_MAJOR = 3;
 const MIN_TMUX_MINOR = 3;
+/**
+ * One session's whole identity, as tmux expands it: name, then the four
+ * markers, with the root last because it is the only value that may contain a
+ * newline of its own.
+ */
+const SESSION_FORMAT =
+	[
+		"#{session_name}",
+		`#{${CONTEXT_OPTION}}`,
+		`#{${WORKSPACE_ID_OPTION}}`,
+		`#{${AGENT_ID_OPTION}}`,
+		`#{${ROOT_OPTION}}`,
+	].join(FIELD_SEPARATOR) + RECORD_SEPARATOR;
+/** Which of the two listings a record of `listWindowsAndPanes` came from. */
+const WINDOW_RECORD = "window";
+const PANE_RECORD = "pane";
 const MAX_SESSIONS = 1024;
 const MAX_WINDOWS = 256;
 const MAX_PANES = 1024;
@@ -295,6 +314,15 @@ export function isWorkspaceSessionName(name: string, root: string): boolean {
  * has to carry a real id, and `none` is not one, so an agent-context session
  * with no marker stays unowned exactly as before.
  */
+/**
+ * A marker as read from a format expansion. DevHub never writes an empty
+ * marker, so empty is how an unset one arrives — the same answer the
+ * per-field `show-options` gave by returning no output at all.
+ */
+function markerValue(raw: string): string | undefined {
+	return raw.length === 0 ? undefined : raw;
+}
+
 function agentIdMarker(raw: string | undefined): string {
 	return raw === undefined ? NO_AGENT : raw;
 }
@@ -577,6 +605,16 @@ export class TmuxTerminalRuntime {
 	private readonly bootstrapDirectory: string;
 	/** One in-flight bring-up per socket, shared by concurrent callers. */
 	private readonly serverBootstraps = new Map<SocketName, Promise<void>>();
+	/**
+	 * The executable whose `tmux -V` this runtime has already accepted.
+	 *
+	 * Every operation begins by checking the version, and the answer cannot
+	 * change under a resolved executable: the path is canonical and the runtime
+	 * never re-derives it, so a second `-V` is a process spent re-reading a
+	 * constant. A replaced binary still cannot slip past — the very next tmux
+	 * command runs the new one, and reports its own failure.
+	 */
+	private acceptedVersionOf: string | undefined;
 	readonly timeoutMs: number;
 
 	constructor(options: TmuxTerminalRuntimeOptions) {
@@ -1344,15 +1382,7 @@ export class TmuxTerminalRuntime {
 			// Without the configured shell's name there is no way to tell a
 			// pane that is only a shell from one running the viewer's work.
 			if (this.shellName === undefined) return unknownInspection();
-			const windows = await this.listCount(
-				socket,
-				session.name,
-				"list-windows",
-				"#{window_id}",
-				cancel,
-				deadline,
-			);
-			const panes = await this.listPanes(
+			const { windows, panes } = await this.listWindowsAndPanes(
 				socket,
 				session.name,
 				cancel,
@@ -1538,6 +1568,8 @@ export class TmuxTerminalRuntime {
 		cancel: CancellationToken,
 		deadline: OperationDeadline,
 	): Promise<void> {
+		const executable = this.executable().path;
+		if (this.acceptedVersionOf === executable) return;
 		const output = await this.runTmux(
 			socket,
 			["-V"],
@@ -1559,6 +1591,7 @@ export class TmuxTerminalRuntime {
 		) {
 			throw portFailure("incompatible");
 		}
+		this.acceptedVersionOf = executable;
 	}
 
 	targetIdentity(
@@ -1764,6 +1797,22 @@ export class TmuxTerminalRuntime {
 		}
 	}
 
+	/**
+	 * Every session on the socket, with its whole marker tuple, in one command.
+	 *
+	 * The markers are read by `-F` rather than by a `show-options` per field.
+	 * That is not only cheaper — it is the difference between an inventory that
+	 * costs one process and one that costs `4N + 1`, which on a cold start with
+	 * a dozen sessions is what made a single attach spawn dozens of tmuxes —
+	 * but also atomic per session: the five values come out of one expansion of
+	 * one session, so a tuple can no longer be assembled from a session that
+	 * was replaced between two reads of it.
+	 *
+	 * The four markers are only ever set on a session, never globally, so the
+	 * format expands exactly what `show-options -t <session> -qv` answered. An
+	 * unset marker expands to the empty string, and DevHub never writes an
+	 * empty marker: empty therefore means absent, as it did before.
+	 */
 	async listSessions(
 		socket: SocketName,
 		cancel: CancellationToken,
@@ -1771,7 +1820,7 @@ export class TmuxTerminalRuntime {
 	): Promise<SessionInfo[]> {
 		const output = await this.runTmux(
 			socket,
-			["list-sessions", "-F", "#{session_name}"],
+			["list-sessions", "-F", SESSION_FORMAT],
 			this.contextHome,
 			cancel,
 			deadline,
@@ -1780,103 +1829,66 @@ export class TmuxTerminalRuntime {
 			if (isNoServerError(output.stderr)) return [];
 			throw portFailure("failed");
 		}
-		const names = parseLines(output.stdout);
-		if (names.length > MAX_SESSIONS) throw portFailure("failed");
-		const sessions: SessionInfo[] = [];
-		for (const name of names) {
-			sessions.push({
-				name,
-				context: await this.showOption(
-					socket,
-					name,
-					CONTEXT_OPTION,
-					cancel,
-					deadline,
-				),
-				workspaceId: await this.showOption(
-					socket,
-					name,
-					WORKSPACE_ID_OPTION,
-					cancel,
-					deadline,
-				),
-				root: await this.showOption(
-					socket,
-					name,
-					ROOT_OPTION,
-					cancel,
-					deadline,
-				),
-				agentId: agentIdMarker(
-					await this.showOption(
-						socket,
-						name,
-						AGENT_ID_OPTION,
-						cancel,
-						deadline,
-					),
-				),
-			});
+		const records = parseRecords(output.stdout, 5);
+		if (records.length > MAX_SESSIONS) throw portFailure("failed");
+		return records.map((record) => ({
+			name: record[0],
+			context: markerValue(record[1]),
+			workspaceId: markerValue(record[2]),
+			agentId: agentIdMarker(markerValue(record[3])),
+			// Last, because it is the field whose value may itself contain a
+			// newline; the record separator is what ends it either way.
+			root: markerValue(record[4]),
+		}));
+	}
+
+	/**
+	 * The windows and panes of one session, in one command.
+	 *
+	 * Two listings share a client queue rather than a process each, and each
+	 * record says which listing it came from — the two answers arrive on one
+	 * stream and would otherwise be indistinguishable.
+	 */
+	private async listWindowsAndPanes(
+		socket: SocketName,
+		session: string,
+		cancel: CancellationToken,
+		deadline: OperationDeadline,
+	): Promise<{ windows: number; panes: string[] }> {
+		const output = await this.runTmux(
+			socket,
+			[
+				"list-windows",
+				"-t",
+				session,
+				"-F",
+				`${WINDOW_RECORD}${FIELD_SEPARATOR}#{window_id}${RECORD_SEPARATOR}`,
+				";",
+				"list-panes",
+				"-t",
+				session,
+				"-F",
+				`${PANE_RECORD}${FIELD_SEPARATOR}#{pane_current_command}${RECORD_SEPARATOR}`,
+			],
+			this.contextHome,
+			cancel,
+			deadline,
+		);
+		if (!output.success) throw portFailure("failed");
+		const records = parseRecords(output.stdout, 2);
+		const windows = records.filter(
+			(record) => record[0] === WINDOW_RECORD,
+		).length;
+		const panes = records
+			.filter((record) => record[0] === PANE_RECORD)
+			.map((record) => record[1]);
+		if (windows > MAX_WINDOWS || panes.length > MAX_PANES) {
+			throw portFailure("failed");
 		}
-		return sessions;
-	}
-
-	private async showOption(
-		socket: SocketName,
-		session: string,
-		option: string,
-		cancel: CancellationToken,
-		deadline: OperationDeadline,
-	): Promise<string | undefined> {
-		const output = await this.runTmux(
-			socket,
-			["show-options", "-t", session, "-qv", option],
-			this.contextHome,
-			cancel,
-			deadline,
-		);
-		if (!output.success || output.stdout.byteLength === 0) return undefined;
-		return parseOptionValue(output.stdout);
-	}
-
-	private async listCount(
-		socket: SocketName,
-		session: string,
-		command: string,
-		format: string,
-		cancel: CancellationToken,
-		deadline: OperationDeadline,
-	): Promise<number> {
-		const output = await this.runTmux(
-			socket,
-			[command, "-t", session, "-F", format],
-			this.contextHome,
-			cancel,
-			deadline,
-		);
-		if (!output.success) throw portFailure("failed");
-		const lines = parseLines(output.stdout);
-		if (lines.length > MAX_WINDOWS) throw portFailure("failed");
-		return lines.length;
-	}
-
-	private async listPanes(
-		socket: SocketName,
-		session: string,
-		cancel: CancellationToken,
-		deadline: OperationDeadline,
-	): Promise<string[]> {
-		const output = await this.runTmux(
-			socket,
-			["list-panes", "-t", session, "-F", "#{pane_current_command}"],
-			this.contextHome,
-			cancel,
-			deadline,
-		);
-		if (!output.success) throw portFailure("failed");
-		const lines = parseLines(output.stdout);
-		if (lines.length > MAX_PANES) throw portFailure("failed");
-		return lines;
+		if (windows + panes.length !== records.length) {
+			throw portFailure("failed");
+		}
+		return { windows, panes };
 	}
 
 	/**
