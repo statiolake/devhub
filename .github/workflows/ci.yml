@@ -1,9 +1,11 @@
 name: CI
 
+# Runs only when asked. The job needs a macOS runner, which is billed at ten
+# times a Linux minute against a private repository's monthly allowance, so a
+# run on every push would spend the month on pushes nobody wanted checked here.
+# `pnpm run check` is the same verification, run locally before a push.
 on:
-  push:
-    branches: [main]
-  pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
