@@ -38,6 +38,7 @@ import { dirname, join } from "node:path";
 import { BUILT_IN_ACTIONS } from "./agentActions.js";
 import { dateTemplateBracketsBalance } from "./dateTemplate.js";
 import { isValidFontFamily } from "./fontFamily.js";
+import { currentProfile, type ProfileLocations } from "./profile.js";
 import { mergeScopes, subtractScope } from "./settingsScopes.js";
 import {
   parseTomlValue,
@@ -99,20 +100,17 @@ function decodeUtf8(bytes: Buffer, scope: ConfigScope): string {
 /**
  * Where the settings live.
  *
- * `~/.config/devhub/`, unless `XDG_CONFIG_HOME` says otherwise — which is the
- * convention for everything else under `~/.config`, and is what lets a test or
- * a second instance be pointed somewhere else without moving `HOME` and taking
- * the Keychain, the caches and the app's whole identity with it.
+ * `~/.config/devhub/` for the default profile, `~/.config/devhub-<profile>/`
+ * for any other, and `$XDG_CONFIG_HOME` in place of `~/.config` when it says
+ * so. The directory is not spelled here: `profile.ts` derives it along with
+ * every other location a profile decides, so a second DevHub cannot end up
+ * separated everywhere but its settings.
  */
 export function defaultConfigPaths(
   home: string,
   environment: Readonly<Record<string, string | undefined>> = process.env,
 ): ConfigPaths {
-  const xdg = environment["XDG_CONFIG_HOME"];
-  const directory =
-    xdg !== undefined && xdg.startsWith("/")
-      ? join(xdg, "devhub")
-      : join(home, ".config", "devhub");
+  const directory = currentProfile(home, environment).configDirectory;
   return {
     global: join(directory, GLOBAL_CONFIG_FILE_NAME),
     local: join(directory, LOCAL_CONFIG_FILE_NAME),
@@ -297,6 +295,45 @@ export interface Config {
   readonly workspaceSources: readonly WorkspaceSource[];
   readonly agentProfiles: readonly ConfiguredAgentProfile[];
   readonly agentActions: readonly ConfiguredAgentAction[];
+}
+
+/**
+ * The configuration a non-default profile actually runs on.
+ *
+ * `runtimes.tmux_socket_name` is the one setting a person can write that would
+ * undo the separation a profile exists for: a development DevHub whose
+ * settings were seeded from the production one carries
+ * `tmux_socket_name = "devhub"`, and two DevHubs on one tmux server manage each
+ * other's sessions.
+ *
+ * The profile wins, rather than the app refusing to start. Refusing would be
+ * correct if the setting were a request DevHub could not honour, but it is
+ * not: separation is the whole meaning of asking for a second profile, so the
+ * profile's socket *is* what was asked for, and a shared settings file that
+ * names the production socket is the ordinary case rather than a mistake to
+ * report. The override is logged so that "my socket name is ignored here" is
+ * something the person is told rather than something they discover.
+ */
+export function withProfileRuntimes(
+  config: Config,
+  locations: ProfileLocations,
+): { config: Config; overriddenSocketName?: string } {
+  if (
+    locations.isDefault ||
+    config.runtimes.tmux_socket_name === locations.tmuxSocketName
+  ) {
+    return { config };
+  }
+  return {
+    config: {
+      ...config,
+      runtimes: {
+        ...config.runtimes,
+        tmux_socket_name: locations.tmuxSocketName,
+      },
+    },
+    overriddenSocketName: config.runtimes.tmux_socket_name,
+  };
 }
 
 export function defaultTerminalLight(): TerminalPalette {

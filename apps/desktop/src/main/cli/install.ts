@@ -29,6 +29,17 @@ export interface InstallRequest {
 	readonly cliScript: string;
 	/** The control socket of the app doing the installing. */
 	readonly socketPath: string;
+	/**
+	 * What the launcher is called, and which DevHub it belongs to.
+	 *
+	 * A profile installs its own command — `devhub` for the default one,
+	 * `devhub-dev` for a development profile — so a second DevHub does not
+	 * quietly take the first one's name in the PATH. The profile travels in the
+	 * script as well, because the CLI needs it to know which bundle to ask
+	 * macOS for when nothing is listening.
+	 */
+	readonly commandName: string;
+	readonly profile: string;
 	readonly home: string;
 	/** The PATH the installing process sees, for the "add this" advice. */
 	readonly pathValue: string;
@@ -61,6 +72,7 @@ export function launcherScript(request: InstallRequest): string {
 		"# below are absolute, and that is what makes this script work without a",
 		"# system Node installation.",
 		`DEVHUB_CONTROL_SOCKET=${shellQuote(request.socketPath)} \\`,
+		`DEVHUB_PROFILE=${shellQuote(request.profile)} \\`,
 		"ELECTRON_RUN_AS_NODE=1 \\",
 		`exec ${shellQuote(request.execPath)} ${shellQuote(request.cliScript)} "$@"`,
 		"",
@@ -102,7 +114,7 @@ export function installLauncher(request: InstallRequest): InstallResult {
 				continue;
 			}
 		}
-		const launcherPath = join(directory, "devhub");
+		const launcherPath = join(directory, request.commandName);
 		writeFileSync(launcherPath, launcherScript(request), { mode: 0o755 });
 		return {
 			launcherPath,
@@ -120,7 +132,9 @@ function installMessage(
 	refused: readonly string[],
 	request: InstallRequest,
 ): string {
-	const parts = [`Installed the 'devhub' command at ${launcherPath}.`];
+	const parts = [
+		`Installed the '${request.commandName}' command at ${launcherPath}.`,
+	];
 	if (refused.length > 0) {
 		parts.push(
 			`${refused.join(" and ")} ${refused.length === 1 ? "is" : "are"} not writable, so it was not used — DevHub does not use sudo.`,

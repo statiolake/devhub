@@ -194,6 +194,25 @@ Provisioning is idempotent and stamped over the submodule commit *and* the
 patches, so a bump or a patch edit recompiles and nothing else does. `--force`
 redoes every step.
 
+`pnpm dev` runs under the `dev` profile, so a source build and the packaged
+DevHub can be open at the same time — which is what makes developing DevHub
+inside DevHub possible. `DEVHUB_PROFILE` is the whole switch: unset (every
+packaged run) is the default profile, on exactly the locations DevHub has
+always used, and any other name derives a complete, disjoint set of them —
+`~/Library/Application Support/DevHub Dev/` for the editor's user data and
+extensions, `~/.config/devhub-dev/` for the settings, the `devhub-dev` tmux
+socket, its own control socket, and a `devhub-dev` command in the PATH.
+`src/model/profile.ts` derives all of it from the one name.
+
+A new profile's first launch copies the default profile's
+`settings.local.toml` in, so it starts configured rather than empty, and says
+so in the log. It is a copy: the two are meant to drift. `settings.toml` is not
+copied — it is the shared half, and both profiles pointing at the same dotfiles
+symlink is right. One setting a profile does not take from that copy is
+`runtimes.tmux_socket_name`: a second DevHub on the first one's tmux server
+would manage the first one's sessions, so the profile's socket wins and the
+override is logged.
+
 ## Building the app
 
 ```sh

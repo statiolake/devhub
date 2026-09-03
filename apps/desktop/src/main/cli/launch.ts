@@ -32,8 +32,14 @@ import { execFile } from "node:child_process";
 import { connect } from "node:net";
 import type { ControlResponse } from "./protocol.js";
 
-/** DevHub's bundle identifier, as macOS knows it. */
-export const BUNDLE_ID = "dev.devhub.app";
+/**
+ * The bundle to ask macOS for.
+ *
+ * It is a parameter rather than a constant because which DevHub the CLI
+ * belongs to is decided by the profile in its generated launcher, and a
+ * `devhub-dev` that woke the packaged DevHub would be answering with the wrong
+ * application.
+ */
 
 /** How long a cold start is given before the wait is called a failure. */
 export const LAUNCH_TIMEOUT_MS = 30_000;
@@ -64,6 +70,8 @@ export class NotRunning extends Error {
 export interface Launcher {
 	/** Ask macOS to start DevHub. Rejects with the reason it could not. */
 	open(): Promise<void>;
+	/** The bundle `open` was asked for, for the message when it is not there. */
+	readonly bundleIdentifier: string;
 	/** Whether the control socket is answering right now. */
 	answers(): Promise<boolean>;
 	pause(ms: number): Promise<void>;
@@ -108,7 +116,7 @@ export async function launchAndWait(launcher: Launcher): Promise<void> {
 		throw new Error(
 			`DevHub is not running, and it could not be started: ${
 				error instanceof Error ? error.message : String(error)
-			}\nmacOS was asked to open the bundle ${BUNDLE_ID} and found no DevHub installed. A DevHub running from a source checkout is not registered with macOS, so start that one yourself and run this command again.`,
+			}\nmacOS was asked to open the bundle ${launcher.bundleIdentifier} and found no DevHub installed. A DevHub running from a source checkout is not registered with macOS, so start that one yourself and run this command again.`,
 		);
 	}
 	const deadline = launcher.now() + LAUNCH_TIMEOUT_MS;
@@ -124,9 +132,13 @@ export async function launchAndWait(launcher: Launcher): Promise<void> {
 }
 
 /** The real thing: macOS, the socket, and the clock. */
-export function bundleLauncher(socketPath: string): Launcher {
+export function bundleLauncher(
+	socketPath: string,
+	bundleIdentifier: string,
+): Launcher {
 	return {
-		open: openBundle,
+		bundleIdentifier,
+		open: () => openBundle(bundleIdentifier),
 		answers: () => socketAnswers(socketPath),
 		pause: (ms) =>
 			new Promise((resolve) => {
@@ -136,18 +148,22 @@ export function bundleLauncher(socketPath: string): Launcher {
 	};
 }
 
-function openBundle(): Promise<void> {
+function openBundle(bundleIdentifier: string): Promise<void> {
 	return new Promise((resolve, reject) => {
-		execFile("/usr/bin/open", ["-b", BUNDLE_ID], (error, _stdout, stderr) => {
-			if (!error) {
-				resolve();
-				return;
-			}
-			// `open` puts its reason on stderr and says nothing useful in the
-			// exit status, so the reason is what gets reported.
-			const reason = stderr.trim();
-			reject(new Error(reason.length > 0 ? reason : error.message));
-		});
+		execFile(
+			"/usr/bin/open",
+			["-b", bundleIdentifier],
+			(error, _stdout, stderr) => {
+				if (!error) {
+					resolve();
+					return;
+				}
+				// `open` puts its reason on stderr and says nothing useful in the
+				// exit status, so the reason is what gets reported.
+				const reason = stderr.trim();
+				reject(new Error(reason.length > 0 ? reason : error.message));
+			},
+		);
 	});
 }
 

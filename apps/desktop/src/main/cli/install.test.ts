@@ -14,6 +14,8 @@ describe("installing the devhub launcher", () => {
 			execPath: join(scratch, "Code - OSS"),
 			cliScript: join(scratch, "out", "main", "cli", "devhubCli.js"),
 			socketPath: join(scratch, "user-data", "devhub", "control.sock"),
+			commandName: "devhub",
+			profile: "default",
 			home: scratch,
 			pathValue: "/usr/bin:/bin",
 		};
@@ -81,5 +83,20 @@ describe("installing the devhub launcher", () => {
 		expect(script).toContain("exec '/Apps/Code - OSS'");
 		expect(script).toContain("DEVHUB_CONTROL_SOCKET='/a b/control.sock'");
 		expect(shellQuote("it's")).toBe(`'it'\\''s'`);
+	});
+
+	it("installs a profile's own command, carrying the profile to the CLI", () => {
+		const directory = join(scratch, "bin");
+		mkdirSync(directory);
+		const result = installLauncher({
+			...request,
+			commandName: "devhub-dev",
+			profile: "dev",
+			candidates: [directory],
+		});
+		expect(result.launcherPath).toBe(join(directory, "devhub-dev"));
+		expect(readFileSync(result.launcherPath, "utf8")).toContain(
+			"DEVHUB_PROFILE='dev'",
+		);
 	});
 });

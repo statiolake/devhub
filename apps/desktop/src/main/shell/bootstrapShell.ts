@@ -31,6 +31,7 @@ import { startControlServer } from "../cli/controlServer.js";
 import { controlSocketPath } from "../cli/protocol.js";
 import { installLauncher } from "../cli/install.js";
 import { missingWorkbenchDefaults } from "../workbenchDefaults.js";
+import { activeProfile } from "../../model/profile.js";
 
 /** How long a quit waits for the runtimes to let go before leaving anyway. */
 const SHUTDOWN_DEADLINE_MS = 3_000;
@@ -144,6 +145,8 @@ export async function bootstrapShell(
 					execPath: process.execPath,
 					cliScript: join(APP_ROOT, "out", "main", "cli", "devhubCli.js"),
 					socketPath,
+					commandName: activeProfile().cliCommandName,
+					profile: activeProfile().profile,
 					home: homedir(),
 					pathValue: process.env["PATH"] ?? "",
 				}).message,

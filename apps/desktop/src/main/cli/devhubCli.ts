@@ -29,6 +29,7 @@ import { resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseFileAndPosition, type FilePosition } from "./goto.js";
 import { bundleLauncher, NotRunning, sendOrLaunch } from "./launch.js";
+import { activeProfile } from "../../model/profile.js";
 import { expandPath } from "./resolve.js";
 import { spoolStdin, stdinSpoolPath } from "./stdin.js";
 import {
@@ -498,7 +499,9 @@ async function run(
 	// do is answered by the DevHub that exists, or not at all; see `launch.ts`.
 	const response = await sendOrLaunch(
 		() => ask(socketPath, request),
-		command.kind === "activate" ? bundleLauncher(socketPath) : undefined,
+		command.kind === "activate"
+			? bundleLauncher(socketPath, activeProfile().bundleIdentifier)
+			: undefined,
 	);
 	if (response === undefined) {
 		// `open -b` brings the app forward on its way, so there is nothing left

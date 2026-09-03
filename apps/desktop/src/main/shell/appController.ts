@@ -83,8 +83,15 @@ import {
 } from "../../model/intents.js";
 import { AppModel } from "../../model/appModel.js";
 import {
+	activeProfile,
+	DEFAULT_PROFILE,
+	profileLocations,
+} from "../../model/profile.js";
+import { seedProfileSettings } from "../profileSeed.js";
+import {
 	ConfigStore,
 	defaultConfigPaths,
+	withProfileRuntimes,
 	type Config,
 } from "../../model/config.js";
 import {
@@ -390,9 +397,17 @@ export class AppController {
 		// whole of the change. Once a run has owned sessions on a socket, the
 		// configured name becomes a request Settings has to apply, because
 		// switching silently would abandon them.
-		const configuredSocket = config?.runtimes.tmux_socket_name;
+		//
+		// A non-default profile is the exception, and for the same reason its
+		// settings cannot name a socket: its whole purpose is to be a DevHub
+		// that shares no tmux server with the other one, so its socket is
+		// adopted whether or not this is a first run.
+		const profile = activeProfile();
+		const configuredSocket = profile.isDefault
+			? config?.runtimes.tmux_socket_name
+			: profile.tmuxSocketName;
 		if (
-			this.freshState &&
+			(this.freshState || !profile.isDefault) &&
 			configuredSocket !== undefined &&
 			this.state.tmux.transition.kind === "stable" &&
 			this.state.tmux.effective_socket_name !== configuredSocket
@@ -422,7 +437,7 @@ export class AppController {
 				shell: "/bin/zsh",
 				git: "git",
 				tmux: "tmux",
-				tmux_socket_name: "devhub",
+				tmux_socket_name: activeProfile().tmuxSocketName,
 				tmux_args: [],
 			},
 			this.launchEnvironment["PATH"] ?? "",
@@ -2982,10 +2997,29 @@ export async function createAppController(
 	}
 	setRuntimeVersion(electron.app.getVersion());
 
+	// One switch, resolved once: which DevHub this is, and therefore where its
+	// settings, its state and its tmux server are. See model/profile.ts.
+	const profile = activeProfile();
+	const seeded = seedProfileSettings(
+		profile,
+		profileLocations(DEFAULT_PROFILE, homedir()),
+	);
+	if (seeded.kind === "copied") {
+		console.log(
+			`[devhub] profile ${profile.profile}: seeded ${seeded.to} from ${seeded.from}`,
+		);
+	}
 	const configStore = new ConfigStore(defaultConfigPaths(homedir()));
 	let config: Config | undefined;
 	try {
-		config = (await configStore.load()).config;
+		const loaded = (await configStore.load()).config;
+		const applied = withProfileRuntimes(loaded, profile);
+		if (applied.overriddenSocketName !== undefined) {
+			console.log(
+				`[devhub] profile ${profile.profile}: runtimes.tmux_socket_name = "${applied.overriddenSocketName}" is ignored here; this profile uses "${profile.tmuxSocketName}"`,
+			);
+		}
+		config = applied.config;
 	} catch {
 		// A config that will not parse is not a reason not to start: the shell
 		// comes up, and the failure is reported to the page and the Settings

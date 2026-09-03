@@ -54,11 +54,20 @@ fi
 # its product.json from as well.
 "$REPO_ROOT/scripts/product_metadata.py" "$VSCODE_DIR/product.overrides.json"
 
-# DevHub's own state, beside the user's real VS Code state and never inside it.
-DEVHUB_DATA="$HOME/Library/Application Support/DevHub"
-USER_DATA_DIR="$DEVHUB_DATA/editor"
-EXTENSIONS_DIR="$DEVHUB_DATA/extensions"
-mkdir -p "$USER_DATA_DIR" "$EXTENSIONS_DIR"
+# Which DevHub this run is. A source run is a *second* DevHub: the packaged one
+# is the environment the person works in, and the two cannot share the editor's
+# user-data directory (VS Code makes that single-instance, so the second one
+# simply never starts), the settings, the tmux server or the control socket.
+# `DEVHUB_PROFILE` is the whole switch — set it to `default` to run a source
+# build on the packaged app's own locations instead.
+export DEVHUB_PROFILE="${DEVHUB_PROFILE:-dev}"
+
+# Every location the profile decides, derived where it is decided — in
+# src/model/profile.ts, printed by out/main/profilePaths.js. Spelling them here
+# as well is how the shell and the app end up disagreeing after a rename.
+eval "$(ELECTRON_RUN_AS_NODE=1 "$ELECTRON" "$APP_DIR/out/main/profilePaths.js")"
+mkdir -p "$DEVHUB_USER_DATA_DIR" "$DEVHUB_EXTENSIONS_DIR"
+echo "[devhub] profile $DEVHUB_PROFILE_NAME: user data $DEVHUB_USER_DATA_DIR, settings $DEVHUB_CONFIG_DIR, tmux socket $DEVHUB_TMUX_SOCKET_NAME" >&2
 
 export VSCODE_DEV=1
 export VSCODE_CLI=1
@@ -67,8 +76,8 @@ export ELECTRON_ENABLE_LOGGING=1
 export ELECTRON_ENABLE_STACK_DUMPING=1
 
 exec "$ELECTRON" "$APP_DIR" \
-	--user-data-dir "$USER_DATA_DIR" \
-	--extensions-dir "$EXTENSIONS_DIR" \
+	--user-data-dir "$DEVHUB_USER_DATA_DIR" \
+	--extensions-dir "$DEVHUB_EXTENSIONS_DIR" \
 	--builtin-extensions-dir "$REPO_ROOT/vscode/.build/devhub-builtin-extensions" \
 	--disable-extension=vscode.vscode-api-tests \
 	"$@"

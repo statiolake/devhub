@@ -12,8 +12,8 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { DEFAULT_PROFILE, profileLocations } from "../../model/profile.js";
 import {
-	BUNDLE_ID,
 	LAUNCH_TIMEOUT_MS,
 	launchAndWait,
 	NotRunning,
@@ -35,6 +35,7 @@ function fakeLauncher(options: {
 	let probes = 0;
 	let clock = 0;
 	return {
+		bundleIdentifier: BUNDLE_ID,
 		opened,
 		probes: () => probes,
 		open: () => {
@@ -59,14 +60,19 @@ function fakeLauncher(options: {
 	};
 }
 
+const BUNDLE_ID = profileLocations(
+	DEFAULT_PROFILE,
+	"/home/tester",
+).bundleIdentifier;
+
 const ANSWER: ControlResponse = { ok: true, message: "DevHub is in front." };
 
 describe("starting DevHub when a bare devhub finds none", () => {
 	/**
-	 * The identifier is a copy, because this file may not import anything from
-	 * the app — it runs as a plain script under the app's Electron as Node, and
-	 * that isolation is the whole reason the CLI works in a checkout and in a
-	 * bundle alike. A copy that can drift silently is worth exactly one test:
+	 * The default profile's identifier is derived rather than read from
+	 * product.json, because the CLI is a plain script run under the app's
+	 * Electron as Node and cannot load VS Code's product. A derivation that can
+	 * drift silently is worth exactly one test:
 	 * the day somebody renames the bundle, `open -b` would start looking for an
 	 * application nobody ships, and the CLI would report that DevHub is not
 	 * installed on a machine where it is.

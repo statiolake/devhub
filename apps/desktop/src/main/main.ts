@@ -52,6 +52,7 @@ import { INLSConfiguration } from 'code-oss-dev/out/vs/nls.js';
 import { NativeParsedArgs } from 'code-oss-dev/out/vs/platform/environment/common/argv.js';
 import { createRequire } from 'node:module';
 import { migrateUserDataDirectory } from './userDataMigration.js';
+import { activeProfile } from '../model/profile.js';
 
 /**
  * VS Code resolves its NLS bundles relative to the file that asks for them.
@@ -93,8 +94,21 @@ if (args['sandbox'] &&
 	app.commandLine.appendSwitch('disable-gpu-sandbox');
 }
 
+// Which DevHub this is. Unset means the one DevHub has always been, on the
+// paths it has always used; anything else is a second, fully separate DevHub —
+// see model/profile.ts, which derives every one of its locations.
+const devhubProfile = activeProfile();
+
 // Set userData path before app 'ready' event
-const userDataPath = getUserDataPath(args, product.nameShort ?? 'code-oss-dev');
+//
+// A non-default profile brings its own user-data directory, because that
+// directory is what makes a VS Code single-instance: two DevHubs sharing it is
+// exactly the "the second one does not start" that a profile is asked for to
+// avoid. An explicit --user-data-dir still wins, for the scratch runs that pass
+// one.
+const userDataPath = devhubProfile.isDefault || args['user-data-dir']
+	? getUserDataPath(args, product.nameShort ?? 'code-oss-dev')
+	: devhubProfile.userDataDirectory;
 migrateUserDataDirectory(userDataPath);
 if (process.platform === 'win32') {
 	const userDataUNCHost = getUNCHost(userDataPath);
@@ -112,7 +126,7 @@ if (process.platform === 'win32') {
 // reach — so DevHub is run from a bundle of its own in both modes: the
 // packaged app is one (scripts/package-nightly.py), and a source run boots a
 // branded clone of VS Code's Electron (step 5b of scripts/provision-vscode.sh).
-app.setName('DevHub');
+app.setName(devhubProfile.applicationName);
 
 app.setPath('userData', userDataPath);
 
