@@ -397,6 +397,54 @@ describe("TerminalSurface lifecycle", () => {
     expect(alert).toHaveTextContent(summary);
   });
 
+  it("keeps waiting while main is still sending, and fails only when it goes quiet", async () => {
+    // "Slow" and "silent" are different states. On a cold start with several
+    // Agents mounted at once, attaching takes longer than any fixed budget —
+    // and a pane that called that a failure was cured by pressing Retry once
+    // the machine was quiet, which is a load problem wearing a failure's
+    // words. So the clock measures silence, and every frame restarts it.
+    vi.useFakeTimers();
+    const harness = clientHarness();
+    let onFrame: ((value: unknown) => void) | undefined;
+    harness.client.attach = vi.fn(async (_request, callback) => {
+      onFrame = callback;
+      return new Promise<ReturnType<typeof receipt>>(() => undefined);
+    });
+    render(
+      <TerminalSurface
+        surfaceKey="global-terminal"
+        surfaceLabel="Scratch"
+        client={harness.client}
+      />,
+    );
+    await act(async () => {
+      await Promise.resolve();
+    });
+    act(() => vi.advanceTimersByTime(4_000));
+    act(() => onFrame?.(started(harness.receipts[0].attachmentId, 42)));
+    for (let beat = 0; beat < 3; beat += 1) {
+      act(() => vi.advanceTimersByTime(4_000));
+      act(() =>
+        onFrame?.(
+          output(
+            harness.receipts[0].attachmentId,
+            beat + 1,
+            new TextEncoder().encode("."),
+          ),
+        ),
+      );
+    }
+    // Sixteen seconds of a five-second budget, and the pane is still waiting:
+    // it is a spinner, not an alert.
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent(/connecting/i);
+
+    act(() => vi.advanceTimersByTime(5_001));
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      /terminal session is not connected/i,
+    );
+  });
+
   it("keeps the handshake timeout until a pre-receipt Started has a receipt", async () => {
     vi.useFakeTimers();
     const harness = clientHarness();
@@ -419,6 +467,8 @@ describe("TerminalSurface lifecycle", () => {
     await act(async () => {
       await Promise.resolve();
     });
+    // The pre-receipt Started is a sign of life and restarts the clock, so the
+    // failure comes from the silence that follows it, not from the attach.
     act(() => vi.advanceTimersByTime(5_001));
     // A dead session is an alert, not a status line, and it names the cause.
     expect(screen.getByRole("alert")).toHaveTextContent(

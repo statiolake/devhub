@@ -29,24 +29,47 @@ export const MAX_LINE_BYTES = 4096;
 export const MAX_ROOT_METADATA_BYTES = 16 * 1024;
 
 /**
- * When an operation must be finished by.
+ * How long an operation may go without an answer from the provider.
  *
- * The deadline belongs to the whole operation, not to one command: a sequence
- * of probes cannot extend itself by making more of them.
+ * It is a watchdog on *silence*, not a budget for the whole operation. The
+ * distinction is the difference between a runtime that has stopped answering
+ * and one that is merely being asked a lot: resolving a session reads its
+ * marker with one `show-options` per field, so a single attach runs dozens of
+ * commands, and on a cold start several attaches and the Agent reconciler all
+ * do it at once. Every one of those commands answered in milliseconds and the
+ * operation still ran past a fixed three-second budget — which reported "the
+ * terminal runtime did not answer in time" about a tmux that had answered
+ * every single time. Retrying it once the machine was quiet worked, which is
+ * exactly the shape of a load problem wearing a failure's words.
+ *
+ * So the clock is reset by an answer, and only by an answer. A tmux that hangs
+ * still trips the same watchdog in the same `timeoutMs`, and a sequence that
+ * stalls halfway through trips it where it stalled. What can no longer happen
+ * is an operation failing because it asked more questions than the budget had
+ * room for.
  */
 export class OperationDeadline {
-	private constructor(readonly at: number) {}
+	private expiresAt: number;
 
-	static in(milliseconds: number): OperationDeadline {
-		return new OperationDeadline(Date.now() + milliseconds);
+	private constructor(private readonly budgetMs: number) {
+		this.expiresAt = Date.now() + budgetMs;
 	}
 
-	static at(timestamp: number): OperationDeadline {
-		return new OperationDeadline(timestamp);
+	static in(milliseconds: number): OperationDeadline {
+		return new OperationDeadline(milliseconds);
 	}
 
 	get remaining(): number {
-		return this.at - Date.now();
+		return this.expiresAt - Date.now();
+	}
+
+	/**
+	 * The provider answered. Recorded by `runBounded` when a command completes
+	 * — including one that failed, because a refusal is an answer too, and the
+	 * caller that keeps going after it is not waiting on a silent runtime.
+	 */
+	answered(): void {
+		this.expiresAt = Date.now() + this.budgetMs;
 	}
 
 	/** Cancellation wins over expiry: an abandoned operation is not a timeout. */
@@ -202,6 +225,10 @@ export function runBounded(
 		// `close` rather than `exit`: the drain is part of the same budget, so
 		// a descendant holding a pipe open cannot be mistaken for completion.
 		child.on("close", (code, signal) => {
+			// The provider answered, so the operation's watchdog starts again:
+			// the next command is waiting on a runtime that has just proven it
+			// is alive, not extending a budget it already spent.
+			deadline.answered();
 			finish(undefined, {
 				success: code === 0 && signal === null,
 				stdout: Buffer.concat(stdout),

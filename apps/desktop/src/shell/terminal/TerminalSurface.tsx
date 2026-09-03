@@ -53,7 +53,23 @@ export interface TerminalSurfaceProps {
 type ConnectionState = "connecting" | "connected" | "disconnected";
 
 const DETACHABLE_ERROR = "The terminal connection is unavailable.";
-const HANDSHAKE_TIMEOUT_MS = 5_000;
+/**
+ * How long the handshake may go without a word from main.
+ *
+ * It bounds *silence*, not the handshake: main answers an attach by resolving
+ * the request and then sending frames, and every one of those is a sign of
+ * life that starts this clock again. Attaching is not a fixed amount of work —
+ * it brings the tmux server up, resolves the session and spawns the client,
+ * and on a cold start with several Agents mounted at once that is legitimately
+ * slower than any number written here. A fixed budget turned that into a pane
+ * saying the session was not connected, cured by pressing Retry once the
+ * machine was quiet, which is the signature of a load problem being reported
+ * as a failure.
+ *
+ * A main that genuinely stops answering still lands here, in the same time it
+ * always did, and says so.
+ */
+const HANDSHAKE_SILENCE_MS = 5_000;
 const MAX_HANDSHAKE_BUFFER_FRAMES = 8;
 const MAX_HANDSHAKE_BUFFER_BYTES = 256 * 1024;
 
@@ -254,6 +270,36 @@ export function TerminalSurface({
         resolveStarted = resolve;
         rejectStarted = reject;
       });
+      const clearHandshakeWatchdog = () => {
+        if (handshakeTimer === undefined) return;
+        clearTimeout(handshakeTimer);
+        handshakeTimer = undefined;
+      };
+
+      /**
+       * Start the silence watchdog, or start it again.
+       *
+       * Called once when the attach is made and again on every sign of life
+       * from main, so the pane stays in `connecting` — a spinner, not a
+       * failure — for as long as the other side is still talking.
+       */
+      const armHandshakeWatchdog = () => {
+        clearHandshakeWatchdog();
+        handshakeTimer = setTimeout(() => {
+          const timeout = new Error("terminal handshake timed out");
+          handshakeTimer = undefined;
+          channelFailed = true;
+          channelFailure = timeout;
+          rejectStarted(timeout);
+          if (returnedReceipt) {
+            fail(serial, timeout);
+          } else if (!disposed && serial === attachSerial) {
+            setConnection("disconnected");
+            setError(terminalErrorSummary(timeout));
+          }
+        }, HANDSHAKE_SILENCE_MS);
+      };
+
       setConnection("connecting");
       setError(undefined);
       session.remeasure();
@@ -301,6 +347,9 @@ export function TerminalSurface({
 
       const onFrame = (value: unknown) => {
         if (disposed || serial !== attachSerial || channelFailed) return;
+        // A frame is main talking, whatever it says. The watchdog is looking
+        // for silence, so anything at all on this channel starts it again.
+        if (handshakeTimer !== undefined) armHandshakeWatchdog();
         try {
           const frame = decoder.push(value);
           if (frame.type === "started") {
@@ -308,13 +357,8 @@ export function TerminalSurface({
             if (returnedReceipt) {
               validateStarted(surfaceKey, returnedReceipt, frame);
             }
-            if (
-              returnedReceipt &&
-              validReceipt(surfaceKey, returnedReceipt) &&
-              handshakeTimer !== undefined
-            ) {
-              clearTimeout(handshakeTimer);
-              handshakeTimer = undefined;
+            if (returnedReceipt && validReceipt(surfaceKey, returnedReceipt)) {
+              clearHandshakeWatchdog();
             }
             resolveStarted();
             return;
@@ -343,27 +387,13 @@ export function TerminalSurface({
         } catch (frameError: unknown) {
           channelFailed = true;
           channelFailure = frameError;
-          if (returnedReceipt && handshakeTimer !== undefined) {
-            clearTimeout(handshakeTimer);
-            handshakeTimer = undefined;
-          }
+          if (returnedReceipt) clearHandshakeWatchdog();
           rejectStarted(frameError);
           if (returnedReceipt) fail(serial, frameError);
         }
       };
 
-      handshakeTimer = setTimeout(() => {
-        const timeout = new Error("terminal handshake timed out");
-        channelFailed = true;
-        channelFailure = timeout;
-        rejectStarted(timeout);
-        if (returnedReceipt) {
-          fail(serial, timeout);
-        } else if (!disposed && serial === attachSerial) {
-          setConnection("disconnected");
-          setError(terminalErrorSummary(timeout));
-        }
-      }, HANDSHAKE_TIMEOUT_MS);
+      armHandshakeWatchdog();
 
       try {
         returnedReceipt = await clientRef.current.attach(
@@ -375,6 +405,9 @@ export function TerminalSurface({
           },
           onFrame,
         );
+        // Main answered. Whatever the attach cost, it was not silence, so
+        // the wait for the `started` frame gets the full budget of its own.
+        if (handshakeTimer !== undefined) armHandshakeWatchdog();
         if (disposed || serial !== attachSerial) {
           detachExact(returnedReceipt);
           return;
@@ -386,10 +419,7 @@ export function TerminalSurface({
         if (channelFailure) throw channelFailure;
         await startedReady;
         if (started) validateStarted(surfaceKey, returnedReceipt, started);
-        if (handshakeTimer !== undefined) {
-          clearTimeout(handshakeTimer);
-          handshakeTimer = undefined;
-        }
+        clearHandshakeWatchdog();
         for (const frame of bufferedFrames) {
           processFrame(frame, returnedReceipt);
         }
@@ -408,10 +438,7 @@ export function TerminalSurface({
         setConnection("connected");
         await sendResize(returnedReceipt, session.geometry, serial);
       } catch (attachError: unknown) {
-        if (handshakeTimer !== undefined) {
-          clearTimeout(handshakeTimer);
-          handshakeTimer = undefined;
-        }
+        clearHandshakeWatchdog();
         // The request can resolve with a receipt after the frames already
         // rejected it, or after a replacement/unmount. Always release exactly
         // that returned opaque handle; stale channels are ignored by serial.

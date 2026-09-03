@@ -354,7 +354,7 @@ describe("inspection", () => {
 
 describe("the bounded runner", () => {
 	it("checks cancellation and the deadline before spawning anything", async () => {
-		const expired = OperationDeadline.at(Date.now() - 1);
+		const expired = OperationDeadline.in(0);
 		expect(() =>
 			runBounded(
 				{ file: "not-spawned", args: [], cwd: ".", env: {} },
@@ -392,6 +392,47 @@ describe("the bounded runner", () => {
 			),
 		).rejects.toThrowError(
 			expect.objectContaining({ code: "unavailable" }) as unknown as Error,
+		);
+	});
+
+	it("gives the next command a full budget once one has answered", async () => {
+		// The budget is a watchdog on silence, not a ration of commands.
+		// Resolving one session reads its marker with one `show-options` per
+		// field, so a single attach runs dozens of these; a cold start with
+		// several Agents ran hundreds, every one of them answering in
+		// milliseconds, and the operation still failed as "the terminal
+		// runtime did not answer in time".
+		const deadline = OperationDeadline.in(300);
+		for (let round = 0; round < 6; round += 1) {
+			await new Promise((resolve) => setTimeout(resolve, 60));
+			const output = await runBounded(
+				{
+					file: "/bin/echo",
+					args: [String(round)],
+					cwd: SCRATCH_ROOT,
+					env: { PATH: "/usr/bin:/bin" },
+				},
+				deadline,
+				new CancellationToken(),
+			);
+			expect(output.success).toBe(true);
+		}
+	});
+
+	it("still times out a command that goes quiet for the whole budget", async () => {
+		await expect(
+			runBounded(
+				{
+					file: "/bin/sleep",
+					args: ["5"],
+					cwd: SCRATCH_ROOT,
+					env: { PATH: "/usr/bin:/bin" },
+				},
+				OperationDeadline.in(200),
+				new CancellationToken(),
+			),
+		).rejects.toThrowError(
+			expect.objectContaining({ code: "timed_out" }) as unknown as Error,
 		);
 	});
 
