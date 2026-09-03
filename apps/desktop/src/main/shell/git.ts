@@ -191,12 +191,24 @@ export interface RepositoryFacts {
 	 * searching for pull requests by the local name finds nothing at all for
 	 * exactly the people who set this up deliberately.
 	 *
-	 * `%(push:strip=3)` is git's own answer to "where does this branch push
-	 * to", so it follows `push.default`, `remote.pushDefault` and
-	 * `branch.<name>.pushRemote` without any of them being read here. Absent
-	 * when the branch has no push destination — nobody has pushed it yet — and
-	 * the caller falls back to the local name, which is what the branch will be
-	 * called the first time somebody does.
+	 * `%(push)` is git's own answer to "where does this branch push to", so it
+	 * follows `push.default`, `remote.pushDefault` and
+	 * `branch.<name>.pushRemote` without any of them being read here — but it is
+	 * empty under the default `push.default=simple` for exactly the branches
+	 * this field exists for, because `simple` refuses to push a branch whose
+	 * remote name differs from its local one. So `%(upstream)` answers when
+	 * `%(push)` does not: the branch is tracking `origin/release-2`, and
+	 * `release-2` is what a pull request from it is headed by.
+	 *
+	 * Push first and upstream second, never the other way round: in the fork
+	 * layout `gh repo fork` sets up, the upstream is `upstream/main` and the
+	 * push destination is `origin/feature`. Reading upstream first would answer
+	 * `main` — the trunk of somebody else's repository — for every branch in
+	 * every fork.
+	 *
+	 * Absent when the branch has neither — nobody has pushed it and it tracks
+	 * nothing — and the caller falls back to the local name, which is what the
+	 * branch will be called the first time somebody pushes it.
 	 */
 	readonly pushBranch: string | undefined;
 	/** `origin`, normalised so an HTTPS and an SSH clone compare equal. */
@@ -365,20 +377,10 @@ export async function readRepository(
 		["rev-parse", "--abbrev-ref", "HEAD"],
 		directory,
 	);
-	// The name this branch has on the remote, which is not always the one it has
-	// here. `strip=3` takes `refs/remotes/origin/` off the front, leaving the
-	// branch — including the slashes in a name like `feature/128-tidy`, because
-	// it strips leading components and not every one.
-	const pushed =
+	const pushBranch =
 		branch === undefined || branch === "HEAD"
 			? undefined
-			: await ask(
-					command,
-					["for-each-ref", "--format=%(push:strip=3)", `refs/heads/${branch}`],
-					directory,
-				).catch(() => undefined);
-	const pushBranch =
-		pushed !== undefined && pushed.length > 0 ? pushed : undefined;
+			: await remoteBranchOf(command, directory, branch);
 	const remote = await remoteNamed(command, directory, "origin");
 	const upstream = await remoteNamed(command, directory, "upstream");
 	// `origin/main`, trimmed to `main`. A clone that has never been told what
@@ -400,6 +402,53 @@ export async function readRepository(
 		branch: branch === undefined || branch === "HEAD" ? undefined : branch,
 		remote,
 	};
+}
+
+/**
+ * What a branch is called on the remote, or nothing when it has no remote at
+ * all.
+ *
+ * Asks git for both destinations at once and takes the push destination when
+ * there is one — see `pushBranch` for why that order and not the reverse.
+ *
+ * The remote's own name comes back alongside the ref so the prefix can be taken
+ * off as a string. A remote may be called `my/fork`, and then
+ * `refs/remotes/my/fork/release-2` has four leading components rather than
+ * three: any fixed `strip` count answers `fork/release-2` for it, which is not
+ * a branch anybody has.
+ */
+async function remoteBranchOf(
+	command: GitCommand,
+	directory: string,
+	branch: string,
+): Promise<string | undefined> {
+	const line = await ask(
+		command,
+		[
+			"for-each-ref",
+			"--format=%(push:remotename)%09%(push)%09%(upstream:remotename)%09%(upstream)",
+			`refs/heads/${branch}`,
+		],
+		directory,
+	).catch(() => undefined);
+	if (line === undefined) return undefined;
+	const [pushRemote, push, upstreamRemote, upstream] = line.split("\t");
+	return trimRemote(pushRemote, push) ?? trimRemote(upstreamRemote, upstream);
+}
+
+/** `refs/remotes/origin/release-2` under `origin`, as `release-2`. */
+function trimRemote(
+	remote: string | undefined,
+	ref: string | undefined,
+): string | undefined {
+	if (!remote || !ref) return undefined;
+	const prefix = `refs/remotes/${remote}/`;
+	// A ref that does not start with its own remote is git telling us something
+	// we do not understand, and answering the tail of it anyway would put a name
+	// nobody has into a pull request search.
+	if (!ref.startsWith(prefix)) return undefined;
+	const name = ref.slice(prefix.length);
+	return name.length > 0 ? name : undefined;
 }
 
 /**

@@ -255,3 +255,103 @@ describe("a git that fails", () => {
 		).rejects.toThrow(/no-such-branch/u);
 	});
 });
+
+describe("the name a branch has on the remote", () => {
+	/** A bare repository to push to, added under a name. */
+	async function addRemote(name: string): Promise<string> {
+		const path = join(parent, `${name.replace(/\//gu, "_")}.git`);
+		await runGit(command, ["init", "--bare", "-b", "main", path]);
+		await runGit(command, ["remote", "add", name, path], { cwd: repository });
+		return path;
+	}
+
+	it("is the push destination when the branch has one", async () => {
+		await addRemote("origin");
+		await runGit(command, ["push", "-u", "origin", "main"], {
+			cwd: repository,
+		});
+		expect((await readRepository(command, repository))?.pushBranch).toBe(
+			"main",
+		);
+	});
+
+	it("is the upstream when `push.default=simple` refuses to answer", async () => {
+		// The default `push.default` declines to push a branch whose remote name
+		// differs from its local one, so `%(push)` is empty for exactly the
+		// branches whose remote name has to be looked up. The upstream still says
+		// it.
+		await addRemote("origin");
+		await runGit(command, ["config", "push.default", "simple"], {
+			cwd: repository,
+		});
+		await runGit(command, ["push", "origin", "main:release-2"], {
+			cwd: repository,
+		});
+		await runGit(command, ["checkout", "-b", "foo/baz"], { cwd: repository });
+		await runGit(
+			command,
+			["branch", "--set-upstream-to=origin/release-2", "foo/baz"],
+			{ cwd: repository },
+		);
+		expect((await readRepository(command, repository))?.pushBranch).toBe(
+			"release-2",
+		);
+	});
+
+	it("is the push destination and not the upstream in a fork", async () => {
+		// A fork tracks `upstream/main` and pushes to `origin/<branch>`. Reading
+		// the upstream first would answer `main` here — somebody else's trunk —
+		// for every branch in every fork.
+		await addRemote("origin");
+		const source = await addRemote("upstream");
+		await runGit(command, ["push", "upstream", "main"], { cwd: repository });
+		await runGit(command, ["fetch", "upstream"], { cwd: repository });
+		await runGit(command, ["checkout", "-b", "feature/128-tidy"], {
+			cwd: repository,
+		});
+		await runGit(
+			command,
+			["branch", "--set-upstream-to=upstream/main", "feature/128-tidy"],
+			{ cwd: repository },
+		);
+		await runGit(command, ["config", "push.default", "current"], {
+			cwd: repository,
+		});
+		await runGit(
+			command,
+			["config", "branch.feature/128-tidy.pushRemote", "origin"],
+			{ cwd: repository },
+		);
+		expect(source).toContain("upstream");
+		expect((await readRepository(command, repository))?.pushBranch).toBe(
+			"feature/128-tidy",
+		);
+	});
+
+	it("keeps the whole branch name when the remote's own name has a slash", async () => {
+		// `refs/remotes/my/fork/release-2` has one more leading component than
+		// `refs/remotes/origin/release-2`, so a fixed strip count answers
+		// `fork/release-2` — a branch nobody has.
+		await addRemote("my/fork");
+		await runGit(command, ["push", "my/fork", "main:release-2"], {
+			cwd: repository,
+		});
+		await runGit(command, ["checkout", "-b", "local-name"], {
+			cwd: repository,
+		});
+		await runGit(
+			command,
+			["branch", "--set-upstream-to=my/fork/release-2", "local-name"],
+			{ cwd: repository },
+		);
+		expect((await readRepository(command, repository))?.pushBranch).toBe(
+			"release-2",
+		);
+	});
+
+	it("is nothing at all when the branch has neither", async () => {
+		expect(
+			(await readRepository(command, repository))?.pushBranch,
+		).toBeUndefined();
+	});
+});
