@@ -120,8 +120,8 @@ export function profileLocations(
     isDefault,
     applicationName: isDefault ? "DevHub" : `DevHub ${titleCase(profile)}`,
     bundleIdentifier: isDefault
-      ? "dev.devhub.app"
-      : `dev.devhub.app.${profile}`,
+      ? "net.statiolake.devhub"
+      : `net.statiolake.devhub.${profile}`,
     cliCommandName: `devhub${suffix}`,
     dataDirectory,
     userDataDirectory: join(dataDirectory, "editor"),

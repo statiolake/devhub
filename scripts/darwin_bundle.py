@@ -250,7 +250,7 @@ def install_dev_launcher(app: Path) -> None:
 	about: it carried DevHub's names, and a source run reached the Electron
 	inside it by path. Nothing could *open* it. Launch Services runs a bundle's
 	executable with no arguments, which for a bare Electron means exiting at
-	once, so `open -b dev.devhub.app` on a development machine started nothing
+	once, so `open -b net.statiolake.devhub` on a development machine started nothing
 	and reported success — and since the dev clone is the bundle Launch Services
 	resolves that identifier to here, a bare `devhub` inherited the same silence
 	and spent its thirty-second timeout on it.

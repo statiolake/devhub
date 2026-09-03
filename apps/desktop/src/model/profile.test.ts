@@ -22,7 +22,7 @@ describe("the default profile", () => {
       profile: "default",
       isDefault: true,
       applicationName: "DevHub",
-      bundleIdentifier: "dev.devhub.app",
+      bundleIdentifier: "net.statiolake.devhub",
       cliCommandName: "devhub",
       dataDirectory: "/home/tester/Library/Application Support/DevHub",
       userDataDirectory:
@@ -82,7 +82,7 @@ describe("a second profile", () => {
       profile: "dev",
       isDefault: false,
       applicationName: "DevHub Dev",
-      bundleIdentifier: "dev.devhub.app.dev",
+      bundleIdentifier: "net.statiolake.devhub.dev",
       cliCommandName: "devhub-dev",
       dataDirectory: "/home/tester/Library/Application Support/DevHub Dev",
       userDataDirectory:

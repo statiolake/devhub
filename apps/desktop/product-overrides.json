@@ -5,7 +5,7 @@
 	"dataFolderName": ".devhub",
 	"sharedDataFolderName": ".devhub-shared",
 	"serverDataFolderName": ".devhub-server",
-	"darwinBundleIdentifier": "dev.devhub.app",
+	"darwinBundleIdentifier": "net.statiolake.devhub",
 	"urlProtocol": "devhub",
 	"win32MutexName": "devhub",
 	"extensionsGallery": {

@@ -132,7 +132,7 @@ describe("starting DevHub when a bare devhub finds none", () => {
 	it("says that it tried to start DevHub and could not", async () => {
 		const launcher = fakeLauncher({ answersAfter: "never", opens: false });
 		await expect(launchAndWait(launcher)).rejects.toThrow(
-			/could not be started: Unable to find application for bundle dev\.devhub\.app/,
+			/could not be started: Unable to find application for bundle net\.statiolake\.devhub/,
 		);
 		await expect(launchAndWait(launcher)).rejects.toThrow(
 			/source checkout is not registered with macOS/,
