@@ -847,4 +847,16 @@ export interface WorkbenchDialogRequest {
  * dispatched in main as an ordinary intent, because routing it through the
  * page would be a second way to do what there is already one way to do.
  */
-export type MenuCommand = "open_workspace_picker";
+export type MenuCommand =
+	| "open_workspace_picker"
+	/**
+	 * Put the keyboard in the Agent's pane.
+	 *
+	 * The one thing the selection does not already answer. Side by side, both
+	 * halves of a workspace are on screen at once, so `Cmd+Q Cmd+J` moves the
+	 * keyboard rather than the selection — and the editor is a native view the
+	 * window focuses directly while the Agent's pane is drawn by this page, so
+	 * only this half can be a message. See `shell/focusHome.ts`, which is the
+	 * page's half of the focus rule and already knows how to find the pane.
+	 */
+	| "focus_agent_pane";

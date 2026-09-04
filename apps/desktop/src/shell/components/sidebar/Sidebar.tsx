@@ -23,6 +23,7 @@ import { devhub } from "../../client";
 import { isImeComposing } from "../../accessibility/ime";
 import { Glyph, type GlyphName } from "./icons";
 import { RowMenu, type RowMenuItem } from "./RowMenu";
+import { focusMainSurface } from "../../focusHome";
 import { SidebarHeader } from "./SidebarHeader";
 import { StatusMark } from "./StatusMark";
 import { statusLabel } from "./status";
@@ -796,6 +797,11 @@ export function Sidebar({ snapshot, onDispatch }: SidebarProps) {
     () =>
       devhub().onMenuCommand((command) => {
         if (command === "open_workspace_picker") openPicker();
+        // The page's half of `Cmd+Q Cmd+J` in the side-by-side layout: main
+        // decides *that* the keyboard should move and this finds the pane,
+        // through the one function that already answers "where does the
+        // keyboard belong in this document".
+        if (command === "focus_agent_pane") focusMainSurface();
       }),
     [openPicker],
   );
