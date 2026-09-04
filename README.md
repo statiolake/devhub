@@ -229,11 +229,13 @@ dist/DevHub-darwin-arm64-<date>-<sha>.zip
 ```
 
 signed ad-hoc — enough for macOS to run a modified bundle, not enough to skip
-`xattr -d com.apple.quarantine` on a bundle that has travelled. The build ends
-by starting the app and asking it something over its control socket, so a
-bundle that assembles but cannot run fails here rather than on a double-click.
-Run `scripts/smoke_packaged_app.py dist/DevHub.app` to repeat that check on its
-own.
+`xattr -d com.apple.quarantine` on a bundle that has travelled. The build does
+not start what it just made: a running DevHub takes over the machine's tmux
+socket and its Agents, and nobody asks for that by typing `pnpm build`. The
+check that a bundle which assembles can also run is `pnpm run smoke`
+(`scripts/smoke_packaged_app.py dist/DevHub.app`), which starts the bundle
+under a throwaway `smoke` profile and asks it something over its control
+socket. CI runs it on every bundle it packages.
 
 What has to be on the machine first: macOS on Apple Silicon, the Xcode command
 line tools (`xcode-select --install`), `python3`, Node, and pnpm `11.20.0`

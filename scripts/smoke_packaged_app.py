@@ -19,6 +19,17 @@ missing takes one feature down and leaves the rest of the app answering
 normally, so no question asked of a running DevHub would ever find it. See
 `check_bundle_layout`.
 
+It starts the app under its own profile, `smoke`, and that is not a detail.
+A DevHub launched on the *default* profile is the user's DevHub: it reads
+`~/.config/devhub`, it attaches to the tmux socket `devhub`, and on startup it
+reaps every DevHub-marked Agent session that its own state file does not know
+about. A throwaway `--user-data-dir` gives it an empty state file, so the
+reaping is total: every Agent the person is actually running dies. `smoke` is
+what keeps the test off all of it — the profile name derives the tmux socket
+(`devhub-smoke`), the data directories and the bundle identifier — and
+`XDG_CONFIG_HOME` under the same throwaway directory moves the config directory
+with it. See apps/desktop/src/model/profile.ts.
+
 Run it standalone against any bundle:
 
     scripts/smoke_packaged_app.py path/to/DevHub.app
@@ -156,6 +167,43 @@ def check_bundle_layout(app: Path) -> list[str]:
 	return faults
 
 
+# The profile this test runs the app under. Anything but the default: see the
+# module docstring for what the default profile does to a live DevHub.
+SMOKE_PROFILE = "smoke"
+
+
+def user_data_directory(state: Path) -> Path:
+	"""Where the app is told to keep its editor state, and so its control socket."""
+	return state / "editor"
+
+
+def launch_command(
+	executable: Path,
+	state: Path,
+	base_environment: dict[str, str] | None = None,
+) -> tuple[list[str], dict[str, str]]:
+	"""How to start the bundle so that it owns nothing a live DevHub owns.
+
+	Three locations have to move together, and each moves by its own mechanism:
+	the editor's user-data directory (and the control socket inside it) by the
+	command line, the config directory by `XDG_CONFIG_HOME`, and the tmux socket
+	by the profile name — `profile.ts` derives `devhub-smoke` from it. Returned
+	rather than passed straight to Popen so a test can assert all three without
+	starting Electron.
+	"""
+	environment = dict(os.environ if base_environment is None else base_environment)
+	environment["DEVHUB_PROFILE"] = SMOKE_PROFILE
+	environment["XDG_CONFIG_HOME"] = str(state / "config")
+	argv = [
+		str(executable),
+		"--user-data-dir",
+		str(user_data_directory(state)),
+		"--extensions-dir",
+		str(state / "extensions"),
+	]
+	return argv, environment
+
+
 def smoke(app: Path, timeout: float) -> int:
 	executable = app / "Contents" / "MacOS" / "DevHub"
 	if not executable.is_file():
@@ -173,15 +221,11 @@ def smoke(app: Path, timeout: float) -> int:
 	)
 
 	state = Path(tempfile.mkdtemp(prefix="devhub-smoke-"))
-	user_data = state / "editor"
+	argv, environment = launch_command(executable, state)
+	user_data = user_data_directory(state)
 	process = subprocess.Popen(
-		[
-			str(executable),
-			"--user-data-dir",
-			str(user_data),
-			"--extensions-dir",
-			str(state / "extensions"),
-		],
+		argv,
+		env=environment,
 		stdout=subprocess.PIPE,
 		stderr=subprocess.STDOUT,
 		text=True,

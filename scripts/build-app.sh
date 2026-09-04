@@ -10,6 +10,12 @@
 #   dist/DevHub.app
 #   dist/DevHub-darwin-arm64-<date>-<sha>.zip
 #
+# It assembles the bundle and stops there: it does not start what it made. A
+# DevHub that starts takes over the machine's tmux socket and the Agents on it,
+# and a person who typed `pnpm build` did not ask for that. Whether the bundle
+# runs is a separate question, asked by `pnpm run smoke`
+# (scripts/smoke_packaged_app.py) and by CI on every bundle it packages.
+#
 # ## Which prerequisites this satisfies, and which it refuses to
 #
 # The rule is the one the first run has to pass: if a missing input can be

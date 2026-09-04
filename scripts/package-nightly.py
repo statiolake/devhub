@@ -145,7 +145,6 @@ from darwin_bundle import (  # noqa: E402
 	sign,
 )
 from product_metadata import devhub_commit, devhub_version, packaged_metadata  # noqa: E402
-from smoke_packaged_app import smoke  # noqa: E402
 
 # The inline `//# sourceMappingURL=data:...` tail every file of the dev compile
 # carries. It is about half the weight of `out/` and means nothing without the
@@ -196,8 +195,8 @@ def check_compiled_output_is_current() -> None:
 	`out/` and `dist/` are build output that packaging copies verbatim; nothing
 	here rebuilds them. So an edit that was never compiled ships as the
 	*previous* compile, and nothing about the result says so — the app starts,
-	the smoke test passes, and only whatever the change was supposed to do is
-	quietly missing. That is how a packaged build once shipped without the
+	it answers, and only whatever the change was supposed to do is quietly
+	missing. That is how a packaged build once shipped without the
 	workbench default that turns off extension signature verification, and
 	answered every gallery install with "Signature verification was not
 	executed".
@@ -736,17 +735,6 @@ def main() -> int:
 	parser.add_argument("--zip", action="store_true", help="also produce a zip with ditto")
 	parser.add_argument("--zip-name", default=None, help="the zip's file name")
 	parser.add_argument(
-		"--skip-smoke",
-		action="store_true",
-		help="do not start the packaged app to check that it answers",
-	)
-	parser.add_argument(
-		"--smoke-timeout",
-		type=float,
-		default=90.0,
-		help="how long the smoke test waits for a reply before calling it stalled",
-	)
-	parser.add_argument(
 		"--skip-extension-build",
 		action="store_true",
 		help="reuse an existing vscode/.build/extensions instead of rebuilding it",
@@ -793,16 +781,11 @@ def main() -> int:
 
 	print(f"\n    {app}  {directory_size(app) / 1e6:.0f} MB")
 
-	if args.skip_smoke:
-		step("start-up smoke test: skipped")
-	else:
-		# A bundle that assembles and verifies can still be inert: the app comes
-		# up, shows its window, and answers nothing, because its main thread is
-		# parked in a synchronous macOS call and Electron has stopped pumping
-		# libuv behind it. Only asking the running app something catches that.
-		step("start-up smoke test")
-		if smoke(app, timeout=args.smoke_timeout) != 0:
-			fail("the packaged app never answered on its control socket")
+	# Packaging deliberately does not start the app it just made. A bundle that
+	# assembles can still be inert, and scripts/smoke_packaged_app.py is what
+	# finds that out — but starting DevHub has effects on the machine that
+	# starts it, and a developer running `pnpm build` did not ask for them. CI
+	# runs the smoke test as its own step, against this bundle.
 
 	if args.zip:
 		name = args.zip_name or f"{APP_NAME}-darwin-arm64-{date.today():%Y%m%d}.zip"

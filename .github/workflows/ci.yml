@@ -108,3 +108,12 @@ jobs:
           # addresses hit the rate limit. The token is only there for that.
           GITHUB_TOKEN: ${{ github.token }}
         run: pnpm run build
+
+      # The build assembles the bundle and stops there — starting a DevHub has
+      # effects on the machine that starts it, which a developer running
+      # `pnpm build` never asked for. A runner is disposable, so here the app
+      # is started and asked something over its control socket: that is the
+      # only way to catch a bundle whose main process comes up and then stops
+      # pumping its event loop.
+      - name: Smoke-test the packaged app
+        run: pnpm run smoke
