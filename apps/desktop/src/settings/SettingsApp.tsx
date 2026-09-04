@@ -13,7 +13,9 @@
  * - The one thing in this window that is a decision rather than a value — moving
  *   DevHub's terminal sessions to another tmux socket — is a sheet, because it
  *   is a question with consequences and an answer, and the person has to be
- *   able to say no. It is the only one.
+ *   able to say no. It is the only one, and it is a picker, because every
+ *   question in DevHub is (see `Picker`'s docstring): two answers, two rows,
+ *   the one that changes nothing first.
  *
  * Keyboard: the section toolbar is a tab list, so the arrows move between
  * sections; a collection's list is a list box, so the arrows move between
@@ -38,7 +40,7 @@ import {
   type SettingsSnapshot,
   type SettingsSocketPreflightWire,
 } from "../ipc/settings";
-import { Alert } from "../shell/components/shell/Alert";
+import { Picker } from "../shell/components/shell/Picker";
 import {
   createSettingsClient,
   parseSettingsTransportError,
@@ -222,47 +224,50 @@ function socketQuestion(preflight: SettingsSocketPreflightWire): {
   readonly title: string;
   readonly message: string;
   readonly confirm: string;
-  readonly destructive: boolean;
+  /** What the socket change costs, on the row that costs it. */
+  readonly consequence: string;
 } {
   const name = preflight.requestedSocketName;
+  const restarted =
+    "Your current sessions are closed and recreated there, so what is running in them stops.";
   switch (preflight.state) {
     case "target_absent":
       return {
         title: `Move DevHub's terminals to “${name}”?`,
-        message:
-          "No tmux server is running there yet. Your current DevHub sessions will be closed and recreated on the new socket, so what is running in them will stop.",
-        confirm: "Move",
-        destructive: true,
+        message: "No tmux server is running there yet.",
+        confirm: "Move the terminals",
+        consequence: restarted,
       };
     case "target_devhub_empty":
       return {
         title: `Move DevHub's terminals to “${name}”?`,
-        message:
-          "A DevHub tmux server is already there with no sessions. Your current sessions will be closed and recreated on it, so what is running in them will stop.",
-        confirm: "Move",
-        destructive: true,
+        message: "A DevHub tmux server is already there with no sessions.",
+        confirm: "Move the terminals",
+        consequence: restarted,
       };
     case "marked_sessions":
       return {
         title: `Adopt the DevHub sessions on “${name}”?`,
-        message: `That socket already has ${String(preflight.ownedSessionCount)} DevHub ${preflight.ownedSessionCount === 1 ? "session" : "sessions"} from another run. DevHub will take them over, and the sessions on the current socket will be closed.`,
-        confirm: "Adopt",
-        destructive: true,
+        message: `That socket already has ${String(preflight.ownedSessionCount)} DevHub ${preflight.ownedSessionCount === 1 ? "session" : "sessions"} from another run.`,
+        confirm: "Adopt them",
+        consequence:
+          "DevHub takes them over, and the sessions on the current socket are closed.",
       };
     case "wrong_marker":
       return {
         title: `“${name}” belongs to another tmux server.`,
-        message: `There ${preflight.unknownSessionCount === 1 ? "is" : "are"} ${String(preflight.unknownSessionCount)} ${preflight.unknownSessionCount === 1 ? "session" : "sessions"} there that DevHub did not create. DevHub will not touch them. Choose a socket name of its own.`,
-        confirm: "Move Anyway",
-        destructive: true,
+        message: `There ${preflight.unknownSessionCount === 1 ? "is" : "are"} ${String(preflight.unknownSessionCount)} ${preflight.unknownSessionCount === 1 ? "session" : "sessions"} there that DevHub did not create. Choose a socket name of its own.`,
+        confirm: "Move there anyway",
+        consequence:
+          "DevHub will not touch the sessions it did not create. Your current sessions are closed and recreated there.",
       };
     case "not_checked":
       return {
         title: `Move DevHub's terminals to “${name}”?`,
-        message:
-          "DevHub could not see what is on that socket. Moving will close your current sessions and try to recreate them there.",
-        confirm: "Move",
-        destructive: true,
+        message: "DevHub could not see what is on that socket.",
+        confirm: "Move the terminals",
+        consequence:
+          "Your current sessions are closed, and DevHub tries to recreate them there.",
       };
   }
 }
@@ -607,7 +612,7 @@ export function SettingsApp({ client }: { readonly client?: SettingsClient }) {
       </div>
 
       {socketSheet ? (
-        <SocketChangeAlert
+        <SocketChangeSheet
           preflight={socketSheet}
           onCancel={() => {
             setSocketSheet(undefined);
@@ -621,7 +626,20 @@ export function SettingsApp({ client }: { readonly client?: SettingsClient }) {
   );
 }
 
-function SocketChangeAlert({
+/** The safe row, and therefore the first one. */
+const KEEP_SOCKET = "devhub:keep-socket";
+const CHANGE_SOCKET = "devhub:change-socket";
+
+/**
+ * The one question this window asks, asked the way DevHub asks questions.
+ *
+ * It was an alert with two buttons and the destructive one under Return. A
+ * confirmation is a list with as many rows as there are answers and the safe
+ * one first, so "Keep the current socket" leads and is what Return takes, and
+ * the consequence is written on the row that causes it rather than in a
+ * paragraph above both of them.
+ */
+function SocketChangeSheet({
   preflight,
   onCancel,
   onConfirm,
@@ -632,24 +650,38 @@ function SocketChangeAlert({
 }) {
   const question = socketQuestion(preflight);
   return (
-    <Alert
+    <Picker
       title={question.title}
-      message={question.message}
-      tone="danger"
-      detail={[
-        ["DevHub sessions there", String(preflight.ownedSessionCount)],
-        ["Other sessions there", String(preflight.unknownSessionCount)],
-      ]}
-      onCancel={onCancel}
-      actions={[
-        { label: "Cancel", run: onCancel },
+      question={question.message}
+      items={[
         {
+          id: KEEP_SOCKET,
+          label: "Keep the current socket",
+          detail: "DevHub stays on the socket it is on. Nothing is closed.",
+        },
+        {
+          id: CHANGE_SOCKET,
           label: question.confirm,
-          destructive: question.destructive,
-          isDefault: true,
-          run: onConfirm,
+          detail: question.consequence,
         },
       ]}
+      note={
+        <ul className="mac-detail-list">
+          <li>
+            <span>DevHub sessions there</span>
+            <span>{String(preflight.ownedSessionCount)}</span>
+          </li>
+          <li>
+            <span>Other sessions there</span>
+            <span>{String(preflight.unknownSessionCount)}</span>
+          </li>
+        </ul>
+      }
+      onChoose={({ id }) => {
+        if (id === CHANGE_SOCKET) onConfirm();
+        else onCancel();
+      }}
+      onCancel={onCancel}
     />
   );
 }

@@ -18,6 +18,7 @@ import {
 import { clampSidebarWidth } from "../../../ipc/appShell";
 import { SCRATCH_NAME } from "../../../ipc/windowTitles";
 import type { WorkspaceRepositoryWire } from "../../../ipc/contract";
+import { closingDeletesWorktree } from "../../../model/worktrees";
 import { useAppShell } from "../../useAppShell";
 import { devhub } from "../../client";
 import { isImeComposing } from "../../accessibility/ime";
@@ -123,6 +124,11 @@ function WorkspaceRow({
   // because they are going with it.
   const closing = workspace.state === "closing";
 
+  // What the close button is about to do, read from the same rule main uses to
+  // decide it (`closingDeletesWorktree`). A second copy of the rule here is how
+  // a button ends up promising a close and performing a deletion.
+  const deletesWorktree = closingDeletesWorktree(repository, workspace.root);
+
   return (
     <li
       className={`sidebar-tree-item${closing ? " is-closing" : ""}`}
@@ -203,16 +209,27 @@ function WorkspaceRow({
           )}
           {/* One close, whatever state the Workspace is in: a close that failed
             is retried by asking for the same thing again, not by a second
-            icon that means the same thing. */}
+            icon that means the same thing.
+
+            It says which of the two closes it is, because on a worktree row
+            closing deletes the folder (`closingDeletesWorktree`). The ellipsis
+            is the rest of that promise: a question may follow, and does
+            whenever there is anything in the folder to lose. */}
           {workspace.state !== "closing" && (
             <button
               className="row-action-button"
               type="button"
-              aria-label={`Close ${workspace.label}`}
+              aria-label={
+                deletesWorktree
+                  ? `Close the worktree ${workspace.label}`
+                  : `Close ${workspace.label}`
+              }
               title={
                 workspace.state === "closing-failed"
                   ? "Retry close"
-                  : "Close workspace"
+                  : deletesWorktree
+                    ? "Close worktree…"
+                    : "Close workspace"
               }
               onClick={() => {
                 // A close that failed is retried by asking for the same thing

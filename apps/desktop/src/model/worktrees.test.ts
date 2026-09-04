@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   baseName,
+  closingDeletesWorktree,
   sanitizeBranchName,
   worktreeDirectory,
 } from "./worktrees.js";
@@ -35,5 +36,49 @@ describe("a worktree's directory", () => {
   it("names the repository by its last segment", () => {
     expect(baseName("/projects/widget")).toBe("widget");
     expect(baseName("/projects/widget/")).toBe("widget");
+  });
+});
+
+/**
+ * The one question behind "close": does closing this delete a folder?
+ *
+ * Both halves of DevHub read it — main to decide what to do, the sidebar to
+ * decide what its button says it will do — so the two cannot disagree about
+ * what a click is about to destroy.
+ */
+describe("whether closing a workspace deletes its worktree", () => {
+  it("does not, for a folder git knows nothing about", () => {
+    expect(closingDeletesWorktree(undefined, "/projects/widget")).toBe(false);
+    expect(closingDeletesWorktree({}, "/projects/widget")).toBe(false);
+  });
+
+  it("does not, for the repository itself", () => {
+    // Removing the main worktree is not a close, it is losing the repository.
+    expect(
+      closingDeletesWorktree(
+        { mainWorktree: "/projects/widget", worktree: "/projects/widget" },
+        "/projects/widget",
+      ),
+    ).toBe(false);
+  });
+
+  it("does, for a checkout that is not the repository and is the row itself", () => {
+    expect(
+      closingDeletesWorktree(
+        { mainWorktree: "/projects/other", worktree: "/projects/widget" },
+        "/projects/widget",
+      ),
+    ).toBe(true);
+  });
+
+  it("does not, for a folder merely inside a worktree", () => {
+    // `git worktree remove` takes the checkout's root, so removing from a row
+    // three directories down would delete the whole checkout around it.
+    expect(
+      closingDeletesWorktree(
+        { mainWorktree: "/projects/other", worktree: "/projects/widget" },
+        "/projects/widget/packages/app",
+      ),
+    ).toBe(false);
   });
 });

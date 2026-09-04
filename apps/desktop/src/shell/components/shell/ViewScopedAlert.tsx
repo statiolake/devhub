@@ -49,7 +49,7 @@ export function ViewScopedAlert({ request, onAnswer }: ViewScopedAlertProps) {
     >
       <div className="view-scoped-alert-scrim" />
       <div className="mac-alert" ref={panel}>
-        <div className="mac-alert-body plain">
+        <div className="mac-alert-body">
           <div className="mac-alert-text">
             <h2 className="mac-title">{request.message}</h2>
             {request.detail ? (

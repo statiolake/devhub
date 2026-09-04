@@ -5,8 +5,9 @@
  * closing the workspace deletes it — otherwise a machine fills up with
  * checkouts nobody can account for. That is only safe when there is nothing in
  * the folder to lose, which is why a *clean* worktree never reaches this sheet:
- * `closeWorkspaceOrWorktree` removes it without asking, the way the sidebar's
- * own button already did.
+ * `closeWorkspaceOrWorktree` removes it without asking. Which rows are
+ * worktrees at all is `closingDeletesWorktree`, read by main to decide this and
+ * by the sidebar so its button can say what it is about to do.
  *
  * **Three answers, because there really are three.** A two-button dialog would
  * have had to drop one of them, and each of the three is something a person

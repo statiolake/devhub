@@ -137,7 +137,13 @@ export function AppShellProvider({
   const [pickerSourceCount, setPickerSourceCount] = useState<number>();
   const [pendingConfirmation, setPendingConfirmation] =
     useState<PendingConfirmation | null>(null);
-  const [confirmationBusy, setConfirmationBusy] = useState(false);
+  /**
+   * One answer at a time, and the whole of what that costs.
+   *
+   * A ref rather than state, because nothing draws it: the picker that asks
+   * the question shows the wait on the row that was taken. This only stops a
+   * second Return from sending main a confirmation it has already consumed.
+   */
   const confirmationBusyRef = useRef(false);
   const lastRevision = useRef(-1);
   const lastEventCursor = useRef(0);
@@ -614,17 +620,16 @@ export function AppShellProvider({
     [applyOpening, transport],
   );
 
-  const confirmPending = useCallback(async () => {
-    if (!pendingConfirmation || confirmationBusyRef.current) return;
+  const confirmPending = useCallback(async (): Promise<boolean> => {
+    if (!pendingConfirmation || confirmationBusyRef.current) return false;
     confirmationBusyRef.current = true;
-    setConfirmationBusy(true);
     const confirmationId = pendingConfirmation.confirmationId;
     try {
       let outcome: AppOutcome | undefined;
       if (pendingConfirmation.purpose.kind === "agent_stop") {
         if (!pendingConfirmation.agentId) {
           setPendingConfirmation(null);
-          return;
+          return true;
         }
         outcome = await dispatch({
           type: "confirm_stop_agent",
@@ -644,9 +649,9 @@ export function AppShellProvider({
           current?.confirmationId === confirmationId ? null : current,
         );
       }
+      return outcome !== undefined;
     } finally {
       confirmationBusyRef.current = false;
-      setConfirmationBusy(false);
     }
   }, [dispatch, pendingConfirmation]);
 
@@ -717,7 +722,6 @@ export function AppShellProvider({
       agentProfiles,
       repositoryStatus,
       pendingConfirmation,
-      confirmationBusy,
       confirmPending,
       dismissCloseConfirmation,
       adoptConfirmation,
@@ -746,7 +750,6 @@ export function AppShellProvider({
       listBranches,
       assignIssue,
       confirmPending,
-      confirmationBusy,
       dismissCloseConfirmation,
       dismissIntentError,
       dispatch,

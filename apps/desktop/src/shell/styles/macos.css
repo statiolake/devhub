@@ -397,37 +397,13 @@
   }
 }
 
+/* One column. The caution glyph went with DevHub's own alerts: every question
+   DevHub asks is a picker now, and what is left here is a workbench's own
+   dialog, which is about one editor and carries no application-wide warning. */
 .mac-alert-body {
   display: grid;
-  grid-template-columns: 40px 1fr;
-  gap: var(--space-4);
-}
-
-/* A message that carries no glyph gets the whole width; without this the text
-   lands in the icon's column and wraps a word to a line. */
-.mac-alert-body.plain {
   grid-template-columns: 1fr;
-}
-
-.mac-alert-icon {
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  color: var(--waiting);
-}
-
-.mac-alert-icon svg {
-  width: 34px;
-  height: 34px;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.5;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-
-.mac-alert-icon.danger {
-  color: var(--danger);
+  gap: var(--space-4);
 }
 
 .mac-alert-text {
@@ -437,7 +413,10 @@
   min-width: 0;
 }
 
-.mac-alert-detail {
+/* Facts about the question, as label and value — what a close is about to take
+   with it, what is already on a socket. It sits under a picker's list, which is
+   where a sheet says things about itself. */
+.mac-detail-list {
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -446,7 +425,7 @@
   list-style: none;
 }
 
-.mac-alert-detail li {
+.mac-detail-list li {
   display: flex;
   justify-content: space-between;
   gap: var(--space-4);

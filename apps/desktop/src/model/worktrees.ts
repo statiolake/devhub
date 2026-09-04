@@ -49,3 +49,42 @@ export function worktreeDirectory(
   const name = `${baseName(mainWorktree)}_${sanitizeBranchName(branch)}`;
   return parent === "/" ? `/${name}` : `${parent}/${name}`;
 }
+
+/**
+ * Whether closing this workspace deletes a folder — the one rule, in one place.
+ *
+ * "Close" and "delete the worktree" are the same act in DevHub: a worktree is a
+ * folder git made so that work could happen somewhere, and closing the
+ * workspace while leaving the folder is how a machine fills with checkouts
+ * nobody can account for. So there is exactly one question — *is this row a
+ * worktree of something?* — and everything that closes a workspace asks it
+ * here: main, to decide what to do, and the sidebar, so its button can say what
+ * it is about to do rather than guessing at a second copy of the rule.
+ *
+ * Three facts have to hold, and each of them rules out a real row:
+ *
+ *   - git knows a main worktree for it. Its absence is the whole of what "not a
+ *     repository" means, and a plain folder is only ever closed.
+ *   - the checkout is not that main worktree. Removing the repository itself is
+ *     not a close, it is losing the repository.
+ *   - the row *is* the checkout's root, not merely inside it. `git worktree
+ *     remove` takes the root, so a workspace opened on `worktree/packages/app`
+ *     would delete the whole checkout around it — a folder the person never
+ *     named.
+ */
+export function closingDeletesWorktree(
+  repository:
+    | {
+        readonly mainWorktree?: string;
+        readonly worktree?: string;
+      }
+    | undefined,
+  root: string,
+): boolean {
+  return (
+    repository?.mainWorktree !== undefined &&
+    repository.worktree !== undefined &&
+    repository.worktree !== repository.mainWorktree &&
+    repository.worktree === root
+  );
+}

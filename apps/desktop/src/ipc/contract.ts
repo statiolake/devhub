@@ -721,9 +721,9 @@ export type ModalRequest =
 	 * workspace, delete it anyway, or do nothing. Cancel is the default, which
 	 * is the rule for every question whose other answers destroy something.
 	 *
-	 * A *clean* worktree never gets here — it is removed without asking, the
-	 * way the sidebar's own button already did — so the question is only ever
-	 * put in front of somebody when the answer is not obvious.
+	 * A *clean* worktree never gets here — it is removed without asking — so the
+	 * question is only ever put in front of somebody when the answer is not
+	 * obvious.
 	 */
 	| {
 			readonly kind: "worktree-close";
@@ -760,23 +760,6 @@ export type ModalRequest =
 			readonly actionName: string;
 			/** The template, rendered. The starting contents of the field. */
 			readonly text: string;
-	  }
-	| {
-			readonly kind: "worktree-removal";
-			readonly workspaceId: string;
-			/** What the row calls it, so the question names what it is about. */
-			readonly label: string;
-			/**
-			 * The folder that is about to be deleted.
-			 *
-			 * The question is only ever asked when there is uncommitted work in it,
-			 * or when DevHub cannot say there is not — so it has to name the folder
-			 * and not only the label. Two worktrees of one repository are two rows
-			 * with different labels and the same everything else, and "widget_fix"
-			 * is not enough to check you are about to destroy the right one.
-			 */
-			readonly root: string;
-			readonly branch?: string;
 	  }
 	| {
 			readonly kind: "close-confirmation";

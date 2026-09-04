@@ -33,7 +33,12 @@
  * typed"; and a confirmation is a list with as many rows as there are answers,
  * with the safe one first, because Return takes the first row and the safe
  * answer is the one Return should take. `WorktreeCloseSheet` is what that looks
- * like with three of them: cancel, keep the folder, delete it.
+ * like with three of them: cancel, keep the folder, delete it;
+ * `CloseConfirmationSheet` and the socket change in Settings are what it looks
+ * like with two. There is no `Alert` any more — DevHub's own alert was deleted
+ * once the last three confirmations came here, because a rule with a spare
+ * control sitting beside it is a rule waiting to be broken by the next person
+ * in a hurry.
  *
  * The reason is not tidiness. Keys are muscle memory, and muscle memory does
  * not know which sheet it is looking at — so a second control answering the
@@ -49,8 +54,9 @@
  * The other two things not drawn by this control are not questions at all, and
  * so are not exceptions to a rule about questions: `ChordHelpSheet` is a
  * reference one reads and closes, and `ViewScopedAlert` is a workbench's own
- * dialog, drawn inside that workbench's rectangle because it is about one
- * editor rather than about DevHub.
+ * dialog — VS Code's question about VS Code's unsaved editors, drawn inside
+ * that workbench's rectangle because it is about one editor rather than about
+ * DevHub, with the buttons and the default the workbench itself asked for.
  */
 
 import {
@@ -558,10 +564,14 @@ export function Picker({
             between a caption and the thing it captions, and would make the
             sheet's seams depend on whether a caller passed one. */}
         <footer className="picker-footer">
+          {/* A `div` and not a `p`: a note is whatever the caller has to say
+              about the question — a line of guidance, a refusal, the list of
+              what a close is about to take with it — and a paragraph cannot
+              legally contain a list. */}
           {note ? (
-            <p className="picker-note mac-caption" role="status">
+            <div className="picker-note mac-caption" role="status">
               {note}
-            </p>
+            </div>
           ) : null}
           <div className="picker-actions">
             {extraAction ? (

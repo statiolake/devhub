@@ -146,8 +146,16 @@ export interface AppShellContextValue {
     readonly purpose: ConfirmationPurposeWire;
     readonly agentId?: string;
   } | null;
-  readonly confirmationBusy: boolean;
-  readonly confirmPending: () => Promise<void>;
+  /**
+   * Answer the pending confirmation, and say whether it was carried out.
+   *
+   * `false` is a request main refused: the confirmation is still there, still
+   * retryable — main's one-shot operation was not consumed — and the caller is
+   * the only thing in a position to say so where the question was asked. A
+   * `void` here is how a close that quietly did not happen looked exactly like
+   * one that did.
+   */
+  readonly confirmPending: () => Promise<boolean>;
   readonly dismissCloseConfirmation: () => void;
   /** Take on a confirmation raised on another page, as if raised here. */
   readonly adoptConfirmation: (confirmation: {

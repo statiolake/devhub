@@ -21,8 +21,7 @@ import { AgentPickerSheet } from "./AgentPickerSheet";
 import { IssueAssignmentSheet } from "./IssueAssignmentSheet";
 import { AgentRenameSheet } from "./AgentRenameSheet";
 import { InjectionReviewSheet } from "./InjectionReviewSheet";
-import { CloseConfirmationAlert } from "./CloseConfirmationAlert";
-import { WorktreeRemovalAlert } from "./WorktreeRemovalAlert";
+import { CloseConfirmationSheet } from "./CloseConfirmationSheet";
 import { WorktreeCloseSheet } from "./WorktreeCloseSheet";
 import { TabPickerSheet } from "./TabPickerSheet";
 import { AgentActionsSheet } from "./AgentActionsSheet";
@@ -161,18 +160,9 @@ function Modal({ modal }: { readonly modal: OpenModal }) {
           }}
         />
       );
-    case "worktree-removal":
-      return (
-        <WorktreeRemovalAlert
-          request={request}
-          onDismiss={() => {
-            close(id);
-          }}
-        />
-      );
     case "close-confirmation":
       return (
-        <CloseConfirmationAlert
+        <CloseConfirmationSheet
           request={request}
           onDismiss={() => {
             close(id);

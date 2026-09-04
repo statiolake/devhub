@@ -85,6 +85,7 @@ import {
 	type ProviderEvent,
 	type UserIntent,
 } from "../../model/intents.js";
+import { closingDeletesWorktree } from "../../model/worktrees.js";
 import { AppModel, type NavigationSelection } from "../../model/appModel.js";
 import {
 	activeProfile,
@@ -760,15 +761,9 @@ export class AppController {
 		const repository = this.lastRepositoryStatus.workspaces.find(
 			(entry) => entry.workspaceId === workspaceId,
 		);
-		const isWorktree =
-			repository?.mainWorktree !== undefined &&
-			repository.worktree !== undefined &&
-			repository.worktree !== repository.mainWorktree &&
-			// And only when the row *is* the worktree, not merely inside one:
-			// `git worktree remove` takes the checkout's root, so a row on
-			// `worktree/packages/app` would delete the whole checkout around it.
-			repository.worktree === workspace.root;
-		if (!isWorktree) {
+		// The same predicate the sidebar's button reads to decide what to call
+		// itself, so the label and the act cannot disagree.
+		if (!closingDeletesWorktree(repository, workspace.root)) {
 			this.requestCloseWorkspace(workspaceId);
 			return;
 		}

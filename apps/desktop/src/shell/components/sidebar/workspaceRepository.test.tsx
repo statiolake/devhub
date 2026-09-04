@@ -385,7 +385,7 @@ describe("a workspace row, continued", () => {
       ],
     });
     const close = () =>
-      screen.queryByRole("button", { name: /^Close widget/u });
+      screen.queryByRole("button", { name: /^Close (the worktree )?widget/u });
 
     it("offers one close, and no second control that means the same thing", () => {
       // The row used to have a close *and* a trash, so whether a worktree
@@ -414,6 +414,41 @@ describe("a workspace row, continued", () => {
       }
     });
 
+    /**
+     * The button says which of the two closes it is. Closing a worktree
+     * deletes the folder, and a control that says "Close workspace" while
+     * deleting a directory is a control that lies once and is never trusted
+     * again. The ellipsis is the rest of the promise: a question may follow.
+     */
+    it("says it is a worktree it is about to close", () => {
+      mount(worktree(true));
+      const button = screen.getByRole("button", {
+        name: "Close the worktree widget",
+      });
+      expect(button).toHaveAttribute("title", "Close worktree…");
+    });
+
+    it("says only 'close' where nothing is going to be deleted", () => {
+      // A plain folder, and a folder *inside* a worktree: `git worktree
+      // remove` takes the checkout's root, so a row that is not that root is
+      // closed and nothing on disk is touched.
+      for (const workspaces of [
+        [{ workspaceId: "w-1", branch: "main" }],
+        [
+          {
+            workspaceId: "w-1",
+            mainWorktree: "/projects/other",
+            worktree: "/projects/widget/nested",
+          },
+        ],
+      ]) {
+        mount({ sequence: 1, workspaces });
+        const button = screen.getByRole("button", { name: "Close widget" });
+        expect(button).toHaveAttribute("title", "Close workspace");
+        cleanup();
+      }
+    });
+
     it("still retries a failed close through the model, not through main", () => {
       // A close that failed is retried by asking for the same thing again, and
       // that retry is the model's own command: nothing about the folder has
@@ -422,7 +457,7 @@ describe("a workspace row, continued", () => {
         worktree(false),
         "closing-failed",
       );
-      fireEvent.click(screen.getByRole("button", { name: /^Close widget/u }));
+      fireEvent.click(close() as HTMLElement);
       expect(closeWorkspace).not.toHaveBeenCalled();
       expect(onDispatch).toHaveBeenCalledWith({
         type: "retry_close_workspace",
