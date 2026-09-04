@@ -19,7 +19,7 @@ import { WorkspacePicker } from "../components/shell/WorkspacePicker";
 import { ViewScopedAlert } from "../components/shell/ViewScopedAlert";
 import { AgentPickerSheet } from "./AgentPickerSheet";
 import { IssueAssignmentSheet } from "./IssueAssignmentSheet";
-import { AgentRenameAlert } from "./AgentRenameAlert";
+import { AgentRenameSheet } from "./AgentRenameSheet";
 import { InjectionReviewSheet } from "./InjectionReviewSheet";
 import { CloseConfirmationAlert } from "./CloseConfirmationAlert";
 import { WorktreeRemovalAlert } from "./WorktreeRemovalAlert";
@@ -94,7 +94,7 @@ function Modal({ modal }: { readonly modal: OpenModal }) {
       );
     case "agent-rename":
       return (
-        <AgentRenameAlert
+        <AgentRenameSheet
           agentId={request.agentId}
           onDismiss={() => {
             close(id);

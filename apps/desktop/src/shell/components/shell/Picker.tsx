@@ -42,10 +42,15 @@
  *
  * **Multi-line text is the exception, and the only one.** A message to an agent
  * is a paragraph, so Return has to insert a newline and Command-Return has to
- * be what sends it — which is the opposite of what Return means here. Those are
- * modals of their own (`InjectionReviewSheet`, and the first-message sheet a
- * new Agent gets), and they say so by looking like an editor rather than a
- * list.
+ * be what sends it — which is the opposite of what Return means here. That is a
+ * modal of its own — `InjectionReviewSheet`, the only one there is — and it says
+ * so by looking like an editor rather than a list.
+ *
+ * The other two things not drawn by this control are not questions at all, and
+ * so are not exceptions to a rule about questions: `ChordHelpSheet` is a
+ * reference one reads and closes, and `ViewScopedAlert` is a workbench's own
+ * dialog, drawn inside that workbench's rectangle because it is about one
+ * editor rather than about DevHub.
  */
 
 import {
