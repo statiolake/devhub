@@ -2,7 +2,7 @@
  *  DevHub's copy of VS Code's outer bootstrap.
  *
  *  Upstream: vscode/src/main.ts
- *  Pinned at: microsoft/vscode 3a03d6f72d628a7741c29f456b4ddbb5ae68502c (tag 1.131.0)
+ *  Pinned at: microsoft/vscode a44adf7f53e00964ab890f9f8758a334f1fc15bc (tag 1.136.1)
  *
  *  This is the file Electron runs (apps/desktop/package.json "main"). It exists
  *  to substitute the things below and nothing else. Keep it as close to upstream as

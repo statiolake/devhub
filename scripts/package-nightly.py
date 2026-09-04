@@ -222,9 +222,13 @@ def check_compiled_output_is_current() -> None:
 
 def check_inputs() -> None:
 	required = [
+		# The Electron this app is built around is BASE_APP, the bundle
+		# `npm run electron` unpacks under vscode/.build — not the `electron`
+		# npm package, which nothing here reads and which VS Code dropped from
+		# its devDependencies in 1.136.1. Asking for the package was asking a
+		# question about a directory that had stopped meaning anything.
 		(BASE_APP, "scripts/provision-vscode.sh"),
 		(VSCODE_DIR / "out-vscode-min" / "main.js", "scripts/provision-vscode.sh"),
-		(VSCODE_DIR / "node_modules" / "electron", "scripts/provision-vscode.sh"),
 		(DESKTOP_DIR / "out" / "main" / "main.js", "pnpm --filter @devhub/desktop build"),
 		(DESKTOP_DIR / "dist" / "shell" / "index.html", "pnpm --filter @devhub/desktop build"),
 		(BRIDGE_DIR / "dist" / "extension.js", "pnpm --filter @devhub/bridge build"),

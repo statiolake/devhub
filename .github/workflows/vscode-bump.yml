@@ -120,7 +120,10 @@ jobs:
 
       # A pull request opened with GITHUB_TOKEN does not start any workflow —
       # GitHub refuses, so that a workflow cannot trigger itself into a loop.
-      # The CI run is therefore asked for explicitly, on the branch, below.
+      # Nothing here asks for one either: the bump report below already says
+      # whether the patches, the provision and the checks passed, and a person
+      # reads that before taking the pull request out of draft. Marking it ready
+      # is a human action, so it starts CI the ordinary way.
       - name: Open the pull request
         id: pr
         env:
@@ -147,9 +150,3 @@ jobs:
             --title "chore: follow VS Code $NEW" \
             --body-file "$RUNNER_TEMP/body.md" \
             "${draft[@]}"
-
-      - name: Ask CI to run on the branch
-        env:
-          GH_TOKEN: ${{ github.token }}
-          BRANCH: ${{ needs.plan.outputs.branch }}
-        run: gh workflow run CI --ref "$BRANCH"

@@ -108,8 +108,31 @@ vscode_dirs_without_node_modules() {
 	')
 }
 
+# Which submodule commit the tree below was installed from, and the whole of
+# what "already installed" means here.
+#
+# It replaces a check for one package being present, which asked the wrong
+# question twice over. A bump rewrites vscode/package.json and every nested
+# package.json with it, and no single directory's existence reflects that: at
+# 1.131.0 the tree had a package the compile needed and 1.136.1 added another,
+# so the old check happily passed over yesterday's dependencies and the run died
+# tens of minutes later, in the compile, on `Cannot find package
+# '@vscode/gulp-vinyl-zip'` — a message naming neither the bump nor the install.
+# The sentinel package was `electron`, which 1.136.1 dropped from its
+# devDependencies outright, so the check had also stopped ever being satisfied:
+# every run reinstalled from scratch.
+#
+# The submodule commit is the exact key, because package.json is tracked content
+# of the submodule and patches/vscode never touches a manifest. The stamp lives
+# inside node_modules so that deleting the tree takes the claim about it along,
+# and it is written only past the completeness check below — so a stamp that
+# matches means installed, complete, and from this commit, and nothing else
+# needs asking.
+INSTALL_STAMP="$VSCODE_DIR/node_modules/.devhub-install.stamp"
+INSTALL_STATE="$(git -C "$VSCODE_DIR" rev-parse HEAD)"
+
 step "npm ci in vscode/"
-if [ "$FORCE" = 1 ] || [ ! -d "$VSCODE_DIR/node_modules/electron" ]; then
+if [ "$FORCE" = 1 ] || [ "$(cat "$INSTALL_STAMP" 2>/dev/null)" != "$INSTALL_STATE" ]; then
 	(cd "$VSCODE_DIR" && npm ci)
 else
 	INCOMPLETE="$(vscode_dirs_without_node_modules)"
@@ -129,6 +152,10 @@ if [ -n "$INCOMPLETE" ]; then
 	echo "$INCOMPLETE" | sed 's/^/  /' >&2
 	exit 1
 fi
+# Written only here, past every check above: the stamp is a claim that the tree
+# is complete for this commit, so it must not survive a run that found it was
+# not.
+printf '%s' "$INSTALL_STATE" > "$INSTALL_STAMP"
 
 # --- 3b. the patches DevHub cannot avoid ------------------------------------
 # Applying them is scripts/apply-vscode-patches.sh, because the VS Code bump
@@ -187,8 +214,30 @@ fi
 # it; VS Code's `electron` script does.
 step "Electron runtime"
 ELECTRON_APP="$VSCODE_DIR/.build/electron"
-if [ "$FORCE" = 1 ] || [ ! -d "$ELECTRON_APP" ]; then
+# Which Electron this VS Code is: `vscode/.npmrc` states it as the `target` npm
+# built every native module in vscode/node_modules against, and `npm run
+# electron` fetches that same one. So the version already on disk has to be
+# compared against it, not merely be present — a bump raises the target, npm ci
+# rebuilds node-pty and friends for the new one, and a `.build/electron` left
+# over from the previous tag would go on running the old binary underneath them.
+# Nothing about that says "wrong": the app starts, and the native modules it
+# needs fail one by one, which is what a terminal that will not open looks like.
+ELECTRON_TARGET="$(sed -n 's/^target="\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' "$VSCODE_DIR/.npmrc")"
+if [ -z "$ELECTRON_TARGET" ]; then
+	echo "no target= in $VSCODE_DIR/.npmrc — cannot tell which Electron this VS Code wants" >&2
+	exit 1
+fi
+if [ "$FORCE" = 1 ] \
+	|| [ ! -d "$ELECTRON_APP" ] \
+	|| [ "$(cat "$ELECTRON_APP/version" 2>/dev/null)" != "$ELECTRON_TARGET" ]; then
 	(cd "$VSCODE_DIR" && npm run electron)
+	# The branded clone below is a copy of this bundle, so it is now a copy of
+	# the wrong one. Take it away and let the step rebuild it.
+	rm -rf "$VSCODE_DIR/.build/devhub-electron"
+fi
+if [ "$(cat "$ELECTRON_APP/version" 2>/dev/null)" != "$ELECTRON_TARGET" ]; then
+	echo "$ELECTRON_APP is Electron $(cat "$ELECTRON_APP/version" 2>/dev/null || echo unknown), but this VS Code is built for $ELECTRON_TARGET" >&2
+	exit 1
 fi
 if [ ! -d "$ELECTRON_APP" ]; then
 	echo "missing $ELECTRON_APP — 'npm run electron' did not produce it" >&2

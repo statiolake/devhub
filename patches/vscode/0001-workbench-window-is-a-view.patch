@@ -1,8 +1,8 @@
 diff --git a/src/vs/platform/windows/electron-main/windowImpl.ts b/src/vs/platform/windows/electron-main/windowImpl.ts
-index 7aeeb120..5096bb93 100644
+index 94aee9da976..65bdf6c7515 100644
 --- a/src/vs/platform/windows/electron-main/windowImpl.ts
 +++ b/src/vs/platform/windows/electron-main/windowImpl.ts
-@@ -716,7 +716,15 @@ export class CodeWindow extends BaseWindow implements ICodeWindow {
+@@ -772,7 +772,15 @@ export class CodeWindow extends BaseWindow implements ICodeWindow {
  
  			// Create the browser window
  			mark('code/willCreateCodeBrowserWindow');

@@ -1,5 +1,5 @@
 diff --git a/src/vs/base/common/product.ts b/src/vs/base/common/product.ts
-index 46881e33054..9ad31a38db3 100644
+index 43e145eb3b7..abcbd1c198d 100644
 --- a/src/vs/base/common/product.ts
 +++ b/src/vs/base/common/product.ts
 @@ -98,6 +98,16 @@ export interface IDictationRuntimeProductConfig {
@@ -20,7 +20,7 @@ index 46881e33054..9ad31a38db3 100644
  	readonly quality?: string;
  	readonly commit?: string;
 diff --git a/src/vs/platform/dialogs/electron-browser/dialog.ts b/src/vs/platform/dialogs/electron-browser/dialog.ts
-index ec26804c300..7c68f9ae125 100644
+index 835a4009ff8..14dfb461f31 100644
 --- a/src/vs/platform/dialogs/electron-browser/dialog.ts
 +++ b/src/vs/platform/dialogs/electron-browser/dialog.ts
 @@ -11,18 +11,32 @@ import { IProductService } from '../../product/common/productService.js';
@@ -50,8 +50,8 @@ index ec26804c300..7c68f9ae125 100644
 +	}
 +
  	const getDetails = (useAgo: boolean): string => {
- 		return localize({ key: 'aboutDetail', comment: ['Electron, Chromium, Node.js and V8 are product names that need no translation'] },
- 			"Version: {0}\nCommit: {1}\nDate: {2}\nElectron: {3}\nElectronBuildId: {4}\nChromium: {5}\nNode.js: {6}\nV8: {7}\nOS: {8}",
+ 		return localize({ key: 'aboutDetail', comment: ['Electron, Chromium, Node.js, V8 and Copilot are product names that need no translation'] },
+ 			"Version: {0}\nCommit: {1}\nDate: {2}\nElectron: {3}\nElectronBuildId: {4}\nChromium: {5}\nNode.js: {6}\nV8: {7}\n@github/copilot: {8}\n@github/copilot-sdk: {9}\nOS: {10}",
  			version,
 -			productService.commit || 'Unknown',
 +			commit,

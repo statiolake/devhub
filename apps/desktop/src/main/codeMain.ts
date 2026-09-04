@@ -2,7 +2,7 @@
  *  DevHub's copy of VS Code's main-process entry point.
  *
  *  Upstream: vscode/src/vs/code/electron-main/main.ts
- *  Pinned at: microsoft/vscode 3a03d6f72d628a7741c29f456b4ddbb5ae68502c (tag 1.131.0)
+ *  Pinned at: microsoft/vscode a44adf7f53e00964ab890f9f8758a334f1fc15bc (tag 1.136.1)
  *
  *  This file exists to substitute two things and nothing else. Keep it as close
  *  to upstream as possible; a VS Code bump re-applies exactly this list:
@@ -703,6 +703,10 @@ class CodeMain {
 	}
 
 	private validatePaths(args: NativeParsedArgs): NativeParsedArgs {
+		const defaultKeybindingsExportPath = args['export-default-keybindings'];
+		if (defaultKeybindingsExportPath) {
+			args['export-default-keybindings'] = sanitizeFilePath(defaultKeybindingsExportPath, cwd());
+		}
 
 		// Track URLs if they're going to be used
 		if (args['open-url']) {

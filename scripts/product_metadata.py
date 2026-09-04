@@ -172,7 +172,7 @@ def devhub_version() -> str:
 	version of the VS Code inside DevHub, and it is not decoration: it is what
 	every `engines.vscode` range in every extension is validated against
 	(`extensionManagementService.ts` and `extensionGalleryService.ts` both call
-	`isEngineValid(..., productService.version, ...)`). Answering "1.131.0" there
+	`isEngineValid(..., productService.version, ...)`). Answering "1.136.1" there
 	is the truth. `hostVersion` is the other question — which DevHub is this? —
 	and the About dialog is the one place both need an answer at once, which is
 	what patches/vscode/0002 exists for.
