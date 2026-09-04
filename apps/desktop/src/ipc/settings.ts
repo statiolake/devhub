@@ -139,11 +139,26 @@ export interface SettingsAgentActionWire {
 	readonly enabled: boolean;
 }
 
+/**
+ * The keyboard, as the Settings window reads and writes it.
+ *
+ * `chords` is the override table exactly as `settings.toml` holds it: a key
+ * string to a command id, with the empty string meaning "this key does
+ * nothing". Overrides and not the whole table, so the window never has to
+ * restate a chord DevHub ships — and a DevHub that adds a command does not find
+ * it deleted by a file this window saved before it existed.
+ */
+export interface SettingsKeybindingsWire {
+	readonly prefix: string;
+	readonly chords: Readonly<Record<string, string>>;
+}
+
 export interface SettingsConfigWire {
 	readonly version: number;
 	readonly general: SettingsGeneralWire;
 	readonly runtimes: SettingsRuntimeConfigWire;
 	readonly appearance: SettingsAppearanceWire;
+	readonly keybindings: SettingsKeybindingsWire;
 	readonly workspaceSources: readonly SettingsWorkspaceSourceWire[];
 	readonly agentProfiles: readonly SettingsAgentProfileWire[];
 	readonly agentActions: readonly SettingsAgentActionWire[];
@@ -291,6 +306,8 @@ export type SettingsDiagnosticCodeWire =
 	| "invalid_socket_name"
 	| "forbidden_tmux_argument"
 	| "invalid_appearance"
+	| "invalid_keybinding"
+	| "unknown_command"
 	| "invalid_font_family"
 	| "invalid_workspace_path"
 	| "invalid_workspace_depth"
@@ -358,6 +375,7 @@ export type SettingsScopeKeyWire =
 	| "general"
 	| "runtimes"
 	| "appearance"
+	| "keybindings"
 	| "workspaceSources"
 	| "agentProfiles"
 	| "agentActions";

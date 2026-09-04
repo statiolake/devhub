@@ -90,6 +90,10 @@ export function ruleMessage(code: SettingsDiagnosticCodeWire): string {
       return "A font size is 9 to 24, a line height 1 to 2, an inset 0 to 64, and a sidebar density Compact or Comfortable.";
     case "invalid_string":
       return "That value cannot contain a null character.";
+    case "invalid_keybinding":
+      return "A chord is modifiers and a key, like `Shift+n` or `Cmd+j`. The key is the one on the keyboard — `Shift+bracketleft`, not `{` — so that a binding means the same thing on every layout.";
+    case "unknown_command":
+      return "That is not a command DevHub has. The keyboard section lists every one of them.";
 
     // Things about the file rather than a value in it.
     case "parse":

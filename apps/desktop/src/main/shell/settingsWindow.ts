@@ -161,6 +161,10 @@ function toWireConfig(config: Config): SettingsConfigWire {
 			terminalMargin: config.appearance.terminalMargin,
 			terminalTheme: config.appearance.terminalTheme,
 		},
+		keybindings: {
+			prefix: config.keybindings.prefix,
+			chords: { ...config.keybindings.chords },
+		},
 		workspaceSources: config.workspaceSources.map(toWireSource),
 		agentActions: config.agentActions.map((action) => ({
 			trigger: action.trigger,
@@ -274,6 +278,10 @@ function fromWireConfig(wire: SettingsConfigWire): Config {
 			terminalLineHeight: wire.appearance.terminalLineHeight,
 			terminalMargin: wire.appearance.terminalMargin,
 			terminalTheme: wire.appearance.terminalTheme,
+		},
+		keybindings: {
+			prefix: wire.keybindings.prefix,
+			chords: { ...wire.keybindings.chords },
 		},
 		workspaceSources: wire.workspaceSources.map(fromWireSource),
 		// The order is the order the window shows them in — the tree is where a

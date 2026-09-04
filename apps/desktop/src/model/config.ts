@@ -39,6 +39,11 @@ import {
   triggerOf,
   type AgentActionTrigger,
 } from "./agentActions.js";
+import {
+  checkKeybindings,
+  defaultKeybindings,
+  type KeybindingsSpec,
+} from "./commands.js";
 import { dateTemplateBracketsBalance } from "./dateTemplate.js";
 import { isValidFontFamily } from "./fontFamily.js";
 import { currentProfile, type ProfileLocations } from "./profile.js";
@@ -314,6 +319,16 @@ export interface Config {
   readonly general: GeneralConfig;
   readonly runtimes: RuntimeConfig;
   readonly appearance: AppearanceConfig;
+  /**
+   * What arms a chord, and what the second stroke reaches.
+   *
+   * Overrides only: `chords` holds the keys somebody has changed, and every key
+   * it does not mention keeps the command `model/commands.ts` ships it with.
+   * Stating the whole table instead would make a file written today delete
+   * every chord DevHub adds tomorrow — the bug that lost the shortcut buttons
+   * from `agent_actions` when that was an array.
+   */
+  readonly keybindings: KeybindingsSpec;
   readonly workspaceSources: readonly WorkspaceSource[];
   readonly agentProfiles: readonly ConfiguredAgentProfile[];
   readonly agentActions: readonly ConfiguredAgentAction[];
@@ -548,6 +563,7 @@ export function defaultConfig(): Config {
     general: { import_login_environment: true },
     runtimes: defaultRuntimes(),
     appearance: defaultAppearance(),
+    keybindings: defaultKeybindings(),
     workspaceSources: defaultWorkspaceSources(),
     agentProfiles: defaultAgentProfiles(),
     agentActions: defaultAgentActions(),
@@ -570,6 +586,8 @@ export type ValidationCode =
   | "invalid_socket_name"
   | "forbidden_tmux_argument"
   | "invalid_appearance"
+  | "invalid_keybinding"
+  | "unknown_command"
   | "invalid_font_family"
   | "invalid_workspace_path"
   | "invalid_workspace_depth"
@@ -900,6 +918,28 @@ function validateAppearance(appearance: AppearanceConfig): void {
   }
 }
 
+/**
+ * The keyboard, as a set rather than one entry at a time.
+ *
+ * Every problem `checkKeybindings` finds is a refusal here, and the *first* of
+ * them is the one the diagnostic names — the config's own rule everywhere else:
+ * the whole file is validated before any of it is adopted, so DevHub goes on
+ * running the last table that parsed and the person is told which line to fix
+ * rather than discovering it by pressing a key that does nothing.
+ */
+function validateKeybindings(keybindings: KeybindingsSpec): void {
+  const problem = checkKeybindings(keybindings)[0];
+  if (!problem) return;
+  fail(
+    problem.code === "unknown_command"
+      ? "unknown_command"
+      : problem.code === "duplicate_key"
+        ? "duplicate_identity"
+        : "invalid_keybinding",
+    problem.path,
+  );
+}
+
 function validateWorkspaceSources(sources: readonly WorkspaceSource[]): void {
   const seen = new Map<string, number>();
   sources.forEach((source, index) => {
@@ -1028,6 +1068,7 @@ export function validateConfig(config: Config): void {
   }
   validateRuntimes(config.runtimes);
   validateAppearance(config.appearance);
+  validateKeybindings(config.keybindings);
   validateWorkspaceSources(config.workspaceSources);
   validateAgentProfiles(config.agentProfiles);
   validateAgentActions(config.agentActions);
@@ -1040,6 +1081,7 @@ const TOP_LEVEL_KEYS = [
   "general",
   "runtimes",
   "appearance",
+  "keybindings",
   "workspace_sources",
   "agent_profiles",
   "agent_actions",
@@ -1458,6 +1500,23 @@ export function interpretConfig(document: unknown): Config {
   );
   checkKeys(themeTable, ["light", "dark"], "appearance.terminal_theme");
 
+  const keybindingsTable = requireTable(
+    table["keybindings"] ?? {},
+    "keybindings",
+  );
+  checkKeys(keybindingsTable, ["prefix", "chords"], "keybindings");
+  const chordsTable = requireTable(
+    keybindingsTable["chords"] ?? {},
+    "keybindings.chords",
+  );
+  const chords: Record<string, string> = {};
+  for (const [key, value] of Object.entries(chordsTable)) {
+    if (typeof value !== "string") {
+      fail("invalid_type", `keybindings.chords.${key}`);
+    }
+    chords[key] = value;
+  }
+
   const rawSources = table["workspace_sources"];
   if (rawSources !== undefined && !Array.isArray(rawSources)) {
     fail("invalid_type", "workspace_sources");
@@ -1538,6 +1597,15 @@ export function interpretConfig(document: unknown): Config {
           defaultTerminalDark(),
         ),
       },
+    },
+    keybindings: {
+      prefix: optionalString(
+        keybindingsTable,
+        "prefix",
+        "keybindings",
+        defaults.keybindings.prefix,
+      ),
+      chords,
     },
     workspaceSources:
       rawSources === undefined
@@ -1626,6 +1694,12 @@ export function configDocument(config: Config): Record<string, TomlValue> {
         dark: paletteToTable(config.appearance.terminalTheme.dark),
       },
     },
+    keybindings: {
+      prefix: config.keybindings.prefix,
+      // Written even when empty, so the table a person edits by hand is a table
+      // the file already has a heading for.
+      chords: { ...config.keybindings.chords },
+    },
     workspace_sources: config.workspaceSources.map(sourceToTable),
     agent_actions: agentActionsToTable(config.agentActions),
     agent_profiles: config.agentProfiles.map((profile) => ({
@@ -1709,6 +1783,7 @@ export type ConfigScopeKey =
   | "general"
   | "runtimes"
   | "appearance"
+  | "keybindings"
   | "workspaceSources"
   | "agentProfiles"
   | "agentActions";

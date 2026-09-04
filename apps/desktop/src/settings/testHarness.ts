@@ -56,6 +56,7 @@ export function testConfig(
       terminalMargin: 4,
       terminalTheme: { light: PALETTE, dark: PALETTE },
     },
+    keybindings: { prefix: "Cmd+q", chords: {} },
     workspaceSources: [],
     agentProfiles: [],
     // The one action DevHub ships, as a fresh config carries it.
