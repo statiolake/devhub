@@ -352,6 +352,20 @@ function cleanupKind(result: WorkspaceCleanupResult): OperationKind {
   return `cleanup:${result.step}`;
 }
 
+/**
+ * The one error a close that did not finish becomes.
+ *
+ * Every place a workspace lands in `closing-failed` raises this, so the alert
+ * reads the same whichever step gave up, and the step itself is on the
+ * workspace as its `stateDiagnostic` rather than in three sentences written
+ * three times.
+ */
+function closeFailedError(operationId: OperationId): AppError {
+  return new AppError(AppErrorCode.Domain)
+    .withDomain(DomainErrorCode.WorkspaceClosingFailed)
+    .withOperation(operationId);
+}
+
 export class AppCoordinator {
   private readonly events: SequencedCoordinatorEvent[] = [];
   private nextSequence = 0;
@@ -1023,7 +1037,7 @@ export class AppCoordinator {
       case "state_persisted":
         return this.completePersist(event.token);
       case "state_persistence_failed":
-        return this.completePersistFailed(event.token);
+        return this.completePersistFailed(event.token, event.reason);
       case "operation_failed":
         return this.completeOperationFailed(event.token);
     }
@@ -1539,9 +1553,12 @@ export class AppCoordinator {
         this.emit({ kind: "operation_completed", token });
         this.emit({
           kind: "error",
-          error: new AppError(AppErrorCode.PortUnavailable).withOperation(
-            token.operationId,
-          ),
+          // A close that did not finish is a *close* failure, not a port
+          // that would not answer: the catch-all sentence ("the native app
+          // shell is unavailable") named the wrong thing and offered the
+          // wrong next step. The workspace's own `stateDiagnostic` is what
+          // says which step, and the Surface draws it.
+          error: closeFailedError(token.operationId),
         });
         this.queuePersist(token.operationId);
         return { kind: "updated", snapshot };
@@ -1740,9 +1757,7 @@ export class AppCoordinator {
       this.emit({ kind: "operation_completed", token });
       this.emit({
         kind: "error",
-        error: new AppError(AppErrorCode.PortUnavailable).withOperation(
-          token.operationId,
-        ),
+        error: closeFailedError(token.operationId),
       });
       this.queuePersist(token.operationId);
       return { kind: "updated", snapshot };
@@ -1789,9 +1804,12 @@ export class AppCoordinator {
         this.emit({ kind: "operation_completed", token });
         this.emit({
           kind: "error",
-          error: new AppError(AppErrorCode.PortUnavailable).withOperation(
-            token.operationId,
-          ),
+          // A close that did not finish is a *close* failure, not a port
+          // that would not answer: the catch-all sentence ("the native app
+          // shell is unavailable") named the wrong thing and offered the
+          // wrong next step. The workspace's own `stateDiagnostic` is what
+          // says which step, and the Surface draws it.
+          error: closeFailedError(token.operationId),
         });
         this.queuePersist(token.operationId);
         return { kind: "updated", snapshot };
@@ -1882,7 +1900,10 @@ export class AppCoordinator {
     return { kind: "noop", snapshot: this.snapshot() };
   }
 
-  private completePersistFailed(token: OperationToken): IntentOutcome {
+  private completePersistFailed(
+    token: OperationToken,
+    reason: string,
+  ): IntentOutcome {
     this.takePending(
       token,
       "persist_state",
@@ -1926,9 +1947,10 @@ export class AppCoordinator {
         }
       }
     }
-    const error = new AppError(AppErrorCode.PersistenceDegraded).withOperation(
-      token.operationId,
-    );
+    const error = new AppError(AppErrorCode.PersistenceDegraded)
+      .withPort("state")
+      .withDetail(reason)
+      .withOperation(token.operationId);
     this.emit({ kind: "snapshot", snapshot: this.snapshot() });
     this.emit({ kind: "error", error });
     this.emit({ kind: "operation_completed", token });

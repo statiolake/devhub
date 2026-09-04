@@ -393,6 +393,14 @@ export type ProviderEvent =
   | {
       readonly type: "state_persistence_failed";
       readonly token: OperationToken;
+      /**
+       * What the store said, in the words the reader gets: which file, and
+       * what happened to it. It travels with the completion because the
+       * coordinator is where the failure becomes the error the page draws,
+       * and an error that only says "changes could not be saved" leaves the
+       * person with nothing to check.
+       */
+      readonly reason: string;
     }
   /**
    * The adapter could not complete an operation. This consumes the token, so a

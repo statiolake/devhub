@@ -151,7 +151,12 @@ function WorkspaceRow({
             // A Workspace has no status of its own. Its Agents each carry
             // theirs on their own row, and rolling four of them into one mark
             // only produced a fifth thing to read that named none of them.
-            aria-label={`${workspace.label} workspace, path ${workspace.root}`}
+            // A close that stopped is said, not only drawn: the row's colour
+            // is what a sighted reader sees and this is the same statement
+            // for everyone else.
+            aria-label={`${workspace.label} workspace, path ${workspace.root}${
+              workspace.state === "closing-failed" ? ", close failed" : ""
+            }`}
             title={workspace.root}
             onClick={() =>
               dispatch({

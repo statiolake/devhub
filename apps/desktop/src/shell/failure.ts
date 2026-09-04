@@ -38,15 +38,6 @@ export const FALLBACK_ERROR: AppError = {
   actions: ["retry", "open_settings"],
 };
 
-export const PERSISTENCE_DEGRADED_ERROR: AppError = {
-  code: "persistence_degraded",
-  summary: "Changes could not be saved.",
-  module: "state",
-  timestampMs: 0,
-  runtimeVersion: "unknown",
-  actions: ["retry", "open_settings"],
-};
-
 function isAppError(value: unknown): value is AppError {
   if (typeof value !== "object" || value === null) {
     return false;

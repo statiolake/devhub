@@ -25,12 +25,19 @@ import {
   type WorkspacePickerCandidate,
   type WorkspacePickerEvent,
 } from "./client";
-import {
-  PERSISTENCE_DEGRADED_ERROR,
-  subscribeToUnhandled,
-  toAppError,
-} from "./failure";
+import { subscribeToUnhandled, toAppError } from "./failure";
 import { AppShellContext, type AppShellContextValue } from "./useAppShell";
+
+/**
+ * What makes two failures the same failure.
+ *
+ * The code and the words: a save that keeps failing for the same reason is
+ * one failure being re-raised, and a save that starts failing for a different
+ * reason is news.
+ */
+function errorIdentity(error: AppError): string {
+  return `${error.code}\u0000${error.detail ?? ""}`;
+}
 
 /** What a dispatch came back asking to have confirmed. */
 export interface PendingConfirmation {
@@ -80,13 +87,40 @@ export function AppShellProvider({
    * The failure on screen.
    *
    * One rule decides when it goes, and it does not depend on what raised it:
-   * the user dismisses it, the user starts another action, or a newer failure
-   * replaces it. Nothing that merely arrives can retire it — a projection
-   * showing up is not evidence that anything was fixed, and letting one clear
-   * the alert is how a reported failure reaches the screen and vanishes before
-   * it can be read.
+   * the user dismisses it, the user starts another action, or a *different*
+   * failure replaces it. Nothing that merely arrives can retire it — a
+   * projection showing up is not evidence that anything was fixed, and letting
+   * one clear the alert is how a reported failure reaches the screen and
+   * vanishes before it can be read. Nor can anything that merely arrives bring
+   * a dismissed failure back: re-raising the same failure is not news, and an
+   * alert that returns as fast as it is closed is one the person cannot get
+   * out of the way of.
    */
-  const [intentError, setIntentError] = useState<AppError | null>(null);
+  const [intentError, setIntentErrorState] = useState<AppError | null>(null);
+  /**
+   * The failure the user has already read and put away.
+   *
+   * Kept because a failure can be raised again without anything new having
+   * happened: a background save that keeps failing re-raises the same one
+   * every few seconds, and an alert that comes back the moment it is
+   * dismissed cannot be dismissed at all. So the same failure — same code,
+   * same detail — stays away until either something *different* fails or the
+   * user starts another action, which are the other two halves of the one
+   * rule. It is deliberately not a per-source decision: no raising site gets
+   * to choose whether its failure is the sticky kind.
+   */
+  const dismissed = useRef<string | null>(null);
+
+  const setIntentError = useCallback((error: AppError) => {
+    if (dismissed.current === errorIdentity(error)) return;
+    dismissed.current = null;
+    setIntentErrorState(error);
+  }, []);
+
+  const clearIntentError = useCallback(() => {
+    dismissed.current = null;
+    setIntentErrorState(null);
+  }, []);
   const [pickerCandidates, setPickerCandidates] = useState<
     WorkspacePickerCandidate[]
   >([]);
@@ -122,13 +156,16 @@ export function AppShellProvider({
    * Route a failure to the one place the shell shows them. Callers that cannot
    * recover do not catch to explain themselves; they hand the failure here.
    */
-  const reportFailure = useCallback((error: unknown) => {
-    setIntentError(toAppError(error));
-  }, []);
+  const reportFailure = useCallback(
+    (error: unknown) => {
+      setIntentError(toAppError(error));
+    },
+    [setIntentError],
+  );
 
   // Whatever the root handler caught is a failure like any other, and it is
   // shown where every other failure is shown.
-  useEffect(() => subscribeToUnhandled(setIntentError), []);
+  useEffect(() => subscribeToUnhandled(setIntentError), [setIntentError]);
 
   const applySnapshot = useCallback((snapshot: AppSnapshot) => {
     if (snapshot.revision < lastRevision.current) return;
@@ -286,19 +323,20 @@ export function AppShellProvider({
         dispose();
       }
     };
-  }, [applySnapshot, attempt, transport, reportFailure]);
+  }, [applySnapshot, attempt, transport, reportFailure, setIntentError]);
 
   const dispatch = useCallback(
     async (intent: AppIntent): Promise<AppOutcome | undefined> => {
       const dispatchGeneration = generation.current;
-      setIntentError(null);
+      clearIntentError();
       try {
         const outcome = await transport.dispatch(intent);
         if (generation.current !== dispatchGeneration) return undefined;
         applySnapshot(outcome.snapshot);
-        if (outcome.kind === "persistence_degraded") {
-          setIntentError(PERSISTENCE_DEGRADED_ERROR);
-        }
+        // A degraded save is *not* turned into a second alert here. Main
+        // already emitted one, with the file and the reason on it; raising a
+        // detail-free copy beside it left two sentences for one failure and
+        // put the useless one on screen.
         if (outcome.kind === "confirmation_required") {
           (raiseConfirmation ?? setPendingConfirmation)({
             confirmationId: outcome.confirmationId,
@@ -321,15 +359,22 @@ export function AppShellProvider({
         return undefined;
       }
     },
-    [applySnapshot, transport, pendingConfirmation, raiseConfirmation],
+    [
+      applySnapshot,
+      transport,
+      pendingConfirmation,
+      raiseConfirmation,
+      clearIntentError,
+      setIntentError,
+    ],
   );
 
   const retry = useCallback(() => {
     generation.current += 1;
-    setIntentError(null);
+    clearIntentError();
     setState({ status: "loading" });
     setAttempt((current) => current + 1);
-  }, []);
+  }, [clearIntentError]);
 
   const openExternalUrl = useCallback(
     (url: string) => {
@@ -589,12 +634,15 @@ export function AppShellProvider({
     }
   }, [dispatch, pendingConfirmation]);
 
-  // A dispatch failure stays until something replaces it, which for a failure
-  // needing no further action means it never leaves on its own. The user gets
-  // to put it away; the next dispatch re-raises it if it is still there.
+  // Putting it away records *which* failure was put away, so the source that
+  // keeps raising it cannot put it straight back. The next action the user
+  // takes clears that memory: at that point a failure that is still happening
+  // is worth showing again.
   const dismissIntentError = useCallback(() => {
-    setIntentError(null);
-  }, []);
+    dismissed.current =
+      intentError === null ? null : errorIdentity(intentError);
+    setIntentErrorState(null);
+  }, [intentError]);
 
   const dismissCloseConfirmation = useCallback(() => {
     setPendingConfirmation(null);

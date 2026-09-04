@@ -197,6 +197,38 @@ describe("validation", () => {
   });
 });
 
+describe("a close that was in progress when DevHub stopped", () => {
+  it("comes back as a close that failed, never as one still running", () => {
+    const state = freshState();
+    state.workspaces = [
+      {
+        workspace_id: WS_A,
+        selected_path: "/dev/a",
+        canonical_path: "/dev/a",
+        lifecycle: {
+          kind: "closing",
+          progress: {
+            agents_closed: 0,
+            agents_step_completed: true,
+            terminal_closed: true,
+            editor_closed: false,
+          },
+        },
+        agents: [],
+      },
+    ];
+    const model = hydrateModel(state, []);
+    const workspace = model.snapshot().workspaces[0];
+    // Nothing is left to drive the remaining steps, so "closing" would be a
+    // row that never stops closing. It is a failure with the progress kept,
+    // which the Sidebar offers a retry for.
+    expect(workspace.state.kind).toBe("closing-failed");
+    expect(workspace.state).toMatchObject({
+      progress: { terminalClosed: true, editorClosed: false },
+    });
+  });
+});
+
 describe("shutdown metadata", () => {
   it("marks a launch unclean and a shutdown clean again", () => {
     const state = freshState();
@@ -258,6 +290,25 @@ describe("store", () => {
     expect(load.metadata.recoveryReason).toBe("corrupt_primary");
     expect(load.metadata.primaryQuarantined).toBe(true);
     expect(load.state).toEqual(good);
+  });
+
+  it("names the file and the reason when a save cannot be written", async () => {
+    const store = new JsonStateStore(join(directory, "locked", "state.json"));
+    await chmod(directory, 0o500);
+    try {
+      await store.saveState(freshState());
+      throw new Error("the save should not have succeeded");
+    } catch (error) {
+      expect(error).toBeInstanceOf(StateError);
+      const described = (error as StateError).describe();
+      // What the person reads has to be enough to go and look: which file,
+      // and what the operating system said about it.
+      expect(described).toContain("state.json");
+      expect(described).toMatch(/permission|could not be written/);
+      expect(described).toContain("EACCES");
+    } finally {
+      await chmod(directory, 0o700);
+    }
   });
 
   it("refuses a state file from a newer schema", async () => {

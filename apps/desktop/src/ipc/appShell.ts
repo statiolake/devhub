@@ -169,7 +169,11 @@ export const APP_ERROR_SUMMARY: Readonly<Record<AppErrorCodeWire, string>> = {
 	workspace_close_failed: "The workspace could not be closed cleanly.",
 	operation_pending: "Another operation is still in progress.",
 	operation_timed_out: "The requested action did not finish.",
-	persistence_degraded: "Changes could not be saved.",
+	// It names the file it is about, because "changes" named nothing the
+	// reader could go and look at — not which changes, not where they were
+	// going, not what stopped them. The detail carries the path and the
+	// operating system's own words; this says what kind of thing broke.
+	persistence_degraded: "DevHub could not save its state file.",
 	native_unavailable: "The native app shell is unavailable.",
 	editor_provider_missing: "Visual Studio Code was not found.",
 	editor_port_unavailable: "The editor's port is already in use.",

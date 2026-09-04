@@ -578,9 +578,22 @@
    rather than used, and none of these are that — they are ordinary rows in a
    less-than-ordinary state, which the colour already says. */
 .workspace-row[data-state="unavailable"] .row-label,
-.workspace-row[data-state="closing"] .row-label,
-.workspace-row[data-state="closing-failed"] .row-label {
+.workspace-row[data-state="closing"] .row-label {
   color: var(--secondary);
+}
+
+/*
+ * A close that failed is not a close that is still going.
+ *
+ * They used to look the same — dimmed — and the only difference was a pulse
+ * the eye had to sit and watch for. "Working on it" and "this stopped and
+ * needs you" are the two things a person most needs to tell apart, so the
+ * failed row states it: the label takes the danger ink every other failure in
+ * this app uses, and it holds perfectly still. Motion means in progress here,
+ * and nothing else does.
+ */
+.workspace-row[data-state="closing-failed"] .row-label {
+  color: var(--danger);
 }
 
 /* ------------------------------------------------------- closing a row */

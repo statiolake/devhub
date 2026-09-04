@@ -99,15 +99,59 @@ export type StateErrorCode =
   | "STATE_INVALID_TRANSITION"
   | "STATE_CANCELLED";
 
+/** What each code means, in the words the person using DevHub gets to read. */
+const STATE_ERROR_REASON: Readonly<Record<StateErrorCode, string>> = {
+  STATE_IO: "the file could not be written",
+  STATE_PERMISSION_DENIED: "permission was denied",
+  STATE_UNSAFE_PATH: "the path is not a private regular file",
+  STATE_CORRUPT: "the file on disk could not be parsed",
+  STATE_INVALID: "the state DevHub was about to write is not valid",
+  STATE_NEWER_VERSION: "the file on disk was written by a newer DevHub",
+  STATE_INVALID_TRANSITION: "the state changed in a way the store forbids",
+  STATE_CANCELLED: "the write was cancelled",
+};
+
+/**
+ * A failure of the state store, said in full.
+ *
+ * The code alone is what the app branches on; `describe()` is what a person
+ * reads, and it names the file and what happened to it. A message that says
+ * only "changes could not be saved" leaves the reader with nothing to check,
+ * so the path and the operating system's own words travel with the failure
+ * from here to the alert instead of being dropped at the boundary.
+ */
 export class StateError extends Error {
-  constructor(readonly code: StateErrorCode) {
-    super(code);
+  readonly path: string | undefined;
+
+  constructor(
+    readonly code: StateErrorCode,
+    options?: { readonly path?: string; readonly cause?: unknown },
+  ) {
+    super(
+      code,
+      options?.cause === undefined ? undefined : { cause: options.cause },
+    );
     this.name = "StateError";
+    this.path = options?.path;
+  }
+
+  /**
+   * `fallbackPath` is for the failures raised before the store is reached —
+   * validation of the record about to be written knows what is wrong but not
+   * where it was going, and the caller that holds the store knows the file.
+   */
+  describe(fallbackPath?: string): string {
+    const where = this.path ?? fallbackPath ?? "DevHub's state";
+    const cause =
+      this.cause instanceof Error && this.cause.message.length > 0
+        ? ` (${this.cause.message})`
+        : "";
+    return `${where}: ${STATE_ERROR_REASON[this.code]}${cause}`;
   }
 }
 
-function fail(code: StateErrorCode): never {
-  throw new StateError(code);
+function fail(code: StateErrorCode, path?: string): never {
+  throw new StateError(code, { path });
 }
 
 export type RecoveryReason =
@@ -818,8 +862,16 @@ export function hydrateModel(
           model.markWorkspaceUnavailable(id, record.lifecycle.reason);
           break;
         case "closing":
-          model.markWorkspaceClosing(
+          // Nothing survives the launch that was driving this close, so a
+          // restored `closing` would be a workspace that never stops closing:
+          // greyed out, breathing, refusing every operation, with no step left
+          // to finish it. It comes back as a *failed* close instead — the same
+          // progress, kept, and a row that says so and offers the retry that
+          // starts the remaining steps again. A launch resolves every close
+          // one way or the other; none is left in progress.
+          model.markWorkspaceClosingFailed(
             id,
+            "cleanup_failed",
             progressFrom(record.lifecycle.progress),
           );
           break;
@@ -1094,15 +1146,14 @@ type Candidate =
   | { kind: "unsafe" }
   | { kind: "bytes"; bytes: Buffer };
 
-function mapIoError(error: unknown): StateError {
-  if (
+function mapIoError(error: unknown, path: string): StateError {
+  const code =
     error instanceof Error &&
     "code" in error &&
     (error as { code: unknown }).code === "EACCES"
-  ) {
-    return new StateError("STATE_PERMISSION_DENIED");
-  }
-  return new StateError("STATE_IO");
+      ? "STATE_PERMISSION_DENIED"
+      : "STATE_IO";
+  return new StateError(code, { path, cause: error });
 }
 
 async function readCandidate(path: string): Promise<Candidate> {
@@ -1117,7 +1168,7 @@ async function readCandidate(path: string): Promise<Candidate> {
     ) {
       return { kind: "missing" };
     }
-    throw mapIoError(error);
+    throw mapIoError(error, path);
   }
   if (!stats.isFile()) {
     return { kind: "unsafe" };
@@ -1128,7 +1179,7 @@ async function readCandidate(path: string): Promise<Candidate> {
   try {
     return { kind: "bytes", bytes: await readFile(path) };
   } catch (error) {
-    throw mapIoError(error);
+    throw mapIoError(error, path);
   }
 }
 
@@ -1318,7 +1369,15 @@ export class JsonStateStore {
   private async saveStateLocked(state: PersistedAppState): Promise<void> {
     validateState(state);
     const parent = dirname(this.path);
-    await mkdir(parent, { recursive: true, mode: 0o700 });
+    // The directory is part of the write. It used to be made outside the
+    // mapping, so a state directory that could not be created came out as a
+    // bare `EACCES` and was reported as an unexplained app failure rather
+    // than as the file DevHub could not save.
+    await mkdir(parent, { recursive: true, mode: 0o700 }).catch(
+      (error: unknown) => {
+        throw mapIoError(error, this.path);
+      },
+    );
     const text = `${JSON.stringify(state, undefined, 2)}\n`;
     const temporary = `${this.path}.tmp.${String(process.pid)}.${String(Date.now())}`;
     const handle = await open(
@@ -1326,7 +1385,7 @@ export class JsonStateStore {
       constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL,
       0o600,
     ).catch((error: unknown) => {
-      throw mapIoError(error);
+      throw mapIoError(error, this.path);
     });
     try {
       await handle.writeFile(text, "utf8");
@@ -1338,7 +1397,7 @@ export class JsonStateStore {
     try {
       await rename(temporary, this.path);
     } catch (error) {
-      throw mapIoError(error);
+      throw mapIoError(error, this.path);
     }
   }
 
@@ -1362,7 +1421,7 @@ export class JsonStateStore {
       await copyFile(this.path, temporary, constants.COPYFILE_EXCL);
       await rename(temporary, this.backupPath);
     } catch (error) {
-      throw mapIoError(error);
+      throw mapIoError(error, this.path);
     }
   }
 }

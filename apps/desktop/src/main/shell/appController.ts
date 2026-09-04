@@ -47,6 +47,7 @@ import type {
 } from "../../ipc/appShell.js";
 import { AppCoordinator, type Effect } from "../../model/coordinator.js";
 import { editorReveal } from "./editorReveal.js";
+import { CleanupTimeout, withCleanupDeadline } from "./cleanupDeadline.js";
 import { canonicalise } from "../cli/canonical.js";
 import {
 	installExtensions,
@@ -101,6 +102,7 @@ import {
 	JsonStateStore,
 	markCleanShutdown,
 	markStarting,
+	StateError,
 	type PersistedAppState,
 } from "../../model/persistence.js";
 import {
@@ -1229,6 +1231,24 @@ export class AppController {
 		}
 	}
 
+	/**
+	 * What to tell the person about a save that did not happen.
+	 *
+	 * The store's own failures already name the file and the reason; anything
+	 * else is a bug in the projection, and saying which file it was going to
+	 * and what threw is still more than the reader had before.
+	 */
+	private persistenceReason(error: unknown): string {
+		if (error instanceof StateError) {
+			return error.describe(this.stateStore.path);
+		}
+		return `${this.stateStore.path}: ${
+			error instanceof Error && error.message.length > 0
+				? error.message
+				: String(error)
+		}`;
+	}
+
 	private async persist(token: OperationToken): Promise<void> {
 		try {
 			this.state = applySnapshot(this.state, this.coordinator.snapshot());
@@ -1236,10 +1256,19 @@ export class AppController {
 		} catch (error) {
 			// A save that did not happen is reported as degraded, so the model can
 			// roll back a close that depended on it rather than believing it landed
-			// — and the reason it did not happen goes to the page, because a
-			// silent one turns every later symptom into a mystery.
-			this.publishError(errorWire(error));
-			this.accept({ type: "state_persistence_failed", token });
+			// — and the reason it did not happen goes with it, because a save that
+			// says only "changes could not be saved" tells the reader neither
+			// which file nor what went wrong with it.
+			//
+			// It is *not* also published here. Reporting it twice put two
+			// different sentences for one failure on the page — this one, and the
+			// coordinator's — and the page then had to pick, which it did by
+			// showing whichever arrived last.
+			this.accept({
+				type: "state_persistence_failed",
+				token,
+				reason: this.persistenceReason(error),
+			});
 			return;
 		}
 		this.accept({ type: "state_persisted", token });
@@ -1694,7 +1723,10 @@ export class AppController {
 				case "agents": {
 					const adapter = agents();
 					if (adapter) {
-						await adapter.closeWorkspaceAgents(workspaceId);
+						await withCleanupDeadline(
+							step,
+							adapter.closeWorkspaceAgents(workspaceId),
+						);
 					}
 					// With no Agent runtime there are no Agents, so this step is already
 					// true — the model's own Agent list is emptied by the transition.
@@ -1703,12 +1735,18 @@ export class AppController {
 				case "terminal": {
 					const adapter = terminals();
 					if (adapter) {
-						await adapter.closeWorkspaceTerminals(workspaceId);
+						await withCleanupDeadline(
+							step,
+							adapter.closeWorkspaceTerminals(workspaceId),
+						);
 					}
 					break;
 				}
 				case "editor": {
-					const closed = await this.askEditorToClose(workspaceId);
+					const closed = await withCleanupDeadline(
+						step,
+						this.askEditorToClose(workspaceId),
+					);
 					if (!closed) {
 						// The workbench refused — unsaved work, most likely, and the
 						// person has just been asked about it. That is a reason, not
@@ -1730,12 +1768,24 @@ export class AppController {
 				case "state_committed":
 					break;
 			}
-		} catch {
+		} catch (error) {
+			// Every way a step can end is a completion. A step that threw and a
+			// step that never answered both land here as a *failed* close with a
+			// reason, because the alternative — leaving the workspace in
+			// `closing` — is a row that greys out, breathes, refuses every
+			// operation and never stops, with nothing on screen saying why.
 			this.accept({
 				type: "workspace_cleanup_completed",
 				token,
 				workspaceId,
-				result: { kind: "failed", step, diagnostic: "cleanup_failed" },
+				result: {
+					kind: "failed",
+					step,
+					diagnostic:
+						error instanceof CleanupTimeout
+							? error.diagnostic
+							: "cleanup_failed",
+				},
 			});
 			return;
 		}

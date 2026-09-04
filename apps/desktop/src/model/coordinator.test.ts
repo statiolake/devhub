@@ -7,6 +7,7 @@ import {
   busy,
   CLEAN_INSPECTION,
   displayPath,
+  DomainErrorCode,
   workspaceId,
   workspaceRoot,
   type CloseInspectionInputs,
@@ -63,6 +64,15 @@ class Driver {
     this.cursor = subscription.cursor;
     return subscription.events.flatMap((event) =>
       event.event.kind === "effect" ? [event.event.effect] : [],
+    );
+  }
+
+  /** Every error emitted since the last drain, in order. */
+  drainErrors(): AppError[] {
+    const subscription = this.coordinator.subscribeFrom(this.cursor);
+    this.cursor = subscription.cursor;
+    return subscription.events.flatMap((event) =>
+      event.event.kind === "error" ? [event.event.error] : [],
     );
   }
 
@@ -401,6 +411,54 @@ describe("closing a workspace", () => {
     });
   });
 
+  it("reports a close that did not finish as a close failure", () => {
+    const driver = new Driver();
+    driver.openFolder("/dev/project");
+    driver.dispatch({ type: "request_close_workspace", workspaceId: WS_A });
+    const inspect = driver.drainEffects()[0];
+    if (inspect.kind !== "inspect_workspace") throw new Error("unexpected");
+    driver.accept({
+      type: "workspace_inspection_completed",
+      token: inspect.token,
+      workspaceId: WS_A,
+      inspection: CLEAN_INSPECTION,
+    });
+    // Every step is followed by a save, so the close walks forward only as
+    // its effects are answered. The first cleanup step is what this is about.
+    let cleanup: Effect | undefined;
+    for (let round = 0; round < 8 && !cleanup; round += 1) {
+      for (const effect of driver.drainEffects()) {
+        if (effect.kind === "cleanup_workspace") {
+          cleanup = effect;
+          break;
+        }
+        driver.answer(effect);
+      }
+    }
+    if (cleanup?.kind !== "cleanup_workspace") throw new Error("unexpected");
+    driver.drainErrors();
+    driver.accept({
+      type: "workspace_cleanup_completed",
+      token: cleanup.token,
+      workspaceId: WS_A,
+      result: {
+        kind: "failed",
+        step: cleanup.step,
+        diagnostic: "close_agents_unknown",
+      },
+    });
+
+    const workspace = driver.coordinator.snapshot().workspaces[0];
+    expect(workspace.state.kind).toBe("closing-failed");
+    // Not a port that would not answer. It used to be raised as one, and the
+    // page drew "the native app shell is unavailable" over a workspace whose
+    // agents simply could not be confirmed stopped.
+    const errors = driver.drainErrors();
+    expect(errors).toHaveLength(1);
+    expect(errors[0].code).toBe(AppErrorCode.Domain);
+    expect(errors[0].domainCode).toBe(DomainErrorCode.WorkspaceClosingFailed);
+  });
+
   it("refuses a confirmation that was never issued", () => {
     const driver = new Driver();
     expect(
@@ -540,8 +598,27 @@ describe("persistence", () => {
     const outcome = driver.accept({
       type: "state_persistence_failed",
       token: persist.token,
+      reason: "/state.json: permission was denied (EACCES)",
     });
     expect(outcome.kind).toBe("persistence_degraded");
+  });
+
+  it("says which file could not be saved and why", () => {
+    const driver = new Driver();
+    driver.dispatch({ type: "resize_sidebar", width: 300 });
+    const persist = driver.drainEffects()[0];
+    if (persist.kind !== "persist_state") throw new Error("unexpected");
+    driver.accept({
+      type: "state_persistence_failed",
+      token: persist.token,
+      reason: "/state.json: permission was denied (EACCES)",
+    });
+    const errors = driver.drainErrors();
+    expect(errors).toHaveLength(1);
+    expect(errors[0].code).toBe(AppErrorCode.PersistenceDegraded);
+    expect(errors[0].detail).toBe(
+      "/state.json: permission was denied (EACCES)",
+    );
   });
 });
 
