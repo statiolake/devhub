@@ -25,6 +25,25 @@
  * belongs to the runtime and survives untouched. That is what makes a terminal
  * outlive the window, and the app.
  *
+ * **Output is coalesced here, before the IPC hop, not in the view.** A curses
+ * redraw — tmux, an agent's TUI — reaches this process as several small reads,
+ * and one frame per read is one `terminal.write` per read. xterm queues those
+ * writes internally but renders *between* tasks, and every frame arrives on its
+ * own task, so the view paints the intermediate states of a redraw: the cursor
+ * jumps through the positions the redraw passed over and an IME preedit
+ * flickers. Batching in the view could not fix that on its own — the frames
+ * have already been split by then — and batching here also halves the number of
+ * IPC messages. This is what VS Code's pty host does with `TerminalDataBufferer`
+ * (`vscode/src/vs/platform/terminal/common/terminalDataBuffering.ts`), and it is
+ * done the same way for the same reason.
+ *
+ * The frame contract is unchanged by it: output frames still carry a contiguous
+ * sequence, still never exceed `MAX_OUTPUT_FRAME_BYTES`, and still arrive in
+ * PTY order relative to every other frame — pending bytes are flushed before an
+ * error or an exit frame can be emitted, so nothing a child printed appears
+ * after the news that it is gone. What changes is only how many reads one frame
+ * is made of.
+ *
  * Attaching resolves a live tmux session first, so it is not instantaneous, and
  * two attaches for the same surface can be in flight at once. The in-flight
  * ledger below is the Rust's `AttachPermit`: a newer attach supersedes an older
@@ -59,6 +78,17 @@ const MAX_IN_FLIGHT_BYTES = MAX_OUTPUT_BUFFER_BYTES;
 const FLOW_CONTROL_TIMEOUT_MS = 2_000;
 /** Output already read from the PTY but not yet sendable, bounded like the window. */
 const MAX_QUEUED_OUTPUT_BYTES = MAX_OUTPUT_BUFFER_BYTES;
+/**
+ * How long the reads of one redraw are gathered before they become a frame.
+ *
+ * 5 ms is upstream's number: VS Code's pty host throttles terminal data by
+ * exactly this before sending it to a renderer (`TerminalDataBufferer`'s
+ * `throttleBy` default, `vscode/src/vs/platform/terminal/common/terminalDataBuffering.ts`).
+ * It is under a frame at 120 Hz, so a coalesced redraw still lands in the same
+ * paint the uncoalesced one would have, while the intermediate states of that
+ * redraw never reach the view at all.
+ */
+export const OUTPUT_COALESCE_MS = 5;
 
 /**
  * The view's end of one attachment.
@@ -235,6 +265,9 @@ class Attachment {
 	private stopped = false;
 	private readonly queue: Uint8Array[] = [];
 	private queuedBytes = 0;
+	private readonly pending: Uint8Array[] = [];
+	private pendingBytes = 0;
+	private coalesceTimer: ReturnType<typeof setTimeout> | undefined;
 	private backpressureTimer: ReturnType<typeof setTimeout> | undefined;
 	private readonly resizer: ResizeCoalescer;
 	private paused = false;
@@ -287,9 +320,55 @@ class Attachment {
 		}
 	}
 
-	/** PTY output, split at the frame bound and metered by the ack window. */
+	/**
+	 * PTY output, gathered for `OUTPUT_COALESCE_MS` before it becomes a frame.
+	 *
+	 * A read that already fills a frame has nothing to wait for, so the bound is
+	 * also a flush: what is pending goes out at once, tail included, rather than
+	 * a full frame leaving now and its remainder 5 ms later out of the same read.
+	 */
 	acceptOutput(bytes: Uint8Array): void {
-		if (this.stopped) return;
+		if (this.stopped || bytes.byteLength === 0) return;
+		this.pending.push(new Uint8Array(bytes));
+		this.pendingBytes += bytes.byteLength;
+		if (this.pendingBytes >= MAX_OUTPUT_FRAME_BYTES) {
+			this.flushPending();
+			return;
+		}
+		if (this.coalesceTimer === undefined) {
+			this.coalesceTimer = setTimeout(
+				() => this.flushPending(),
+				OUTPUT_COALESCE_MS,
+			);
+		}
+	}
+
+	/**
+	 * Turn everything pending into frames, now.
+	 *
+	 * Pending bytes are taken before any of them is sent, so a failure raised
+	 * while sending — which ends the attachment, and flushes on the way — finds
+	 * nothing left to flush and cannot recurse.
+	 */
+	private flushPending(): void {
+		if (this.coalesceTimer !== undefined) {
+			clearTimeout(this.coalesceTimer);
+			this.coalesceTimer = undefined;
+		}
+		if (this.pending.length === 0) return;
+		const bytes = new Uint8Array(this.pendingBytes);
+		let offset = 0;
+		for (const chunk of this.pending) {
+			bytes.set(chunk, offset);
+			offset += chunk.byteLength;
+		}
+		this.pending.length = 0;
+		this.pendingBytes = 0;
+		this.sendOutput(bytes);
+	}
+
+	/** Coalesced output, split at the frame bound and metered by the ack window. */
+	private sendOutput(bytes: Uint8Array): void {
 		for (
 			let offset = 0;
 			offset < bytes.byteLength;
@@ -399,6 +478,9 @@ class Attachment {
 
 	private failWith(failure: unknown): void {
 		if (this.stopped) return;
+		// Whatever the child printed before the failure precedes the news of it.
+		this.flushPending();
+		if (this.stopped) return;
 		const code = failure instanceof TerminalFailure ? failure.code : "internal";
 		this.sequence += 1;
 		this.sink({
@@ -424,7 +506,13 @@ class Attachment {
 	}
 
 	private finish(reason: ExitReason): void {
+		// Stopped first, so the flush below cannot re-enter this through a
+		// failure; then the flush, so the last of the output is on the wire
+		// before the frame that says there will be no more. What the window has
+		// no room for is dropped here exactly as the queue below is: a view that
+		// is not consuming is not owed the tail of a session it has ended.
 		this.stopped = true;
+		this.flushPending();
 		this.resizer.stop();
 		if (this.backpressureTimer !== undefined) {
 			clearTimeout(this.backpressureTimer);

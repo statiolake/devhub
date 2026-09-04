@@ -12,6 +12,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   AttachmentManager,
   FlowControl,
+  OUTPUT_COALESCE_MS,
   type AttachContext,
 } from "../../src/main/terminal/attachments";
 import {
@@ -153,6 +154,18 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+/**
+ * Let the output coalescer's window pass.
+ *
+ * Output is gathered in main for a few milliseconds before it becomes a frame,
+ * so a test that wants one read to be one frame has to say when that window
+ * ended. Fake timers are what make that a statement about the contract rather
+ * than about how fast the machine is.
+ */
+function flushOutput(): void {
+  vi.advanceTimersByTime(OUTPUT_COALESCE_MS);
+}
+
 describe("flow control", () => {
   it("holds output at the window until a cumulative ack", () => {
     const flow = new FlowControl();
@@ -179,6 +192,7 @@ describe("flow control", () => {
 
 describe("attach", () => {
   it("gives the view a started frame before any output, and a receipt to match", () => {
+    vi.useFakeTimers();
     const test = harness();
     const { receipt, frames, pty } = test.attach();
     expect(receipt.surfaceKey).toBe("global-terminal");
@@ -194,6 +208,7 @@ describe("attach", () => {
       rows: 24,
     });
     pty.emit("hello");
+    flushOutput();
     expect(frames[1]).toMatchObject({ type: "output", sequence: 1 });
     expect(pty.launch.cwd).toBe(".");
     // The client is tmux, never a shell: the shell lives in the session.
@@ -311,6 +326,173 @@ describe("attach", () => {
   });
 });
 
+/**
+ * Coalescing PTY output.
+ *
+ * A curses redraw arrives as several reads; sending each one as its own frame
+ * makes the view render the redraw's intermediate states. So the reads of one
+ * window become one frame, and everything the frame contract promised about
+ * order and bounds still holds across that.
+ */
+describe("output coalescing", () => {
+  const outputsOf = (frames: TerminalFrame[]) =>
+    frames.filter((frame) => frame.type === "output");
+  const textOf = (frames: TerminalFrame[]) =>
+    outputsOf(frames)
+      .map((frame) =>
+        frame.type === "output" ? new TextDecoder().decode(frame.bytes) : "",
+      )
+      .join("");
+
+  it("makes one frame of the reads inside one window, in order", () => {
+    vi.useFakeTimers();
+    const test = harness();
+    const { frames, pty } = test.attach();
+    pty.emit("[H");
+    pty.emit("row one");
+    pty.emit("[2;1H");
+    pty.emit("row two");
+    // Nothing has been sent yet: the redraw is still arriving.
+    expect(outputsOf(frames)).toHaveLength(0);
+    flushOutput();
+    const outputs = outputsOf(frames);
+    expect(outputs).toHaveLength(1);
+    expect(outputs[0]).toMatchObject({ sequence: 1 });
+    expect(textOf(frames)).toBe("[Hrow one[2;1Hrow two");
+  });
+
+  it("starts a new window for the next read", () => {
+    vi.useFakeTimers();
+    const test = harness();
+    const { frames, pty } = test.attach();
+    pty.emit("a");
+    flushOutput();
+    pty.emit("b");
+    flushOutput();
+    expect(outputsOf(frames).map((frame) => frame.sequence)).toEqual([1, 2]);
+    expect(textOf(frames)).toBe("ab");
+  });
+
+  it("does not wait once the pending bytes fill a frame", () => {
+    vi.useFakeTimers();
+    const test = harness();
+    const { frames, pty } = test.attach();
+    pty.emit(new Uint8Array(MAX_OUTPUT_FRAME_BYTES - 1).fill(0x41));
+    expect(outputsOf(frames)).toHaveLength(0);
+    // The read that crosses the bound flushes what is pending immediately,
+    // tail included, rather than leaving the remainder for the timer.
+    pty.emit("BB");
+    const outputs = outputsOf(frames);
+    expect(outputs).toHaveLength(2);
+    expect(outputs.map((frame) => frame.sequence)).toEqual([1, 2]);
+    expect(
+      outputs.reduce(
+        (total, frame) =>
+          total + (frame.type === "output" ? frame.bytes.byteLength : 0),
+        0,
+      ),
+    ).toBe(MAX_OUTPUT_FRAME_BYTES + 1);
+    expect(textOf(frames).endsWith("ABB")).toBe(true);
+    // And the window is over: the timer has nothing left to send.
+    flushOutput();
+    expect(outputsOf(frames)).toHaveLength(2);
+  });
+
+  it("sends what is pending before the exit frame", () => {
+    vi.useFakeTimers();
+    const test = harness();
+    const { frames, pty } = test.attach();
+    pty.emit("last words");
+    pty.end();
+    expect(frames.map((frame) => frame.type)).toEqual([
+      "started",
+      "output",
+      "exited",
+    ]);
+    expect(textOf(frames)).toBe("last words");
+    expect(frames.at(-1)).toMatchObject({ type: "exited", reason: "eof" });
+  });
+
+  it("sends what is pending before a failure frame", () => {
+    vi.useFakeTimers();
+    const test = harness();
+    const { frames, pty } = test.attach();
+    // Fill the window with frames the view never acknowledges, then let the
+    // backpressure timeout end the attachment while a read is still pending.
+    for (let index = 0; index < 9; index += 1) {
+      pty.emit("x");
+      flushOutput();
+    }
+    pty.emit("pending");
+    vi.advanceTimersByTime(2_000);
+    const types = frames.map((frame) => frame.type);
+    expect(types.slice(-2)).toEqual(["error", "exited"]);
+    // The pending read was flushed first — the window had no room left for it,
+    // so it is dropped exactly as the queue is, but it never appears after the
+    // error frame.
+    expect(types.indexOf("error")).toBe(types.length - 2);
+    expect(frames.at(-2)).toMatchObject({ error: { code: "backpressure" } });
+  });
+
+  it("sends what is pending before a detach's exit frame", () => {
+    vi.useFakeTimers();
+    const test = harness();
+    const { receipt, frames, pty } = test.attach();
+    pty.emit("half a redraw");
+    test.manager.detach({
+      surfaceKey: receipt.surfaceKey,
+      attachmentId: receipt.attachmentId,
+      targetGeneration: receipt.targetGeneration,
+      viewLabel: "shell:1",
+    });
+    expect(frames.map((frame) => frame.type)).toEqual([
+      "started",
+      "output",
+      "exited",
+    ]);
+    expect(textOf(frames)).toBe("half a redraw");
+    expect(pty.killed).toBe(true);
+  });
+
+  it("emits nothing more once the attachment has stopped", () => {
+    vi.useFakeTimers();
+    const test = harness();
+    const { frames, pty } = test.attach();
+    pty.emit("before");
+    pty.end();
+    const settled = frames.length;
+    pty.emit("after");
+    flushOutput();
+    expect(frames).toHaveLength(settled);
+    expect(textOf(frames)).toBe("before");
+  });
+
+  it("meters coalesced frames through the same window", () => {
+    vi.useFakeTimers();
+    const test = harness();
+    const { receipt, frames, pty } = test.attach();
+    const identity = {
+      surfaceKey: receipt.surfaceKey,
+      attachmentId: receipt.attachmentId,
+      targetGeneration: receipt.targetGeneration,
+      viewLabel: "shell:1",
+    };
+    // Eight coalesced frames fill the window; the ninth waits for an ack, and
+    // the child is paused meanwhile.
+    for (let index = 0; index < 9; index += 1) {
+      pty.emit("aa");
+      pty.emit("bb");
+      flushOutput();
+    }
+    expect(outputsOf(frames)).toHaveLength(8);
+    expect(pty.paused).toBe(true);
+    test.manager.acknowledge(identity, 8);
+    expect(outputsOf(frames)).toHaveLength(9);
+    expect(pty.paused).toBe(false);
+    expect(textOf(frames)).toBe("aabb".repeat(9));
+  });
+});
+
 describe("output", () => {
   it("splits at the frame bound and keeps the sequence contiguous", () => {
     const test = harness();
@@ -329,6 +511,7 @@ describe("output", () => {
   });
 
   it("pauses the child once the view stops consuming, and resumes on ack", () => {
+    vi.useFakeTimers();
     const test = harness();
     const { receipt, frames, pty } = test.attach();
     const identity = {
@@ -337,7 +520,12 @@ describe("output", () => {
       targetGeneration: receipt.targetGeneration,
       viewLabel: "shell:1",
     };
-    for (let index = 0; index < 9; index += 1) pty.emit("x");
+    // Each read is separated by the coalescing window, so this is nine frames
+    // and not one: the window is what is under test here, not the coalescer.
+    for (let index = 0; index < 9; index += 1) {
+      pty.emit("x");
+      flushOutput();
+    }
     expect(frames.filter((frame) => frame.type === "output")).toHaveLength(8);
     expect(pty.paused).toBe(true);
     test.manager.acknowledge(identity, 8);
@@ -349,7 +537,10 @@ describe("output", () => {
     vi.useFakeTimers();
     const test = harness();
     const { frames, pty } = test.attach();
-    for (let index = 0; index < 9; index += 1) pty.emit("x");
+    for (let index = 0; index < 9; index += 1) {
+      pty.emit("x");
+      flushOutput();
+    }
     vi.advanceTimersByTime(2_000);
     expect(frames.at(-2)).toMatchObject({ error: { code: "backpressure" } });
     expect(frames.at(-1)).toMatchObject({
