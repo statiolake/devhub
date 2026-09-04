@@ -154,6 +154,40 @@ describe("the failure on screen", () => {
     expect(alert()).toContain("ENOSPC");
   });
 
+  it("keeps a dismissed close failure away until the next close is asked for", async () => {
+    // A close that fails raises the same failure every time it is tried, and
+    // the model re-pushes it with no detail to tell one from another. The
+    // rule is the same as for every other failure: dismissing it puts it
+    // away, and only the person's next action brings it back.
+    const closeFailed: AppError = {
+      code: "workspace_close_failed",
+      summary: "The workspace could not be closed cleanly.",
+      module: "workspace",
+      timestampMs: 1,
+      runtimeVersion: "test",
+      actions: ["retry"],
+    };
+    const { raise } = mount();
+    raise(closeFailed);
+    expect(alert()).toContain("could not be closed");
+
+    await act(async () => {
+      screen.getByText("Dismiss").click();
+    });
+    expect(alert()).toBe("");
+
+    // A reconcile, a persist, anything that re-raises it: still away.
+    raise(closeFailed);
+    raise(closeFailed);
+    expect(alert()).toBe("");
+
+    await act(async () => {
+      screen.getByText("Act").click();
+    });
+    raise(closeFailed);
+    expect(alert()).toContain("could not be closed");
+  });
+
   it("shows it again once the user has started another action", async () => {
     const { raise } = mount();
     raise(failure("/tmp/state.json: permission was denied (EACCES)"));

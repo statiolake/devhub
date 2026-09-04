@@ -128,7 +128,7 @@ import { editorElement, shellTitleFor } from "./shellTitle.js";
 import type { ShellPalette } from "../../ipc/palette.js";
 import type { WorkbenchView } from "./workbenchView.js";
 import { agents, inspectWorkspaceResources, terminals } from "./adapters.js";
-import { editorInspection } from "./editorInspection.js";
+import { editorInspection, editorRuntimeState } from "./editorInspection.js";
 import { wireTerminals, type TerminalWiring } from "./terminalWiring.js";
 import {
 	CancellationToken,
@@ -217,6 +217,15 @@ export class AppController {
 
 	/** Folder path (or the scratch key) -> the `ICodeWindow` id of its view. */
 	private readonly viewsByFolder = new Map<string, number>();
+
+	/**
+	 * Workspaces whose workbench was asked to close and did not answer.
+	 *
+	 * The one piece of memory that makes a close terminate. See
+	 * `askEditorToClose`: the second time a person asks, an editor that never
+	 * answered the first time is closed rather than asked again.
+	 */
+	private readonly editorsThatDidNotAnswer = new Set<WorkspaceId>();
 	/** How many unasked-for deaths a folder's workbench gets before DevHub stops. */
 	private readonly editorRestarts = new Map<string, number>();
 	/** One in-flight workbench open per folder, shared by concurrent callers. */
@@ -576,10 +585,20 @@ export class AppController {
 	 * surface the way every other unwatched failure does.
 	 */
 	private requestCloseWorkspace(workspaceId: string): void {
-		void this.dispatchFromPage({
-			type: "request_close_workspace",
-			workspaceId,
-		}).catch((error: unknown) => {
+		// A close that failed is retried by asking for the same thing again —
+		// the same rule the Sidebar's one close button follows. Sending a fresh
+		// `request_close_workspace` for a workspace in `closing-failed` is
+		// refused by the model, so the menu item and the chord used to be the
+		// two ways of closing a workspace that stopped working the moment a
+		// close went wrong.
+		const failed =
+			this.coordinator.model.workspace(parseWorkspaceId(workspaceId))?.state
+				.kind === "closing-failed";
+		void this.dispatchFromPage(
+			failed
+				? { type: "retry_close_workspace", workspaceId }
+				: { type: "request_close_workspace", workspaceId },
+		).catch((error: unknown) => {
 			this.publishError(errorWire(error));
 		});
 	}
@@ -1583,38 +1602,45 @@ export class AppController {
 	): Promise<ResourceInspection> {
 		const workspace = this.coordinator.model.workspace(workspaceId);
 		const state = workspace?.state;
-		const facts = {
-			editorAgreedToClose:
-				state !== undefined &&
-				(state.kind === "closing" || state.kind === "closing-failed") &&
-				state.progress.editorClosed,
-			hasView:
-				workspace !== undefined && this.viewsByFolder.has(workspace.root),
-			workbenchIsRunning: false,
-			documentEdited: false,
-		};
-		if (!facts.hasView || facts.editorAgreedToClose) {
-			return editorInspection(facts);
+		const editorAgreedToClose =
+			state !== undefined &&
+			(state.kind === "closing" || state.kind === "closing-failed") &&
+			state.progress.editorClosed;
+		if (editorAgreedToClose || workspace === undefined) {
+			return editorInspection({
+				editorAgreedToClose,
+				runtime: "absent",
+				documentEdited: false,
+			});
 		}
-		const viewId = this.viewsByFolder.get(workspace?.root ?? "");
-		const codeWindow = (await this.services())
+		const codeWindow = await this.editorWindowFor(workspace.root);
+		return editorInspection({
+			editorAgreedToClose,
+			runtime: editorRuntimeState(codeWindow),
+			documentEdited: codeWindow?.isDocumentEdited() === true,
+		});
+	}
+
+	/**
+	 * The `CodeWindow` bound to a folder, or nothing when there is no workbench
+	 * for it any more.
+	 *
+	 * The binding in `viewsByFolder` outlives the view it names: a workbench
+	 * that VS Code closed, or whose view DevHub destroyed, leaves its id
+	 * behind. So "there is an entry in the map" is not "there is a workbench",
+	 * and asking the window service is the only answer worth having. Reading
+	 * the map alone is what used to make a workspace with no editor at all
+	 * report that its editor was not running.
+	 */
+	private async editorWindowFor(
+		folder: string,
+	): Promise<ICodeWindow | undefined> {
+		const viewId = this.viewsByFolder.get(folder);
+		if (viewId === undefined) return undefined;
+		return (await this.services())
 			.windows()
 			.getWindows()
 			.find((candidate) => candidate.id === viewId);
-		const contents = codeWindow?.win?.webContents;
-		return editorInspection({
-			...facts,
-			// `isReady` is the workbench's own handshake: it is true from the
-			// moment the workbench signalled it had come up, and false again
-			// while it navigates. Crashed or destroyed contents cannot answer
-			// either, whatever the handshake last said.
-			workbenchIsRunning:
-				codeWindow?.isReady === true &&
-				contents !== undefined &&
-				!contents.isDestroyed() &&
-				!contents.isCrashed(),
-			documentEdited: codeWindow?.isDocumentEdited() === true,
-		});
 	}
 
 	private async launchAgent(
@@ -2145,21 +2171,38 @@ export class AppController {
 	 * a workspace, and it goes when the workspace does (`syncEditorViews`). A
 	 * step that destroyed it early is how a close that failed later left a
 	 * workspace in the sidebar with a white pane beside it.
+	 *
+	 * Asking is not always possible, and a close that cannot ask still has to
+	 * end. A workbench that is `absent` or `gone` holds nothing anybody could
+	 * save, so the step is already true. A workbench that has not answered
+	 * before — it never came up, or the unload ran out of time — is closed
+	 * without asking the *second* time the person asks for the close, because
+	 * a workbench that does not process IPC cannot save anything either and a
+	 * close that repeats the same unanswered question forever is a workspace
+	 * nobody can get rid of. A *veto* is an answer, so it never lands here:
+	 * asking again re-runs VS Code's own save prompt, which is the right thing
+	 * for work that can still be saved.
 	 */
 	private async askEditorToClose(workspaceId: WorkspaceId): Promise<boolean> {
 		const root = this.coordinator.model.workspace(workspaceId)?.root;
 		if (root === undefined) return true;
-		const viewId = this.viewsByFolder.get(root);
-		if (viewId === undefined) return true;
 		const services = await this.services();
-		const codeWindow = services
-			.windows()
-			.getWindows()
-			.find((candidate) => candidate.id === viewId);
-		if (!codeWindow) return true;
+		const codeWindow = await this.editorWindowFor(root);
+		const runtime = editorRuntimeState(codeWindow);
+		if (!codeWindow || runtime === "absent" || runtime === "gone") return true;
+		if (this.editorsThatDidNotAnswer.has(workspaceId)) {
+			this.editorsThatDidNotAnswer.delete(workspaceId);
+			return true;
+		}
+		// Marked *before* the ask, and cleared by the answer. An unload that
+		// never resolves leaves the mark behind, which is exactly the state the
+		// next close reads to stop asking.
+		this.editorsThatDidNotAnswer.add(workspaceId);
+		if (runtime === "starting") return false;
 		const vetoed = await services
 			.lifecycle()
 			.unload(codeWindow, UnloadReason.CLOSE);
+		this.editorsThatDidNotAnswer.delete(workspaceId);
 		return !vetoed;
 	}
 

@@ -36,7 +36,11 @@ function closeResourceStatus(resource: CloseResourceWire): string {
         case "close_terminal_unknown":
           return "Could not verify terminal state";
         case "close_editor_unknown":
-          return "Could not verify: the editor is not running";
+          return "Could not verify editor state";
+        case "close_editor_starting":
+          return "Could not verify: the editor is still starting";
+        case "close_editor_unresponsive":
+          return "Could not verify: the editor is not answering";
         case "close_editor_vetoed":
           return "The editor has unsaved changes";
         case "cleanup_failed":

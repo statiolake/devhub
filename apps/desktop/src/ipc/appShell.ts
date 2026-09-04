@@ -322,6 +322,8 @@ export type CloseDiagnosticWire =
 	| "close_agents_unknown"
 	| "close_terminal_unknown"
 	| "close_editor_unknown"
+	| "close_editor_starting"
+	| "close_editor_unresponsive"
 	| "close_editor_vetoed"
 	| "cleanup_failed"
 	| "runtime_unavailable";

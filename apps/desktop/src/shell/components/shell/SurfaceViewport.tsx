@@ -218,12 +218,14 @@ function AgentPane({
 }
 
 /** Why this Workspace cannot be shown, in the Sidebar's own vocabulary. */
-function Unavailable({
+export function Unavailable({
   workspace,
   actions,
+  onRetryClose,
 }: {
   readonly workspace: WorkspaceSnapshot | undefined;
   readonly actions: React.ComponentProps<typeof Failure>["actions"];
+  readonly onRetryClose: () => void;
 }) {
   if (!workspace) {
     return <Failure summary="The selected context is no longer available." />;
@@ -231,11 +233,12 @@ function Unavailable({
   if (workspace.state === "closing") {
     return <Waiting label="Closing the workspace…" />;
   }
+  const closeFailed = workspace.state === "closing-failed";
   return (
     <Failure
       summary={
-        workspace.state === "closing-failed"
-          ? "This Workspace could not be closed. Retry close from the Sidebar."
+        closeFailed
+          ? "This Workspace could not be closed."
           : "This workspace is unavailable."
       }
       detail={
@@ -243,7 +246,20 @@ function Unavailable({
           ? closeDiagnosticLabel(workspace.stateDiagnostic)
           : workspace.root
       }
-      actions={workspace.state === "unavailable" ? actions : undefined}
+      /**
+       * A failed close is answered where it is read. It used to say "retry
+       * close from the Sidebar" and offer nothing: the pane a person was
+       * looking at stated a problem, named a control somewhere else, and could
+       * not be put away — which is what a workspace nobody could close looked
+       * like from the inside.
+       */
+      actions={
+        closeFailed
+          ? [{ label: "Close Workspace", primary: true, run: onRetryClose }]
+          : workspace.state === "unavailable"
+            ? actions
+            : undefined
+      }
     />
   );
 }
@@ -358,7 +374,19 @@ export function SurfaceViewport({
     body = <Waiting label="Connecting…" />;
   } else if (layout.kind === "unavailable") {
     surfaceState = workspace?.state ?? "unavailable";
-    body = <Unavailable workspace={workspace} actions={unavailableActions} />;
+    body = (
+      <Unavailable
+        workspace={workspace}
+        actions={unavailableActions}
+        onRetryClose={() => {
+          if (workspace)
+            void dispatch({
+              type: "retry_close_workspace",
+              workspaceId: workspace.id,
+            });
+        }}
+      />
+    );
   } else if (layout.kind === "agent") {
     // No workbench in this arrangement, so none is asked for and none is
     // revealed. The views stay built and running behind it: this is the Agent

@@ -17,7 +17,11 @@ export function closeDiagnosticLabel(diagnostic: CloseDiagnosticWire): string {
     case "close_terminal_unknown":
       return "DevHub could not confirm the terminal had closed.";
     case "close_editor_unknown":
-      return "The editor is not running, so DevHub could not check it for unsaved changes.";
+      return "DevHub could not check the editor for unsaved changes.";
+    case "close_editor_starting":
+      return "The editor had not finished starting, so DevHub could not check it for unsaved changes.";
+    case "close_editor_unresponsive":
+      return "The editor did not answer the request to close. Closing again will close it anyway.";
     case "close_editor_vetoed":
       return "The editor has unsaved changes. Save or discard them, then close the workspace again.";
     case "cleanup_failed":

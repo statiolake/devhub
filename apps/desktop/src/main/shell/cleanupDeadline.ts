@@ -23,7 +23,10 @@ export const CLEANUP_STEP_TIMEOUT_MS = 20_000;
 const CLEANUP_TIMEOUT_DIAGNOSTIC = {
 	agents: "close_agents_unknown",
 	terminal: "close_terminal_unknown",
-	editor: "close_editor_unknown",
+	// Not "not running": a workbench that never answered the request to close
+	// is, as far as anything here can tell, up and busy — and it is very
+	// likely the thing the person is looking at.
+	editor: "close_editor_unresponsive",
 	state_committed: "cleanup_failed",
 } as const satisfies Record<CleanupStep, CloseDiagnosticWire>;
 
