@@ -24,6 +24,28 @@
  * it — they refuse it on mousedown — and anything that manages to steal it is
  * taken back, because a picker that has stopped answering the keyboard and
  * cannot be clicked back into is a dead end with no way out but the mouse.
+ *
+ * # The rule
+ *
+ * **Every question that takes a choice among options, or one line of typing,
+ * is this control.** Not a control like this one — this one. A choice is a list
+ * of rows; a line of text is a list with the pinned row that means "what I
+ * typed"; and a confirmation is a list with as many rows as there are answers,
+ * with the safe one first, because Return takes the first row and the safe
+ * answer is the one Return should take. `WorktreeCloseSheet` is what that looks
+ * like with three of them: cancel, keep the folder, delete it.
+ *
+ * The reason is not tidiness. Keys are muscle memory, and muscle memory does
+ * not know which sheet it is looking at — so a second control answering the
+ * same kind of question is a place where Return, Escape and Command-Return
+ * quietly mean something else, and the person finds out by losing something.
+ *
+ * **Multi-line text is the exception, and the only one.** A message to an agent
+ * is a paragraph, so Return has to insert a newline and Command-Return has to
+ * be what sends it — which is the opposite of what Return means here. Those are
+ * modals of their own (`InjectionReviewSheet`, and the first-message sheet a
+ * new Agent gets), and they say so by looking like an editor rather than a
+ * list.
  */
 
 import {

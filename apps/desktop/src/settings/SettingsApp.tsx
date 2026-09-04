@@ -50,6 +50,7 @@ import {
   ActionsSection,
   AgentsSection,
   GeneralSection,
+  KeyboardSection,
   TerminalSection,
   WorkspacesSection,
 } from "./sections";
@@ -69,6 +70,7 @@ const SECTIONS = [
   "Workspaces",
   "Agents",
   "Actions",
+  "Keyboard",
   "Terminal",
   "Advanced",
 ] as const;
@@ -91,6 +93,7 @@ const SECTION_SCOPE: Readonly<
   Workspaces: ["workspaceSources"],
   Agents: ["agentProfiles"],
   Actions: ["agentActions"],
+  Keyboard: ["keybindings"],
   Terminal: ["appearance"],
   Advanced: ["runtimes"],
 };
@@ -123,6 +126,12 @@ const SECTION_GLYPHS: Readonly<Record<Section, ReactNode>> = {
   Actions: (
     <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
       <path d="M10.8 2.4 4.2 11.4h4.2l-1.2 6.2 6.6-9h-4.2z" />
+    </svg>
+  ),
+  Keyboard: (
+    <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+      <rect x="2.2" y="5.4" width="15.6" height="9.2" rx="1.8" />
+      <path d="M5.4 8.4h.01M8 8.4h.01M10.6 8.4h.01M13.2 8.4h.01M6.6 11.6h6.8" />
     </svg>
   ),
   Terminal: (
@@ -536,6 +545,13 @@ export function SettingsApp({ client }: { readonly client?: SettingsClient }) {
         ) : null}
         {section === "Actions" ? (
           <ActionsSection
+            config={draft}
+            update={update}
+            onReset={resetSection}
+          />
+        ) : null}
+        {section === "Keyboard" ? (
+          <KeyboardSection
             config={draft}
             update={update}
             onReset={resetSection}

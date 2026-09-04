@@ -1064,3 +1064,109 @@ describe("the files a configuration can arrive from", () => {
     expect((failure as ConfigError).code).toBe("parse");
   });
 });
+
+describe("the keyboard, as the file spells it", () => {
+  it("has no overrides at all by default", () => {
+    // Overrides and not the whole table: a file that stated every chord would
+    // delete whatever DevHub adds next, which is the bug `agent_actions` had to
+    // be reshaped to fix.
+    expect(defaultConfig().keybindings).toEqual({
+      prefix: "Cmd+q",
+      chords: {},
+    });
+  });
+
+  it("reads a prefix and a table of second strokes", () => {
+    const config = parseConfig(`
+version = 1
+
+[keybindings]
+prefix = "Ctrl+q"
+
+[keybindings.chords]
+"Shift+n" = "previous_workspace"
+g = ""
+`);
+    expect(config.keybindings.prefix).toBe("Ctrl+q");
+    expect(config.keybindings.chords).toEqual({
+      "Shift+n": "previous_workspace",
+      g: "",
+    });
+  });
+
+  it("survives a round trip through the document", () => {
+    const config = parseConfig(`
+version = 1
+
+[keybindings.chords]
+"Cmd+j" = "next_tab"
+`);
+    expect(parseConfig(configToToml(config)).keybindings).toEqual(
+      config.keybindings,
+    );
+  });
+
+  it("keeps the file the person wrote when only a chord changed", () => {
+    const source = `# mine
+version = 1
+
+[keybindings.chords]
+"Cmd+j" = "next_tab"
+`;
+    const config = parseConfig(source);
+    const written = configOntoDocument(source, {
+      ...config,
+      keybindings: {
+        ...config.keybindings,
+        chords: { "Cmd+j": "previous_tab" },
+      },
+    });
+    expect(written).toContain("# mine");
+    expect(written).toContain("previous_tab");
+  });
+
+  it("refuses a command id DevHub does not have", () => {
+    expect(
+      codeOf(() =>
+        parseConfig(`version = 1\n[keybindings.chords]\ng = "teleport"\n`),
+      ),
+    ).toBe("unknown_command");
+  });
+
+  it("refuses a key that names a character instead of a key", () => {
+    expect(
+      codeOf(() =>
+        parseConfig(
+          `version = 1\n[keybindings.chords]\n"Shift+{" = "next_tab"\n`,
+        ),
+      ),
+    ).toBe("invalid_keybinding");
+    expect(
+      codeOf(() =>
+        parseConfig(`version = 1\n[keybindings]\nprefix = "Hyper+q"\n`),
+      ),
+    ).toBe("invalid_keybinding");
+  });
+
+  it("refuses two spellings of one key, because a key does one thing", () => {
+    expect(
+      codeOf(() =>
+        parseConfig(
+          `version = 1\n[keybindings.chords]\n"Shift+n" = "next_tab"\n"shift+N" = "previous_tab"\n`,
+        ),
+      ),
+    ).toBe("duplicate_identity");
+  });
+
+  it("refuses a value that is not a command id at all", () => {
+    expect(
+      codeOf(() => parseConfig(`version = 1\n[keybindings.chords]\ng = 3\n`)),
+    ).toBe("invalid_type");
+  });
+
+  it("refuses an unknown key under [keybindings], like everywhere else", () => {
+    expect(
+      codeOf(() => parseConfig(`version = 1\n[keybindings]\nsuffix = "x"\n`)),
+    ).toBe("unknown_key");
+  });
+});

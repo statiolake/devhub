@@ -636,3 +636,43 @@ body {
   display: flex;
   gap: var(--space-2);
 }
+
+/* ---------------------------------------------------------------- keyboard */
+
+/*
+ * One command's row: what it is bound to, and the three things that can be done
+ * about it. The recorder is a button rather than a text field on purpose — a
+ * binding is a key you press, not a string you type, and a field would invite
+ * somebody to type `{` for a key whose name is `bracketleft`.
+ */
+.keyboard-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.keyboard-record {
+  min-width: 160px;
+  font-family: ui-monospace, monospace;
+}
+
+/* While it is listening, so that a person can tell it from a button they have
+   merely focused. */
+.keyboard-record.is-recording {
+  font-family: inherit;
+  font-style: italic;
+}
+
+/* The id, because it is what `settings.toml` and the diagnostics name. */
+.keyboard-id {
+  margin-inline-start: auto;
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.keyboard-problems {
+  margin: 0;
+  padding-inline-start: var(--space-4);
+}

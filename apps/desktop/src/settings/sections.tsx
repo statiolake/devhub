@@ -33,11 +33,29 @@ import { runtimeUnavailableMessage } from "../ipc/settings";
 import type {
   SettingsAgentProfileWire,
   SettingsConfig,
+  SettingsKeybindingsWire,
   SettingsRuntimeWire,
   SettingsSnapshot,
   SettingsAgentActionWire,
   SettingsWorkspaceSourceWire,
 } from "../ipc/settings";
+import {
+  chordKeyId,
+  describeChordKey,
+  formatChordKey,
+  isModifierKey,
+  keyNameForCode,
+  parseChordKey,
+  type ChordKey,
+} from "../model/chordKeys";
+import {
+  checkKeybindings,
+  COMMANDS,
+  keysForCommand,
+  resolveBindings,
+  type CommandDefinition,
+  type CommandNeeds,
+} from "../model/commands";
 import { FONT_FAMILY_RULE, isValidFontFamily } from "../model/fontFamily";
 import {
   ACTION_VARIABLES,
@@ -77,6 +95,22 @@ import {
 } from "./rules";
 
 type Update = (next: SettingsConfig) => void;
+
+/**
+ * The rule a chord key has to satisfy, in the words the field states.
+ *
+ * The same sentence the save's refusal uses (`settings/errorMessage.ts`), so a
+ * rule is never described one way while you type and another way afterwards.
+ */
+const CHORD_KEY_RULE =
+  "Modifiers and a key, by the key's own name: `Shift+n`, `Cmd+j`, `Shift+bracketleft`.";
+
+/** What each keyboard problem means, for the list that shows them. */
+const KEYBINDING_PROBLEMS: Readonly<Record<string, string>> = {
+  invalid_key: CHORD_KEY_RULE,
+  unknown_command: "That is not a command DevHub has.",
+  duplicate_key: "Two spellings of one key. A key can only do one thing.",
+};
 
 // ----------------------------------------------------------------- general
 
@@ -1366,5 +1400,300 @@ export function ActionsSection({
         </>
       ) : null}
     </Collection>
+  );
+}
+
+// ---------------------------------------------------------------- keyboard
+
+/**
+ * What each command is bound to now, and what it ships bound to.
+ *
+ * Read from the registry and the same resolver the chord layer runs on
+ * (`model/commands.ts`), so this window cannot describe a keyboard DevHub does
+ * not have. Nothing here is a second table.
+ */
+function keyboardRows(keybindings: SettingsKeybindingsWire) {
+  const { bindings } = resolveBindings(keybindings);
+  return COMMANDS.map((command) => ({
+    command,
+    keys: keysForCommand(bindings, command.id),
+    defaults: command.defaultKeys.map(parseChordKey),
+  }));
+}
+
+/** Whether this command is bound to exactly what DevHub ships it bound to. */
+function isDefaultBinding(
+  keys: readonly ChordKey[],
+  defaults: readonly ChordKey[],
+): boolean {
+  const written = keys.map(chordKeyId).sort();
+  const shipped = defaults.map(chordKeyId).sort();
+  return (
+    written.length === shipped.length &&
+    written.every((key, index) => key === shipped[index])
+  );
+}
+
+/**
+ * The override table, with one command's keys replaced by one new key.
+ *
+ * Three edits, in one place, because they are one intention. Whatever the
+ * command was reachable by stops reaching it — a shipped key is written as an
+ * unbind because silence means "the default", and an override is simply
+ * removed. Then the new key is written.
+ */
+function rebind(
+  keybindings: SettingsKeybindingsWire,
+  command: CommandDefinition,
+  keys: readonly ChordKey[],
+  next: ChordKey | undefined,
+): SettingsKeybindingsWire {
+  const chords: Record<string, string> = { ...keybindings.chords };
+  for (const key of keys) {
+    const written = formatChordKey(key);
+    if (command.defaultKeys.includes(written)) {
+      chords[written] = "";
+    } else {
+      delete chords[written];
+    }
+  }
+  if (next) chords[formatChordKey(next)] = command.id;
+  return { ...keybindings, chords };
+}
+
+/**
+ * The override table with everything this command said taken out of it.
+ *
+ * Both directions: the keys it was given, and the unbinds that took its shipped
+ * keys away. What is left is silence, and silence is the default.
+ */
+function resetBinding(
+  keybindings: SettingsKeybindingsWire,
+  command: CommandDefinition,
+): SettingsKeybindingsWire {
+  const chords: Record<string, string> = {};
+  for (const [key, id] of Object.entries(keybindings.chords)) {
+    if (id === command.id) continue;
+    if (id === "" && command.defaultKeys.includes(key)) continue;
+    chords[key] = id;
+  }
+  return { ...keybindings, chords };
+}
+
+const NEEDS_NOTE: Readonly<Record<CommandNeeds, string>> = {
+  nothing: "",
+  workspace: "Needs a workspace selected.",
+  agent: "Needs an agent selected.",
+};
+
+/**
+ * One row: the command, its keys, and the three things that can be done to it.
+ *
+ * Recording is a keypress, not typing: the field takes the next key down and
+ * reads its *physical* identity, which is the only thing a binding can be
+ * written in (see `model/chordKeys.ts`). A modifier on its own is ignored while
+ * recording, for the same reason it does not complete a chord.
+ */
+function KeyboardRow({
+  command,
+  keys,
+  defaults,
+  takenBy,
+  onRebind,
+  onUnbind,
+  onReset,
+}: {
+  readonly command: CommandDefinition;
+  readonly keys: readonly ChordKey[];
+  readonly defaults: readonly ChordKey[];
+  /** The command a recorded key would be taken from, if it is already used. */
+  readonly takenBy: (key: ChordKey) => CommandDefinition | undefined;
+  readonly onRebind: (key: ChordKey) => void;
+  readonly onUnbind: () => void;
+  readonly onReset: () => void;
+}) {
+  const [recording, setRecording] = useState(false);
+  const [conflict, setConflict] = useState<string | undefined>(undefined);
+  const atDefault = isDefaultBinding(keys, defaults);
+
+  return (
+    <Row label={command.label} help={NEEDS_NOTE[command.needs] || undefined}>
+      <div className="keyboard-row">
+        <button
+          type="button"
+          className={`mac-button keyboard-record${recording ? " is-recording" : ""}`}
+          aria-label={`Change the key for ${command.label}`}
+          onClick={() => {
+            setConflict(undefined);
+            setRecording(true);
+          }}
+          onBlur={() => {
+            setRecording(false);
+          }}
+          onKeyDown={(event) => {
+            if (!recording) return;
+            event.preventDefault();
+            if (event.code === "Escape") {
+              setRecording(false);
+              return;
+            }
+            // A modifier on its own is not a stroke — the same rule the chord
+            // layer follows, and the reason a shifted chord used to fall
+            // through.
+            if (isModifierKey(event.code)) return;
+            const key: ChordKey = {
+              key: keyNameForCode(event.code),
+              command: event.metaKey,
+              control: event.ctrlKey,
+              option: event.altKey,
+              shift: event.shiftKey,
+            };
+            const owner = takenBy(key);
+            // Said before the save, not after it: taking a key from another
+            // command is a real thing to want, and it is also the mistake this
+            // control makes easiest.
+            setConflict(
+              owner && owner.id !== command.id
+                ? `${describeChordKey(key)} currently does “${owner.label}”. It does this instead now.`
+                : undefined,
+            );
+            setRecording(false);
+            onRebind(key);
+          }}
+        >
+          {recording
+            ? "Press a key…"
+            : keys.length === 0
+              ? "Unbound"
+              : keys.map(describeChordKey).join("  ·  ")}
+        </button>
+        <button
+          type="button"
+          className="mac-button"
+          disabled={keys.length === 0}
+          onClick={onUnbind}
+        >
+          Unbind
+        </button>
+        <button
+          type="button"
+          className="mac-button"
+          disabled={atDefault}
+          title={`Default: ${defaults.map(describeChordKey).join(", ")}`}
+          onClick={onReset}
+        >
+          Reset
+        </button>
+        <code className="keyboard-id">{command.id}</code>
+      </div>
+      {conflict ? (
+        <p className="sf-field-note mac-caption">{conflict}</p>
+      ) : null}
+    </Row>
+  );
+}
+
+/**
+ * The Keyboard screen.
+ *
+ * Every DevHub command is a two-stroke chord: the prefix, then one key. So
+ * there is one field for the prefix and one row per command, and the rows are
+ * the registry — a command added to DevHub appears here without anybody
+ * remembering to add it, and a command that is not in the registry cannot be
+ * bound at all.
+ *
+ * What is saved is *overrides*, never the whole table: a file that stated
+ * everything would delete whatever DevHub adds next, which is the bug
+ * `agent_actions` had to be reshaped to fix.
+ */
+export function KeyboardSection({
+  config,
+  update,
+  onReset,
+}: {
+  readonly onReset?: () => void;
+  readonly config: SettingsConfig;
+  readonly update: Update;
+}) {
+  const keybindings = config.keybindings;
+  const rows = keyboardRows(keybindings);
+  const owners = new Map(
+    rows.flatMap(({ command, keys }) =>
+      keys.map((key) => [chordKeyId(key), command] as const),
+    ),
+  );
+  const problems = checkKeybindings(keybindings);
+  const set = (next: SettingsKeybindingsWire) => {
+    update({ ...config, keybindings: next });
+  };
+
+  return (
+    <Form>
+      <Group
+        heading="Prefix"
+        note="Every DevHub command is two strokes: this one, then one key. Nothing DevHub does is a single shortcut, because the editor and the terminal inside it want their own keys."
+      >
+        <Row
+          label="Prefix"
+          help="Modifiers and a key, by the key's own name: `Cmd+q`, `Ctrl+q`."
+        >
+          <TextField
+            label="Chord prefix"
+            value={keybindings.prefix}
+            onCommit={(prefix) => {
+              set({ ...keybindings, prefix });
+            }}
+            validate={(value) => {
+              try {
+                parseChordKey(value);
+                return undefined;
+              } catch {
+                return CHORD_KEY_RULE;
+              }
+            }}
+          />
+        </Row>
+      </Group>
+
+      {problems.length > 0 ? (
+        <Group heading="Problems">
+          <WideRow>
+            <ul className="keyboard-problems">
+              {problems.map((problem) => (
+                <li key={`${problem.code}:${problem.path}`}>
+                  {problem.path} — {KEYBINDING_PROBLEMS[problem.code]}
+                </li>
+              ))}
+            </ul>
+          </WideRow>
+        </Group>
+      ) : null}
+
+      <Group
+        heading="Commands"
+        note="A key is written by its place on the keyboard, not by the character it prints — `Shift+bracketleft`, not `{` — so one binding means the same thing on every layout and while an input method is composing."
+      >
+        {rows.map(({ command, keys, defaults }) => (
+          <KeyboardRow
+            key={command.id}
+            command={command}
+            keys={keys}
+            defaults={defaults}
+            takenBy={(key) => owners.get(chordKeyId(key))}
+            onRebind={(key) => {
+              set(rebind(keybindings, command, keys, key));
+            }}
+            onUnbind={() => {
+              set(rebind(keybindings, command, keys, undefined));
+            }}
+            onReset={() => {
+              set(resetBinding(keybindings, command));
+            }}
+          />
+        ))}
+      </Group>
+
+      <ResetSection what="keyboard shortcuts" onReset={onReset} />
+    </Form>
   );
 }
