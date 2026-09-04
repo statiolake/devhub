@@ -53,7 +53,7 @@ export interface ProfileLocations {
   /** VS Code's user-data directory — the single-instance boundary. */
   readonly userDataDirectory: string;
   readonly extensionsDirectory: string;
-  /** Where `settings.toml` and `settings.local.toml` are read from. */
+  /** Where `settings.toml` is read from. */
   readonly configDirectory: string;
   /** The tmux server the terminals and Agents live on. */
   readonly tmuxSocketName: string;

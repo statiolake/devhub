@@ -418,9 +418,8 @@ describe("the actions an agent is sent", () => {
   });
 
   /**
-   * A reset is not a save of the defaults: what it produces depends on the
-   * shared file, which this page has never read. So it names the keys and main
-   * does the subtraction.
+   * A reset is not a save the page composes: the defaults live in the model,
+   * which this page has never read. So it names the keys and main writes them.
    */
   it("asks before resetting the screen, and then asks main to do it", async () => {
     const { resets, saves } = await open("Actions", testConfig({}));

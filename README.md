@@ -157,16 +157,17 @@ not know is refused with a sentence — it is never quietly treated as a path.
 
 ## Configuration
 
-Two files in `~/.config/devhub/` (or `$XDG_CONFIG_HOME/devhub/`), read as one.
-`settings.toml` is the shared half — meant to be a symlink from dotfiles, and
-never written by DevHub. `settings.local.toml` is what is only true of this
-machine, and the only file a save touches: Settings edits there, writing down
-just what the shared file does not already say.
+One file: `settings.toml` in `~/.config/devhub/` (or
+`$XDG_CONFIG_HOME/devhub/`). DevHub reads it and DevHub writes it — Settings
+edits it in place, keeping the comments, grouping and order that are in it.
 
-Tables merge key by key, so the shared file can hold `[appearance]` while a
-machine overrides nothing but the font; everything else, arrays included, the
-local file replaces whole. A pre-split `config.toml` is renamed to
-`settings.local.toml` on first launch.
+It was two files for a while, a shared `settings.toml` symlinked out of
+dotfiles plus a `settings.local.toml` beside it. The dotfiles side generates
+the file now, so the two layers were two answers to one question. A
+`settings.local.toml` still on disk is folded in on the first start — tables
+merged key by key, arrays replaced whole, exactly the rule that used to combine
+them at read time — and then renamed to `settings.local.toml.migrated`. An
+older `config.toml` is renamed into place the same way.
 
 The workbench's own settings are VS Code's, on disk under the app's user-data
 directory. Runtime state lives separately under Application Support.
@@ -204,11 +205,10 @@ extensions, `~/.config/devhub-dev/` for the settings, the `devhub-dev` tmux
 socket, its own control socket, and a `devhub-dev` command in the PATH.
 `src/model/profile.ts` derives all of it from the one name.
 
-A new profile's first launch copies the default profile's
-`settings.local.toml` in, so it starts configured rather than empty, and says
-so in the log. It is a copy: the two are meant to drift. `settings.toml` is not
-copied — it is the shared half, and both profiles pointing at the same dotfiles
-symlink is right. One setting a profile does not take from that copy is
+A new profile's first launch copies the default profile's `settings.toml` in,
+so it starts configured rather than empty, and says so in the log. It is a
+copy: the two are meant to drift. One setting a profile does not take from that
+copy is
 `runtimes.tmux_socket_name`: a second DevHub on the first one's tmux server
 would manage the first one's sessions, so the profile's socket wins and the
 override is logged.

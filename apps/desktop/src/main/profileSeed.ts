@@ -5,24 +5,19 @@
  * no shell, no workspace sources and no Agent profiles — which is not a second
  * DevHub, it is an unconfigured one, and the first thing anybody would do is
  * copy the file across by hand. So the first launch does it: the default
- * profile's `settings.local.toml` is copied in, once, when the new profile's
+ * profile's `settings.toml` is copied in, once, when the new profile's
  * directory holds no settings of its own.
  *
  * Copied, never symlinked. The two profiles are meant to drift — that is what
  * a development profile is for — and a symlink would make every experiment in
  * the development DevHub a change to the production one, silently, including
  * the ones made from its Settings window.
- *
- * `settings.toml` is deliberately not copied. It is the shared half, and
- * normally already a symlink into a dotfiles repository; both profiles pointing
- * that symlink at the same file is exactly right, and is the person's own
- * doing rather than something to arrange behind their back.
  */
 
 import { copyFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import {
-	GLOBAL_CONFIG_FILE_NAME,
+	CONFIG_FILE_NAME,
 	LEGACY_CONFIG_FILE_NAME,
 	LOCAL_CONFIG_FILE_NAME,
 } from "../model/config.js";
@@ -39,7 +34,7 @@ export type SeedOutcome =
 
 function hasSettings(directory: string): boolean {
 	return [
-		GLOBAL_CONFIG_FILE_NAME,
+		CONFIG_FILE_NAME,
 		LOCAL_CONFIG_FILE_NAME,
 		LEGACY_CONFIG_FILE_NAME,
 	].some((name) => existsSync(join(directory, name)));
@@ -61,11 +56,11 @@ export function seedProfileSettings(
 	if (hasSettings(locations.configDirectory)) {
 		return { kind: "already-configured" };
 	}
-	const from = join(defaultLocations.configDirectory, LOCAL_CONFIG_FILE_NAME);
+	const from = join(defaultLocations.configDirectory, CONFIG_FILE_NAME);
 	if (!existsSync(from)) {
 		return { kind: "nothing-to-copy" };
 	}
-	const to = join(locations.configDirectory, LOCAL_CONFIG_FILE_NAME);
+	const to = join(locations.configDirectory, CONFIG_FILE_NAME);
 	mkdirSync(locations.configDirectory, { recursive: true, mode: 0o700 });
 	copyFileSync(from, to);
 	return { kind: "copied", from, to };

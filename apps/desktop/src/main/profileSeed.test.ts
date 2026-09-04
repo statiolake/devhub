@@ -14,7 +14,7 @@ describe("a new profile's first settings", () => {
 	function writeProduction(contents: string): string {
 		const directory = production().configDirectory;
 		mkdirSync(directory, { recursive: true });
-		const file = join(directory, "settings.local.toml");
+		const file = join(directory, "settings.toml");
 		writeFileSync(file, contents);
 		return file;
 	}
@@ -27,12 +27,12 @@ describe("a new profile's first settings", () => {
 		removeScratchDir(home);
 	});
 
-	it("copies the production local settings on a first launch", () => {
+	it("copies the production settings on a first launch", () => {
 		writeProduction('[runtimes]\nshell = "/bin/zsh"\n');
 		const outcome = seedProfileSettings(dev(), production());
 		expect(outcome.kind).toBe("copied");
 		expect(
-			readFileSync(join(dev().configDirectory, "settings.local.toml"), "utf8"),
+			readFileSync(join(dev().configDirectory, "settings.toml"), "utf8"),
 		).toBe('[runtimes]\nshell = "/bin/zsh"\n');
 	});
 
@@ -42,19 +42,19 @@ describe("a new profile's first settings", () => {
 		seedProfileSettings(dev(), production());
 		writeFileSync(source, "second\n");
 		expect(
-			readFileSync(join(dev().configDirectory, "settings.local.toml"), "utf8"),
+			readFileSync(join(dev().configDirectory, "settings.toml"), "utf8"),
 		).toBe("first\n");
 	});
 
 	it("leaves settings the profile already has alone", () => {
 		writeProduction("production\n");
 		mkdirSync(dev().configDirectory, { recursive: true });
-		writeFileSync(join(dev().configDirectory, "settings.local.toml"), "mine\n");
+		writeFileSync(join(dev().configDirectory, "settings.toml"), "mine\n");
 		expect(seedProfileSettings(dev(), production()).kind).toBe(
 			"already-configured",
 		);
 		expect(
-			readFileSync(join(dev().configDirectory, "settings.local.toml"), "utf8"),
+			readFileSync(join(dev().configDirectory, "settings.toml"), "utf8"),
 		).toBe("mine\n");
 	});
 

@@ -338,7 +338,6 @@ async function buildSnapshot(): Promise<SettingsSnapshotWire> {
 			? {
 					code: diagnostic.code,
 					path: diagnostic.path,
-					scope: diagnostic.scope,
 					line: diagnostic.location?.line,
 					column: diagnostic.location?.column,
 				}
@@ -368,7 +367,6 @@ function settingsError(error: unknown): Error {
 			diagnostic: {
 				code: error.diagnostic.code,
 				path: error.diagnostic.path,
-				scope: error.diagnostic.scope,
 				line: error.diagnostic.location?.line,
 				column: error.diagnostic.location?.column,
 			},

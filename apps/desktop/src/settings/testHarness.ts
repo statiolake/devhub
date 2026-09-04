@@ -129,8 +129,8 @@ export function testClient(initial: SettingsConfig): {
       current = request.config;
       return Promise.resolve(snapshot());
     },
-    // The page hands over names, not values: what a reset produces depends on
-    // the shared file, which only main has read.
+    // The page hands over names, not values: the defaults live in the model,
+    // which only main has.
     resetScope: (request) => {
       resets.push(request.keys);
       return Promise.resolve(snapshot());

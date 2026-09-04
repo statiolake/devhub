@@ -21,12 +21,10 @@
  */
 
 import {
-  GLOBAL_SETTINGS_FILE_NAME,
-  LOCAL_SETTINGS_FILE_NAME,
+  SETTINGS_FILE_NAME,
   type SettingsDiagnosticCodeWire,
   type SettingsDiagnosticWire,
   type SettingsError,
-  type SettingsScopeWire,
 } from "../ipc/settings";
 import { FONT_FAMILY_RULE } from "../model/fontFamily";
 import {
@@ -42,31 +40,14 @@ import {
 } from "./rules";
 
 /**
- * The file a message is about.
- *
- * DevHub reads two, and only ever writes one, so the default is the local
- * file: everything a save can go wrong about happened there. A scope only
- * arrives on a problem found while *reading*, which is the one case where the
- * shared file can be the answer.
- */
-export function settingsFileName(scope: SettingsScopeWire | undefined): string {
-  return scope === "global"
-    ? GLOBAL_SETTINGS_FILE_NAME
-    : LOCAL_SETTINGS_FILE_NAME;
-}
-
-/**
  * The rule the value broke, in the words the field itself uses.
  *
  * Where a field states a rule (`rules.ts`), that same sentence is used here, so
  * a rule is never described one way while you are typing and another way once
  * the save comes back.
  */
-export function ruleMessage(
-  code: SettingsDiagnosticCodeWire,
-  scope?: SettingsScopeWire,
-): string {
-  const file = settingsFileName(scope);
+export function ruleMessage(code: SettingsDiagnosticCodeWire): string {
+  const file = SETTINGS_FILE_NAME;
   switch (code) {
     // The rules a field states while you type.
     case "invalid_font_family":
@@ -157,13 +138,13 @@ function where(diagnostic: SettingsDiagnosticWire): string {
 export function fileDiagnosticMessage(
   diagnostic: SettingsDiagnosticWire,
 ): string {
-  return `${settingsFileName(diagnostic.scope)} has a problem DevHub could not read, so it is running on the last version that parsed. ${ruleMessage(diagnostic.code, diagnostic.scope)} (${where(diagnostic)})`;
+  return `${SETTINGS_FILE_NAME} has a problem DevHub could not read, so it is running on the last version that parsed. ${ruleMessage(diagnostic.code)} (${where(diagnostic)})`;
 }
 
 export function errorMessage(error: SettingsError): string {
   switch (error.code) {
     case "external_edit_conflict":
-      return `${settingsFileName(error.diagnostic?.scope)} changed outside Settings. Reload to see the new file.`;
+      return `${SETTINGS_FILE_NAME} changed outside Settings. Reload to see the new file.`;
     case "invalid_config": {
       // Every refusal names its field and its code, whatever came back. A
       // diagnostic with neither a path nor a position is still a diagnostic
@@ -175,10 +156,10 @@ export function errorMessage(error: SettingsError): string {
       const field = diagnostic.path
         ? `${diagnostic.path} was not saved.`
         : "That change was not saved.";
-      return `${field} ${ruleMessage(diagnostic.code, diagnostic.scope)} (${where(diagnostic)})`;
+      return `${field} ${ruleMessage(diagnostic.code)} (${where(diagnostic)})`;
     }
     case "invalid_file":
-      return `${settingsFileName(error.diagnostic?.scope)} could not be read or written.`;
+      return `${SETTINGS_FILE_NAME} could not be read or written.`;
     case "runtime_unavailable":
       return "DevHub could not inspect the runtimes.";
     case "permission_denied":

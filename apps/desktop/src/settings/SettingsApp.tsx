@@ -352,12 +352,11 @@ export function SettingsApp({ client }: { readonly client?: SettingsClient }) {
   };
 
   /**
-   * Take this machine's answers out for the screen that is showing.
+   * Put the screen that is showing back to DevHub's defaults.
    *
-   * Not a `update()` with defaults in it: what a reset produces depends on the
-   * shared file, which this page has never seen. Main is the only place that
-   * can subtract one file from another, so the page says which keys and gets a
-   * whole snapshot back.
+   * Not an `update()` with defaults in it: the defaults are the model's, and
+   * this page holds a wire snapshot rather than a `Config`. So the page says
+   * which keys and gets a whole snapshot back.
    */
   const resetSection = () => {
     if (!snapshot) return;

@@ -44,14 +44,14 @@ describe("the default profile", () => {
 
   it("still reads the settings from the directory it always did", () => {
     expect(defaultConfigPaths(HOME, {})).toEqual({
-      global: "/home/tester/.config/devhub/settings.toml",
+      file: "/home/tester/.config/devhub/settings.toml",
       local: "/home/tester/.config/devhub/settings.local.toml",
       legacy: "/home/tester/.config/devhub/config.toml",
     });
   });
 
   it("follows XDG_CONFIG_HOME where it always did", () => {
-    expect(defaultConfigPaths(HOME, { XDG_CONFIG_HOME: "/xdg" }).global).toBe(
+    expect(defaultConfigPaths(HOME, { XDG_CONFIG_HOME: "/xdg" }).file).toBe(
       "/xdg/devhub/settings.toml",
     );
   });

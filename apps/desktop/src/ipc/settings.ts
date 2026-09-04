@@ -306,23 +306,11 @@ export type SettingsDiagnosticCodeWire =
 	| "conflict"
 	| "serialization";
 
-/**
- * Which of the two settings files a problem is in.
- *
- * The fix differs by file: a broken `settings.local.toml` is fixed on this
- * machine, while a broken `settings.toml` is fixed in the dotfiles repository
- * it is usually a symlink into. A message that says only "the settings are
- * broken" sends a person to open the wrong one first.
- */
-export type SettingsScopeWire = "global" | "local";
-
-export const GLOBAL_SETTINGS_FILE_NAME = "settings.toml";
-export const LOCAL_SETTINGS_FILE_NAME = "settings.local.toml";
+/** The one file DevHub's settings live in, named for the messages about it. */
+export const SETTINGS_FILE_NAME = "settings.toml";
 
 export interface SettingsDiagnosticWire {
 	readonly code: SettingsDiagnosticCodeWire;
-	/** Absent when the problem is not about one file — a save is always local. */
-	readonly scope?: SettingsScopeWire;
 	readonly path?: string;
 	readonly line?: number;
 	readonly column?: number;
@@ -407,13 +395,11 @@ export interface SettingsApi {
 	getSnapshot(): Promise<SettingsSnapshot>;
 	save(request: SettingsSaveRequestWire): Promise<SettingsSnapshot>;
 	/**
-	 * Take this machine's word out for some part of the configuration.
+	 * Put some part of the configuration back to DevHub's defaults.
 	 *
 	 * The keys name properties of the configuration, and every screen says which
-	 * of them it owns. What comes back is what the shared file and DevHub's own
-	 * defaults have to say about them, which is not always the defaults — a
-	 * shared `settings.toml` is somebody's considered answer and resetting a
-	 * screen does not overrule it.
+	 * of them it owns. The defaults for those keys are written into
+	 * `settings.toml`; everything else the file says is kept.
 	 */
 	resetScope(request: SettingsResetRequestWire): Promise<SettingsSnapshot>;
 	reload(): Promise<SettingsSnapshot>;

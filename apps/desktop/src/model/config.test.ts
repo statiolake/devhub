@@ -1,4 +1,4 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { chmod, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -667,8 +667,8 @@ describe("store", () => {
 
   beforeEach(() => {
     directory = makeScratchDir("config");
-    path = join(directory, "settings.local.toml");
-    paths = { global: join(directory, "settings.toml"), local: path };
+    path = join(directory, "settings.toml");
+    paths = { file: path };
   });
 
   afterEach(() => {
@@ -711,6 +711,18 @@ describe("store", () => {
     expect(store.lastDiagnostic()?.code).toBe("unknown_key");
   });
 
+  /**
+   * A broken file on the *first* read used to leave the diagnostic empty, so
+   * the Settings window had nothing to show and the person was told only that
+   * DevHub was unconfigured.
+   */
+  it("records the diagnostic when the file is already broken at load", async () => {
+    await writeFile(path, "version = 1\nnonsense = true\n");
+    const store = new ConfigStore(paths);
+    await expect(store.load()).rejects.toBeInstanceOf(ConfigError);
+    expect(store.lastDiagnostic()?.code).toBe("unknown_key");
+  });
+
   it("refuses a save over a file that changed underneath it", async () => {
     const store = new ConfigStore(paths);
     const loaded = await store.load();
@@ -735,7 +747,7 @@ describe("store", () => {
     };
     const saved = await store.save(loaded.revision, next);
     expect(saved.config.appearance.terminalFontSize).toBe(16);
-    // The revision names the pair of files, so reading them fresh agrees.
+    // The revision names the file's bytes, so reading it fresh agrees.
     expect(saved.revision).toBe((await new ConfigStore(paths).load()).revision);
   });
 
@@ -772,13 +784,7 @@ describe("store", () => {
     expect(text).not.toContain("order = -1");
   });
 
-  /**
-   * "Reset this screen" on a machine with no shared file — which is most of
-   * them. The shared file's word was read as a whole document, and a document
-   * that does not exist states no schema version, so every reset failed with
-   * `unsupported_version` before it wrote anything.
-   */
-  it("resets a section back to the defaults with no shared file", async () => {
+  it("resets a section back to the defaults", async () => {
     await writeFile(
       path,
       ["version = 1", "", "[appearance]", "terminal_font_size = 19", ""].join(
@@ -789,21 +795,30 @@ describe("store", () => {
     const loaded = await store.load();
     const reset = await store.resetScope(loaded.revision, ["appearance"]);
     expect(reset.config.appearance).toEqual(defaultConfig().appearance);
-    // With no shared file to defer to, the local file keeps the answer — it is
-    // now DevHub's own, spelled out. What has gone is the 19.
+    // The default is spelled out in the file, not left as an absence: the file
+    // states the whole configuration, and what has gone is the 19.
     expect(await readFile(path, "utf8")).not.toContain("= 19");
   });
 
-  it("resets a section back to what the shared file says", async () => {
-    await writeFile(paths.global, "[appearance]\nterminal_font_size = 17\n");
+  it("leaves the sections a reset does not name alone", async () => {
     await writeFile(
       path,
-      "version = 1\n\n[appearance]\nterminal_font_size = 19\n",
+      [
+        "version = 1",
+        "",
+        "[appearance]",
+        "terminal_font_size = 19",
+        "",
+        "[runtimes]",
+        'shell = "/bin/bash"',
+        "",
+      ].join("\n"),
     );
     const store = new ConfigStore(paths);
     const loaded = await store.load();
     const reset = await store.resetScope(loaded.revision, ["appearance"]);
-    expect(reset.config.appearance.terminalFontSize).toBe(17);
+    expect(reset.config.appearance).toEqual(defaultConfig().appearance);
+    expect(reset.config.runtimes.shell).toBe("/bin/bash");
   });
 });
 
@@ -814,8 +829,8 @@ describe("saving over a hand-written file", () => {
 
   beforeEach(() => {
     directory = makeScratchDir("config-roundtrip");
-    path = join(directory, "settings.local.toml");
-    paths = { global: join(directory, "settings.toml"), local: path };
+    path = join(directory, "settings.toml");
+    paths = { file: path };
   });
 
   afterEach(() => {
@@ -909,14 +924,14 @@ describe("saving over a hand-written file", () => {
   });
 });
 
-describe("two scopes", () => {
+describe("the files a configuration can arrive from", () => {
   let directory: string;
   let paths: ConfigPaths;
 
   beforeEach(() => {
-    directory = makeScratchDir("config-scopes");
+    directory = makeScratchDir("config-arrival");
     paths = {
-      global: join(directory, "settings.toml"),
+      file: join(directory, "settings.toml"),
       local: join(directory, "settings.local.toml"),
       legacy: join(directory, "config.toml"),
     };
@@ -926,202 +941,126 @@ describe("two scopes", () => {
     removeScratchDir(directory);
   });
 
-  it("runs on both files, with the local one having the last word", async () => {
+  const localPath = () => paths.local as string;
+  const legacyPath = () => paths.legacy as string;
+
+  it("takes the pre-split file over as the settings file, once", async () => {
     await writeFile(
-      paths.global,
-      'version = 1\n[appearance]\nterminal_font_size = 12\nsidebar_density = "comfortable"\n',
-    );
-    await writeFile(
-      paths.local,
-      "version = 1\n[appearance]\nterminal_font_size = 20\n",
-    );
-
-    const loaded = await new ConfigStore(paths).load();
-    expect(loaded.config.appearance.terminalFontSize).toBe(20);
-    expect(loaded.config.appearance.sidebarDensity).toBe("comfortable");
-  });
-
-  it("does not let a default in one file beat a value in the other", async () => {
-    // The local file says nothing about the font, so the shared file's answer
-    // has to survive — which it only does if the two are merged before the
-    // defaults are filled in.
-    await writeFile(
-      paths.global,
-      'version = 1\n[appearance]\nterminal_font_family = "SF Mono"\n',
-    );
-    await writeFile(
-      paths.local,
-      'version = 1\n[runtimes]\nshell = "/bin/bash"\n',
-    );
-
-    const loaded = await new ConfigStore(paths).load();
-    expect(loaded.config.appearance.terminalFontFamily).toBe("SF Mono");
-    expect(loaded.config.runtimes.shell).toBe("/bin/bash");
-  });
-
-  it("writes a save to the local file and never to the shared one", async () => {
-    const shared = "version = 1\n[appearance]\nterminal_font_size = 12\n";
-    await writeFile(paths.global, shared);
-    await writeFile(paths.local, "");
-
-    const store = new ConfigStore(paths);
-    const loaded = await store.load();
-    await store.save(loaded.revision, {
-      ...loaded.config,
-      runtimes: { ...loaded.config.runtimes, shell: "/bin/bash" },
-    });
-
-    expect(await readFile(paths.global, "utf8")).toBe(shared);
-    expect(await readFile(paths.local, "utf8")).toContain("/bin/bash");
-  });
-
-  it("leaves out of the local file what the shared file already says", async () => {
-    await writeFile(
-      paths.global,
-      "version = 1\n[appearance]\nterminal_font_size = 12\nterminal_line_height = 1.2\n",
-    );
-    await writeFile(paths.local, "");
-
-    const store = new ConfigStore(paths);
-    const loaded = await store.load();
-    await store.save(loaded.revision, loaded.config);
-
-    const local = await readFile(paths.local, "utf8");
-    expect(local).not.toContain("terminal_font_size");
-    expect(local).not.toContain("terminal_line_height");
-  });
-
-  it("drops a local value once the shared file starts saying the same thing", async () => {
-    // The operation this whole arrangement is for: a person copies a block
-    // into the shared file, and the next save takes the local copy out rather
-    // than leaving two spellings to drift apart.
-    await writeFile(paths.global, "version = 1\n");
-    await writeFile(paths.local, "[appearance]\nterminal_font_size = 17\n");
-    const first = new ConfigStore(paths);
-    const loaded = await first.load();
-    expect(loaded.config.appearance.terminalFontSize).toBe(17);
-
-    await writeFile(
-      paths.global,
-      "version = 1\n[appearance]\nterminal_font_size = 17\n",
-    );
-    const second = new ConfigStore(paths);
-    const again = await second.load();
-    await second.save(again.revision, again.config);
-
-    expect(await readFile(paths.local, "utf8")).not.toContain(
-      "terminal_font_size",
-    );
-    expect(
-      (await new ConfigStore(paths).load()).config.appearance.terminalFontSize,
-    ).toBe(17);
-  });
-
-  it("refuses a save made against a shared file that has since moved", async () => {
-    await writeFile(
-      paths.global,
-      "version = 1\n[appearance]\nterminal_font_size = 12\n",
-    );
-    await writeFile(paths.local, "");
-    const store = new ConfigStore(paths);
-    const loaded = await store.load();
-
-    await writeFile(
-      paths.global,
-      "version = 1\n[appearance]\nterminal_font_size = 13\n",
-    );
-
-    const failure = await store.save(loaded.revision, loaded.config).then(
-      () => undefined,
-      (error: unknown) => error,
-    );
-    expect((failure as ConfigError).code).toBe("conflict");
-  });
-
-  it("notices an edit to the shared file the same as one to the local file", async () => {
-    await writeFile(
-      paths.global,
-      "version = 1\n[appearance]\nterminal_font_size = 12\n",
-    );
-    await writeFile(paths.local, "");
-    const store = new ConfigStore(paths);
-    await store.load();
-
-    await writeFile(
-      paths.global,
-      "version = 1\n[appearance]\nterminal_font_size = 19\n",
-    );
-    const outcome = await store.reload();
-    expect(outcome.kind).toBe("applied");
-    if (outcome.kind !== "applied") return;
-    expect(outcome.loaded.config.appearance.terminalFontSize).toBe(19);
-  });
-
-  it("says which file a bad key is in", async () => {
-    await writeFile(paths.global, "version = 1\nnonsense = true\n");
-    await writeFile(paths.local, "");
-    const store = new ConfigStore(paths);
-    await expect(store.load()).rejects.toBeInstanceOf(ConfigError);
-    expect(store.lastDiagnostic()).toBeUndefined();
-
-    const failure = await new ConfigStore(paths).load().then(
-      () => undefined,
-      (error: unknown) => error,
-    );
-    expect((failure as ConfigError).diagnostic.code).toBe("unknown_key");
-    expect((failure as ConfigError).diagnostic.scope).toBe("global");
-  });
-
-  it("blames the local file for a value the local file wrote", async () => {
-    await writeFile(
-      paths.global,
-      "version = 1\n[appearance]\nterminal_font_size = 12\n",
-    );
-    await writeFile(
-      paths.local,
-      'version = 1\n[appearance]\nmode = "sideways"\n',
-    );
-    const failure = await new ConfigStore(paths).load().then(
-      () => undefined,
-      (error: unknown) => error,
-    );
-    expect((failure as ConfigError).diagnostic.scope).toBe("local");
-  });
-
-  it("takes the pre-split file over as the local one, once", async () => {
-    await writeFile(
-      paths.legacy as string,
+      legacyPath(),
       "version = 1\n[appearance]\nterminal_font_size = 21\n",
     );
 
     const loaded = await new ConfigStore(paths).load();
     expect(loaded.config.appearance.terminalFontSize).toBe(21);
-    expect(await readFile(paths.local, "utf8")).toContain(
+    expect(await readFile(paths.file, "utf8")).toContain(
       "terminal_font_size = 21",
     );
     // Gone, rather than left behind for DevHub to keep half-reading.
-    await expect(readFile(paths.legacy as string, "utf8")).rejects.toThrow();
+    await expect(readFile(legacyPath(), "utf8")).rejects.toThrow();
   });
 
-  it("leaves the pre-split file alone once there is a local file", async () => {
+  it("leaves the pre-split file alone once there is a settings file", async () => {
     await writeFile(
-      paths.legacy as string,
+      legacyPath(),
       "version = 1\n[appearance]\nterminal_font_size = 21\n",
     );
     await writeFile(
-      paths.local,
+      paths.file,
       "version = 1\n[appearance]\nterminal_font_size = 9\n",
     );
 
     const loaded = await new ConfigStore(paths).load();
     expect(loaded.config.appearance.terminalFontSize).toBe(9);
-    expect(await readFile(paths.legacy as string, "utf8")).toContain("21");
+    expect(await readFile(legacyPath(), "utf8")).toContain("21");
   });
 
-  it("writes only the defaults the shared file does not already give", async () => {
-    await writeFile(paths.global, configToToml(defaultConfig()));
+  it("does nothing when there is no per-machine file to fold in", async () => {
+    await writeFile(
+      paths.file,
+      "version = 1\n[appearance]\nterminal_font_size = 12\n",
+    );
+    const store = new ConfigStore(paths);
+    const loaded = await store.load();
+    expect(store.lastMigration().kind).toBe("nothing-to-migrate");
+    expect(loaded.config.appearance.terminalFontSize).toBe(12);
+  });
+
+  it("folds the per-machine file in and renames it away", async () => {
+    await writeFile(
+      paths.file,
+      '# Mine.\nversion = 1\n[appearance]\nterminal_font_size = 12\nsidebar_density = "comfortable"\n',
+    );
+    await writeFile(
+      localPath(),
+      "version = 1\n[appearance]\nterminal_font_size = 20\n",
+    );
+
+    const store = new ConfigStore(paths);
+    const loaded = await store.load();
+    expect(store.lastMigration().kind).toBe("migrated");
+    // Local's word, over what the file said, with everything else kept.
+    expect(loaded.config.appearance.terminalFontSize).toBe(20);
+    expect(loaded.config.appearance.sidebarDensity).toBe("comfortable");
+    const text = await readFile(paths.file, "utf8");
+    expect(text).toContain("terminal_font_size = 20");
+    expect(text).toContain("# Mine.");
+    await expect(readFile(localPath(), "utf8")).rejects.toThrow();
+    expect(await readFile(`${localPath()}.migrated`, "utf8")).toContain(
+      "terminal_font_size = 20",
+    );
+  });
+
+  it("folds a per-machine file in when there is no settings file at all", async () => {
+    await writeFile(
+      localPath(),
+      'version = 1\n[runtimes]\nshell = "/bin/bash"\n',
+    );
     const loaded = await new ConfigStore(paths).load();
-    expect(loaded.config).toEqual(defaultConfig());
-    expect((await readFile(paths.local, "utf8")).trim()).toBe("");
+    expect(loaded.config.runtimes.shell).toBe("/bin/bash");
+    expect(await readFile(paths.file, "utf8")).toContain("/bin/bash");
+  });
+
+  it("folds in once: a second start finds nothing to do", async () => {
+    await writeFile(paths.file, "version = 1\n");
+    await writeFile(
+      localPath(),
+      "version = 1\n[appearance]\nterminal_font_size = 20\n",
+    );
+    await new ConfigStore(paths).load();
+
+    // The renamed file is not read again, so a later edit to it changes nothing.
+    await writeFile(
+      `${localPath()}.migrated`,
+      "version = 1\n[appearance]\nterminal_font_size = 9\n",
+    );
+    const second = new ConfigStore(paths);
+    const loaded = await second.load();
+    expect(second.lastMigration().kind).toBe("nothing-to-migrate");
+    expect(loaded.config.appearance.terminalFontSize).toBe(20);
+  });
+
+  it("fails the start when the fold cannot be written", async () => {
+    await writeFile(paths.file, "version = 1\n");
+    await writeFile(localPath(), "version = 1\n");
+    // A directory where the temporary file has to go: the write cannot succeed
+    // and must not be reported as a start on a configuration nobody has.
+    await chmod(directory, 0o500);
+    try {
+      await expect(new ConfigStore(paths).load()).rejects.toThrow();
+    } finally {
+      await chmod(directory, 0o700);
+    }
+    // The old file is still there, so the next start can try again.
+    expect(await readFile(localPath(), "utf8")).toContain("version = 1");
+  });
+
+  it("fails the start when the per-machine file will not parse", async () => {
+    await writeFile(paths.file, "version = 1\n");
+    await writeFile(localPath(), "this is not = = toml\n");
+    const failure = await new ConfigStore(paths).load().then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    expect((failure as ConfigError).code).toBe("parse");
   });
 });

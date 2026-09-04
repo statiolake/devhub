@@ -3351,10 +3351,19 @@ export async function createAppController(
 			);
 		}
 		config = applied.config;
-	} catch {
+		const migration = configStore.lastMigration();
+		if (migration.kind === "migrated") {
+			console.log(
+				`[devhub] settings: folded ${migration.from} into settings.toml and kept the old file as ${migration.to}`,
+			);
+		}
+	} catch (error) {
 		// A config that will not parse is not a reason not to start: the shell
 		// comes up, and the failure is reported to the page and the Settings
-		// window rather than taking the app down.
+		// window (`configStore.lastDiagnostic()`) rather than taking the app
+		// down. Said here too, because a person who cannot open Settings still
+		// has the log.
+		console.error("[devhub] settings could not be read:", error);
 		config = undefined;
 	}
 

@@ -493,12 +493,9 @@ export function PlusGlyph() {
  * "Put this screen back to its defaults", the same control on every screen.
  *
  * One component and not a button per section, because the sections must not be
- * allowed to disagree about what resetting means. What it does is remove this
- * machine's answers for the keys the screen owns — so what you get back is the
- * shared `settings.toml`'s answer where it has one, and DevHub's default where
- * it does not. That is deliberately not "write the defaults down": a shared
- * file is somebody's considered answer, and a reset that overruled it would
- * make the shared file unusable for exactly the settings people share.
+ * allowed to disagree about what resetting means. What it does is write
+ * DevHub's defaults for the keys the screen owns into `settings.toml`, leaving
+ * everything else the file says alone.
  *
  * It asks first. Undoing it means retyping whatever was there, and a control
  * that sits at the bottom of every screen is a control that will be pressed by
@@ -521,9 +518,8 @@ export function ResetSection({
         {asking ? (
           <div className="sf-reset">
             <p className="sf-help mac-caption">
-              This removes your {what} from settings.local.toml. Anything
-              settings.toml says is kept; the rest goes back to DevHub&rsquo;s
-              defaults.
+              This writes DevHub&rsquo;s default {what} into settings.toml. The
+              rest of the file is left as it is.
             </p>
             <div className="sf-reset-actions">
               <button
