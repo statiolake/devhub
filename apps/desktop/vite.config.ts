@@ -1,22 +1,19 @@
 /// <reference types="vitest/config" />
-import { createRequire } from "node:module";
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
-// The one Electron. DevHub declares it in this package's own devDependencies,
-// and it is the version the submodule's .npmrc builds VS Code's native modules
-// against.
-//
-// The tests need it named here because a suite that reaches into the submodule
-// pulls VS Code's own modules in, and those `import 'electron'` from inside
-// `vscode/`, where Node resolves it against `vscode/node_modules`. Up to
-// 1.131.0 that happened to hold a copy, because VS Code listed Electron among
-// its devDependencies; 1.136.1 dropped it, leaving the import to be answered by
-// whichever nested `node_modules` a walk up the tree reached first — in
-// practice a bare extension copy with no downloaded binary, which throws
-// "Electron failed to install correctly" at load. Resolving from this file
-// makes the answer DevHub's declared one, from wherever the import is written.
-const electronEntry = createRequire(import.meta.url).resolve("electron");
+// What `import 'electron'` means to a test. There is no Electron under vitest,
+// and up to 1.131.0 nobody had to say so: VS Code listed Electron among its
+// devDependencies, so a VS Code module imported from a test resolved it against
+// `vscode/node_modules`. 1.136.1 dropped it, and the import began reaching
+// whichever nested `node_modules` a walk up the tree found first — a bare
+// extension copy with no binary, which throws at load. The stub says what the
+// answer has always been in these tests; see the file for why it is not
+// DevHub's own `electron` package.
+const electronStub = fileURLToPath(
+  new URL("./test/stubs/electron.cjs", import.meta.url),
+);
 
 // The App Shell page is loaded from disk by the shell BrowserWindow, so the
 // build has to be relative: there is no server root to be absolute against.
@@ -33,6 +30,6 @@ export default defineConfig({
     // each suite twice — against code that is only as fresh as the last build.
     // The sources are the tests; the build output is not.
     exclude: ["**/node_modules/**", "out/**", "dist/**"],
-    alias: { electron: electronEntry },
+    alias: { electron: electronStub },
   },
 });

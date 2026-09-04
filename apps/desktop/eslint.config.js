@@ -39,6 +39,15 @@ export default tseslint.config(
     rules: { "@typescript-eslint/triple-slash-reference": "off" },
   },
   {
+    // `.cjs` is CommonJS by extension, so `module` and `require` are globals
+    // rather than undefined names.
+    files: ["**/*.cjs"],
+    languageOptions: {
+      sourceType: "commonjs",
+      globals: { ...globals.node },
+    },
+  },
+  {
     // Near-verbatim copies of VS Code's entry points. They are kept diffable
     // against upstream, so upstream's unused bindings stay where they are.
     files: ["src/main/main.ts", "src/main/codeMain.ts"],
