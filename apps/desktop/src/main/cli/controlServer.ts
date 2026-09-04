@@ -35,6 +35,11 @@ export interface ControlHandlers {
 		position: ControlPosition | undefined,
 		waitMarkerPath: string | undefined,
 	): Promise<string>;
+	/**
+	 * A `--wait` ended: its editor was closed. Answers with the text the CLI
+	 * would print if anyone were reading it.
+	 */
+	waitEnded(waitMarkerPath: string): Promise<string>;
 	addAgent(
 		profileId: string,
 		args: readonly string[],
@@ -179,6 +184,11 @@ async function handle(
 						request.position,
 						request.waitMarkerPath,
 					),
+				};
+			case "wait-ended":
+				return {
+					ok: true,
+					message: await handlers.waitEnded(request.waitMarkerPath),
 				};
 			case "add-agent":
 				return {

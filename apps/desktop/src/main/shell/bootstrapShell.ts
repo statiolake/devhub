@@ -126,6 +126,7 @@ export async function bootstrapShell(
 		activate: () => controller.activateFromCli(),
 		open: (path, cwd, position, waitMarkerPath) =>
 			controller.openFromCli(path, cwd, position, waitMarkerPath),
+		waitEnded: (waitMarkerPath) => controller.waitEndedFromCli(waitMarkerPath),
 		addAgent: (profileId, args, cwd) =>
 			controller.addAgentFromCli(profileId, args, cwd),
 		installExtensions: (targets, force, cwd) =>

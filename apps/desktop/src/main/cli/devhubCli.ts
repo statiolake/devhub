@@ -55,7 +55,8 @@ usage:
                                    other file no open workspace contains
   devhub -w|--wait <file>          open the file and do not return until its
                                    editor is closed again, so that this can be
-                                   your EDITOR; combines with - and --goto
+                                   your EDITOR; closing it puts DevHub back
+                                   where it was; combines with - and --goto
   devhub -g|--goto <file:line[:col]>
                                    open the file the same way and put the
                                    cursor on that line and column
@@ -521,6 +522,23 @@ async function run(
 	// an EDITOR that writes to stdout writes into whatever is reading it. The
 	// report is the exit status, and the file.
 	await waitForClose(markerWorld(marker, socketPath));
+	// The editor is closed, so the modal session is over and DevHub goes back
+	// to where it was (see `waitReturn.ts`). This is told rather than noticed
+	// because this process is the one that watched the marker.
+	try {
+		const ended = await ask(socketPath, {
+			kind: "wait-ended",
+			waitMarkerPath: marker,
+		});
+		if (!ended.ok) console.error(ended.message);
+	} catch (error) {
+		// The edit itself happened, and `git commit` is reading this exit
+		// status to decide whether to use it — so a DevHub that quit between
+		// closing the tab and being told about it must not turn a finished
+		// commit message into a failed commit. It is still said out loud, on
+		// the stream nobody is parsing.
+		console.error(messageOf(error));
+	}
 	return 0;
 }
 

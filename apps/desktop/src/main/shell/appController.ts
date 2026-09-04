@@ -55,6 +55,7 @@ import {
 	uninstallExtensions,
 } from "../cli/extensionCommands.js";
 import { openFileInWorkbench } from "../cli/openFiles.js";
+import { WaitSelectionReturns } from "../cli/waitReturn.js";
 import type { ControlPosition } from "../cli/protocol.js";
 import { workspaceRootFor } from "../cli/resolve.js";
 import {
@@ -83,7 +84,7 @@ import {
 	type ProviderEvent,
 	type UserIntent,
 } from "../../model/intents.js";
-import { AppModel } from "../../model/appModel.js";
+import { AppModel, type NavigationSelection } from "../../model/appModel.js";
 import {
 	activeProfile,
 	DEFAULT_PROFILE,
@@ -214,6 +215,12 @@ export class AppController {
 	private readonly coordinator: AppCoordinator;
 	private cursor = 0;
 	private draining = false;
+
+	/**
+	 * Where each `--wait` open came from, so closing it can go back there.
+	 * Empty except while a `devhub --wait` is in flight; see `waitReturn.ts`.
+	 */
+	private readonly waitReturns = new WaitSelectionReturns();
 
 	/** Folder path (or the scratch key) -> the `ICodeWindow` id of its view. */
 	private readonly viewsByFolder = new Map<string, number>();
@@ -2449,6 +2456,9 @@ export class AppController {
 		position: ControlPosition | undefined,
 		waitMarkerPath: string | undefined,
 	): Promise<string> {
+		// Taken before anything is selected: this is the "before" a `--wait`
+		// goes back to when its editor is closed.
+		const before = this.coordinator.model.selection;
 		const target = await canonicalise(path);
 		if (target.isDirectory) {
 			if (position) {
@@ -2481,6 +2491,7 @@ export class AppController {
 				position,
 				waitMarkerPath,
 			);
+			this.rememberWaitReturn(waitMarkerPath, before);
 			this.bringToFront();
 			return `${target.path}${at(position)} is open in the Scratch editor: no open workspace contains it.`;
 		}
@@ -2503,8 +2514,81 @@ export class AppController {
 			position,
 			waitMarkerPath,
 		);
+		this.rememberWaitReturn(waitMarkerPath, before);
 		this.bringToFront();
 		return `${target.path}${at(position)} is open in the workspace at ${root}.`;
+	}
+
+	/**
+	 * Record where a `--wait` open came from, and where it landed.
+	 *
+	 * Only for `--wait`: an open without one is not a modal session, and a
+	 * person who ran plain `devhub <file>` asked to be where the file is and to
+	 * stay there. The landing selection is read here, after the open, because
+	 * it is what the pop is checked against — see `waitReturn.ts`.
+	 */
+	private rememberWaitReturn(
+		waitMarkerPath: string | undefined,
+		before: NavigationSelection,
+	): void {
+		if (waitMarkerPath === undefined) return;
+		this.waitReturns.push(
+			waitMarkerPath,
+			before,
+			this.coordinator.model.selection,
+		);
+	}
+
+	/**
+	 * The CLI says a `--wait` is over: go back to where its open came from.
+	 *
+	 * The rules are in `waitReturn.ts`; what is left here is the one thing the
+	 * model has to answer — whether the workspace or Agent being returned to
+	 * still exists. When it does not, nothing is restored, because the model
+	 * already moved the selection by its own rule when the thing went away.
+	 *
+	 * Restoring is the same select-and-reveal an open does, so the keyboard
+	 * lands where it lands for every other selection change (`reveal` ->
+	 * `focusSurface`). DevHub is deliberately *not* brought to the front: the
+	 * editor was closed by somebody already looking at it.
+	 */
+	waitEndedFromCli(waitMarkerPath: string): Promise<string> {
+		return asSentence(() => this.doWaitEnded(waitMarkerPath));
+	}
+
+	private async doWaitEnded(waitMarkerPath: string): Promise<string> {
+		const back = this.waitReturns.take(
+			waitMarkerPath,
+			this.coordinator.model.selection,
+		);
+		if (back === undefined) {
+			return "The wait is over; DevHub stayed where it was.";
+		}
+		if (!this.contextStillExists(back)) {
+			return "The wait is over; what was selected before it is gone.";
+		}
+		await this.dispatchAwaiting({
+			type: "select_context",
+			context: back.context,
+			presentation: back.presentation,
+		});
+		await this.syncEditorView();
+		return "The wait is over; DevHub is back where it was.";
+	}
+
+	private contextStillExists(selection: NavigationSelection): boolean {
+		const context = selection.context;
+		if (context.kind === "workspace") {
+			return (
+				this.coordinator.model.workspaces.some(
+					(workspace) => workspace.id === context.workspaceId,
+				) === true
+			);
+		}
+		if (context.kind === "agent") {
+			return this.coordinator.model.agent(context.agentId) !== undefined;
+		}
+		return true;
 	}
 
 	/**

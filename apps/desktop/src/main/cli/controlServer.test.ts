@@ -23,6 +23,7 @@ function everythingSaysOk(): ControlHandlers {
 	return {
 		activate: () => Promise.resolve("ok"),
 		open: () => Promise.resolve("ok"),
+		waitEnded: () => Promise.resolve("ok"),
 		addAgent: () => Promise.resolve("ok"),
 		installExtensions: () => Promise.resolve("ok"),
 		uninstallExtensions: () => Promise.resolve("ok"),
@@ -70,6 +71,10 @@ describe("the DevHub control socket", () => {
 					`open ${path} ${cwd}${position ? ` @${position.line}:${position.column}` : ""}${waitMarkerPath ? ` wait=${waitMarkerPath}` : ""}`,
 				);
 				return Promise.resolve(`opened ${path}`);
+			},
+			waitEnded: (waitMarkerPath) => {
+				calls.push(`wait-ended ${waitMarkerPath}`);
+				return Promise.resolve("back where it was");
 			},
 			addAgent: (profileId, args, cwd) => {
 				calls.push(`agent ${profileId} [${args.join(" ")}] ${cwd}`);
@@ -157,6 +162,29 @@ describe("the DevHub control socket", () => {
 		expect(calls).toEqual([
 			"open /work/a/COMMIT_EDITMSG /work/a wait=/tmp/devhub-wait-abc/marker",
 		]);
+	});
+
+	/** The end of a wait is its own request, sent by the CLI that watched it. */
+	it("carries the end of a wait through to the handler", async () => {
+		const answer = await ask(
+			socketPath,
+			`${JSON.stringify({
+				kind: "wait-ended",
+				waitMarkerPath: "/tmp/devhub-wait-abc/marker",
+			})}\n`,
+		);
+		expect(answer).toEqual({ ok: true, message: "back where it was" });
+		expect(calls).toEqual(["wait-ended /tmp/devhub-wait-abc/marker"]);
+	});
+
+	it("refuses the end of a wait whose marker is not an absolute path", async () => {
+		const answer = await ask(
+			socketPath,
+			`${JSON.stringify({ kind: "wait-ended", waitMarkerPath: "marker" })}\n`,
+		);
+		expect(answer.ok).toBe(false);
+		expect(answer.message).toMatch(/waitMarkerPath must be an absolute path/);
+		expect(calls).toEqual([]);
 	});
 
 	/** A marker that is not an absolute path is not a marker this app made. */

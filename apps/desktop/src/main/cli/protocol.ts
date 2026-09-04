@@ -85,6 +85,19 @@ export type ControlRequest =
 	  }
 	| {
 			/**
+			 * The `--wait` named by this marker is over: the editor was closed.
+			 *
+			 * Sent by the CLI itself, once, on its way out. The CLI is what
+			 * polls the marker, so the CLI is what knows; an app that watched
+			 * the same marker would be a second answer to one question, free to
+			 * disagree with the first. What DevHub does with it is go back to
+			 * whatever was selected before the open — see `waitReturn.ts`.
+			 */
+			readonly kind: "wait-ended";
+			readonly waitMarkerPath: string;
+	  }
+	| {
+			/**
 			 * Extension ids, or paths to `.vsix` files. Which of the two a
 			 * target is, is decided where VS Code's own rule lives — the app —
 			 * so `cwd` comes along for the paths among them.
@@ -182,6 +195,14 @@ export function parseControlRequest(line: string): ControlRequest {
 								"waitMarkerPath",
 							),
 						}),
+			};
+		case "wait-ended":
+			return {
+				kind: "wait-ended",
+				waitMarkerPath: requireAbsolute(
+					record["waitMarkerPath"],
+					"waitMarkerPath",
+				),
 			};
 		case "install-extensions":
 			return {
