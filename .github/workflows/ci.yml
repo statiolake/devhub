@@ -29,7 +29,15 @@ concurrency:
 jobs:
   verify:
     runs-on: macos-15
-    timeout-minutes: 60
+    # Sized for the run that has no cache to hit, not the ordinary one. The
+    # cache below is keyed on the submodule commit, so a VS Code bump misses it
+    # by construction and pays for `npm ci` and both compiles from cold — which
+    # is the same work the bump workflow already allows 180 minutes for. At 60
+    # this job was cancelled mid-build on exactly the change it exists to check,
+    # and a bump is the change most worth checking. Every other run restores the
+    # cache and finishes in a few minutes, so this ceiling costs nothing when it
+    # is not needed.
+    timeout-minutes: 150
     env:
       CI: "true"
     steps:
