@@ -447,6 +447,14 @@ export interface AgentObservation {
  */
 export type AgentInjectionWait =
   | "nothing_queued"
+  /**
+   * Composed, but nobody has agreed to the wording yet.
+   *
+   * Not a property of the Agent's screen at all, which is why it leads this
+   * list: however free the prompt is, DevHub is not entitled to type a sentence
+   * the person has not looked at. See `main/agent/injection.ts`.
+   */
+  | "awaiting_review"
   /** The prompt is free; the queue is making sure it stays that way. */
   | "settling"
   | "agent_busy"
@@ -455,17 +463,40 @@ export type AgentInjectionWait =
   /** A screen no manifest describes, so no keystroke has a known meaning. */
   | "agent_unreadable";
 
+/**
+ * What became of the last thing DevHub meant to say to this Agent.
+ *
+ * One vocabulary for all four endings, so a row never has to work out which of
+ * two fields to believe. `sent` is kept and not merely inferred from an empty
+ * queue: "nothing is waiting" and "it went" are different sentences, and the
+ * second is the one a person who just pressed a button is asking about.
+ */
+export type AgentInjectionResult =
+  | { readonly kind: "sent" }
+  /** The person closed the review sheet. The Agent keeps running. */
+  | { readonly kind: "cancelled" }
+  | { readonly kind: "failed"; readonly reason: string };
+
 export interface AgentInjection {
   readonly queued: number;
   readonly waitingFor: AgentInjectionWait;
-  /** The last send that failed, kept until one succeeds. */
-  readonly lastFailure: string | undefined;
+  /** How the last one ended, until the next one ends differently. */
+  readonly lastResult: AgentInjectionResult | undefined;
+}
+
+function sameResult(
+  a: AgentInjectionResult | undefined,
+  b: AgentInjectionResult | undefined,
+): boolean {
+  if (a === undefined || b === undefined) return a === b;
+  if (a.kind !== b.kind) return false;
+  return a.kind !== "failed" || a.reason === (b as { reason: string }).reason;
 }
 
 export const NO_INJECTION: AgentInjection = {
   queued: 0,
   waitingFor: "nothing_queued",
-  lastFailure: undefined,
+  lastResult: undefined,
 };
 
 /**
@@ -679,7 +710,7 @@ export class Agent {
     if (
       current.queued === injection.queued &&
       current.waitingFor === injection.waitingFor &&
-      current.lastFailure === injection.lastFailure
+      sameResult(current.lastResult, injection.lastResult)
     ) {
       return false;
     }

@@ -46,6 +46,7 @@ import { terminalApi } from "./terminal.js";
 import {
 	SETTINGS_CHANNELS,
 	type SettingsApi,
+	type SettingsResetRequestWire,
 	type SettingsSaveRequestWire,
 	type SettingsSnapshot,
 	type SettingsSocketPreflightWire,
@@ -136,6 +137,19 @@ const devhub: DevhubApi = {
 			agentId,
 			actionId,
 		) as Promise<AppOutcome>,
+	confirmInjection: (agentId: string, injectionId: string, text: string) =>
+		ipcRenderer.invoke(
+			CHANNELS.confirmInjection,
+			agentId,
+			injectionId,
+			text,
+		) as Promise<AppOutcome>,
+	cancelInjection: (agentId: string, injectionId: string) =>
+		ipcRenderer.invoke(
+			CHANNELS.cancelInjection,
+			agentId,
+			injectionId,
+		) as Promise<AppOutcome>,
 	agentActions: () =>
 		ipcRenderer.invoke(CHANNELS.agentActions) as Promise<
 			readonly AgentActionWire[]
@@ -189,6 +203,11 @@ const devhubSettings: SettingsApi = {
 	save: (request: SettingsSaveRequestWire) =>
 		ipcRenderer.invoke(
 			SETTINGS_CHANNELS.save,
+			request,
+		) as Promise<SettingsSnapshot>,
+	resetScope: (request: SettingsResetRequestWire) =>
+		ipcRenderer.invoke(
+			SETTINGS_CHANNELS.resetScope,
 			request,
 		) as Promise<SettingsSnapshot>,
 	reload: () =>

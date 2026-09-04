@@ -175,7 +175,8 @@ import {
 } from "./github.js";
 import { gitHubItemUrl, parseGitHubItemUrl } from "../../model/github.js";
 import type { GitHubItem } from "../../model/github.js";
-import { renderAgentAction, triggerOf } from "../../model/agentActions.js";
+import { renderAgentAction } from "../../model/agentActions.js";
+import type { ConfiguredAgentAction } from "../../model/config.js";
 import { RepositoryStatusWatcher } from "./repositoryStatus.js";
 import { installMenu, refreshMenu } from "./menu.js";
 import { installKeyboard } from "./keyboard.js";
@@ -1331,7 +1332,7 @@ export class AppController {
 			.find((candidate) => candidate.id === agentId);
 		if (!agent) throw workspaceFailure("That agent is not running.");
 		const action = this.config?.agentActions.find(
-			(candidate) => candidate.id === actionId,
+			(candidate) => candidate.id === actionId && candidate.enabled,
 		);
 		if (!action) {
 			throw workspaceFailure(
@@ -1344,13 +1345,11 @@ export class AppController {
 		const branch = this.lastRepositoryStatus.workspaces.find(
 			(entry) => entry.workspaceId === agent.workspaceId,
 		)?.branch;
-		agents()?.queueInjection(
+		this.sayToAgent(
 			agent.id,
-			renderAgentAction(
-				action.template,
-				branch === undefined ? {} : { BRANCH: branch },
-				agent.profile.kind,
-			),
+			agent.profile.kind,
+			action,
+			branch === undefined ? {} : { BRANCH: branch },
 		);
 		// Queueing changed the Agent's `injection`, which is what the buttons read
 		// to say a message is waiting — so the page is handed the snapshot that
@@ -1359,6 +1358,45 @@ export class AppController {
 			{ kind: "updated", snapshot: this.coordinator.model.snapshot() },
 			this.coordinator.readiness,
 		);
+	}
+
+	/**
+	 * Compose one action for one Agent and put it where it will be sent.
+	 *
+	 * Every template DevHub says goes through here — the Issue flow's first
+	 * message and the three shortcut buttons alike — because they are one act
+	 * with one difference: what fired it. Rendering, the review decision, and
+	 * the sheet are therefore written once. A second caller that queued its own
+	 * text directly would be a second answer to "does this get looked at first",
+	 * and one of the two answers would eventually be the wrong one.
+	 *
+	 * `confirm_before_send` is the action's, not the caller's. A short, standing
+	 * instruction like "commit what is here" is right every time and can be
+	 * turned off; anything a person wants to glance at first stays on, which is
+	 * the default because a sheet nobody wanted costs a keystroke and a sentence
+	 * nobody read costs a turn of somebody's agent.
+	 */
+	private sayToAgent(
+		agentId: ReturnType<typeof parseAgentId>,
+		kind: AgentProfileKind,
+		action: ConfiguredAgentAction,
+		values: Readonly<Record<string, string>>,
+	): void {
+		const text = renderAgentAction(action.template, values, kind);
+		const review = action.confirm_before_send;
+		const injectionId = agents()?.queueInjection(agentId, text, review);
+		if (injectionId === undefined || !review) return;
+		// The sheet goes up *now*, over an Agent that is still starting behind
+		// it. That simultaneity is the point: the person reads and edits while
+		// the program boots, and whichever of the two finishes last is what the
+		// send waits on.
+		shellWindow().modals.openModal({
+			kind: "injection-review",
+			agentId,
+			injectionId,
+			actionName: action.display_name,
+			text,
+		});
 	}
 
 	/**
@@ -1393,26 +1431,19 @@ export class AppController {
 		// means they have none configured, which is a decision — the agent starts
 		// and DevHub says nothing — rather than a gap to fill with a default.
 		if (actionId === undefined) return;
-		const template = this.config?.agentActions.find(
-			(action) => action.id === actionId,
-		)?.template;
-		if (template === undefined) return;
-		agents()?.queueInjection(
-			started.id,
-			renderAgentAction(
-				template,
-				// One pair of names for either kind. A person's actions are their own
-				// wording, written before pull requests were accepted at all, and a
-				// second pair meaning the same thing would make every template that
-				// wanted to work for both say everything twice. `{{ISSUE_URL}}` is
-				// the URL of the thing that was assigned, whichever it was.
-				{
-					ISSUE_URL: gitHubItemUrl(item),
-					ISSUE_NO: String(item.number),
-				},
-				started.profile.kind,
-			),
+		const action = this.config?.agentActions.find(
+			(candidate) => candidate.id === actionId && candidate.enabled,
 		);
+		if (action === undefined) return;
+		this.sayToAgent(started.id, started.profile.kind, action, {
+			// One pair of names for either kind. A person's actions are their own
+			// wording, written before pull requests were accepted at all, and a
+			// second pair meaning the same thing would make every template that
+			// wanted to work for both say everything twice. `{{ISSUE_URL}}` is
+			// the URL of the thing that was assigned, whichever it was.
+			ISSUE_URL: gitHubItemUrl(item),
+			ISSUE_NO: String(item.number),
+		});
 	}
 
 	/**
@@ -2858,12 +2889,57 @@ export class AppController {
 				}
 			},
 		);
+		// The two ends of a reviewed message. Both hand the snapshot back, because
+		// both change what the Agent's row says about its queue, and both refuse
+		// with words when the intent is no longer there — an Agent that ended
+		// while its sheet stood is exactly the case a silent success would hide.
+		handle(
+			CHANNELS.confirmInjection,
+			(_event, agentId: string, injectionId: string, text: string) => {
+				try {
+					const id = parseAgentId(agentId);
+					if (!agents()?.confirmInjection(id, injectionId, text)) {
+						throw workspaceFailure(
+							"That message is no longer queued — the agent it was for has ended.",
+						);
+					}
+					return outcomeWire(
+						{ kind: "updated", snapshot: this.coordinator.model.snapshot() },
+						this.coordinator.readiness,
+					);
+				} catch (error: unknown) {
+					throw asIpcError(errorWire(error));
+				}
+			},
+		);
+		handle(
+			CHANNELS.cancelInjection,
+			(_event, agentId: string, injectionId: string) => {
+				try {
+					agents()?.cancelInjection(parseAgentId(agentId), injectionId);
+					// Cancelling something already gone is not a failure: the sheet is
+					// being closed and closing it is what the person asked for.
+					return outcomeWire(
+						{ kind: "updated", snapshot: this.coordinator.model.snapshot() },
+						this.coordinator.readiness,
+					);
+				} catch (error: unknown) {
+					throw asIpcError(errorWire(error));
+				}
+			},
+		);
+		// The actions that exist, in the order they are arranged. The trigger
+		// travels with each one rather than being worked out from its id: a person
+		// may have three commit buttons and none of them is called
+		// `commit_changes`.
 		handle(CHANNELS.agentActions, () =>
-			(this.config?.agentActions ?? []).map((action) => ({
-				trigger: triggerOf(action.id),
-				id: action.id,
-				displayName: action.display_name,
-			})),
+			(this.config?.agentActions ?? [])
+				.filter((action) => action.enabled)
+				.map((action) => ({
+					trigger: action.trigger,
+					id: action.id,
+					displayName: action.display_name,
+				})),
 		);
 		handle(CHANNELS.openSettings, () => {
 			openSettingsWindow();

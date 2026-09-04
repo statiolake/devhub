@@ -492,6 +492,20 @@ export interface DevhubApi {
 	 * rather than into the middle of its output.
 	 */
 	runAgentAction(agentId: string, actionId: string): Promise<AppOutcome>;
+	/**
+	 * The wording, as the person settled on it. Nothing is sent by this call.
+	 *
+	 * Confirming only removes the reason the queue was refusing to send; the
+	 * idle gate is untouched and still decides the instant. See
+	 * `main/agent/injection.ts`.
+	 */
+	confirmInjection(
+		agentId: string,
+		injectionId: string,
+		text: string,
+	): Promise<AppOutcome>;
+	/** Drop the intent without sending it. The agent keeps running. */
+	cancelInjection(agentId: string, injectionId: string): Promise<AppOutcome>;
 	/** Clone, and answer with the directory git made. Opens nothing. */
 	cloneRepository(url: string, parentDirectory: string): Promise<string>;
 	/**
@@ -577,6 +591,8 @@ export const CHANNELS = {
 	pullRequestHeadBranch: "devhub:pull-request-head-branch",
 	removeWorktree: "devhub:remove-worktree",
 	runAgentAction: "devhub:run-agent-action",
+	confirmInjection: "devhub:confirm-injection",
+	cancelInjection: "devhub:cancel-injection",
 	agentActions: "devhub:agent-actions",
 	openSettings: "devhub:open-settings",
 	openExternalUrl: "devhub:open-external-url",
@@ -623,6 +639,24 @@ export type ModalRequest =
 	| { readonly kind: "agent-picker"; readonly workspaceId: string }
 	| { readonly kind: "issue-assignment" }
 	| { readonly kind: "agent-rename"; readonly agentId: string }
+	| {
+			/**
+			 * The wording DevHub is about to say, before it says it.
+			 *
+			 * The agent is already starting behind this sheet — that is the point
+			 * of it being a modal and not a step in the flow's picker chain: the
+			 * two waits run at once, and whichever finishes second is the one that
+			 * decides when the text goes.
+			 */
+			readonly kind: "injection-review";
+			readonly agentId: string;
+			/** The intent this sheet is reviewing, in `main/agent/injection.ts`. */
+			readonly injectionId: string;
+			/** What the action's name is, so the sheet says what is being sent. */
+			readonly actionName: string;
+			/** The template, rendered. The starting contents of the field. */
+			readonly text: string;
+	  }
 	| {
 			readonly kind: "worktree-removal";
 			readonly workspaceId: string;

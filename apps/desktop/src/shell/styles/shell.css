@@ -983,6 +983,14 @@ body.is-resizing-sidebar {
  * wide as the widest, so a column of one, two or three of them has a ragged
  * left edge and a straight right one — against the corner it is pinned to.
  */
+/*
+ * A column, and now one that can be long: the buttons are whatever actions a
+ * person has written under an offered trigger, not the three DevHub ships. It
+ * is capped at half the pane and scrolls past that rather than climbing over
+ * the terminal — a stack tall enough to hide the work it is about is worse than
+ * one that has to be scrolled, and eliding buttons would hide the very one
+ * somebody added.
+ */
 .agent-shortcuts {
   position: absolute;
   z-index: 2;
@@ -990,6 +998,8 @@ body.is-resizing-sidebar {
   bottom: var(--space-3);
   display: flex;
   max-width: calc(100% - var(--space-6));
+  max-height: 50%;
+  overflow-y: auto;
   flex-direction: column;
   align-items: end;
   gap: var(--space-1);

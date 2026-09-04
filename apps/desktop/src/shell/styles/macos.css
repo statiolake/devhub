@@ -803,3 +803,48 @@
   align-items: center;
   gap: var(--space-2);
 }
+
+/* ------------------------------------------------------ injection review */
+
+/*
+ * The same stack as a picker, with an editor where the list would be. It reuses
+ * the picker's bands deliberately: it is a sheet asking one question, and a
+ * second chrome for that would be a second thing to learn.
+ */
+.injection-review {
+  width: min(680px, 88vw);
+}
+
+.injection-review-body {
+  padding: var(--space-3) var(--space-4);
+}
+
+/* The template's own line breaks are the message, so the field wraps and
+   scrolls rather than collapsing them, and it is monospaced because what is in
+   it is going to be typed into a terminal. */
+.injection-review-field {
+  flex: 1;
+  min-height: 180px;
+  box-sizing: border-box;
+  width: 100%;
+  padding: var(--space-2);
+  border: 1px solid var(--line-soft);
+  border-radius: 5px;
+  background: var(--surface);
+  color: var(--primary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  resize: none;
+  white-space: pre-wrap;
+}
+
+.injection-review-field:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.injection-review-buttons {
+  display: flex;
+  gap: var(--space-2);
+}

@@ -42,14 +42,17 @@ import { FONT_FAMILY_RULE, isValidFontFamily } from "../model/fontFamily";
 import {
   ACTION_VARIABLES,
   BUILT_IN_ACTIONS,
+  ACTION_TRIGGERS,
   DEFAULT_ACTION_TEMPLATE,
-  triggerOf,
+  TRIGGER_NAMES,
+  type AgentActionTrigger,
 } from "../model/agentActions";
 import { Collection } from "./Collection";
 import {
   Group,
   NumberField,
   Popup,
+  ResetSection,
   Row,
   SwitchRow,
   TextArea,
@@ -81,7 +84,10 @@ export function GeneralSection({
   config,
   update,
   runtime,
+  onReset,
 }: {
+  /** Absent while there is nothing to reset against yet. */
+  readonly onReset?: () => void;
   readonly config: SettingsConfig;
   readonly update: Update;
   /**
@@ -213,6 +219,7 @@ export function GeneralSection({
           />
         </Row>
       </Group>
+      <ResetSection what="general settings" onReset={onReset} />
     </Form>
   );
 }
@@ -258,7 +265,10 @@ function AgentGlyph() {
 export function WorkspacesSection({
   config,
   update,
+  onReset,
 }: {
+  /** Absent while there is nothing to reset against yet. */
+  readonly onReset?: () => void;
   readonly config: SettingsConfig;
   readonly update: Update;
 }) {
@@ -318,6 +328,7 @@ export function WorkspacesSection({
           ),
         });
       }}
+      footer={<ResetSection what="workspace sources" onReset={onReset} />}
       empty={{
         title: "No workspace sources",
         message:
@@ -601,7 +612,10 @@ function DepthRow({
 export function AgentsSection({
   config,
   update,
+  onReset,
 }: {
+  /** Absent while there is nothing to reset against yet. */
+  readonly onReset?: () => void;
   readonly config: SettingsConfig;
   readonly update: Update;
 }) {
@@ -665,6 +679,7 @@ export function AgentsSection({
           ),
         });
       }}
+      footer={<ResetSection what="agent profiles" onReset={onReset} />}
       empty={{
         title: "No agent profiles",
         message:
@@ -878,7 +893,10 @@ export function TerminalSection({
   onSocketChange,
   effectiveSocket,
   busy,
+  onReset,
 }: {
+  /** Absent while there is nothing to reset against yet. */
+  readonly onReset?: () => void;
   readonly config: SettingsConfig;
   readonly update: Update;
   readonly socketDraft: string;
@@ -966,6 +984,7 @@ export function TerminalSection({
           </div>
         </Row>
       </Group>
+      <ResetSection what="terminal settings" onReset={onReset} />
     </Form>
   );
 }
@@ -1000,7 +1019,10 @@ export function AdvancedSection({
   onCopyDiagnostics,
   status,
   busy,
+  onReset,
 }: {
+  /** Absent while there is nothing to reset against yet. */
+  readonly onReset?: () => void;
   readonly config: SettingsConfig;
   readonly update: Update;
   readonly runtime: SettingsRuntimeWire;
@@ -1092,6 +1114,7 @@ export function AdvancedSection({
           </div>
         </Row>
       </Group>
+      <ResetSection what="advanced settings" onReset={onReset} />
     </Form>
   );
 }
@@ -1130,15 +1153,33 @@ function ActionGlyph() {
 export function ActionsSection({
   config,
   update,
+  onReset,
 }: {
   readonly config: SettingsConfig;
   readonly update: Update;
+  readonly onReset?: () => void;
 }) {
-  const actions = config.agentActions;
+  /**
+   * The actions in tree order: by trigger, then in each trigger's own order.
+   *
+   * The heading is drawn from the entries, so a trigger nobody has an action
+   * for has no branch. That is not a gap: `+` adds beside what is selected and
+   * the Trigger popup moves it, so putting the first push action somewhere is
+   * two controls that already exist rather than a branch that has to be
+   * selectable — and there is one inspector, which a selectable branch would
+   * have nothing to put in.
+   */
+  const actions = ACTION_TRIGGERS.flatMap((trigger) =>
+    config.agentActions.filter((action) => action.trigger === trigger),
+  );
   const [wanted, setWanted] = useState(0);
   const selected =
     actions.length === 0 ? undefined : Math.min(wanted, actions.length - 1);
   const action = selected === undefined ? undefined : actions[selected];
+  // Which branch `+` adds to: the trigger of whatever is selected. The tree has
+  // no selectable branches, so the selected leaf is the only thing that can say
+  // which branch is being worked in.
+  const trigger: AgentActionTrigger = action?.trigger ?? "issue";
 
   const replace = (next: SettingsAgentActionWire) => {
     update({
@@ -1157,29 +1198,38 @@ export function ActionsSection({
     <Collection
       label="Agent actions"
       entries={actions.map((item) => ({
-        key: item.id,
-        title: item.displayName,
+        key: `${item.trigger}:${item.id}`,
+        title: item.enabled ? item.displayName : `${item.displayName} (off)`,
         // The first line of the wording, which tells two actions apart at a
         // glance far better than their names do.
         note: item.template.split("\n")[0],
         glyph: <ActionGlyph />,
+        group: TRIGGER_NAMES[item.trigger],
       }))}
       selected={selected}
       onSelect={setWanted}
       addLabel="Add Action"
       onAdd={() => {
-        setWanted(actions.length);
         const id = freeId(
           "action",
           actions.map((item) => item.id),
         );
-        update({
-          ...config,
-          agentActions: [
-            ...actions,
-            { id, displayName: "New action", template: "{{ISSUE_URL}}\n" },
-          ],
+        // At the end of its own group, which is where a new button appears in
+        // the row it will be drawn in — not at the end of a list whose order
+        // spans four different triggers.
+        const last = actions.map((item) => item.trigger).lastIndexOf(trigger);
+        const at = last === -1 ? actions.length : last + 1;
+        const next = [...actions];
+        next.splice(at, 0, {
+          trigger,
+          id,
+          displayName: "New action",
+          template: `{{${ACTION_VARIABLES[trigger][0] ?? "BRANCH"}}}\n`,
+          confirmBeforeSend: true,
+          enabled: true,
         });
+        setWanted(at);
+        update({ ...config, agentActions: next });
       }}
       removeLabel="Remove Action"
       onRemove={() => {
@@ -1188,10 +1238,24 @@ export function ActionsSection({
           agentActions: actions.filter((_, position) => position !== selected),
         });
       }}
+      footer={<ResetSection what="agent actions" onReset={onReset} />}
+      onMove={(direction) => {
+        if (selected === undefined) return;
+        const target = selected + direction;
+        // Only within the group. An action dragged from "commit" into "push"
+        // would be a different action, not the same one moved, and the tree
+        // would have silently rewritten what fires it.
+        if (actions[target]?.trigger !== trigger) return;
+        const next = [...actions];
+        const [moved] = next.splice(selected, 1);
+        if (moved) next.splice(target, 0, moved);
+        setWanted(target);
+        update({ ...config, agentActions: next });
+      }}
       empty={{
         title: "No agent actions",
         message:
-          "An action is what DevHub says to an agent when it starts it on an Issue. With none, the Issue flow starts the agent and says nothing.",
+          "An action is what DevHub says to an agent — when it starts one on an Issue, and when you press one of a workspace's buttons.",
       }}
     >
       {action ? (
@@ -1208,7 +1272,22 @@ export function ActionsSection({
                 }}
               />
             </Row>
-            <Row label="Identifier" help="What config.toml calls it.">
+            <Row
+              label="Trigger"
+              help="What fires it: the Issue flow, or one of a workspace's buttons."
+            >
+              <Popup
+                label="Agent action trigger"
+                value={action.trigger}
+                options={ACTION_TRIGGERS.map(
+                  (one) => [one, TRIGGER_NAMES[one]] as const,
+                )}
+                onChange={(next) => {
+                  replace({ ...action, trigger: next });
+                }}
+              />
+            </Row>
+            <Row label="Identifier" help="What settings.toml calls it.">
               <TextField
                 label="Agent action identifier"
                 value={action.id}
@@ -1223,25 +1302,47 @@ export function ActionsSection({
                 }}
               />
             </Row>
+            {/* Per action, because whether a sentence is worth re-reading is a
+                property of the sentence. Off means the wording goes straight to
+                the agent the moment its prompt settles; on means it is put on
+                screen first and nothing is sent until it is confirmed. */}
+            <SwitchRow
+              label="Review before sending"
+              help="Show this message in an editable sheet and send it only once you confirm it."
+              checked={action.confirmBeforeSend}
+              onChange={(confirmBeforeSend) => {
+                replace({ ...action, confirmBeforeSend });
+              }}
+            />
+            {/* How an action DevHub ships is taken away. Deleting it from the
+                file no longer means anything — built-ins are merged in by id,
+                which is what stops a configuration written today from losing an
+                action DevHub adds next month — so "gone" is said out loud. */}
+            <SwitchRow
+              label="Offer this action"
+              help="Off hides it without deleting the wording."
+              checked={action.enabled}
+              onChange={(enabled) => {
+                replace({ ...action, enabled });
+              }}
+            />
           </Group>
 
           <Group
             heading="Message"
-            // Which names are offered depends on what fires this action, and
-            // it has to: an action fired from a workspace row knows the branch
-            // it is standing on and has no Issue to name, so advertising
+            // Which names are offered depends on what fires this action, and it
+            // has to: an action fired from a workspace row knows the branch it
+            // is standing on and has no Issue to name, so advertising
             // `{{ISSUE_URL}}` on it would be inviting somebody to type a hole
             // that is never filled. An action with no variables at all says so
             // rather than printing an empty sentence.
             note={`${
-              ACTION_VARIABLES[triggerOf(action.id)].length === 0
+              ACTION_VARIABLES[action.trigger].length === 0
                 ? "This message takes no variables."
-                : `${ACTION_VARIABLES[triggerOf(action.id)]
+                : `${ACTION_VARIABLES[action.trigger]
                     .map((name) => `{{${name}}}`)
                     .join(" and ")} ${
-                    ACTION_VARIABLES[triggerOf(action.id)].length === 1
-                      ? "is"
-                      : "are"
+                    ACTION_VARIABLES[action.trigger].length === 1 ? "is" : "are"
                   } replaced when it is sent.`
             } A line starting $name runs a skill: Claude Code is sent /name, Codex is sent $name, and an agent DevHub has no manifest for is sent the line as written.`}
           >

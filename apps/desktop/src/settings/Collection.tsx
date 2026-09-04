@@ -14,7 +14,7 @@
  * of these, used by both collections, so the two cannot drift apart.
  */
 
-import { useEffect, useRef, type ReactNode } from "react";
+import { Fragment, useEffect, useRef, type ReactNode } from "react";
 import { MinusGlyph, PlusGlyph } from "./controls";
 
 export interface CollectionEntry {
@@ -24,6 +24,20 @@ export interface CollectionEntry {
   /** The one fact that tells two entries apart at a glance. */
   readonly note?: string;
   readonly glyph: ReactNode;
+  /**
+   * The heading this entry sits under, for a list that is a shallow tree.
+   *
+   * Optional, and a list where nobody passes one is exactly the flat list it
+   * was. Where it is passed, entries with the same group must be adjacent —
+   * the caller has already put them in the order it wants, and the heading is
+   * drawn when the group changes rather than by re-sorting behind its back.
+   *
+   * Headings are not entries: they are not selectable, the arrows do not stop
+   * on them, and the indices the caller sees are still positions in `entries`.
+   * A tree whose branches could be selected would need a second answer to
+   * "what does the inspector show", and there is only one inspector.
+   */
+  readonly group?: string;
 }
 
 export function Collection({
@@ -35,7 +49,9 @@ export function Collection({
   onAdd,
   removeLabel,
   onRemove,
+  onMove,
   empty,
+  footer,
   children,
 }: {
   readonly label: string;
@@ -55,7 +71,25 @@ export function Collection({
   readonly onAdd?: () => void;
   readonly removeLabel?: string;
   readonly onRemove?: () => void;
+  /**
+   * Move the selected entry one place, when its position means something.
+   *
+   * Given a direction rather than a pair of indices: what "one place up" means
+   * inside a grouped list is the caller's business (it is a swap within the
+   * group, not across it), and a scaffold that computed the target index would
+   * be deciding that for it.
+   */
+  readonly onMove?: (direction: -1 | 1) => void;
   readonly empty: { readonly title: string; readonly message: string };
+  /**
+   * What sits under the inspector whatever is selected — the reset control.
+   *
+   * Below the inspector rather than inside it, because it is about the
+   * collection and not about the entry: a screen whose list is empty is exactly
+   * the screen somebody wants to put back to its defaults, and a control that
+   * lived in the inspector would be missing at that moment.
+   */
+  readonly footer?: ReactNode;
   /** The inspector for the selected entry. */
   readonly children: ReactNode;
 }) {
@@ -107,24 +141,31 @@ export function Collection({
           onKeyDown={onKeyDown}
         >
           {entries.map((entry, index) => (
-            <div
-              key={entry.key}
-              role="option"
-              aria-selected={index === selected}
-              tabIndex={index === selected ? 0 : -1}
-              className={`sf-list-row${index === selected ? " is-selected" : ""}`}
-              onClick={() => {
-                onSelect(index);
-              }}
-            >
-              <span className="sf-list-glyph">{entry.glyph}</span>
-              <span className="sf-list-text">
-                <span className="sf-list-title">{entry.title}</span>
-                {entry.note ? (
-                  <span className="sf-list-note">{entry.note}</span>
-                ) : null}
-              </span>
-            </div>
+            <Fragment key={entry.key}>
+              {entry.group !== undefined &&
+              entry.group !== entries[index - 1]?.group ? (
+                <div className="sf-list-group" role="presentation">
+                  {entry.group}
+                </div>
+              ) : null}
+              <div
+                role="option"
+                aria-selected={index === selected}
+                tabIndex={index === selected ? 0 : -1}
+                className={`sf-list-row${index === selected ? " is-selected" : ""}`}
+                onClick={() => {
+                  onSelect(index);
+                }}
+              >
+                <span className="sf-list-glyph">{entry.glyph}</span>
+                <span className="sf-list-text">
+                  <span className="sf-list-title">{entry.title}</span>
+                  {entry.note ? (
+                    <span className="sf-list-note">{entry.note}</span>
+                  ) : null}
+                </span>
+              </div>
+            </Fragment>
           ))}
         </div>
         {/* The two actions sit under the list they act on, joined, the way a
@@ -150,6 +191,34 @@ export function Collection({
             >
               <MinusGlyph />
             </button>
+            {onMove ? (
+              <>
+                <button
+                  type="button"
+                  className="sf-list-action"
+                  aria-label="Move up"
+                  title="Move up"
+                  disabled={selected === undefined}
+                  onClick={() => {
+                    onMove(-1);
+                  }}
+                >
+                  ↑
+                </button>
+                <button
+                  type="button"
+                  className="sf-list-action"
+                  aria-label="Move down"
+                  title="Move down"
+                  disabled={selected === undefined}
+                  onClick={() => {
+                    onMove(1);
+                  }}
+                >
+                  ↓
+                </button>
+              </>
+            ) : null}
           </div>
         ) : null}
       </div>
@@ -180,6 +249,7 @@ export function Collection({
         ) : (
           <div className="sf-detail-column">{children}</div>
         )}
+        {footer}
       </div>
     </div>
   );

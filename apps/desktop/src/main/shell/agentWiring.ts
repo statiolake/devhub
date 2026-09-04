@@ -12,6 +12,8 @@
  * that is converted here, once.
  */
 
+import { randomUUID } from "node:crypto";
+
 import { AgentActivityReader } from "../agent/activity.js";
 import { AgentStatusDetector } from "../agent/detect/detector.js";
 import { AgentInjectionQueue } from "../agent/injection.js";
@@ -143,7 +145,7 @@ export function wireAgents(options: AgentWiringOptions): AgentSessions {
 					// so it is said out loud rather than dropped in silence.
 					for (const undelivered of injections.forget(id)) {
 						console.error(
-							`[devhub] agent ${id} ended with text never delivered: ${undelivered.slice(0, 120)}`,
+							`[devhub] agent ${id} ended with text never delivered (${undelivered.state}): ${undelivered.text.slice(0, 120)}`,
 						);
 					}
 					exited.push(id);
@@ -179,8 +181,30 @@ export function wireAgents(options: AgentWiringOptions): AgentSessions {
 			return { observations, exited };
 		},
 
-		queueInjection(agentId: AgentId, text: string): void {
-			injections.queue(agentId, text);
+		queueInjection(agentId: AgentId, text: string, review: boolean): string {
+			const id = randomUUID();
+			// Which state it starts in is the whole of what a caller varies. There
+			// is no second path for "send this one straight away": both kinds of
+			// intent go into the same queue and through the same gate, and one of
+			// them has already cleared the first half of it.
+			injections.queue(agentId, {
+				id,
+				text,
+				state: review ? "pending-review" : "confirmed",
+			});
+			return id;
+		},
+
+		confirmInjection(
+			agentId: AgentId,
+			injectionId: string,
+			text: string,
+		): boolean {
+			return injections.confirm(agentId, injectionId, text);
+		},
+
+		cancelInjection(agentId: AgentId, injectionId: string): boolean {
+			return injections.cancel(agentId, injectionId);
 		},
 
 		async closeWorkspaceAgents(workspaceId: WorkspaceId): Promise<void> {

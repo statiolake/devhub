@@ -473,6 +473,36 @@ export function AppShellProvider({
     [applySnapshot, transport],
   );
 
+  /**
+   * The two ends of a reviewed message, and both bring the snapshot back.
+   *
+   * Confirming and cancelling both change what the agent's row says about its
+   * queue — waiting for a prompt, or cancelled — so the page is handed the
+   * state that says so rather than finding out on the next poll, exactly as
+   * queueing one does.
+   */
+  const confirmInjection = useCallback(
+    async (agentId: string, injectionId: string, text: string) => {
+      const outcome = await transport.confirmInjection(
+        agentId,
+        injectionId,
+        text,
+      );
+      applySnapshot(outcome.snapshot);
+      return outcome;
+    },
+    [applySnapshot, transport],
+  );
+
+  const cancelInjection = useCallback(
+    async (agentId: string, injectionId: string) => {
+      const outcome = await transport.cancelInjection(agentId, injectionId);
+      applySnapshot(outcome.snapshot);
+      return outcome;
+    },
+    [applySnapshot, transport],
+  );
+
   const projectDefaultDirectory = useCallback(
     () => transport.projectDefaultDirectory(),
     [transport],
@@ -598,6 +628,8 @@ export function AppShellProvider({
       agentActions,
       removeWorktree,
       runAgentAction,
+      confirmInjection,
+      cancelInjection,
       findIssueRepositories,
       cloneRepository,
       listBranches,
@@ -625,6 +657,8 @@ export function AppShellProvider({
       agentActions,
       removeWorktree,
       runAgentAction,
+      confirmInjection,
+      cancelInjection,
       findIssueRepositories,
       cloneRepository,
       listBranches,

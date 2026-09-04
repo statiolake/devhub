@@ -41,6 +41,30 @@ import type { AgentProfileKind } from "./config.js";
 export type AgentActionTrigger = "issue" | "commit" | "push" | "pull_request";
 
 /**
+ * Every trigger there is, in the order a person meets them.
+ *
+ * The list the config file's `[agent_actions.<trigger>]` keys are checked
+ * against and the order the Settings tree draws its groups in. One list, so a
+ * trigger cannot be spellable in the file and invisible in the window.
+ */
+export const ACTION_TRIGGERS: readonly AgentActionTrigger[] = [
+  "issue",
+  "commit",
+  "push",
+  "pull_request",
+];
+
+/**
+ * What each trigger is, in one line, for the group headings in Settings.
+ */
+export const TRIGGER_NAMES: Readonly<Record<AgentActionTrigger, string>> = {
+  issue: "Assigning an Issue",
+  commit: "Commit button",
+  push: "Push button",
+  pull_request: "Pull request button",
+};
+
+/**
  * The action DevHub ships for the Issue flow, and the id it ships it under.
  */
 export const DEFAULT_ACTION_ID = "issue_assignment";
@@ -149,11 +173,11 @@ export const BUILT_IN_ACTIONS: readonly {
 ];
 
 /**
- * What fires this action.
+ * What fired an action DevHub shipped, by its id.
  *
- * An id DevHub does not ship is an Issue action: that is the one trigger a
- * person can write for, and treating an unknown id as anything else would put
- * somebody's wording behind a button that never appears.
+ * Only for reading a configuration written before the trigger was spelled in
+ * the file, where the id was the only thing that said which action an entry
+ * was. Anywhere else the trigger is data: see `ConfiguredAgentAction`.
  */
 export function triggerOf(id: string): AgentActionTrigger {
   return (

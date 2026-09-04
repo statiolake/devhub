@@ -55,9 +55,12 @@ function mount(overrides: Partial<AppShellContextValue> = {}) {
       .mockResolvedValue(["/projects", "/code/github"]),
     pullRequestHeadBranch,
     // The URL step's rows are the person's own actions.
-    agentActions: vi
-      .fn()
-      .mockResolvedValue([{ id: "implement", displayName: "Work on it" }]),
+    agentActions: vi.fn().mockResolvedValue([
+      { id: "implement", displayName: "Work on it", trigger: "issue" },
+      // A workspace button's action, in the same list. It is not an answer to
+      // "what should the agent do with this Issue", so it must not be a row.
+      { id: "commit_changes", displayName: "Commit", trigger: "commit" },
+    ]),
     ...overrides,
   } as unknown as AppShellContextValue;
   render(
@@ -85,9 +88,12 @@ function mountFor(agentProfiles: AppShellContextValue["agentProfiles"]) {
     assignIssue: vi.fn().mockResolvedValue(undefined),
     projectDefaultDirectory: vi.fn().mockResolvedValue("/projects"),
     cloneParentDirectories: vi.fn().mockResolvedValue([]),
-    agentActions: vi
-      .fn()
-      .mockResolvedValue([{ id: "implement", displayName: "Work on it" }]),
+    agentActions: vi.fn().mockResolvedValue([
+      { id: "implement", displayName: "Work on it", trigger: "issue" },
+      // A workspace button's action, in the same list. It is not an answer to
+      // "what should the agent do with this Issue", so it must not be a row.
+      { id: "commit_changes", displayName: "Commit", trigger: "commit" },
+    ]),
   } as unknown as AppShellContextValue;
   const view = render(
     <AppShellContext.Provider value={value}>

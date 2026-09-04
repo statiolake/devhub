@@ -488,3 +488,77 @@ export function PlusGlyph() {
     </svg>
   );
 }
+
+/**
+ * "Put this screen back to its defaults", the same control on every screen.
+ *
+ * One component and not a button per section, because the sections must not be
+ * allowed to disagree about what resetting means. What it does is remove this
+ * machine's answers for the keys the screen owns — so what you get back is the
+ * shared `settings.toml`'s answer where it has one, and DevHub's default where
+ * it does not. That is deliberately not "write the defaults down": a shared
+ * file is somebody's considered answer, and a reset that overruled it would
+ * make the shared file unusable for exactly the settings people share.
+ *
+ * It asks first. Undoing it means retyping whatever was there, and a control
+ * that sits at the bottom of every screen is a control that will be pressed by
+ * accident.
+ */
+export function ResetSection({
+  what,
+  onReset,
+}: {
+  /** What is about to go back, named the way the screen names it. */
+  readonly what: string;
+  /** Absent while the window has nothing to reset against yet. */
+  readonly onReset?: () => void;
+}) {
+  const [asking, setAsking] = useState(false);
+  if (!onReset) return null;
+  return (
+    <Group heading="Defaults">
+      <WideRow>
+        {asking ? (
+          <div className="sf-reset">
+            <p className="sf-help mac-caption">
+              This removes your {what} from settings.local.toml. Anything
+              settings.toml says is kept; the rest goes back to DevHub&rsquo;s
+              defaults.
+            </p>
+            <div className="sf-reset-actions">
+              <button
+                type="button"
+                className="mac-button"
+                onClick={() => {
+                  setAsking(false);
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="mac-button default"
+                onClick={() => {
+                  setAsking(false);
+                  onReset();
+                }}
+              >
+                Reset
+              </button>
+            </div>
+          </div>
+        ) : (
+          <button
+            type="button"
+            className="mac-button"
+            onClick={() => {
+              setAsking(true);
+            }}
+          >
+            Reset {what} to defaults
+          </button>
+        )}
+      </WideRow>
+    </Group>
+  );
+}

@@ -52,17 +52,28 @@ export interface AgentAdapter {
 	/** Close every Agent belonging to a workspace. Resolves when they are gone. */
 	closeWorkspaceAgents(workspaceId: WorkspaceId): Promise<void>;
 	/**
-	 * Hold text for an Agent, to be sent the next time its prompt is free.
+	 * Hold an intent to say something to an Agent.
 	 *
-	 * It does not go now. The Agent may be mid-turn, or stopped on a question
-	 * that wants a keypress rather than a sentence, and the queue waits for a
-	 * settled idle prompt before typing anything — see `agent/injection.ts`.
-	 * Callers build the text; when it is delivered is not theirs to decide.
+	 * It does not go now, and it may not go at all. The Agent may be mid-turn,
+	 * or stopped on a question that wants a keypress rather than a sentence, and
+	 * the queue waits for a settled idle prompt; and an intent queued for review
+	 * waits additionally on the person confirming the wording. Callers build the
+	 * text and say which of those two waits apply; when it is delivered is not
+	 * theirs to decide. See `agent/injection.ts`.
 	 *
-	 * Throws if the text is empty, which is a caller's bug rather than a state
-	 * of the world: a bare Enter into an Agent's prompt is not a no-op.
+	 * Returns the intent's id, which is what a review sheet later confirms or
+	 * cancels. Throws if the text is empty, which is a caller's bug rather than
+	 * a state of the world: a bare Enter into an Agent's prompt is not a no-op.
 	 */
-	queueInjection(agentId: AgentId, text: string): void;
+	queueInjection(agentId: AgentId, text: string, review: boolean): string;
+	/** The wording as the person settled on it. False if it is no longer there. */
+	confirmInjection(
+		agentId: AgentId,
+		injectionId: string,
+		text: string,
+	): boolean;
+	/** Drop an intent unsent. False if it is no longer there. */
+	cancelInjection(agentId: AgentId, injectionId: string): boolean;
 }
 
 export interface TerminalAdapter {

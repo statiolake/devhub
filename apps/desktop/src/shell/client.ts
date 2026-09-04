@@ -72,6 +72,12 @@ export interface AppShellClient {
   agentActions(): Promise<readonly AgentActionWire[]>;
   removeWorktree(workspaceId: string, force: boolean): Promise<AppOutcome>;
   runAgentAction(agentId: string, actionId: string): Promise<AppOutcome>;
+  confirmInjection(
+    agentId: string,
+    injectionId: string,
+    text: string,
+  ): Promise<AppOutcome>;
+  cancelInjection(agentId: string, injectionId: string): Promise<AppOutcome>;
   findIssueRepositories(issueUrl: string): Promise<readonly IssueRepository[]>;
   cloneRepository(url: string, parentDirectory: string): Promise<string>;
   listBranches(directory: string): Promise<readonly string[]>;
@@ -143,6 +149,10 @@ export function createShellClient(api: DevhubApi = devhub()): AppShellClient {
       api.removeWorktree(workspaceId, force),
     runAgentAction: (agentId, actionId) =>
       api.runAgentAction(agentId, actionId),
+    confirmInjection: (agentId, injectionId, text) =>
+      api.confirmInjection(agentId, injectionId, text),
+    cancelInjection: (agentId, injectionId) =>
+      api.cancelInjection(agentId, injectionId),
     findIssueRepositories: (issueUrl) => api.findIssueRepositories(issueUrl),
     cloneRepository: (url, parentDirectory) =>
       api.cloneRepository(url, parentDirectory),

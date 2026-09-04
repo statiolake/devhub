@@ -82,6 +82,22 @@ export interface AppShellContextValue {
     actionId: string,
   ) => Promise<AppOutcome>;
   /**
+   * The wording, as the person settled on it. Confirming does not send it.
+   *
+   * What it removes is the queue's reason for refusing; when the text actually
+   * goes is still the idle gate's decision, and may already have been reached.
+   */
+  readonly confirmInjection: (
+    agentId: string,
+    injectionId: string,
+    text: string,
+  ) => Promise<AppOutcome>;
+  /** Drop a queued message without sending it. The agent keeps running. */
+  readonly cancelInjection: (
+    agentId: string,
+    injectionId: string,
+  ) => Promise<AppOutcome>;
+  /**
    * The four steps of assigning an Issue. Each throws what to do about it when
    * it fails, because each is answered by re-asking the question that led to
    * it — which is the wizard's rule, not a special case for these.

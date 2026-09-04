@@ -993,7 +993,7 @@ describe.skipIf(TMUX === undefined)(
 
       const text =
         "First line.\nSecond line, which must not submit on its own.";
-      queue.queue(agentId, text);
+      queue.queue(agentId, { id: "intent-1", text, state: "confirmed" });
 
       let sends = 0;
       const firstIdleAt = { at: 0 };
@@ -1059,7 +1059,11 @@ describe.skipIf(TMUX === undefined)(
     it("holds text back while an Agent is busy or asking", async () => {
       const queue = new AgentInjectionQueue();
       const agentId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa6";
-      queue.queue(agentId, "do the thing");
+      queue.queue(agentId, {
+        id: "intent-1",
+        text: "do the thing",
+        state: "confirmed",
+      });
       for (let round = 0; round < 30; round += 1) {
         expect(queue.due(agentId, "working")).toBeUndefined();
         expect(queue.due(agentId, "waiting")).toBeUndefined();

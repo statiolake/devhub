@@ -69,6 +69,12 @@ function identity(request: ModalRequest): string {
 			return `${request.kind}:${request.surfaceKey}`;
 		case "agent-rename":
 			return `${request.kind}:${request.agentId}`;
+		// One sheet per intent, not per agent. Two messages queued for one agent
+		// are two different sentences to agree to, and answering the second by
+		// throwing the first away would send whichever survived without anybody
+		// having read it.
+		case "injection-review":
+			return `${request.kind}:${request.injectionId}`;
 		case "agent-picker":
 			return `${request.kind}:${request.workspaceId}`;
 		default:

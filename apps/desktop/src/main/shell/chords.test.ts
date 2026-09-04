@@ -19,7 +19,7 @@ function agent(id: string, workspaceId: string, ordinal: number): AgentWire {
 		injection: {
 			queued: 0,
 			waitingFor: "nothing_queued",
-			lastFailure: undefined,
+			lastResult: undefined,
 		},
 		controlState: "running",
 		displayName: id,

@@ -15,6 +15,8 @@
 
 export const SETTINGS_SCHEMA_VERSION = 1 as const;
 
+import type { AgentActionTriggerWire } from "./contract.js";
+
 export type SettingsAgentProfileKindWire =
 	| "codex"
 	| "claude"
@@ -124,11 +126,17 @@ export type SettingsWorkspaceSourceWire =
 			readonly createIfMissing: boolean;
 	  };
 
-/** One of DevHub's own actions, and the wording it is sent with. */
+/** One action, and the wording it is sent with. */
 export interface SettingsAgentActionWire {
+	/** What fires it. The tree groups by this, and it is spelled in the file. */
+	readonly trigger: AgentActionTriggerWire;
 	readonly id: string;
 	readonly displayName: string;
 	readonly template: string;
+	/** Whether the wording is shown for review before it is sent. */
+	readonly confirmBeforeSend: boolean;
+	/** False is how one DevHub ships is taken away. */
+	readonly enabled: boolean;
 }
 
 export interface SettingsConfigWire {
@@ -357,6 +365,22 @@ export type SettingsSnapshot = SettingsSnapshotWire;
 export type SettingsConfig = SettingsConfigWire;
 export type SettingsError = SettingsErrorWire;
 
+/** Which part of the configuration a reset acts on. */
+export type SettingsScopeKeyWire =
+	| "general"
+	| "runtimes"
+	| "appearance"
+	| "workspaceSources"
+	| "agentProfiles"
+	| "agentActions";
+
+export interface SettingsResetRequestWire {
+	readonly schemaVersion: number;
+	/** The revision it was drafted from, exactly as a save carries one. */
+	readonly revision: string;
+	readonly keys: readonly SettingsScopeKeyWire[];
+}
+
 /** The surface the preload puts on `window.devhubSettings`. */
 /**
  * What the socket DevHub is being asked to move to looks like right now.
@@ -382,6 +406,16 @@ export interface SettingsSocketPreflightWire {
 export interface SettingsApi {
 	getSnapshot(): Promise<SettingsSnapshot>;
 	save(request: SettingsSaveRequestWire): Promise<SettingsSnapshot>;
+	/**
+	 * Take this machine's word out for some part of the configuration.
+	 *
+	 * The keys name properties of the configuration, and every screen says which
+	 * of them it owns. What comes back is what the shared file and DevHub's own
+	 * defaults have to say about them, which is not always the defaults — a
+	 * shared `settings.toml` is somebody's considered answer and resetting a
+	 * screen does not overrule it.
+	 */
+	resetScope(request: SettingsResetRequestWire): Promise<SettingsSnapshot>;
 	reload(): Promise<SettingsSnapshot>;
 	recheck(): Promise<SettingsSnapshot>;
 	openLogFolder(): Promise<void>;
@@ -395,6 +429,7 @@ export interface SettingsApi {
 export const SETTINGS_CHANNELS = {
 	getSnapshot: "devhub-settings:get-snapshot",
 	save: "devhub-settings:save",
+	resetScope: "devhub-settings:reset-scope",
 	reload: "devhub-settings:reload",
 	recheck: "devhub-settings:recheck",
 	openLogFolder: "devhub-settings:open-log-folder",

@@ -64,6 +64,9 @@ export function testConfig(
         id: DEFAULT_ACTION_ID,
         displayName: DEFAULT_ACTION_NAME,
         template: DEFAULT_ACTION_TEMPLATE,
+        confirmBeforeSend: true,
+        trigger: "issue",
+        enabled: true,
       },
     ],
     ...patch,
@@ -111,9 +114,12 @@ export function testSnapshot(
 
 export function testClient(initial: SettingsConfig): {
   readonly saves: SettingsConfig[];
+  /** Which keys each "reset this screen" asked main to drop. */
+  readonly resets: (readonly string[])[];
   readonly client: SettingsClient;
 } {
   const saves: SettingsConfig[] = [];
+  const resets: (readonly string[])[] = [];
   let current = initial;
   const snapshot = () => testSnapshot(current, saves.length + 1);
   const client: SettingsClient = {
@@ -121,6 +127,12 @@ export function testClient(initial: SettingsConfig): {
     save: (request) => {
       saves.push(request.config);
       current = request.config;
+      return Promise.resolve(snapshot());
+    },
+    // The page hands over names, not values: what a reset produces depends on
+    // the shared file, which only main has read.
+    resetScope: (request) => {
+      resets.push(request.keys);
       return Promise.resolve(snapshot());
     },
     reload: () => Promise.resolve(snapshot()),
@@ -138,5 +150,5 @@ export function testClient(initial: SettingsConfig): {
     close: () => Promise.resolve(),
     subscribe: () => () => undefined,
   };
-  return { saves, client };
+  return { saves, resets, client };
 }

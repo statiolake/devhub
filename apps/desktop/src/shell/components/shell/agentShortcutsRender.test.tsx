@@ -55,7 +55,7 @@ function agent(over: Partial<AgentSnapshot> = {}): AgentSnapshot {
     injection: {
       queued: 0,
       waitingFor: "nothing_queued",
-      lastFailure: undefined,
+      lastResult: undefined,
     },
     ...over,
   } as unknown as AgentSnapshot;
@@ -159,12 +159,53 @@ describe("the shortcut buttons", () => {
       injection: {
         queued: 1,
         waitingFor: "agent_busy",
-        lastFailure: undefined,
+        lastResult: undefined,
       },
     } as Partial<AgentSnapshot>);
     expect(await screen.findByRole("status")).toHaveTextContent(
-      /Waiting for a prompt/u,
+      /Waiting for the agent to finish/u,
     );
+  });
+
+  /**
+   * The four endings are four different sentences, and the one that is not a
+   * failure is the one most easily lost: a message nobody agreed to looks
+   * exactly like a message waiting for a busy agent if the row only knows the
+   * queue is not empty.
+   */
+  it("distinguishes waiting for the person from waiting for the agent", async () => {
+    mount(DIRTY, {
+      injection: {
+        queued: 1,
+        waitingFor: "awaiting_review",
+        lastResult: undefined,
+      },
+    } as Partial<AgentSnapshot>);
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      /confirm the wording/u,
+    );
+  });
+
+  it("says a message was cancelled rather than dropping it in silence", async () => {
+    mount(DIRTY, {
+      injection: {
+        queued: 0,
+        waitingFor: "nothing_queued",
+        lastResult: { kind: "cancelled" as const },
+      },
+    } as Partial<AgentSnapshot>);
+    expect(await screen.findByRole("status")).toHaveTextContent(/Cancelled/u);
+  });
+
+  it("says a message went, which an empty queue alone does not", async () => {
+    mount(DIRTY, {
+      injection: {
+        queued: 0,
+        waitingFor: "nothing_queued",
+        lastResult: { kind: "sent" as const },
+      },
+    } as Partial<AgentSnapshot>);
+    expect(await screen.findByRole("status")).toHaveTextContent(/Sent/u);
   });
 
   it("keeps a failed send on screen", async () => {
@@ -172,7 +213,10 @@ describe("the shortcut buttons", () => {
       injection: {
         queued: 0,
         waitingFor: "nothing_queued",
-        lastFailure: "The pane closed before the text could be typed.",
+        lastResult: {
+          kind: "failed" as const,
+          reason: "The pane closed before the text could be typed.",
+        },
       },
     } as Partial<AgentSnapshot>);
     expect(await screen.findByRole("alert")).toHaveTextContent(/pane closed/u);

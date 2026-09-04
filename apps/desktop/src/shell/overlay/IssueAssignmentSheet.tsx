@@ -159,9 +159,13 @@ function issueUrlStep(services: FlowServices): WizardStep {
     // URL because they have already decided whether they are implementing it or
     // reviewing it. A single row that said "Use this Issue" was a keystroke
     // asking them to confirm the only thing they could have meant.
-    const actions = await input.working("Reading settings…", () =>
-      services.agentActions(),
-    );
+    // The Issue flow's own actions, and only those. The workspace buttons are
+    // in the same list and are not answers to this question: offering "Commit
+    // the changes" as a way to start an agent on an Issue was a row that could
+    // only produce a message about a working tree nobody has touched yet.
+    const actions = (
+      await input.working("Reading settings…", () => services.agentActions())
+    ).filter((action) => action.trigger === "issue");
     const answer = await input.ask({
       title: "Assign Issue",
       question:

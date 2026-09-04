@@ -601,3 +601,38 @@ body {
 .sf-detail.is-empty > .mac-empty {
   flex: 1;
 }
+
+/*
+ * A branch of the actions tree: what fires everything under it.
+ *
+ * Not a row. It is drawn where a row would be but takes no selection and no
+ * arrow key, because there is one inspector and a branch has nothing to put in
+ * it. Its indent is the leaves', minus the glyph, so the two read as levels
+ * rather than as two kinds of row.
+ */
+.sf-list-group {
+  padding: var(--space-2) var(--space-2) var(--space-1);
+  color: var(--tertiary);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.sf-list-group + .sf-list-row,
+.sf-list-row {
+  margin-left: var(--space-2);
+}
+
+/* "Reset this screen", and the sentence it asks before doing it. */
+.sf-reset {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  align-items: start;
+}
+
+.sf-reset-actions {
+  display: flex;
+  gap: var(--space-2);
+}

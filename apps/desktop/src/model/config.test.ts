@@ -114,26 +114,143 @@ describe("parsing", () => {
     }
   });
 
-  it("takes the actions the file lists, in the file's own order", () => {
+  /**
+   * The file adds to the actions DevHub ships rather than replacing them.
+   *
+   * This is the whole point of the shape. It used to be an array, and an array
+   * is what a scope replaces whole — so every configuration that had ever saved
+   * one action had thereby deleted every action added to DevHub afterwards, and
+   * nobody had the commit, push or pull-request buttons.
+   */
+  it("adds the file's actions to the ones DevHub ships", () => {
     const source = [
       "version = 1",
       "",
-      "[[agent_actions]]",
-      'id = "implement"',
+      "[agent_actions.issue.implement]",
       'display_name = "Work on it"',
       'template = "read {{ISSUE_URL}}"',
       "",
-      "[[agent_actions]]",
-      'id = "review"',
+      "[agent_actions.issue.review]",
       'display_name = "Review it"',
       'template = "review {{ISSUE_URL}}"',
       "",
     ].join("\n");
     expect(
       parseConfig(source).agentActions.map((action) => action.display_name),
-    ).toEqual(["Work on it", "Review it"]);
+    ).toEqual([
+      "Work on the Issue",
+      "Work on it",
+      "Review it",
+      "Commit the changes",
+      "Push the commits",
+      "Open a pull request",
+    ]);
     expect(parseConfig(configToToml(parseConfig(source)))).toEqual(
       parseConfig(source),
+    );
+  });
+
+  it("takes the file's word about an action DevHub ships", () => {
+    const source = [
+      "version = 1",
+      "",
+      "[agent_actions.commit.commit_changes]",
+      'template = "commit it"',
+      "confirm_before_send = false",
+      "",
+    ].join("\n");
+    const action = parseConfig(source).agentActions.find(
+      (one) => one.id === "commit_changes",
+    );
+    expect(action?.template).toBe("commit it");
+    expect(action?.confirm_before_send).toBe(false);
+    // The name it did not restate is still the one DevHub ships, rather than
+    // an empty string that would validate as a nameless action.
+    expect(action?.display_name).toBe("Commit the changes");
+  });
+
+  it("takes an action away only when the file says so", () => {
+    const source = [
+      "version = 1",
+      "",
+      "[agent_actions.push.push_commits]",
+      "enabled = false",
+      "",
+    ].join("\n");
+    const actions = parseConfig(source).agentActions;
+    expect(actions.map((one) => one.id)).toContain("push_commits");
+    expect(actions.find((one) => one.id === "push_commits")?.enabled).toBe(
+      false,
+    );
+  });
+
+  it("puts a second action under a trigger after the one DevHub ships", () => {
+    const source = [
+      "version = 1",
+      "",
+      "[agent_actions.commit.commit_in_pieces]",
+      'display_name = "Commit in pieces"',
+      'template = "commit each change on its own"',
+      "",
+    ].join("\n");
+    expect(
+      parseConfig(source)
+        .agentActions.filter((one) => one.trigger === "commit")
+        .map((one) => one.id),
+    ).toEqual(["commit_changes", "commit_in_pieces"]);
+  });
+
+  it("orders a trigger's actions the way the file asks", () => {
+    const source = [
+      "version = 1",
+      "",
+      "[agent_actions.commit.commit_in_pieces]",
+      'display_name = "Commit in pieces"',
+      'template = "one at a time"',
+      "order = -1",
+      "",
+    ].join("\n");
+    expect(
+      parseConfig(source)
+        .agentActions.filter((one) => one.trigger === "commit")
+        .map((one) => one.id),
+    ).toEqual(["commit_in_pieces", "commit_changes"]);
+  });
+
+  /**
+   * The damage, and the repair. A file in the old shape is read as what it
+   * meant — these actions, with these words — rather than as "and nothing
+   * else", so the built-ins it had unwittingly deleted come back.
+   */
+  it("reads a file written in the old array shape, and restores what it dropped", () => {
+    const source = [
+      "version = 1",
+      "",
+      "[[agent_actions]]",
+      'id = "issue_assignment"',
+      'display_name = "Work on the Issue"',
+      'template = "mine, edited"',
+      "",
+    ].join("\n");
+    const actions = parseConfig(source).agentActions;
+    expect(actions.map((one) => one.id)).toEqual([
+      "issue_assignment",
+      "commit_changes",
+      "push_commits",
+      "open_pull_request",
+    ]);
+    // The person's own wording survives the move; the trigger comes back from
+    // the id, which is all the old shape ever said about it.
+    const issue = actions.find((one) => one.id === "issue_assignment");
+    expect(issue?.template).toBe("mine, edited");
+    expect(issue?.trigger).toBe("issue");
+    expect(actions.find((one) => one.id === "push_commits")?.trigger).toBe(
+      "push",
+    );
+    // And it is written back out in the new shape, so the next save is a file
+    // that cannot lose an action again.
+    expect(configToToml(parseConfig(source))).toContain(
+      "[agent_actions.commit.commit_changes]",
     );
   });
 
@@ -143,13 +260,11 @@ describe("parsing", () => {
     const source = [
       "version = 1",
       "",
-      "[[agent_actions]]",
-      'id = "same"',
+      "[agent_actions.issue.same]",
       'display_name = "One"',
       'template = "a"',
       "",
-      "[[agent_actions]]",
-      'id = "same"',
+      "[agent_actions.commit.same]",
       'display_name = "Two"',
       'template = "b"',
       "",

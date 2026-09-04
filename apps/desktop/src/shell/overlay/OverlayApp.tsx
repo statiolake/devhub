@@ -20,6 +20,7 @@ import { ViewScopedAlert } from "../components/shell/ViewScopedAlert";
 import { AgentPickerSheet } from "./AgentPickerSheet";
 import { IssueAssignmentSheet } from "./IssueAssignmentSheet";
 import { AgentRenameAlert } from "./AgentRenameAlert";
+import { InjectionReviewSheet } from "./InjectionReviewSheet";
 import { CloseConfirmationAlert } from "./CloseConfirmationAlert";
 import { WorktreeRemovalAlert } from "./WorktreeRemovalAlert";
 
@@ -90,6 +91,18 @@ function Modal({ modal }: { readonly modal: OpenModal }) {
       return (
         <AgentRenameAlert
           agentId={request.agentId}
+          onDismiss={() => {
+            close(id);
+          }}
+        />
+      );
+    case "injection-review":
+      return (
+        <InjectionReviewSheet
+          agentId={request.agentId}
+          injectionId={request.injectionId}
+          actionName={request.actionName}
+          text={request.text}
           onDismiss={() => {
             close(id);
           }}

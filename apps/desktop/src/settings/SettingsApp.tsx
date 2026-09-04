@@ -34,6 +34,7 @@ import {
   SETTINGS_SCHEMA_VERSION,
   type SettingsConfig,
   type SettingsError,
+  type SettingsScopeKeyWire,
   type SettingsSnapshot,
   type SettingsSocketPreflightWire,
 } from "../ipc/settings";
@@ -73,6 +74,26 @@ const SECTIONS = [
 ] as const;
 
 type Section = (typeof SECTIONS)[number];
+
+/**
+ * Which part of the configuration each screen owns, for "reset this screen".
+ *
+ * One table, so no screen gets to decide for itself what resetting it means —
+ * and so a new screen is a row here rather than a method somewhere. The socket
+ * is on the Terminal screen but lives under `runtimes`, which is Advanced's:
+ * that is deliberate, because resetting a font must not move DevHub's terminal
+ * sessions to another socket underneath it.
+ */
+const SECTION_SCOPE: Readonly<
+  Record<Section, readonly SettingsScopeKeyWire[]>
+> = {
+  General: ["general"],
+  Workspaces: ["workspaceSources"],
+  Agents: ["agentProfiles"],
+  Actions: ["agentActions"],
+  Terminal: ["appearance"],
+  Advanced: ["runtimes"],
+};
 
 const clone = (config: SettingsConfig): SettingsConfig =>
   JSON.parse(JSON.stringify(config)) as SettingsConfig;
@@ -330,6 +351,42 @@ export function SettingsApp({ client }: { readonly client?: SettingsClient }) {
     }, 400);
   };
 
+  /**
+   * Take this machine's answers out for the screen that is showing.
+   *
+   * Not a `update()` with defaults in it: what a reset produces depends on the
+   * shared file, which this page has never seen. Main is the only place that
+   * can subtract one file from another, so the page says which keys and gets a
+   * whole snapshot back.
+   */
+  const resetSection = () => {
+    if (!snapshot) return;
+    const current = generation.current;
+    setBusy(true);
+    // A pending debounce would land after this and put back exactly what was
+    // just removed.
+    window.clearTimeout(saveTimer.current);
+    void transport
+      .resetScope({
+        schemaVersion: SETTINGS_SCHEMA_VERSION,
+        revision: snapshot.revision,
+        keys: SECTION_SCOPE[section],
+      })
+      .then(
+        (next) => {
+          if (generation.current === current) adopt(next);
+        },
+        (value: unknown) => {
+          if (generation.current === current) {
+            setError(parseSettingsTransportError(value));
+          }
+        },
+      )
+      .finally(() => {
+        if (generation.current === current) setBusy(false);
+      });
+  };
+
   const reload = () => {
     const current = generation.current;
     setBusy(true);
@@ -460,22 +517,36 @@ export function SettingsApp({ client }: { readonly client?: SettingsClient }) {
           <GeneralSection
             config={draft}
             update={update}
+            onReset={resetSection}
             runtime={snapshot.runtime}
           />
         ) : null}
         {section === "Workspaces" ? (
-          <WorkspacesSection config={draft} update={update} />
+          <WorkspacesSection
+            config={draft}
+            update={update}
+            onReset={resetSection}
+          />
         ) : null}
         {section === "Agents" ? (
-          <AgentsSection config={draft} update={update} />
+          <AgentsSection
+            config={draft}
+            update={update}
+            onReset={resetSection}
+          />
         ) : null}
         {section === "Actions" ? (
-          <ActionsSection config={draft} update={update} />
+          <ActionsSection
+            config={draft}
+            update={update}
+            onReset={resetSection}
+          />
         ) : null}
         {section === "Terminal" ? (
           <TerminalSection
             config={draft}
             update={update}
+            onReset={resetSection}
             socketDraft={socketDraft ?? draft.runtimes.tmuxSocketName}
             onSocketDraft={setSocketDraft}
             onSocketChange={askToChangeSocket}
@@ -487,6 +558,7 @@ export function SettingsApp({ client }: { readonly client?: SettingsClient }) {
           <AdvancedSection
             config={draft}
             update={update}
+            onReset={resetSection}
             runtime={snapshot.runtime}
             diagnostics={snapshot.diagnostics}
             onRecheck={recheck}

@@ -1,6 +1,7 @@
 import type {
   SettingsApi,
   SettingsError,
+  SettingsResetRequestWire,
   SettingsSaveRequestWire,
   SettingsSnapshot,
   SettingsSocketPreflightWire,
@@ -9,6 +10,7 @@ import type {
 export interface SettingsClient {
   getSnapshot(): Promise<SettingsSnapshot>;
   save(request: SettingsSaveRequestWire): Promise<SettingsSnapshot>;
+  resetScope(request: SettingsResetRequestWire): Promise<SettingsSnapshot>;
   reload(): Promise<SettingsSnapshot>;
   recheck(): Promise<SettingsSnapshot>;
   openLogFolder(): Promise<void>;
@@ -41,6 +43,7 @@ export function createSettingsClient(
   return {
     getSnapshot: () => api.getSnapshot(),
     save: (request) => api.save(request),
+    resetScope: (request) => api.resetScope(request),
     reload: () => api.reload(),
     recheck: () => api.recheck(),
     openLogFolder: () => api.openLogFolder(),

@@ -62,10 +62,10 @@ const WITH_DATED: SettingsConfig["workspaceSources"] = [
 ];
 
 async function open(section: string, config: SettingsConfig) {
-  const { saves, client } = testClient(config);
+  const { saves, resets, client } = testClient(config);
   render(<SettingsApp client={client} />);
   fireEvent.click(await screen.findByRole("tab", { name: section }));
-  return { saves };
+  return { saves, resets };
 }
 
 // Scoped to the source list: a popup button's `<option>` elements carry the
@@ -313,6 +313,25 @@ describe("a collection of agent profiles", () => {
   });
 });
 
+/** A configuration with two triggers in it, so the tree has two branches. */
+function withCommitAction(): SettingsConfig {
+  const base = testConfig({});
+  return {
+    ...base,
+    agentActions: [
+      ...base.agentActions,
+      {
+        trigger: "commit",
+        id: "commit_changes",
+        displayName: "Commit the changes",
+        template: "commit it",
+        confirmBeforeSend: true,
+        enabled: true,
+      },
+    ],
+  };
+}
+
 describe("the actions an agent is sent", () => {
   it("lists the person's own actions, and lets them add and remove one", async () => {
     // The membership *is* theirs now: every action has the same trigger — the
@@ -354,13 +373,97 @@ describe("the actions an agent is sent", () => {
     });
   });
 
+  /**
+   * The tree. What fires an action is spelled in the file now rather than
+   * guessed from its id, so "which button is this?" is a question the list can
+   * answer — and it answers it once per group instead of once per row.
+   */
+  it("groups the actions under what fires them", async () => {
+    await open("Actions", withCommitAction());
+    const headings = within(list())
+      .getAllByRole("presentation")
+      .map((one) => one.textContent);
+    expect(headings).toEqual(["Assigning an Issue", "Commit button"]);
+  });
+
+  it("adds a new action under the trigger that is selected", async () => {
+    const { saves } = await open("Actions", withCommitAction());
+    // The commit action, which is the second row of the tree.
+    fireEvent.click(options()[1] as HTMLElement);
+    fireEvent.click(screen.getByRole("button", { name: "Add Action" }));
+    await vi.waitFor(() => {
+      expect(saves.at(-1)?.agentActions).toHaveLength(3);
+    });
+    // Beside the one it was added next to, not at the end of a list whose
+    // order spans four triggers.
+    expect(saves.at(-1)?.agentActions[2]?.trigger).toBe("commit");
+  });
+
+  it("saves the per-action review toggle", async () => {
+    const { saves } = await open("Actions", testConfig({}));
+    expect(saves).toHaveLength(0);
+    fireEvent.click(screen.getByLabelText("Review before sending"));
+    await vi.waitFor(() => {
+      expect(saves.at(-1)?.agentActions[0]?.confirmBeforeSend).toBe(false);
+    });
+  });
+
+  it("turns an action off rather than deleting the wording", async () => {
+    const { saves } = await open("Actions", testConfig({}));
+    fireEvent.click(screen.getByLabelText("Offer this action"));
+    await vi.waitFor(() => {
+      expect(saves.at(-1)?.agentActions[0]?.enabled).toBe(false);
+    });
+    expect(saves.at(-1)?.agentActions[0]?.template.length).toBeGreaterThan(0);
+  });
+
+  /**
+   * A reset is not a save of the defaults: what it produces depends on the
+   * shared file, which this page has never read. So it names the keys and main
+   * does the subtraction.
+   */
+  it("asks before resetting the screen, and then asks main to do it", async () => {
+    const { resets, saves } = await open("Actions", testConfig({}));
+    fireEvent.click(
+      screen.getByRole("button", { name: /Reset agent actions/u }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Reset" }));
+    await vi.waitFor(() => {
+      expect(resets).toEqual([["agentActions"]]);
+    });
+    expect(saves).toHaveLength(0);
+  });
+
+  it("does not reset when the question is answered with Cancel", async () => {
+    const { resets } = await open("Actions", testConfig({}));
+    fireEvent.click(
+      screen.getByRole("button", { name: /Reset agent actions/u }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(resets).toHaveLength(0);
+  });
+
   it("refuses two actions with one identifier", async () => {
     await open(
       "Actions",
       testConfig({
         agentActions: [
-          { id: "implement", displayName: "Work on it", template: "a" },
-          { id: "review", displayName: "Review it", template: "b" },
+          {
+            id: "implement",
+            displayName: "Work on it",
+            template: "a",
+            confirmBeforeSend: true,
+            trigger: "issue",
+            enabled: true,
+          },
+          {
+            id: "review",
+            displayName: "Review it",
+            template: "b",
+            confirmBeforeSend: true,
+            trigger: "issue",
+            enabled: true,
+          },
         ],
       }),
     );

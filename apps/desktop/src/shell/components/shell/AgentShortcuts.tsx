@@ -92,6 +92,38 @@ function unavailableReason(agent: AgentSnapshot): string | undefined {
     : undefined;
 }
 
+/** Why the message on the front of the queue has not gone yet, in words. */
+function waitingNote(injection: AgentSnapshot["injection"]): string {
+  const many =
+    injection.queued === 1 ? "" : ` (${String(injection.queued)} waiting)`;
+  switch (injection.waitingFor) {
+    case "awaiting_review":
+      return `Waiting for you to confirm the wording${many}`;
+    case "agent_busy":
+      return `Waiting for the agent to finish its turn${many}`;
+    case "agent_asking":
+      return `The agent is asking a question; nothing is typed into that${many}`;
+    case "agent_unreadable":
+      return `DevHub cannot read this agent's screen${many}`;
+    default:
+      return `Waiting for a prompt to send it${many}`;
+  }
+}
+
+/** How the last one ended. */
+function resultNote(
+  result: NonNullable<AgentSnapshot["injection"]["lastResult"]>,
+): string {
+  switch (result.kind) {
+    case "sent":
+      return "Sent to the agent.";
+    case "cancelled":
+      return "Cancelled — nothing was sent.";
+    default:
+      return result.reason;
+  }
+}
+
 export function AgentShortcuts({
   agent,
   repository,
@@ -120,17 +152,23 @@ export function AgentShortcuts({
   // them. A person who deleted the commit action from their configuration has
   // decided DevHub should not offer it, and a button with nothing to say would
   // be a button that fails when pressed.
-  const offered = offeredShortcuts(repository).flatMap((trigger) => {
-    const action = actions.find((candidate) => candidate.trigger === trigger);
-    return action ? [{ trigger, action }] : [];
-  });
+  // Every action under an offered trigger, not the first one. A person may
+  // have two ways of committing — "commit it" and "commit it in pieces" — and
+  // the trigger is what decides *when* to offer, never *which*. The column
+  // scrolls past half the pane rather than eliding, because the button somebody
+  // would lose to an ellipsis is exactly the one they added by hand.
+  const offered = offeredShortcuts(repository).flatMap((trigger) =>
+    actions
+      .filter((candidate) => candidate.trigger === trigger)
+      .map((action) => ({ trigger, action })),
+  );
   if (offered.length === 0) return null;
 
   return (
     <div className="agent-shortcuts">
       {offered.map(({ trigger, action }) => (
         <button
-          key={trigger}
+          key={action.id}
           className="agent-shortcut"
           type="button"
           disabled={blocked !== undefined}
@@ -147,21 +185,30 @@ export function AgentShortcuts({
       ))}
       {/* What became of pressing one. The queue is the only honest place to
           read that from: a message is not sent when the button is pressed, it
-          is held until the agent's screen settles, and a button that claimed
-          otherwise would be lying about where the text is. */}
+          is held until the wording is agreed and the agent's screen settles,
+          and a button that claimed otherwise would be lying about where the
+          text is. */}
       {agent.injection.queued > 0 ? (
         <p className="agent-shortcuts-note" role="status">
-          {agent.injection.queued === 1
-            ? "Waiting for a prompt to send it"
-            : `Waiting for a prompt to send ${String(agent.injection.queued)} messages`}
+          {waitingNote(agent.injection)}
         </p>
       ) : null}
-      {/* A send that failed. It stays until one succeeds, which is the queue's
-          own rule, and it is drawn here because this is where the person asked
-          for it to go. */}
-      {agent.injection.lastFailure !== undefined ? (
-        <p className="agent-shortcuts-failure" role="alert">
-          {agent.injection.lastFailure}
+      {/* How the last one ended. One line for all four endings, replaced by the
+          next one and cleared when something new is queued — a rule that does
+          not depend on which of them it is, so a new kind of ending cannot
+          arrive with nobody having chosen to show it. */}
+      {agent.injection.lastResult ? (
+        <p
+          className={
+            agent.injection.lastResult.kind === "failed"
+              ? "agent-shortcuts-failure"
+              : "agent-shortcuts-note"
+          }
+          role={
+            agent.injection.lastResult.kind === "failed" ? "alert" : "status"
+          }
+        >
+          {resultNote(agent.injection.lastResult)}
         </p>
       ) : null}
     </div>

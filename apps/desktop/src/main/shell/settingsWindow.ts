@@ -21,6 +21,7 @@ import {
 	type SettingsConfigWire,
 	type SettingsWorkspaceSourceWire,
 	type SettingsErrorWire,
+	type SettingsResetRequestWire,
 	type SettingsSaveRequestWire,
 	type SettingsSnapshotWire,
 	type SettingsSocketPreflightWire,
@@ -162,9 +163,12 @@ function toWireConfig(config: Config): SettingsConfigWire {
 		},
 		workspaceSources: config.workspaceSources.map(toWireSource),
 		agentActions: config.agentActions.map((action) => ({
+			trigger: action.trigger,
 			id: action.id,
 			displayName: action.display_name,
 			template: action.template,
+			confirmBeforeSend: action.confirm_before_send,
+			enabled: action.enabled,
 		})),
 		agentProfiles: config.agentProfiles.map((profile) => ({
 			id: profile.id,
@@ -272,10 +276,17 @@ function fromWireConfig(wire: SettingsConfigWire): Config {
 			terminalTheme: wire.appearance.terminalTheme,
 		},
 		workspaceSources: wire.workspaceSources.map(fromWireSource),
-		agentActions: wire.agentActions.map((action) => ({
+		// The order is the order the window shows them in — the tree is where a
+		// person arranges these — so the position in this list is the `order`
+		// that is written down, rather than a number the page has to carry.
+		agentActions: wire.agentActions.map((action, index) => ({
+			trigger: action.trigger,
 			id: action.id,
 			display_name: action.displayName,
 			template: action.template,
+			confirm_before_send: action.confirmBeforeSend,
+			enabled: action.enabled,
+			order: index,
 		})),
 		agentProfiles: wire.agentProfiles.map((profile) => ({
 			id: profile.id,
@@ -376,6 +387,23 @@ function registerIpc(): void {
 			throw settingsError(error);
 		}
 	});
+
+	handle(
+		SETTINGS_CHANNELS.resetScope,
+		async (_event, request: SettingsResetRequestWire) => {
+			const settings = requireHost();
+			try {
+				const loaded = await settings.store.resetScope(
+					request.revision,
+					request.keys,
+				);
+				settings.adopt(loaded.config);
+				return await buildSnapshot();
+			} catch (error) {
+				throw settingsError(error);
+			}
+		},
+	);
 
 	handle(
 		SETTINGS_CHANNELS.save,

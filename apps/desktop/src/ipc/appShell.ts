@@ -51,15 +51,23 @@ export type AgentStatusWire =
 	| "unknown";
 export type AgentInjectionWaitWire =
 	| "nothing_queued"
+	/** Composed, but nobody has agreed to the wording yet. */
+	| "awaiting_review"
 	| "settling"
 	| "agent_busy"
 	| "agent_asking"
 	| "agent_unreadable";
 
+/** How the last thing DevHub meant to say to an Agent ended. */
+export type AgentInjectionResultWire =
+	| { readonly kind: "sent" }
+	| { readonly kind: "cancelled" }
+	| { readonly kind: "failed"; readonly reason: string };
+
 export interface AgentInjectionWire {
 	readonly queued: number;
 	readonly waitingFor: AgentInjectionWaitWire;
-	readonly lastFailure: string | undefined;
+	readonly lastResult: AgentInjectionResultWire | undefined;
 }
 
 export interface AgentWire {
@@ -84,9 +92,10 @@ export interface AgentWire {
 	 * Text DevHub is holding for this Agent, and why it has not gone yet.
 	 *
 	 * `queued` is how many instructions are waiting; `waitingFor` is the reason
-	 * the first of them has not been typed into the pane — the Agent is busy,
-	 * or stopped on a question, or showing a screen nothing can read. See
-	 * `main/agent/injection.ts`.
+	 * the first of them has not been typed into the pane — nobody has confirmed
+	 * the wording yet, or the Agent is busy, or stopped on a question, or
+	 * showing a screen nothing can read. `lastResult` is how the previous one
+	 * ended. See `main/agent/injection.ts`.
 	 */
 	readonly injection: AgentInjectionWire;
 	readonly workspaceId: string;

@@ -35,7 +35,12 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { BUILT_IN_ACTIONS } from "./agentActions.js";
+import {
+  ACTION_TRIGGERS,
+  BUILT_IN_ACTIONS,
+  triggerOf,
+  type AgentActionTrigger,
+} from "./agentActions.js";
 import { dateTemplateBracketsBalance } from "./dateTemplate.js";
 import { isValidFontFamily } from "./fontFamily.js";
 import { currentProfile, type ProfileLocations } from "./profile.js";
@@ -201,15 +206,51 @@ export function defaultCommandForKind(
 /**
  * What DevHub says to an Agent when it takes an action on the person's behalf.
  *
- * The `id` names one of DevHub's own actions — it is not a name somebody
- * invents, because an invented action would have nothing to trigger it — and
- * the template is the wording. See `model/agentActions.ts` for the actions
- * themselves, the variables each one offers and the skill notation.
+ * **The trigger is data now, not a lookup.** It used to be inferred from the id
+ * — an id DevHub shipped had the trigger DevHub shipped it with, and everything
+ * else was an Issue action — which meant a person could not write a second
+ * commit button, and meant the file's shape did not say what it meant. It is
+ * spelled in the file (`[agent_actions.commit.tidy_up]`) and read from there.
+ *
+ * See `model/agentActions.ts` for the triggers, the variables each one offers
+ * and the skill notation.
  */
 export interface ConfiguredAgentAction {
+  /** What fires it: the Issue flow, or one of the workspace's own buttons. */
+  readonly trigger: AgentActionTrigger;
   readonly id: string;
   readonly display_name: string;
   readonly template: string;
+  /**
+   * Whether the wording is put in front of the person before it is sent.
+   *
+   * True by default, and per action rather than per place it is fired from: a
+   * template is a sentence somebody wrote once and may be right every time
+   * ("commit what is here") or worth a look every time ("implement this
+   * Issue"), and that is a property of the wording, not of the button. The
+   * caller never chooses — it queues an intent and this decides which state
+   * that intent starts in (`main/agent/injection.ts`).
+   */
+  readonly confirm_before_send: boolean;
+  /**
+   * Whether this action exists at all.
+   *
+   * The way a person removes one DevHub ships. Built-ins are merged in by id
+   * rather than listed by the file, which is what stops a file written before
+   * an action existed from deleting it — the bug that lost the three shortcut
+   * buttons from every configuration that had ever been saved. The cost of that
+   * is that "not mentioned" can no longer mean "gone", so being gone is said
+   * out loud.
+   */
+  readonly enabled: boolean;
+  /**
+   * Where it sits among the actions with its trigger.
+   *
+   * A number rather than the file's key order, because a table's keys are a set
+   * — TOML says nothing about their order surviving a rewrite — and the order
+   * of four buttons in a row is something a person arranges and expects to keep.
+   */
+  readonly order: number;
 }
 
 export interface ConfiguredAgentProfile {
@@ -502,11 +543,22 @@ export function defaultAgentProfiles(): ConfiguredAgentProfile[] {
  * chosen from.
  */
 export function defaultAgentActions(): ConfiguredAgentAction[] {
-  return BUILT_IN_ACTIONS.map((action) => ({
-    id: action.id,
-    display_name: action.displayName,
-    template: action.template,
-  }));
+  const seen = new Map<AgentActionTrigger, number>();
+  return BUILT_IN_ACTIONS.map((action) => {
+    const order = seen.get(action.trigger) ?? 0;
+    seen.set(action.trigger, order + 1);
+    return {
+      trigger: action.trigger,
+      id: action.id,
+      display_name: action.displayName,
+      template: action.template,
+      confirm_before_send: true,
+      enabled: true,
+      // Position within its own trigger, which is what `order` means
+      // everywhere. See `overlay`.
+      order,
+    };
+  });
 }
 
 export function defaultConfig(): Config {
@@ -1101,17 +1153,220 @@ function workspaceSourceFromTable(
   return fail("invalid_type", `${prefix}.type`);
 }
 
-function agentActionFromTable(
+/**
+ * The actions, as the file spells them, over the ones DevHub ships.
+ *
+ * `[agent_actions.<trigger>.<id>]`, a table two deep. Tables and not an array
+ * of tables, and that is the whole point of the shape: `settings.local.toml`
+ * merges into `settings.toml` key by key for tables and *replaces whole* for
+ * arrays (`model/settingsScopes.ts`), so the old array meant a local file that
+ * had ever saved one action was a local file that had deleted every other —
+ * including the three DevHub added afterwards, which is why nobody had commit,
+ * push or pull-request buttons. Keyed tables cannot do that: a key somebody
+ * writes is a key somebody wrote, and everything else is still there.
+ *
+ * Built-ins are the starting set rather than a list the file has to repeat.
+ * A file that mentions none has all of them; a file that mentions one changes
+ * that one; `enabled = false` is how one is taken away.
+ */
+/**
+ * The actions, back out as `[agent_actions.<trigger>.<id>]`.
+ *
+ * Every action is written in full, including the ones DevHub ships unchanged.
+ * The thinning-out is `subtractScope`'s job and it does it key by key against
+ * whatever the shared file says, which is a different question from what
+ * DevHub's defaults are — writing the defaults out here as absences would
+ * answer the wrong one, and would put back the "a file that predates an action
+ * deletes it" bug in a new place.
+ */
+function agentActionsToTable(
+  actions: readonly ConfiguredAgentAction[],
+): Record<string, TomlValue> {
+  const table: Record<string, TomlValue> = {};
+  for (const action of actions) {
+    const group = (table[action.trigger] ??= {}) as Record<string, TomlValue>;
+    group[action.id] = {
+      display_name: action.display_name,
+      template: action.template,
+      confirm_before_send: action.confirm_before_send,
+      enabled: action.enabled,
+      // The position within its trigger, which is the only thing `order` ever
+      // means. Writing the index in this flat list instead would make a file
+      // that parsed back to a different arrangement than it was written from.
+      order: Object.keys(group).length - 1,
+    };
+  }
+  return table;
+}
+
+function agentActionsFromValue(
+  value: unknown,
+  defaults: readonly ConfiguredAgentAction[],
+): ConfiguredAgentAction[] {
+  if (value === undefined) return [...defaults];
+  // A file written before this shape existed. Every entry names its own id, and
+  // the id is what says which action it was — so the trigger is recovered the
+  // way it used to be inferred, and the built-ins the array had dropped come
+  // back because the built-ins are no longer the array's to drop.
+  if (Array.isArray(value)) {
+    return overlay(defaults, value.map(legacyAgentAction));
+  }
+  const table = requireTable(value, "agent_actions");
+  checkKeys(table, [...ACTION_TRIGGERS], "agent_actions");
+  const written: ConfiguredAgentAction[] = [];
+  for (const trigger of ACTION_TRIGGERS) {
+    const raw = table[trigger];
+    if (raw === undefined) continue;
+    const group = requireTable(raw, `agent_actions.${trigger}`);
+    for (const id of Object.keys(group)) {
+      written.push(agentActionFromTable(group[id], trigger, id));
+    }
+  }
+  return overlay(defaults, written);
+}
+
+/**
+ * The shipped set, with the file's word over it, in a stable order.
+ *
+ * An id the file names that DevHub also ships is one action, changed. An id it
+ * does not is one added, and it goes after everything with its trigger that was
+ * there already — a new button appears at the end of the row rather than in the
+ * middle of it. `order` moves either of them.
+ */
+function overlay(
+  defaults: readonly ConfiguredAgentAction[],
+  written: readonly ConfiguredAgentAction[],
+): ConfiguredAgentAction[] {
+  const merged = [...defaults];
+  const taken = new Set<number>();
+  for (const mine of written) {
+    const at = merged.findIndex(
+      (shipped, index) =>
+        !taken.has(index) &&
+        shipped.id === mine.id &&
+        shipped.trigger === mine.trigger,
+    );
+    if (at === -1) {
+      // Appended, not merged onto whatever happens to share its name. Two
+      // entries with one id is a file that has to be refused, and an overlay
+      // that quietly folded the second into the first would swallow the very
+      // thing validation exists to catch.
+      merged.push(mine);
+      continue;
+    }
+    taken.add(at);
+    merged[at] = mine;
+  }
+  // Grouped by trigger, and ordered within each group. Two separate facts, so
+  // two separate steps: a single sort over the whole list would be comparing
+  // positions that only mean anything within one group, which is not an
+  // ordering at all and does not survive `Array.sort`.
+  return ACTION_TRIGGERS.flatMap((trigger) =>
+    merged
+      .filter((action) => action.trigger === trigger)
+      .map((action, index) => ({ action, index }))
+      .sort((left, right) =>
+        left.action.order === right.action.order
+          ? left.index - right.index
+          : left.action.order - right.action.order,
+      )
+      // Normalised, so `order` is always the position it means: the number a
+      // file wrote is a request about where to sit, and what is kept is where
+      // it ended up. Without this the same configuration would compare
+      // unequal to itself across a save.
+      .map((entry, position) => ({ ...entry.action, order: position })),
+  );
+}
+
+/** One entry of the old `[[agent_actions]]` array. */
+function legacyAgentAction(
   value: unknown,
   index: number,
 ): ConfiguredAgentAction {
   const prefix = `agent_actions[${String(index)}]`;
   const table = requireTable(value, prefix);
-  checkKeys(table, ["id", "display_name", "template"], prefix);
+  checkKeys(
+    table,
+    ["id", "display_name", "template", "confirm_before_send"],
+    prefix,
+  );
+  const id = optionalString(table, "id", prefix, "");
   return {
-    id: optionalString(table, "id", prefix, ""),
+    trigger: triggerOf(id),
+    id,
     display_name: optionalString(table, "display_name", prefix, ""),
     template: optionalString(table, "template", prefix, ""),
+    confirm_before_send: optionalBoolean(
+      table,
+      "confirm_before_send",
+      prefix,
+      true,
+    ),
+    enabled: true,
+    // After whatever DevHub ships under the same trigger, in the array's own
+    // order. The old shape had no way to say where an action sat, so the only
+    // honest answer is "where it was written".
+    order: BUILT_IN_ACTIONS.length + index,
+  };
+}
+
+function agentActionFromTable(
+  value: unknown,
+  trigger: AgentActionTrigger,
+  id: string,
+): ConfiguredAgentAction {
+  const prefix = `agent_actions.${trigger}.${id}`;
+  const table = requireTable(value, prefix);
+  checkKeys(
+    table,
+    ["display_name", "template", "confirm_before_send", "enabled", "order"],
+    prefix,
+  );
+  const shipped = BUILT_IN_ACTIONS.find((one) => one.id === id);
+  return {
+    trigger,
+    id,
+    // A built-in that is only being switched off, or reordered, does not have
+    // to restate its own wording. Anything DevHub did not ship has no wording
+    // to fall back on, so an empty name is a name and validation refuses it.
+    display_name: optionalString(
+      table,
+      "display_name",
+      prefix,
+      shipped?.displayName ?? "",
+    ),
+    template: optionalString(
+      table,
+      "template",
+      prefix,
+      shipped?.template ?? "",
+    ),
+    // Absent means "show me the wording". Anybody who wants a template to go
+    // straight out has said so; nobody is surprised by a sheet they did not
+    // ask to be rid of.
+    confirm_before_send: optionalBoolean(
+      table,
+      "confirm_before_send",
+      prefix,
+      true,
+    ),
+    enabled: optionalBoolean(table, "enabled", prefix, true),
+    // An action DevHub ships keeps its shipped position; one somebody wrote
+    // goes after everything shipped under that trigger, which is where a new
+    // button belongs — at the end of the row, not in the middle of it.
+    // An action DevHub ships keeps its shipped position; one somebody wrote
+    // goes after everything shipped under that trigger, which is where a new
+    // button belongs — at the end of the row, not in the middle of it.
+    order: optionalNumber(
+      table,
+      "order",
+      prefix,
+      shipped === undefined
+        ? BUILT_IN_ACTIONS.length
+        : BUILT_IN_ACTIONS.filter(
+            (one) => one.trigger === trigger && one !== shipped,
+          ).length,
+    ),
   };
 }
 
@@ -1236,10 +1491,6 @@ export function interpretConfig(document: unknown): Config {
   if (rawSources !== undefined && !Array.isArray(rawSources)) {
     fail("invalid_type", "workspace_sources");
   }
-  const rawActions = table["agent_actions"];
-  if (rawActions !== undefined && !Array.isArray(rawActions)) {
-    fail("invalid_type", "agent_actions");
-  }
   const rawProfiles = table["agent_profiles"];
   if (rawProfiles !== undefined && !Array.isArray(rawProfiles)) {
     fail("invalid_type", "agent_profiles");
@@ -1325,14 +1576,14 @@ export function interpretConfig(document: unknown): Config {
       rawProfiles === undefined
         ? defaults.agentProfiles
         : rawProfiles.map(agentProfileFromTable),
-    // The file's list is the list. A file that mentions none has none, which
-    // is a person who has decided not to have DevHub say anything — and is
-    // different from a file that has not been written yet, which gets the
-    // default from `defaults`.
-    agentActions:
-      rawActions === undefined
-        ? defaults.agentActions
-        : rawActions.map(agentActionFromTable),
+    // The file's word over the actions DevHub ships, rather than in place of
+    // them. See `agentActionsFromValue` for why that is the difference between
+    // a configuration that keeps working when DevHub adds an action and one
+    // that silently loses it.
+    agentActions: agentActionsFromValue(
+      table["agent_actions"],
+      defaults.agentActions,
+    ),
   };
 
   validateConfig(config);
@@ -1405,11 +1656,7 @@ export function configDocument(config: Config): Record<string, TomlValue> {
       },
     },
     workspace_sources: config.workspaceSources.map(sourceToTable),
-    agent_actions: config.agentActions.map((action) => ({
-      id: action.id,
-      display_name: action.display_name,
-      template: action.template,
-    })),
+    agent_actions: agentActionsToTable(config.agentActions),
     agent_profiles: config.agentProfiles.map((profile) => ({
       id: profile.id,
       display_name: profile.display_name,
@@ -1521,6 +1768,21 @@ function isNotFound(error: unknown): boolean {
  * revision it was given. A revision names the pair, so an edit to *either*
  * file underneath an open Settings window is the refusal it always was.
  */
+/**
+ * The parts of a configuration a screen can be put back to its defaults.
+ *
+ * Named by their `Config` property, because that is what a reset acts on. The
+ * mapping from a screen to the names it owns lives with the screens; nothing
+ * here knows what a "section" is.
+ */
+export type ConfigScopeKey =
+  | "general"
+  | "runtimes"
+  | "appearance"
+  | "workspaceSources"
+  | "agentProfiles"
+  | "agentActions";
+
 export class ConfigStore {
   private active: LoadedConfig | undefined;
   private diagnostic: ConfigDiagnostic | undefined;
@@ -1634,6 +1896,42 @@ export class ConfigStore {
     this.active = loaded;
     this.diagnostic = undefined;
     return loaded;
+  }
+
+  /**
+   * Put part of the configuration back to what it would be without this
+   * machine's file.
+   *
+   * "Reset this screen" means one thing, and this is it: take the local file's
+   * word out of the picture for these keys and keep whatever is left — the
+   * shared file's answer if it has one, DevHub's default if it does not. It is
+   * *not* "write the defaults down", which would look identical the moment you
+   * pressed it and then quietly stop tracking a shared file that changed.
+   *
+   * It is written as an ordinary save because it is one. `subtractScope` drops
+   * a key whose value the shared file already gives, so handing back the
+   * shared-and-default answer is exactly what removes it from the local file —
+   * one mechanism for "this is not mine to say", not two.
+   */
+  async resetScope(
+    expectedRevision: ContentRevision,
+    keys: readonly ConfigScopeKey[],
+  ): Promise<LoadedConfig> {
+    const scopes = await this.read();
+    const globalRaw =
+      scopes.global === undefined
+        ? {}
+        : this.parseScope(scopes.global, "global");
+    const withoutLocal = interpretConfig(globalRaw);
+    const current = this.decode(scopes).config;
+    const reset = { ...current };
+    for (const key of keys) {
+      // One assignment per key rather than a switch: every scope key names a
+      // property of `Config` with the same name, which is what makes "reset
+      // this screen" a list of names instead of a method per screen.
+      (reset as Record<string, unknown>)[key] = withoutLocal[key];
+    }
+    return this.save(expectedRevision, reset);
   }
 
   /**
