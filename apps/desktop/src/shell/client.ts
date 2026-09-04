@@ -65,9 +65,17 @@ export interface AppShellClient {
   ): () => void;
   startWorkspacePicker(query: string): Promise<string>;
   cancelWorkspacePicker(): Promise<void>;
-  selectWorkspacePicker(path: string, create: boolean): Promise<AppOutcome>;
-  createProject(path: string): Promise<AppOutcome>;
-  cloneProject(url: string, parentDirectory: string): Promise<AppOutcome>;
+  selectWorkspacePicker(
+    path: string,
+    create: boolean,
+    withAgent?: string,
+  ): Promise<AppOutcome>;
+  createProject(path: string, withAgent?: string): Promise<AppOutcome>;
+  cloneProject(
+    url: string,
+    parentDirectory: string,
+    withAgent?: string,
+  ): Promise<AppOutcome>;
   projectDefaultDirectory(): Promise<string>;
   cloneParentDirectories(): Promise<readonly string[]>;
   githubLogin(): Promise<GitHubLoginWire>;
@@ -139,11 +147,11 @@ export function createShellClient(api: DevhubApi = devhub()): AppShellClient {
     subscribeRepositoryStatus: (listener) => api.onRepositoryStatus(listener),
     startWorkspacePicker: (query) => api.startWorkspacePicker(query),
     cancelWorkspacePicker: () => api.cancelWorkspacePicker(),
-    selectWorkspacePicker: (path, create) =>
-      api.selectWorkspacePicker(path, create),
-    createProject: (path) => api.createProject(path),
-    cloneProject: (url, parentDirectory) =>
-      api.cloneProject(url, parentDirectory),
+    selectWorkspacePicker: (path, create, withAgent) =>
+      api.selectWorkspacePicker(path, create, withAgent),
+    createProject: (path, withAgent) => api.createProject(path, withAgent),
+    cloneProject: (url, parentDirectory, withAgent) =>
+      api.cloneProject(url, parentDirectory, withAgent),
     projectDefaultDirectory: () => api.projectDefaultDirectory(),
     cloneParentDirectories: () => api.cloneParentDirectories(),
     githubLogin: () => api.githubLogin(),

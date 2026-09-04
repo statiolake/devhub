@@ -73,7 +73,7 @@ describe("the new project sheet", () => {
     });
 
     fireEvent.keyDown(screen.getByRole("dialog"), { key: "Enter" });
-    expect(createProject).toHaveBeenCalledWith("/projects/widget");
+    expect(createProject).toHaveBeenCalledWith("/projects/widget", undefined);
   });
 
   it("keeps the sheet, the reason and the typing when the folder is refused", async () => {

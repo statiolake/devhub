@@ -450,7 +450,11 @@ export interface DevhubApi {
 	chooseWorkspaceFolder(): Promise<string | undefined>;
 	startWorkspacePicker(query: string): Promise<string>;
 	cancelWorkspacePicker(): Promise<void>;
-	selectWorkspacePicker(path: string, create: boolean): Promise<AppOutcome>;
+	selectWorkspacePicker(
+		path: string,
+		create: boolean,
+		withAgent?: string,
+	): Promise<AppOutcome>;
 	onWorkspacePicker(
 		listener: (event: WorkspacePickerEvent) => void,
 	): () => void;
@@ -464,8 +468,12 @@ export interface DevhubApi {
 	 * there already, git could not reach the URL — is thrown with what to do
 	 * about it, and the sheet that asked shows it and stays open.
 	 */
-	createProject(path: string): Promise<AppOutcome>;
-	cloneProject(url: string, parentDirectory: string): Promise<AppOutcome>;
+	createProject(path: string, withAgent?: string): Promise<AppOutcome>;
+	cloneProject(
+		url: string,
+		parentDirectory: string,
+		withAgent?: string,
+	): Promise<AppOutcome>;
 	/** Where a new project goes unless the person says otherwise. */
 	projectDefaultDirectory(): Promise<string>;
 

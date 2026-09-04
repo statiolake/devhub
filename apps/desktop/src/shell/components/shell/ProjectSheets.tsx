@@ -105,6 +105,24 @@ export interface ProjectSheetProps {
    * as the name of a folder — each in its own terms, from the same string.
    */
   readonly initialQuery?: string;
+  /**
+   * Which question this is, counting the ones already answered to get here.
+   *
+   * The workspace picker was one; the agent profile, when Command asked for
+   * one, was another. A sheet cannot know how it was reached, so it is told —
+   * the same way a wizard step is told rather than counting for itself.
+   */
+  readonly step?: number;
+  /**
+   * The agent profile to start once the folder exists, when the person opened
+   * it with Command.
+   *
+   * It is handed to the call that makes and opens the folder rather than acted
+   * on here, because "clone it and start an agent in it" is one act: a sheet
+   * that started the agent itself would have to find the workspace the opening
+   * produced, which is main's fact to state and not this page's to re-derive.
+   */
+  readonly withAgent?: string;
   readonly onDismiss: () => void;
 }
 
@@ -134,6 +152,8 @@ function Refusal({ what }: { readonly what: string }) {
  */
 export function NewProjectSheet({
   initialQuery = "",
+  step,
+  withAgent,
   onDismiss,
 }: ProjectSheetProps) {
   const { createProject } = useAppShell();
@@ -160,6 +180,7 @@ export function NewProjectSheet({
       key={`${start ?? ""}:${String(attempt)}`}
       title="New Project"
       question="The folder is created and opened as a workspace."
+      step={step}
       initialQuery={typed ?? start ?? ""}
       items={[]}
       busy={defaultDirectory === undefined}
@@ -172,11 +193,14 @@ export function NewProjectSheet({
       ]}
       note={failure ? <Refusal what={failure} /> : undefined}
       onChoose={(choice) => {
-        void createProject(choice.query).then(onDismiss, (error: unknown) => {
-          setFailure(reasonOf(error));
-          setTyped(choice.query);
-          setAttempt((count) => count + 1);
-        });
+        void createProject(choice.query, withAgent).then(
+          onDismiss,
+          (error: unknown) => {
+            setFailure(reasonOf(error));
+            setTyped(choice.query);
+            setAttempt((count) => count + 1);
+          },
+        );
       }}
       onCancel={onDismiss}
     />
@@ -206,6 +230,8 @@ export function NewProjectSheet({
  */
 export function CloneProjectSheet({
   initialQuery = "",
+  step,
+  withAgent,
   onDismiss,
 }: ProjectSheetProps) {
   const { cloneProject, cloneParentDirectories, reportFailure } = useAppShell();
@@ -244,6 +270,7 @@ export function CloneProjectSheet({
         key={`repository:${String(attempt)}`}
         title="Clone Project"
         question="The repository is cloned and then opened as a workspace."
+        step={step}
         // The one thing here worth an example, because it is the form a person
         // is least likely to guess: a name on its own is their own repository.
         placeholder="owner/repo"
@@ -289,6 +316,7 @@ export function CloneProjectSheet({
       key={`where:${String(attempt)}`}
       title={`Clone ${name ?? "repository"}`}
       question={`Choose the folder ${name ?? "it"} is cloned into.`}
+      step={step === undefined ? undefined : step + 1}
       // No starting value: the field filters the rows, so a path put there
       // first would hide the list it is meant to search. Where projects go
       // is a row — main adds it when the sources imply no folders.
@@ -302,7 +330,7 @@ export function CloneProjectSheet({
         if (committed.kind !== "clone") return;
         const parent =
           choice.id === CLONE_INTO_TYPED ? choice.query : choice.id;
-        void cloneProject(committed.url, parent).then(
+        void cloneProject(committed.url, parent, withAgent).then(
           onDismiss,
           (error: unknown) => {
             // The reason is about the destination, so the question about the

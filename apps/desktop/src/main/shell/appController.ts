@@ -2149,14 +2149,73 @@ export class AppController {
 		this.dispatchOwn({ type: "open_folder", path: requestedPath(folder) });
 	}
 
-	/** Open a folder on the page's behalf, and answer with the outcome. */
-	private async openFolder(path: string): Promise<AppOutcomeWire> {
-		const settled = await this.dispatchAwaiting({
+	/**
+	 * Open a folder on the page's behalf, and answer with the outcome.
+	 *
+	 * `withAgent` is the profile the person asked to start in it — the picker's
+	 * Command gesture — and it is carried here rather than made a second call
+	 * because it is one act: a folder opened for an agent that then failed to
+	 * start would leave them looking at a workspace they did not ask for on its
+	 * own. Every way of opening ends up here, so the gesture means the same
+	 * thing on a folder that already existed, one a source offered to make, one
+	 * just created and one just cloned.
+	 */
+	private async openFolder(
+		path: string,
+		withAgent?: string,
+	): Promise<AppOutcomeWire> {
+		const before = new Set(
+			this.coordinator.model.workspaces.map((workspace) => workspace.id),
+		);
+		const opened = await this.dispatchAwaiting({
 			type: "open_folder",
 			path: requestedPath(path),
 		});
+		if (withAgent === undefined) {
+			await this.syncEditorView();
+			return outcomeWire(opened, this.coordinator.readiness);
+		}
+		const settled = await this.dispatchAwaiting({
+			type: "create_agent",
+			workspaceId: this.openedWorkspaceId(before, path),
+			profileId: agentProfileId(withAgent),
+			// The person answered "which profile", not "where to put it". The
+			// Agent gets the plain arrangement, the same one `devhub --agent`
+			// gets, and the modifier they used to get here has already been spent
+			// saying they wanted an agent at all.
+			presentation: "full",
+		});
 		await this.syncEditorView();
 		return outcomeWire(settled, this.coordinator.readiness);
+	}
+
+	/**
+	 * Which Workspace an `openFolder` just produced.
+	 *
+	 * The model states it in one of two ways and this reads both: a folder that
+	 * was not open is *added*, and a folder that was becomes the *selection*.
+	 * Matching the path back would be a third answer to a question already
+	 * answered — the root is canonicalised on the way in, so it is not the
+	 * string the call was given — and a third answer is one that can disagree.
+	 *
+	 * `before` is the set of Workspace ids from before the opening.
+	 */
+	private openedWorkspaceId(
+		before: ReadonlySet<WorkspaceId>,
+		target: string,
+	): WorkspaceId {
+		const added = this.coordinator.model.workspaces.find(
+			(workspace) => !before.has(workspace.id),
+		);
+		if (added) return added.id;
+		const context = this.coordinator.model.selection.context;
+		if (context.kind === "workspace") return context.workspaceId;
+		// Neither happened, so the model and this call disagree about what just
+		// took place; going on would attach whatever comes next to whatever else
+		// was selected.
+		throw new Error(
+			`opening ${target} neither added a workspace nor selected one`,
+		);
 	}
 
 	/**
@@ -2661,21 +2720,12 @@ export class AppController {
 		// way in, so it is not the string this call was given.
 		const before = new Set(this.coordinator.model.workspaces.map((w) => w.id));
 		await this.openFolder(target);
-		const added = this.coordinator.model.workspaces.find(
-			(workspace) => !before.has(workspace.id),
-		);
-		const context = this.coordinator.model.selection.context;
-		const workspaceId =
-			added?.id ??
-			(context.kind === "workspace" ? context.workspaceId : undefined);
-		if (workspaceId === undefined) {
-			// Neither happened, so the model and this call disagree about what just
-			// took place; going on would attach the Issue and the agent to whatever
-			// else was selected.
-			throw new Error(
-				`opening ${target} neither added a workspace nor selected one`,
-			);
-		}
+		// Not `openFolder(target, profileId)`: this flow has more to do around the
+		// creation than that shortcut can express — the Agent goes beside the
+		// editor when the person asked for that, and the Issue's prompt is queued
+		// against whichever Agent it produced — but *which workspace opening
+		// produced* is the same fact, read the same way.
+		const workspaceId = this.openedWorkspaceId(before, target);
 		// Nothing is written down about which Issue this workspace is for. The
 		// branch the flow just made carries the number (`feature/128-…`), and the
 		// branch is the whole of the link — so a worktree made for the Issue shows
@@ -2752,7 +2802,12 @@ export class AppController {
 		// same path through the model: one way to add a Workspace, not two.
 		handle(
 			CHANNELS.selectWorkspacePicker,
-			async (_event, path: string, create: boolean) => {
+			async (
+				_event,
+				path: string,
+				create: boolean,
+				withAgent: string | undefined,
+			) => {
 				this.cancelPicker?.();
 				this.cancelPicker = undefined;
 				// A date source offers today's folder before anything has made it —
@@ -2762,6 +2817,7 @@ export class AppController {
 				try {
 					return this.openFolder(
 						create ? await ensureWorkspaceFolder(path) : path,
+						withAgent,
 					);
 				} catch (error: unknown) {
 					throw asIpcError(errorWire(error));
@@ -2813,22 +2869,33 @@ export class AppController {
 		// A refusal travels the way every other one does — as the structured
 		// error inside the message — so the sheet that asked shows the sentence
 		// and not "the native app shell is unavailable".
-		handle(CHANNELS.createProject, async (_event, path: string) => {
-			this.cancelPicker?.();
-			this.cancelPicker = undefined;
-			try {
-				return this.openFolder(await createProject(path));
-			} catch (error: unknown) {
-				throw asIpcError(errorWire(error));
-			}
-		});
 		handle(
-			CHANNELS.cloneProject,
-			async (_event, url: string, parentDirectory: string) => {
+			CHANNELS.createProject,
+			async (_event, path: string, withAgent: string | undefined) => {
 				this.cancelPicker?.();
 				this.cancelPicker = undefined;
 				try {
-					return this.openFolder(await this.clone(url, parentDirectory));
+					return this.openFolder(await createProject(path), withAgent);
+				} catch (error: unknown) {
+					throw asIpcError(errorWire(error));
+				}
+			},
+		);
+		handle(
+			CHANNELS.cloneProject,
+			async (
+				_event,
+				url: string,
+				parentDirectory: string,
+				withAgent: string | undefined,
+			) => {
+				this.cancelPicker?.();
+				this.cancelPicker = undefined;
+				try {
+					return this.openFolder(
+						await this.clone(url, parentDirectory),
+						withAgent,
+					);
 				} catch (error: unknown) {
 					throw asIpcError(errorWire(error));
 				}

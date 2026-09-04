@@ -81,6 +81,8 @@ describe("the clone sheet reading what was typed", () => {
     expect(cloneProject).toHaveBeenCalledWith(
       "https://github.com/octocat/devhub.git",
       "/projects",
+      // No agent: this sheet was reached without the picker's Command gesture.
+      undefined,
     );
   });
 
@@ -95,6 +97,8 @@ describe("the clone sheet reading what was typed", () => {
     expect(cloneProject).toHaveBeenCalledWith(
       "https://github.com/example/widget.git",
       "/projects",
+      // No agent: this sheet was reached without the picker's Command gesture.
+      undefined,
     );
   });
 
@@ -109,6 +113,8 @@ describe("the clone sheet reading what was typed", () => {
     expect(cloneProject).toHaveBeenCalledWith(
       "git@gitlab.example:group/thing.git",
       "/projects",
+      // No agent: this sheet was reached without the picker's Command gesture.
+      undefined,
     );
   });
 
@@ -126,6 +132,8 @@ describe("the clone sheet reading what was typed", () => {
     expect(cloneProject).toHaveBeenCalledWith(
       "https://github.com/octocat/devhub.git",
       "/projects",
+      // No agent: this sheet was reached without the picker's Command gesture.
+      undefined,
     );
   });
 

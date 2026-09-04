@@ -40,19 +40,30 @@ function mount(pickerSourceCount: number | undefined) {
   );
 }
 
+/**
+ * What the sheet says where its rows would be.
+ *
+ * Found by its words rather than by the live region it sits in: the footer's
+ * hint about the Command key is one too, and "the only thing being announced"
+ * stopped being a way to name this message the moment there were two.
+ */
+function emptyMessage(words: RegExp) {
+  return screen.getByText(words);
+}
+
 describe("a workspace picker with nothing to show", () => {
   it("asks for a source when none is configured", () => {
     mount(0);
-    expect(screen.getByRole("status")).toHaveTextContent(
-      /No workspace sources yet\. Add one in Settings/u,
-    );
+    expect(
+      emptyMessage(/No workspace sources yet\. Add one in Settings/u),
+    ).toBeInTheDocument();
   });
 
   it("says the search came back empty when there were sources to search", () => {
     mount(2);
-    expect(screen.getByRole("status")).toHaveTextContent(
-      /No workspaces found in the configured sources\./u,
-    );
+    expect(
+      emptyMessage(/No workspaces found in the configured sources\./u),
+    ).toBeInTheDocument();
   });
 
   it("still offers the two things that need no configuration", () => {

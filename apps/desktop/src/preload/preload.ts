@@ -113,11 +113,12 @@ const devhub: DevhubApi = {
 		ipcRenderer.invoke(CHANNELS.startWorkspacePicker, query) as Promise<string>,
 	cancelWorkspacePicker: () =>
 		ipcRenderer.invoke(CHANNELS.cancelWorkspacePicker) as Promise<void>,
-	selectWorkspacePicker: (path: string, create: boolean) =>
+	selectWorkspacePicker: (path: string, create: boolean, withAgent?: string) =>
 		ipcRenderer.invoke(
 			CHANNELS.selectWorkspacePicker,
 			path,
 			create,
+			withAgent,
 		) as Promise<AppOutcome>,
 	cloneParentDirectories: () =>
 		ipcRenderer.invoke(CHANNELS.cloneParentDirectories) as Promise<
@@ -156,13 +157,18 @@ const devhub: DevhubApi = {
 		ipcRenderer.invoke(CHANNELS.agentActions) as Promise<
 			readonly AgentActionWire[]
 		>,
-	createProject: (path: string) =>
-		ipcRenderer.invoke(CHANNELS.createProject, path) as Promise<AppOutcome>,
-	cloneProject: (url: string, parentDirectory: string) =>
+	createProject: (path: string, withAgent?: string) =>
+		ipcRenderer.invoke(
+			CHANNELS.createProject,
+			path,
+			withAgent,
+		) as Promise<AppOutcome>,
+	cloneProject: (url: string, parentDirectory: string, withAgent?: string) =>
 		ipcRenderer.invoke(
 			CHANNELS.cloneProject,
 			url,
 			parentDirectory,
+			withAgent,
 		) as Promise<AppOutcome>,
 	projectDefaultDirectory: () =>
 		ipcRenderer.invoke(CHANNELS.projectDefaultDirectory) as Promise<string>,

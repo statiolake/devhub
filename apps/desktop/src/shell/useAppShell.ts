@@ -42,14 +42,19 @@ export interface AppShellContextValue {
   readonly selectWorkspacePicker: (
     path: string,
     create: boolean,
+    withAgent?: string,
   ) => Promise<AppOutcome | undefined>;
   readonly chooseWorkspaceFolder: () => Promise<string | undefined>;
   /** Make a folder and open it. Throws what to do about it when it cannot. */
-  readonly createProject: (path: string) => Promise<AppOutcome>;
+  readonly createProject: (
+    path: string,
+    withAgent?: string,
+  ) => Promise<AppOutcome>;
   /** Clone into `parentDirectory` and open what git made. Throws git's reason. */
   readonly cloneProject: (
     url: string,
     parentDirectory: string,
+    withAgent?: string,
   ) => Promise<AppOutcome>;
   readonly projectDefaultDirectory: () => Promise<string>;
   /** Where a clone could go: the parents of everything the sources find. */

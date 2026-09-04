@@ -391,8 +391,12 @@ export function AppShellProvider({
   }, [transport, reportFailure]);
 
   const selectWorkspacePicker = useCallback(
-    async (path: string, create: boolean) => {
-      const outcome = await transport.selectWorkspacePicker(path, create);
+    async (path: string, create: boolean, withAgent?: string) => {
+      const outcome = await transport.selectWorkspacePicker(
+        path,
+        create,
+        withAgent,
+      );
       applySnapshot(outcome.snapshot);
       setPickerBusy(false);
       return outcome;
@@ -424,13 +428,16 @@ export function AppShellProvider({
   );
 
   const createProject = useCallback(
-    async (path: string) => applyOpening(await transport.createProject(path)),
+    async (path: string, withAgent?: string) =>
+      applyOpening(await transport.createProject(path, withAgent)),
     [applyOpening, transport],
   );
 
   const cloneProject = useCallback(
-    async (url: string, parentDirectory: string) =>
-      applyOpening(await transport.cloneProject(url, parentDirectory)),
+    async (url: string, parentDirectory: string, withAgent?: string) =>
+      applyOpening(
+        await transport.cloneProject(url, parentDirectory, withAgent),
+      ),
     [applyOpening, transport],
   );
 
