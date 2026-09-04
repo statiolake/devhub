@@ -338,6 +338,35 @@ describe("editing in place", () => {
     });
   });
 
+  /**
+   * A key that stops being an array of tables.
+   *
+   * `agent_actions` was `[[agent_actions]]` and is now
+   * `[agent_actions.<trigger>.<id>]`, so the first save over a file written
+   * before the change has to take the old blocks out. Leaving them defined the
+   * key twice in one document, and a document that defines a key twice does
+   * not parse — which is how the first save from Settings failed outright.
+   */
+  it("takes out the blocks of a key that is no longer an array of tables", () => {
+    const legacy = [
+      "version = 1",
+      "",
+      "[[agent_actions]]",
+      'id = "issue_assignment"',
+      'template = "mine"',
+      "",
+    ].join("\n");
+    const next = updateTomlDocument(legacy, {
+      version: 1,
+      agent_actions: { issue: { issue_assignment: { template: "mine" } } },
+    });
+    expect(next).not.toContain("[[agent_actions]]");
+    expect(parseTomlValue(next)).toEqual({
+      version: 1,
+      agent_actions: { issue: { issue_assignment: { template: "mine" } } },
+    });
+  });
+
   it("round-trips whatever it produced", () => {
     const next = updateTomlDocument(source, {
       ...document,

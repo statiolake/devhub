@@ -738,6 +738,73 @@ describe("store", () => {
     // The revision names the pair of files, so reading them fresh agrees.
     expect(saved.revision).toBe((await new ConfigStore(paths).load()).revision);
   });
+
+  /**
+   * The first save over a file written before `agent_actions` became a table.
+   *
+   * It failed outright: the old `[[agent_actions]]` blocks stayed where they
+   * were and the new `[agent_actions.<trigger>.<id>]` was written beside them,
+   * which defines one key twice and does not parse. Nothing in the Settings
+   * window could be changed at all until the file was edited by hand.
+   */
+  it("saves over a file written in the old array shape", async () => {
+    await writeFile(
+      path,
+      [
+        "version = 1",
+        "",
+        "[[agent_actions]]",
+        'id = "issue_assignment"',
+        'display_name = "Work on the Issue"',
+        'template = "mine, edited"',
+        "",
+      ].join("\n"),
+    );
+    const store = new ConfigStore(paths);
+    const loaded = await store.load();
+    const saved = await store.save(loaded.revision, loaded.config);
+    const text = await readFile(path, "utf8");
+    expect(text).not.toContain("[[agent_actions]]");
+    expect(text).toContain("[agent_actions.issue.issue_assignment]");
+    expect(parseConfig(text).agentActions).toEqual(saved.config.agentActions);
+    // The position within its trigger, counted from the first one.
+    expect(text).toContain("order = 0");
+    expect(text).not.toContain("order = -1");
+  });
+
+  /**
+   * "Reset this screen" on a machine with no shared file — which is most of
+   * them. The shared file's word was read as a whole document, and a document
+   * that does not exist states no schema version, so every reset failed with
+   * `unsupported_version` before it wrote anything.
+   */
+  it("resets a section back to the defaults with no shared file", async () => {
+    await writeFile(
+      path,
+      ["version = 1", "", "[appearance]", "terminal_font_size = 19", ""].join(
+        "\n",
+      ),
+    );
+    const store = new ConfigStore(paths);
+    const loaded = await store.load();
+    const reset = await store.resetScope(loaded.revision, ["appearance"]);
+    expect(reset.config.appearance).toEqual(defaultConfig().appearance);
+    // With no shared file to defer to, the local file keeps the answer — it is
+    // now DevHub's own, spelled out. What has gone is the 19.
+    expect(await readFile(path, "utf8")).not.toContain("= 19");
+  });
+
+  it("resets a section back to what the shared file says", async () => {
+    await writeFile(paths.global, "[appearance]\nterminal_font_size = 17\n");
+    await writeFile(
+      path,
+      "version = 1\n\n[appearance]\nterminal_font_size = 19\n",
+    );
+    const store = new ConfigStore(paths);
+    const loaded = await store.load();
+    const reset = await store.resetScope(loaded.revision, ["appearance"]);
+    expect(reset.config.appearance.terminalFontSize).toBe(17);
+  });
 });
 
 describe("saving over a hand-written file", () => {

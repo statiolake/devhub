@@ -471,6 +471,18 @@ export function updateTomlDocument(
         continue;
       }
 
+      // Past this point the value is not an array of tables, so any `[[key]]`
+      // blocks the document spells it with are the *old* shape of a key that
+      // has changed shape — `agent_actions` was an array and is now a table of
+      // tables. They go for the same reason an unclaimed block goes above: a
+      // block left behind is an entry that comes back on the next read, and
+      // here it is worse than that, because the key would then be defined
+      // twice in one document and the document would not parse at all.
+      for (const entry of arrayTableBlocks(childPath)) {
+        const span = blockWithChildrenSpan(entry);
+        edits.push({ start: span.start, end: span.end, text: "" });
+      }
+
       if (isTable(wanted)) {
         // The document's own spelling wins, and a table has one either way it
         // is written — `[path]` with no keys under it is an empty table, not an

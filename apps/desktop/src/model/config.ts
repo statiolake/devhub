@@ -1185,6 +1185,10 @@ function agentActionsToTable(
   const table: Record<string, TomlValue> = {};
   for (const action of actions) {
     const group = (table[action.trigger] ??= {}) as Record<string, TomlValue>;
+    // Counted before the entry is added, because the entry being written is
+    // not one of the ones already there: reading the length inside the literal
+    // below numbered the first action in every group -1.
+    const position = Object.keys(group).length;
     group[action.id] = {
       display_name: action.display_name,
       template: action.template,
@@ -1193,7 +1197,7 @@ function agentActionsToTable(
       // The position within its trigger, which is the only thing `order` ever
       // means. Writing the index in this flat list instead would make a file
       // that parsed back to a different arrangement than it was written from.
-      order: Object.keys(group).length - 1,
+      order: position,
     };
   }
   return table;
@@ -1922,8 +1926,17 @@ export class ConfigStore {
       scopes.global === undefined
         ? {}
         : this.parseScope(scopes.global, "global");
-    const withoutLocal = interpretConfig(globalRaw);
     const current = this.decode(scopes).config;
+    // What the settings would say with this machine's file taken away: the
+    // shared file alone, read as a whole document. `version` is supplied
+    // rather than read, because it is not one of the answers a scope holds —
+    // it names the schema *a file* is written in, and the shared file need not
+    // state it or exist at all. Reading it off an absent shared file said
+    // version 0, and every reset on a machine without one failed outright.
+    const withoutLocal = interpretConfig({
+      ...globalRaw,
+      version: CONFIG_SCHEMA_VERSION,
+    });
     const reset = { ...current };
     for (const key of keys) {
       // One assignment per key rather than a switch: every scope key names a
