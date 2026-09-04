@@ -52,6 +52,9 @@ export interface AppShellClient {
   subscribeAgentProfiles(
     listener: (profiles: AgentProfiles) => void,
   ): () => void;
+  subscribeAgentActions(
+    listener: (actions: readonly AgentActionWire[]) => void,
+  ): () => void;
   subscribeNativeError(listener: (error: AppError) => void): () => void;
   subscribeWorkspacePicker(
     listener: (event: WorkspacePickerEvent) => void,
@@ -129,6 +132,7 @@ export function createShellClient(api: DevhubApi = devhub()): AppShellClient {
     subscribe: (listener) => api.onSnapshot(listener),
     subscribeAppearance: (listener) => api.onAppearance(listener),
     subscribeAgentProfiles: (listener) => api.onAgentProfiles(listener),
+    subscribeAgentActions: (listener) => api.onAgentActions(listener),
     subscribeNativeError: (listener) => api.onNativeError(listener),
     subscribeWorkspacePicker: (listener) => api.onWorkspacePicker(listener),
     getRepositoryStatus: () => api.getRepositoryStatus(),

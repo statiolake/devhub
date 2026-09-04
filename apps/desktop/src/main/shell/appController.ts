@@ -28,6 +28,7 @@ import { OpenContext } from "code-oss-dev/out/vs/platform/windows/electron-main/
 import { UnloadReason } from "code-oss-dev/out/vs/platform/window/electron-main/window.js";
 import {
 	CHANNELS,
+	type AgentActionWire,
 	type ContentRect,
 	type ContentSurfaceWire,
 	type IssueAssignment,
@@ -912,6 +913,27 @@ export class AppController {
 
 	private publishProfiles(): void {
 		this.send(CHANNELS.agentProfilesChanged, this.agentProfiles());
+	}
+
+	/**
+	 * The actions that exist, in the order they are arranged.
+	 *
+	 * The trigger travels with each one rather than being worked out from its
+	 * id: a person may have three commit buttons and none of them is called
+	 * `commit_changes`.
+	 */
+	private agentActionsWire(): readonly AgentActionWire[] {
+		return (this.config?.agentActions ?? [])
+			.filter((action) => action.enabled)
+			.map((action) => ({
+				trigger: action.trigger,
+				id: action.id,
+				displayName: action.display_name,
+			}));
+	}
+
+	private publishActions(): void {
+		this.send(CHANNELS.agentActionsChanged, this.agentActionsWire());
 	}
 
 	private publishError(error: AppErrorWire): void {
@@ -2491,6 +2513,7 @@ export class AppController {
 				this.config = outcome.loaded.config;
 				this.publishAppearance();
 				this.publishProfiles();
+				this.publishActions();
 				publishSettingsSnapshot();
 				return;
 			}
@@ -2928,19 +2951,7 @@ export class AppController {
 				}
 			},
 		);
-		// The actions that exist, in the order they are arranged. The trigger
-		// travels with each one rather than being worked out from its id: a person
-		// may have three commit buttons and none of them is called
-		// `commit_changes`.
-		handle(CHANNELS.agentActions, () =>
-			(this.config?.agentActions ?? [])
-				.filter((action) => action.enabled)
-				.map((action) => ({
-					trigger: action.trigger,
-					id: action.id,
-					displayName: action.display_name,
-				})),
-		);
+		handle(CHANNELS.agentActions, () => this.agentActionsWire());
 		handle(CHANNELS.openSettings, () => {
 			openSettingsWindow();
 		});

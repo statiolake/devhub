@@ -18,6 +18,7 @@ import type {
 } from "../ipc/appShell";
 import {
   createShellClient,
+  type AgentActionWire,
   type AppShellClient,
   type IssueAssignment,
   type RepositoryStatusWire,
@@ -447,6 +448,12 @@ export function AppShellProvider({
 
   const agentActions = useCallback(() => transport.agentActions(), [transport]);
 
+  const subscribeAgentActions = useCallback(
+    (listener: (actions: readonly AgentActionWire[]) => void) =>
+      transport.subscribeAgentActions(listener),
+    [transport],
+  );
+
   const removeWorktree = useCallback(
     async (workspaceId: string, force: boolean) => {
       const outcome = await transport.removeWorktree(workspaceId, force);
@@ -626,6 +633,7 @@ export function AppShellProvider({
       githubLogin,
       pullRequestHeadBranch,
       agentActions,
+      subscribeAgentActions,
       removeWorktree,
       runAgentAction,
       confirmInjection,
@@ -655,6 +663,7 @@ export function AppShellProvider({
       githubLogin,
       pullRequestHeadBranch,
       agentActions,
+      subscribeAgentActions,
       removeWorktree,
       runAgentAction,
       confirmInjection,

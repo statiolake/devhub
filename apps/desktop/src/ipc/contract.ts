@@ -413,6 +413,9 @@ export interface DevhubApi {
 	onAppearance(listener: (appearance: AppAppearance) => void): () => void;
 	onTheme(listener: (palette: ShellPalette) => void): () => void;
 	onAgentProfiles(listener: (profiles: AgentProfiles) => void): () => void;
+	onAgentActions(
+		listener: (actions: readonly AgentActionWire[]) => void,
+	): () => void;
 	/** Failures that happen between requests, such as a startup mount. */
 	onNativeError(listener: (error: AppError) => void): () => void;
 	onMenuCommand(listener: (command: MenuCommand) => void): () => void;
@@ -604,6 +607,14 @@ export const CHANNELS = {
 	/** The Workbench changed colour theme, so DevHub's chrome changes with it. */
 	themeChanged: "devhub:theme-changed",
 	agentProfilesChanged: "devhub:agent-profiles-changed",
+	/**
+	 * The actions changed, because the configuration they live in did.
+	 *
+	 * Pushed for the same reason the profiles are: a page that read them once
+	 * would go on offering yesterday's buttons after somebody edited their
+	 * wording in Settings, with nothing on screen to say the row was stale.
+	 */
+	agentActionsChanged: "devhub:agent-actions-changed",
 	nativeError: "devhub:native-error",
 	workspacePicker: "devhub:workspace-picker",
 	/** A menu command the page has to carry out itself, e.g. open the picker. */

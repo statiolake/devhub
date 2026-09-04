@@ -131,21 +131,28 @@ export function AgentShortcuts({
   readonly agent: AgentSnapshot;
   readonly repository: WorkspaceRepositoryWire | undefined;
 }) {
-  const { agentActions, runAgentAction, reportFailure } = useAppShell();
+  const { agentActions, subscribeAgentActions, runAgentAction, reportFailure } =
+    useAppShell();
   const [actions, setActions] = useState<readonly AgentActionWire[]>([]);
 
-  // The wording is a setting, so it is read from main rather than known here.
-  // It is read once: a person who edits their actions is editing a file, and
-  // the window is reloaded when the configuration changes.
+  // The wording is a setting, so it is read from main rather than known here —
+  // and read again whenever the configuration changes. A row of buttons stands
+  // for as long as its pane does, so somebody who renames an action in Settings
+  // would otherwise go on pressing the old one with nothing to say it was
+  // stale. Subscribed before the first read, so an edit cannot land in the gap.
   useEffect(() => {
     let live = true;
+    const unsubscribe = subscribeAgentActions((loaded) => {
+      if (live) setActions(loaded);
+    });
     void agentActions().then((loaded) => {
       if (live) setActions(loaded);
     }, reportFailure);
     return () => {
       live = false;
+      unsubscribe();
     };
-  }, [agentActions, reportFailure]);
+  }, [agentActions, subscribeAgentActions, reportFailure]);
 
   const blocked = unavailableReason(agent);
   // Only the shortcuts whose condition holds *and* which have wording behind

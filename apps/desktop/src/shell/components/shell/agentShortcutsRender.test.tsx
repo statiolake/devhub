@@ -69,6 +69,7 @@ function mount(
   const reportFailure = vi.fn();
   const value = {
     agentActions: () => Promise.resolve(ACTIONS),
+    subscribeAgentActions: () => () => undefined,
     runAgentAction,
     reportFailure,
   } as unknown as AppShellContextValue;
@@ -222,12 +223,46 @@ describe("the shortcut buttons", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(/pane closed/u);
   });
 
+  /**
+   * A row of buttons stands for as long as its pane does, so it cannot read the
+   * actions once. Renaming one in Settings used to leave the old name on the
+   * button until the window was reloaded, with nothing on screen to say so.
+   */
+  it("follows a change to the actions while the pane stands", async () => {
+    let publish: ((actions: typeof ACTIONS) => void) | undefined;
+    const value = {
+      agentActions: () => Promise.resolve(ACTIONS),
+      subscribeAgentActions: (listener: (actions: typeof ACTIONS) => void) => {
+        publish = listener;
+        return () => undefined;
+      },
+      runAgentAction: vi.fn(),
+      reportFailure: vi.fn(),
+    } as unknown as AppShellContextValue;
+    render(
+      <AppShellContext.Provider value={value}>
+        <AgentShortcuts agent={agent()} repository={DIRTY} />
+      </AppShellContext.Provider>,
+    );
+    expect(await screen.findByText("Commit the changes")).toBeInTheDocument();
+    publish?.([
+      {
+        id: "commit_changes",
+        displayName: "Commit in pieces",
+        trigger: "commit",
+      },
+    ] as unknown as typeof ACTIONS);
+    expect(await screen.findByText("Commit in pieces")).toBeInTheDocument();
+    expect(screen.queryByText("Commit the changes")).toBeNull();
+  });
+
   it("offers no shortcut the configuration has no wording for", async () => {
     // A person who deleted the commit action has decided DevHub should not
     // offer it. A button with nothing to say would fail when pressed.
     const value = {
       agentActions: () =>
         Promise.resolve(ACTIONS.filter((a) => a.trigger !== "commit")),
+      subscribeAgentActions: () => () => undefined,
       runAgentAction: vi.fn(),
       reportFailure: vi.fn(),
     } as unknown as AppShellContextValue;

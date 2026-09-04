@@ -65,6 +65,15 @@ export interface AppShellContextValue {
   /** The ways of starting an agent on an Issue, as Settings lists them. */
   readonly agentActions: () => Promise<readonly AgentActionWire[]>;
   /**
+   * The same list again whenever the configuration changes.
+   *
+   * Reading once was enough while the actions were only read as a flow opened.
+   * A row of buttons stands for as long as its pane does, so it has to be told.
+   */
+  readonly subscribeAgentActions: (
+    listener: (actions: readonly AgentActionWire[]) => void,
+  ) => () => void;
+  /**
    * Remove a worktree's folder and close its workspace. Throws git's reason.
    *
    * `force` is only ever true after the person has been asked and has said to

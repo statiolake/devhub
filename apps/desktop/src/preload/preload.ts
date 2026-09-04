@@ -83,6 +83,8 @@ const devhub: DevhubApi = {
 	onTheme: (listener) => on<ShellPalette>(CHANNELS.themeChanged, listener),
 	onAgentProfiles: (listener) =>
 		on<AgentProfiles>(CHANNELS.agentProfilesChanged, listener),
+	onAgentActions: (listener) =>
+		on<readonly AgentActionWire[]>(CHANNELS.agentActionsChanged, listener),
 	onNativeError: (listener) => on<AppError>(CHANNELS.nativeError, listener),
 	onMenuCommand: (listener) => on<MenuCommand>(CHANNELS.menuCommand, listener),
 	onEditorRestarting: (listener) =>
