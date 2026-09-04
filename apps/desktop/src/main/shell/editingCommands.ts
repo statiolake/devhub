@@ -40,7 +40,7 @@
  * two paths raise the *same* command rather than two implementations of it.
  */
 
-import type { KeyStroke } from "./chords.js";
+import type { ChordKey } from "../../model/chordKeys.js";
 import { SHELL_ORIGIN } from "./shellPageProtocol.js";
 
 /**
@@ -117,7 +117,7 @@ function isShellChrome(surfaceUrl: string): boolean {
  */
 export function editingCommandFor(
 	surfaceUrl: string,
-	stroke: KeyStroke,
+	stroke: ChordKey,
 ): EditingCommand | undefined {
 	if (!isShellChrome(surfaceUrl)) return undefined;
 	if (!stroke.command || stroke.option || stroke.control) return undefined;

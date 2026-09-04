@@ -848,3 +848,79 @@
   display: flex;
   gap: var(--space-2);
 }
+
+/* ---------------------------------------------------------- chord help */
+
+/*
+ * The list of chords. The picker's sheet, without the picker: there is nothing
+ * to choose here, only something to read, so it keeps the chrome and drops the
+ * field and the ranked list.
+ */
+.chord-help {
+  width: min(560px, 88vw);
+  max-height: min(640px, 82vh);
+  display: flex;
+  flex-direction: column;
+}
+
+.chord-help-title {
+  margin: 0;
+  padding: var(--space-4) var(--space-4) 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.chord-help-note {
+  margin: 0;
+  padding: 2px var(--space-4) var(--space-3);
+  color: var(--text-secondary);
+}
+
+.chord-help-rows {
+  flex: 1;
+  margin: 0;
+  padding: var(--space-2) 0;
+  overflow-y: auto;
+  list-style: none;
+  border-top: 1px solid var(--line-soft);
+}
+
+/* The keys lead, because that is the column a person scans. */
+.chord-help-row {
+  display: flex;
+  gap: var(--space-3);
+  align-items: baseline;
+  padding: 3px var(--space-4);
+}
+
+.chord-help-keys {
+  flex: 0 0 auto;
+  min-width: 148px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.chord-help-keys kbd {
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  padding: 1px 5px;
+  border: 1px solid var(--line-soft);
+  border-radius: 4px;
+  background: var(--chrome);
+  white-space: nowrap;
+}
+
+.chord-help-label {
+  flex: 1;
+}
+
+/* What has to be selected for the row to do anything, where there is such a
+   condition — so "why did that key do nothing" has an answer on the page. */
+.chord-help-needs {
+  color: var(--text-secondary);
+}
+
+.chord-help-footer {
+  justify-content: flex-end;
+}

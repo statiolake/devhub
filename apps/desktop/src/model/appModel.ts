@@ -121,6 +121,8 @@ export interface WorkspaceSnapshot {
   readonly state: WorkspaceState;
   readonly agents: readonly AgentSnapshot[];
   readonly canCreateAgent: boolean;
+  /** The Agent last selected here, if it is still running. */
+  readonly lastAgentId: AgentId | undefined;
 }
 
 /**
@@ -183,6 +185,22 @@ export class AppModel {
     presentation: "full",
   };
   private sidebarWidthValue = SIDEBAR_DEFAULT_WIDTH;
+  /**
+   * The Agent last selected in each workspace, by workspace id.
+   *
+   * What `toggle_workspace_agent` (`Cmd+Q Cmd+J`) comes back to. It is per
+   * workspace because that is the question being asked — "the Agent I was in,
+   * *here*" — and one global "last Agent" would send the chord to another
+   * folder the first time you changed workspace.
+   *
+   * Recorded by `selectContext` and by nothing else, so an Agent the model
+   * selected on its own (the successor to one that exited) does not become
+   * somewhere you asked to be. An entry whose Agent has gone is dropped when it
+   * is read, not when it exits: the exit path has enough rules already, and a
+   * stale id answers the only question anybody asks of it — "is it still
+   * there?" — perfectly well.
+   */
+  private readonly lastAgentByWorkspace = new Map<WorkspaceId, AgentId>();
   private splitRatioValue = SPLIT_DEFAULT_RATIO;
   private editorHost: EditorHostState = { kind: "starting" };
   private revision = 0;
@@ -218,6 +236,20 @@ export class AppModel {
 
   get sidebarWidth(): number {
     return this.sidebarWidthValue;
+  }
+
+  /**
+   * The Agent last selected in this workspace, if it is still running.
+   *
+   * Checked here rather than kept true by every removal path: one reader, one
+   * check, and no rule for another caller to forget.
+   */
+  lastAgentIn(workspaceId: WorkspaceId): AgentId | undefined {
+    const remembered = this.lastAgentByWorkspace.get(workspaceId);
+    if (remembered === undefined) return undefined;
+    if (this.workspace(workspaceId)?.agent(remembered)) return remembered;
+    this.lastAgentByWorkspace.delete(workspaceId);
+    return undefined;
   }
 
   get workspaces(): readonly Workspace[] {
@@ -557,6 +589,15 @@ export class AppModel {
       context,
       presentation: context.kind === "agent" ? presentation : "full",
     };
+    // Choosing an Agent is what makes it the one this workspace comes back to.
+    // Recorded on the way in, whether or not the selection actually moves, so
+    // re-selecting the Agent you are already in still answers the question.
+    if (context.kind === "agent") {
+      const owner = this.agent(context.agentId)?.workspaceId;
+      if (owner !== undefined) {
+        this.lastAgentByWorkspace.set(owner, context.agentId);
+      }
+    }
     if (!sameSelection(this.selectionValue, next)) {
       this.selectionValue = next;
       this.bumpRevision();
@@ -835,6 +876,7 @@ export class AppModel {
       repositoryId: workspace.repositoryId,
       state: workspace.state,
       canCreateAgent: isWorkspaceAvailable(workspace.state),
+      lastAgentId: this.lastAgentIn(workspace.id),
       agents: workspace.agents.map((agent) => ({
         id: agent.id,
         workspaceId: agent.workspaceId,

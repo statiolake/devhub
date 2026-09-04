@@ -495,6 +495,17 @@ export interface DevhubApi {
 	 */
 	removeWorktree(workspaceId: string, force: boolean): Promise<AppOutcome>;
 	/**
+	 * Get rid of a workspace, whatever kind of workspace it is.
+	 *
+	 * **The one path.** The sidebar's close button, `Cmd+Q Shift+W` and
+	 * `Cmd+Q X` on a workspace row all come here, because "close this" has to
+	 * mean one thing: an ordinary workspace is closed, and a worktree is
+	 * deleted — without a question when there is nothing in it to lose, and with
+	 * the three-way one when there is. It answers nothing, because what happens
+	 * next may be a question; the projection says how it ended.
+	 */
+	closeWorkspace(workspaceId: string): Promise<void>;
+	/**
 	 * Say one of the configured actions to a running agent.
 	 *
 	 * Queued rather than sent, on the same terms as the Issue flow's first
@@ -601,6 +612,7 @@ export const CHANNELS = {
 	githubLogin: "devhub:github-login",
 	pullRequestHeadBranch: "devhub:pull-request-head-branch",
 	removeWorktree: "devhub:remove-worktree",
+	closeWorkspace: "devhub:close-workspace",
 	runAgentAction: "devhub:run-agent-action",
 	confirmInjection: "devhub:confirm-injection",
 	cancelInjection: "devhub:cancel-injection",
@@ -653,11 +665,84 @@ export const CHANNELS = {
  * Shell page, and a workbench asking its own question through Electron — and
  * the answer has to come back to whichever asked.
  */
+/** One line of the help overlay: a chord, and what it does. */
+export interface ChordHelpRowWire {
+	readonly commandId: string;
+	readonly label: string;
+	/** Every chord that reaches it, written out in full: `Cmd+Q Shift+N`. */
+	readonly chords: readonly string[];
+	/** What must be selected for it to do anything, in words, or nothing. */
+	readonly needs?: string;
+}
+
 export type ModalRequest =
 	| { readonly kind: "workspace-picker" }
 	| { readonly kind: "agent-picker"; readonly workspaceId: string }
 	| { readonly kind: "issue-assignment" }
 	| { readonly kind: "agent-rename"; readonly agentId: string }
+	/**
+	 * Which of an Agent's configured actions to send it.
+	 *
+	 * `Cmd+Q Shift+A`'s chooser. The buttons a workspace draws
+	 * (`AgentShortcuts`) show only the actions whose condition holds right now;
+	 * a person who has armed a chord for this is asking for the whole list, so
+	 * this one is every enabled action under every trigger. What happens after
+	 * the choice is not this sheet's business: it runs the same
+	 * `runAgentAction`, so the wording still goes through the review the action
+	 * asks for.
+	 */
+	| { readonly kind: "agent-actions"; readonly agentId: string }
+	/**
+	 * Every workspace and Agent, as a list to choose from.
+	 *
+	 * `Cmd+Q G`. Stepping (`Cmd+N`, `{`, `Shift+N`) is for the neighbour; this
+	 * is for the one you can name. It is the ordinary picker, so `Return`
+	 * activates and `Command-Return` mounts an Agent beside its workbench — the
+	 * same two gestures, meaning the same two things, as in the workspace
+	 * picker.
+	 */
+	| { readonly kind: "tab-picker" }
+	/**
+	 * What to hand this workspace's folder to.
+	 *
+	 * `Cmd+Q O`. A picker rather than a menu, because every other list of
+	 * choices in DevHub is one.
+	 */
+	| {
+			readonly kind: "open-externally";
+			readonly workspaceId: string;
+			readonly root: string;
+	  }
+	/**
+	 * Closing a worktree that has something in it to lose.
+	 *
+	 * Three answers, because there really are three, and a two-button dialog
+	 * would have had to pick two of them: keep the folder and just close the
+	 * workspace, delete it anyway, or do nothing. Cancel is the default, which
+	 * is the rule for every question whose other answers destroy something.
+	 *
+	 * A *clean* worktree never gets here — it is removed without asking, the
+	 * way the sidebar's own button already did — so the question is only ever
+	 * put in front of somebody when the answer is not obvious.
+	 */
+	| {
+			readonly kind: "worktree-close";
+			readonly workspaceId: string;
+			/** What the row calls it, so the question names what it is about. */
+			readonly label: string;
+			/**
+			 * The folder that is about to be deleted.
+			 *
+			 * Two worktrees of one repository are two rows with different labels
+			 * and the same everything else, and a label is not enough to check you
+			 * are about to destroy the right one.
+			 */
+			readonly root: string;
+			readonly branch?: string;
+			/** Nothing when DevHub could not read the working tree at all. */
+			readonly dirty?: boolean;
+	  }
+	| { readonly kind: "chord-help"; readonly rows: readonly ChordHelpRowWire[] }
 	| {
 			/**
 			 * The wording DevHub is about to say, before it says it.

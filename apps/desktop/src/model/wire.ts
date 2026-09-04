@@ -293,6 +293,9 @@ export function snapshotWire(
     stateDiagnostic: workspaceStateDiagnostic(workspace.state),
     agents: workspace.agents.map(agentWire),
     canCreateAgent: workspace.canCreateAgent,
+    ...(workspace.lastAgentId === undefined
+      ? {}
+      : { lastAgentId: workspace.lastAgentId }),
   }));
   const wire: AppSnapshotWire = {
     schemaVersion: APP_SHELL_SCHEMA_VERSION,

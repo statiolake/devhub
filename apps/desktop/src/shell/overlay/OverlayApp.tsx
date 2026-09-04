@@ -23,6 +23,11 @@ import { AgentRenameAlert } from "./AgentRenameAlert";
 import { InjectionReviewSheet } from "./InjectionReviewSheet";
 import { CloseConfirmationAlert } from "./CloseConfirmationAlert";
 import { WorktreeRemovalAlert } from "./WorktreeRemovalAlert";
+import { WorktreeCloseSheet } from "./WorktreeCloseSheet";
+import { TabPickerSheet } from "./TabPickerSheet";
+import { AgentActionsSheet } from "./AgentActionsSheet";
+import { OpenExternallySheet } from "./OpenExternallySheet";
+import { ChordHelpSheet } from "./ChordHelpSheet";
 
 /** Take one modal off screen, with the answer if it asked for one. */
 function close(id: string, response?: number): void {
@@ -103,6 +108,54 @@ function Modal({ modal }: { readonly modal: OpenModal }) {
           injectionId={request.injectionId}
           actionName={request.actionName}
           text={request.text}
+          onDismiss={() => {
+            close(id);
+          }}
+        />
+      );
+    case "tab-picker":
+      return (
+        <TabPickerSheet
+          onDismiss={() => {
+            close(id);
+          }}
+        />
+      );
+    case "agent-actions":
+      return (
+        <AgentActionsSheet
+          agentId={request.agentId}
+          onDismiss={() => {
+            close(id);
+          }}
+        />
+      );
+    case "open-externally":
+      return (
+        <OpenExternallySheet
+          root={request.root}
+          onDismiss={() => {
+            close(id);
+          }}
+        />
+      );
+    case "worktree-close":
+      return (
+        <WorktreeCloseSheet
+          workspaceId={request.workspaceId}
+          label={request.label}
+          root={request.root}
+          branch={request.branch}
+          dirty={request.dirty}
+          onDismiss={() => {
+            close(id);
+          }}
+        />
+      );
+    case "chord-help":
+      return (
+        <ChordHelpSheet
+          rows={request.rows}
           onDismiss={() => {
             close(id);
           }}

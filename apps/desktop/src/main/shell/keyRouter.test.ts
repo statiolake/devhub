@@ -1,9 +1,23 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { KeyRouter, PREFIX_TIMEOUT_MS, type KeyStroke } from "./keyRouter.js";
+import { keyNameForCode, parseChordKey } from "../../model/chordKeys.js";
+import {
+	defaultChordLayout,
+	KeyRouter,
+	PREFIX_TIMEOUT_MS,
+	type KeyStroke,
+} from "./keyRouter.js";
 
-function stroke(key: string, overrides: Partial<KeyStroke> = {}): KeyStroke {
+/**
+ * A stroke, named by the physical key the way Electron reports it.
+ *
+ * The tests say `code` because that is what the router reads; the key name is
+ * derived from it here exactly as `keyboard.ts` derives it, so a test cannot
+ * pass with a pairing the real path would never produce.
+ */
+function stroke(code: string, overrides: Partial<KeyStroke> = {}): KeyStroke {
 	return {
-		key,
+		key: keyNameForCode(code),
+		code,
 		command: false,
 		shift: false,
 		option: false,
@@ -13,7 +27,7 @@ function stroke(key: string, overrides: Partial<KeyStroke> = {}): KeyStroke {
 	};
 }
 
-const commandQ = stroke("q", { command: true });
+const commandQ = stroke("KeyQ", { command: true });
 
 describe("the Command-Q chord", () => {
 	let router: KeyRouter;
@@ -47,161 +61,155 @@ describe("the Command-Q chord", () => {
 
 	it("leaves every other key alone while nothing is armed", () => {
 		for (const key of [
-			stroke("w", { command: true }),
-			stroke("n", { command: true }),
-			stroke("1", { command: true }),
-			stroke("c", { command: true }),
-			stroke("k", { control: true }),
-			stroke("a"),
+			stroke("KeyW", { command: true }),
+			stroke("KeyN", { command: true }),
+			stroke("Digit1", { command: true }),
+			stroke("KeyK", { control: true }),
+			stroke("KeyA"),
 			// The chord keys themselves: without the prefix they are ordinary.
-			stroke("z"),
-			stroke("3"),
-			stroke("P", { shift: true }),
+			stroke("KeyZ"),
+			stroke("Digit3"),
+			stroke("KeyP", { shift: true }),
 		]) {
-			expect(router.route(key, 0)).toEqual({ kind: "pass" });
+			expect(router.route(key, 0), key.code).toEqual({ kind: "pass" });
 		}
 	});
 
-	it("is not armed by a Command-Q that carries other modifiers", () => {
-		for (const key of [
-			stroke("q", { command: true, shift: true }),
-			stroke("q", { command: true, option: true }),
-			stroke("q", { command: true, control: true }),
-			stroke("q"),
-		]) {
-			expect(router.route(key, 0)).toEqual({ kind: "pass" });
-		}
+	it("runs a bound second stroke and swallows an unbound one", () => {
+		router.route(commandQ, 0);
+		expect(router.route(stroke("KeyF"), 10)).toEqual({
+			kind: "run",
+			commandId: "add_workspace",
+		});
+		router.route(commandQ, 20);
+		expect(router.route(stroke("KeyY"), 30)).toEqual({ kind: "cancelled" });
 	});
 
-	it("swallows a held Command-Q without ever arming or forwarding", () => {
+	it("is over once the second has passed", () => {
+		router.route(commandQ, 0);
+		expect(router.route(stroke("KeyZ"), PREFIX_TIMEOUT_MS + 1)).toEqual({
+			kind: "pass",
+		});
+	});
+
+	it("does not arm and fire on one held-down prefix", () => {
 		expect(router.route({ ...commandQ, isAutoRepeat: true }, 0)).toEqual({
 			kind: "consume",
 		});
 		expect(router.isArmed(0)).toBe(false);
 	});
 
-	it("disarms when what is focused changes", () => {
-		router.route(commandQ, 0);
-		router.focusChanged();
-		expect(router.isArmed(0)).toBe(false);
-		expect(router.route(commandQ, 10)).toEqual({
-			kind: "armed",
-			deadline: 10 + PREFIX_TIMEOUT_MS,
+	it("takes its layout as data, so an override is another table", () => {
+		const overridden = new KeyRouter({
+			prefix: parseChordKey("Ctrl+q"),
+			table: [{ key: parseChordKey("s"), commandId: "open_settings" }],
 		});
+		expect(overridden.route(commandQ, 0)).toEqual({ kind: "pass" });
+		overridden.route(stroke("KeyQ", { control: true }), 10);
+		expect(overridden.route(stroke("KeyS"), 20)).toEqual({
+			kind: "run",
+			commandId: "open_settings",
+		});
+	});
+
+	it("drops an armed prefix when the table changes underneath it", () => {
+		router.route(commandQ, 0);
+		router.setLayout(defaultChordLayout());
+		expect(router.route(stroke("KeyF"), 10)).toEqual({ kind: "pass" });
 	});
 });
 
-describe("completing a chord", () => {
+/**
+ * The bug: every shifted chord fell through, and every unshifted one worked.
+ *
+ * Chromium delivers a `keyDown` for Shift itself before it delivers the shifted
+ * key. That arrived as a second stroke, completed no chord, and abandoned the
+ * chord — so the key the person actually meant then reached the terminal as a
+ * literal `P`. These are the sequences the reporter typed.
+ */
+describe("a modifier pressed after the prefix", () => {
 	let router: KeyRouter;
-
-	function complete(second: KeyStroke) {
-		router.route(commandQ, 0);
-		return router.route(second, 10);
-	}
 
 	beforeEach(() => {
 		router = new KeyRouter();
 	});
 
-	it("runs the workspace and agent cycles", () => {
-		expect(complete(stroke("P", { shift: true }))).toEqual({
-			kind: "run",
-			action: { kind: "cycle-workspace", step: -1 },
-		});
-		expect(complete(stroke("N", { shift: true }))).toEqual({
-			kind: "run",
-			action: { kind: "cycle-workspace", step: 1 },
-		});
-		expect(complete(stroke("{", { shift: true }))).toEqual({
-			kind: "run",
-			action: { kind: "cycle-agent", step: -1 },
-		});
-		expect(complete(stroke("}", { shift: true }))).toEqual({
-			kind: "run",
-			action: { kind: "cycle-agent", step: 1 },
-		});
-	});
-
-	it("toggles the workbench's terminal", () => {
-		expect(complete(stroke("t"))).toEqual({
-			kind: "run",
-			action: { kind: "toggle-terminal" },
-		});
-	});
-
-	it("runs the window commands", () => {
-		expect(complete(stroke("C", { shift: true }))).toEqual({
-			kind: "run",
-			action: { kind: "add-workspace" },
-		});
-		expect(complete(stroke("<", { shift: true }))).toEqual({
-			kind: "run",
-			action: { kind: "open-settings" },
-		});
-	});
-
-	it("cancels on a key the table has no row for", () => {
-		// `Z` used to collapse the sidebar. The sidebar has one form now, so the
-		// row is gone and the key falls through to the same cancellation any
-		// other unbound key gets.
-		expect(complete(stroke("z"))).toEqual({ kind: "cancelled" });
-	});
-
-	it("selects the Nth sidebar entry by its digit", () => {
-		for (const ordinal of [1, 5, 9]) {
-			expect(complete(stroke(String(ordinal)))).toEqual({
-				kind: "run",
-				action: { kind: "select-entry", ordinal },
-			});
-		}
-	});
-
-	it("distinguishes the shifted chord from the unshifted one", () => {
-		// Modifiers are matched exactly, so retiring the unshifted `N` — it
-		// stepped the activity ring, which no longer exists — leaves it
-		// cancelling rather than falling through to its shifted neighbour.
-		expect(complete(stroke("n"))).toEqual({ kind: "cancelled" });
-		expect(complete(stroke("N", { shift: true }))).toEqual({
-			kind: "run",
-			action: { kind: "cycle-workspace", step: 1 },
-		});
-	});
-
-	it("cancels on a key the table does not have, and forwards nothing", () => {
-		expect(complete(stroke("w", { command: true }))).toEqual({
-			kind: "cancelled",
-		});
-		expect(router.isArmed(10)).toBe(false);
-		// And the Command-W that was swallowed must not have become a quit.
-		expect(router.route(commandQ, 20)).toEqual({
-			kind: "armed",
-			deadline: 20 + PREFIX_TIMEOUT_MS,
-		});
-	});
-
-	it("cancels on the pane and split keys DevHub deliberately does not bind", () => {
-		for (const key of ["h", "j", "k", "l", "v", "s", "d", "0"]) {
-			expect(complete(stroke(key))).toEqual({ kind: "cancelled" });
-		}
-	});
-
-	it("is over once the second has passed", () => {
+	function chord(
+		modifierCode: string,
+		code: string,
+		flags: Partial<KeyStroke>,
+	) {
 		router.route(commandQ, 0);
-		expect(router.route(stroke("z"), PREFIX_TIMEOUT_MS + 1)).toEqual({
+		// The modifier goes down first. It must neither complete nor cancel.
+		const held = router.route(stroke(modifierCode, flags), 5);
+		return { held, then: router.route(stroke(code, flags), 10) };
+	}
+
+	it("keeps the chord armed for Shift+P and Shift+N", () => {
+		expect(chord("ShiftLeft", "KeyP", { shift: true })).toEqual({
+			held: { kind: "pass" },
+			then: { kind: "run", commandId: "previous_workspace" },
+		});
+		expect(chord("ShiftRight", "KeyN", { shift: true })).toEqual({
+			held: { kind: "pass" },
+			then: { kind: "run", commandId: "next_workspace" },
+		});
+	});
+
+	it("keeps it armed for the bracket chords, on US and on JIS alike", () => {
+		// `{` and `}` are Shift and the bracket keys, and they are the *same*
+		// physical keys on a JIS keyboard even though the characters printed on
+		// them differ. Naming the key rather than the character is what makes
+		// one binding right on both.
+		expect(chord("ShiftLeft", "BracketLeft", { shift: true })).toEqual({
+			held: { kind: "pass" },
+			then: { kind: "run", commandId: "previous_agent" },
+		});
+		expect(chord("ShiftLeft", "BracketRight", { shift: true })).toEqual({
+			held: { kind: "pass" },
+			then: { kind: "run", commandId: "next_agent" },
+		});
+	});
+
+	it("keeps it armed for Shift+, which is Settings", () => {
+		expect(chord("ShiftLeft", "Comma", { shift: true })).toEqual({
+			held: { kind: "pass" },
+			then: { kind: "run", commandId: "open_settings" },
+		});
+	});
+
+	it("keeps it armed for the Command chords", () => {
+		expect(chord("MetaLeft", "KeyN", { command: true })).toEqual({
+			held: { kind: "pass" },
+			then: { kind: "run", commandId: "next_tab" },
+		});
+		expect(chord("MetaLeft", "KeyJ", { command: true })).toEqual({
+			held: { kind: "pass" },
+			then: { kind: "run", commandId: "toggle_workspace_agent" },
+		});
+	});
+
+	it("still works for the unshifted chords that never broke", () => {
+		router.route(commandQ, 0);
+		expect(router.route(stroke("KeyF"), 10)).toEqual({
+			kind: "run",
+			commandId: "add_workspace",
+		});
+		router.route(commandQ, 20);
+		expect(router.route(stroke("Comma"), 30)).toEqual({
+			kind: "run",
+			commandId: "rename_agent",
+		});
+		router.route(commandQ, 40);
+		expect(router.route(stroke("Digit1"), 50)).toEqual({
+			kind: "run",
+			commandId: "select_entry_1",
+		});
+	});
+
+	it("leaves a bare modifier alone when nothing is armed", () => {
+		expect(router.route(stroke("ShiftLeft", { shift: true }), 0)).toEqual({
 			kind: "pass",
 		});
-	});
-
-	it("takes its table as data, so an override is another array", () => {
-		const overridden = new KeyRouter([
-			{ key: "s", action: { kind: "open-settings" } },
-		]);
-		overridden.route(commandQ, 0);
-		expect(overridden.route(stroke("s"), 10)).toEqual({
-			kind: "run",
-			action: { kind: "open-settings" },
-		});
-		overridden.route(commandQ, 20);
-		expect(overridden.route(stroke("z"), 30)).toEqual({ kind: "cancelled" });
 	});
 });

@@ -506,6 +506,22 @@ export function AppShellProvider({
     [transport],
   );
 
+  /**
+   * Ask main to get rid of a workspace.
+   *
+   * It answers nothing on purpose: what happens next may be a question on the
+   * modal layer, and the projection is what says how it ended — the same shape
+   * as every other unwatched command.
+   */
+  const closeWorkspace = useCallback(
+    (workspaceId: string) => {
+      void transport.closeWorkspace(workspaceId).catch((error: unknown) => {
+        setIntentError(toAppError(error));
+      });
+    },
+    [setIntentError, transport],
+  );
+
   const removeWorktree = useCallback(
     async (workspaceId: string, force: boolean) => {
       const outcome = await transport.removeWorktree(workspaceId, force);
@@ -689,6 +705,7 @@ export function AppShellProvider({
       pullRequestHeadBranch,
       agentActions,
       subscribeAgentActions,
+      closeWorkspace,
       removeWorktree,
       runAgentAction,
       confirmInjection,
@@ -719,6 +736,7 @@ export function AppShellProvider({
       pullRequestHeadBranch,
       agentActions,
       subscribeAgentActions,
+      closeWorkspace,
       removeWorktree,
       runAgentAction,
       confirmInjection,

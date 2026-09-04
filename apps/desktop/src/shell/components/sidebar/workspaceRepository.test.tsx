@@ -55,24 +55,45 @@ const SNAPSHOT = {
   ],
 } as unknown as AppSnapshot;
 
-function mount(repositoryStatus: RepositoryStatusWire) {
+function mount(
+  repositoryStatus: RepositoryStatusWire,
+  /** The workspace's own state, for the one test that is about a failed close. */
+  workspaceState = "available",
+) {
   const openExternalUrl = vi.fn();
   const removeWorktree = vi.fn(() => Promise.resolve({}));
+  const closeWorkspace = vi.fn();
+  const dispatch = vi.fn();
+  const onDispatch = vi.fn();
   const reportFailure = vi.fn();
   const value = {
-    dispatch: vi.fn(),
+    dispatch,
     openExternalUrl,
     removeWorktree,
+    closeWorkspace,
     reportFailure,
     agentProfiles: { sequence: 1, availability: "available", profiles: [] },
     repositoryStatus,
   } as unknown as AppShellContextValue;
+  const snapshot = {
+    ...SNAPSHOT,
+    workspaces: SNAPSHOT.workspaces.map((workspace) => ({
+      ...workspace,
+      state: workspaceState,
+    })),
+  } as unknown as AppSnapshot;
   render(
     <AppShellContext.Provider value={value}>
-      <Sidebar snapshot={SNAPSHOT} onDispatch={vi.fn()} />
+      <Sidebar snapshot={snapshot} onDispatch={onDispatch} />
     </AppShellContext.Provider>,
   );
-  return { openExternalUrl, removeWorktree, reportFailure };
+  return {
+    openExternalUrl,
+    removeWorktree,
+    closeWorkspace,
+    onDispatch,
+    reportFailure,
+  };
 }
 
 const WORKING_ON: RepositoryStatusWire = {
@@ -347,7 +368,7 @@ describe("a workspace row, continued", () => {
     expect(screen.queryByRole("button", { name: /on GitHub/u })).toBeNull();
   });
 
-  describe("removing a worktree", () => {
+  describe("getting rid of a workspace", () => {
     const worktree = (dirty: boolean | undefined) => ({
       sequence: 1,
       workspaces: [
@@ -363,90 +384,50 @@ describe("a workspace row, continued", () => {
         },
       ],
     });
-    const button = () =>
-      screen.queryByRole("button", { name: /Remove the worktree/u });
+    const close = () =>
+      screen.queryByRole("button", { name: /^Close widget/u });
 
-    it("is offered for a clean worktree", () => {
-      mount(worktree(false));
-      expect(button()).toBeInTheDocument();
-    });
-
-    it("is offered while there is work in it to lose", () => {
-      // It used to be withheld, which left a worktree with one stray file with
-      // no way to be removed from DevHub at all — and nothing on screen saying
-      // why the control had gone.
+    it("offers one close, and no second control that means the same thing", () => {
+      // The row used to have a close *and* a trash, so whether a worktree
+      // survived depended on which of the two you happened to press. There is
+      // one button now, and one rule behind it.
       mount(worktree(true));
-      expect(button()).toBeInTheDocument();
+      expect(close()).toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: /Remove the worktree/u }),
+      ).toBeNull();
     });
 
-    it("is offered when DevHub cannot tell", () => {
-      mount(worktree(undefined));
-      expect(button()).toBeInTheDocument();
+    it("asks main to close it, whatever kind of workspace it is", () => {
+      // The page no longer decides whether a worktree is deleted, or whether
+      // to ask first. It could only decide it from a poll up to a minute old,
+      // and the chords decided the same question somewhere else — one of the
+      // two was always going to be the wrong one. See
+      // `closeWorkspaceOrWorktree` in `main/shell/appController.ts`.
+      for (const dirty of [false, true, undefined]) {
+        const { closeWorkspace } = mount(worktree(dirty));
+        fireEvent.click(close() as HTMLElement);
+        expect(closeWorkspace).toHaveBeenCalledWith("w-1");
+        expect(openModal).not.toHaveBeenCalled();
+        cleanup();
+        vi.clearAllMocks();
+      }
     });
 
-    it("is not offered for the repository itself", () => {
-      mount({
-        sequence: 1,
-        workspaces: [
-          {
-            workspaceId: "w-1",
-            branch: "main",
-            mainWorktree: "/projects/widget",
-            worktree: "/projects/widget",
-            dirty: false,
-          },
-        ],
-      });
-      expect(button()).toBeNull();
-    });
-
-    it("does not ask about a clean worktree, and does not force it", () => {
-      // A folder git can rebuild in a second. Confirming that is a question
-      // whose answer is always yes, and a question like that is what teaches
-      // people to dismiss the ones that matter. Unforced, so that if the poll
-      // was stale git refuses and nothing has happened.
-      const { removeWorktree } = mount(worktree(false));
-      fireEvent.click(button() as HTMLElement);
-      expect(removeWorktree).toHaveBeenCalledWith("w-1", false);
-      expect(openModal).not.toHaveBeenCalled();
-    });
-
-    it("reports git disagreeing about clean, rather than swallowing it", () => {
-      // The removal that is not asked about has no sheet of its own to show a
-      // failure in, so it goes to the one place the shell shows them. Without
-      // this the poll being a minute stale is a button that silently does
-      // nothing.
-      // Rejected when the mock is *called*, not when it is set up: a promise
-      // built here and rejected before anything attaches a handler is an
-      // unhandled rejection, and it would be reported against whichever test
-      // happened to be running when the microtask queue next drained.
-      const refusal = new Error("fatal: '…' contains modified files");
-      const { removeWorktree, reportFailure } = mount(worktree(false));
-      removeWorktree.mockImplementation(() => Promise.reject(refusal));
-      fireEvent.click(button() as HTMLElement);
-      return Promise.resolve().then(() => {
-        expect(reportFailure).toHaveBeenCalledWith(refusal);
-      });
-    });
-
-    it("asks before destroying uncommitted work, and names the folder", () => {
-      const { removeWorktree } = mount(worktree(true));
-      fireEvent.click(button() as HTMLElement);
-      expect(removeWorktree).not.toHaveBeenCalled();
-      expect(openModal).toHaveBeenCalledWith({
-        kind: "worktree-removal",
+    it("still retries a failed close through the model, not through main", () => {
+      // A close that failed is retried by asking for the same thing again, and
+      // that retry is the model's own command: nothing about the folder has
+      // changed, so there is nothing for the close rule to decide again.
+      const { closeWorkspace, onDispatch } = mount(
+        worktree(false),
+        "closing-failed",
+      );
+      fireEvent.click(screen.getByRole("button", { name: /^Close widget/u }));
+      expect(closeWorkspace).not.toHaveBeenCalled();
+      expect(onDispatch).toHaveBeenCalledWith({
+        type: "retry_close_workspace",
         workspaceId: "w-1",
-        label: "widget",
-        root: "/projects/widget",
-        branch: "feature/128-tidy",
       });
-    });
-
-    it("asks when it cannot tell, because not knowing is not clean", () => {
-      const { removeWorktree } = mount(worktree(undefined));
-      fireEvent.click(button() as HTMLElement);
-      expect(removeWorktree).not.toHaveBeenCalled();
-      expect(openModal).toHaveBeenCalled();
     });
   });
 

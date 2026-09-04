@@ -413,6 +413,12 @@ export interface WorkspaceWire {
 	readonly selectedPath: string;
 	readonly state: WorkspaceStateWire;
 	/**
+	 * The Agent last selected in this workspace, if it is still running.
+	 *
+	 * What `Cmd+Q Cmd+J` comes back to. See `AppModel.lastAgentIn`.
+	 */
+	readonly lastAgentId?: string;
+	/**
 	 * Why the workspace is not available, when it is not.
 	 *
 	 * The state alone says something went wrong; this says what, which is the

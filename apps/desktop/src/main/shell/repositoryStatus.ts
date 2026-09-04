@@ -320,6 +320,20 @@ export class RepositoryStatusWatcher {
 	}
 
 	/**
+	 * Look now, because somebody asked.
+	 *
+	 * The same round the slow clock runs, not a second path: what a person means
+	 * by "refresh" is "do the poll you were going to do anyway, now" — and a
+	 * refresh that read something the poll does not would make the sidebar say
+	 * two different things depending on how it was last updated. A round already
+	 * in flight is left to finish (`refresh` refuses to overlap), which is the
+	 * honest answer to asking for a look while one is happening.
+	 */
+	look(): void {
+		void this.refresh();
+	}
+
+	/**
 	 * One round.
 	 *
 	 * Rounds never overlap: a slow GitHub would otherwise stack requests every

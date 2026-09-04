@@ -29,6 +29,7 @@ import { UnloadReason } from "code-oss-dev/out/vs/platform/window/electron-main/
 import {
 	CHANNELS,
 	type AgentActionWire,
+	type ChordHelpRowWire,
 	type ContentRect,
 	type ContentSurfaceWire,
 	type IssueAssignment,
@@ -183,7 +184,14 @@ import { renderAgentAction } from "../../model/agentActions.js";
 import type { ConfiguredAgentAction } from "../../model/config.js";
 import { RepositoryStatusWatcher } from "./repositoryStatus.js";
 import { installMenu, refreshMenu } from "./menu.js";
-import { installKeyboard } from "./keyboard.js";
+import { installKeyboard, setChordLayout } from "./keyboard.js";
+import { describeChordKey } from "../../model/chordKeys.js";
+import {
+	COMMANDS,
+	defaultKeybindings,
+	keysForCommand,
+	resolveBindings,
+} from "../../model/commands.js";
 import {
 	openSettingsWindow,
 	publishSettingsSnapshot,
@@ -558,29 +566,229 @@ export class AppController {
 	installChords(): void {
 		installKeyboard({
 			snapshot: () => this.snapshot(),
-			selectContext: (context) => {
-				this.dispatchOwn(intentFromWire({ type: "select_context", context }));
+			selectContext: (context, presentation) => {
+				this.dispatchOwn(
+					intentFromWire({
+						type: "select_context",
+						context,
+						...(presentation === "beside" ? { split: true } : {}),
+					}),
+				);
 			},
-			toggleIntegratedTerminal: () => {
-				this.toggleIntegratedTerminal();
+			swapSplitFocus: () => {
+				this.swapSplitFocus();
 			},
 			openWorkspacePicker: () => {
 				this.send(CHANNELS.menuCommand, "open_workspace_picker");
+			},
+			openTabPicker: () => {
+				shellWindow().modals.openModal({ kind: "tab-picker" });
 			},
 			openAgentPicker: (workspaceId) => {
 				// The same door the sidebar's `+` goes through: it asks main to
 				// open this modal, and this *is* main.
 				shellWindow().modals.openModal({ kind: "agent-picker", workspaceId });
 			},
+			openIssuePicker: () => {
+				shellWindow().modals.openModal({ kind: "issue-assignment" });
+			},
+			openAgentActions: (agentId) => {
+				shellWindow().modals.openModal({ kind: "agent-actions", agentId });
+			},
 			renameAgent: (agentId) => {
 				shellWindow().modals.openModal({ kind: "agent-rename", agentId });
 			},
+			closeAgent: (agentId) => {
+				this.requestCloseAgent(agentId);
+			},
 			closeWorkspace: (workspaceId) => {
-				this.requestCloseWorkspace(workspaceId);
+				this.closeWorkspaceOrWorktree(workspaceId);
+			},
+			openWorkspaceExternally: (workspaceId) => {
+				const workspace = this.coordinator.model.workspaces.find(
+					(candidate) => candidate.id === workspaceId,
+				);
+				if (!workspace) return;
+				shellWindow().modals.openModal({
+					kind: "open-externally",
+					workspaceId,
+					root: workspace.root,
+				});
+			},
+			refreshRepositories: () => {
+				this.repositoryStatus.look();
+			},
+			openChordHelp: () => {
+				shellWindow().modals.openModal({
+					kind: "chord-help",
+					rows: this.chordHelpRows(),
+				});
 			},
 			openSettings: () => {
 				openSettingsWindow();
 			},
+		});
+		this.applyChordLayout();
+	}
+
+	/**
+	 * Hand the chord layer the table the configuration says it should have.
+	 *
+	 * Called once at start and again on every configuration change, because the
+	 * file is already re-read when it changes and a keyboard that needed a
+	 * restart would be the one setting in DevHub that did.
+	 *
+	 * A `[keybindings]` table that would not validate never gets here: the store
+	 * refuses the whole file and keeps the last one that parsed, which is why
+	 * `resolveBindings` can skip a bad entry rather than having an opinion about
+	 * it.
+	 */
+	private applyChordLayout(): void {
+		const spec = this.config?.keybindings ?? defaultKeybindings();
+		const resolved = resolveBindings(spec);
+		setChordLayout({ prefix: resolved.prefix, table: resolved.bindings });
+	}
+
+	/**
+	 * Every chord there is, for the help overlay.
+	 *
+	 * Built from the registry and from the table actually in effect, so a person
+	 * who rebound a key reads their own keyboard rather than DevHub's shipped
+	 * one — and a command added later appears here without anybody remembering
+	 * to add it.
+	 */
+	private chordHelpRows(): readonly ChordHelpRowWire[] {
+		const spec = this.config?.keybindings ?? defaultKeybindings();
+		const { prefix, bindings } = resolveBindings(spec);
+		const armed = describeChordKey(prefix);
+		return COMMANDS.map((command) => ({
+			commandId: command.id,
+			label: command.label,
+			chords: keysForCommand(bindings, command.id).map(
+				(key) => `${armed} ${describeChordKey(key)}`,
+			),
+			...(command.needs === "nothing"
+				? {}
+				: {
+						needs:
+							command.needs === "agent"
+								? "with an Agent selected"
+								: "with a workspace selected",
+					}),
+		})).filter((row) => row.chords.length > 0);
+	}
+
+	/**
+	 * Side by side: move the keyboard between the editor and the Agent's pane.
+	 *
+	 * The one place in DevHub where "focused" is a question the selection does
+	 * not already answer, because in this arrangement both halves are selected
+	 * at once. It is kept here, in the window layer, rather than in the model:
+	 * which of two visible panes has the keyboard is not a fact about the
+	 * application's state, it is a fact about this window, and the model does
+	 * not have windows.
+	 *
+	 * The Agent's pane is drawn by the App Shell page and the workbench is a
+	 * native view, so the two halves are moved to differently: one is the
+	 * window's own focus rule, and the other is a message to the page (see
+	 * `shell/focusHome.ts`, which is the page's half of that rule).
+	 */
+	private splitFocusOnAgent = false;
+
+	private swapSplitFocus(): void {
+		this.splitFocusOnAgent = !this.splitFocusOnAgent;
+		if (this.splitFocusOnAgent) {
+			this.send(CHANNELS.menuCommand, "focus_agent_pane");
+			return;
+		}
+		shellWindow().focusSurface();
+	}
+
+	/**
+	 * Stop an Agent, asking first, exactly as its own row does.
+	 *
+	 * The row dispatches `stop_agent` and draws the confirmation the model asks
+	 * for; a chord cannot draw anything, so it opens the same confirmation on
+	 * the modal layer with the same token. One question, one wording, one
+	 * `confirm_stop_agent` — the chord is another way to press the row's button
+	 * and not a second way to stop an Agent.
+	 */
+	private requestCloseAgent(agentId: string): void {
+		void this.dispatchFromPage({ type: "stop_agent", agentId })
+			.then((outcome) => {
+				if (outcome.kind !== "confirmation_required") return;
+				shellWindow().modals.openModal({
+					kind: "close-confirmation",
+					confirmationId: outcome.confirmationId,
+					purpose: outcome.purpose,
+					agentId,
+				});
+			})
+			.catch((error: unknown) => {
+				this.publishError(errorWire(error));
+			});
+	}
+
+	/**
+	 * Getting rid of a workspace, whatever kind of workspace it is.
+	 *
+	 * **One path**, and this is it: the `Cmd+Q Shift+W` chord, `Cmd+Q X` on a
+	 * workspace row, and the sidebar's own close button all arrive here, because
+	 * "close this" has to mean one thing. It used to mean two — the sidebar had
+	 * a close button and a separate trash button, and the chord only knew about
+	 * the first — so whether a worktree survived depended on which control you
+	 * happened to press.
+	 *
+	 * A worktree is a folder git made so that work could happen somewhere.
+	 * Closing the workspace and leaving the folder behind is how a machine fills
+	 * up with checkouts nobody can account for, so closing a worktree deletes
+	 * it. What is *asked* is decided by whether there is anything in it to lose:
+	 *
+	 * - Not a worktree: the ordinary close, unchanged.
+	 * - A clean worktree: removed without a question. git can rebuild it in a
+	 *   second, and a question whose answer is always yes is what teaches people
+	 *   to dismiss the ones that matter. Not `--force`, so if DevHub's "clean"
+	 *   was a stale poll git refuses and nothing has happened.
+	 * - A dirty worktree, or one DevHub could not read: the three-way question.
+	 *   Not knowing is not clean, and the question is the safe branch.
+	 */
+	private closeWorkspaceOrWorktree(workspaceId: string): void {
+		const workspace = this.coordinator.model.workspaces.find(
+			(candidate) => candidate.id === workspaceId,
+		);
+		if (!workspace) return;
+		const repository = this.lastRepositoryStatus.workspaces.find(
+			(entry) => entry.workspaceId === workspaceId,
+		);
+		const isWorktree =
+			repository?.mainWorktree !== undefined &&
+			repository.worktree !== undefined &&
+			repository.worktree !== repository.mainWorktree &&
+			// And only when the row *is* the worktree, not merely inside one:
+			// `git worktree remove` takes the checkout's root, so a row on
+			// `worktree/packages/app` would delete the whole checkout around it.
+			repository.worktree === workspace.root;
+		if (!isWorktree) {
+			this.requestCloseWorkspace(workspaceId);
+			return;
+		}
+		if (repository?.dirty === false) {
+			void this.removeWorktree(workspaceId, false).catch((error: unknown) => {
+				this.publishError(errorWire(error));
+			});
+			return;
+		}
+		shellWindow().modals.openModal({
+			kind: "worktree-close",
+			workspaceId,
+			label:
+				this.snapshot()?.workspaces.find((one) => one.id === workspaceId)
+					?.label ?? workspace.root,
+			root: workspace.root,
+			...(repository?.branch === undefined
+				? {}
+				: { branch: repository.branch }),
+			...(repository?.dirty === undefined ? {} : { dirty: repository.dirty }),
 		});
 	}
 
@@ -2747,6 +2955,7 @@ export class AppController {
 		this.stopWatchingConfig = this.configStore.watch(2000, (outcome) => {
 			if ("kind" in outcome && outcome.kind === "applied") {
 				this.config = outcome.loaded.config;
+				this.applyChordLayout();
 				this.publishAppearance();
 				this.publishProfiles();
 				this.publishActions();
@@ -2769,6 +2978,7 @@ export class AppController {
 
 	adoptConfig(config: Config): void {
 		this.config = config;
+		this.applyChordLayout();
 		// Before the pages are told, because this one is not a message to a page:
 		// it changes what the OS appearance is for the whole process, and every
 		// workbench and the shell's own chrome follow from that.
@@ -3146,6 +3356,12 @@ export class AppController {
 				}
 			},
 		);
+		handle(CHANNELS.closeWorkspace, (_event, workspaceId: string) => {
+			// The one path — see `closeWorkspaceOrWorktree`. It answers nothing
+			// because what happens next may be a question on the modal layer, and
+			// the projection is what says how it ended.
+			this.closeWorkspaceOrWorktree(workspaceId);
+		});
 		handle(
 			CHANNELS.removeWorktree,
 			async (_event, workspaceId: string, force: boolean) => {

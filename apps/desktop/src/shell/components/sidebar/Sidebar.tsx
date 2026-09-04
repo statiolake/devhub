@@ -74,7 +74,7 @@ function WorkspaceRow({
   agentProfiles,
   agentProfilesAvailability,
   onCreateAgent,
-  onRemoveWorktree,
+  onCloseWorkspace,
   onRenameAgent,
   onAgentMenu,
 }: {
@@ -86,7 +86,15 @@ function WorkspaceRow({
   readonly agentProfiles: readonly AgentProfile[];
   readonly agentProfilesAvailability: AgentProfilesAvailabilityWire;
   readonly onCreateAgent: (workspaceId: string) => void;
-  readonly onRemoveWorktree: (workspace: WorkspaceSnapshot) => void;
+  /**
+   * Get rid of this workspace — and its folder, if the folder is a worktree.
+   *
+   * One prop where there were two buttons. The row used to offer a close *and*
+   * a trash, so whether a worktree survived depended on which control you
+   * happened to press; closing a worktree deletes it now, and what is asked is
+   * decided in one place by whether there is anything in it to lose.
+   */
+  readonly onCloseWorkspace: (workspace: WorkspaceSnapshot) => void;
   readonly onRenameAgent: (agent: AgentSnapshot) => void;
   readonly onAgentMenu: (
     agent: AgentSnapshot,
@@ -205,54 +213,25 @@ function WorkspaceRow({
                   ? "Retry close"
                   : "Close workspace"
               }
-              onClick={() =>
-                dispatch(
-                  workspace.state === "closing-failed"
-                    ? {
-                        type: "retry_close_workspace",
-                        workspaceId: workspace.id,
-                      }
-                    : {
-                        type: "request_close_workspace",
-                        workspaceId: workspace.id,
-                      },
-                )
-              }
+              onClick={() => {
+                // A close that failed is retried by asking for the same thing
+                // again, and that retry is the model's own command. Anything
+                // else goes through main's one close, which is what decides
+                // whether this workspace is a worktree and therefore whether
+                // the folder goes with it (`closeWorkspaceOrWorktree`).
+                if (workspace.state === "closing-failed") {
+                  void dispatch({
+                    type: "retry_close_workspace",
+                    workspaceId: workspace.id,
+                  });
+                  return;
+                }
+                onCloseWorkspace(workspace);
+              }}
             >
               <Glyph name="close" />
             </button>
           )}
-          {/* Only a worktree. A worktree is a place the repository is also
-            checked out; the repository itself is not something this row
-            deletes.
-
-            Offered whether or not there is anything in it to lose, which is
-            the change: the button used to appear only for a worktree DevHub
-            had seen to be clean, so a worktree with one stray file had no way
-            to be removed from DevHub at all — the control simply was not
-            there, and nothing said why. What "clean" decides now is whether
-            the removal is *asked about*, in `onRemoveWorktree`.
-
-            And only when the row *is* the worktree, not merely inside one.
-            `git worktree remove` takes the checkout's root, so a row on
-            `worktree/packages/app` would offer a button that deletes the whole
-            checkout around it — which is not what the row names, and is not
-            recoverable. */}
-          {!closing &&
-          repository?.mainWorktree !== undefined &&
-          repository.worktree !== undefined &&
-          repository.worktree !== repository.mainWorktree &&
-          repository.worktree === workspace.root ? (
-            <button
-              className="row-action-button"
-              type="button"
-              aria-label={`Remove the worktree ${workspace.label}`}
-              title="Remove worktree"
-              onClick={() => onRemoveWorktree(workspace)}
-            >
-              <Glyph name="trash" />
-            </button>
-          ) : null}
         </div>
         {/* Line two: the branch, and nothing else on it.
             
@@ -753,13 +732,8 @@ function ClosingGhostRow({ label }: { label: string }) {
 }
 
 export function Sidebar({ snapshot, onDispatch }: SidebarProps) {
-  const {
-    dispatch,
-    agentProfiles,
-    repositoryStatus,
-    removeWorktree,
-    reportFailure,
-  } = useAppShell();
+  const { dispatch, agentProfiles, repositoryStatus, closeWorkspace } =
+    useAppShell();
   const repositories = useMemo(
     () =>
       new Map(
@@ -791,42 +765,20 @@ export function Sidebar({ snapshot, onDispatch }: SidebarProps) {
   // more — there is no local "is it open" to keep in step with anything.
   //
   /**
-   * Remove a worktree, asking first only when there is an answer worth asking
-   * for.
+   * Get rid of a workspace, whatever kind of workspace it is.
    *
-   * A worktree with nothing uncommitted in it is a folder git can rebuild from
-   * the repository in a second. Confirming that was a question whose answer was
-   * always yes, put in front of somebody every single time — and a question
-   * like that is worse than none, because it is what teaches people to dismiss
-   * the ones that matter. So a clean worktree goes straight to git, without
-   * `--force`: DevHub's "clean" is a poll up to a minute old, and if it was
-   * stale git refuses and nothing has happened.
-   *
-   * Anything else is asked about on the modal layer, like every other
-   * destructive question, and answering it removes the worktree with `--force`
-   * — which is the only way a worktree with uncommitted work can be removed at
-   * all. "Anything else" includes DevHub not knowing: not knowing is not clean,
-   * and the question is the safe branch.
+   * Handed straight to main, which is where the one rule lives: an ordinary
+   * folder is closed, a worktree is deleted — without a question when git can
+   * rebuild it in a second, and with the three-way one when there is something
+   * in it to lose. The page used to decide that here, from a poll up to a
+   * minute old, while the chords decided it somewhere else; one of the two was
+   * always going to be the wrong one.
    */
-  const askRemoveWorktree = useCallback(
+  const closeWorkspaceRow = useCallback(
     (workspace: WorkspaceSnapshot) => {
-      const repository = repositories.get(workspace.id);
-      if (repository?.dirty === false) {
-        // Nothing to lose, so nothing to ask. The failure — git disagreeing
-        // about "clean", a lock, a permission — goes to the one place the
-        // shell shows failures, because this one has no sheet of its own.
-        void removeWorktree(workspace.id, false).catch(reportFailure);
-        return;
-      }
-      void devhub().openModal({
-        kind: "worktree-removal",
-        workspaceId: workspace.id,
-        label: workspace.label,
-        root: workspace.root,
-        branch: repository?.branch,
-      });
+      closeWorkspace(workspace.id);
     },
-    [removeWorktree, reportFailure, repositories],
+    [closeWorkspace],
   );
 
   const openPicker = useCallback(() => {
@@ -1070,7 +1022,7 @@ export function Sidebar({ snapshot, onDispatch }: SidebarProps) {
                   agentProfiles={agentProfiles.profiles}
                   agentProfilesAvailability={agentProfiles.availability}
                   onCreateAgent={openAgentPicker}
-                  onRemoveWorktree={askRemoveWorktree}
+                  onCloseWorkspace={closeWorkspaceRow}
                   onRenameAgent={openRename}
                   onAgentMenu={openAgentMenu}
                 />

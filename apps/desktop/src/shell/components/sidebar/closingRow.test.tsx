@@ -86,6 +86,7 @@ function mount(snapshot: AppSnapshot) {
     dispatch: vi.fn(),
     openExternalUrl: vi.fn(),
     removeWorktree: vi.fn(() => Promise.resolve({})),
+    closeWorkspace: vi.fn(),
     reportFailure: vi.fn(),
     agentProfiles: { sequence: 1, availability: "available", profiles: [] },
     repositoryStatus: WORKTREE,
@@ -127,9 +128,6 @@ describe("a closing workspace row", () => {
     // be withdrawn in the first place.
     mount(snapshotWith("available"));
     expect(screen.getByRole("button", { name: /^Close/ })).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: /^Remove the worktree/ }),
-    ).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: /^Create agent/ }),
     ).toBeInTheDocument();

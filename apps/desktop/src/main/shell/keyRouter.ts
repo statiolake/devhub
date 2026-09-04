@@ -7,9 +7,14 @@
  * single Command-Q, next to an editor where Command-W closes a tab and
  * Command-N makes a file, is a keypress away from losing everything unsaved.
  * So the first Command-Q only arms; the second stroke is looked up in the
- * chord table (`chords.ts`, which is also where the bindings and the reasoning
- * behind them are written down), and `Cmd+Q Cmd+Q` is the row that passes a
- * real Command-Q through to whatever is focused, which is what actually quits.
+ * chord table (`model/commands.ts` holds the commands and the reasoning,
+ * `chords.ts` resolves one against the model), and `forward_prefix` is the
+ * command that passes a real Command-Q through to whatever is focused, which is
+ * what actually quits.
+ *
+ * The prefix is a constructor argument for the same reason the table is: both
+ * are settings now (`[keybindings]`), and a router with either of them baked in
+ * would be a second answer to what the configuration already decides.
  *
  * Outside an armed prefix this router has no power at all: it never invents a
  * key event, and composition, marked text and every shortcut a surface defines
@@ -17,9 +22,15 @@
  */
 
 import {
-	DEFAULT_CHORDS,
+	isModifierKey,
+	parseChordKey,
+	sameChordKey,
+	type ChordKey,
+} from "../../model/chordKeys.js";
+import { DEFAULT_CHORD_PREFIX, type CommandId } from "../../model/commands.js";
+import {
+	defaultChordTable,
 	matchChord,
-	type ChordAction,
 	type ChordBinding,
 	type KeyStroke,
 } from "./chords.js";
@@ -34,35 +45,47 @@ export type RouteDecision =
 	| { readonly kind: "consume" }
 	/** Swallow it, and arm the prefix until `deadline`. */
 	| { readonly kind: "armed"; readonly deadline: number }
-	/** Let it through as an ordinary Command-Q. */
+	/** Let it through as an ordinary prefix keystroke. */
 	| { readonly kind: "forward" }
-	/** Swallow it, and run this chord. */
-	| { readonly kind: "run"; readonly action: ChordAction }
+	/** Swallow it, and run this command. */
+	| { readonly kind: "run"; readonly commandId: CommandId }
 	/** Swallow it: it completed no chord, so the chord is abandoned. */
 	| { readonly kind: "cancelled" }
 	/** Leave it entirely alone. */
 	| { readonly kind: "pass" };
 
-function isExactCommandQ(stroke: KeyStroke): boolean {
-	return (
-		stroke.key.toLowerCase() === "q" &&
-		stroke.command &&
-		!stroke.shift &&
-		!stroke.option &&
-		!stroke.control
-	);
+/** The whole of what the configuration decides about the keyboard. */
+export interface ChordLayout {
+	readonly prefix: ChordKey;
+	readonly table: readonly ChordBinding[];
+}
+
+export function defaultChordLayout(): ChordLayout {
+	return {
+		prefix: parseChordKey(DEFAULT_CHORD_PREFIX),
+		table: defaultChordTable(),
+	};
 }
 
 export class KeyRouter {
 	private armedUntil: number | undefined;
+	private layout: ChordLayout;
+
+	constructor(layout: ChordLayout = defaultChordLayout()) {
+		this.layout = layout;
+	}
 
 	/**
-	 * The table is an argument so that a user override is a different array
-	 * rather than a different router. Nothing builds one yet; see `chords.ts`.
+	 * Adopt a new table, because the configuration file changed.
+	 *
+	 * An armed prefix is dropped with it: the person armed against the table
+	 * that was in effect a moment ago, and completing their chord against a
+	 * different one is not what they asked for.
 	 */
-	constructor(
-		private readonly table: readonly ChordBinding[] = DEFAULT_CHORDS,
-	) {}
+	setLayout(layout: ChordLayout): void {
+		this.layout = layout;
+		this.armedUntil = undefined;
+	}
 
 	/**
 	 * A change of what is focused invalidates an armed prefix.
@@ -78,10 +101,25 @@ export class KeyRouter {
 		return this.armedUntil !== undefined && now <= this.armedUntil;
 	}
 
+	private isPrefix(stroke: KeyStroke): boolean {
+		return sameChordKey(this.layout.prefix, stroke);
+	}
+
 	route(stroke: KeyStroke, now: number): RouteDecision {
-		// A held-down Command-Q is one intention, not many. Holding it must not
-		// arm and fire in the same press.
-		if (stroke.isAutoRepeat && isExactCommandQ(stroke)) {
+		// **A bare modifier is not a stroke.** Chromium delivers a `keyDown` for
+		// Shift itself before it delivers the shifted key, so `Cmd+Q Shift+P`
+		// arrived here as two strokes: `ShiftLeft`, and then `p` with Shift down.
+		// The first completed no chord, the chord was abandoned on it, and the `p`
+		// then fell straight through to whatever was focused — which is exactly
+		// what every shifted chord did while every unshifted one worked.
+		//
+		// So it neither completes nor cancels, and it is not swallowed either: a
+		// surface underneath is entitled to know that Shift went down.
+		if (isModifierKey(stroke.code)) return { kind: "pass" };
+
+		// A held-down prefix is one intention, not many. Holding it must not arm
+		// and fire in the same press.
+		if (stroke.isAutoRepeat && this.isPrefix(stroke)) {
 			this.armedUntil = undefined;
 			return { kind: "consume" };
 		}
@@ -89,7 +127,7 @@ export class KeyRouter {
 		const deadline = this.armedUntil;
 		this.armedUntil = undefined;
 		if (deadline !== undefined && now <= deadline) {
-			const binding = matchChord(this.table, stroke);
+			const binding = matchChord(this.layout.table, stroke);
 			if (!binding) {
 				// Once the prefix is armed the keyboard belongs to the chord layer.
 				// A key that completes nothing abandons the chord and goes nowhere:
@@ -97,11 +135,11 @@ export class KeyRouter {
 				// the focused surface would have done with that key.
 				return { kind: "cancelled" };
 			}
-			if (binding.action.kind === "forward-prefix") return { kind: "forward" };
-			return { kind: "run", action: binding.action };
+			if (binding.commandId === "forward_prefix") return { kind: "forward" };
+			return { kind: "run", commandId: binding.commandId };
 		}
 
-		if (isExactCommandQ(stroke)) {
+		if (this.isPrefix(stroke)) {
 			const armed = now + PREFIX_TIMEOUT_MS;
 			this.armedUntil = armed;
 			return { kind: "armed", deadline: armed };

@@ -81,6 +81,7 @@ export interface AppShellClient {
   githubLogin(): Promise<GitHubLoginWire>;
   pullRequestHeadBranch(url: string): Promise<string>;
   agentActions(): Promise<readonly AgentActionWire[]>;
+  closeWorkspace(workspaceId: string): Promise<void>;
   removeWorktree(workspaceId: string, force: boolean): Promise<AppOutcome>;
   runAgentAction(agentId: string, actionId: string): Promise<AppOutcome>;
   confirmInjection(
@@ -157,6 +158,7 @@ export function createShellClient(api: DevhubApi = devhub()): AppShellClient {
     githubLogin: () => api.githubLogin(),
     pullRequestHeadBranch: (url) => api.pullRequestHeadBranch(url),
     agentActions: () => api.agentActions(),
+    closeWorkspace: (workspaceId) => api.closeWorkspace(workspaceId),
     removeWorktree: (workspaceId, force) =>
       api.removeWorktree(workspaceId, force),
     runAgentAction: (agentId, actionId) =>

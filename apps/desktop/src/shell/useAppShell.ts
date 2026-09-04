@@ -86,6 +86,14 @@ export interface AppShellContextValue {
    * all. Without it git refuses such a removal, which is the check that makes
    * the unasked removals safe.
    */
+  /**
+   * Get rid of a workspace, whatever kind of workspace it is.
+   *
+   * The one path: a folder is closed, a worktree is deleted — silently when
+   * there is nothing in it to lose, and after the three-way question when there
+   * is. See `main/shell/appController.ts`.
+   */
+  readonly closeWorkspace: (workspaceId: string) => void;
   readonly removeWorktree: (
     workspaceId: string,
     force: boolean,
