@@ -162,7 +162,7 @@ describe("the failure on screen", () => {
     const closeFailed: AppError = {
       code: "workspace_close_failed",
       summary: "The workspace could not be closed cleanly.",
-      module: "workspace",
+      module: "app",
       timestampMs: 1,
       runtimeVersion: "test",
       actions: ["retry"],
