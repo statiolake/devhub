@@ -317,13 +317,48 @@ describe("editing in place", () => {
     expect(next).toBe(withEmptyGeneral);
   });
 
-  it("writes an empty table the document does not have as one line", () => {
+  it("writes an empty table the document does not have as its own heading", () => {
+    // A heading with nothing under it, never `general = {}`. The one-line
+    // spelling reads better right up until somebody wants to put something
+    // under it: a `[general]` added by hand beneath `general = {}` defines the
+    // same key twice, which is not TOML at all.
     const next = updateTomlDocument("version = 1\n", {
       version: 1,
       general: {},
     });
-    expect(next).toContain("general = {}");
+    expect(next).toContain("[general]");
+    expect(next).not.toContain("general = {}");
     expect(parseTomlValue(next)).toEqual({ version: 1, general: {} });
+  });
+
+  it("rewrites an empty inline table it wrote itself as a heading", () => {
+    // An empty inline table is the empty marker, not a claim on the spelling —
+    // the same sentence `key = []` gets. A document DevHub wrote as
+    // `chords = {}` is one nobody chose the spelling of.
+    const written =
+      'version = 1\n\n[keybindings]\nprefix = "Cmd+q"\nchords = {}\n';
+    const next = updateTomlDocument(written, {
+      version: 1,
+      keybindings: { prefix: "Cmd+q", chords: {} },
+    });
+    expect(next).not.toContain("chords = {}");
+    expect(next).toContain("[keybindings.chords]");
+    expect(parseTomlValue(next)).toEqual({
+      version: 1,
+      keybindings: { prefix: "Cmd+q", chords: {} },
+    });
+  });
+
+  it("keeps an inline table the person actually spelled inline", () => {
+    // Non-empty is a spelling somebody chose, and that still wins.
+    const chosen =
+      "version = 1\ngeneral = { import_login_environment = true }\n";
+    const next = updateTomlDocument(chosen, {
+      version: 1,
+      general: { import_login_environment: false },
+    });
+    expect(next).toContain("general = { import_login_environment = false }");
+    expect(next).not.toContain("[general]");
   });
 
   it("empties an inline table without re-spelling it as a block", () => {

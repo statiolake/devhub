@@ -1170,3 +1170,79 @@ version = 1
     ).toBe("unknown_key");
   });
 });
+
+/**
+ * The section a person is meant to write lines into.
+ *
+ * `[keybindings.chords]` is the one table in `settings.toml` whose whole
+ * purpose is to be added to by hand, and DevHub used to write it as
+ * `chords = {}` — so the first thing anybody did to it, adding a
+ * `[keybindings.chords]` heading underneath, defined the key twice and the
+ * whole file stopped parsing. The store kept the last configuration that
+ * worked and said `config: parse`, which is the right behaviour for a broken
+ * file and no help at all when DevHub wrote the trap itself.
+ */
+describe("the chords table, written so it can be added to", () => {
+  let directory: string;
+  let paths: ConfigPaths;
+
+  beforeEach(() => {
+    directory = makeScratchDir("config-chords");
+    paths = { file: join(directory, "settings.toml") };
+  });
+
+  afterEach(() => {
+    removeScratchDir(directory);
+  });
+
+  it("writes a heading for an empty table, not a one-line marker", async () => {
+    const store = new ConfigStore(paths);
+    const loaded = await store.load();
+    await store.save(loaded.revision, defaultConfig());
+    const written = await readFile(paths.file, "utf8");
+    expect(written).toContain("[keybindings.chords]");
+    expect(written).not.toContain("chords = {}");
+  });
+
+  it("takes a section appended by hand, and applies it", async () => {
+    const store = new ConfigStore(paths);
+    const first = await store.load();
+    await store.save(first.revision, defaultConfig());
+
+    // Exactly what a person would do to the file DevHub just wrote: find the
+    // heading and put a line under it.
+    const written = await readFile(paths.file, "utf8");
+    await writeFile(
+      paths.file,
+      written.replace(
+        "[keybindings.chords]",
+        '[keybindings.chords]\n"Shift+n" = "previous_workspace"\ng = ""',
+      ),
+    );
+
+    const reloaded = await new ConfigStore(paths).load();
+    expect(reloaded.config.keybindings.chords).toEqual({
+      "Shift+n": "previous_workspace",
+      g: "",
+    });
+  });
+
+  it("rewrites a file the old version wrote, on the next save", async () => {
+    // `chords = {}` is what DevHub wrote before this; a file carrying it still
+    // loads, and the next save spells it the way a person can extend.
+    await writeFile(
+      paths.file,
+      'version = 1\n\n[keybindings]\nprefix = "Cmd+q"\nchords = {}\n',
+    );
+    const store = new ConfigStore(paths);
+    const loaded = await store.load();
+    expect(loaded.config.keybindings).toEqual({ prefix: "Cmd+q", chords: {} });
+
+    await store.save(loaded.revision, loaded.config);
+    const written = await readFile(paths.file, "utf8");
+    expect(written).not.toContain("chords = {}");
+    expect(written).toContain("[keybindings.chords]");
+    // And it is still the same configuration, spelled differently.
+    expect(parseConfig(written).keybindings).toEqual(loaded.config.keybindings);
+  });
+});

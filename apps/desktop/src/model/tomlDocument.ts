@@ -155,12 +155,23 @@ function isTable(value: unknown): value is Record<string, TomlValue> {
 /**
  * Whether a value belongs in its own `[table]` rather than on one line.
  *
- * A table of scalars is a table; a table of tables is a table. An array is a
- * value either way — DevHub's arrays are short lists of strings, and the file
- * reads better with them inline, which is also how the defaults are written.
+ * A table of scalars is a table; a table of tables is a table; **an empty table
+ * is a table.** An array is a value either way — DevHub's arrays are short
+ * lists of strings, and the file reads better with them inline, which is also
+ * how the defaults are written.
+ *
+ * An empty table used to be written `key = {}`, on the grounds that it read
+ * better than a heading with nothing under it. It does, right up until somebody
+ * wants to put something under it: adding `[keybindings.chords]` beneath a
+ * document that already says `chords = {}` defines the same key twice, which is
+ * not TOML at all, and DevHub answers with `config: parse` on a file the person
+ * edited exactly as the documentation describes. A heading with nothing under
+ * it is not merely acceptable there — it is the thing that says where the lines
+ * go. So the special case is gone rather than made conditional: one rule, and
+ * every table in a DevHub document is spelled the same way.
  */
 function needsTableBlock(value: TomlValue): value is Record<string, TomlValue> {
-  return isTable(value) && Object.keys(value).length > 0;
+  return isTable(value);
 }
 
 /** A whole `[path]` block, for a table the document does not have yet. */
@@ -500,8 +511,18 @@ export function updateTomlDocument(
           continue;
         }
         const inline = pairs.get(key);
-        if (inline) {
-          // The file wrote it as an inline table; keep it inline.
+        // An empty inline table is the empty marker, not a claim on the
+        // spelling — the same sentence `key = []` gets a few lines above, for
+        // the same reason. A document DevHub itself wrote as `chords = {}` is a
+        // document nobody chose the spelling of, and leaving it there is what
+        // makes the section impossible to add a line to by hand. Anything the
+        // file spells inline *and has something in* is a spelling somebody
+        // chose, and that wins as it always did.
+        const spelledInline =
+          inline !== undefined &&
+          isTable(existing[key]) &&
+          Object.keys(existing[key]).length > 0;
+        if (spelledInline) {
           if (!valuesEqual(existing[key], wanted)) {
             edits.push({
               start: inline.value.range[0],
@@ -511,14 +532,13 @@ export function updateTomlDocument(
           }
           continue;
         }
-        // Neither spelling is in the document, so this picks one: a table with
-        // contents earns its own block, an empty one reads better as `key = {}`
-        // than as a heading with nothing under it.
-        if (needsTableBlock(wanted)) {
-          appended.push(renderTableBlock(childPath.map(String), wanted));
-        } else {
-          newKeys.push([key, wanted]);
+        // Exactly one of the two spellings survives, as with an array: the
+        // block, and the `key = {}` line goes if the document had one.
+        if (inline) {
+          const span = lineSpan(source, inline);
+          edits.push({ start: span.start, end: span.end, text: "" });
         }
+        appended.push(renderTableBlock(childPath.map(String), wanted));
         continue;
       }
 
