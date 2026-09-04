@@ -211,11 +211,21 @@ export class ModalOverlay {
 
 		const view = this.ensureView();
 		view.setBounds(this.boundsFor(modals));
+		// Re-adding an existing child moves it to the end of the list, which is
+		// the top of the stack. Nothing else establishes that order, and the
+		// whole point of this layer is that it is above everything.
+		//
+		// It is re-added on *every* reposition, not only when the layer
+		// arrives. `ShellWindow.layout` raises the workbench on screen exactly
+		// the same way, and it runs whenever anything about the arrangement
+		// moves — a window resize, a sidebar drag, the split divider, a second
+		// modal opening. Raising this layer once meant the first such layout
+		// after a modal opened put the workbench back on top of it: the sheet
+		// still held the keyboard, but the editor was what was drawn and what
+		// took the clicks over the content area, which is a picker that cannot
+		// be used and an editor that looks like it activates itself.
+		this.host.window.contentView.addChildView(view);
 		if (!this.present) {
-			// Re-adding an existing child moves it to the end of the list, which
-			// is the top of the stack. Nothing else establishes that order, and
-			// the whole point of this layer is that it is above everything.
-			this.host.window.contentView.addChildView(view);
 			this.present = true;
 			view.webContents.focus();
 		}

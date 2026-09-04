@@ -311,11 +311,22 @@ export class ShellWindow {
 	 */
 	focusSurface(): void {
 		if (this.window.isDestroyed()) return;
-		// Before the early returns below, not after. Each of them is a case
-		// where the keyboard stays where it is *and the workbenches still need
-		// to be told* — a modal standing up is precisely when every workbench
-		// stops having focus, and it is the case that returns earliest.
+		this.placeTheKeyboard();
+		// Reported after the keyboard has been placed, never before, and
+		// reported in every case — including the ones `placeTheKeyboard`
+		// declines, because a modal standing up is precisely when every
+		// workbench stops having focus.
+		//
+		// The order is not cosmetic. A workbench hears about this as an
+		// `electron.app` focus event (see `WorkbenchView`), and what upstream
+		// does with that event is go and read `document.hasFocus()` in the
+		// renderer — so an announcement sent before `focus()` had moved
+		// anything would be answered with the state it was about to leave.
 		this.publishFocus();
+	}
+
+	/** The half of `focusSurface` that actually moves the keyboard. */
+	private placeTheKeyboard(): void {
 		// An open Web Inspector keeps the keyboard. It is a window onto these
 		// same contents, so unlike the Settings window it is not protected by
 		// simply belonging to somebody else — and a rule that quietly pulled

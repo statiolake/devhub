@@ -46,6 +46,11 @@ const VIEW_EVENTS = new Set(["responsive", "unresponsive"]);
  * That is what `hostService.hasFocus` is built on, and what made a trust
  * prompt wait: VS Code holds it until the window it belongs to has focus, and
  * the event that would have said so never came.
+ *
+ * These two are only half the delivery, though — see
+ * `announceFocusToTheApplication`. Upstream's own `win.on('focus')` listener
+ * does nothing but stamp `_lastFocusTime`; everything that acts on focus reads
+ * it off `electron.app` instead.
  */
 const FOCUS_EVENTS = new Set(["focus", "blur"]);
 
@@ -284,6 +289,52 @@ export class WorkbenchView {
 		if (next === this.focused) return;
 		this.focused = next;
 		this.focusEvents.emit(next ? "focus" : "blur");
+		this.announceFocusToTheApplication(next);
+	}
+
+	/**
+	 * Say it again on `electron.app`, which is where VS Code is listening.
+	 *
+	 * The event above is the one a `BrowserWindow` emits, and it is the one
+	 * this class was written to get right. It is not, however, the one anything
+	 * downstream reads. Upstream's only listener for it stamps `_lastFocusTime`
+	 * (`windowImpl.ts`); the focus that *reaches* the workbench and its
+	 * extensions comes from `nativeHostMainService`, which builds
+	 * `onDidFocusMainWindow` / `onDidBlurMainWindow` out of the process-wide
+	 * `app` events `browser-window-focus` and `browser-window-blur`, filtered
+	 * to the windows it knows. From there it is `hostService.onDidChangeFocus`,
+	 * `MainThreadWindow`, and `vscode.window.state.focused`.
+	 *
+	 * Electron raises those two for real `BrowserWindow`s and nothing else. A
+	 * workbench is a `WebContentsView`, so it never had one — no view has ever
+	 * been the subject of a `browser-window-focus` in DevHub's whole life — and
+	 * the one that *is* raised, for the App Shell window, carries an id VS Code
+	 * does not recognise and drops. So the chain simply never fired, and two
+	 * separate reports were the same silence:
+	 *
+	 * - the workspace trust prompt, which is shown on start only if
+	 *   `hostService.hasFocus`, and otherwise waits for the first
+	 *   `onDidChangeFocus(true)` that says so (`workspace.contribution.ts`);
+	 * - the git extension, whose refresh loop parks in `whenIdleAndFocused`
+	 *   until `window.state.focused` and then waits on
+	 *   `onDidChangeWindowState` (`extensions/git/src/repository.ts`) — so a
+	 *   workbench that was not focused when its extension host started never
+	 *   ran `git status` again.
+	 *
+	 * Emitting here rather than at each of the places that move focus is the
+	 * same rule the rest of this pair follows: there is one answer to whether
+	 * this workbench has the keyboard, `ShellWindow.isSurfaceFocused` computes
+	 * it, and every way of hearing about it is a rendering of that one answer.
+	 */
+	private announceFocusToTheApplication(focused: boolean): void {
+		electron.app.emit(
+			focused ? "browser-window-focus" : "browser-window-blur",
+			// Electron's own shape for these: the event, then the window. Only
+			// `id` and `webContents` are ever read off the second argument, and
+			// the proxy is what every other `BrowserWindow` hand-off uses.
+			{ preventDefault: () => undefined },
+			asBrowserWindow(this),
+		);
 	}
 
 	//#endregion

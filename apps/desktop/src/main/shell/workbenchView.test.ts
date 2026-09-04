@@ -45,8 +45,25 @@ class FakeWebContentsView {
 	setBackgroundColor(): void {}
 }
 
+/**
+ * What was announced on `electron.app`, in order, as `event:windowId`.
+ *
+ * This is the delivery that matters: `nativeHostMainService` builds the focus
+ * the workbench and its extensions see out of `app`'s `browser-window-focus`
+ * and `browser-window-blur`, and Electron raises neither of those for a
+ * `WebContentsView`. See `WorkbenchView.announceFocusToTheApplication`.
+ */
+const announced: string[] = [];
+
 vi.mock("../electron.js", () => ({
-	electron: { WebContentsView: FakeWebContentsView },
+	electron: {
+		WebContentsView: FakeWebContentsView,
+		app: {
+			emit: (event: string, _payload: unknown, window: { id: number }) => {
+				announced.push(`${event}:${window.id}`);
+			},
+		},
+	},
 }));
 
 const { WorkbenchView } = await import("./workbenchView.js");
@@ -256,6 +273,7 @@ describe("a workbench view's focus", () => {
 		view = new WorkbenchView(asShell, {});
 		other = new WorkbenchView(asShell, {});
 		events = [];
+		announced.length = 0;
 		view.on("focus", () => events.push("focus"));
 		view.on("blur", () => events.push("blur"));
 	});
@@ -347,5 +365,31 @@ describe("a workbench view's focus", () => {
 		shell.appIsInFront = false;
 		shell.publishFocus(view);
 		expect(view.isFocused()).toBe(events.at(-1) === "focus");
+	});
+
+	it("says it on `electron.app`, which is where VS Code is listening", () => {
+		// The window's own `focus`/`blur` reach one upstream listener, and all
+		// it does is stamp `_lastFocusTime`. Everything that acts on focus —
+		// `hostService.onDidChangeFocus`, `vscode.window.state.focused`, the
+		// workspace trust prompt, the git extension's refresh loop — is built
+		// on `app`'s `browser-window-focus` and `browser-window-blur`, which
+		// Electron raises for real windows only. Emitting them here is the only
+		// way a view is ever the subject of one.
+		shell.reveal(view);
+		shell.publishFocus(view, other);
+		expect(announced).toEqual([`browser-window-focus:${view.id}`]);
+
+		shell.appIsInFront = false;
+		shell.publishFocus(view, other);
+		expect(announced).toEqual([
+			`browser-window-focus:${view.id}`,
+			`browser-window-blur:${view.id}`,
+		]);
+
+		// One announcement per transition, exactly as for the events beside it:
+		// upstream latches on the value, and a repeat that said nothing changed
+		// would still cost a round trip to the renderer for every layout.
+		shell.publishFocus(view, other);
+		expect(announced).toHaveLength(2);
 	});
 });

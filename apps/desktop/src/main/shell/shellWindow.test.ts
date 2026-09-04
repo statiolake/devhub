@@ -155,6 +155,11 @@ vi.mock("../electron.js", () => ({
 		// starts.
 		app: {
 			setMaxListeners: () => undefined,
+			// A workbench's focus is announced here as well as on its own
+			// window, because `app` is where VS Code reads it from. See
+			// `WorkbenchView.announceFocusToTheApplication`; what it says is
+			// asserted in that module's test.
+			emit: () => undefined,
 		},
 		shell: {
 			openExternal: (url: string) => {
@@ -428,6 +433,32 @@ describe("the shell window's modal layer", () => {
 		expect(overlayChild()).toBeUndefined();
 	});
 
+	it("stays the topmost child through every later layout", () => {
+		// The regression. `layout` raises the workbench on screen by re-adding
+		// it, and it runs whenever anything about the arrangement moves — the
+		// page re-measuring its content hole on a window resize or a sidebar
+		// drag, another modal opening, the surface changing. The overlay used
+		// to be raised only on the way in, so the first of those after a modal
+		// opened put the editor back on top of the sheet: the picker still had
+		// the keyboard, but the workbench was what was drawn and what took the
+		// clicks, which reads exactly as an editor that activates itself.
+		shell.reveal(editor);
+		shell.modals.openModal({ kind: "workspace-picker" });
+		const children = shell.window.contentView.children as unknown as FakeView[];
+
+		shell.setContentRect({ x: 248, y: 38, width: 1000, height: 837 });
+		expect(children[children.length - 1]).toBe(overlayChild());
+
+		shell.modals.openModal({ kind: "issue-assignment" });
+		expect(children[children.length - 1]).toBe(overlayChild());
+
+		shell.reveal(other);
+		expect(children[children.length - 1]).toBe(overlayChild());
+
+		shell.setContentSurface("page");
+		expect(children[children.length - 1]).toBe(overlayChild());
+	});
+
 	it("covers the window for a DevHub modal and one workbench for its own", () => {
 		shell.reveal(editor);
 		const picker = shell.modals.openModal({ kind: "workspace-picker" });
@@ -631,5 +662,34 @@ describe("the shell window's focus reporting", () => {
 		// It is off the table, so nothing will ever ask it again. If it kept the
 		// `true` it had, it would keep it for the rest of its life.
 		expect(a.isFocused()).toBe(false);
+	});
+
+	it("moves the keyboard before it reports where the keyboard is", () => {
+		// What a workbench does with the report is go and read
+		// `document.hasFocus()` in its own renderer, so a report sent before
+		// `focus()` had moved anything would be answered with the state the
+		// window was about to leave — and upstream latches, so the correction
+		// never comes.
+		const order: string[] = [];
+		a.on("focus", () =>
+			order.push(
+				focused === a.webContents.id ? "focused then told" : "told first",
+			),
+		);
+
+		shell.reveal(a);
+		expect(order).toEqual(["focused then told"]);
+	});
+
+	it("still reports a workbench losing the keyboard to a modal it must not take back", () => {
+		// The case that made the report unconditional in the first place: the
+		// keyboard deliberately stays where the modal put it, and every
+		// workbench still has to be told it no longer has it.
+		shell.reveal(a);
+		expect(a.isFocused()).toBe(true);
+
+		shell.modals.openModal({ kind: "workspace-picker" });
+		expect(a.isFocused()).toBe(false);
+		expect(b.isFocused()).toBe(false);
 	});
 });
