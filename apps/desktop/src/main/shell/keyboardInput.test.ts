@@ -140,6 +140,27 @@ function type(
 	return taken;
 }
 
+/**
+ * What a command id looks like once it has run against this snapshot.
+ *
+ * The cycles all end in a selection, so they are one string; the pickers name
+ * themselves. Written here rather than asserted inline so a layout matrix can
+ * say only which *command* each key reached.
+ */
+function named(commandId: string): string {
+	switch (commandId) {
+		case "add_workspace":
+			return "openWorkspacePicker";
+		case "open_settings":
+			return "openSettings";
+		case "show_chord_help":
+			return "openChordHelp";
+		default:
+			// previous_agent, next_agent, next_workspace: all selections.
+			return "selectContext [object Object] undefined";
+	}
+}
+
 describe("a chord, as Electron delivers it", () => {
 	beforeEach(() => {
 		resetChordRouterForTests();
@@ -166,37 +187,88 @@ describe("a chord, as Electron delivers it", () => {
 		expect(calls).toEqual(["selectContext [object Object] undefined"]);
 	});
 
-	it("completes `{` from the bracket key, whatever the layout prints on it", () => {
-		// US sends `{`; a JIS keyboard sends the same code with a different
-		// character. The binding names the code, so both arrive here.
-		for (const character of ["{", "「"]) {
+	/**
+	 * The same chord on two keyboards, and mid-composition on each.
+	 *
+	 * A JIS keyboard does not put punctuation where a US one does, and matching
+	 * the physical key therefore selected the key one to the left of the one the
+	 * person was looking at. The character does not move.
+	 *
+	 * Composition is where the character is not there to read, and where the
+	 * physical key has to be guessed at from two layouts — so the punctuation
+	 * rows say which reading wins and the letters, which both layouts agree
+	 * about, say that the ordinary case is not a guess at all.
+	 */
+	describe.each([
+		{
+			layout: "US",
+			rows: [
+				{ key: "{", code: "BracketLeft", reaches: "previous_agent" },
+				{ key: "}", code: "BracketRight", reaches: "next_agent" },
+				{ key: "<", code: "Comma", reaches: "open_settings" },
+				{ key: "?", code: "Slash", reaches: "show_chord_help" },
+				{ key: "f", code: "KeyF", reaches: "add_workspace" },
+			],
+			// Composing: no character, so the physical key is read. The US
+			// reading is taken first where the two layouts disagree.
+			composing: [
+				{ code: "BracketLeft", reaches: "previous_agent", shift: true },
+				{ code: "BracketRight", reaches: "next_agent", shift: true },
+				{ code: "Comma", reaches: "open_settings", shift: true },
+				{ code: "Slash", reaches: "show_chord_help", shift: true },
+				{ code: "KeyF", reaches: "add_workspace", shift: false },
+			],
+		},
+		{
+			layout: "JIS",
+			rows: [
+				{ key: "{", code: "BracketRight", reaches: "previous_agent" },
+				{ key: "}", code: "Backslash", reaches: "next_agent" },
+				// The key a US keyboard reads as `{` is `@` here, and `@` is no
+				// chord: it cancels rather than firing the wrong command.
+				{ key: "@", code: "BracketLeft", reaches: undefined },
+				{ key: "<", code: "Comma", reaches: "open_settings" },
+				{ key: "?", code: "Slash", reaches: "show_chord_help" },
+				{ key: "f", code: "KeyF", reaches: "add_workspace" },
+			],
+			composing: [
+				// The one cell the fallback cannot resolve: shifted BracketRight is
+				// `}` on US and `{` on JIS, both are bound, and the US reading
+				// wins. Letters and digits are unambiguous, which is why the rest
+				// of the chords keep working mid-composition on both keyboards.
+				{ code: "BracketRight", reaches: "next_agent", shift: true },
+				{ code: "Backslash", reaches: "next_agent", shift: true },
+				{ code: "Comma", reaches: "open_settings", shift: true },
+				{ code: "Slash", reaches: "show_chord_help", shift: true },
+				{ code: "KeyF", reaches: "add_workspace", shift: false },
+			],
+		},
+	])("on a $layout keyboard", ({ rows, composing }) => {
+		it.each(rows)("$key ($code) reaches $reaches", ({ key, code, reaches }) => {
 			resetChordRouterForTests();
 			const { calls, chordHost } = host();
 			type(chordHost, [
 				PREFIX,
 				input("ShiftLeft", "Shift", { shift: true }),
-				input("BracketLeft", character, { shift: true }),
+				input(code, key, { shift: key !== "f" }),
 			]);
-			// Recognised on both, which is the whole point: the same physical key
-			// under two different characters reaches the same command.
-			expect(calls, character).toEqual([
-				"selectContext [object Object] undefined",
-			]);
-		}
-	});
+			expect(calls).toEqual(reaches === undefined ? [] : [named(reaches)]);
+		});
 
-	it("completes a chord while an input method is composing", () => {
-		// With a Japanese IME active Chromium reports `Process` for the key and
-		// still fills in the code. Matching on the code is what lets the chord be
-		// recognised at all, and swallowing it is what keeps the stroke out of
-		// the preedit.
-		const { calls, chordHost } = host();
-		const taken = type(chordHost, [
-			PREFIX,
-			input("KeyF", "Process", { isComposing: true }),
-		]);
-		expect(taken).toEqual([true, true]);
-		expect(calls).toEqual(["openWorkspacePicker"]);
+		it.each(composing)(
+			"$code composing reaches $reaches",
+			({ code, reaches, shift }) => {
+				// Chromium reports `Process` for the key while an input method is
+				// composing, and still fills in the code.
+				resetChordRouterForTests();
+				const { calls, chordHost } = host();
+				type(chordHost, [
+					PREFIX,
+					input(code, "Process", { shift, isComposing: true }),
+				]);
+				expect(calls).toEqual([named(reaches)]);
+			},
+		);
 	});
 
 	it("swallows a mistyped second stroke rather than letting it through", () => {

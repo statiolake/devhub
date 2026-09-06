@@ -57,21 +57,54 @@ export function defaultChordTable(): readonly ChordBinding[] {
 /**
  * One keystroke as the main process sees it.
  *
- * `key` is the physical key's name and `code` is what it was derived from. Both
- * travel because the code is what says whether this was a bare modifier — a
- * question the name cannot answer, and the one the shifted-chord bug turned on.
+ * `keys` is what the stroke could be, best first — one entry for anything that
+ * produced a character, which is nearly everything, and up to two for a
+ * punctuation key read from its position while an input method is composing
+ * (see `charactersForCode`). `shift` is the raw flag, still needed by the
+ * editing keys and by a named key; `code` is here for one question only, which
+ * is whether this was a bare modifier.
  */
-export interface KeyStroke extends ChordKey {
+export interface KeyStroke {
+	readonly keys: readonly string[];
 	readonly code: string;
+	readonly command: boolean;
+	readonly control: boolean;
+	readonly option: boolean;
+	readonly shift: boolean;
 	readonly isAutoRepeat: boolean;
 }
 
+/** One candidate identity of a stroke, as a binding would spell it. */
+export function strokeAs(stroke: KeyStroke, key: string): ChordKey {
+	return {
+		key,
+		command: stroke.command,
+		control: stroke.control,
+		option: stroke.option,
+		// Shift is in the character already, unless there is no character to be
+		// in — which is `chordKeys.ts`'s rule and not a second one.
+		shift: key.length > 1 ? stroke.shift : false,
+	};
+}
+
+/**
+ * The binding this stroke completes, if any.
+ *
+ * Candidates in order, first bound one wins. Ordinarily there is one candidate
+ * and the order says nothing; it matters only for a punctuation key read from
+ * its position mid-composition, where two layouts disagree about what it
+ * produces and only one of the two readings is usually bound to anything.
+ */
 export function matchChord(
 	table: readonly ChordBinding[],
 	stroke: KeyStroke,
 ): ChordBinding | undefined {
-	const wanted = chordKeyId(stroke);
-	return table.find((binding) => chordKeyId(binding.key) === wanted);
+	for (const key of stroke.keys) {
+		const wanted = chordKeyId(strokeAs(stroke, key));
+		const found = table.find((binding) => chordKeyId(binding.key) === wanted);
+		if (found) return found;
+	}
+	return undefined;
 }
 
 /**

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { keyNameForCode } from "../../model/chordKeys.js";
+import { strokeKeys } from "../../model/chordKeys.js";
 import type { CommandId } from "../../model/commands.js";
 import {
 	defaultChordTable,
@@ -465,44 +465,60 @@ describe("the commands that need nothing at all", () => {
 });
 
 describe("the default table", () => {
-	function press(code: string, modifiers: Partial<KeyStroke> = {}) {
-		return matchChord(defaultChordTable(), {
-			key: keyNameForCode(code),
-			code,
+	function press(
+		key: string,
+		code: string,
+		modifiers: Partial<Omit<KeyStroke, "keys" | "code">> = {},
+	) {
+		const flags = {
 			command: false,
 			shift: false,
 			option: false,
 			control: false,
 			isAutoRepeat: false,
 			...modifiers,
+		};
+		return matchChord(defaultChordTable(), {
+			keys: strokeKeys(key, code, flags.shift),
+			code,
+			...flags,
 		})?.commandId;
 	}
 
 	it("reaches the picker by the finder key", () => {
-		expect(press("KeyF")).toBe("add_workspace");
+		expect(press("f", "KeyF")).toBe("add_workspace");
 	});
 
 	it("keeps the case rule: lower acts inside, upper reaches further", () => {
-		expect(press("KeyC")).toBe("add_agent");
-		expect(press("KeyW", { shift: true })).toBe("close_workspace");
+		expect(press("c", "KeyC")).toBe("add_agent");
+		expect(press("W", "KeyW", { shift: true })).toBe("close_workspace");
 		// Unshifted `w` is not a row: closing a workspace is not a key you can
 		// hit by missing Shift.
-		expect(press("KeyW")).toBeUndefined();
+		expect(press("w", "KeyW")).toBeUndefined();
 	});
 
 	it("separates rename from settings by Shift, as the multiplexer does", () => {
-		expect(press("Comma")).toBe("rename_agent");
-		expect(press("Comma", { shift: true })).toBe("open_settings");
+		expect(press(",", "Comma")).toBe("rename_agent");
+		expect(press("<", "Comma", { shift: true })).toBe("open_settings");
 	});
 
 	it("no longer claims the workbench's terminal key", () => {
-		expect(press("KeyT")).toBeUndefined();
-		expect(press("KeyJ", { control: true })).toBeUndefined();
+		expect(press("t", "KeyT")).toBeUndefined();
+		expect(press("j", "KeyJ", { control: true })).toBeUndefined();
 	});
 
 	it("gives the three cycles three different keys", () => {
-		expect(press("KeyN", { shift: true })).toBe("next_workspace");
-		expect(press("BracketRight", { shift: true })).toBe("next_agent");
-		expect(press("KeyN", { command: true })).toBe("next_tab");
+		expect(press("N", "KeyN", { shift: true })).toBe("next_workspace");
+		expect(press("}", "BracketRight", { shift: true })).toBe("next_agent");
+		expect(press("n", "KeyN", { command: true })).toBe("next_tab");
+	});
+
+	it("matches the character, so a JIS keyboard reaches the same commands", () => {
+		// The same two characters, from the keys a JIS keyboard makes them with.
+		expect(press("{", "BracketRight", { shift: true })).toBe("previous_agent");
+		expect(press("}", "Backslash", { shift: true })).toBe("next_agent");
+		// And the key a US keyboard would have read as `{` is `@` there, which
+		// is no chord at all rather than the wrong one.
+		expect(press("@", "BracketLeft", { shift: true })).toBeUndefined();
 	});
 });

@@ -11,9 +11,10 @@
  *
  * The bindings are modelled on the person's existing multiplexer environment
  * (`prefix = ctrl+q` there, `Command-Q` here) so the muscle memory carries
- * over unchanged — including the way they are written down: `Shift+comma`, a
- * modifier list and a physical key, exactly as that config spells it. See
- * `model/chordKeys.ts` for why the key is physical and not a character.
+ * over unchanged. A stroke is written as the character it produces — `{`, `N`,
+ * `<` — and the `Shift+[` spelling that multiplexer uses is accepted as an
+ * alias for it. See `model/chordKeys.ts` for why the character is the identity
+ * and the physical key is not.
  *
  * # Why a registry, and not a table of key→behaviour
  *
@@ -144,6 +145,9 @@
  * - **A bare modifier neither completes nor cancels.** Chromium sends a
  *   `keyDown` for Shift before it sends the shifted key, and treating that as a
  *   second stroke is what broke every shifted chord. See `isModifierKey`.
+ * - **A stroke is the character, so the same binding is right on every
+ *   layout.** `{` is `{` whether the key that made it sits where a US keyboard
+ *   puts it or where a JIS one does.
  * - **A second key that is not in the table cancels the chord and is *not*
  *   forwarded.** Once the prefix is armed the keyboard belongs to the chord
  *   layer, so a mistyped chord does nothing at all rather than firing whatever
@@ -263,25 +267,25 @@ export const COMMANDS: readonly CommandDefinition[] = [
     id: "next_workspace",
     label: "Next workspace",
     needs: "nothing",
-    defaultKeys: ["Shift+n"],
+    defaultKeys: ["N"],
   },
   {
     id: "previous_workspace",
     label: "Previous workspace",
     needs: "nothing",
-    defaultKeys: ["Shift+p"],
+    defaultKeys: ["P"],
   },
   {
     id: "next_agent",
     label: "Next Agent",
     needs: "nothing",
-    defaultKeys: ["Shift+bracketright"],
+    defaultKeys: ["}"],
   },
   {
     id: "previous_agent",
     label: "Previous Agent",
     needs: "nothing",
-    defaultKeys: ["Shift+bracketleft"],
+    defaultKeys: ["{"],
   },
   {
     id: "next_tab",
@@ -350,7 +354,7 @@ export const COMMANDS: readonly CommandDefinition[] = [
     id: "rename_agent",
     label: "Rename this Agent…",
     needs: "agent",
-    defaultKeys: ["comma"],
+    defaultKeys: [","],
   },
   {
     id: "close_selection",
@@ -362,7 +366,7 @@ export const COMMANDS: readonly CommandDefinition[] = [
     id: "close_workspace",
     label: "Close this workspace",
     needs: "workspace",
-    defaultKeys: ["Shift+w"],
+    defaultKeys: ["W"],
   },
 
   {
@@ -382,14 +386,14 @@ export const COMMANDS: readonly CommandDefinition[] = [
     id: "open_settings",
     label: "DevHub Settings…",
     needs: "nothing",
-    defaultKeys: ["Shift+comma"],
+    defaultKeys: ["<"],
   },
   {
     id: "show_chord_help",
     label: "Keyboard shortcuts",
     needs: "nothing",
     // `?` is Shift and the slash key, which is what the physical name says.
-    defaultKeys: ["Shift+slash"],
+    defaultKeys: ["?"],
   },
 ];
 

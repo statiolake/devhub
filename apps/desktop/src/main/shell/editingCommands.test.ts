@@ -25,7 +25,7 @@ const WORKBENCH =
 
 function stroke(key: string, modifiers: Partial<KeyStroke> = {}): KeyStroke {
 	return {
-		key,
+		keys: [key],
 		code: `Key${key.toUpperCase()}`,
 		command: true,
 		shift: false,

@@ -60,29 +60,32 @@ describe("the keyboard screen", () => {
     expect(recorder("Go to workspace or Agent…")).toHaveTextContent("Unbound");
   });
 
-  it("writes the character beside the key where it can be sure of one", async () => {
+  it("shows the character the key produces", async () => {
     await open();
     await screen.findByText("DevHub Settings…");
-    // `Shift+comma` is the binding; `Shift+,` is what is printed on the key.
-    expect(recorder("DevHub Settings…")).toHaveTextContent("Shift+,");
+    // The stroke *is* `<`. Writing `Shift+,` would be naming a US keyboard's
+    // way of making it, which is not what a JIS one does with the same binding.
+    expect(recorder("DevHub Settings…")).toHaveTextContent("<");
+    expect(recorder("Previous Agent")).toHaveTextContent("{");
+    expect(recorder("Keyboard shortcuts")).toHaveTextContent("?");
   });
 
-  it("records a keypress by its place on the keyboard, not its character", async () => {
-    const harness = await open();
-    await screen.findByText("Next sidebar row");
-    const button = recorder("Next sidebar row");
-    fireEvent.click(button);
-    // Shift and the bracket key: on a US layout this prints `}`, and on a JIS
-    // one something else. What is written down is the key.
-    fireEvent.keyDown(button, {
-      code: "BracketRight",
-      shiftKey: true,
-    });
-    await waitFor(() => {
-      expect(
-        harness.saves.at(-1)?.keybindings.chords["Shift+bracketright"],
-      ).toBe("next_tab");
-    });
+  it("records the character a keypress produced, not where the key sits", async () => {
+    // The same character from the two keys that make it: `}` is Shift and
+    // `BracketRight` on a US keyboard and Shift and `Backslash` on a JIS one.
+    // Both record the same binding, which is the whole point.
+    for (const code of ["BracketRight", "Backslash"]) {
+      const harness = await open();
+      const button = recorder("Next sidebar row");
+      fireEvent.click(button);
+      fireEvent.keyDown(button, { key: "}", code, shiftKey: true });
+      await waitFor(() => {
+        expect(harness.saves.at(-1)?.keybindings.chords["}"], code).toBe(
+          "next_tab",
+        );
+      });
+      cleanup();
+    }
   });
 
   it("says which command a recorded key is being taken from", async () => {
@@ -144,9 +147,9 @@ describe("the keyboard screen", () => {
   });
 
   it("shows a table's problems rather than leaving a key silently dead", async () => {
-    await open({ "Shift+{": "next_tab", h: "teleport" });
+    await open({ "Hyper+g": "next_tab", h: "teleport" });
     expect(
-      await screen.findByText(/keybindings.chords.Shift\+\{/u),
+      await screen.findByText(/keybindings.chords.Hyper\+g/u),
     ).toBeInTheDocument();
     expect(screen.getByText(/keybindings.chords.h/u)).toBeInTheDocument();
   });

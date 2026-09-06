@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { keyNameForCode, parseChordKey } from "../../model/chordKeys.js";
+import { parseChordKey, strokeKeys } from "../../model/chordKeys.js";
 import {
 	defaultChordLayout,
 	KeyRouter,
@@ -8,23 +8,32 @@ import {
 } from "./keyRouter.js";
 
 /**
- * A stroke, named by the physical key the way Electron reports it.
+ * A stroke, from the character and the physical key Electron reports.
  *
- * The tests say `code` because that is what the router reads; the key name is
- * derived from it here exactly as `keyboard.ts` derives it, so a test cannot
- * pass with a pairing the real path would never produce.
+ * Built through the same function `keyboard.ts` builds one with, so a test
+ * cannot pass on a pairing the real path would never produce.
  */
-function stroke(code: string, overrides: Partial<KeyStroke> = {}): KeyStroke {
-	return {
-		key: keyNameForCode(code),
-		code,
+function press(
+	key: string,
+	code: string,
+	modifiers: Partial<Omit<KeyStroke, "keys" | "code">> = {},
+): KeyStroke {
+	const flags = {
 		command: false,
 		shift: false,
 		option: false,
 		control: false,
 		isAutoRepeat: false,
-		...overrides,
+		...modifiers,
 	};
+	return { keys: strokeKeys(key, code, flags.shift), code, ...flags };
+}
+
+/** A key whose character is its own lower-case letter or digit. */
+function stroke(code: string, overrides: Partial<KeyStroke> = {}): KeyStroke {
+	const character = /^Key([A-Z])$/u.exec(code)?.[1].toLowerCase();
+	const digit = /^Digit([0-9])$/u.exec(code)?.[1];
+	return press(character ?? digit ?? code, code, overrides);
 }
 
 const commandQ = stroke("KeyQ", { command: true });
@@ -134,56 +143,37 @@ describe("a modifier pressed after the prefix", () => {
 		router = new KeyRouter();
 	});
 
-	function chord(
-		modifierCode: string,
-		code: string,
-		flags: Partial<KeyStroke>,
-	) {
+	function chord(modifierCode: string, second: KeyStroke) {
 		router.route(commandQ, 0);
 		// The modifier goes down first. It must neither complete nor cancel.
-		const held = router.route(stroke(modifierCode, flags), 5);
-		return { held, then: router.route(stroke(code, flags), 10) };
+		const held = router.route(press("Shift", modifierCode, { shift: true }), 5);
+		return { held, then: router.route(second, 10) };
 	}
 
 	it("keeps the chord armed for Shift+P and Shift+N", () => {
-		expect(chord("ShiftLeft", "KeyP", { shift: true })).toEqual({
+		expect(chord("ShiftLeft", press("P", "KeyP", { shift: true }))).toEqual({
 			held: { kind: "pass" },
 			then: { kind: "run", commandId: "previous_workspace" },
 		});
-		expect(chord("ShiftRight", "KeyN", { shift: true })).toEqual({
+		expect(chord("ShiftRight", press("N", "KeyN", { shift: true }))).toEqual({
 			held: { kind: "pass" },
 			then: { kind: "run", commandId: "next_workspace" },
 		});
 	});
 
-	it("keeps it armed for the bracket chords, on US and on JIS alike", () => {
-		// `{` and `}` are Shift and the bracket keys, and they are the *same*
-		// physical keys on a JIS keyboard even though the characters printed on
-		// them differ. Naming the key rather than the character is what makes
-		// one binding right on both.
-		expect(chord("ShiftLeft", "BracketLeft", { shift: true })).toEqual({
-			held: { kind: "pass" },
-			then: { kind: "run", commandId: "previous_agent" },
-		});
-		expect(chord("ShiftLeft", "BracketRight", { shift: true })).toEqual({
-			held: { kind: "pass" },
-			then: { kind: "run", commandId: "next_agent" },
-		});
-	});
-
 	it("keeps it armed for Shift+, which is Settings", () => {
-		expect(chord("ShiftLeft", "Comma", { shift: true })).toEqual({
+		expect(chord("ShiftLeft", press("<", "Comma", { shift: true }))).toEqual({
 			held: { kind: "pass" },
 			then: { kind: "run", commandId: "open_settings" },
 		});
 	});
 
 	it("keeps it armed for the Command chords", () => {
-		expect(chord("MetaLeft", "KeyN", { command: true })).toEqual({
+		expect(chord("MetaLeft", press("n", "KeyN", { command: true }))).toEqual({
 			held: { kind: "pass" },
 			then: { kind: "run", commandId: "next_tab" },
 		});
-		expect(chord("MetaLeft", "KeyJ", { command: true })).toEqual({
+		expect(chord("MetaLeft", press("j", "KeyJ", { command: true }))).toEqual({
 			held: { kind: "pass" },
 			then: { kind: "run", commandId: "toggle_workspace_agent" },
 		});
@@ -196,7 +186,7 @@ describe("a modifier pressed after the prefix", () => {
 			commandId: "add_workspace",
 		});
 		router.route(commandQ, 20);
-		expect(router.route(stroke("Comma"), 30)).toEqual({
+		expect(router.route(press(",", "Comma"), 30)).toEqual({
 			kind: "run",
 			commandId: "rename_agent",
 		});
@@ -208,8 +198,75 @@ describe("a modifier pressed after the prefix", () => {
 	});
 
 	it("leaves a bare modifier alone when nothing is armed", () => {
-		expect(router.route(stroke("ShiftLeft", { shift: true }), 0)).toEqual({
+		expect(
+			router.route(press("Shift", "ShiftLeft", { shift: true }), 0),
+		).toEqual({
 			kind: "pass",
 		});
 	});
+});
+
+/**
+ * The same chord on two keyboards.
+ *
+ * A JIS keyboard does not put punctuation where a US one does: the key printed
+ * `[` is `BracketRight` there, the one printed `]` is `Backslash`, and
+ * `BracketLeft` is where `@` lives. Matching the physical key selected the key
+ * one to the left of the one the person was looking at. The character does not
+ * move, so one binding is right on both.
+ */
+describe("a chord on a US and a JIS keyboard", () => {
+	let router: KeyRouter;
+
+	beforeEach(() => {
+		router = new KeyRouter();
+	});
+
+	function second(key: string, code: string, shift = true) {
+		router.route(commandQ, 0);
+		router.route(press("Shift", "ShiftLeft", { shift }), 5);
+		return router.route(press(key, code, { shift }), 10);
+	}
+
+	const layouts: readonly {
+		readonly name: string;
+		readonly rows: readonly [string, string, string | undefined][];
+	}[] = [
+		{
+			name: "US",
+			rows: [
+				["{", "BracketLeft", "previous_agent"],
+				["}", "BracketRight", "next_agent"],
+				["<", "Comma", "open_settings"],
+				["?", "Slash", "show_chord_help"],
+				["N", "KeyN", "next_workspace"],
+			],
+		},
+		{
+			name: "JIS",
+			rows: [
+				["{", "BracketRight", "previous_agent"],
+				["}", "Backslash", "next_agent"],
+				// The key a US keyboard reads as `{` is `@` here, and `@` is not a
+				// chord: it cancels rather than firing the wrong command, which is
+				// exactly what the physical-key model got wrong.
+				["@", "BracketLeft", undefined],
+				["<", "Comma", "open_settings"],
+				["?", "Slash", "show_chord_help"],
+				["N", "KeyN", "next_workspace"],
+			],
+		},
+	];
+
+	for (const layout of layouts) {
+		for (const [key, code, commandId] of layout.rows) {
+			it(`${layout.name}: ${key} (${code}) → ${commandId ?? "nothing"}`, () => {
+				expect(second(key, code)).toEqual(
+					commandId === undefined
+						? { kind: "cancelled" }
+						: { kind: "run", commandId },
+				);
+			});
+		}
+	}
 });

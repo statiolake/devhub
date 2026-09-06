@@ -13,6 +13,8 @@ import {
   parseConfig,
   type ValidationCode,
 } from "./config.js";
+import { chordKeyId } from "./chordKeys.js";
+import { resolveBindings } from "./commands.js";
 import { isValidFontFamily, MAX_FONT_FAMILY_LENGTH } from "./fontFamily.js";
 import { makeScratchDir, removeScratchDir } from "./testScratch.js";
 
@@ -1088,6 +1090,9 @@ prefix = "Ctrl+q"
 g = ""
 `);
     expect(config.keybindings.prefix).toBe("Ctrl+q");
+    // Stored exactly as the file spells it; the normalising happens where the
+    // table is resolved, so nothing rewrites a person's spelling underneath
+    // them.
     expect(config.keybindings.chords).toEqual({
       "Shift+n": "previous_workspace",
       g: "",
@@ -1133,14 +1138,7 @@ version = 1
     ).toBe("unknown_command");
   });
 
-  it("refuses a key that names a character instead of a key", () => {
-    expect(
-      codeOf(() =>
-        parseConfig(
-          `version = 1\n[keybindings.chords]\n"Shift+{" = "next_tab"\n`,
-        ),
-      ),
-    ).toBe("invalid_keybinding");
+  it("refuses a modifier that is not one", () => {
     expect(
       codeOf(() =>
         parseConfig(`version = 1\n[keybindings]\nprefix = "Hyper+q"\n`),
@@ -1148,11 +1146,43 @@ version = 1
     ).toBe("invalid_keybinding");
   });
 
+  it("reads a stroke written as a character or as Shift and its base", () => {
+    // The character is the stroke; `Shift+[` is the multiplexer's spelling of
+    // the same thing. Both have to land on one binding, or a file written one
+    // way and a file written the other would be two different keyboards.
+    const asCharacter = parseConfig(
+      `version = 1\n[keybindings.chords]\n"{" = "next_tab"\n`,
+    );
+    const asShifted = parseConfig(
+      `version = 1\n[keybindings.chords]\n"Shift+[" = "next_tab"\n`,
+    );
+    const commandFor = (config: ReturnType<typeof parseConfig>) =>
+      resolveBindings(config.keybindings).bindings.find(
+        (binding) => chordKeyId(binding.key) === "{",
+      )?.commandId;
+    expect(commandFor(asCharacter)).toBe("next_tab");
+    expect(commandFor(asShifted)).toBe("next_tab");
+    // And the same for the two ways of writing Settings' own key.
+    for (const written of ["<", "Shift+,"]) {
+      const config = parseConfig(
+        `version = 1\n[keybindings.chords]\n"${written}" = "next_tab"\n`,
+      );
+      expect(
+        resolveBindings(config.keybindings).bindings.find(
+          (binding) => chordKeyId(binding.key) === "<",
+        )?.commandId,
+        written,
+      ).toBe("next_tab");
+    }
+  });
+
   it("refuses two spellings of one key, because a key does one thing", () => {
+    // `Shift+n` and `N` are the same stroke written two ways, which is exactly
+    // what makes a duplicate possible to write by accident.
     expect(
       codeOf(() =>
         parseConfig(
-          `version = 1\n[keybindings.chords]\n"Shift+n" = "next_tab"\n"shift+N" = "previous_tab"\n`,
+          `version = 1\n[keybindings.chords]\n"Shift+n" = "next_tab"\n"N" = "previous_tab"\n`,
         ),
       ),
     ).toBe("duplicate_identity");

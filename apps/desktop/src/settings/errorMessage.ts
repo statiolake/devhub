@@ -91,7 +91,7 @@ export function ruleMessage(code: SettingsDiagnosticCodeWire): string {
     case "invalid_string":
       return "That value cannot contain a null character.";
     case "invalid_keybinding":
-      return "A chord is modifiers and a key, like `Shift+n` or `Cmd+j`. The key is the one on the keyboard — `Shift+bracketleft`, not `{` — so that a binding means the same thing on every layout.";
+      return "A chord is modifiers and the character the key produces, like `{` or `Cmd+j`. `Shift+[` is accepted and stored as `{`.";
     case "unknown_command":
       return "That is not a command DevHub has. The keyboard section lists every one of them.";
 

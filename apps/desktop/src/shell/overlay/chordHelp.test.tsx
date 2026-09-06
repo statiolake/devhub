@@ -100,13 +100,13 @@ describe("the chord help", () => {
     ).toBeGreaterThan(0);
   });
 
-  it("writes the character beside the key where it can be sure of one", () => {
+  it("shows the character the key produces", () => {
     render(<ChordHelpSheet rows={rowsFor({})} onDismiss={vi.fn()} />);
-    // The binding is `Shift+comma`; what a person looks for is `Shift+,`.
-    expect(screen.getByText("Cmd+q Shift+,")).toBeInTheDocument();
-    expect(describeChordKey(parseChordKey("Shift+bracketleft"))).toBe(
-      "Shift+[",
-    );
+    // The stroke *is* `<`, and `{`. Naming a US keyboard's way of making them
+    // would be wrong for the person reading this on a JIS one.
+    expect(screen.getByText("Cmd+q <")).toBeInTheDocument();
+    expect(screen.getByText("Cmd+q {")).toBeInTheDocument();
+    expect(describeChordKey(parseChordKey("Shift+["))).toBe("{");
   });
 
   it("closes on Escape and on Done", () => {

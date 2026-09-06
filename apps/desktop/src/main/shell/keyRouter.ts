@@ -31,6 +31,7 @@ import { DEFAULT_CHORD_PREFIX, type CommandId } from "../../model/commands.js";
 import {
 	defaultChordTable,
 	matchChord,
+	strokeAs,
 	type ChordBinding,
 	type KeyStroke,
 } from "./chords.js";
@@ -102,7 +103,9 @@ export class KeyRouter {
 	}
 
 	private isPrefix(stroke: KeyStroke): boolean {
-		return sameChordKey(this.layout.prefix, stroke);
+		return stroke.keys.some((key) =>
+			sameChordKey(this.layout.prefix, strokeAs(stroke, key)),
+		);
 	}
 
 	route(stroke: KeyStroke, now: number): RouteDecision {

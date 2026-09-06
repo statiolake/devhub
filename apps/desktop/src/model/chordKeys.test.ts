@@ -1,61 +1,86 @@
 import { describe, expect, it } from "vitest";
 import {
+  charactersForCode,
   ChordKeyError,
   chordKeyId,
   describeChordKey,
   formatChordKey,
   isModifierKey,
-  keyNameForCode,
   parseChordKey,
   sameChordKey,
+  strokeKeys,
 } from "./chordKeys.js";
 
 describe("the key-string grammar", () => {
-  it("reads a bare key and every modifier, in any order and any case", () => {
-    expect(parseChordKey("n")).toEqual({
-      key: "n",
+  it("reads a character and every modifier, in any order and any case", () => {
+    expect(parseChordKey("{")).toEqual({
+      key: "{",
       command: false,
       control: false,
       option: false,
       shift: false,
     });
-    expect(parseChordKey("shift+CMD+Alt+ctrl+comma")).toEqual({
-      key: "comma",
+    expect(parseChordKey("CMD+Alt+ctrl+,")).toEqual({
+      key: ",",
       command: true,
       control: true,
       option: true,
-      shift: true,
+      shift: false,
     });
   });
 
-  it("normalises the case of a key written as a character", () => {
-    // Somebody thinking in characters writes `Shift+N`. It is the same
-    // physical key, so it is accepted rather than refused, and it lands on
-    // the same binding the canonical `Shift+n` does.
-    expect(parseChordKey("Shift+N")).toEqual(parseChordKey("Shift+n"));
+  it("folds Shift into the character, and accepts either spelling", () => {
+    // The multiplexer's notation, and the character it means, are the same
+    // stroke. What is stored — and written back to the file — is the
+    // character.
+    expect(parseChordKey("Shift+n")).toEqual(parseChordKey("N"));
+    expect(parseChordKey("Shift+[")).toEqual(parseChordKey("{"));
+    expect(parseChordKey("Shift+]")).toEqual(parseChordKey("}"));
+    expect(parseChordKey("Shift+,")).toEqual(parseChordKey("<"));
+    expect(parseChordKey("Shift+/")).toEqual(parseChordKey("?"));
+    expect(parseChordKey("Shift+w")).toEqual(parseChordKey("W"));
+    expect(formatChordKey(parseChordKey("Shift+["))).toBe("{");
+    // Already shifted: a character with no shifted form of its own has been
+    // written shifted already, so it is taken as it stands.
+    expect(parseChordKey("Shift+{")).toEqual(parseChordKey("{"));
   });
 
-  it("round-trips every default spelling through format", () => {
+  it("keeps Shift as a flag for a key with no character to put it in", () => {
+    expect(parseChordKey("Shift+Escape")).toEqual({
+      key: "escape",
+      command: false,
+      control: false,
+      option: false,
+      shift: true,
+    });
+    expect(formatChordKey(parseChordKey("shift+escape"))).toBe("Shift+escape");
+    // And Shift is never written twice: on a character it is already there.
+    expect(formatChordKey(parseChordKey("Shift+n"))).toBe("N");
+  });
+
+  it("round-trips every spelling through format", () => {
     for (const text of [
       "q",
       "Cmd+q",
-      "Shift+n",
-      "Shift+bracketleft",
+      "N",
+      "{",
+      "}",
+      "<",
+      "?",
+      ",",
       "Cmd+j",
-      "comma",
-      "Shift+slash",
       "1",
       "f12",
-      "escape",
+      "Shift+escape",
     ]) {
       const parsed = parseChordKey(text);
-      expect(parseChordKey(formatChordKey(parsed))).toEqual(parsed);
+      expect(parseChordKey(formatChordKey(parsed)), text).toEqual(parsed);
     }
   });
 
   it("writes the modifiers in one order however they were typed", () => {
-    expect(formatChordKey(parseChordKey("shift+cmd+n"))).toBe("Cmd+Shift+n");
-    expect(formatChordKey(parseChordKey("cmd+shift+n"))).toBe("Cmd+Shift+n");
+    expect(formatChordKey(parseChordKey("shift+cmd+n"))).toBe("Cmd+N");
+    expect(formatChordKey(parseChordKey("cmd+shift+n"))).toBe("Cmd+N");
   });
 
   it("refuses what could never be a key, with the reason", () => {
@@ -65,10 +90,6 @@ describe("the key-string grammar", () => {
       ["Shift+", "missing_key"],
       ["Hyper+n", "unknown_modifier"],
       ["Shift+Shift+n", "duplicate_modifier"],
-      // A character is not a key name: nothing can say which physical key
-      // produces `{` on the layout the person will be typing on.
-      ["Shift+{", "invalid_key"],
-      ["Cmd+,", "invalid_key"],
       ["a b", "invalid_key"],
     ];
     for (const [text, problem] of problems) {
@@ -83,38 +104,70 @@ describe("the key-string grammar", () => {
     }
   });
 
-  it("treats two spellings of one stroke as one key", () => {
-    expect(chordKeyId(parseChordKey("shift+N"))).toBe(
-      chordKeyId(parseChordKey("Shift+n")),
+  it("keeps a letter's case, because the case is the Shift", () => {
+    // Folding them would make `Shift+N` and `n` one binding.
+    expect(chordKeyId(parseChordKey("N"))).not.toBe(
+      chordKeyId(parseChordKey("n")),
     );
-    expect(
-      sameChordKey(parseChordKey("Shift+n"), parseChordKey("shift+n")),
-    ).toBe(true);
-    // And an absent modifier means the modifier is up, not "don't care".
-    expect(sameChordKey(parseChordKey("n"), parseChordKey("Shift+n"))).toBe(
+    expect(sameChordKey(parseChordKey("Shift+n"), parseChordKey("N"))).toBe(
+      true,
+    );
+    // And an absent modifier still means the modifier is up.
+    expect(sameChordKey(parseChordKey("N"), parseChordKey("Cmd+N"))).toBe(
       false,
     );
   });
 });
 
-describe("naming the physical key", () => {
-  it("strips the two prefixes that are pure prefix, and nothing else", () => {
-    expect(keyNameForCode("KeyF")).toBe("f");
-    expect(keyNameForCode("Digit1")).toBe("1");
-    expect(keyNameForCode("BracketLeft")).toBe("bracketleft");
-    expect(keyNameForCode("Comma")).toBe("comma");
-    expect(keyNameForCode("Slash")).toBe("slash");
-    expect(keyNameForCode("Escape")).toBe("escape");
-    // The JIS-only keys are ordinary codes and need no special case.
-    expect(keyNameForCode("IntlYen")).toBe("intlyen");
-    expect(keyNameForCode("IntlRo")).toBe("intlro");
+/**
+ * What a key event says it is.
+ *
+ * The character, whenever there is one — which is what makes a binding right on
+ * a keyboard whose punctuation sits somewhere else. The physical key is a
+ * fallback for the one case that has no character, and it is where the layouts
+ * have to be guessed at.
+ */
+describe("reading a key event", () => {
+  it("takes the character, whatever key produced it", () => {
+    // US: `{` is Shift and the key at BracketLeft. JIS: the same character
+    // from the key at BracketRight. One binding matches both, because both
+    // events say `{`.
+    expect(strokeKeys("{", "BracketLeft", true)).toEqual(["{"]);
+    expect(strokeKeys("{", "BracketRight", true)).toEqual(["{"]);
+    expect(strokeKeys("}", "BracketRight", true)).toEqual(["}"]);
+    expect(strokeKeys("}", "Backslash", true)).toEqual(["}"]);
+    // And the JIS key at BracketLeft is `@`, which is not a chord at all.
+    expect(strokeKeys("@", "BracketLeft", true)).toEqual(["@"]);
   });
 
-  it("has no name for an event with no physical key behind it", () => {
-    // Chromium reports an empty code for a few synthesised events. The empty
-    // string is not a key name, so no binding can ever match one.
-    expect(keyNameForCode("")).toBe("");
-    expect(() => parseChordKey("")).toThrow(ChordKeyError);
+  it("keeps a named key by its name, without regard to case", () => {
+    expect(strokeKeys("Escape", "Escape", false)).toEqual(["escape"]);
+    expect(strokeKeys("ArrowLeft", "ArrowLeft", false)).toEqual(["arrowleft"]);
+  });
+
+  it("falls back to the physical key only when there is no character", () => {
+    for (const absent of ["Process", "Dead", "Unidentified", ""]) {
+      expect(strokeKeys(absent, "KeyF", false), absent).toEqual(["f"]);
+      expect(strokeKeys(absent, "KeyP", true), absent).toEqual(["P"]);
+      expect(strokeKeys(absent, "Digit1", false), absent).toEqual(["1"]);
+    }
+  });
+
+  it("offers both layouts' readings of a punctuation key it can only place", () => {
+    // The ambiguity this cannot resolve, written down rather than hidden:
+    // shifted BracketRight is `}` on a US keyboard and `{` on a JIS one.
+    expect(charactersForCode("BracketRight", true)).toEqual(["}", "{"]);
+    expect(charactersForCode("BracketLeft", true)).toEqual(["{", "`"]);
+    expect(charactersForCode("Backslash", true)).toEqual(["|", "}"]);
+    // Where the two layouts agree there is one candidate, not one twice.
+    expect(charactersForCode("Comma", true)).toEqual(["<"]);
+    expect(charactersForCode("Slash", true)).toEqual(["?"]);
+    expect(charactersForCode("Comma", false)).toEqual([","]);
+  });
+
+  it("has nothing to say about a key it has never placed", () => {
+    expect(charactersForCode("F13", false)).toEqual([]);
+    expect(strokeKeys("Process", "F13", false)).toEqual([]);
   });
 
   it("knows a bare modifier when it sees one", () => {
@@ -135,16 +188,17 @@ describe("naming the physical key", () => {
 });
 
 describe("showing a chord", () => {
-  it("prints the character where DevHub can be sure of one", () => {
-    expect(describeChordKey(parseChordKey("Shift+comma"))).toBe("Shift+,");
-    expect(describeChordKey(parseChordKey("Shift+slash"))).toBe("Shift+/");
-    expect(describeChordKey(parseChordKey("Shift+bracketleft"))).toBe(
-      "Shift+[",
-    );
+  it("shows the character, which is what is printed on the key", () => {
+    expect(describeChordKey(parseChordKey("Shift+,"))).toBe("<");
+    expect(describeChordKey(parseChordKey("Shift+/"))).toBe("?");
+    expect(describeChordKey(parseChordKey("Shift+["))).toBe("{");
+    expect(describeChordKey(parseChordKey("Cmd+j"))).toBe("Cmd+j");
   });
 
-  it("falls back to the key's own name where it cannot", () => {
-    expect(describeChordKey(parseChordKey("Shift+n"))).toBe("Shift+n");
-    expect(describeChordKey(parseChordKey("escape"))).toBe("escape");
+  it("capitalises a key that has a name rather than a character", () => {
+    expect(describeChordKey(parseChordKey("escape"))).toBe("Escape");
+    expect(describeChordKey(parseChordKey("Shift+escape"))).toBe(
+      "Shift+Escape",
+    );
   });
 });

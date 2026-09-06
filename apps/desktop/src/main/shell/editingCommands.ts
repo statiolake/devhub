@@ -40,7 +40,7 @@
  * two paths raise the *same* command rather than two implementations of it.
  */
 
-import type { ChordKey } from "../../model/chordKeys.js";
+import type { KeyStroke } from "./chords.js";
 import { SHELL_ORIGIN } from "./shellPageProtocol.js";
 
 /**
@@ -117,14 +117,19 @@ function isShellChrome(surfaceUrl: string): boolean {
  */
 export function editingCommandFor(
 	surfaceUrl: string,
-	stroke: ChordKey,
+	stroke: KeyStroke,
 ): EditingCommand | undefined {
 	if (!isShellChrome(surfaceUrl)) return undefined;
 	if (!stroke.command || stroke.option || stroke.control) return undefined;
+	// Case-folded, and with Shift compared separately: Cmd+Z and Cmd+Shift+Z are
+	// two commands, so this is the one place that wants the raw flag rather than
+	// the character it would otherwise be folded into.
 	return EDITING_COMMAND_GROUPS.flat().find(
 		(command) =>
 			command.key !== undefined &&
-			command.key.toLowerCase() === stroke.key.toLowerCase() &&
+			stroke.keys.some(
+				(key) => command.key?.toLowerCase() === key.toLowerCase(),
+			) &&
 			(command.shift ?? false) === stroke.shift,
 	);
 }

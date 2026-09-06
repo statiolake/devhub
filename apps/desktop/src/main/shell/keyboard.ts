@@ -32,7 +32,7 @@
  */
 
 import { electron } from "../electron.js";
-import { keyNameForCode } from "../../model/chordKeys.js";
+import { strokeKeys } from "../../model/chordKeys.js";
 import { editingCommandFor, type EditingRole } from "./editingCommands.js";
 import { resolveChord, type ChordEffect } from "./chords.js";
 import { KeyRouter, type ChordLayout, type KeyStroke } from "./keyRouter.js";
@@ -89,14 +89,14 @@ let installed = false;
 /**
  * One Electron input event as a stroke.
  *
- * The key is derived from `input.code`, never from `input.key`. See
- * `model/chordKeys.ts`: the character is a function of the modifiers, the
- * layout and whether an input method is composing, and a binding compared
- * against it is a binding that stops working when any of those change.
+ * The identity is the *character* the key produced, because Chromium has
+ * already applied the modifiers and the layout to work it out — see
+ * `model/chordKeys.ts`, which also says why the physical `code` cannot be that
+ * identity and what it is still needed for.
  */
 function strokeOf(input: Electron.Input): KeyStroke {
 	return {
-		key: keyNameForCode(input.code),
+		keys: strokeKeys(input.key, input.code, input.shift),
 		code: input.code,
 		command: input.meta,
 		shift: input.shift,

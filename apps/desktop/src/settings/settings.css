@@ -641,9 +641,9 @@ body {
 
 /*
  * One command's row: what it is bound to, and the three things that can be done
- * about it. The recorder is a button rather than a text field on purpose — a
- * binding is a key you press, not a string you type, and a field would invite
- * somebody to type `{` for a key whose name is `bracketleft`.
+ * about it. The recorder is a button rather than a text field on purpose: a
+ * binding is a key you press, not a string you type, so pressing the key is
+ * the one gesture that cannot describe a stroke the keyboard never makes.
  */
 .keyboard-row {
   display: flex;

@@ -107,12 +107,18 @@ describe("what the configuration is allowed to say", () => {
   });
 
   it("reports a key that is not a key", () => {
+    // `Shift+{` is *not* one of these: it is the multiplexer's spelling of a
+    // stroke that is already shifted, and it normalises to `{`. What is refused
+    // is a modifier that does not exist and a key with whitespace in it.
     expect(
-      checkKeybindings({ prefix: "Cmd+q", chords: { "Shift+{": "next_tab" } }),
-    ).toEqual([{ code: "invalid_key", path: "keybindings.chords.Shift+{" }]);
+      checkKeybindings({ prefix: "Cmd+q", chords: { "Hyper+g": "next_tab" } }),
+    ).toEqual([{ code: "invalid_key", path: "keybindings.chords.Hyper+g" }]);
     expect(checkKeybindings({ prefix: "Hyper+q", chords: {} })).toEqual([
       { code: "invalid_key", path: "keybindings.prefix" },
     ]);
+    expect(
+      checkKeybindings({ prefix: "Cmd+q", chords: { "Shift+{": "next_tab" } }),
+    ).toEqual([]);
   });
 
   it("reports two spellings of one stroke, because a key does one thing", () => {
@@ -127,7 +133,7 @@ describe("what the configuration is allowed to say", () => {
   it("reports every problem, not the first", () => {
     const problems = checkKeybindings({
       prefix: "Cmd+q",
-      chords: { g: "teleport", "Shift+{": "next_tab" },
+      chords: { g: "teleport", "Hyper+h": "next_tab" },
     });
     expect(problems.map((problem) => problem.code)).toEqual([
       "unknown_command",
@@ -191,7 +197,7 @@ describe("the table actually in effect", () => {
     // chord away with it.
     const spec = {
       prefix: "nonsense++",
-      chords: { "Shift+{": "next_tab", g: "teleport" },
+      chords: { "Hyper+h": "next_tab", g: "teleport" },
     };
     const resolved = resolveBindings(spec);
     expect(formatChordKey(resolved.prefix)).toBe("Cmd+q");

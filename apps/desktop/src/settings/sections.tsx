@@ -44,8 +44,8 @@ import {
   describeChordKey,
   formatChordKey,
   isModifierKey,
-  keyNameForCode,
   parseChordKey,
+  strokeKeys,
   type ChordKey,
 } from "../model/chordKeys";
 import {
@@ -103,7 +103,7 @@ type Update = (next: SettingsConfig) => void;
  * rule is never described one way while you type and another way afterwards.
  */
 const CHORD_KEY_RULE =
-  "Modifiers and a key, by the key's own name: `Shift+n`, `Cmd+j`, `Shift+bracketleft`.";
+  "Modifiers and the character the key produces: `N`, `{`, `Cmd+j`. `Shift+n` is accepted and stored as `N`.";
 
 /** What each keyboard problem means, for the list that shows them. */
 const KEYBINDING_PROBLEMS: Readonly<Record<string, string>> = {
@@ -1541,12 +1541,24 @@ function KeyboardRow({
             // layer follows, and the reason a shifted chord used to fall
             // through.
             if (isModifierKey(event.code)) return;
+            // The character the key produced, worked out by exactly the
+            // function the chord layer uses, so what is recorded here is what
+            // will match there. A key that produced no character at all — a
+            // dead key part-way through composing — is not a stroke to record.
+            const [character] = strokeKeys(
+              event.key,
+              event.code,
+              event.shiftKey,
+            );
+            if (character === undefined) return;
             const key: ChordKey = {
-              key: keyNameForCode(event.code),
+              key: character,
               command: event.metaKey,
               control: event.ctrlKey,
               option: event.altKey,
-              shift: event.shiftKey,
+              // Shift is in the character unless there is no character for it
+              // to be in. One rule, and it lives in `chordKeys.ts`.
+              shift: character.length > 1 ? event.shiftKey : false,
             };
             const owner = takenBy(key);
             // Said before the save, not after it: taking a key from another
@@ -1635,7 +1647,7 @@ export function KeyboardSection({
       >
         <Row
           label="Prefix"
-          help="Modifiers and a key, by the key's own name: `Cmd+q`, `Ctrl+q`."
+          help="Modifiers and the character the key produces: `Cmd+q`, `Ctrl+q`."
         >
           <TextField
             label="Chord prefix"
@@ -1671,7 +1683,7 @@ export function KeyboardSection({
 
       <Group
         heading="Commands"
-        note="A key is written by its place on the keyboard, not by the character it prints — `Shift+bracketleft`, not `{` — so one binding means the same thing on every layout and while an input method is composing."
+        note="A chord is written as the character the key produces — `{`, not `Shift+[` — because that is what the keyboard reports whatever layout it has, so one binding means the same thing on a US and a JIS keyboard alike."
       >
         {rows.map(({ command, keys, defaults }) => (
           <KeyboardRow
