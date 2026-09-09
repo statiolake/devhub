@@ -11,9 +11,20 @@ import {
   keysForCommand,
   resolveBindings,
   type CommandId,
+  type KeyBinding,
 } from "./commands.js";
 
 describe("the registry itself", () => {
+  /** Which command a stroke reaches, by the id a keypress is looked up by. */
+  function commandFor(
+    bindings: readonly KeyBinding[],
+    key: string,
+  ): CommandId | undefined {
+    const wanted = chordKeyId(parseChordKey(key));
+    return bindings.find((binding) => chordKeyId(binding.key) === wanted)
+      ?.commandId;
+  }
+
   it("gives every command an id nothing else has", () => {
     const ids = COMMANDS.map((command) => command.id);
     expect(new Set(ids).size).toBe(ids.length);
@@ -61,6 +72,19 @@ describe("the registry itself", () => {
         command.defaultKeys.length,
       );
     }
+  });
+
+  it("reaches the split toggle from both of the habits that want it", () => {
+    // `Z` is the multiplexer's `zoom`; `Shift+J` is the split's own key, on the
+    // physical key `Cmd+J` already uses for the other question about the split.
+    expect(commandById("toggle_split")?.defaultKeys).toEqual(["z", "J"]);
+    const bindings = defaultBindings();
+    for (const key of ["z", "J"]) {
+      expect(commandFor(bindings, key), key).toBe("toggle_split");
+    }
+    // The Command-held stroke on the same letter is a different stroke, and it
+    // is still the other command.
+    expect(commandFor(bindings, "Cmd+j")).toBe("toggle_workspace_agent");
   });
 
   it("knows its own ids and nobody else's", () => {

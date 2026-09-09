@@ -46,7 +46,7 @@
  * | `Cmd+Q G`                   | `open_tab_picker`         |
  * | `Cmd+Q 1`…`9`               | `select_entry_1`…`9`      |
  * | `Cmd+Q Cmd+J`               | `toggle_workspace_agent`  |
- * | `Cmd+Q Z`                   | `toggle_split`            |
+ * | `Cmd+Q Z` / `Shift+J`       | `toggle_split`            |
  * | `Cmd+Q E`                   | `focus_editor`            |
  * | `Cmd+Q F`                   | `add_workspace`           |
  * | `Cmd+Q C`                   | `add_agent`               |
@@ -116,6 +116,14 @@
  * had both. So it moves the *selection's presentation* rather than adding a
  * second notion of "maximised" the layout would then have to reconcile with the
  * one it has.
+ *
+ * **`Shift+J` is the same command under the hand that is already there.** The
+ * two chords about the split — `Cmd+J`, which moves between the two halves, and
+ * this one, which decides whether there are two — sit on one physical key that
+ * way, and which of them you get is the modifier: Command steps, Shift changes
+ * the arrangement. `Cmd+Q Cmd+J` is a stroke with Command held and `Cmd+Q J` is
+ * the bare one, so the pair takes nothing away from each other and `Z` keeps
+ * working for the hand that learned it from the multiplexer.
  *
  * **`Cmd+Q X` closes what is selected, and `Cmd+Q Shift+W` closes the
  * workspace.** They are the same command on a workspace row on purpose: there
@@ -361,7 +369,7 @@ export const COMMANDS: readonly CommandDefinition[] = [
     id: "toggle_split",
     label: "Show the Agent beside the editor, or alone",
     needs: "agent",
-    defaultKeys: ["z"],
+    defaultKeys: ["z", "J"],
   },
   {
     id: "focus_editor",
