@@ -373,6 +373,28 @@ describe("parsing", () => {
     ).toBe("invalid_appearance");
   });
 
+  it("scrolls an Agent pane three lines a notch until told otherwise", () => {
+    // One at a time is what xterm.js gives on its own, and it is far heavier
+    // than every other terminal on the machine.
+    expect(defaultConfig().appearance.terminalScrollSensitivity).toBe(3);
+    const parsed = parseConfig(
+      "version = 1\n[appearance]\nterminal_scroll_sensitivity = 5.5\n",
+    );
+    expect(parsed.appearance.terminalScrollSensitivity).toBe(5.5);
+    expect(configOntoDocument("version = 1\n", parsed)).toContain(
+      "terminal_scroll_sensitivity = 5.5",
+    );
+    for (const value of ["0", "-2", "1000"]) {
+      expect(
+        codeOf(() =>
+          parseConfig(
+            `version = 1\n[appearance]\nterminal_scroll_sensitivity = ${value}\n`,
+          ),
+        ),
+      ).toBe("invalid_appearance");
+    }
+  });
+
   it("carries the three appearances, and defaults to following the OS", () => {
     expect(defaultConfig().appearance.mode).toBe("auto");
     for (const mode of ["auto", "light", "dark"]) {

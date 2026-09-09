@@ -238,6 +238,11 @@ export function openXtermSession(
     fontSize: options.appearance?.terminalFontSize ?? 13,
     linkHandler,
     lineHeight: options.appearance?.terminalLineHeight ?? 1.2,
+    // How far one wheel notch or trackpad flick goes. xterm.js emits at most
+    // one mouse report per wheel event, so with tmux reading the mouse this is
+    // the whole of the pane's scroll speed, and it is the same knob for
+    // DevHub's own scrollback.
+    scrollSensitivity: options.appearance?.terminalScrollSensitivity ?? 3,
     scrollback: options.scrollback ?? 10_000,
     theme: themeInForce(host, options.palette),
   });
@@ -448,6 +453,8 @@ export function openXtermSession(
         );
         terminal.options.fontSize = appearance.terminalFontSize;
         terminal.options.lineHeight = appearance.terminalLineHeight;
+        terminal.options.scrollSensitivity =
+          appearance.terminalScrollSensitivity;
       }
       remeasure();
     },

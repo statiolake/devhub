@@ -122,6 +122,7 @@ export function appearanceWire(
     terminalFontFamily: config.terminalFontFamily,
     terminalFontSize: config.terminalFontSize,
     terminalLineHeight: config.terminalLineHeight,
+    terminalScrollSensitivity: config.terminalScrollSensitivity,
     terminalMargin: config.terminalMargin,
     terminalTheme: {
       light: paletteWire(config.terminalTheme.light),
@@ -148,6 +149,9 @@ function validateAppearanceWire(
     !Number.isFinite(wire.terminalLineHeight) ||
     wire.terminalLineHeight < 1 ||
     wire.terminalLineHeight > 2 ||
+    !Number.isFinite(wire.terminalScrollSensitivity) ||
+    wire.terminalScrollSensitivity < 0.1 ||
+    wire.terminalScrollSensitivity > 20 ||
     wire.terminalMargin > 64 ||
     !paletteIsValid(config.terminalTheme.light) ||
     !paletteIsValid(config.terminalTheme.dark)

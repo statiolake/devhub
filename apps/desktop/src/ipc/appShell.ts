@@ -118,6 +118,8 @@ export interface AppAppearanceWire {
 	readonly terminalFontFamily: string;
 	readonly terminalFontSize: number;
 	readonly terminalLineHeight: number;
+	/** A multiplier on wheel and trackpad scrolling. See `AppearanceConfig`. */
+	readonly terminalScrollSensitivity: number;
 	readonly terminalMargin: number;
 	readonly terminalTheme: TerminalThemeWire;
 }

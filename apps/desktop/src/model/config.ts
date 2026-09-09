@@ -309,6 +309,19 @@ export interface AppearanceConfig {
   readonly terminalFontFamily: string;
   readonly terminalFontSize: number;
   readonly terminalLineHeight: number;
+  /**
+   * How far one notch of the wheel, or one flick of the trackpad, scrolls an
+   * Agent pane.
+   *
+   * A multiplier on what the mouse reports, in lines. xterm.js turns a wheel
+   * event into at most one report per event, so at 1 a trackpad flick moves a
+   * single line whether tmux is reading the mouse or DevHub is showing its own
+   * scrollback — far heavier than every other terminal on the machine. Must be
+   * between 0.1 and 20; zero or less would be a pane that does not scroll at
+   * all, which is a setting nobody wants and a bug report DevHub would have to
+   * answer for.
+   */
+  readonly terminalScrollSensitivity: number;
   readonly sidebarDensity: string;
   readonly terminalMargin: number;
   readonly terminalTheme: TerminalThemeConfig;
@@ -437,6 +450,7 @@ export function defaultAppearance(): AppearanceConfig {
     terminalFontFamily: DEFAULT_FONT_FAMILY,
     terminalFontSize: 13,
     terminalLineHeight: 1.2,
+    terminalScrollSensitivity: 3,
     sidebarDensity: "compact",
     terminalMargin: 4,
     terminalTheme: {
@@ -907,6 +921,9 @@ function validateAppearance(appearance: AppearanceConfig): void {
     !Number.isFinite(appearance.terminalLineHeight) ||
     appearance.terminalLineHeight < 1 ||
     appearance.terminalLineHeight > 2 ||
+    !Number.isFinite(appearance.terminalScrollSensitivity) ||
+    appearance.terminalScrollSensitivity < 0.1 ||
+    appearance.terminalScrollSensitivity > 20 ||
     !APPEARANCE_MODES.includes(appearance.mode) ||
     (appearance.sidebarDensity !== "compact" &&
       appearance.sidebarDensity !== "comfortable") ||
@@ -1488,6 +1505,7 @@ export function interpretConfig(document: unknown): Config {
       "terminal_font_family",
       "terminal_font_size",
       "terminal_line_height",
+      "terminal_scroll_sensitivity",
       "sidebar_density",
       "terminal_margin",
       "terminal_theme",
@@ -1571,6 +1589,12 @@ export function interpretConfig(document: unknown): Config {
         "terminal_line_height",
         "appearance",
         1.2,
+      ),
+      terminalScrollSensitivity: optionalNumber(
+        appearanceTable,
+        "terminal_scroll_sensitivity",
+        "appearance",
+        3,
       ),
       mode: optionalString(appearanceTable, "mode", "appearance", "auto"),
       sidebarDensity: optionalString(
@@ -1687,6 +1711,7 @@ export function configDocument(config: Config): Record<string, TomlValue> {
       terminal_font_family: config.appearance.terminalFontFamily,
       terminal_font_size: config.appearance.terminalFontSize,
       terminal_line_height: config.appearance.terminalLineHeight,
+      terminal_scroll_sensitivity: config.appearance.terminalScrollSensitivity,
       sidebar_density: config.appearance.sidebarDensity,
       terminal_margin: config.appearance.terminalMargin,
       terminal_theme: {

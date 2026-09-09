@@ -170,6 +170,7 @@ function appearanceFixture(): TerminalAppearance {
     terminalFontFamily: "SF Mono",
     terminalFontSize: 13,
     terminalLineHeight: 1.2,
+    terminalScrollSensitivity: 3,
     terminalMargin: 4,
     terminalTheme: {
       light: PALETTE,
@@ -652,6 +653,7 @@ describe("TerminalSurface lifecycle", () => {
     expect(mocks.terminals[0].options).toMatchObject({
       fontSize: 13,
       lineHeight: 1.2,
+      scrollSensitivity: 3,
     });
     // A bigger face is fewer cells in the same pane; the addon would measure
     // that, so the mock says it, and the refit has something to report.
@@ -661,11 +663,18 @@ describe("TerminalSurface lifecycle", () => {
       <TerminalSurface
         surfaceKey="global-terminal"
         surfaceLabel="Scratch"
-        appearance={{ ...firstAppearance, terminalFontSize: 15 }}
+        appearance={{
+          ...firstAppearance,
+          terminalFontSize: 15,
+          terminalScrollSensitivity: 6,
+        }}
         client={harness.client}
       />,
     );
     await waitFor(() => expect(mocks.terminals[0].options.fontSize).toBe(15));
+    // The same re-application, without a remount, carries every option: a
+    // second path for one of them is a second thing to forget.
+    expect(mocks.terminals[0].options.scrollSensitivity).toBe(6);
     expect(harness.client.attach).toHaveBeenCalledTimes(1);
     await waitFor(() => expect(harness.client.resize).toHaveBeenCalledTimes(2));
     expect(mocks.terminals[0].options.theme).toMatchObject({

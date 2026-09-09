@@ -53,6 +53,7 @@ export function testConfig(
       terminalFontFamily: "SF Mono",
       terminalFontSize: 13,
       terminalLineHeight: 1.2,
+      terminalScrollSensitivity: 3,
       terminalMargin: 4,
       terminalTheme: { light: PALETTE, dark: PALETTE },
     },

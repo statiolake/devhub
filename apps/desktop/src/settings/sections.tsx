@@ -237,6 +237,24 @@ export function GeneralSection({
             }}
           />
         </Row>
+        <Row
+          label="Scroll speed"
+          help="Multiplies wheel and trackpad scrolling in Agent panes, both when the Agent is reading the mouse and in DevHub's own scrollback."
+        >
+          <NumberField
+            label="Agent pane scroll speed"
+            value={config.appearance.terminalScrollSensitivity}
+            min={0.1}
+            max={20}
+            unit="×"
+            onCommit={(terminalScrollSensitivity) => {
+              update({
+                ...config,
+                appearance: { ...config.appearance, terminalScrollSensitivity },
+              });
+            }}
+          />
+        </Row>
         <Row label="Inset" help="Space between the text and the pane's edge.">
           <NumberField
             label="Agent pane margin"

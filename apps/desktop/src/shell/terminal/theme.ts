@@ -34,6 +34,7 @@ export interface TerminalAppearance {
   readonly terminalFontFamily: string;
   readonly terminalFontSize: number;
   readonly terminalLineHeight: number;
+  readonly terminalScrollSensitivity: number;
   readonly terminalMargin: number;
   readonly terminalTheme: TerminalTheme;
 }

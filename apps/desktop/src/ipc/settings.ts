@@ -75,6 +75,7 @@ export interface SettingsAppearanceWire {
 	readonly terminalFontFamily: string;
 	readonly terminalFontSize: number;
 	readonly terminalLineHeight: number;
+	readonly terminalScrollSensitivity: number;
 	/**
 	 * Carried verbatim rather than edited everywhere: a save rebuilds the whole
 	 * appearance table, so a field the page does not round-trip is a field every

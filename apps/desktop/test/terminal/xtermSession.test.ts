@@ -95,6 +95,7 @@ function open(terminalFontFamily?: string) {
             terminalFontFamily,
             terminalFontSize: 13,
             terminalLineHeight: 1.2,
+            terminalScrollSensitivity: 3,
           } as never),
     inputLabel: "Example terminal input",
     isHidden: () => false,
@@ -385,11 +386,27 @@ describe("the shared xterm session", () => {
       terminalFontFamily: "'Cascadia Code NF'",
       terminalFontSize: 14,
       terminalLineHeight: 1.3,
+      terminalScrollSensitivity: 5,
     } as never);
     expect(String(session.terminal.options.fontFamily)).not.toContain("'");
     expect(String(session.terminal.options.fontFamily)).toContain(
       '"Cascadia Code NF"',
     );
+    session.dispose();
+  });
+
+  it("scrolls by what the appearance says, at open and when it changes", () => {
+    // xterm.js turns one wheel event into at most one mouse report, so this
+    // multiplier is the whole of how far an Agent pane moves per notch.
+    const session = open("Menlo");
+    expect(session.terminal.options.scrollSensitivity).toBe(3);
+    session.applyAppearance({
+      terminalFontFamily: "Menlo",
+      terminalFontSize: 13,
+      terminalLineHeight: 1.2,
+      terminalScrollSensitivity: 5,
+    } as never);
+    expect(session.terminal.options.scrollSensitivity).toBe(5);
     session.dispose();
   });
 });
