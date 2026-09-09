@@ -121,6 +121,37 @@ describe("projection", () => {
     expect(restored.snapshot().workspaces[0].agents[0].unread).toBeUndefined();
   });
 
+  it("round-trips the Agent a workspace was last in", () => {
+    const model = populatedModel();
+    model.selectContext({ kind: "agent", agentId: AG_A });
+    // Away again, so the selection is not what puts the answer back.
+    model.selectContext({ kind: "workspace", workspaceId: WS_B });
+    const state = stateFromSnapshot(model.snapshot());
+    expect(state.workspaces[0].last_agent_id).toBe(AG_A);
+    const restored = hydrateModel(state, [codex]);
+    expect(restored.lastAgentIn(WS_A)).toBe(AG_A);
+  });
+
+  it("has nothing remembered for a workspace nobody opened an Agent in", () => {
+    const model = populatedModel();
+    // Adding the Agent selected it; leave, so nothing was ever asked for here.
+    model.selectContext({ kind: "workspace", workspaceId: WS_B });
+    const state = stateFromSnapshot(model.snapshot());
+    state.workspaces[0].last_agent_id = undefined;
+    expect(hydrateModel(state, [codex]).lastAgentIn(WS_A)).toBeUndefined();
+  });
+
+  it("forgets an Agent that did not come back", () => {
+    const model = populatedModel();
+    model.selectContext({ kind: "agent", agentId: AG_A });
+    model.selectContext({ kind: "workspace", workspaceId: WS_B });
+    const state = stateFromSnapshot(model.snapshot());
+    // An Agent this workspace does not have: the same shape as an id whose
+    // Agent was removed while DevHub was not running.
+    state.workspaces[0].last_agent_id = AG_B;
+    expect(hydrateModel(state, [codex]).lastAgentIn(WS_A)).toBeUndefined();
+  });
+
   it("keeps the provider mapping the model does not own", () => {
     const model = populatedModel();
     const state = stateFromSnapshot(model.snapshot());

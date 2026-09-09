@@ -371,10 +371,13 @@ export function resolveChord(
 					context: { kind: "workspace", workspaceId: workspace.id },
 				};
 			}
-			// Back to the Agent this workspace was last in, and only that: with
-			// none remembered there is no "other half" to go to, and picking the
-			// first Agent instead would make one chord mean two things.
-			const last = workspace.lastAgentId;
+			// Back to the Agent you were last in, or the first one if you have
+			// not been in any. A workspace with Agents always has an "other
+			// half"; refusing to open it until one had been opened by hand made
+			// the chord dead exactly when it was most useful — on a workspace
+			// just restored, or just given its first Agent. Only a workspace
+			// with no Agents at all has nowhere to go.
+			const last = workspace.lastAgentId ?? workspace.agents[0]?.id;
 			return last === undefined
 				? undefined
 				: {

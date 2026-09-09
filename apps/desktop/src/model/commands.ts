@@ -84,9 +84,11 @@
  * the same two things.
  *
  * **`Cmd+Q Cmd+J` is the toggle between the two halves of one workspace.** In
- * the single layout it swaps the selected row between the workspace and the
- * last Agent you had open *in that workspace* — a fact the model keeps, because
- * "the Agent I was in" is per workspace and there is no other way back to it.
+ * the single layout it swaps the selected row between the workspace and its
+ * Agent: the one you were last in *in that workspace*, or its first Agent if
+ * you have not been in any. The last one is a fact the model keeps and writes
+ * down, because "the Agent I was in" is per workspace, survives a restart, and
+ * there is no other way back to it.
  * Side by side, both are already on screen, so there is nothing to select and
  * the same chord moves the keyboard between them instead. One chord, one
  * meaning — "the other half" — and the layout decides what that costs.

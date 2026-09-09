@@ -295,6 +295,17 @@ export class AppModel {
     return undefined;
   }
 
+  /**
+   * Put back the Agent a workspace was last in, from the state file.
+   *
+   * No check that the Agent is still there: `lastAgentIn` already asks that of
+   * every entry, so an id whose Agent did not come back is dropped the first
+   * time anybody reads it, by the one rule that drops stale ids.
+   */
+  restoreLastAgent(workspaceId: WorkspaceId, agentId: AgentId): void {
+    this.lastAgentByWorkspace.set(workspaceId, agentId);
+  }
+
   get workspaces(): readonly Workspace[] {
     return this.workspaceList;
   }

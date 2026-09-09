@@ -279,14 +279,29 @@ describe("the two halves of a workspace", () => {
 		});
 	});
 
-	it("does nothing from a workspace that has never had one open", () => {
-		// Falling back to the first Agent would make one chord mean two things.
+	it("goes to the first Agent from a workspace that has never had one open", () => {
 		expect(
 			run(
 				"toggle_workspace_agent",
 				snapshotOf({
 					workspaces: [two],
 					context: { kind: "workspace", workspaceId: "two" },
+				}),
+			),
+		).toEqual({
+			kind: "select-context",
+			context: { kind: "agent", agentId: "b1" },
+			presentation: "full",
+		});
+	});
+
+	it("does nothing from a workspace with no Agents at all", () => {
+		expect(
+			run(
+				"toggle_workspace_agent",
+				snapshotOf({
+					workspaces: [workspace("empty", [])],
+					context: { kind: "workspace", workspaceId: "empty" },
 				}),
 			),
 		).toBeUndefined();

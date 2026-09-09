@@ -276,6 +276,17 @@ export interface WorkspaceStateRecord {
    * read and not validated, so it is ignored on load and simply absent from
    * the next file written — no migration, because there is nothing to carry.
    */
+  /**
+   * The Agent this workspace was last selected in, if any.
+   *
+   * What `Cmd+Q Cmd+J` comes back to. It is written down because "the Agent I
+   * was in here" is a fact about the person, and a restart is exactly when
+   * they most want it back. An id whose Agent did not come back is dropped on
+   * the first read (`AppModel.lastAgentIn`), and a file from an older DevHub
+   * has no key here and loads as "none remembered" — the chord then opens the
+   * workspace's first Agent, which is its rule with nothing remembered.
+   */
+  last_agent_id?: string;
   lifecycle: WorkspaceLifecycleRecord;
   agents: AgentStateRecord[];
 }
@@ -536,6 +547,9 @@ function validateWorkspaceRecord(record: WorkspaceStateRecord): void {
   validateAbsolutePath(record.canonical_path);
   if (record.repository_id !== undefined) {
     validateUuid(record.repository_id);
+  }
+  if (record.last_agent_id !== undefined) {
+    validateUuid(record.last_agent_id);
   }
   const ids = new Set<string>();
   for (const agent of record.agents) {
@@ -931,6 +945,14 @@ export function hydrateModel(
         return fail("STATE_INVALID");
       }
     }
+
+    if (record.last_agent_id !== undefined) {
+      try {
+        model.restoreLastAgent(id, parseAgentId(record.last_agent_id));
+      } catch {
+        return fail("STATE_INVALID");
+      }
+    }
   }
 
   try {
@@ -1042,6 +1064,7 @@ export function stateFromSnapshot(
       selected_path: workspace.selectedPath,
       canonical_path: workspace.root,
       repository_id: workspace.repositoryId,
+      last_agent_id: workspace.lastAgentId,
       lifecycle: lifecycleFrom(workspace.state),
       agents: workspace.agents.map((agent) => ({
         agent_id: agent.id,
