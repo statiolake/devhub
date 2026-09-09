@@ -17,6 +17,7 @@
  */
 
 import {
+  agentIsIdle,
   cleanupProgress,
   cleanupProgressAfterAgents,
   CLEAN_CLOSE_INSPECTION,
@@ -804,15 +805,26 @@ export class AppCoordinator {
     return { kind: "deferred", operationId: id, snapshot: this.snapshot() };
   }
 
+  /**
+   * Stop an Agent, asking first only if stopping it would interrupt anything.
+   *
+   * `agentIsIdle` is the whole of the rule and it lives in one place — the
+   * same one the workspace close reads, so "this Agent is busy" cannot mean
+   * two things. An Agent sitting at its prompt is stopped where it stands: a
+   * question whose answer is always yes is what teaches people to dismiss the
+   * ones that matter.
+   */
   private beginStopConfirmation(
     agent: AgentId,
     id: OperationId,
   ): IntentOutcome {
-    if (!this.model.workspaceForAgent(agent)) {
+    const found = this.model.agent(agent);
+    if (!found || !this.model.workspaceForAgent(agent)) {
       throw new AppError(AppErrorCode.Domain).withDomain(
         DomainErrorCode.UnknownAgent,
       );
     }
+    if (agentIsIdle(found.status)) return this.startAgentStop(agent, id);
     const token = this.startOperation(
       "generate_confirmation_id",
       { kind: "agent", agentId: agent },
@@ -842,13 +854,20 @@ export class AppCoordinator {
     if (state.kind !== "stop") {
       throw new AppError(AppErrorCode.ConfirmationExpired);
     }
-    this.model.requestAgentStop(state.agentId);
+    return this.startAgentStop(state.agentId, id);
+  }
+
+  /**
+   * Actually stop it. The one second half, whether or not anything was asked.
+   */
+  private startAgentStop(agent: AgentId, id: OperationId): IntentOutcome {
+    this.model.requestAgentStop(agent);
     const token = this.startOperation(
       "stop_agent",
-      { kind: "agent", agentId: state.agentId },
+      { kind: "agent", agentId: agent },
       id,
     );
-    this.emitEffect({ kind: "stop_agent", token, agentId: state.agentId });
+    this.emitEffect({ kind: "stop_agent", token, agentId: agent });
     this.emit({ kind: "snapshot", snapshot: this.snapshot() });
     return { kind: "deferred", operationId: id, snapshot: this.snapshot() };
   }

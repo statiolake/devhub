@@ -372,6 +372,76 @@ describe("closing a workspace", () => {
     expect(driver.coordinator.snapshot().workspaces).toHaveLength(0);
   });
 
+  it("closes a workspace whose Agents are all idle, and stops them with it", () => {
+    // What the inspection reports is `agentsInspection`'s answer, and idle
+    // Agents are not a reason to ask anything. Nothing is asked, and the
+    // cleanup takes them with it.
+    const driver = new Driver();
+    driver.openFolder("/dev/project");
+    driver.dispatch({
+      type: "create_agent",
+      workspaceId: WS_A,
+      profileId: agentProfileId("codex"),
+      presentation: "full",
+    });
+    driver.settle();
+    expect(driver.coordinator.snapshot().workspaces[0].agents).toHaveLength(1);
+
+    driver.dispatch({ type: "request_close_workspace", workspaceId: WS_A });
+    driver.settle();
+    expect(driver.coordinator.snapshot().workspaces).toHaveLength(0);
+  });
+
+  it("asks about a workspace with an Agent that is busy, and leaves it alone until it is answered", () => {
+    const driver = new Driver();
+    driver.openFolder("/dev/project");
+    driver.dispatch({
+      type: "create_agent",
+      workspaceId: WS_A,
+      profileId: agentProfileId("codex"),
+      presentation: "full",
+    });
+    driver.settle();
+    driver.dispatch({ type: "request_close_workspace", workspaceId: WS_A });
+    const inspect = driver.drainEffects()[0];
+    if (inspect.kind !== "inspect_workspace") throw new Error("unexpected");
+    driver.accept({
+      type: "workspace_inspection_completed",
+      token: inspect.token,
+      workspaceId: WS_A,
+      inspection: { ...CLEAN_INSPECTION, agents: busy(1) },
+    });
+    const generate = driver.drainEffects()[0];
+    if (generate.kind !== "generate_confirmation_id") {
+      throw new Error("unexpected");
+    }
+    const required = driver.accept({
+      type: "confirmation_id_generated",
+      token: generate.token,
+      confirmationId: CONFIRM,
+    });
+    expect(required.kind).toBe("confirmation_required");
+    if (required.kind !== "confirmation_required") return;
+    expect(required.purpose).toEqual({
+      kind: "workspace_close",
+      inspection: expect.objectContaining({
+        workspaceId: WS_A,
+        agents: busy(1),
+      }),
+    });
+    // Not answered is not cancelled and not confirmed: the workspace and its
+    // Agent are exactly where they were.
+    expect(driver.coordinator.snapshot().workspaces).toHaveLength(1);
+    expect(driver.coordinator.snapshot().workspaces[0].agents).toHaveLength(1);
+
+    driver.dispatch({
+      type: "confirm_close_workspace",
+      confirmationId: CONFIRM,
+    });
+    driver.settle();
+    expect(driver.coordinator.snapshot().workspaces).toHaveLength(0);
+  });
+
   it("marks the close failed when the final inspection is still busy", () => {
     const driver = new Driver();
     driver.openFolder("/dev/project");
@@ -522,6 +592,80 @@ describe("launching an agent", () => {
 });
 
 describe("stopping an agent", () => {
+  /** A driver with one Agent in one workspace, reported as `status`. */
+  function withAgent(status: "idle" | "working" | "unknown"): Driver {
+    const driver = new Driver();
+    driver.openFolder("/dev/project");
+    driver.dispatch({
+      type: "create_agent",
+      workspaceId: WS_A,
+      profileId: agentProfileId("codex"),
+      presentation: "full",
+    });
+    driver.settle();
+    if (status !== "unknown") {
+      driver.dispatch({ type: "reconcile_agents" });
+      const effect = driver
+        .drainEffects()
+        .find((candidate) => candidate.kind === "reconcile_agents");
+      if (effect?.kind !== "reconcile_agents") {
+        throw new Error("the coordinator did not ask for a reconcile");
+      }
+      driver.accept({
+        type: "agents_reconciled",
+        token: effect.token,
+        reconciliation: {
+          observations: [
+            {
+              agentId: AG_A,
+              status,
+              runtimeHealth: "healthy",
+              activity: undefined,
+              injection: NO_INJECTION,
+            },
+          ],
+          exited: [],
+        },
+      });
+      driver.drainEffects();
+    }
+    return driver;
+  }
+
+  it("stops an idle Agent where it stands, with no question", () => {
+    const driver = withAgent("idle");
+    const outcome = driver.dispatch({ type: "stop_agent", agentId: AG_A });
+    expect(outcome.kind).not.toBe("confirmation_required");
+    const effects = driver.drainEffects();
+    expect(effects.map((effect) => effect.kind)).toContain("stop_agent");
+    for (const effect of effects) driver.answer(effect);
+    driver.settle();
+    expect(driver.coordinator.snapshot().workspaces[0].agents).toHaveLength(0);
+  });
+
+  it("asks before stopping an Agent that is working", () => {
+    const driver = withAgent("working");
+    driver.dispatch({ type: "stop_agent", agentId: AG_A });
+    const generate = driver.drainEffects()[0];
+    if (generate.kind !== "generate_confirmation_id") {
+      throw new Error("the coordinator did not ask for a confirmation");
+    }
+    const required = driver.accept({
+      type: "confirmation_id_generated",
+      token: generate.token,
+      confirmationId: CONFIRM,
+    });
+    expect(required.kind).toBe("confirmation_required");
+    // Cancelling is not answering: the Agent is still there.
+    expect(driver.coordinator.snapshot().workspaces[0].agents).toHaveLength(1);
+  });
+
+  it("asks about an Agent nobody has read, because not knowing is not idle", () => {
+    const driver = withAgent("unknown");
+    driver.dispatch({ type: "stop_agent", agentId: AG_A });
+    expect(driver.drainEffects()[0].kind).toBe("generate_confirmation_id");
+  });
+
   it("confirms, stops, and removes the agent", () => {
     const driver = new Driver();
     driver.openFolder("/dev/project");

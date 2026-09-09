@@ -61,6 +61,7 @@ import type { ControlPosition } from "../cli/protocol.js";
 import { workspaceRootFor } from "../cli/resolve.js";
 import {
 	AgentProfile,
+	agentsInspection,
 	agentProfileId,
 	displayPath,
 	agentId as parseAgentId,
@@ -717,13 +718,10 @@ export class AppController {
 	private requestCloseAgent(agentId: string): void {
 		void this.dispatchFromPage({ type: "stop_agent", agentId })
 			.then((outcome) => {
-				if (outcome.kind !== "confirmation_required") return;
-				shellWindow().modals.openModal({
-					kind: "close-confirmation",
-					confirmationId: outcome.confirmationId,
-					purpose: outcome.purpose,
-					agentId,
-				});
+				// An idle Agent is stopped without a question — the model decides
+				// that, from `agentIsIdle` — and then there is no confirmation in
+				// the outcome and nothing to open.
+				this.raiseCloseConfirmation(outcome, agentId);
 			})
 			.catch((error: unknown) => {
 				this.publishError(errorWire(error));
@@ -752,6 +750,21 @@ export class AppController {
 	 *   was a stale poll git refuses and nothing has happened.
 	 * - A dirty worktree, or one DevHub could not read: the three-way question.
 	 *   Not knowing is not clean, and the question is the safe branch.
+	 *
+	 * # When two things are worth asking about
+	 *
+	 * The folder and the work inside it are two different losses, and either
+	 * can apply on its own, so they are two questions in one fixed order: the
+	 * **folder first**, then the **close**. The folder question is the one that
+	 * cannot be undone and the one whose answer decides whether there is
+	 * anything left to close, so asking it second would be asking about a
+	 * checkout that may be about to be deleted anyway.
+	 *
+	 * Neither is asked when there is nothing to lose: a clean worktree is
+	 * removed without a word, and a workspace whose Agents are all idle closes
+	 * without one — see `agentsInspection`. So the common case still asks
+	 * nothing at all, and the two-sheet case is exactly the case where two
+	 * different things were at stake.
 	 */
 	private closeWorkspaceOrWorktree(workspaceId: string): void {
 		const workspace = this.coordinator.model.workspaces.find(
@@ -788,11 +801,40 @@ export class AppController {
 	}
 
 	/**
+	 * Put a question main raised on screen, if there is one to put there.
+	 *
+	 * Every way of closing something ends in an outcome, and an outcome that
+	 * says `confirmation_required` is a question nobody has been asked yet. It
+	 * goes to the one sheet that asks it — the same one a close started from
+	 * the page opens — so a close cannot quietly stop halfway. The alternative
+	 * was what this replaces: an outcome nobody read, and a row that stayed.
+	 */
+	private raiseCloseConfirmation(
+		outcome: AppOutcomeWire,
+		agentId?: string,
+	): AppOutcomeWire {
+		if (outcome.kind === "confirmation_required") {
+			shellWindow().modals.openModal({
+				kind: "close-confirmation",
+				confirmationId: outcome.confirmationId,
+				purpose: outcome.purpose,
+				...(agentId === undefined ? {} : { agentId }),
+			});
+		}
+		return outcome;
+	}
+
+	/**
 	 * Ask to close a workspace, from a command with nobody waiting on it.
 	 *
 	 * The menu item and the `Cmd+Q Shift+W` chord are the same command, so they
 	 * are the same line: one intent, and a failure that goes to the error
 	 * surface the way every other unwatched failure does.
+	 *
+	 * A close that has something to ask about is *asked*, through
+	 * `raiseCloseConfirmation`. This used to drop the `confirmation_required`
+	 * outcome on the floor, so closing a workspace with an Agent in it — or an
+	 * unsaved editor — did nothing at all and said nothing about why.
 	 */
 	private requestCloseWorkspace(workspaceId: string): void {
 		// A close that failed is retried by asking for the same thing again —
@@ -808,9 +850,13 @@ export class AppController {
 			failed
 				? { type: "retry_close_workspace", workspaceId }
 				: { type: "request_close_workspace", workspaceId },
-		).catch((error: unknown) => {
-			this.publishError(errorWire(error));
-		});
+		)
+			.then((outcome) => {
+				this.raiseCloseConfirmation(outcome);
+			})
+			.catch((error: unknown) => {
+				this.publishError(errorWire(error));
+			});
 	}
 
 	get terminalRuntime(): TerminalWiring | undefined {
@@ -996,10 +1042,6 @@ export class AppController {
 		);
 	}
 
-	private orderedWorkspaceIds(): readonly string[] {
-		return this.snapshot().workspaces.map((workspace) => workspace.id);
-	}
-
 	/**
 	 * Which repository each workspace is a checkout of, for the projection.
 	 *
@@ -1008,6 +1050,10 @@ export class AppController {
 	 * chords step through are then the same list, because they *are* the same
 	 * list. See `model/workspaceOrder.ts`.
 	 */
+	private orderedWorkspaceIds(): readonly string[] {
+		return this.snapshot().workspaces.map((workspace) => workspace.id);
+	}
+
 	private readonly repositoryOf = (workspaceId: string): string | undefined =>
 		this.lastRepositoryStatus.workspaces.find(
 			(entry) => entry.workspaceId === workspaceId,
@@ -1165,7 +1211,7 @@ export class AppController {
 			this.lastRepositoryStatus = status;
 			this.send(CHANNELS.repositoryStatusChanged, status);
 			const after = this.orderedWorkspaceIds();
-			if (before.join(" ") !== after.join(" ")) {
+			if (before.join(" ") !== after.join(" ")) {
 				this.send(CHANNELS.snapshotChanged, this.snapshot());
 			}
 		},
@@ -1618,7 +1664,12 @@ export class AppController {
 			type: "request_close_workspace",
 			workspaceId: workspace.id,
 		});
-		return outcomeWire(settled, this.coordinator.readiness, this.repositoryOf);
+		// The folder is gone; whether the *workspace* can close may still be a
+		// question — a busy Agent, an unsaved editor — and it is asked here for
+		// the same reason it is asked in `requestCloseWorkspace`.
+		return this.raiseCloseConfirmation(
+			outcomeWire(settled, this.coordinator.readiness, this.repositoryOf),
+		);
 	}
 
 	/**
@@ -1826,7 +1877,11 @@ export class AppController {
 		const workspace = this.coordinator.model.workspace(workspaceId);
 		const inspection = await inspectWorkspaceResources(
 			workspaceId,
-			workspace?.agents.length ?? 0,
+			// Only the Agents that stopping would interrupt: an idle one is not a
+			// reason to ask anything, and the close stops it on the way out. The
+			// rule is `agentsInspection`'s, and it is the same one `Cmd+Q X` on a
+			// single Agent reads.
+			agentsInspection((workspace?.agents ?? []).map((agent) => agent.status)),
 			await this.inspectEditors(workspaceId),
 		);
 		this.accept({

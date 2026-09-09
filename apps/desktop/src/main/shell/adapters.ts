@@ -111,13 +111,14 @@ const CLEAN: ResourceInspection = { kind: "clean" };
 /**
  * Collect what a close confirmation needs, asking whoever owns each answer.
  *
- * `agentCount` comes from the model, which is the only place that knows how
- * many Agents this Workspace has — the adapter knows about sessions, not about
- * DevHub's Agents.
+ * `agents` comes from the model, which is the only place that knows what this
+ * Workspace's Agents are doing — the adapter knows about sessions, not about
+ * DevHub's Agents. Which of them count is `agentsInspection`'s rule and not a
+ * second one here.
  */
 export async function inspectWorkspaceResources(
 	workspaceId: WorkspaceId,
-	agentCount: number,
+	agents: ResourceInspection,
 	unsavedEditors: ResourceInspection,
 ): Promise<CloseInspectionInputs> {
 	const terminal = terminals();
@@ -125,7 +126,7 @@ export async function inspectWorkspaceResources(
 		? await terminal.inspect(workspaceId)
 		: { processes: CLEAN, panes: CLEAN, windows: CLEAN };
 	return {
-		agents: agentCount > 0 ? { kind: "busy", count: agentCount } : CLEAN,
+		agents,
 		terminalProcesses: terminalInspection.processes,
 		terminalPanes: terminalInspection.panes,
 		terminalWindows: terminalInspection.windows,

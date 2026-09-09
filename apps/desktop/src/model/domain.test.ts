@@ -4,6 +4,8 @@ import {
   AgentProfile,
   agentProfileId,
   agentId,
+  agentIsIdle,
+  agentsInspection,
   consolidateCloseInspection,
   closeInspectionProjection,
   busy,
@@ -259,5 +261,34 @@ describe("close inspection", () => {
     expect(projection.workspaceLabel).toBe("DevHub");
     expect(projection.agents).toEqual({ kind: "busy", count: 2 });
     expect(projection.terminalPanes).toEqual({ kind: "clean" });
+  });
+});
+
+describe("whether stopping an Agent would interrupt anything", () => {
+  it("counts only a read that says the Agent is at its prompt", () => {
+    expect(agentIsIdle("idle")).toBe(true);
+    for (const status of ["working", "waiting", "error", "unknown"] as const) {
+      expect(agentIsIdle(status)).toBe(false);
+    }
+  });
+});
+
+describe("what the Agents in a workspace amount to for a close", () => {
+  it("counts only the ones stopping would interrupt", () => {
+    expect(agentsInspection(["idle", "working", "idle", "waiting"])).toEqual(
+      busy(2),
+    );
+  });
+
+  it("is clean when every Agent is sitting at its prompt", () => {
+    expect(agentsInspection(["idle", "idle"])).toEqual(CLEAN);
+    expect(agentsInspection([])).toEqual(CLEAN);
+  });
+
+  it("counts an Agent nobody has read, and one that failed", () => {
+    // Not knowing is not idle, and an error is on a screen that stopping the
+    // Agent throws away.
+    expect(agentsInspection(["unknown"])).toEqual(busy(1));
+    expect(agentsInspection(["error"])).toEqual(busy(1));
   });
 });

@@ -17,18 +17,25 @@
  *     the column has a straight leading edge.
  *   - Stroked, never filled: `fill: none`, `stroke: currentcolor`, round caps
  *     and joins, and one weight carried by `--sidebar-glyph-stroke` so a
- *     glyph's line is 1.5 device pixels at either density. The one exception
- *     is `.glyph-fill`, for the two marks that are a dot — a dot cannot be
- *     drawn as an outline at this size without closing to a smudge.
+ *     glyph's line is 1.5 device pixels at either density. `.glyph-fill` is
+ *     the exception, and it covers two cases: the marks that are a dot — a dot
+ *     cannot be drawn as an outline at this size without closing to a smudge —
+ *     and the six Octicons below.
  *   - Colour is `currentcolor`, always. What a mark means by its colour is
  *     said by the element that holds it, never here.
  *
- * The drawings are DevHub's own. They were Octicons and codicons taken
- * verbatim, and that was the mistake underneath the rest: both families are
+ * The drawings are DevHub's own, with one deliberate set of borrowings. The
+ * marks that say what *DevHub* is — a workspace, a worktree, a terminal, an
+ * Agent's status — are drawn here, because codicons and Octicons taken
+ * verbatim for those was the mistake underneath the rest: both families are
  * drawn for a 16-pixel box with interior detail sized for it, and the Sidebar
- * renders them at thirteen and fourteen. `git-pull-request` lost three nodes
- * and a merge arrow to grey mush; `issue-opened`'s centre dot closed up. What
- * is here instead says the same things with the detail this size can hold.
+ * renders them at thirteen and fourteen, so a stroked `loading` arc arrived as
+ * a hairline crescent.
+ *
+ * The marks that say what *GitHub* says — the Issue and pull-request states —
+ * are GitHub's, verbatim and filled. They survive the size because a filled
+ * silhouette does, and their whole job is recognition rather than description.
+ * The block below carries the argument and the licence.
  *
  * To change how the Sidebar looks, change this file. Nothing else draws.
  */
@@ -46,9 +53,13 @@ export type GlyphName =
   | "issueOpen"
   | "issueClosed"
   | "pullRequest"
+  | "pullRequestDraft"
+  | "pullRequestClosed"
   | "pullRequestMerged"
   | "commit"
   | "push"
+  | "openIssue"
+  | "openPullRequest"
   | "statusWorking"
   | "statusWaiting"
   | "statusIdle"
@@ -130,53 +141,66 @@ const GLYPHS: Record<GlyphName, ReactNode> = {
 
   close: <path d="M4.75 4.75l6.5 6.5M11.25 4.75l-6.5 6.5" />,
 
-  /* GitHub's two Issue states, and the pull request out from the branch.
+  /* --------------------------------------------- what GitHub says, in
+   * GitHub's own marks
    *
-   * A ring with something inside it, and what is inside says which: nothing
-   * added for open, a check for closed. The ring is the recognition and the
-   * interior is one stroke, which is all this size holds — the Octicon these
-   * replace put a 3-unit dot inside a 13-pixel ring and it closed to a blob.
+   * Six of the marks in this file are not DevHub's drawings. The Issue and
+   * pull-request states are GitHub's own Octicons, at the 16-unit size they
+   * are drawn for, path data verbatim from `@primer/octicons` v19 (MIT,
+   * GitHub Inc. — `distribution/licenses/Octicons-MIT.txt`, the copy that
+   * ships inside the bundle).
    *
-   * The pull request is a branch and a trunk, and there are two drawings for
-   * the four states — because there is exactly one question the shape answers:
-   * **did this land?**
+   * They are the one exception to the stroked convention above, and the
+   * exception is the point of them. These marks do not say anything about
+   * DevHub — they say what GitHub says about this Issue and this pull request,
+   * and somebody who reads GitHub all day knows these silhouettes cold. A
+   * redrawn approximation of a mark whose entire job is recognition is a mark
+   * that has to be learned a second time.
    *
-   * `open`, `draft` and `closed` are all "no", and they get the arrow: the
-   * branch proposed at the trunk, not touching it. `merged` is "yes", and the
-   * branch reaches the trunk and joins it at a node. What separates the three
-   * that did not land is colour and label — green, grey, red — the same way
-   * `open` and `draft` have always been separated, because a second silhouette
-   * differing from the first by one node is a difference nobody can see at
-   * thirteen pixels. Landing is not that kind of difference: it is the one
-   * fact a person scans this column for. */
+   * So they are filled rather than stroked (`glyph-fill`, the same class the
+   * dots use), and the four pull-request states are four drawings rather than
+   * two-plus-colour. That second part is what lets the colour go away at rest
+   * — see `.row-link-button` in `shell.css`. A column whose state is carried
+   * only by colour cannot be greyed without losing the state; one whose state
+   * is carried by shape can, and then the only colour left in the Sidebar at
+   * rest is an Agent's status, which is the one thing worth a glance. */
+
   issueOpen: (
-    <>
-      <circle cx="8" cy="8" r="5.25" />
-      <circle className="glyph-fill" cx="8" cy="8" r="1.55" />
-    </>
+    <g className="glyph-fill">
+      <path d="M8 9.5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3Z" />
+      <path d="M8 0a8 8 0 1 1 0 16A8 8 0 0 1 8 0ZM1.5 8a6.5 6.5 0 1 0 13 0 6.5 6.5 0 0 0-13 0Z" />
+    </g>
   ),
 
   issueClosed: (
-    <>
-      <circle cx="8" cy="8" r="5.25" />
-      <path d="M5.6 8.15 7.3 9.85 10.5 6.4" />
-    </>
+    <g className="glyph-fill">
+      <path d="M11.28 6.78a.75.75 0 0 0-1.06-1.06L7.25 8.69 5.78 7.22a.75.75 0 0 0-1.06 1.06l2 2a.75.75 0 0 0 1.06 0l3.5-3.5Z" />
+      <path d="M16 8A8 8 0 1 1 0 8a8 8 0 0 1 16 0Zm-1.5 0a6.5 6.5 0 1 0-13 0 6.5 6.5 0 0 0 13 0Z" />
+    </g>
   ),
 
   pullRequest: (
-    <path d="M4.25 2.75v10.5M11.75 13.25V7.6a2.35 2.35 0 0 0-2.35-2.35H6.6M8.85 3 6.6 5.25 8.85 7.5" />
+    <g className="glyph-fill">
+      <path d="M1.5 3.25a2.25 2.25 0 1 1 3 2.122v5.256a2.251 2.251 0 1 1-1.5 0V5.372A2.25 2.25 0 0 1 1.5 3.25Zm5.677-.177L9.573.677A.25.25 0 0 1 10 .854V2.5h1A2.5 2.5 0 0 1 13.5 5v5.628a2.251 2.251 0 1 1-1.5 0V5a1 1 0 0 0-1-1h-1v1.646a.25.25 0 0 1-.427.177L7.177 3.427a.25.25 0 0 1 0-.354ZM3.75 2.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm0 9.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm8.25.75a.75.75 0 1 0 1.5 0 .75.75 0 0 0-1.5 0Z" />
+    </g>
   ),
 
-  /* Merged: the same trunk and the same branch, with the arrow replaced by the
-     junction it was pointing at. The branch runs all the way in and a filled
-     node sits where it meets — a dot, and not an outline, for the reason the
-     other two dots in this file are dots: at this size a ring that small
-     closes to a smudge. */
+  pullRequestDraft: (
+    <g className="glyph-fill">
+      <path d="M3.25 1A2.25 2.25 0 0 1 4 5.372v5.256a2.251 2.251 0 1 1-1.5 0V5.372A2.251 2.251 0 0 1 3.25 1Zm9.5 14a2.25 2.25 0 1 1 0-4.5 2.25 2.25 0 0 1 0 4.5ZM2.5 3.25a.75.75 0 1 0 1.5 0 .75.75 0 0 0-1.5 0ZM3.25 12a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm9.5 0a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5ZM14 7.5a1.25 1.25 0 1 1-2.5 0 1.25 1.25 0 0 1 2.5 0Zm0-4.25a1.25 1.25 0 1 1-2.5 0 1.25 1.25 0 0 1 2.5 0Z" />
+    </g>
+  ),
+
+  pullRequestClosed: (
+    <g className="glyph-fill">
+      <path d="M3.25 1A2.25 2.25 0 0 1 4 5.372v5.256a2.251 2.251 0 1 1-1.5 0V5.372A2.251 2.251 0 0 1 3.25 1Zm9.5 5.5a.75.75 0 0 1 .75.75v3.378a2.251 2.251 0 1 1-1.5 0V7.25a.75.75 0 0 1 .75-.75Zm-2.03-5.273a.75.75 0 0 1 1.06 0l.97.97.97-.97a.748.748 0 0 1 1.265.332.75.75 0 0 1-.205.729l-.97.97.97.97a.751.751 0 0 1-.018 1.042.751.751 0 0 1-1.042.018l-.97-.97-.97.97a.749.749 0 0 1-1.275-.326.749.749 0 0 1 .215-.734l.97-.97-.97-.97a.75.75 0 0 1 0-1.06ZM2.5 3.25a.75.75 0 1 0 1.5 0 .75.75 0 0 0-1.5 0ZM3.25 12a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm9.5 0a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Z" />
+    </g>
+  ),
+
   pullRequestMerged: (
-    <>
-      <path d="M4.25 2.75v10.5M11.75 13.25V7.6a2.35 2.35 0 0 0-2.35-2.35H5.6" />
-      <circle className="glyph-fill" cx="4.25" cy="5.25" r="1.35" />
-    </>
+    <g className="glyph-fill">
+      <path d="M5.45 5.154A4.25 4.25 0 0 0 9.25 7.5h1.378a2.251 2.251 0 1 1 0 1.5H9.25A5.734 5.734 0 0 1 5 7.123v3.505a2.25 2.25 0 1 1-1.5 0V5.372a2.25 2.25 0 1 1 1.95-.218ZM4.25 13.5a.75.75 0 1 0 0-1.5.75.75 0 0 0 0 1.5Zm8.5-4.5a.75.75 0 1 0 0-1.5.75.75 0 0 0 0 1.5ZM5 3.25a.75.75 0 1 0 0 .005V3.25Z" />
+    </g>
   ),
 
   /* The three shortcuts a workspace offers while work is under way. They are
@@ -194,6 +218,30 @@ const GLYPHS: Record<GlyphName, ReactNode> = {
       <path d="M8 2.75v2.6M8 10.65v2.6" />
       <circle cx="8" cy="8" r="2.65" />
     </>
+  ),
+
+  /* Opening an Issue and opening a pull request, as *acts* rather than as
+     states.
+
+     They are DevHub's drawings and not the Octicons above, and the difference
+     is the whole reason there are two of each. An Octicon reports what GitHub
+     already says about something that exists; these two ask an Agent to make
+     one, they sit in a column beside `commit` and `push`, and a filled
+     16-pixel Octicon next to a 1.5-pixel stroke is the disagreement this file
+     exists to prevent. Same grid, same weight, same column.
+
+     The Issue is a ring with a dot in it and the pull request is the branch
+     proposed at the trunk — the shapes DevHub drew for these before the states
+     went to GitHub's own. */
+  openIssue: (
+    <>
+      <circle cx="8" cy="8" r="5.25" />
+      <circle className="glyph-fill" cx="8" cy="8" r="1.55" />
+    </>
+  ),
+
+  openPullRequest: (
+    <path d="M4.25 2.75v10.5M11.75 13.25V7.6a2.35 2.35 0 0 0-2.35-2.35H6.6M8.85 3 6.6 5.25 8.85 7.5" />
   ),
 
   push: (

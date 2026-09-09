@@ -383,6 +383,30 @@ export class AgentProfile {
  * folding it into `idle` would claim a reading nobody took.
  */
 export type AgentStatus = "working" | "waiting" | "idle" | "error" | "unknown";
+
+/**
+ * Whether stopping this Agent would interrupt anything.
+ *
+ * **One predicate, and this is it.** It decides whether `Cmd+Q X` on an Agent
+ * asks "Stop this agent?" before stopping it, and it decides whether closing a
+ * workspace asks about the Agents in it. A question whose answer is always yes
+ * is what teaches people to dismiss the ones that matter, so an Agent sitting
+ * at its prompt with nothing to lose is stopped without one.
+ *
+ * The reading is the reconciler's — the screen detectors' `AgentStatus` — and
+ * only `idle` counts:
+ *
+ * - `working`: it is mid-task. Stopping it throws that away.
+ * - `waiting`: it asked the person something and is holding for the answer.
+ * - `error`: something is on its screen that says what went wrong, and the
+ *   only copy of it is the screen.
+ * - `unknown`: nobody has read this Agent — a profile with no detector, or one
+ *   that has not been reconciled yet. Not knowing is not idle, and the
+ *   question is the safe branch. See `AgentStatus`.
+ */
+export function agentIsIdle(status: AgentStatus): boolean {
+  return status === "idle";
+}
 export type RuntimeHealth =
   | "starting"
   | "healthy"
@@ -1153,6 +1177,22 @@ export function busy(count: number): ResourceInspection {
     throw invalid(DomainErrorCode.InvalidBusyCount);
   }
   return { kind: "busy", count };
+}
+
+/**
+ * What the Agents in a Workspace amount to, for a close.
+ *
+ * Only the ones stopping would interrupt are counted — `agentIsIdle` says
+ * which, and it is the same predicate `Cmd+Q X` on a single Agent reads, so a
+ * workspace full of idle Agents closes with no question and stops them on the
+ * way out. Counting every Agent is what made "close this workspace" ask about
+ * three Agents that were all sitting at a prompt.
+ */
+export function agentsInspection(
+  statuses: readonly AgentStatus[],
+): ResourceInspection {
+  const busyCount = statuses.filter((status) => !agentIsIdle(status)).length;
+  return busyCount === 0 ? CLEAN : busy(busyCount);
 }
 
 export function unknownResource(
