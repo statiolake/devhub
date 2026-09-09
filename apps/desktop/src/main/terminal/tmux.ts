@@ -28,6 +28,7 @@
  * the old socket and the commit of the new effective name.
  */
 
+import { activityCounters, COUNTER } from "../diagnostics/counters.js";
 import { createHash, randomBytes } from "node:crypto";
 import {
 	closeSync,
@@ -80,6 +81,7 @@ import {
 	type TerminalPreflight,
 	type TerminalTarget,
 	type WorkspaceTerminalTarget,
+	type ListedAgentSession,
 } from "./ports.js";
 import { requiredTerminalSet } from "./ports.js";
 
@@ -109,6 +111,18 @@ const SESSION_FORMAT =
 		`#{${CONTEXT_OPTION}}`,
 		`#{${WORKSPACE_ID_OPTION}}`,
 		`#{${AGENT_ID_OPTION}}`,
+		// When the session's window last produced output, to the second.
+		//
+		// It rides along on the listing every reconcile round already runs, so
+		// it costs nothing to ask for, and it is what lets a round skip reading
+		// the screen of an Agent that has not written anything since the last
+		// one. `session_activity` is the wrong variable and was tried first: it
+		// tracks a *client* attaching and typing, and sat unchanged through a
+		// pane printing a line a second.
+		//
+		// Before the root, because the root is the field that keeps the last
+		// place — see where it is read.
+		"#{window_activity}",
 		`#{${ROOT_OPTION}}`,
 	].join(FIELD_SEPARATOR) + RECORD_SEPARATOR;
 /** Which of the two listings a record of `listWindowsAndPanes` came from. */
@@ -200,12 +214,24 @@ const BOOTSTRAP_CONFIG = [
 /** What the server's global marker says about who owns it. */
 export type MarkerState = "absent" | "wrong" | "owned";
 
+/** The part of a listing that says whether DevHub wrote the session. */
+export type SessionMarking = Pick<
+	SessionInfo,
+	"name" | "context" | "workspaceId" | "root" | "agentId"
+>;
+
 export interface SessionInfo {
 	readonly name: string;
 	readonly context: string | undefined;
 	readonly workspaceId: string | undefined;
 	readonly root: string | undefined;
 	readonly agentId: string | undefined;
+	/**
+	 * When this session's window last produced output, as tmux's
+	 * `#{window_activity}` — a unix time in whole seconds. `undefined` from a
+	 * tmux that did not answer with one, which is read as "assume it changed".
+	 */
+	readonly activity: string | undefined;
 }
 
 interface SessionSpec {
@@ -342,7 +368,10 @@ export function parseNumericPrefix(value: string): number {
 }
 
 export function isMarked(
-	session: SessionInfo,
+	// The four marker fields and the name, which is all this reads. A listing
+	// carries more — when the pane last wrote, for one — and none of it bears
+	// on whether the session is one DevHub wrote.
+	session: SessionMarking,
 	expectedGlobalRoot: string,
 ): boolean {
 	const { context, workspaceId, root, agentId } = session;
@@ -389,7 +418,9 @@ export function isMarked(
  * a name, and it must stay intact.
  */
 export function sessionMatches(
-	session: SessionInfo,
+	// The marker fields and the name, as `isMarked`: whether a listing's
+	// session is the one being addressed does not depend on what it has done.
+	session: SessionMarking,
 	identity: TargetIdentity,
 ): boolean {
 	return (
@@ -1009,7 +1040,7 @@ export class TmuxTerminalRuntime {
 	 */
 	async listAgents(
 		cancel = new CancellationToken(),
-	): Promise<readonly OwnedSessionRecord[]> {
+	): Promise<readonly ListedAgentSession[]> {
 		const release = await this.gate.acquireOperation(cancel);
 		try {
 			const socket = this.socket();
@@ -1025,7 +1056,10 @@ export class TmuxTerminalRuntime {
 						session.context === AGENT_CONTEXT &&
 						isMarked(session, this.contextHome),
 				)
-				.map((session) => this.ownedSessionRecord(session));
+				.map((session) => ({
+					record: this.ownedSessionRecord(session),
+					activity: session.activity,
+				}));
 		} finally {
 			release();
 		}
@@ -1058,6 +1092,7 @@ export class TmuxTerminalRuntime {
 		cancel = new CancellationToken(),
 	): Promise<{ readonly screen: string; readonly oscTitle: string }> {
 		if (record.kind !== "agent") throw portFailure("failed");
+		activityCounters.record(COUNTER.agentScreenCapture);
 		const release = await this.gate.acquireOperation(cancel);
 		try {
 			const socket = this.socket();
@@ -1818,6 +1853,7 @@ export class TmuxTerminalRuntime {
 		cancel: CancellationToken,
 		deadline: OperationDeadline,
 	): Promise<SessionInfo[]> {
+		activityCounters.record(COUNTER.tmuxListSessions);
 		const output = await this.runTmux(
 			socket,
 			["list-sessions", "-F", SESSION_FORMAT],
@@ -1829,16 +1865,17 @@ export class TmuxTerminalRuntime {
 			if (isNoServerError(output.stderr)) return [];
 			throw portFailure("failed");
 		}
-		const records = parseRecords(output.stdout, 5);
+		const records = parseRecords(output.stdout, 6);
 		if (records.length > MAX_SESSIONS) throw portFailure("failed");
 		return records.map((record) => ({
 			name: record[0],
 			context: markerValue(record[1]),
 			workspaceId: markerValue(record[2]),
 			agentId: agentIdMarker(markerValue(record[3])),
+			activity: markerValue(record[4]),
 			// Last, because it is the field whose value may itself contain a
 			// newline; the record separator is what ends it either way.
-			root: markerValue(record[4]),
+			root: markerValue(record[5]),
 		}));
 	}
 

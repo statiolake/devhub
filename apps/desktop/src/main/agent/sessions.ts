@@ -49,6 +49,8 @@ export interface AgentLaunchSpec extends AgentTerminalTarget {
 export interface LiveAgentSession {
 	readonly agentId: string;
 	readonly workspaceId: string;
+	/** `#{window_activity}`: when this Agent's pane last wrote, to the second. */
+	readonly activity: string | undefined;
 }
 
 export class AgentSessions {
@@ -110,10 +112,16 @@ export class AgentSessions {
 
 	/** Every Agent session on the socket right now. */
 	async list(cancel = new CancellationToken()): Promise<LiveAgentSession[]> {
-		const records = await this.#runtime.listAgents(cancel);
-		return records.flatMap((record) =>
-			record.kind === "agent"
-				? [{ agentId: record.agentId, workspaceId: record.workspaceId }]
+		const listed = await this.#runtime.listAgents(cancel);
+		return listed.flatMap((one) =>
+			one.record.kind === "agent"
+				? [
+						{
+							agentId: one.record.agentId,
+							workspaceId: one.record.workspaceId,
+							activity: one.activity,
+						},
+					]
 				: [],
 		);
 	}
@@ -210,11 +218,10 @@ export class AgentSessions {
 		// after creating its session: there is no row for that Agent and there
 		// never will be, so a terminate that could only work for Agents the
 		// model knows would leave exactly those sessions running for ever.
-		const record = (await this.#runtime.listAgents(cancel)).find(
-			(candidate) =>
-				candidate.kind === "agent" && candidate.agentId === agentId,
+		const listed = (await this.#runtime.listAgents(cancel)).find(
+			({ record }) => record.kind === "agent" && record.agentId === agentId,
 		);
-		if (!record) return;
-		await this.#runtime.closeAgent(record, cancel);
+		if (!listed) return;
+		await this.#runtime.closeAgent(listed.record, cancel);
 	}
 }

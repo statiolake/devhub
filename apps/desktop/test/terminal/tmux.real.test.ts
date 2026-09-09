@@ -465,7 +465,9 @@ describe.skipIf(TMUX === undefined)(
         ].sort(),
       );
       expect(await new AgentSessions(adopted).list()).toEqual([
-        { agentId, workspaceId },
+        // The activity marker is tmux's clock, so it is asserted by shape:
+        // what matters here is that the listing carries one at all.
+        { agentId, workspaceId, activity: expect.stringMatching(/^\d+$/) },
       ]);
     });
 
@@ -709,7 +711,9 @@ describe.skipIf(TMUX === undefined)(
         command: { file: "/bin/sh", args: ["-c", "sleep 30"], env: {} },
       });
 
-      expect(await sessions.list()).toEqual([{ agentId, workspaceId }]);
+      expect(await sessions.list()).toEqual([
+        { agentId, workspaceId, activity: expect.stringMatching(/^\d+$/) },
+      ]);
       const listed = await test.runtime.listSessions(
         test.socket,
         test.cancel,
@@ -904,7 +908,7 @@ describe.skipIf(TMUX === undefined)(
       );
 
       const live = await test.runtime.listAgents(test.cancel);
-      expect(live.map((one) => one.sessionName)).toContain(
+      expect(live.map((one) => one.record.sessionName)).toContain(
         agentSessionName(agentId),
       );
 

@@ -239,6 +239,24 @@ export type OwnedSessionRecord =
 			readonly sessionName: string;
 	  };
 
+/**
+ * One Agent session as a listing found it.
+ *
+ * The record is the session's identity and nothing else — it is what a caller
+ * builds from an id in order to address a session it has never listed. When it
+ * last wrote is an *observation*, true only of the listing that made it, so it
+ * travels beside the record rather than inside it.
+ */
+export interface ListedAgentSession {
+	readonly record: OwnedSessionRecord;
+	/**
+	 * `#{window_activity}`: when the Agent's pane last wrote, to the second.
+	 * `undefined` means the runtime did not say, and a reader that uses it to
+	 * skip work must not skip.
+	 */
+	readonly activity: string | undefined;
+}
+
 export function ownedSessionName(record: OwnedSessionRecord): string {
 	return record.sessionName;
 }

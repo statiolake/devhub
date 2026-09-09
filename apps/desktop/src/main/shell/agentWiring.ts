@@ -17,6 +17,7 @@ import { randomUUID } from "node:crypto";
 import { AgentActivityReader } from "../agent/activity.js";
 import { AgentStatusDetector } from "../agent/detect/detector.js";
 import { AgentInjectionQueue } from "../agent/injection.js";
+import { AgentScreenFreshness } from "../agent/screenFreshness.js";
 import { AgentSessions } from "../agent/sessions.js";
 import type { AppModel } from "../../model/appModel.js";
 import type {
@@ -46,6 +47,10 @@ export function wireAgents(options: AgentWiringOptions): AgentSessions {
 	const detector = new AgentStatusDetector();
 	const activity = new AgentActivityReader();
 	const injections = new AgentInjectionQueue();
+	// Which Agents have written something since the last round. Without it
+	// every round read every Agent's screen, whether or not there was anything
+	// new on it — see `agent/screenFreshness.ts`.
+	const freshness = new AgentScreenFreshness();
 
 	registerAgentAdapter({
 		async launch(
@@ -122,7 +127,16 @@ export function wireAgents(options: AgentWiringOptions): AgentSessions {
 					});
 				}
 			}
-			const live = new Set((await sessions.list()).map((one) => one.agentId));
+			// The listing carries each Agent's activity marker, so this is both
+			// "which Agents are alive" and "which of them have written
+			// anything" — one answer, from one command, as it has to be: two
+			// listings would be two moments, and an Agent could be alive in one
+			// and gone in the other.
+			const listed = await sessions.list();
+			const live = new Set(listed.map((one) => one.agentId));
+			const markers = new Map(
+				listed.map((one) => [one.agentId, one.activity] as const),
+			);
 			const observations: {
 				agentId: AgentId;
 				status: AgentStatus;
@@ -140,6 +154,7 @@ export function wireAgents(options: AgentWiringOptions): AgentSessions {
 					if (sessions.isLaunching(id)) continue;
 					detector.forget(id);
 					activity.forget(id);
+					freshness.forget(id);
 					// An Agent that ended takes with it anything it was never
 					// told. That is the one delivery failure nothing can retry,
 					// so it is said out loud rather than dropped in silence.
@@ -155,6 +170,8 @@ export function wireAgents(options: AgentWiringOptions): AgentSessions {
 					sessions,
 					detector,
 					activity,
+					freshness,
+					markers.get(id),
 					id,
 					about.workspaceId,
 					about.kind,
@@ -238,6 +255,8 @@ async function observe(
 	sessions: AgentSessions,
 	detector: AgentStatusDetector,
 	activity: AgentActivityReader,
+	freshness: AgentScreenFreshness,
+	marker: string | undefined,
 	agentId: AgentId,
 	workspaceId: WorkspaceId,
 	kind: string,
@@ -245,6 +264,19 @@ async function observe(
 	readonly status: AgentStatus;
 	readonly activity: string | undefined;
 }> {
+	// An Agent that has written nothing since its screen was last read has the
+	// screen it had, so the reading DevHub already has is the reading. Saying
+	// so costs nothing; asking again costs a process.
+	//
+	// It answers with what was last shown, which is the same thing this
+	// function already answers with when a capture fails — one path for "no
+	// new screen", rather than a second kind of unchanged.
+	if (!freshness.shouldCapture(agentId, marker)) {
+		return {
+			status: detector.showing(agentId),
+			activity: activity.showing(agentId),
+		};
+	}
 	const screen = await sessions
 		.screen(agentId, workspaceId)
 		.catch(() => undefined);
@@ -254,6 +286,9 @@ async function observe(
 			activity: activity.showing(agentId),
 		};
 	}
+	// Only a capture that arrived counts. One that failed left the reading
+	// where it was, and marking it settled would stop the next round retrying.
+	freshness.captured(agentId, marker);
 	return {
 		status: detector.status(kind, screen),
 		activity: activity.activity(screen),
