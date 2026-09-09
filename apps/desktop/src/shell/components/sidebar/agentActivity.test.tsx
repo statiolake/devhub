@@ -15,10 +15,11 @@
  * leading line is never empty.
  */
 
+import { readFileSync } from "node:fs";
 import "@testing-library/jest-dom/vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { AppSnapshot } from "../../../ipc/appShell";
+import type { AgentStatus, AppSnapshot } from "../../../ipc/appShell";
 import type { AppShellContextValue } from "../../useAppShell";
 import { AppShellContext } from "../../useAppShell";
 import { Sidebar } from "./Sidebar";
@@ -32,7 +33,7 @@ afterEach(cleanup);
 
 function snapshotWithAgent(
   activity: string | undefined,
-  unread = false,
+  unread: AgentStatus | undefined = undefined,
 ): AppSnapshot {
   return {
     schemaVersion: 1,
@@ -70,7 +71,10 @@ function snapshotWithAgent(
   } as unknown as AppSnapshot;
 }
 
-function mount(activity: string | undefined, unread = false): void {
+function mount(
+  activity: string | undefined,
+  unread: AgentStatus | undefined = undefined,
+): void {
   const value = {
     dispatch: vi.fn(),
     openExternalUrl: vi.fn(),
@@ -125,7 +129,7 @@ describe("what an Agent's row leads with", () => {
 
 describe("where an Agent's unread mark is", () => {
   it("sits in the row's leading rail, and nowhere else", () => {
-    mount("Reading the reconciler", true);
+    mount("Reading the reconciler", "waiting");
     const row = document.querySelector(".agent-row");
     expect(row?.querySelector(".row-rail > .row-unread")).toBeInTheDocument();
     // One mark, at one end. Two of them at opposite ends of the row is the
@@ -136,5 +140,46 @@ describe("where an Agent's unread mark is", () => {
   it("is absent when the Agent is not owed an answer", () => {
     mount("Reading the reconciler");
     expect(document.querySelector(".row-unread")).toBeNull();
+  });
+
+  /**
+   * The dot says why it is there, in the colour of the status that earned it.
+   * A finish and a question are not the same errand, and one blue dot for both
+   * is the dot saying they are. The class is the whole of the difference: the
+   * colours themselves are the status tokens, in `shell.css`.
+   */
+  it("wears the colour of the reason it is there", () => {
+    for (const reason of [
+      "waiting",
+      "idle",
+      "error",
+      "working",
+      "unknown",
+    ] as const) {
+      mount("Reading the reconciler", reason);
+      expect(document.querySelector(".row-unread")).toHaveClass(
+        `row-unread-${reason}`,
+      );
+      cleanup();
+    }
+  });
+
+  it("draws each reason in that status's own colour, and invents none", () => {
+    // Vitest runs from the package root, and the stylesheet is one file, not
+    // a module this test can import under jsdom.
+    const css = readFileSync("src/shell/styles/shell.css", "utf8");
+    for (const [reason, token] of [
+      ["waiting", "--status-waiting"],
+      ["idle", "--status-idle"],
+      ["error", "--status-error"],
+      ["working", "--status-working"],
+      // Not a verdict, and it does not get a status colour: the same secondary
+      // ink the `unknown` status mark takes.
+      ["unknown", "--secondary"],
+    ] as const) {
+      expect(css).toContain(
+        `.row-unread-${reason} {\n  background: var(${token});\n}`,
+      );
+    }
   });
 });

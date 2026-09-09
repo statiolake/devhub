@@ -402,10 +402,19 @@ function WorkspaceRow({
                       you and you have not been, which is a fact about the
                       person and outlives whatever the Agent is doing now — an
                       Agent can be idle and unread, and that is exactly the
-                      case one mark would lose. */}
+                      case one mark would lose.
+
+                      Its colour is the reason it is there: the status the
+                      Agent went into while nobody was watching. A finish and a
+                      question are not the same errand, and a dot that is
+                      always blue would say they were. */}
                   <div className="row-head">
                     <span className="row-rail" aria-hidden="true">
-                      {agent.unread ? <span className="row-unread" /> : null}
+                      {agent.unread ? (
+                        <span
+                          className={`row-unread row-unread-${agent.unread}`}
+                        />
+                      ) : null}
                     </span>
                     <button
                       className="sidebar-context-button"

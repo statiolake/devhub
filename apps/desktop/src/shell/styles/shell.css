@@ -1686,14 +1686,19 @@ body.is-resizing-split {
 /* ------------------------------------------------- unread, and the attention */
 
 /*
- * An Agent asked for you and you have not been.
+ * An Agent wanted you and you have not been.
  *
- * A small filled disc in the row's leading rail, in the same blue as the
- * `waiting` status mark, because it is the same fact one step later: the status
- * says the Agent is asking now, the dot says it asked and is still owed an
- * answer. Two marks rather than one, because an Agent can be idle and unread —
- * it asked, you never came, and it moved on — and that is exactly the case a
- * single mark would lose.
+ * A small filled disc in the row's leading rail, in the colour of the status
+ * that earned it, because it is that fact one step later: the status mark says
+ * what the Agent is doing now, the dot says what it did while you were away
+ * and is still owed a look. Two marks rather than one, because an Agent can be
+ * idle and unread — it finished, you never came — and that is exactly the case
+ * a single mark would lose.
+ *
+ * Finishing and asking are different errands, so they are different colours:
+ * the same four status tokens the marks themselves use, and no fifth colour
+ * invented for the rail. Blue is the default only because a state file written
+ * by a DevHub that could only mean "it asked" is loaded as `waiting`.
  *
  * Both marks are at the leading edge, in adjacent columns. The dot used to
  * trail the row while the status glyph led it, which put two marks about one
@@ -1707,6 +1712,28 @@ body.is-resizing-split {
   height: 6px;
   border-radius: 50%;
   background: var(--status-waiting);
+}
+
+.row-unread-working {
+  background: var(--status-working);
+}
+
+.row-unread-waiting {
+  background: var(--status-waiting);
+}
+
+.row-unread-idle {
+  background: var(--status-idle);
+}
+
+.row-unread-error {
+  background: var(--status-error);
+}
+
+/* No detector read this Agent's screen; the same secondary ink the `unknown`
+   status mark takes, for the same reason — it is visibly not a verdict. */
+.row-unread-unknown {
+  background: var(--secondary);
 }
 
 .agent-row.is-unread .row-label {
