@@ -70,7 +70,7 @@ import {
   Group,
   NumberField,
   Popup,
-  ResetSection,
+  ResetLink,
   Row,
   SwitchRow,
   TextArea,
@@ -132,7 +132,7 @@ export function GeneralSection({
   readonly runtime: SettingsRuntimeWire;
 }) {
   return (
-    <Form>
+    <Form reset={<ResetLink what="general settings" onReset={onReset} />}>
       <Group heading="Environment" note={runtime.loginEnvironment}>
         <SwitchRow
           label="Login shell"
@@ -253,7 +253,6 @@ export function GeneralSection({
           />
         </Row>
       </Group>
-      <ResetSection what="general settings" onReset={onReset} />
     </Form>
   );
 }
@@ -362,7 +361,7 @@ export function WorkspacesSection({
           ),
         });
       }}
-      footer={<ResetSection what="workspace sources" onReset={onReset} />}
+      reset={<ResetLink what="workspace sources" onReset={onReset} />}
       empty={{
         title: "No workspace sources",
         message:
@@ -713,7 +712,7 @@ export function AgentsSection({
           ),
         });
       }}
-      footer={<ResetSection what="agent profiles" onReset={onReset} />}
+      reset={<ResetLink what="agent profiles" onReset={onReset} />}
       empty={{
         title: "No agent profiles",
         message:
@@ -955,7 +954,7 @@ export function TerminalSection({
   const moved = asked.length > 0 && asked !== effectiveSocket;
 
   return (
-    <Form>
+    <Form reset={<ResetLink what="terminal settings" onReset={onReset} />}>
       {/*
         The one setting in this window that is a decision rather than a value.
         Everything above applies where it is typed; DevHub's live sessions are
@@ -1018,7 +1017,6 @@ export function TerminalSection({
           </div>
         </Row>
       </Group>
-      <ResetSection what="terminal settings" onReset={onReset} />
     </Form>
   );
 }
@@ -1074,7 +1072,7 @@ export function AdvancedSection({
   ] as const;
 
   return (
-    <Form>
+    <Form reset={<ResetLink what="advanced settings" onReset={onReset} />}>
       <Group
         heading="Programs"
         note="A bare name is looked up on your PATH; a path is used as given. What DevHub found is shown under each one."
@@ -1148,18 +1146,34 @@ export function AdvancedSection({
           </div>
         </Row>
       </Group>
-      <ResetSection what="advanced settings" onReset={onReset} />
     </Form>
   );
 }
 
 // ------------------------------------------------------------------ shared
 
-/** A screen that is a form: one centred column, scrolling on its own. */
-function Form({ children }: { readonly children: React.ReactNode }) {
+/**
+ * A screen that is a form: one centred column, scrolling on its own.
+ *
+ * `reset` is the screen's way back to DevHub's defaults, and it is a slot here
+ * rather than a group at the end of every section for the reason `ResetLink`
+ * gives: it is not one of the things the form sets, so it does not stand in
+ * the column of them. It leads the column instead, at the trailing edge, on
+ * the line the first group's heading starts.
+ */
+function Form({
+  reset,
+  children,
+}: {
+  readonly reset?: React.ReactNode;
+  readonly children: React.ReactNode;
+}) {
   return (
     <div className="sf-form">
-      <div className="sf-column">{children}</div>
+      <div className="sf-column">
+        {reset ? <div className="sf-screen-head">{reset}</div> : null}
+        {children}
+      </div>
     </div>
   );
 }
@@ -1272,7 +1286,7 @@ export function ActionsSection({
           agentActions: actions.filter((_, position) => position !== selected),
         });
       }}
-      footer={<ResetSection what="agent actions" onReset={onReset} />}
+      reset={<ResetLink what="agent actions" onReset={onReset} />}
       onMove={(direction) => {
         if (selected === undefined) return;
         const target = selected + direction;
@@ -1640,7 +1654,7 @@ export function KeyboardSection({
   };
 
   return (
-    <Form>
+    <Form reset={<ResetLink what="keyboard shortcuts" onReset={onReset} />}>
       <Group
         heading="Prefix"
         note="Every DevHub command is two strokes: this one, then one key. Nothing DevHub does is a single shortcut, because the editor and the terminal inside it want their own keys."
@@ -1704,8 +1718,6 @@ export function KeyboardSection({
           />
         ))}
       </Group>
-
-      <ResetSection what="keyboard shortcuts" onReset={onReset} />
     </Form>
   );
 }

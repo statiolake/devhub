@@ -13,6 +13,7 @@
  */
 
 import { useState, type ReactNode } from "react";
+import { Picker } from "../shell/components/shell/Picker";
 
 // ------------------------------------------------------------------ groups
 
@@ -489,19 +490,39 @@ export function PlusGlyph() {
   );
 }
 
+/** The safe row, and therefore the first one. */
+const KEEP_SETTINGS = "devhub:keep-settings";
+const RESET_SETTINGS = "devhub:reset-settings";
+
 /**
  * "Put this screen back to its defaults", the same control on every screen.
  *
- * One component and not a button per section, because the sections must not be
- * allowed to disagree about what resetting means. What it does is write
+ * One component and not a control per section, because the sections must not
+ * be allowed to disagree about what resetting means. What it does is write
  * DevHub's defaults for the keys the screen owns into `settings.toml`, leaving
  * everything else the file says alone.
  *
- * It asks first. Undoing it means retyping whatever was there, and a control
- * that sits at the bottom of every screen is a control that will be pressed by
- * accident.
+ * It is a link at the top of the screen, not a button at the bottom of it. A
+ * reset is not a setting — it is not something a person came here to *do*, it
+ * is the way back when they have done something they regret — and it spent
+ * this window's whole life dressed as one: a push button, in a box, under a
+ * heading of its own reading "Defaults", at the end of every screen, in a
+ * column of controls that all change something the moment you touch them. The
+ * one control in the window that can throw work away looked exactly like the
+ * one that turns the login shell on.
+ *
+ * So it is the quietest thing on the screen and it is out of the reading
+ * order: a line of muted text at the trailing edge, above the first group,
+ * underlined only when the pointer is on it. Nothing is scrolled past to reach
+ * it and nothing is scrolled past to avoid it.
+ *
+ * It still asks first, and it asks the way DevHub asks everything: a `Picker`
+ * with as many rows as there are answers and the safe one first, so Return
+ * keeps what is there. Undoing a reset means retyping whatever was in the
+ * file, which is exactly the kind of question that must not be answerable by
+ * a Return somebody had already started pressing.
  */
-export function ResetSection({
+export function ResetLink({
   what,
   onReset,
 }: {
@@ -513,48 +534,42 @@ export function ResetSection({
   const [asking, setAsking] = useState(false);
   if (!onReset) return null;
   return (
-    <Group heading="Defaults">
-      <WideRow>
-        {asking ? (
-          <div className="sf-reset">
-            <p className="sf-help mac-caption">
-              This writes DevHub&rsquo;s default {what} into settings.toml. The
-              rest of the file is left as it is.
-            </p>
-            <div className="sf-reset-actions">
-              <button
-                type="button"
-                className="mac-button"
-                onClick={() => {
-                  setAsking(false);
-                }}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                className="mac-button default"
-                onClick={() => {
-                  setAsking(false);
-                  onReset();
-                }}
-              >
-                Reset
-              </button>
-            </div>
-          </div>
-        ) : (
-          <button
-            type="button"
-            className="mac-button"
-            onClick={() => {
-              setAsking(true);
-            }}
-          >
-            Reset {what} to defaults
-          </button>
-        )}
-      </WideRow>
-    </Group>
+    <>
+      <button
+        type="button"
+        className="sf-reset-link"
+        aria-label={`Reset ${what} to defaults`}
+        onClick={() => {
+          setAsking(true);
+        }}
+      >
+        Reset to defaults
+      </button>
+      {asking ? (
+        <Picker
+          title={`Reset ${what} to defaults?`}
+          question={`This writes DevHub's default ${what} into settings.toml. The rest of the file is left as it is.`}
+          items={[
+            {
+              id: KEEP_SETTINGS,
+              label: "Keep these settings",
+              detail: "Nothing is written. The file is left exactly as it is.",
+            },
+            {
+              id: RESET_SETTINGS,
+              label: `Reset ${what}`,
+              detail: `Whatever ${what} you have set is replaced by DevHub's, and putting it back means typing it again.`,
+            },
+          ]}
+          onChoose={({ id }) => {
+            setAsking(false);
+            if (id === RESET_SETTINGS) onReset();
+          }}
+          onCancel={() => {
+            setAsking(false);
+          }}
+        />
+      ) : null}
+    </>
   );
 }

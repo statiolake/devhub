@@ -31,6 +31,10 @@ import { testClient, testConfig } from "./testHarness";
 
 afterEach(cleanup);
 
+// jsdom implements no layout, so it has no `scrollIntoView`. Keeping the
+// selected row visible is the picker's job, not this file's subject.
+Element.prototype.scrollIntoView = vi.fn();
+
 const SOURCES: SettingsConfig["workspaceSources"] = [
   {
     type: "filesystem",
@@ -420,26 +424,53 @@ describe("the actions an agent is sent", () => {
   /**
    * A reset is not a save the page composes: the defaults live in the model,
    * which this page has never read. So it names the keys and main writes them.
+   *
+   * The way it asks is the way this application asks everything — a `Picker`
+   * with as many rows as there are answers and the safe one first, so the row
+   * Return takes is the one that keeps what is there. It used to be a pair of
+   * push buttons with the destructive one on the right.
    */
   it("asks before resetting the screen, and then asks main to do it", async () => {
     const { resets, saves } = await open("Actions", testConfig({}));
     fireEvent.click(
-      screen.getByRole("button", { name: /Reset agent actions/u }),
+      screen.getByRole("button", { name: /Reset agent actions to defaults/u }),
     );
-    fireEvent.click(screen.getByRole("button", { name: "Reset" }));
+    const question = await screen.findByRole("dialog");
+    expect(within(question).getAllByRole("option")[0]).toHaveAccessibleName(
+      /Keep these settings/u,
+    );
+    fireEvent.click(
+      within(question).getByRole("option", { name: /Reset agent actions/u }),
+    );
     await vi.waitFor(() => {
       expect(resets).toEqual([["agentActions"]]);
     });
     expect(saves).toHaveLength(0);
   });
 
-  it("does not reset when the question is answered with Cancel", async () => {
+  it("does not reset when the question is answered with the safe row", async () => {
     const { resets } = await open("Actions", testConfig({}));
     fireEvent.click(
-      screen.getByRole("button", { name: /Reset agent actions/u }),
+      screen.getByRole("button", { name: /Reset agent actions to defaults/u }),
     );
-    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    const question = await screen.findByRole("dialog");
+    fireEvent.click(
+      within(question).getByRole("option", { name: /Keep these settings/u }),
+    );
     expect(resets).toHaveLength(0);
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  /* The link reads the same on every screen; what it is *about* is in its
+     accessible name, because "Reset to defaults" alone does not say which
+     defaults and a screen reader has no heading beside it to borrow from. */
+  it("offers the same link, named for its screen, on a form screen too", async () => {
+    await open("General", testConfig({}));
+    const link = screen.getByRole("button", {
+      name: "Reset general settings to defaults",
+    });
+    expect(link).toHaveTextContent("Reset to defaults");
+    expect(link).toHaveClass("sf-reset-link");
   });
 
   it("refuses two actions with one identifier", async () => {

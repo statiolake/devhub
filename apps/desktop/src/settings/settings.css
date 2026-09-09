@@ -575,9 +575,15 @@ body {
   outline-offset: -2px;
 }
 
+/* A column, always: the inspector, the empty state and the screen's reset link
+   are one stack, and the empty state stretches inside it rather than beside
+   it. */
 .sf-detail {
+  display: flex;
   min-width: 0;
+  flex-direction: column;
   padding: var(--space-5) var(--space-6) var(--space-8);
+  gap: var(--space-2);
   overflow-y: auto;
 }
 
@@ -594,10 +600,6 @@ body {
 
 /* The empty state stands in the whole inspector, centred, rather than as a
    sentence at the top of an empty form. */
-.sf-detail.is-empty {
-  display: flex;
-}
-
 .sf-detail.is-empty > .mac-empty {
   flex: 1;
 }
@@ -624,17 +626,40 @@ body {
   margin-left: var(--space-2);
 }
 
-/* "Reset this screen", and the sentence it asks before doing it. */
-.sf-reset {
+/*
+ * The screen's way back to DevHub's defaults.
+ *
+ * A line of muted text at the trailing edge of the screen, above the first
+ * group and on the line its heading starts, and that is the whole of it. It
+ * used to be a push button in a box of its own under a heading reading
+ * "Defaults", at the foot of every screen — which put the one control in this
+ * window that can throw work away in the same clothes as the one that turns
+ * the login shell on, at the end of the column somebody scrolls to the bottom
+ * of. It is deliberately the quietest thing on the screen: nobody is looking
+ * for it until they want it, and then it is exactly where the screen starts.
+ *
+ * The question it asks is a `Picker`, like every other question DevHub asks.
+ */
+.sf-screen-head {
   display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  align-items: start;
+  justify-content: end;
+  /* Aligned with the group headings under it — same inline padding, so the
+     link's right edge is the boxes' right edge. */
+  padding: 0 var(--space-2);
 }
 
-.sf-reset-actions {
-  display: flex;
-  gap: var(--space-2);
+.sf-reset-link {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--secondary);
+  font-size: 11px;
+}
+
+.sf-reset-link:hover {
+  color: var(--primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 
 /* ---------------------------------------------------------------- keyboard */

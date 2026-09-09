@@ -51,7 +51,7 @@ export function Collection({
   onRemove,
   onMove,
   empty,
-  footer,
+  reset,
   children,
 }: {
   readonly label: string;
@@ -82,14 +82,16 @@ export function Collection({
   readonly onMove?: (direction: -1 | 1) => void;
   readonly empty: { readonly title: string; readonly message: string };
   /**
-   * What sits under the inspector whatever is selected — the reset control.
+   * "Reset to defaults" for the screen, at the top of the inspector.
    *
-   * Below the inspector rather than inside it, because it is about the
+   * Above the inspector rather than inside it, because it is about the
    * collection and not about the entry: a screen whose list is empty is exactly
    * the screen somebody wants to put back to its defaults, and a control that
-   * lived in the inspector would be missing at that moment.
+   * lived in the inspector would be missing at that moment. It is drawn either
+   * way, which is what `sf-screen-head` sitting outside the `is-empty` branch
+   * below is for.
    */
-  readonly footer?: ReactNode;
+  readonly reset?: ReactNode;
   /** The inspector for the selected entry. */
   readonly children: ReactNode;
 }) {
@@ -224,6 +226,7 @@ export function Collection({
       </div>
 
       <div className={`sf-detail${selected === undefined ? " is-empty" : ""}`}>
+        {reset ? <div className="sf-screen-head">{reset}</div> : null}
         {selected === undefined ? (
           <div className="mac-empty">
             <span className="mac-empty-glyph">
@@ -249,7 +252,6 @@ export function Collection({
         ) : (
           <div className="sf-detail-column">{children}</div>
         )}
-        {footer}
       </div>
     </div>
   );
