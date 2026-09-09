@@ -648,3 +648,40 @@ describe("the ink every mark in a row rests at", () => {
     expect(shell).not.toContain("var(--state-ink, var(--tertiary))");
   });
 });
+
+/**
+ * The depth an Agent row sits at.
+ *
+ * The same reason as above: the indent is a custom property in a stylesheet,
+ * and jsdom resolves neither `calc` nor a custom property, so what can be
+ * asserted is that there is one term and that both places that need it read
+ * that term rather than a number of their own.
+ */
+describe("how far an Agent row is indented under its Workspace", () => {
+  const shell = readFileSync("src/shell/styles/shell.css", "utf8");
+
+  it("is one term, zero for every row that is not an Agent", () => {
+    expect(shell).toContain("  --row-agent-inset: 0px;");
+    expect(shell).toContain(
+      ".agent-row {\n  --row-agent-inset: calc(var(--sidebar-glyph-width) + var(--space-2));\n}",
+    );
+  });
+
+  it("is one glyph column, so the status mark lands under the Workspace's name", () => {
+    // Not a chosen number: the glyph column plus the gap after it is exactly
+    // the distance from a Workspace's glyph to a Workspace's label, which is
+    // the same distance `--row-text-inset` is built from.
+    expect(shell).toContain(
+      "  --row-text-inset: calc(\n    var(--sidebar-rail-width) + var(--row-agent-inset) +\n      var(--sidebar-glyph-width) + var(--space-2)\n  );",
+    );
+  });
+
+  it("moves the row's two lines together", () => {
+    // The first line by the button's padding, the second by the inset it is
+    // already part of. One term in both places, so they cannot drift apart.
+    expect(shell).toContain(
+      ".agent-row .sidebar-context-button {\n  padding-left: var(--row-agent-inset);\n}",
+    );
+    expect(shell).toContain("padding-inline: var(--row-text-inset)");
+  });
+});

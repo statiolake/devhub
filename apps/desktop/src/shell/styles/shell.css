@@ -157,12 +157,19 @@
   background: transparent;
   color: var(--primary);
   text-align: left;
+  /* How far a row's content sits in from the rail. Zero for every row that is
+     not an Agent, and stated here rather than only on `.agent-row` so that the
+     inset below is one expression with one term for depth, instead of two
+     calcs that have to be kept agreeing. */
+  --row-agent-inset: 0px;
   /* Where a row's text starts, measured from the row's leading edge: past the
-     rail, past the glyph column, past the gap between the glyph and the label.
-     The second line is indented to it so both lines share a left margin, and
-     it is derived rather than measured so it follows the density. */
+     rail, past whatever depth the row is at, past the glyph column, past the
+     gap between the glyph and the label. The second line is indented to it so
+     both lines share a left margin, and it is derived rather than measured so
+     it follows the density. */
   --row-text-inset: calc(
-    var(--sidebar-rail-width) + var(--sidebar-glyph-width) + var(--space-2)
+    var(--sidebar-rail-width) + var(--row-agent-inset) +
+      var(--sidebar-glyph-width) + var(--space-2)
   );
 }
 
@@ -606,31 +613,39 @@
 }
 
 /*
- * An Agent row starts exactly where its Workspace row starts.
+ * An Agent row is indented by exactly one glyph column, and no further.
  *
- * Agents used to be indented a glyph column in, the way a file tree indents a
- * child, and the indent cost more than it said. A Sidebar 248px wide has about
- * twenty characters to spend on a name; an Agent row is the row whose second
- * line carries the name *and* the runtime note, and it was the row paying for
- * the indent. What the indent bought was a fact the row already states twice —
- * an Agent's mark is a status and a Workspace's is a folder, and they are never
- * confusable — and a tree that no longer has anything to collapse.
+ * Agents used to be indented a whole level, the way a file tree indents a
+ * child, and then they were not indented at all. Both were answers to the same
+ * measurement: a Sidebar 248px wide has about twenty characters to spend on a
+ * name, and the Agent row — the one whose second line carries the name *and*
+ * the runtime note — is the row that pays for depth. A full level cost more
+ * than the hierarchy was worth; no indent at all left the two kinds of row on
+ * one flush edge, and the mark at the head of each was doing all of the work.
  *
- * So the levels are still in the markup, where they mean something to a screen
- * reader (`aria-level`, the arrow-key walk between a Workspace and its Agents),
- * and they are not in the geometry. What tells an Agent row from a Workspace
- * row is its leading mark, in the one colour left in this Sidebar.
+ * So the step is one glyph column plus the gap after it, which is not an
+ * amount picked to look right: it is exactly the distance from a Workspace's
+ * glyph to a Workspace's label. An Agent's status mark lands under the name of
+ * the Workspace it belongs to, so the indent is readable against something
+ * already on screen rather than against itself, and the name beside it gives
+ * up one column instead of a level's worth.
  *
- * The zero is stated rather than inherited: the button's own `padding: 0
- * var(--space-2)` would otherwise push an Agent's status mark eight pixels off
- * the glyph column its Workspace's folder sits on, and the gap to the label
- * would be counted twice. The label still lands on `--row-text-inset` — the
- * mark is one glyph column wide and the button's `gap` is the same `--space-2`
- * the inset is derived from — so the row's two lines share one left margin the
- * way every other row's do.
+ * One term, `--row-agent-inset`, does the whole of it: the button's padding
+ * puts the mark there, and `--row-text-inset` — which every row derives its
+ * second line from — has the same term in it, so the Agent's two lines keep
+ * the one left margin every other row's two lines have. The levels are in the
+ * markup too, where `aria-level` and the arrow-key walk mean something.
+ *
+ * The padding is stated rather than inherited: the button's own `padding: 0
+ * var(--space-2)` would otherwise be counted alongside the gap the inset is
+ * already derived from, and the mark would miss the column by eight pixels.
  */
+.agent-row {
+  --row-agent-inset: calc(var(--sidebar-glyph-width) + var(--space-2));
+}
+
 .agent-row .sidebar-context-button {
-  padding-left: 0;
+  padding-left: var(--row-agent-inset);
 }
 
 /* A workspace that is not simply open reads as secondary ink, and nothing
