@@ -7,6 +7,17 @@ import {
 	resolveChord,
 	type KeyStroke,
 } from "./chords.js";
+import { AppModel } from "../../model/appModel.js";
+import {
+	AgentProfile,
+	agentId,
+	agentProfileId,
+	displayPath,
+	Workspace,
+	workspaceId,
+	workspaceRoot,
+} from "../../model/domain.js";
+import { snapshotWire } from "../../model/wire.js";
 import type {
 	AgentWire,
 	AppSnapshotWire,
@@ -520,5 +531,133 @@ describe("the default table", () => {
 		// And the key a US keyboard would have read as `{` is `@` there, which
 		// is no chord at all rather than the wrong one.
 		expect(press("@", "BracketLeft", { shift: true })).toBeUndefined();
+	});
+});
+
+/**
+ * The list on screen and the list the chords walk are the same list.
+ *
+ * The bug this covers: the sidebar grouped worktrees under their repository
+ * and sorted the groups by name, while every cycle walked the order folders
+ * happened to be opened in. Three presses of `Cmd+Q Cmd+N` landed nowhere near
+ * the third row. The order lives in the projection now, so this builds a real
+ * model, projects it the way main does, and checks that stepping the ring
+ * visits exactly the rows the sidebar draws, in that order.
+ */
+describe("the order every cycle walks", () => {
+	const codex = AgentProfile.create(
+		agentProfileId("codex"),
+		"Codex",
+		"codex",
+		"codex",
+	);
+	const id = (last: string) =>
+		workspaceId(`550e8400-e29b-41d4-a716-446655${last}`);
+	const agentOf = (last: string) =>
+		agentId(`550e8400-e29b-41d4-a716-446655${last}`);
+
+	// Opened in an order nobody would choose to read them in: a worktree before
+	// its repository, an unrelated repository in between, and a workspace with
+	// no Agents in it at all.
+	const ZEBRA_WT = id("4000a1");
+	const ALPHA = id("4000a2");
+	const ZEBRA = id("4000a3");
+	const MIDDLE = id("4000a4");
+
+	function projected() {
+		const model = new AppModel();
+		for (const [workspace, path] of [
+			[ZEBRA_WT, "/src/zebra_topic"],
+			[ALPHA, "/src/alpha"],
+			[ZEBRA, "/src/zebra"],
+			[MIDDLE, "/src/middle"],
+		] as const) {
+			model.addWorkspace(
+				new Workspace(workspace, workspaceRoot(path), displayPath(path)),
+			);
+		}
+		model.addAgent(ZEBRA, agentOf("4000b1"), codex);
+		model.addAgent(ZEBRA_WT, agentOf("4000b2"), codex);
+		model.addAgent(ALPHA, agentOf("4000b3"), codex);
+		// MIDDLE deliberately has none: a workspace with no Agents is still a row.
+		const repositories = new Map<string, string>([
+			[ZEBRA, "/src/zebra"],
+			[ZEBRA_WT, "/src/zebra"],
+			[ALPHA, "/src/alpha"],
+		]);
+		return snapshotWire(model.snapshot(), "ready", (workspace) =>
+			repositories.get(workspaceId(workspace)),
+		);
+	}
+
+	/** The rows the sidebar draws, top to bottom: it renders this array. */
+	function sidebarRows(
+		snapshot: AppSnapshotWire,
+	): readonly NavigationContext[] {
+		return [
+			{ kind: "global" },
+			...snapshot.workspaces.flatMap((workspace): NavigationContext[] => [
+				{ kind: "workspace", workspaceId: workspace.id },
+				...workspace.agents.map(
+					(one): NavigationContext => ({ kind: "agent", agentId: one.id }),
+				),
+			]),
+		];
+	}
+
+	it("groups worktrees under their repository, by name", () => {
+		expect(projected().workspaces.map((workspace) => workspace.label)).toEqual([
+			"alpha",
+			"middle",
+			"zebra",
+			"zebra_topic",
+		]);
+	});
+
+	it("steps `next_tab` through the rows the sidebar draws", () => {
+		const snapshot = projected();
+		const rows = sidebarRows(snapshot);
+		const visited: NavigationContext[] = [];
+		let context: NavigationContext = { kind: "global" };
+		for (let step = 0; step < rows.length; step += 1) {
+			const effect = run("next_tab", {
+				...snapshot,
+				selection: { context, presentation: "full" },
+			});
+			expect(effect?.kind).toBe("select-context");
+			context =
+				effect?.kind === "select-context" ? effect.context : { kind: "global" };
+			visited.push(context);
+		}
+		// Round the ring once, ending back where it started.
+		expect(visited).toEqual([...rows.slice(1), rows[0]]);
+	});
+
+	it("steps `next_agent` through the Agents in the same order", () => {
+		const snapshot = projected();
+		const agents = sidebarRows(snapshot).filter((row) => row.kind === "agent");
+		const visited: NavigationContext[] = [];
+		let context: NavigationContext = { kind: "global" };
+		for (let step = 0; step < agents.length; step += 1) {
+			const effect = run("next_agent", {
+				...snapshot,
+				selection: { context, presentation: "full" },
+			});
+			context =
+				effect?.kind === "select-context" ? effect.context : { kind: "global" };
+			visited.push(context);
+		}
+		expect(visited).toEqual(agents);
+	});
+
+	it("names the rows a digit selects in the same order", () => {
+		const snapshot = projected();
+		expect(run("select_entry_2", snapshot)).toEqual(
+			selects({ kind: "workspace", workspaceId: ALPHA }),
+		);
+		// The workspace with no Agents is still an entry, and still visited.
+		expect(run("select_entry_3", snapshot)).toEqual(
+			selects({ kind: "workspace", workspaceId: MIDDLE }),
+		);
 	});
 });

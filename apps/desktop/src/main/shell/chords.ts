@@ -19,6 +19,12 @@
  * `Cmd+Q 3` and three presses of `Cmd+Q Cmd+N` cannot disagree about what the
  * list is:
  *
+ * The workspaces arrive already in the order the sidebar draws them — the
+ * projection puts them in it (`model/workspaceOrder.ts`) — so none of the
+ * three sorts anything. They used to walk the order folders happened to be
+ * opened in while the sidebar drew worktrees grouped under their repository,
+ * which made every one of these cycles jump around the list on screen.
+ *
  * - `sidebarEntries` — Scratch, then the workspaces. What a digit names.
  * - `everyAgent` — every Agent there is, in sidebar order, across workspaces.
  * - `everyTab` — every row of the tree in order, of both kinds.
@@ -140,7 +146,7 @@ export type ChordEffect =
 
 const GLOBAL: NavigationContext = { kind: "global" };
 
-/** Scratch, then the workspaces in their own order. What a digit names. */
+/** Scratch, then the workspaces in sidebar order. What a digit names. */
 function sidebarEntries(
 	snapshot: AppSnapshotWire,
 ): readonly NavigationContext[] {

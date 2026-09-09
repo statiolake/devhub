@@ -992,8 +992,26 @@ export class AppController {
 		return snapshotWire(
 			this.coordinator.snapshot(),
 			this.coordinator.readiness,
+			this.repositoryOf,
 		);
 	}
+
+	private orderedWorkspaceIds(): readonly string[] {
+		return this.snapshot().workspaces.map((workspace) => workspace.id);
+	}
+
+	/**
+	 * Which repository each workspace is a checkout of, for the projection.
+	 *
+	 * The last poll's answer, which is the same one the sidebar's button and
+	 * `closeWorkspaceOrWorktree` read — the order on screen and the order the
+	 * chords step through are then the same list, because they *are* the same
+	 * list. See `model/workspaceOrder.ts`.
+	 */
+	private readonly repositoryOf = (workspaceId: string): string | undefined =>
+		this.lastRepositoryStatus.workspaces.find(
+			(entry) => entry.workspaceId === workspaceId,
+		)?.mainWorktree;
 
 	appearance(): AppAppearance {
 		const config = this.requireConfig();
@@ -1137,8 +1155,19 @@ export class AppController {
 				root: workspace.root,
 			})),
 		publish: (status) => {
+			// The order the rows are in is git's answer to "which repository is
+			// this a checkout of", so a round that changes that answer changes the
+			// list — and the list is the projection's, not the sidebar's. Sending
+			// the snapshot again is how the new order reaches everything that
+			// reads it at once; sending it only when the order actually moved
+			// keeps a poll that learned nothing from redrawing anything.
+			const before = this.orderedWorkspaceIds();
 			this.lastRepositoryStatus = status;
 			this.send(CHANNELS.repositoryStatusChanged, status);
+			const after = this.orderedWorkspaceIds();
+			if (before.join(" ") !== after.join(" ")) {
+				this.send(CHANNELS.snapshotChanged, this.snapshot());
+			}
 		},
 	});
 
@@ -1342,7 +1371,11 @@ export class AppController {
 				for (const { event } of subscription.events) {
 					switch (event.kind) {
 						case "snapshot":
-							latest = snapshotWire(event.snapshot, this.coordinator.readiness);
+							latest = snapshotWire(
+								event.snapshot,
+								this.coordinator.readiness,
+								this.repositoryOf,
+							);
 							break;
 						case "error":
 							this.publishError(errorWire(event.error));
@@ -1585,7 +1618,7 @@ export class AppController {
 			type: "request_close_workspace",
 			workspaceId: workspace.id,
 		});
-		return outcomeWire(settled, this.coordinator.readiness);
+		return outcomeWire(settled, this.coordinator.readiness, this.repositoryOf);
 	}
 
 	/**
@@ -1637,6 +1670,7 @@ export class AppController {
 		return outcomeWire(
 			{ kind: "updated", snapshot: this.coordinator.model.snapshot() },
 			this.coordinator.readiness,
+			this.repositoryOf,
 		);
 	}
 
@@ -2476,7 +2510,7 @@ export class AppController {
 		});
 		if (withAgent === undefined) {
 			await this.syncEditorView();
-			return outcomeWire(opened, this.coordinator.readiness);
+			return outcomeWire(opened, this.coordinator.readiness, this.repositoryOf);
 		}
 		const settled = await this.dispatchAwaiting({
 			type: "create_agent",
@@ -2489,7 +2523,7 @@ export class AppController {
 			presentation: "full",
 		});
 		await this.syncEditorView();
-		return outcomeWire(settled, this.coordinator.readiness);
+		return outcomeWire(settled, this.coordinator.readiness, this.repositoryOf);
 	}
 
 	/**
@@ -3003,7 +3037,7 @@ export class AppController {
 		// done here rather than in the model because a view is an effect on the
 		// window, and the model does not have windows.
 		await this.syncEditorView();
-		return outcomeWire(settled, this.coordinator.readiness);
+		return outcomeWire(settled, this.coordinator.readiness, this.repositoryOf);
 	}
 
 	/**
@@ -3127,7 +3161,7 @@ export class AppController {
 		});
 		this.queueIssuePrompt(agentsBefore, item, request.actionId);
 		await this.syncEditorView();
-		return outcomeWire(settled, this.coordinator.readiness);
+		return outcomeWire(settled, this.coordinator.readiness, this.repositoryOf);
 	}
 
 	private async clone(url: string, parentDirectory: string): Promise<string> {
@@ -3154,6 +3188,7 @@ export class AppController {
 				replayWire(
 					this.coordinator.replayFrom(cursor),
 					this.coordinator.readiness,
+					this.repositoryOf,
 				),
 		);
 
@@ -3384,6 +3419,7 @@ export class AppController {
 					return outcomeWire(
 						{ kind: "updated", snapshot: this.coordinator.model.snapshot() },
 						this.coordinator.readiness,
+						this.repositoryOf,
 					);
 				} catch (error: unknown) {
 					throw asIpcError(errorWire(error));
@@ -3400,6 +3436,7 @@ export class AppController {
 					return outcomeWire(
 						{ kind: "updated", snapshot: this.coordinator.model.snapshot() },
 						this.coordinator.readiness,
+						this.repositoryOf,
 					);
 				} catch (error: unknown) {
 					throw asIpcError(errorWire(error));

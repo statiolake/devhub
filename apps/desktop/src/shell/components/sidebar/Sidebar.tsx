@@ -28,7 +28,6 @@ import { focusMainSurface } from "../../focusHome";
 import { SidebarHeader } from "./SidebarHeader";
 import { StatusMark } from "./StatusMark";
 import { statusLabel } from "./status";
-import { orderWorkspaces } from "./workspaceOrder";
 import { mergeExitingRows, useClosingExit } from "./closingExit";
 
 function runtimeHealthLabel(health: AgentSnapshot["runtimeHealth"]): string {
@@ -542,14 +541,31 @@ function WorkspaceGlyph({
 }
 
 /**
+ * Which mark a pull request wears, by what became of it.
+ *
+ * Four states, four of GitHub's own drawings — there is no state here that has
+ * to be told from another by colour, which is what lets the whole column go
+ * grey at rest. See `icons.tsx`.
+ */
+const PULL_REQUEST_GLYPH: Record<
+  NonNullable<WorkspaceRepositoryWire["pullRequest"]>["state"],
+  GlyphName
+> = {
+  open: "pullRequest",
+  draft: "pullRequestDraft",
+  closed: "pullRequestClosed",
+  merged: "pullRequestMerged",
+};
+
+/**
  * The Issue this workspace is for and the pull request out from its branch, as
  * marks that open GitHub.
  *
- * They are marks rather than words because the row already has words. What
- * each one says is its shape and then its colour — GitHub's own: an open issue
- * is green and a closed one purple; a pull request is green open, grey draft,
- * red closed and purple merged — and what it says in full is in its label, for
- * anyone who cannot use either.
+ * They are marks rather than words because the row already has words, and they
+ * are GitHub's marks rather than DevHub's because what they say is GitHub's:
+ * somebody who reads pull requests all day recognises these silhouettes
+ * without being told. What each one says in full is in its label, for anyone
+ * who cannot use a picture.
  *
  * The Issue leads, because the Issue is what the work is *for* and the pull
  * request is how it is being delivered. The number is in the label rather than
@@ -557,9 +573,10 @@ function WorkspaceGlyph({
  * characters on `#128` before every title was spending them on the part a
  * person already knows.
  *
- * Two pull-request drawings for four states, and the split is "did it land":
- * `merged` gets the junction, the other three get the arrow and differ by
- * colour. `icons.tsx` carries the argument.
+ * They are grey at rest and take GitHub's state colours under the pointer. The
+ * state is never lost by that, because it is carried by the shape; what the
+ * grey buys is a Sidebar in which the one coloured thing is an Agent that
+ * wants something. `shell.css` carries the rule.
  */
 function RepositoryLinks({
   repository,
@@ -597,13 +614,7 @@ function RepositoryLinks({
             openExternalUrl(pullRequest.url);
           }}
         >
-          <Glyph
-            name={
-              pullRequest.state === "merged"
-                ? "pullRequestMerged"
-                : "pullRequest"
-            }
-          />
+          <Glyph name={PULL_REQUEST_GLYPH[pullRequest.state]} />
         </button>
       ) : null}
     </>
@@ -759,18 +770,11 @@ export function Sidebar({ snapshot, onDispatch }: SidebarProps) {
       ),
     [repositoryStatus],
   );
-  // Worktrees under the repository they came from, everything else by name.
-  // The identity is git's — see `orderWorkspaces` — and it arrives with the
-  // rest of what each row knows, so the order settles as the first poll lands
-  // rather than being guessed from folder names.
-  const workspaces = useMemo(
-    () =>
-      orderWorkspaces(
-        snapshot.workspaces,
-        (workspace) => repositories.get(workspace.id)?.mainWorktree,
-      ),
-    [repositories, snapshot.workspaces],
-  );
+  // Drawn in the order they arrive in. Worktrees sit under the repository
+  // they came from and everything else is by name, but that is decided once,
+  // in the projection (`model/workspaceOrder.ts`), so the rows on screen and
+  // the rows `Cmd+Q Cmd+N` steps through are the same rows in the same order.
+  const workspaces = snapshot.workspaces;
   // Rows that have finished closing, still on screen for as long as it takes
   // them to leave. See `closingExit.ts`.
   const exiting = useClosingExit(workspaces);
@@ -928,9 +932,11 @@ export function Sidebar({ snapshot, onDispatch }: SidebarProps) {
               title="Assign issue"
               onClick={openIssueAssignment}
             >
-              {/* The same mark an open Issue wears on a Workspace row, so the
-                button and the thing it produces say one thing. */}
-              <Glyph name="issueOpen" />
+              {/* An act, not a state: DevHub's own mark, the same one the
+                Agent shortcut for opening an Issue wears. The Octicon a
+                Workspace row shows is GitHub reporting on an Issue that
+                exists, which this button's is not. */}
+              <Glyph name="openIssue" />
             </button>
             <button
               ref={pickerTriggerRef}

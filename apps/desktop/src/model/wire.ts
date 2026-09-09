@@ -33,6 +33,7 @@ import {
   SPLIT_MIN_RATIO,
 } from "./appModel.js";
 import { isValidFontFamily } from "./fontFamily.js";
+import { orderWorkspaces } from "./workspaceOrder.js";
 import {
   AppError,
   AppErrorCode,
@@ -277,14 +278,26 @@ function editorHostWire(state: EditorHostState): EditorHostWire {
   }
 }
 
+/**
+ * Which repository a workspace is a checkout of, as its main worktree's path.
+ *
+ * git's answer, and the only thing the order needs from outside the model —
+ * `undefined` for a folder that is not a repository or one whose git has not
+ * been read yet. It is asked for here, in the one place the workspace list is
+ * projected, so that the list every reader gets is already in the order the
+ * sidebar draws: see `workspaceOrder.ts`.
+ */
+export type RepositoryOf = (workspaceId: string) => string | undefined;
+
 export function snapshotWire(
   snapshot: AppSnapshot,
   readiness: AppReadiness,
+  repositoryOf: RepositoryOf,
 ): AppSnapshotWire {
   if (snapshot.revision > MAX_SAFE_JS_INTEGER) {
     throw new SnapshotWireError("snapshot revision is outside the safe range");
   }
-  const workspaces: WorkspaceWire[] = snapshot.workspaces.map((workspace) => ({
+  const projected: WorkspaceWire[] = snapshot.workspaces.map((workspace) => ({
     id: workspace.id,
     label: workspace.label,
     root: workspace.root,
@@ -297,6 +310,9 @@ export function snapshotWire(
       ? {}
       : { lastAgentId: workspace.lastAgentId }),
   }));
+  const workspaces = orderWorkspaces(projected, (workspace) =>
+    repositoryOf(workspace.id),
+  );
   const wire: AppSnapshotWire = {
     schemaVersion: APP_SHELL_SCHEMA_VERSION,
     revision: snapshot.revision,
@@ -359,8 +375,9 @@ function confirmationPurposeWire(
 export function outcomeWire(
   outcome: IntentOutcome,
   readiness: AppReadiness,
+  repositoryOf: RepositoryOf,
 ): AppOutcomeWire {
-  const snapshot = snapshotWire(outcome.snapshot, readiness);
+  const snapshot = snapshotWire(outcome.snapshot, readiness, repositoryOf);
   switch (outcome.kind) {
     case "noop":
       return { kind: "noop", snapshot };
@@ -389,6 +406,7 @@ export function outcomeWire(
 export function replayWire(
   replay: CoordinatorReplay,
   readiness: AppReadiness,
+  repositoryOf: RepositoryOf,
 ): ReplayWire {
   const events = replay.events.flatMap((event) => {
     const kind: ReplayEventKindWire | undefined =
@@ -406,7 +424,7 @@ export function replayWire(
   return {
     cursor: replay.cursor,
     historyGap: replay.historyGap,
-    snapshot: snapshotWire(replay.snapshot, readiness),
+    snapshot: snapshotWire(replay.snapshot, readiness, repositoryOf),
     events,
   };
 }
