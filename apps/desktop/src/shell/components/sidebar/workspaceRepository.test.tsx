@@ -9,6 +9,7 @@
  * still known rather than instead of it.
  */
 
+import { readFileSync } from "node:fs";
 import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -602,5 +603,48 @@ describe("a workspace row, continued", () => {
     mount({ ...WORKING_ON, diagnostic: "GitHub answered 502." });
     expect(screen.getByText("Tidy the picker")).toBeInTheDocument();
     expect(screen.getByText("GitHub answered 502.")).toBeInTheDocument();
+  });
+});
+
+/**
+ * How bright a row's marks are when nobody is pointing at them.
+ *
+ * A row has marks at both ends — the folder, repository or worktree glyph on
+ * the left, GitHub's Issue and pull-request marks on the right — and they are
+ * read in one glance, down a column, as one thing. So they rest at one ink.
+ * They did not: the leading glyph sat at `--secondary` and the trailing marks
+ * at `--tertiary`, which is twice the ink on the left of every row, and the
+ * eye read the difference as the folder being the point.
+ *
+ * The assertion is on the stylesheet because that is where the fact lives; the
+ * marks are `currentcolor` all the way down, and jsdom resolves no custom
+ * property, so there is nothing to measure on a rendered node.
+ */
+describe("the ink every mark in a row rests at", () => {
+  // Vitest runs from the package root, and these are files rather than modules
+  // a jsdom test can import.
+  const shell = readFileSync("src/shell/styles/shell.css", "utf8");
+  const tokens = readFileSync("src/shell/styles/tokens.css", "utf8");
+
+  it("is one token, named once", () => {
+    expect(tokens).toContain("--row-glyph-ink: var(--tertiary);");
+  });
+
+  it("is what the leading glyph and GitHub's marks both take at rest", () => {
+    // Both sites, by the token and not by a value that happens to match it: a
+    // later change to the ink has to move both or neither.
+    expect(shell).toContain(
+      ".row-glyph {\n  display: flex;\n  width: var(--sidebar-glyph-width);\n  flex: 0 0 var(--sidebar-glyph-width);\n  align-items: center;\n  justify-content: center;\n  color: var(--row-glyph-ink);",
+    );
+    expect(shell).toContain(
+      "  color: var(--row-glyph-ink);\n}\n\n/* The same size a row's own controls take",
+    );
+  });
+
+  it("is what an unlit state falls back to, so no state is brighter at rest", () => {
+    // A pull request with no colour of its own — a draft — must rest exactly
+    // where a folder rests, not one step up.
+    expect(shell).toContain("color: var(--state-ink, var(--row-glyph-ink));");
+    expect(shell).not.toContain("var(--state-ink, var(--tertiary))");
   });
 });

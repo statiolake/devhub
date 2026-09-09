@@ -329,8 +329,10 @@
  */
 
 /* The row's leading mark: which kind of Workspace this is, or which Agent
-   status. Grey at rest with everything else; the accent — Finder's own
-   treatment for a source-list icon — is what hover restores.
+   status. Grey at rest with everything else — at `--row-glyph-ink`, the one
+   ink every mark in a row rests at, so the folder on the left and GitHub's
+   mark on the right weigh the same; the accent — Finder's own treatment for a
+   source-list icon — is what hover restores.
 
    The folder used to carry an 18% accent wash as well, which made it the one
    solid block in a column of lines — the single loudest thing in the Sidebar,
@@ -341,7 +343,7 @@
   flex: 0 0 var(--sidebar-glyph-width);
   align-items: center;
   justify-content: center;
-  color: var(--secondary);
+  color: var(--row-glyph-ink);
   /* Level with the label, not with the label's box — see the token. */
   transform: translateY(var(--sidebar-glyph-optical-shift));
 }
@@ -536,10 +538,11 @@
   background: transparent;
   /* The state is carried as `color` on the button rather than as a fill on the
      paths, so one rule per state colours a mark whatever shape it turned out to
-     be. At rest that colour is the row's dim ink, whatever the state is; each
-     state names the colour it *would* wear in `--state-ink`, and the rule under
-     them is the only thing that ever puts it on. */
-  color: var(--tertiary);
+     be. At rest that colour is `--row-glyph-ink`, the same ink the row's
+     leading glyph takes, whatever the state is; each state names the colour it
+     *would* wear in `--state-ink`, and the rule under them is the only thing
+     that ever puts it on. */
+  color: var(--row-glyph-ink);
 }
 
 /* The same size a row's own controls take, so the trailing edge of a row is
@@ -589,7 +592,7 @@
 .sidebar-row:hover .row-link-button,
 .sidebar-row:focus-visible .row-link-button,
 .sidebar-row:has(:focus-visible) .row-link-button {
-  color: var(--state-ink, var(--tertiary));
+  color: var(--state-ink, var(--row-glyph-ink));
 }
 
 /* Why the marks above may be out of date. It is not an error the person did

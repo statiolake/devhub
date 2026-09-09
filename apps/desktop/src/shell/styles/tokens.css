@@ -79,6 +79,15 @@
     transparent
   );
   --disabled-ink: var(--tertiary);
+  /* The rest colour of every mark inside a Sidebar row: the leading folder,
+     repository and worktree glyphs, and GitHub's Issue and pull-request marks
+     at the trailing edge. One token because they are one column of marks read
+     in one glance — the leading glyphs sat at `--secondary` and the trailing
+     ones at `--tertiary`, which is twice the ink on the left of the row, and
+     the eye read that difference as the folder being the point. The exception
+     is an Agent's status mark, which is the one coloured thing at rest and
+     says so with its own tokens. */
+  --row-glyph-ink: var(--tertiary);
 
   /* Accent and state.
    *
