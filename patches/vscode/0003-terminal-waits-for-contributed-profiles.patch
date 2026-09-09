@@ -1,0 +1,23 @@
+diff --git a/src/vs/workbench/contrib/terminal/browser/terminalService.ts b/src/vs/workbench/contrib/terminal/browser/terminalService.ts
+index 83ac3261b33..ba32c6a81e9 100644
+--- a/src/vs/workbench/contrib/terminal/browser/terminalService.ts
++++ b/src/vs/workbench/contrib/terminal/browser/terminalService.ts
+@@ -977,8 +977,17 @@ export class TerminalService extends Disposable implements ITerminalService {
+ 		// local terminal in a remote workspace as profile won't be used in those cases and these
+ 		// terminals need to be launched before remote connections are established.
+ 		const isLocalInRemoteTerminal = this._remoteAgentService.getConnection() && URI.isUri(options?.cwd) && options?.cwd.scheme === Schemas.file;
++		const isPtyTerminal = options?.config && hasKey(options.config, { customPtyImplementation: true });
++		// DevHub: the default profile is contributed by an extension, and
++		// `contributedProfiles` is only filled once the `terminals` extension
++		// point has seen the installed extensions' manifests. Awaiting the
++		// detected profiles alone lets a terminal created on window load pick
++		// the OS shell instead — a plain zsh outside tmux. Same exemptions as
++		// the wait below, for the same reason: those terminals use no profile.
++		if (!isPtyTerminal && !isLocalInRemoteTerminal) {
++			await this._extensionService.whenInstalledExtensionsRegistered();
++		}
+ 		if (this._terminalProfileService.availableProfiles.length === 0) {
+-			const isPtyTerminal = options?.config && hasKey(options.config, { customPtyImplementation: true });
+ 			if (!isPtyTerminal && !isLocalInRemoteTerminal) {
+ 				if (this._connectionState === TerminalConnectionState.Connecting) {
+ 					mark(`code/terminal/willGetProfiles`);

@@ -29,6 +29,18 @@
  * terminal reattaches to the same session with its history intact, which is the
  * restoration the person actually wanted, and it is the one this profile
  * already performs.
+ *
+ * One thing this file cannot do on its own, and so is done to the workbench
+ * instead: `TerminalService.createTerminal` used to wait only for the *detected*
+ * shell profiles before choosing a default, not for the extension manifests that
+ * fill the *contributed* ones. A terminal opened on window load — a fresh start,
+ * a reload, a restored terminal — could therefore run before the `terminals`
+ * extension point had seen this manifest, find no profile named "DevHub", and
+ * silently fall back to the OS shell: a plain zsh outside tmux. No amount of
+ * earlier activation here fixes that, because the race is over registration, not
+ * activation, and the loser is a decision the workbench has already made by the
+ * time this extension runs at all. So `patches/vscode/0003-terminal-waits-for-
+ * contributed-profiles.patch` makes that wait cover manifest registration too.
  */
 
 import { connect } from "node:net";
