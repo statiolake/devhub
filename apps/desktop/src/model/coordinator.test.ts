@@ -949,3 +949,31 @@ describe("reconciling agents", () => {
     ).toBe(true);
   });
 });
+
+describe("the window coming and going", () => {
+  /**
+   * Focus is a fact only main can see, so it arrives as an intent like every
+   * other one — and it has to reach the model, because "is anybody looking at
+   * this Agent" is half of whether a finished Agent is owed a look.
+   */
+  it("carries the window's focus into the model", () => {
+    const driver = new Driver();
+    expect(driver.coordinator.model.windowFocused).toBe(true);
+
+    const away = driver.dispatch({
+      type: "window_focus_changed",
+      focused: false,
+    });
+    expect(away.kind).toBe("updated");
+    expect(driver.coordinator.model.windowFocused).toBe(false);
+
+    // Saying the same thing twice moves nothing, and must not look like a
+    // change: it is raised on every window event there is.
+    expect(
+      driver.dispatch({ type: "window_focus_changed", focused: false }).kind,
+    ).toBe("noop");
+
+    driver.dispatch({ type: "window_focus_changed", focused: true });
+    expect(driver.coordinator.model.windowFocused).toBe(true);
+  });
+});

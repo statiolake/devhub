@@ -985,6 +985,27 @@ export class AppController {
 	}
 
 	/**
+	 * The window came forward, or went away.
+	 *
+	 * Wired to `ShellWindow` in `bootstrapShell`. It is a fact about the person,
+	 * so it goes into the model as an intent like every other one; what the
+	 * model does with it — reading whatever is on screen when DevHub comes back
+	 * — is the model's rule and is stated there.
+	 */
+	windowFocusChanged(focused: boolean): void {
+		// Dispatched rather than awaited: nothing about a focus change has an
+		// effect to wait for, and this is called from a window event that has
+		// nowhere to put a rejected promise. A throw here is a bug in the model
+		// and belongs on the console with its stack, not swallowed.
+		this.coordinator.dispatchUser({
+			intentId: parseIntentId(randomUUID()),
+			operationId: this.freshOperationId(),
+			intent: { type: "window_focus_changed", focused },
+		});
+		this.drain();
+	}
+
+	/**
 	 * One round of the reconciler: ask the provider about every Agent and let
 	 * the model settle before the next round is scheduled.
 	 */

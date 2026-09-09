@@ -638,6 +638,9 @@ export class AppCoordinator {
         return this.confirmWorkspaceClose(intent.confirmationId, id);
       case "retry_close_workspace":
         return this.retryWorkspaceClose(intent.workspaceId, id);
+      case "window_focus_changed":
+        this.model.setWindowFocused(intent.focused);
+        return this.transitionOutcome(beforeRevision, id);
       case "window_closed":
         return this.detach("window_closed");
       case "quit":

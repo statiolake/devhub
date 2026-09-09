@@ -47,6 +47,7 @@ import {
   type AgentControlState,
   type AgentProfileKind,
   type AgentStatus,
+  type UnreadReason,
   type RuntimeHealth,
 } from "./domain.js";
 import {
@@ -242,7 +243,15 @@ export interface AgentStateRecord {
   ordinal: number;
   temporary_name?: string;
   status: AgentStatus;
-  unread?: boolean;
+  /**
+   * Why this Agent is owed a look, or absent if it has been read.
+   *
+   * DevHub used to write `true` here, when entering `waiting` was the only way
+   * to become unread. A file from that DevHub loads as `"waiting"` — the
+   * reason it would have had — so an old state file comes back saying what it
+   * meant, rather than losing the mark or inventing a reason for it.
+   */
+  unread?: UnreadReason | boolean;
   runtime_health: RuntimeHealth;
   control_state: PersistedAgentControlState;
   /** An adapter's own identity for this Agent. Opaque and never interpreted. */
@@ -417,6 +426,16 @@ function normalizePathString(value: string): string {
     parts.push(component);
   }
   return `/${parts.join("/")}`;
+}
+
+/** See `AgentStateRecord.unread`: `true` is the old spelling of "waiting". */
+function unreadFrom(
+  value: UnreadReason | boolean | undefined,
+): UnreadReason | undefined {
+  if (value === undefined || value === false) {
+    return undefined;
+  }
+  return value === true ? "waiting" : value;
 }
 
 function validateAgentRecord(record: AgentStateRecord): void {
@@ -904,7 +923,7 @@ export function hydrateModel(
           ordinal: agentRecord.ordinal,
           temporaryName: agentRecord.temporary_name,
           status,
-          unread: agentRecord.unread === true,
+          unread: unreadFrom(agentRecord.unread),
           runtimeHealth,
           controlState: controlStateFrom(agentRecord.control_state),
         });

@@ -86,6 +86,41 @@ describe("projection", () => {
     expect(agent.displayName).toBe("Codex");
   });
 
+  it("round-trips why an Agent is unread", () => {
+    const model = populatedModel();
+    // Somewhere else, so the Agent that stops working is not being looked at.
+    model.selectContext({ kind: "workspace", workspaceId: WS_B });
+    model.setAgentStatus(AG_A, "working");
+    model.setAgentStatus(AG_A, "idle");
+    const state = stateFromSnapshot(model.snapshot());
+    expect(state.workspaces[0].agents[0].unread).toBe("idle");
+    const restored = hydrateModel(state, [codex]);
+    expect(restored.snapshot().workspaces[0].agents[0].unread).toBe("idle");
+  });
+
+  it("reads an older DevHub's `unread: true` as the question it meant", () => {
+    // That DevHub could only become unread by entering `waiting`, so `true`
+    // has exactly one reason and this is it. Nothing is lost and nothing is
+    // invented.
+    const model = populatedModel();
+    // Looking elsewhere, or restoring the file would put the Agent on screen
+    // and reading it is exactly what that means.
+    model.selectContext({ kind: "workspace", workspaceId: WS_B });
+    const state = stateFromSnapshot(model.snapshot());
+    state.workspaces[0].agents[0].unread = true;
+    const restored = hydrateModel(state, [codex]);
+    expect(restored.snapshot().workspaces[0].agents[0].unread).toBe("waiting");
+  });
+
+  it("reads an older DevHub's `unread: false` as read", () => {
+    const model = populatedModel();
+    model.selectContext({ kind: "workspace", workspaceId: WS_B });
+    const state = stateFromSnapshot(model.snapshot());
+    state.workspaces[0].agents[0].unread = false;
+    const restored = hydrateModel(state, [codex]);
+    expect(restored.snapshot().workspaces[0].agents[0].unread).toBeUndefined();
+  });
+
   it("keeps the provider mapping the model does not own", () => {
     const model = populatedModel();
     const state = stateFromSnapshot(model.snapshot());

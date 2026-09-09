@@ -385,6 +385,18 @@ export class AgentProfile {
 export type AgentStatus = "working" | "waiting" | "idle" | "error" | "unknown";
 
 /**
+ * Why an Agent is owed a look, expressed as the status that earned it.
+ *
+ * Unread is a fact about the person, not about the Agent — which is why it is
+ * not a sixth status — but it always has a reason, and the reason is always a
+ * status the Agent went into while nobody was watching. Carrying that status
+ * rather than a vocabulary of its own is what lets the unread dot be drawn in
+ * the same colour as the status mark that caused it, without anything having
+ * to translate between two lists that could drift apart.
+ */
+export type UnreadReason = AgentStatus;
+
+/**
  * Whether stopping this Agent would interrupt anything.
  *
  * **One predicate, and this is it.** It decides whether `Cmd+Q X` on an Agent
@@ -544,8 +556,8 @@ export interface AgentRestoreRecord {
   readonly status: AgentStatus;
   readonly runtimeHealth: RuntimeHealth;
   readonly controlState: AgentControlState;
-  /** Whether this Agent has asked for attention that nobody has looked at. */
-  readonly unread?: boolean;
+  /** Why this Agent is unread, or nothing if it has been read. */
+  readonly unread?: UnreadReason;
 }
 
 export function agentRestoreRecord(
@@ -588,15 +600,16 @@ export class Agent {
     private runtimeHealthValue: RuntimeHealth,
     private controlStateValue: AgentControlState,
     /**
-     * The Agent asked for something and nobody has looked yet.
+     * The Agent wanted you and nobody has looked yet, and why.
      *
      * It is a fact about the *person*, not about the Agent, which is why it is
-     * a flag of its own rather than a fifth status: an Agent can be waiting and
-     * read (you are looking at it now), or idle and unread (it asked, you never
-     * came, and it timed out). Collapsing the two would lose the second, which
-     * is the one worth a glow.
+     * a field of its own rather than a fifth status: an Agent can be waiting and
+     * read (you are looking at it now), or idle and unread (it finished, you
+     * never came). Collapsing the two would lose the second, which is the one
+     * worth a glow. The value is the reason — see `UnreadReason` — and
+     * `undefined` is read.
      */
-    private unreadValue: boolean,
+    private unreadValue: UnreadReason | undefined,
   ) {
     this.nameOverride = nameOverride;
   }
@@ -633,7 +646,7 @@ export class Agent {
       validated.status,
       validated.runtimeHealth,
       validated.controlState,
-      validated.unread === true,
+      validated.unread,
     );
   }
 
@@ -686,11 +699,11 @@ export class Agent {
     return this.controlStateValue;
   }
 
-  get unread(): boolean {
+  get unread(): UnreadReason | undefined {
     return this.unreadValue;
   }
 
-  setUnread(unread: boolean): boolean {
+  setUnread(unread: UnreadReason | undefined): boolean {
     if (this.unreadValue === unread) return false;
     this.unreadValue = unread;
     return true;

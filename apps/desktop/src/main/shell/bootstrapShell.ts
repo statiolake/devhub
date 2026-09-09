@@ -109,6 +109,9 @@ export async function bootstrapShell(
 	// normal. Ordering is the fix, not speed.
 	createShellWindow(preloadPath, `${SHELL_ORIGIN}/index.html`, palette);
 	const controller = await createAppController(userDataPath, cliArgs);
+	shellWindowIfCreated()?.onWindowFocusChanged((focused) => {
+		controller.windowFocusChanged(focused);
+	});
 	shellTheme().onDidChange((next) => {
 		shellWindowIfCreated()?.applyPalette(next);
 		controller.publishTheme(next);

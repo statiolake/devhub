@@ -52,6 +52,15 @@ export class ShellWindow {
 	 * by whoever has both (`shellTitle.ts`).
 	 */
 	private titleChanged: () => void = () => undefined;
+	/**
+	 * Told when the window came forward or went away.
+	 *
+	 * The model needs this and cannot see it: a `WebContentsView` keeps its DOM
+	 * focus while the window behind it is deactivated, so no page in this window
+	 * can tell whether the person is in front of it. It is a fact only main
+	 * holds, and this is how it leaves.
+	 */
+	private windowFocusChanged: (focused: boolean) => void = () => undefined;
 
 	/**
 	 * The App Shell page's URL, held until `openPage` runs it.
@@ -140,7 +149,10 @@ export class ShellWindow {
 		// be looked at while the keys went somewhere else. `focusSurface` is
 		// already the one answer to that question, so it is asked again here
 		// rather than a second rule being written for this case.
-		this.window.on("focus", () => this.focusSurface());
+		this.window.on("focus", () => {
+			this.focusSurface();
+			this.windowFocusChanged(true);
+		});
 
 		// Going away is as much a fact about a workbench's focus as coming back,
 		// and it is the half nothing was reporting. A `WebContentsView` keeps
@@ -151,7 +163,10 @@ export class ShellWindow {
 		// the workbench was concerned nothing had changed. `focusSurface` is not
 		// the right answer here: the keyboard should stay exactly where it is
 		// while the app is away, and only the *reporting* of it changes.
-		this.window.on("blur", () => this.publishFocus());
+		this.window.on("blur", () => {
+			this.publishFocus();
+			this.windowFocusChanged(false);
+		});
 
 		// macOS convention: closing the window does not end the app, and here it
 		// must not even end the window. Every workbench, terminal and agent lives
@@ -439,6 +454,17 @@ export class ShellWindow {
 		// the xterm inside itself; only main can take the keyboard off the
 		// workbench view that had it.
 		this.focusSurface();
+	}
+
+	/**
+	 * Register the one reader of "is DevHub the window in front".
+	 *
+	 * Registering it publishes the current answer, so the reader starts in step
+	 * with the window rather than with whatever it assumed.
+	 */
+	onWindowFocusChanged(changed: (focused: boolean) => void): void {
+		this.windowFocusChanged = changed;
+		changed(!this.window.isDestroyed() && this.window.isFocused());
 	}
 
 	/** Register the one reader of "the window may need a new name". */

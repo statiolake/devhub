@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AppModel, SPLIT_DEFAULT_RATIO } from "./appModel.js";
+import { AppModel, SPLIT_DEFAULT_RATIO, wantsAttention } from "./appModel.js";
 import {
   AgentProfile,
   agentId,
@@ -12,6 +12,7 @@ import {
   Workspace,
   workspaceId,
   workspaceRoot,
+  type AgentStatus,
   type NavigationContext,
 } from "./domain.js";
 
@@ -369,6 +370,41 @@ describe("duplicates", () => {
   });
 });
 
+describe("wantsAttention", () => {
+  /**
+   * The whole rule, in a table: leaving `working` is the only thing that owes
+   * the person a look. Every other pair is something nobody was waiting for.
+   */
+  const statuses: AgentStatus[] = [
+    "working",
+    "waiting",
+    "idle",
+    "error",
+    "unknown",
+  ];
+
+  it("is exactly 'it stopped working'", () => {
+    for (const previous of statuses) {
+      for (const next of statuses) {
+        expect(wantsAttention(previous, next)).toBe(
+          previous === "working" && next !== "working",
+        );
+      }
+    }
+  });
+
+  it("says nothing about a screen nobody had read, or a status standing still", () => {
+    for (const next of statuses) {
+      expect(wantsAttention("unknown", next)).toBe(false);
+    }
+    for (const status of statuses) {
+      expect(wantsAttention(status, status)).toBe(false);
+    }
+    // The finish is the case this rule exists for.
+    expect(wantsAttention("working", "idle")).toBe(true);
+  });
+});
+
 describe("unread agents", () => {
   /**
    * A launched Agent, with the person looking somewhere else.
@@ -384,44 +420,128 @@ describe("unread agents", () => {
     return model;
   }
 
-  it("becomes unread on entering waiting, but not while it is on screen", () => {
-    const model = withAgent();
-    // Nobody is looking: the question is one to come back to.
-    model.setAgentStatus(AG_A, "waiting");
-    expect(model.agent(AG_A)?.unread).toBe(true);
-
-    // Opening it is reading it.
-    model.selectContext({ kind: "agent", agentId: AG_A });
-    expect(model.agent(AG_A)?.unread).toBe(false);
-
-    // Asking again while you are looking at it is not something to come back
-    // to — you are already there.
+  /** Take it through `working` first: that is what makes leaving it mean something. */
+  function ranAndThen(model: AppModel, status: AgentStatus) {
     model.setAgentStatus(AG_A, "working");
-    model.setAgentStatus(AG_A, "waiting");
-    expect(model.agent(AG_A)?.unread).toBe(false);
+    model.setAgentStatus(AG_A, status);
+  }
+
+  it("becomes unread whenever it stops working, and says which way", () => {
+    for (const status of ["idle", "waiting", "error", "unknown"] as const) {
+      const model = withAgent();
+      ranAndThen(model, status);
+      expect(model.agent(AG_A)?.unread).toBe(status);
+    }
   });
 
-  it("survives the Agent moving on, and is only cleared by opening it", () => {
+  it("stays read when it stops working in front of you", () => {
     const model = withAgent();
-    model.setAgentStatus(AG_A, "waiting");
-    // It asked, nobody came, it timed out and went idle. The row still owes an
-    // answer, which is the case a single status mark would lose.
-    model.setAgentStatus(AG_A, "idle");
-    expect(model.agent(AG_A)?.unread).toBe(true);
     model.selectContext({ kind: "agent", agentId: AG_A });
-    expect(model.agent(AG_A)?.unread).toBe(false);
+    ranAndThen(model, "idle");
+    expect(model.agent(AG_A)?.unread).toBeUndefined();
+  });
+
+  it("counts the side-by-side pane as looking at it", () => {
+    const model = withAgent();
+    model.selectContext({ kind: "agent", agentId: AG_A }, "beside");
+    ranAndThen(model, "waiting");
+    expect(model.agent(AG_A)?.unread).toBeUndefined();
+  });
+
+  it("reads an Agent mounted in the side pane", () => {
+    const model = withAgent();
+    ranAndThen(model, "idle");
+    model.selectContext({ kind: "agent", agentId: AG_A }, "beside");
+    expect(model.agent(AG_A)?.unread).toBeUndefined();
+  });
+
+  it("does not raise a mark for anything that did not stop working", () => {
+    const model = withAgent();
+    // The first reading of a screen nobody had read.
+    model.setAgentStatus(AG_A, "waiting");
+    expect(model.agent(AG_A)?.unread).toBeUndefined();
+    // An Agent that never went away asking again.
+    model.setAgentStatus(AG_A, "idle");
+    model.setAgentStatus(AG_A, "waiting");
+    expect(model.agent(AG_A)?.unread).toBeUndefined();
+  });
+
+  it("keeps the mark while the Agent moves on, and clears it only by opening it", () => {
+    const model = withAgent();
+    ranAndThen(model, "waiting");
+    // It asked, nobody came, it timed out and went idle. The row still owes an
+    // answer, and still owes it for the reason it was first owed.
+    model.setAgentStatus(AG_A, "idle");
+    expect(model.agent(AG_A)?.unread).toBe("waiting");
+    model.selectContext({ kind: "agent", agentId: AG_A });
+    expect(model.agent(AG_A)?.unread).toBeUndefined();
   });
 
   it("can be put back by hand, and re-read by clicking the same row", () => {
     const model = withAgent();
     model.selectContext({ kind: "agent", agentId: AG_A });
+    model.setAgentStatus(AG_A, "working");
     model.markAgentUnread(AG_A);
-    expect(model.agent(AG_A)?.unread).toBe(true);
+    // By hand, the reason is whatever it is doing now: that is what you are
+    // asking to be reminded of.
+    expect(model.agent(AG_A)?.unread).toBe("working");
     const before = model.snapshot().revision;
     // Already selected: re-selecting still reads it, and still counts as a
     // change, or the sidebar would keep drawing the dot.
     model.selectContext({ kind: "agent", agentId: AG_A });
-    expect(model.agent(AG_A)?.unread).toBe(false);
+    expect(model.agent(AG_A)?.unread).toBeUndefined();
     expect(model.snapshot().revision).toBeGreaterThan(before);
+  });
+});
+
+describe("looking at an Agent, and the window that is not in front", () => {
+  function selectedAgent() {
+    const model = modelWith([WS_A, "/dev/a"]);
+    model.addAgent(WS_A, AG_A, codex);
+    model.selectContext({ kind: "agent", agentId: AG_A });
+    return model;
+  }
+
+  it("is nobody looking at anything while DevHub is behind another window", () => {
+    const model = selectedAgent();
+    model.setWindowFocused(false);
+    expect(model.isAgentVisible(AG_A)).toBe(false);
+    // The case the whole rule is for: it finished while you were elsewhere.
+    model.setAgentStatus(AG_A, "working");
+    model.setAgentStatus(AG_A, "idle");
+    expect(model.agent(AG_A)?.unread).toBe("idle");
+  });
+
+  it("reads what is on screen when the window comes back", () => {
+    const model = selectedAgent();
+    model.setWindowFocused(false);
+    model.setAgentStatus(AG_A, "working");
+    model.setAgentStatus(AG_A, "idle");
+    const before = model.snapshot().revision;
+    model.setWindowFocused(true);
+    expect(model.agent(AG_A)?.unread).toBeUndefined();
+    expect(model.snapshot().revision).toBeGreaterThan(before);
+  });
+
+  it("reads nothing when the window comes back to something that is not an Agent", () => {
+    const model = selectedAgent();
+    model.setWindowFocused(false);
+    model.setAgentStatus(AG_A, "working");
+    model.setAgentStatus(AG_A, "error");
+    model.selectContext({ kind: "workspace", workspaceId: WS_A });
+    model.setWindowFocused(true);
+    expect(model.agent(AG_A)?.unread).toBe("error");
+  });
+
+  it("does not read an Agent selected while the window is away", () => {
+    const model = selectedAgent();
+    model.selectContext({ kind: "workspace", workspaceId: WS_A });
+    model.setWindowFocused(false);
+    model.setAgentStatus(AG_A, "working");
+    model.setAgentStatus(AG_A, "idle");
+    model.selectContext({ kind: "agent", agentId: AG_A });
+    expect(model.agent(AG_A)?.unread).toBe("idle");
+    model.setWindowFocused(true);
+    expect(model.agent(AG_A)?.unread).toBeUndefined();
   });
 });

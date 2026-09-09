@@ -78,8 +78,13 @@ export interface AgentWire {
 	readonly profileId: string;
 	readonly runtimeHealth: RuntimeHealthWire;
 	readonly status: AgentStatusWire;
-	/** The Agent asked for attention and nobody has opened it since. */
-	readonly unread: boolean;
+	/**
+	 * Why this Agent is owed a look, or nothing if it has been read.
+	 *
+	 * The status it went into while nobody was watching, so the Sidebar can
+	 * draw the mark in that status's own colour. See `wantsAttention`.
+	 */
+	readonly unread: AgentStatusWire | undefined;
 	/**
 	 * What the Agent says it is doing, in its own words.
 	 *

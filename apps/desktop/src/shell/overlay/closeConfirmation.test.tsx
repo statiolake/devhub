@@ -68,7 +68,7 @@ function snapshotWith(agents: boolean): AppSnapshot {
                 profileId: "claude",
                 ordinal: 1,
                 status: "working",
-                unread: false,
+                unread: undefined,
                 activity: undefined,
                 injection: {
                   queued: 0,

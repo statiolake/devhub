@@ -37,6 +37,7 @@ import {
   type RuntimeHealth,
   type SurfaceLayout,
   type SurfacePresentation,
+  type UnreadReason,
   type WorkspaceId,
   type WorkspaceRoot,
   type WorkspaceState,
@@ -105,8 +106,13 @@ export interface AgentSnapshot {
   readonly status: AgentStatus;
   readonly runtimeHealth: RuntimeHealth;
   readonly controlState: AgentControlState;
-  /** The Agent asked for attention and nobody has opened it since. */
-  readonly unread: boolean;
+  /**
+   * Why this Agent is owed a look, or nothing if it has been read.
+   *
+   * The reason is the status it went into while nobody was watching, so the
+   * Sidebar's dot can be drawn in that status's own colour.
+   */
+  readonly unread: UnreadReason | undefined;
   /** What the Agent says it is doing, or nothing if it has not said. */
   readonly activity: string | undefined;
   readonly injection: AgentInjection;
@@ -176,6 +182,32 @@ function sameEditorHost(
   return true;
 }
 
+/**
+ * Whether a status change is one the person would want to be told about.
+ *
+ * **One predicate, and this is it.** `setAgentStatus` is its only caller, and
+ * the only thing in DevHub that raises an unread mark on its own.
+ *
+ * The rule is leaving `working`. An Agent that is working is an Agent nobody
+ * has to watch; the moment it stops working it is either asking a question,
+ * finished, broken, or unreadable, and all four are the person's turn. What
+ * matters most is the finish — `working` → `idle` — which the old rule
+ * ("entered `waiting`") missed entirely, and which is the case somebody
+ * actually waits for.
+ *
+ * What is deliberately *not* here: anything that does not start from
+ * `working`. `unknown` → anything is a first reading of a screen nobody had
+ * read, not a change; `idle` → `idle` is nothing; `idle` → `waiting` without a
+ * working spell in between is an Agent that never went away. Every one of them
+ * would raise a mark for something that did not happen while you were gone.
+ */
+export function wantsAttention(
+  previous: AgentStatus,
+  next: AgentStatus,
+): boolean {
+  return previous === "working" && next !== "working";
+}
+
 export class AppModel {
   private readonly workspaceList: Workspace[] = [];
   private readonly repositoryMap = new Map<RepositoryId, Repository>();
@@ -185,6 +217,17 @@ export class AppModel {
     presentation: "full",
   };
   private sidebarWidthValue = SIDEBAR_DEFAULT_WIDTH;
+  /**
+   * Whether the DevHub window has the person in front of it.
+   *
+   * Main owns this fact — a workbench view can hold the keyboard while the
+   * window behind it is deactivated, so nothing inside the page can see it —
+   * and it arrives through `setWindowFocused` like any other observation. It
+   * starts `true` because the window is created and shown focused, and main
+   * republishes it on the first blur; starting `false` would make everything
+   * on screen at startup unread the moment it stopped working.
+   */
+  private windowFocusedValue = true;
   /**
    * The Agent last selected in each workspace, by workspace id.
    *
@@ -444,19 +487,20 @@ export class AppModel {
   }
 
   /**
-   * Set an Agent's status, and raise its unread flag if it just asked for you.
+   * Set an Agent's status, and raise its unread mark if it wanted you.
    *
    * The rule is one rule, stated once, here — where both the status and the
-   * selection live. An Agent becomes unread when it *enters* `waiting` and it
-   * is not the thing on screen; if it is on screen, you are already looking at
-   * the question, so there is nothing to come back to. Nothing else in the app
-   * decides this, so a new caller of `setAgentStatus` cannot get it wrong.
+   * selection live. `wantsAttention` says whether the move is one worth coming
+   * back to; `isAgentVisible` says whether you were there to see it. Nothing
+   * else in the app decides either half, so a new caller of `setAgentStatus`
+   * cannot get it wrong. The reason recorded is the status it moved into, so
+   * the Sidebar can say *why* without a second vocabulary.
    */
   setAgentStatus(id: AgentId, status: AgentStatus): void {
     const agent = this.requireAgent(id);
-    const entered = agent.status !== "waiting" && status === "waiting";
+    const attention = wantsAttention(agent.status, status);
     let changed = agent.setStatus(status);
-    if (entered && !this.isSelectedAgent(id) && agent.setUnread(true)) {
+    if (attention && !this.isAgentVisible(id) && agent.setUnread(status)) {
       changed = true;
     }
     if (changed) {
@@ -469,17 +513,76 @@ export class AppModel {
    *
    * The counterpart to opening one, and the reason unread is not simply
    * "waiting and not selected": having looked at something is a decision, and
-   * so is deciding you have not finished with it.
+   * so is deciding you have not finished with it. The reason is whatever the
+   * Agent is doing now, because that is what you are choosing to be reminded
+   * of.
    */
   markAgentUnread(id: AgentId): void {
-    if (this.requireAgent(id).setUnread(true)) {
+    const agent = this.requireAgent(id);
+    if (agent.setUnread(agent.status)) {
       this.bumpRevision();
     }
   }
 
-  private isSelectedAgent(id: AgentId): boolean {
-    const context = this.selectionValue.context;
-    return context.kind === "agent" && context.agentId === id;
+  /**
+   * Whether the person can see this Agent right now.
+   *
+   * **One predicate, and this is it**, replacing "is it the selected Agent":
+   * an Agent is being looked at when it is what the content area is drawing —
+   * on its own, or in the side-by-side pane beside its Workspace's workbench —
+   * *and* the window is in front. `resolveLayout` already answers the first
+   * half for every arrangement there is, so a new arrangement cannot appear
+   * with this rule left behind; the second half is why an Agent that finishes
+   * while DevHub is behind the browser is still owed a look.
+   */
+  isAgentVisible(id: AgentId): boolean {
+    return this.visibleAgentId() === id;
+  }
+
+  private visibleAgentId(): AgentId | undefined {
+    if (!this.windowFocusedValue) {
+      return undefined;
+    }
+    const layout = this.resolveLayout(this.selectionValue);
+    if (layout.kind !== "agent" && layout.kind !== "split") {
+      return undefined;
+    }
+    return layout.agent.kind === "agent" ? layout.agent.agentId : undefined;
+  }
+
+  /**
+   * Tell the model whether DevHub is the window in front.
+   *
+   * Coming back to a visible Agent is reading it — the same event as opening
+   * one, arriving the other way round — so it goes through the same one place
+   * that clears the mark.
+   */
+  setWindowFocused(focused: boolean): void {
+    if (this.windowFocusedValue === focused) {
+      return;
+    }
+    this.windowFocusedValue = focused;
+    this.readVisibleAgent();
+    this.bumpRevision();
+  }
+
+  get windowFocused(): boolean {
+    return this.windowFocusedValue;
+  }
+
+  /**
+   * Clear the unread mark on whatever is being looked at.
+   *
+   * The only thing that clears it automatically, called from the two events
+   * that can make the visibility predicate become true — a selection, and the
+   * window coming forward. Returns whether anything actually changed.
+   */
+  private readVisibleAgent(): boolean {
+    const visible = this.visibleAgentId();
+    return (
+      visible !== undefined &&
+      this.agent(visible)?.setUnread(undefined) === true
+    );
   }
 
   /** What the Agent says it is doing, as of the round that read its pane. */
@@ -579,12 +682,6 @@ export class AppModel {
     presentation: SurfacePresentation = "full",
   ): void {
     this.ensureContextExists(context);
-    // Opening an Agent is reading it. This is the only place that clears the
-    // flag automatically, so "it went away and I do not know why" has one
-    // answer.
-    const read =
-      context.kind === "agent" &&
-      this.agent(context.agentId)?.setUnread(false) === true;
     const next: NavigationSelection = {
       context,
       presentation: context.kind === "agent" ? presentation : "full",
@@ -598,12 +695,16 @@ export class AppModel {
         this.lastAgentByWorkspace.set(owner, context.agentId);
       }
     }
-    if (!sameSelection(this.selectionValue, next)) {
-      this.selectionValue = next;
-      this.bumpRevision();
-    } else if (read) {
-      // Re-selecting what is already selected still reads it: an Agent marked
-      // unread by hand while it was on screen is read again by clicking it.
+    const moved = !sameSelection(this.selectionValue, next);
+    this.selectionValue = next;
+    // Selecting an Agent is reading it, because selecting it is what makes it
+    // the thing being looked at — asked of the new selection, and answered by
+    // the same predicate the window's focus is answered by, so a selection
+    // made while DevHub is behind another app reads nothing. Re-selecting what
+    // is already selected still reads it: an Agent marked unread by hand while
+    // it was on screen is read again by clicking it.
+    const read = this.readVisibleAgent();
+    if (moved || read) {
       this.bumpRevision();
     }
   }

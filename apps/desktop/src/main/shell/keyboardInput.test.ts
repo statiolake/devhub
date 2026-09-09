@@ -75,7 +75,7 @@ const SNAPSHOT = {
 					status: "idle",
 					runtimeHealth: "healthy",
 					controlState: "running",
-					unread: false,
+					unread: undefined,
 					activity: undefined,
 					injection: {
 						queued: 0,

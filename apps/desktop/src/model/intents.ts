@@ -272,6 +272,15 @@ export type UserIntent =
       readonly type: "retry_close_workspace";
       readonly workspaceId: WorkspaceId;
     }
+  /**
+   * DevHub became, or stopped being, the window in front.
+   *
+   * Raised by main and by nothing else: a page inside the window cannot see
+   * this — a workbench view keeps its DOM focus while the window behind it is
+   * deactivated — and it is the half of "is anybody looking at this Agent"
+   * that the selection cannot answer.
+   */
+  | { readonly type: "window_focus_changed"; readonly focused: boolean }
   | { readonly type: "window_closed" }
   | { readonly type: "quit" };
 

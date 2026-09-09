@@ -641,6 +641,24 @@ describe("the shell window's focus reporting", () => {
 		expect(events).toEqual(["focus", "blur", "focus"]);
 	});
 
+	it("tells the model too, starting with the answer as it stands", () => {
+		// The model cannot see this for itself — a view keeps its DOM focus
+		// while the window behind it is deactivated — and it needs it to know
+		// whether anybody is looking at the Agent on screen. Registering
+		// publishes the current answer, so the model does not start on an
+		// assumption.
+		const reported: boolean[] = [];
+		window.inFront = true;
+		shell.onWindowFocusChanged((focused) => reported.push(focused));
+		expect(reported).toEqual([true]);
+
+		window.inFront = false;
+		window.emit("blur");
+		window.inFront = true;
+		window.emit("focus");
+		expect(reported).toEqual([true, false, true]);
+	});
+
 	it("takes focus off every workbench while the page's own surface is on screen", () => {
 		shell.reveal(a);
 		expect(a.isFocused()).toBe(true);
