@@ -66,7 +66,8 @@ describe("the keyboard screen", () => {
     // The stroke *is* `<`. Writing `Shift+,` would be naming a US keyboard's
     // way of making it, which is not what a JIS one does with the same binding.
     expect(recorder("DevHub Settings…")).toHaveTextContent("<");
-    expect(recorder("Previous Agent")).toHaveTextContent("{");
+    expect(recorder("Previous Agent")).toHaveTextContent("[");
+    expect(recorder("Previous unread Agent")).toHaveTextContent("{");
     expect(recorder("Keyboard shortcuts")).toHaveTextContent("?");
   });
 

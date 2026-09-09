@@ -150,10 +150,14 @@ const US_SHIFTED: Readonly<Record<string, string>> = {
  *
  * So both readings are candidates and the first one that is actually bound wins.
  * That resolves every case except one: a punctuation key whose two readings are
- * *both* bound to something. `BracketRight` shifted is `}` on a US keyboard and
- * `{` on a JIS one, and DevHub binds both — so under composition, and only
- * under composition, that pair is genuinely ambiguous and the US reading is
- * taken. The practical cost is small and worth stating plainly: this table is
+ * *both* bound to something. `BracketRight` is `]`/`}` on a US keyboard and
+ * `[`/`{` on a JIS one, and DevHub binds all four — the Agent cycle and its
+ * unread narrowing — so under composition, and only under composition, that key
+ * is genuinely ambiguous in both its shifted and its unshifted reading, and the
+ * US one is taken. On a JIS keyboard that means it steps forward where it
+ * should have stepped back; the other half of each pair is unambiguous, because
+ * `BracketLeft` and `Backslash` each have only one bound reading.
+ * The practical cost is small and worth stating plainly: this table is
  * consulted **only** while an input method is composing, letters and digits are
  * unambiguous on both layouts, and every chord whose second stroke is
  * punctuation can still be typed by finishing or cancelling the composition

@@ -55,8 +55,9 @@ const SNAPSHOT = {
 	selection: { context: { kind: "global" }, presentation: "full" },
 	sidebar: { width: 248 },
 	splitRatio: 0.55,
-	// One workspace with one Agent, so that the cycles have somewhere to go and
-	// a chord that was recognised is visibly distinct from one that was not.
+	// One workspace with one Agent, unread, so that every cycle — including the
+	// one narrowed to unread Agents — has somewhere to go and a chord that was
+	// recognised is visibly distinct from one that was not.
 	workspaces: [
 		{
 			id: "w-1",
@@ -75,7 +76,7 @@ const SNAPSHOT = {
 					status: "idle",
 					runtimeHealth: "healthy",
 					controlState: "running",
-					unread: undefined,
+					unread: "idle",
 					activity: undefined,
 					injection: {
 						queued: 0,
@@ -203,8 +204,10 @@ describe("a chord, as Electron delivers it", () => {
 		{
 			layout: "US",
 			rows: [
-				{ key: "{", code: "BracketLeft", reaches: "previous_agent" },
-				{ key: "}", code: "BracketRight", reaches: "next_agent" },
+				{ key: "[", code: "BracketLeft", reaches: "previous_agent" },
+				{ key: "]", code: "BracketRight", reaches: "next_agent" },
+				{ key: "{", code: "BracketLeft", reaches: "previous_unread_agent" },
+				{ key: "}", code: "BracketRight", reaches: "next_unread_agent" },
 				{ key: "<", code: "Comma", reaches: "open_settings" },
 				{ key: "?", code: "Slash", reaches: "show_chord_help" },
 				{ key: "f", code: "KeyF", reaches: "add_workspace" },
@@ -212,8 +215,10 @@ describe("a chord, as Electron delivers it", () => {
 			// Composing: no character, so the physical key is read. The US
 			// reading is taken first where the two layouts disagree.
 			composing: [
-				{ code: "BracketLeft", reaches: "previous_agent", shift: true },
-				{ code: "BracketRight", reaches: "next_agent", shift: true },
+				{ code: "BracketLeft", reaches: "previous_unread_agent", shift: true },
+				{ code: "BracketRight", reaches: "next_unread_agent", shift: true },
+				{ code: "BracketLeft", reaches: "previous_agent", shift: false },
+				{ code: "BracketRight", reaches: "next_agent", shift: false },
 				{ code: "Comma", reaches: "open_settings", shift: true },
 				{ code: "Slash", reaches: "show_chord_help", shift: true },
 				{ code: "KeyF", reaches: "add_workspace", shift: false },
@@ -222,8 +227,10 @@ describe("a chord, as Electron delivers it", () => {
 		{
 			layout: "JIS",
 			rows: [
-				{ key: "{", code: "BracketRight", reaches: "previous_agent" },
-				{ key: "}", code: "Backslash", reaches: "next_agent" },
+				{ key: "[", code: "BracketRight", reaches: "previous_agent" },
+				{ key: "]", code: "Backslash", reaches: "next_agent" },
+				{ key: "{", code: "BracketRight", reaches: "previous_unread_agent" },
+				{ key: "}", code: "Backslash", reaches: "next_unread_agent" },
 				// The key a US keyboard reads as `{` is `@` here, and `@` is no
 				// chord: it cancels rather than firing the wrong command.
 				{ key: "@", code: "BracketLeft", reaches: undefined },
@@ -232,12 +239,16 @@ describe("a chord, as Electron delivers it", () => {
 				{ key: "f", code: "KeyF", reaches: "add_workspace" },
 			],
 			composing: [
-				// The one cell the fallback cannot resolve: shifted BracketRight is
-				// `}` on US and `{` on JIS, both are bound, and the US reading
-				// wins. Letters and digits are unambiguous, which is why the rest
-				// of the chords keep working mid-composition on both keyboards.
-				{ code: "BracketRight", reaches: "next_agent", shift: true },
-				{ code: "Backslash", reaches: "next_agent", shift: true },
+				// The one key the fallback cannot resolve: BracketRight is `]`/`}`
+				// on US and `[`/`{` on JIS, all four are bound, and the US reading
+				// wins — so on a JIS keyboard, mid-composition, it steps forward
+				// where it should have stepped back. Letters and digits are
+				// unambiguous, and so is the other half of each pair, which is why
+				// the rest of the chords keep working mid-composition on both.
+				{ code: "BracketRight", reaches: "next_unread_agent", shift: true },
+				{ code: "Backslash", reaches: "next_unread_agent", shift: true },
+				{ code: "BracketRight", reaches: "next_agent", shift: false },
+				{ code: "Backslash", reaches: "next_agent", shift: false },
 				{ code: "Comma", reaches: "open_settings", shift: true },
 				{ code: "Slash", reaches: "show_chord_help", shift: true },
 				{ code: "KeyF", reaches: "add_workspace", shift: false },
@@ -250,7 +261,7 @@ describe("a chord, as Electron delivers it", () => {
 			type(chordHost, [
 				PREFIX,
 				input("ShiftLeft", "Shift", { shift: true }),
-				input(code, key, { shift: key !== "f" }),
+				input(code, key, { shift: !/^[a-z[\]]$/u.test(key) }),
 			]);
 			expect(calls).toEqual(reaches === undefined ? [] : [named(reaches)]);
 		});

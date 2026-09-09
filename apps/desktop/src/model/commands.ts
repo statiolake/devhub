@@ -39,7 +39,9 @@
  * | --------------------------- | ------------------------- |
  * | `Cmd+Q Cmd+Q`               | `forward_prefix`          |
  * | `Cmd+Q Shift+N` / `Shift+P` | `next_workspace` / `previous_workspace` |
- * | `Cmd+Q }` / `{`             | `next_agent` / `previous_agent` |
+ * | `Cmd+Q ]` / `[`             | `next_agent` / `previous_agent` |
+ * | `Cmd+Q Cmd+]` / `Cmd+[`     | `next_agent` / `previous_agent` |
+ * | `Cmd+Q }` / `{`             | `next_unread_agent` / `previous_unread_agent` |
  * | `Cmd+Q Cmd+N` / `Cmd+P`     | `next_tab` / `previous_tab` |
  * | `Cmd+Q G`                   | `open_tab_picker`         |
  * | `Cmd+Q 1`…`9`               | `select_entry_1`…`9`      |
@@ -68,7 +70,7 @@
  *
  * **Three ways of stepping, because there are three lists.** The sidebar is a
  * tree, and "the next thing" means something different depending on which level
- * you are working at: `Shift+N`/`Shift+P` step the *workspaces*, `{`/`}` step
+ * you are working at: `Shift+N`/`Shift+P` step the *workspaces*, `[`/`]` step
  * the *Agents* — every Agent there is, in sidebar order, not only the ones
  * under the workspace you happen to be in, because an Agent is the unit of work
  * and which folder it belongs to is not what you are cycling through — and
@@ -76,6 +78,20 @@
  * it is, which is what a person means by "the next tab". Three commands rather
  * than one that guesses, because a guess would be wrong a third of the time and
  * there would be no way to ask for the other two.
+ *
+ * **Shift narrows the same cycle to unread Agents.** `{`/`}` walk the same
+ * ring, in the same order, from the same place, and stop only on an Agent that
+ * is owed a look (`unread`, the rule in `wantsAttention`). It is a filter over
+ * one cycle rather than a second cycle: "the next one" and "the next one I have
+ * not seen" are the same question with the list narrowed, so they are the same
+ * ring with a predicate, and the shifted key is the narrower answer everywhere
+ * else in this table too. With nothing unread it is a no-op, like every other
+ * chord with nothing to act on.
+ *
+ * **`Cmd+[` and `Cmd+]` are the same two commands under a second key.** Many
+ * keys may name one command; the bracket pair is worth reaching with the hand
+ * already on Command after the prefix, and a stroke with Command held is a
+ * different stroke from the bare one, so nothing is taken away.
  *
  * **`Cmd+Q G` is the same list as a picker.** Stepping is for the neighbour;
  * the picker is for the one you can name. It is the ordinary picker component,
@@ -150,6 +166,16 @@
  * - **A stroke is the character, so the same binding is right on every
  *   layout.** `{` is `{` whether the key that made it sits where a US keyboard
  *   puts it or where a JIS one does.
+ * - **The bracket cycles need a character, so they wait for a composition to
+ *   end.** While an input method is composing there is no character to read and
+ *   only the physical key is known, and `BracketRight` is `]`/`}` on a US
+ *   keyboard and `[`/`{` on a JIS one — both readings now being bound, the US
+ *   one is taken (see `LAYOUT_CHARACTERS`). So on a JIS keyboard, mid-
+ *   composition, that key steps forward where it should have stepped back.
+ *   Finishing or cancelling the composition first makes it right, which is the
+ *   same answer punctuation chords have always had here; nothing else is
+ *   affected, because `[` from `BracketLeft` and `]` from `Backslash` each have
+ *   only one bound reading.
  * - **A second key that is not in the table cancels the chord and is *not*
  *   forwarded.** Once the prefix is armed the keyboard belongs to the chord
  *   layer, so a mistyped chord does nothing at all rather than firing whatever
@@ -187,6 +213,8 @@ export type CommandId =
   | "next_workspace"
   | "previous_agent"
   | "next_agent"
+  | "previous_unread_agent"
+  | "next_unread_agent"
   | "previous_tab"
   | "next_tab"
   | "open_tab_picker"
@@ -281,11 +309,25 @@ export const COMMANDS: readonly CommandDefinition[] = [
     id: "next_agent",
     label: "Next Agent",
     needs: "nothing",
-    defaultKeys: ["}"],
+    defaultKeys: ["]", "Cmd+]"],
   },
   {
     id: "previous_agent",
     label: "Previous Agent",
+    needs: "nothing",
+    defaultKeys: ["[", "Cmd+["],
+  },
+  {
+    // The same ring as `next_agent`, stopping only where there is something to
+    // come back to. Shift narrows; it does not walk a different list.
+    id: "next_unread_agent",
+    label: "Next unread Agent",
+    needs: "nothing",
+    defaultKeys: ["}"],
+  },
+  {
+    id: "previous_unread_agent",
+    label: "Previous unread Agent",
     needs: "nothing",
     defaultKeys: ["{"],
   },

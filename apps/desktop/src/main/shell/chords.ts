@@ -27,6 +27,8 @@
  *
  * - `sidebarEntries` — Scratch, then the workspaces. What a digit names.
  * - `everyAgent` — every Agent there is, in sidebar order, across workspaces.
+ *   `Cmd+Q }` walks this same ring with the unread ones as the only stops, so
+ *   the filtered cycle cannot disagree with the whole one about the order.
  * - `everyTab` — every row of the tree in order, of both kinds.
  */
 
@@ -166,7 +168,7 @@ function sidebarEntries(
  *
  * Across workspaces, deliberately: an Agent is the unit of work, and which
  * folder it happens to be rooted in is not what somebody stepping through them
- * is choosing between. Confining the cycle to one workspace made `}` stop dead
+ * is choosing between. Confining the cycle to one workspace made `]` stop dead
  * at a boundary that means nothing to the person pressing it.
  */
 function everyAgent(snapshot: AppSnapshotWire): readonly AgentWire[] {
@@ -226,23 +228,33 @@ function wrap(index: number, length: number): number {
 /**
  * Step through a ring, from wherever the selection is in it.
  *
- * One function for all three cycles, because they differ only in what the ring
- * holds. A selection that is not in the ring at all — a workspace row while the
- * Agent ring is being stepped — steps forward onto the first entry and back
- * onto the last, which is the answer with no arbitrary choice in it.
+ * One function for every cycle, because they differ only in what the ring holds
+ * and which of its entries count. A selection that is not in the ring at all —
+ * a workspace row while the Agent ring is being stepped — steps forward onto
+ * the first entry and back onto the last, which is the answer with no arbitrary
+ * choice in it.
+ *
+ * `wanted` is what makes `}` a narrowing of `]` rather than a second cycle: the
+ * same ring, from the same place, in the same direction, stopping at the first
+ * entry that qualifies. Every entry is offered exactly once before it gives up,
+ * so a ring with nothing wanted in it is a no-op rather than a loop.
  */
 function step(
 	ring: readonly NavigationContext[],
 	from: NavigationContext | undefined,
 	direction: 1 | -1,
+	wanted: (index: number) => boolean = () => true,
 ): ChordEffect | undefined {
 	if (ring.length === 0) return undefined;
 	const found = from ? ring.findIndex((entry) => sameContext(entry, from)) : -1;
 	const current = found === -1 ? (direction === 1 ? -1 : 0) : found;
-	return {
-		kind: "select-context",
-		context: ring[wrap(current + direction, ring.length)],
-	};
+	for (let offset = 1; offset <= ring.length; offset += 1) {
+		const index = wrap(current + direction * offset, ring.length);
+		if (wanted(index)) {
+			return { kind: "select-context", context: ring[index] };
+		}
+	}
+	return undefined;
 }
 
 /**
@@ -402,8 +414,14 @@ export function resolveChord(
 		}
 
 		case "next_agent":
-		case "previous_agent": {
-			const direction = commandId === "next_agent" ? 1 : -1;
+		case "previous_agent":
+		case "next_unread_agent":
+		case "previous_unread_agent": {
+			const forwards =
+				commandId === "next_agent" || commandId === "next_unread_agent";
+			const onlyUnread =
+				commandId === "next_unread_agent" ||
+				commandId === "previous_unread_agent";
 			const agents = everyAgent(snapshot);
 			if (agents.length === 0) return undefined;
 			return step(
@@ -411,7 +429,8 @@ export function resolveChord(
 					(one): NavigationContext => ({ kind: "agent", agentId: one.id }),
 				),
 				agent ? { kind: "agent", agentId: agent.id } : undefined,
-				direction,
+				forwards ? 1 : -1,
+				onlyUnread ? (index) => agents[index].unread !== undefined : undefined,
 			);
 		}
 

@@ -1,7 +1,7 @@
 /**
  * "Go to…": every workspace and Agent, as one list.
  *
- * `Cmd+Q G`. Stepping (`Cmd+N`, `{`, `Shift+N`) is for the neighbour you can
+ * `Cmd+Q G`. Stepping (`Cmd+N`, `[`, `Shift+N`) is for the neighbour you can
  * see; this is for the one you can name, and past three or four workspaces it
  * is the only one of the two that scales.
  *

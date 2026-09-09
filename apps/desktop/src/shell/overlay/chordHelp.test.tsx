@@ -68,6 +68,11 @@ describe("the chord help", () => {
       ).toBeGreaterThan(0);
     }
     expect(screen.getAllByText("Cmd+q f")).toHaveLength(1);
+    // The narrowed cycle is a command like any other, so it is a row like any
+    // other — the sheet has nothing of its own to keep in step.
+    expect(screen.getByText("Next unread Agent")).toBeInTheDocument();
+    expect(screen.getByText("Previous unread Agent")).toBeInTheDocument();
+    expect(screen.getByText("Cmd+q }")).toBeInTheDocument();
   });
 
   it("shows the keyboard the person has, not the one DevHub ships", () => {
@@ -106,6 +111,9 @@ describe("the chord help", () => {
     // would be wrong for the person reading this on a JIS one.
     expect(screen.getByText("Cmd+q <")).toBeInTheDocument();
     expect(screen.getByText("Cmd+q {")).toBeInTheDocument();
+    // Two keys onto one command, both spelled out on the row.
+    expect(screen.getByText("Cmd+q ]")).toBeInTheDocument();
+    expect(screen.getByText("Cmd+q Cmd+]")).toBeInTheDocument();
     expect(describeChordKey(parseChordKey("Shift+["))).toBe("{");
   });
 

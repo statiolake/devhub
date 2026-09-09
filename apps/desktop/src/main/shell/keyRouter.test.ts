@@ -230,13 +230,15 @@ describe("a chord on a US and a JIS keyboard", () => {
 
 	const layouts: readonly {
 		readonly name: string;
-		readonly rows: readonly [string, string, string | undefined][];
+		readonly rows: readonly [string, string, string | undefined, boolean?][];
 	}[] = [
 		{
 			name: "US",
 			rows: [
-				["{", "BracketLeft", "previous_agent"],
-				["}", "BracketRight", "next_agent"],
+				["[", "BracketLeft", "previous_agent", false],
+				["]", "BracketRight", "next_agent", false],
+				["{", "BracketLeft", "previous_unread_agent"],
+				["}", "BracketRight", "next_unread_agent"],
 				["<", "Comma", "open_settings"],
 				["?", "Slash", "show_chord_help"],
 				["N", "KeyN", "next_workspace"],
@@ -245,8 +247,10 @@ describe("a chord on a US and a JIS keyboard", () => {
 		{
 			name: "JIS",
 			rows: [
-				["{", "BracketRight", "previous_agent"],
-				["}", "Backslash", "next_agent"],
+				["[", "BracketRight", "previous_agent", false],
+				["]", "Backslash", "next_agent", false],
+				["{", "BracketRight", "previous_unread_agent"],
+				["}", "Backslash", "next_unread_agent"],
 				// The key a US keyboard reads as `{` is `@` here, and `@` is not a
 				// chord: it cancels rather than firing the wrong command, which is
 				// exactly what the physical-key model got wrong.
@@ -259,9 +263,9 @@ describe("a chord on a US and a JIS keyboard", () => {
 	];
 
 	for (const layout of layouts) {
-		for (const [key, code, commandId] of layout.rows) {
+		for (const [key, code, commandId, shift = true] of layout.rows) {
 			it(`${layout.name}: ${key} (${code}) → ${commandId ?? "nothing"}`, () => {
-				expect(second(key, code)).toEqual(
+				expect(second(key, code, shift)).toEqual(
 					commandId === undefined
 						? { kind: "cancelled" }
 						: { kind: "run", commandId },

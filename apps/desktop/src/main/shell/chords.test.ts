@@ -26,7 +26,12 @@ import type {
 	WorkspaceWire,
 } from "../../ipc/appShell.js";
 
-function agent(id: string, workspaceId: string, ordinal: number): AgentWire {
+function agent(
+	id: string,
+	workspaceId: string,
+	ordinal: number,
+	extra: Partial<AgentWire> = {},
+): AgentWire {
 	return {
 		activity: undefined,
 		injection: {
@@ -43,16 +48,28 @@ function agent(id: string, workspaceId: string, ordinal: number): AgentWire {
 		status: "idle",
 		unread: undefined,
 		workspaceId,
+		...extra,
 	};
 }
 
+/**
+ * `"a1"` for an Agent that has been read, `"a1!"` for one that is unread.
+ *
+ * The mark is in the name so that a test's expectation reads as the ring it is
+ * walking — `["a1!", "b1", "b2!"]` is the whole fixture — rather than as a
+ * second list of ids somewhere else that has to be kept in step with it.
+ */
 function workspace(
 	id: string,
 	agentIds: readonly string[],
 	extra: Partial<WorkspaceWire> = {},
 ): WorkspaceWire {
 	return {
-		agents: agentIds.map((agentId, index) => agent(agentId, id, index)),
+		agents: agentIds.map((written, index) =>
+			written.endsWith("!")
+				? agent(written.slice(0, -1), id, index, { unread: "idle" })
+				: agent(written, id, index),
+		),
 		canCreateAgent: true,
 		id,
 		label: id,
@@ -199,6 +216,91 @@ describe("the Agent cycle", () => {
 		expect(
 			run("next_agent", snapshotOf({ workspaces: [empty] })),
 		).toBeUndefined();
+	});
+});
+
+/**
+ * `}` is `]` with the list narrowed, and that is the whole of it.
+ *
+ * The same ring in the same order from the same place — so these expectations
+ * are written against the ring the all-Agents cycle walks, and only the stops
+ * differ.
+ */
+describe("the unread Agent cycle", () => {
+	// The ring, in order: a1, a2 (unread), b1 (unread), b2.
+	const mixedOne = workspace("one", ["a1", "a2!"]);
+	const mixedTwo = workspace("two", ["b1!", "b2"]);
+	const mixed = [mixedOne, mixedTwo];
+
+	function from(agentId: string, commandId: CommandId) {
+		return run(
+			commandId,
+			snapshotOf({ workspaces: mixed, context: { kind: "agent", agentId } }),
+		);
+	}
+
+	it("skips the Agents that have been read, in sidebar order", () => {
+		expect(from("a1", "next_unread_agent")).toEqual(
+			selects({ kind: "agent", agentId: "a2" }),
+		);
+		expect(from("a2", "next_unread_agent")).toEqual(
+			selects({ kind: "agent", agentId: "b1" }),
+		);
+		expect(from("b2", "previous_unread_agent")).toEqual(
+			selects({ kind: "agent", agentId: "b1" }),
+		);
+	});
+
+	it("wraps around the whole ring, crossing workspaces", () => {
+		expect(from("b1", "next_unread_agent")).toEqual(
+			selects({ kind: "agent", agentId: "a2" }),
+		);
+		expect(from("a1", "previous_unread_agent")).toEqual(
+			selects({ kind: "agent", agentId: "b1" }),
+		);
+	});
+
+	it("starts at the top from a row that is not an Agent", () => {
+		const snapshot = snapshotOf({ workspaces: mixed });
+		expect(run("next_unread_agent", snapshot)).toEqual(
+			selects({ kind: "agent", agentId: "a2" }),
+		);
+		expect(run("previous_unread_agent", snapshot)).toEqual(
+			selects({ kind: "agent", agentId: "b1" }),
+		);
+		expect(
+			run(
+				"next_unread_agent",
+				snapshotOf({
+					workspaces: mixed,
+					context: { kind: "workspace", workspaceId: "two" },
+				}),
+			),
+		).toEqual(selects({ kind: "agent", agentId: "a2" }));
+	});
+
+	it("is a no-op with nothing unread, and with no Agents at all", () => {
+		const read = snapshotOf({
+			workspaces: [one, two],
+			context: { kind: "agent", agentId: "a1" },
+		});
+		expect(run("next_unread_agent", read)).toBeUndefined();
+		expect(run("previous_unread_agent", read)).toBeUndefined();
+		expect(
+			run("next_unread_agent", snapshotOf({ workspaces: [empty] })),
+		).toBeUndefined();
+	});
+
+	it("leaves the unnarrowed cycle alone", () => {
+		expect(from("a1", "next_agent")).toEqual(
+			selects({ kind: "agent", agentId: "a2" }),
+		);
+		expect(from("a2", "next_agent")).toEqual(
+			selects({ kind: "agent", agentId: "b1" }),
+		);
+		expect(from("b1", "previous_agent")).toEqual(
+			selects({ kind: "agent", agentId: "a2" }),
+		);
 	});
 });
 
@@ -535,14 +637,35 @@ describe("the default table", () => {
 
 	it("gives the three cycles three different keys", () => {
 		expect(press("N", "KeyN", { shift: true })).toBe("next_workspace");
-		expect(press("}", "BracketRight", { shift: true })).toBe("next_agent");
+		expect(press("]", "BracketRight")).toBe("next_agent");
 		expect(press("n", "KeyN", { command: true })).toBe("next_tab");
+	});
+
+	it("puts the unread narrowing on Shift, over the same brackets", () => {
+		expect(press("}", "BracketRight", { shift: true })).toBe(
+			"next_unread_agent",
+		);
+		expect(press("{", "BracketLeft", { shift: true })).toBe(
+			"previous_unread_agent",
+		);
+	});
+
+	it("reaches the Agent cycle with Command held as well", () => {
+		// A second key onto one command, not a second command: `Cmd+]` is its own
+		// stroke, and the bare `]` still means the same thing.
+		expect(press("]", "BracketRight", { command: true })).toBe("next_agent");
+		expect(press("[", "BracketLeft", { command: true })).toBe("previous_agent");
+		expect(press("[", "BracketLeft")).toBe("previous_agent");
 	});
 
 	it("matches the character, so a JIS keyboard reaches the same commands", () => {
 		// The same two characters, from the keys a JIS keyboard makes them with.
-		expect(press("{", "BracketRight", { shift: true })).toBe("previous_agent");
-		expect(press("}", "Backslash", { shift: true })).toBe("next_agent");
+		expect(press("{", "BracketRight", { shift: true })).toBe(
+			"previous_unread_agent",
+		);
+		expect(press("}", "Backslash", { shift: true })).toBe("next_unread_agent");
+		expect(press("[", "BracketRight")).toBe("previous_agent");
+		expect(press("]", "Backslash")).toBe("next_agent");
 		// And the key a US keyboard would have read as `{` is `@` there, which
 		// is no chord at all rather than the wrong one.
 		expect(press("@", "BracketLeft", { shift: true })).toBeUndefined();
