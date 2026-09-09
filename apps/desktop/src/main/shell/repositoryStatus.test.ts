@@ -30,6 +30,21 @@ vi.mock("./git.js", () => ({
 	readDirty: (...args: unknown[]) => readDirty(...args),
 	readAhead: (...args: unknown[]) => readAhead(...args),
 }));
+// The watcher has its own tests, against a real repository, because what it
+// does is filesystem behaviour and nothing about it can be learned from a
+// stand-in. Here it is out of the way: these cases are about the clocks and
+// the projection, and the roots they use are names rather than directories.
+vi.mock("./headWatcher.js", () => ({
+	HeadWatcher: class {
+		arm(): Promise<void> {
+			return Promise.resolve();
+		}
+		failures(): readonly never[] {
+			return [];
+		}
+		stop(): void {}
+	},
+}));
 vi.mock("./github.js", async (importOriginal) => ({
 	...(await importOriginal<Record<string, unknown>>()),
 	readGitHubToken: (...args: unknown[]) => readGitHubToken(...args),
@@ -282,23 +297,28 @@ describe("what a workspace is about", () => {
 		}
 	});
 
-	it("does not re-read the repository while the branch stays put", async () => {
-		// What makes the fast clock cheap: one local command per workspace, and
-		// nothing else unless the answer actually changed. Without this it would
-		// be a full round every two seconds, which is the poll this file is
-		// written to avoid.
+	it("runs no git at all while nothing has happened", async () => {
+		// The whole of what an idle DevHub costs here. A checkout writes `HEAD`
+		// and the watcher notices it, so between one safety round and the next
+		// there is nothing to ask and nothing is asked — where this used to be
+		// one `git rev-parse` per workspace every two seconds, for ever.
 		vi.useFakeTimers();
 		try {
 			checkedOut("feature/128-tidy");
 			const published: RepositoryStatusWire[] = [];
 			const running = watcher(published);
 			running.start();
-			await vi.waitFor(() => {
-				expect(published.length).toBeGreaterThan(0);
-			});
+			// Advanced rather than waited for: `waitFor` moves a fake clock by
+			// however much it takes, and this case is about exactly how far the
+			// clock has gone. Ten milliseconds is the first round's own work.
+			await vi.advanceTimersByTimeAsync(10);
+			expect(published.length).toBeGreaterThan(0);
+			const rounds = readRepository.mock.calls.length;
+			const branches = readBranch.mock.calls.length;
 
-			await vi.advanceTimersByTimeAsync(BRANCH_POLL_INTERVAL_MS * 3);
-			expect(readRepository).toHaveBeenCalledTimes(1);
+			await vi.advanceTimersByTimeAsync(BRANCH_POLL_INTERVAL_MS - 20);
+			expect(readRepository).toHaveBeenCalledTimes(rounds);
+			expect(readBranch).toHaveBeenCalledTimes(branches);
 			running.stop();
 		} finally {
 			vi.useRealTimers();

@@ -56,6 +56,16 @@ export const COUNTER = {
 	repositoryStatusRound: "repository.status.round",
 	/** One fast round of the repository watcher: which branch is checked out. */
 	repositoryBranchRound: "repository.branch.round",
+	/** One checkout whose git directory DevHub is watching for a checkout. */
+	repositoryHeadWatch: "repository.head.watch",
+	/**
+	 * One checkout DevHub could not watch, and is therefore only polling.
+	 *
+	 * Here because "the branch is a minute stale on this row and nowhere else"
+	 * is otherwise indistinguishable from DevHub working: the fallback is meant
+	 * to be safe, not invisible.
+	 */
+	repositoryHeadWatchFailed: "repository.head.watch.failed",
 } as const;
 
 export class ActivityCounters {

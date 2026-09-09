@@ -26,6 +26,7 @@
 import type { RemoteIdentity } from "../../model/domain.js";
 import { activityCounters, COUNTER } from "../diagnostics/counters.js";
 import { issueNumberFromBranch } from "../../model/github.js";
+import { HeadWatcher } from "./headWatcher.js";
 import type {
 	RepositoryStatusWire,
 	WorkspaceRepositoryWire,
@@ -61,8 +62,17 @@ export interface RepositoryStatusDeps {
 
 /** How often the branch and the Issue are looked at again. */
 export const POLL_INTERVAL_MS = 60 * 1000;
-/** How often the branch alone is re-read. One local command per workspace. */
-export const BRANCH_POLL_INTERVAL_MS = 2 * 1000;
+/**
+ * How often the branch is re-read when nothing said it had changed.
+ *
+ * It used to be every two seconds, which is thirty-eight `git` processes a
+ * minute per workspace to learn thirty-eight times that nothing moved. A
+ * checkout writes `HEAD`, so `headWatcher.ts` notices one instead, and this is
+ * what is left: the safety net under a watcher, not the way the branch is
+ * normally learned. A missed event costs a minute of staleness rather than a
+ * branch name that is wrong until somebody restarts DevHub.
+ */
+export const BRANCH_POLL_INTERVAL_MS = 60 * 1000;
 /** How many branches one round is allowed to ask GitHub about. */
 const MAX_BRANCHES_PER_ROUND = 16;
 
@@ -270,6 +280,10 @@ export class RepositoryStatusWatcher {
 	private lastDiagnostic: string | undefined;
 	/** git, as the last round resolved it, so the fast clock need not re-look. */
 	private command: GitCommand | undefined;
+	/** `HEAD`, watched, so a checkout is noticed rather than polled for. */
+	private readonly heads = new HeadWatcher(() => {
+		void this.refreshBranches();
+	});
 
 	constructor(private readonly deps: RepositoryStatusDeps) {}
 
@@ -285,6 +299,9 @@ export class RepositoryStatusWatcher {
 		// GitHub says about an Issue costs a round trip and changes when somebody
 		// on another continent clicks a button. Putting both on the slow clock
 		// meant a branch you had just changed took up to a minute to appear.
+		// The safety net, not the mechanism. `heads` is what makes a checkout
+		// appear at once; this is what keeps a branch from staying wrong forever
+		// if an event is ever missed or a checkout could not be watched at all.
 		this.branchTimer = setInterval(() => {
 			activityCounters.record(COUNTER.repositoryBranchRound);
 			void this.refreshBranches();
@@ -295,6 +312,7 @@ export class RepositoryStatusWatcher {
 	}
 
 	stop(): void {
+		this.heads.stop();
 		if (this.branchTimer) {
 			clearInterval(this.branchTimer);
 			this.branchTimer = undefined;
@@ -506,6 +524,12 @@ export class RepositoryStatusWatcher {
 		);
 
 		this.local = local;
+		// Awaited, so a checkout that could not be watched is already known when
+		// this round decides what the Sidebar's note says. Re-arming here and
+		// nowhere else is what makes a worktree created or removed since the last
+		// round pick up, or lose, its watcher.
+		await this.armHeads();
+		diagnostic ??= this.watchDiagnostic();
 		this.lastDiagnostic = diagnostic;
 		// The local half is done and costs nothing to show, so it is shown now
 		// rather than after a round trip to GitHub. Branches, and the reasons a
@@ -595,6 +619,41 @@ export class RepositoryStatusWatcher {
 	 * that has just heard back from GitHub. One projection means the two cannot
 	 * draw a row differently.
 	 */
+	/**
+	 * Watch every checkout that is open, and nothing else.
+	 *
+	 * Keyed by workspace, rooted at the checkout git reported rather than at the
+	 * folder the workspace was opened at: a workspace opened three directories
+	 * inside a repository has no `.git` of its own, and a linked worktree's
+	 * `HEAD` is not the main one's.
+	 */
+	private async armHeads(): Promise<void> {
+		await this.heads.arm(
+			this.local.flatMap((entry) =>
+				entry.worktree === undefined
+					? []
+					: [{ key: entry.workspace.id, worktree: entry.worktree }],
+			),
+		);
+	}
+
+	/**
+	 * What to say when a checkout is only being polled.
+	 *
+	 * The fallback is safe — the branch is still re-read every minute — and
+	 * saying nothing about it is what would make it dangerous: a row a minute
+	 * behind everything else looks exactly like DevHub working. So it is a
+	 * sentence, and `repository.head.watch.failed` counts it for `--metrics`.
+	 */
+	private watchDiagnostic(): string | undefined {
+		const failures = this.heads.failures();
+		const first = failures[0];
+		if (!first) return undefined;
+		const rest =
+			failures.length > 1 ? ` (and ${String(failures.length - 1)} more)` : "";
+		return `DevHub could not watch ${first.worktree} for branch changes${rest}: ${first.reason}. The branch there is re-read once a minute instead.`;
+	}
+
 	private project(): RepositoryStatusWire {
 		const projected: WorkspaceRepositoryWire[] = this.local.map((entry) => {
 			const key = entry.reference ? branchKey(entry.reference) : undefined;
