@@ -121,6 +121,19 @@ export type ControlRequest =
 			readonly kind: "version";
 	  }
 	| {
+			/**
+			 * One reading of what the running app is costing: every process's
+			 * CPU and memory, joined to the workbench it is showing, plus the
+			 * rates DevHub counts about itself.
+			 *
+			 * It goes over this socket rather than to a log because the only
+			 * process that can answer it is the running one, and because a
+			 * reading is a thing somebody takes twice a minute apart — a log
+			 * would make the interval whatever the log happened to flush at.
+			 */
+			readonly kind: "metrics";
+	  }
+	| {
 			/** An Agent for the workspace the current directory belongs to. */
 			readonly kind: "add-agent";
 			readonly profileId: string;
@@ -224,6 +237,8 @@ export function parseControlRequest(line: string): ControlRequest {
 			};
 		case "version":
 			return { kind: "version" };
+		case "metrics":
+			return { kind: "metrics" };
 		case "add-agent":
 			return {
 				kind: "add-agent",

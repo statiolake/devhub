@@ -285,6 +285,20 @@ describe("what the devhub command was asked to do", () => {
 		expect(parseArguments(["-v"])).toEqual({ kind: "version" });
 	});
 
+	it("asks the running app what it is costing", () => {
+		expect(parseArguments(["--metrics"])).toEqual({ kind: "metrics" });
+		expect(
+			requestFor(parseArguments(["--metrics"]), "/work/a", "/home/d"),
+		).toEqual({ kind: "metrics" });
+	});
+
+	it("will not take a reading and do something else in the same run", () => {
+		expect(parseArguments(["--metrics", "--version"])).toEqual({
+			kind: "invalid",
+			message: "devhub does one of these things at a time.",
+		});
+	});
+
 	it("does one thing at a time", () => {
 		expect(
 			parseArguments(["--list-extensions", "--install-extension", "a.b"]),

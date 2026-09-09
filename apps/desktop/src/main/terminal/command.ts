@@ -15,7 +15,8 @@
 
 import { spawn } from "node:child_process";
 import { accessSync, constants, realpathSync, statSync } from "node:fs";
-import { delimiter, isAbsolute, join } from "node:path";
+import { basename, delimiter, isAbsolute, join } from "node:path";
+import { activityCounters, COUNTER } from "../diagnostics/counters.js";
 import {
 	CancellationToken,
 	portFailure,
@@ -160,6 +161,10 @@ export function runBounded(
 	// The deadline started at the caller's first probe, not when this child
 	// happens to be spawned. Refuse a late spawn outright.
 	deadline.check(cancel);
+	// Every tmux DevHub runs is one of these, and each is a fork and an exec.
+	// They live for milliseconds, so nothing outside the process can see how
+	// many there are; counted here, the rate is a fact rather than a guess.
+	activityCounters.record(COUNTER.process(basename(spec.file)));
 	return new Promise<CommandOutput>((resolve, reject) => {
 		const child = spawn(spec.file, [...spec.args], {
 			cwd: spec.cwd,

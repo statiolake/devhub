@@ -18,6 +18,8 @@
  * and no answer ever lands.
  */
 
+import { activityCounters, COUNTER } from "../diagnostics/counters.js";
+
 /** What the Tauri reconciler slept between rounds. */
 export const AGENT_RECONCILE_INTERVAL_MS = 300;
 
@@ -80,6 +82,7 @@ export class AgentReconciler {
 		while (!this.#stopped) {
 			if (this.#options.hasAgents()) {
 				try {
+					activityCounters.record(COUNTER.agentReconcileRound);
 					await this.#options.reconcile();
 				} catch (error) {
 					// A round that failed is a fact about the provider, and it goes

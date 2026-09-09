@@ -11,6 +11,7 @@
  */
 
 import { spawn } from "node:child_process";
+import { activityCounters, COUNTER } from "../diagnostics/counters.js";
 import type { IssueReference } from "../../model/github.js";
 
 /**
@@ -175,6 +176,7 @@ function runGh(
 	args: readonly string[],
 	environment: Readonly<Record<string, string | undefined>>,
 ): Promise<GhResult> {
+	activityCounters.record(COUNTER.process("gh"));
 	return new Promise<GhResult>((resolve) => {
 		const child = spawn("gh", [...args], {
 			env: environment as NodeJS.ProcessEnv,

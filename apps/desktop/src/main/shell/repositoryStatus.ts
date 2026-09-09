@@ -24,6 +24,7 @@
  */
 
 import type { RemoteIdentity } from "../../model/domain.js";
+import { activityCounters, COUNTER } from "../diagnostics/counters.js";
 import { issueNumberFromBranch } from "../../model/github.js";
 import type {
 	RepositoryStatusWire,
@@ -275,6 +276,7 @@ export class RepositoryStatusWatcher {
 	start(): void {
 		if (this.timer) return;
 		this.timer = setInterval(() => {
+			activityCounters.record(COUNTER.repositoryStatusRound);
 			void this.refresh();
 		}, POLL_INTERVAL_MS);
 		// The fast clock, and the whole reason there are two. Which branch is
@@ -284,6 +286,7 @@ export class RepositoryStatusWatcher {
 		// on another continent clicks a button. Putting both on the slow clock
 		// meant a branch you had just changed took up to a minute to appear.
 		this.branchTimer = setInterval(() => {
+			activityCounters.record(COUNTER.repositoryBranchRound);
 			void this.refreshBranches();
 		}, BRANCH_POLL_INTERVAL_MS);
 		// Not `unref`'d: this is a projection the window is drawing, and the

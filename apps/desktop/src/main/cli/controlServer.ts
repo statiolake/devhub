@@ -53,6 +53,8 @@ export interface ControlHandlers {
 	uninstallExtensions(ids: readonly string[], force: boolean): Promise<string>;
 	listExtensions(showVersions: boolean): Promise<string>;
 	version(): Promise<string>;
+	/** One reading of the app's own cost, as JSON. */
+	metrics(): Promise<string>;
 	installCli(): Promise<string>;
 	/**
 	 * The command line the workbench rooted at `root` — or the folderless one,
@@ -223,6 +225,8 @@ async function handle(
 				};
 			case "version":
 				return { ok: true, message: await handlers.version() };
+			case "metrics":
+				return { ok: true, message: await handlers.metrics() };
 			case "install-cli":
 				return { ok: true, message: await handlers.installCli() };
 			case "terminal-profile": {

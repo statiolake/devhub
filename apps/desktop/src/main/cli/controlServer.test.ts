@@ -28,6 +28,7 @@ function everythingSaysOk(): ControlHandlers {
 		installExtensions: () => Promise.resolve("ok"),
 		uninstallExtensions: () => Promise.resolve("ok"),
 		listExtensions: () => Promise.resolve("ok"),
+		metrics: () => Promise.resolve("ok"),
 		version: () => Promise.resolve("ok"),
 		installCli: () => Promise.resolve("ok"),
 		terminalProfile: () => Promise.resolve({ file: "tmux", args: [] }),
@@ -103,6 +104,10 @@ describe("the DevHub control socket", () => {
 				);
 			},
 			version: () => Promise.resolve("DevHub 0.1.0\nVS Code 1.0.0\nabc123"),
+			metrics: () => {
+				calls.push("metrics");
+				return Promise.resolve('{"processes":[]}');
+			},
 			installCli: () => Promise.resolve("installed"),
 			terminalProfile: (root) => {
 				calls.push(`profile ${root ?? "scratch"}`);
@@ -327,6 +332,13 @@ describe("the DevHub control socket", () => {
 		expect(
 			await ask(socketPath, `${JSON.stringify({ kind: "version" })}\n`),
 		).toEqual({ ok: true, message: "DevHub 0.1.0\nVS Code 1.0.0\nabc123" });
+	});
+
+	it("answers a metrics request with the reading the app assembled", async () => {
+		expect(
+			await ask(socketPath, `${JSON.stringify({ kind: "metrics" })}\n`),
+		).toEqual({ ok: true, message: '{"processes":[]}' });
+		expect(calls).toEqual(["metrics"]);
 	});
 
 	it("refuses a request it does not understand", async () => {

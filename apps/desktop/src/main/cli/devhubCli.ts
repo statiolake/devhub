@@ -81,6 +81,11 @@ extensions:
 
   devhub -v|--version              print DevHub's version, VS Code's, and the
                                    commit it was built from
+  devhub --metrics                 print, as JSON, what the running DevHub is
+                                   costing: every process's CPU and memory,
+                                   which workbench each renderer is showing,
+                                   and how often DevHub polls. Take two
+                                   readings a known time apart to get a rate.
   devhub -h|--help                 show this text
 
 The command talks to a running DevHub over its control socket. If DevHub is
@@ -116,7 +121,8 @@ export type Command =
 			readonly force: boolean;
 	  }
 	| { readonly kind: "list-extensions"; readonly showVersions: boolean }
-	| { readonly kind: "version" };
+	| { readonly kind: "version" }
+	| { readonly kind: "metrics" };
 
 /**
  * What the arguments asked for.
@@ -197,6 +203,7 @@ function parseOptions(args: readonly string[]): Command {
 	let list = false;
 	let showVersions = false;
 	let version = false;
+	let metrics = false;
 
 	for (let index = 0; index < args.length; index++) {
 		const arg = args[index] ?? "";
@@ -252,6 +259,9 @@ function parseOptions(args: readonly string[]): Command {
 			case "--show-versions":
 				showVersions = true;
 				continue;
+			case "--metrics":
+				metrics = true;
+				continue;
 			case "-v":
 			case "--version":
 				version = true;
@@ -281,6 +291,7 @@ function parseOptions(args: readonly string[]): Command {
 		uninstall.length > 0,
 		list,
 		version,
+		metrics,
 		goto !== undefined,
 		stdin,
 		paths.length > 0,
@@ -307,6 +318,7 @@ function parseOptions(args: readonly string[]): Command {
 		return { kind: "uninstall-extensions", ids: uninstall, force };
 	}
 	if (list) return { kind: "list-extensions", showVersions };
+	if (metrics) return { kind: "metrics" };
 	if (version) return { kind: "version" };
 	if (stdin) return { kind: "open-stdin", wait };
 	if (goto !== undefined) {
@@ -390,6 +402,8 @@ export function requestFor(
 			};
 		case "version":
 			return { kind: "version" };
+		case "metrics":
+			return { kind: "metrics" };
 	}
 }
 

@@ -13,6 +13,7 @@
  */
 
 import { spawn } from "node:child_process";
+import { activityCounters, COUNTER } from "../diagnostics/counters.js";
 import { stat } from "node:fs/promises";
 import {
 	remoteIdentity,
@@ -93,6 +94,7 @@ export function runGit(
 	options: GitRunOptions = {},
 ): Promise<string> {
 	const timeoutMs = options.timeoutMs ?? LOCAL_TIMEOUT_MS;
+	activityCounters.record(COUNTER.process("git"));
 	return new Promise<string>((resolve, reject) => {
 		const child = spawn(command.git, args, {
 			cwd: options.cwd,

@@ -168,6 +168,7 @@ export async function bootstrapShell(
 		listExtensions: (showVersions) =>
 			controller.listExtensionsFromCli(showVersions),
 		version: () => controller.versionFromCli(),
+		metrics: () => controller.metricsFromCli(),
 		terminalProfile: (root) => controller.terminalProfileFor(root),
 		installCli: () =>
 			Promise.resolve(

@@ -19,6 +19,8 @@ import { access, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import vscodeProduct from "code-oss-dev/out/vs/platform/product/common/product.js";
+import { activityCounters } from "../diagnostics/counters.js";
+import { metricsReport } from "../diagnostics/metrics.js";
 import { electron } from "../electron.js";
 import { URI } from "code-oss-dev/out/vs/base/common/uri.js";
 import { CancellationToken as VSCancellationToken } from "code-oss-dev/out/vs/base/common/cancellation.js";
@@ -2951,6 +2953,48 @@ export class AppController {
 			`VS Code ${vscodeVersion}`,
 			commit ?? "no commit: this DevHub was built from a source checkout",
 		].join("\n");
+	}
+
+	/**
+	 * `devhub --metrics`.
+	 *
+	 * The reading is taken here because this is the only object that has both
+	 * halves of it: Electron's per-process CPU, which names a workbench
+	 * renderer nothing but "renderer", and the model's idea of which workspace
+	 * each view is showing. A reading assembled anywhere else would have to
+	 * guess at one of the two.
+	 *
+	 * It reports; it changes nothing and it resets nothing. Two readings a
+	 * known time apart are a rate, and that stays true however many people
+	 * take one.
+	 */
+	async metricsFromCli(): Promise<string> {
+		const onScreen = shellWindow().onScreenViewId();
+		const views = shellWindow()
+			.getViews()
+			.filter((view) => !view.isDestroyed())
+			.map((view) => ({
+				pid: view.webContents.getOSProcessId(),
+				id: view.id,
+				surfaceKey: this.editorSurfaceKeyForView(view.id),
+				onScreen: view.id === onScreen,
+			}));
+		const cpu = process.cpuUsage();
+		return JSON.stringify(
+			metricsReport({
+				takenAt: Date.now(),
+				uptimeMs: Math.round(process.uptime() * 1000),
+				mainProcessCpu: {
+					userMs: Math.round(cpu.user / 1000),
+					systemMs: Math.round(cpu.system / 1000),
+				},
+				processMetrics: electron.app.getAppMetrics(),
+				views,
+				counters: activityCounters.read(),
+			}),
+			null,
+			2,
+		);
 	}
 
 	/**

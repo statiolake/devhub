@@ -544,6 +544,19 @@ export class ShellWindow {
 	 * Otherwise it is whatever the selection resolves to, unless the page is
 	 * showing a Surface of its own over the same rectangle.
 	 */
+	/**
+	 * Which workbench is on screen, for a reader outside this class.
+	 *
+	 * The view itself cannot answer it: `WorkbenchView.isVisible` is about the
+	 * *window* being shown and deliberately stays true for a workbench nobody
+	 * has selected (see its comment — VS Code opens DevTools by itself if a
+	 * loaded window says it is neither visible nor minimized). Which one is
+	 * selected is this class's invariant, so this is where it is read.
+	 */
+	onScreenViewId(): number | undefined {
+		return this.onScreenView()?.id;
+	}
+
 	private onScreenView(): WorkbenchView | undefined {
 		const asking = this.askingView();
 		if (asking) return asking;
