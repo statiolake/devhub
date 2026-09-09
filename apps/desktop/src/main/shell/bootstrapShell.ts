@@ -30,6 +30,10 @@ import { refreshMenu } from "./menu.js";
 import { startControlServer } from "../cli/controlServer.js";
 import { controlSocketPath } from "../cli/protocol.js";
 import { installLauncher } from "../cli/install.js";
+import {
+	installTerminalLauncher,
+	terminalLauncherPath,
+} from "../terminal/launcher.js";
 import { missingWorkbenchDefaults } from "../workbenchDefaults.js";
 import { activeProfile } from "../../model/profile.js";
 
@@ -45,7 +49,10 @@ const APP_ROOT = join(
 );
 
 /** Write the settings DevHub cannot contribute as defaults; see the module. */
-function ensureWorkbenchDefaults(userDataPath: string): void {
+function ensureWorkbenchDefaults(
+	userDataPath: string,
+	terminalLauncherPath: string,
+): void {
 	const file = join(userDataPath, "User", "settings.json");
 
 	let settings: Record<string, unknown>;
@@ -61,7 +68,7 @@ function ensureWorkbenchDefaults(userDataPath: string): void {
 		settings = {};
 	}
 
-	const missing = missingWorkbenchDefaults(settings);
+	const missing = missingWorkbenchDefaults(settings, terminalLauncherPath);
 	if (missing.length === 0) {
 		return;
 	}
@@ -81,7 +88,28 @@ export async function bootstrapShell(
 	cliArgs: NativeParsedArgs,
 	themeMainService: IThemeMainService,
 ): Promise<void> {
-	ensureWorkbenchDefaults(userDataPath);
+	// The terminal launcher first: the profile DevHub writes below is a path to
+	// it, and both have to be in place before the first workbench reads its
+	// settings — which is why `bootstrapShell` runs before `startup()`. See
+	// `codeMain.ts` and `terminal/launcher.ts`.
+	const launcherPath = installTerminalLauncher(
+		terminalLauncherPath(userDataPath),
+		{
+			// The binary running this process is the app's own Electron, in a
+			// checkout and in a bundle alike — the same fact the `devhub` CLI's
+			// launcher is written with.
+			execPath: process.execPath,
+			entryScript: join(
+				APP_ROOT,
+				"out",
+				"main",
+				"terminal",
+				"devhubTerminal.js",
+			),
+			socketPath: controlSocketPath(userDataPath),
+		},
+	);
+	ensureWorkbenchDefaults(userDataPath, launcherPath);
 
 	// The colour theme comes first, before the page is servable and before the
 	// window exists, because both are created wearing it. VS Code stores the
@@ -125,6 +153,7 @@ export async function bootstrapShell(
 	// cannot be taken, since a `devhub` command that silently does nothing is
 	// worse than one that says DevHub is not running.
 	const socketPath = controlSocketPath(userDataPath);
+
 	const control = await startControlServer(socketPath, {
 		activate: () => controller.activateFromCli(),
 		open: (path, cwd, position, waitMarkerPath) =>
