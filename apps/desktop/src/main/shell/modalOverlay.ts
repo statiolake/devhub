@@ -33,15 +33,21 @@ export interface ModalOverlayHost {
 	/** The rectangle a workbench's own question is clipped to. */
 	workbenchRect(): Electron.Rectangle;
 	/**
-	 * What holds the keyboard when no modal does.
+	 * Put the keyboard back where it belongs, and say so.
 	 *
-	 * The workbench on screen, or the App Shell page when none is. Asking the
-	 * window rather than remembering who was focused when the modal opened is
-	 * what makes this correct: Electron reports no focused `webContents` for a
-	 * child view at all, so "put back what I took" quietly meant "give it to
-	 * the page", and typing after closing a sheet went nowhere near the editor.
+	 * The window's one answer to "where do the keys go" — the workbench on
+	 * screen, or the App Shell page when none is. Asking the window rather
+	 * than remembering who was focused when the modal opened is what makes
+	 * this correct: Electron reports no focused `webContents` for a child view
+	 * at all, so "put back what I took" quietly meant "give it to the page",
+	 * and typing after closing a sheet went nowhere near the editor.
+	 *
+	 * It is the whole of `focusSurface` rather than just the contents to
+	 * focus, because moving the keyboard and reporting that it moved are one
+	 * act everywhere else in this window, and a layer that did only the first
+	 * half left every workbench believing a modal still stood in front of it.
 	 */
-	focusTarget(): Electron.WebContents;
+	focusSurface(): void;
 	/**
 	 * The set that is open has changed.
 	 *
@@ -237,7 +243,7 @@ export class ModalOverlay {
 		if (!this.present || !this.view) return;
 		this.host.window.contentView.removeChildView(this.view);
 		this.present = false;
-		this.host.focusTarget().focus();
+		this.host.focusSurface();
 	}
 
 	private ensureView(): Electron.WebContentsView {

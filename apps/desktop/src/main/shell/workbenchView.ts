@@ -293,6 +293,40 @@ export class WorkbenchView {
 	}
 
 	/**
+	 * Say the answer again, unchanged, because the renderer only just took the
+	 * keyboard.
+	 *
+	 * The pair above is a change notification, and that is right for the
+	 * `focus`/`blur` events a `BrowserWindow` emits: nothing downstream wants
+	 * to hear that a window it already believed focused is still focused.
+	 *
+	 * The announcement on `electron.app` is not a change notification, even
+	 * though it looks like one. What upstream does with it is go and read
+	 * `document.hasFocus()` in the renderer, so its *value* is whatever the
+	 * renderer says at the moment it is asked — and main asks in the same tick
+	 * it called `webContents.focus()`, before the renderer's document has
+	 * taken anything. Measured: the announcement went out 4ms after the
+	 * `focus()` call and the document did not have focus for another 245ms, so
+	 * the sentence "this workbench has the keyboard" was answered "no" and
+	 * nothing ever said it again.
+	 *
+	 * Worse, a workbench is announced once, when its view is created, and that
+	 * is a second and a half before its renderer reaches
+	 * `LifecyclePhase.Restored` — which is when the workspace trust prompt and
+	 * the git extension's `whenIdleAndFocused` start listening. The one
+	 * announcement they could have heard was made before either of them
+	 * existed.
+	 *
+	 * So the arrival of DOM focus is its own occasion to speak, and this is
+	 * what says it. There is still one answer — `isSurfaceFocused` — and this
+	 * is that answer repeated, never a second opinion.
+	 */
+	focusConfirmed(): void {
+		if (!this.shell.isSurfaceFocused(this)) return;
+		this.announceFocusToTheApplication(true);
+	}
+
+	/**
 	 * Say it again on `electron.app`, which is where VS Code is listening.
 	 *
 	 * The event above is the one a `BrowserWindow` emits, and it is the one

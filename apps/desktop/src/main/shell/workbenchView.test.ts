@@ -392,4 +392,33 @@ describe("a workbench view's focus", () => {
 		shell.publishFocus(view, other);
 		expect(announced).toHaveLength(2);
 	});
+
+	it("says the same answer again when the renderer confirms it took the keyboard", () => {
+		// Not a transition, and deliberately so: the announcement's value is
+		// read out of `document.hasFocus()` at the moment upstream is asked, so
+		// the one sent in the same tick as `focus()` is answered with the state
+		// the renderer was about to leave. This is that sentence repeated once
+		// the renderer has actually taken it.
+		shell.reveal(view);
+		shell.publishFocus(view, other);
+		expect(announced).toEqual([`browser-window-focus:${view.id}`]);
+
+		view.focusConfirmed();
+		expect(announced).toEqual([
+			`browser-window-focus:${view.id}`,
+			`browser-window-focus:${view.id}`,
+		]);
+	});
+
+	it("says nothing again for a workbench that does not have the keyboard", () => {
+		// Repeating an answer is only ever repeating `isSurfaceFocused`. A
+		// workbench nobody is typing into must not be announced as focused
+		// however its own contents came by their DOM focus.
+		shell.reveal(other);
+		shell.publishFocus(view, other);
+		announced.length = 0;
+
+		view.focusConfirmed();
+		expect(announced).toEqual([]);
+	});
 });

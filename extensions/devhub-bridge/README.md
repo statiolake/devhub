@@ -20,6 +20,14 @@ paths; it does not claim a custom scheme. Only a single `path` query value is
 accepted and it must be an absolute, lexically normalized path. The two public
 commands in the manifest are the folder/new-window interception fallback.
 
+The manifest's `configurationDefaults` are the workbench settings DevHub owes
+an answer for and the person may still overrule. Two of them are about what
+comes up on a workbench nobody has configured yet: `workbench.startupEditor`
+is `none` because DevHub decides what a Workspace opens with, and
+`chat.disableAIFeatures` is `true` because DevHub hosts its own Agents — left
+on, a fresh profile opens every workbench behind Copilot's sign-in dialog,
+which takes the keyboard and holds it until somebody dismisses it.
+
 The manifest declares `capabilities.untrustedWorkspaces.supported: true` so
 the extension can activate in Restricted Mode. Official VS Code's
 `vscode-remote` workspace URI is accepted only after the Rust-owned registry

@@ -27,7 +27,9 @@
       "window.commandCenter": false,
       "workbench.layoutControl.enabled": false,
       "terminal.integrated.defaultProfile.osx": "DevHub",
-      "terminal.integrated.enablePersistentSessions": false
+      "terminal.integrated.enablePersistentSessions": false,
+      "workbench.startupEditor": "none",
+      "chat.disableAIFeatures": true
     },
     "commands": [
       {

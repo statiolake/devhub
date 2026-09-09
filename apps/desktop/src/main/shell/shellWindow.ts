@@ -124,7 +124,7 @@ export class ShellWindow {
 			{
 				window: this.window,
 				workbenchRect: () => this.currentRect(),
-				focusTarget: () => this.focusTarget(),
+				focusSurface: () => this.focusSurface(),
 				modalsChanged: () => {
 					this.layout();
 					// A modal owns the keyboard while it stands, so every
@@ -243,6 +243,19 @@ export class ShellWindow {
 		// is the Editor's half of the window's name arriving.
 		view.webContents.on("page-title-updated", () => {
 			this.titleChanged();
+		});
+		// The keyboard actually arriving, as opposed to main having asked for
+		// it. These two facts are not the same moment and the gap is where the
+		// workspace trust prompt was lost; `WorkbenchView.focusConfirmed` is
+		// where the whole of the reasoning is written down. The answer itself
+		// is still the one `isSurfaceFocused` computes — this only says when
+		// it is worth saying again.
+		view.webContents.on("focus", () => {
+			this.publishFocus();
+			view.focusConfirmed();
+		});
+		view.webContents.on("blur", () => {
+			this.publishFocus();
 		});
 	}
 

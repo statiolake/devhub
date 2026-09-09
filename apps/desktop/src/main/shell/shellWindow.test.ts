@@ -44,6 +44,10 @@ class FakeView {
 			this.webContents.on(event, listener);
 		},
 		removeListener: () => undefined,
+		/** Fire what Electron fires — the contents taking or losing DOM focus. */
+		emit: (event: string) => {
+			for (const listener of this.listeners.get(event) ?? []) listener();
+		},
 		setWindowOpenHandler: () => undefined,
 		send: () => undefined,
 		focus: () => {
@@ -144,6 +148,15 @@ class FakeWindow {
 /** Every URL handed to the system browser, in order. */
 const openedExternally: string[] = [];
 
+/**
+ * What reached `electron.app`, as `event:windowId`.
+ *
+ * The delivery the workspace trust prompt and the git extension are built on;
+ * see `WorkbenchView.announceFocusToTheApplication`. Recorded here because the
+ * question these tests ask is *when* the shell says it, not what it says.
+ */
+const announced: string[] = [];
+
 vi.mock("../electron.js", () => ({
 	electron: {
 		BrowserWindow: FakeWindow,
@@ -159,7 +172,9 @@ vi.mock("../electron.js", () => ({
 			// window, because `app` is where VS Code reads it from. See
 			// `WorkbenchView.announceFocusToTheApplication`; what it says is
 			// asserted in that module's test.
-			emit: () => undefined,
+			emit: (event: string, _details: unknown, window: { id: number }) => {
+				announced.push(`${event}:${window.id}`);
+			},
 		},
 		shell: {
 			openExternal: (url: string) => {
@@ -697,6 +712,60 @@ describe("the shell window's focus reporting", () => {
 
 		shell.reveal(a);
 		expect(order).toEqual(["focused then told"]);
+	});
+
+	it("says it again when the keyboard actually arrives in the renderer", () => {
+		// The measured failure. `focus()` and the renderer's document taking
+		// focus are not the same moment — 245ms apart, measured — and what a
+		// workbench does with the announcement is go and read
+		// `document.hasFocus()`. So the announcement made in the same tick as
+		// `focus()` is answered "no", and without this one nothing corrects it:
+		// a workbench is announced once, when its view is created, which is a
+		// second and a half before its renderer reaches `Restored` and the
+		// trust prompt starts listening.
+		announced.length = 0;
+		shell.reveal(a);
+		expect(announced).toEqual([`browser-window-focus:${a.webContents.id}`]);
+
+		a.webContents.emit("focus");
+		expect(announced).toEqual([
+			`browser-window-focus:${a.webContents.id}`,
+			`browser-window-focus:${a.webContents.id}`,
+		]);
+	});
+
+	it("says nothing again for a workbench the keyboard did not go to", () => {
+		announced.length = 0;
+		shell.reveal(a);
+		announced.length = 0;
+
+		// `b` is behind `a`. Its contents reporting DOM focus does not make it
+		// the surface, and the one answer to that is `isSurfaceFocused`.
+		b.webContents.emit("focus");
+		expect(announced).toEqual([]);
+	});
+
+	it("says nothing again while a modal stands in front", () => {
+		shell.reveal(a);
+		shell.modals.openModal({ kind: "workspace-picker" });
+		announced.length = 0;
+
+		a.webContents.emit("focus");
+		expect(announced).toEqual([]);
+	});
+
+	it("puts the keyboard back through the one path when the last modal goes", () => {
+		shell.reveal(a);
+		shell.modals.openModal({ kind: "workspace-picker" });
+		expect(a.isFocused()).toBe(false);
+		announced.length = 0;
+
+		// Withdrawing used to focus the contents directly, which moved the
+		// keyboard without anybody being told it had moved.
+		shell.modals.closeWhere(() => true);
+		expect(focused).toBe(a.webContents.id);
+		expect(a.isFocused()).toBe(true);
+		expect(announced).toEqual([`browser-window-focus:${a.webContents.id}`]);
 	});
 
 	it("still reports a workbench losing the keyboard to a modal it must not take back", () => {
