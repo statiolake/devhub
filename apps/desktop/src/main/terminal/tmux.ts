@@ -100,31 +100,51 @@ const NO_AGENT = "none";
 export const SCRATCH_SESSION = "scratch";
 const MIN_TMUX_MAJOR = 3;
 const MIN_TMUX_MINOR = 3;
+/** Which of the two answers in one inventory a record came from. */
+const MARKER_RECORD = "marker";
+const SESSION_RECORD = "session";
 /**
- * One session's whole identity, as tmux expands it: name, then the four
- * markers, with the root last because it is the only value that may contain a
- * newline of its own.
+ * One session's whole identity, as tmux expands it: the record kind, the name,
+ * then the four markers, with the root last because it is the only value that
+ * may contain a newline of its own.
  */
-const SESSION_FORMAT =
-	[
-		"#{session_name}",
-		`#{${CONTEXT_OPTION}}`,
-		`#{${WORKSPACE_ID_OPTION}}`,
-		`#{${AGENT_ID_OPTION}}`,
-		// When the session's window last produced output, to the second.
-		//
-		// It rides along on the listing every reconcile round already runs, so
-		// it costs nothing to ask for, and it is what lets a round skip reading
-		// the screen of an Agent that has not written anything since the last
-		// one. `session_activity` is the wrong variable and was tried first: it
-		// tracks a *client* attaching and typing, and sat unchanged through a
-		// pane printing a line a second.
-		//
-		// Before the root, because the root is the field that keeps the last
-		// place — see where it is read.
-		"#{window_activity}",
-		`#{${ROOT_OPTION}}`,
-	].join(FIELD_SEPARATOR) + RECORD_SEPARATOR;
+const SESSION_FIELDS = [
+	SESSION_RECORD,
+	"#{session_name}",
+	`#{${CONTEXT_OPTION}}`,
+	`#{${WORKSPACE_ID_OPTION}}`,
+	`#{${AGENT_ID_OPTION}}`,
+	// When the session's window last produced output, to the second.
+	//
+	// It rides along on the listing every reconcile round already runs, so
+	// it costs nothing to ask for, and it is what lets a round skip reading
+	// the screen of an Agent that has not written anything since the last
+	// one. `session_activity` is the wrong variable and was tried first: it
+	// tracks a *client* attaching and typing, and sat unchanged through a
+	// pane printing a line a second.
+	//
+	// Before the root, because the root is the field that keeps the last
+	// place — see where it is read.
+	"#{window_activity}",
+	`#{${ROOT_OPTION}}`,
+];
+const SESSION_FORMAT = SESSION_FIELDS.join(FIELD_SEPARATOR) + RECORD_SEPARATOR;
+/**
+ * The server's protocol marker, in the same shape a session answers in.
+ *
+ * The value is the second field and the rest are empty, because one stream of
+ * fixed-width records is what `parseRecords` reads and what makes the two
+ * answers of an inventory tellable apart. The marker is a *server* fact, so
+ * the trailing session fields have nothing to say and say nothing.
+ *
+ * `display-message -p` rather than `show-options -gqv`: the option is reachable
+ * from a format, and a format is what puts the answer in the same record stream
+ * as the listing that follows it in the same client.
+ */
+const MARKER_FORMAT =
+	[MARKER_RECORD, `#{${PROTOCOL_OPTION}}`]
+		.concat(Array.from({ length: SESSION_FIELDS.length - 2 }, () => ""))
+		.join(FIELD_SEPARATOR) + RECORD_SEPARATOR;
 /** Which of the two listings a record of `listWindowsAndPanes` came from. */
 const WINDOW_RECORD = "window";
 const PANE_RECORD = "pane";
@@ -213,6 +233,19 @@ const BOOTSTRAP_CONFIG = [
 
 /** What the server's global marker says about who owns it. */
 export type MarkerState = "absent" | "wrong" | "owned";
+
+/**
+ * One reading of a socket: who owns the server, and what is on it.
+ *
+ * The two travel together because they are one observation. A caller that held
+ * a marker from one moment and a listing from another could act on a server
+ * that changed owner in between.
+ */
+export interface Inventory {
+	readonly marker: MarkerState;
+	/** Empty unless the marker is `owned`; nothing else may be acted on. */
+	readonly sessions: readonly SessionInfo[];
+}
 
 /** The part of a listing that says whether DevHub wrote the session. */
 export type SessionMarking = Pick<
@@ -351,6 +384,30 @@ function markerValue(raw: string): string | undefined {
 
 function agentIdMarker(raw: string | undefined): string {
 	return raw === undefined ? NO_AGENT : raw;
+}
+
+/**
+ * The session records of a listing, as identities.
+ *
+ * A record that does not say it is a session is malformed provider output, not
+ * a session to be read anyway — the same fail-closed rule the record widths
+ * already carry.
+ */
+function sessionsFrom(records: readonly string[][]): SessionInfo[] {
+	if (records.length > MAX_SESSIONS) throw portFailure("failed");
+	return records.map((record) => {
+		if (record[0] !== SESSION_RECORD) throw portFailure("failed");
+		return {
+			name: record[1],
+			context: markerValue(record[2]),
+			workspaceId: markerValue(record[3]),
+			agentId: agentIdMarker(markerValue(record[4])),
+			activity: markerValue(record[5]),
+			// Last, because it is the field whose value may itself contain a
+			// newline; the record separator is what ends it either way.
+			root: markerValue(record[6]),
+		};
+	});
 }
 
 export function isRootMetadata(value: string): boolean {
@@ -908,7 +965,7 @@ export class TmuxTerminalRuntime {
 	): Promise<TerminalPreflight> {
 		const deadline = OperationDeadline.in(this.timeoutMs);
 		await this.ensureVersion(requestedSocketName, cancel, deadline);
-		const marker = await this.markerState(
+		const { marker, sessions } = await this.inventory(
 			requestedSocketName,
 			cancel,
 			deadline,
@@ -919,11 +976,6 @@ export class TmuxTerminalRuntime {
 		if (marker === "wrong") {
 			return terminalPreflight(requestedSocketName, "wrong_marker", 0, 0);
 		}
-		const sessions = await this.listSessions(
-			requestedSocketName,
-			cancel,
-			deadline,
-		);
 		const owned = sessions.filter((session) =>
 			isMarked(session, this.contextHome),
 		).length;
@@ -1046,10 +1098,13 @@ export class TmuxTerminalRuntime {
 			const socket = this.socket();
 			const deadline = OperationDeadline.in(this.timeoutMs);
 			await this.ensureVersion(socket, cancel, deadline);
-			const marker = await this.markerState(socket, cancel, deadline);
+			const { marker, sessions } = await this.inventory(
+				socket,
+				cancel,
+				deadline,
+			);
 			if (marker === "absent") return [];
 			if (marker === "wrong") throw portFailure("conflict");
-			const sessions = await this.listSessions(socket, cancel, deadline);
 			return sessions
 				.filter(
 					(session) =>
@@ -1247,10 +1302,9 @@ export class TmuxTerminalRuntime {
 	): Promise<TerminalOwnedSessions> {
 		const deadline = OperationDeadline.in(this.timeoutMs);
 		await this.ensureVersion(socket, cancel, deadline);
-		const marker = await this.markerState(socket, cancel, deadline);
+		const { marker, sessions } = await this.inventory(socket, cancel, deadline);
 		if (marker === "absent") return terminalOwnedSessions([], 0);
 		if (marker === "wrong") throw portFailure("conflict");
-		const sessions = await this.listSessions(socket, cancel, deadline);
 		const owned: OwnedSessionRecord[] = [];
 		for (const session of sessions) {
 			if (!isMarked(session, this.contextHome)) continue;
@@ -1402,10 +1456,13 @@ export class TmuxTerminalRuntime {
 		try {
 			const socket = this.socket();
 			await this.ensureVersion(socket, cancel, deadline);
-			const marker = await this.markerState(socket, cancel, deadline);
+			const { marker, sessions } = await this.inventory(
+				socket,
+				cancel,
+				deadline,
+			);
 			if (marker === "absent") return cleanInspection();
 			if (marker === "wrong") return unknownInspection();
-			const sessions = await this.listSessions(socket, cancel, deadline);
 			const identity = this.targetIdentity(target, sessions);
 			const session = sessions.find(
 				(candidate) => candidate.name === identity.sessionName,
@@ -1442,10 +1499,9 @@ export class TmuxTerminalRuntime {
 		const socket = this.socket();
 		const deadline = OperationDeadline.in(this.timeoutMs);
 		await this.ensureVersion(socket, cancel, deadline);
-		const marker = await this.markerState(socket, cancel, deadline);
+		const { marker, sessions } = await this.inventory(socket, cancel, deadline);
 		if (marker === "absent") return;
 		if (marker === "wrong") throw portFailure("conflict");
-		const sessions = await this.listSessions(socket, cancel, deadline);
 		const identity = this.workspaceIdentity(target, sessions);
 		const existing = sessions.find(
 			(session) => session.name === identity.sessionName,
@@ -1457,10 +1513,13 @@ export class TmuxTerminalRuntime {
 		// Re-inspect immediately before the destructive command. A session may
 		// have been replaced, or its ownership metadata changed, since the
 		// first probe; never kill a mismatched resource.
-		const recheck = await this.markerState(socket, cancel, deadline);
+		const { marker: recheck, sessions: currentSessions } = await this.inventory(
+			socket,
+			cancel,
+			deadline,
+		);
 		if (recheck === "absent") return;
 		if (recheck === "wrong") throw portFailure("conflict");
-		const currentSessions = await this.listSessions(socket, cancel, deadline);
 		const current = currentSessions.find(
 			(session) => session.name === identity.sessionName,
 		);
@@ -1536,15 +1595,12 @@ export class TmuxTerminalRuntime {
 	): Promise<void> {
 		const home = this.contextHome;
 		const identity = this.targetIdentity(SCRATCH_TARGET, []);
-		const sessions = await this.listSessions(socket, cancel, deadline);
+		const { marker, sessions } = await this.inventory(socket, cancel, deadline);
 		const scratch = sessions.find(
 			(session) => session.name === SCRATCH_SESSION,
 		);
 		if (scratch) {
-			if (!sessionMatches(scratch, identity)) {
-				throw portFailure("conflict");
-			}
-			if ((await this.markerState(socket, cancel, deadline)) !== "owned") {
+			if (marker !== "owned" || !sessionMatches(scratch, identity)) {
 				throw portFailure("conflict");
 			}
 			return;
@@ -1561,14 +1617,15 @@ export class TmuxTerminalRuntime {
 			cancel,
 			deadline,
 		);
-		if ((await this.markerState(socket, cancel, deadline)) !== "owned") {
-			throw portFailure("conflict");
-		}
-		const readBack = await this.listSessions(socket, cancel, deadline);
-		const created = readBack.find(
+		const readBack = await this.inventory(socket, cancel, deadline);
+		const created = readBack.sessions.find(
 			(session) => session.name === SCRATCH_SESSION,
 		);
-		if (!created || !sessionMatches(created, identity)) {
+		if (
+			readBack.marker !== "owned" ||
+			!created ||
+			!sessionMatches(created, identity)
+		) {
 			throw portFailure("conflict");
 		}
 	}
@@ -1865,18 +1922,70 @@ export class TmuxTerminalRuntime {
 			if (isNoServerError(output.stderr)) return [];
 			throw portFailure("failed");
 		}
-		const records = parseRecords(output.stdout, 6);
-		if (records.length > MAX_SESSIONS) throw portFailure("failed");
-		return records.map((record) => ({
-			name: record[0],
-			context: markerValue(record[1]),
-			workspaceId: markerValue(record[2]),
-			agentId: agentIdMarker(markerValue(record[3])),
-			activity: markerValue(record[4]),
-			// Last, because it is the field whose value may itself contain a
-			// newline; the record separator is what ends it either way.
-			root: markerValue(record[5]),
-		}));
+		return sessionsFrom(parseRecords(output.stdout, SESSION_FIELDS.length));
+	}
+
+	/**
+	 * The server's marker and its whole session list, in one tmux client.
+	 *
+	 * Every caller that decides anything asks both questions — "is this
+	 * server DevHub's" and "what is on it" — and asking them as two clients
+	 * cost two forks and two execs for one answer. On the Agent reconciler,
+	 * which runs five times a second, that was the whole of what an idle
+	 * DevHub spent once the screen captures were gone.
+	 *
+	 * The marker is read *first* in the client's queue, so the answer is still
+	 * ordered the way the two separate commands were: a foreign server is
+	 * refused before its listing is read, not after. tmux ends a client's queue
+	 * at the first command that fails, so a failure with nothing on stdout is
+	 * the marker probe's own — there is no server — and a failure with the
+	 * marker record on stdout is the listing's.
+	 */
+	async inventory(
+		socket: SocketName,
+		cancel: CancellationToken,
+		deadline: OperationDeadline,
+	): Promise<Inventory> {
+		activityCounters.record(COUNTER.tmuxListSessions);
+		const output = await this.runTmux(
+			socket,
+			[
+				"display-message",
+				"-p",
+				MARKER_FORMAT,
+				";",
+				"list-sessions",
+				"-F",
+				SESSION_FORMAT,
+			],
+			this.contextHome,
+			cancel,
+			deadline,
+		);
+		if (!output.success && output.stdout.byteLength === 0) {
+			// The marker probe itself did not answer. An absent server says so
+			// on stderr; anything else is a reachable server this command could
+			// not read, which is the same fail-closed conflict as a wrong
+			// marker.
+			return {
+				marker: isNoServerError(output.stderr) ? "absent" : "wrong",
+				sessions: [],
+			};
+		}
+		const records = parseRecords(output.stdout, SESSION_FIELDS.length);
+		const first = records[0];
+		if (first === undefined || first[0] !== MARKER_RECORD) {
+			throw portFailure("failed");
+		}
+		const marker: MarkerState = first[1] === PROTOCOL_VALUE ? "owned" : "wrong";
+		if (marker !== "owned") return { marker, sessions: [] };
+		if (!output.success) {
+			// The server was DevHub's and went away between the two commands,
+			// which is the same answer an absent server gives: nothing is on it.
+			if (isNoServerError(output.stderr)) return { marker, sessions: [] };
+			throw portFailure("failed");
+		}
+		return { marker, sessions: sessionsFrom(records.slice(1)) };
 	}
 
 	/**

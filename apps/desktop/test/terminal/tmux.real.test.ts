@@ -503,22 +503,29 @@ describe.skipIf(TMUX === undefined)(
       for (const target of targets) await test.runtime.ensure(target);
 
       // Nine marked sessions exist. Attaching to one that is already there
-      // takes a fixed five commands whatever the count is, because each of the
-      // two inventories it reads is a single `list-sessions`. Reading the
-      // markers a field at a time cost `4N` per inventory instead: the same
-      // attach measured 78 processes here, and grew by eight with every
-      // workspace the viewer had open.
+      // takes a fixed four commands whatever the count is, because each of the
+      // inventories it reads is a single client. Reading the markers a field
+      // at a time cost `4N` per inventory instead: the same attach measured 78
+      // processes here, and grew by eight with every workspace the viewer had
+      // open.
       const attachStart = test.tmuxRuns();
       await test.runtime.ensure(targets[0]);
-      expect(test.tmuxRuns() - attachStart).toBe(5);
+      expect(test.tmuxRuns() - attachStart).toBe(4);
 
-      // An inspection reads the marker, the inventory, and both of its
-      // listings — the windows and the panes share one command. It measured
-      // 41 before.
+      // An inspection reads the inventory — marker and listing in one client —
+      // and then both of its listings, the windows and the panes sharing one
+      // command. It measured 41 before, and 3 while the marker was a client of
+      // its own.
       const inspectStart = test.tmuxRuns();
       const inspection = await test.runtime.inspect(targets[0]);
       expect(inspection.extraPanes).toEqual({ kind: "clean" });
-      expect(test.tmuxRuns() - inspectStart).toBe(3);
+      expect(test.tmuxRuns() - inspectStart).toBe(2);
+
+      // And a reconcile round is one client: the whole of what an idle DevHub
+      // spends on tmux once no Agent's screen needs reading. It was two.
+      const listStart = test.tmuxRuns();
+      await test.runtime.listAgents();
+      expect(test.tmuxRuns() - listStart).toBe(1);
     });
 
     it("keeps a root that contains a newline whole in the inventory", async () => {
