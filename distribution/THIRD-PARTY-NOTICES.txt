@@ -24,6 +24,12 @@ Shipped application components
 * minimist 1.2.8, toml-eslint-parser 1.0.3 and eslint-visitor-keys 5.0.1 — MIT.
   The main process imports these three at runtime.
 
+* Octicons 19.36.0 (`@primer/octicons`) — MIT; see
+  `licenses/Octicons-MIT.txt`. The Sidebar's Issue and pull-request marks are
+  GitHub's own 16px Octicon path data, inlined verbatim in
+  `apps/desktop/src/shell/components/sidebar/icons.tsx`. The package itself is
+  not a dependency and nothing else of it is redistributed.
+
 Ported source
 -------------
 

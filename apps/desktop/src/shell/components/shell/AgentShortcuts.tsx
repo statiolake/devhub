@@ -71,11 +71,20 @@ export function offeredShortcuts(
   return offered;
 }
 
+/**
+ * The mark on each shortcut, and it is DevHub's rather than GitHub's.
+ *
+ * These four are one column, and a column of marks reads as one only while
+ * they agree about how thick a line is. `commit` and `push` are DevHub
+ * drawings; so are `openIssue` and `openPullRequest`, which is what keeps the
+ * Octicons the Sidebar uses for *states* out of a column about *acts*. See
+ * `icons.tsx`.
+ */
 const MARK: Readonly<Record<AgentActionTriggerWire, GlyphName>> = {
-  issue: "issueOpen",
+  issue: "openIssue",
   commit: "commit",
   push: "push",
-  pull_request: "pullRequest",
+  pull_request: "openPullRequest",
 };
 
 /**

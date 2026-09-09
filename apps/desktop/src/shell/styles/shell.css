@@ -301,10 +301,36 @@
   justify-content: center;
 }
 
-/* Finder's source-list icons are accented on every row, not only the selected
-   one — the accent names the column, and selection is carried by the row fill
-   and the label weight. The colour is set here and the drawing obeys it,
-   because `.sidebar-glyph` strokes `currentcolor` and nothing else.
+/*
+ * ------------------------------------------------- colour, and when there is
+ *
+ * At rest the Sidebar has exactly one coloured thing in it: an Agent's status
+ * mark. Everything else — the folder, the repository, the worktree, GitHub's
+ * Issue and pull-request marks, every trailing control — is the row's own ink.
+ *
+ * That is not restraint for its own sake. A column in which twenty marks are
+ * coloured has no colour in it: the eye stops sorting by hue and goes back to
+ * reading, which is the thing a Sidebar exists to save you from. With one
+ * colour left, "which Agent is waiting for me" is answered from the far side
+ * of the room.
+ *
+ * Colour is not lost, it is *asked for*: hovering a row, or reaching it with
+ * the keyboard, lights that row's marks. So the state of an Issue is a
+ * pointer-move away rather than gone, and it is never more than one row at a
+ * time. Nothing here is keyed to selection — a selected row is where you *are*,
+ * not something that needs saying twice, and it already has the fill and the
+ * semibold label.
+ *
+ * The condition is written the same way every time it appears below: the row
+ * is hovered, or something inside it has keyboard focus, or the row *is* the
+ * focused control (the Scratch row is itself a button). Focus is
+ * `:focus-visible` and not `:focus`, so clicking a row does not leave it lit
+ * after the pointer has gone somewhere else.
+ */
+
+/* The row's leading mark: which kind of Workspace this is, or which Agent
+   status. Grey at rest with everything else; the accent — Finder's own
+   treatment for a source-list icon — is what hover restores.
 
    The folder used to carry an 18% accent wash as well, which made it the one
    solid block in a column of lines — the single loudest thing in the Sidebar,
@@ -315,9 +341,15 @@
   flex: 0 0 var(--sidebar-glyph-width);
   align-items: center;
   justify-content: center;
-  color: var(--accent);
+  color: var(--secondary);
   /* Level with the label, not with the label's box — see the token. */
   transform: translateY(var(--sidebar-glyph-optical-shift));
+}
+
+.sidebar-row:hover .row-glyph,
+.sidebar-row:focus-visible .row-glyph,
+.sidebar-row:has(:focus-visible) .row-glyph {
+  color: var(--accent);
 }
 
 .row-glyph svg {
@@ -504,8 +536,9 @@
   background: transparent;
   /* The state is carried as `color` on the button rather than as a fill on the
      paths, so one rule per state colours a mark whatever shape it turned out to
-     be — and a draft, which has no state rule of its own, is the grey the
-     button already sits at. */
+     be. At rest that colour is the row's dim ink, whatever the state is; each
+     state names the colour it *would* wear in `--state-ink`, and the rule under
+     them is the only thing that ever puts it on. */
   color: var(--tertiary);
 }
 
@@ -516,7 +549,7 @@
   height: 14px;
 }
 
-/* What each mark is saying, in GitHub's own colours.
+/* What each mark would say in colour, in GitHub's own.
  *
  * The state is named with the kind it belongs to — `is-issue-closed`, not
  * `is-closed` — because "closed" is not one fact here. A closed Issue is work
@@ -528,21 +561,35 @@
  * The green is `--status-idle`, which is the green an idle Agent wears. That is
  * deliberate and is stated at the token: both mean "nothing is wrong here", and
  * a second green in the same window would only invite the question of how the
- * two differ. A draft has no rule of its own — it is the grey the button
- * already sits at, which is what "nobody is being asked to look at this yet"
- * looks like. */
+ * two differ. A draft names no colour at all — GitHub draws a draft grey, so
+ * the fallback below *is* its colour, and "nobody is being asked to look at
+ * this yet" looks the same lit or unlit.
+ *
+ * Losing the colour at rest costs the mark nothing, because the mark is a
+ * shape first: these are GitHub's four pull-request drawings and two Issue
+ * drawings, one per state, so the state is legible in grey, in greyscale and to
+ * a reader who sees no colour at all. Under the old two-drawings-plus-colour
+ * arrangement this rule could not have been written. */
 .row-link-button.is-issue-open,
 .row-link-button.is-pr-open {
-  color: var(--status-idle);
+  --state-ink: var(--status-idle);
 }
 
 .row-link-button.is-issue-closed,
 .row-link-button.is-pr-merged {
-  color: var(--status-done);
+  --state-ink: var(--status-done);
 }
 
 .row-link-button.is-pr-closed {
-  color: var(--danger);
+  --state-ink: var(--danger);
+}
+
+/* The only thing that ever puts a state colour on. One rule, so a state added
+   later is lit by having named a colour and by nothing else. */
+.sidebar-row:hover .row-link-button,
+.sidebar-row:focus-visible .row-link-button,
+.sidebar-row:has(:focus-visible) .row-link-button {
+  color: var(--state-ink, var(--tertiary));
 }
 
 /* Why the marks above may be out of date. It is not an error the person did
@@ -555,22 +602,32 @@
   font-size: 11px;
 }
 
-/* Agents sit one indent level in from their Workspace row, so the Agent's own
-   status mark starts where its parent's label does. The rail is a column of
-   the row itself — it carries the unread mark — so what the button adds is the
-   glyph column their Workspace's folder occupies, and no more. Derived rather
-   than measured, so it follows the glyph column at either density. */
+/*
+ * An Agent row starts exactly where its Workspace row starts.
+ *
+ * Agents used to be indented a glyph column in, the way a file tree indents a
+ * child, and the indent cost more than it said. A Sidebar 248px wide has about
+ * twenty characters to spend on a name; an Agent row is the row whose second
+ * line carries the name *and* the runtime note, and it was the row paying for
+ * the indent. What the indent bought was a fact the row already states twice —
+ * an Agent's mark is a status and a Workspace's is a folder, and they are never
+ * confusable — and a tree that no longer has anything to collapse.
+ *
+ * So the levels are still in the markup, where they mean something to a screen
+ * reader (`aria-level`, the arrow-key walk between a Workspace and its Agents),
+ * and they are not in the geometry. What tells an Agent row from a Workspace
+ * row is its leading mark, in the one colour left in this Sidebar.
+ *
+ * The zero is stated rather than inherited: the button's own `padding: 0
+ * var(--space-2)` would otherwise push an Agent's status mark eight pixels off
+ * the glyph column its Workspace's folder sits on, and the gap to the label
+ * would be counted twice. The label still lands on `--row-text-inset` — the
+ * mark is one glyph column wide and the button's `gap` is the same `--space-2`
+ * the inset is derived from — so the row's two lines share one left margin the
+ * way every other row's do.
+ */
 .agent-row .sidebar-context-button {
-  padding-left: calc(var(--sidebar-glyph-width) + var(--space-1));
-}
-
-/* An Agent's text starts one indent level further in than a Workspace's, so
-   its second line is indented to match. Same derivation, one term longer. */
-.agent-row {
-  --row-text-inset: calc(
-    var(--sidebar-rail-width) + var(--sidebar-glyph-width) + var(--space-1) +
-      var(--sidebar-glyph-width) + var(--space-2)
-  );
+  padding-left: 0;
 }
 
 /* A workspace that is not simply open reads as secondary ink, and nothing
@@ -715,8 +772,11 @@
   height: 14px;
 }
 
+/* Hover and the keyboard, and not selection. A selected row is where you are,
+   and it stood there permanently carrying two controls you were not reaching
+   for — the one row in the list guaranteed to be showing the most icons. */
 .sidebar-row:hover .row-action-button,
-.sidebar-row.is-selected .row-action-button,
+.sidebar-row:has(:focus-visible) .row-action-button,
 .row-action-button:focus-visible {
   opacity: 1;
 }
@@ -824,9 +884,11 @@ body.is-resizing-sidebar {
 .status-mark {
   display: flex;
   width: var(--sidebar-glyph-width);
+  height: var(--sidebar-glyph-width);
   flex: 0 0 var(--sidebar-glyph-width);
   align-items: center;
   justify-content: center;
+  border-radius: 50%;
   color: var(--status-idle);
   /* The same drop the folder glyph takes: an Agent's status mark is a row's
      leading glyph, and it sits level with the Agent's name for the same
@@ -851,7 +913,22 @@ body.is-resizing-sidebar {
   color: var(--status-working);
 }
 
+/*
+ * Waiting is the loudest thing in the window, and it is meant to be.
+ *
+ * The five statuses are five silhouettes in four colours, and four of them
+ * describe an Agent that is getting on with it or has finished. Exactly one is
+ * about *you*: the Agent has stopped and cannot go on until you answer. In a
+ * Sidebar where nothing else is coloured at all, that one has to be the first
+ * thing found, so the bubble sits on a disc of its own colour at a sixteenth
+ * strength — the same badge Mail puts a count in.
+ *
+ * A tint and not a fill: a solid blue disc at 16 pixels is a button, and a
+ * mark that looks pressable in a list of rows is a mark somebody will try to
+ * press. This reads as ground behind the bubble, which is what it is.
+ */
 .status-mark-waiting {
+  background: color-mix(in srgb, var(--status-waiting) 16%, transparent);
   color: var(--status-waiting);
 }
 
@@ -1025,9 +1102,29 @@ body.is-resizing-sidebar {
   pointer-events: auto;
 }
 
-/* A floating control over a surface that may be any colour, so it carries its
-   own ground rather than relying on the one behind it — the one place in this
-   window where a button cannot inherit its contrast from its container. */
+/*
+ * A floating control over a surface that may be any colour, so it carries its
+ * own ground rather than relying on the one behind it — the one place in this
+ * window where a button cannot inherit its contrast from its container.
+ *
+ * And it stays out of the way. These sit *on top of the terminal*, in the
+ * corner, and the terminal is the thing the person is here to read: a row of
+ * opaque chrome buttons with a shadow under them, permanently in the corner of
+ * the work, is a permanent subtraction from it. At rest they are a suggestion
+ * — the ground, the border and the ink all at 40% — and at rest is where they
+ * spend nearly all of their time. There is no shadow at all: a shadow says
+ * "this is above the page", which is exactly the claim a resting suggestion
+ * should not be making.
+ *
+ * They come to full strength on the whole group rather than on the button
+ * under the pointer, and on keyboard focus anywhere in the pane. Reaching for
+ * one is a decision about the group — "what can I do here" — and a stack in
+ * which one button is bright and the two beside it are ghosts is a stack whose
+ * other two look disabled.
+ *
+ * The transition is short enough to feel like the group answering the pointer
+ * rather than fading up: 120ms, and only `opacity`, which composites.
+ */
 .agent-shortcut {
   display: flex;
   align-items: center;
@@ -1036,11 +1133,21 @@ body.is-resizing-sidebar {
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-row);
   background: var(--chrome);
-  box-shadow: 0 1px 3px rgb(0 0 0 / 22%);
   color: var(--primary);
   font-size: 11px;
   font-weight: 510;
   white-space: nowrap;
+  opacity: 0.4;
+  transition: opacity 120ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+/* Lit, they sit above the terminal and say so with a shadow. At rest they make
+   no such claim. */
+.agent-shortcuts:hover .agent-shortcut,
+.agent-shortcuts:focus-within .agent-shortcut,
+.agent-pane:focus-within .agent-shortcut {
+  box-shadow: 0 1px 3px rgb(0 0 0 / 22%);
+  opacity: 1;
 }
 
 .agent-shortcut svg {
@@ -1060,11 +1167,20 @@ body.is-resizing-sidebar {
 
 /* Dimmed and still there, with the reason in its tooltip. An agent whose screen
    nothing can read cannot be typed into safely, and a button that vanished for
-   that would take the explanation with it. */
-.agent-shortcut:disabled {
+   that would take the explanation with it.
+
+   Stated against the lit state, because at rest it is already fainter than
+   this: a resting button and a resting disabled button look alike, and they
+   should — neither is asking for anything. The difference appears when the
+   group is reached for and one of them does not come up with the others. */
+.agent-shortcuts:hover .agent-shortcut:disabled,
+.agent-shortcuts:focus-within .agent-shortcut:disabled,
+.agent-pane:focus-within .agent-shortcut:disabled {
   opacity: 0.45;
 }
 
+/* The notes under the stack are about the buttons, so they keep the buttons'
+   strength — with one exception below: a failure is never a suggestion. */
 .agent-shortcuts-note,
 .agent-shortcuts-failure {
   max-width: 100%;
@@ -1072,6 +1188,22 @@ body.is-resizing-sidebar {
   margin: 0;
   font-size: 11px;
   text-align: right;
+  opacity: 0.4;
+  transition: opacity 120ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.agent-shortcuts:hover .agent-shortcuts-note,
+.agent-shortcuts:focus-within .agent-shortcuts-note,
+.agent-pane:focus-within .agent-shortcuts-note {
+  opacity: 1;
+}
+
+/* Something the person asked for did not happen. That is not a suggestion and
+   it does not wait to be hovered — every other failure in this window is
+   plainly visible, and one that had to be found by moving the mouse into the
+   corner is one that will not be found. */
+.agent-shortcuts-failure {
+  opacity: 1;
 }
 
 .agent-shortcuts-note {

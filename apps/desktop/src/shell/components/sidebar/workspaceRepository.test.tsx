@@ -200,10 +200,22 @@ describe("a workspace row", () => {
     );
   });
 
-  it("draws a merged pull request as the one that landed", () => {
-    // The only silhouette difference in the set of four, because it is the one
-    // question a person scans this column for. The other three differ by
-    // colour, which is the class.
+  /**
+   * One drawing per pull-request state, and they are GitHub's own.
+   *
+   * This used to be two drawings and four colours: `merged` had a silhouette
+   * and the other three were told apart by hue alone. Four shapes is what lets
+   * the Sidebar go grey at rest — a mark whose state lives only in its colour
+   * cannot be greyed without losing the state, and greying everything but an
+   * Agent's status is the whole point of the column. It is also what a person
+   * who reads GitHub all day already knows by heart.
+   */
+  it.each([
+    ["open", "pullRequest"],
+    ["draft", "pullRequestDraft"],
+    ["closed", "pullRequestClosed"],
+    ["merged", "pullRequestMerged"],
+  ] as const)("draws a %s pull request as GitHub draws it", (state, glyph) => {
     mount({
       sequence: 1,
       workspaces: [
@@ -214,16 +226,59 @@ describe("a workspace row", () => {
             number: 9,
             url: "p",
             title: "Tidy the picker",
-            state: "merged",
+            state,
           },
         },
       ],
     });
     const mark = screen.getByRole("button", {
-      name: /Pull request #9, merged/u,
+      name: new RegExp(`Pull request #9, ${state}`, "u"),
     });
-    expect(mark).toHaveClass("is-pr-merged");
-    expect(mark.querySelector("svg")?.dataset.glyph).toBe("pullRequestMerged");
+    expect(mark).toHaveClass(`is-pr-${state}`);
+    expect(mark.querySelector("svg")?.dataset.glyph).toBe(glyph);
+  });
+
+  it.each([
+    ["open", "issueOpen"],
+    ["closed", "issueClosed"],
+  ] as const)("draws a %s Issue as GitHub draws it", (state, glyph) => {
+    mount({
+      sequence: 1,
+      workspaces: [
+        {
+          workspaceId: "w-1",
+          branch: "feature/128-tidy",
+          issue: { number: 128, url: "i", title: "Tidy the picker", state },
+        },
+      ],
+    });
+    const mark = screen.getByRole("button", {
+      name: new RegExp(`Issue #128, ${state}`, "u"),
+    });
+    expect(mark).toHaveClass(`is-issue-${state}`);
+    expect(mark.querySelector("svg")?.dataset.glyph).toBe(glyph);
+  });
+
+  it("gives every pull-request state a drawing of its own", () => {
+    // Not four references to two pictures. If two states ever shared a
+    // silhouette again, the grey column would stop saying which one it is.
+    const drawn = new Set<string>();
+    for (const state of ["open", "draft", "closed", "merged"] as const) {
+      cleanup();
+      mount({
+        sequence: 1,
+        workspaces: [
+          {
+            workspaceId: "w-1",
+            pullRequest: { number: 9, url: "p", title: "t", state },
+          },
+        ],
+      });
+      drawn.add(
+        document.querySelector(".row-link-button svg")?.innerHTML ?? "",
+      );
+    }
+    expect(drawn.size).toBe(4);
   });
 });
 
