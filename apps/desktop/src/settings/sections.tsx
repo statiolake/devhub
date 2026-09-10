@@ -222,7 +222,10 @@ export function GeneralSection({
             }}
           />
         </Row>
-        <Row label="Line height">
+        <Row
+          label="Line height"
+          help="Multiplies the row height above the font's own line box. The extra space is shared around the font's bounding box, which already carries its slack above the capitals and none below the descenders, so raising this adds far more room above a line than below it."
+        >
           <NumberField
             label="Agent pane line height"
             value={config.appearance.terminalLineHeight}

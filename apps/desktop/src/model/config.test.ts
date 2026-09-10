@@ -46,6 +46,16 @@ describe("parsing", () => {
     expect(config).toEqual(defaultConfig());
   });
 
+  it("leaves a row at the font's own line box, because the multiplier lands above the text and not around it", () => {
+    // Measured in Electron at 12px, dpr 2, SauceCodePro Nerd Font Mono: at 1.2
+    // the cell was 36 device px with 13 of clearance above the capitals and 1
+    // below the descenders. xterm spends the multiplier as half-leading around
+    // the font's bounding box, and that box already holds all of its slack
+    // above the ink.
+    expect(parseConfig(MINIMAL).appearance.terminalLineHeight).toBe(1);
+    expect(defaultConfig().appearance.terminalLineHeight).toBe(1);
+  });
+
   it("offers the three agents DevHub knows how to start", () => {
     expect(
       defaultConfig().agentProfiles.map((profile) => [

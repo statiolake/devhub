@@ -237,7 +237,13 @@ export function openXtermSession(
     fontFamily: terminalFontStack(options.appearance?.terminalFontFamily),
     fontSize: options.appearance?.terminalFontSize ?? 13,
     linkHandler,
-    lineHeight: options.appearance?.terminalLineHeight ?? 1.2,
+    // The font's own line box, which is what `terminalLineHeight` documents and
+    // what VS Code's integrated terminal draws. A multiplier above 1 is spent
+    // by xterm as half-leading around the font's *bounding box*, and a terminal
+    // font's bounding box already carries its empty space above the capitals
+    // and none below the descenders, so the extra lands almost entirely on top
+    // and the row reads as glyphs pushed to its bottom edge.
+    lineHeight: options.appearance?.terminalLineHeight ?? 1,
     // How far one wheel notch or trackpad flick goes. xterm.js emits at most
     // one mouse report per wheel event, so with tmux reading the mouse this is
     // the whole of the pane's scroll speed, and it is the same knob for

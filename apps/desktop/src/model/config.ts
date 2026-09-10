@@ -319,6 +319,28 @@ export interface AppearanceConfig {
   readonly mode: string;
   readonly terminalFontFamily: string;
   readonly terminalFontSize: number;
+  /**
+   * The row height, as a multiple of the font's own line box.
+   *
+   * `1` is the font's own line box and it is the default, because the
+   * multiplier does not do what it reads like it does. xterm sizes a cell from
+   * the font's *bounding box* — `fontBoundingBoxAscent + fontBoundingBoxDescent`
+   * — and then spends anything above 1 as half-leading around that box, half
+   * above and half below. A terminal font's bounding box is not symmetric
+   * around its ink: measured in Electron at 12px, dpr 2, SauceCodePro Nerd Font
+   * Mono reports an ascent of 12 css px against a cap height of 7.9, so 4 px of
+   * the box is already empty above the capitals, while the 3 px of descent
+   * below the baseline is fully spent by `g`, `y` and `_`.
+   *
+   * So the leading is not shared evenly by the *text*: at 1.2 the same font
+   * measured 13 device px of clearance above the capitals and 1 below the
+   * descenders in a 36 px cell — a row of glyphs sitting on its own bottom edge,
+   * which is exactly the "the Agent pane draws its text too low" report. At 1
+   * the cell is the line box the font itself asks for, the same row VS Code's
+   * integrated terminal draws, and the whitespace is the font's rather than
+   * ours to misplace. Raising it is still a viewer's choice; it just is not a
+   * choice DevHub makes for them.
+   */
   readonly terminalLineHeight: number;
   /**
    * How far one notch of the wheel, or one flick of the trackpad, scrolls an
@@ -460,7 +482,7 @@ export function defaultAppearance(): AppearanceConfig {
     mode: "auto",
     terminalFontFamily: DEFAULT_FONT_FAMILY,
     terminalFontSize: 13,
-    terminalLineHeight: 1.2,
+    terminalLineHeight: 1,
     terminalScrollSensitivity: 3,
     sidebarDensity: "compact",
     terminalMargin: 4,
@@ -1655,7 +1677,7 @@ export function interpretConfig(document: unknown): Config {
         appearanceTable,
         "terminal_line_height",
         "appearance",
-        1.2,
+        1,
       ),
       terminalScrollSensitivity: optionalNumber(
         appearanceTable,
