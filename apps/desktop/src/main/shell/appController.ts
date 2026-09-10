@@ -136,6 +136,7 @@ import type { ShellPalette } from "../../ipc/palette.js";
 import type { WorkbenchView } from "./workbenchView.js";
 import { agents, inspectWorkspaceResources, terminals } from "./adapters.js";
 import { editorInspection, editorRuntimeState } from "./editorInspection.js";
+import { type EditorCloseAsk, editorCloseStep } from "./editorCloseAsk.js";
 import { wireTerminals, type TerminalWiring } from "./terminalWiring.js";
 import {
 	CancellationToken,
@@ -273,13 +274,15 @@ export class AppController {
 	private readonly viewsByFolder = new Map<string, number>();
 
 	/**
-	 * Workspaces whose workbench was asked to close and did not answer.
+	 * What each workspace's workbench did the last time it was asked to close.
 	 *
 	 * The one piece of memory that makes a close terminate. See
 	 * `askEditorToClose`: the second time a person asks, an editor that never
-	 * answered the first time is closed rather than asked again.
+	 * answered the first time is closed rather than asked again. Absence is
+	 * `never-asked`; only the ask writes here, and only from its outcome, so a
+	 * close that was *refused* leaves nothing behind.
 	 */
-	private readonly editorsThatDidNotAnswer = new Set<WorkspaceId>();
+	private readonly editorCloseAnswers = new Map<WorkspaceId, EditorCloseAsk>();
 	/** How many unasked-for deaths a folder's workbench gets before DevHub stops. */
 	private readonly editorRestarts = new Map<string, number>();
 	/** One in-flight workbench open per folder, shared by concurrent callers. */
@@ -2595,20 +2598,26 @@ export class AppController {
 		const services = await this.services();
 		const codeWindow = await this.editorWindowFor(root);
 		const runtime = editorRuntimeState(codeWindow);
-		if (!codeWindow || runtime === "absent" || runtime === "gone") return true;
-		if (this.editorsThatDidNotAnswer.has(workspaceId)) {
-			this.editorsThatDidNotAnswer.delete(workspaceId);
+		const step = editorCloseStep({
+			runtime,
+			asked: this.editorCloseAnswers.get(workspaceId) ?? "never-asked",
+		});
+		if (!codeWindow || step === "nothing-to-ask") return true;
+		if (step === "close-without-asking") {
+			this.editorCloseAnswers.delete(workspaceId);
 			return true;
 		}
-		// Marked *before* the ask, and cleared by the answer. An unload that
+		// A refusal is not an outcome: it writes nothing, so the next close
+		// still asks.
+		if (step === "not-yet") return false;
+		// Marked *before* the ask, and replaced by the answer. An unload that
 		// never resolves leaves the mark behind, which is exactly the state the
 		// next close reads to stop asking.
-		this.editorsThatDidNotAnswer.add(workspaceId);
-		if (runtime === "starting") return false;
+		this.editorCloseAnswers.set(workspaceId, "asked-and-silent");
 		const vetoed = await services
 			.lifecycle()
 			.unload(codeWindow, UnloadReason.CLOSE);
-		this.editorsThatDidNotAnswer.delete(workspaceId);
+		this.editorCloseAnswers.set(workspaceId, "answered");
 		return !vetoed;
 	}
 
