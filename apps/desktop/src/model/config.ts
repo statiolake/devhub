@@ -59,7 +59,18 @@ import {
   type TomlValue,
 } from "./tomlDocument.js";
 
-export const CONFIG_SCHEMA_VERSION = 1;
+/**
+ * The shape this build writes.
+ *
+ * 2 says the shortcut buttons send without a review sheet. A file still saying
+ * 1 is read with the old default in mind — see `withoutTheOldConfirmDefault` —
+ * and comes back as 2, so the answer is migrated once rather than argued with
+ * on every load.
+ */
+export const CONFIG_SCHEMA_VERSION = 2;
+
+/** The oldest file shape this build knows how to read. */
+const OLDEST_READABLE_VERSION = 1;
 
 export const CONFIG_FILE_NAME = "settings.toml";
 /** The name of the per-machine file the settings were split across, once. */
@@ -562,7 +573,7 @@ export function defaultAgentActions(): ConfiguredAgentAction[] {
       id: action.id,
       display_name: action.displayName,
       template: action.template,
-      confirm_before_send: true,
+      confirm_before_send: action.confirmBeforeSend,
       enabled: true,
       // Position within its own trigger, which is what `order` means
       // everywhere. See `overlay`.
@@ -1229,6 +1240,50 @@ function agentActionsToTable(
   return table;
 }
 
+/**
+ * The one-time migration of `confirm_before_send` on the shortcut buttons.
+ *
+ * Every file DevHub has ever written says `confirm_before_send = true` for
+ * every action, because that is what the default used to be and DevHub writes
+ * the whole table. So doing nothing would leave the sheet in front of the
+ * shortcut buttons for everybody who has ever opened Settings, and a "new
+ * default" nobody gets is not a default.
+ *
+ * The rule is narrow, and it is about what a stored `true` can honestly be
+ * taken to mean. On a **built-in** action whose wording is still exactly the
+ * wording DevHub ships, `true` is a copy of the old default rather than
+ * somebody's answer — nobody who never touched the action chose it, because
+ * there was nothing else to choose. That one is migrated. An action somebody
+ * wrote, and a built-in whose display name or template they have edited, are
+ * theirs: the file is answered, and `true` stays `true`.
+ *
+ * It happens once because the file comes back as the current version, and a
+ * file that already says so is taken at its word — which is what makes the
+ * Settings toggle mean something again afterwards. A person who wants the
+ * sheet back ticks it, and the save that follows writes the current version
+ * beside it.
+ */
+function withoutTheOldConfirmDefault(
+  actions: readonly ConfiguredAgentAction[],
+  fileVersion: number,
+): ConfiguredAgentAction[] {
+  if (fileVersion >= CONFIG_SCHEMA_VERSION) return [...actions];
+  return actions.map((action) => {
+    const shipped = BUILT_IN_ACTIONS.find(
+      (one) => one.id === action.id && one.trigger === action.trigger,
+    );
+    const untouched =
+      shipped !== undefined &&
+      shipped.confirmBeforeSend === false &&
+      action.confirm_before_send &&
+      action.display_name === shipped.displayName &&
+      action.template === shipped.template;
+    return untouched
+      ? { ...action, confirm_before_send: shipped.confirmBeforeSend }
+      : action;
+  });
+}
+
 function agentActionsFromValue(
   value: unknown,
   defaults: readonly ConfiguredAgentAction[],
@@ -1321,6 +1376,7 @@ function legacyAgentAction(
     prefix,
   );
   const id = optionalString(table, "id", prefix, "");
+  const shipped = BUILT_IN_ACTIONS.find((one) => one.id === id);
   return {
     trigger: triggerOf(id),
     id,
@@ -1330,7 +1386,7 @@ function legacyAgentAction(
       table,
       "confirm_before_send",
       prefix,
-      true,
+      shipped?.confirmBeforeSend ?? true,
     ),
     enabled: true,
     // After whatever DevHub ships under the same trigger, in the array's own
@@ -1371,14 +1427,15 @@ function agentActionFromTable(
       prefix,
       shipped?.template ?? "",
     ),
-    // Absent means "show me the wording". Anybody who wants a template to go
-    // straight out has said so; nobody is surprised by a sheet they did not
-    // ask to be rid of.
+    // Absent means whatever DevHub ships for that action, and for anything
+    // DevHub does not ship it means "show me the wording": a template somebody
+    // wrote has never been seen going out, and nobody is surprised by a sheet
+    // they did not ask to be rid of.
     confirm_before_send: optionalBoolean(
       table,
       "confirm_before_send",
       prefix,
-      true,
+      shipped?.confirmBeforeSend ?? true,
     ),
     enabled: optionalBoolean(table, "enabled", prefix, true),
     // An action DevHub ships keeps its shipped position; one somebody wrote
@@ -1485,7 +1542,17 @@ export function interpretConfig(document: unknown): Config {
   checkKeys(table, TOP_LEVEL_KEYS, "");
 
   const defaults = defaultConfig();
-  const version = optionalNumber(table, "version", "", 0);
+  // What the file says it is, which is not what it comes back as: a shape this
+  // build still reads is read and then written forward, so the migration below
+  // happens once instead of on every load. A shape it does not know is refused
+  // here rather than half-understood.
+  const fileVersion = optionalNumber(table, "version", "", 0);
+  if (
+    fileVersion < OLDEST_READABLE_VERSION ||
+    fileVersion > CONFIG_SCHEMA_VERSION
+  ) {
+    fail("unsupported_version", "version");
+  }
 
   const generalTable = requireTable(table["general"] ?? {}, "general");
   checkKeys(generalTable, ["import_login_environment"], "general");
@@ -1545,7 +1612,7 @@ export function interpretConfig(document: unknown): Config {
   }
 
   const config: Config = {
-    version,
+    version: CONFIG_SCHEMA_VERSION,
     general: {
       import_login_environment: optionalBoolean(
         generalTable,
@@ -1643,9 +1710,9 @@ export function interpretConfig(document: unknown): Config {
     // them. See `agentActionsFromValue` for why that is the difference between
     // a configuration that keeps working when DevHub adds an action and one
     // that silently loses it.
-    agentActions: agentActionsFromValue(
-      table["agent_actions"],
-      defaults.agentActions,
+    agentActions: withoutTheOldConfirmDefault(
+      agentActionsFromValue(table["agent_actions"], defaults.agentActions),
+      fileVersion,
     ),
   };
 

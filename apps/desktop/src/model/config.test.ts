@@ -2,6 +2,7 @@ import { chmod, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  CONFIG_SCHEMA_VERSION,
   ConfigError,
   type ConfigPaths,
   ConfigStore,
@@ -150,6 +151,107 @@ describe("parsing", () => {
     expect(parseConfig(configToToml(parseConfig(source)))).toEqual(
       parseConfig(source),
     );
+  });
+
+  // The shortcut buttons say what they send, so a sheet asking a person to
+  // approve the sentence on the button they just pressed is a second click,
+  // not a safeguard. The Issue action's text is not on its button.
+  it("sends the shortcut buttons without a review sheet", () => {
+    const actions = defaultConfig().agentActions;
+    const confirms = Object.fromEntries(
+      actions.map((action) => [action.id, action.confirm_before_send]),
+    );
+    expect(confirms).toEqual({
+      issue_assignment: true,
+      commit_changes: false,
+      push_commits: false,
+      open_pull_request: false,
+    });
+  });
+
+  // Every file DevHub has ever written says `true` for every action, because
+  // that is what the default was and DevHub writes the whole table. A new
+  // default nobody gets is not a default.
+  it("reads an untouched built-in's stored true as the old default", () => {
+    const source = [
+      "version = 1",
+      "",
+      "[agent_actions.commit.commit_changes]",
+      'display_name = "Commit the changes"',
+      "confirm_before_send = true",
+      "",
+    ].join("\n");
+    const config = parseConfig(source);
+    expect(
+      config.agentActions.find((one) => one.id === "commit_changes")
+        ?.confirm_before_send,
+    ).toBe(false);
+    // And the file is written forward, so the answer is migrated once rather
+    // than argued with on every load.
+    expect(config.version).toBe(CONFIG_SCHEMA_VERSION);
+  });
+
+  it("leaves a stored true alone once the file is in the new shape", () => {
+    const source = [
+      `version = ${String(CONFIG_SCHEMA_VERSION)}`,
+      "",
+      "[agent_actions.commit.commit_changes]",
+      "confirm_before_send = true",
+      "",
+    ].join("\n");
+    expect(
+      parseConfig(source).agentActions.find(
+        (one) => one.id === "commit_changes",
+      )?.confirm_before_send,
+    ).toBe(true);
+  });
+
+  it("leaves a stored true alone on a built-in somebody has reworded", () => {
+    const source = [
+      "version = 1",
+      "",
+      "[agent_actions.commit.commit_changes]",
+      'template = "commit it my way"',
+      "confirm_before_send = true",
+      "",
+    ].join("\n");
+    expect(
+      parseConfig(source).agentActions.find(
+        (one) => one.id === "commit_changes",
+      )?.confirm_before_send,
+    ).toBe(true);
+  });
+
+  it("leaves a stored true alone on an action somebody wrote", () => {
+    const source = [
+      "version = 1",
+      "",
+      "[agent_actions.commit.commit_in_pieces]",
+      'display_name = "Commit in pieces"',
+      'template = "commit it in pieces"',
+      "confirm_before_send = true",
+      "",
+    ].join("\n");
+    expect(
+      parseConfig(source).agentActions.find(
+        (one) => one.id === "commit_in_pieces",
+      )?.confirm_before_send,
+    ).toBe(true);
+  });
+
+  it("keeps the Issue action's sheet, which is where the text is", () => {
+    const source = [
+      "version = 1",
+      "",
+      "[agent_actions.issue.issue_assignment]",
+      "confirm_before_send = true",
+      "",
+    ].join("\n");
+    expect(
+      parseConfig(source).agentActions.find(
+        (one) => one.id === "issue_assignment",
+      )?.confirm_before_send,
+    ).toBe(true);
   });
 
   it("takes the file's word about an action DevHub ships", () => {
@@ -319,7 +421,7 @@ describe("parsing", () => {
   });
 
   it("refuses a version it does not implement", () => {
-    expect(codeOf(() => parseConfig("version = 2\n"))).toBe(
+    expect(codeOf(() => parseConfig("version = 3\n"))).toBe(
       "unsupported_version",
     );
   });
@@ -899,6 +1001,14 @@ describe("saving over a hand-written file", () => {
       .filter((line) => line.length > 0)
       .map((line) =>
         line.replace("terminal_font_size = 13", "terminal_font_size = 15"),
+      )
+      // The version is the other line a save is allowed to change: a file in
+      // an older shape is read, migrated and written forward, once. See
+      // `withoutTheOldConfirmDefault`.
+      .map((line) =>
+        line === "version = 1"
+          ? `version = ${String(CONFIG_SCHEMA_VERSION)}`
+          : line,
       );
     const positions = written.map((line) => lines.indexOf(line));
     expect(positions.every((position) => position >= 0)).toBe(true);

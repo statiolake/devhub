@@ -133,42 +133,62 @@ const PULL_REQUEST_TEMPLATE = `{{BRANCH}} からプルリクエストを作成�
 `;
 
 /**
- * Every action DevHub ships, with what fires it.
+ * Every action DevHub ships, with what fires it and whether it is shown first.
  *
  * The list the config's defaults are built from and the list a trigger is
  * looked up in, so a built-in action cannot exist in one and not the other.
  * An id that is not here is an Issue action somebody wrote, which is the
  * extension point working as intended.
+ *
+ * **Why `confirmBeforeSend` differs between them.** The shortcut buttons in
+ * the corner of an Agent pane are the whole sentence: "commit the changes" is
+ * what the button says and what it sends, and a review sheet in front of it
+ * asks a person to approve the text on the button they just pressed. That is
+ * not a safeguard, it is a second click — and it is the click that teaches
+ * people to press Enter through sheets without reading them. Anybody who wants
+ * to say something more particular types it, which is the same keystroke the
+ * sheet would have cost.
+ *
+ * The Issue action keeps its sheet, because its text is not on the button. It
+ * is a filled-in template about a specific Issue — a number, a title, a branch
+ * — assembled from something DevHub read, and seeing what is about to be sent
+ * is the only place a wrong Issue can be caught before an Agent starts working
+ * on it.
  */
 export const BUILT_IN_ACTIONS: readonly {
   readonly id: string;
   readonly displayName: string;
   readonly template: string;
   readonly trigger: AgentActionTrigger;
+  readonly confirmBeforeSend: boolean;
 }[] = [
   {
     id: DEFAULT_ACTION_ID,
     displayName: "Work on the Issue",
     template: ISSUE_ASSIGNMENT_TEMPLATE,
     trigger: "issue",
+    confirmBeforeSend: true,
   },
   {
     id: "commit_changes",
     displayName: "Commit the changes",
     template: COMMIT_TEMPLATE,
     trigger: "commit",
+    confirmBeforeSend: false,
   },
   {
     id: "push_commits",
     displayName: "Push the commits",
     template: PUSH_TEMPLATE,
     trigger: "push",
+    confirmBeforeSend: false,
   },
   {
     id: "open_pull_request",
     displayName: "Open a pull request",
     template: PULL_REQUEST_TEMPLATE,
     trigger: "pull_request",
+    confirmBeforeSend: false,
   },
 ];
 
