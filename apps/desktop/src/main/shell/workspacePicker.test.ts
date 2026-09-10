@@ -163,7 +163,16 @@ describe("a date source", () => {
 		create_if_missing,
 	});
 	// A day chosen so the expanded path is unmistakable in a failure message.
+	//
+	// Both instants are written in local time, which is the notion of "day"
+	// `expandDateTemplate` states and reads (see its module comment). That is
+	// what makes the expected path below a constant rather than something this
+	// file would have to recompute per timezone — and it is why neither of them
+	// is `Date.now()`. A test that asked the clock and a picker that asked the
+	// clock are two readings, and a run that crossed midnight between them
+	// failed for no reason anyone could see.
 	const NOW = new Date(2026, 8, 1);
+	const LAST_SECOND_OF_THE_DAY = new Date(2026, 8, 1, 23, 59, 59);
 
 	it("offers the one folder today's date names", async () => {
 		const today = join(root, "2026", "0901");
@@ -172,6 +181,22 @@ describe("a date source", () => {
 		const events = await runAt(
 			configWith([dated(join(root, "YYYY", "MMDD"), false)]),
 			NOW,
+		);
+		expect(candidates(events)).toEqual([
+			{ path: today, sourceId: "daily", sourceRank: 0, missing: false },
+		]);
+	});
+
+	it("still offers today's folder in the last second of the day", async () => {
+		// The boundary the run is most likely to sit on, and the one where a
+		// second reading of the clock would have named tomorrow: a second before
+		// midnight is still today, so it is still today's folder.
+		const today = join(root, "2026", "0901");
+		await mkdir(today, { recursive: true });
+
+		const events = await runAt(
+			configWith([dated(join(root, "YYYY", "MMDD"), false)]),
+			LAST_SECOND_OF_THE_DAY,
 		);
 		expect(candidates(events)).toEqual([
 			{ path: today, sourceId: "daily", sourceRank: 0, missing: false },

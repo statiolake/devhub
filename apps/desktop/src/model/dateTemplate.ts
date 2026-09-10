@@ -17,6 +17,15 @@
  * Nothing here touches the filesystem, and nothing here asks what time it is:
  * the clock is a parameter, so a test can say what day it is and the answer is
  * a pure function of the template and that day.
+ *
+ * The day is the *local* day, and this is the one place that says so. Every
+ * token below reads its instant through `Date`'s local-time getters, never the
+ * UTC ones, because a daily folder is named after the day the person having it
+ * is living in — at 23:59 on the first of the month they want the first's
+ * folder, whatever date UTC has already moved on to. Anything that needs to
+ * agree with this — a caller, a test pinning an instant — expresses its instant
+ * in local time too (`new Date(year, monthIndex, day, …)`), and then the answer
+ * is the same in every timezone.
  */
 
 /** What each token stands for, longest first — `MMDD` before `MM`. */
