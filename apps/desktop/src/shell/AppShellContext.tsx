@@ -499,8 +499,9 @@ export function AppShellProvider({
 
   const githubLogin = useCallback(() => transport.githubLogin(), [transport]);
 
-  const pullRequestHeadBranch = useCallback(
-    (url: string) => transport.pullRequestHeadBranch(url),
+  const assignmentBranch = useCallback(
+    (url: string, directory: string) =>
+      transport.assignmentBranch(url, directory),
     [transport],
   );
 
@@ -707,7 +708,7 @@ export function AppShellProvider({
       projectDefaultDirectory,
       cloneParentDirectories,
       githubLogin,
-      pullRequestHeadBranch,
+      assignmentBranch,
       agentActions,
       subscribeAgentActions,
       closeWorkspace,
@@ -737,7 +738,7 @@ export function AppShellProvider({
       projectDefaultDirectory,
       cloneParentDirectories,
       githubLogin,
-      pullRequestHeadBranch,
+      assignmentBranch,
       agentActions,
       subscribeAgentActions,
       closeWorkspace,

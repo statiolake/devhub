@@ -10,6 +10,7 @@ import type {
 } from "../ipc/appShell";
 import type {
   AgentActionWire,
+  AssignmentBranchWire,
   GitHubLoginWire,
   IssueAssignment,
   IssueRepository,
@@ -65,8 +66,14 @@ export interface AppShellContextValue {
    * rather than throwing when it cannot say.
    */
   readonly githubLogin: () => Promise<GitHubLoginWire>;
-  /** The branch a pull request is asking to merge. Throws GitHub's reason. */
-  readonly pullRequestHeadBranch: (url: string) => Promise<string>;
+  /**
+   * The branch this Issue or pull request already has, and what this clone can
+   * do with it. Throws GitHub's reason when GitHub will not say.
+   */
+  readonly assignmentBranch: (
+    url: string,
+    directory: string,
+  ) => Promise<AssignmentBranchWire>;
   /** The ways of starting an agent on an Issue, as Settings lists them. */
   readonly agentActions: () => Promise<readonly AgentActionWire[]>;
   /**

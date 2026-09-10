@@ -27,6 +27,7 @@ import {
 	type ContentSurfaceWire,
 	type DevhubApi,
 	type GitHubLoginWire,
+	type AssignmentBranchWire,
 	type IssueAssignment,
 	type IssueRepository,
 	type RepositoryStatusWire,
@@ -126,8 +127,12 @@ const devhub: DevhubApi = {
 		>,
 	githubLogin: () =>
 		ipcRenderer.invoke(CHANNELS.githubLogin) as Promise<GitHubLoginWire>,
-	pullRequestHeadBranch: (url: string) =>
-		ipcRenderer.invoke(CHANNELS.pullRequestHeadBranch, url) as Promise<string>,
+	assignmentBranch: (url: string, directory: string) =>
+		ipcRenderer.invoke(
+			CHANNELS.assignmentBranch,
+			url,
+			directory,
+		) as Promise<AssignmentBranchWire>,
 	closeWorkspace: (workspaceId: string) =>
 		ipcRenderer.invoke(CHANNELS.closeWorkspace, workspaceId) as Promise<void>,
 	removeWorktree: (workspaceId: string, force: boolean) =>

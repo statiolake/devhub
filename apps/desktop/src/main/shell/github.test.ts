@@ -19,6 +19,8 @@ import {
 	readBranchStatus,
 	readGitHubLogin,
 	readGitHubToken,
+	readIssueLinkedBranch,
+	readPullRequestHead,
 } from "./github.js";
 
 let directory: string;
@@ -362,6 +364,108 @@ describe("the Issue a branch names", () => {
 		await expect(readBranchStatus(REFERENCE, "token")).rejects.toThrow(
 			/no issue example\/widget#128/u,
 		);
+	});
+});
+
+/**
+ * What the assignment flow reads: the branch this work already has.
+ *
+ * Two questions with the same shape and the same use. The answer decides which
+ * branch a worktree is made on, and getting it wrong makes an empty worktree
+ * under the name of somebody's work — so the head's *repository* is read
+ * alongside its name, because a branch in a fork is not a branch this clone can
+ * reach and the name alone cannot say so.
+ */
+describe("the branch a pull request is from", () => {
+	it("is the head ref, with the repository it is actually in", async () => {
+		answers({
+			data: {
+				repository: {
+					pullRequest: {
+						headRefName: "patch-1",
+						headRepository: { name: "widget", owner: { login: "alice" } },
+					},
+				},
+			},
+		});
+		expect(
+			await readPullRequestHead(
+				{ owner: "example", repository: "widget", number: 7 },
+				"token",
+			),
+		).toEqual({ branch: "patch-1", owner: "alice", repository: "widget" });
+	});
+
+	it("belongs to the pull request's own repository when the fork is gone", async () => {
+		// A fork deleted after the pull request was opened. The only remaining
+		// candidate is the repository the pull request is in, which is also the
+		// right answer for every pull request that was never from a fork.
+		answers({
+			data: {
+				repository: {
+					pullRequest: { headRefName: "release-2", headRepository: null },
+				},
+			},
+		});
+		expect(
+			await readPullRequestHead(
+				{ owner: "example", repository: "widget", number: 7 },
+				"token",
+			),
+		).toEqual({
+			branch: "release-2",
+			owner: "example",
+			repository: "widget",
+		});
+	});
+
+	it("is a refusal when GitHub will not say which branch it is", async () => {
+		answers({ data: { repository: { pullRequest: null } } });
+		await expect(
+			readPullRequestHead(
+				{ owner: "example", repository: "widget", number: 7 },
+				"token",
+			),
+		).rejects.toThrow(/did not say which branch/u);
+	});
+});
+
+describe("the branch an Issue is linked to", () => {
+	it("is the first branch GitHub has recorded against it", async () => {
+		answers({
+			data: {
+				repository: {
+					issue: {
+						linkedBranches: {
+							nodes: [
+								{ ref: { name: "128-add-the-picker" } },
+								{ ref: { name: "128-first-try" } },
+							],
+						},
+					},
+				},
+			},
+		});
+		expect(
+			await readIssueLinkedBranch(
+				{ owner: "example", repository: "widget", number: 128 },
+				"token",
+			),
+		).toBe("128-add-the-picker");
+	});
+
+	it("is nothing at all for an Issue nobody has started", async () => {
+		// The ordinary case, and not a failure: it is what `feature/128-wip`
+		// exists for.
+		answers({
+			data: { repository: { issue: { linkedBranches: { nodes: [] } } } },
+		});
+		expect(
+			await readIssueLinkedBranch(
+				{ owner: "example", repository: "widget", number: 128 },
+				"token",
+			),
+		).toBeUndefined();
 	});
 });
 

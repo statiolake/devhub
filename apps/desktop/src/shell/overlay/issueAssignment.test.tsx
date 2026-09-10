@@ -35,9 +35,9 @@ function mount(overrides: Partial<AppShellContextValue> = {}) {
   ]);
   const listBranches = vi.fn().mockResolvedValue(["main", "release"]);
   const cloneRepository = vi.fn().mockResolvedValue("/projects/widget");
-  const pullRequestHeadBranch = vi
-    .fn()
-    .mockResolvedValue("alice/fix-the-crash");
+  // Nothing has a branch yet: the shape most of these walk, where the flow
+  // offers `feature/128-wip` and the root checkout.
+  const assignmentBranch = vi.fn().mockResolvedValue({ reachable: false });
   const onDismiss = vi.fn();
   const value = {
     agentProfiles: {
@@ -53,7 +53,7 @@ function mount(overrides: Partial<AppShellContextValue> = {}) {
     cloneParentDirectories: vi
       .fn()
       .mockResolvedValue(["/projects", "/code/github"]),
-    pullRequestHeadBranch,
+    assignmentBranch,
     // The URL step's rows are the person's own actions.
     agentActions: vi.fn().mockResolvedValue([
       { id: "implement", displayName: "Work on it", trigger: "issue" },
@@ -73,7 +73,7 @@ function mount(overrides: Partial<AppShellContextValue> = {}) {
     findIssueRepositories,
     listBranches,
     cloneRepository,
-    pullRequestHeadBranch,
+    assignmentBranch,
     onDismiss,
   };
 }
@@ -88,6 +88,7 @@ function mountFor(agentProfiles: AppShellContextValue["agentProfiles"]) {
     assignIssue: vi.fn().mockResolvedValue(undefined),
     projectDefaultDirectory: vi.fn().mockResolvedValue("/projects"),
     cloneParentDirectories: vi.fn().mockResolvedValue([]),
+    assignmentBranch: vi.fn().mockResolvedValue({ reachable: false }),
     agentActions: vi.fn().mockResolvedValue([
       { id: "implement", displayName: "Work on it", trigger: "issue" },
       // A workspace button's action, in the same list. It is not an answer to
@@ -134,14 +135,17 @@ async function answer(name: string | RegExp, text?: string) {
 
 describe("assigning an Issue", () => {
   it("asks three questions and sends what they add up to", async () => {
-    // The Issue, the agent, and how to work on it. The repository is not asked
-    // because there is exactly one clone, and the branch is not asked at all:
-    // DevHub makes `feature/128-wip` and the agent is told to rename it.
+    // The Issue, the agent, and which branch. The repository is not asked
+    // because there is exactly one clone, and the Issue has no branch of its
+    // own: DevHub offers `feature/128-wip` and the agent is told to rename it.
     const { assignIssue } = mount();
 
     await answer("Assign Issue", ISSUE);
     await answer(/Agent for example\/widget#128/u);
-    await choose(/Where to work on example\/widget#128/u, /New worktree/u);
+    await choose(
+      /Where to work on example\/widget#128/u,
+      /New branch feature\/128-wip/u,
+    );
 
     await vi.waitFor(() => {
       expect(assignIssue).toHaveBeenCalledWith({
@@ -177,7 +181,7 @@ describe("assigning an Issue", () => {
     await answer("Assign Issue", ISSUE);
     await answer(/Agent for/u);
     await choose(/Which example\/widget/u, /\/other\/widget/u);
-    await choose(/Where to work on/u, /Repository Root/u);
+    await choose(/Where to work on/u, /root checkout/u);
 
     await vi.waitFor(() => {
       expect(assignIssue).toHaveBeenCalledWith(
@@ -189,42 +193,58 @@ describe("assigning an Issue", () => {
     });
   });
 
-  it("offers every worktree of one repository as one question", async () => {
-    // Worktrees of a repository are not different repositories, so there is no
-    // "which of these?" followed by "did you want a different one?" — the
-    // repository, its worktrees and a new one are the same question.
+  it("offers the branch the work already has, and opens it where it is", async () => {
+    // A pull request whose branch is already checked out somewhere. git gives
+    // one branch one worktree, so the honest offer is the folder the work is
+    // already in — opening it, not making a second one git would refuse.
     const { assignIssue } = mount({
-      findIssueRepositories: vi.fn().mockResolvedValue([
-        {
-          mainWorktree: "/projects/widget",
-          worktrees: [
-            { path: "/projects/widget", branch: "main", isMainWorktree: true },
-            {
-              path: "/projects/widget_feature_9-old",
-              branch: "feature/9-old",
-              isMainWorktree: false,
-            },
-          ],
-        },
-      ]),
+      assignmentBranch: vi.fn().mockResolvedValue({
+        branch: "alice/fix-the-crash",
+        reachable: true,
+        checkedOutAt: "/projects/widget_alice_fix-the-crash",
+      }),
     } as unknown as Partial<AppShellContextValue>);
 
-    await answer("Assign Issue", ISSUE);
+    await answer("Assign Issue", PULL_REQUEST);
     await answer(/Agent for/u);
-    // One repository, so it is not asked about at all.
-    expect(
-      screen.queryByRole("dialog", { name: /Which example/u }),
-    ).not.toBeInTheDocument();
-    await choose(/Where to work on/u, /feature\/9-old/u);
+    await choose(/Where to work on/u, /Open widget_alice_fix-the-crash/u);
 
     await vi.waitFor(() => {
       expect(assignIssue).toHaveBeenCalledWith(
         expect.objectContaining({
-          directory: "/projects/widget_feature_9-old",
+          directory: "/projects/widget_alice_fix-the-crash",
           branch: undefined,
         }),
       );
     });
+  });
+
+  it("says a fork's branch cannot be checked out here, and offers the rest", async () => {
+    // The branch exists and is in somebody else's copy. DevHub will not add a
+    // remote to somebody's repository on their behalf, so the row is not there
+    // — and the reason is, rather than a checkout that fails a step later.
+    mount({
+      assignmentBranch: vi.fn().mockResolvedValue({
+        branch: "patch-1",
+        fork: "alice/widget",
+        reachable: false,
+      }),
+    } as unknown as Partial<AppShellContextValue>);
+
+    await answer("Assign Issue", PULL_REQUEST);
+    await answer(/Agent for/u);
+    await screen.findByRole("dialog", { name: /Where to work on/u });
+
+    expect(
+      screen.getByText(
+        "patch-1 is in alice/widget, which this clone has no remote for, so it cannot be checked out here.",
+      ),
+    ).toBeVisible();
+    expect(
+      screen
+        .getAllByRole("option")
+        .map((row) => row.querySelector(".mac-list-title")?.textContent),
+    ).toEqual(["New branch feature/128-wip", "Work in the root checkout"]);
   });
 
   it("makes no branch when the work stays in the workspace", async () => {
@@ -234,7 +254,7 @@ describe("assigning an Issue", () => {
 
     await answer("Assign Issue", ISSUE);
     await answer(/Agent for/u);
-    await choose(/Where to work on/u, /Repository Root/u);
+    await choose(/Where to work on/u, /root checkout/u);
 
     await vi.waitFor(() => {
       expect(assignIssue).toHaveBeenCalledWith({
@@ -312,11 +332,19 @@ describe("assigning an Issue", () => {
     // An Issue has no branch yet, so DevHub makes one. A pull request *is* a
     // branch, and it is the one being reviewed — a new `feature/128-wip` beside
     // it would be an empty worktree under a name promising somebody's work.
-    const { assignIssue, pullRequestHeadBranch } = mount();
+    const assignmentBranch = vi
+      .fn()
+      .mockResolvedValue({ branch: "alice/fix-the-crash", reachable: true });
+    const { assignIssue } = mount({
+      assignmentBranch,
+    } as unknown as Partial<AppShellContextValue>);
 
     await answer("Assign Issue", PULL_REQUEST);
     await answer(/Agent for example\/widget#128/u);
-    await choose(/Where to work on example\/widget#128/u, /New worktree/u);
+    await choose(
+      /Where to work on example\/widget#128/u,
+      /Check out alice\/fix-the-crash/u,
+    );
 
     await vi.waitFor(() => {
       expect(assignIssue).toHaveBeenCalledWith(
@@ -327,18 +355,25 @@ describe("assigning an Issue", () => {
         }),
       );
     });
-    expect(pullRequestHeadBranch).toHaveBeenCalledWith(PULL_REQUEST);
+    expect(assignmentBranch).toHaveBeenCalledWith(
+      PULL_REQUEST,
+      "/projects/widget",
+    );
   });
 
   it("checks nothing out when the work stays in the repository itself", async () => {
     // The agent is handed the repository as it stands. Which branch to look at
     // is then the agent's business, and DevHub moving somebody's checkout out
     // from under them would be the wrong kind of helpful.
-    const { assignIssue, pullRequestHeadBranch } = mount();
+    const { assignIssue } = mount({
+      assignmentBranch: vi
+        .fn()
+        .mockResolvedValue({ branch: "alice/fix-the-crash", reachable: true }),
+    } as unknown as Partial<AppShellContextValue>);
 
     await answer("Assign Issue", PULL_REQUEST);
     await answer(/Agent for/u);
-    await choose(/Where to work on/u, /Repository Root/u);
+    await choose(/Where to work on/u, /root checkout/u);
 
     await vi.waitFor(() => {
       expect(assignIssue).toHaveBeenCalledWith(
@@ -349,33 +384,20 @@ describe("assigning an Issue", () => {
         }),
       );
     });
-    expect(pullRequestHeadBranch).not.toHaveBeenCalled();
   });
 
-  it("offers the repository, then a new worktree, then the ones there are", async () => {
+  it("leads with the branch the work already has, then the two standing answers", async () => {
     // Read top to bottom that is the order the decision is considered in, and
-    // the repository leads because it is the answer that needs nothing
-    // arranged — so it is also what Return takes on a sheet nobody has typed
-    // into. Each row is named by its folder — what a person recognises — with
-    // the path underneath to tell two of them apart, except the repository,
-    // which is named for what it is rather than where.
+    // the branch this work already has leads, because a person assigning a pull
+    // request has decided what to work on and it is not a new branch — so it is
+    // also what Return takes on a sheet nobody has typed into.
     mount({
-      findIssueRepositories: vi.fn().mockResolvedValue([
-        {
-          mainWorktree: "/projects/widget",
-          worktrees: [
-            { path: "/projects/widget", branch: "main", isMainWorktree: true },
-            {
-              path: "/projects/widget_128-wip",
-              branch: "feature/128-wip",
-              isMainWorktree: false,
-            },
-          ],
-        },
-      ]),
+      assignmentBranch: vi
+        .fn()
+        .mockResolvedValue({ branch: "alice/fix-the-crash", reachable: true }),
     } as unknown as Partial<AppShellContextValue>);
 
-    await answer("Assign Issue", ISSUE);
+    await answer("Assign Issue", PULL_REQUEST);
     await answer(/Agent for/u);
     await screen.findByRole("dialog", { name: /Where to work on/u });
 
@@ -383,20 +405,18 @@ describe("assigning an Issue", () => {
       screen
         .getAllByRole("option")
         .map((row) => row.querySelector(".mac-list-title")?.textContent),
-    ).toEqual(["Repository Root", "New worktree", "widget_128-wip"]);
-    // The path is demoted, not lost: it is what tells two folders of the same
-    // name apart, and it is still what the field searches.
-    expect(
-      screen.getByRole("option", { name: /Repository Root/u }),
-    ).toHaveTextContent("/projects/widget");
-    // The two standing answers survive a query that matches no worktree: they
-    // are pinned, so "nothing matches" is still a screen with answers on it.
+    ).toEqual([
+      "Check out alice/fix-the-crash in a worktree",
+      "New branch feature/128-wip",
+      "Work in the root checkout",
+    ]);
+    // Every row is an answer rather than a name to search among, so they are
+    // all pinned and typing narrows nothing away: there is no list here that a
+    // query could leave empty.
     fireEvent.change(screen.getByRole("textbox"), {
       target: { value: "nothing-like-this" },
     });
-    expect(
-      screen.getAllByRole("option").map((row) => row.textContent),
-    ).toHaveLength(2);
+    expect(screen.getAllByRole("option")).toHaveLength(3);
   });
 
   it("says why a clone is being asked about when nobody asked for one", async () => {
@@ -463,7 +483,10 @@ describe("assigning an Issue", () => {
 
     await answer("Assign Issue", ISSUE);
     await answer(/Agent for/u);
-    await choose(/Where to work on example\/widget#128/u, /New worktree/u);
+    await choose(
+      /Where to work on example\/widget#128/u,
+      /New branch feature\/128-wip/u,
+    );
 
     expect(
       await screen.findByText(
@@ -492,7 +515,7 @@ describe("assigning an Issue", () => {
     await choose(/Clone example\/widget/u, /\/code\/github/u);
     // A fresh clone is checked out in one place, and that place plus a new
     // worktree is the same location question everybody else gets.
-    await choose(/Where to work on/u, /Repository Root/u);
+    await choose(/Where to work on/u, /root checkout/u);
 
     await vi.waitFor(() => {
       expect(cloneRepository).toHaveBeenCalledWith(
@@ -519,7 +542,7 @@ describe("assigning an Issue", () => {
       target: { value: "/elsewhere/scratch" },
     });
     fireEvent.click(screen.getByRole("option", { name: /typed above/u }));
-    await choose(/Where to work on/u, /Repository Root/u);
+    await choose(/Where to work on/u, /root checkout/u);
 
     await vi.waitFor(() => {
       expect(cloneRepository).toHaveBeenCalledWith(

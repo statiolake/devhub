@@ -84,6 +84,35 @@ export type AgentActionTriggerWire =
 	| "push"
 	| "pull_request";
 
+/**
+ * The branch an Issue or a pull request already has, and what can be done with
+ * it in one particular clone.
+ *
+ * Read in one call because the four facts are one question — *is there a branch
+ * for this, and can this checkout have it?* — and each is worthless without the
+ * others: a name with nowhere to fetch it from is a row that can only fail, and
+ * a name already checked out somewhere is a different offer entirely.
+ *
+ * Everything absent is the ordinary case: an Issue nobody has started, whose
+ * branch DevHub is about to invent.
+ */
+export interface AssignmentBranchWire {
+	/** The branch that exists for it: a pull request's head, an Issue's link. */
+	readonly branch?: string;
+	/**
+	 * Where the branch lives, when that is not the repository being worked in —
+	 * `alice/widget` for a pull request out of a fork.
+	 *
+	 * Present *and* `reachable` false is the case worth saying out loud: the
+	 * branch exists, and not anywhere this clone can see.
+	 */
+	readonly fork?: string;
+	/** The branch is here, or on a remote this clone has, so it can be had. */
+	readonly reachable: boolean;
+	/** Where it is already checked out, when it is. Opening that is the offer. */
+	readonly checkedOutAt?: string;
+}
+
 /** Everything the Issue flow asked, once it has all the answers. */
 export interface IssueAssignment {
 	readonly issueUrl: string;
@@ -546,14 +575,18 @@ export interface DevhubApi {
 	 */
 	githubLogin(): Promise<GitHubLoginWire>;
 	/**
-	 * The branch a pull request is asking to merge.
+	 * The branch this Issue or pull request already has, in this clone's terms.
 	 *
-	 * Asked when somebody assigns a pull request and a worktree is being made
-	 * for it: the worktree is that branch, checked out, rather than a new one.
-	 * Throws what to do about it — no token, no such pull request — because the
-	 * step that asked is the step that shows the reason.
+	 * Asked once the clone is known, because half the answer is about the clone:
+	 * a pull request's head branch is a fact of GitHub's, and whether it can be
+	 * checked out here — and whether it already is — is a fact of this
+	 * repository's remotes and worktrees. Throws what to do about it — no token,
+	 * no such pull request — because the step that asked shows the reason.
 	 */
-	pullRequestHeadBranch(url: string): Promise<string>;
+	assignmentBranch(
+		url: string,
+		directory: string,
+	): Promise<AssignmentBranchWire>;
 	listBranches(directory: string): Promise<readonly string[]>;
 	/**
 	 * Do what the answers add up to: make the worktree if one was asked for,
@@ -610,7 +643,7 @@ export const CHANNELS = {
 	projectDefaultDirectory: "devhub:project-default-directory",
 	cloneParentDirectories: "devhub:clone-parent-directories",
 	githubLogin: "devhub:github-login",
-	pullRequestHeadBranch: "devhub:pull-request-head-branch",
+	assignmentBranch: "devhub:assignment-branch",
 	removeWorktree: "devhub:remove-worktree",
 	closeWorkspace: "devhub:close-workspace",
 	runAgentAction: "devhub:run-agent-action",

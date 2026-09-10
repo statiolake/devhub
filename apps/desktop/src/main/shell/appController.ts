@@ -34,6 +34,7 @@ import {
 	type ChordHelpRowWire,
 	type ContentRect,
 	type ContentSurfaceWire,
+	type AssignmentBranchWire,
 	type IssueAssignment,
 	type ModalRequest,
 	type RepositoryStatusWire,
@@ -171,18 +172,28 @@ import {
 } from "./projects.js";
 import {
 	ensureWorktree,
+	fetchBranchFrom,
+	findBranch,
+	refreshOrigin,
+	remoteForRepository,
 	removeWorktree,
 	listBranches,
 	workspaceFailure,
+	worktreeForBranch,
 	type GitCommand,
 } from "./git.js";
 import { findClones } from "./issues.js";
 import {
 	readGitHubLogin,
 	readGitHubToken,
+	readIssueLinkedBranch,
 	readPullRequestHead,
 } from "./github.js";
-import { gitHubItemUrl, parseGitHubItemUrl } from "../../model/github.js";
+import {
+	gitHubItemUrl,
+	issueNumberFromBranch,
+	parseGitHubItemUrl,
+} from "../../model/github.js";
 import type { GitHubItem } from "../../model/github.js";
 import { renderAgentAction } from "../../model/agentActions.js";
 import type { ConfiguredAgentAction } from "../../model/config.js";
@@ -3357,6 +3368,112 @@ export class AppController {
 		return outcomeWire(settled, this.coordinator.readiness, this.repositoryOf);
 	}
 
+	/**
+	 * The branch this Issue or pull request already has, and what this clone can
+	 * do with it.
+	 *
+	 * Two questions with one answer. GitHub is asked what the branch *is* — a
+	 * pull request's head, an Issue's linked branch — and git is asked whether
+	 * this checkout can have it: is there a remote it can be fetched from, is it
+	 * here already, and is it already checked out somewhere.
+	 *
+	 * Everything is best effort except the asking. A fetch that fails narrows
+	 * what can be offered and is not reported here, because this runs while
+	 * somebody is being asked a question and a network that is down is not an
+	 * answer to it; the fetch that has to succeed happens when the worktree is
+	 * made, where its failure is shown and answered. What is *not* softened is
+	 * GitHub refusing to talk at all — no token, no such pull request — because
+	 * then the flow is offering choices about something it never read.
+	 */
+	private async assignmentBranch(
+		url: string,
+		directory: string,
+	): Promise<AssignmentBranchWire> {
+		const item = parseGitHubItemUrl(url);
+		if (!item) {
+			throw workspaceFailure("That is not a GitHub Issue or pull request URL.");
+		}
+		const credentials = await readGitHubToken(this.launchEnvironment);
+		if (credentials.kind !== "token") {
+			throw workspaceFailure(
+				credentials.kind === "unauthenticated"
+					? "DevHub is not signed in to GitHub. Run `gh auth login` and try again."
+					: `DevHub could not ask GitHub about ${item.owner}/${item.repository}#${String(item.number)}: ${credentials.reason}.`,
+			);
+		}
+		const git = await this.gitCommand();
+		if (item.kind === "pull") {
+			const head = await readPullRequestHead(item, credentials.token);
+			// A branch in somebody else's copy is reachable only through a remote
+			// that is already there. DevHub does not add one: a flow that assigns
+			// work is not the place to change the person's remotes, and the row it
+			// would enable is one they can decline for a reason it can state.
+			const sameRepository =
+				head.owner.toLowerCase() === item.owner.toLowerCase() &&
+				head.repository.toLowerCase() === item.repository.toLowerCase();
+			const remote = sameRepository
+				? "origin"
+				: await remoteForRepository(
+						git,
+						directory,
+						head.owner,
+						head.repository,
+					);
+			if (remote) await fetchBranchFrom(git, directory, remote, head.branch);
+			return this.branchWhereabouts(
+				git,
+				directory,
+				head.branch,
+				sameRepository ? undefined : `${head.owner}/${head.repository}`,
+			);
+		}
+		// GitHub's own record first — the branch its Create a branch button made
+		// — and only then the convention, which is a guess about a name and is
+		// consulted exactly because most Issues have no record to read.
+		const linked = await readIssueLinkedBranch(item, credentials.token);
+		const branch = linked ?? (await this.branchNamedFor(git, directory, item));
+		if (branch === undefined) return { reachable: false };
+		return this.branchWhereabouts(git, directory, branch, undefined);
+	}
+
+	/**
+	 * A branch on this machine or on `origin` that names the Issue.
+	 *
+	 * The fallback for an Issue GitHub has no linked branch for, and the same
+	 * rule the Sidebar reads a branch by — so a worktree somebody made by hand,
+	 * or on another machine, or in a DevHub session last week, is found by the
+	 * name it already has rather than being made a second time under
+	 * `feature/128-wip`.
+	 */
+	private async branchNamedFor(
+		git: GitCommand,
+		directory: string,
+		item: GitHubItem,
+	): Promise<string | undefined> {
+		await refreshOrigin(git, directory);
+		const branches = await listBranches(git, directory);
+		return branches.find(
+			(branch) => issueNumberFromBranch(branch) === item.number,
+		);
+	}
+
+	/** The same three git questions, whichever kind the branch came from. */
+	private async branchWhereabouts(
+		git: GitCommand,
+		directory: string,
+		branch: string,
+		fork: string | undefined,
+	): Promise<AssignmentBranchWire> {
+		const found = await findBranch(git, directory, branch);
+		const checkedOutAt = await worktreeForBranch(git, directory, branch);
+		return {
+			branch,
+			fork,
+			reachable: found !== undefined,
+			checkedOutAt,
+		};
+	}
+
 	private async clone(url: string, parentDirectory: string): Promise<string> {
 		return cloneProject({
 			url,
@@ -3463,28 +3580,20 @@ export class AppController {
 		// kept: a login that was switched or logged out of should stop being
 		// DevHub's answer the moment it stops being true.
 		handle(CHANNELS.githubLogin, () => readGitHubLogin(this.launchEnvironment));
-		// The branch a pull request is asking to merge. A refusal travels as the
-		// structured error inside the message, so the step that asked shows
-		// GitHub's own sentence and not "the native app shell is unavailable".
-		handle(CHANNELS.pullRequestHeadBranch, async (_event, url: string) => {
-			try {
-				const item = parseGitHubItemUrl(url);
-				if (item?.kind !== "pull") {
-					throw workspaceFailure("That is not a pull request URL.");
+		// The branch this Issue or pull request already has, in this clone's
+		// terms. A refusal travels as the structured error inside the message, so
+		// the step that asked shows GitHub's own sentence and not "the native app
+		// shell is unavailable".
+		handle(
+			CHANNELS.assignmentBranch,
+			async (_event, url: string, directory: string) => {
+				try {
+					return await this.assignmentBranch(url, directory);
+				} catch (error: unknown) {
+					throw asIpcError(errorWire(error));
 				}
-				const credentials = await readGitHubToken(this.launchEnvironment);
-				if (credentials.kind !== "token") {
-					throw workspaceFailure(
-						credentials.kind === "unauthenticated"
-							? "DevHub is not signed in to GitHub. Run `gh auth login` and try again."
-							: `DevHub could not ask GitHub about the pull request: ${credentials.reason}.`,
-					);
-				}
-				return await readPullRequestHead(item, credentials.token);
-			} catch (error: unknown) {
-				throw asIpcError(errorWire(error));
-			}
-		});
+			},
+		);
 		// A refusal travels the way every other one does — as the structured
 		// error inside the message — so the sheet that asked shows the sentence
 		// and not "the native app shell is unavailable".

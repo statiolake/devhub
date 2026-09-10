@@ -22,7 +22,10 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { TypedFailure } from "../../model/wire.js";
 import {
 	ensureWorktree,
+	findBranch,
 	listBranches,
+	remoteForRepository,
+	worktreeForBranch,
 	parseWorktrees,
 	readRepository,
 	runGit,
@@ -213,6 +216,122 @@ describe("the worktree for a branch", () => {
 		await expect(ensureWorktree(command, repository, "   ")).rejects.toThrow(
 			/Enter a branch name/u,
 		);
+	});
+});
+
+describe("a branch that already exists somewhere", () => {
+	/** A bare `origin` with one branch on it that this clone does not have. */
+	async function originWith(branch: string): Promise<string> {
+		const origin = join(parent, "origin.git");
+		await runGit(command, ["init", "--bare", "-b", "main", origin]);
+		await runGit(command, ["remote", "add", "origin", origin], {
+			cwd: repository,
+		});
+		await runGit(command, ["push", "origin", `main:${branch}`], {
+			cwd: repository,
+		});
+		await runGit(command, ["fetch", "origin"], { cwd: repository });
+		return origin;
+	}
+
+	it("is checked out into a worktree rather than started again", async () => {
+		// The pull request case: the branch is somebody's work, on origin and not
+		// here. A new branch of the same name would be an empty worktree under a
+		// name promising that work.
+		await originWith("alice/fix-the-crash");
+		const wanted = await runGit(command, ["rev-parse", "main"], {
+			cwd: repository,
+		});
+
+		const path = await ensureWorktree(
+			command,
+			repository,
+			"alice/fix-the-crash",
+			{ branchExistsAlready: true },
+		);
+
+		expect(
+			(
+				await runGit(command, ["rev-parse", "--abbrev-ref", "HEAD"], {
+					cwd: path,
+				})
+			).trim(),
+		).toBe("alice/fix-the-crash");
+		expect(
+			(await runGit(command, ["rev-parse", "HEAD"], { cwd: path })).trim(),
+		).toBe(wanted.trim());
+	});
+
+	it("is found on the remote it is actually on, whatever that remote is called", async () => {
+		// A pull request from a fork, in a clone that has already added the fork.
+		// `origin` does not have the branch and the answer is not "nowhere".
+		const fork = join(parent, "fork.git");
+		await runGit(command, ["init", "--bare", "-b", "main", fork]);
+		await runGit(command, ["remote", "add", "alice", fork], {
+			cwd: repository,
+		});
+		await runGit(command, ["push", "alice", "main:patch-1"], {
+			cwd: repository,
+		});
+		await runGit(command, ["fetch", "alice"], { cwd: repository });
+
+		expect(await findBranch(command, repository, "patch-1")).toEqual({
+			kind: "remote",
+			ref: "refs/remotes/alice/patch-1",
+		});
+		const path = await ensureWorktree(command, repository, "patch-1", {
+			branchExistsAlready: true,
+		});
+		expect(
+			(
+				await runGit(command, ["rev-parse", "--abbrev-ref", "HEAD"], {
+					cwd: path,
+				})
+			).trim(),
+		).toBe("patch-1");
+	});
+
+	it("is nowhere at all when it is on a fork this clone has no remote for", async () => {
+		// What a fork's pull request looks like from a clone that only has
+		// `origin`: the branch exists on GitHub and not here, and DevHub says so
+		// rather than inventing an empty branch under the same name.
+		await originWith("release");
+		expect(await findBranch(command, repository, "patch-1")).toBeUndefined();
+		await expect(
+			ensureWorktree(command, repository, "patch-1", {
+				branchExistsAlready: true,
+			}),
+		).rejects.toThrow(/on neither this machine nor any remote/u);
+	});
+
+	it("says which worktree already has it, so no second one is asked for", async () => {
+		// git gives one branch one worktree and refuses a second. The person is
+		// offered the folder the work is already in, which is this answer.
+		const path = await ensureWorktree(command, repository, "feature/128-tidy");
+		expect(
+			await worktreeForBranch(command, repository, "feature/128-tidy"),
+		).toBe(path);
+		// The repository root counts as a checkout like any other.
+		expect(await worktreeForBranch(command, repository, "main")).toBe(
+			repository,
+		);
+		expect(
+			await worktreeForBranch(command, repository, "never-made"),
+		).toBeUndefined();
+	});
+
+	it("names the remote that is one owner's copy of the repository", async () => {
+		await runGit(
+			command,
+			["remote", "add", "alice", "git@github.com:Alice/Widget.git"],
+			{ cwd: repository },
+		);
+		expect(
+			await remoteForRepository(command, repository, "alice", "widget"),
+		).toBe("alice");
+		expect(
+			await remoteForRepository(command, repository, "bob", "widget"),
+		).toBeUndefined();
 	});
 });
 

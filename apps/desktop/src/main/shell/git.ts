@@ -534,6 +534,155 @@ export async function listBranches(
 }
 
 /**
+ * Where a branch is, in the one form a `worktree add` can be given.
+ *
+ * `local` is a branch this clone has; `remote` is one only a remote has, and
+ * then `ref` is the remote-tracking ref a local branch would be started from —
+ * spelled out rather than left to git's DWIM, because DWIM answers only while
+ * exactly one remote has the name and a fork layout is precisely the case where
+ * two of them do.
+ */
+export interface BranchWhereabouts {
+	readonly kind: "local" | "remote";
+	/** `refs/heads/x`, or `refs/remotes/fork/x`. */
+	readonly ref: string;
+}
+
+/**
+ * Where this clone can see the branch, or nothing when it cannot see it at all.
+ *
+ * Every remote is looked at rather than `origin` alone. A pull request from a
+ * fork has its branch on the fork, and a clone that has already added that fork
+ * as a remote can check the branch out like any other — which is the whole of
+ * the difference between "this pull request cannot be worked on here" and "it
+ * can".
+ *
+ * The remote names come from git rather than from the ref path, because a
+ * remote may be called `my/fork` and then a ref under it has one more component
+ * than the pattern anybody would write.
+ */
+export async function findBranch(
+	command: GitCommand,
+	directory: string,
+	branch: string,
+): Promise<BranchWhereabouts | undefined> {
+	const local = `refs/heads/${branch}`;
+	const refs = new Set(
+		(
+			await runGit(
+				command,
+				["for-each-ref", "--format=%(refname)", "refs/heads", "refs/remotes"],
+				{ cwd: directory },
+			)
+		)
+			.split("\n")
+			.map((line) => line.trim())
+			.filter((line) => line.length > 0),
+	);
+	if (refs.has(local)) return { kind: "local", ref: local };
+	for (const remote of await remoteNames(command, directory)) {
+		const ref = `refs/remotes/${remote}/${branch}`;
+		if (refs.has(ref)) return { kind: "remote", ref };
+	}
+	return undefined;
+}
+
+/** The remotes this clone has, in git's order. */
+async function remoteNames(
+	command: GitCommand,
+	directory: string,
+): Promise<readonly string[]> {
+	const output = await ask(command, ["remote"], directory).catch(
+		() => undefined,
+	);
+	return (output ?? "")
+		.split("\n")
+		.map((line) => line.trim())
+		.filter((line) => line.length > 0);
+}
+
+/**
+ * The remote that is one owner's copy of the repository, if the clone has one.
+ *
+ * Asked about a pull request from a fork: the branch lives in `owner`'s copy,
+ * and whether DevHub can offer to check it out is exactly the question of
+ * whether this clone already talks to that copy. Nothing is added here — a flow
+ * that assigns work is not the place to change somebody's remotes.
+ */
+export async function remoteForRepository(
+	command: GitCommand,
+	directory: string,
+	owner: string,
+	repository: string,
+): Promise<string | undefined> {
+	const wanted = remoteIdentity(
+		`https://github.com/${owner}/${repository}.git`,
+	);
+	for (const name of await remoteNames(command, directory)) {
+		const found = await remoteNamed(command, directory, name);
+		if (found === wanted) return name;
+	}
+	return undefined;
+}
+
+/**
+ * Where a branch is already checked out, when it is.
+ *
+ * The repository root counts: a branch checked out there is a branch git will
+ * refuse to give a second worktree, and the honest answer to "make a worktree
+ * for it" is that the work already has a folder and this is which one.
+ */
+export async function worktreeForBranch(
+	command: GitCommand,
+	directory: string,
+	branch: string,
+): Promise<string | undefined> {
+	const records = parseWorktrees(
+		await runGit(command, ["worktree", "list", "--porcelain"], {
+			cwd: directory,
+		}),
+	);
+	return records.find((record) => record.branch === branch)?.path;
+}
+
+/**
+ * Bring one branch here from a remote, for a question rather than for work.
+ *
+ * Best effort, and deliberately so: this runs while somebody is being *asked*
+ * which branch to work on, and a network that is down is not an answer to that
+ * question. What it changes is only how much this clone knows — a branch that
+ * arrives can be offered, one that does not is offered as a new branch instead
+ * — and the fetch that has to succeed still happens later, in `ensureWorktree`,
+ * where its failure is reported and answered.
+ */
+export async function fetchBranchFrom(
+	command: GitCommand,
+	directory: string,
+	remote: string,
+	branch: string,
+): Promise<void> {
+	await runGit(command, ["fetch", remote, branch], {
+		cwd: directory,
+		timeoutMs: NETWORK_TIMEOUT_MS,
+	}).catch(() => undefined);
+}
+
+/**
+ * Bring `origin` up to date, for a question rather than for work.
+ *
+ * The same best-effort bargain as `fetchBranchFrom`, and for the same moment:
+ * DevHub is about to look through the branch names for one that belongs to an
+ * Issue, and a list one fetch out of date is a worse answer than none only if
+ * it is presented as certain — it is not, it is a row the person can decline.
+ */
+export async function refreshOrigin(
+	command: GitCommand,
+	directory: string,
+): Promise<void> {
+	await fetchOrigin(command, directory, { allowStaleBase: true });
+}
+
+/**
  * The worktree for a branch, made if it is not there yet.
  *
  * The three cases are the ones `gwt co` has always had, and they are answered
@@ -589,9 +738,9 @@ export async function ensureWorktree(
 	if (existing) return existing.path;
 
 	// Somebody else's branch: bring it here before asking whether it is here.
-	// `branchExists` reads `refs/remotes/origin/…`, which is only as current as
-	// the last fetch, so without this a pull request opened five minutes ago
-	// looks like a branch that does not exist and would be created empty.
+	// `findBranch` reads refs, which are only as current as the last fetch, so
+	// without this a pull request opened five minutes ago looks like a branch
+	// that does not exist and would be created empty.
 	if (options.branchExistsAlready)
 		await fetchOrigin(command, directory, options);
 
@@ -602,14 +751,18 @@ export async function ensureWorktree(
 		);
 	}
 
-	const here = await branchExists(command, directory, name);
+	const here = await findBranch(command, directory, name);
 	if (options.branchExistsAlready && !here) {
 		throw workspaceFailure(
-			`${name} is on neither this machine nor origin. A pull request from a fork has its branch on the fork, which this clone cannot see.`,
+			`${name} is on neither this machine nor any remote this clone has. A pull request from a fork has its branch on the fork.`,
 		);
 	}
 	const args = here
-		? ["worktree", "add", target, name]
+		? here.kind === "local"
+			? ["worktree", "add", target, name]
+			: // Started from the remote-tracking ref by name: a branch of the same
+				// name on a second remote must not be able to decide this.
+				["worktree", "add", "-b", name, target, here.ref]
 		: [
 				"worktree",
 				"add",
@@ -725,25 +878,6 @@ async function fetchOrigin(
 			return false;
 		},
 	);
-}
-
-async function branchExists(
-	command: GitCommand,
-	directory: string,
-	branch: string,
-): Promise<boolean> {
-	for (const ref of [`refs/heads/${branch}`, `refs/remotes/origin/${branch}`]) {
-		const found = await runGit(
-			command,
-			["show-ref", "--verify", "--quiet", ref],
-			{ cwd: directory },
-		).then(
-			() => true,
-			() => false,
-		);
-		if (found) return true;
-	}
-	return false;
 }
 
 async function exists(path: string): Promise<boolean> {

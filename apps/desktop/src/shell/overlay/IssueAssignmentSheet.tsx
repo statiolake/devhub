@@ -1,11 +1,11 @@
 /**
- * "Assign Issue": the five questions, as a wizard.
+ * "Assign Issue": the four questions, as a wizard.
  *
- * Which Issue, which agent, which clone, one workspace or a worktree, which
- * branch — and each answer decides the next question, which is why this is a
- * chain of steps rather than five sheets that open each other. Escape goes back
- * one question the whole way down, because that is the runner's rule and no
- * step here had to be told about it.
+ * Which Issue and what to do with it, which agent, which clone, which branch —
+ * and each answer decides the next question, which is why this is a chain of
+ * steps rather than four sheets that open each other. Escape goes back one
+ * question the whole way down, because that is the runner's rule and no step
+ * here had to be told about it.
  *
  * Two kinds of "that did not work" show up in the same place, the line under
  * the field, and they are different things. A URL that is not an Issue URL is
@@ -15,8 +15,9 @@
  * it back to whichever step caused it.
  */
 
-import { useMemo, useRef } from "react";
+import { useMemo, useRef, type ReactNode } from "react";
 import type { AgentProfilesWire } from "../../ipc/appShell";
+import type { AssignmentBranchWire } from "../../ipc/contract";
 import {
   wipBranchForIssue,
   gitHubItemUrl,
@@ -50,6 +51,11 @@ const ACCEPT_TYPED = "devhub:accept-typed";
 /** A row that is one of the person's own actions, by its id. */
 const ACTION_PREFIX = "devhub:action:";
 const NEW_WORKTREE = "devhub:new-worktree";
+/** The branch this work already has, checked out in a worktree of its own. */
+const EXISTING_BRANCH = "devhub:existing-branch";
+/** The checkout that branch is already in, opened as the workspace it is. */
+const OPEN_CHECKOUT = "devhub:open-checkout";
+const ROOT_CHECKOUT = "devhub:root-checkout";
 const USE_STALE_BASE = "devhub:use-stale-base";
 
 function Wrong({ what }: { readonly what: string }) {
@@ -80,7 +86,7 @@ export function IssueAssignmentSheet({ onDismiss }: IssueAssignmentSheetProps) {
     cloneRepository,
     assignIssue,
     cloneParentDirectories,
-    pullRequestHeadBranch,
+    assignmentBranch,
     agentActions,
   } = useAppShell();
 
@@ -105,7 +111,7 @@ export function IssueAssignmentSheet({ onDismiss }: IssueAssignmentSheetProps) {
         cloneRepository,
         assignIssue,
         cloneParentDirectories,
-        pullRequestHeadBranch,
+        assignmentBranch,
         agentActions,
       }),
     [
@@ -114,7 +120,7 @@ export function IssueAssignmentSheet({ onDismiss }: IssueAssignmentSheetProps) {
       cloneParentDirectories,
       cloneRepository,
       findIssueRepositories,
-      pullRequestHeadBranch,
+      assignmentBranch,
     ],
   );
 
@@ -137,7 +143,10 @@ interface FlowServices {
     readonly allowStaleBase?: boolean;
   }) => Promise<unknown>;
   readonly cloneParentDirectories: () => Promise<readonly string[]>;
-  readonly pullRequestHeadBranch: (url: string) => Promise<string>;
+  readonly assignmentBranch: (
+    url: string,
+    directory: string,
+  ) => Promise<AssignmentBranchWire>;
   readonly agentActions: () => Promise<readonly AgentActionWire[]>;
 }
 
@@ -278,7 +287,7 @@ function repositoryStep(
       return cloneDestinationStep(services, item, agent, nothingCloned(item));
     }
     const only = repositories.length === 1 ? repositories[0] : undefined;
-    if (only) return locationStep(services, item, agent, only);
+    if (only) return branchStep(services, item, agent, only.mainWorktree);
     const answer = await input.ask({
       ...SHEET,
       title: `Which ${item.owner}/${item.repository}`,
@@ -311,60 +320,17 @@ function repositoryStep(
       (repository) => repository.mainWorktree === answer.id,
     );
     return chosen
-      ? locationStep(services, item, agent, chosen)
+      ? branchStep(services, item, agent, chosen.mainWorktree)
       : cloneDestinationStep(services, item, agent, nothingCloned(item));
   };
 }
 
-/**
- * Where the work goes, as rows: the two standing answers, then the worktrees.
- *
- * Read top to bottom the list is the order the decision is considered in.
- * **Repository Root** leads, because it is the answer that needs nothing
- * arranged — the clone is already there, and it is what Return takes when
- * somebody opens the sheet and presses it. Then **New worktree**, for work that
- * wants a folder of its own. Then the worktrees there already are.
- *
- * The first two are `pinned` and the worktrees are not, which is the picker's
- * own distinction and not a layout trick: pinned rows are never filtered out.
- * Typing narrows the worktrees you have, and the two answers that do not depend
- * on having any survive whatever is typed — which is what makes "nothing
- * matches" still a screen with answers on it.
- *
- * A row is named by its folder rather than its path. The path is what tells
- * two checkouts apart and the name is what a person recognises, and there is
- * only one of those a list can lead with; the path goes underneath, where it
- * settles the question when two folders share a name. The repository itself is
- * named for what it is rather than where it is: "Repository Root" is the thing
- * a person is choosing, and its path was the longest and least distinguishing
- * string on the sheet.
- */
-function checkoutRow(place: IssueRepository["worktrees"][number]): PickerItem {
-  return {
-    id: place.path,
-    label: place.isMainWorktree ? "Repository Root" : folderName(place.path),
-    // The path is still searched even where it is no longer the label: a
-    // person who knows where a checkout lives should be able to type that.
-    searchText: `${place.path} ${place.branch ?? ""} ${
-      place.isMainWorktree ? "repository root" : ""
-    }`,
-    detail: `${place.branch ?? "detached"} · ${place.path}`,
-  };
-}
-
-/** The worktrees the repository already has, which is what the field filters. */
-function worktreeRows(repository: IssueRepository): readonly PickerItem[] {
-  return repository.worktrees
-    .filter((place) => !place.isMainWorktree)
-    .map(checkoutRow);
-}
-
-/** "the repository itself", "and 2 worktrees" — what a repository row says. */
 /** Why a clone is being asked about when nobody asked for one. */
 function nothingCloned(item: GitHubItem): string {
   return `No clone of ${item.owner}/${item.repository} was found on this machine, so it has to be cloned before the agent can start.`;
 }
 
+/** "No worktrees", "2 worktrees" — what a repository row says about itself. */
 function worktreeCount(places: number): string {
   const others = places - 1;
   if (others <= 0) return "No worktrees";
@@ -372,98 +338,136 @@ function worktreeCount(places: number): string {
 }
 
 /**
- * Where in the repository the work happens.
+ * Which branch the agent works on, which is the same question as where.
  *
- * One question with every answer in it: the repository itself, each worktree it
- * already has, and a new worktree. They belong together because they are the
- * same decision — *which checkout do I want* — and a person who keeps three
- * worktrees of one repository was previously asked to pick one directory and
- * then, separately, whether they wanted a different one.
+ * There are three answers and never a fourth, because an agent runs in the
+ * repository's root checkout or in exactly one worktree of it:
  *
- * The worktrees are git's list rather than the search's, so one made by hand in
- * a folder no source looks at is offered like any other.
+ * 1. **the branch this work already has** — a pull request's head, an Issue's
+ *    linked branch — checked out in a worktree;
+ * 2. **a new branch**, `feature/128-wip`, in a worktree, which is what an Issue
+ *    nobody has started gets;
+ * 3. **the root checkout**, taken as it stands, where nothing is checked out
+ *    and which branch to read is the agent's business.
+ *
+ * The first is the default when there is one, because a person assigning a pull
+ * request has already decided what to work on and it is not a new branch. It is
+ * absent when there is no such branch — most Issues — and when there is one this
+ * clone cannot reach, which is a pull request from a fork: the branch is in
+ * somebody else's copy, DevHub will not add a remote to somebody's repository
+ * on their behalf, and the note says so rather than the row failing later.
+ *
+ * A branch that is *already checked out* turns the first row into a different
+ * offer: git gives one branch one worktree, so the honest answer is that the
+ * work already has a folder and this is which one. Opening it is not "another
+ * worktree for the agent" — it is the workspace the branch lives in.
+ *
+ * This replaced a list of every worktree the repository had. That list read as
+ * the same question and was not: choosing an unrelated worktree put an agent to
+ * work on a branch that had nothing to do with the Issue, and the branch — the
+ * thing the person was actually deciding — was never on screen.
  */
-function locationStep(
+function branchStep(
   services: FlowServices,
   item: GitHubItem,
   agent: AgentChoice,
-  repository: IssueRepository,
+  root: string,
 ): WizardStep {
   return async (input) => {
+    const plan = await input.working(`Reading ${itemLabel(item)}…`, () =>
+      services.assignmentBranch(gitHubItemUrl(item), root),
+    );
+    const wip = wipBranchForIssue(item.number);
     const answer = await input.ask({
       ...SHEET,
       title: `Where to work on ${itemLabel(item)}`,
-      // The repository by its folder name, as the rows below name theirs. Its
-      // path is on the row that is the repository, which is where somebody who
-      // wants to know exactly which clone this is will look.
-      question: `Choose the checkout of ${folderName(repository.mainWorktree)} the agent works in — the repository itself, a new worktree, or one it already has.`,
-      items: worktreeRows(repository),
+      question: `Choose the branch the agent works on in ${folderName(root)}.`,
+      // Every row is an answer to the question rather than a name to search
+      // among, so they are all pinned and the field filters nothing: there is
+      // no list here that typing could narrow.
+      items: [],
       pinned: [
-        // The repository itself leads, and so is what Return takes on a sheet
-        // nobody has typed into: it is the answer that needs nothing arranged.
-        ...repository.worktrees
-          .filter((place) => place.isMainWorktree)
-          .map(checkoutRow),
+        ...existingBranchRows(plan, root),
         {
           id: NEW_WORKTREE,
-          label: "New worktree",
-          // A new worktree is the only answer that decides a branch, so it is
-          // the only row that reads differently for the two kinds: an Issue's
-          // branch is made here, a pull request's is fetched and checked out.
-          // Every other answer opens a checkout as it stands and says nothing
-          // about branches, which is why nothing else here mentions one.
-          detail:
-            item.kind === "pull"
-              ? `The pull request's own branch, checked out beside ${folderName(repository.mainWorktree)}`
-              : `A branch of its own, in a folder beside ${folderName(repository.mainWorktree)}`,
+          label: `New branch ${wip}`,
+          detail: `A worktree of its own, beside ${folderName(root)}`,
+          searchText: `new branch worktree ${wip}`,
+        },
+        {
+          id: ROOT_CHECKOUT,
+          label: "Work in the root checkout",
+          detail: `${root} — taken as it stands, with nothing checked out`,
+          searchText: `repository root ${root}`,
         },
       ],
-      // About the worktrees, which are the only rows the field filters. The
-      // repository itself and a new worktree are above whatever it says.
-      emptyNoItems: "No worktrees yet.",
-      emptyNoMatch: "No worktree matches.",
+      note: unreachableBranch(plan),
     });
+    if (answer.id === OPEN_CHECKOUT && plan.checkedOutAt !== undefined) {
+      return finishStep(services, item, agent, plan.checkedOutAt, undefined);
+    }
     return finishStep(
       services,
       item,
       agent,
-      // A new worktree is measured from the repository; an existing one is
-      // simply opened where it is.
-      answer.id === NEW_WORKTREE ? repository.mainWorktree : answer.id,
-      // The branch is not asked for. It is `feature/128-wip`, made now so work
-      // can start now, and the agent is told to rename it once it knows what
-      // the work is — that instruction is in the action's message, which is a
-      // setting (see `model/agentActions.ts`). A picker of branch names here
-      // was a question nobody could answer yet: the good name is the one you
-      // have after reading the Issue, not before.
+      root,
       answer.id === NEW_WORKTREE
-        ? await newWorktreeBranch(services, input, item)
-        : undefined,
+        ? wip
+        : answer.id === EXISTING_BRANCH
+          ? plan.branch
+          : undefined,
     );
   };
 }
 
 /**
- * The branch a new worktree is made on, which is where the two kinds differ.
+ * The row for the branch this work already has, when there is one to offer.
  *
- * An Issue has no branch yet, so DevHub makes one — `feature/128-wip`, named so
- * work can start before anybody knows what to call it, and renamed by the agent
- * once it does. A pull request *is* a branch, and it is the one being reviewed:
- * making a second one beside it would produce an empty worktree under a name
- * that promised somebody else's work.
- *
- * This is the only place the flow asks which kind it is holding. Everywhere
- * else the two are the same three fields answering the same questions, which is
- * why they travel as one reference rather than as two flows.
+ * Three cases and one row: the branch is already checked out somewhere, so that
+ * folder is what is offered; the branch can be had, so a worktree for it is;
+ * or there is nothing to offer and the list starts at the new branch.
  */
-async function newWorktreeBranch(
-  services: FlowServices,
-  input: WizardInput,
-  item: GitHubItem,
-): Promise<string> {
-  if (item.kind === "issue") return wipBranchForIssue(item.number);
-  return input.working(`Reading ${itemLabel(item)}…`, () =>
-    services.pullRequestHeadBranch(gitHubItemUrl(item)),
+function existingBranchRows(
+  plan: AssignmentBranchWire,
+  root: string,
+): readonly PickerItem[] {
+  const branch = plan.branch;
+  if (branch === undefined) return [];
+  if (plan.checkedOutAt !== undefined) {
+    return [
+      {
+        id: OPEN_CHECKOUT,
+        label:
+          plan.checkedOutAt === root
+            ? "Open the root checkout"
+            : `Open ${folderName(plan.checkedOutAt)}`,
+        detail: `${branch} is already checked out there`,
+        searchText: `${branch} ${plan.checkedOutAt}`,
+      },
+    ];
+  }
+  if (!plan.reachable) return [];
+  return [
+    {
+      id: EXISTING_BRANCH,
+      label: `Check out ${branch} in a worktree`,
+      detail: `The branch this work already has, beside ${folderName(root)}`,
+      searchText: `${branch} checkout worktree`,
+    },
+  ];
+}
+
+/** The branch exists and is somewhere this clone cannot see. */
+function unreachableBranch(plan: AssignmentBranchWire): ReactNode {
+  if (plan.branch === undefined || plan.reachable) return undefined;
+  return (
+    <Wrong
+      what={
+        plan.fork === undefined
+          ? `${plan.branch} is on neither this machine nor any remote this clone has.`
+          : `${plan.branch} is in ${plan.fork}, which this clone has no remote for, so it cannot be checked out here.`
+      }
+    />
   );
 }
 
@@ -529,10 +533,7 @@ function cloneDestinationStep(
     // place, so the location question is asked over that one place and a new
     // worktree — which is the same question everybody else gets, from the same
     // step, rather than a second arrangement of it.
-    return locationStep(services, item, agent, {
-      mainWorktree: directory,
-      worktrees: [{ path: directory, isMainWorktree: true }],
-    });
+    return branchStep(services, item, agent, directory);
   };
 }
 

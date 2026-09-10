@@ -18,6 +18,7 @@ import type {
 } from "../ipc/appShell";
 import type {
   AgentActionWire,
+  AssignmentBranchWire,
   ContentSurfaceWire,
   DevhubApi,
   GitHubLoginWire,
@@ -31,6 +32,7 @@ import type {
 
 export type {
   AgentActionWire,
+  AssignmentBranchWire,
   GitHubLoginWire,
   IssueAssignment,
   IssueRepository,
@@ -79,7 +81,10 @@ export interface AppShellClient {
   projectDefaultDirectory(): Promise<string>;
   cloneParentDirectories(): Promise<readonly string[]>;
   githubLogin(): Promise<GitHubLoginWire>;
-  pullRequestHeadBranch(url: string): Promise<string>;
+  assignmentBranch(
+    url: string,
+    directory: string,
+  ): Promise<AssignmentBranchWire>;
   agentActions(): Promise<readonly AgentActionWire[]>;
   closeWorkspace(workspaceId: string): Promise<void>;
   removeWorktree(workspaceId: string, force: boolean): Promise<AppOutcome>;
@@ -156,7 +161,7 @@ export function createShellClient(api: DevhubApi = devhub()): AppShellClient {
     projectDefaultDirectory: () => api.projectDefaultDirectory(),
     cloneParentDirectories: () => api.cloneParentDirectories(),
     githubLogin: () => api.githubLogin(),
-    pullRequestHeadBranch: (url) => api.pullRequestHeadBranch(url),
+    assignmentBranch: (url, directory) => api.assignmentBranch(url, directory),
     agentActions: () => api.agentActions(),
     closeWorkspace: (workspaceId) => api.closeWorkspace(workspaceId),
     removeWorktree: (workspaceId, force) =>

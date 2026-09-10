@@ -302,11 +302,50 @@ interface GraphQlPullRequest {
 	readonly headRepositoryOwner: { readonly login: string } | null;
 }
 
+/**
+ * A pull request's head, as somewhere a branch can be fetched from.
+ *
+ * The branch and the repository it is in, always both. For most pull requests
+ * the repository is the one the pull request is in and saying so twice is
+ * harmless; for one out of a fork it is the whole of the difference between a
+ * branch this clone can reach and one it cannot, and a caller handed only the
+ * name would have to go and ask a second question to find out which case it
+ * has.
+ */
+export interface PullRequestHead {
+	readonly branch: string;
+	readonly owner: string;
+	readonly repository: string;
+}
+
+/**
+ * What GitHub answers, as the union of every field this file asks for.
+ *
+ * One shape rather than one per query, because each reader takes only the
+ * fields its own query named and a second shape would be a second place to keep
+ * the endpoint's spelling right.
+ */
 interface GraphQlAnswer {
 	readonly data?: {
 		readonly repository?: {
-			readonly issue?: GraphQlIssue | null;
-			readonly pullRequest?: { readonly headRefName?: string | null } | null;
+			readonly issue?:
+				| (GraphQlIssue & {
+						readonly linkedBranches?: {
+							readonly nodes?:
+								| readonly ({
+										readonly ref?: { readonly name?: string | null } | null;
+								  } | null)[]
+								| null;
+						} | null;
+				  })
+				| null;
+			readonly pullRequest?: {
+				readonly headRefName?: string | null;
+				readonly headRepository?: {
+					readonly name: string;
+					readonly owner: { readonly login: string };
+				} | null;
+			} | null;
 			readonly pullRequests?: {
 				readonly nodes?: readonly (GraphQlPullRequest | null)[] | null;
 			} | null;
@@ -453,11 +492,14 @@ export async function readBranchStatus(
 export async function readPullRequestHead(
 	pullRequest: IssueReference,
 	token: string,
-): Promise<string> {
+): Promise<PullRequestHead> {
 	const answer = await post(
 		{
 			query: `query($owner:String!,$name:String!,$number:Int!){
-  repository(owner:$owner,name:$name){ pullRequest(number:$number){ headRefName } }
+  repository(owner:$owner,name:$name){ pullRequest(number:$number){
+    headRefName
+    headRepository{ name owner{ login } }
+  } }
 }`,
 			variables: {
 				owner: pullRequest.owner,
@@ -469,13 +511,67 @@ export async function readPullRequestHead(
 	);
 	const failed = answer.errors?.[0]?.message;
 	if (failed !== undefined) throw new GitHubUnavailable(failed);
-	const branch = answer.data?.repository?.pullRequest?.headRefName ?? undefined;
+	const head = answer.data?.repository?.pullRequest ?? undefined;
+	const branch = head?.headRefName ?? undefined;
 	if (branch === undefined || branch.length === 0) {
 		throw new GitHubUnavailable(
 			`GitHub did not say which branch ${pullRequest.owner}/${pullRequest.repository}#${String(pullRequest.number)} is from.`,
 		);
 	}
-	return branch;
+	// A head repository GitHub cannot name is a fork that has been deleted since
+	// the pull request was opened. The pull request's own repository is the only
+	// remaining candidate, and it is the one that is right for every pull request
+	// that was not from a fork — which is nearly all of them.
+	return {
+		branch,
+		owner: head?.headRepository?.owner.login ?? pullRequest.owner,
+		repository: head?.headRepository?.name ?? pullRequest.repository,
+	};
+}
+
+/**
+ * The branch GitHub says an Issue is being worked on.
+ *
+ * GitHub's own "linked branches" — what its Create a branch button records, and
+ * what the Issue page shows in the development panel. It is a *record* somebody
+ * made, which is why it is asked before any guessing at names: a branch linked
+ * to the Issue is the branch for the Issue, whatever it is called.
+ *
+ * More than one is possible and the first is taken. GitHub lists them in the
+ * order they were linked, and an Issue with two linked branches is one somebody
+ * restarted; the newer one is not distinguishable here and the choice is
+ * offered to the person anyway, as a row they can decline.
+ *
+ * Nothing is a perfectly ordinary answer: most Issues have no branch, which is
+ * what the wizard's `feature/128-wip` exists for.
+ */
+export async function readIssueLinkedBranch(
+	issue: IssueReference,
+	token: string,
+): Promise<string | undefined> {
+	const answer = await post(
+		{
+			query: `query($owner:String!,$name:String!,$number:Int!){
+  repository(owner:$owner,name:$name){ issue(number:$number){
+    linkedBranches(first:10){ nodes{ ref{ name } } }
+  } }
+}`,
+			variables: {
+				owner: issue.owner,
+				name: issue.repository,
+				number: issue.number,
+			},
+		},
+		token,
+	);
+	const failed = answer.errors?.[0]?.message;
+	if (failed !== undefined) throw new GitHubUnavailable(failed);
+	const nodes = answer.data?.repository?.issue?.linkedBranches?.nodes ?? [];
+	for (const node of nodes) {
+		const name = node?.ref?.name ?? undefined;
+		if (name !== undefined && name.length > 0) return name;
+	}
+	return undefined;
 }
 
 async function post(body: unknown, token: string): Promise<GraphQlAnswer> {
