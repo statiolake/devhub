@@ -16,7 +16,6 @@ import { ModalOverlay } from "./modalOverlay.js";
 import { shellTheme } from "./shellTheme.js";
 import type { ShellPalette } from "../../ipc/palette.js";
 import type { WorkbenchView } from "./workbenchView.js";
-import { settingsWindowIsFocused } from "./settingsWindow.js";
 
 export class ShellWindow {
 	readonly window: Electron.BrowserWindow;
@@ -126,6 +125,7 @@ export class ShellWindow {
 				window: this.window,
 				workbenchRect: () => this.currentRect(),
 				focusSurface: () => this.focusSurface(),
+				focusModal: (contents) => this.focusModal(contents),
 				modalsChanged: () => {
 					this.layout();
 					// A modal owns the keyboard while it stands, so every
@@ -333,10 +333,10 @@ export class ShellWindow {
 	 * calls that change it (`reveal`, `setNativeSurfaceVisible`) and by nothing
 	 * else.
 	 *
-	 * Window-level focus is not touched here. Whether DevHub should come to the
-	 * front is a different question with different answers — a chord is typed
-	 * into an app that is already frontmost; a `devhub` command from a terminal
-	 * is not — and the paths that mean it say so themselves.
+	 * Window-level focus is not touched here, and cannot be: `placeKeyboardIn`
+	 * declines outright while any other window is in front. Whether DevHub
+	 * should come to the front is a different question with one answer,
+	 * `raise`, and only the paths that carry a person's intent ask it.
 	 */
 	focusSurface(): void {
 		if (this.window.isDestroyed()) return;
@@ -356,31 +356,127 @@ export class ShellWindow {
 
 	/** The half of `focusSurface` that actually moves the keyboard. */
 	private placeTheKeyboard(): void {
-		// An open Web Inspector keeps the keyboard. It is a window onto these
-		// same contents, so unlike the Settings window it is not protected by
-		// simply belonging to somebody else — and a rule that quietly pulled
-		// focus back out of it every time a surface was revealed is how a
-		// debugging session becomes impossible to hold.
-		//
-		// Deliberately not a check on whether this window is focused: a reveal
-		// raised by the `devhub` command line happens *before* the window is
-		// brought to the front, and would then never place the keyboard at all.
-		if (this.window.webContents.isDevToolsFocused()) return;
-		// The Settings window is somebody else's, and it is protected by being
-		// so — but only if nothing here reaches across. `webContents.focus()`
-		// on macOS focuses the window the contents belong to as well as the
-		// contents, so placing the keyboard in a workbench while Settings was
-		// the key window pulled the App Shell in front of it: every reveal —
-		// and a reveal follows every projection change, Agents ticking
-		// included — brought DevHub's main window back over the settings the
-		// person was trying to change. The keyboard is theirs until they hand
-		// it back, at which point the shell's own `focus` event asks again.
-		if (settingsWindowIsFocused()) return;
 		// A modal owns the keyboard for as long as it stands; it is on top of
 		// everything this method can see, and taking focus out of it would leave
-		// a dialog on screen that no key reaches.
+		// a dialog on screen that no key reaches. This is a question about
+		// *which* contents, not about whether DevHub may take the front, which
+		// is why it is here and not in `mayPlaceTheKeyboard` — the modal layer
+		// places its own keyboard through the same gate.
 		if (this.modals.isPresent()) return;
-		this.focusTarget().focus();
+		this.placeKeyboardIn(this.focusTarget());
+	}
+
+	/**
+	 * Move the keyboard into one of this window's contents — the one gate, and
+	 * the only place in DevHub that calls `webContents.focus()`.
+	 *
+	 * `webContents.focus()` on macOS does not only move DOM focus: it makes
+	 * the window those contents belong to the key window, which activates
+	 * DevHub. So every caller of it is a caller that can put the App Shell
+	 * window in front of whatever the person was actually looking at, and this
+	 * window is asked to put the keyboard back a great deal more often than
+	 * anybody would want to be interrupted:
+	 *
+	 * - `reveal`, which follows every projection change — an Agent ticking, a
+	 *   HEAD moving, a workspace finishing its open (`AppController
+	 *   .syncEditorView` → `revealEditorFor`). Measured on an idle instance:
+	 *   the window went to the background and DevHub called `focus()` on the
+	 *   workbench 5ms later.
+	 * - `setContentSurface`, when the page swaps a terminal in for an editor.
+	 * - the window's own `focus` event, coming back from another app.
+	 * - `ModalOverlay.withdraw`, when the last sheet goes.
+	 * - `WorkbenchView.focus`, which is VS Code's `hostService.focus()` →
+	 *   `nativeHostMainService.focusWindow` → `CodeWindow.focus()` arriving
+	 *   through the proxy. VS Code calls it on hover and on drag
+	 *   (`workbench/browser/dnd.ts`), on `window.focus()` from an extension,
+	 *   on `workbench.action.focusWindow`, and from
+	 *   `enableWindowFocusOnElementFocus` whenever anything inside a workbench
+	 *   focuses an element while the workbench does not have the keyboard.
+	 * - `WorkbenchView.moveTop` and `show`, which are `windowsMainService`'s
+	 *   open and focus paths, and which reach `reveal` above.
+	 *
+	 * Not one of those is a person asking DevHub to come forward. So none of
+	 * them may: the keyboard is placed *within the window that already has
+	 * focus*, and while anything else is in front — another app, the Settings
+	 * window, an undocked Web Inspector — this does nothing at all. The one
+	 * way DevHub comes forward is `raise`, and after a raise the window's own
+	 * `focus` event asks this again, which is what makes declining safe rather
+	 * than lossy.
+	 *
+	 * This subsumes two guards written for single symptoms of it. The Settings
+	 * window (`4a260bf`) is somebody else's window and is now covered by being
+	 * somebody else's window. An undocked Web Inspector is a window too. The
+	 * *docked* inspector is the one case the window's own focus cannot
+	 * distinguish — it is a view onto these same contents in this same
+	 * window — so it keeps a line of its own.
+	 */
+	private placeKeyboardIn(contents: Electron.WebContents): void {
+		if (!this.mayPlaceTheKeyboard()) return;
+		contents.focus();
+	}
+
+	/** Whether moving the keyboard would be moving it, rather than raising. */
+	private mayPlaceTheKeyboard(): boolean {
+		if (this.window.isDestroyed()) return false;
+		if (!this.window.isFocused()) return false;
+		if (this.window.webContents.isDevToolsFocused()) return false;
+		return true;
+	}
+
+	/**
+	 * The one place DevHub brings its own window to the front.
+	 *
+	 * Raising is a person's decision, never the app's, so this is called from
+	 * the paths that carry one and from nowhere else: a `devhub` command line
+	 * (`AppController.activateFromCli`, `openFromCli`, `addAgentFromCli`), and
+	 * the Dock or Cmd-Tab activating DevHub itself while its window is put
+	 * away (`raiseFromAppActivation`). Everything else places the keyboard
+	 * through `placeKeyboardIn` and leaves the front alone.
+	 *
+	 * The keyboard is not placed here. The window's own `focus` event does
+	 * that, once macOS has actually made it key — asking in the same tick as
+	 * `focus()` asks before the activation has landed.
+	 */
+	raise(): void {
+		if (this.window.isDestroyed()) return;
+		this.window.show();
+		this.window.focus();
+		electron.app.focus({ steal: true });
+	}
+
+	/**
+	 * macOS activated DevHub — the Dock icon, Cmd-Tab, `open -b`.
+	 *
+	 * Only a window that was put away needs anything from this. `activate` is
+	 * every activation of the *application*, including the one a click on the
+	 * Settings window causes when DevHub was not in front, and answering that
+	 * by raising a different window than the one clicked is how Settings
+	 * became impossible to reach (`4a260bf`). macOS has already brought the
+	 * clicked window forward, and a Dock click brings every visible window
+	 * forward on its own.
+	 */
+	raiseFromAppActivation(): void {
+		if (this.window.isDestroyed() || this.window.isVisible()) return;
+		this.raise();
+	}
+
+	/**
+	 * VS Code asking for the keyboard on behalf of one workbench.
+	 *
+	 * `CodeWindow.focus()` for a workbench arrives here through the proxy. It
+	 * is a request to type into that workbench, never a request to activate
+	 * DevHub, and it is only honoured for the workbench that is on screen: a
+	 * deselected workspace's extension calling `window.focus()` must not
+	 * change what the person is looking at.
+	 */
+	focusWorkbench(view: WorkbenchView): void {
+		if (this.focusTarget() !== view.webContents) return;
+		this.focusSurface();
+	}
+
+	/** The modal layer's keyboard, placed through the same gate. */
+	focusModal(contents: Electron.WebContents): void {
+		this.placeKeyboardIn(contents);
 	}
 
 	/**

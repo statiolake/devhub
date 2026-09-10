@@ -3156,12 +3156,15 @@ export class AppController {
 	 *
 	 * They typed a command asking to see something; the app answering from
 	 * behind a terminal window has not answered.
+	 *
+	 * The raising itself is `ShellWindow.raise`, which is the one place DevHub
+	 * comes forward, so that a command line is distinguishable from the many
+	 * things that merely want the keyboard moved. It runs after the reveal the
+	 * command asked for, and the window's own `focus` event places the
+	 * keyboard once macOS has made the window key.
 	 */
 	private bringToFront(): void {
-		const shell = shellWindow();
-		shell.window.show();
-		shell.window.focus();
-		electron.app.focus({ steal: true });
+		shellWindow().raise();
 	}
 
 	/** Hand a request's files to a workbench, exactly as upstream would. */

@@ -124,6 +124,11 @@ class FakeWindow {
 	isFocused(): boolean {
 		return this.inFront;
 	}
+	/** Whether the window was put away. `raiseFromAppActivation` asks. */
+	visible = true;
+	isVisible(): boolean {
+		return this.visible;
+	}
 	getContentSize(): [number, number] {
 		return [1440, 900];
 	}
@@ -142,8 +147,23 @@ class FakeWindow {
 	emit(event: string): void {
 		for (const listener of this.listeners.get(event) ?? []) listener();
 	}
-	show(): void {}
+	/**
+	 * Everything that brings this window to the front, in order.
+	 *
+	 * The question every test below asks of a raise is whether it happened at
+	 * all, so it is recorded rather than acted on.
+	 */
+	show(): void {
+		this.visible = true;
+		raised.push("show");
+	}
+	focus(): void {
+		raised.push("focus");
+	}
 }
+
+/** `show`/`focus`/`app.focus` — the whole of what puts DevHub in front. */
+const raised: string[] = [];
 
 /** Every URL handed to the system browser, in order. */
 const openedExternally: string[] = [];
@@ -174,6 +194,9 @@ vi.mock("../electron.js", () => ({
 			// asserted in that module's test.
 			emit: (event: string, _details: unknown, window: { id: number }) => {
 				announced.push(`${event}:${window.id}`);
+			},
+			focus: () => {
+				raised.push("app.focus");
 			},
 		},
 		shell: {
@@ -778,5 +801,155 @@ describe("the shell window's focus reporting", () => {
 		shell.modals.openModal({ kind: "workspace-picker" });
 		expect(a.isFocused()).toBe(false);
 		expect(b.isFocused()).toBe(false);
+	});
+});
+
+/**
+ * When DevHub may come to the front, and when it may only move the keyboard.
+ *
+ * The two were one act — `reveal` placed the keyboard, and
+ * `webContents.focus()` makes a window key on macOS — so everything that
+ * revealed anything raised the window. A reveal follows every projection
+ * change, so an Agent ticking, a HEAD moving or a workbench finishing its open
+ * put DevHub in front of whatever the person was looking at; measured on an
+ * idle instance, the window went to the background and DevHub called `focus()`
+ * on the workbench five milliseconds later. The same one act is what put the
+ * App Shell back over the Settings window, and what let a workbench activate
+ * the application by asking for the keyboard on a hover.
+ */
+describe("when the shell window may come to the front", () => {
+	let shell: ShellWindow;
+	let window: FakeWindow;
+	let a: WorkbenchView;
+	let b: WorkbenchView;
+
+	beforeEach(() => {
+		raised.length = 0;
+		focused = undefined;
+		shell = new ShellWindow(
+			"preload.js",
+			"devhub-app://shell/index.html",
+			undefined,
+		);
+		shell.setContentRect({ x: 248, y: 38, width: 1192, height: 837 });
+		window = shell.window as unknown as FakeWindow;
+		a = new WorkbenchView(shell, {});
+		b = new WorkbenchView(shell, {});
+		for (const view of [a, b]) shell.attach(view);
+	});
+
+	it("moves the keyboard for VS Code's focusWindow, and raises nothing", () => {
+		// `hostService.focus()` on a hover or a drag, arriving as
+		// `CodeWindow.focus()` through the proxy. It is a request to type into
+		// the workbench, and never a request to see DevHub.
+		shell.reveal(a);
+		focused = undefined;
+		raised.length = 0;
+
+		a.focus();
+		expect(focused).toBe(a.webContents.id);
+		expect(raised).toEqual([]);
+	});
+
+	it("does nothing at all for a workbench nobody is looking at", () => {
+		shell.reveal(a);
+		focused = undefined;
+
+		// `b` is behind `a`. An extension in it calling `window.focus()` must
+		// not change what is on screen.
+		b.focus();
+		expect(focused).toBeUndefined();
+		expect(raised).toEqual([]);
+	});
+
+	it("declines to move the keyboard while another window is in front", () => {
+		// The Settings window, an undocked Web Inspector, another application:
+		// all of them are this one fact, and the shell no longer reaches across
+		// to any of them. `focus()` here would have made this window key.
+		shell.reveal(a);
+		window.inFront = false;
+		focused = undefined;
+
+		shell.reveal(b);
+		a.focus();
+		b.focus();
+		shell.setContentSurface("page");
+		shell.setContentSurface("workbench");
+		expect(focused).toBeUndefined();
+		expect(raised).toEqual([]);
+	});
+
+	it("declines while a docked Web Inspector holds the keyboard", () => {
+		// The one case the window's own focus cannot tell apart: the inspector
+		// is a view onto these same contents, in this same window.
+		shell.reveal(a);
+		window.webContents.devToolsFocused = true;
+		focused = undefined;
+
+		shell.reveal(b);
+		expect(focused).toBeUndefined();
+	});
+
+	it("places the keyboard when the window comes back, without raising", () => {
+		// What makes declining safe rather than lossy: the answer is asked
+		// again the moment the window is key, from the window's own event.
+		shell.reveal(a);
+		window.inFront = false;
+		window.emit("blur");
+		focused = undefined;
+		raised.length = 0;
+
+		window.inFront = true;
+		window.emit("focus");
+		expect(focused).toBe(a.webContents.id);
+		expect(raised).toEqual([]);
+	});
+
+	it("raises when a command line asks for DevHub", () => {
+		window.inFront = false;
+		shell.raise();
+		expect(raised).toEqual(["show", "focus", "app.focus"]);
+		// Not the keyboard: macOS has not made the window key yet, and the
+		// window's own `focus` event is what asks once it has.
+		expect(focused).toBeUndefined();
+	});
+
+	it("raises on an app activation only for a window that was put away", () => {
+		window.visible = false;
+		shell.raiseFromAppActivation();
+		expect(raised).toEqual(["show", "focus", "app.focus"]);
+
+		// A visible window needs nothing: macOS has already brought forward
+		// whichever window was clicked, and that may be the Settings window.
+		raised.length = 0;
+		shell.raiseFromAppActivation();
+		expect(raised).toEqual([]);
+	});
+
+	it("opens a modal without raising, and not at all from behind", () => {
+		shell.reveal(a);
+		focused = undefined;
+		shell.modals.openModal({ kind: "workspace-picker" });
+		expect(focused).not.toBe(a.webContents.id);
+		expect(raised).toEqual([]);
+
+		shell.modals.closeWhere(() => true);
+		window.inFront = false;
+		focused = undefined;
+		shell.modals.openModal({ kind: "workspace-picker" });
+		expect(focused).toBeUndefined();
+	});
+
+	it("re-announces a workbench's focus without moving or raising anything", () => {
+		// The repeat added for the workspace trust prompt says the answer
+		// again; it must not be a second way of taking the front.
+		shell.reveal(a);
+		focused = undefined;
+		raised.length = 0;
+		announced.length = 0;
+
+		a.webContents.emit("focus");
+		expect(announced).toEqual([`browser-window-focus:${a.webContents.id}`]);
+		expect(raised).toEqual([]);
 	});
 });

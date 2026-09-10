@@ -49,6 +49,16 @@ export interface ModalOverlayHost {
 	 */
 	focusSurface(): void;
 	/**
+	 * Put the keyboard in the modal layer itself.
+	 *
+	 * Through the window rather than by calling `focus()` here, because
+	 * `webContents.focus()` makes the window key on macOS: a sheet opening is
+	 * a reason to type into this window, never a reason to pull it in front of
+	 * the Settings window or another app. See
+	 * `ShellWindow.placeKeyboardIn`.
+	 */
+	focusModal(contents: Electron.WebContents): void;
+	/**
 	 * The set that is open has changed.
 	 *
 	 * The window lays itself out again, because what a modal is *over* is part
@@ -233,7 +243,7 @@ export class ModalOverlay {
 		this.host.window.contentView.addChildView(view);
 		if (!this.present) {
 			this.present = true;
-			view.webContents.focus();
+			this.host.focusModal(view.webContents);
 		}
 		this.publish(modals);
 	}

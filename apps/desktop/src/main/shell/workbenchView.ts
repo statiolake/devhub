@@ -205,6 +205,34 @@ export class WorkbenchView {
 		this.view.setVisible(false);
 	}
 
+	/**
+	 * VS Code asking for this workbench to be focused.
+	 *
+	 * `hostService.focus()` → `nativeHostMainService.focusWindow` →
+	 * `CodeWindow.focus()` → `win.focus()` lands here, and the workbench asks
+	 * for it from a great many places that are not a person asking to see
+	 * DevHub: on hover and on drag (`workbench/browser/dnd.ts`), before a
+	 * dialog (`editorGroupView`), from `enableWindowFocusOnElementFocus`
+	 * whenever anything inside the workbench focuses an element while the
+	 * workbench does not have the keyboard, and from any extension calling
+	 * `window.focus()`.
+	 *
+	 * This used to be nothing at all — `focus` is not on the class, so the
+	 * proxy answered with a no-op and a warning. Answering it properly means
+	 * answering it the way every other keyboard move in this window is
+	 * answered: the keyboard goes where it belongs *inside the window that
+	 * already has focus*, and DevHub does not come forward for it. See
+	 * `ShellWindow.placeKeyboardIn`.
+	 *
+	 * `FocusMode.Force` is the one shape of this DevHub does not see: upstream
+	 * calls `electron.app.focus({ steal: true })` itself before reaching the
+	 * window, so a task or a debug session that asks for attention still gets
+	 * it. That is the mode's whole purpose, and it is asked for deliberately.
+	 */
+	focus(): void {
+		this.shell.focusWorkbench(this);
+	}
+
 	blur(): void {
 		this.shell.window.blur();
 	}
