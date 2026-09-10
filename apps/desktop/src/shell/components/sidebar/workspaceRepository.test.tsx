@@ -676,22 +676,63 @@ describe("how far an Agent row is indented under its Workspace", () => {
     );
   });
 
-  it("draws one guide line down the Workspace's own glyph column", () => {
-    // The indent says an Agent is inside something; the line says how many
-    // rows are. It is a `::before` on the row rather than an element, so the
-    // tree the keyboard and the accessibility tree walk is unchanged — and it
-    // is placed off the same two terms the indent is measured from, so the
-    // line and the depth cannot come to disagree.
+  it("draws the stem down the Workspace's own glyph column", () => {
+    // The indent says an Agent is inside something; the stem says what, and how
+    // many rows are. It is a `::before` on the row rather than an element, so
+    // the tree the keyboard and the accessibility tree walk is unchanged — and
+    // its x is the same two terms the indent is measured from, so the line and
+    // the depth cannot come to disagree.
     expect(shell).toContain(
-      ".agent-row::before {\n  position: absolute;\n  top: 0;\n  bottom: 0;",
+      "  --row-stem-x: calc(\n    var(--sidebar-rail-width) + var(--sidebar-glyph-width) / 2\n  );",
     );
     expect(shell).toContain(
-      '  left: calc(var(--sidebar-rail-width) + var(--sidebar-glyph-width) / 2);\n  width: 1px;\n  background: var(--row-glyph-ink);\n  content: "";\n}',
+      '.agent-row::before {\n  position: absolute;\n  top: 0;\n  bottom: 0;\n  left: var(--row-stem-x);\n  width: 1px;\n  background: var(--row-glyph-ink);\n  content: "";\n}',
     );
-    // At rest and on hover alike: the hierarchy is not something to point at,
-    // and a guide that lit up would be the brightest thing in a Sidebar whose
-    // whole design is that only a status has colour.
+    // At rest, on hover and on the selected row alike: the hierarchy is not
+    // something to point at, and a guide that lit up would be the brightest
+    // thing in a Sidebar whose whole design is that only a status has colour.
     expect(shell).not.toContain(".agent-row:hover::before");
+    expect(shell).not.toContain(".agent-row:hover::after");
+    expect(shell).not.toContain(".agent-row.is-selected::before");
+    expect(shell).not.toContain(".agent-row.is-selected::after");
+  });
+
+  it("turns the stem into each Agent's status mark", () => {
+    // `├─`. Two edges rather than an offset and a width: the near edge is the
+    // stem's own x, so the corner cannot come apart, and the far edge is the
+    // mark's, so the gap before the mark is `--space-1` and not a subtraction
+    // that has to come out right.
+    expect(shell).toContain(
+      "  --row-mark-x: calc(var(--sidebar-rail-width) + var(--row-agent-inset));",
+    );
+    expect(shell).toContain(
+      '.agent-row::after {\n  position: absolute;\n  top: var(--row-branch-y);\n  right: calc(100% - var(--row-mark-x) + var(--space-1));\n  left: var(--row-stem-x);\n  height: 1px;\n  background: var(--row-glyph-ink);\n  content: "";\n}',
+    );
+  });
+
+  it("meets the mark where the mark is, whatever else the row has to say", () => {
+    // A row's first line carries the floor, so its mark centres at
+    // `--row-height / 2` whether the Agent has a second line under it or not;
+    // the mark then takes the optical drop every leading glyph takes, so the
+    // branch takes it too. One term, read by the branch and by the stem the
+    // last Agent stops.
+    expect(shell).toContain(
+      "  min-height: calc(var(--row-height) - 2 * var(--row-pad-block));",
+    );
+    expect(shell).toContain(
+      "  --row-branch-y: calc(\n    var(--row-height) / 2 + var(--sidebar-glyph-optical-shift)\n  );",
+    );
+  });
+
+  it("closes the stem under the last Agent of a Workspace", () => {
+    // `└─`, and nothing running on below it. Which Agent is last is a fact
+    // about the list, and the list is in the markup: a Workspace's Agents are
+    // the whole of its own `.agent-tree`, so `li:last-child` is exactly "the
+    // last Agent of this Workspace" — whether another Workspace follows, or
+    // the section ends. No `:has()`, and no class to keep in step with it.
+    expect(shell).toContain(
+      ".agent-tree > li:last-child .agent-row::before {\n  bottom: calc(100% - var(--row-branch-y));\n}",
+    );
   });
 
   it("moves the row's two lines together", () => {

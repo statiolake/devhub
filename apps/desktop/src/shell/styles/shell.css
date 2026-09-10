@@ -136,7 +136,6 @@
   display: flex;
   overflow: hidden;
   width: 100%;
-  min-height: var(--row-height);
   flex-direction: column;
   /* One value above the content and the same value below it, whatever the row
      has to say. The row used to have no padding at all: a one-line row got its
@@ -147,10 +146,7 @@
      differently, and the difference was an accident of how many lines each
      happened to have.
 
-     `justify-content` is what keeps it true at the floor: when a short row is
-     stretched to `--row-height`, the slack is split between the two ends
-     rather than falling to the bottom. */
-  justify-content: center;
+     The floor is on the first line rather than here — see `.row-head`. */
   padding-block: var(--row-pad-block);
   border: 0;
   border-radius: var(--radius-row);
@@ -183,12 +179,28 @@
  * row's trailing edge, under the marks and the buttons rather than beside
  * them.
  */
-/* No height of its own. The row carries the floor and the padding now; a
-   min-height here as well would be a second source of vertical space, and it
-   was the one that made a row's top and bottom disagree. */
+/* The floor is here, on the first line, and not on the row.
+ *
+ * It was on the row, as `min-height: var(--row-height)` with the slack split
+ * between the two ends. That is the same amount of space in the end — a
+ * one-line row is still exactly `--row-height` tall — but it put the first
+ * line at a different offset depending on how many lines the row had: 6px down
+ * in a two-line row, 7px in a one-line row, because a one-line row was 2px
+ * short of the floor and half of the difference went above it.
+ *
+ * A row's first line is what the density's rhythm is about — it is the line
+ * with the mark and the name on it — so it is the line that carries the floor,
+ * and the row's height is then padding plus lines and nothing else. Every row
+ * now centres its first line's mark at exactly `--row-height / 2` from its own
+ * top, whatever else the row has to say, which is what lets the tree lines
+ * below meet an Agent's status mark off one term instead of two.
+ *
+ * Still one source of vertical space, just moved: the row states padding, this
+ * states the floor, and neither restates the other. */
 .row-head {
   display: flex;
   width: 100%;
+  min-height: calc(var(--row-height) - 2 * var(--row-pad-block));
   align-items: center;
 }
 
@@ -649,39 +661,85 @@
 }
 
 /*
- * The line that says these rows belong to the row above them.
+ * The lines that say which Workspace these rows belong to — `tree`(1)'s.
  *
- * The indent alone says an Agent is *inside* something; it does not say how
- * many rows are inside it, and a list of four Agents under one Workspace read
- * as four rows that happened to start at the same place. One hairline down the
- * Workspace's own glyph column joins them: it starts where the Workspace's
- * glyph is, which is the column the indent was measured from, so the line and
- * the depth are the same statement drawn twice rather than two amounts that
- * have to agree.
+ * The indent alone says an Agent is *inside* something; it does not say what,
+ * and it does not say how many rows are. A plain vertical rule down the
+ * Workspace's glyph column said how many, and still left each row to be joined
+ * to the rule by eye. So the rows are joined: a stem down the Workspace's own
+ * glyph column, and out of it into each Agent a branch stopping just short of
+ * that Agent's status mark. The last Agent's stem ends at its own branch and
+ * draws nothing below it, which is the whole of what `└─` says — and the only
+ * mark in the Sidebar that says a group is over without anything being counted.
  *
- * It is a `::before` on the row itself, not an element. There is nothing to
+ * They are pseudo-elements on the row rather than elements. There is nothing to
  * read here — the tree is already in the markup, where `aria-level` and the
- * arrow-key walk are — so a `span` for it would be a node the keyboard and the
- * accessibility tree would have to be taught to ignore.
+ * arrow-key walk are — so a `span` for either would be a node the keyboard and
+ * the accessibility tree would have to be taught to ignore.
  *
- * Rows sit flush against each other with no gap, so consecutive Agent rows draw
- * one unbroken line and the group ends exactly where the Agents do. The ink is
- * `--row-glyph-ink`, the same rest colour every mark in a row takes, and it
- * does not change on hover: the hierarchy is not a thing you can point at, and
- * a guide that lit up would be the brightest thing in a Sidebar whose whole
- * design is that only a status has colour.
+ * The ink is `--row-glyph-ink`, the same rest colour every mark in a row takes,
+ * and it does not change on hover or on selection: the hierarchy is not a thing
+ * you can point at, and a guide that lit up would be the brightest thing in a
+ * Sidebar whose whole design is that only a status has colour.
  */
+.agent-row {
+  /* Where the stem runs: the middle of the Workspace's glyph column, past the
+     rail and half a glyph in. The same two terms `--row-agent-inset` is
+     measured from, so a change to either moves the lines and the rows they
+     belong to together. */
+  --row-stem-x: calc(
+    var(--sidebar-rail-width) + var(--sidebar-glyph-width) / 2
+  );
+  /* Where the Agent's status mark starts: past the rail, past the depth. The
+     same expression the button's padding puts it at. */
+  --row-mark-x: calc(var(--sidebar-rail-width) + var(--row-agent-inset));
+  /* Where the branch meets the mark. Every row centres its first line at
+     `--row-height / 2` — see `.row-head` — and every leading mark then takes
+     the same optical drop the folder glyph does, so the branch takes it too:
+     it is aimed at the mark, and this is where the mark is. */
+  --row-branch-y: calc(
+    var(--row-height) / 2 + var(--sidebar-glyph-optical-shift)
+  );
+}
+
+/* The stem. Rows sit flush against each other with no gap, so consecutive
+   Agents draw one unbroken line. */
 .agent-row::before {
   position: absolute;
   top: 0;
   bottom: 0;
-  /* The middle of the Workspace's glyph column: past the rail, half a glyph
-     in. Derived from the same two terms the indent is, so a change to either
-     moves the line and the rows it belongs to together. */
-  left: calc(var(--sidebar-rail-width) + var(--sidebar-glyph-width) / 2);
+  left: var(--row-stem-x);
   width: 1px;
   background: var(--row-glyph-ink);
   content: "";
+}
+
+/* The branch, from the stem to `--space-1` short of the status mark. Stated as
+   two edges rather than an offset and a width: the near edge is the stem's own
+   x, so the corner cannot come apart, and the far edge is the mark's, so the
+   gap before it is the gap and not a subtraction that has to come out right. */
+.agent-row::after {
+  position: absolute;
+  top: var(--row-branch-y);
+  right: calc(100% - var(--row-mark-x) + var(--space-1));
+  left: var(--row-stem-x);
+  height: 1px;
+  background: var(--row-glyph-ink);
+  content: "";
+}
+
+/* `└─`: the last Agent's stem stops at its own branch, and nothing runs on
+ * below it.
+ *
+ * Which Agent is last is a fact about the list and not about the row, and the
+ * list is in the markup: a Workspace's Agents are the whole of its own
+ * `.agent-tree`, so `li:last-child` is exactly "the last Agent of this
+ * Workspace" — for a Workspace followed by another, for the last Workspace in
+ * the section, and for a Workspace whose Agents are followed by nothing at all.
+ * No `:has()` and no class for the markup to keep in step with the list.
+ */
+.agent-tree > li:last-child .agent-row::before {
+  bottom: calc(100% - var(--row-branch-y));
 }
 
 /* A workspace that is not simply open reads as secondary ink, and nothing
