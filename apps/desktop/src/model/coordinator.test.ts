@@ -733,6 +733,63 @@ describe("stopping an agent", () => {
   });
 });
 
+/**
+ * A close completion that arrives with the close's own bookkeeping gone.
+ *
+ * It used to invent `NO_CLEANUP_PROGRESS` for this — "nothing has been closed
+ * yet" — which is the most damaging value available: on the failed path it
+ * marks the workspace `closing-failed` having erased the count of Agents
+ * already stopped, and on the success path `agents` is exactly the step that
+ * progress asks for next, so the close silently starts again from the
+ * beginning against an entry the coordinator never created.
+ */
+describe("a cleanup completion with no cleanup state", () => {
+  it("is a broken invariant, and says so instead of inventing progress", () => {
+    const driver = new Driver();
+    driver.openFolder("/dev/project");
+    driver.dispatch({ type: "request_close_workspace", workspaceId: WS_A });
+    const inspect = driver.drainEffects()[0];
+    if (inspect.kind !== "inspect_workspace") throw new Error("unexpected");
+    driver.accept({
+      type: "workspace_inspection_completed",
+      token: inspect.token,
+      workspaceId: WS_A,
+      inspection: CLEAN_INSPECTION,
+    });
+    let cleanup: Effect | undefined;
+    for (let round = 0; round < 8 && !cleanup; round += 1) {
+      for (const effect of driver.drainEffects()) {
+        if (effect.kind === "cleanup_workspace") {
+          cleanup = effect;
+          break;
+        }
+        driver.answer(effect);
+      }
+    }
+    if (cleanup?.kind !== "cleanup_workspace") throw new Error("unexpected");
+
+    // Break the invariant the way a bug would: the operation is still pending,
+    // and the cleanup entry that says how far the close got is gone.
+    (
+      driver.coordinator as unknown as { cleanup: Map<unknown, unknown> }
+    ).cleanup.clear();
+
+    expect(() =>
+      driver.accept({
+        type: "workspace_cleanup_completed",
+        token: cleanup.token,
+        workspaceId: WS_A,
+        result: { kind: "step_completed", step: cleanup.step },
+      }),
+    ).toThrow();
+    // Nothing was decided about the workspace on the strength of a made-up
+    // progress: it is still closing, not failed with an erased count.
+    expect(driver.coordinator.snapshot().workspaces[0].state.kind).toBe(
+      "closing",
+    );
+  });
+});
+
 describe("persistence", () => {
   it("reports a failed save as degraded rather than losing it", () => {
     const driver = new Driver();

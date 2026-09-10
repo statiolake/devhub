@@ -674,3 +674,42 @@ describe("decoding the state file", () => {
     expect(load.state.workspaces[0]).not.toHaveProperty("issue_url");
   });
 });
+
+/**
+ * What a refusal to project a state file blames.
+ *
+ * Projection used to be six `try { ... } catch { return fail("STATE_INVALID") }`
+ * blocks with the cause thrown away, so a record the domain refused, a value
+ * that slipped past the decoder and a programming error inside `AppModel` all
+ * came out identically — as "your file is corrupt", which quarantines the
+ * person's session and blames the file for a bug in the code.
+ */
+describe("projecting a state file that will not project", () => {
+  it("names the record and the reason when the document is at fault", () => {
+    const state = stateFromSnapshot(populatedModel().snapshot());
+    // Valid as a document — absolute, no NUL — and not a path the domain will
+    // accept, because it climbs out above the root.
+    state.workspaces[0].selected_path = "/dev/../..";
+    try {
+      hydrateModel(state, []);
+      throw new Error("the projection should have refused");
+    } catch (error) {
+      expect(error).toBeInstanceOf(StateError);
+      const described = (error as StateError).describe("state.json");
+      expect(described).toContain(state.workspaces[0].workspace_id);
+      expect(described).toContain("INVALID_PATH");
+    }
+  });
+
+  it("lets a bug in the projection itself through, uncaught", () => {
+    const state = stateFromSnapshot(populatedModel().snapshot());
+    // Not a profile. A caller that hands this over has a bug, and a bug is a
+    // crash with the cause attached — not a state file declared corrupt and
+    // moved out of the way.
+    const notProfiles = [
+      { id: "codex" },
+      { id: "codex" },
+    ] as unknown as AgentProfile[];
+    expect(() => hydrateModel(state, notProfiles)).toThrow(TypeError);
+  });
+});

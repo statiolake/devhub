@@ -30,6 +30,18 @@ const CLEANUP_TIMEOUT_DIAGNOSTIC = {
 	state_committed: "cleanup_failed",
 } as const satisfies Record<CleanupStep, CloseDiagnosticWire>;
 
+/**
+ * The longest a close can legitimately take before anything has gone wrong.
+ *
+ * Every step is bounded separately and they run in sequence, so the close's
+ * own budget is the number of steps times the step bound. It is derived from
+ * the table above rather than written down, because a fifth step added to
+ * `CleanupStep` has to move this number with it — and the operation deadline
+ * that has to be longer than it.
+ */
+export const CLEANUP_BUDGET_MS =
+	Object.keys(CLEANUP_TIMEOUT_DIAGNOSTIC).length * CLEANUP_STEP_TIMEOUT_MS;
+
 export class CleanupTimeout extends Error {
 	constructor(readonly diagnostic: CloseDiagnosticWire) {
 		super(`cleanup step timed out: ${diagnostic}`);

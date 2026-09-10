@@ -51,7 +51,11 @@ import type {
 } from "../../ipc/appShell.js";
 import { AppCoordinator, type Effect } from "../../model/coordinator.js";
 import { editorReveal } from "./editorReveal.js";
-import { CleanupTimeout, withCleanupDeadline } from "./cleanupDeadline.js";
+import {
+	CLEANUP_BUDGET_MS,
+	CleanupTimeout,
+	withCleanupDeadline,
+} from "./cleanupDeadline.js";
 import { canonicalise } from "../cli/canonical.js";
 import {
 	installExtensions,
@@ -220,8 +224,18 @@ import {
 /** The folder key a scratch (folderless) workbench view is filed under. */
 const SCRATCH_EDITOR = "";
 
-/** How long the page waits for a deferred operation before it is a failure. */
-const OPERATION_TIMEOUT_MS = 60_000;
+/**
+ * How long the page waits for a deferred operation before it is a failure.
+ *
+ * *Derived* from the cleanup budget, not chosen beside it. It was 60s against
+ * four steps of 20s each, so two unresponsive steps plus any real work ran
+ * past it: `awaitOutcome`'s timer fired first and reported a generic
+ * `operation_timed_out`, throwing away the per-step diagnostics —
+ * `close_editor_unresponsive`, `close_terminal_unknown` — that were computed
+ * for exactly that scenario and are the only ones that say *what* did not
+ * answer. The margin is for the work either side of the steps.
+ */
+const OPERATION_TIMEOUT_MS = CLEANUP_BUDGET_MS + 20_000;
 
 /**
  * What the help overlay says a command wants, one phrase per `CommandNeeds`.
@@ -1698,8 +1712,15 @@ export class AppController {
 				root: workspaceRoot(canonical),
 				selectedPath: displayPath(canonical),
 			});
-		} catch {
-			this.accept({ type: "operation_failed", token });
+		} catch (error) {
+			// The `try` raises its own "not a directory: ..." — picking a file
+			// where a folder was expected — and that sentence is the whole
+			// answer. Discarding it left the generic "nothing happened" that
+			// `failOperation` exists to stop.
+			this.failOperation(
+				token,
+				`${path} could not be opened as a workspace: ${error instanceof Error ? error.message : String(error)}`,
+			);
 		}
 	}
 
@@ -2045,8 +2066,14 @@ export class AppController {
 		const adapter = agents();
 		const workspace = this.coordinator.model.workspace(workspaceId);
 		if (!adapter || !workspace) {
-			// Nothing can launch an Agent, so nothing pretends one launched.
-			this.accept({ type: "operation_failed", token });
+			// Nothing can launch an Agent, so nothing pretends one launched —
+			// and the person is told which of the two was missing.
+			this.failOperation(
+				token,
+				adapter
+					? "the workspace this agent belongs to is no longer open"
+					: "the agent runtime is not running, so no agent can be started",
+			);
 			return;
 		}
 		const result = await adapter.launch(
@@ -2071,7 +2098,10 @@ export class AppController {
 	): Promise<void> {
 		const adapter = agents();
 		if (!adapter) {
-			this.accept({ type: "operation_failed", token });
+			this.failOperation(
+				token,
+				"the agent runtime is not running, so no agent can be stopped",
+			);
 			return;
 		}
 		const result =
@@ -2091,7 +2121,10 @@ export class AppController {
 	): Promise<void> {
 		const adapter = agents();
 		if (!adapter) {
-			this.accept({ type: "operation_failed", token });
+			this.failOperation(
+				token,
+				"the agent runtime is not running, so no agent could be read",
+			);
 			return;
 		}
 		let reconciliation: AgentReconciliation;
@@ -2105,7 +2138,10 @@ export class AppController {
 			// failed, in that port's own words, by the one path that reports
 			// operation failures.
 			console.error(error instanceof Error ? error.stack : error);
-			this.accept({ type: "operation_failed", token });
+			this.failOperation(
+				token,
+				`the agent runtime would not answer: ${error instanceof Error ? error.message : String(error)}`,
+			);
 			return;
 		}
 		if (agentId === undefined) {
@@ -2120,7 +2156,10 @@ export class AppController {
 			(candidate) => candidate.agentId === agentId,
 		);
 		if (!observation) {
-			this.accept({ type: "operation_failed", token });
+			this.failOperation(
+				token,
+				"the agent runtime answered without saying anything about this agent",
+			);
 			return;
 		}
 		this.accept({
@@ -2547,14 +2586,29 @@ export class AppController {
 			surfaceKey === undefined
 				? undefined
 				: this.folderForSurfaceKey(surfaceKey);
+		// *This* folder's view, not "some workbench is revealed". Reading the
+		// second as the first meant that selecting a workspace whose view was
+		// not yet built, while another workbench was on screen, returned
+		// "on-screen" with the wrong editor showing — rescued only by whichever
+		// of `syncEditorViewInBackground` and this ran first.
+		const viewId =
+			folder === undefined ? undefined : this.viewsByFolder.get(folder);
+		const revealed = shellWindow().revealedView();
 		const reveal = editorReveal({
-			revealed: shellWindow().revealedView() !== undefined,
+			revealed: viewId !== undefined && revealed?.id === viewId,
 			opening: folder !== undefined && this.editorOpens.has(folder),
 		});
 		if (reveal === "on-screen") return;
 		if (reveal === "coming" && surfaceKey !== undefined) {
 			await this.revealEditorFor(surfaceKey);
-			if (shellWindow().revealedView()) return;
+			const now = shellWindow().revealedView();
+			if (
+				now !== undefined &&
+				folder !== undefined &&
+				this.viewsByFolder.get(folder) === now.id
+			) {
+				return;
+			}
 		}
 		throw asIpcError(
 			withDetail(
@@ -3964,12 +4018,21 @@ export async function createAppController(
 
 	const profiles = (config?.agentProfiles ?? []).map(toDomainProfile);
 	let model: AppModel;
+	let projectionFailure: string | undefined;
 	try {
 		model = hydrateModel(state, profiles);
-	} catch {
-		// A state file that validates but cannot be projected is a bug, and the
-		// app starting empty is better than not starting — the file is kept, not
-		// overwritten, so it is still there to look at.
+	} catch (error) {
+		// Two different things used to arrive here and both started the app
+		// empty in silence, which is every workspace gone and a working-looking
+		// app that says nothing. They are told apart by what threw.
+		//
+		// A `StateError` is the document describing something the domain refuses
+		// — the file names the field and the value, the file is kept rather than
+		// overwritten, and the person is told on the first render. Anything else
+		// is a bug in the projection itself, and a bug is a crash with the cause
+		// attached: starting empty would move it somewhere it cannot be found.
+		if (!(error instanceof StateError)) throw error;
+		projectionFailure = error.describe(stateStore.path);
 		model = new AppModel();
 	}
 
@@ -3983,6 +4046,15 @@ export async function createAppController(
 		previousExit,
 		load.metadata.origin === "fresh",
 	);
+	// A file DevHub refused is a session that vanished, and there is exactly one
+	// place to say so before there is a page to say it to. Both halves report
+	// the same way: the file would not load, or it loaded and would not project.
+	const stateFailure = load.metadata.corruptionDetail ?? projectionFailure;
+	if (stateFailure !== undefined) {
+		current.noteStartupFailure(
+			withDetail(errorWireAt("persistence_degraded"), stateFailure),
+		);
+	}
 	return current;
 }
 

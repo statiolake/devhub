@@ -47,6 +47,7 @@ import {
   isCanonicalUuid,
   isEnvironmentName,
   isSlug,
+  DomainError,
   validDisplayName,
   Workspace,
   workspaceRoot,
@@ -160,6 +161,33 @@ export class StateError extends Error {
 
 function fail(code: StateErrorCode, path?: string): never {
   throw new StateError(code, { path });
+}
+
+/**
+ * Refuse a record the *document* got wrong, and let a bug through.
+ *
+ * Projection used to be six `try { ... } catch { return fail("STATE_INVALID") }`
+ * blocks, and `fail` dropped the cause. So a `DomainError` refusing a record, a
+ * `TypeError` from a value that slipped past the decoder, and a programming
+ * error inside `AppModel.addWorkspace` all came out as "your file is corrupt" —
+ * which quarantines the person's session and blames the file for a bug in the
+ * code.
+ *
+ * `DomainError` is the one that genuinely means "this record is not valid":
+ * the domain looked at the value and said no. Everything else propagates,
+ * because a bug is a crash with the cause attached and not a lost session.
+ */
+function refuseRecord<T>(where: string, work: () => T): T {
+  try {
+    return work();
+  } catch (error) {
+    if (error instanceof DomainError) {
+      throw new StateError("STATE_INVALID", {
+        cause: new Error(`${where}: ${error.message}`, { cause: error }),
+      });
+    }
+    throw error;
+  }
 }
 
 export type RecoveryReason =
@@ -856,18 +884,16 @@ function launchProfile(
   ) {
     fail("STATE_INVALID");
   }
-  try {
-    return AgentProfile.create(
+  return refuseRecord(`agent ${record.agent_id}'s profile`, () =>
+    AgentProfile.create(
       parseAgentProfileId(record.profile_id),
       displayName,
       kind,
       command,
       args,
       env,
-    );
-  } catch {
-    return fail("STATE_INVALID");
-  }
+    ),
+  );
 }
 
 /**
@@ -893,20 +919,16 @@ export function hydrateModel(
 
   const model = new AppModel();
   for (const record of state.workspaces) {
-    let id, root, selected;
-    try {
-      id = parseWorkspaceId(record.workspace_id);
-      root = workspaceRoot(record.canonical_path);
-      selected = displayPath(record.selected_path);
-    } catch {
-      return fail("STATE_INVALID");
-    }
-    try {
+    const where = `workspace ${record.workspace_id}`;
+    const { id, root, selected } = refuseRecord(where, () => ({
+      id: parseWorkspaceId(record.workspace_id),
+      root: workspaceRoot(record.canonical_path),
+      selected: displayPath(record.selected_path),
+    }));
+    refuseRecord(where, () => {
       model.addWorkspace(new Workspace(id, root, selected));
-    } catch {
-      return fail("STATE_INVALID");
-    }
-    try {
+    });
+    refuseRecord(`${where}'s lifecycle`, () => {
       switch (record.lifecycle.kind) {
         case "available":
           break;
@@ -935,9 +957,7 @@ export function hydrateModel(
           );
           break;
       }
-    } catch {
-      return fail("STATE_INVALID");
-    }
+    });
 
     for (const agentRecord of record.agents) {
       const configured = profileById.get(agentRecord.profile_id);
@@ -946,7 +966,7 @@ export function hydrateModel(
       const runtimeHealth: RuntimeHealth = configured
         ? agentRecord.runtime_health
         : "unavailable";
-      try {
+      refuseRecord(`agent ${agentRecord.agent_id}`, () => {
         model.restoreAgent({
           id: parseAgentId(agentRecord.agent_id),
           workspaceId: id,
@@ -958,29 +978,24 @@ export function hydrateModel(
           runtimeHealth,
           controlState: controlStateFrom(agentRecord.control_state),
         });
-      } catch {
-        return fail("STATE_INVALID");
-      }
+      });
     }
 
     if (record.last_agent_id !== undefined) {
-      try {
-        model.restoreLastAgent(id, parseAgentId(record.last_agent_id));
-      } catch {
-        return fail("STATE_INVALID");
-      }
+      const lastAgentId = record.last_agent_id;
+      refuseRecord(`${where}'s last agent`, () => {
+        model.restoreLastAgent(id, parseAgentId(lastAgentId));
+      });
     }
   }
 
-  try {
+  refuseRecord("the sidebar and the split", () => {
     model.restoreSidebar(state.sidebar.width);
     model.restoreSplitRatio(state.split.ratio);
-  } catch {
-    return fail("STATE_INVALID");
-  }
+  });
 
   const navigation = restoreNavigation(state);
-  try {
+  refuseRecord("the selection", () => {
     switch (navigation.context.kind) {
       case "global":
         model.selectContext({ kind: "global" });
@@ -998,9 +1013,7 @@ export function hydrateModel(
         });
         break;
     }
-  } catch {
-    return fail("STATE_INVALID");
-  }
+  });
   return model;
 }
 

@@ -1788,21 +1788,27 @@ export class AppCoordinator {
     workspaceId: WorkspaceId,
     result: WorkspaceCleanupResult,
   ): IntentOutcome {
-    const pending = this.takePending(
+    // Taken for its effect: the pending operation is consumed here whether or
+    // not the cleanup bookkeeping survived, so nothing is left half-open.
+    this.takePending(
       token,
       cleanupKind(result),
       (target) =>
         target.kind === "workspace" && target.workspaceId === workspaceId,
     );
-    const id = pending.token.operationId;
-    let state = this.cleanup.get(workspaceId);
+    const state = this.cleanup.get(workspaceId);
     if (!state) {
-      state = {
-        operationId: id,
-        workspaceId,
-        progress: NO_CLEANUP_PROGRESS,
-      };
-      this.cleanup.set(workspaceId, state);
+      // The completion passed `takePending`, so this coordinator started the
+      // close — and then its own cleanup bookkeeping is not there. That is a
+      // broken invariant, and inventing "nothing has been closed yet" for it
+      // is the worst of the answers available: on the failed path it marks the
+      // workspace `closing-failed` with a progress that has erased the count
+      // of Agents already stopped, and on the success path `agents` happens to
+      // be the step `NO_CLEANUP_PROGRESS` asks for next, so the close silently
+      // starts again from the beginning against an entry nothing created.
+      throw new AppError(AppErrorCode.UnknownOperation).withOperation(
+        token.operationId,
+      );
     }
     const progress = state.progress;
 
@@ -2275,17 +2281,26 @@ export class AppCoordinator {
     }
   }
 
+  /**
+   * Schedule the save that follows a mutation.
+   *
+   * It used to catch. `startOperation` throws `OperationInProgress` or
+   * `OperationGenerationExhausted`, and both of those mean this coordinator's
+   * own bookkeeping is inconsistent — neither is a condition a caller can do
+   * anything about. Caught, the mutation stayed in the model and was never
+   * scheduled for persistence, and the failure was reported as
+   * `operation_pending`, which reads as "try again" and does not describe
+   * "your change exists only in memory". So it throws: the mutation and the
+   * save it needs are one act, and an act that cannot be completed is not
+   * reported as a hiccup.
+   */
   private queuePersist(id: OperationId): void {
-    try {
-      const token = this.startOperation(
-        "persist_state",
-        { kind: "application" },
-        id,
-      );
-      this.emitEffect({ kind: "persist_state", token });
-    } catch (raw) {
-      this.emit({ kind: "error", error: AppError.from(raw) });
-    }
+    const token = this.startOperation(
+      "persist_state",
+      { kind: "application" },
+      id,
+    );
+    this.emitEffect({ kind: "persist_state", token });
   }
 
   private emitEffect(effect: Effect): void {
