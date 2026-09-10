@@ -40,6 +40,7 @@ import {
   type SettingsSnapshot,
   type SettingsSocketPreflightWire,
 } from "../ipc/settings";
+import { useAlertLifetime } from "../shell/alertLifetime";
 import { Picker } from "../shell/components/shell/Picker";
 import {
   createSettingsClient,
@@ -102,6 +103,25 @@ const SECTION_SCOPE: Readonly<
 
 const clone = (config: SettingsConfig): SettingsConfig =>
   JSON.parse(JSON.stringify(config)) as SettingsConfig;
+
+/**
+ * What makes two refusals the same refusal.
+ *
+ * Everything the window would print: a save that keeps being refused for the
+ * same reason about the same field is one refusal being re-raised, and one
+ * about a different field is news. `errorMessage` is what a person reads, so
+ * what it distinguishes is what "the same" has to mean.
+ */
+function settingsErrorIdentity(error: SettingsError): string {
+  const diagnostic = error.diagnostic;
+  return [
+    error.code,
+    diagnostic?.code ?? "",
+    diagnostic?.path ?? "",
+    diagnostic?.line ?? "",
+    diagnostic?.column ?? "",
+  ].join("\u0000");
+}
 
 // ------------------------------------------------------------------ toolbar
 
@@ -282,7 +302,6 @@ export function SettingsApp({ client }: { readonly client?: SettingsClient }) {
   const [snapshot, setSnapshot] = useState<SettingsSnapshot>();
   const [draft, setDraft] = useState<SettingsConfig>();
   const [section, setSection] = useState<Section>("General");
-  const [error, setError] = useState<SettingsError>();
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string>();
   // The socket is asked for, not typed into effect: `socketDraft` is the
@@ -290,17 +309,109 @@ export function SettingsApp({ client }: { readonly client?: SettingsClient }) {
   // only thing that closes the gap between them.
   const [socketDraft, setSocketDraft] = useState<string>();
   const [socketSheet, setSocketSheet] = useState<SettingsSocketPreflightWire>();
+
+  /**
+   * The refusal on screen, under the rule every DevHub window uses.
+   *
+   * It used to be a plain `useState` that any arriving snapshot could wipe, so
+   * a push caused by something else entirely erased the refusal the person was
+   * reading. Now the only three things that retire it are the ones in
+   * `useAlertLifetime`: dismissed, superseded by a *different* refusal, or the
+   * person started another action.
+   */
+  const {
+    alert: error,
+    raise: raiseError,
+    clear: clearError,
+    dismiss: dismissError,
+  } = useAlertLifetime<SettingsError>(settingsErrorIdentity);
+
   const generation = useRef(0);
   const lastSequence = useRef(0);
   const saveTimer = useRef<number | undefined>(undefined);
+  /**
+   * Whether this window is holding changes DevHub has not taken.
+   *
+   * Counted rather than flagged, because a save is asynchronous: it captures
+   * the count it is saving and settles the edits only if the person has not
+   * typed since. Otherwise a save landing mid-sentence would declare the
+   * window clean and let the next push overwrite the rest of the word.
+   */
+  const edits = useRef(0);
+  const settledEdits = useRef(0);
 
+  /**
+   * The person started something.
+   *
+   * The two things that always go with an action, in one place: the refusal on
+   * screen is retired (that is the App Shell's rule, and it is this window's
+   * too), and a debounced save still waiting to fire is cancelled, because
+   * every action here either supersedes that save or is answered by a snapshot
+   * the save would land behind.
+   */
+  const act = useCallback(() => {
+    window.clearTimeout(saveTimer.current);
+    saveTimer.current = undefined;
+    clearError();
+  }, [clearError]);
+
+  /**
+   * Take an answer only if it is still the one being waited for.
+   *
+   * The single staleness rule this window has. It used to be nineteen
+   * hand-written `generation.current === current` guards in three spellings,
+   * which is the shape `focusHome.ts` warns about: a rule enforced call site by
+   * call site is a rule the next call site forgets.
+   *
+   * It owns all three of them: the window generation, the wait, and — through
+   * `act()` — the debounce timer. A refused request becomes the alert here and
+   * nowhere else. Resolves `undefined` when there is no answer to take, either
+   * because the window moved on or because the request was refused; an answer
+   * is wrapped so that a request answering with nothing (`Promise<void>`) is
+   * still distinguishable from no answer at all.
+   */
+  const latest = useCallback(
+    async <T,>(
+      work: Promise<T>,
+    ): Promise<{ readonly value: T } | undefined> => {
+      const mine = generation.current;
+      setBusy(true);
+      try {
+        const value = await work;
+        return generation.current === mine ? { value } : undefined;
+      } catch (value: unknown) {
+        if (generation.current === mine) {
+          raiseError(parseSettingsTransportError(value));
+        }
+        return undefined;
+      } finally {
+        if (generation.current === mine) setBusy(false);
+      }
+    },
+    [raiseError],
+  );
+
+  /**
+   * The one rule for what an arriving snapshot changes.
+   *
+   * A snapshot newer than the last one taken becomes what DevHub is on. It
+   * becomes what is *shown* as well — unless the person is part-way through an
+   * edit, in which case the fields they are typing in are theirs until the
+   * edit is saved or reset. A push is DevHub saying what it has; it is never
+   * DevHub taking the keyboard away.
+   */
   const adopt = useCallback((next: SettingsSnapshot) => {
     if (next.sequence < lastSequence.current) return;
     lastSequence.current = next.sequence;
     setSnapshot(next);
+    if (edits.current !== settledEdits.current) return;
     setDraft(clone(next.config));
     setSocketDraft(next.config.runtimes.tmuxSocketName);
-    setError(undefined);
+  }, []);
+
+  /** DevHub has taken everything typed up to `count`. */
+  const settle = useCallback((count: number) => {
+    settledEdits.current = count;
   }, []);
 
   useEffect(() => {
@@ -309,19 +420,16 @@ export function SettingsApp({ client }: { readonly client?: SettingsClient }) {
     const unsubscribe = transport.subscribe((next) => {
       if (live()) adopt(next);
     });
-    void transport.getSnapshot().then(
-      (next) => {
-        if (live()) adopt(next);
-      },
-      (value: unknown) => {
-        if (live()) setError(parseSettingsTransportError(value));
-      },
-    );
+    void latestSnapshot();
+    async function latestSnapshot() {
+      const answer = await latest(transport.getSnapshot());
+      if (answer) adopt(answer.value);
+    }
     return () => {
       generation.current += 1;
       unsubscribe();
     };
-  }, [adopt, transport]);
+  }, [adopt, latest, transport]);
 
   /**
    * A change is applied, not staged.
@@ -332,37 +440,42 @@ export function SettingsApp({ client }: { readonly client?: SettingsClient }) {
    * the person typed.
    */
   const update = (next: SettingsConfig) => {
+    edits.current += 1;
     setDraft(next);
     if (!snapshot) return;
-    window.clearTimeout(saveTimer.current);
+    act();
     saveTimer.current = window.setTimeout(() => {
-      const current = generation.current;
-      setBusy(true);
-      void transport
-        .save({
-          schemaVersion: SETTINGS_SCHEMA_VERSION,
-          revision: snapshot.revision,
-          config: next,
-        })
-        .then(
-          (saved) => {
-            if (generation.current !== current) return;
-            if (saved.sequence >= lastSequence.current) {
-              lastSequence.current = saved.sequence;
-              setSnapshot(saved);
-            }
-            setError(undefined);
-          },
-          (value: unknown) => {
-            if (generation.current === current) {
-              setError(parseSettingsTransportError(value));
-            }
-          },
-        )
-        .finally(() => {
-          if (generation.current === current) setBusy(false);
-        });
+      const saving = edits.current;
+      void (async () => {
+        const answer = await latest(
+          transport.save({
+            schemaVersion: SETTINGS_SCHEMA_VERSION,
+            revision: snapshot.revision,
+            config: next,
+          }),
+        );
+        if (!answer) return;
+        // Only what was actually sent is settled: anything typed while the
+        // save was in flight is still the person's.
+        settle(saving);
+        adopt(answer.value);
+      })();
     }, 400);
+  };
+
+  /**
+   * The socket name is typed like any other field, and is an edit like any
+   * other: a push that arrived while it was being typed must not take the
+   * keyboard away here either.
+   */
+  const editSocketDraft = (next: string) => {
+    edits.current += 1;
+    setSocketDraft(next);
+  };
+
+  /** Edits the person has explicitly asked DevHub to replace. */
+  const discardEdits = () => {
+    settle(edits.current);
   };
 
   /**
@@ -374,119 +487,58 @@ export function SettingsApp({ client }: { readonly client?: SettingsClient }) {
    */
   const resetSection = () => {
     if (!snapshot) return;
-    const current = generation.current;
-    setBusy(true);
-    // A pending debounce would land after this and put back exactly what was
-    // just removed.
-    window.clearTimeout(saveTimer.current);
-    void transport
-      .resetScope({
-        schemaVersion: SETTINGS_SCHEMA_VERSION,
-        revision: snapshot.revision,
-        keys: SECTION_SCOPE[section],
-      })
-      .then(
-        (next) => {
-          if (generation.current === current) adopt(next);
-        },
-        (value: unknown) => {
-          if (generation.current === current) {
-            setError(parseSettingsTransportError(value));
-          }
-        },
-      )
-      .finally(() => {
-        if (generation.current === current) setBusy(false);
-      });
+    act();
+    void (async () => {
+      const answer = await latest(
+        transport.resetScope({
+          schemaVersion: SETTINGS_SCHEMA_VERSION,
+          revision: snapshot.revision,
+          keys: SECTION_SCOPE[section],
+        }),
+      );
+      if (!answer) return;
+      discardEdits();
+      adopt(answer.value);
+    })();
   };
 
   const reload = () => {
-    const current = generation.current;
-    setBusy(true);
-    void transport
-      .reload()
-      .then(
-        (next) => {
-          if (generation.current === current) adopt(next);
-        },
-        (value: unknown) => {
-          if (generation.current === current) {
-            setError(parseSettingsTransportError(value));
-          }
-        },
-      )
-      .finally(() => {
-        if (generation.current === current) setBusy(false);
-      });
+    act();
+    void (async () => {
+      const answer = await latest(transport.reload());
+      if (!answer) return;
+      discardEdits();
+      adopt(answer.value);
+    })();
   };
 
   const recheck = () => {
-    const current = generation.current;
-    setBusy(true);
-    void transport
-      .recheck()
-      .then(
-        (next) => {
-          if (
-            generation.current === current &&
-            next.sequence >= lastSequence.current
-          ) {
-            lastSequence.current = next.sequence;
-            setSnapshot(next);
-          }
-        },
-        (value: unknown) => {
-          if (generation.current === current) {
-            setError(parseSettingsTransportError(value));
-          }
-        },
-      )
-      .finally(() => {
-        if (generation.current === current) setBusy(false);
-      });
+    act();
+    void (async () => {
+      const answer = await latest(transport.recheck());
+      if (answer) adopt(answer.value);
+    })();
   };
 
   const askToChangeSocket = () => {
     const requested = socketDraft?.trim();
     if (!requested) return;
-    const current = generation.current;
-    setBusy(true);
-    void transport
-      .socketPreflight(requested)
-      .then(
-        (preflight) => {
-          if (generation.current === current) setSocketSheet(preflight);
-        },
-        (value: unknown) => {
-          if (generation.current === current) {
-            setError(parseSettingsTransportError(value));
-          }
-        },
-      )
-      .finally(() => {
-        if (generation.current === current) setBusy(false);
-      });
+    act();
+    void (async () => {
+      const answer = await latest(transport.socketPreflight(requested));
+      if (answer) setSocketSheet(answer.value);
+    })();
   };
 
   const applySocketChange = (requested: string) => {
-    const current = generation.current;
     setSocketSheet(undefined);
-    setBusy(true);
-    void transport
-      .socketApply(requested)
-      .then(
-        (next) => {
-          if (generation.current === current) adopt(next);
-        },
-        (value: unknown) => {
-          if (generation.current === current) {
-            setError(parseSettingsTransportError(value));
-          }
-        },
-      )
-      .finally(() => {
-        if (generation.current === current) setBusy(false);
-      });
+    act();
+    void (async () => {
+      const answer = await latest(transport.socketApply(requested));
+      if (!answer) return;
+      discardEdits();
+      adopt(answer.value);
+    })();
   };
 
   if (!snapshot || !draft) {
@@ -514,6 +566,16 @@ export function SettingsApp({ client }: { readonly client?: SettingsClient }) {
                 ? fileDiagnosticMessage(snapshot.diagnostic)
                 : ""}
           </span>
+          {/* A refusal is the person's to put away — the third of the three
+              gestures that retire one, and the only one that works when the
+              same refusal keeps being raised. The file diagnostic beside it is
+              not a refusal but a fact about the file, so it goes when the file
+              is read again and not before. */}
+          {error ? (
+            <button type="button" className="mac-button" onClick={dismissError}>
+              Dismiss
+            </button>
+          ) : null}
           <button type="button" className="mac-button" onClick={reload}>
             Reload
           </button>
@@ -568,7 +630,7 @@ export function SettingsApp({ client }: { readonly client?: SettingsClient }) {
             update={update}
             onReset={resetSection}
             socketDraft={socketDraft ?? draft.runtimes.tmuxSocketName}
-            onSocketDraft={setSocketDraft}
+            onSocketDraft={editSocketDraft}
             onSocketChange={askToChangeSocket}
             effectiveSocket={snapshot.config.runtimes.tmuxSocketName}
             busy={busy}
@@ -583,27 +645,17 @@ export function SettingsApp({ client }: { readonly client?: SettingsClient }) {
             diagnostics={snapshot.diagnostics}
             onRecheck={recheck}
             onOpenLogs={() => {
+              act();
               setStatus("Opening…");
-              void transport.openLogFolder().then(
-                () => {
-                  setStatus(undefined);
-                },
-                (value: unknown) => {
-                  setError(parseSettingsTransportError(value));
-                  setStatus(undefined);
-                },
-              );
+              void latest(transport.openLogFolder()).finally(() => {
+                setStatus(undefined);
+              });
             }}
             onCopyDiagnostics={() => {
-              void transport.copyDiagnostics().then(
-                () => {
-                  setStatus("Copied.");
-                },
-                (value: unknown) => {
-                  setError(parseSettingsTransportError(value));
-                  setStatus(undefined);
-                },
-              );
+              act();
+              void latest(transport.copyDiagnostics()).then((answer) => {
+                setStatus(answer ? "Copied." : undefined);
+              });
             }}
             status={status}
             busy={busy}

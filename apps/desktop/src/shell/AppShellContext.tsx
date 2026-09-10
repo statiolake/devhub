@@ -26,6 +26,7 @@ import {
   type WorkspacePickerEvent,
 } from "./client";
 import { subscribeToUnhandled, toAppError } from "./failure";
+import { useAlertLifetime } from "./alertLifetime";
 import { AppShellContext, type AppShellContextValue } from "./useAppShell";
 
 /**
@@ -98,54 +99,33 @@ export function AppShellProvider({
     profiles: [],
   });
   /**
-   * The failure on screen.
+   * The failure on screen, and the one rule that decides when it goes.
    *
-   * One rule decides when it goes, and it does not depend on what raised it:
-   * the user dismisses it, the user starts another action, or a *different*
-   * failure replaces it. Nothing that merely arrives can retire it — a
-   * projection showing up is not evidence that anything was fixed, and letting
-   * one clear the alert is how a reported failure reaches the screen and
-   * vanishes before it can be read. Nor can anything that merely arrives bring
-   * a dismissed failure back: re-raising the same failure is not news, and an
-   * alert that returns as fast as it is closed is one the person cannot get
-   * out of the way of.
+   * The rule itself is `useAlertLifetime` and is shared with every other
+   * window DevHub has, so there is no second implementation to drift from.
+   * All this page supplies is what makes two failures "the same" one.
    */
-  const [intentError, setIntentErrorState] = useState<AppError | null>(null);
-  /**
-   * The failure the user has already read and put away.
-   *
-   * Kept because a failure can be raised again without anything new having
-   * happened: a background save that keeps failing re-raises the same one
-   * every few seconds, and an alert that comes back the moment it is
-   * dismissed cannot be dismissed at all. So the same failure — same code,
-   * same detail — stays away until either something *different* fails or the
-   * user starts another action, which are the other two halves of the one
-   * rule. It is deliberately not a per-source decision: no raising site gets
-   * to choose whether its failure is the sticky kind.
-   */
-  const dismissed = useRef<string | null>(null);
+  const {
+    alert: intentError,
+    raise: raiseHere,
+    clear: clearIntentError,
+    dismiss: dismissIntentError,
+  } = useAlertLifetime<AppError>(errorIdentity);
 
   const setIntentError = useCallback(
     (error: AppError) => {
       if (raiseFailure) {
         // Not held here and not drawn here: this page has no display site, and
         // a failure kept where nobody draws it is the failure that does not
-        // exist. The identity and lifetime rules below belong to the page that
-        // draws it, so they are applied there and only there.
+        // exist. The identity and lifetime rules belong to the page that draws
+        // it, so they are applied there and only there.
         raiseFailure(error);
         return;
       }
-      if (dismissed.current === errorIdentity(error)) return;
-      dismissed.current = null;
-      setIntentErrorState(error);
+      raiseHere(error);
     },
-    [raiseFailure],
+    [raiseFailure, raiseHere],
   );
-
-  const clearIntentError = useCallback(() => {
-    dismissed.current = null;
-    setIntentErrorState(null);
-  }, []);
   const [pickerCandidates, setPickerCandidates] = useState<
     WorkspacePickerCandidate[]
   >([]);
@@ -680,16 +660,6 @@ export function AppShellProvider({
       confirmationBusyRef.current = false;
     }
   }, [dispatch, pendingConfirmation]);
-
-  // Putting it away records *which* failure was put away, so the source that
-  // keeps raising it cannot put it straight back. The next action the user
-  // takes clears that memory: at that point a failure that is still happening
-  // is worth showing again.
-  const dismissIntentError = useCallback(() => {
-    dismissed.current =
-      intentError === null ? null : errorIdentity(intentError);
-    setIntentErrorState(null);
-  }, [intentError]);
 
   const dismissCloseConfirmation = useCallback(() => {
     setPendingConfirmation(null);
