@@ -223,6 +223,15 @@ interface PendingRequest {
 	readonly timer: ReturnType<typeof setTimeout>;
 }
 
+/** Whether a workbench could be opened in `folder`: it exists, and is a folder. */
+async function folderIsDirectory(folder: string): Promise<boolean> {
+	try {
+		return (await stat(folder)).isDirectory();
+	} catch {
+		return false;
+	}
+}
+
 export class AppController {
 	private readonly coordinator: AppCoordinator;
 	private cursor = 0;
@@ -994,6 +1003,33 @@ export class AppController {
 	 * model does with it — reading whatever is on screen when DevHub comes back
 	 * — is the model's rule and is stated there.
 	 */
+	/**
+	 * The folder a workbench was asked for is not on disk.
+	 *
+	 * Told to the model as an intent, the way a focus change is: the model
+	 * decides what an absent folder means for the workspace (`unavailable`,
+	 * with `root_missing` as the reason), and the projection change that
+	 * follows is what takes the workspace out of `syncEditorViews`'s list.
+	 * A folder no workspace owns is nobody's to mark.
+	 */
+	private noteFolderMissing(folder: string): void {
+		const workspace = this.coordinator.model.workspaces.find(
+			(candidate) => candidate.root === folder,
+		);
+		if (!workspace) return;
+		try {
+			this.coordinator.dispatchUser({
+				intentId: parseIntentId(randomUUID()),
+				operationId: this.freshOperationId(),
+				intent: { type: "workspace_root_missing", workspaceId: workspace.id },
+			});
+		} catch (error: unknown) {
+			this.publishError(errorWire(error));
+			return;
+		}
+		this.drain();
+	}
+
 	windowFocusChanged(focused: boolean): void {
 		// Dispatched rather than awaited: nothing about a focus change has an
 		// effect to wait for, and this is called from a window event that has
@@ -2214,6 +2250,19 @@ export class AppController {
 	private async openEditorView(
 		folder: string,
 	): Promise<WorkbenchView | undefined> {
+		// Look before asking. VS Code answers an open for a folder that is not
+		// there with a modal box — "The path '…' does not exist on this
+		// computer." — and it answered it on every launch and on every
+		// selection of a workspace whose folder had gone, because nothing here
+		// had looked first. The folder's absence is a fact about the workspace,
+		// so it goes into the model as one: the workspace becomes unavailable,
+		// which the content area draws with Retry, Locate… and Close, and
+		// `syncEditorViews` stops asking for a workbench in it.
+		if (folder !== SCRATCH_EDITOR && !(await folderIsDirectory(folder))) {
+			console.log(`[devhub] open: '${folder}' is not there — no workbench`);
+			this.noteFolderMissing(folder);
+			return undefined;
+		}
 		const services = await this.services();
 		// Go through VS Code's own open path, which is what creates a
 		// `CodeWindow` — and therefore, through the shim, a view in the shell.
@@ -2416,9 +2465,16 @@ export class AppController {
 				? undefined
 				: this.folderForSurfaceKey(selectedKey);
 
+		// Not every workspace wants a workbench: one whose folder is gone
+		// (`unavailable`) has nothing to open a workbench *in*, and asking is
+		// what used to put VS Code's "path does not exist" box on screen. It is
+		// asked for again the moment it is relocated or retried back to
+		// available, because that is a projection change and this runs on it.
 		const wanted = new Set<string>([
 			SCRATCH_EDITOR,
-			...this.coordinator.model.workspaces.map((workspace) => workspace.root),
+			...this.coordinator.model.workspaces
+				.filter((workspace) => workspace.state.kind !== "unavailable")
+				.map((workspace) => workspace.root),
 		]);
 		for (const folder of [...this.viewsByFolder.keys()]) {
 			if (wanted.has(folder)) continue;

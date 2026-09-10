@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  NO_CLEANUP_PROGRESS,
   Agent,
   AgentProfile,
   agentProfileId,
@@ -176,6 +177,20 @@ describe("workspace lifecycle", () => {
     "codex",
     "codex",
   );
+
+  it("can be closed while its folder is missing", () => {
+    // A workspace whose folder is gone is exactly the one a person closes,
+    // so `unavailable` has to be a state a close can start from. The Close
+    // action on the unavailable surface used to fail on this.
+    const workspace = new Workspace(
+      workspaceId(UUID_A),
+      workspaceRoot("/dev/project"),
+      displayPath("/dev/project"),
+    );
+    workspace.markUnavailable("root_missing");
+    expect(workspace.markClosing(NO_CLEANUP_PROGRESS)).toBe(true);
+    expect(workspace.state.kind).toBe("closing");
+  });
 
   it("keeps agents when unavailable but refuses new ones", () => {
     const owner = workspaceId(UUID_A);

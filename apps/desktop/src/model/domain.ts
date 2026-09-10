@@ -1021,9 +1021,17 @@ export class Workspace {
     return true;
   }
 
+  /**
+   * A Workspace whose folder is gone can still be closed. `unavailable` used
+   * to refuse this, which left the row with a Close button that could only
+   * fail: closing is exactly what a person does with a workspace whose folder
+   * is not coming back, and every step of the cleanup already copes with a
+   * root that is missing (the same path a removed worktree takes).
+   */
   markClosing(progress: CleanupProgress): boolean {
     switch (this.stateValue.kind) {
       case "available":
+      case "unavailable":
       case "closing-failed": {
         const next: WorkspaceState = { kind: "closing", progress };
         if (sameWorkspaceState(this.stateValue, next)) {
@@ -1034,8 +1042,6 @@ export class Workspace {
       }
       case "closing":
         throw invalid(DomainErrorCode.WorkspaceClosing);
-      case "unavailable":
-        throw invalid(DomainErrorCode.WorkspaceUnavailable);
     }
   }
 

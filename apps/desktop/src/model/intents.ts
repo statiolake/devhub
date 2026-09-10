@@ -206,6 +206,16 @@ export type UserIntent =
   | { readonly type: "open_folder"; readonly path: RequestedPath }
   | { readonly type: "new_window"; readonly path?: RequestedPath }
   | { readonly type: "retry_workspace"; readonly workspaceId: WorkspaceId }
+  /**
+   * Main found the Workspace's folder gone when it went to open a workbench
+   * in it. Raised by the shell, never by the page: it is a fact about the
+   * disk, and the model's answer is the `unavailable` state the content area
+   * already knows how to draw, with `root_missing` as the reason.
+   */
+  | {
+      readonly type: "workspace_root_missing";
+      readonly workspaceId: WorkspaceId;
+    }
   | {
       readonly type: "locate_workspace";
       readonly workspaceId: WorkspaceId;

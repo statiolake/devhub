@@ -600,6 +600,12 @@ export class AppCoordinator {
       }
       case "retry_workspace":
         return this.beginWorkspaceRetry(intent.workspaceId, id);
+      case "workspace_root_missing":
+        return this.markWorkspaceRootMissing(
+          intent.workspaceId,
+          beforeRevision,
+          id,
+        );
       case "locate_workspace":
         return this.beginWorkspaceRelocation(
           intent.workspaceId,
@@ -725,6 +731,35 @@ export class AppCoordinator {
     );
     this.emitEffect({ kind: "resolve_workspace_path", token, path });
     return { kind: "deferred", operationId: id, snapshot: this.snapshot() };
+  }
+
+  /**
+   * The folder is not there. The workspace becomes `unavailable`, which is
+   * the state the content area already draws with Retry, Locate… and Close.
+   *
+   * A workspace on its way out is left alone: `closing` is a state the model
+   * refuses operations in, and a close that has already failed keeps its own
+   * diagnostic — "the folder is missing" is not a better answer than "this
+   * step did not finish" to the question of what to do next.
+   */
+  private markWorkspaceRootMissing(
+    workspaceId: WorkspaceId,
+    beforeRevision: number,
+    id: OperationId,
+  ): IntentOutcome {
+    const workspace = this.model.workspace(workspaceId);
+    if (!workspace) {
+      throw new AppError(AppErrorCode.Domain).withDomain(
+        DomainErrorCode.UnknownWorkspace,
+      );
+    }
+    if (
+      workspace.state.kind === "available" ||
+      workspace.state.kind === "unavailable"
+    ) {
+      this.model.markWorkspaceUnavailable(workspaceId, "root_missing");
+    }
+    return this.transitionOutcome(beforeRevision, id);
   }
 
   private beginWorkspaceRetry(
