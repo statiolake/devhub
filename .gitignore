@@ -40,3 +40,6 @@ apps/desktop/.test-scratch/
 *.dmg
 *.zip
 *.app/
+
+# npm is not this repository's package manager; a stray `npm …` at the root leaves an empty lockfile behind
+package-lock.json
