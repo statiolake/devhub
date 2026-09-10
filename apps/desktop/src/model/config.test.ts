@@ -1,6 +1,6 @@
 import { chmod, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   CONFIG_SCHEMA_VERSION,
   ConfigError,
@@ -12,6 +12,8 @@ import {
   isSafeTmuxArgument,
   isValidSocketName,
   parseConfig,
+  parseConfigText,
+  retiredKeysIn,
   type ValidationCode,
 } from "./config.js";
 import { chordKeyId } from "./chordKeys.js";
@@ -415,16 +417,17 @@ describe("parsing", () => {
     ).toBe("unknown_key");
   });
 
-  it("still loads a file with a retired key, and says so once", () => {
-    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+  it("still loads a file with a retired key, and names it where somebody reads", () => {
     const retired = 'version = 1\n[appearance]\ncolor_scheme = "dark"\n';
-    try {
-      expect(parseConfig(retired)).toEqual(defaultConfig());
-      expect(info).toHaveBeenCalledTimes(1);
-      expect(info.mock.calls[0][0]).toContain("appearance.color_scheme");
-    } finally {
-      info.mockRestore();
-    }
+    expect(parseConfig(retired)).toEqual(defaultConfig());
+    // The notice used to be a `console.info`, which is invisible to exactly
+    // the person who wrote the key. It is a value now, and the Settings window
+    // is what draws it.
+    expect(retiredKeysIn(parseConfigText(retired))).toEqual([
+      { key: "appearance.color_scheme", replacement: expect.any(String) },
+    ]);
+    // A file that names none of them says nothing.
+    expect(retiredKeysIn(parseConfigText("version = 1\n"))).toEqual([]);
     // And the next save drops it, rather than keeping a key nothing reads.
     const saved = configOntoDocument(retired, parseConfig(retired));
     expect(saved).not.toContain("color_scheme");
@@ -526,16 +529,13 @@ describe("parsing", () => {
     // should paint itself, which the workbench theme answers, and `mode` asks
     // which appearance the process runs in. An old file must not have its dead
     // key quietly revived as the new one.
-    const info = vi.spyOn(console, "info").mockImplementation(() => {});
-    try {
-      const parsed = parseConfig(
-        'version = 1\n[appearance]\ncolor_scheme = "dark"\n',
-      );
-      expect(parsed.appearance.mode).toBe("auto");
-      expect(info.mock.calls[0][0]).toContain("appearance.mode");
-    } finally {
-      info.mockRestore();
-    }
+    const text = 'version = 1\n[appearance]\ncolor_scheme = "dark"\n';
+    expect(parseConfig(text).appearance.mode).toBe("auto");
+    // The notice points at the setting that replaced it, so the person is not
+    // left to guess which of the two DevHub meant.
+    expect(retiredKeysIn(parseConfigText(text))[0].replacement).toContain(
+      "appearance.mode",
+    );
   });
 
   it("takes any font family CSS would take", () => {

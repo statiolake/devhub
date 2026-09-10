@@ -144,6 +144,18 @@ body {
   font-size: 12px;
 }
 
+/*
+ * A note is the same strip in a quieter colour.
+ *
+ * Same shape on purpose: it sits in the same place and says the same kind of
+ * thing about the same file. Only the urgency differs, so only the ground
+ * differs — a second layout would be a second thing to notice.
+ */
+.settings-notice.is-note {
+  background: light-dark(#eef2f7, #23272e);
+  color: var(--secondary);
+}
+
 /* ---------------------------------------------------------------- body */
 
 .settings-body {

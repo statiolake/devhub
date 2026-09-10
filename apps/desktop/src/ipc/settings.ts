@@ -334,6 +334,24 @@ export interface SettingsDiagnosticWire {
 	readonly column?: number;
 }
 
+/**
+ * Something true about the settings file that is not a failure.
+ *
+ * Deliberately not a `SettingsDiagnosticWire`. A diagnostic is a refusal —
+ * the window draws it in an alert with a Reload beside it, and it is cleared
+ * by the next successful read. A retired key refused nothing: the file loaded,
+ * DevHub ignored one line of it, and the person who wrote that line is owed an
+ * answer. Folding the two together would make one of them look like the other,
+ * and the file's own history says which way that goes.
+ */
+export interface SettingsNoticeWire {
+	readonly kind: "config_key_retired";
+	/** The dotted key, as it appears in the file. */
+	readonly key: string;
+	/** What to use instead, in the words the model keeps. */
+	readonly replacement: string;
+}
+
 export interface SettingsSnapshotWire {
 	readonly schemaVersion: number;
 	readonly sequence: number;
@@ -343,6 +361,8 @@ export interface SettingsSnapshotWire {
 	readonly diagnostics: SettingsDiagnosticsWire;
 	/** The last external read that did not parse, if the file is broken now. */
 	readonly diagnostic?: SettingsDiagnosticWire;
+	/** Keys the file names that DevHub no longer reads. Usually empty. */
+	readonly notices: readonly SettingsNoticeWire[];
 }
 
 export interface SettingsSaveRequestWire {

@@ -698,9 +698,24 @@ export function contentRevision(bytes: Buffer | string): ContentRevision {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
+/**
+ * A key a past DevHub read and this one ignores, and what to use instead.
+ *
+ * A notice, not a diagnostic: the file loaded, nothing was refused, and there
+ * is nothing to retry. It exists because the person who wrote the key is owed
+ * an answer to "I set that and nothing happened", and the answer used to be a
+ * `console.info` line — invisible to exactly the person it was written for.
+ */
+export interface RetiredKeyNotice {
+  readonly key: string;
+  readonly replacement: string;
+}
+
 export interface LoadedConfig {
   readonly config: Config;
   readonly revision: ContentRevision;
+  /** Retired keys the document still names. Empty for almost every file. */
+  readonly notices: readonly RetiredKeyNotice[];
 }
 
 export type ReloadOutcome =
@@ -731,6 +746,30 @@ const RETIRED_KEYS: Readonly<Record<string, string>> = {
     "an Agent is now a tmux session on DevHub's own socket, so there is no separate Agent runtime to point at; the program to run is each profile's own `command`",
 };
 
+/**
+ * Which retired keys a parsed document still names.
+ *
+ * Read off `RETIRED_KEYS` directly rather than collected during validation:
+ * the paths are dotted and few, and threading an accumulator through fifteen
+ * `checkKeys` call sites would put a notice channel inside a function whose
+ * whole job is to refuse or not refuse.
+ */
+export function retiredKeysIn(document: unknown): RetiredKeyNotice[] {
+  const notices: RetiredKeyNotice[] = [];
+  for (const [key, replacement] of Object.entries(RETIRED_KEYS)) {
+    let cursor: unknown = document;
+    for (const segment of key.split(".")) {
+      if (!isPlainObject(cursor)) {
+        cursor = undefined;
+        break;
+      }
+      cursor = cursor[segment];
+    }
+    if (cursor !== undefined) notices.push({ key, replacement });
+  }
+  return notices;
+}
+
 function checkKeys(
   table: Record<string, unknown>,
   allowed: readonly string[],
@@ -739,13 +778,11 @@ function checkKeys(
   for (const key of Object.keys(table)) {
     if (allowed.includes(key)) continue;
     const path = prefix.length > 0 ? `${prefix}.${key}` : key;
-    const retired = RETIRED_KEYS[path];
-    if (retired !== undefined) {
-      console.info(
-        `[devhub] config: ${path} is no longer used and is ignored — ${retired}. The next save drops it from the file.`,
-      );
-      continue;
-    }
+    // Ignored on purpose. *Saying* it is ignored is `retiredKeysIn`'s job,
+    // because a notice belongs where somebody will read it and this validator
+    // has nowhere to put one. Both read `RETIRED_KEYS`, so there is still one
+    // answer to "is this key retired".
+    if (RETIRED_KEYS[path] !== undefined) continue;
     fail("unknown_key", path);
   }
 }
@@ -2089,9 +2126,11 @@ export class ConfigStore {
   }
 
   private decode(text: string): LoadedConfig {
+    const document = parseConfigText(text);
     return {
-      config: interpretConfig(parseConfigText(text)),
+      config: interpretConfig(document),
       revision: contentRevision(text),
+      notices: retiredKeysIn(document),
     };
   }
 

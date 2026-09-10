@@ -33,6 +33,7 @@ import {
   type ReactNode,
 } from "react";
 import {
+  SETTINGS_FILE_NAME,
   SETTINGS_SCHEMA_VERSION,
   type SettingsConfig,
   type SettingsError,
@@ -581,6 +582,20 @@ export function SettingsApp({ client }: { readonly client?: SettingsClient }) {
           </button>
         </div>
       ) : null}
+
+      {/*
+        A key DevHub stopped reading, said where the person who wrote it will
+        see it. Not an alert and not dismissible: nothing failed and there is
+        nothing to retry — it is a fact about the file, and it goes when the
+        line goes, which the next save does on its own.
+      */}
+      {snapshot.notices.map((notice) => (
+        <div className="settings-notice is-note" key={notice.key} role="status">
+          <span>
+            {`“${notice.key}” is no longer used and is ignored — ${notice.replacement}. The next change you make here drops it from ${SETTINGS_FILE_NAME}.`}
+          </span>
+        </div>
+      ))}
 
       <div
         className="settings-body"

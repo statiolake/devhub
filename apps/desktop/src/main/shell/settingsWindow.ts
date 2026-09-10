@@ -352,6 +352,15 @@ async function buildSnapshot(): Promise<SettingsSnapshotWire> {
 					column: diagnostic.location?.column,
 				}
 			: undefined,
+		// A key DevHub stopped reading is said here rather than to stdout. The
+		// argument for not refusing the file is unchanged — DevHub's own change
+		// of mind is not the person's typo — but "loads and is ignored" has to
+		// reach the person who wrote it, and the console never did.
+		notices: loaded.notices.map((notice) => ({
+			kind: "config_key_retired" as const,
+			key: notice.key,
+			replacement: notice.replacement,
+		})),
 	};
 }
 

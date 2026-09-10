@@ -171,6 +171,35 @@ describe("what an arriving snapshot may do to the Settings window", () => {
   });
 });
 
+describe("a key DevHub no longer reads", () => {
+  it("is said in the window, not to a console", async () => {
+    const base = testClient(testConfig());
+    const client: SettingsClient = {
+      ...base.client,
+      getSnapshot: async () => ({
+        ...(await base.client.getSnapshot()),
+        notices: [
+          {
+            kind: "config_key_retired" as const,
+            key: "appearance.color_scheme",
+            replacement: "use `appearance.mode`",
+          },
+        ],
+      }),
+    };
+    render(<SettingsApp client={client} />);
+
+    // The whole answer to "I set that and nothing happened": the key, why it
+    // is ignored, and what becomes of it.
+    const note = await screen.findByRole("status");
+    expect(note).toHaveTextContent("appearance.color_scheme");
+    expect(note).toHaveTextContent("use `appearance.mode`");
+    expect(note).toHaveTextContent("settings.toml");
+    // A notice is not a refusal, so it is not in the channel refusals use.
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+});
+
 describe("how long a refusal stays on the Settings window", () => {
   it("goes when the person puts it away", async () => {
     const { refuseASave } = harness({ refuse: true });

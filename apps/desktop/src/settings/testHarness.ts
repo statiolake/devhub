@@ -103,6 +103,7 @@ export function testSnapshot(
       restartRequired: false,
       loginEnvironment: "Imported from /bin/zsh.",
     },
+    notices: [],
     diagnostics: {
       sessionId: "session",
       logDirectory: "logs",
