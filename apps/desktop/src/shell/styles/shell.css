@@ -1675,7 +1675,7 @@ body.is-resizing-split {
 
 /* --------------------------------------------------------- window dragging */
 
-/* With the titlebar gone the Sidebar is the handle: the whole pane is a drag
+/* With the titlebar gone the Sidebar is the handle: the pane is a drag
    region, and every part of it that does something opts back out.
 
    The opt-out list is written as "anything interactive" rather than as a list
@@ -1683,10 +1683,26 @@ body.is-resizing-split {
    clicks that land on it — so a control added later that is not on the list
    would be a control nobody can press, and it would look like a bug in the
    control rather than in this rule. What is left draggable is what is left
-   over: the header strip, the padding, the section heading's dead space, and
-   the empty room below the rows. */
+   over: the header strip and the pane's own edges. */
 .sidebar {
   -webkit-app-region: drag;
+}
+
+/* The list is not a handle, and neither is its scrollbar.
+
+   A drag region is not a CSS hit-test: Electron collects the region's
+   rectangles from layout and hands them to the window system, which takes
+   the mouse before the page ever sees it. A scrollbar inside one of those
+   rectangles is therefore a scrollbar that moves the window when dragged —
+   which is what the Sidebar's did. The whole scroll region opts out, and not
+   only its scrollbar, for two reasons: the scrollbar has no element of its
+   own to opt out with, and the rectangles are collected on layout rather
+   than on scroll, so a drag region inside a scroller is a region that stays
+   where the content was before it scrolled. The empty room below the rows
+   stops being a handle; the header strip, which never scrolls, is the one
+   that was always meant. */
+.sidebar-scroll-region {
+  -webkit-app-region: no-drag;
 }
 
 .sidebar button,
