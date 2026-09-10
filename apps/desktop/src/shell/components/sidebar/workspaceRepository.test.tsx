@@ -676,6 +676,24 @@ describe("how far an Agent row is indented under its Workspace", () => {
     );
   });
 
+  it("draws one guide line down the Workspace's own glyph column", () => {
+    // The indent says an Agent is inside something; the line says how many
+    // rows are. It is a `::before` on the row rather than an element, so the
+    // tree the keyboard and the accessibility tree walk is unchanged — and it
+    // is placed off the same two terms the indent is measured from, so the
+    // line and the depth cannot come to disagree.
+    expect(shell).toContain(
+      ".agent-row::before {\n  position: absolute;\n  top: 0;\n  bottom: 0;",
+    );
+    expect(shell).toContain(
+      '  left: calc(var(--sidebar-rail-width) + var(--sidebar-glyph-width) / 2);\n  width: 1px;\n  background: var(--row-glyph-ink);\n  content: "";\n}',
+    );
+    // At rest and on hover alike: the hierarchy is not something to point at,
+    // and a guide that lit up would be the brightest thing in a Sidebar whose
+    // whole design is that only a status has colour.
+    expect(shell).not.toContain(".agent-row:hover::before");
+  });
+
   it("moves the row's two lines together", () => {
     // The first line by the button's padding, the second by the inset it is
     // already part of. One term in both places, so they cannot drift apart.

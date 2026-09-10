@@ -648,6 +648,42 @@
   padding-left: var(--row-agent-inset);
 }
 
+/*
+ * The line that says these rows belong to the row above them.
+ *
+ * The indent alone says an Agent is *inside* something; it does not say how
+ * many rows are inside it, and a list of four Agents under one Workspace read
+ * as four rows that happened to start at the same place. One hairline down the
+ * Workspace's own glyph column joins them: it starts where the Workspace's
+ * glyph is, which is the column the indent was measured from, so the line and
+ * the depth are the same statement drawn twice rather than two amounts that
+ * have to agree.
+ *
+ * It is a `::before` on the row itself, not an element. There is nothing to
+ * read here — the tree is already in the markup, where `aria-level` and the
+ * arrow-key walk are — so a `span` for it would be a node the keyboard and the
+ * accessibility tree would have to be taught to ignore.
+ *
+ * Rows sit flush against each other with no gap, so consecutive Agent rows draw
+ * one unbroken line and the group ends exactly where the Agents do. The ink is
+ * `--row-glyph-ink`, the same rest colour every mark in a row takes, and it
+ * does not change on hover: the hierarchy is not a thing you can point at, and
+ * a guide that lit up would be the brightest thing in a Sidebar whose whole
+ * design is that only a status has colour.
+ */
+.agent-row::before {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  /* The middle of the Workspace's glyph column: past the rail, half a glyph
+     in. Derived from the same two terms the indent is, so a change to either
+     moves the line and the rows it belongs to together. */
+  left: calc(var(--sidebar-rail-width) + var(--sidebar-glyph-width) / 2);
+  width: 1px;
+  background: var(--row-glyph-ink);
+  content: "";
+}
+
 /* A workspace that is not simply open reads as secondary ink, and nothing
    more. It used to be italic as well; italic is for a word being *mentioned*
    rather than used, and none of these are that — they are ordinary rows in a
