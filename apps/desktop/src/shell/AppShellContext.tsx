@@ -58,6 +58,19 @@ export interface AppShellProviderProps {
    * the alert *is* the thing on screen.
    */
   readonly raiseConfirmation?: (confirmation: PendingConfirmation) => void;
+  /**
+   * Where a failure goes when this page has no place to draw one.
+   *
+   * The exact counterpart of `raiseConfirmation`, and for the same reason. The
+   * overlay page is a sheet of glass that main takes off screen the moment the
+   * last modal closes — which is precisely when a sheet's action fails, since
+   * every sheet dismisses itself as it acts. So the overlay hands its failures
+   * to main, main publishes them, and the App Shell — the page that is always
+   * on screen — draws them under the one lifetime rule there is. The App Shell
+   * keeps the default, which is to hold the failure right here, because there
+   * the alert *is* the thing on screen.
+   */
+  readonly raiseFailure?: (error: AppError) => void;
   readonly children: ReactNode;
 }
 
@@ -71,6 +84,7 @@ export interface AppShellProviderProps {
 export function AppShellProvider({
   client,
   raiseConfirmation,
+  raiseFailure,
   children,
 }: AppShellProviderProps) {
   const transport = useMemo(() => client ?? createShellClient(), [client]);
@@ -111,11 +125,22 @@ export function AppShellProvider({
    */
   const dismissed = useRef<string | null>(null);
 
-  const setIntentError = useCallback((error: AppError) => {
-    if (dismissed.current === errorIdentity(error)) return;
-    dismissed.current = null;
-    setIntentErrorState(error);
-  }, []);
+  const setIntentError = useCallback(
+    (error: AppError) => {
+      if (raiseFailure) {
+        // Not held here and not drawn here: this page has no display site, and
+        // a failure kept where nobody draws it is the failure that does not
+        // exist. The identity and lifetime rules below belong to the page that
+        // draws it, so they are applied there and only there.
+        raiseFailure(error);
+        return;
+      }
+      if (dismissed.current === errorIdentity(error)) return;
+      dismissed.current = null;
+      setIntentErrorState(error);
+    },
+    [raiseFailure],
+  );
 
   const clearIntentError = useCallback(() => {
     dismissed.current = null;

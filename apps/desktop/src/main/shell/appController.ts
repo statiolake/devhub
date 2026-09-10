@@ -3805,6 +3805,12 @@ export class AppController {
 		handle(CHANNELS.openModal, (_event, request: ModalRequest) =>
 			shellWindow().modals.openModal(request),
 		);
+		// A page that has nowhere to draw a failure hands it here, and it goes
+		// out on the same channel every failure main raises goes out on. One
+		// display site, one lifetime rule, whichever page the failure began on.
+		handle(CHANNELS.raiseFailure, (_event, error: AppErrorWire) => {
+			this.publishError(error);
+		});
 		handle(
 			CHANNELS.closeModal,
 			(_event, id: string, response: number | undefined) => {

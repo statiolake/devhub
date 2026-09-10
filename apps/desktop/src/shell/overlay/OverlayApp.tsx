@@ -184,7 +184,16 @@ function ModalLayer() {
 
 export function OverlayApp() {
   return (
-    <AppShellProvider>
+    <AppShellProvider
+      // This layer draws no alerts. It is withdrawn the moment the last modal
+      // closes, and every sheet dismisses itself as it acts — so a failure
+      // held here would be drawn, if at all, on a view already on its way off
+      // screen. It goes to main, which publishes it to the App Shell, where
+      // every other failure is drawn.
+      raiseFailure={(error) => {
+        void devhub().raiseFailure(error);
+      }}
+    >
       <ModalLayer />
     </AppShellProvider>
   );

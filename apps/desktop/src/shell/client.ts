@@ -111,6 +111,8 @@ export interface AppShellClient {
   setContentSurface(surface: ContentSurfaceWire): Promise<void>;
   /** Put a modal on the overlay layer; the id is what takes it off again. */
   openModal(request: ModalRequest): Promise<string>;
+  /** Hand main a failure this page has no place to draw. */
+  raiseFailure(error: AppError): Promise<void>;
   closeModal(id: string, response?: number): Promise<void>;
 }
 
@@ -183,6 +185,7 @@ export function createShellClient(api: DevhubApi = devhub()): AppShellClient {
     setContentRect: (rect) => api.setContentRect(rect),
     setContentSurface: (surface) => api.setContentSurface(surface),
     openModal: (request) => api.openModal(request),
+    raiseFailure: (error) => api.raiseFailure(error),
     closeModal: (id, response) => api.closeModal(id, response),
   };
 }

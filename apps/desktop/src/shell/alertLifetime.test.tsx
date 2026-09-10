@@ -81,7 +81,9 @@ function Probe() {
   );
 }
 
-function mount() {
+function mount(options?: {
+  readonly raiseFailure?: (error: AppError) => void;
+}) {
   let raise: (error: AppError) => void = () => undefined;
   const client = {
     getSnapshot: async () => SNAPSHOT,
@@ -111,11 +113,14 @@ function mount() {
     closeModal: async () => undefined,
   } as unknown as AppShellClient;
   render(
-    <AppShellProvider client={client}>
+    <AppShellProvider client={client} raiseFailure={options?.raiseFailure}>
       <Probe />
     </AppShellProvider>,
   );
-  return { raise: (error: AppError) => act(() => raise(error)) };
+  return {
+    client,
+    raise: (error: AppError) => act(() => raise(error)),
+  };
 }
 
 const alert = () => screen.getByTestId("alert").textContent ?? "";
@@ -200,5 +205,52 @@ describe("the failure on screen", () => {
     });
     raise(failure("/tmp/state.json: permission was denied (EACCES)"));
     expect(alert()).toContain("permission was denied");
+  });
+});
+
+/**
+ * The overlay page collects failures and has nowhere to draw them.
+ *
+ * It is a sheet of glass main takes off screen the moment the last modal
+ * closes — and every sheet dismisses itself as it acts, so a `--force` worktree
+ * removal that fails, a failed Agent action and every unhandled rejection on
+ * that page set a state nobody would ever see. The rule is not a second
+ * renderer: the page that cannot draw hands the failure to main, which
+ * publishes it to the page that can.
+ */
+describe("a failure raised on a page with nowhere to draw it", () => {
+  afterEach(cleanup);
+
+  it("is handed on instead of being held where nobody draws it", async () => {
+    const raised: AppError[] = [];
+    const { client } = mount({
+      raiseFailure: (error) => {
+        raised.push(error);
+      },
+    });
+    (
+      client as unknown as { dispatch: ReturnType<typeof vi.fn> }
+    ).dispatch.mockRejectedValueOnce(
+      new Error("the worktree could not be removed"),
+    );
+
+    await act(async () => {
+      screen.getByText("Act").click();
+    });
+
+    expect(raised).toHaveLength(1);
+    expect(raised[0].detail ?? raised[0].summary).toContain(
+      "the worktree could not be removed",
+    );
+    // And nothing was drawn here, because here is not where failures are drawn.
+    expect(alert()).toBe("");
+  });
+
+  it("still draws it on the page that does have somewhere", () => {
+    const { raise } = mount();
+    // What main does with a handed-on failure: it goes out on `nativeError`,
+    // which is the same channel every failure main raises goes out on.
+    raise(failure("the worktree could not be removed"));
+    expect(alert()).toContain("the worktree could not be removed");
   });
 });

@@ -466,6 +466,17 @@ export interface DevhubApi {
 	 */
 	openModal(request: ModalRequest): Promise<string>;
 	/**
+	 * Hand a failure to main, so it is drawn where failures are drawn.
+	 *
+	 * The counterpart of `openModal`, and for the same reason. A page that
+	 * cannot show a thing does not show it badly: the overlay layer is taken
+	 * off screen the moment the last modal closes, which is exactly when a
+	 * sheet's action fails, so a failure held there is a failure nobody sees.
+	 * Main publishes it on `nativeError`, and the App Shell — the page that is
+	 * always on screen — draws it under the one lifetime rule there is.
+	 */
+	raiseFailure(error: AppError): Promise<void>;
+	/**
 	 * Take one modal off screen.
 	 *
 	 * `response` is the button a workbench's own question was answered with;
@@ -669,6 +680,8 @@ export const CHANNELS = {
 	 */
 	agentActionsChanged: "devhub:agent-actions-changed",
 	nativeError: "devhub:native-error",
+	/** A page handing main a failure it has no place to draw. */
+	raiseFailure: "devhub:raise-failure",
 	workspacePicker: "devhub:workspace-picker",
 	/** A menu command the page has to carry out itself, e.g. open the picker. */
 	menuCommand: "devhub:menu-command",
