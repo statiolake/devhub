@@ -71,6 +71,23 @@ export interface MetricsReport {
 	/** Every process's CPU added up, which is what a fan responds to. */
 	readonly totalCpuPercent: number;
 	readonly counters: CountersReading;
+	/**
+	 * The tmux clients attached to DevHub's socket.
+	 *
+	 * One per terminal on screen, and never more. A client is a terminal
+	 * somebody is looking at; one that outlived the terminal that showed it is
+	 * invisible in every other reading DevHub takes — it owns no window, and
+	 * the session it holds looks the same with or without it — so this is where
+	 * that leak becomes a number. Compare it with the terminals that are open:
+	 * a count that climbs across window reloads is clients being left behind.
+	 */
+	readonly terminalClients: readonly TerminalClientReading[];
+}
+
+/** One attached tmux client, as a reading names it. */
+export interface TerminalClientReading {
+	readonly tty: string;
+	readonly session: string;
 }
 
 export interface MetricsInput {
@@ -80,6 +97,7 @@ export interface MetricsInput {
 	readonly processMetrics: readonly ProcessMetricInput[];
 	readonly views: readonly ViewIdentity[];
 	readonly counters: CountersReading;
+	readonly terminalClients: readonly TerminalClientReading[];
 }
 
 /**
@@ -120,5 +138,6 @@ export function metricsReport(input: MetricsInput): MetricsReport {
 			0,
 		),
 		counters: input.counters,
+		terminalClients: input.terminalClients,
 	};
 }

@@ -6,7 +6,16 @@
  * the marker protocol belong to the terminal runtime and must not be spelled
  * anywhere else. So the integrated terminal does not run a shell: it runs this
  * launcher, which asks DevHub over the control socket (the `terminal-profile`
- * request) and runs the answer.
+ * request) and `exec`s the answer.
+ *
+ * `exec` is the whole of how a tmux client's lifetime is tied to its terminal.
+ * VS Code hangs up the pty when the terminal goes away, and a hangup reaches
+ * the process the pty is holding — so that process must be tmux itself. The
+ * asking runs as a child that has already exited by then (see
+ * `devhubTerminal.ts`), leaving nothing between the pty and the client. Anything
+ * left in between would make "the client dies with its terminal" depend on that
+ * process passing a signal along, and a client that survives its terminal is one
+ * nobody can see, close, or count.
  *
  * Why a file on disk rather than an extension-contributed profile. A
  * contributed profile is only a profile once the extension host has registered
@@ -75,11 +84,42 @@ export function terminalLauncherScript(
 		"# time it starts, which is why moving or updating the app needs nothing",
 		"# done to this file, and why a copy of it is a launcher for a DevHub that",
 		"# may no longer be there.",
-		`DEVHUB_CONTROL_SOCKET=${shellQuote(request.socketPath)} \\`,
+		"#",
+		"# Ask DevHub for the argv, then *become* it. The asking is a child, so",
+		"# that Node exits before tmux starts, and what VS Code's pty holds is the",
+		"# tmux client itself — the process a hangup has to reach. A tmux client",
+		"# that ran as a grandchild would outlive the pty whenever the process in",
+		"# between failed to pass the hangup on, and a client that outlives the",
+		"# terminal showing it is a client nobody can see or close.",
+		`devhub_argv=$(DEVHUB_CONTROL_SOCKET=${shellQuote(request.socketPath)} \\`,
 		"ELECTRON_RUN_AS_NODE=1 \\",
-		`exec ${shellQuote(request.execPath)} ${shellQuote(request.entryScript)} "$@"`,
+		`${shellQuote(request.execPath)} ${shellQuote(request.entryScript)} "$@") || exit $?`,
+		"# An empty answer with a zero status is not an answer. Without this the",
+		"# `exec` below would have no arguments, and a shell that execs nothing",
+		"# carries on reading its input — which is a bare shell on the pty, the",
+		"# one outcome this launcher exists to make impossible.",
+		'if [ -z "$devhub_argv" ]; then',
+		'\techo "devhub-terminal: DevHub answered without a command line." >&2',
+		"\texit 1",
+		"fi",
+		'eval "exec $devhub_argv"',
 		"",
 	].join("\n");
+}
+
+/**
+ * One shell word per argument, for the launcher to `exec`.
+ *
+ * The quoting is the launcher's own — `shellQuote` is what wrote the paths
+ * into the script above — so the argv crosses the one gap between DevHub and
+ * `/bin/sh` in the language the receiving side actually parses. Nothing here
+ * ever sees a word split on a space in a path.
+ */
+export function terminalCommandLine(command: {
+	readonly file: string;
+	readonly args: readonly string[];
+}): string {
+	return [command.file, ...command.args].map(shellQuote).join(" ");
 }
 
 /**

@@ -20,6 +20,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { createServer } from "node:net";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -29,6 +30,10 @@ import { nodePty, openPty, terminalEnvironment } from "../../out/test-terminal/m
 import { AttachmentManager } from "../../out/test-terminal/main/terminal/attachments.js";
 import { TerminalSurfaces } from "../../out/test-terminal/main/terminal/surfaces.js";
 import { TmuxTerminalRuntime } from "../../out/test-terminal/main/terminal/tmux.js";
+import {
+	installTerminalLauncher,
+	terminalLauncherPath,
+} from "../../out/test-terminal/main/terminal/launcher.js";
 import {
 	CancellationToken,
 	SCRATCH_TARGET,
@@ -376,5 +381,113 @@ test(
 		});
 		assert.equal(surfaces.attachmentCount, 0);
 		});
+	},
+);
+
+test(
+	"a tmux client does not outlive the terminal that showed it",
+	{ skip: TMUX === undefined ? "tmux is not installed" : false },
+	async (t) => {
+		// The launcher, end to end, on a real pty: a fake DevHub answers the
+		// `terminal-profile` request with an argv that attaches to a throwaway
+		// server, and the pty is then hung up on the way VS Code hangs one up
+		// when its terminal goes away. What must be true afterwards is the
+		// property the launcher's `exec` shape exists for — no client is left
+		// on the socket, and no process is left holding one.
+		const home = scratchDirectory("tmux-launcher");
+		const socket = `dhlaunch${process.pid}`;
+		t.after(() => {
+			try {
+				execFileSync(TMUX, ["-L", socket, "kill-server"], { stdio: "ignore" });
+			} catch {
+				// Not a swallow: no server on that socket is the goal.
+			}
+			rmSync(home, { recursive: true, force: true });
+		});
+
+		execFileSync(TMUX, [
+			"-L",
+			socket,
+			"new-session",
+			"-d",
+			"-s",
+			"scratch",
+			"/bin/sh",
+		]);
+
+		const controlSocket = join(home, "control.sock");
+		const answer = {
+			ok: true,
+			message: "tmux attach",
+			profile: {
+				file: TMUX,
+				args: ["-L", socket, "attach-session", "-t", "scratch"],
+			},
+		};
+		const devhub = createServer((connection) => {
+			connection.setEncoding("utf8");
+			connection.once("data", () => {
+				connection.end(`${JSON.stringify(answer)}\n`);
+			});
+		});
+		await new Promise((resolve) => devhub.listen(controlSocket, resolve));
+		t.after(() => devhub.close());
+
+		const launcher = installTerminalLauncher(
+			terminalLauncherPath(join(home, "user-data")),
+			{
+				execPath: process.execPath,
+				entryScript: fileURLToPath(
+					new URL("../../out/test-terminal/main/terminal/devhubTerminal.js", import.meta.url),
+				),
+				socketPath: controlSocket,
+			},
+		);
+
+		const clients = () =>
+			execFileSync(TMUX, ["-L", socket, "list-clients", "-F", "#{client_tty}"], {
+				encoding: "utf8",
+			})
+				.split("\n")
+				.filter(Boolean);
+		const until = async (want, what) => {
+			const stop = Date.now() + 20_000;
+			while (Date.now() < stop) {
+				if (want()) return;
+				await sleep(50);
+			}
+			throw new Error(`timed out waiting for ${what}`);
+		};
+
+		const terminal = openPty({
+			file: launcher,
+			args: [],
+			cwd: home,
+			cols: 80,
+			rows: 24,
+			pixelWidth: 0,
+			pixelHeight: 0,
+			env: terminalEnvironment(process.env),
+		});
+		let transcript = "";
+		terminal.onData((bytes) => {
+			transcript += Buffer.from(bytes).toString("utf8");
+		});
+		await until(() => clients().length === 1, `one client to attach: ${transcript}`);
+
+		// The pty's own child is the client. Nothing stands between the two, so
+		// there is nothing that has to pass the hangup on.
+		const holder = execFileSync(
+			"/bin/ps",
+			["-o", "command=", "-p", String(terminal.pid)],
+			{ encoding: "utf8" },
+		).trim();
+		assert.ok(
+			holder.startsWith(TMUX),
+			`the pty must hold tmux itself, not ${holder}`,
+		);
+
+		terminal.kill();
+		await until(() => clients().length === 0, "the client to go with its terminal");
 	},
 );

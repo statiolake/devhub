@@ -145,6 +145,11 @@ const MARKER_FORMAT =
 	[MARKER_RECORD, `#{${PROTOCOL_OPTION}}`]
 		.concat(Array.from({ length: SESSION_FIELDS.length - 2 }, () => ""))
 		.join(FIELD_SEPARATOR) + RECORD_SEPARATOR;
+/** Which of the two listings a record of `listClients` came from. */
+const CLIENT_RECORD = "client";
+/** One attached client: the tty it draws on and the session it is showing. */
+const CLIENT_FIELDS = [CLIENT_RECORD, "#{client_tty}", "#{client_session}"];
+const CLIENT_FORMAT = CLIENT_FIELDS.join(FIELD_SEPARATOR) + RECORD_SEPARATOR;
 /** Which of the two listings a record of `listWindowsAndPanes` came from. */
 const WINDOW_RECORD = "window";
 const PANE_RECORD = "pane";
@@ -265,6 +270,14 @@ export interface SessionInfo {
 	 * tmux that did not answer with one, which is read as "assume it changed".
 	 */
 	readonly activity: string | undefined;
+}
+
+/** One tmux client: a terminal on screen, attached to one session. */
+export interface ClientInfo {
+	/** The pty it draws on, which is the terminal VS Code opened. */
+	readonly tty: string;
+	/** The session it is showing. */
+	readonly session: string;
 }
 
 interface SessionSpec {
@@ -1923,6 +1936,49 @@ export class TmuxTerminalRuntime {
 			throw portFailure("failed");
 		}
 		return sessionsFrom(parseRecords(output.stdout, SESSION_FIELDS.length));
+	}
+
+	/**
+	 * Every attached client on the socket, which is every terminal on screen.
+	 *
+	 * A client is a terminal somebody is looking at, so this number is the one
+	 * fact that says whether clients are leaking: it must never exceed the
+	 * terminals that are open. A client that outlived its terminal is invisible
+	 * everywhere else — it holds no window of its own, and the session it
+	 * attached to looks exactly the same with it there — so counting them is
+	 * how the leak becomes something a person can see (`devhub --metrics`).
+	 *
+	 * No server means no clients, in the same shape `listSessions` gives no
+	 * sessions: an app that has not started a terminal yet is not a failure.
+	 */
+	async listClients(
+		socket: SocketName,
+		cancel: CancellationToken,
+		deadline: OperationDeadline,
+	): Promise<ClientInfo[]> {
+		const output = await this.runTmux(
+			socket,
+			["list-clients", "-F", CLIENT_FORMAT],
+			this.contextHome,
+			cancel,
+			deadline,
+		);
+		if (!output.success) {
+			if (isNoServerError(output.stderr)) return [];
+			throw portFailure("failed");
+		}
+		return parseRecords(output.stdout, CLIENT_FIELDS.length).map((record) => ({
+			tty: record[1] ?? "",
+			session: record[2] ?? "",
+		}));
+	}
+
+	/** The client list on the effective socket, for whoever is asking. */
+	async listClientsUnlocked(
+		cancel: CancellationToken,
+		deadline: OperationDeadline,
+	): Promise<ClientInfo[]> {
+		return this.listClients(this.socket(), cancel, deadline);
 	}
 
 	/**

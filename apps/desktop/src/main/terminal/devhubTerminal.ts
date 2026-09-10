@@ -4,7 +4,15 @@
  * The generated `devhub-terminal` script (see `launcher.ts`) runs this file
  * with the app's own Electron as Node, in the directory VS Code started the
  * terminal in. It asks DevHub which of its sessions that directory belongs to,
- * over the control socket, and becomes the argv that attaches to it.
+ * over the control socket, and prints the argv that attaches to it — one
+ * shell-quoted line on stdout, which the launcher `exec`s.
+ *
+ * Printing rather than running is what puts tmux itself on VS Code's pty. This
+ * process is dead by the time tmux starts, so there is no process between the
+ * pty and the client: when the terminal goes away the client is hung up on
+ * directly, and a tmux client can never outlive the terminal that showed it.
+ * Running tmux as a child here would put that guarantee behind this process
+ * relaying a signal it may not survive long enough to relay.
  *
  * There is no fallback. A DevHub that does not answer means this window has no
  * session to attach to, and the honest end of that is one line in the terminal
@@ -13,12 +21,11 @@
  * exactly the failure this launcher exists to make impossible.
  */
 
-import { spawn } from "node:child_process";
 import { connect } from "node:net";
 import { resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ControlResponse } from "../cli/protocol.js";
-import { terminalRoot } from "./launcher.js";
+import { terminalCommandLine, terminalRoot } from "./launcher.js";
 
 /**
  * Ask DevHub for the command line.
@@ -82,26 +89,19 @@ export async function resolveTerminalCommand(
 }
 
 /**
- * Run it, and exit the way it exited.
+ * Say what to run, and get out of the way.
  *
- * `stdio: "inherit"` hands tmux this terminal's pty itself, so the resizes,
- * the signals and the exit are the session's own rather than something
- * forwarded through here.
+ * stdout is the launcher's command substitution and carries nothing but the
+ * argv; the failure above goes to stderr, which is the pty, so a person reads
+ * it in the tab where the terminal should have been.
  */
 export async function main(): Promise<number> {
 	const command = await resolveTerminalCommand(
 		process.env["DEVHUB_CONTROL_SOCKET"],
 		process.cwd(),
 	);
-	return await new Promise<number>((resolve, reject) => {
-		const child = spawn(command.file, [...command.args], {
-			stdio: "inherit",
-		});
-		child.on("error", reject);
-		child.on("close", (code, signal) => {
-			resolve(signal === null ? (code ?? 0) : 128);
-		});
-	});
+	process.stdout.write(`${terminalCommandLine(command)}\n`);
+	return 0;
 }
 
 function messageOf(error: unknown): string {

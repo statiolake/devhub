@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { makeScratchDir, removeScratchDir } from "../../model/testScratch.js";
 import { resolveTerminalCommand } from "./devhubTerminal.js";
+import { terminalCommandLine } from "./launcher.js";
 
 /** A DevHub that answers one `terminal-profile` request, however it likes. */
 function answering(
@@ -81,6 +82,23 @@ describe("what a DevHub terminal runs", () => {
 		await expect(
 			resolveTerminalCommand(socketPath, "/work/gone"),
 		).rejects.toThrow("That workspace is not open in DevHub.");
+	});
+
+	// stdout is the launcher's command substitution: what it prints is what
+	// gets `exec`ed, so it has to be shell words and nothing else.
+	it("prints the argv as shell words for the launcher to exec", async () => {
+		server = await answering(socketPath, () => ({
+			ok: true,
+			message: "tmux attach",
+			profile: {
+				file: "/opt/tmux",
+				args: ["-L", "devhub", "attach-session", "-t", "ws one"],
+			},
+		}));
+		const command = await resolveTerminalCommand(socketPath, "/work/project");
+		expect(terminalCommandLine(command)).toBe(
+			"'/opt/tmux' '-L' 'devhub' 'attach-session' '-t' 'ws one'",
+		);
 	});
 
 	it("says which socket did not answer when DevHub is not running", async () => {

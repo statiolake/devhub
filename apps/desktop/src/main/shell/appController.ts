@@ -150,6 +150,7 @@ import {
 	type TerminalPreflight,
 } from "../terminal/ports.js";
 import { enclosingRoot } from "../terminal/launcher.js";
+import { OperationDeadline } from "../terminal/command.js";
 import { wireAgents } from "./agentWiring.js";
 import { AgentReconciler } from "./agentReconciler.js";
 import { MainServicesGate, type MainServices } from "./mainServices.js";
@@ -253,6 +254,17 @@ const NEEDS_PHRASE: Readonly<Record<Exclude<CommandNeeds, "nothing">, string>> =
 
 /** More rounds than any real chain needs, and fewer than a cycle survives. */
 const MAX_DRAIN_ROUNDS = 512;
+
+/**
+ * How long `--metrics` waits for tmux to list its clients.
+ *
+ * A reading is something a person takes while wondering what DevHub is doing,
+ * so it must come back even when tmux is the thing that is wedged. Short, and
+ * the failure is a failure — a reading that quietly left the client count out
+ * would read as "no clients", which is the answer this number exists to
+ * distinguish from.
+ */
+const METRICS_CLIENT_TIMEOUT_MS = 2_000;
 
 /** A crash loop is a bug to report, not a thing to keep feeding. */
 const MAX_EDITOR_RESTARTS = 5;
@@ -3131,6 +3143,19 @@ export class AppController {
 				onScreen: view.id === onScreen,
 			}));
 		const cpu = process.cpuUsage();
+		// A terminal DevHub cannot reach has no clients to report, which is a
+		// different sentence from "none are attached" only to a reader who has
+		// one — and a reading taken before the runtime is up is the first of
+		// those. Anything else the runtime says goes up: a socket that will not
+		// answer is a fact about DevHub, and `--metrics` is where facts about
+		// DevHub are read.
+		const wiring = this.terminalsWiring;
+		const terminalClients = wiring?.runtime.adapterAvailable
+			? await wiring.runtime.listClientsUnlocked(
+					new CancellationToken(),
+					OperationDeadline.in(METRICS_CLIENT_TIMEOUT_MS),
+				)
+			: [];
 		return JSON.stringify(
 			metricsReport({
 				takenAt: Date.now(),
@@ -3142,6 +3167,7 @@ export class AppController {
 				processMetrics: electron.app.getAppMetrics(),
 				views,
 				counters: activityCounters.read(),
+				terminalClients,
 			}),
 			null,
 			2,

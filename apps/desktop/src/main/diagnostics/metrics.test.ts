@@ -41,6 +41,7 @@ describe("metricsReport", () => {
 			processMetrics: [metric(1, "Browser", 2), metric(7, "Tab", 5)],
 			views: [view(7, 42, "workspace:one", true)],
 			counters: noCounters,
+			terminalClients: [],
 		});
 
 		expect(report.processes.map((one) => one.pid)).toEqual([7, 1]);
@@ -62,6 +63,7 @@ describe("metricsReport", () => {
 			],
 			views: [],
 			counters: noCounters,
+			terminalClients: [],
 		});
 		expect(report.processes.map((one) => one.cpuPercent)).toEqual([9, 3, 0.5]);
 		expect(report.totalCpuPercent).toBeCloseTo(12.5);
@@ -78,6 +80,7 @@ describe("metricsReport", () => {
 				view(7, 2, "workspace:shown", true),
 			],
 			counters: noCounters,
+			terminalClients: [],
 		});
 		expect(report.processes[0]?.workbench?.surfaceKey).toBe("workspace:shown");
 	});
@@ -96,10 +99,36 @@ describe("metricsReport", () => {
 			processMetrics: [],
 			views: [],
 			counters,
+			terminalClients: [],
 		});
 		expect(report.takenAt).toBe("2026-01-02T03:04:05.000Z");
 		expect(report.mainProcessCpu).toEqual({ userMs: 12_000, systemMs: 8_000 });
 		expect(report.counters).toEqual(counters);
 		expect(report.totalCpuPercent).toBe(0);
+	});
+});
+
+describe("the tmux clients a reading carries", () => {
+	// The count is the whole point: one client per terminal on screen, and a
+	// reading that shows more is a client that outlived its terminal.
+	it("reports every attached client, so a leak has somewhere to show", () => {
+		const report = metricsReport({
+			takenAt: 0,
+			uptimeMs: 0,
+			mainProcessCpu: noCpu,
+			processMetrics: [],
+			views: [],
+			counters: noCounters,
+			terminalClients: [
+				{ tty: "/dev/ttys001", session: "scratch" },
+				{ tty: "/dev/ttys002", session: "ws-abc" },
+			],
+		});
+
+		expect(report.terminalClients).toHaveLength(2);
+		expect(report.terminalClients[0]).toEqual({
+			tty: "/dev/ttys001",
+			session: "scratch",
+		});
 	});
 });

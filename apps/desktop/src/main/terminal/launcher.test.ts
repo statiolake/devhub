@@ -1,10 +1,12 @@
-import { readFileSync, statSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { makeScratchDir, removeScratchDir } from "../../model/testScratch.js";
 import {
 	installTerminalLauncher,
 	terminalLauncherPath,
+	terminalCommandLine,
 	terminalLauncherScript,
 	terminalRoot,
 	enclosingRoot,
@@ -47,8 +49,74 @@ describe("the DevHub terminal launcher", () => {
 		expect(script).toContain(`DEVHUB_CONTROL_SOCKET='${request.socketPath}'`);
 		expect(script).toContain("ELECTRON_RUN_AS_NODE=1");
 		expect(script).toContain(
-			`exec '${request.execPath}' '${request.entryScript}' "$@"`,
+			`'${request.execPath}' '${request.entryScript}' "$@")`,
 		);
+	});
+
+	// The one property the whole launcher exists to have: what VS Code's pty
+	// holds is tmux, so hanging up the pty hangs up the client. Asking DevHub
+	// is a command substitution — a child that has exited by then — and the
+	// answer is `exec`ed, never run.
+	it("becomes the command DevHub answers with rather than running it", () => {
+		const script = terminalLauncherScript(request);
+		expect(script).toContain('eval "exec $devhub_argv"');
+		expect(script).toMatch(/devhub_argv=\$\(/);
+	});
+
+	// A shell that execs nothing does not exit; it reads its input, which on a
+	// pty is a bare shell wearing the terminal's name.
+	it("refuses to exec nothing when the answer is empty", () => {
+		expect(terminalLauncherScript(request)).toContain('if [ -z "$devhub_argv"');
+	});
+
+	it("quotes the argv it hands the shell, one word per argument", () => {
+		expect(
+			terminalCommandLine({
+				file: "/opt/tmux",
+				args: ["-L", "devhub", "attach-session", "-t", "ws with space"],
+			}),
+		).toBe("'/opt/tmux' '-L' 'devhub' 'attach-session' '-t' 'ws with space'");
+	});
+
+	// Not a reading of the script but a run of it: the process that ends up
+	// running the answer is the launcher's own, which is what "the pty holds
+	// tmux" means when VS Code is the one holding the pty.
+	it("leaves no process of its own between the caller and the answer", () => {
+		const fakeApp = join(scratch, "DevHub");
+		// Stands in for Electron-as-Node: it prints one shell-quoted argv, and
+		// that argv reports the pid of the process it ends up running as.
+		writeFileSync(
+			fakeApp,
+			"#!/bin/sh\necho \"'/bin/sh' '-c' 'echo \\$\\$'\"\n",
+			{
+				mode: 0o755,
+			},
+		);
+		const path = installTerminalLauncher(
+			terminalLauncherPath(join(scratch, "user-data")),
+			{ ...request, execPath: fakeApp },
+		);
+		const output = execFileSync(
+			"/bin/sh",
+			["-c", 'echo "$$"; exec "$1"', "sh", path],
+			{ encoding: "utf8" },
+		)
+			.trim()
+			.split("\n");
+		expect(output).toHaveLength(2);
+		expect(output[1]).toBe(output[0]);
+	});
+
+	it("stops with what DevHub said when DevHub answers with nothing", () => {
+		const fakeApp = join(scratch, "DevHub");
+		writeFileSync(fakeApp, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+		const path = installTerminalLauncher(
+			terminalLauncherPath(join(scratch, "user-data")),
+			{ ...request, execPath: fakeApp },
+		);
+		const result = spawnSync(path, { encoding: "utf8" });
+		expect(result.status).toBe(1);
+		expect(result.stderr).toContain("without a command line");
 	});
 
 	it("is rewritten rather than appended to, so a moved app leaves no stale paths", () => {
