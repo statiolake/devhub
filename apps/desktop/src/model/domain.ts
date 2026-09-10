@@ -290,7 +290,13 @@ export class Repository {
  * live pane with a `?` for a status, which is exactly what attaching an editor
  * or a plain command should get you.
  */
-export type AgentProfileKind = "codex" | "claude" | "cursor" | "custom";
+export const AGENT_PROFILE_KINDS = [
+  "codex",
+  "claude",
+  "cursor",
+  "custom",
+] as const;
+export type AgentProfileKind = (typeof AGENT_PROFILE_KINDS)[number];
 
 export function validDisplayName(value: string): boolean {
   return value.trim().length > 0 && !value.includes("\0");
@@ -382,7 +388,14 @@ export class AgentProfile {
  * somebody who deliberately attached a plain command that something is wrong;
  * folding it into `idle` would claim a reading nobody took.
  */
-export type AgentStatus = "working" | "waiting" | "idle" | "error" | "unknown";
+export const AGENT_STATUSES = [
+  "working",
+  "waiting",
+  "idle",
+  "error",
+  "unknown",
+] as const;
+export type AgentStatus = (typeof AGENT_STATUSES)[number];
 
 /**
  * Why an Agent is owed a look, expressed as the status that earned it.
@@ -419,28 +432,32 @@ export type UnreadReason = AgentStatus;
 export function agentIsIdle(status: AgentStatus): boolean {
   return status === "idle";
 }
-export type RuntimeHealth =
-  | "starting"
-  | "healthy"
-  | "degraded"
-  | "unavailable"
-  | "failed";
+export const RUNTIME_HEALTHS = [
+  "starting",
+  "healthy",
+  "degraded",
+  "unavailable",
+  "failed",
+] as const;
+export type RuntimeHealth = (typeof RUNTIME_HEALTHS)[number];
 
 /**
  * Why a Workspace is unavailable, or cannot finish cleanup. These are the only
  * diagnostics the UI ever renders.
  */
-export type DiagnosticCode =
-  | "root_missing"
-  | "root_inaccessible"
-  | "close_agents_unknown"
-  | "close_terminal_unknown"
-  | "close_editor_unknown"
-  | "close_editor_starting"
-  | "close_editor_unresponsive"
-  | "close_editor_vetoed"
-  | "cleanup_failed"
-  | "runtime_unavailable";
+export const DIAGNOSTIC_CODES = [
+  "root_missing",
+  "root_inaccessible",
+  "close_agents_unknown",
+  "close_terminal_unknown",
+  "close_editor_unknown",
+  "close_editor_starting",
+  "close_editor_unresponsive",
+  "close_editor_vetoed",
+  "cleanup_failed",
+  "runtime_unavailable",
+] as const;
+export type DiagnosticCode = (typeof DIAGNOSTIC_CODES)[number];
 
 /** Product-level control lifecycle, independent of status and health. */
 export type AgentControlState =

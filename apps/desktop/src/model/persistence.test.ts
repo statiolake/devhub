@@ -23,6 +23,7 @@ import {
   stateFromSnapshot,
   STATE_SCHEMA_VERSION,
   validateState,
+  type LoadMetadata,
   type PersistedAppState,
 } from "./persistence.js";
 import { makeScratchDir, removeScratchDir } from "./testScratch.js";
@@ -475,12 +476,10 @@ describe("store", () => {
     await writeFile(path, JSON.stringify(legacy), { mode: 0o600 });
     const load = await new JsonStateStore(path).loadState();
     expect(load.metadata.migrated).toBe(true);
-    // The retired field is not read, and the new one defaults rather than
-    // making an old file unloadable.
-    expect(load.state.navigation).toEqual({
-      context: { kind: "global" },
-      activity: "terminal",
-    });
+    // The retired field is not read — the decoder keeps what this build reads
+    // and nothing else — and the new one defaults rather than making an old
+    // file unloadable.
+    expect(load.state.navigation).toEqual({ context: { kind: "global" } });
     expect(load.state.split.ratio).toBe(SPLIT_DEFAULT_RATIO);
   });
 
@@ -552,5 +551,126 @@ describe("store", () => {
     const merged = applySnapshot(freshState(), model.snapshot());
     expect(merged.sidebar.width).toBe(321);
     expect(merged.split.ratio).toBe(0.7);
+  });
+});
+
+/**
+ * The state file is bytes, and this is where they become typed values.
+ *
+ * Every case here used to be accepted: `object["sidebar"] as SidebarState` is
+ * an assertion, not a check, so `"width": "300"` passed the range test that
+ * follows it — `"300" < 200` and `"300" > 400` are both false — and reached
+ * the model and the wire as a string. `"status": "banana"` hydrated into an
+ * Agent whose row drew nothing, arbitrarily far from the file that caused it.
+ */
+describe("decoding the state file", () => {
+  let directory: string;
+  let path: string;
+
+  beforeEach(() => {
+    directory = makeScratchDir("decode");
+    path = join(directory, "state.json");
+  });
+
+  afterEach(() => {
+    removeScratchDir(directory);
+  });
+
+  /** A good file with one thing changed, loaded, and what the load said. */
+  async function loadWith(
+    mutate: (document: Record<string, unknown>) => void,
+  ): Promise<LoadMetadata & { readonly state: PersistedAppState }> {
+    const good = stateFromSnapshot(populatedModel().snapshot());
+    const document = JSON.parse(JSON.stringify(good)) as Record<
+      string,
+      unknown
+    >;
+    mutate(document);
+    await writeFile(path, JSON.stringify(document), { mode: 0o600 });
+    const load = await new JsonStateStore(path).loadState();
+    return { ...load.metadata, state: load.state };
+  }
+
+  function firstAgent(
+    document: Record<string, unknown>,
+  ): Record<string, unknown> {
+    const workspaces = document["workspaces"] as Record<string, unknown>[];
+    return (workspaces[0]["agents"] as Record<string, unknown>[])[0];
+  }
+
+  it("refuses a value that is not a member of its enum, and says which", async () => {
+    const load = await loadWith((document) => {
+      firstAgent(document)["status"] = "banana";
+    });
+    expect(load.recoveryReason).toBe("corrupt_primary");
+    expect(load.corruptionDetail).toContain("workspaces[0].agents[0].status");
+    expect(load.corruptionDetail).toContain('"banana"');
+    expect(load.corruptionDetail).toContain("working");
+  });
+
+  it("refuses a number written as a string, before anything compares it", async () => {
+    // The whole bug: `"300"` is inside the sidebar's range because neither
+    // comparison against a string is true.
+    const load = await loadWith((document) => {
+      document["sidebar"] = { width: "300" };
+    });
+    expect(load.recoveryReason).toBe("corrupt_primary");
+    expect(load.corruptionDetail).toContain("sidebar.width");
+    expect(load.corruptionDetail).toContain("a number");
+    expect(load.corruptionDetail).toContain('"300"');
+  });
+
+  it("refuses a required field that is not there", async () => {
+    const load = await loadWith((document) => {
+      const workspaces = document["workspaces"] as Record<string, unknown>[];
+      delete workspaces[0]["lifecycle"];
+    });
+    expect(load.recoveryReason).toBe("corrupt_primary");
+    expect(load.corruptionDetail).toContain("workspaces[0].lifecycle");
+    expect(load.corruptionDetail).toContain("nothing");
+  });
+
+  it("refuses an unknown tag on a union the model owns", async () => {
+    const load = await loadWith((document) => {
+      firstAgent(document)["control_state"] = { kind: "exploded" };
+    });
+    expect(load.corruptionDetail).toContain(
+      "workspaces[0].agents[0].control_state.kind",
+    );
+    expect(load.corruptionDetail).toContain("stop_failed");
+  });
+
+  it("decodes an optional field once, into the type the model uses", async () => {
+    // `unread: true` is the old spelling of "waiting", and it is translated
+    // here rather than travelling as a boolean and being translated later.
+    const load = await loadWith((document) => {
+      firstAgent(document)["unread"] = true;
+      // Looking at an Agent is what clears its mark, so look elsewhere.
+      document["navigation"] = { context: { kind: "global" } };
+    });
+    expect(load.recoveryReason).toBeUndefined();
+    const agent = hydrateModel(load.state, []).snapshot().workspaces[0]
+      .agents[0];
+    expect(agent.unread).toBe("waiting");
+
+    const bad = await loadWith((document) => {
+      firstAgent(document)["unread"] = "banana";
+    });
+    expect(bad.corruptionDetail).toContain("workspaces[0].agents[0].unread");
+  });
+
+  it("ignores keys this build has no use for, and drops them", async () => {
+    // The policy, and it is deliberate: `navigation.activity`, `issue_url` and
+    // `sidebar.expanded` are all fields a past DevHub wrote. Refusing them
+    // would make every key ever retired a file this build cannot open.
+    const load = await loadWith((document) => {
+      document["nonsense"] = 1;
+      document["sidebar"] = { width: 321, expanded: false };
+      const workspaces = document["workspaces"] as Record<string, unknown>[];
+      workspaces[0]["issue_url"] = "https://example.invalid/1";
+    });
+    expect(load.recoveryReason).toBeUndefined();
+    expect(load.state.sidebar).toEqual({ width: 321 });
+    expect(load.state.workspaces[0]).not.toHaveProperty("issue_url");
   });
 });

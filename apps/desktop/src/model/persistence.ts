@@ -9,7 +9,9 @@
  *   file that parsed, so a crash mid-write cannot lose the previous state;
  * - a corrupt file is quarantined rather than deleted, and the load says so;
  * - a file from a newer schema is an error, never a silent downgrade;
- * - the whole document is validated before any of it is adopted.
+ * - the whole document is *decoded* before any of it is adopted: every enum
+ *   checked for membership and every number checked for being one, so nothing
+ *   the file says reaches the model as a shape the model does not have.
  *
  * The `tmux` section is what makes a terminal outlive the app. A DevHub
  * terminal is a client attached to a tmux session on DevHub's own socket, so
@@ -32,6 +34,10 @@ import { dirname, join } from "node:path";
 import {
   Agent,
   AgentProfile,
+  AGENT_PROFILE_KINDS,
+  AGENT_STATUSES,
+  DIAGNOSTIC_CODES,
+  RUNTIME_HEALTHS,
   agentProfileId as parseAgentProfileId,
   agentId as parseAgentId,
   workspaceId as parseWorkspaceId,
@@ -45,6 +51,7 @@ import {
   Workspace,
   workspaceRoot,
   type AgentControlState,
+  type DiagnosticCode,
   type AgentProfileKind,
   type AgentStatus,
   type UnreadReason,
@@ -164,6 +171,15 @@ export type StateOrigin = "primary" | "backup" | "fresh";
 export interface LoadMetadata {
   readonly origin: StateOrigin;
   readonly recoveryReason?: RecoveryReason;
+  /**
+   * Why the primary file would not load, in the words a person can act on.
+   *
+   * Present exactly when a file was refused: which field it was and what was
+   * in it. `recoveryReason` says *that* the file was rejected; this says what
+   * was wrong with it, and without it a quarantined state file is a session
+   * that vanished for no stated reason.
+   */
+  readonly corruptionDetail?: string;
   readonly primaryQuarantined: boolean;
   readonly backupQuarantined: boolean;
   readonly migrated: boolean;
@@ -201,17 +217,14 @@ export type PersistedAgentControlState =
   | { kind: "stopping" }
   | { kind: "stop_failed"; diagnostic: PersistedDiagnosticCode };
 
-export type PersistedDiagnosticCode =
-  | "root_missing"
-  | "root_inaccessible"
-  | "close_agents_unknown"
-  | "close_terminal_unknown"
-  | "close_editor_unknown"
-  | "close_editor_starting"
-  | "close_editor_unresponsive"
-  | "close_editor_vetoed"
-  | "cleanup_failed"
-  | "runtime_unavailable";
+/**
+ * The same list as the model's, and now literally the same list.
+ *
+ * It was spelled out twice — once here and once as `DiagnosticCode` — and the
+ * decoder needs a membership list, which is exactly the thing two copies of a
+ * union cannot safely provide.
+ */
+export type PersistedDiagnosticCode = DiagnosticCode;
 
 export interface PersistedCleanupProgress {
   agents_closed: number;
@@ -1231,60 +1244,643 @@ async function readCandidate(path: string): Promise<Candidate> {
   }
 }
 
-type DecodeFailure = "corrupt" | "newer_version";
+// ---------------------------------------------------------------- decoding
 
-function decodeState(
-  bytes: Buffer,
-): { state: PersistedAppState; migrated: boolean } | DecodeFailure {
+/**
+ * Where untyped bytes become typed values, and the only place they do.
+ *
+ * Everything below `decodeState` used to be `as`: `object["sidebar"] as
+ * SidebarState` asserted a shape nothing had checked, and the checks that
+ * follow are written against the types those assertions claimed. So
+ * `"width": "300"` passed `"300" < 200 || "300" > 400` — both false — and
+ * reached the model and the wire as a string; `"status": "banana"` hydrated
+ * into an Agent whose row drew nothing, arbitrarily far from the file that
+ * caused it.
+ *
+ * The rule here: a decoder that returns `AgentStatus` rejects everything that
+ * is not one, and a field typed `number` is `typeof`-checked before anybody
+ * compares it. Ranges stay in `validateState` — it already owns them, and one
+ * owner per fact is the point — so a decoded document is *well-typed*, and
+ * `validateState` then says whether it is *well-formed*.
+ *
+ * Unknown keys are ignored, deliberately and as before: `navigation.activity`,
+ * `sidebar.expanded` and `issue_url` are all fields a past DevHub wrote and
+ * this one has no use for, and refusing them would make every retired key a
+ * file this build cannot open. What is *present* under a key this build reads
+ * has to be what that key means.
+ *
+ * A refusal names the path and the value, and travels as the `cause` of a
+ * `STATE_INVALID` — which `StateError.describe` already renders next to the
+ * file name, so the person reading the alert is told which field it was.
+ */
+
+/** The offending value, said back short enough to read in one line. */
+function render(value: unknown): string {
+  if (value === undefined) return "nothing";
+  let text: string;
+  try {
+    text = JSON.stringify(value) ?? String(value);
+  } catch {
+    text = String(value);
+  }
+  return text.length > 60 ? `${text.slice(0, 57)}...` : text;
+}
+
+function refuse(where: string, expected: string, value: unknown): never {
+  throw new StateError("STATE_INVALID", {
+    cause: new Error(
+      `${where} should be ${expected}, and the file has ${render(value)}`,
+    ),
+  });
+}
+
+function decodeObject(where: string, value: unknown): Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    refuse(where, "an object", value);
+  }
+  return value as Record<string, unknown>;
+}
+
+function decodeArray(where: string, value: unknown): readonly unknown[] {
+  if (!Array.isArray(value)) refuse(where, "an array", value);
+  return value;
+}
+
+function decodeString(where: string, value: unknown): string {
+  if (typeof value !== "string") refuse(where, "a string", value);
+  return value;
+}
+
+function decodeNumber(where: string, value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    refuse(where, "a number", value);
+  }
+  return value;
+}
+
+function decodeBoolean(where: string, value: unknown): boolean {
+  if (typeof value !== "boolean") refuse(where, "true or false", value);
+  return value;
+}
+
+function decodeMember<T extends string>(
+  where: string,
+  value: unknown,
+  allowed: readonly T[],
+): T {
+  if (
+    typeof value !== "string" ||
+    !(allowed as readonly string[]).includes(value)
+  ) {
+    refuse(where, `one of ${allowed.join(", ")}`, value);
+  }
+  return value as T;
+}
+
+/** A key that may be absent, decoded once into the model's own type. */
+function decodeOptional<T>(
+  value: unknown,
+  decode: (value: unknown) => T,
+): T | undefined {
+  return value === undefined || value === null ? undefined : decode(value);
+}
+
+function decodeStringArray(where: string, value: unknown): string[] {
+  return decodeArray(where, value).map((entry, index) =>
+    decodeString(`${where}[${index}]`, entry),
+  );
+}
+
+function decodeStringMap(
+  where: string,
+  value: unknown,
+): Record<string, string> {
+  const object = decodeObject(where, value);
+  const out: Record<string, string> = {};
+  for (const [key, entry] of Object.entries(object)) {
+    out[key] = decodeString(`${where}.${key}`, entry);
+  }
+  return out;
+}
+
+const CONTROL_STATE_KINDS = ["running", "stopping", "stop_failed"] as const;
+const LIFECYCLE_KINDS = [
+  "available",
+  "unavailable",
+  "closing",
+  "closing_failed",
+] as const;
+const NAVIGATION_KINDS = ["global", "workspace", "agent"] as const;
+const OWNED_SESSION_KINDS = ["scratch", "workspace"] as const;
+const CLEANUP_SESSION_STATUSES = [
+  "pending",
+  "completed",
+  "failed",
+  "conflict",
+] as const;
+const RECREATION_SESSION_STATUSES = ["pending", "completed", "failed"] as const;
+const SOCKET_TARGET_PREFLIGHT_STATES = [
+  "not_checked",
+  "target_absent",
+  "target_devhub_empty",
+  "wrong_marker",
+  "marked_sessions",
+] as const;
+const SOCKET_TRANSITION_KINDS = [
+  "stable",
+  "pending",
+  "cleaning_old",
+  "old_cleaned",
+  "recreation_pending",
+] as const;
+
+function decodeDiagnostic(
+  where: string,
+  value: unknown,
+): PersistedDiagnosticCode {
+  return decodeMember(where, value, DIAGNOSTIC_CODES);
+}
+
+function decodeCleanupProgress(
+  where: string,
+  value: unknown,
+): PersistedCleanupProgress {
+  const object = decodeObject(where, value);
+  return {
+    agents_closed: decodeNumber(
+      `${where}.agents_closed`,
+      object["agents_closed"],
+    ),
+    agents_step_completed: decodeBoolean(
+      `${where}.agents_step_completed`,
+      object["agents_step_completed"],
+    ),
+    terminal_closed: decodeBoolean(
+      `${where}.terminal_closed`,
+      object["terminal_closed"],
+    ),
+    editor_closed: decodeBoolean(
+      `${where}.editor_closed`,
+      object["editor_closed"],
+    ),
+  };
+}
+
+function decodeControlState(
+  where: string,
+  value: unknown,
+): PersistedAgentControlState {
+  const object = decodeObject(where, value);
+  const kind = decodeMember(
+    `${where}.kind`,
+    object["kind"],
+    CONTROL_STATE_KINDS,
+  );
+  return kind === "stop_failed"
+    ? {
+        kind,
+        diagnostic: decodeDiagnostic(
+          `${where}.diagnostic`,
+          object["diagnostic"],
+        ),
+      }
+    : { kind };
+}
+
+/** See `AgentStateRecord.unread`: `true` is the old spelling of "waiting". */
+function decodeUnread(where: string, value: unknown): UnreadReason | boolean {
+  if (typeof value === "boolean") return value;
+  return decodeMember(where, value, AGENT_STATUSES);
+}
+
+function decodeAgentRecord(where: string, value: unknown): AgentStateRecord {
+  const object = decodeObject(where, value);
+  const at = (key: string): string => `${where}.${key}`;
+  return {
+    agent_id: decodeString(at("agent_id"), object["agent_id"]),
+    workspace_id: decodeString(at("workspace_id"), object["workspace_id"]),
+    profile_id: decodeString(at("profile_id"), object["profile_id"]),
+    profile_kind: decodeOptional(object["profile_kind"], (entry) =>
+      decodeMember(at("profile_kind"), entry, AGENT_PROFILE_KINDS),
+    ),
+    profile_display_name: decodeOptional(
+      object["profile_display_name"],
+      (entry) => decodeString(at("profile_display_name"), entry),
+    ),
+    profile_command: decodeOptional(object["profile_command"], (entry) =>
+      decodeString(at("profile_command"), entry),
+    ),
+    profile_args: decodeOptional(object["profile_args"], (entry) =>
+      decodeStringArray(at("profile_args"), entry),
+    ),
+    profile_env: decodeOptional(object["profile_env"], (entry) =>
+      decodeStringMap(at("profile_env"), entry),
+    ),
+    ordinal: decodeNumber(at("ordinal"), object["ordinal"]),
+    temporary_name: decodeOptional(object["temporary_name"], (entry) =>
+      decodeString(at("temporary_name"), entry),
+    ),
+    status: decodeMember(at("status"), object["status"], AGENT_STATUSES),
+    unread: decodeOptional(object["unread"], (entry) =>
+      decodeUnread(at("unread"), entry),
+    ),
+    runtime_health: decodeMember(
+      at("runtime_health"),
+      object["runtime_health"],
+      RUNTIME_HEALTHS,
+    ),
+    control_state: decodeControlState(
+      at("control_state"),
+      object["control_state"],
+    ),
+    provider_mapping: decodeOptional(object["provider_mapping"], (entry) =>
+      decodeString(at("provider_mapping"), entry),
+    ),
+  };
+}
+
+function decodeLifecycle(
+  where: string,
+  value: unknown,
+): WorkspaceLifecycleRecord {
+  const object = decodeObject(where, value);
+  const kind = decodeMember(`${where}.kind`, object["kind"], LIFECYCLE_KINDS);
+  switch (kind) {
+    case "available":
+      return { kind };
+    case "unavailable":
+      return {
+        kind,
+        reason: decodeDiagnostic(`${where}.reason`, object["reason"]),
+      };
+    case "closing":
+      return {
+        kind,
+        progress: decodeCleanupProgress(
+          `${where}.progress`,
+          object["progress"],
+        ),
+      };
+    case "closing_failed":
+      return {
+        kind,
+        diagnostic: decodeDiagnostic(
+          `${where}.diagnostic`,
+          object["diagnostic"],
+        ),
+        progress: decodeCleanupProgress(
+          `${where}.progress`,
+          object["progress"],
+        ),
+      };
+  }
+}
+
+function decodeWorkspaceRecord(
+  where: string,
+  value: unknown,
+): WorkspaceStateRecord {
+  const object = decodeObject(where, value);
+  const at = (key: string): string => `${where}.${key}`;
+  return {
+    workspace_id: decodeString(at("workspace_id"), object["workspace_id"]),
+    selected_path: decodeString(at("selected_path"), object["selected_path"]),
+    canonical_path: decodeString(
+      at("canonical_path"),
+      object["canonical_path"],
+    ),
+    repository_id: decodeOptional(object["repository_id"], (entry) =>
+      decodeString(at("repository_id"), entry),
+    ),
+    last_agent_id: decodeOptional(object["last_agent_id"], (entry) =>
+      decodeString(at("last_agent_id"), entry),
+    ),
+    lifecycle: decodeLifecycle(at("lifecycle"), object["lifecycle"]),
+    agents: decodeArray(at("agents"), object["agents"]).map((entry, index) =>
+      decodeAgentRecord(`${at("agents")}[${index}]`, entry),
+    ),
+  };
+}
+
+function decodeNavigation(where: string, value: unknown): NavigationState {
+  const object = decodeObject(where, value);
+  const context = decodeObject(`${where}.context`, object["context"]);
+  const kind = decodeMember(
+    `${where}.context.kind`,
+    context["kind"],
+    NAVIGATION_KINDS,
+  );
+  switch (kind) {
+    case "global":
+      return { context: { kind } };
+    case "workspace":
+      return {
+        context: {
+          kind,
+          workspace_id: decodeString(
+            `${where}.context.workspace_id`,
+            context["workspace_id"],
+          ),
+        },
+      };
+    case "agent":
+      return {
+        context: {
+          kind,
+          agent_id: decodeString(
+            `${where}.context.agent_id`,
+            context["agent_id"],
+          ),
+        },
+      };
+  }
+}
+
+function decodeOwnedSession(where: string, value: unknown): OwnedSessionRecord {
+  const object = decodeObject(where, value);
+  const kind = decodeMember(
+    `${where}.kind`,
+    object["kind"],
+    OWNED_SESSION_KINDS,
+  );
+  const sessionName = decodeString(
+    `${where}.session_name`,
+    object["session_name"],
+  );
+  return kind === "scratch"
+    ? { kind, session_name: sessionName }
+    : {
+        kind,
+        workspace_id: decodeString(
+          `${where}.workspace_id`,
+          object["workspace_id"],
+        ),
+        session_name: sessionName,
+      };
+}
+
+function decodeOwnedSessions(
+  where: string,
+  value: unknown,
+): OwnedSessionRecord[] {
+  return decodeArray(where, value).map((entry, index) =>
+    decodeOwnedSession(`${where}[${index}]`, entry),
+  );
+}
+
+function decodeSessionStatuses<T extends string>(
+  where: string,
+  value: unknown,
+  allowed: readonly T[],
+): { session: OwnedSessionRecord; status: T }[] {
+  return decodeArray(where, value).map((entry, index) => {
+    const at = `${where}[${index}]`;
+    const object = decodeObject(at, entry);
+    return {
+      session: decodeOwnedSession(`${at}.session`, object["session"]),
+      status: decodeMember(`${at}.status`, object["status"], allowed),
+    };
+  });
+}
+
+function decodeTransition(
+  where: string,
+  value: unknown,
+): SocketTransitionState {
+  const object = decodeObject(where, value);
+  const at = (key: string): string => `${where}.${key}`;
+  const kind = decodeMember(
+    at("kind"),
+    object["kind"],
+    SOCKET_TRANSITION_KINDS,
+  );
+  switch (kind) {
+    case "stable":
+      return { kind };
+    case "pending":
+      return {
+        kind,
+        requested_socket_name: decodeString(
+          at("requested_socket_name"),
+          object["requested_socket_name"],
+        ),
+        required: decodeOwnedSessions(at("required"), object["required"]),
+        preflight: decodeMember(
+          at("preflight"),
+          object["preflight"],
+          SOCKET_TARGET_PREFLIGHT_STATES,
+        ),
+        verified_old_sessions: decodeOptional(
+          object["verified_old_sessions"],
+          (entry) => decodeOwnedSessions(at("verified_old_sessions"), entry),
+        ),
+      };
+    case "cleaning_old":
+      return {
+        kind,
+        old_socket_name: decodeString(
+          at("old_socket_name"),
+          object["old_socket_name"],
+        ),
+        requested_socket_name: decodeString(
+          at("requested_socket_name"),
+          object["requested_socket_name"],
+        ),
+        required: decodeOwnedSessions(at("required"), object["required"]),
+        target_preflight: decodeMember(
+          at("target_preflight"),
+          object["target_preflight"],
+          SOCKET_TARGET_PREFLIGHT_STATES,
+        ),
+        sessions: decodeSessionStatuses(
+          at("sessions"),
+          object["sessions"],
+          CLEANUP_SESSION_STATUSES,
+        ),
+      };
+    case "old_cleaned":
+      return {
+        kind,
+        old_socket_name: decodeString(
+          at("old_socket_name"),
+          object["old_socket_name"],
+        ),
+        new_socket_name: decodeString(
+          at("new_socket_name"),
+          object["new_socket_name"],
+        ),
+        required: decodeOwnedSessions(at("required"), object["required"]),
+      };
+    case "recreation_pending":
+      return {
+        kind,
+        effective_socket_name: decodeString(
+          at("effective_socket_name"),
+          object["effective_socket_name"],
+        ),
+        required: decodeOwnedSessions(at("required"), object["required"]),
+        sessions: decodeSessionStatuses(
+          at("sessions"),
+          object["sessions"],
+          RECREATION_SESSION_STATUSES,
+        ),
+      };
+  }
+}
+
+function decodeTmux(where: string, value: unknown): TmuxState {
+  const object = decodeObject(where, value);
+  return {
+    effective_socket_name: decodeString(
+      `${where}.effective_socket_name`,
+      object["effective_socket_name"],
+    ),
+    transition: decodeTransition(`${where}.transition`, object["transition"]),
+  };
+}
+
+function decodeWindow(where: string, value: unknown): WindowState {
+  const object = decodeObject(where, value);
+  const frame = decodeObject(`${where}.frame`, object["frame"]);
+  const at = (key: string): string => `${where}.frame.${key}`;
+  return {
+    frame: {
+      x: decodeNumber(at("x"), frame["x"]),
+      y: decodeNumber(at("y"), frame["y"]),
+      width: decodeNumber(at("width"), frame["width"]),
+      height: decodeNumber(at("height"), frame["height"]),
+      maximized: decodeBoolean(at("maximized"), frame["maximized"]),
+    },
+  };
+}
+
+function decodeShutdown(where: string, value: unknown): ShutdownMetadata {
+  const object = decodeObject(where, value);
+  return {
+    clean: decodeBoolean(`${where}.clean`, object["clean"]),
+    launch_generation: decodeNumber(
+      `${where}.launch_generation`,
+      object["launch_generation"],
+    ),
+  };
+}
+
+/**
+ * What a file turned out to be.
+ *
+ * `corrupt` carries the reason it is corrupt. It used to be a bare string, and
+ * the reason — which field, and what was in it — was computed and dropped one
+ * line later, leaving "the file on disk could not be parsed" as the whole of
+ * what a person was told about a file DevHub had just quarantined.
+ */
+type Decoded =
+  | { kind: "state"; state: PersistedAppState; migrated: boolean }
+  | { kind: "corrupt"; detail: string }
+  | { kind: "newer_version" };
+
+/** The words a decode refusal contributes to what the person reads. */
+function detailOf(error: unknown): string {
+  if (error instanceof StateError) {
+    return error.cause instanceof Error && error.cause.message.length > 0
+      ? error.cause.message
+      : STATE_ERROR_REASON[error.code];
+  }
+  return error instanceof Error ? error.message : String(error);
+}
+
+function decodeState(bytes: Buffer): Decoded {
   let value: unknown;
   try {
     value = JSON.parse(bytes.toString("utf8"));
-  } catch {
-    return "corrupt";
+  } catch (error) {
+    return { kind: "corrupt", detail: detailOf(error) };
   }
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return "corrupt";
+    return { kind: "corrupt", detail: "the document is not a JSON object" };
   }
   const object = value as Record<string, unknown>;
   const schema = object["schema_version"];
   const legacy = object["version"];
   let version: number;
   if (typeof schema === "number" && typeof legacy === "number") {
-    if (schema !== legacy) return "corrupt";
+    if (schema !== legacy) {
+      return {
+        kind: "corrupt",
+        detail: `schema_version is ${schema} and version is ${legacy}`,
+      };
+    }
     version = schema;
   } else if (typeof schema === "number") {
     version = schema;
   } else if (typeof legacy === "number") {
     version = legacy;
   } else {
-    return "corrupt";
+    return { kind: "corrupt", detail: "the document has no schema_version" };
   }
   if (version > STATE_SCHEMA_VERSION) {
-    return "newer_version";
+    return { kind: "newer_version" };
   }
   const migrated = version < STATE_SCHEMA_VERSION || legacy !== undefined;
   const fresh = freshState();
-  const state: PersistedAppState = {
-    schema_version: STATE_SCHEMA_VERSION,
-    workspaces:
-      (object["workspaces"] as WorkspaceStateRecord[] | undefined) ?? [],
-    navigation:
-      (object["navigation"] as NavigationState | undefined) ?? fresh.navigation,
-    sidebar: (object["sidebar"] as SidebarState | undefined) ?? fresh.sidebar,
-    split: (object["split"] as SplitState | undefined) ?? fresh.split,
-    window: (object["window"] as WindowState | undefined) ?? fresh.window,
-    tmux: (object["tmux"] as TmuxState | undefined) ?? fresh.tmux,
-    shutdown:
-      (object["shutdown"] as ShutdownMetadata | undefined) ?? fresh.shutdown,
-  };
+  // A key this build reads and the file does not have is the default; a key
+  // the file *does* have has to mean what this build reads it as.
+  let state: PersistedAppState;
+  try {
+    state = {
+      schema_version: STATE_SCHEMA_VERSION,
+      workspaces: decodeArray("workspaces", object["workspaces"] ?? []).map(
+        (entry, index) => decodeWorkspaceRecord(`workspaces[${index}]`, entry),
+      ),
+      navigation:
+        object["navigation"] === undefined
+          ? fresh.navigation
+          : decodeNavigation("navigation", object["navigation"]),
+      sidebar:
+        object["sidebar"] === undefined
+          ? fresh.sidebar
+          : {
+              width: decodeNumber(
+                "sidebar.width",
+                decodeObject("sidebar", object["sidebar"])["width"],
+              ),
+            },
+      split:
+        object["split"] === undefined
+          ? fresh.split
+          : {
+              ratio: decodeNumber(
+                "split.ratio",
+                decodeObject("split", object["split"])["ratio"],
+              ),
+            },
+      window:
+        object["window"] === undefined
+          ? fresh.window
+          : decodeWindow("window", object["window"]),
+      tmux:
+        object["tmux"] === undefined
+          ? fresh.tmux
+          : decodeTmux("tmux", object["tmux"]),
+      shutdown:
+        object["shutdown"] === undefined
+          ? fresh.shutdown
+          : decodeShutdown("shutdown", object["shutdown"]),
+    };
+  } catch (error) {
+    if (error instanceof StateError && error.code === "STATE_INVALID") {
+      return { kind: "corrupt", detail: detailOf(error) };
+    }
+    throw error;
+  }
   try {
     validateState(state);
   } catch (error) {
-    return error instanceof StateError && error.code === "STATE_NEWER_VERSION"
-      ? "newer_version"
-      : "corrupt";
+    if (error instanceof StateError && error.code === "STATE_NEWER_VERSION") {
+      return { kind: "newer_version" };
+    }
+    return { kind: "corrupt", detail: detailOf(error) };
   }
-  return { state, migrated };
+  return { kind: "state", state, migrated };
 }
 
 export class JsonStateStore {
@@ -1341,12 +1937,16 @@ export class JsonStateStore {
       fail("STATE_UNSAFE_PATH");
     }
     const decoded = decodeState(primary.bytes);
-    if (decoded === "newer_version") {
+    if (decoded.kind === "newer_version") {
       fail("STATE_NEWER_VERSION");
     }
-    if (decoded === "corrupt") {
+    if (decoded.kind === "corrupt") {
       const quarantined = await quarantine(this.path);
-      return this.loadBackupOrFresh("corrupt_primary", quarantined);
+      return this.loadBackupOrFresh(
+        "corrupt_primary",
+        quarantined,
+        decoded.detail,
+      );
     }
     if (decoded.migrated) {
       await this.saveStateLocked(decoded.state);
@@ -1365,6 +1965,7 @@ export class JsonStateStore {
   private async loadBackupOrFresh(
     reason: RecoveryReason,
     primaryQuarantined: boolean,
+    primaryDetail?: string,
   ): Promise<StateLoad> {
     const backup = await readCandidate(this.backupPath);
     if (backup.kind === "unsafe") {
@@ -1376,6 +1977,7 @@ export class JsonStateStore {
         metadata: {
           origin: "fresh",
           recoveryReason: reason,
+          corruptionDetail: primaryDetail,
           primaryQuarantined,
           backupQuarantined: false,
           migrated: false,
@@ -1383,16 +1985,17 @@ export class JsonStateStore {
       };
     }
     const decoded = decodeState(backup.bytes);
-    if (decoded === "newer_version") {
+    if (decoded.kind === "newer_version") {
       fail("STATE_NEWER_VERSION");
     }
-    if (decoded === "corrupt") {
+    if (decoded.kind === "corrupt") {
       const backupQuarantined = await quarantine(this.backupPath);
       return {
         state: freshState(),
         metadata: {
           origin: "fresh",
           recoveryReason: "corrupt_primary_and_backup",
+          corruptionDetail: primaryDetail ?? decoded.detail,
           primaryQuarantined,
           backupQuarantined,
           migrated: false,
@@ -1407,6 +2010,7 @@ export class JsonStateStore {
       metadata: {
         origin: "backup",
         recoveryReason: reason,
+        corruptionDetail: primaryDetail,
         primaryQuarantined,
         backupQuarantined: false,
         migrated: decoded.migrated,
@@ -1457,10 +2061,10 @@ export class JsonStateStore {
       fail("STATE_UNSAFE_PATH");
     }
     const decoded = decodeState(primary.bytes);
-    if (decoded === "newer_version") {
+    if (decoded.kind === "newer_version") {
       fail("STATE_NEWER_VERSION");
     }
-    if (decoded === "corrupt") {
+    if (decoded.kind === "corrupt") {
       await quarantine(this.path);
       return;
     }
