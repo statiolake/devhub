@@ -16,6 +16,7 @@ import { ModalOverlay } from "./modalOverlay.js";
 import { shellTheme } from "./shellTheme.js";
 import type { ShellPalette } from "../../ipc/palette.js";
 import type { WorkbenchView } from "./workbenchView.js";
+import { settingsWindowIsFocused } from "./settingsWindow.js";
 
 export class ShellWindow {
 	readonly window: Electron.BrowserWindow;
@@ -365,6 +366,16 @@ export class ShellWindow {
 		// raised by the `devhub` command line happens *before* the window is
 		// brought to the front, and would then never place the keyboard at all.
 		if (this.window.webContents.isDevToolsFocused()) return;
+		// The Settings window is somebody else's, and it is protected by being
+		// so — but only if nothing here reaches across. `webContents.focus()`
+		// on macOS focuses the window the contents belong to as well as the
+		// contents, so placing the keyboard in a workbench while Settings was
+		// the key window pulled the App Shell in front of it: every reveal —
+		// and a reveal follows every projection change, Agents ticking
+		// included — brought DevHub's main window back over the settings the
+		// person was trying to change. The keyboard is theirs until they hand
+		// it back, at which point the shell's own `focus` event asks again.
+		if (settingsWindowIsFocused()) return;
 		// A modal owns the keyboard for as long as it stands; it is on top of
 		// everything this method can see, and taking focus out of it would leave
 		// a dialog on screen that no key reaches.

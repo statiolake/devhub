@@ -190,9 +190,19 @@ export async function bootstrapShell(
 	// macOS: the dock icon brings the shell back after its window was hidden.
 	// DevHub is the app, not the window, and the window it comes back to is the
 	// same one, with every workbench, terminal and agent still in it.
+	//
+	// Only after it was hidden. `activate` is every activation of the app, not
+	// only the Dock: clicking the Settings window while another app was in
+	// front activates DevHub too, and this used to answer that by putting the
+	// App Shell window in front of the Settings window the person had just
+	// clicked — which made Settings impossible to reach from anywhere else. A
+	// shell that is already showing needs nothing from here; macOS has brought
+	// the window that was clicked forward itself, and a Dock click brings every
+	// visible window forward on its own.
 	electron.app.on("activate", () => {
 		const shell = shellWindowIfCreated();
 		if (shell) {
+			if (shell.window.isVisible()) return;
 			shell.window.show();
 			shell.window.focus();
 			return;
