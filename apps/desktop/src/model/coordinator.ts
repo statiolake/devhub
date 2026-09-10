@@ -19,7 +19,7 @@
 import {
   agentIsIdle,
   cleanupProgress,
-  cleanupProgressAfterAgents,
+  agentsStepDone,
   CLEAN_CLOSE_INSPECTION,
   closeInspectionProjection,
   consolidateCloseInspection,
@@ -323,23 +323,29 @@ function fingerprint(value: unknown): string {
 }
 
 function nextCleanupStep(progress: CleanupProgress): CleanupStep {
-  if (!progress.agentsStepCompleted) return "agents";
+  if (progress.agentsStep.kind === "pending") return "agents";
   if (!progress.terminalClosed) return "terminal";
   if (!progress.editorClosed) return "editor";
   return "state_committed";
 }
 
+/**
+ * The progress a finished step leaves behind.
+ *
+ * `agentsClosed` is what the Agents step actually closed, and it is the
+ * caller's to supply because only the caller knows it — the count is read off
+ * the workspace at the moment the step answers. It is ignored by every other
+ * step, which is the same shape the progress record itself has: one field per
+ * step, written by that step alone.
+ */
 function progressAfterStep(
   progress: CleanupProgress,
   step: CleanupStep,
+  agentsClosed: number,
 ): CleanupProgress {
   switch (step) {
     case "agents":
-      return cleanupProgressAfterAgents(
-        progress.agentsClosed,
-        progress.terminalClosed,
-        progress.editorClosed,
-      );
+      return { ...progress, agentsStep: agentsStepDone(agentsClosed) };
     case "terminal":
       return { ...progress, terminalClosed: true };
     case "editor":
@@ -1835,14 +1841,11 @@ export class AppCoordinator {
         token.operationId,
       );
     }
-    const nextProgress =
-      step === "agents"
-        ? cleanupProgressAfterAgents(
-            this.model.workspace(workspaceId)?.agents.length ?? 0,
-            progress.terminalClosed,
-            progress.editorClosed,
-          )
-        : progressAfterStep(progress, step);
+    const nextProgress = progressAfterStep(
+      progress,
+      step,
+      this.model.workspace(workspaceId)?.agents.length ?? 0,
+    );
     state.progress = nextProgress;
 
     if (step === "agents") {

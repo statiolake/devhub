@@ -14,7 +14,7 @@ import {
 	AgentProfile,
 	agentId,
 	agentProfileId,
-	cleanupProgress,
+	NO_CLEANUP_PROGRESS,
 	displayPath,
 	Workspace,
 	workspaceId,
@@ -76,7 +76,7 @@ describe("an open workspace", () => {
 describe("a workspace that is closing", () => {
 	it("refuses its terminal by name, rather than reporting no such surface", () => {
 		const model = modelWithWorkspace();
-		model.markWorkspaceClosing(WS, cleanupProgress(0, false, false));
+		model.markWorkspaceClosing(WS, NO_CLEANUP_PROGRESS);
 		expect(
 			refusalOf(() => resolverFor(model)(`workspace-terminal:${WS}`)),
 		).toBe("workspace_closing");
@@ -84,7 +84,7 @@ describe("a workspace that is closing", () => {
 
 	it("refuses the agents that are closing with it", () => {
 		const model = modelWithWorkspace();
-		model.markWorkspaceClosing(WS, cleanupProgress(0, false, false));
+		model.markWorkspaceClosing(WS, NO_CLEANUP_PROGRESS);
 		expect(refusalOf(() => resolverFor(model)(`agent:${AG}`))).toBe(
 			"workspace_closing",
 		);
@@ -104,7 +104,7 @@ describe("keys that name nothing", () => {
 
 	it("still answers the scratch terminal, which belongs to no workspace", () => {
 		const model = modelWithWorkspace();
-		model.markWorkspaceClosing(WS, cleanupProgress(0, false, false));
+		model.markWorkspaceClosing(WS, NO_CLEANUP_PROGRESS);
 		// The scratch session is not a workspace's, so nothing about a closing
 		// workspace may take it away.
 		expect(resolverFor(model)("global-terminal")).toMatchObject({

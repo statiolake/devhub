@@ -440,9 +440,12 @@ export interface TerminalThemeWire {
  * the progress of a close it did not run, and a count of Agents already
  * stopped that never leaves main is a count nobody can act on.
  */
+export type AgentsCleanupStepWire =
+	| { readonly kind: "pending" }
+	| { readonly kind: "done"; readonly closed: number };
+
 export interface CleanupProgressWire {
-	readonly agentsClosed: number;
-	readonly agentsStepCompleted: boolean;
+	readonly agentsStep: AgentsCleanupStepWire;
 	readonly terminalClosed: boolean;
 	readonly editorClosed: boolean;
 }

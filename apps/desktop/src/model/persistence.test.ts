@@ -24,6 +24,7 @@ import {
   STATE_SCHEMA_VERSION,
   validateState,
   type LoadMetadata,
+  type PersistedAgentsStep,
   type PersistedAppState,
 } from "./persistence.js";
 import { makeScratchDir, removeScratchDir } from "./testScratch.js";
@@ -249,8 +250,7 @@ describe("validation", () => {
         lifecycle: {
           kind: "closing",
           progress: {
-            agents_closed: 0,
-            agents_step_completed: true,
+            agents_step: { kind: "done", closed: 0 },
             terminal_closed: false,
             editor_closed: true,
           },
@@ -280,8 +280,7 @@ describe("cleanup progress after the agents step", () => {
         lifecycle: {
           kind: "closing",
           progress: {
-            agents_closed: 2,
-            agents_step_completed: true,
+            agents_step: { kind: "done", closed: 2 },
             terminal_closed: false,
             editor_closed: false,
           },
@@ -305,8 +304,7 @@ describe("cleanup progress after the agents step", () => {
           kind: "closing_failed",
           diagnostic: "cleanup_failed",
           progress: {
-            agents_closed: -1,
-            agents_step_completed: true,
+            agents_step: { kind: "done", closed: -1 },
             terminal_closed: false,
             editor_closed: false,
           },
@@ -317,6 +315,79 @@ describe("cleanup progress after the agents step", () => {
     expect(() => {
       validateState(state);
     }).toThrow(StateError);
+  });
+});
+
+/**
+ * The Agents step is one value, and the file holds that value.
+ *
+ * It used to be `agents_closed` plus `agents_step_completed`, and there were
+ * two constructors that disagreed about the pair — one derived the flag from
+ * the count, one set it. So `{ agents_closed: 3, agents_step_completed: false }`
+ * was writable and came back as *completed*: the resumed close skipped its
+ * Agents step, and the symptom was a close that did not finish with nothing
+ * anywhere saying why.
+ */
+describe("how far a close got, across a restart", () => {
+  const STEPS: readonly PersistedAgentsStep[] = [
+    { kind: "pending" },
+    { kind: "done", closed: 0 },
+    { kind: "done", closed: 3 },
+  ];
+
+  function closingWith(step: PersistedAgentsStep): PersistedAppState {
+    const state = freshState();
+    state.workspaces = [
+      {
+        workspace_id: WS_A,
+        selected_path: "/dev/a",
+        canonical_path: "/dev/a",
+        lifecycle: {
+          kind: "closing_failed",
+          diagnostic: "cleanup_failed",
+          progress: {
+            agents_step: step,
+            terminal_closed: false,
+            editor_closed: false,
+          },
+        },
+        agents: [],
+      },
+    ];
+    return state;
+  }
+
+  it("comes back the step it went in as, and writes back the same one", () => {
+    for (const step of STEPS) {
+      const model = hydrateModel(closingWith(step), []);
+      const restored = model.snapshot().workspaces[0]!.state;
+      expect(restored.kind).toBe("closing-failed");
+      if (restored.kind !== "closing-failed") throw new Error("unreachable");
+      expect(restored.progress.agentsStep).toEqual(
+        step.kind === "done"
+          ? { kind: "done", closed: step.closed }
+          : { kind: "pending" },
+      );
+      const written = stateFromSnapshot(model.snapshot()).workspaces[0]!;
+      expect(written.lifecycle).toMatchObject({
+        progress: { agents_step: step },
+      });
+    }
+  });
+
+  it("keeps a step that ran and closed nothing apart from one that has not run", () => {
+    const ran = hydrateModel(
+      closingWith({ kind: "done", closed: 0 }),
+      [],
+    ).snapshot().workspaces[0]!.state;
+    const pending = hydrateModel(
+      closingWith({ kind: "pending" }),
+      [],
+    ).snapshot().workspaces[0]!.state;
+    if (ran.kind !== "closing-failed" || pending.kind !== "closing-failed") {
+      throw new Error("unreachable");
+    }
+    expect(ran.progress.agentsStep).not.toEqual(pending.progress.agentsStep);
   });
 });
 
@@ -331,8 +402,7 @@ describe("a close that was in progress when DevHub stopped", () => {
         lifecycle: {
           kind: "closing",
           progress: {
-            agents_closed: 0,
-            agents_step_completed: true,
+            agents_step: { kind: "done", closed: 0 },
             terminal_closed: true,
             editor_closed: false,
           },
@@ -618,6 +688,72 @@ describe("decoding the state file", () => {
     expect(load.corruptionDetail).toContain("sidebar.width");
     expect(load.corruptionDetail).toContain("a number");
     expect(load.corruptionDetail).toContain('"300"');
+  });
+
+  /** The workspace's cleanup progress, in the raw document. */
+  function progressOf(
+    document: Record<string, unknown>,
+  ): Record<string, unknown> {
+    const workspaces = document["workspaces"] as Record<string, unknown>[];
+    workspaces[0]["lifecycle"] = {
+      kind: "closing_failed",
+      diagnostic: "cleanup_failed",
+      progress: {
+        agents_step: { kind: "pending" },
+        terminal_closed: false,
+        editor_closed: false,
+      },
+    };
+    return (workspaces[0]["lifecycle"] as Record<string, unknown>)[
+      "progress"
+    ] as Record<string, unknown>;
+  }
+
+  it("refuses an Agents step it cannot read, rather than choosing one", async () => {
+    for (const broken of [
+      { kind: "done" },
+      { kind: "done", closed: -1 },
+      { kind: "done", closed: 1.5 },
+      { kind: "done", closed: "3" },
+      { kind: "banana" },
+      true,
+    ]) {
+      const load = await loadWith((document) => {
+        progressOf(document)["agents_step"] = broken;
+      });
+      expect(load.recoveryReason).toBe("corrupt_primary");
+      expect(load.corruptionDetail).toContain("agents_step");
+    }
+  });
+
+  /**
+   * A close only sits in a state file while it is *interrupted*, so a file
+   * from the previous build is a person mid-close. Dropping their progress
+   * would restart the close from the beginning — the bug the union exists to
+   * prevent — so the retired pair is read, once, here.
+   */
+  it("reads a version-2 file's Agents step without losing its place", async () => {
+    const done = await loadWith((document) => {
+      const progress = progressOf(document);
+      delete progress["agents_step"];
+      progress["agents_closed"] = 3;
+      progress["agents_step_completed"] = true;
+    });
+    expect(done.recoveryReason).toBeUndefined();
+    expect(done.state.workspaces[0]!.lifecycle).toMatchObject({
+      progress: { agents_step: { kind: "done", closed: 3 } },
+    });
+
+    const pending = await loadWith((document) => {
+      const progress = progressOf(document);
+      delete progress["agents_step"];
+      progress["agents_closed"] = 0;
+      progress["agents_step_completed"] = false;
+    });
+    expect(pending.recoveryReason).toBeUndefined();
+    expect(pending.state.workspaces[0]!.lifecycle).toMatchObject({
+      progress: { agents_step: { kind: "pending" } },
+    });
   });
 
   it("refuses a required field that is not there", async () => {

@@ -28,8 +28,7 @@ function closeFailed(diagnostic: CloseDiagnosticWire): WorkspaceSnapshot {
       kind: "closing-failed",
       diagnostic,
       progress: {
-        agentsClosed: 0,
-        agentsStepCompleted: false,
+        agentsStep: { kind: "pending" },
         terminalClosed: false,
         editorClosed: false,
       },

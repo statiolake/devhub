@@ -32,8 +32,7 @@ const AVAILABLE: WorkspaceStateWire = { kind: "available" };
 const CLOSING: WorkspaceStateWire = {
   kind: "closing",
   progress: {
-    agentsClosed: 0,
-    agentsStepCompleted: false,
+    agentsStep: { kind: "pending" },
     terminalClosed: false,
     editorClosed: false,
   },

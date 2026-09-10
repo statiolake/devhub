@@ -8,7 +8,7 @@ import {
   DomainErrorCode,
   displayPath,
   CLEAN_CLOSE_INSPECTION,
-  cleanupProgress,
+  NO_CLEANUP_PROGRESS,
   Workspace,
   workspaceId,
   workspaceRoot,
@@ -87,12 +87,12 @@ describe("layout resolution", () => {
     model.markWorkspaceUnavailable(WS_A, "root_missing");
     expect(full(model, context)).toEqual({ kind: "unavailable" });
     model.markWorkspaceAvailable(WS_A);
-    model.markWorkspaceClosing(WS_A, cleanupProgress(0, false, false));
+    model.markWorkspaceClosing(WS_A, NO_CLEANUP_PROGRESS);
     expect(full(model, context)).toEqual({ kind: "unavailable" });
     model.markWorkspaceClosingFailed(
       WS_A,
       "cleanup_failed",
-      cleanupProgress(0, false, false),
+      NO_CLEANUP_PROGRESS,
     );
     expect(full(model, context)).toEqual({ kind: "unavailable" });
   });

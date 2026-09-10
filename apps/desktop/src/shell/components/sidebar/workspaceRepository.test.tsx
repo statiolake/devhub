@@ -513,8 +513,7 @@ describe("a workspace row, continued", () => {
         kind: "closing-failed",
         diagnostic: "cleanup_failed",
         progress: {
-          agentsClosed: 0,
-          agentsStepCompleted: false,
+          agentsStep: { kind: "pending" },
           terminalClosed: false,
           editorClosed: false,
         },

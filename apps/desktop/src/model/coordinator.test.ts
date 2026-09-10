@@ -473,8 +473,7 @@ describe("closing a workspace", () => {
       kind: "closing-failed",
       diagnostic: "cleanup_failed",
       progress: {
-        agentsClosed: 0,
-        agentsStepCompleted: true,
+        agentsStep: { kind: "done", closed: 0 },
         terminalClosed: true,
         editorClosed: true,
       },

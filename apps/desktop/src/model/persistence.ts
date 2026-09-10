@@ -42,7 +42,8 @@ import {
   agentId as parseAgentId,
   workspaceId as parseWorkspaceId,
   cleanupProgress,
-  cleanupProgressAfterAgents,
+  agentsStepDone,
+  AGENTS_PENDING,
   displayPath,
   isCanonicalUuid,
   isEnvironmentName,
@@ -67,22 +68,30 @@ import {
 } from "./appModel.js";
 
 /**
- * Version 2 retired `navigation.activity` and added `split`.
+ * Version 3 made a close's Agents step one value; version 2 retired
+ * `navigation.activity` and added `split`.
  *
- * A version-1 file still loads: the activity is a field this build has no use
- * for and drops on the next save, and a missing `split` is the default ratio.
- * The bump is for the other direction — an older DevHub reading a file written
- * here would find no activity to restore and would have to invent one, and
- * refusing is the guarantee this number exists to make.
+ * Older files still load. A version-1 file's activity is a field this build
+ * has no use for and drops on the next save, and a missing `split` is the
+ * default ratio. A version-2 file's `agents_closed` / `agents_step_completed`
+ * pair is read into `agents_step` by `decodeAgentsStep` — a close only sits in
+ * a state file while it is *interrupted*, so such a file is a person mid-close
+ * and their place has to be kept.
  *
- * `sidebar.expanded` was retired *without* a bump, for the same reason the
- * activity needed one and this does not. It is read like the activity — a
- * field this build has no use for, ignored on load and dropped on the next
- * save — and in the other direction a build that still collapses the sidebar
- * finds the field missing, which it already reads as "expanded", the only
- * state there is now. Nothing has to be invented, so nothing has to refuse.
+ * The bump is always for the other direction, and that is the guarantee this
+ * number exists to make: an older DevHub reading a file written here would
+ * find no activity to restore, or no `agents_step_completed`, and would have
+ * to invent one or refuse the file as corrupt — which quarantines the session.
+ * `newer_version` is the refusal that does neither.
+ *
+ * `sidebar.expanded` was retired *without* a bump, for the same reason those
+ * needed one and it did not. It is read like the activity — ignored on load,
+ * dropped on the next save — and in the other direction a build that still
+ * collapses the sidebar finds the field missing, which it already reads as
+ * "expanded", the only state there is now. Nothing has to be invented, so
+ * nothing has to refuse.
  */
-export const STATE_SCHEMA_VERSION = 2;
+export const STATE_SCHEMA_VERSION = 3;
 export { SIDEBAR_DEFAULT_WIDTH };
 
 const MIN_SIDEBAR_WIDTH = 200;
@@ -254,9 +263,21 @@ export type PersistedAgentControlState =
  */
 export type PersistedDiagnosticCode = DiagnosticCode;
 
+/**
+ * How far a close got, as the file holds it.
+ *
+ * The union, not two fields that can disagree about it. It used to be
+ * `agents_closed` plus `agents_step_completed`, and a file saying
+ * `{ agents_closed: 3, agents_step_completed: false }` was read back as
+ * completed — a resumed close then skipped or repeated its Agents step, and
+ * the only symptom was that the close did not finish.
+ */
+export type PersistedAgentsStep =
+  | { kind: "pending" }
+  | { kind: "done"; closed: number };
+
 export interface PersistedCleanupProgress {
-  agents_closed: number;
-  agents_step_completed: boolean;
+  agents_step: PersistedAgentsStep;
   terminal_closed: boolean;
   editor_closed: boolean;
 }
@@ -577,17 +598,19 @@ function validateLifecycle(lifecycle: WorkspaceLifecycleRecord): void {
     if (progress.editor_closed && !progress.terminal_closed) {
       fail("STATE_INVALID");
     }
-    // `agents_closed` is how many Agents the close has already stopped, and a
-    // stopped Agent leaves the record — so the count is *expected* to exceed
-    // the Agents still listed, and is usually compared against none at all.
-    // This used to be checked against `record.agents.length`, which made every
+    // `closed` is how many Agents the close has already stopped, and a stopped
+    // Agent leaves the record — so the count is *expected* to exceed the
+    // Agents still listed, and is usually compared against none at all. This
+    // used to be checked against `record.agents.length`, which made every
     // close of a workspace with an Agent in it fail at the first save after
     // the agents step, and fail again on every retry: the progress the retry
     // resumed from was the same "invalid" record. The only thing the number
-    // has to be is a count.
+    // has to be is a count — and a step that has not run has no count at all,
+    // which is why it is not a field the pending case has to fill in.
     if (
-      !Number.isInteger(progress.agents_closed) ||
-      progress.agents_closed < 0
+      progress.agents_step.kind === "done" &&
+      (!Number.isInteger(progress.agents_step.closed) ||
+        progress.agents_step.closed < 0)
     ) {
       fail("STATE_INVALID");
     }
@@ -826,18 +849,16 @@ export function validateState(state: PersistedAppState): void {
 
 // -------------------------------------------------------------- projection
 
-function progressFrom(record: PersistedCleanupProgress) {
-  return record.agents_step_completed
-    ? cleanupProgressAfterAgents(
-        record.agents_closed,
-        record.terminal_closed,
-        record.editor_closed,
-      )
-    : cleanupProgress(
-        record.agents_closed,
-        record.terminal_closed,
-        record.editor_closed,
-      );
+function progressFrom(
+  record: PersistedCleanupProgress,
+): import("./domain.js").CleanupProgress {
+  return cleanupProgress(
+    record.agents_step.kind === "done"
+      ? agentsStepDone(record.agents_step.closed)
+      : AGENTS_PENDING,
+    record.terminal_closed,
+    record.editor_closed,
+  );
 }
 
 function controlStateFrom(
@@ -1190,8 +1211,10 @@ function progressRecord(
   progress: import("./domain.js").CleanupProgress,
 ): PersistedCleanupProgress {
   return {
-    agents_closed: progress.agentsClosed,
-    agents_step_completed: progress.agentsStepCompleted,
+    agents_step:
+      progress.agentsStep.kind === "done"
+        ? { kind: "done", closed: progress.agentsStep.closed }
+        : { kind: "pending" },
     terminal_closed: progress.terminalClosed,
     editor_closed: progress.editorClosed,
   };
@@ -1420,14 +1443,7 @@ function decodeCleanupProgress(
 ): PersistedCleanupProgress {
   const object = decodeObject(where, value);
   return {
-    agents_closed: decodeNumber(
-      `${where}.agents_closed`,
-      object["agents_closed"],
-    ),
-    agents_step_completed: decodeBoolean(
-      `${where}.agents_step_completed`,
-      object["agents_step_completed"],
-    ),
+    agents_step: decodeAgentsStep(where, object),
     terminal_closed: decodeBoolean(
       `${where}.terminal_closed`,
       object["terminal_closed"],
@@ -1437,6 +1453,53 @@ function decodeCleanupProgress(
       object["editor_closed"],
     ),
   };
+}
+
+/**
+ * The Agents step, from a version-3 record or a version-2 one.
+ *
+ * Version 2 spelled this as `agents_closed` plus `agents_step_completed`, and
+ * this is the one place those two are still read — a close is only ever in a
+ * state file *while it is interrupted*, so a file written by the previous
+ * build is a person mid-close, and dropping their progress would restart the
+ * close from the beginning, which is exactly the bug the union exists to
+ * prevent. Nothing writes the retired pair; when version 2 is out of support
+ * this branch goes, and the record is a plain union again.
+ */
+function decodeAgentsStep(
+  where: string,
+  object: Record<string, unknown>,
+): PersistedAgentsStep {
+  const value = object["agents_step"];
+  if (value === undefined) {
+    const completed = decodeBoolean(
+      `${where}.agents_step_completed`,
+      object["agents_step_completed"],
+    );
+    if (!completed) return { kind: "pending" };
+    return {
+      kind: "done",
+      closed: decodeCount(`${where}.agents_closed`, object["agents_closed"]),
+    };
+  }
+  const step = decodeObject(`${where}.agents_step`, value);
+  const kind = decodeMember(`${where}.agents_step.kind`, step["kind"], [
+    "pending",
+    "done",
+  ] as const);
+  if (kind === "pending") return { kind: "pending" };
+  return {
+    kind: "done",
+    closed: decodeCount(`${where}.agents_step.closed`, step["closed"]),
+  };
+}
+
+function decodeCount(where: string, value: unknown): number {
+  const count = decodeNumber(where, value);
+  if (!Number.isInteger(count) || count < 0) {
+    refuse(where, "a count of zero or more", value);
+  }
+  return count;
 }
 
 function decodeControlState(

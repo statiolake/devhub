@@ -37,6 +37,7 @@ export enum DomainErrorCode {
   WorkspaceHasLiveAgents = "WORKSPACE_HAS_LIVE_AGENTS",
   WorkspaceClosing = "WORKSPACE_CLOSING",
   WorkspaceClosingFailed = "WORKSPACE_CLOSING_FAILED",
+  InvalidCleanupProgress = "INVALID_CLEANUP_PROGRESS",
   InvalidSidebarWidth = "INVALID_SIDEBAR_WIDTH",
   InvalidSplitRatio = "INVALID_SPLIT_RATIO",
 }
@@ -821,53 +822,69 @@ export class Agent {
   }
 }
 
+/**
+ * Whether a close has run its Agents step, and what it closed if it has.
+ *
+ * A count alone cannot say this. "The step ran and there was nothing to close"
+ * and "the step has not run" are both zero, which is why there used to be two
+ * constructors — one deriving `agentsStepCompleted` from `agentsClosed > 0`
+ * and one setting it to `true` — and a record they disagreed about. A stored
+ * `{ closed: 3, completed: false }` came back as completed; the resumed close
+ * then skipped or repeated the step, and the symptom was "the close did not
+ * finish" with nothing saying why.
+ *
+ * One constructor per state, and the disagreeing pair cannot be written down.
+ */
+export type AgentsCleanupStep =
+  | { readonly kind: "pending" }
+  | { readonly kind: "done"; readonly closed: number };
+
+export const AGENTS_PENDING: AgentsCleanupStep = { kind: "pending" };
+
+export function agentsStepDone(closed: number): AgentsCleanupStep {
+  if (!Number.isInteger(closed) || closed < 0) {
+    throw invalid(DomainErrorCode.InvalidCleanupProgress);
+  }
+  return { kind: "done", closed };
+}
+
 /** Progress retained when a Workspace close partially fails. */
 export interface CleanupProgress {
-  readonly agentsClosed: number;
-  readonly agentsStepCompleted: boolean;
+  readonly agentsStep: AgentsCleanupStep;
   readonly terminalClosed: boolean;
   readonly editorClosed: boolean;
 }
 
 export function cleanupProgress(
-  agentsClosed: number,
+  agentsStep: AgentsCleanupStep,
   terminalClosed: boolean,
   editorClosed: boolean,
 ): CleanupProgress {
-  return {
-    agentsClosed,
-    agentsStepCompleted: agentsClosed > 0,
-    terminalClosed,
-    editorClosed,
-  };
-}
-
-export function cleanupProgressAfterAgents(
-  agentsClosed: number,
-  terminalClosed: boolean,
-  editorClosed: boolean,
-): CleanupProgress {
-  return {
-    agentsClosed,
-    agentsStepCompleted: true,
-    terminalClosed,
-    editorClosed,
-  };
+  return { agentsStep, terminalClosed, editorClosed };
 }
 
 export const NO_CLEANUP_PROGRESS: CleanupProgress = cleanupProgress(
-  0,
+  AGENTS_PENDING,
   false,
   false,
 );
+
+export function sameAgentsStep(
+  left: AgentsCleanupStep,
+  right: AgentsCleanupStep,
+): boolean {
+  if (left.kind === "done" && right.kind === "done") {
+    return left.closed === right.closed;
+  }
+  return left.kind === right.kind;
+}
 
 export function sameProgress(
   left: CleanupProgress,
   right: CleanupProgress,
 ): boolean {
   return (
-    left.agentsClosed === right.agentsClosed &&
-    left.agentsStepCompleted === right.agentsStepCompleted &&
+    sameAgentsStep(left.agentsStep, right.agentsStep) &&
     left.terminalClosed === right.terminalClosed &&
     left.editorClosed === right.editorClosed
   );

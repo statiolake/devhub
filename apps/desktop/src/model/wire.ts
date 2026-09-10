@@ -240,8 +240,10 @@ function contextWire(
 
 function cleanupProgressWire(progress: CleanupProgress): CleanupProgressWire {
   return {
-    agentsClosed: progress.agentsClosed,
-    agentsStepCompleted: progress.agentsStepCompleted,
+    agentsStep:
+      progress.agentsStep.kind === "done"
+        ? { kind: "done", closed: progress.agentsStep.closed }
+        : { kind: "pending" },
     terminalClosed: progress.terminalClosed,
     editorClosed: progress.editorClosed,
   };

@@ -17,6 +17,7 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  agentsStepDone,
   cleanupProgress,
   DIAGNOSTIC_CODES,
   type AgentControlState,
@@ -31,7 +32,11 @@ import type {
   WorkspaceSnapshot,
 } from "./appModel.js";
 
-const PROGRESS: CleanupProgress = cleanupProgress(2, true, false);
+const PROGRESS: CleanupProgress = cleanupProgress(
+  agentsStepDone(2),
+  true,
+  false,
+);
 
 function agent(controlState: AgentControlState): AgentSnapshot {
   return {
