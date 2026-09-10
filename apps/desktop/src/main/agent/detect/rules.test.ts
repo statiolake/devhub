@@ -9,6 +9,9 @@
 
 import { describe, expect, it } from "vitest";
 import { AgentStatusDetector, type AgentScreen } from "./detector.js";
+import { agentIsIdle } from "../../../model/domain.js";
+import { CLAUDE_IDLE } from "./claudeScreens.fixture.js";
+import { CODEX_IDLE } from "./codexScreens.fixture.js";
 import { CLAUDE, CODEX, CURSOR, manifestFor } from "./manifests.js";
 import { read, region, type DetectionInput, type Manifest } from "./rules.js";
 
@@ -198,6 +201,64 @@ describe("the debounce", () => {
 		// all here, for ever.
 		expect(detector.status("custom", screen("", "⠋ working"))).toBe("unknown");
 		expect(detector.status("custom", screen("", "⠋ working"))).toBe("unknown");
+	});
+
+	// The bug this exists for: DevHub stopped capturing a pane that has
+	// written nothing, so an Agent already sitting at its prompt when DevHub
+	// started was read once and never again. `idle` was proposed, counted
+	// once, and the second round it needed never came — the row stayed
+	// `unknown`, which is a `?` in the sidebar, "Stop this agent?" for a stop
+	// that interrupts nothing, and a queue that will not send.
+	it("settles on what it read once the screen stops changing", () => {
+		const detector = new AgentStatusDetector();
+		expect(detector.status("claude", screen(idle))).toBe("unknown");
+		expect(detector.unchanged(AGENT)).toBe("idle");
+	});
+
+	it("has nothing to settle for an Agent it never managed to read", () => {
+		const detector = new AgentStatusDetector();
+		expect(detector.unchanged(AGENT)).toBe("unknown");
+	});
+
+	it("holds still once a quiet screen has been agreed on", () => {
+		const detector = new AgentStatusDetector();
+		detector.status("claude", screen(idle));
+		expect(detector.unchanged(AGENT)).toBe("idle");
+		expect(detector.unchanged(AGENT)).toBe("idle");
+	});
+
+	// The real screens, because the whole point is what a person actually
+	// sees: a Claude Code and a Codex sitting at their prompts, read once and
+	// then left alone, must be `idle` — that is what decides whether stopping
+	// one asks first.
+	it("reads a real Claude Code prompt as idle without a second capture", () => {
+		const detector = new AgentStatusDetector();
+		detector.status("claude", {
+			agentId: AGENT,
+			oscProgress: "",
+			...CLAUDE_IDLE,
+		});
+		expect(detector.unchanged(AGENT)).toBe("idle");
+		expect(agentIsIdle(detector.unchanged(AGENT))).toBe(true);
+	});
+
+	it("reads a real Codex composer as idle without a second capture", () => {
+		const detector = new AgentStatusDetector();
+		detector.status("codex", {
+			agentId: AGENT,
+			oscProgress: "",
+			...CODEX_IDLE,
+		});
+		expect(detector.unchanged(AGENT)).toBe("idle");
+		expect(agentIsIdle(detector.unchanged(AGENT))).toBe(true);
+	});
+
+	// An Agent that fell quiet mid-turn is still mid-turn. The same rule that
+	// finishes an idle reading must not turn one into the other.
+	it("settles a working screen as working, not as something else", () => {
+		const detector = new AgentStatusDetector();
+		detector.status("claude", screen("", "⠋ working"));
+		expect(detector.unchanged(AGENT)).toBe("working");
 	});
 
 	it("keeps the row's status while the Agent's own viewer is up", () => {

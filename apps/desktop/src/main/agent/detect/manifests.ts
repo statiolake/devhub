@@ -66,11 +66,23 @@ export const CLAUDE: Manifest = {
 			 * It stays below the blocked rules, and refuses outright on a
 			 * screen that is asking a question, because a turn that has paused
 			 * for a person is not a turn that is running.
+			 *
+			 * The region is everything below the prompt box rather than the
+			 * last few lines. It was the last five, which is where the footer
+			 * is — until the person has background agents running, because
+			 * Claude Code draws one line per agent *underneath* the footer and
+			 * there is no bound on how many. Five lines then held the agent
+			 * list and nothing else, the rule could not fire, and a session
+			 * that was mid-turn read `idle`: a `?` would have been harmless,
+			 * but `idle` is the one state the injection queue sends on, so
+			 * DevHub would type into a running turn. Everything after the last
+			 * rule the screen drew is exactly the chrome — footer, hint line,
+			 * agent list — and none of the scrollback, whatever is in it.
 			 */
 			id: "screen_working_footer",
 			state: "working",
 			priority: 960,
-			region: bottomNonEmptyLines(5),
+			region: "after_last_horizontal_rule",
 			visibleWorking: true,
 			contains: ["esc to interrupt"],
 			not: [{ contains: ["do you want to"] }],

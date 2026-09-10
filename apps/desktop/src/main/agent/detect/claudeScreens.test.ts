@@ -12,6 +12,7 @@ import {
 	CLAUDE_IDLE,
 	CLAUDE_WAITING,
 	CLAUDE_WORKING,
+	CLAUDE_WORKING_WITH_AGENTS,
 	type ClaudeScreen,
 } from "./claudeScreens.fixture.js";
 import { CLAUDE } from "./manifests.js";
@@ -24,6 +25,16 @@ function reading(screen: ClaudeScreen) {
 describe("the Claude Code manifest, on real screens", () => {
 	it("says working while it is working", () => {
 		const result = reading(CLAUDE_WORKING);
+		expect(result.state).toBe("working");
+		expect(result.visibleWorking).toBe(true);
+	});
+
+	// The footer is the only durable "a turn is running", and background
+	// agents push it an unbounded distance from the bottom of the screen.
+	// Reading `idle` here is not a cosmetic mistake: `idle` is what the
+	// injection queue sends on.
+	it("says working with a background-agent list under the footer", () => {
+		const result = reading(CLAUDE_WORKING_WITH_AGENTS);
 		expect(result.state).toBe("working");
 		expect(result.visibleWorking).toBe(true);
 	});

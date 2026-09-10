@@ -106,3 +106,37 @@ export const CLAUDE_WAITING: ClaudeScreen = {
      2. Yes, and don't ask again for example.com
      3. No, and tell Claude what to do differently (esc)`,
 };
+
+/**
+ * Mid-turn in v2.1.260, with the background-agent list drawn under the footer.
+ *
+ * The same working screen as `CLAUDE_WORKING`, in the shape a person who runs
+ * background agents actually sees: Claude draws one line per agent *below* the
+ * footer, so the "esc to interrupt" that says a turn is running is no longer
+ * near the bottom of the screen, and how far from it depends on how many
+ * agents are running. Captured from a real session that DevHub was showing as
+ * `idle` — which is the reading that lets the injection queue type into a
+ * turn that is still going.
+ */
+export const CLAUDE_WORKING_WITH_AGENTS: ClaudeScreen = {
+	oscTitle: "✳ example-branch",
+	screen: ` ▐▛███▛█   Claude Code v2.1.260
+▝▜██████▀  Opus 5 with low effort · Claude Pro
+  ▝▝ ▝▝    ~/example/work
+
+⏺ Agent(An example errand) Opus 5
+  ⎿  Backgrounded agent (↓ to manage · ctrl+o to expand)
+
+✢ Nesting… (2m 40s · ↓ 8.8k tokens)
+
+───────────────────────────── example-branch ─
+❯ 
+───────────────────────────────────────
+  ⏵⏵ auto mode on · 1 shell · esc to interrupt · ← for agents · ↓ to manage
+                                                                            /rc
+
+  ⏺ main
+  ◯ general-purpose  Running an errand                          21m 59s · ↓ 242.9k tokens
+  ◯ general-purpose  Reading a file                               1m 7s · ↓ 84.7k tokens
+  ◯ general-purpose  Reading another file                           35s · ↓ 56.2k tokens`,
+};

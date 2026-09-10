@@ -268,12 +268,15 @@ async function observe(
 	// screen it had, so the reading DevHub already has is the reading. Saying
 	// so costs nothing; asking again costs a process.
 	//
-	// It answers with what was last shown, which is the same thing this
-	// function already answers with when a capture fails — one path for "no
-	// new screen", rather than a second kind of unchanged.
+	// It is told to the detector rather than answered around it, because "the
+	// screen has not changed" is news: it is what finishes a reading the
+	// debounce has only counted once, and without it an Agent that fell quiet
+	// straight after DevHub first read it stayed `unknown` for ever. A capture
+	// that *failed*, below, is not that news — nobody knows what that screen
+	// says — so it keeps answering with what was last shown.
 	if (!freshness.shouldCapture(agentId, marker)) {
 		return {
-			status: detector.showing(agentId),
+			status: detector.unchanged(agentId),
 			activity: activity.showing(agentId),
 		};
 	}
