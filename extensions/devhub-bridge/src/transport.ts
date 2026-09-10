@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { connect, type Socket } from "node:net";
+import type { BridgeFault } from "./fault";
 
 export const MAX_MESSAGE_BYTES = 262_144;
 export const MAX_TOKEN_BYTES = 4_096;
@@ -15,7 +16,15 @@ export function isSafeBearerToken(token: string): boolean {
 export interface LoopbackSocketHandlers {
   onOpen: () => void;
   onMessage: (raw: string) => void;
-  onError: () => void;
+  /**
+   * Why this connection is over.
+   *
+   * It used to take no argument, so nine distinct protocol failures arrived
+   * indistinguishable and became one `log("endpoint_error")` and a reconnect.
+   * The fault is the whole point: a reconnect loop that cannot say what it is
+   * retrying is a reconnect loop nobody can debug.
+   */
+  onError: (fault: BridgeFault) => void;
   onClose: () => void;
 }
 
@@ -74,35 +83,94 @@ export function validateServerUpgrade(headers: string, key: string): boolean {
   return accept === expected;
 }
 
-/** Validate one complete server frame before handing it to the stateful reader. */
-export function validateServerFrame(frame: Uint8Array): boolean {
-  if (frame.byteLength < 2) return false;
-  const first = frame[0];
-  const second = frame[1];
-  if ((first & 0x80) === 0 || (first & 0x70) !== 0 || (second & 0x80) !== 0)
-    return false;
+/**
+ * What the front of a buffer is.
+ *
+ * One grammar, one implementation. There used to be two: `validateServerFrame`
+ * checked a whole assembled frame, and `readFrames` re-checked the reserved
+ * bits, the mask, the length and the opcode inline before calling it. Two
+ * implementations of one grammar have to be kept in agreement by hand, and
+ * these two had already drifted — only the exported one had the opcode
+ * allow-list. Now the reader is the grammar, and the exported predicate is a
+ * question asked of it.
+ */
+export type FrameReading =
+  /** Not enough bytes yet. Nothing is wrong; wait for more. */
+  | { readonly kind: "incomplete" }
+  | {
+      readonly kind: "frame";
+      readonly opcode: number;
+      /** Where the payload starts, and how long it is. */
+      readonly offset: number;
+      readonly length: number;
+    }
+  | { readonly kind: "invalid"; readonly fault: BridgeFault };
+
+function protocolFault(
+  violationKind: Extract<BridgeFault, { kind: "protocol" }>["violation"],
+  bytes?: number,
+): FrameReading {
+  return {
+    kind: "invalid",
+    fault:
+      bytes === undefined
+        ? { kind: "protocol", violation: violationKind }
+        : { kind: "protocol", violation: violationKind, bytes },
+  };
+}
+
+/** Read one server frame from the front of `buffer`, or say why not. */
+export function readServerFrame(buffer: Uint8Array): FrameReading {
+  if (buffer.byteLength < 2) return { kind: "incomplete" };
+  const first = buffer[0];
+  const second = buffer[1];
+  // No fragmentation and no extension: this Bridge negotiated neither, so a
+  // frame that claims either is a host speaking a protocol we did not agree.
+  if ((first & 0x80) === 0 || (first & 0x70) !== 0)
+    return protocolFault("reserved_bits_set");
+  if ((second & 0x80) !== 0) return protocolFault("server_frame_masked");
   const opcode = first & 0x0f;
-  if (![0x1, 0x8, 0x9, 0xa].includes(opcode)) return false;
+  if (![0x1, 0x8, 0x9, 0xa].includes(opcode))
+    return protocolFault("unsupported_opcode");
   let length = second & 0x7f;
   let offset = 2;
   if (length === 126) {
-    if (frame.byteLength < 4) return false;
-    length = frame[2] * 256 + frame[3];
+    if (buffer.byteLength < 4) return { kind: "incomplete" };
+    length = buffer[2] * 256 + buffer[3];
     offset = 4;
   } else if (length === 127) {
-    if (frame.byteLength < 10) return false;
+    if (buffer.byteLength < 10) return { kind: "incomplete" };
     const longLength = new DataView(
-      frame.buffer,
-      frame.byteOffset + 2,
+      buffer.buffer,
+      buffer.byteOffset + 2,
       8,
     ).getBigUint64(0);
-    if (longLength > BigInt(MAX_MESSAGE_BYTES)) return false;
+    if (longLength > BigInt(MAX_MESSAGE_BYTES))
+      return protocolFault("frame_too_large");
     length = Number(longLength);
     offset = 10;
   }
-  if (length > MAX_MESSAGE_BYTES || frame.byteLength !== offset + length)
-    return false;
-  return opcode < 0x8 || ((first & 0x80) !== 0 && length <= 125);
+  if (length > MAX_MESSAGE_BYTES)
+    return protocolFault("frame_too_large", length);
+  // A control frame carries its whole meaning in one short frame, always.
+  if (opcode >= 0x8 && length > 125)
+    return protocolFault("control_frame_invalid", length);
+  if (buffer.byteLength < offset + length) return { kind: "incomplete" };
+  return { kind: "frame", opcode, offset, length };
+}
+
+/**
+ * Whether `frame` is exactly one complete, acceptable server frame.
+ *
+ * Kept as the narrow question the contract tests ask. It has no rules of its
+ * own — it is `readServerFrame` plus "and nothing left over".
+ */
+export function validateServerFrame(frame: Uint8Array): boolean {
+  const reading = readServerFrame(frame);
+  return (
+    reading.kind === "frame" &&
+    reading.offset + reading.length === frame.byteLength
+  );
 }
 
 /** Minimal RFC6455 client for the injected loopback endpoint. */
@@ -163,8 +231,15 @@ export class LoopbackSocket {
       );
     });
     this.socket.on("data", (chunk: Buffer) => this.receive(chunk));
-    this.socket.on("error", () => {
-      if (!this.closed) this.handlers.onError();
+    this.socket.on("error", (error: NodeJS.ErrnoException) => {
+      // Node's code, which is the whole diagnostic: ECONNREFUSED means DevHub
+      // is not listening, EPIPE means it went away mid-frame, and the two want
+      // different things looked at.
+      if (!this.closed)
+        this.handlers.onError({
+          kind: "transport",
+          errno: error.code ?? "unknown",
+        });
     });
     this.socket.on("close", () => {
       this.notifyClose();
@@ -195,26 +270,33 @@ export class LoopbackSocket {
     this.handlers.onClose();
   }
 
+  /** End this connection, and say why. */
+  private fail(fault: BridgeFault): void {
+    this.close();
+    this.handlers.onError(fault);
+  }
+
   private receive(chunk: Buffer): void {
     this.buffer = Buffer.concat([this.buffer, chunk]);
     if (this.buffer.byteLength > MAX_MESSAGE_BYTES + 16 * 1024) {
-      this.close();
-      this.handlers.onError();
+      this.fail({
+        kind: "protocol",
+        violation: "frame_too_large",
+        bytes: this.buffer.byteLength,
+      });
       return;
     }
     if (!this.upgraded) {
       const end = this.buffer.indexOf("\r\n\r\n");
       if (this.buffer.byteLength > 16 * 1024) {
-        this.close();
-        this.handlers.onError();
+        this.fail({ kind: "handshake", refusal: "headers_too_large" });
         return;
       }
       if (end < 0) return;
       const headers = this.buffer.subarray(0, end).toString("latin1");
       this.buffer = this.buffer.subarray(end + 4);
       if (!validateServerUpgrade(headers, this.key)) {
-        this.close();
-        this.handlers.onError();
+        this.fail({ kind: "handshake", refusal: "upgrade_rejected" });
         return;
       }
       this.upgraded = true;
@@ -224,57 +306,18 @@ export class LoopbackSocket {
   }
 
   private readFrames(): void {
-    while (this.buffer.byteLength >= 2) {
-      const first = this.buffer[0];
-      const second = this.buffer[1];
-      if ((first & 0x80) === 0 || (first & 0x70) !== 0) {
-        this.close();
-        this.handlers.onError();
+    for (;;) {
+      const reading = readServerFrame(this.buffer);
+      if (reading.kind === "incomplete") return;
+      if (reading.kind === "invalid") {
+        this.fail(reading.fault);
         return;
       }
-      const opcode = first & 0x0f;
-      const masked = (second & 0x80) !== 0;
-      if (masked) {
-        this.close();
-        this.handlers.onError();
-        return;
-      }
-      let length = second & 0x7f;
-      let offset = 2;
-      if (length === 126) {
-        if (this.buffer.byteLength < offset + 2) return;
-        length = this.buffer.readUInt16BE(offset);
-        offset += 2;
-      } else if (length === 127) {
-        if (this.buffer.byteLength < offset + 8) return;
-        const longLength = this.buffer.readBigUInt64BE(offset);
-        if (longLength > BigInt(MAX_MESSAGE_BYTES)) {
-          this.close();
-          this.handlers.onError();
-          return;
-        }
-        length = Number(longLength);
-        offset += 8;
-      }
-      if (length > MAX_MESSAGE_BYTES) {
-        this.close();
-        this.handlers.onError();
-        return;
-      }
-      if (this.buffer.byteLength < offset + length) return;
-      const completeFrame = this.buffer.subarray(0, offset + length);
-      if (!validateServerFrame(completeFrame)) {
-        this.close();
-        this.handlers.onError();
-        return;
-      }
+      const { opcode, offset, length } = reading;
       const payload = this.buffer.subarray(offset, offset + length);
       this.buffer = this.buffer.subarray(offset + length);
-      if (opcode >= 0x8 && ((first & 0x80) === 0 || length > 125)) {
-        this.close();
-        this.handlers.onError();
-        return;
-      }
+      // A close from the host is the host ending the conversation, not a
+      // failure: there is nothing to report and nothing to retry differently.
       if (opcode === 0x8) {
         this.close();
         return;
@@ -284,11 +327,6 @@ export class LoopbackSocket {
         continue;
       }
       if (opcode === 0xa) continue;
-      if (opcode !== 0x1) {
-        this.close();
-        this.handlers.onError();
-        return;
-      }
       this.handlers.onMessage(payload.toString("utf8"));
     }
   }

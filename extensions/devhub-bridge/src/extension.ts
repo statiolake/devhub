@@ -11,6 +11,12 @@ import {
 import { BridgeControllerCore } from "./controller";
 import { parseNavigationUri } from "./navigation";
 import { isSafeBearerToken, LoopbackSocket } from "./transport";
+import {
+  describeFault,
+  faultIdentity,
+  faultIsTransient,
+  type BridgeFault,
+} from "./fault";
 import { controlSocketFromGlobalStorage, requestInstall } from "./installCli";
 
 interface BridgeConfiguration {
@@ -21,40 +27,139 @@ interface BridgeConfiguration {
   registry: SurfaceRegistryEntry[];
 }
 
-interface BridgeBootstrap {
-  endpoint: string;
-  token: string;
+/**
+ * Where a fault is said, and the only place.
+ *
+ * Two audiences, one value. The workbench gets a notification or a status item
+ * — that is where the person is looking when the integration stops working,
+ * and it is the half that was missing entirely. `console.log` stays as the
+ * transcript, but it is no longer the report: in a packaged app nobody is
+ * reading it, which is how "the editor integration just does not work" became
+ * a sentence with no reason anywhere behind it.
+ *
+ * A fault that will fix itself on the next reconnect goes to the status item
+ * only. One that needs a person is said out loud, once per distinct fault, so
+ * a reconnect loop cannot turn the channel into noise.
+ */
+class FaultReporter {
+  private readonly status: vscode.StatusBarItem;
+  private announced: string | null = null;
+
+  public constructor() {
+    this.status = vscode.window.createStatusBarItem(
+      vscode.StatusBarAlignment.Right,
+      0,
+    );
+    this.status.name = "DevHub Bridge";
+  }
+
+  public report(fault: BridgeFault): void {
+    const sentence = describeFault(fault);
+    console.log(`[DEVHUB-BRIDGE] ${JSON.stringify(fault)}`);
+    this.status.text = "$(warning) DevHub";
+    this.status.tooltip = sentence;
+    this.status.show();
+    const identity = faultIdentity(fault);
+    if (this.announced === identity) return;
+    this.announced = identity;
+    if (faultIsTransient(fault)) return;
+    void vscode.window.showErrorMessage(sentence);
+  }
+
+  /** The Bridge is working. Nothing to say and nothing to show. */
+  public clear(): void {
+    this.announced = null;
+    this.status.hide();
+  }
+
+  public dispose(): void {
+    this.status.dispose();
+  }
 }
 
-function log(kind: string, fields: Record<string, unknown> = {}): void {
-  // Diagnostics are intentionally content-free. Never add endpoint, token,
-  // workspace paths, editor text, or query values to this object.
-  const safe = Object.fromEntries(
-    Object.entries(fields).filter(([key]) =>
-      ["attempt", "dirty", "readiness", "reason", "source"].includes(key),
-    ),
-  );
-  console.log(`[DEVHUB-BRIDGE] ${JSON.stringify({ kind, ...safe })}`);
+/**
+ * A note about the Bridge that is not a failure.
+ *
+ * Kept deliberately separate from `report`: activation, and a workbench DevHub
+ * did not inject a Bridge into, are the normal desktop case, and announcing
+ * them would teach a person to ignore the channel that matters.
+ */
+function note(kind: string): void {
+  console.log(`[DEVHUB-BRIDGE] ${JSON.stringify({ kind })}`);
 }
 
-function configuration(): BridgeBootstrap | null {
+/**
+ * What DevHub injected, or why it cannot be used.
+ *
+ * Three outcomes, not two. `null` used to mean both "there is no Bridge here"
+ * and "there is one and it is wrong", which is how seven distinct refusals
+ * became one silent return — and the first of the two is not a failure at all:
+ * the desktop app injects no endpoint, so an uninjected workbench is inactive
+ * by design.
+ */
+type Bootstrap =
+  | { readonly kind: "absent" }
+  | {
+      readonly kind: "ready";
+      readonly endpoint: string;
+      readonly token: string;
+    }
+  | { readonly kind: "refused"; readonly fault: BridgeFault };
+
+function configuration(): Bootstrap {
   const endpoint = process.env.DEVHUB_BRIDGE_ENDPOINT;
   const token = process.env.DEVHUB_BRIDGE_TOKEN;
   const registryPath = process.env.DEVHUB_BRIDGE_SURFACE_REGISTRY;
+  const present = [endpoint, token, registryPath].filter(
+    (value) => value !== undefined && value.length > 0,
+  ).length;
+  if (present === 0) return { kind: "absent" };
+  if (present < 3) {
+    return {
+      kind: "refused",
+      fault: {
+        kind: "config",
+        variable: "DEVHUB_BRIDGE_ENDPOINT",
+        refusal: "partially_injected",
+      },
+    };
+  }
   if (
-    !endpoint ||
-    !token ||
     !registryPath ||
     !registryPath.startsWith("/") ||
     registryPath.includes("\0")
   ) {
-    log("inactive_missing_configuration");
-    return null;
+    return {
+      kind: "refused",
+      fault: {
+        kind: "config",
+        variable: "DEVHUB_BRIDGE_SURFACE_REGISTRY",
+        refusal: "registry_path_unsafe",
+      },
+    };
   }
-  if (!isSafeBearerToken(token)) {
-    log("inactive_invalid_configuration");
-    return null;
+  if (!token || !isSafeBearerToken(token)) {
+    return {
+      kind: "refused",
+      fault: {
+        kind: "config",
+        variable: "DEVHUB_BRIDGE_TOKEN",
+        // Never the value. This one is a bearer token, and a diagnostic that
+        // prints the credential it is complaining about is a worse failure
+        // than the one it is reporting.
+        refusal: "token_unsafe",
+      },
+    };
   }
+  const badEndpoint: Bootstrap = {
+    kind: "refused",
+    fault: {
+      kind: "config",
+      variable: "DEVHUB_BRIDGE_ENDPOINT",
+      refusal: "endpoint_not_loopback",
+    },
+  };
+  if (!endpoint) return badEndpoint;
   try {
     const parsed = new URL(endpoint);
     const port = Number(parsed.port || 80);
@@ -69,48 +174,87 @@ function configuration(): BridgeBootstrap | null {
       port < 1 ||
       port > 65_535
     )
-      throw new Error("invalid endpoint");
+      return badEndpoint;
   } catch {
-    log("inactive_invalid_configuration");
-    return null;
+    return badEndpoint;
   }
   // IDs are intentionally resolved asynchronously from the EditorHost-owned
   // registry below; the common environment carries only the registry path.
-  return { endpoint, token };
+  return { kind: "ready", endpoint, token };
 }
 
-async function readSurfaceRegistry(): Promise<SurfaceRegistryEntry[] | null> {
+type RegistryReading =
+  | { readonly kind: "entries"; readonly entries: SurfaceRegistryEntry[] }
+  | { readonly kind: "refused"; readonly fault: BridgeFault };
+
+async function readSurfaceRegistry(): Promise<RegistryReading> {
   const registryPath = process.env.DEVHUB_BRIDGE_SURFACE_REGISTRY;
   if (
     !registryPath ||
     !registryPath.startsWith("/") ||
     registryPath.includes("\0")
-  )
-    return null;
-  try {
-    const bytes = await readFile(registryPath);
-    return parseSurfaceRegistry(bytes);
-  } catch {
-    return null;
+  ) {
+    return {
+      kind: "refused",
+      fault: {
+        kind: "config",
+        variable: "DEVHUB_BRIDGE_SURFACE_REGISTRY",
+        refusal: "registry_path_unsafe",
+      },
+    };
   }
+  // Read and parse are two different things to be told, and they used to be
+  // one `catch { return null }`: "DevHub did not write the file" and "DevHub
+  // wrote one this Bridge does not understand" want different people looked at.
+  let bytes: Buffer;
+  try {
+    bytes = await readFile(registryPath);
+  } catch {
+    return {
+      kind: "refused",
+      fault: { kind: "registry", refusal: "unreadable" },
+    };
+  }
+  const entries = parseSurfaceRegistry(bytes);
+  return entries
+    ? { kind: "entries", entries }
+    : {
+        kind: "refused",
+        fault: { kind: "registry", refusal: "unparsable" },
+      };
 }
 
-async function resolveConfiguration(): Promise<BridgeConfiguration | null> {
+type Resolution =
+  /** No Bridge was injected into this workbench. Inactive, and correctly so. */
+  | { readonly kind: "absent" }
+  | { readonly kind: "ready"; readonly configuration: BridgeConfiguration }
+  | { readonly kind: "refused"; readonly fault: BridgeFault };
+
+async function resolveConfiguration(): Promise<Resolution> {
   const base = configuration();
-  if (!base) return null;
-  if ((vscode.workspace.workspaceFolders?.length ?? 0) > 1) return null;
+  if (base.kind !== "ready") return base;
+  const folders = vscode.workspace.workspaceFolders?.length ?? 0;
+  if (folders > 1) {
+    return { kind: "refused", fault: { kind: "surface", folders } };
+  }
   const root = vscode.workspace.workspaceFolders?.[0]
     ? filePath(vscode.workspace.workspaceFolders[0].uri)
     : null;
-  const entries = await readSurfaceRegistry();
-  if (!entries) return null;
-  const match = findSurfaceForRoot(entries, root);
-  if (!match) return null;
+  const registry = await readSurfaceRegistry();
+  if (registry.kind === "refused") return registry;
+  const match = findSurfaceForRoot(registry.entries, root);
+  if (!match) {
+    return { kind: "refused", fault: { kind: "surface", folders } };
+  }
   return {
-    ...base,
-    surfaceId: match.surface_id,
-    workspaceId: match.workspace_id,
-    registry: entries,
+    kind: "ready",
+    configuration: {
+      endpoint: base.endpoint,
+      token: base.token,
+      surfaceId: match.surface_id,
+      workspaceId: match.workspace_id,
+      registry: registry.entries,
+    },
   };
 }
 
@@ -155,6 +299,7 @@ function contextForWorkspace(
 function install(
   context: vscode.ExtensionContext,
   configurationValue: BridgeConfiguration,
+  reporter: FaultReporter,
 ): BridgeControllerCore {
   const controller = new BridgeControllerCore(
     {
@@ -177,7 +322,12 @@ function install(
         vscode.workspace.textDocuments.some(
           (document: vscode.TextDocument) => document.isDirty === true,
         ),
-      log,
+      log: (kind, fields) => {
+        console.log(`[DEVHUB-BRIDGE] ${JSON.stringify({ kind, ...fields })}`);
+      },
+      report: (fault) => {
+        reporter.report(fault);
+      },
     },
   );
   const update = () => {
@@ -255,17 +405,39 @@ function installCliCommand(
 
 export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(installCliCommand(context));
+  const reporter = new FaultReporter();
+  context.subscriptions.push({
+    dispose: () => {
+      reporter.dispose();
+    },
+  });
   void resolveConfiguration()
-    .then((config) => {
-      if (!config) return;
+    .then((resolution) => {
+      if (resolution.kind === "absent") {
+        note("inactive_no_bridge_injected");
+        return;
+      }
+      if (resolution.kind === "refused") {
+        reporter.report(resolution.fault);
+        return;
+      }
       try {
-        install(context, config);
-        log("activated");
-      } catch {
-        log("inactive_startup_failure");
+        install(context, resolution.configuration, reporter);
+        reporter.clear();
+        note("activated");
+      } catch (error) {
+        reporter.report({
+          kind: "startup",
+          reason: error instanceof Error ? error.message : "unknown",
+        });
       }
     })
-    .catch(() => log("inactive_startup_failure"));
+    .catch((error: unknown) => {
+      reporter.report({
+        kind: "startup",
+        reason: error instanceof Error ? error.message : "unknown",
+      });
+    });
 }
 
 export function deactivate(): void {

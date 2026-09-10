@@ -15,6 +15,7 @@ await build({
     "test/controller.test.ts",
     "test/navigation.test.ts",
     "test/transport.test.ts",
+    "test/fault.test.ts",
   ],
   bundle: true,
   platform: "node",

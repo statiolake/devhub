@@ -1,3 +1,4 @@
+import type { BridgeFault, SessionBreak } from "./fault";
 import {
   BRIDGE_PROTOCOL_VERSION,
   MAX_MESSAGE_BYTES,
@@ -26,6 +27,12 @@ export interface SessionActions {
   frames: string[];
   close: boolean;
   connected: boolean;
+  /**
+   * Why the session is closing, when it is closing because something was
+   * wrong. Absent when nothing was: `close` alone used to mean both "the host
+   * said something unacceptable" and "we are done", with no way to tell.
+   */
+  fault?: BridgeFault;
 }
 
 type Message = Envelope & { payload: Record<string, unknown> };
@@ -180,13 +187,13 @@ export class BridgeSession {
 
   public onHostFrame(raw: string): SessionActions {
     if (new TextEncoder().encode(raw).length > MAX_MESSAGE_BYTES) {
-      return this.closeActions();
+      return this.closeActions("frame_unparsable");
     }
     let message: Message;
     try {
       message = parseEnvelope(raw) as Message;
     } catch {
-      return this.closeActions();
+      return this.closeActions("frame_unparsable");
     }
 
     if (!this.connected) {
@@ -195,7 +202,7 @@ export class BridgeSession {
         message.sequence !== 1 ||
         !message.connection_id
       ) {
-        return this.closeActions();
+        return this.closeActions("handshake_frame_rejected");
       }
       const generation = message.payload.connection_generation;
       if (
@@ -205,7 +212,7 @@ export class BridgeSession {
         generation < 1 ||
         generation <= this.lastGeneration
       ) {
-        return this.closeActions();
+        return this.closeActions("handshake_frame_rejected");
       }
       this.connectionId = message.connection_id;
       this.connectionGeneration = generation;
@@ -223,19 +230,21 @@ export class BridgeSession {
       };
     }
 
-    if (message.connection_id !== this.connectionId) return this.closeActions();
+    if (message.connection_id !== this.connectionId)
+      return this.closeActions("sequence_broken");
     if (message.sequence === this.hostSequence) {
       if (
         message.message_id !== this.lastHostMessageId ||
         fingerprint(message) !== this.lastHostFingerprint
       )
-        return this.closeActions();
+        return this.closeActions("sequence_broken");
       const cached = this.requestLedger.get(message.message_id);
       return cached
         ? { frames: [cached.response], close: false, connected: true }
         : { frames: [], close: false, connected: true };
     }
-    if (message.sequence !== this.hostSequence + 1) return this.closeActions();
+    if (message.sequence !== this.hostSequence + 1)
+      return this.closeActions("sequence_broken");
     this.hostSequence = message.sequence;
     this.lastHostMessageId = message.message_id;
     this.lastHostFingerprint = fingerprint(message);
@@ -244,7 +253,7 @@ export class BridgeSession {
       return { frames: [], close: false, connected: true };
     }
     if (message.kind !== "request_state_snapshot" && message.kind !== "focus") {
-      return this.closeActions();
+      return this.closeActions("unexpected_message");
     }
 
     const previous = this.requestLedger.get(message.message_id);
@@ -253,7 +262,7 @@ export class BridgeSession {
         previous.kind !== message.kind ||
         !sameJson(previous.payload, message.payload)
       )
-        return this.closeActions();
+        return this.closeActions("sequence_broken");
       if (previous.generation === this.connectionGeneration) {
         return { frames: [previous.response], close: false, connected: true };
       }
@@ -317,9 +326,14 @@ export class BridgeSession {
     } as never);
   }
 
-  private closeActions(): SessionActions {
+  private closeActions(reason: SessionBreak): SessionActions {
     this.onSocketClosed();
-    return { frames: [], close: true, connected: false };
+    return {
+      frames: [],
+      close: true,
+      connected: false,
+      fault: { kind: "session", reason } satisfies BridgeFault,
+    };
   }
 }
 

@@ -1,5 +1,6 @@
 import type { AbsolutePath, Context } from "./generated/bridge/index";
 import type { OpenWorkspaceSource } from "./generated/bridge/index";
+import { faultIdentity, type BridgeFault } from "./fault";
 import { BridgeSession } from "./session";
 
 const MAX_RECONNECT_DELAY_MS = 5_000;
@@ -7,7 +8,7 @@ const MAX_RECONNECT_DELAY_MS = 5_000;
 export interface ControllerSocketHandlers {
   onOpen: () => void;
   onMessage: (raw: string) => void;
-  onError: () => void;
+  onError: (fault: BridgeFault) => void;
   onClose: () => void;
 }
 
@@ -26,6 +27,15 @@ export interface ControllerDependencies {
   context: () => Context | null;
   dirty: () => boolean;
   log?: (kind: string, fields?: Record<string, unknown>) => void;
+  /**
+   * Where a fault goes.
+   *
+   * Not optional in spirit: a controller with nowhere to report is the state
+   * this whole union exists to end. It is optional only so the pure tests can
+   * leave it out, and it defaults to doing nothing rather than to a console,
+   * because a console is what was wrong before.
+   */
+  report?: (fault: BridgeFault) => void;
   schedule?: (
     callback: () => void,
     delayMs: number,
@@ -59,6 +69,14 @@ export class BridgeControllerCore {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private reconnectAttempt = 0;
   private stopped = false;
+  /**
+   * The fault this connection ended on, kept until the next one succeeds.
+   *
+   * A reconnect loop that cannot say what it is retrying is the thing that
+   * made a broken Bridge undiagnosable, so the reason is state rather than a
+   * moment. `lastFault` is what a status item reads.
+   */
+  private fault: BridgeFault | null = null;
 
   public constructor(
     config: ControllerConfig,
@@ -70,6 +88,7 @@ export class BridgeControllerCore {
     this.dependencies = {
       ...dependencies,
       log: dependencies.log ?? (() => undefined),
+      report: dependencies.report ?? (() => undefined),
       schedule:
         dependencies.schedule ??
         ((callback, delay) => setTimeout(callback, delay)),
@@ -86,6 +105,11 @@ export class BridgeControllerCore {
       context,
       dirty: dependencies.dirty(),
     });
+  }
+
+  /** What went wrong last, or `null` if this connection is healthy. */
+  public lastFault(): BridgeFault | null {
+    return this.fault;
   }
 
   public start(): void {
@@ -149,6 +173,7 @@ export class BridgeControllerCore {
   public handleHostMessage(raw: string): void {
     const actions = this.session.onHostFrame(raw);
     actions.frames.forEach((frame) => this.send(frame));
+    if (actions.fault) this.raise(actions.fault);
     if (actions.close) this.socket?.close();
   }
 
@@ -172,22 +197,59 @@ export class BridgeControllerCore {
         {
           onOpen: () => {
             this.reconnectAttempt = 0;
+            // A connection that came up is the answer to whatever the last one
+            // failed with; nothing else retires a fault, so nothing else can
+            // retire it while it is still true.
+            this.clearFault();
             const actions = this.session.onSocketOpen();
             actions.frames.forEach((frame) => this.send(frame));
           },
           onMessage: (raw) => this.handleHostMessage(raw),
-          onError: () => {
-            this.dependencies.log?.("endpoint_error");
+          onError: (fault) => {
+            this.raise(fault);
             this.socket?.close();
           },
           onClose: () => this.handleClose(),
         },
       );
       this.socket.open();
-    } catch {
+    } catch (error) {
+      // The socket constructor refuses an endpoint or token it will not use.
+      // That is a configuration DevHub injected, not a network condition, and
+      // reconnecting will refuse it again — so it is said, every time, until
+      // somebody changes it.
       this.socket = null;
+      this.raise({
+        kind: "config",
+        variable: "DEVHUB_BRIDGE_ENDPOINT",
+        refusal:
+          error instanceof Error && error.message.includes("token")
+            ? "token_unsafe"
+            : "endpoint_not_loopback",
+      });
       this.scheduleReconnect();
     }
+  }
+
+  /**
+   * Record a fault and report it, once per distinct fault.
+   *
+   * The identity check is here rather than at the reporter because it is the
+   * controller that knows a reconnect loop is raising the same one every few
+   * seconds. Somewhere to report it and a rule for how often are the two
+   * halves of "visible"; a report that repeats a hundred times is the silent
+   * case with extra steps.
+   */
+  private raise(fault: BridgeFault): void {
+    const repeated =
+      this.fault !== null && faultIdentity(this.fault) === faultIdentity(fault);
+    this.fault = fault;
+    if (repeated) return;
+    this.dependencies.report?.(fault);
+  }
+
+  private clearFault(): void {
+    this.fault = null;
   }
 
   private handleClose(): void {
