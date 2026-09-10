@@ -532,9 +532,21 @@ function validateAgentRecord(record: AgentStateRecord): void {
 
 function validateLifecycle(lifecycle: WorkspaceLifecycleRecord): void {
   if (lifecycle.kind === "closing" || lifecycle.kind === "closing_failed") {
+    const progress = lifecycle.progress;
+    if (progress.editor_closed && !progress.terminal_closed) {
+      fail("STATE_INVALID");
+    }
+    // `agents_closed` is how many Agents the close has already stopped, and a
+    // stopped Agent leaves the record — so the count is *expected* to exceed
+    // the Agents still listed, and is usually compared against none at all.
+    // This used to be checked against `record.agents.length`, which made every
+    // close of a workspace with an Agent in it fail at the first save after
+    // the agents step, and fail again on every retry: the progress the retry
+    // resumed from was the same "invalid" record. The only thing the number
+    // has to be is a count.
     if (
-      lifecycle.progress.editor_closed &&
-      !lifecycle.progress.terminal_closed
+      !Number.isInteger(progress.agents_closed) ||
+      progress.agents_closed < 0
     ) {
       fail("STATE_INVALID");
     }
@@ -560,14 +572,6 @@ function validateWorkspaceRecord(record: WorkspaceStateRecord): void {
     ids.add(agent.agent_id);
   }
   validateLifecycle(record.lifecycle);
-  const progress =
-    record.lifecycle.kind === "closing" ||
-    record.lifecycle.kind === "closing_failed"
-      ? record.lifecycle.progress
-      : undefined;
-  if (progress && progress.agents_closed > record.agents.length) {
-    fail("STATE_INVALID");
-  }
 }
 
 function isValidSocketName(value: string): boolean {

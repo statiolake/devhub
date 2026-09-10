@@ -263,6 +263,62 @@ describe("validation", () => {
   });
 });
 
+describe("cleanup progress after the agents step", () => {
+  it("accepts more Agents closed than are left in the record", () => {
+    // The agents step stops every Agent and takes it out of the workspace, and
+    // then writes down how many it stopped. So the record a close saves has
+    // `agents_closed: 2` and no Agents — which is the normal shape of a close
+    // that is going well, not a corrupt one. Refusing it is what made closing
+    // a workspace with an Agent in it fail on every attempt.
+    const state = freshState();
+    state.workspaces = [
+      {
+        workspace_id: WS_A,
+        selected_path: "/dev/a",
+        canonical_path: "/dev/a",
+        lifecycle: {
+          kind: "closing",
+          progress: {
+            agents_closed: 2,
+            agents_step_completed: true,
+            terminal_closed: false,
+            editor_closed: false,
+          },
+        },
+        agents: [],
+      },
+    ];
+    expect(() => {
+      validateState(state);
+    }).not.toThrow();
+  });
+
+  it("still refuses a count that is not one", () => {
+    const state = freshState();
+    state.workspaces = [
+      {
+        workspace_id: WS_A,
+        selected_path: "/dev/a",
+        canonical_path: "/dev/a",
+        lifecycle: {
+          kind: "closing_failed",
+          diagnostic: "cleanup_failed",
+          progress: {
+            agents_closed: -1,
+            agents_step_completed: true,
+            terminal_closed: false,
+            editor_closed: false,
+          },
+        },
+        agents: [],
+      },
+    ];
+    expect(() => {
+      validateState(state);
+    }).toThrow(StateError);
+  });
+});
+
 describe("a close that was in progress when DevHub stopped", () => {
   it("comes back as a close that failed, never as one still running", () => {
     const state = freshState();
