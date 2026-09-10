@@ -879,8 +879,10 @@ describe("retrying a failed close", () => {
     );
 
     // Nothing is busy any more, and nothing is left of the in-flight cleanup
-    // either — the same position a restart leaves behind.
-    driver.dispatch({ type: "retry_close_workspace", workspaceId: WS_A });
+    // either — the same position a restart leaves behind. The close is asked
+    // for in the same words as the first time: the model reads `closing-failed`
+    // and carries the close on rather than starting a new one.
+    driver.dispatch({ type: "request_close_workspace", workspaceId: WS_A });
     driver.settle();
     expect(driver.coordinator.snapshot().workspaces).toHaveLength(0);
   });

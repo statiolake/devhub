@@ -288,12 +288,18 @@ export type AppIntentWire =
 			readonly type: "locate_workspace";
 			readonly workspaceId: string;
 	  }
+	/**
+	 * Close this Workspace — first attempt or fifth, it is the same request.
+	 *
+	 * A `retry_close_workspace` used to sit beside it, and every caller read
+	 * the workspace's state to pick between the two. The model owns that state,
+	 * so the model makes the distinction. See `UserIntent`.
+	 */
 	| { readonly type: "request_close_workspace"; readonly workspaceId: string }
 	| {
 			readonly confirmationId: string;
 			readonly type: "confirm_close_workspace";
-	  }
-	| { readonly type: "retry_close_workspace"; readonly workspaceId: string };
+	  };
 export type AppOutcomeWire =
 	| { readonly kind: "noop"; readonly snapshot: AppSnapshotWire }
 	| { readonly kind: "updated"; readonly snapshot: AppSnapshotWire }
@@ -379,7 +385,12 @@ export type ConfirmationPurposeWire =
 			readonly inspection: CloseInspectionWire;
 			readonly kind: "workspace_close";
 	  }
-	| { readonly kind: "agent_stop" };
+	/**
+	 * Stopping this Agent. The subject is *in* the purpose, not beside it: a
+	 * question that cannot say what it is about is a question that can be
+	 * answered about the wrong thing.
+	 */
+	| { readonly kind: "agent_stop"; readonly agentId: string };
 export type ContextWire =
 	| { readonly kind: "global" }
 	| { readonly kind: "workspace"; readonly workspaceId: string }

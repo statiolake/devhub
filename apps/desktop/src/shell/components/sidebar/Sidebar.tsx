@@ -233,19 +233,13 @@ function WorkspaceRow({
                     ? "Close worktree…"
                     : "Close workspace"
               }
+              // One close, whichever state the row is in. The page used to
+              // read `closing-failed` here and dispatch a different intent —
+              // a rule the sidebar knew and the surface pane did not, which is
+              // how closing the same workspace from two places did two things.
+              // Whether this is a first attempt or a retry is main's to decide,
+              // from state main already holds.
               onClick={() => {
-                // A close that failed is retried by asking for the same thing
-                // again, and that retry is the model's own command. Anything
-                // else goes through main's one close, which is what decides
-                // whether this workspace is a worktree and therefore whether
-                // the folder goes with it (`closeWorkspaceOrWorktree`).
-                if (workspace.state.kind === "closing-failed") {
-                  void dispatch({
-                    type: "retry_close_workspace",
-                    workspaceId: workspace.id,
-                  });
-                  return;
-                }
                 onCloseWorkspace(workspace);
               }}
             >

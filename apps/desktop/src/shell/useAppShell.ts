@@ -86,24 +86,27 @@ export interface AppShellContextValue {
     listener: (actions: readonly AgentActionWire[]) => void,
   ) => () => void;
   /**
-   * Remove a worktree's folder and close its workspace. Throws git's reason.
-   *
-   * `force` is only ever true after the person has been asked and has said to
-   * go ahead: it is what lets a worktree with uncommitted changes be removed at
-   * all. Without it git refuses such a removal, which is the check that makes
-   * the unasked removals safe.
-   */
-  /**
    * Get rid of a workspace, whatever kind of workspace it is.
    *
-   * The one path: a folder is closed, a worktree is deleted — silently when
-   * there is nothing in it to lose, and after the three-way question when there
-   * is. See `main/shell/appController.ts`.
+   * **The one path**, used by every control that closes one: a folder is
+   * closed, a worktree is deleted — silently when there is nothing in it to
+   * lose, and after the three-way question when there is. First attempt or
+   * retry is main's to decide, from state main already holds. The page never
+   * dispatches a raw lifecycle intent and never gets a `--force` flag. See
+   * `main/shell/appController.ts`.
    */
   readonly closeWorkspace: (workspaceId: string) => void;
-  readonly removeWorktree: (
+  /**
+   * Answer the three-way question about a worktree main is closing.
+   *
+   * The page answers a question main asked. It does not decide `--force`, and
+   * it does not carry out either answer itself: `delete` is the only way a
+   * worktree with uncommitted work can be removed at all, and that it is
+   * allowed here is what the person was just asked. Throws git's reason.
+   */
+  readonly answerWorktreeClose: (
     workspaceId: string,
-    force: boolean,
+    answer: "close" | "delete",
   ) => Promise<AppOutcome>;
   /** Say one of the configured actions to a running agent. Queued, not sent. */
   readonly runAgentAction: (
@@ -150,8 +153,8 @@ export interface AppShellContextValue {
   readonly repositoryStatus: RepositoryStatusWire;
   readonly pendingConfirmation: {
     readonly confirmationId: string;
+    /** What is being asked, subject included. See `ConfirmationPurposeWire`. */
     readonly purpose: ConfirmationPurposeWire;
-    readonly agentId?: string;
   } | null;
   /**
    * Answer the pending confirmation, and say whether it was carried out.

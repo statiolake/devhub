@@ -62,7 +62,7 @@ function mount(
   workspaceState: WorkspaceStateWire = { kind: "available" },
 ) {
   const openExternalUrl = vi.fn();
-  const removeWorktree = vi.fn(() => Promise.resolve({}));
+  const answerWorktreeClose = vi.fn(() => Promise.resolve({}));
   const closeWorkspace = vi.fn();
   const dispatch = vi.fn();
   const onDispatch = vi.fn();
@@ -70,7 +70,7 @@ function mount(
   const value = {
     dispatch,
     openExternalUrl,
-    removeWorktree,
+    answerWorktreeClose,
     closeWorkspace,
     reportFailure,
     agentProfiles: { sequence: 1, availability: "available", profiles: [] },
@@ -90,7 +90,7 @@ function mount(
   );
   return {
     openExternalUrl,
-    removeWorktree,
+    answerWorktreeClose,
     closeWorkspace,
     onDispatch,
     reportFailure,
@@ -505,10 +505,13 @@ describe("a workspace row, continued", () => {
       }
     });
 
-    it("still retries a failed close through the model, not through main", () => {
-      // A close that failed is retried by asking for the same thing again, and
-      // that retry is the model's own command: nothing about the folder has
-      // changed, so there is nothing for the close rule to decide again.
+    it("retries a failed close through the same one close, not a second one", () => {
+      // A close that failed is retried by asking for the same thing again —
+      // and "the same thing" is main's one close, exactly as on the first
+      // attempt. The page used to read `closing-failed` here and dispatch a
+      // different intent, which is a rule the sidebar knew and the surface
+      // pane did not: whether a retry went past the worktree rule depended on
+      // which control you happened to press.
       const { closeWorkspace, onDispatch } = mount(worktree(false), {
         kind: "closing-failed",
         diagnostic: "cleanup_failed",
@@ -519,11 +522,8 @@ describe("a workspace row, continued", () => {
         },
       });
       fireEvent.click(close() as HTMLElement);
-      expect(closeWorkspace).not.toHaveBeenCalled();
-      expect(onDispatch).toHaveBeenCalledWith({
-        type: "retry_close_workspace",
-        workspaceId: "w-1",
-      });
+      expect(closeWorkspace).toHaveBeenCalledWith("w-1");
+      expect(onDispatch).not.toHaveBeenCalled();
     });
   });
 

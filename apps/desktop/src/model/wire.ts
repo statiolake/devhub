@@ -403,12 +403,15 @@ function closeInspectionWire(
 function confirmationPurposeWire(
   purpose: ConfirmationOutcomePurpose,
 ): ConfirmationPurposeWire {
-  return purpose.kind === "workspace_close"
-    ? {
+  switch (purpose.kind) {
+    case "workspace_close":
+      return {
         kind: "workspace_close",
         inspection: closeInspectionWire(purpose.inspection),
-      }
-    : { kind: "agent_stop" };
+      };
+    case "agent_stop":
+      return { kind: "agent_stop", agentId: purpose.agentId };
+  }
 }
 
 export function outcomeWire(
@@ -748,11 +751,6 @@ export function intentFromWire(wire: AppIntentWire): UserIntent {
         confirmationId: tryParse(() =>
           parseConfirmationId(wire.confirmationId),
         ),
-      };
-    case "retry_close_workspace":
-      return {
-        type: "retry_close_workspace",
-        workspaceId: tryParse(() => parseWorkspaceId(wire.workspaceId)),
       };
     case "request_create_agent":
       return {

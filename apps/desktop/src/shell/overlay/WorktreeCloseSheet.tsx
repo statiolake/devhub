@@ -48,7 +48,7 @@ export function WorktreeCloseSheet({
   dirty,
   onDismiss,
 }: WorktreeCloseSheetProps) {
-  const { dispatch, removeWorktree, reportFailure } = useAppShell();
+  const { answerWorktreeClose, reportFailure } = useAppShell();
 
   return (
     <Picker
@@ -81,13 +81,14 @@ export function WorktreeCloseSheet({
         },
       ]}
       onChoose={({ id }) => {
-        if (id === "close") {
-          void dispatch({ type: "request_close_workspace", workspaceId });
-        } else if (id === "delete") {
-          // `--force` is the only way a worktree with uncommitted work can be
-          // removed at all, and it is what this row says it will do. The close
-          // that follows is `removeWorktree`'s own second half.
-          void removeWorktree(workspaceId, true).catch(reportFailure);
+        // The sheet reports *which answer*, and nothing else. It used to pick
+        // between a raw `request_close_workspace` and `removeWorktree(id,
+        // force)` — one question carried out down two paths, with the renderer
+        // deciding `--force` and the "just close" path going around main's
+        // close rule entirely. Cancel is this sheet dismissing itself, so it
+        // is the one answer nothing is sent for.
+        if (id === "close" || id === "delete") {
+          void answerWorktreeClose(workspaceId, id).catch(reportFailure);
         }
         onDismiss();
       }}

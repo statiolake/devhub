@@ -142,7 +142,10 @@ function client(
 // selected row visible is the picker's job, not this file's subject.
 Element.prototype.scrollIntoView = vi.fn();
 
-const STOP_AGENT: ConfirmationPurposeWire = { kind: "agent_stop" };
+const STOP_AGENT: ConfirmationPurposeWire = {
+  kind: "agent_stop",
+  agentId: AGENT_ID,
+};
 
 /** A workspace with something open in it, which is the only case that asks. */
 const CLOSE_WORKSPACE: ConfirmationPurposeWire = {
@@ -174,7 +177,6 @@ function mount(
           kind: "close-confirmation",
           confirmationId: CONFIRMATION_ID,
           purpose,
-          ...(purpose.kind === "agent_stop" ? { agentId: AGENT_ID } : {}),
         }}
         onDismiss={onDismiss}
       />
@@ -352,5 +354,53 @@ describe("closing a workspace with things open in it", () => {
         confirmationId: CONFIRMATION_ID,
       });
     });
+  });
+});
+
+/**
+ * A confirmation renders from its purpose and nothing else.
+ *
+ * The subject used to travel beside the purpose, and the page recovered it by
+ * sniffing the request it had sent — `intent.type === "stop_agent" ? … :
+ * pendingConfirmation?.agentId : undefined`, a three-way chain reading the
+ * state it was about to overwrite. It said nothing at all for a confirmation
+ * main raised on its own, which is the one the chord and the menu produce.
+ */
+describe("what a confirmation knows about itself", () => {
+  afterEach(cleanup);
+
+  it("names the Agent from the purpose, with nothing beside it", async () => {
+    // Nothing was dispatched from this page: the sheet is handed the purpose
+    // and has to be able to draw the whole question out of it.
+    mount(snapshotWith(true), vi.fn(), {
+      kind: "agent_stop",
+      agentId: AGENT_ID,
+    });
+    await waitFor(() => {
+      expect(screen.getByText("Stop “claude 1”?")).toBeInTheDocument();
+    });
+  });
+
+  it("answers each purpose with that purpose's own intent", async () => {
+    for (const [purpose, expected] of [
+      [
+        { kind: "agent_stop", agentId: AGENT_ID } as ConfirmationPurposeWire,
+        { type: "confirm_stop_agent", confirmationId: CONFIRMATION_ID },
+      ],
+      [
+        CLOSE_WORKSPACE,
+        { type: "confirm_close_workspace", confirmationId: CONFIRMATION_ID },
+      ],
+    ] as const) {
+      const dispatch = mount(snapshotWith(true), vi.fn(), purpose);
+      await waitFor(() => {
+        expect(rows()).toHaveLength(2);
+      });
+      fireEvent.click(screen.getByText(rows()[1]!));
+      await waitFor(() => {
+        expect(dispatch).toHaveBeenCalledWith(expected);
+      });
+      cleanup();
+    }
   });
 });

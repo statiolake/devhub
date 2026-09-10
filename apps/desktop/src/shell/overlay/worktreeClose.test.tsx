@@ -30,7 +30,7 @@ const WORKSPACE_ID = "63752e9f-c93d-4d49-87f0-70f352eea8b0";
 
 function mount(dirty: boolean | undefined) {
   const dispatch = vi.fn(async () => ({}) as never);
-  const removeWorktree = vi.fn(async () => ({}) as never);
+  const answerWorktreeClose = vi.fn(async () => ({}) as never);
   const reportFailure = vi.fn();
   const onDismiss = vi.fn();
   render(
@@ -38,7 +38,7 @@ function mount(dirty: boolean | undefined) {
       value={
         {
           dispatch,
-          removeWorktree,
+          answerWorktreeClose,
           reportFailure,
         } as unknown as AppShellContextValue
       }
@@ -53,7 +53,7 @@ function mount(dirty: boolean | undefined) {
       />
     </AppShellContext.Provider>,
   );
-  return { dispatch, removeWorktree, reportFailure, onDismiss };
+  return { dispatch, answerWorktreeClose, reportFailure, onDismiss };
 }
 
 /** The rows, in the order the arrows and Return walk them. */
@@ -81,38 +81,39 @@ describe("closing a worktree with something in it to lose", () => {
   });
 
   it("does nothing at all on Return, because Cancel is the default", () => {
-    const { dispatch, removeWorktree, onDismiss } = mount(true);
+    const { dispatch, answerWorktreeClose, onDismiss } = mount(true);
     fireEvent.keyDown(screen.getByRole("dialog"), { key: "Enter" });
     expect(dispatch).not.toHaveBeenCalled();
-    expect(removeWorktree).not.toHaveBeenCalled();
+    expect(answerWorktreeClose).not.toHaveBeenCalled();
     expect(onDismiss).toHaveBeenCalled();
   });
 
   it("does nothing at all on Escape, which means what Cancel means", () => {
-    const { dispatch, removeWorktree, onDismiss } = mount(true);
+    const { dispatch, answerWorktreeClose, onDismiss } = mount(true);
     fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
     expect(dispatch).not.toHaveBeenCalled();
-    expect(removeWorktree).not.toHaveBeenCalled();
+    expect(answerWorktreeClose).not.toHaveBeenCalled();
     expect(onDismiss).toHaveBeenCalled();
   });
 
-  it("closes the workspace and keeps the folder on the second row", () => {
-    const { dispatch, removeWorktree, onDismiss } = mount(true);
+  /**
+   * The sheet reports which answer it was given and nothing else — no raw
+   * lifecycle intent for one answer and a `--force` flag for the other. Both
+   * answers go down main's one close path, which is what decides what "delete"
+   * means and whether the folder goes with the workspace.
+   */
+  it("reports the second answer, and never dispatches a close itself", () => {
+    const { dispatch, answerWorktreeClose, onDismiss } = mount(true);
     fireEvent.click(screen.getByText("Just close the workspace"));
-    expect(dispatch).toHaveBeenCalledWith({
-      type: "request_close_workspace",
-      workspaceId: WORKSPACE_ID,
-    });
-    expect(removeWorktree).not.toHaveBeenCalled();
+    expect(answerWorktreeClose).toHaveBeenCalledWith(WORKSPACE_ID, "close");
+    expect(dispatch).not.toHaveBeenCalled();
     expect(onDismiss).toHaveBeenCalled();
   });
 
-  it("removes the folder with --force on the third", () => {
-    // Forced, because this question is only ever asked when git would refuse —
-    // or when DevHub cannot promise it would not.
-    const { dispatch, removeWorktree, onDismiss } = mount(true);
+  it("reports the third answer, and never decides --force itself", () => {
+    const { dispatch, answerWorktreeClose, onDismiss } = mount(true);
     fireEvent.click(screen.getByText("Delete the worktree"));
-    expect(removeWorktree).toHaveBeenCalledWith(WORKSPACE_ID, true);
+    expect(answerWorktreeClose).toHaveBeenCalledWith(WORKSPACE_ID, "delete");
     expect(dispatch).not.toHaveBeenCalled();
     expect(onDismiss).toHaveBeenCalled();
   });

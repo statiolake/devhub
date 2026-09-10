@@ -40,11 +40,19 @@ function errorIdentity(error: AppError): string {
   return `${error.code}\u0000${error.detail ?? ""}`;
 }
 
-/** What a dispatch came back asking to have confirmed. */
+/**
+ * What a dispatch came back asking to have confirmed.
+ *
+ * The token, and what the question is about. There used to be an `agentId`
+ * beside the purpose, filled in by sniffing the request that had been sent —
+ * which said nothing for a confirmation main raised on its own, and left
+ * `confirmPending` guarding against a state it could not do anything about.
+ * The purpose carries its own subject now (`ConfirmationPurposeWire`), so
+ * there is nothing here to disagree with it.
+ */
 export interface PendingConfirmation {
   readonly confirmationId: string;
   readonly purpose: ConfirmationPurposeWire;
-  readonly agentId?: string;
 }
 
 export interface AppShellProviderProps {
@@ -352,15 +360,6 @@ export function AppShellProvider({
           (raiseConfirmation ?? setPendingConfirmation)({
             confirmationId: outcome.confirmationId,
             purpose: outcome.purpose,
-            // A confirmation can be replaced by main while this one is being
-            // submitted. Keep the original Agent identity, because the
-            // replacement carries only its token.
-            agentId:
-              intent.type === "stop_agent"
-                ? intent.agentId
-                : outcome.purpose.kind === "agent_stop"
-                  ? pendingConfirmation?.agentId
-                  : undefined,
           });
         }
         return outcome;
@@ -373,7 +372,6 @@ export function AppShellProvider({
     [
       applySnapshot,
       transport,
-      pendingConfirmation,
       raiseConfirmation,
       clearIntentError,
       setIntentError,
@@ -534,9 +532,9 @@ export function AppShellProvider({
     [setIntentError, transport],
   );
 
-  const removeWorktree = useCallback(
-    async (workspaceId: string, force: boolean) => {
-      const outcome = await transport.removeWorktree(workspaceId, force);
+  const answerWorktreeClose = useCallback(
+    async (workspaceId: string, answer: "close" | "delete") => {
+      const outcome = await transport.answerWorktreeClose(workspaceId, answer);
       applySnapshot(outcome.snapshot);
       return outcome;
     },
@@ -631,22 +629,17 @@ export function AppShellProvider({
     confirmationBusyRef.current = true;
     const confirmationId = pendingConfirmation.confirmationId;
     try {
-      let outcome: AppOutcome | undefined;
-      if (pendingConfirmation.purpose.kind === "agent_stop") {
-        if (!pendingConfirmation.agentId) {
-          setPendingConfirmation(null);
-          return true;
-        }
-        outcome = await dispatch({
-          type: "confirm_stop_agent",
-          confirmationId,
-        });
-      } else {
-        outcome = await dispatch({
-          type: "confirm_close_workspace",
-          confirmationId,
-        });
-      }
+      // One answer per purpose, and every purpose has one. There used to be a
+      // guard above this that cleared the confirmation and reported *success*
+      // when an `agent_stop` had no Agent id — so main's one-shot confirmation
+      // was stranded, the Agent was not stopped, and the sheet closed as
+      // though it had been. The purpose carries its subject now, and there is
+      // no such state left to guard.
+      const outcome: AppOutcome | undefined = await dispatch(
+        pendingConfirmation.purpose.kind === "agent_stop"
+          ? { type: "confirm_stop_agent", confirmationId }
+          : { type: "confirm_close_workspace", confirmationId },
+      );
       // Keep the confirmation available when the request itself failed. A
       // successful confirmation consumes the one-shot operation in main; a
       // failure has to stay retryable without inventing a second local state.
@@ -707,7 +700,7 @@ export function AppShellProvider({
       agentActions,
       subscribeAgentActions,
       closeWorkspace,
-      removeWorktree,
+      answerWorktreeClose,
       runAgentAction,
       confirmInjection,
       cancelInjection,
@@ -737,7 +730,7 @@ export function AppShellProvider({
       agentActions,
       subscribeAgentActions,
       closeWorkspace,
-      removeWorktree,
+      answerWorktreeClose,
       runAgentAction,
       confirmInjection,
       cancelInjection,

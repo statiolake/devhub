@@ -335,7 +335,7 @@ export async function readAhead(
  * end otherwise: a worktree with uncommitted changes could not be removed from
  * DevHub at all, however sure the person was.
  *
- * The branch is not touched either way: see `removeWorktree` in the controller.
+ * The branch is not touched either way: see `deleteWorktree` in the controller.
  */
 export async function removeWorktree(
 	command: GitCommand,

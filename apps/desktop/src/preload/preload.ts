@@ -137,11 +137,11 @@ const devhub: DevhubApi = {
 		) as Promise<AssignmentBranchWire>,
 	closeWorkspace: (workspaceId: string) =>
 		ipcRenderer.invoke(CHANNELS.closeWorkspace, workspaceId) as Promise<void>,
-	removeWorktree: (workspaceId: string, force: boolean) =>
+	answerWorktreeClose: (workspaceId: string, answer: "close" | "delete") =>
 		ipcRenderer.invoke(
-			CHANNELS.removeWorktree,
+			CHANNELS.answerWorktreeClose,
 			workspaceId,
-			force,
+			answer,
 		) as Promise<AppOutcome>,
 	runAgentAction: (agentId: string, actionId: string) =>
 		ipcRenderer.invoke(

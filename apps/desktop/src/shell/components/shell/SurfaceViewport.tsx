@@ -221,11 +221,12 @@ function AgentPane({
 export function Unavailable({
   workspace,
   actions,
-  onRetryClose,
+  onClose,
 }: {
   readonly workspace: WorkspaceSnapshot | undefined;
   readonly actions: React.ComponentProps<typeof Failure>["actions"];
-  readonly onRetryClose: () => void;
+  /** Main's one close. Not an intent: see `closeWorkspace` in the client. */
+  readonly onClose: () => void;
 }) {
   if (!workspace) {
     return <Failure summary="The selected context is no longer available." />;
@@ -260,7 +261,7 @@ export function Unavailable({
        */
       actions={
         closeFailed
-          ? [{ label: "Close Workspace", primary: true, run: onRetryClose }]
+          ? [{ label: "Close Workspace", primary: true, run: onClose }]
           : state.kind === "unavailable"
             ? actions
             : undefined
@@ -289,8 +290,13 @@ export function SurfaceViewport({
   intentError,
   appearance,
 }: SurfaceViewportProps) {
-  const { dispatch, chooseWorkspaceFolder, dismissIntentError, reportFailure } =
-    useAppShell();
+  const {
+    dispatch,
+    closeWorkspace,
+    chooseWorkspaceFolder,
+    dismissIntentError,
+    reportFailure,
+  } = useAppShell();
   const layout = snapshot.layout;
   const workspace = workspaceForContext(snapshot, snapshot.selection.context);
   const restartingEditors = useRestartingEditors();
@@ -337,12 +343,15 @@ export function SurfaceViewport({
               }),
           },
           {
+            // Main's one close, the same one the Sidebar's button asks for.
+            // This used to dispatch the raw lifecycle intent, which went around
+            // the worktree rule entirely — so closing an unavailable worktree
+            // from the Sidebar deleted the folder and closing the same
+            // workspace from this pane did not.
             label: "Close",
-            run: () =>
-              void dispatch({
-                type: "request_close_workspace",
-                workspaceId: workspace.id,
-              }),
+            run: () => {
+              closeWorkspace(workspace.id);
+            },
           },
         ] as const)
       : undefined;
@@ -383,12 +392,8 @@ export function SurfaceViewport({
       <Unavailable
         workspace={workspace}
         actions={unavailableActions}
-        onRetryClose={() => {
-          if (workspace)
-            void dispatch({
-              type: "retry_close_workspace",
-              workspaceId: workspace.id,
-            });
+        onClose={() => {
+          if (workspace) closeWorkspace(workspace.id);
         }}
       />
     );

@@ -587,8 +587,13 @@ export class AppController {
 			toggleIntegratedTerminal: () => {
 				this.toggleIntegratedTerminal();
 			},
+			// The menu item is the same command as the chord and the sidebar's
+			// button, so it is the same line. It used to go straight to
+			// `requestCloseWorkspace`, around the worktree rule — so File ▸ Close
+			// Workspace left a worktree's folder on disk and every other way of
+			// closing the same row deleted it.
 			closeWorkspace: (workspaceId) => {
-				this.requestCloseWorkspace(workspaceId);
+				this.closeWorkspaceOrWorktree(workspaceId);
 			},
 			openWorkspacePicker: () => {
 				this.send(CHANNELS.menuCommand, "open_workspace_picker");
@@ -784,11 +789,17 @@ export class AppController {
 	 * Getting rid of a workspace, whatever kind of workspace it is.
 	 *
 	 * **One path**, and this is it: the `Cmd+Q Shift+W` chord, `Cmd+Q X` on a
-	 * workspace row, and the sidebar's own close button all arrive here, because
-	 * "close this" has to mean one thing. It used to mean two — the sidebar had
-	 * a close button and a separate trash button, and the chord only knew about
-	 * the first — so whether a worktree survived depended on which control you
-	 * happened to press.
+	 * workspace row, File ▸ Close Workspace, the sidebar's own close button and
+	 * the Unavailable pane's all arrive here, because "close this" has to mean
+	 * one thing. It used to mean several — the sidebar had a close button and a
+	 * separate trash button and the chord only knew about the first; later the
+	 * menu item and the surface pane dispatched the raw lifecycle intent — so
+	 * whether a worktree survived depended on which control you happened to
+	 * press.
+	 *
+	 * A close that failed is not a different act and has no separate entry: it
+	 * is this same close, asked for again. What the model does with it is the
+	 * model's, from state the model already holds.
 	 *
 	 * A worktree is a folder git made so that work could happen somewhere.
 	 * Closing the workspace and leaving the folder behind is how a machine fills
@@ -833,7 +844,7 @@ export class AppController {
 			return;
 		}
 		if (repository?.dirty === false) {
-			void this.removeWorktree(workspaceId, false).catch((error: unknown) => {
+			void this.deleteWorktree(workspaceId, false).catch((error: unknown) => {
 				this.publishError(errorWire(error));
 			});
 			return;
@@ -889,20 +900,12 @@ export class AppController {
 	 * unsaved editor — did nothing at all and said nothing about why.
 	 */
 	private requestCloseWorkspace(workspaceId: string): void {
-		// A close that failed is retried by asking for the same thing again —
-		// the same rule the Sidebar's one close button follows. Sending a fresh
-		// `request_close_workspace` for a workspace in `closing-failed` is
-		// refused by the model, so the menu item and the chord used to be the
-		// two ways of closing a workspace that stopped working the moment a
-		// close went wrong.
-		const failed =
-			this.coordinator.model.workspace(parseWorkspaceId(workspaceId))?.state
-				.kind === "closing-failed";
-		void this.dispatchFromPage(
-			failed
-				? { type: "retry_close_workspace", workspaceId }
-				: { type: "request_close_workspace", workspaceId },
-		)
+		// One intent, whatever state the workspace is in. Choosing between a
+		// fresh close and a retry used to happen here, from the workspace's own
+		// state — a branch in a caller, which every other caller then had to
+		// grow its own copy of or send the wrong one. The model owns that state
+		// and now makes the distinction (`Coordinator.closeWorkspace`).
+		void this.dispatchFromPage({ type: "request_close_workspace", workspaceId })
 			.then((outcome) => {
 				this.raiseCloseConfirmation(outcome);
 			})
@@ -1755,7 +1758,7 @@ export class AppController {
 	 * already succeeded, and a workspace left pointing at a missing folder is a
 	 * state DevHub already draws.
 	 */
-	private async removeWorktree(
+	private async deleteWorktree(
 		workspaceId: string,
 		force: boolean,
 	): Promise<AppOutcomeWire> {
@@ -1794,6 +1797,37 @@ export class AppController {
 		// The folder is gone; whether the *workspace* can close may still be a
 		// question — a busy Agent, an unsaved editor — and it is asked here for
 		// the same reason it is asked in `requestCloseWorkspace`.
+		return this.raiseCloseConfirmation(
+			outcomeWire(settled, this.coordinator.readiness, this.repositoryOf),
+		);
+	}
+
+	/**
+	 * Carry out the answer to the three-way worktree question.
+	 *
+	 * The sheet asked which of three things should happen to the folder, and
+	 * this is where two of them are done — the third is Cancel, which is the
+	 * sheet dismissing itself and never gets here. The page reports *which
+	 * answer*, not what to do about it: `--force` is what makes removing a
+	 * worktree with uncommitted work possible at all, and that it is allowed is
+	 * exactly what the person was asked, so it is decided here, from the
+	 * answer, and is not a flag the renderer passes.
+	 *
+	 * "Just close the workspace" is the ordinary close, so it goes through the
+	 * ordinary close — main's one path — rather than a raw lifecycle intent
+	 * that would skip the worktree rule on the way past.
+	 */
+	private async answerWorktreeClose(
+		workspaceId: string,
+		answer: "close" | "delete",
+	): Promise<AppOutcomeWire> {
+		if (answer === "delete") {
+			return await this.deleteWorktree(workspaceId, true);
+		}
+		const settled = await this.dispatchAwaiting({
+			type: "request_close_workspace",
+			workspaceId: parseWorkspaceId(workspaceId),
+		});
 		return this.raiseCloseConfirmation(
 			outcomeWire(settled, this.coordinator.readiness, this.repositoryOf),
 		);
@@ -3799,11 +3833,15 @@ export class AppController {
 			// the projection is what says how it ended.
 			this.closeWorkspaceOrWorktree(workspaceId);
 		});
+		// The answer to the three-way worktree question main asked. The page
+		// says which of the two answers it was told; `--force` is main's, and
+		// so is what "delete" means. "Cancel" is the sheet dismissing itself
+		// and never arrives here.
 		handle(
-			CHANNELS.removeWorktree,
-			async (_event, workspaceId: string, force: boolean) => {
+			CHANNELS.answerWorktreeClose,
+			async (_event, workspaceId: string, answer: "close" | "delete") => {
 				try {
-					return await this.removeWorktree(workspaceId, force);
+					return await this.answerWorktreeClose(workspaceId, answer);
 				} catch (error: unknown) {
 					throw asIpcError(errorWire(error));
 				}

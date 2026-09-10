@@ -41,16 +41,16 @@ describe("a workspace whose close failed", () => {
   afterEach(cleanup);
 
   it("offers the close itself rather than naming a control elsewhere", async () => {
-    const retry = vi.fn();
+    const close = vi.fn();
     render(
       <Unavailable
         workspace={closeFailed("close_editor_unresponsive")}
         actions={undefined}
-        onRetryClose={retry}
+        onClose={close}
       />,
     );
     screen.getByRole("button", { name: "Close Workspace" }).click();
-    expect(retry).toHaveBeenCalledTimes(1);
+    expect(close).toHaveBeenCalledTimes(1);
     expect(screen.queryByText(/from the Sidebar/)).toBeNull();
   });
 
@@ -59,7 +59,7 @@ describe("a workspace whose close failed", () => {
       <Unavailable
         workspace={closeFailed("close_editor_unresponsive")}
         actions={undefined}
-        onRetryClose={() => undefined}
+        onClose={() => undefined}
       />,
     );
     expect(screen.queryByText(/is not running/)).toBeNull();
@@ -73,7 +73,7 @@ describe("a workspace whose close failed", () => {
       <Unavailable
         workspace={closeFailed("close_editor_starting")}
         actions={undefined}
-        onRetryClose={() => undefined}
+        onClose={() => undefined}
       />,
     );
     expect(screen.getByText(/had not finished starting/)).toBeInTheDocument();

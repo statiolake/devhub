@@ -87,7 +87,10 @@ export interface AppShellClient {
   ): Promise<AssignmentBranchWire>;
   agentActions(): Promise<readonly AgentActionWire[]>;
   closeWorkspace(workspaceId: string): Promise<void>;
-  removeWorktree(workspaceId: string, force: boolean): Promise<AppOutcome>;
+  answerWorktreeClose(
+    workspaceId: string,
+    answer: "close" | "delete",
+  ): Promise<AppOutcome>;
   runAgentAction(agentId: string, actionId: string): Promise<AppOutcome>;
   confirmInjection(
     agentId: string,
@@ -166,8 +169,8 @@ export function createShellClient(api: DevhubApi = devhub()): AppShellClient {
     assignmentBranch: (url, directory) => api.assignmentBranch(url, directory),
     agentActions: () => api.agentActions(),
     closeWorkspace: (workspaceId) => api.closeWorkspace(workspaceId),
-    removeWorktree: (workspaceId, force) =>
-      api.removeWorktree(workspaceId, force),
+    answerWorktreeClose: (workspaceId, answer) =>
+      api.answerWorktreeClose(workspaceId, answer),
     runAgentAction: (agentId, actionId) =>
       api.runAgentAction(agentId, actionId),
     confirmInjection: (agentId, injectionId, text) =>

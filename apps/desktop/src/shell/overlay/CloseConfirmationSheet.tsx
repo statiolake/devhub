@@ -110,7 +110,6 @@ export function CloseConfirmationSheet({
     adoptConfirmation({
       confirmationId: request.confirmationId,
       purpose: request.purpose,
-      agentId: request.agentId,
     });
     setTaken(true);
   }, [adoptConfirmation, request]);
@@ -121,8 +120,12 @@ export function CloseConfirmationSheet({
     if (taken && !pendingConfirmation) onDismiss();
   }, [onDismiss, pendingConfirmation, taken]);
 
+  // One purpose, and everything about the question comes out of it. The
+  // provider's copy wins while it has one, because main can replace a
+  // confirmation while this sheet stands and the replacement is the current
+  // question; the request is what to draw on the frame before adoption lands.
   const purpose = pendingConfirmation?.purpose ?? request.purpose;
-  const agentId = pendingConfirmation?.agentId ?? request.agentId;
+  const agentId = purpose.kind === "agent_stop" ? purpose.agentId : undefined;
   /**
    * Every Agent there is, or nothing when this page does not know yet.
    *

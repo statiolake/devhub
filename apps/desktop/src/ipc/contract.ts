@@ -528,12 +528,20 @@ export interface DevhubApi {
 	 */
 	findIssueRepositories(issueUrl: string): Promise<readonly IssueRepository[]>;
 	/**
-	 * Remove a worktree's folder and close its workspace.
+	 * Answer the three-way question about a worktree main is closing.
 	 *
-	 * Destructive, and asked about first: the page raises the question, this
-	 * carries out the answer.
+	 * The page answers a question main asked; it does not decide `--force`.
+	 * This used to be `removeWorktree(workspaceId, force)` — a destructive verb
+	 * of its own, with the renderer choosing the flag — beside a raw
+	 * `request_close_workspace` for the other answer, so one question was
+	 * carried out down two paths and only one of them went through the close
+	 * rule. `cancel` is the third answer and is the sheet's own dismissal, so
+	 * it is not sent.
 	 */
-	removeWorktree(workspaceId: string, force: boolean): Promise<AppOutcome>;
+	answerWorktreeClose(
+		workspaceId: string,
+		answer: "close" | "delete",
+	): Promise<AppOutcome>;
 	/**
 	 * Get rid of a workspace, whatever kind of workspace it is.
 	 *
@@ -655,7 +663,7 @@ export const CHANNELS = {
 	cloneParentDirectories: "devhub:clone-parent-directories",
 	githubLogin: "devhub:github-login",
 	assignmentBranch: "devhub:assignment-branch",
-	removeWorktree: "devhub:remove-worktree",
+	answerWorktreeClose: "devhub:answer-worktree-close",
 	closeWorkspace: "devhub:close-workspace",
 	runAgentAction: "devhub:run-agent-action",
 	confirmInjection: "devhub:confirm-injection",
@@ -799,14 +807,15 @@ export type ModalRequest =
 	| {
 			readonly kind: "close-confirmation";
 			readonly confirmationId: string;
-			readonly purpose: ConfirmationPurposeWire;
 			/**
-			 * Which Agent is being stopped.
+			 * What is being asked, subject included.
 			 *
-			 * A replacement confirmation carries only its token, so the identity
-			 * travels with the request rather than being read back out of it.
+			 * There used to be an `agentId` beside it, and the page recovered the
+			 * identity by sniffing the request it had sent — which cannot work
+			 * for a confirmation main raised on its own. The purpose says what it
+			 * is about. See `ConfirmationPurposeWire`.
 			 */
-			readonly agentId?: string;
+			readonly purpose: ConfirmationPurposeWire;
 	  }
 	| WorkbenchDialogRequest;
 

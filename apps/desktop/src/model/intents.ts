@@ -278,6 +278,17 @@ export type UserIntent =
    * thing a person asks for.
    */
   | { readonly type: "reconcile_agents" }
+  /**
+   * Close this Workspace — first attempt or fifth, it is the same request.
+   *
+   * There used to be a `retry_close_workspace` beside it, and every caller had
+   * to read the workspace's state to pick between the two. The branch lived in
+   * the callers, so a caller that had not been told sent the wrong one and the
+   * close stopped working the moment one went wrong. The model owns the state
+   * that distinguishes an opening close from a resumed one, so the model makes
+   * the distinction: a close of a Workspace in `closing-failed` continues that
+   * close from the progress it kept.
+   */
   | {
       readonly type: "request_close_workspace";
       readonly workspaceId: WorkspaceId;
@@ -285,10 +296,6 @@ export type UserIntent =
   | {
       readonly type: "confirm_close_workspace";
       readonly confirmationId: ConfirmationId;
-    }
-  | {
-      readonly type: "retry_close_workspace";
-      readonly workspaceId: WorkspaceId;
     }
   /**
    * DevHub became, or stopped being, the window in front.
@@ -440,12 +447,22 @@ export interface ProviderEventEnvelope {
   readonly event: ProviderEvent;
 }
 
+/**
+ * What a confirmation is about, subject included.
+ *
+ * The subject is *inside* the purpose and not a sibling of it. `agent_stop`
+ * used to carry nothing, so the identity of the Agent being stopped travelled
+ * beside the answer instead of in it — and the page recovered it by sniffing
+ * the request it had sent, which cannot work for a confirmation main raised on
+ * its own. A question that cannot say what it is about is a question that can
+ * be answered about the wrong thing.
+ */
 export type ConfirmationOutcomePurpose =
   | {
       readonly kind: "workspace_close";
       readonly inspection: CloseInspectionProjection;
     }
-  | { readonly kind: "agent_stop" };
+  | { readonly kind: "agent_stop"; readonly agentId: AgentId };
 
 export type IntentOutcome =
   | { readonly kind: "noop"; readonly snapshot: AppSnapshot }

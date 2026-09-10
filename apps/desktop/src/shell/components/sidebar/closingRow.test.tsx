@@ -95,7 +95,7 @@ function mount(snapshot: AppSnapshot) {
   const value = {
     dispatch: vi.fn(),
     openExternalUrl: vi.fn(),
-    removeWorktree: vi.fn(() => Promise.resolve({})),
+    answerWorktreeClose: vi.fn(() => Promise.resolve({})),
     closeWorkspace: vi.fn(),
     reportFailure: vi.fn(),
     agentProfiles: { sequence: 1, availability: "available", profiles: [] },

@@ -646,13 +646,9 @@ export class AppCoordinator {
       case "reconcile_agents":
         return this.requestAgentsReconcile(id);
       case "request_close_workspace":
-        return this.beginWorkspaceInspection(intent.workspaceId, id, {
-          kind: "begin",
-        });
+        return this.closeWorkspace(intent.workspaceId, id);
       case "confirm_close_workspace":
         return this.confirmWorkspaceClose(intent.confirmationId, id);
-      case "retry_close_workspace":
-        return this.retryWorkspaceClose(intent.workspaceId, id);
       case "window_focus_changed":
         this.model.setWindowFocused(intent.focused);
         return this.transitionOutcome(beforeRevision, id);
@@ -1004,14 +1000,40 @@ export class AppCoordinator {
   }
 
   /**
-   * Retry a close that failed, in this run or a previous one.
+   * Close a Workspace — first attempt or fifth.
+   *
+   * **One intent, and this decides which kind of close it is**, because this
+   * is where the state that distinguishes them lives. There used to be a
+   * `retry_close_workspace` beside `request_close_workspace`, and each caller
+   * read `state.kind === "closing-failed"` to pick; the branch lived in the
+   * callers, so a caller that had not been told sent the wrong one and closing
+   * that workspace stopped working the moment a close went wrong.
+   */
+  private closeWorkspace(
+    workspaceId: WorkspaceId,
+    id: OperationId,
+  ): IntentOutcome {
+    const workspace = this.model.workspace(workspaceId);
+    if (!workspace) {
+      throw new AppError(AppErrorCode.Domain).withDomain(
+        DomainErrorCode.UnknownWorkspace,
+      );
+    }
+    if (workspace.state.kind === "closing-failed") {
+      return this.resumeWorkspaceClose(workspaceId, id);
+    }
+    return this.beginWorkspaceInspection(workspaceId, id, { kind: "begin" });
+  }
+
+  /**
+   * Carry on a close that failed, in this run or a previous one.
    *
    * The progress comes from the live cleanup when there is one and from the
    * Workspace's own persisted state otherwise, because a close interrupted by
    * a quit is the same situation as one interrupted by a failure — and having
-   * two ways to say "retry" is how one of them ends up being the broken one.
+   * two ways to say "carry on" is how one of them ends up being the broken one.
    */
-  private retryWorkspaceClose(
+  private resumeWorkspaceClose(
     workspaceId: WorkspaceId,
     id: OperationId,
   ): IntentOutcome {
@@ -1033,7 +1055,7 @@ export class AppCoordinator {
     workspaceId: WorkspaceId,
     id: OperationId,
   ): IntentOutcome {
-    return this.retryWorkspaceClose(workspaceId, id);
+    return this.resumeWorkspaceClose(workspaceId, id);
   }
 
   // ------------------------------------------------------------ completions
@@ -1546,7 +1568,7 @@ export class AppCoordinator {
     const purpose: ConfirmationOutcomePurpose =
       request.kind === "workspace_close"
         ? { kind: "workspace_close", inspection: request.inspection }
-        : { kind: "agent_stop" };
+        : { kind: "agent_stop", agentId: request.agentId };
 
     if (request.kind === "stop") {
       this.confirmations = this.confirmations.filter(
