@@ -158,7 +158,17 @@ export type AppErrorCodeWire =
 	 * copy of `origin` already on disk is usable, and whether to start from
 	 * something that may be days old is the person's decision, not DevHub's.
 	 */
-	| "git_fetch_failed";
+	| "git_fetch_failed"
+	/**
+	 * The workbench's own `User/settings.json` could not be parsed, so DevHub
+	 * did not touch it — and the settings it writes there are not in it.
+	 *
+	 * Its own code because it is the one failure whose consequence is a
+	 * *missing* feature rather than a failed action: everything still works
+	 * except the things that settings file was carrying, and the reader needs
+	 * to be told which ones and where to go and fix it.
+	 */
+	| "workbench_settings_unreadable";
 
 /**
  * The sentence each failure is shown as.
@@ -193,6 +203,8 @@ export const APP_ERROR_SUMMARY: Readonly<Record<AppErrorCodeWire, string>> = {
 	agent_runtime_unavailable: "The agent runtime is unavailable.",
 	agent_attach_timed_out: "The agent surface did not connect in time.",
 	git_fetch_failed: "The latest changes could not be fetched from the remote.",
+	workbench_settings_unreadable:
+		"The editor's settings file is not valid JSON.",
 };
 export type AppErrorModuleWire =
 	| "app"

@@ -13,9 +13,19 @@
  * settings file — once, and only where the person has not already said
  * otherwise, so a user override still wins.
  *
- * This module is deliberately free of Electron and of the filesystem: the merge
- * rule is the part worth testing, and the write around it is four lines.
+ * This module is deliberately free of Electron and of the filesystem: what the
+ * file should say next is the part worth testing, and the write around it is
+ * three lines.
  */
+
+import {
+	parse,
+	type ParseError,
+} from "code-oss-dev/out/vs/base/common/json.js";
+import {
+	applyEdits,
+	setProperty,
+} from "code-oss-dev/out/vs/base/common/jsonEdit.js";
 
 /**
  * The defaults, and why each one is not the workbench's own answer.
@@ -103,4 +113,111 @@ export function missingWorkbenchDefaults(
 	return Object.entries(workbenchDefaults(terminalLauncherPath)).filter(
 		([key]) => !(key in settings),
 	);
+}
+
+/** Where a settings file stopped making sense, in the numbers an editor shows. */
+export interface SettingsProblem {
+	/** 1-based, as every editor counts. */
+	readonly line: number;
+	/** 1-based. */
+	readonly column: number;
+}
+
+/**
+ * What should happen to `User/settings.json`, given what is in it.
+ *
+ * `unreadable` is the whole reason this is a decision rather than a write.
+ * The file is the person's — their dotfiles tool rewrites it, they edit it by
+ * hand, and it is JSON**C**: VS Code reads it with comments and trailing
+ * commas in it and so does this. But a file that is genuinely broken (a
+ * truncated object, a missing brace) has no object to merge into, and the two
+ * things DevHub must not do about that are the two that are easy to do by
+ * accident — overwrite it with a fresh one, which throws away everything the
+ * person wrote, or refuse to start, which is what a `JSON.parse` at startup
+ * did. Neither is DevHub's to choose. The workbench reads the same file with
+ * the same parser and will say the same thing about it, so DevHub starts, says
+ * which line, and says what the person has lost until it is fixed.
+ */
+export type WorkbenchSettingsPlan =
+	| { readonly kind: "unreadable"; readonly problem: SettingsProblem }
+	/** Every default is already answered; nothing is written. */
+	| { readonly kind: "answered" }
+	| {
+			readonly kind: "write";
+			readonly text: string;
+			readonly keys: readonly string[];
+	  };
+
+/**
+ * How the file is written: tabs, and the newline this project writes.
+ *
+ * It only decides the *added* lines. Everything already in the file keeps the
+ * shape it had, comments included, because the defaults go in as edits to the
+ * text rather than as a re-serialised object.
+ */
+const FORMATTING = { insertSpaces: false, tabSize: 4, eol: "\n" };
+
+/**
+ * What `User/settings.json` should say next.
+ *
+ * `undefined` is a file that is not there; empty is a file that is there and
+ * says nothing. Both are answered the same way, with a document DevHub writes
+ * from scratch — there is nothing in either to preserve.
+ */
+export function workbenchSettingsPlan(
+	existing: string | undefined,
+	terminalLauncherPath: string,
+): WorkbenchSettingsPlan {
+	const text = existing ?? "";
+	const settings = readSettings(text);
+	if (settings === undefined) {
+		return { kind: "unreadable", problem: firstProblem(text) };
+	}
+	const missing = missingWorkbenchDefaults(settings, terminalLauncherPath);
+	if (missing.length === 0) return { kind: "answered" };
+	let next = text;
+	for (const [key, value] of missing) {
+		next = applyEdits(next, setProperty(next, [key], value, FORMATTING));
+	}
+	return {
+		kind: "write",
+		text: next.endsWith("\n") ? next : `${next}\n`,
+		keys: missing.map(([key]) => key),
+	};
+}
+
+/**
+ * The settings in this text, or nothing if it is not a settings object.
+ *
+ * VS Code's own parser, with VS Code's own defaults — comments and trailing
+ * commas are settings-file grammar, not damage, and a file DevHub called
+ * broken that the workbench reads happily would be DevHub inventing a fault.
+ */
+function readSettings(text: string): Record<string, unknown> | undefined {
+	if (text.trim().length === 0) return {};
+	const errors: ParseError[] = [];
+	const parsed: unknown = parse(text, errors);
+	if (errors.length > 0) return undefined;
+	if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+		// A settings file that is a list or a number parses and still has no
+		// key to answer for. There is nowhere to put a default, so it is the
+		// same "not something DevHub can merge into" as a syntax error.
+		return undefined;
+	}
+	return parsed as Record<string, unknown>;
+}
+
+function firstProblem(text: string): SettingsProblem {
+	const errors: ParseError[] = [];
+	parse(text, errors);
+	return positionOf(text, errors[0]?.offset ?? 0);
+}
+
+function positionOf(text: string, offset: number): SettingsProblem {
+	const before = text.slice(0, Math.min(offset, text.length));
+	const lastBreak = before.lastIndexOf("\n");
+	return {
+		line: before.split("\n").length,
+		column: before.length - lastBreak,
+	};
 }

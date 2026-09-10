@@ -34,8 +34,13 @@ import {
 	installTerminalLauncher,
 	terminalLauncherPath,
 } from "../terminal/launcher.js";
-import { missingWorkbenchDefaults } from "../workbenchDefaults.js";
+import {
+	workbenchSettingsPlan,
+	type SettingsProblem,
+} from "../workbenchDefaults.js";
 import { activeProfile } from "../../model/profile.js";
+import type { AppErrorWire } from "../../ipc/appShell.js";
+import { errorWireAt, withDetail } from "../../model/wire.js";
 
 /** How long a quit waits for the runtimes to let go before leaving anyway. */
 const SHUTDOWN_DEADLINE_MS = 3_000;
@@ -48,38 +53,56 @@ const APP_ROOT = join(
 	"..",
 );
 
-/** Write the settings DevHub cannot contribute as defaults; see the module. */
+/**
+ * Write the settings DevHub cannot contribute as defaults; see the module.
+ *
+ * A file that would not parse is the one outcome that is neither written nor
+ * thrown: it is returned, so the caller can say so on screen once there is a
+ * screen. Startup carries on without it — the workbench reads the same file
+ * with the same parser and has its own answer for it, and an editor that will
+ * not open is a far worse thing to do to somebody about a stray comma than a
+ * terminal profile that is missing until they fix it.
+ */
 function ensureWorkbenchDefaults(
 	userDataPath: string,
 	terminalLauncherPath: string,
-): void {
+): SettingsProblem | undefined {
 	const file = join(userDataPath, "User", "settings.json");
 
-	let settings: Record<string, unknown>;
+	let existing: string | undefined;
 	try {
-		settings = JSON.parse(readFileSync(file, "utf8")) as Record<
-			string,
-			unknown
-		>;
+		existing = readFileSync(file, "utf8");
 	} catch (error) {
 		if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
 			throw error;
 		}
-		settings = {};
+		existing = undefined;
 	}
 
-	const missing = missingWorkbenchDefaults(settings, terminalLauncherPath);
-	if (missing.length === 0) {
-		return;
+	const plan = workbenchSettingsPlan(existing, terminalLauncherPath);
+	if (plan.kind === "unreadable") {
+		console.error(
+			`[devhub] ${file}:${String(plan.problem.line)}:${String(plan.problem.column)} is not valid JSON; workbench defaults not written`,
+		);
+		return plan.problem;
 	}
+	if (plan.kind === "answered") return undefined;
 
-	for (const [key, value] of missing) {
-		settings[key] = value;
-	}
 	mkdirSync(dirname(file), { recursive: true });
-	writeFileSync(file, `${JSON.stringify(settings, undefined, "\t")}\n`);
-	console.log(
-		`[devhub] wrote workbench defaults: ${missing.map(([key]) => key).join(", ")}`,
+	writeFileSync(file, plan.text);
+	console.log(`[devhub] wrote workbench defaults: ${plan.keys.join(", ")}`);
+	return undefined;
+}
+
+/** What a broken `User/settings.json` says on screen, and where it is. */
+function unreadableSettingsError(
+	userDataPath: string,
+	problem: SettingsProblem,
+): AppErrorWire {
+	const file = join(userDataPath, "User", "settings.json");
+	return withDetail(
+		errorWireAt("workbench_settings_unreadable"),
+		`${file}, line ${String(problem.line)}, column ${String(problem.column)}. DevHub left the file alone, so its terminal profile is missing until the file is valid.`,
 	);
 }
 
@@ -109,7 +132,7 @@ export async function bootstrapShell(
 			socketPath: controlSocketPath(userDataPath),
 		},
 	);
-	ensureWorkbenchDefaults(userDataPath, launcherPath);
+	const settingsProblem = ensureWorkbenchDefaults(userDataPath, launcherPath);
 
 	// The colour theme comes first, before the page is servable and before the
 	// window exists, because both are created wearing it. VS Code stores the
@@ -137,6 +160,11 @@ export async function bootstrapShell(
 	// normal. Ordering is the fix, not speed.
 	createShellWindow(preloadPath, `${SHELL_ORIGIN}/index.html`, palette);
 	const controller = await createAppController(userDataPath, cliArgs);
+	if (settingsProblem) {
+		controller.noteStartupFailure(
+			unreadableSettingsError(userDataPath, settingsProblem),
+		);
+	}
 	shellWindowIfCreated()?.onWindowFocusChanged((focused) => {
 		controller.windowFocusChanged(focused);
 	});

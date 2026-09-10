@@ -1306,6 +1306,23 @@ export class AppController {
 	}
 
 	/**
+	 * A failure from before there was a page, kept until there is one.
+	 *
+	 * Startup does things a person needs to be told about — reading the
+	 * workbench's settings file is one — and it does them before the App Shell
+	 * page exists. Published there and then, the message goes to a window with
+	 * nothing loaded in it and is gone. So it waits, and the page's first
+	 * request for the snapshot delivers it: that request is what "there is
+	 * somebody to tell" means. It is delivered once, because an alert that
+	 * comes back every time the page reloads cannot be dismissed.
+	 */
+	noteStartupFailure(error: AppErrorWire): void {
+		this.startupFailure = error;
+	}
+
+	private startupFailure: AppErrorWire | undefined;
+
+	/**
 	 * Refuse an operation, and say why where a person can read it.
 	 *
 	 * `operation_failed` is the coordinator's whole vocabulary for "this did
@@ -3351,7 +3368,16 @@ export class AppController {
 	private registerIpc(): void {
 		const handle = electron.ipcMain.handle.bind(electron.ipcMain);
 
-		handle(CHANNELS.getSnapshot, () => this.snapshot());
+		handle(CHANNELS.getSnapshot, () => {
+			// A page asking for the world is the first moment there is anywhere
+			// to say what went wrong before it existed. See `noteStartupFailure`.
+			const pending = this.startupFailure;
+			if (pending) {
+				this.startupFailure = undefined;
+				this.publishError(pending);
+			}
+			return this.snapshot();
+		});
 		handle(CHANNELS.getAppearance, () => this.appearance());
 		handle(CHANNELS.getTheme, () => shellTheme().palette() ?? null);
 		handle(CHANNELS.getAgentProfiles, () => this.agentProfiles());
