@@ -1281,7 +1281,7 @@ export class AppController {
 			this.lastRepositoryStatus = status;
 			this.send(CHANNELS.repositoryStatusChanged, status);
 			const after = this.orderedWorkspaceIds();
-			if (before.join(" ") !== after.join(" ")) {
+			if (before.join("\0") !== after.join("\0")) {
 				this.send(CHANNELS.snapshotChanged, this.snapshot());
 			}
 		},
