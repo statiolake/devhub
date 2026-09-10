@@ -145,6 +145,7 @@ import {
 	workspaceTarget,
 	type TerminalPreflight,
 } from "../terminal/ports.js";
+import { enclosingRoot } from "../terminal/launcher.js";
 import { wireAgents } from "./agentWiring.js";
 import { AgentReconciler } from "./agentReconciler.js";
 import { MainServicesGate, type MainServices } from "./mainServices.js";
@@ -921,25 +922,28 @@ export class AppController {
 	 * half only it can do — owning the socket, the names and the markers — and
 	 * hands out the command line for the half VS Code does.
 	 *
-	 * The root identifies the workbench, not the workspace: a folderless
-	 * workbench is the Scratch context, and its session is the same `scratch`
-	 * one it has been since before this existed, so an integrated terminal
-	 * opened after this change lands in the shell that was already running
-	 * there.
+	 * What arrives is the directory VS Code started the terminal in, and there
+	 * is one rule for turning it into a session: it belongs to the Workspace
+	 * that contains it, and to Scratch when no Workspace does. The folderless
+	 * workbench is not a case of its own — VS Code starts its terminal in the
+	 * user's home, nothing is rooted there, and Scratch is what the rule gives,
+	 * which is the same `scratch` session it has been since before this existed.
 	 */
 	async terminalProfileFor(
 		root: string | null,
 	): Promise<{ readonly file: string; readonly args: readonly string[] }> {
 		const wiring = this.terminalsWiring;
 		if (!wiring) throw new Error("the terminal runtime is not running");
-		if (root === null) {
-			return wiring.service.surfaces.profile(SCRATCH_TARGET);
-		}
-		const workspace = this.coordinator.model.workspaces.find(
-			(candidate) => candidate.root === root,
+		const workspaces = this.coordinator.model.workspaces;
+		const enclosing = enclosingRoot(
+			workspaces.map((candidate) => candidate.root),
+			root,
+		);
+		const workspace = workspaces.find(
+			(candidate) => candidate.root === enclosing,
 		);
 		if (!workspace) {
-			throw new Error(`no DevHub workspace is rooted at ${root}`);
+			return wiring.service.surfaces.profile(SCRATCH_TARGET);
 		}
 		return wiring.service.surfaces.profile(
 			workspaceTarget(workspace.id, workspace.root),

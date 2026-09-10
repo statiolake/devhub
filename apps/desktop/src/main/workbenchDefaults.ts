@@ -13,6 +13,14 @@
  * settings file — once, and only where the person has not already said
  * otherwise, so a user override still wins.
  *
+ * That last clause is the whole reason the terminal is *not* here any more. A
+ * key in this file is a suggestion: the person's settings file is theirs, their
+ * dotfiles tool rewrites it wholesale, and when it did, the DevHub profile went
+ * with it and the next reload produced a plain zsh. DevHub's terminal is not a
+ * suggestion, so it is not a setting — it is told to VS Code in code, by
+ * `patches/vscode/0003-devhub-terminal-is-the-terminal.patch`, which reads no
+ * terminal setting at all.
+ *
  * This module is deliberately free of Electron and of the filesystem: what the
  * file should say next is the part worth testing, and the write around it is
  * three lines.
@@ -67,36 +75,13 @@ import {
  *   protection, it is a wall in front of the only gallery DevHub has. Turning
  *   it off says what is true — DevHub does not verify Microsoft signatures —
  *   instead of a packaged build that cannot install anything.
- * - **The terminal profile, the default that names it, and persistent
- *   sessions.** These three are here for the second reason. They were an
- *   extension's `configurationDefaults`, and a default only exists once the
- *   extension host has registered the manifest — but a window opens a terminal
- *   *on load*, before that, and the terminal it opened was a plain zsh outside
- *   tmux. Settings written here are read from the file the workbench starts
- *   with, so there is no moment when DevHub's answer is not yet there.
- *
- *   The profile is a path to the launcher DevHub generates on startup (see
- *   `terminal/launcher.ts`), which is why this is a function of that path
- *   rather than a constant: it names one DevHub's control socket, and it lives
- *   beside the very settings file it is written into.
  */
-export function workbenchDefaults(
-	terminalLauncherPath: string,
-): Readonly<Record<string, unknown>> {
+export function workbenchDefaults(): Readonly<Record<string, unknown>> {
 	return {
 		"window.titleBarStyle": "native",
 		"window.customTitleBarVisibility": "never",
 		"security.workspace.trust.untrustedFiles": "open",
 		"extensions.verifySignature": false,
-		"terminal.integrated.profiles.osx": {
-			DevHub: {
-				path: terminalLauncherPath,
-				args: ["${workspaceFolder}"],
-				icon: "terminal-tmux",
-			},
-		},
-		"terminal.integrated.defaultProfile.osx": "DevHub",
-		"terminal.integrated.enablePersistentSessions": false,
 	};
 }
 
@@ -108,9 +93,8 @@ export function workbenchDefaults(
  */
 export function missingWorkbenchDefaults(
 	settings: Readonly<Record<string, unknown>>,
-	terminalLauncherPath: string,
 ): readonly (readonly [string, unknown])[] {
-	return Object.entries(workbenchDefaults(terminalLauncherPath)).filter(
+	return Object.entries(workbenchDefaults()).filter(
 		([key]) => !(key in settings),
 	);
 }
@@ -166,14 +150,13 @@ const FORMATTING = { insertSpaces: false, tabSize: 4, eol: "\n" };
  */
 export function workbenchSettingsPlan(
 	existing: string | undefined,
-	terminalLauncherPath: string,
 ): WorkbenchSettingsPlan {
 	const text = existing ?? "";
 	const settings = readSettings(text);
 	if (settings === undefined) {
 		return { kind: "unreadable", problem: firstProblem(text) };
 	}
-	const missing = missingWorkbenchDefaults(settings, terminalLauncherPath);
+	const missing = missingWorkbenchDefaults(settings);
 	if (missing.length === 0) return { kind: "answered" };
 	let next = text;
 	for (const [key, value] of missing) {

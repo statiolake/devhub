@@ -1,0 +1,162 @@
+diff --git a/src/vs/base/common/platform.ts b/src/vs/base/common/platform.ts
+index d2072dea83c..e2ae5e1a646 100644
+--- a/src/vs/base/common/platform.ts
++++ b/src/vs/base/common/platform.ts
+@@ -60,6 +60,18 @@ if (typeof $globalThis.vscode !== 'undefined' && typeof $globalThis.vscode.proce
+ 	nodeProcess = process;
+ }
+ 
++// DevHub: the launcher this workbench's integrated terminal must run, or
++// undefined in a workbench nothing hosts.
++//
++// DevHub hosts this workbench, and its terminal is the tmux session DevHub
++// owns — not a shell the workbench chooses. DevHub puts the launcher's
++// absolute path in its own environment before it creates a window, so every
++// process descending from it reads the same answer. It is read here, beside
++// the other facts about the process this code is running in, because the
++// terminal profile service needs it synchronously in its constructor, before
++// any configuration has been read or any shell detected.
++export const devhubTerminalLauncher: string | undefined = nodeProcess?.env['DEVHUB_TERMINAL'] || undefined;
++
+ const isElectronProcess = typeof nodeProcess?.versions?.electron === 'string';
+ const isElectronRenderer = isElectronProcess && nodeProcess?.type === 'renderer';
+ 
+diff --git a/src/vs/workbench/contrib/terminal/browser/terminalConfigurationService.ts b/src/vs/workbench/contrib/terminal/browser/terminalConfigurationService.ts
+index 385e1b055d1..28cb1d99d5c 100644
+--- a/src/vs/workbench/contrib/terminal/browser/terminalConfigurationService.ts
++++ b/src/vs/workbench/contrib/terminal/browser/terminalConfigurationService.ts
+@@ -11,7 +11,7 @@ import { IConfigurationService } from '../../../../platform/configuration/common
+ import { ITerminalConfigurationService, LinuxDistro } from './terminal.js';
+ import type { IXtermCore } from './xterm-private.js';
+ import { DEFAULT_BOLD_FONT_WEIGHT, DEFAULT_COMMANDS_TO_SKIP_SHELL, DEFAULT_FONT_WEIGHT, DEFAULT_LETTER_SPACING, DEFAULT_LINE_HEIGHT, FontWeight, ITerminalConfiguration, MAXIMUM_FONT_WEIGHT, MINIMUM_FONT_WEIGHT, MINIMUM_LETTER_SPACING, TERMINAL_CONFIG_SECTION, type ITerminalFont } from '../common/terminal.js';
+-import { isMacintosh } from '../../../../base/common/platform.js';
++import { devhubTerminalLauncher, isMacintosh } from '../../../../base/common/platform.js';
+ import { TerminalLocation, TerminalLocationConfigValue } from '../../../../platform/terminal/common/terminal.js';
+ import { isString } from '../../../../base/common/types.js';
+ import { clamp } from '../../../../base/common/numbers.js';
+@@ -60,6 +60,16 @@ export class TerminalConfigurationService extends Disposable implements ITermina
+ 		const configValues = { ...this._configurationService.getValue<ITerminalConfiguration>(TERMINAL_CONFIG_SECTION) };
+ 		configValues.fontWeight = this._normalizeFontWeight(configValues.fontWeight, DEFAULT_FONT_WEIGHT);
+ 		configValues.fontWeightBold = this._normalizeFontWeight(configValues.fontWeightBold, DEFAULT_BOLD_FONT_WEIGHT);
++		// DevHub: DevHub hosts this workbench, and its terminals are tmux
++		// sessions DevHub owns. They outlive the window already, so there is
++		// nothing for VS Code to persist and replay — a restored tab is a
++		// second, empty client for a session that is still running. Reopening a
++		// terminal reattaches to it with its history intact, which is the
++		// restoration a person actually wanted. Not a preference, so not read
++		// from one.
++		if (devhubTerminalLauncher) {
++			configValues.enablePersistentSessions = false;
++		}
+ 		this._config = configValues;
+ 		const skipTerminalCommands = new Set(DEFAULT_COMMANDS_TO_SKIP_SHELL);
+ 		const commandsToSkipShell = configValues.commandsToSkipShell ?? [];
+diff --git a/src/vs/workbench/contrib/terminal/browser/terminalEditorInput.ts b/src/vs/workbench/contrib/terminal/browser/terminalEditorInput.ts
+index f7ce1dab62b..f0875b9538c 100644
+--- a/src/vs/workbench/contrib/terminal/browser/terminalEditorInput.ts
++++ b/src/vs/workbench/contrib/terminal/browser/terminalEditorInput.ts
+@@ -7,6 +7,7 @@ import { localize } from '../../../../nls.js';
+ import Severity from '../../../../base/common/severity.js';
+ import { dispose, toDisposable } from '../../../../base/common/lifecycle.js';
+ import { URI } from '../../../../base/common/uri.js';
++import { devhubTerminalLauncher } from '../../../../base/common/platform.js';
+ import { EditorInputCapabilities, IEditorIdentifier, IUntypedEditorInput } from '../../../common/editor.js';
+ import { IThemeService } from '../../../../platform/theme/common/themeService.js';
+ import { ThemeIcon } from '../../../../base/common/themables.js';
+@@ -182,7 +183,9 @@ export class TerminalEditorInput extends EditorInput implements IEditorCloseHand
+ 			dispose(disposeListeners);
+ 
+ 			// Don't touch processes if the shutdown was a result of reload as they will be reattached
+-			const shouldPersistTerminals = this._configurationService.getValue<boolean>(TerminalSettingId.EnablePersistentSessions) && e.reason === ShutdownReason.RELOAD;
++			// DevHub: the same fact as in `terminalConfigurationService.ts` —
++			// a DevHub terminal is a tmux session and persists itself.
++			const shouldPersistTerminals = !devhubTerminalLauncher && this._configurationService.getValue<boolean>(TerminalSettingId.EnablePersistentSessions) && e.reason === ShutdownReason.RELOAD;
+ 			if (shouldPersistTerminals) {
+ 				instance.detachProcessAndDispose(TerminalExitReason.Shutdown);
+ 			} else {
+diff --git a/src/vs/workbench/contrib/terminal/browser/terminalProfileService.ts b/src/vs/workbench/contrib/terminal/browser/terminalProfileService.ts
+index d4d6ba9ee53..21ac092103b 100644
+--- a/src/vs/workbench/contrib/terminal/browser/terminalProfileService.ts
++++ b/src/vs/workbench/contrib/terminal/browser/terminalProfileService.ts
+@@ -9,7 +9,8 @@ import { AutoOpenBarrier } from '../../../../base/common/async.js';
+ import { throttle } from '../../../../base/common/decorators.js';
+ import { Emitter, Event } from '../../../../base/common/event.js';
+ import { Disposable, IDisposable, MutableDisposable, toDisposable } from '../../../../base/common/lifecycle.js';
+-import { isMacintosh, isWeb, isWindows, OperatingSystem, OS } from '../../../../base/common/platform.js';
++import { devhubTerminalLauncher, isMacintosh, isWeb, isWindows, OperatingSystem, OS } from '../../../../base/common/platform.js';
++import { Codicon } from '../../../../base/common/codicons.js';
+ import { ConfigurationTarget, IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
+ import { IContextKey, IContextKeyService } from '../../../../platform/contextkey/common/contextkey.js';
+ import { ITerminalProfile, IExtensionTerminalProfile, TerminalSettingPrefix, TerminalSettingId, ITerminalProfileObject, IShellLaunchConfig, ITerminalExecutable } from '../../../../platform/terminal/common/terminal.js';
+@@ -45,6 +46,26 @@ export class TerminalProfileService extends Disposable implements ITerminalProfi
+ 	private readonly _profileProviders: Map</*ext id*/string, Map</*provider id*/string, ITerminalProfileProvider>> = new Map();
+ 	private _defaultProfileOverride: { extensionIdentifier: string; id: string } | undefined;
+ 
++	/**
++	 * DevHub: the profile this workbench's terminal is, when DevHub hosts it.
++	 *
++	 * DevHub hosts this workbench; its terminal is the tmux session DevHub
++	 * owns. That is not a preference, so nothing below reads one for it —
++	 * `defaultProfile.*`, `profiles.*`, an extension's contribution and shell
++	 * detection can none of them move it. Because it is not derived from
++	 * configuration it exists the moment this service does, which is what makes
++	 * it the answer for the terminal a window creates on load, before any
++	 * refresh has run. The person's own profiles stay in the list and are still
++	 * theirs to pick; what cannot happen is one of them becoming the default.
++	 */
++	private readonly _devhubProfile: ITerminalProfile | undefined = devhubTerminalLauncher ? {
++		profileName: 'DevHub',
++		path: devhubTerminalLauncher,
++		args: [],
++		isDefault: true,
++		icon: Codicon.terminalTmux
++	} : undefined;
++
+ 	private readonly _onDidChangeAvailableProfiles = this._register(new Emitter<ITerminalProfile[]>());
+ 	get onDidChangeAvailableProfiles(): Event<ITerminalProfile[]> { return this._onDidChangeAvailableProfiles.event; }
+ 
+@@ -53,7 +74,12 @@ export class TerminalProfileService extends Disposable implements ITerminalProfi
+ 		if (!this._platformConfigJustRefreshed) {
+ 			this.refreshAvailableProfiles();
+ 		}
+-		return this._availableProfiles || [];
++		const profiles = this._availableProfiles || [];
++		// DevHub: first in the dropdown, and the only profile of that name.
++		if (this._devhubProfile) {
++			return [this._devhubProfile, ...profiles.filter(p => p.profileName !== this._devhubProfile!.profileName)];
++		}
++		return profiles;
+ 	}
+ 	get contributedProfiles(): IExtensionTerminalProfile[] {
+ 		const userConfiguredProfileNames = this._availableProfiles?.map(p => p.profileName) || [];
+@@ -111,10 +137,19 @@ export class TerminalProfileService extends Disposable implements ITerminalProfi
+ 	}
+ 
+ 	getDefaultProfileName(): string | undefined {
++		// DevHub: see `_devhubProfile`.
++		if (this._devhubProfile) {
++			return this._devhubProfile.profileName;
++		}
+ 		return this._defaultProfileName;
+ 	}
+ 
+ 	getDefaultProfile(os?: OperatingSystem): ITerminalProfile | undefined {
++		// DevHub: see `_devhubProfile`. Answered synchronously, before any
++		// setting is read and without waiting for detection.
++		if (this._devhubProfile) {
++			return this._devhubProfile;
++		}
+ 		let defaultProfileName: string | undefined;
+ 		if (os) {
+ 			defaultProfileName = this._configurationService.getValue(`${TerminalSettingPrefix.DefaultProfile}${this._getOsKey(os)}`);
+@@ -278,6 +313,10 @@ export class TerminalProfileService extends Disposable implements ITerminalProfi
+ 	}
+ 
+ 	async getContributedDefaultProfile(shellLaunchConfig: IShellLaunchConfig): Promise<IExtensionTerminalProfile | undefined> {
++		// DevHub: see `_devhubProfile`. No extension takes this default.
++		if (this._devhubProfile) {
++			return undefined;
++		}
+ 		// prevents recursion with the MainThreadTerminalService call to create terminal
+ 		// and defers to the provided launch config when an executable is provided
+ 		if (shellLaunchConfig && !shellLaunchConfig.extHostTerminalId && !hasKey(shellLaunchConfig, { executable: true })) {

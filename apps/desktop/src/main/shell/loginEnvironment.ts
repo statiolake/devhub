@@ -211,6 +211,35 @@ export function launchEnvironment(
 }
 
 /**
+ * The name a DevHub-hosted workbench reads its terminal launcher from.
+ *
+ * `DEVHUB_*` is a family a terminal must never inherit, and `withoutDevHubRuntime`
+ * already takes the whole family out of every child DevHub spawns itself. This
+ * one goes the other way: it is written into DevHub's *own* process, before any
+ * window exists, so that the workbench windows, the extension host and the pty
+ * host — all of which descend from `process.env` and none of which DevHub hands
+ * an environment to — read it. The patched `TerminalProfileService` reads it
+ * synchronously in its constructor and makes it the terminal, which is why it is
+ * an environment variable rather than a setting: a setting is a suggestion the
+ * person's dotfiles tool can rewrite, and this is not one. See
+ * `patches/vscode/0003-devhub-terminal-is-the-terminal.patch`.
+ */
+export const DEVHUB_TERMINAL = "DEVHUB_TERMINAL";
+
+/**
+ * Tell every process this one starts which launcher a DevHub terminal runs.
+ *
+ * Nothing is caught and nothing is optional: a workbench that cannot read this
+ * has no DevHub terminal, and the patch it feeds refuses to invent one.
+ */
+export function exportTerminalLauncher(
+	target: Record<string, string | undefined>,
+	launcherPath: string,
+): void {
+	target[DEVHUB_TERMINAL] = launcherPath;
+}
+
+/**
  * What became of the import, in a sentence.
  *
  * Shown as the status line under the Settings option, and — when the import

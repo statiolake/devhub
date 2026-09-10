@@ -15,9 +15,8 @@
  * created on window load (the panel is visible, there are no persistent
  * sessions to restore, so `TerminalViewPane` creates one immediately) happens
  * before all of that and silently gets the OS shell: a plain zsh outside tmux.
- * A profile whose `path` is a real executable has no such window. It is in the
- * settings before the first frame, and no extension host has to be alive for a
- * terminal to be a DevHub terminal.
+ * A profile whose `path` is a real executable has no such window: it is a path
+ * VS Code can spawn the moment it is asked.
  *
  * Why the script is *generated* on every startup, like the `devhub` CLI's
  * launcher in `../cli/install.ts`: it records the two absolute facts a launcher
@@ -29,21 +28,20 @@
  *
  * The socket is written *into* the script rather than read from the
  * environment because `DEVHUB_*` is a family a terminal is not supposed to
- * inherit — see `../shell/loginEnvironment.ts`. Nothing has to reach the
- * workbench through the environment either: the profile that names this file
- * names it by its absolute path, which `../workbenchDefaults.ts` writes into
- * the settings file the workbench starts with.
+ * inherit — see `../shell/loginEnvironment.ts`.
  *
- * That is also where `terminal.integrated.enablePersistentSessions` is turned
- * off, and the reasoning is the same one. That setting exists to solve a problem DevHub does not have:
- * upstream persists a terminal's tab and replays its scrollback because closing
- * the window would otherwise kill the shell. Here the shell is in tmux and
- * outlives everything, so the tab restored on the next launch is a second,
- * empty client for a session that is already running. Opening a terminal
- * reattaches to the same session with its history intact, which is the
- * restoration the person actually wanted — and it is why a terminal is created
- * on window load at all, which is what made the old contributed profile lose
- * its race.
+ * Who names this file to VS Code is the other half, and it is not a setting.
+ * It was one — `terminal.integrated.profiles.osx` and the default that named
+ * it, written into `User/settings.json` — and a settings file is the person's:
+ * a dotfiles tool rewrote it wholesale, the keys went with it, and the next
+ * reload was a plain zsh again. So the path goes into DevHub's own environment
+ * as `DEVHUB_TERMINAL` (`exportTerminalLauncher`), and the patched
+ * `TerminalProfileService` reads it and *is* the default, reading no terminal
+ * setting at all. See `patches/vscode/0003-devhub-terminal-is-the-terminal.
+ * patch`; `terminal.integrated.enablePersistentSessions` is forced off in the
+ * same patch and for the same reason — a tmux session outlives the window
+ * already, so a restored tab is a second, empty client for a session that is
+ * still running.
  *
  * Only the tasks and automation shells are left alone: they ask for a shell to
  * run one command in and throw away, which is `terminal.integrated.
@@ -106,20 +104,45 @@ export function terminalLauncherPath(userDataPath: string): string {
 }
 
 /**
- * Which DevHub session this terminal belongs to, from the launcher's argv.
+ * The directory a terminal belongs to, from what the launcher was started in.
  *
- * The profile passes `${workspaceFolder}`, and VS Code resolves it in
- * `terminalProfileResolverService.ts#_resolveProfile` — but only when the
- * window has a folder. In the folderless window the resolver throws inside
- * `_resolveVariables`, which logs and returns the string untouched, so the
- * literal `${workspaceFolder}` arrives here. That is not an error to report:
- * the folderless window is DevHub's Scratch context, and `null` is its root.
+ * The profile carries no arguments and nothing is resolved into it. VS Code
+ * spawns the terminal in the cwd it computed for it — the workspace folder when
+ * the window has one, the user's home when it does not
+ * (`terminalEnvironment.ts#getCwd`) — so the launcher simply asks where it is,
+ * and DevHub answers which of its sessions that directory is in.
  *
- * Anything that is not an absolute path is the same case. A relative path is
- * not something DevHub can name a session from, and guessing what it was
- * relative to would be inventing an answer.
+ * A cwd is always absolute; anything that is not is a runtime that could not
+ * say where it was, and `null` — the Scratch context — is the honest answer to
+ * that rather than a guess.
  */
-export function terminalRoot(argument: string | undefined): string | null {
-	if (argument === undefined || !argument.startsWith("/")) return null;
-	return argument;
+export function terminalRoot(directory: string | undefined): string | null {
+	if (directory === undefined || !directory.startsWith("/")) return null;
+	return directory;
+}
+
+/**
+ * Which of these workspace roots contains `directory`, if any.
+ *
+ * One rule, and the same one for every window: a terminal belongs to the
+ * workspace its directory is in, and to Scratch when no workspace contains it.
+ * The folderless window is not a case of its own — VS Code starts its terminal
+ * in the user's home, no workspace is rooted there, and Scratch is what falls
+ * out of the rule.
+ *
+ * The longest match wins, so a workspace nested inside another one gets its own
+ * terminals rather than its parent's. Matching is on whole path segments: a
+ * root of `/work/app` does not contain `/work/app-old`.
+ */
+export function enclosingRoot(
+	roots: readonly string[],
+	directory: string | null,
+): string | null {
+	if (directory === null) return null;
+	let best: string | null = null;
+	for (const root of roots) {
+		if (directory !== root && !directory.startsWith(`${root}/`)) continue;
+		if (best === null || root.length > best.length) best = root;
+	}
+	return best;
 }

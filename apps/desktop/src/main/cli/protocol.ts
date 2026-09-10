@@ -147,11 +147,12 @@ export type ControlRequest =
 	| {
 			/**
 			 * How this workbench's integrated terminal attaches to its DevHub
-			 * session. Sent by the bridge extension, never by a person.
+			 * session. Sent by the terminal launcher, never by a person.
 			 *
-			 * The root is the workbench's own workspace folder, or `null` for the
-			 * folderless one — which is the Scratch context, and the same session
-			 * the Scratch terminal has always been.
+			 * The root is the directory VS Code started the terminal in. DevHub
+			 * answers with the session of the Workspace that contains it, or the
+			 * Scratch session when none does — which is what the folderless
+			 * window gets, since VS Code starts its terminal in the user's home.
 			 */
 			readonly kind: "terminal-profile";
 			readonly root: string | null;

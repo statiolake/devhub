@@ -39,7 +39,7 @@ describe("what a DevHub terminal runs", () => {
 		removeScratchDir(scratch);
 	});
 
-	it("runs the argv DevHub answers with, for the window's own root", async () => {
+	it("runs the argv DevHub answers with, for the directory it is in", async () => {
 		let asked: unknown;
 		server = await answering(socketPath, (root) => {
 			asked = root;
@@ -57,7 +57,7 @@ describe("what a DevHub terminal runs", () => {
 		});
 	});
 
-	it("asks for the Scratch session when the profile's variable did not resolve", async () => {
+	it("asks for the Scratch session when there is no directory to name", async () => {
 		let asked: unknown = "unset";
 		server = await answering(socketPath, (root) => {
 			asked = root;
@@ -67,7 +67,7 @@ describe("what a DevHub terminal runs", () => {
 				profile: { file: "/opt/tmux", args: [] },
 			};
 		});
-		await resolveTerminalCommand(socketPath, "${workspaceFolder}");
+		await resolveTerminalCommand(socketPath, undefined);
 		expect(asked).toBeNull();
 	});
 

@@ -2,9 +2,9 @@
  * What a DevHub terminal actually runs.
  *
  * The generated `devhub-terminal` script (see `launcher.ts`) runs this file
- * with the app's own Electron as Node, handing it the workspace folder VS Code
- * resolved for the window. It asks DevHub for that window's argv over the
- * control socket and becomes it.
+ * with the app's own Electron as Node, in the directory VS Code started the
+ * terminal in. It asks DevHub which of its sessions that directory belongs to,
+ * over the control socket, and becomes the argv that attaches to it.
  *
  * There is no fallback. A DevHub that does not answer means this window has no
  * session to attach to, and the honest end of that is one line in the terminal
@@ -64,7 +64,7 @@ export function requestTerminalProfile(
 /** What to run, or the sentence saying why there is nothing to run. */
 export async function resolveTerminalCommand(
 	socketPath: string | undefined,
-	argument: string | undefined,
+	directory: string | undefined,
 ): Promise<{ readonly file: string; readonly args: readonly string[] }> {
 	if (socketPath === undefined || socketPath.length === 0) {
 		throw new Error(
@@ -73,7 +73,7 @@ export async function resolveTerminalCommand(
 	}
 	const answer = await requestTerminalProfile(
 		socketPath,
-		terminalRoot(argument),
+		terminalRoot(directory),
 	);
 	if (!answer.ok || !answer.profile) {
 		throw new Error(answer.message);
@@ -88,10 +88,10 @@ export async function resolveTerminalCommand(
  * the signals and the exit are the session's own rather than something
  * forwarded through here.
  */
-export async function main(argv: readonly string[]): Promise<number> {
+export async function main(): Promise<number> {
 	const command = await resolveTerminalCommand(
 		process.env["DEVHUB_CONTROL_SOCKET"],
-		argv[0],
+		process.cwd(),
 	);
 	return await new Promise<number>((resolve, reject) => {
 		const child = spawn(command.file, [...command.args], {
@@ -114,7 +114,7 @@ if (
 	process.argv[1] !== undefined &&
 	fileURLToPath(import.meta.url) === resolvePath(process.argv[1])
 ) {
-	main(process.argv.slice(2))
+	main()
 		.then((code) => {
 			process.exitCode = code;
 		})

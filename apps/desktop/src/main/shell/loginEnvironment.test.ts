@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
 	adoptLoginEnvironment,
+	exportTerminalLauncher,
 	launchEnvironment,
 	loginEnvironmentSummary,
 	resolveLoginEnvironment,
@@ -273,6 +274,28 @@ describe("launchEnvironment", () => {
 			"PATH",
 			"SHELL",
 		]);
+	});
+});
+
+describe("exportTerminalLauncher", () => {
+	// The one DEVHUB_* variable that goes the other way: into DevHub's own
+	// process, so the workbench windows, the extension host and the pty host —
+	// none of which DevHub hands an environment to — read the launcher its
+	// terminal must run. It is an environment variable rather than a setting
+	// because a setting is a suggestion, and this is not one.
+	it("puts the launcher where every process DevHub starts will see it", () => {
+		const environment: Record<string, string | undefined> = {};
+		exportTerminalLauncher(environment, "/data/devhub/devhub-terminal");
+		expect(environment["DEVHUB_TERMINAL"]).toBe("/data/devhub/devhub-terminal");
+	});
+
+	// And it is still DEVHUB_*, so no shell a person types into inherits it.
+	it("is taken back out of every child DevHub spawns itself", () => {
+		const environment: Record<string, string | undefined> = {
+			PATH: LAUNCHD_PATH,
+		};
+		exportTerminalLauncher(environment, "/data/devhub/devhub-terminal");
+		expect(launchEnvironment(environment)["DEVHUB_TERMINAL"]).toBeUndefined();
 	});
 });
 

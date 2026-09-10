@@ -7,6 +7,7 @@ import {
 	terminalLauncherPath,
 	terminalLauncherScript,
 	terminalRoot,
+	enclosingRoot,
 } from "./launcher.js";
 
 describe("the DevHub terminal launcher", () => {
@@ -62,23 +63,51 @@ describe("the DevHub terminal launcher", () => {
 		expect(script).not.toContain(request.execPath);
 	});
 
-	describe("the root it is given", () => {
-		it("is the workspace folder when the window has one", () => {
+	describe("the directory it was started in", () => {
+		it("is the cwd VS Code gave the terminal", () => {
 			expect(terminalRoot("/work/project")).toBe("/work/project");
 		});
 
-		// VS Code leaves `${workspaceFolder}` unresolved in the folderless
-		// window rather than failing; that window is DevHub's Scratch context.
-		it("is Scratch when the profile's variable did not resolve", () => {
-			expect(terminalRoot("${workspaceFolder}")).toBeNull();
-		});
-
-		it("is Scratch when nothing was passed at all", () => {
+		it("is Scratch when there is no cwd to speak of", () => {
 			expect(terminalRoot(undefined)).toBeNull();
 		});
 
 		it("is Scratch rather than a guess when the path is relative", () => {
 			expect(terminalRoot("project")).toBeNull();
+		});
+	});
+
+	// One rule for every window: the Workspace that contains the directory, or
+	// Scratch when none does.
+	describe("the workspace a directory belongs to", () => {
+		const roots = ["/work/app", "/work/app/packages/ui", "/work/app-old"];
+
+		it("is the workspace rooted exactly there", () => {
+			expect(enclosingRoot(roots, "/work/app")).toBe("/work/app");
+		});
+
+		it("is the workspace a subdirectory is inside", () => {
+			expect(enclosingRoot(roots, "/work/app/src/main")).toBe("/work/app");
+		});
+
+		it("is the innermost workspace when they nest", () => {
+			expect(enclosingRoot(roots, "/work/app/packages/ui/src")).toBe(
+				"/work/app/packages/ui",
+			);
+		});
+
+		// A root of /work/app does not contain /work/app-old: the match is on
+		// whole path segments, never on the string.
+		it("does not take a sibling whose name merely starts the same", () => {
+			expect(enclosingRoot(roots, "/work/app-old/src")).toBe("/work/app-old");
+		});
+
+		it("is Scratch when no workspace contains the directory", () => {
+			expect(enclosingRoot(roots, "/home/testuser")).toBeNull();
+		});
+
+		it("is Scratch when there is no directory at all", () => {
+			expect(enclosingRoot(roots, null)).toBeNull();
 		});
 	});
 });

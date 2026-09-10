@@ -38,6 +38,7 @@ import {
 	workbenchSettingsPlan,
 	type SettingsProblem,
 } from "../workbenchDefaults.js";
+import { exportTerminalLauncher } from "./loginEnvironment.js";
 import { activeProfile } from "../../model/profile.js";
 import type { AppErrorWire } from "../../ipc/appShell.js";
 import { errorWireAt, withDetail } from "../../model/wire.js";
@@ -65,7 +66,6 @@ const APP_ROOT = join(
  */
 function ensureWorkbenchDefaults(
 	userDataPath: string,
-	terminalLauncherPath: string,
 ): SettingsProblem | undefined {
 	const file = join(userDataPath, "User", "settings.json");
 
@@ -79,7 +79,7 @@ function ensureWorkbenchDefaults(
 		existing = undefined;
 	}
 
-	const plan = workbenchSettingsPlan(existing, terminalLauncherPath);
+	const plan = workbenchSettingsPlan(existing);
 	if (plan.kind === "unreadable") {
 		console.error(
 			`[devhub] ${file}:${String(plan.problem.line)}:${String(plan.problem.column)} is not valid JSON; workbench defaults not written`,
@@ -102,7 +102,7 @@ function unreadableSettingsError(
 	const file = join(userDataPath, "User", "settings.json");
 	return withDetail(
 		errorWireAt("workbench_settings_unreadable"),
-		`${file}, line ${String(problem.line)}, column ${String(problem.column)}. DevHub left the file alone, so its terminal profile is missing until the file is valid.`,
+		`${file}, line ${String(problem.line)}, column ${String(problem.column)}. DevHub left the file alone, so the defaults it writes there are missing until the file is valid.`,
 	);
 }
 
@@ -111,10 +111,12 @@ export async function bootstrapShell(
 	cliArgs: NativeParsedArgs,
 	themeMainService: IThemeMainService,
 ): Promise<void> {
-	// The terminal launcher first: the profile DevHub writes below is a path to
-	// it, and both have to be in place before the first workbench reads its
-	// settings — which is why `bootstrapShell` runs before `startup()`. See
-	// `codeMain.ts` and `terminal/launcher.ts`.
+	// The terminal launcher first, and its path into DevHub's own environment
+	// before any window exists: the patched workbench reads `DEVHUB_TERMINAL`
+	// synchronously as it builds its terminal profile service, and a window
+	// created before this line would build one without an answer. That is why
+	// `bootstrapShell` runs before `startup()`. See `codeMain.ts`,
+	// `terminal/launcher.ts` and `loginEnvironment.ts`.
 	const launcherPath = installTerminalLauncher(
 		terminalLauncherPath(userDataPath),
 		{
@@ -132,7 +134,8 @@ export async function bootstrapShell(
 			socketPath: controlSocketPath(userDataPath),
 		},
 	);
-	const settingsProblem = ensureWorkbenchDefaults(userDataPath, launcherPath);
+	exportTerminalLauncher(process.env, launcherPath);
+	const settingsProblem = ensureWorkbenchDefaults(userDataPath);
 
 	// The colour theme comes first, before the page is servable and before the
 	// window exists, because both are created wearing it. VS Code stores the
