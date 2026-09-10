@@ -39,7 +39,7 @@ function agent(
 			waitingFor: "nothing_queued",
 			lastResult: undefined,
 		},
-		controlState: "running",
+		controlState: { kind: "running" },
 		displayName: id,
 		id,
 		ordinal,
@@ -75,7 +75,7 @@ function workspace(
 		label: id,
 		root: `/workspaces/${id}`,
 		selectedPath: `/workspaces/${id}`,
-		state: "available",
+		state: { kind: "available" },
 		...extra,
 	};
 }

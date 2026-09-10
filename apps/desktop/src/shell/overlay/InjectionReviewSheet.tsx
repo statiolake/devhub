@@ -74,7 +74,7 @@ export function InjectionReviewSheet({
    */
   const gone =
     agents !== undefined &&
-    (agent === undefined || agent.controlState !== "running")
+    (agent === undefined || agent.controlState.kind !== "running")
       ? agent === undefined
         ? "That agent has ended, so this message cannot be sent."
         : "That agent is no longer running, so this message cannot be sent."

@@ -65,7 +65,7 @@ export function AgentRenameSheet({
   // stops being asked rather than standing with a row that can only fail.
   useEffect(() => {
     if (!agents) return;
-    if (!agent || agent.controlState !== "running") onDismiss();
+    if (!agent || agent.controlState.kind !== "running") onDismiss();
   }, [agent, agents, onDismiss]);
 
   if (!agent) return null;

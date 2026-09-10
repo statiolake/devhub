@@ -27,9 +27,9 @@ export function runningAgentSurfaces(
 ): ReadonlyMap<string, PooledSurface> {
   const surfaces = new Map<string, PooledSurface>();
   for (const workspace of snapshot.workspaces) {
-    if (workspace.state !== "available") continue;
+    if (workspace.state.kind !== "available") continue;
     for (const agent of workspace.agents) {
-      if (agent.controlState !== "running") continue;
+      if (agent.controlState.kind !== "running") continue;
       const key = `agent:${agent.id}`;
       surfaces.set(key, { key, label: agent.displayName });
     }

@@ -29,6 +29,7 @@ import { SidebarHeader } from "./SidebarHeader";
 import { StatusMark } from "./StatusMark";
 import { statusLabel } from "./status";
 import { mergeExitingRows, useClosingExit } from "./closingExit";
+import { closeDiagnosticLabel } from "../shell/diagnosticLabel";
 
 function runtimeHealthLabel(health: AgentSnapshot["runtimeHealth"]): string {
   switch (health) {
@@ -121,7 +122,7 @@ function WorkspaceRow({
   // a person has to run into: the row goes quiet at the same moment it stops
   // being able to answer. It covers the Agents as well as the Workspace
   // because they are going with it.
-  const closing = workspace.state === "closing";
+  const closing = workspace.state.kind === "closing";
 
   // What the close button is about to do, read from the same rule main uses to
   // decide it (`closingDeletesWorktree`). A second copy of the rule here is how
@@ -141,7 +142,7 @@ function WorkspaceRow({
     >
       <div
         className={`sidebar-row workspace-row${selected ? " is-selected" : ""}`}
-        data-state={workspace.state}
+        data-state={workspace.state.kind}
       >
         <div className="row-head">
           <span className="row-rail" aria-hidden="true" />
@@ -169,7 +170,9 @@ function WorkspaceRow({
             // is what a sighted reader sees and this is the same statement
             // for everyone else.
             aria-label={`${workspace.label} workspace, path ${workspace.root}${
-              workspace.state === "closing-failed" ? ", close failed" : ""
+              workspace.state.kind === "closing-failed"
+                ? `, close failed: ${closeDiagnosticLabel(workspace.state.diagnostic)}`
+                : ""
             }`}
             title={workspace.root}
             onClick={() =>
@@ -214,7 +217,7 @@ function WorkspaceRow({
             closing deletes the folder (`closingDeletesWorktree`). The ellipsis
             is the rest of that promise: a question may follow, and does
             whenever there is anything in the folder to lose. */}
-          {workspace.state !== "closing" && (
+          {workspace.state.kind !== "closing" && (
             <button
               className="row-action-button"
               type="button"
@@ -224,7 +227,7 @@ function WorkspaceRow({
                   : `Close ${workspace.label}`
               }
               title={
-                workspace.state === "closing-failed"
+                workspace.state.kind === "closing-failed"
                   ? "Retry close"
                   : deletesWorktree
                     ? "Close worktree…"
@@ -236,7 +239,7 @@ function WorkspaceRow({
                 // else goes through main's one close, which is what decides
                 // whether this workspace is a worktree and therefore whether
                 // the folder goes with it (`closeWorkspaceOrWorktree`).
-                if (workspace.state === "closing-failed") {
+                if (workspace.state.kind === "closing-failed") {
                   void dispatch({
                     type: "retry_close_workspace",
                     workspaceId: workspace.id,
@@ -348,12 +351,18 @@ function WorkspaceRow({
         >
           {workspace.agents.map((agent) => {
             const agentSelected = selectedAgentId === agent.id;
-            const stopFailed = agent.controlState === "stop-failed";
+            const control = agent.controlState;
+            const stopFailed = control.kind === "stop-failed";
+            // A stop that failed says why, in the vocabulary every other
+            // reason is said in. DevHub computed the diagnostic when the stop
+            // failed and it now crosses the wire with the state that carries
+            // it, so the row states it rather than saying "Stop failed" and
+            // leaving the person to guess at a reason DevHub already knows.
             const note =
-              agent.controlState === "stopping"
+              control.kind === "stopping"
                 ? "Stopping"
-                : stopFailed
-                  ? "Stop failed"
+                : control.kind === "stop-failed"
+                  ? closeDiagnosticLabel(control.diagnostic)
                   : agent.runtimeHealth === "healthy"
                     ? undefined
                     : runtimeHealthLabel(agent.runtimeHealth);
@@ -382,7 +391,7 @@ function WorkspaceRow({
               >
                 <div
                   className={`sidebar-row agent-row${agentSelected ? " is-selected" : ""}${agent.unread ? " is-unread" : ""}`}
-                  data-control-state={agent.controlState}
+                  data-control-state={agent.controlState.kind}
                   onContextMenu={(event) => {
                     event.preventDefault();
                     onAgentMenu(agent, {
@@ -423,7 +432,7 @@ function WorkspaceRow({
                       tabIndex={agentSelected ? 0 : -1}
                       aria-current={agentSelected ? "page" : undefined}
                       aria-label={`${agent.displayName}, ${statusLabel(agent.status)} agent, ${note ?? runtimeHealthLabel(agent.runtimeHealth)}${agent.unread ? ", unread" : ""}${agent.activity ? `, ${agent.activity}` : ""}`}
-                      disabled={agent.controlState === "stopping"}
+                      disabled={agent.controlState.kind === "stopping"}
                       // Command-click opens the Agent beside its workbench; a
                       // plain click gives it the whole content area. The same
                       // pair as Return and Command-Return in the picker, because
@@ -447,7 +456,7 @@ function WorkspaceRow({
                       <StatusMark status={agent.status} />
                       <span className="row-label">{leading}</span>
                     </button>
-                    {agent.controlState === "stopping" ? null : (
+                    {agent.controlState.kind === "stopping" ? null : (
                       <button
                         className="row-action-button agent-row-action"
                         type="button"
@@ -1127,13 +1136,14 @@ function agentMenuItems(
       },
     });
   }
-  if (agent.controlState !== "stopping") {
+  if (agent.controlState.kind !== "stopping") {
     items.push({
       id: "stop",
-      label: agent.controlState === "stop-failed" ? "Retry Stop" : "Stop Agent",
+      label:
+        agent.controlState.kind === "stop-failed" ? "Retry Stop" : "Stop Agent",
       run: () => {
         dispatch(
-          agent.controlState === "stop-failed"
+          agent.controlState.kind === "stop-failed"
             ? { type: "retry_stop_agent", agentId: agent.id }
             : { type: "stop_agent", agentId: agent.id },
         );

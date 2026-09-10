@@ -15,6 +15,8 @@ import {
   DomainErrorCode,
   surfaceKeyName,
   type AgentProfile,
+  type AgentControlState,
+  type CleanupProgress,
   type CloseInspectionProjection,
   type ResourceInspection,
   type SurfaceLayout,
@@ -59,7 +61,8 @@ import {
   type AppOutcomeWire,
   type AppReadiness,
   type AppSnapshotWire,
-  type CloseDiagnosticWire,
+  type AgentControlStateWire,
+  type CleanupProgressWire,
   type CloseInspectionWire,
   type CloseResourceWire,
   type ConfirmationPurposeWire,
@@ -235,23 +238,54 @@ function contextWire(
   }
 }
 
-function workspaceStateName(
-  state: WorkspaceSnapshot["state"],
-): WorkspaceStateWire {
-  return state.kind;
+function cleanupProgressWire(progress: CleanupProgress): CleanupProgressWire {
+  return {
+    agentsClosed: progress.agentsClosed,
+    agentsStepCompleted: progress.agentsStepCompleted,
+    terminalClosed: progress.terminalClosed,
+    editorClosed: progress.editorClosed,
+  };
 }
 
-/** The reason behind a state that has one; nothing for the states that do not. */
-function workspaceStateDiagnostic(
+/**
+ * The Workspace's state, variant for variant.
+ *
+ * One arm per constructor and no `default`, so a fifth state cannot be added
+ * to the model without this switch refusing to compile. The projection carries
+ * the payload the model computed — the reason, and how far a close got — for
+ * the same reason the model carries it: whoever draws the state has to be able
+ * to say why it is that state.
+ */
+function workspaceStateWire(
   state: WorkspaceSnapshot["state"],
-): CloseDiagnosticWire | undefined {
+): WorkspaceStateWire {
   switch (state.kind) {
+    case "available":
+      return { kind: "available" };
     case "unavailable":
-      return state.reason;
+      return { kind: "unavailable", reason: state.reason };
+    case "closing":
+      return { kind: "closing", progress: cleanupProgressWire(state.progress) };
     case "closing-failed":
-      return state.diagnostic;
-    default:
-      return undefined;
+      return {
+        kind: "closing-failed",
+        diagnostic: state.diagnostic,
+        progress: cleanupProgressWire(state.progress),
+      };
+  }
+}
+
+/** The Agent's control state, variant for variant. See `workspaceStateWire`. */
+function agentControlStateWire(
+  state: AgentControlState,
+): AgentControlStateWire {
+  switch (state.kind) {
+    case "running":
+      return { kind: "running" };
+    case "stopping":
+      return { kind: "stopping" };
+    case "stop-failed":
+      return { kind: "stop-failed", diagnostic: state.diagnostic };
   }
 }
 
@@ -264,7 +298,7 @@ function agentWire(agent: AgentSnapshot): AgentWire {
     ordinal: agent.ordinal,
     status: agent.status,
     runtimeHealth: agent.runtimeHealth,
-    controlState: agent.controlState.kind,
+    controlState: agentControlStateWire(agent.controlState),
     unread: agent.unread,
     activity: agent.activity,
     injection: agent.injection,
@@ -306,8 +340,7 @@ export function snapshotWire(
     label: workspace.label,
     root: workspace.root,
     selectedPath: workspace.selectedPath,
-    state: workspaceStateName(workspace.state),
-    stateDiagnostic: workspaceStateDiagnostic(workspace.state),
+    state: workspaceStateWire(workspace.state),
     agents: workspace.agents.map(agentWire),
     canCreateAgent: workspace.canCreateAgent,
     ...(workspace.lastAgentId === undefined

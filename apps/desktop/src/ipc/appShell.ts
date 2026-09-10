@@ -21,7 +21,22 @@ export const MIN_SPLIT_RATIO = 0.25 as const;
 export const MAX_SPLIT_RATIO = 0.85 as const;
 export const DEFAULT_SPLIT_RATIO = 0.55 as const;
 
-export type AgentControlStateWire = "running" | "stopping" | "stop-failed";
+/**
+ * An Agent's control lifecycle, as the model states it.
+ *
+ * The tag alone used to cross, and `stop-failed` arrived on the page with its
+ * reason removed — DevHub knew why the Agent would not stop and the row could
+ * only say that it would not. A boundary that drops a variant's payload is the
+ * boundary deciding what the model meant, so the union crosses whole and the
+ * row renders `closeDiagnosticLabel(diagnostic)`.
+ */
+export type AgentControlStateWire =
+	| { readonly kind: "running" }
+	| { readonly kind: "stopping" }
+	| {
+			readonly kind: "stop-failed";
+			readonly diagnostic: CloseDiagnosticWire;
+	  };
 export type AgentProfileKindWire = "codex" | "claude" | "cursor" | "custom";
 export interface AgentProfileWire {
 	readonly displayName: string;
@@ -319,8 +334,8 @@ export interface AppSnapshotWire {
  *
  * A workbench alone for a Workspace or for Scratch; that workbench with an
  * Agent's pane beside it when an Agent is selected; nothing at all when the
- * Workspace cannot be shown, in which case the workspace's own `state` and
- * `stateDiagnostic` are what say why.
+ * Workspace cannot be shown, in which case the workspace's own `state` is
+ * what says why.
  */
 export type LayoutWire =
 	| { readonly kind: "workbench"; readonly editorKey: string }
@@ -418,11 +433,41 @@ export interface TerminalThemeWire {
 	readonly dark: TerminalPaletteWire;
 	readonly light: TerminalPaletteWire;
 }
+/**
+ * How far a close got, so a close that stopped can say where it stopped.
+ *
+ * Mirrors `CleanupProgress` in the domain. It crosses because the page draws
+ * the progress of a close it did not run, and a count of Agents already
+ * stopped that never leaves main is a count nobody can act on.
+ */
+export interface CleanupProgressWire {
+	readonly agentsClosed: number;
+	readonly agentsStepCompleted: boolean;
+	readonly terminalClosed: boolean;
+	readonly editorClosed: boolean;
+}
+
+/**
+ * A Workspace's availability, as the model states it.
+ *
+ * The union crosses whole. It used to be a tag with an optional
+ * `stateDiagnostic` beside it, which made `{ available, cleanup_failed }` and
+ * a `closing-failed` with no reason both writable — invalid states the model
+ * had made unrepresentable, representable again one function call later — and
+ * left `CleanupProgress` with no way across at all.
+ */
 export type WorkspaceStateWire =
-	| "available"
-	| "unavailable"
-	| "closing"
-	| "closing-failed";
+	| { readonly kind: "available" }
+	| { readonly kind: "unavailable"; readonly reason: CloseDiagnosticWire }
+	| {
+			readonly kind: "closing";
+			readonly progress: CleanupProgressWire;
+	  }
+	| {
+			readonly kind: "closing-failed";
+			readonly diagnostic: CloseDiagnosticWire;
+			readonly progress: CleanupProgressWire;
+	  };
 export interface WorkspaceWire {
 	readonly agents: readonly AgentWire[];
 	readonly canCreateAgent: boolean;
@@ -437,14 +482,6 @@ export interface WorkspaceWire {
 	 * What `Cmd+Q Cmd+J` comes back to. See `AppModel.lastAgentIn`.
 	 */
 	readonly lastAgentId?: string;
-	/**
-	 * Why the workspace is not available, when it is not.
-	 *
-	 * The state alone says something went wrong; this says what, which is the
-	 * difference between "could not be closed" and "the editor has unsaved
-	 * changes".
-	 */
-	readonly stateDiagnostic?: CloseDiagnosticWire;
 }
 
 export type SnapshotReadiness = AppReadiness;

@@ -81,7 +81,7 @@ function snapshotWith(control: "running" | "stopping" | "gone"): AppSnapshot {
                     waitingFor: "nothing_queued",
                     lastResult: undefined,
                   },
-                  controlState: control,
+                  controlState: { kind: control },
                   runtimeHealth: { kind: "healthy" } as never,
                 },
               ],

@@ -13,7 +13,7 @@ import { readFileSync } from "node:fs";
 import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { AppSnapshot } from "../../../ipc/appShell";
+import type { AppSnapshot, WorkspaceStateWire } from "../../../ipc/appShell";
 import type { RepositoryStatusWire } from "../../client";
 import type { AppShellContextValue } from "../../useAppShell";
 import { AppShellContext } from "../../useAppShell";
@@ -49,7 +49,7 @@ const SNAPSHOT = {
       label: "widget",
       root: "/projects/widget",
       selectedPath: "/projects/widget",
-      state: "available",
+      state: { kind: "available" },
       canCreateAgent: true,
       agents: [],
     },
@@ -59,7 +59,7 @@ const SNAPSHOT = {
 function mount(
   repositoryStatus: RepositoryStatusWire,
   /** The workspace's own state, for the one test that is about a failed close. */
-  workspaceState = "available",
+  workspaceState: WorkspaceStateWire = { kind: "available" },
 ) {
   const openExternalUrl = vi.fn();
   const removeWorktree = vi.fn(() => Promise.resolve({}));
@@ -509,10 +509,16 @@ describe("a workspace row, continued", () => {
       // A close that failed is retried by asking for the same thing again, and
       // that retry is the model's own command: nothing about the folder has
       // changed, so there is nothing for the close rule to decide again.
-      const { closeWorkspace, onDispatch } = mount(
-        worktree(false),
-        "closing-failed",
-      );
+      const { closeWorkspace, onDispatch } = mount(worktree(false), {
+        kind: "closing-failed",
+        diagnostic: "cleanup_failed",
+        progress: {
+          agentsClosed: 0,
+          agentsStepCompleted: false,
+          terminalClosed: false,
+          editorClosed: false,
+        },
+      });
       fireEvent.click(close() as HTMLElement);
       expect(closeWorkspace).not.toHaveBeenCalled();
       expect(onDispatch).toHaveBeenCalledWith({

@@ -45,7 +45,7 @@ function seen(workspaces: readonly WorkspaceSnapshot[]): SeenRow[] {
   return workspaces.map((workspace) => ({
     id: workspace.id,
     label: workspace.label,
-    closing: workspace.state === "closing",
+    closing: workspace.state.kind === "closing",
   }));
 }
 

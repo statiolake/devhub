@@ -230,10 +230,19 @@ export function Unavailable({
   if (!workspace) {
     return <Failure summary="The selected context is no longer available." />;
   }
-  if (workspace.state === "closing") {
+  const state = workspace.state;
+  if (state.kind === "closing") {
     return <Waiting label="Closing the workspace…" />;
   }
-  const closeFailed = workspace.state === "closing-failed";
+  const closeFailed = state.kind === "closing-failed";
+  // The reason is the state's own, not a field beside it: an `available`
+  // workspace has no diagnostic to read and a failed close always has one.
+  const diagnostic =
+    state.kind === "closing-failed"
+      ? state.diagnostic
+      : state.kind === "unavailable"
+        ? state.reason
+        : undefined;
   return (
     <Failure
       summary={
@@ -241,11 +250,7 @@ export function Unavailable({
           ? "This Workspace could not be closed."
           : "This workspace is unavailable."
       }
-      detail={
-        workspace.stateDiagnostic
-          ? closeDiagnosticLabel(workspace.stateDiagnostic)
-          : workspace.root
-      }
+      detail={diagnostic ? closeDiagnosticLabel(diagnostic) : workspace.root}
       /**
        * A failed close is answered where it is read. It used to say "retry
        * close from the Sidebar" and offer nothing: the pane a person was
@@ -256,7 +261,7 @@ export function Unavailable({
       actions={
         closeFailed
           ? [{ label: "Close Workspace", primary: true, run: onRetryClose }]
-          : workspace.state === "unavailable"
+          : state.kind === "unavailable"
             ? actions
             : undefined
       }
@@ -308,7 +313,7 @@ export function SurfaceViewport({
   );
 
   const unavailableActions =
-    workspace?.state === "unavailable"
+    workspace?.state.kind === "unavailable"
       ? ([
           {
             label: "Retry",
@@ -373,7 +378,7 @@ export function SurfaceViewport({
     surfaceState = "loading";
     body = <Waiting label="Connecting…" />;
   } else if (layout.kind === "unavailable") {
-    surfaceState = workspace?.state ?? "unavailable";
+    surfaceState = workspace?.state.kind ?? "unavailable";
     body = (
       <Unavailable
         workspace={workspace}

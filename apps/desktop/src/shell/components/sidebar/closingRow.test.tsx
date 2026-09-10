@@ -11,7 +11,7 @@
 import "@testing-library/jest-dom/vitest";
 import { act, cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { AppSnapshot } from "../../../ipc/appShell";
+import type { AppSnapshot, WorkspaceStateWire } from "../../../ipc/appShell";
 import type { RepositoryStatusWire } from "../../client";
 import type { AppShellContextValue } from "../../useAppShell";
 import { AppShellContext } from "../../useAppShell";
@@ -28,7 +28,18 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-function workspace(state: string) {
+const AVAILABLE: WorkspaceStateWire = { kind: "available" };
+const CLOSING: WorkspaceStateWire = {
+  kind: "closing",
+  progress: {
+    agentsClosed: 0,
+    agentsStepCompleted: false,
+    terminalClosed: false,
+    editorClosed: false,
+  },
+};
+
+function workspace(state: WorkspaceStateWire) {
   return {
     id: "w-1",
     label: "widget",
@@ -37,12 +48,12 @@ function workspace(state: string) {
     state,
     // The model says a closing Workspace cannot take a new Agent. The row is
     // given the truthful projection so the test exercises the real pairing.
-    canCreateAgent: state === "available",
+    canCreateAgent: state.kind === "available",
     agents: [],
   };
 }
 
-function snapshotWith(state: string): AppSnapshot {
+function snapshotWith(state: WorkspaceStateWire): AppSnapshot {
   return {
     schemaVersion: 1,
     revision: 1,
@@ -108,14 +119,14 @@ function mount(snapshot: AppSnapshot) {
 
 describe("a closing workspace row", () => {
   it("is not selectable", () => {
-    mount(snapshotWith("closing"));
+    mount(snapshotWith(CLOSING));
     expect(
       screen.getByRole("button", { name: /widget workspace/ }),
     ).toBeDisabled();
   });
 
   it("offers no close, no remove and no new agent", () => {
-    mount(snapshotWith("closing"));
+    mount(snapshotWith(CLOSING));
     expect(screen.queryByRole("button", { name: /^Close/ })).toBeNull();
     expect(
       screen.queryByRole("button", { name: /^Remove the worktree/ }),
@@ -126,7 +137,7 @@ describe("a closing workspace row", () => {
   it("still offers all of them while it is merely open", () => {
     // The negatives above are only worth anything if the controls are there to
     // be withdrawn in the first place.
-    mount(snapshotWith("available"));
+    mount(snapshotWith(AVAILABLE));
     expect(screen.getByRole("button", { name: /^Close/ })).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: /^Create agent/ }),
@@ -134,7 +145,7 @@ describe("a closing workspace row", () => {
   });
 
   it("says it is busy, and is not italic about it", () => {
-    mount(snapshotWith("closing"));
+    mount(snapshotWith(CLOSING));
     const item = document.querySelector(".sidebar-tree-item");
     expect(item).toHaveAttribute("aria-busy", "true");
     expect(item).toHaveClass("is-closing");
@@ -151,7 +162,7 @@ describe("the row's exit", () => {
   });
 
   it("keeps a closed row on screen while it fades, then drops it", () => {
-    const { rerender } = mount(snapshotWith("closing"));
+    const { rerender } = mount(snapshotWith(CLOSING));
     act(() => {
       rerender(EMPTY);
     });
@@ -174,7 +185,7 @@ describe("the row's exit", () => {
   it("does not haunt a row that left without closing", () => {
     // Anything other than a close — a restore, a snapshot replaced wholesale —
     // must not play an exit animation for every row it drops.
-    const { rerender } = mount(snapshotWith("available"));
+    const { rerender } = mount(snapshotWith(AVAILABLE));
     act(() => {
       rerender(EMPTY);
     });
@@ -185,7 +196,7 @@ describe("the row's exit", () => {
     // The regression this is here for: the removal timer used to be cancelled
     // by the next snapshot, and since that snapshot had nothing new leaving,
     // no replacement was scheduled and the ghost stayed for good.
-    const { rerender } = mount(snapshotWith("closing"));
+    const { rerender } = mount(snapshotWith(CLOSING));
     act(() => {
       rerender(EMPTY);
     });

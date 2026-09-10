@@ -13,18 +13,27 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { WorkspaceSnapshot } from "../../../ipc/appShell";
+import type {
+  CloseDiagnosticWire,
+  WorkspaceSnapshot,
+} from "../../../ipc/appShell";
 import { Unavailable } from "./SurfaceViewport";
 
-function closeFailed(
-  diagnostic: WorkspaceSnapshot["stateDiagnostic"],
-): WorkspaceSnapshot {
+function closeFailed(diagnostic: CloseDiagnosticWire): WorkspaceSnapshot {
   return {
     id: "workspace-1",
     label: "example",
     root: "/example",
-    state: "closing-failed",
-    stateDiagnostic: diagnostic,
+    state: {
+      kind: "closing-failed",
+      diagnostic,
+      progress: {
+        agentsClosed: 0,
+        agentsStepCompleted: false,
+        terminalClosed: false,
+        editorClosed: false,
+      },
+    },
     agents: [],
   } as unknown as WorkspaceSnapshot;
 }

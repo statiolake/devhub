@@ -64,7 +64,7 @@ const SNAPSHOT = {
 			label: "widget",
 			root: "/workspaces/widget",
 			selectedPath: "/workspaces/widget",
-			state: "available",
+			state: { kind: "available" },
 			canCreateAgent: true,
 			agents: [
 				{
@@ -75,7 +75,7 @@ const SNAPSHOT = {
 					profileId: "claude",
 					status: "idle",
 					runtimeHealth: "healthy",
-					controlState: "running",
+					controlState: { kind: "running" },
 					unread: "idle",
 					activity: undefined,
 					injection: {

@@ -19,10 +19,15 @@ import { readFileSync } from "node:fs";
 import "@testing-library/jest-dom/vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { AgentStatus, AppSnapshot } from "../../../ipc/appShell";
+import type {
+  AgentControlStateWire,
+  AgentStatus,
+  AppSnapshot,
+} from "../../../ipc/appShell";
 import type { AppShellContextValue } from "../../useAppShell";
 import { AppShellContext } from "../../useAppShell";
 import { Sidebar } from "./Sidebar";
+import { closeDiagnosticLabel } from "../shell/diagnosticLabel";
 
 window.devhub = {
   openModal: () => Promise.resolve(""),
@@ -34,6 +39,7 @@ afterEach(cleanup);
 function snapshotWithAgent(
   activity: string | undefined,
   unread: AgentStatus | undefined = undefined,
+  controlState: AgentControlStateWire = { kind: "running" },
 ): AppSnapshot {
   return {
     schemaVersion: 1,
@@ -50,7 +56,7 @@ function snapshotWithAgent(
         label: "widget",
         root: "/projects/widget",
         selectedPath: "/projects/widget",
-        state: "available",
+        state: { kind: "available" },
         canCreateAgent: true,
         agents: [
           {
@@ -61,7 +67,7 @@ function snapshotWithAgent(
             ordinal: 1,
             status: "working",
             runtimeHealth: "healthy",
-            controlState: "running",
+            controlState,
             unread,
             activity,
           },
@@ -74,6 +80,7 @@ function snapshotWithAgent(
 function mount(
   activity: string | undefined,
   unread: AgentStatus | undefined = undefined,
+  controlState: AgentControlStateWire = { kind: "running" },
 ): void {
   const value = {
     dispatch: vi.fn(),
@@ -84,7 +91,7 @@ function mount(
   render(
     <AppShellContext.Provider value={value}>
       <Sidebar
-        snapshot={snapshotWithAgent(activity, unread)}
+        snapshot={snapshotWithAgent(activity, unread, controlState)}
         onDispatch={vi.fn()}
       />
     </AppShellContext.Provider>,
@@ -181,5 +188,38 @@ describe("where an Agent's unread mark is", () => {
         `.row-unread-${reason} {\n  background: var(${token});\n}`,
       );
     }
+  });
+});
+
+/**
+ * A stop that failed says why.
+ *
+ * DevHub computes a diagnostic when a stop fails and used to keep it: the tag
+ * alone crossed the wire, so the row could say the Agent would not stop and
+ * never why. The reason now crosses with the state that carries it, and the
+ * row states it in the same vocabulary every other reason is stated in.
+ */
+describe("an Agent that would not stop", () => {
+  it("says why on the row, not merely that the stop failed", () => {
+    mount(undefined, undefined, {
+      kind: "stop-failed",
+      diagnostic: "close_agents_unknown",
+    });
+    expect(agentLines().under).toContain(
+      closeDiagnosticLabel("close_agents_unknown"),
+    );
+    expect(agentLines().under).not.toBe("Stop failed");
+  });
+
+  it("says it in the row's accessible name too", () => {
+    mount(undefined, undefined, {
+      kind: "stop-failed",
+      diagnostic: "close_editor_vetoed",
+    });
+    expect(
+      screen.getByRole("button", {
+        name: new RegExp(closeDiagnosticLabel("close_editor_vetoed")),
+      }),
+    ).toBeInTheDocument();
   });
 });
