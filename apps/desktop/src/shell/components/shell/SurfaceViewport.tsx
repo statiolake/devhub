@@ -410,9 +410,13 @@ export function SurfaceViewport({
       split = true;
       agentPresentation = "beside";
       agentKey = layout.agentKey;
-      // Both are drawn, and the Agent is the one that was selected — a split is
-      // only ever entered by asking for an Agent beside its editor.
-      contentSurface = "split";
+      // Both are drawn; which of them holds the keyboard is which half is
+      // selected. An Agent selected `beside` is the Agent half in front, and
+      // the workspace selected `beside` is the editor half — the same two
+      // panes, and `contentSurface` is the only place that difference is
+      // spoken. See `SurfacePresentation`.
+      contentSurface =
+        snapshot.selection.context.kind === "agent" ? "split" : "workbench";
     }
   }
 

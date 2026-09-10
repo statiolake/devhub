@@ -428,7 +428,7 @@ describe("the two halves of a workspace", () => {
 });
 
 describe("the layout toggles", () => {
-	it("puts the Agent beside the editor, and back again", () => {
+	it("puts the Agent beside the editor, and back to the Agent", () => {
 		const alone = snapshotOf({
 			workspaces: [two],
 			context: { kind: "agent", agentId: "b1" },
@@ -454,7 +454,38 @@ describe("the layout toggles", () => {
 		});
 	});
 
-	it("does nothing with no Agent selected: there is no pane to move", () => {
+	it("splits from the editor to the workspace's last Agent, and back to the editor", () => {
+		const onRow = snapshotOf({
+			workspaces: [workspace("two", ["b1", "b2"], { lastAgentId: "b2" })],
+			context: { kind: "workspace", workspaceId: "two" },
+		});
+		expect(run("toggle_split", onRow)).toEqual({
+			kind: "select-context",
+			context: { kind: "workspace", workspaceId: "two" },
+			presentation: "beside",
+		});
+		// The editor is the half in front, so the single view is the editor —
+		// the Agent beside it is not what was being worked in.
+		expect(
+			run(
+				"toggle_split",
+				snapshotOf({
+					workspaces: [workspace("two", ["b1", "b2"], { lastAgentId: "b2" })],
+					context: { kind: "workspace", workspaceId: "two" },
+					presentation: "beside",
+				}),
+			),
+		).toEqual({
+			kind: "select-context",
+			context: { kind: "workspace", workspaceId: "two" },
+			presentation: "full",
+		});
+	});
+
+	it("splits from a workspace that has never had an Agent open, to its first", () => {
+		// The pair rule, the same one `toggle_workspace_agent` reads: the split
+		// is the editor with the first Agent beside it, and the editor is in
+		// front because that is where the chord was pressed.
 		expect(
 			run(
 				"toggle_split",
@@ -463,7 +494,66 @@ describe("the layout toggles", () => {
 					context: { kind: "workspace", workspaceId: "two" },
 				}),
 			),
+		).toEqual({
+			kind: "select-context",
+			context: { kind: "workspace", workspaceId: "two" },
+			presentation: "beside",
+		});
+	});
+
+	it("leaves the split to the half the keyboard was moved to", () => {
+		// `Cmd+J` in a split swaps the halves; the selection is the record of
+		// which one is in front, so `Shift+J` after it lands on that one.
+		expect(
+			run(
+				"toggle_split",
+				snapshotOf({
+					workspaces: [two],
+					context: { kind: "agent", agentId: "b2" },
+					presentation: "beside",
+				}),
+			),
+		).toEqual({
+			kind: "select-context",
+			context: { kind: "agent", agentId: "b2" },
+			presentation: "full",
+		});
+	});
+
+	it("does nothing on a workspace with no Agents, or on Scratch", () => {
+		expect(
+			run(
+				"toggle_split",
+				snapshotOf({
+					workspaces: [empty],
+					context: { kind: "workspace", workspaceId: "empty" },
+				}),
+			),
 		).toBeUndefined();
+		expect(run("toggle_split", snapshotOf())).toBeUndefined();
+	});
+
+	it("moves the keyboard to the other pane of a split, and nowhere else", () => {
+		expect(
+			run(
+				"swap_split_focus",
+				snapshotOf({
+					workspaces: [two],
+					context: { kind: "agent", agentId: "b1" },
+					presentation: "beside",
+				}),
+			),
+		).toEqual({ kind: "swap-split-focus" });
+		expect(
+			run(
+				"swap_split_focus",
+				snapshotOf({
+					workspaces: [two],
+					context: { kind: "agent", agentId: "b1" },
+				}),
+			),
+		).toBeUndefined();
+		expect(run("swap_split_focus", snapshotOf())).toBeUndefined();
 	});
 
 	it("shows the editor by selecting it, from an Agent or from Scratch", () => {
@@ -555,14 +645,6 @@ describe("the commands that act on what is selected", () => {
 			workspaceId: "two",
 		});
 		expect(run("close_workspace", snapshotOf())).toBeUndefined();
-	});
-
-	it("opens the selected workspace outside DevHub, never Scratch", () => {
-		expect(run("open_workspace_externally", inTwo)).toEqual({
-			kind: "open-workspace-externally",
-			workspaceId: "two",
-		});
-		expect(run("open_workspace_externally", snapshotOf())).toBeUndefined();
 	});
 });
 

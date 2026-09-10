@@ -201,6 +201,14 @@ export type UserIntent =
       /** How much of the content area it should take. Only Agents have two. */
       readonly presentation: SurfacePresentation;
     }
+  /**
+   * Side by side: put the keyboard in the other half.
+   *
+   * Raised by the shell, never by the page — `Cmd+Q O` and `Cmd+Q Cmd+J` in a
+   * split — and it carries nothing, because which two halves are on screen is
+   * something the model already knows. Outside a split it does nothing.
+   */
+  | { readonly type: "swap_split_focus" }
   | { readonly type: "resize_sidebar"; readonly width: number }
   | { readonly type: "resize_split"; readonly ratio: number }
   | { readonly type: "open_folder"; readonly path: RequestedPath }

@@ -47,6 +47,7 @@
  * | `Cmd+Q 1`…`9`               | `select_entry_1`…`9`      |
  * | `Cmd+Q Cmd+J`               | `toggle_workspace_agent`  |
  * | `Cmd+Q Z` / `Shift+J`       | `toggle_split`            |
+ * | `Cmd+Q O`                   | `swap_split_focus`        |
  * | `Cmd+Q E`                   | `focus_editor`            |
  * | `Cmd+Q F`                   | `add_workspace`           |
  * | `Cmd+Q C`                   | `add_agent`               |
@@ -55,7 +56,6 @@
  * | `Cmd+Q ,`                   | `rename_agent`            |
  * | `Cmd+Q X`                   | `close_selection`         |
  * | `Cmd+Q Shift+W`             | `close_workspace`         |
- * | `Cmd+Q O`                   | `open_workspace_externally` |
  * | `Cmd+Q R`                   | `refresh_repositories`    |
  * | `Cmd+Q Shift+,`             | `open_settings`           |
  * | `Cmd+Q ?`                   | `show_chord_help`         |
@@ -99,15 +99,32 @@
  * workbench — the same two gestures the workspace picker has, because they mean
  * the same two things.
  *
- * **`Cmd+Q Cmd+J` is the toggle between the two halves of one workspace.** In
- * the single layout it swaps the selected row between the workspace and its
- * Agent: the one you were last in *in that workspace*, or its first Agent if
- * you have not been in any. The last one is a fact the model keeps and writes
- * down, because "the Agent I was in" is per workspace, survives a restart, and
- * there is no other way back to it.
- * Side by side, both are already on screen, so there is nothing to select and
- * the same chord moves the keyboard between them instead. One chord, one
- * meaning — "the other half" — and the layout decides what that costs.
+ * **`Cmd+Q Cmd+J` and `Cmd+Q Shift+J` are twins.** Both are about one pair —
+ * a workspace and its Agent: the one you were last in *in that workspace*, or
+ * its first Agent if you have not been in any (`pairedAgentId`, the single rule
+ * both read). The last one is a fact the model keeps and writes down, because
+ * "the Agent I was in" is per workspace, survives a restart, and there is no
+ * other way back to it. They differ only in *how* they show the pair: `Cmd+J`
+ * **switches** — one of the two, full width — and `Shift+J` **splits** — both
+ * of them, side by side. A workspace with no Agents has no pair, so both are
+ * no-ops there.
+ *
+ * Side by side, both halves are already on screen, so `Cmd+J` has nothing to
+ * select and moves the keyboard between them instead — the same thing
+ * `Cmd+Q O` does, so in a split the two keys reach one effect.
+ *
+ * **`Cmd+Q Shift+J` leaves the split the way it came in.** Entering it from the
+ * editor leaves to the editor; entering it from the Agent leaves to the Agent;
+ * and if the keyboard was moved to the other half while the split stood, that
+ * is the half it leaves to. One rule, because there is one fact: the half in
+ * front is *what is selected* — a split is a `beside` presentation, and the
+ * selection inside it says which pane holds the keyboard (see
+ * `SurfacePresentation`). So leaving is `presentation: "full"` on whatever is
+ * selected, with nothing else remembered anywhere.
+ *
+ * **`Cmd+Q O` is the multiplexer's `prefix o`: the other pane.** It does in a
+ * split exactly what `Cmd+J` does there, under the key the hand already knows
+ * from tmux; outside a split there is no other pane and it is a no-op.
  *
  * **`Cmd+Q Z` is the multiplexer's `zoom`, moved to the noun DevHub has.** A
  * DevHub context is not tiled panes, so there is nothing to zoom in the tmux
@@ -150,7 +167,10 @@
  * **Gone, and why.** `Cmd+Q T` and `Cmd+Q Ctrl+J` toggled the workbench's
  * integrated terminal: that is a workbench command with a workbench key, and
  * putting a DevHub chord in front of it was DevHub claiming a key in order to
- * forward a command whose real binding it had to guess. `Cmd+Q Shift+C` was a
+ * forward a command whose real binding it had to guess. `Cmd+Q O` used to hand
+ * the workspace's folder to the Finder, from a picker with one row in it; the
+ * key is worth more as the multiplexer's "other pane", and revealing a folder
+ * is something the machine already does from everywhere else. `Cmd+Q Shift+C` was a
  * second key onto the workspace picker, carried over from a multiplexer where
  * making a session and finding a project were two commands; DevHub's picker is
  * both, and one key for one command is the rule everywhere else.
@@ -236,7 +256,7 @@ export type CommandId =
   | "close_workspace"
   | "open_issue_picker"
   | "send_agent_action"
-  | "open_workspace_externally"
+  | "swap_split_focus"
   | "refresh_repositories"
   | "open_settings"
   | "show_chord_help";
@@ -249,7 +269,7 @@ export type CommandId =
  * command can forget it — and the Settings window shows the same words next to
  * the row, so "why does this key do nothing here" has an answer on screen.
  */
-export type CommandNeeds = "nothing" | "workspace" | "agent";
+export type CommandNeeds = "nothing" | "workspace" | "agent" | "split";
 
 export interface CommandDefinition {
   readonly id: CommandId;
@@ -368,8 +388,14 @@ export const COMMANDS: readonly CommandDefinition[] = [
   {
     id: "toggle_split",
     label: "Show the Agent beside the editor, or alone",
-    needs: "agent",
+    needs: "workspace",
     defaultKeys: ["z", "J"],
+  },
+  {
+    id: "swap_split_focus",
+    label: "Focus the other pane",
+    needs: "split",
+    defaultKeys: ["o"],
   },
   {
     id: "focus_editor",
@@ -421,12 +447,6 @@ export const COMMANDS: readonly CommandDefinition[] = [
     defaultKeys: ["W"],
   },
 
-  {
-    id: "open_workspace_externally",
-    label: "Open this workspace outside DevHub…",
-    needs: "workspace",
-    defaultKeys: ["o"],
-  },
   {
     id: "refresh_repositories",
     label: "Refresh branch, pull request and Issue information",

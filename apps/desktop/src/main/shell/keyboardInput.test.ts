@@ -108,7 +108,6 @@ function host() {
 		renameAgent: record("renameAgent"),
 		closeAgent: record("closeAgent"),
 		closeWorkspace: record("closeWorkspace"),
-		openWorkspaceExternally: record("openWorkspaceExternally"),
 		refreshRepositories: record("refreshRepositories"),
 		openChordHelp: record("openChordHelp"),
 		openSettings: record("openSettings"),

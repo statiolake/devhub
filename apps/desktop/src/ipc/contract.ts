@@ -736,17 +736,6 @@ export type ModalRequest =
 	 */
 	| { readonly kind: "tab-picker" }
 	/**
-	 * What to hand this workspace's folder to.
-	 *
-	 * `Cmd+Q O`. A picker rather than a menu, because every other list of
-	 * choices in DevHub is one.
-	 */
-	| {
-			readonly kind: "open-externally";
-			readonly workspaceId: string;
-			readonly root: string;
-	  }
-	/**
 	 * Closing a worktree that has something in it to lose.
 	 *
 	 * Three answers, because there really are three, and a two-button dialog

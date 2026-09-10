@@ -121,13 +121,68 @@ describe("layout resolution", () => {
     });
   });
 
-  it("keeps the presentation out of a selection that has only one", () => {
+  it("keeps the presentation out of a selection with no other half", () => {
     const model = modelWith([WS_A, "/dev/a"]);
-    // A Workspace *is* its workbench, so `beside` names no arrangement it
-    // has. Recording it anyway would leave a value in the snapshot that
-    // nothing honours and that the next reader has to know to ignore.
+    // A Workspace with no Agents has nothing to be beside, and neither has
+    // Scratch. Recording `beside` anyway would leave a value in the snapshot
+    // that nothing honours and the next reader has to know to ignore.
     model.selectContext({ kind: "workspace", workspaceId: WS_A }, "beside");
     expect(model.snapshot().selection.presentation).toBe("full");
+    model.selectContext({ kind: "global" }, "beside");
+    expect(model.snapshot().selection.presentation).toBe("full");
+  });
+
+  it("splits a Workspace beside the Agent it is paired with", () => {
+    const model = modelWith([WS_A, "/dev/a"]);
+    model.addAgent(WS_A, AG_A, codex);
+    model.addAgent(WS_A, AG_B, codex);
+    // Never been in one: the pair is the first Agent. The editor is what is
+    // selected, so the editor is the half in front.
+    expect(
+      model.resolveLayout({
+        context: { kind: "workspace", workspaceId: WS_A },
+        presentation: "beside",
+      }),
+    ).toEqual({
+      kind: "split",
+      editor: { kind: "workspace-editor", workspaceId: WS_A },
+      agent: { kind: "agent", agentId: AG_A },
+    });
+    // Once an Agent has been selected here, that is the one it pairs with.
+    model.selectContext({ kind: "agent", agentId: AG_B });
+    expect(
+      model.resolveLayout({
+        context: { kind: "workspace", workspaceId: WS_A },
+        presentation: "beside",
+      }),
+    ).toEqual({
+      kind: "split",
+      editor: { kind: "workspace-editor", workspaceId: WS_A },
+      agent: { kind: "agent", agentId: AG_B },
+    });
+  });
+
+  it("swaps the half of a split the keyboard is in, and only inside one", () => {
+    const model = modelWith([WS_A, "/dev/a"]);
+    model.addAgent(WS_A, AG_A, codex);
+    model.selectContext({ kind: "agent", agentId: AG_A }, "beside");
+    model.swapSplitFocus();
+    expect(model.snapshot().selection).toEqual({
+      context: { kind: "workspace", workspaceId: WS_A },
+      presentation: "beside",
+    });
+    model.swapSplitFocus();
+    expect(model.snapshot().selection).toEqual({
+      context: { kind: "agent", agentId: AG_A },
+      presentation: "beside",
+    });
+    // Outside a split there is no other pane, so nothing moves.
+    model.selectContext({ kind: "agent", agentId: AG_A });
+    model.swapSplitFocus();
+    expect(model.snapshot().selection).toEqual({
+      context: { kind: "agent", agentId: AG_A },
+      presentation: "full",
+    });
   });
 
   it("re-selecting the same Agent a different way moves the layout", () => {

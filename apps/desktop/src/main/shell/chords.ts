@@ -33,6 +33,7 @@
  */
 
 import { chordKeyId, type ChordKey } from "../../model/chordKeys.js";
+import { pairedAgentId } from "../../model/appModel.js";
 import {
 	commandById,
 	defaultBindings,
@@ -141,7 +142,6 @@ export type ChordEffect =
 	| { readonly kind: "close-agent"; readonly agentId: string }
 	/** Close it, and delete the worktree if that is what it is. */
 	| { readonly kind: "close-workspace"; readonly workspaceId: string }
-	| { readonly kind: "open-workspace-externally"; readonly workspaceId: string }
 	| { readonly kind: "refresh-repositories" }
 	| { readonly kind: "open-chord-help" }
 	| { readonly kind: "open-settings" };
@@ -278,6 +278,11 @@ export function resolveChord(
 	const agent = selectedAgent(snapshot);
 	if (definition.needs === "workspace" && !workspace) return undefined;
 	if (definition.needs === "agent" && !agent) return undefined;
+	if (
+		definition.needs === "split" &&
+		snapshot.selection.presentation !== "beside"
+	)
+		return undefined;
 
 	if (isSelectEntryCommand(commandId)) {
 		const entries = sidebarEntries(snapshot);
@@ -329,11 +334,6 @@ export function resolveChord(
 				? { kind: "close-workspace", workspaceId: workspace.id }
 				: undefined;
 
-		case "open_workspace_externally":
-			return workspace
-				? { kind: "open-workspace-externally", workspaceId: workspace.id }
-				: undefined;
-
 		case "refresh_repositories":
 			return { kind: "refresh-repositories" };
 
@@ -356,24 +356,49 @@ export function resolveChord(
 					: GLOBAL,
 			};
 
-		case "toggle_split":
-			// The two arrangements DevHub already has for an Agent: beside its
-			// workbench, or alone over the content area. Moving the *selection's*
-			// presentation rather than adding a "maximised" flag is what keeps
-			// there being one answer to how much room the Agent takes.
-			return agent
-				? {
+		case "swap_split_focus":
+			// `needs: "split"` has already answered "is there another pane".
+			return { kind: "swap-split-focus" };
+
+		case "toggle_split": {
+			// Both halves of one pair, side by side — the twin of
+			// `toggle_workspace_agent`, which shows one of the same two.
+			if (!workspace) return undefined;
+			if (snapshot.selection.presentation === "beside") {
+				// Leaving: the half in front is what is selected, and it is what
+				// the single view lands on. Entered from the editor, left to the
+				// editor; entered from the Agent, left to the Agent; moved with
+				// `Cmd+J` in between, left to wherever that moved it.
+				return {
+					kind: "select-context",
+					context: snapshot.selection.context,
+					presentation: "full",
+				};
+			}
+			// Entering: the pair as two panes, with the keyboard staying in the
+			// half it was already in. A workspace with no Agents has no pair and
+			// nothing to put beside it.
+			if (agent) {
+				return {
+					kind: "select-context",
+					context: { kind: "agent", agentId: agent.id },
+					presentation: "beside",
+				};
+			}
+			return pairedAgentId(workspace) === undefined
+				? undefined
+				: {
 						kind: "select-context",
-						context: { kind: "agent", agentId: agent.id },
-						presentation:
-							snapshot.selection.presentation === "beside" ? "full" : "beside",
-					}
-				: undefined;
+						context: { kind: "workspace", workspaceId: workspace.id },
+						presentation: "beside",
+					};
+		}
 
 		case "toggle_workspace_agent": {
 			if (!workspace) return undefined;
 			// Side by side, both halves are already on screen: there is nothing to
-			// select, so the same chord moves the keyboard between them instead.
+			// select, so the same chord moves the keyboard between them instead —
+			// which is what `Cmd+Q O` does with nothing else attached.
 			if (snapshot.selection.presentation === "beside") {
 				return { kind: "swap-split-focus" };
 			}
@@ -389,7 +414,7 @@ export function resolveChord(
 			// the chord dead exactly when it was most useful — on a workspace
 			// just restored, or just given its first Agent. Only a workspace
 			// with no Agents at all has nowhere to go.
-			const last = workspace.lastAgentId ?? workspace.agents[0]?.id;
+			const last = pairedAgentId(workspace);
 			return last === undefined
 				? undefined
 				: {

@@ -74,8 +74,6 @@ export interface ChordHost {
 	closeAgent(agentId: string): void;
 	/** Close it — and delete the worktree, if that is what it is. */
 	closeWorkspace(workspaceId: string): void;
-	/** Hand this workspace's folder to something outside DevHub. */
-	openWorkspaceExternally(workspaceId: string): void;
 	/** Look at every workspace's branch, pull request and Issue again, now. */
 	refreshRepositories(): void;
 	/** The list of chords, drawn from the registry they are run from. */
@@ -137,9 +135,6 @@ function perform(host: ChordHost, effect: ChordEffect): void {
 			return;
 		case "close-workspace":
 			host.closeWorkspace(effect.workspaceId);
-			return;
-		case "open-workspace-externally":
-			host.openWorkspaceExternally(effect.workspaceId);
 			return;
 		case "refresh-repositories":
 			host.refreshRepositories();

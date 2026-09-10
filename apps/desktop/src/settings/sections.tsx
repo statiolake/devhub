@@ -1516,6 +1516,7 @@ const NEEDS_NOTE: Readonly<Record<CommandNeeds, string>> = {
   nothing: "",
   workspace: "Needs a workspace selected.",
   agent: "Needs an agent selected.",
+  split: "Needs the editor and an Agent side by side.",
 };
 
 /**

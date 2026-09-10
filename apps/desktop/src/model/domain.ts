@@ -1176,10 +1176,16 @@ export type SurfaceLayout =
  * selections of one Agent, so nothing about the Agent itself changes and
  * nothing has to be stored on it or remembered between launches.
  *
- * Only an Agent has two answers. A Workspace *is* its workbench, full width,
- * and Scratch is the same — so `full` is the only presentation a non-Agent
- * selection is ever recorded with, which `AppModel.selectContext` enforces
- * rather than leaving a second value lying around that nothing reads.
+ * A split has two halves, and either can be the one in front, so a Workspace
+ * carries this too: `beside` on a Workspace is the same two panes as `beside`
+ * on its Agent, with the keyboard in the editor rather than in the Agent. That
+ * is how "which half of the split am I in" is written down — as what is
+ * selected, not as a second notion of focus.
+ *
+ * Scratch has no other half, and neither has a Workspace with no Agents, so
+ * `full` is the only presentation either is ever recorded with — which
+ * `AppModel.selectContext` enforces rather than leaving a second value lying
+ * around that nothing reads.
  */
 export type SurfacePresentation = "full" | "beside";
 

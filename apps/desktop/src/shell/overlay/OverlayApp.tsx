@@ -25,7 +25,6 @@ import { CloseConfirmationSheet } from "./CloseConfirmationSheet";
 import { WorktreeCloseSheet } from "./WorktreeCloseSheet";
 import { TabPickerSheet } from "./TabPickerSheet";
 import { AgentActionsSheet } from "./AgentActionsSheet";
-import { OpenExternallySheet } from "./OpenExternallySheet";
 import { ChordHelpSheet } from "./ChordHelpSheet";
 
 /** Take one modal off screen, with the answer if it asked for one. */
@@ -124,15 +123,6 @@ function Modal({ modal }: { readonly modal: OpenModal }) {
       return (
         <AgentActionsSheet
           agentId={request.agentId}
-          onDismiss={() => {
-            close(id);
-          }}
-        />
-      );
-    case "open-externally":
-      return (
-        <OpenExternallySheet
-          root={request.root}
           onDismiss={() => {
             close(id);
           }}

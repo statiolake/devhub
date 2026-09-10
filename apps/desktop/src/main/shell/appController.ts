@@ -206,6 +206,7 @@ import {
 	defaultKeybindings,
 	keysForCommand,
 	resolveBindings,
+	type CommandNeeds,
 } from "../../model/commands.js";
 import {
 	openSettingsWindow,
@@ -219,6 +220,20 @@ const SCRATCH_EDITOR = "";
 
 /** How long the page waits for a deferred operation before it is a failure. */
 const OPERATION_TIMEOUT_MS = 60_000;
+
+/**
+ * What the help overlay says a command wants, one phrase per `CommandNeeds`.
+ *
+ * A total table rather than a chain of conditionals, so a need added to the
+ * registry is a compile error here instead of a row that quietly says the
+ * wrong thing.
+ */
+const NEEDS_PHRASE: Readonly<Record<Exclude<CommandNeeds, "nothing">, string>> =
+	{
+		workspace: "with a workspace selected",
+		agent: "with an Agent selected",
+		split: "with the editor and an Agent side by side",
+	};
 
 /** More rounds than any real chain needs, and fewer than a cycle survives. */
 const MAX_DRAIN_ROUNDS = 512;
@@ -628,17 +643,6 @@ export class AppController {
 			closeWorkspace: (workspaceId) => {
 				this.closeWorkspaceOrWorktree(workspaceId);
 			},
-			openWorkspaceExternally: (workspaceId) => {
-				const workspace = this.coordinator.model.workspaces.find(
-					(candidate) => candidate.id === workspaceId,
-				);
-				if (!workspace) return;
-				shellWindow().modals.openModal({
-					kind: "open-externally",
-					workspaceId,
-					root: workspace.root,
-				});
-			},
 			refreshRepositories: () => {
 				this.repositoryStatus.look();
 			},
@@ -694,10 +698,7 @@ export class AppController {
 			...(command.needs === "nothing"
 				? {}
 				: {
-						needs:
-							command.needs === "agent"
-								? "with an Agent selected"
-								: "with a workspace selected",
+						needs: NEEDS_PHRASE[command.needs],
 					}),
 		})).filter((row) => row.chords.length > 0);
 	}
@@ -705,23 +706,22 @@ export class AppController {
 	/**
 	 * Side by side: move the keyboard between the editor and the Agent's pane.
 	 *
-	 * The one place in DevHub where "focused" is a question the selection does
-	 * not already answer, because in this arrangement both halves are selected
-	 * at once. It is kept here, in the window layer, rather than in the model:
-	 * which of two visible panes has the keyboard is not a fact about the
-	 * application's state, it is a fact about this window, and the model does
-	 * not have windows.
+	 * The half in front is *what is selected* — a split with the Agent selected
+	 * and a split with its workspace selected are the same two panes with the
+	 * keyboard in a different one — so the swap is a change to the model and
+	 * not a boolean kept out here. It used to be that boolean, which meant two
+	 * answers to "which half am I in": this one, which started on the editor
+	 * whatever had been selected, and the selection, which `Cmd+Q Shift+J` has
+	 * to read to know which half to leave the split to.
 	 *
 	 * The Agent's pane is drawn by the App Shell page and the workbench is a
 	 * native view, so the two halves are moved to differently: one is the
 	 * window's own focus rule, and the other is a message to the page (see
 	 * `shell/focusHome.ts`, which is the page's half of that rule).
 	 */
-	private splitFocusOnAgent = false;
-
 	private swapSplitFocus(): void {
-		this.splitFocusOnAgent = !this.splitFocusOnAgent;
-		if (this.splitFocusOnAgent) {
+		this.dispatchOwn({ type: "swap_split_focus" });
+		if (this.coordinator.model.selection.context.kind === "agent") {
 			this.send(CHANNELS.menuCommand, "focus_agent_pane");
 			return;
 		}

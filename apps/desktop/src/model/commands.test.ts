@@ -185,6 +185,18 @@ describe("the table actually in effect", () => {
     expect(formatChordKey(resolved.prefix)).toBe("Cmd+q");
   });
 
+  it("puts `o` on the other pane, and lists no way out of DevHub", () => {
+    // `Cmd+Q O` was "open this workspace outside DevHub", from a picker with
+    // one row in it; it is the multiplexer's `prefix o` now. The registry is
+    // what the help overlay and Settings are drawn from, so a command left
+    // here would still be listed with no way to reach it.
+    expect(commandFor(defaultKeybindings(), "o")).toBe("swap_split_focus");
+    expect(isCommandId("open_workspace_externally")).toBe(false);
+    expect(COMMANDS.some((command) => command.id === "swap_split_focus")).toBe(
+      true,
+    );
+  });
+
   it("keeps every key the file does not mention", () => {
     // The reason the file holds overrides and not the whole table: a
     // configuration written today must not delete a command added tomorrow.

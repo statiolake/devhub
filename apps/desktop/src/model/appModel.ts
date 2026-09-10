@@ -94,6 +94,35 @@ export interface SidebarSnapshot {
   readonly width: number;
 }
 
+/**
+ * A workspace, as much of one as the pair rule reads.
+ *
+ * Structural rather than a class or a wire type, because the rule is asked in
+ * two places that hold two shapes of the same thing — the live model here, and
+ * the wire snapshot the chord layer resolves against — and one rule written
+ * twice is how the two chords about the pair came to disagree about which
+ * Agent they meant.
+ */
+export interface AgentPairSource<Id extends string> {
+  readonly lastAgentId?: Id | undefined;
+  readonly agents: readonly { readonly id: Id }[];
+}
+
+/**
+ * The Agent a workspace is paired with: the one it was last in, else its first.
+ *
+ * The one answer to "this workspace's other half", shared by everything that
+ * asks it — `Cmd+Q Cmd+J`, which switches to it, `Cmd+Q Shift+J`, which puts it
+ * beside the editor, and the layout, which has to know what the split's second
+ * pane holds. A workspace with no Agents has no other half, and every one of
+ * those callers is a no-op there.
+ */
+export function pairedAgentId<Id extends string>(
+  workspace: AgentPairSource<Id>,
+): Id | undefined {
+  return workspace.lastAgentId ?? workspace.agents[0]?.id;
+}
+
 export interface AgentSnapshot {
   readonly id: AgentId;
   readonly workspaceId: WorkspaceId;
@@ -683,10 +712,17 @@ export class AppModel {
    * because that is the modified gesture — and a caller that forgets cannot
    * accidentally produce the arrangement nobody asked for.
    *
-   * Only an Agent has two presentations, so anything else is recorded as
-   * `full` whatever the caller passed. That keeps the invariant a fact about
-   * the stored value rather than a rule every reader has to remember: there is
-   * no non-Agent selection carrying a `beside` nothing would honour.
+   * `beside` names a split, and a split has two halves that can each be the
+   * one in front: the Agent, and the workspace's editor. So a workspace
+   * selection carries it too — that is how "the editor half of the split is
+   * what I am in" is written down, and it is the same fact `Cmd+Q Shift+J`
+   * reads to know which half to leave the split to.
+   *
+   * Anything with no other half to be beside is recorded as `full` whatever
+   * the caller passed: Scratch, and a workspace with no Agents. That keeps the
+   * invariant a fact about the stored value rather than a rule every reader has
+   * to remember — there is no selection carrying a `beside` nothing would
+   * honour.
    */
   selectContext(
     context: NavigationContext,
@@ -695,7 +731,7 @@ export class AppModel {
     this.ensureContextExists(context);
     const next: NavigationSelection = {
       context,
-      presentation: context.kind === "agent" ? presentation : "full",
+      presentation: this.canPresentBeside(context) ? presentation : "full",
     };
     // Choosing an Agent is what makes it the one this workspace comes back to.
     // Recorded on the way in, whether or not the selection actually moves, so
@@ -721,6 +757,57 @@ export class AppModel {
   }
 
   /**
+   * The Agent this workspace's chords and its split are about.
+   *
+   * `pairedAgentId`'s one rule, asked of the live model; the chord layer asks
+   * the same function of the wire snapshot.
+   */
+  pairedAgentIn(workspaceId: WorkspaceId): AgentId | undefined {
+    const workspace = this.workspace(workspaceId);
+    if (!workspace) return undefined;
+    return pairedAgentId({
+      lastAgentId: this.lastAgentIn(workspaceId),
+      agents: workspace.agents,
+    });
+  }
+
+  /** Whether this context has an other half to be shown beside. */
+  private canPresentBeside(context: NavigationContext): boolean {
+    if (context.kind === "agent") return true;
+    if (context.kind === "global") return false;
+    return this.pairedAgentIn(context.workspaceId) !== undefined;
+  }
+
+  /**
+   * Side by side: put the keyboard in the other half.
+   *
+   * The half in front *is* the selection — a split with the Agent selected and
+   * a split with the workspace selected are the same two panes with the
+   * keyboard in a different one — so moving between them is an ordinary
+   * selection and not a second notion of focus the layout would have to be
+   * reconciled with. Both `Cmd+Q Cmd+J` and `Cmd+Q O` come here, and outside a
+   * split there is no other half, so it is a no-op.
+   */
+  swapSplitFocus(): void {
+    const selection = this.selectionValue;
+    if (selection.presentation !== "beside") return;
+    const context = selection.context;
+    if (context.kind === "agent") {
+      const workspace = this.agent(context.agentId)?.workspaceId;
+      if (workspace === undefined) return;
+      this.selectContext(
+        { kind: "workspace", workspaceId: workspace },
+        "beside",
+      );
+      return;
+    }
+    if (context.kind !== "workspace") return;
+    const agent = this.pairedAgentIn(context.workspaceId);
+    if (agent === undefined) return;
+    this.selectContext({ kind: "agent", agentId: agent }, "beside");
+  }
+
+  /**
    * The one place that decides what the content area holds, and what it points
    * at. Everything the page draws in it comes from here.
    */
@@ -735,10 +822,24 @@ export class AppModel {
       if (!workspace || !isWorkspaceAvailable(workspace.state)) {
         return { kind: "unavailable" };
       }
-      return {
-        kind: "workbench",
-        editor: { kind: "workspace-editor", workspaceId: workspace.id },
-      };
+      const editor = {
+        kind: "workspace-editor",
+        workspaceId: workspace.id,
+      } as const;
+      // The editor half of a split: the same two panes an Agent selected
+      // `beside` draws, with the keyboard in the other one.
+      const paired =
+        selection.presentation === "beside"
+          ? this.pairedAgentIn(workspace.id)
+          : undefined;
+      if (paired !== undefined) {
+        return {
+          kind: "split",
+          editor,
+          agent: { kind: "agent", agentId: paired },
+        };
+      }
+      return { kind: "workbench", editor };
     }
 
     const agent = this.agent(context.agentId);
