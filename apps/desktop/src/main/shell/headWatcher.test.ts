@@ -117,10 +117,18 @@ describe("watching for a checkout", () => {
 		const { watcher, changes } = watching();
 		await watcher.arm([{ key: "w-1", worktree: root }]);
 
+		// The repository was written moments ago, and macOS delivers file
+		// events late enough that its creation can still arrive after the
+		// watcher is armed. Let those land first; the claim under test is
+		// about a window in which nothing happens, not about the first one.
 		await new Promise((resolve) =>
 			setTimeout(resolve, HEAD_DEBOUNCE_CEILING_MS),
 		);
-		expect(changes()).toBe(0);
+		const settled = changes();
+		await new Promise((resolve) =>
+			setTimeout(resolve, HEAD_DEBOUNCE_CEILING_MS),
+		);
+		expect(changes()).toBe(settled);
 	});
 
 	it("says which checkout it could not watch, rather than going quiet", async () => {
