@@ -302,6 +302,7 @@ function agentWire(agent: AgentSnapshot): AgentWire {
     unread: agent.unread,
     activity: agent.activity,
     injection: agent.injection,
+    ...(agent.failure === undefined ? {} : { failure: agent.failure }),
   };
 }
 

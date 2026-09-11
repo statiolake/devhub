@@ -21,6 +21,7 @@ import {
   sameContext,
   Workspace,
   type AgentControlState,
+  type AgentFailure,
   type AgentId,
   type AgentInjection,
   type AgentProfileId,
@@ -146,6 +147,8 @@ export interface AgentSnapshot {
   /** What the Agent says it is doing, or nothing if it has not said. */
   readonly activity: string | undefined;
   readonly injection: AgentInjection;
+  /** The refusal this Agent's pane is still showing, or nothing. */
+  readonly failure: AgentFailure | undefined;
 }
 
 export interface WorkspaceSnapshot {
@@ -542,7 +545,10 @@ export class AppModel {
   setAgentStatus(id: AgentId, status: AgentStatus): void {
     const agent = this.requireAgent(id);
     const attention = wantsAttention(agent.status, status);
-    let changed = agent.setStatus(status);
+    // Reading the Agent is what retires its last refusal, and the only thing
+    // that does. See `Agent.clearFailure`.
+    let changed = agent.clearFailure();
+    if (agent.setStatus(status)) changed = true;
     if (attention && !this.isAgentVisible(id) && agent.setUnread(status)) {
       changed = true;
     }
@@ -1012,6 +1018,13 @@ export class AppModel {
     }
   }
 
+  /** An operation on this Agent was refused. It shows in the Agent's own pane. */
+  markAgentFailed(id: AgentId, failure: AgentFailure): void {
+    if (this.requireAgent(id).fail(failure)) {
+      this.bumpRevision();
+    }
+  }
+
   markWorkspaceCloseFailed(
     id: WorkspaceId,
     step: CloseStep,
@@ -1101,6 +1114,7 @@ export class AppModel {
         unread: agent.unread,
         activity: agent.activity,
         injection: agent.injection,
+        failure: agent.failure,
       })),
     }));
   }

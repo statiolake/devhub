@@ -600,3 +600,68 @@ describe("looking at an Agent, and the window that is not in front", () => {
     expect(model.agent(AG_A)?.unread).toBeUndefined();
   });
 });
+
+/**
+ * A failure about one Agent, and how long it is shown for.
+ *
+ * The rule is the App Shell's one lifetime rule applied to a failure that has
+ * a subject: it is retired by the event that makes it untrue, and by nothing
+ * else. For an Agent that event is the next reconcile that actually read it.
+ * There is no dismiss and no timer, because a failure a person could put away
+ * while the condition held would be a failure they could hide from themselves.
+ */
+describe("a refusal about one Agent", () => {
+  function withFailingAgent() {
+    const model = modelWith([WS_A, "/dev/a"]);
+    model.addAgent(WS_A, AG_A, codex);
+    return model;
+  }
+
+  function failureOf(model: AppModel) {
+    return model
+      .snapshot()
+      .workspaces.flatMap((workspace) => workspace.agents)
+      .find((agent) => agent.id === AG_A)?.failure;
+  }
+
+  it("is carried by the Agent it is about", () => {
+    const model = withFailingAgent();
+    model.markAgentFailed(AG_A, {
+      code: "tmux_session_conflict",
+      detail: "A session of that name is already there.",
+    });
+    expect(failureOf(model)).toEqual({
+      code: "tmux_session_conflict",
+      detail: "A session of that name is already there.",
+    });
+  });
+
+  it("goes when the next reconcile reads the Agent, with nothing to dismiss", () => {
+    const model = withFailingAgent();
+    model.markAgentFailed(AG_A, { code: "agent_runtime_unavailable" });
+    expect(failureOf(model)).toBeDefined();
+    model.setAgentStatus(AG_A, "working");
+    expect(failureOf(model)).toBeUndefined();
+  });
+
+  it("stays until then, however many times it is raised again", () => {
+    // The hard case the App Shell's own lifetime test pins: a condition that
+    // keeps failing must not flicker, and must not stop being shown.
+    const model = withFailingAgent();
+    model.markAgentFailed(AG_A, { code: "agent_runtime_unavailable" });
+    const before = model.snapshot().revision;
+    model.markAgentFailed(AG_A, { code: "agent_runtime_unavailable" });
+    // The same refusal raised again is not news, so nothing is republished —
+    // which is what stops a condition failing every few seconds from
+    // redrawing the pane over and over.
+    expect(model.snapshot().revision).toBe(before);
+    expect(failureOf(model)).toEqual({ code: "agent_runtime_unavailable" });
+  });
+
+  it("is replaced by a different refusal about the same Agent", () => {
+    const model = withFailingAgent();
+    model.markAgentFailed(AG_A, { code: "agent_runtime_unavailable" });
+    model.markAgentFailed(AG_A, { code: "tmux_command_timed_out" });
+    expect(failureOf(model)).toEqual({ code: "tmux_command_timed_out" });
+  });
+});

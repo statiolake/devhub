@@ -432,6 +432,49 @@ export type UnreadReason = AgentStatus;
 export function agentIsIdle(status: AgentStatus): boolean {
   return status === "idle";
 }
+/**
+ * Why an operation on one Agent was refused.
+ *
+ * A closed set, mirrored by `AgentFailureWire`, and deliberately separate from
+ * the app-wide alert vocabulary: these are failures with a *subject*. They are
+ * drawn where that subject is drawn — in the Agent's own pane and on its own
+ * row — so the sentence sits next to the thing it is about, and the person is
+ * not shown an application-wide banner about one pane.
+ *
+ * The tmux codes are distinct because reading them as one was the bug. Every
+ * refusal of the Agent port used to arrive as "the agent runtime is
+ * unavailable", which sent the reader to look at a tmux that was working
+ * perfectly: a command that failed, a command that ran out of time and a
+ * session somebody else already holds are three different things to do next.
+ */
+export const AGENT_FAILURE_CODES = [
+  /** tmux itself cannot be reached — the binary, or the socket. */
+  "agent_runtime_unavailable",
+  /** tmux ran DevHub's command and refused it. */
+  "tmux_command_failed",
+  /** tmux did not answer DevHub's command inside its bound. */
+  "tmux_command_timed_out",
+  /** The session this Agent needs is not the session that is there. */
+  "tmux_session_conflict",
+  /** The profile this Agent would start from is not usable. */
+  "agent_profile_unavailable",
+  /** The Workspace this Agent belongs to is not open any more. */
+  "workspace_unavailable",
+] as const;
+export type AgentFailureCode = (typeof AGENT_FAILURE_CODES)[number];
+
+/**
+ * The last refusal this Agent is still showing, and the tool's own words.
+ *
+ * `detail` is only ever something DevHub composed about its **own**
+ * configuration, never provider output — the rule `PortFailure.detail` states
+ * and the reason nothing here can leak a foreign tmux server's inventory.
+ */
+export interface AgentFailure {
+  readonly code: AgentFailureCode;
+  readonly detail?: string;
+}
+
 export const RUNTIME_HEALTHS = [
   "starting",
   "healthy",
@@ -628,6 +671,18 @@ export class Agent {
   private activityValue: string | undefined;
   private injectionValue: AgentInjection = NO_INJECTION;
 
+  /**
+   * The refusal this Agent's pane is still showing, or nothing.
+   *
+   * There is no dismiss, and there is deliberately no timer. It is retired by
+   * the one event that makes it untrue — the next reconcile that actually read
+   * this Agent — so a pane that says the runtime would not answer stops saying
+   * it the moment the runtime answers, and goes on saying it until then. A
+   * failure a person could dismiss while the condition held would be a failure
+   * they could hide from themselves.
+   */
+  private failureValue: AgentFailure | undefined;
+
   private constructor(
     readonly id: AgentId,
     readonly workspaceId: WorkspaceId,
@@ -702,6 +757,7 @@ export class Agent {
     );
     copy.activityValue = this.activityValue;
     copy.injectionValue = this.injectionValue;
+    copy.failureValue = this.failureValue;
     return copy;
   }
 
@@ -731,6 +787,36 @@ export class Agent {
 
   get runtimeHealth(): RuntimeHealth {
     return this.runtimeHealthValue;
+  }
+
+  /** The refusal this Agent is still showing, or nothing. */
+  get failure(): AgentFailure | undefined {
+    return this.failureValue;
+  }
+
+  /** An operation on this Agent was refused. Shown until a reconcile succeeds. */
+  fail(failure: AgentFailure): boolean {
+    if (
+      this.failureValue?.code === failure.code &&
+      this.failureValue.detail === failure.detail
+    ) {
+      return false;
+    }
+    this.failureValue = failure;
+    return true;
+  }
+
+  /**
+   * A reconcile read this Agent, so whatever it last refused is no longer news.
+   *
+   * The whole lifetime rule, in one place. Nothing else clears a failure,
+   * because a rule applied at each raising site is a rule the next raising
+   * site forgets.
+   */
+  clearFailure(): boolean {
+    if (this.failureValue === undefined) return false;
+    this.failureValue = undefined;
+    return true;
   }
 
   get controlState(): AgentControlState {

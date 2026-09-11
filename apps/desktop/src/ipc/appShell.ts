@@ -85,8 +85,36 @@ export interface AgentInjectionWire {
 	readonly lastResult: AgentInjectionResultWire | undefined;
 }
 
+/**
+ * Why an operation on one Agent was refused. Mirrors `AgentFailureCode`.
+ *
+ * Drawn in that Agent's own pane and on its own row, never as an app-wide
+ * alert: a failure is shown at its subject. See `AGENT_FAILURE_CODES`.
+ */
+export type AgentFailureWire =
+	| "agent_runtime_unavailable"
+	| "tmux_command_failed"
+	| "tmux_command_timed_out"
+	| "tmux_session_conflict"
+	| "agent_profile_unavailable"
+	| "workspace_unavailable";
+
+export interface AgentFailureStateWire {
+	readonly code: AgentFailureWire;
+	/** A sentence about DevHub's own configuration. Never provider output. */
+	readonly detail?: string;
+}
+
 export interface AgentWire {
 	readonly controlState: AgentControlStateWire;
+	/**
+	 * The refusal this Agent's pane is still showing, or nothing.
+	 *
+	 * It is retired by the next reconcile that reads this Agent and by nothing
+	 * else — no dismiss, no timer. The pane simply stops drawing it when the
+	 * condition it describes stops being true.
+	 */
+	readonly failure?: AgentFailureStateWire;
 	readonly displayName: string;
 	readonly id: string;
 	readonly ordinal: number;
@@ -183,7 +211,13 @@ export type AppErrorCodeWire =
 	 * except the things that settings file was carrying, and the reader needs
 	 * to be told which ones and where to go and fix it.
 	 */
-	| "workbench_settings_unreadable";
+	| "workbench_settings_unreadable"
+	/** tmux ran DevHub's command and refused it. */
+	| "tmux_command_failed"
+	/** tmux did not answer DevHub's command inside its bound. */
+	| "tmux_command_timed_out"
+	/** The session DevHub needs is not the session that is there. */
+	| "tmux_session_conflict";
 
 /**
  * The sentence each failure is shown as.
@@ -220,6 +254,13 @@ export const APP_ERROR_SUMMARY: Readonly<Record<AppErrorCodeWire, string>> = {
 	git_fetch_failed: "The latest changes could not be fetched from the remote.",
 	workbench_settings_unreadable:
 		"The editor's settings file is not valid JSON.",
+	// Three sentences rather than one, because they are three different things
+	// to do next. "The agent runtime is unavailable" was said for all of them,
+	// which sent the reader to look at a tmux that was answering perfectly.
+	tmux_command_failed: "The terminal runtime refused the request.",
+	tmux_command_timed_out: "The terminal runtime did not answer in time.",
+	tmux_session_conflict:
+		"The terminal session DevHub needs is not the one that is there.",
 };
 export type AppErrorModuleWire =
 	| "app"
