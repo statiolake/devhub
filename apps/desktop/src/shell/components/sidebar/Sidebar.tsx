@@ -31,6 +31,7 @@ import { statusLabel } from "./status";
 import { mergeExitingRows, useClosingExit } from "./closingExit";
 import {
   closeDiagnosticLabel,
+  agentFailureLabel,
   closeFailureLabel,
 } from "../shell/diagnosticLabel";
 
@@ -357,14 +358,20 @@ function WorkspaceRow({
             // failed and it now crosses the wire with the state that carries
             // it, so the row states it rather than saying "Stop failed" and
             // leaving the person to guess at a reason DevHub already knows.
+            // A refusal about *this* Agent leads, because it is the newest
+            // news about it and it is news nothing else on screen carries: it
+            // is delivered to this Agent rather than to an app-wide banner,
+            // and it is retired by the next reconcile that reads the Agent.
             const note =
               control.kind === "stopping"
                 ? "Stopping"
                 : control.kind === "stop-failed"
                   ? closeDiagnosticLabel(control.diagnostic)
-                  : agent.runtimeHealth === "healthy"
-                    ? undefined
-                    : runtimeHealthLabel(agent.runtimeHealth);
+                  : agent.failure
+                    ? agentFailureLabel(agent.failure)
+                    : agent.runtimeHealth === "healthy"
+                      ? undefined
+                      : runtimeHealthLabel(agent.runtimeHealth);
             /**
              * A row leads with whatever tells it from the rows beside it.
              *

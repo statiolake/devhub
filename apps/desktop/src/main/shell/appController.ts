@@ -97,6 +97,11 @@ import {
 	type WorktreeDisposition,
 } from "../../model/intents.js";
 import { closingDeletesWorktree } from "../../model/worktrees.js";
+import {
+	agentSubject,
+	portRefusal,
+	type RefusedOperation,
+} from "./agentFailure.js";
 import { AppModel, type NavigationSelection } from "../../model/appModel.js";
 import {
 	activeProfile,
@@ -1371,7 +1376,7 @@ export class AppController {
 	private startupFailure: AppErrorWire | undefined;
 
 	/**
-	 * Refuse an operation, and say why where a person can read it.
+	 * Refuse an operation, and say why *where its subject is*.
 	 *
 	 * `operation_failed` is the coordinator's whole vocabulary for "this did
 	 * not happen": it consumes the token so nothing is left pending, and it
@@ -1379,16 +1384,67 @@ export class AppController {
 	 * its own it produces a row that quietly never appears — which is how
 	 * "I picked Codex and nothing happened" became unanswerable.
 	 *
-	 * So the two go together, always, through this one call: the reason to the
-	 * error surface, the token back to the coordinator. A caller that accepts
+	 * So the two go together, always, through this one call: the reason to a
+	 * surface, the token back to the coordinator. A caller that accepts
 	 * `operation_failed` directly is a caller that has decided the person does
 	 * not need to know, and none of them has.
+	 *
+	 * **Which surface is the subject's, and the subject is known here.** A
+	 * failure about one Agent — its session is gone, the runtime cannot be
+	 * reached for it — belongs in that Agent's own pane, where the thing it is
+	 * about is on screen; a failure about one workspace belongs in that
+	 * workspace's surface. Only a failure with no subject to stand on — the
+	 * tmux server unreachable for everything, the control socket, the settings
+	 * file — is the application speaking, and only those are app-wide alerts.
+	 *
+	 * This used to publish `agent_runtime_unavailable` for every refusal there
+	 * is, so a missing profile, a closed workspace and a tmux that would not
+	 * answer all produced one banner across the whole window, all three
+	 * blaming a runtime, none of them naming what they were about.
 	 */
-	private failOperation(token: OperationToken, reason: string): void {
-		this.publishError(
-			withDetail(errorWireAt("agent_runtime_unavailable"), reason),
-		);
+	private failOperation(
+		token: OperationToken,
+		failure: RefusedOperation,
+	): void {
+		this.reportFailure(failure);
 		this.accept({ type: "operation_failed", token });
+	}
+
+	/**
+	 * Deliver a failure to its subject's surface. The one router; exhaustive.
+	 *
+	 * The renderer decides nothing. A page that had to work out whether a
+	 * failure was about an Agent would be a second copy of a rule main already
+	 * knows the answer to, and the two would disagree the first time a new
+	 * raising site forgot one of them.
+	 */
+	private reportFailure(failure: RefusedOperation): void {
+		switch (failure.subject) {
+			case "agent":
+				// Into the Agent's own state, so the pane draws it and the row
+				// notes it — and so the next reconcile that reads the Agent
+				// retires it, with nothing to dismiss.
+				this.coordinator.model.markAgentFailed(failure.id, {
+					code: failure.code,
+					...(failure.detail === undefined ? {} : { detail: failure.detail }),
+				});
+				this.publishSnapshot();
+				return;
+			case "workspace":
+				this.coordinator.model.markWorkspaceUnavailable(
+					failure.id,
+					failure.code,
+				);
+				this.publishSnapshot();
+				return;
+			case "app":
+				this.publishError(
+					failure.detail === undefined
+						? errorWireAt(failure.code)
+						: withDetail(errorWireAt(failure.code), failure.detail),
+				);
+				return;
+		}
 	}
 
 	//#endregion
@@ -1737,10 +1793,11 @@ export class AppController {
 			// where a folder was expected — and that sentence is the whole
 			// answer. Discarding it left the generic "nothing happened" that
 			// `failOperation` exists to stop.
-			this.failOperation(
-				token,
-				`${path} could not be opened as a workspace: ${error instanceof Error ? error.message : String(error)}`,
-			);
+			this.failOperation(token, {
+				subject: "app",
+				code: "workspace_unavailable",
+				detail: `${path} could not be opened as a workspace: ${error instanceof Error ? error.message : String(error)}`,
+			});
 		}
 	}
 
@@ -1947,10 +2004,12 @@ export class AppController {
 			(profile) => profile.id === profileId,
 		);
 		if (!configured) {
-			this.failOperation(
-				token,
-				`There is no agent profile called “${profileId}”.`,
-			);
+			this.failOperation(token, {
+				subject: "workspace",
+				id: workspaceId,
+				code: "runtime_unavailable",
+				detail: `There is no agent profile called “${profileId}”.`,
+			});
 			return;
 		}
 		const resolved = await resolveExecutable(
@@ -1958,7 +2017,12 @@ export class AppController {
 			this.launchEnvironment["PATH"] ?? "",
 		);
 		if (resolved.kind === "unavailable") {
-			this.failOperation(token, this.executableMissingMessage(resolved));
+			this.failOperation(token, {
+				subject: "workspace",
+				id: workspaceId,
+				code: "runtime_unavailable",
+				detail: this.executableMissingMessage(resolved),
+			});
 			return;
 		}
 		this.accept({
@@ -2049,8 +2113,19 @@ export class AppController {
 			this.failOperation(
 				token,
 				adapter
-					? "the workspace this agent belongs to is no longer open"
-					: "the agent runtime is not running, so no agent can be started",
+					? {
+							subject: "agent",
+							id: agentId,
+							code: "workspace_unavailable",
+							detail: "The workspace this Agent belongs to is no longer open.",
+						}
+					: {
+							subject: "agent",
+							id: agentId,
+							code: "agent_runtime_unavailable",
+							detail:
+								"The Agent runtime is not running, so no Agent can be started.",
+						},
 			);
 			return;
 		}
@@ -2076,10 +2151,12 @@ export class AppController {
 	): Promise<void> {
 		const adapter = agents();
 		if (!adapter) {
-			this.failOperation(
-				token,
-				"the agent runtime is not running, so no agent can be stopped",
-			);
+			this.failOperation(token, {
+				subject: "agent",
+				id: agentId,
+				code: "agent_runtime_unavailable",
+				detail: "The Agent runtime is not running, so no Agent can be stopped.",
+			});
 			return;
 		}
 		const result =
@@ -2101,7 +2178,10 @@ export class AppController {
 		if (!adapter) {
 			this.failOperation(
 				token,
-				"the agent runtime is not running, so no agent could be read",
+				agentSubject(agentId, {
+					code: "agent_runtime_unavailable",
+					detail: "The Agent runtime is not running.",
+				}),
 			);
 			return;
 		}
@@ -2116,10 +2196,7 @@ export class AppController {
 			// failed, in that port's own words, by the one path that reports
 			// operation failures.
 			console.error(error instanceof Error ? error.stack : error);
-			this.failOperation(
-				token,
-				`the agent runtime would not answer: ${error instanceof Error ? error.message : String(error)}`,
-			);
+			this.failOperation(token, agentSubject(agentId, portRefusal(error)));
 			return;
 		}
 		if (agentId === undefined) {
@@ -2134,10 +2211,13 @@ export class AppController {
 			(candidate) => candidate.agentId === agentId,
 		);
 		if (!observation) {
-			this.failOperation(
-				token,
-				"the agent runtime answered without saying anything about this agent",
-			);
+			this.failOperation(token, {
+				subject: "agent",
+				id: agentId,
+				code: "tmux_command_failed",
+				detail:
+					"The Agent runtime answered without saying anything about this Agent.",
+			});
 			return;
 		}
 		this.accept({

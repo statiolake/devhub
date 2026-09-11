@@ -20,7 +20,11 @@ import type { ContentSurfaceWire } from "../../../ipc/contract";
 import { useAppShell } from "../../useAppShell";
 import { devhub } from "../../client";
 import { runningAgentSurfaces } from "./surfacePool";
-import { closeDiagnosticLabel, closeFailureLabel } from "./diagnosticLabel";
+import {
+  agentFailureSummary,
+  closeDiagnosticLabel,
+  closeFailureLabel,
+} from "./diagnosticLabel";
 import { Failure, Waiting } from "./SurfaceState";
 import { useRestartingEditors } from "./workbenchDialogs";
 import { TerminalSurface } from "../../terminal/TerminalSurface";
@@ -162,7 +166,7 @@ function SplitDivider({
  * back to it is unhiding it. There is no cheaper set to keep — these are the
  * Agents the person started.
  */
-function AgentPane({
+export function AgentPane({
   snapshot,
   appearance,
   activeKey,
@@ -210,6 +214,30 @@ function AgentPane({
           />
         </div>
       ))}
+      {/* A failure about this Agent is drawn over this Agent's pane, because
+          that is where its subject is. It covers nothing else: the sidebar,
+          the workbench and every other Agent stay usable, which is the whole
+          difference between this and the app-wide alert it used to be.
+
+          There is no dismiss and no timer. It is retired by the next
+          reconcile that reads this Agent, so the pane simply stops drawing it
+          when the condition stops being true — and goes on saying it for as
+          long as it is true, which a dismissible banner could not. */}
+      {active?.failure ? (
+        <div className="agent-pane-failure">
+          {/* The code's own sentence leads, and the detail is whatever the
+              raising site was allowed to carry. A fixed summary over the top
+              of it would put "could not be reached" above a runtime that
+              answered and refused — the very conflation this split exists to
+              undo. */}
+          <Failure
+            summary={agentFailureSummary(active.failure.code)}
+            {...(active.failure.detail === undefined
+              ? {}
+              : { detail: active.failure.detail })}
+          />
+        </div>
+      ) : null}
       {active ? (
         <AgentShortcuts agent={active} repository={repository} />
       ) : null}

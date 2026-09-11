@@ -1,4 +1,9 @@
-import type { CloseDiagnosticWire, CloseStepWire } from "../../../ipc/appShell";
+import type {
+  AgentFailureStateWire,
+  AgentFailureWire,
+  CloseDiagnosticWire,
+  CloseStepWire,
+} from "../../../ipc/appShell";
 
 /**
  * Why a workspace is in the state it is in.
@@ -73,4 +78,38 @@ export function closeFailureLabel(
   return `Closing stopped while ${closeStepLabel(step)}. ${closeDiagnosticLabel(diagnostic)}${
     said === undefined || said.length === 0 ? "" : ` ${said}`
   }`;
+}
+
+/** Why an operation on one Agent was refused, in the words a person would use. */
+export function agentFailureSummary(code: AgentFailureWire): string {
+  switch (code) {
+    case "agent_runtime_unavailable":
+      return "The Agent runtime could not be reached.";
+    case "tmux_command_failed":
+      return "The Agent runtime refused the request.";
+    case "tmux_command_timed_out":
+      return "The Agent runtime did not answer in time.";
+    case "tmux_session_conflict":
+      return "The session this Agent needs is not the one that is there.";
+    case "agent_profile_unavailable":
+      return "This Agent's profile cannot be used.";
+    case "workspace_unavailable":
+      return "The workspace this Agent belongs to is unavailable.";
+  }
+}
+
+/**
+ * What this Agent's pane and row say about the last refusal.
+ *
+ * One sentence, built in one place, for the same reason `closeFailureLabel`
+ * is: the pane and the row must not describe one failure two ways. The detail
+ * is whatever the raising site was allowed to carry — DevHub's own
+ * configuration, never provider output — and is absent far more often than
+ * not.
+ */
+export function agentFailureLabel(failure: AgentFailureStateWire): string {
+  const said = failure.detail?.trim();
+  return said === undefined || said.length === 0
+    ? agentFailureSummary(failure.code)
+    : `${agentFailureSummary(failure.code)} ${said}`;
 }

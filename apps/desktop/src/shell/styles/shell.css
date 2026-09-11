@@ -1167,6 +1167,26 @@ body.is-resizing-sidebar {
 }
 
 /*
+ * A refusal about the Agent on screen, over the Agent on screen.
+ *
+ * It fills this pane and nothing outside it. The rule it exists for is that a
+ * failure is shown at its subject: a failure about one Agent used to be an
+ * app-wide alert across the whole window, which covered the sidebar and every
+ * other workspace to say something about one pane.
+ *
+ * It is opaque, because what is underneath is a terminal whose last frame is
+ * from before the runtime stopped answering — a live-looking screen behind a
+ * sentence saying it cannot be reached is the ambiguity this removes.
+ */
+.agent-pane-failure {
+  position: absolute;
+  z-index: 2;
+  inset: 0;
+  display: flex;
+  background: var(--terminal-background, var(--surface));
+}
+
+/*
  * The shortcuts a workspace offers the Agent on screen.
  *
  * Over the terminal rather than beside it, in the corner furthest from where
