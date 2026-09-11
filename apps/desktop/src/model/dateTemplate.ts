@@ -28,22 +28,44 @@
  * is the same in every timezone.
  */
 
-/** What each token stands for, longest first — `MMDD` before `MM`. */
+/**
+ * Every token, longest first — `MMDD` before `MM`, so the two-part day stamp a
+ * daily folder is usually named with is one token rather than two that happen
+ * to sit together.
+ *
+ * The order is the matching order, and it is stated once: what a token stands
+ * for is below, and what counts as a token when a template is read for
+ * mistakes (`dateTemplateAmbiguity`) is the same list, so the two can never
+ * come to disagree about what `mm` is.
+ */
+const TOKEN_NAMES = [
+  "YYYY",
+  "YY",
+  "MMDD",
+  "MM",
+  "DD",
+  "HH",
+  "mm",
+  "ss",
+] as const;
+
+type TokenName = (typeof TOKEN_NAMES)[number];
+
+/** What each token stands for, in matching order. */
 function tokensFor(now: Date): readonly (readonly [string, string])[] {
   const pad = (value: number, width: number): string =>
     String(value).padStart(width, "0");
-  return [
-    ["YYYY", pad(now.getFullYear(), 4)],
-    ["YY", pad(now.getFullYear() % 100, 2)],
-    // Ahead of `MM`, so the two-part day stamp a daily folder is usually named
-    // with is one token rather than two that happen to sit together.
-    ["MMDD", pad(now.getMonth() + 1, 2) + pad(now.getDate(), 2)],
-    ["MM", pad(now.getMonth() + 1, 2)],
-    ["DD", pad(now.getDate(), 2)],
-    ["HH", pad(now.getHours(), 2)],
-    ["mm", pad(now.getMinutes(), 2)],
-    ["ss", pad(now.getSeconds(), 2)],
-  ];
+  const stands_for: Record<TokenName, string> = {
+    YYYY: pad(now.getFullYear(), 4),
+    YY: pad(now.getFullYear() % 100, 2),
+    MMDD: pad(now.getMonth() + 1, 2) + pad(now.getDate(), 2),
+    MM: pad(now.getMonth() + 1, 2),
+    DD: pad(now.getDate(), 2),
+    HH: pad(now.getHours(), 2),
+    mm: pad(now.getMinutes(), 2),
+    ss: pad(now.getSeconds(), 2),
+  };
+  return TOKEN_NAMES.map((name) => [name, stands_for[name]] as const);
 }
 
 /**
@@ -103,4 +125,70 @@ export function dateTemplateBracketsBalance(template: string): boolean {
     index = end + 1;
   }
   return true;
+}
+
+/** A path segment that reads as a word but expands as a date. */
+export interface DateTemplateAmbiguity {
+  /** The segment as it is written, e.g. `summaries`. */
+  readonly segment: string;
+  /** The token hiding in it, e.g. `mm`. */
+  readonly token: string;
+  /** The segment written so it means itself, e.g. `[summaries]`. */
+  readonly escaped: string;
+}
+
+/** Is this a character a person would have meant as part of a word? */
+function isWordCharacter(character: string): boolean {
+  return /[A-Za-z0-9]/.test(character);
+}
+
+/**
+ * The first segment of this template that mixes a word with a token, if any.
+ *
+ * `expandDateTemplate` replaces tokens *everywhere*, which is what makes the
+ * language small enough to explain in a sentence — and what makes
+ * `~/Documents/summaries/YYYY` expand to `~/Documents/su09aries/2026`. Nobody
+ * sees that happen: the picker offers a folder that does not exist, which
+ * looks exactly like a folder that has not been made yet.
+ *
+ * So the mistake is caught where the configuration is read, and the rule is
+ * about one path segment at a time, because a segment is the unit a person
+ * names: a segment that is only tokens and punctuation (`YYYY`, `MMDD`,
+ * `YYYY-MM-DD`) is a date and is meant to be one, and a segment where a token
+ * sits among letters or digits (`summaries`, `logsYYYY`) is a word that is
+ * about to stop being one. Text inside `[...]` is already the person saying
+ * "this is not a date", so it is left alone.
+ */
+export function dateTemplateAmbiguity(
+  template: string,
+): DateTemplateAmbiguity | undefined {
+  for (const segment of template.split("/")) {
+    let token: string | undefined;
+    let word = false;
+    let index = 0;
+    while (index < segment.length) {
+      if (segment[index] === "[") {
+        const end = segment.indexOf("]", index + 1);
+        // An unclosed bracket is a different mistake, reported on its own by
+        // `dateTemplateBracketsBalance`. Nothing past it is a token.
+        if (end === -1) break;
+        index = end + 1;
+        continue;
+      }
+      const matched = TOKEN_NAMES.find((name) =>
+        segment.startsWith(name, index),
+      );
+      if (matched) {
+        token ??= matched;
+        index += matched.length;
+        continue;
+      }
+      if (isWordCharacter(segment[index] ?? "")) word = true;
+      index += 1;
+    }
+    if (token !== undefined && word) {
+      return { segment, token, escaped: `[${segment}]` };
+    }
+  }
+  return undefined;
 }

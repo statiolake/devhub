@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  dateTemplateAmbiguity,
   dateTemplateBracketsBalance,
   expandDateTemplate,
 } from "./dateTemplate.js";
@@ -45,5 +46,43 @@ describe("a date template", () => {
     expect(dateTemplateBracketsBalance("~/YYYY/MMDD")).toBe(true);
     expect(dateTemplateBracketsBalance("~/YYYY/[DD")).toBe(false);
     expect(dateTemplateBracketsBalance("~/YYYY/DD]")).toBe(false);
+  });
+});
+
+describe("a folder name with a token hiding in it", () => {
+  it("names the segment, the token, and the way to write it", () => {
+    // The expansion nobody sees: "summaries" has "mm" in it, so the picker
+    // would go looking for "~/Documents/su25aries/2026".
+    expect(dateTemplateAmbiguity("~/Documents/summaries/YYYY")).toEqual({
+      segment: "summaries",
+      token: "mm",
+      escaped: "[summaries]",
+    });
+  });
+
+  it("takes a bracketed segment at its word", () => {
+    expect(
+      dateTemplateAmbiguity("~/Documents/[summaries]/YYYY"),
+    ).toBeUndefined();
+  });
+
+  it("leaves a segment that is only a date alone", () => {
+    // Punctuation between tokens is how a date is written, not a word.
+    expect(dateTemplateAmbiguity("~/YYYY-MM-DD")).toBeUndefined();
+    expect(dateTemplateAmbiguity("~/YYYY/MMDD")).toBeUndefined();
+  });
+
+  it("catches a word the token is stuck to", () => {
+    expect(dateTemplateAmbiguity("~/logsYYYY")).toEqual({
+      segment: "logsYYYY",
+      token: "YYYY",
+      escaped: "[logsYYYY]",
+    });
+  });
+
+  it("passes the daily folder DevHub ships with", () => {
+    expect(
+      dateTemplateAmbiguity("~/workspace/daily/YYYY/MMDD"),
+    ).toBeUndefined();
   });
 });

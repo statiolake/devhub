@@ -17,7 +17,10 @@
  * and the notice cannot describe the same rule two different ways.
  */
 
-import { dateTemplateBracketsBalance } from "../model/dateTemplate";
+import {
+  dateTemplateAmbiguity,
+  dateTemplateBracketsBalance,
+} from "../model/dateTemplate";
 
 export const ID_RULE =
   "An identifier starts with a lowercase letter, then uses lowercase letters, digits, dashes and underscores — at most 64 characters.";
@@ -39,6 +42,16 @@ export const WORKSPACE_PATH_RULE =
 
 export const DATE_TEMPLATE_RULE =
   "A date path has a closing bracket for every opening one; text inside brackets is used as written.";
+
+/**
+ * The rule for a word with a token in it.
+ *
+ * Named separately from `DATE_TEMPLATE_RULE` because it is a different
+ * mistake, and the sentence that helps is different: the brackets are not
+ * unbalanced, they are missing.
+ */
+export const DATE_TOKEN_RULE =
+  "A folder name that is not a date goes in brackets: `summaries` has `mm` in it and would expand, `[summaries]` is used as written.";
 
 export const EXCLUDE_NAME_RULE =
   "A name to skip is a plain folder name: no slashes and no wildcards.";
@@ -82,18 +95,23 @@ export function workspacePathProblem(value: string): string | undefined {
 }
 
 /**
- * A dated path: a workspace path, plus balanced brackets.
+ * A dated path: a workspace path, plus balanced brackets, plus no word with a
+ * token hiding in it.
  *
- * Two rules rather than one because they are two different mistakes, and the
- * sentence that helps is different for each: "that is not a full path" and
- * "you opened a bracket and did not close it". The bracket rule is the same
- * one the loader applies, read from the same function, so the field cannot
- * accept a value the file would refuse.
+ * Three rules rather than one because they are three different mistakes, and
+ * the sentence that helps is different for each: "that is not a full path",
+ * "you opened a bracket and did not close it", and "that folder name is about
+ * to turn into a date". All three are the rules the loader applies, read from
+ * the same functions, so the field cannot accept a value the file would
+ * refuse.
  */
 export function dateTemplateProblem(value: string): string | undefined {
   const path = workspacePathProblem(value);
   if (path !== undefined) return path;
-  return dateTemplateBracketsBalance(value) ? undefined : DATE_TEMPLATE_RULE;
+  if (!dateTemplateBracketsBalance(value)) return DATE_TEMPLATE_RULE;
+  return dateTemplateAmbiguity(value) === undefined
+    ? undefined
+    : DATE_TOKEN_RULE;
 }
 
 export function excludeNameProblem(value: string): string | undefined {

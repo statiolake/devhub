@@ -44,7 +44,10 @@ import {
   defaultKeybindings,
   type KeybindingsSpec,
 } from "./commands.js";
-import { dateTemplateBracketsBalance } from "./dateTemplate.js";
+import {
+  dateTemplateAmbiguity,
+  dateTemplateBracketsBalance,
+} from "./dateTemplate.js";
 import { isValidFontFamily } from "./fontFamily.js";
 import { currentProfile, type ProfileLocations } from "./profile.js";
 import {
@@ -640,6 +643,7 @@ export type ValidationCode =
   | "invalid_workspace_depth"
   | "invalid_workspace_kind"
   | "invalid_date_template"
+  | "ambiguous_date_token"
   | "invalid_exclusion"
   | "invalid_command"
   | "invalid_timeout"
@@ -1074,6 +1078,17 @@ function validateWorkspaceSources(sources: readonly WorkspaceSource[]): void {
       // folder nobody named, on a path nobody would recognise as the mistake.
       if (!dateTemplateBracketsBalance(source.path)) {
         fail("invalid_date_template", `${prefix}.path`);
+      }
+      // The other thing that can be wrong without knowing what day it is, and
+      // the one nobody would ever see: a segment that is a word with a token
+      // hiding in it expands into something else entirely, and all the picker
+      // can say afterwards is that a folder is not there.
+      const ambiguity = dateTemplateAmbiguity(source.path);
+      if (ambiguity) {
+        fail(
+          "ambiguous_date_token",
+          `${prefix}.path (source "${source.id}": the segment "${ambiguity.segment}" contains the date token ${ambiguity.token}; write it as ${ambiguity.escaped} to keep it as text)`,
+        );
       }
     } else {
       if (

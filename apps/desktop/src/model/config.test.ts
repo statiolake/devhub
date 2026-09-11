@@ -111,6 +111,51 @@ describe("parsing", () => {
     expect(codeOf(() => parseConfig(source))).toBe("invalid_date_template");
   });
 
+  it("refuses a dated source whose folder name would expand", () => {
+    // The mistake that has no symptom: `summaries` contains `mm`, so the
+    // picker would offer `~/Documents/su25aries/2026` and report it missing.
+    const source = [
+      "version = 1",
+      "",
+      "[[workspace_sources]]",
+      'type = "date"',
+      'id = "daily"',
+      'path = "~/Documents/summaries/YYYY"',
+      "",
+    ].join("\n");
+    expect(codeOf(() => parseConfig(source))).toBe("ambiguous_date_token");
+    // The diagnostic has to be actionable on its own: which source, which
+    // segment, which token, and what to write instead.
+    const where = pathOf(() => parseConfig(source)) ?? "";
+    expect(where).toContain('source "daily"');
+    expect(where).toContain('the segment "summaries"');
+    expect(where).toContain("date token mm");
+    expect(where).toContain("[summaries]");
+  });
+
+  it("takes a dated source that says which parts are text", () => {
+    const dated = (path: string) =>
+      [
+        "version = 1",
+        "",
+        "[[workspace_sources]]",
+        'type = "date"',
+        'id = "daily"',
+        `path = "${path}"`,
+        "",
+      ].join("\n");
+    for (const path of [
+      "~/Documents/[summaries]/YYYY",
+      "~/YYYY-MM-DD",
+      "~/workspace/daily/YYYY/MMDD",
+    ]) {
+      expect(() => parseConfig(dated(path))).not.toThrow();
+    }
+    expect(codeOf(() => parseConfig(dated("~/logsYYYY")))).toBe(
+      "ambiguous_date_token",
+    );
+  });
+
   it("ships one action per thing that can fire one", () => {
     // Defaults rather than a fixed set: the wording is the person's, and a file
     // that lists actions replaces this list entirely. What DevHub decides is
