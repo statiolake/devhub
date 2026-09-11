@@ -17,7 +17,7 @@ import type {
   AgentProfileId,
   AgentReconciliation,
   AgentStatus,
-  CleanupProgress,
+  CloseStep,
   CloseInspectionInputs,
   CloseInspectionProjection,
   DiagnosticCode,
@@ -284,14 +284,19 @@ export type UserIntent =
    * There used to be a `retry_close_workspace` beside it, and every caller had
    * to read the workspace's state to pick between the two. The branch lived in
    * the callers, so a caller that had not been told sent the wrong one and the
-   * close stopped working the moment one went wrong. The model owns the state
-   * that distinguishes an opening close from a resumed one, so the model makes
-   * the distinction: a close of a Workspace in `closing-failed` continues that
-   * close from the progress it kept.
+   * close stopped working the moment one went wrong. A close that failed is
+   * not a different act: it is this one, asked for again.
+   *
+   * `worktree` is the *answer* to the folder question, not a request to ask
+   * it. The three-way question is raised before the close is asked for at all
+   * (`closeWorkspaceOrWorktree`), because every question a close has is
+   * resolved before its first destructive step; what arrives here is what the
+   * person decided. A workspace that is not a worktree answers `keep`.
    */
   | {
       readonly type: "request_close_workspace";
       readonly workspaceId: WorkspaceId;
+      readonly worktree: WorktreeDisposition;
     }
   | {
       readonly type: "confirm_close_workspace";
@@ -336,13 +341,35 @@ export type AgentLaunchResult =
       readonly detail?: string;
     };
 
-export type CleanupStep = "agents" | "terminal" | "editor" | "state_committed";
+/**
+ * What is to become of the folder a worktree Workspace sits in.
+ *
+ * The answer, not the question: it is decided before the close is asked for
+ * (`closeWorkspaceOrWorktree`), because a close resolves every question it has
+ * before its first destructive step.
+ *
+ * - `keep` — not a worktree, or the person chose to close and leave it.
+ * - `remove` — DevHub believes it is clean, so nothing was asked. git is still
+ *   the authority: if the poll was stale it refuses, and that refusal is the
+ *   step's failure, with nothing destroyed.
+ * - `remove-anyway` — the person was shown what would be lost and said yes.
+ *   This is the only thing that means `--force`.
+ */
+export type WorktreeDisposition = "keep" | "remove" | "remove-anyway";
 
-export type WorkspaceCleanupResult =
-  | { readonly kind: "step_completed"; readonly step: CleanupStep }
+/**
+ * How a close ended. There is no third answer, and no partial one.
+ *
+ * Every step is idempotent, so a close that stopped leaves nothing to resume:
+ * the next attempt repeats the steps and finds the finished ones done. What
+ * travels back is therefore either "it is closed" or the one step that
+ * stopped and why.
+ */
+export type WorkspaceCloseResult =
+  | { readonly kind: "closed" }
   | {
       readonly kind: "failed";
-      readonly step: CleanupStep;
+      readonly step: CloseStep;
       readonly diagnostic: DiagnosticCode;
     };
 
@@ -377,10 +404,10 @@ export type ProviderEvent =
       readonly result: AgentStopResult;
     }
   | {
-      readonly type: "workspace_cleanup_completed";
+      readonly type: "workspace_close_completed";
       readonly token: OperationToken;
       readonly workspaceId: WorkspaceId;
-      readonly result: WorkspaceCleanupResult;
+      readonly result: WorkspaceCloseResult;
     }
   | {
       readonly type: "confirmation_id_generated";
@@ -486,7 +513,6 @@ export type ConfirmationPurpose =
   | {
       readonly kind: "workspace_close";
       readonly workspaceId: WorkspaceId;
-      readonly progress: CleanupProgress;
     };
 
 export type DetachReason = "window_closed" | "quit";

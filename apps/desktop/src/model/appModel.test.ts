@@ -8,7 +8,6 @@ import {
   DomainErrorCode,
   displayPath,
   CLEAN_CLOSE_INSPECTION,
-  NO_CLEANUP_PROGRESS,
   Workspace,
   workspaceId,
   workspaceRoot,
@@ -87,14 +86,15 @@ describe("layout resolution", () => {
     model.markWorkspaceUnavailable(WS_A, "root_missing");
     expect(full(model, context)).toEqual({ kind: "unavailable" });
     model.markWorkspaceAvailable(WS_A);
-    model.markWorkspaceClosing(WS_A, NO_CLEANUP_PROGRESS);
+    model.beginWorkspaceClose(WS_A);
     expect(full(model, context)).toEqual({ kind: "unavailable" });
-    model.markWorkspaceClosingFailed(
-      WS_A,
-      "cleanup_failed",
-      NO_CLEANUP_PROGRESS,
-    );
-    expect(full(model, context)).toEqual({ kind: "unavailable" });
+    // A close that failed leaves the Workspace open, and a workspace that is
+    // open shows its workbench. There is no third state to draw.
+    model.markWorkspaceCloseFailed(WS_A, "terminal", "close_terminal_unknown");
+    expect(full(model, context)).toEqual({
+      kind: "workbench",
+      editor: { kind: "workspace-editor", workspaceId: WS_A },
+    });
   });
 
   it("gives a plainly selected Agent the whole content area", () => {

@@ -16,7 +16,7 @@ import {
   surfaceKeyName,
   type AgentProfile,
   type AgentControlState,
-  type CleanupProgress,
+  type WorkspaceClose,
   type CloseInspectionProjection,
   type ResourceInspection,
   type SurfaceLayout,
@@ -62,7 +62,7 @@ import {
   type AppReadiness,
   type AppSnapshotWire,
   type AgentControlStateWire,
-  type CleanupProgressWire,
+  type WorkspaceCloseWire,
   type CloseInspectionWire,
   type CloseResourceWire,
   type ConfirmationPurposeWire,
@@ -238,17 +238,6 @@ function contextWire(
   }
 }
 
-function cleanupProgressWire(progress: CleanupProgress): CleanupProgressWire {
-  return {
-    agentsStep:
-      progress.agentsStep.kind === "done"
-        ? { kind: "done", closed: progress.agentsStep.closed }
-        : { kind: "pending" },
-    terminalClosed: progress.terminalClosed,
-    editorClosed: progress.editorClosed,
-  };
-}
-
 /**
  * The Workspace's state, variant for variant.
  *
@@ -266,13 +255,21 @@ function workspaceStateWire(
       return { kind: "available" };
     case "unavailable":
       return { kind: "unavailable", reason: state.reason };
-    case "closing":
-      return { kind: "closing", progress: cleanupProgressWire(state.progress) };
-    case "closing-failed":
+  }
+}
+
+/** What the Workspace's close has to say, variant for variant. */
+function workspaceCloseWire(close: WorkspaceClose): WorkspaceCloseWire {
+  switch (close.kind) {
+    case "idle":
+      return { kind: "idle" };
+    case "running":
+      return { kind: "running" };
+    case "failed":
       return {
-        kind: "closing-failed",
-        diagnostic: state.diagnostic,
-        progress: cleanupProgressWire(state.progress),
+        kind: "failed",
+        step: close.step,
+        diagnostic: close.diagnostic,
       };
   }
 }
@@ -343,6 +340,7 @@ export function snapshotWire(
     root: workspace.root,
     selectedPath: workspace.selectedPath,
     state: workspaceStateWire(workspace.state),
+    close: workspaceCloseWire(workspace.close),
     agents: workspace.agents.map(agentWire),
     canCreateAgent: workspace.canCreateAgent,
     ...(workspace.lastAgentId === undefined
@@ -739,11 +737,6 @@ export function intentFromWire(wire: AppIntentWire): UserIntent {
         type: "locate_workspace",
         workspaceId: tryParse(() => parseWorkspaceId(wire.workspaceId)),
         path: tryParse(() => requestedPath(wire.path)),
-      };
-    case "request_close_workspace":
-      return {
-        type: "request_close_workspace",
-        workspaceId: tryParse(() => parseWorkspaceId(wire.workspaceId)),
       };
     case "confirm_close_workspace":
       return {

@@ -18,22 +18,15 @@
 
 import {
   agentIsIdle,
-  cleanupProgress,
-  agentsStepDone,
   CLEAN_CLOSE_INSPECTION,
   closeInspectionProjection,
   consolidateCloseInspection,
   DomainErrorCode,
   GLOBAL_CONTEXT,
-  isWorkspaceClosing,
-  NO_CLEANUP_PROGRESS,
-  sameProgress,
   Workspace,
-  workspaceCleanupProgress,
   type AgentId,
   type AgentProfile,
   type AgentProfileId,
-  type CleanupProgress,
   type CloseInspectionInputs,
   type CloseInspectionProjection,
   type DisplayPath,
@@ -58,7 +51,6 @@ import {
   type AgentLaunchResult,
   type AgentStopResult,
   type AppReadiness,
-  type CleanupStep,
   type ConfirmationId,
   type ConfirmationOutcomePurpose,
   type ConfirmationPurpose,
@@ -73,7 +65,8 @@ import {
   type ProviderEventId,
   type RequestedPath,
   type UserIntent,
-  type WorkspaceCleanupResult,
+  type WorkspaceCloseResult,
+  type WorktreeDisposition,
 } from "./intents.js";
 
 export const MAX_INTENT_LEDGER_ENTRIES = 1024;
@@ -144,10 +137,10 @@ export type Effect =
       readonly agentId: AgentId;
     }
   | {
-      readonly kind: "cleanup_workspace";
+      readonly kind: "close_workspace";
       readonly token: OperationToken;
       readonly workspaceId: WorkspaceId;
-      readonly step: CleanupStep;
+      readonly worktree: WorktreeDisposition;
     }
   | { readonly kind: "persist_state"; readonly token: OperationToken };
 
@@ -185,7 +178,7 @@ type OperationKind =
   | "reconcile_agents"
   | "terminate_agent"
   | "persist_state"
-  | `cleanup:${CleanupStep}`;
+  | "close_workspace";
 
 /**
  * What an operation was talking to. A port failure means "that side could not
@@ -250,7 +243,7 @@ type PendingConfirmationState =
       readonly kind: "workspace_close";
       readonly confirmationId: ConfirmationId;
       readonly workspaceId: WorkspaceId;
-      readonly progress: CleanupProgress;
+      readonly worktree: WorktreeDisposition;
       readonly inspection: CloseInspectionProjection;
     };
 
@@ -259,25 +252,8 @@ type PendingConfirmationRequest =
   | {
       readonly kind: "workspace_close";
       readonly workspaceId: WorkspaceId;
-      readonly progress: CleanupProgress;
+      readonly worktree: WorktreeDisposition;
       readonly inspection: CloseInspectionProjection;
-    };
-
-type CleanupPersistenceContinuation =
-  | {
-      readonly kind: "start_next";
-      readonly workspaceId: WorkspaceId;
-      readonly progress: CleanupProgress;
-    }
-  | {
-      readonly kind: "final_inspection";
-      readonly workspaceId: WorkspaceId;
-      readonly progress: CleanupProgress;
-    }
-  | {
-      readonly kind: "finalize_workspace";
-      readonly workspaceId: WorkspaceId;
-      readonly progress: CleanupProgress;
     };
 
 type ActiveReconcile =
@@ -293,16 +269,16 @@ type ActiveReconcile =
       readonly epoch: number;
     };
 
-type InspectionContinuation =
-  | { readonly kind: "begin" }
-  | { readonly kind: "confirm"; readonly progress: CleanupProgress }
-  | { readonly kind: "retry"; readonly progress: CleanupProgress }
-  | { readonly kind: "finalize"; readonly progress: CleanupProgress };
-
-interface CleanupState {
-  operationId: OperationId;
+/**
+ * A close that has been asked for and is still asking its questions.
+ *
+ * It holds the answer to the folder question, which was given before the
+ * close was asked for at all, so that the answer survives the inspection and
+ * the confirmation without either of them having to know about it.
+ */
+interface CloseRequest {
   readonly workspaceId: WorkspaceId;
-  progress: CleanupProgress;
+  readonly worktree: WorktreeDisposition;
 }
 
 /**
@@ -320,43 +296,6 @@ function fingerprint(value: unknown): string {
     }
     return raw;
   });
-}
-
-function nextCleanupStep(progress: CleanupProgress): CleanupStep {
-  if (progress.agentsStep.kind === "pending") return "agents";
-  if (!progress.terminalClosed) return "terminal";
-  if (!progress.editorClosed) return "editor";
-  return "state_committed";
-}
-
-/**
- * The progress a finished step leaves behind.
- *
- * `agentsClosed` is what the Agents step actually closed, and it is the
- * caller's to supply because only the caller knows it — the count is read off
- * the workspace at the moment the step answers. It is ignored by every other
- * step, which is the same shape the progress record itself has: one field per
- * step, written by that step alone.
- */
-function progressAfterStep(
-  progress: CleanupProgress,
-  step: CleanupStep,
-  agentsClosed: number,
-): CleanupProgress {
-  switch (step) {
-    case "agents":
-      return { ...progress, agentsStep: agentsStepDone(agentsClosed) };
-    case "terminal":
-      return { ...progress, terminalClosed: true };
-    case "editor":
-      return { ...progress, editorClosed: true };
-    case "state_committed":
-      return progress;
-  }
-}
-
-function cleanupKind(result: WorkspaceCleanupResult): OperationKind {
-  return `cleanup:${result.step}`;
 }
 
 /**
@@ -419,20 +358,13 @@ export class AppCoordinator {
     OperationId,
     SurfacePresentation
   >();
-  private readonly inspectionContinuations = new Map<
-    OperationId,
-    InspectionContinuation
-  >();
+  /** Closes that are still asking their questions. See `CloseRequest`. */
+  private readonly closeRequests = new Map<OperationId, CloseRequest>();
   private readonly confirmationRequests = new Map<
     OperationId,
     PendingConfirmationRequest
   >();
   private confirmations: PendingConfirmationState[] = [];
-  private readonly cleanup = new Map<WorkspaceId, CleanupState>();
-  private readonly cleanupPersistence = new Map<
-    OperationId,
-    CleanupPersistenceContinuation
-  >();
   private readonly finalizationPending = new Set<OperationId>();
   private readonly finalizationWorkspaces = new Map<OperationId, WorkspaceId>();
   private readonly finalizationRoots = new Map<WorkspaceRoot, OperationId>();
@@ -646,7 +578,7 @@ export class AppCoordinator {
       case "reconcile_agents":
         return this.requestAgentsReconcile(id);
       case "request_close_workspace":
-        return this.closeWorkspace(intent.workspaceId, id);
+        return this.closeWorkspace(intent.workspaceId, intent.worktree, id);
       case "confirm_close_workspace":
         return this.confirmWorkspaceClose(intent.confirmationId, id);
       case "window_focus_changed":
@@ -939,41 +871,20 @@ export class AppCoordinator {
   }
 
   private beginWorkspaceInspection(
-    workspaceId: WorkspaceId,
+    request: CloseRequest,
     id: OperationId,
-    continuation: InspectionContinuation,
   ): IntentOutcome {
-    const workspace = this.model.workspace(workspaceId);
-    if (!workspace) {
-      throw new AppError(AppErrorCode.Domain).withDomain(
-        DomainErrorCode.UnknownWorkspace,
-      );
-    }
-    const continuingCleanup = this.cleanup.get(workspaceId)?.operationId === id;
-    if (
-      workspace.state.kind === "closing" &&
-      continuation.kind !== "finalize" &&
-      !(continuation.kind === "retry" && !continuingCleanup)
-    ) {
-      throw new AppError(AppErrorCode.Domain).withDomain(
-        DomainErrorCode.WorkspaceClosing,
-      );
-    }
-    if (
-      workspace.state.kind === "closing-failed" &&
-      continuation.kind === "begin"
-    ) {
-      throw new AppError(AppErrorCode.Domain).withDomain(
-        DomainErrorCode.WorkspaceClosingFailed,
-      );
-    }
     const token = this.startOperation(
       "inspect_workspace",
-      { kind: "workspace", workspaceId },
+      { kind: "workspace", workspaceId: request.workspaceId },
       id,
     );
-    this.inspectionContinuations.set(id, continuation);
-    this.emitEffect({ kind: "inspect_workspace", token, workspaceId });
+    this.closeRequests.set(id, request);
+    this.emitEffect({
+      kind: "inspect_workspace",
+      token,
+      workspaceId: request.workspaceId,
+    });
     return { kind: "deferred", operationId: id, snapshot: this.snapshot() };
   }
 
@@ -993,24 +904,49 @@ export class AppCoordinator {
     if (state.kind !== "workspace_close") {
       throw new AppError(AppErrorCode.ConfirmationExpired);
     }
-    return this.beginWorkspaceInspection(state.workspaceId, id, {
-      kind: "confirm",
-      progress: state.progress,
-    });
+    return this.startClose(
+      { workspaceId: state.workspaceId, worktree: state.worktree },
+      id,
+    );
   }
 
   /**
-   * Close a Workspace — first attempt or fifth.
+   * Close a Workspace. One function, one act, first attempt or fifth.
    *
-   * **One intent, and this decides which kind of close it is**, because this
-   * is where the state that distinguishes them lives. There used to be a
-   * `retry_close_workspace` beside `request_close_workspace`, and each caller
-   * read `state.kind === "closing-failed"` to pick; the branch lived in the
-   * callers, so a caller that had not been told sent the wrong one and closing
-   * that workspace stopped working the moment a close went wrong.
+   * **1. Ask everything first; do nothing until it is answered.** The busy-Agent
+   * confirmation, the dirty-worktree three-way (answered before the close is
+   * asked for at all, and carried here as `worktree`) and the editor's own
+   * unsaved-work dialog — VS Code's `unload` — are all resolved before the
+   * first destructive step. Cancel any of them and nothing has changed.
+   *
+   * **2. Then run a fixed sequence of idempotent steps**, each of which treats
+   * "already gone" as success: stop the Workspace's Agent sessions, close its
+   * own tmux session, dispose its workbench view, remove the worktree if it is
+   * one and the answer was delete, forget the Workspace in the model, persist
+   * once. A `kill-session` on a session somebody killed from outside is done,
+   * not failed; so is a view whose renderer already died, and a worktree
+   * folder that is not there.
+   *
+   * **3. Nothing about a close is persisted while it runs.** There is no
+   * progress record, no resumable midpoint and no persisted `closing` state —
+   * resuming a close from a persisted midpoint was itself the source of the
+   * errors. A state file written by an older build that names a close comes
+   * back as an ordinary open Workspace: it was never closed.
+   *
+   * **4. Failure is visible and final for that attempt.** A step that fails —
+   * an unreachable tmux socket, a `git worktree remove` that errors, an unload
+   * ask that runs out of time — stops the close there. The row stays, and one
+   * failure names the step and the cause. The steps already done stay done;
+   * because they are idempotent, the next attempt repeats them and finds them
+   * done. There is no "resume" and no separate failed state: a Workspace is
+   * either open — possibly with a last-failure note on it — or gone.
+   *
+   * **5. One deadline per external call**, so a hung process cannot hang the
+   * close forever. A deadline that is hit is a step failure like any other.
    */
   private closeWorkspace(
     workspaceId: WorkspaceId,
+    worktree: WorktreeDisposition,
     id: OperationId,
   ): IntentOutcome {
     const workspace = this.model.workspace(workspaceId);
@@ -1019,43 +955,12 @@ export class AppCoordinator {
         DomainErrorCode.UnknownWorkspace,
       );
     }
-    if (workspace.state.kind === "closing-failed") {
-      return this.resumeWorkspaceClose(workspaceId, id);
+    if (workspace.close.kind === "running") {
+      throw new AppError(AppErrorCode.Domain).withDomain(
+        DomainErrorCode.WorkspaceClosing,
+      );
     }
-    return this.beginWorkspaceInspection(workspaceId, id, { kind: "begin" });
-  }
-
-  /**
-   * Carry on a close that failed, in this run or a previous one.
-   *
-   * The progress comes from the live cleanup when there is one and from the
-   * Workspace's own persisted state otherwise, because a close interrupted by
-   * a quit is the same situation as one interrupted by a failure — and having
-   * two ways to say "carry on" is how one of them ends up being the broken one.
-   */
-  private resumeWorkspaceClose(
-    workspaceId: WorkspaceId,
-    id: OperationId,
-  ): IntentOutcome {
-    const state = this.model.workspace(workspaceId)?.state;
-    const progress =
-      this.cleanup.get(workspaceId)?.progress ??
-      (state ? workspaceCleanupProgress(state) : undefined);
-    if (!progress) {
-      throw new AppError(AppErrorCode.UnknownOperation);
-    }
-    return this.beginWorkspaceInspection(workspaceId, id, {
-      kind: "retry",
-      progress,
-    });
-  }
-
-  /** Resume a close a previous run persisted but never finished. */
-  resumePersistedClose(
-    workspaceId: WorkspaceId,
-    id: OperationId,
-  ): IntentOutcome {
-    return this.resumeWorkspaceClose(workspaceId, id);
+    return this.beginWorkspaceInspection({ workspaceId, worktree }, id);
   }
 
   // ------------------------------------------------------------ completions
@@ -1084,8 +989,8 @@ export class AppCoordinator {
           event.agentId,
           event.result,
         );
-      case "workspace_cleanup_completed":
-        return this.completeWorkspaceCleanup(
+      case "workspace_close_completed":
+        return this.completeWorkspaceClose(
           event.token,
           event.workspaceId,
           event.result,
@@ -1159,14 +1064,12 @@ export class AppCoordinator {
     this.requestedPresentations.delete(id);
     this.resolvedProfiles.delete(id);
     this.launchProfiles.delete(id);
-    this.inspectionContinuations.delete(id);
+    this.closeRequests.delete(id);
     this.confirmationRequests.delete(id);
-    this.cleanupPersistence.delete(id);
     this.finalizationPending.delete(id);
     const workspaceId = this.finalizationWorkspaces.get(id);
     if (workspaceId !== undefined) {
       this.finalizationWorkspaces.delete(id);
-      this.cleanup.delete(workspaceId);
       this.finalizationBackups.delete(id);
       for (const [root, owner] of [...this.finalizationRoots]) {
         if (owner === id) {
@@ -1176,11 +1079,6 @@ export class AppCoordinator {
     }
     if (this.activeReconcile && sameToken(this.activeReconcile.token, token)) {
       this.activeReconcile = undefined;
-    }
-    for (const [key, state] of [...this.cleanup]) {
-      if (state.operationId === id) {
-        this.cleanup.delete(key);
-      }
     }
   }
 
@@ -1592,7 +1490,7 @@ export class AppCoordinator {
         kind: "workspace_close",
         confirmationId: confirmation,
         workspaceId: request.workspaceId,
-        progress: request.progress,
+        worktree: request.worktree,
         inspection: request.inspection,
       });
     }
@@ -1617,159 +1515,102 @@ export class AppCoordinator {
       (target) =>
         target.kind === "workspace" && target.workspaceId === workspaceId,
     );
-    const continuation = this.inspectionContinuations.get(
-      token.operationId,
-    ) ?? {
-      kind: "begin" as const,
-    };
-    this.inspectionContinuations.delete(token.operationId);
-    const progress =
-      continuation.kind === "begin"
-        ? NO_CLEANUP_PROGRESS
-        : continuation.progress;
-    const consolidated = consolidateCloseInspection(inspection);
-
-    if (consolidated.kind !== "clean") {
-      if (continuation.kind === "finalize") {
-        this.model.markWorkspaceClosingFailed(
-          workspaceId,
-          "cleanup_failed",
-          progress,
-        );
-        const snapshot = this.snapshot();
-        this.emit({ kind: "snapshot", snapshot });
-        this.emit({ kind: "operation_completed", token });
-        this.emit({
-          kind: "error",
-          // A close that did not finish is a *close* failure, not a port
-          // that would not answer: the catch-all sentence ("the native app
-          // shell is unavailable") named the wrong thing and offered the
-          // wrong next step. The workspace's own `stateDiagnostic` is what
-          // says which step, and the Surface draws it.
-          error: closeFailedError(token.operationId),
-        });
-        this.queuePersist(token.operationId);
-        return { kind: "updated", snapshot };
-      }
-      if (continuation.kind !== "begin") {
-        return this.startCleanup(workspaceId, progress, token.operationId);
-      }
-      const confirmationToken = this.startOperation(
-        "generate_confirmation_id",
-        { kind: "workspace", workspaceId },
+    // This coordinator put the request here when it started the inspection.
+    // Absent means its own bookkeeping disagrees with itself, and inventing a
+    // close is the one answer that must not be given.
+    const request = this.closeRequests.get(token.operationId);
+    if (!request) {
+      throw new AppError(AppErrorCode.UnknownOperation).withOperation(
         token.operationId,
       );
-      const workspaceLabel =
-        this.snapshot().workspaces.find(
-          (workspace) => workspace.id === workspaceId,
-        )?.label ?? "Workspace";
-      this.confirmationRequests.set(token.operationId, {
-        kind: "workspace_close",
-        workspaceId,
-        progress,
-        inspection: closeInspectionProjection(
-          workspaceId,
-          workspaceLabel,
-          inspection,
-        ),
-      });
-      this.emitEffect({
-        kind: "generate_confirmation_id",
-        token: confirmationToken,
-        purpose: { kind: "workspace_close", workspaceId, progress },
-      });
-      return {
-        kind: "deferred",
-        operationId: token.operationId,
-        snapshot: this.snapshot(),
-      };
+    }
+    this.closeRequests.delete(token.operationId);
+
+    if (consolidateCloseInspection(inspection).kind === "clean") {
+      return this.startClose(request, token.operationId);
     }
 
-    return this.startCleanup(workspaceId, progress, token.operationId);
-  }
-
-  private startCleanup(
-    workspaceId: WorkspaceId,
-    progress: CleanupProgress,
-    id: OperationId,
-  ): IntentOutcome {
     const workspace = this.model.workspace(workspaceId);
     if (!workspace) {
       throw new AppError(AppErrorCode.Domain).withDomain(
         DomainErrorCode.UnknownWorkspace,
       );
     }
-    const initialState = workspace.state;
-    const existing = this.cleanup.get(workspaceId);
-    const continuing =
-      existing?.operationId === id &&
-      existing !== undefined &&
-      sameProgress(existing.progress, progress);
-    const persistedProgress = workspaceCleanupProgress(workspace.state);
-    // A close this process was in the middle of when it stopped. A *failed*
-    // close is not one of these: it has to be moved back into Closing, which
-    // is what the normal path below does.
-    const persistedResume =
-      workspace.state.kind === "closing" &&
-      persistedProgress !== undefined &&
-      sameProgress(persistedProgress, progress) &&
-      !this.cleanup.has(workspaceId);
+    const confirmationToken = this.startOperation(
+      "generate_confirmation_id",
+      { kind: "workspace", workspaceId },
+      token.operationId,
+    );
+    this.confirmationRequests.set(token.operationId, {
+      kind: "workspace_close",
+      workspaceId,
+      worktree: request.worktree,
+      inspection: closeInspectionProjection(
+        workspaceId,
+        this.labelOf(workspaceId),
+        inspection,
+      ),
+    });
+    this.emitEffect({
+      kind: "generate_confirmation_id",
+      token: confirmationToken,
+      purpose: { kind: "workspace_close", workspaceId },
+    });
+    return {
+      kind: "deferred",
+      operationId: token.operationId,
+      snapshot: this.snapshot(),
+    };
+  }
 
-    if (
-      isWorkspaceClosing(workspace.state) &&
-      !continuing &&
-      !persistedResume
-    ) {
+  /** The label the question puts in the sentence a person reads. */
+  private labelOf(workspaceId: WorkspaceId): string {
+    const workspace = this.snapshot().workspaces.find(
+      (candidate) => candidate.id === workspaceId,
+    );
+    if (!workspace) {
       throw new AppError(AppErrorCode.Domain).withDomain(
-        DomainErrorCode.WorkspaceClosing,
+        DomainErrorCode.UnknownWorkspace,
       );
     }
-    if (persistedResume) {
-      this.cleanup.set(workspaceId, { operationId: id, workspaceId, progress });
+    return workspace.label;
+  }
+
+  /**
+   * Every question is answered. Hand the whole close to the environment.
+   *
+   * One effect, not one per step: the steps are fixed, ordered and idempotent,
+   * so there is nothing for the model to decide between them and nothing worth
+   * writing down while they run.
+   */
+  private startClose(request: CloseRequest, id: OperationId): IntentOutcome {
+    const workspace = this.model.workspace(request.workspaceId);
+    if (!workspace) {
+      throw new AppError(AppErrorCode.Domain).withDomain(
+        DomainErrorCode.UnknownWorkspace,
+      );
     }
-
-    const step = nextCleanupStep(progress);
-    const needsInitialPersist =
-      sameProgress(progress, NO_CLEANUP_PROGRESS) &&
-      !persistedResume &&
-      (!continuing || initialState.kind === "closing-failed");
-
-    if (needsInitialPersist) {
-      if (!continuing || initialState.kind === "closing-failed") {
-        this.model.markWorkspaceClosing(workspaceId, progress);
-        this.cancelWorkspaceAgentOperations(workspaceId);
-        this.invalidateReconciliation();
-        this.emit({ kind: "snapshot", snapshot: this.snapshot() });
-      }
-      this.cleanup.set(workspaceId, { operationId: id, workspaceId, progress });
-      this.cleanupPersistence.set(id, {
-        kind: "start_next",
-        workspaceId,
-        progress,
-      });
-      this.queuePersist(id);
-      return { kind: "deferred", operationId: id, snapshot: this.snapshot() };
-    }
-
     const token = this.startOperation(
-      `cleanup:${step}`,
-      { kind: "workspace", workspaceId },
+      "close_workspace",
+      { kind: "workspace", workspaceId: request.workspaceId },
       id,
     );
-    if (!continuing && !persistedResume) {
-      try {
-        this.model.markWorkspaceClosing(workspaceId, progress);
-      } catch (raw) {
-        this.pending.delete(id);
-        this.rememberCompleted(token);
-        throw AppError.from(raw);
-      }
-      this.cancelWorkspaceAgentOperations(workspaceId);
-      this.invalidateReconciliation();
-      this.emit({ kind: "snapshot", snapshot: this.snapshot() });
+    try {
+      this.model.beginWorkspaceClose(request.workspaceId);
+    } catch (raw) {
+      this.pending.delete(id);
+      this.rememberCompleted(token);
+      throw AppError.from(raw);
     }
-    this.cleanup.set(workspaceId, { operationId: id, workspaceId, progress });
-    this.emitEffect({ kind: "cleanup_workspace", token, workspaceId, step });
+    this.cancelWorkspaceAgentOperations(request.workspaceId);
+    this.invalidateReconciliation();
+    this.emit({ kind: "snapshot", snapshot: this.snapshot() });
+    this.emitEffect({
+      kind: "close_workspace",
+      token,
+      workspaceId: request.workspaceId,
+      worktree: request.worktree,
+    });
     return { kind: "deferred", operationId: id, snapshot: this.snapshot() };
   }
 
@@ -1811,116 +1652,63 @@ export class AppCoordinator {
     return { kind: "updated", snapshot };
   }
 
-  private completeWorkspaceCleanup(
+  /**
+   * The close ended. Either the Workspace goes, or one step is named.
+   *
+   * The last two steps are the model's own — forget the Workspace, persist
+   * once — and they are here rather than in the environment because only the
+   * model can do them. The Workspace is taken out with a rollback kept, so a
+   * save that fails puts it back and says so rather than losing a row that is
+   * still in the file.
+   */
+  private completeWorkspaceClose(
     token: OperationToken,
     workspaceId: WorkspaceId,
-    result: WorkspaceCleanupResult,
+    result: WorkspaceCloseResult,
   ): IntentOutcome {
-    // Taken for its effect: the pending operation is consumed here whether or
-    // not the cleanup bookkeeping survived, so nothing is left half-open.
     this.takePending(
       token,
-      cleanupKind(result),
+      "close_workspace",
       (target) =>
         target.kind === "workspace" && target.workspaceId === workspaceId,
     );
-    const state = this.cleanup.get(workspaceId);
-    if (!state) {
-      // The completion passed `takePending`, so this coordinator started the
-      // close — and then its own cleanup bookkeeping is not there. That is a
-      // broken invariant, and inventing "nothing has been closed yet" for it
-      // is the worst of the answers available: on the failed path it marks the
-      // workspace `closing-failed` with a progress that has erased the count
-      // of Agents already stopped, and on the success path `agents` happens to
-      // be the step `NO_CLEANUP_PROGRESS` asks for next, so the close silently
-      // starts again from the beginning against an entry nothing created.
-      throw new AppError(AppErrorCode.UnknownOperation).withOperation(
-        token.operationId,
-      );
-    }
-    const progress = state.progress;
 
     if (result.kind === "failed") {
-      this.model.markWorkspaceClosingFailed(
+      this.model.markWorkspaceCloseFailed(
         workspaceId,
+        result.step,
         result.diagnostic,
-        progress,
       );
       const snapshot = this.snapshot();
       this.emit({ kind: "snapshot", snapshot });
       this.emit({ kind: "operation_completed", token });
-      this.emit({
-        kind: "error",
-        error: closeFailedError(token.operationId),
-      });
+      this.emit({ kind: "error", error: closeFailedError(token.operationId) });
+      // Not close bookkeeping: the steps that did run changed the model — the
+      // Agents they stopped are gone from it — and that is what is saved.
       this.queuePersist(token.operationId);
       return { kind: "updated", snapshot };
     }
 
-    const step = result.step;
-    if (nextCleanupStep(progress) !== step) {
+    const workspace = this.model.workspace(workspaceId);
+    if (!workspace) {
       throw new AppError(AppErrorCode.StaleCompletion).withOperation(
         token.operationId,
       );
     }
-    const nextProgress = progressAfterStep(
-      progress,
-      step,
-      this.model.workspace(workspaceId)?.agents.length ?? 0,
+    for (const agent of [...workspace.agents]) {
+      this.model.agentExited(agent.id);
+    }
+    const backup = this.model.closeWorkspaceForPersistence(
+      workspaceId,
+      CLEAN_CLOSE_INSPECTION,
     );
-    state.progress = nextProgress;
-
-    if (step === "agents") {
-      const ids =
-        this.model.workspace(workspaceId)?.agents.map((agent) => agent.id) ??
-        [];
-      for (const agentId of ids) {
-        this.model.agentExited(agentId);
-      }
-    } else if (step === "state_committed") {
-      const workspace = this.model.workspace(workspaceId);
-      if (!workspace || !isWorkspaceClosing(workspace.state)) {
-        throw new AppError(AppErrorCode.StaleCompletion).withOperation(
-          token.operationId,
-        );
-      }
-      if (workspace.agents.length > 0) {
-        this.model.markWorkspaceClosingFailed(
-          workspaceId,
-          "cleanup_failed",
-          progress,
-        );
-        const snapshot = this.snapshot();
-        this.emit({ kind: "snapshot", snapshot });
-        this.emit({ kind: "operation_completed", token });
-        this.emit({
-          kind: "error",
-          // A close that did not finish is a *close* failure, not a port
-          // that would not answer: the catch-all sentence ("the native app
-          // shell is unavailable") named the wrong thing and offered the
-          // wrong next step. The workspace's own `stateDiagnostic` is what
-          // says which step, and the Surface draws it.
-          error: closeFailedError(token.operationId),
-        });
-        this.queuePersist(token.operationId);
-        return { kind: "updated", snapshot };
-      }
-    }
-
-    if (step !== "state_committed") {
-      this.model.updateWorkspaceClosingProgress(workspaceId, nextProgress);
-    }
+    this.finalizationRoots.set(backup.workspace.root, token.operationId);
+    this.finalizationPending.add(token.operationId);
+    this.finalizationWorkspaces.set(token.operationId, workspaceId);
+    this.finalizationBackups.set(token.operationId, backup);
     const snapshot = this.snapshot();
     this.emit({ kind: "snapshot", snapshot });
     this.emit({ kind: "operation_completed", token });
-
-    const continuation: CleanupPersistenceContinuation =
-      step === "agents" || step === "terminal"
-        ? { kind: "start_next", workspaceId, progress: nextProgress }
-        : step === "editor"
-          ? { kind: "final_inspection", workspaceId, progress: nextProgress }
-          : { kind: "finalize_workspace", workspaceId, progress: nextProgress };
-    this.cleanupPersistence.set(token.operationId, continuation);
     this.queuePersist(token.operationId);
     return { kind: "deferred", operationId: token.operationId, snapshot };
   }
@@ -1932,54 +1720,6 @@ export class AppCoordinator {
       (target) => target.kind === "application",
     );
     this.emit({ kind: "operation_completed", token });
-    const continuation = this.cleanupPersistence.get(token.operationId);
-    if (continuation) {
-      this.cleanupPersistence.delete(token.operationId);
-      switch (continuation.kind) {
-        case "start_next":
-          return this.startCleanup(
-            continuation.workspaceId,
-            continuation.progress,
-            token.operationId,
-          );
-        case "final_inspection":
-          return this.beginWorkspaceInspection(
-            continuation.workspaceId,
-            token.operationId,
-            { kind: "finalize", progress: continuation.progress },
-          );
-        case "finalize_workspace": {
-          const workspaceId = continuation.workspaceId;
-          const workspace = this.model.workspace(workspaceId);
-          if (
-            !workspace ||
-            !isWorkspaceClosing(workspace.state) ||
-            workspace.agents.length > 0
-          ) {
-            throw new AppError(AppErrorCode.StaleCompletion).withOperation(
-              token.operationId,
-            );
-          }
-          const backup = this.model.closeWorkspaceForPersistence(
-            workspaceId,
-            CLEAN_CLOSE_INSPECTION,
-          );
-          this.finalizationRoots.set(backup.workspace.root, token.operationId);
-          this.cleanup.delete(workspaceId);
-          this.finalizationPending.add(token.operationId);
-          this.finalizationWorkspaces.set(token.operationId, workspaceId);
-          this.finalizationBackups.set(token.operationId, backup);
-          const snapshot = this.snapshot();
-          this.emit({ kind: "snapshot", snapshot });
-          this.queuePersist(token.operationId);
-          return {
-            kind: "deferred",
-            operationId: token.operationId,
-            snapshot,
-          };
-        }
-      }
-    }
     if (this.finalizationPending.delete(token.operationId)) {
       this.finalizationWorkspaces.delete(token.operationId);
       const backup = this.finalizationBackups.get(token.operationId);
@@ -1991,6 +1731,14 @@ export class AppCoordinator {
     return { kind: "noop", snapshot: this.snapshot() };
   }
 
+  /**
+   * The save that was to make the close final did not happen.
+   *
+   * The Workspace comes back, and the close is a failure at its last step —
+   * the same shape every other step's failure has. Nothing is remembered about
+   * the steps that did run: they are idempotent, and the next attempt repeats
+   * them.
+   */
   private completePersistFailed(
     token: OperationToken,
     reason: string,
@@ -2000,18 +1748,6 @@ export class AppCoordinator {
       "persist_state",
       (target) => target.kind === "application",
     );
-    const continuation = this.cleanupPersistence.get(token.operationId);
-    if (continuation) {
-      this.cleanupPersistence.delete(token.operationId);
-      if (continuation.kind === "finalize_workspace") {
-        this.finalizationPending.delete(token.operationId);
-      }
-      this.model.markWorkspaceClosingFailed(
-        continuation.workspaceId,
-        "cleanup_failed",
-        continuation.progress,
-      );
-    }
     if (this.finalizationPending.delete(token.operationId)) {
       const workspaceId = this.finalizationWorkspaces.get(token.operationId);
       this.finalizationWorkspaces.delete(token.operationId);
@@ -2022,19 +1758,11 @@ export class AppCoordinator {
         this.model.rollbackWorkspaceClose(backup);
         this.finalizationRoots.delete(root);
         if (workspaceId !== undefined) {
-          const state = this.model.workspace(workspaceId)?.state;
-          const progress =
-            state?.kind === "closing" ? state.progress : NO_CLEANUP_PROGRESS;
-          this.model.markWorkspaceClosingFailed(
+          this.model.markWorkspaceCloseFailed(
             workspaceId,
+            "state",
             "cleanup_failed",
-            progress,
           );
-          this.cleanup.set(workspaceId, {
-            operationId: token.operationId,
-            workspaceId,
-            progress,
-          });
         }
       }
     }
@@ -2386,5 +2114,3 @@ export class AppCoordinator {
     return { kind: "detached", snapshot: this.snapshot() };
   }
 }
-
-export { cleanupProgress, nextCleanupStep };

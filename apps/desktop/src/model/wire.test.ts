@@ -17,12 +17,11 @@
 
 import { describe, expect, it } from "vitest";
 import {
-  agentsStepDone,
-  cleanupProgress,
+  CLOSE_STEPS,
   DIAGNOSTIC_CODES,
   type AgentControlState,
-  type CleanupProgress,
   type DiagnosticCode,
+  type WorkspaceClose,
   type WorkspaceState,
 } from "./domain.js";
 import { snapshotWire } from "./wire.js";
@@ -31,12 +30,6 @@ import type {
   AppSnapshot,
   WorkspaceSnapshot,
 } from "./appModel.js";
-
-const PROGRESS: CleanupProgress = cleanupProgress(
-  agentsStepDone(2),
-  true,
-  false,
-);
 
 function agent(controlState: AgentControlState): AgentSnapshot {
   return {
@@ -72,6 +65,7 @@ function workspace(
     selectedPath: "example",
     repositoryId: undefined,
     state,
+    close: { kind: "idle" },
     agents,
     canCreateAgent: true,
     lastAgentId: undefined,
@@ -96,6 +90,14 @@ function projectWorkspace(state: WorkspaceState) {
     .workspaces[0]!.state;
 }
 
+function projectClose(close: WorkspaceClose) {
+  return snapshotWire(
+    snapshotOf([{ ...workspace({ kind: "available" }), close }]),
+    "ready",
+    () => undefined,
+  ).workspaces[0]!.close;
+}
+
 function projectControl(state: AgentControlState) {
   return snapshotWire(
     snapshotOf([workspace({ kind: "available" }, [agent(state)])]),
@@ -107,12 +109,12 @@ function projectControl(state: AgentControlState) {
 const WORKSPACE_STATES: readonly WorkspaceState[] = [
   { kind: "available" },
   { kind: "unavailable", reason: "root_missing" },
-  { kind: "closing", progress: PROGRESS },
-  {
-    kind: "closing-failed",
-    diagnostic: "close_editor_vetoed",
-    progress: PROGRESS,
-  },
+];
+
+const WORKSPACE_CLOSES: readonly WorkspaceClose[] = [
+  { kind: "idle" },
+  { kind: "running" },
+  { kind: "failed", step: "editor", diagnostic: "close_editor_vetoed" },
 ];
 
 const CONTROL_STATES: readonly AgentControlState[] = [
@@ -134,24 +136,48 @@ describe("a Workspace's state across the wire", () => {
     );
     expect(new Set(seen).size).toBe(WORKSPACE_STATES.length);
   });
+});
 
-  it("carries how far a close got, not only that one is running", () => {
-    const projected = projectWorkspace({ kind: "closing", progress: PROGRESS });
-    expect(projected.kind).toBe("closing");
-    if (projected.kind !== "closing") throw new Error("unreachable");
-    expect(projected.progress).toEqual(PROGRESS);
+describe("a Workspace's close across the wire", () => {
+  it("carries each variant whole", () => {
+    for (const close of WORKSPACE_CLOSES) {
+      expect(projectClose(close)).toEqual(close);
+    }
   });
 
-  it("carries a failed close's own reason, whichever it is", () => {
-    for (const diagnostic of DIAGNOSTIC_CODES) {
-      const projected = projectWorkspace({
-        kind: "closing-failed",
-        diagnostic,
-        progress: PROGRESS,
-      });
-      if (projected.kind !== "closing-failed") throw new Error("unreachable");
-      expect(projected.diagnostic).toBe(diagnostic);
+  it("carries both halves of a failure: the step, and the reason", () => {
+    // Either alone is unreadable. Every step reports the same handful of
+    // diagnostics, so the diagnostic without the step never says which step
+    // stopped — and the step without the reason never says why.
+    for (const step of CLOSE_STEPS) {
+      for (const diagnostic of DIAGNOSTIC_CODES) {
+        expect(projectClose({ kind: "failed", step, diagnostic })).toEqual({
+          kind: "failed",
+          step,
+          diagnostic,
+        });
+      }
     }
+  });
+
+  it("says nothing about a close in the Workspace's availability", () => {
+    // Two facts, not one. A Workspace whose folder vanished mid-close is
+    // both, and one used to overwrite the other.
+    const projected = snapshotWire(
+      snapshotOf([
+        {
+          ...workspace({ kind: "unavailable", reason: "root_missing" }),
+          close: { kind: "running" },
+        },
+      ]),
+      "ready",
+      () => undefined,
+    ).workspaces[0]!;
+    expect(projected.state).toEqual({
+      kind: "unavailable",
+      reason: "root_missing",
+    });
+    expect(projected.close).toEqual({ kind: "running" });
   });
 });
 

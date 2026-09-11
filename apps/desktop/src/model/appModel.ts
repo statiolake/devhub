@@ -27,7 +27,8 @@ import {
   type AgentReconciliation,
   type AgentRestoreRecord,
   type AgentStatus,
-  type CleanupProgress,
+  type CloseStep,
+  type WorkspaceClose,
   type CloseInspection,
   type DiagnosticCode,
   type DisplayPath,
@@ -154,6 +155,8 @@ export interface WorkspaceSnapshot {
   readonly selectedPath: DisplayPath;
   readonly repositoryId: RepositoryId | undefined;
   readonly state: WorkspaceState;
+  /** What its close has to say. See `WorkspaceClose`. */
+  readonly close: WorkspaceClose;
   readonly agents: readonly AgentSnapshot[];
   readonly canCreateAgent: boolean;
   /** The Agent last selected here, if it is still running. */
@@ -819,7 +822,7 @@ export class AppModel {
 
     if (context.kind === "workspace") {
       const workspace = this.workspace(context.workspaceId);
-      if (!workspace || !isWorkspaceAvailable(workspace.state)) {
+      if (!workspace || !showable(workspace)) {
         return { kind: "unavailable" };
       }
       const editor = {
@@ -844,7 +847,7 @@ export class AppModel {
 
     const agent = this.agent(context.agentId);
     const workspace = agent ? this.workspace(agent.workspaceId) : undefined;
-    if (!agent || !workspace || !isWorkspaceAvailable(workspace.state)) {
+    if (!agent || !workspace || !showable(workspace)) {
       return { kind: "unavailable" };
     }
     // An Agent is the whole content area, unless the person asked for it
@@ -1003,27 +1006,18 @@ export class AppModel {
     }
   }
 
-  markWorkspaceClosingFailed(
+  beginWorkspaceClose(id: WorkspaceId): void {
+    if (this.requireWorkspace(id).beginClose()) {
+      this.bumpRevision();
+    }
+  }
+
+  markWorkspaceCloseFailed(
     id: WorkspaceId,
+    step: CloseStep,
     diagnostic: DiagnosticCode,
-    progress: CleanupProgress,
   ): void {
-    if (this.requireWorkspace(id).markClosingFailed(diagnostic, progress)) {
-      this.bumpRevision();
-    }
-  }
-
-  markWorkspaceClosing(id: WorkspaceId, progress: CleanupProgress): void {
-    if (this.requireWorkspace(id).markClosing(progress)) {
-      this.bumpRevision();
-    }
-  }
-
-  updateWorkspaceClosingProgress(
-    id: WorkspaceId,
-    progress: CleanupProgress,
-  ): void {
-    if (this.requireWorkspace(id).updateClosingProgress(progress)) {
+    if (this.requireWorkspace(id).closeFailed(step, diagnostic)) {
       this.bumpRevision();
     }
   }
@@ -1088,7 +1082,8 @@ export class AppModel {
       selectedPath: workspace.selectedPath,
       repositoryId: workspace.repositoryId,
       state: workspace.state,
-      canCreateAgent: isWorkspaceAvailable(workspace.state),
+      close: workspace.close,
+      canCreateAgent: workspace.canCreateAgent,
       lastAgentId: this.lastAgentIn(workspace.id),
       agents: workspace.agents.map((agent) => ({
         id: agent.id,
@@ -1158,6 +1153,20 @@ export class AppModel {
  * is untouched; it is what gets written down, and a name that shortened itself
  * on disk would come back different when a sibling arrived.
  */
+/**
+ * Whether there is anything worth drawing in this Workspace's content area.
+ *
+ * A folder that is not there has nothing to show, and neither has a Workspace
+ * whose close is running: its workbench view is being taken down as part of
+ * that close, so the pane says the close is happening rather than drawing a
+ * workbench that is about to vanish under it.
+ */
+function showable(workspace: Workspace): boolean {
+  return (
+    isWorkspaceAvailable(workspace.state) && workspace.close.kind !== "running"
+  );
+}
+
 function agentLabelFor(agent: Agent, siblings: readonly Agent[]): string {
   const chosen = agent.temporaryName;
   if (chosen !== undefined) return chosen;

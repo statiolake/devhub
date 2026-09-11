@@ -289,13 +289,13 @@ export type AppIntentWire =
 			readonly workspaceId: string;
 	  }
 	/**
-	 * Close this Workspace — first attempt or fifth, it is the same request.
+	 * Answer the question a close asked before it did anything.
 	 *
-	 * A `retry_close_workspace` used to sit beside it, and every caller read
-	 * the workspace's state to pick between the two. The model owns that state,
-	 * so the model makes the distinction. See `UserIntent`.
+	 * The page cannot *start* a close. A close has a question about the folder
+	 * that only main can ask (`closeWorkspaceOrWorktree`), and every question a
+	 * close has is answered before its first destructive step — so main owns
+	 * the way in, and the page's half is answering.
 	 */
-	| { readonly type: "request_close_workspace"; readonly workspaceId: string }
 	| {
 			readonly confirmationId: string;
 			readonly type: "confirm_close_workspace";
@@ -445,42 +445,45 @@ export interface TerminalThemeWire {
 	readonly light: TerminalPaletteWire;
 }
 /**
- * How far a close got, so a close that stopped can say where it stopped.
- *
- * Mirrors `CleanupProgress` in the domain. It crosses because the page draws
- * the progress of a close it did not run, and a count of Agents already
- * stopped that never leaves main is a count nobody can act on.
- */
-export type AgentsCleanupStepWire =
-	| { readonly kind: "pending" }
-	| { readonly kind: "done"; readonly closed: number };
-
-export interface CleanupProgressWire {
-	readonly agentsStep: AgentsCleanupStepWire;
-	readonly terminalClosed: boolean;
-	readonly editorClosed: boolean;
-}
-
-/**
  * A Workspace's availability, as the model states it.
  *
  * The union crosses whole. It used to be a tag with an optional
  * `stateDiagnostic` beside it, which made `{ available, cleanup_failed }` and
  * a `closing-failed` with no reason both writable — invalid states the model
- * had made unrepresentable, representable again one function call later — and
- * left `CleanupProgress` with no way across at all.
+ * had made unrepresentable, representable again one function call later.
+ *
+ * It says nothing about a close. That is `WorkspaceCloseWire`, beside it,
+ * because a folder that has gone missing and a close that stopped are two
+ * facts and either used to overwrite the other.
  */
 export type WorkspaceStateWire =
 	| { readonly kind: "available" }
-	| { readonly kind: "unavailable"; readonly reason: CloseDiagnosticWire }
+	| { readonly kind: "unavailable"; readonly reason: CloseDiagnosticWire };
+
+/** The steps a close is made of, in order. Mirrors `CloseStep`. */
+export type CloseStepWire =
+	| "editor"
+	| "agents"
+	| "terminal"
+	| "view"
+	| "worktree"
+	| "state";
+
+/**
+ * What a Workspace's close has to say, so the row can say it.
+ *
+ * There is no progress in it, because there is no resumable midpoint: a close
+ * is a fixed sequence of idempotent steps, and one that stopped is repeated
+ * from the start next time. What a failure leaves behind is which step stopped
+ * and why — the sentence a person reads.
+ */
+export type WorkspaceCloseWire =
+	| { readonly kind: "idle" }
+	| { readonly kind: "running" }
 	| {
-			readonly kind: "closing";
-			readonly progress: CleanupProgressWire;
-	  }
-	| {
-			readonly kind: "closing-failed";
+			readonly kind: "failed";
+			readonly step: CloseStepWire;
 			readonly diagnostic: CloseDiagnosticWire;
-			readonly progress: CleanupProgressWire;
 	  };
 export interface WorkspaceWire {
 	readonly agents: readonly AgentWire[];
@@ -490,6 +493,7 @@ export interface WorkspaceWire {
 	readonly root: string;
 	readonly selectedPath: string;
 	readonly state: WorkspaceStateWire;
+	readonly close: WorkspaceCloseWire;
 	/**
 	 * The Agent last selected in this workspace, if it is still running.
 	 *

@@ -41,9 +41,6 @@ import {
   agentProfileId as parseAgentProfileId,
   agentId as parseAgentId,
   workspaceId as parseWorkspaceId,
-  cleanupProgress,
-  agentsStepDone,
-  AGENTS_PENDING,
   displayPath,
   isCanonicalUuid,
   isEnvironmentName,
@@ -68,15 +65,18 @@ import {
 } from "./appModel.js";
 
 /**
- * Version 3 made a close's Agents step one value; version 2 retired
+ * Version 4 took the close out of the file entirely; version 3 made a close's
+ * Agents step one value; version 2 retired
  * `navigation.activity` and added `split`.
  *
  * Older files still load. A version-1 file's activity is a field this build
  * has no use for and drops on the next save, and a missing `split` is the
- * default ratio. A version-2 file's `agents_closed` / `agents_step_completed`
- * pair is read into `agents_step` by `decodeAgentsStep` — a close only sits in
- * a state file while it is *interrupted*, so such a file is a person mid-close
- * and their place has to be kept.
+ * default ratio. A version-2 or version-3 file's `closing` /
+ * `closing_failed` lifecycle loads as an ordinary open Workspace, because it
+ * was never closed: nothing about a close is written down while it runs any
+ * more, and resuming one from a persisted midpoint is what this version exists
+ * to stop. Closing it again repeats the steps, which are idempotent, and finds
+ * the ones that finished already done.
  *
  * The bump is always for the other direction, and that is the guarantee this
  * number exists to make: an older DevHub reading a file written here would
@@ -91,7 +91,7 @@ import {
  * "expanded", the only state there is now. Nothing has to be invented, so
  * nothing has to refuse.
  */
-export const STATE_SCHEMA_VERSION = 3;
+export const STATE_SCHEMA_VERSION = 4;
 export { SIDEBAR_DEFAULT_WIDTH };
 
 const MIN_SIDEBAR_WIDTH = 200;
@@ -264,33 +264,17 @@ export type PersistedAgentControlState =
 export type PersistedDiagnosticCode = DiagnosticCode;
 
 /**
- * How far a close got, as the file holds it.
+ * A Workspace's availability, and nothing about a close.
  *
- * The union, not two fields that can disagree about it. It used to be
- * `agents_closed` plus `agents_step_completed`, and a file saying
- * `{ agents_closed: 3, agents_step_completed: false }` was read back as
- * completed — a resumed close then skipped or repeated its Agents step, and
- * the only symptom was that the close did not finish.
+ * `closing` and `closing_failed` were here and are gone. A file is only read
+ * by a launch that is not the one that wrote it, so a close named in a file is
+ * a close nothing is running — and starting one again from its middle is what
+ * produced closes that never ended. Version 3's two close variants are still
+ * *read* (`decodeLifecycle`), as `available`.
  */
-export type PersistedAgentsStep =
-  | { kind: "pending" }
-  | { kind: "done"; closed: number };
-
-export interface PersistedCleanupProgress {
-  agents_step: PersistedAgentsStep;
-  terminal_closed: boolean;
-  editor_closed: boolean;
-}
-
 export type WorkspaceLifecycleRecord =
   | { kind: "available" }
-  | { kind: "unavailable"; reason: PersistedDiagnosticCode }
-  | { kind: "closing"; progress: PersistedCleanupProgress }
-  | {
-      kind: "closing_failed";
-      diagnostic: PersistedDiagnosticCode;
-      progress: PersistedCleanupProgress;
-    };
+  | { kind: "unavailable"; reason: PersistedDiagnosticCode };
 
 export interface AgentStateRecord {
   agent_id: string;
@@ -501,6 +485,27 @@ function normalizePathString(value: string): string {
   return `/${parts.join("/")}`;
 }
 
+function decodeControlState(
+  where: string,
+  value: unknown,
+): PersistedAgentControlState {
+  const object = decodeObject(where, value);
+  const kind = decodeMember(
+    `${where}.kind`,
+    object["kind"],
+    CONTROL_STATE_KINDS,
+  );
+  return kind === "stop_failed"
+    ? {
+        kind,
+        diagnostic: decodeDiagnostic(
+          `${where}.diagnostic`,
+          object["diagnostic"],
+        ),
+      }
+    : { kind };
+}
+
 /** See `AgentStateRecord.unread`: `true` is the old spelling of "waiting". */
 function unreadFrom(
   value: UnreadReason | boolean | undefined,
@@ -592,31 +597,6 @@ function validateAgentRecord(record: AgentStateRecord): void {
   }
 }
 
-function validateLifecycle(lifecycle: WorkspaceLifecycleRecord): void {
-  if (lifecycle.kind === "closing" || lifecycle.kind === "closing_failed") {
-    const progress = lifecycle.progress;
-    if (progress.editor_closed && !progress.terminal_closed) {
-      fail("STATE_INVALID");
-    }
-    // `closed` is how many Agents the close has already stopped, and a stopped
-    // Agent leaves the record — so the count is *expected* to exceed the
-    // Agents still listed, and is usually compared against none at all. This
-    // used to be checked against `record.agents.length`, which made every
-    // close of a workspace with an Agent in it fail at the first save after
-    // the agents step, and fail again on every retry: the progress the retry
-    // resumed from was the same "invalid" record. The only thing the number
-    // has to be is a count — and a step that has not run has no count at all,
-    // which is why it is not a field the pending case has to fill in.
-    if (
-      progress.agents_step.kind === "done" &&
-      (!Number.isInteger(progress.agents_step.closed) ||
-        progress.agents_step.closed < 0)
-    ) {
-      fail("STATE_INVALID");
-    }
-  }
-}
-
 function validateWorkspaceRecord(record: WorkspaceStateRecord): void {
   validateUuid(record.workspace_id);
   validateAbsolutePath(record.selected_path);
@@ -635,7 +615,6 @@ function validateWorkspaceRecord(record: WorkspaceStateRecord): void {
     }
     ids.add(agent.agent_id);
   }
-  validateLifecycle(record.lifecycle);
 }
 
 function isValidSocketName(value: string): boolean {
@@ -849,18 +828,6 @@ export function validateState(state: PersistedAppState): void {
 
 // -------------------------------------------------------------- projection
 
-function progressFrom(
-  record: PersistedCleanupProgress,
-): import("./domain.js").CleanupProgress {
-  return cleanupProgress(
-    record.agents_step.kind === "done"
-      ? agentsStepDone(record.agents_step.closed)
-      : AGENTS_PENDING,
-    record.terminal_closed,
-    record.editor_closed,
-  );
-}
-
 function controlStateFrom(
   record: PersistedAgentControlState,
 ): AgentControlState {
@@ -955,27 +922,6 @@ export function hydrateModel(
           break;
         case "unavailable":
           model.markWorkspaceUnavailable(id, record.lifecycle.reason);
-          break;
-        case "closing":
-          // Nothing survives the launch that was driving this close, so a
-          // restored `closing` would be a workspace that never stops closing:
-          // greyed out, breathing, refusing every operation, with no step left
-          // to finish it. It comes back as a *failed* close instead — the same
-          // progress, kept, and a row that says so and offers the retry that
-          // starts the remaining steps again. A launch resolves every close
-          // one way or the other; none is left in progress.
-          model.markWorkspaceClosingFailed(
-            id,
-            "cleanup_failed",
-            progressFrom(record.lifecycle.progress),
-          );
-          break;
-        case "closing_failed":
-          model.markWorkspaceClosingFailed(
-            id,
-            record.lifecycle.diagnostic,
-            progressFrom(record.lifecycle.progress),
-          );
           break;
       }
     });
@@ -1196,28 +1142,7 @@ function lifecycleFrom(
       return { kind: "available" };
     case "unavailable":
       return { kind: "unavailable", reason: state.reason };
-    case "closing":
-      return { kind: "closing", progress: progressRecord(state.progress) };
-    case "closing-failed":
-      return {
-        kind: "closing_failed",
-        diagnostic: state.diagnostic,
-        progress: progressRecord(state.progress),
-      };
   }
-}
-
-function progressRecord(
-  progress: import("./domain.js").CleanupProgress,
-): PersistedCleanupProgress {
-  return {
-    agents_step:
-      progress.agentsStep.kind === "done"
-        ? { kind: "done", closed: progress.agentsStep.closed }
-        : { kind: "pending" },
-    terminal_closed: progress.terminalClosed,
-    editor_closed: progress.editorClosed,
-  };
 }
 
 export function markStarting(state: PersistedAppState): boolean {
@@ -1400,6 +1325,11 @@ function decodeStringMap(
 }
 
 const CONTROL_STATE_KINDS = ["running", "stopping", "stop_failed"] as const;
+/**
+ * Every lifecycle a file can name, including the two this build no longer
+ * writes. They are decoded so a version-3 file is not refused, and land on
+ * `available`: a close named in a file is a close nothing is running.
+ */
 const LIFECYCLE_KINDS = [
   "available",
   "unavailable",
@@ -1435,92 +1365,6 @@ function decodeDiagnostic(
   value: unknown,
 ): PersistedDiagnosticCode {
   return decodeMember(where, value, DIAGNOSTIC_CODES);
-}
-
-function decodeCleanupProgress(
-  where: string,
-  value: unknown,
-): PersistedCleanupProgress {
-  const object = decodeObject(where, value);
-  return {
-    agents_step: decodeAgentsStep(where, object),
-    terminal_closed: decodeBoolean(
-      `${where}.terminal_closed`,
-      object["terminal_closed"],
-    ),
-    editor_closed: decodeBoolean(
-      `${where}.editor_closed`,
-      object["editor_closed"],
-    ),
-  };
-}
-
-/**
- * The Agents step, from a version-3 record or a version-2 one.
- *
- * Version 2 spelled this as `agents_closed` plus `agents_step_completed`, and
- * this is the one place those two are still read — a close is only ever in a
- * state file *while it is interrupted*, so a file written by the previous
- * build is a person mid-close, and dropping their progress would restart the
- * close from the beginning, which is exactly the bug the union exists to
- * prevent. Nothing writes the retired pair; when version 2 is out of support
- * this branch goes, and the record is a plain union again.
- */
-function decodeAgentsStep(
-  where: string,
-  object: Record<string, unknown>,
-): PersistedAgentsStep {
-  const value = object["agents_step"];
-  if (value === undefined) {
-    const completed = decodeBoolean(
-      `${where}.agents_step_completed`,
-      object["agents_step_completed"],
-    );
-    if (!completed) return { kind: "pending" };
-    return {
-      kind: "done",
-      closed: decodeCount(`${where}.agents_closed`, object["agents_closed"]),
-    };
-  }
-  const step = decodeObject(`${where}.agents_step`, value);
-  const kind = decodeMember(`${where}.agents_step.kind`, step["kind"], [
-    "pending",
-    "done",
-  ] as const);
-  if (kind === "pending") return { kind: "pending" };
-  return {
-    kind: "done",
-    closed: decodeCount(`${where}.agents_step.closed`, step["closed"]),
-  };
-}
-
-function decodeCount(where: string, value: unknown): number {
-  const count = decodeNumber(where, value);
-  if (!Number.isInteger(count) || count < 0) {
-    refuse(where, "a count of zero or more", value);
-  }
-  return count;
-}
-
-function decodeControlState(
-  where: string,
-  value: unknown,
-): PersistedAgentControlState {
-  const object = decodeObject(where, value);
-  const kind = decodeMember(
-    `${where}.kind`,
-    object["kind"],
-    CONTROL_STATE_KINDS,
-  );
-  return kind === "stop_failed"
-    ? {
-        kind,
-        diagnostic: decodeDiagnostic(
-          `${where}.diagnostic`,
-          object["diagnostic"],
-        ),
-      }
-    : { kind };
 }
 
 /** See `AgentStateRecord.unread`: `true` is the old spelling of "waiting". */
@@ -1589,26 +1433,11 @@ function decodeLifecycle(
         kind,
         reason: decodeDiagnostic(`${where}.reason`, object["reason"]),
       };
+    // A version-3 file mid-close. The close was never finished and cannot be
+    // resumed, so the Workspace comes back exactly as it is: open.
     case "closing":
-      return {
-        kind,
-        progress: decodeCleanupProgress(
-          `${where}.progress`,
-          object["progress"],
-        ),
-      };
     case "closing_failed":
-      return {
-        kind,
-        diagnostic: decodeDiagnostic(
-          `${where}.diagnostic`,
-          object["diagnostic"],
-        ),
-        progress: decodeCleanupProgress(
-          `${where}.progress`,
-          object["progress"],
-        ),
-      };
+      return { kind: "available" };
   }
 }
 

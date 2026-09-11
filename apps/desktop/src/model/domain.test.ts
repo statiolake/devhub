@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  NO_CLEANUP_PROGRESS,
   Agent,
   AgentProfile,
   agentProfileId,
@@ -188,8 +187,11 @@ describe("workspace lifecycle", () => {
       displayPath("/dev/project"),
     );
     workspace.markUnavailable("root_missing");
-    expect(workspace.markClosing(NO_CLEANUP_PROGRESS)).toBe(true);
-    expect(workspace.state.kind).toBe("closing");
+    expect(workspace.beginClose()).toBe(true);
+    expect(workspace.close.kind).toBe("running");
+    // The folder is still missing: the two facts are independent, and neither
+    // overwrites the other any more.
+    expect(workspace.state.kind).toBe("unavailable");
   });
 
   it("keeps agents when unavailable but refuses new ones", () => {

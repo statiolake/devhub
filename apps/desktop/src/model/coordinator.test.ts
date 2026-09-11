@@ -24,6 +24,7 @@ import {
   type OperationToken,
   type ProviderEvent,
   type UserIntent,
+  type WorktreeDisposition,
 } from "./intents.js";
 
 const WS_A = workspaceId("550e8400-e29b-41d4-a716-446655440000");
@@ -129,12 +130,12 @@ class Driver {
           workspaceId: effect.workspaceId,
           inspection,
         });
-      case "cleanup_workspace":
+      case "close_workspace":
         return this.accept({
-          type: "workspace_cleanup_completed",
+          type: "workspace_close_completed",
           token: effect.token,
           workspaceId: effect.workspaceId,
-          result: { kind: "step_completed", step: effect.step },
+          result: { kind: "closed" },
         });
       case "stop_agent":
         return this.accept({
@@ -326,19 +327,80 @@ describe("tokens", () => {
   });
 });
 
+/** The close request every test sends; a plain Workspace keeps its folder. */
+function closeIntent(worktree: WorktreeDisposition = "keep"): UserIntent {
+  return { type: "request_close_workspace", workspaceId: WS_A, worktree };
+}
+
+/**
+ * A driver that has opened a workspace and asked to close it, stopped at the
+ * `close_workspace` effect — that is, with every question answered and no step
+ * yet run.
+ */
+function atTheFirstStep(): {
+  driver: Driver;
+  effect: Extract<Effect, { kind: "close_workspace" }>;
+} {
+  const driver = new Driver();
+  driver.openFolder("/dev/project");
+  driver.dispatch(closeIntent());
+  const inspect = driver.drainEffects()[0];
+  if (inspect.kind !== "inspect_workspace") throw new Error("unexpected");
+  driver.answer(inspect);
+  const effect = driver.drainEffects()[0];
+  if (effect?.kind !== "close_workspace") throw new Error("unexpected");
+  return { driver, effect };
+}
+
 describe("closing a workspace", () => {
   it("closes without a confirmation when nothing is busy", () => {
     const driver = new Driver();
     driver.openFolder("/dev/project");
-    driver.dispatch({ type: "request_close_workspace", workspaceId: WS_A });
+    driver.dispatch(closeIntent());
     driver.settle();
     expect(driver.coordinator.snapshot().workspaces).toHaveLength(0);
+  });
+
+  it("asks everything before it does anything", () => {
+    // The whole of rule one. Between the request and the answer there is
+    // exactly one effect — the question — and no step has run.
+    const driver = new Driver();
+    driver.openFolder("/dev/project");
+    driver.dispatch(closeIntent());
+    expect(driver.drainEffects().map((effect) => effect.kind)).toEqual([
+      "inspect_workspace",
+    ]);
+  });
+
+  it("runs the steps as one act, not one save at a time", () => {
+    // A close used to be four effects with a save between each, and the file
+    // it wrote between them was a midpoint somebody could resume from. There
+    // is one effect now, and the only save is the one that makes the close
+    // final.
+    const { driver, effect } = atTheFirstStep();
+    expect(driver.drainEffects()).toHaveLength(0);
+    driver.answer(effect);
+    expect(driver.drainEffects().map((one) => one.kind)).toEqual([
+      "persist_state",
+    ]);
+  });
+
+  it("carries the answer about the folder into the close", () => {
+    // The folder question is asked before the close is requested, so what
+    // reaches the environment is the decision, not a question to raise.
+    const driver = new Driver();
+    driver.openFolder("/dev/project");
+    driver.dispatch(closeIntent("remove-anyway"));
+    driver.answer(driver.drainEffects()[0]);
+    const effect = driver.drainEffects()[0];
+    if (effect?.kind !== "close_workspace") throw new Error("unexpected");
+    expect(effect.worktree).toBe("remove-anyway");
   });
 
   it("asks for confirmation when a resource is busy, then closes on confirm", () => {
     const driver = new Driver();
     driver.openFolder("/dev/project");
-    driver.dispatch({ type: "request_close_workspace", workspaceId: WS_A });
+    driver.dispatch(closeIntent());
 
     const inspect = driver.drainEffects()[0];
     if (inspect.kind !== "inspect_workspace") throw new Error("unexpected");
@@ -361,48 +423,21 @@ describe("closing a workspace", () => {
     expect(required.kind).toBe("confirmation_required");
     if (required.kind !== "confirmation_required") return;
     expect(required.purpose.kind).toBe("workspace_close");
+    // The question is on screen and nothing has been closed.
+    expect(driver.drainEffects()).toHaveLength(0);
 
     driver.dispatch({
       type: "confirm_close_workspace",
       confirmationId: CONFIRM,
     });
-    // Cleanup has run by the time the final inspection happens, so it is
-    // clean; a final inspection that is still busy is the failure case below.
     driver.settle();
     expect(driver.coordinator.snapshot().workspaces).toHaveLength(0);
   });
 
-  it("closes a workspace whose Agents are all idle, and stops them with it", () => {
-    // What the inspection reports is `agentsInspection`'s answer, and idle
-    // Agents are not a reason to ask anything. Nothing is asked, and the
-    // cleanup takes them with it.
+  it("changes nothing when the question is left unanswered", () => {
     const driver = new Driver();
     driver.openFolder("/dev/project");
-    driver.dispatch({
-      type: "create_agent",
-      workspaceId: WS_A,
-      profileId: agentProfileId("codex"),
-      presentation: "full",
-    });
-    driver.settle();
-    expect(driver.coordinator.snapshot().workspaces[0].agents).toHaveLength(1);
-
-    driver.dispatch({ type: "request_close_workspace", workspaceId: WS_A });
-    driver.settle();
-    expect(driver.coordinator.snapshot().workspaces).toHaveLength(0);
-  });
-
-  it("asks about a workspace with an Agent that is busy, and leaves it alone until it is answered", () => {
-    const driver = new Driver();
-    driver.openFolder("/dev/project");
-    driver.dispatch({
-      type: "create_agent",
-      workspaceId: WS_A,
-      profileId: agentProfileId("codex"),
-      presentation: "full",
-    });
-    driver.settle();
-    driver.dispatch({ type: "request_close_workspace", workspaceId: WS_A });
+    driver.dispatch(closeIntent());
     const inspect = driver.drainEffects()[0];
     if (inspect.kind !== "inspect_workspace") throw new Error("unexpected");
     driver.accept({
@@ -411,114 +446,93 @@ describe("closing a workspace", () => {
       workspaceId: WS_A,
       inspection: { ...CLEAN_INSPECTION, agents: busy(1) },
     });
-    const generate = driver.drainEffects()[0];
-    if (generate.kind !== "generate_confirmation_id") {
-      throw new Error("unexpected");
-    }
-    const required = driver.accept({
-      type: "confirmation_id_generated",
-      token: generate.token,
-      confirmationId: CONFIRM,
+    driver.answer(driver.drainEffects()[0]);
+    // Cancel is the sheet closing itself: the confirmation is simply never
+    // answered. The Workspace is exactly where it was, and no step has run.
+    expect(driver.drainEffects()).toHaveLength(0);
+    const workspace = driver.coordinator.snapshot().workspaces[0];
+    expect(workspace).toBeDefined();
+    expect(workspace.close).toEqual({ kind: "idle" });
+  });
+
+  it("closes a workspace whose Agents are all idle, and stops them with it", () => {
+    // What the inspection reports is `agentsInspection`'s answer, and idle
+    // Agents are not a reason to ask anything. Nothing is asked, and the
+    // close takes them with it.
+    const driver = new Driver();
+    driver.openFolder("/dev/project");
+    driver.dispatch({
+      type: "create_agent",
+      workspaceId: WS_A,
+      profileId: agentProfileId("codex"),
+      presentation: "full",
     });
-    expect(required.kind).toBe("confirmation_required");
-    if (required.kind !== "confirmation_required") return;
-    expect(required.purpose).toEqual({
-      kind: "workspace_close",
-      inspection: expect.objectContaining({
-        workspaceId: WS_A,
-        agents: busy(1),
-      }),
-    });
-    // Not answered is not cancelled and not confirmed: the workspace and its
-    // Agent are exactly where they were.
-    expect(driver.coordinator.snapshot().workspaces).toHaveLength(1);
+    driver.settle();
     expect(driver.coordinator.snapshot().workspaces[0].agents).toHaveLength(1);
 
+    driver.dispatch(closeIntent());
+    driver.settle();
+    expect(driver.coordinator.snapshot().workspaces).toHaveLength(0);
+  });
+
+  it("closes a workspace whose Agent was killed from outside", () => {
+    // The Agents step reports success because its session is already gone —
+    // which is the state it was trying to reach. The row, and the Agent on
+    // it, go with the close: "already gone" is not a reason to stop.
+    const driver = new Driver();
+    driver.openFolder("/dev/project");
     driver.dispatch({
-      type: "confirm_close_workspace",
-      confirmationId: CONFIRM,
+      type: "create_agent",
+      workspaceId: WS_A,
+      profileId: agentProfileId("codex"),
+      presentation: "full",
+    });
+    driver.settle();
+    driver.dispatch(closeIntent());
+    driver.answer(driver.drainEffects()[0]);
+    const close = driver.drainEffects()[0];
+    if (close?.kind !== "close_workspace") throw new Error("unexpected");
+    driver.accept({
+      type: "workspace_close_completed",
+      token: close.token,
+      workspaceId: WS_A,
+      result: { kind: "closed" },
     });
     driver.settle();
     expect(driver.coordinator.snapshot().workspaces).toHaveLength(0);
   });
 
-  it("marks the close failed when the final inspection is still busy", () => {
-    const driver = new Driver();
-    driver.openFolder("/dev/project");
-    driver.dispatch({ type: "request_close_workspace", workspaceId: WS_A });
-    const inspect = driver.drainEffects()[0];
-    if (inspect.kind !== "inspect_workspace") throw new Error("unexpected");
-    driver.accept({
-      type: "workspace_inspection_completed",
-      token: inspect.token,
-      workspaceId: WS_A,
-      inspection: { ...CLEAN_INSPECTION, unsavedEditors: busy(1) },
-    });
-    const generate = driver.drainEffects()[0];
-    if (generate.kind !== "generate_confirmation_id") {
-      throw new Error("unexpected");
-    }
-    driver.accept({
-      type: "confirmation_id_generated",
-      token: generate.token,
-      confirmationId: CONFIRM,
-    });
-    driver.dispatch({
-      type: "confirm_close_workspace",
-      confirmationId: CONFIRM,
-    });
-    driver.settle({ ...CLEAN_INSPECTION, unsavedEditors: busy(1) });
-    const workspace = driver.coordinator.snapshot().workspaces[0];
-    expect(workspace.state).toEqual({
-      kind: "closing-failed",
-      diagnostic: "cleanup_failed",
-      progress: {
-        agentsStep: { kind: "done", closed: 0 },
-        terminalClosed: true,
-        editorClosed: true,
-      },
-    });
+  it("refuses a second close while one is running", () => {
+    const { driver } = atTheFirstStep();
+    expect(errorCode(() => driver.dispatch(closeIntent()))).toBe(
+      AppErrorCode.Domain,
+    );
   });
 
-  it("reports a close that did not finish as a close failure", () => {
-    const driver = new Driver();
-    driver.openFolder("/dev/project");
-    driver.dispatch({ type: "request_close_workspace", workspaceId: WS_A });
-    const inspect = driver.drainEffects()[0];
-    if (inspect.kind !== "inspect_workspace") throw new Error("unexpected");
-    driver.accept({
-      type: "workspace_inspection_completed",
-      token: inspect.token,
-      workspaceId: WS_A,
-      inspection: CLEAN_INSPECTION,
-    });
-    // Every step is followed by a save, so the close walks forward only as
-    // its effects are answered. The first cleanup step is what this is about.
-    let cleanup: Effect | undefined;
-    for (let round = 0; round < 8 && !cleanup; round += 1) {
-      for (const effect of driver.drainEffects()) {
-        if (effect.kind === "cleanup_workspace") {
-          cleanup = effect;
-          break;
-        }
-        driver.answer(effect);
-      }
-    }
-    if (cleanup?.kind !== "cleanup_workspace") throw new Error("unexpected");
+  it("names the step and the cause when one fails, and keeps the row", () => {
+    const { driver, effect } = atTheFirstStep();
     driver.drainErrors();
     driver.accept({
-      type: "workspace_cleanup_completed",
-      token: cleanup.token,
+      type: "workspace_close_completed",
+      token: effect.token,
       workspaceId: WS_A,
       result: {
         kind: "failed",
-        step: cleanup.step,
+        step: "agents",
         diagnostic: "close_agents_unknown",
       },
     });
 
     const workspace = driver.coordinator.snapshot().workspaces[0];
-    expect(workspace.state.kind).toBe("closing-failed");
+    expect(workspace).toBeDefined();
+    expect(workspace.close).toEqual({
+      kind: "failed",
+      step: "agents",
+      diagnostic: "close_agents_unknown",
+    });
+    // Open, not a third state: the folder is there and the Workspace is in
+    // the list. Only the close has anything to say.
+    expect(workspace.state).toEqual({ kind: "available" });
     // Not a port that would not answer. It used to be raised as one, and the
     // page drew "the native app shell is unavailable" over a workspace whose
     // agents simply could not be confirmed stopped.
@@ -526,6 +540,48 @@ describe("closing a workspace", () => {
     expect(errors).toHaveLength(1);
     expect(errors[0].code).toBe(AppErrorCode.Domain);
     expect(errors[0].domainCode).toBe(DomainErrorCode.WorkspaceClosingFailed);
+  });
+
+  it("succeeds on the next attempt once the cause is gone", () => {
+    // Nothing is resumed and nothing is remembered: the same close runs the
+    // same steps, and the ones that finished last time find themselves done.
+    const { driver, effect } = atTheFirstStep();
+    driver.accept({
+      type: "workspace_close_completed",
+      token: effect.token,
+      workspaceId: WS_A,
+      result: {
+        kind: "failed",
+        step: "terminal",
+        diagnostic: "close_terminal_unknown",
+      },
+    });
+    driver.settle();
+    expect(driver.coordinator.snapshot().workspaces).toHaveLength(1);
+
+    driver.dispatch(closeIntent());
+    driver.settle();
+    expect(driver.coordinator.snapshot().workspaces).toHaveLength(0);
+  });
+
+  it("clears a previous failure when the next close starts", () => {
+    const { driver, effect } = atTheFirstStep();
+    driver.accept({
+      type: "workspace_close_completed",
+      token: effect.token,
+      workspaceId: WS_A,
+      result: {
+        kind: "failed",
+        step: "worktree",
+        diagnostic: "cleanup_failed",
+      },
+    });
+    driver.settle();
+    driver.dispatch(closeIntent());
+    driver.answer(driver.drainEffects()[0]);
+    expect(driver.coordinator.snapshot().workspaces[0].close).toEqual({
+      kind: "running",
+    });
   });
 
   it("refuses a confirmation that was never issued", () => {
@@ -733,59 +789,31 @@ describe("stopping an agent", () => {
 });
 
 /**
- * A close completion that arrives with the close's own bookkeeping gone.
+ * A completion for a close this coordinator is not running.
  *
- * It used to invent `NO_CLEANUP_PROGRESS` for this — "nothing has been closed
- * yet" — which is the most damaging value available: on the failed path it
- * marks the workspace `closing-failed` having erased the count of Agents
- * already stopped, and on the success path `agents` is exactly the step that
- * progress asks for next, so the close silently starts again from the
- * beginning against an entry the coordinator never created.
+ * There is no separate bookkeeping to go missing any more — the pending
+ * operation *is* the record — so this is what a stale or fabricated completion
+ * meets. It used to invent "nothing has been closed yet" for a missing cleanup
+ * entry, which on the failed path erased the count of Agents already stopped
+ * and on the success path restarted the close from the beginning.
  */
-describe("a cleanup completion with no cleanup state", () => {
-  it("is a broken invariant, and says so instead of inventing progress", () => {
-    const driver = new Driver();
-    driver.openFolder("/dev/project");
-    driver.dispatch({ type: "request_close_workspace", workspaceId: WS_A });
-    const inspect = driver.drainEffects()[0];
-    if (inspect.kind !== "inspect_workspace") throw new Error("unexpected");
+describe("a close completion nobody is waiting for", () => {
+  it("is a broken invariant, and says so instead of inventing one", () => {
+    const { driver, effect } = atTheFirstStep();
     driver.accept({
-      type: "workspace_inspection_completed",
-      token: inspect.token,
+      type: "workspace_close_completed",
+      token: effect.token,
       workspaceId: WS_A,
-      inspection: CLEAN_INSPECTION,
+      result: { kind: "closed" },
     });
-    let cleanup: Effect | undefined;
-    for (let round = 0; round < 8 && !cleanup; round += 1) {
-      for (const effect of driver.drainEffects()) {
-        if (effect.kind === "cleanup_workspace") {
-          cleanup = effect;
-          break;
-        }
-        driver.answer(effect);
-      }
-    }
-    if (cleanup?.kind !== "cleanup_workspace") throw new Error("unexpected");
-
-    // Break the invariant the way a bug would: the operation is still pending,
-    // and the cleanup entry that says how far the close got is gone.
-    (
-      driver.coordinator as unknown as { cleanup: Map<unknown, unknown> }
-    ).cleanup.clear();
-
     expect(() =>
       driver.accept({
-        type: "workspace_cleanup_completed",
-        token: cleanup.token,
+        type: "workspace_close_completed",
+        token: effect.token,
         workspaceId: WS_A,
-        result: { kind: "step_completed", step: cleanup.step },
+        result: { kind: "closed" },
       }),
     ).toThrow();
-    // Nothing was decided about the workspace on the strength of a made-up
-    // progress: it is still closing, not failed with an erased count.
-    expect(driver.coordinator.snapshot().workspaces[0].state.kind).toBe(
-      "closing",
-    );
   });
 });
 
@@ -844,45 +872,38 @@ describe("detaching", () => {
   });
 });
 
-describe("retrying a failed close", () => {
-  it("resumes from the progress the workspace itself carries", () => {
-    const driver = new Driver();
-    driver.openFolder("/dev/project");
-
-    // A close whose final inspection is still busy leaves the workspace in
-    // closing-failed, which is where the retry has to be able to start.
-    driver.dispatch({ type: "request_close_workspace", workspaceId: WS_A });
-    const inspect = driver.drainEffects()[0];
-    if (inspect.kind !== "inspect_workspace") throw new Error("unexpected");
+/**
+ * A close that failed is the same close, asked for again.
+ *
+ * Nothing is resumed: there is no persisted midpoint and no memory of which
+ * steps ran, because every step is idempotent and repeating one that finished
+ * finds it done. The intent is the one the Sidebar's button sends the first
+ * time, word for word.
+ */
+describe("closing again after a close that failed", () => {
+  it("starts from the beginning and finishes", () => {
+    const { driver, effect } = atTheFirstStep();
     driver.accept({
-      type: "workspace_inspection_completed",
-      token: inspect.token,
+      type: "workspace_close_completed",
+      token: effect.token,
       workspaceId: WS_A,
-      inspection: { ...CLEAN_INSPECTION, unsavedEditors: busy(1) },
+      result: {
+        kind: "failed",
+        step: "editor",
+        diagnostic: "close_editor_vetoed",
+      },
     });
-    const generate = driver.drainEffects()[0];
-    if (generate.kind !== "generate_confirmation_id") {
-      throw new Error("unexpected");
-    }
-    driver.accept({
-      type: "confirmation_id_generated",
-      token: generate.token,
-      confirmationId: CONFIRM,
-    });
-    driver.dispatch({
-      type: "confirm_close_workspace",
-      confirmationId: CONFIRM,
-    });
-    driver.settle({ ...CLEAN_INSPECTION, unsavedEditors: busy(1) });
-    expect(driver.coordinator.snapshot().workspaces[0].state.kind).toBe(
-      "closing-failed",
+    driver.settle();
+    expect(driver.coordinator.snapshot().workspaces[0].close.kind).toBe(
+      "failed",
     );
 
-    // Nothing is busy any more, and nothing is left of the in-flight cleanup
-    // either — the same position a restart leaves behind. The close is asked
-    // for in the same words as the first time: the model reads `closing-failed`
-    // and carries the close on rather than starting a new one.
-    driver.dispatch({ type: "request_close_workspace", workspaceId: WS_A });
+    driver.dispatch(closeIntent());
+    // The same question first, then the same one act: a second attempt is not
+    // a different shape of close.
+    const again = driver.drainEffects();
+    expect(again.map((one) => one.kind)).toEqual(["inspect_workspace"]);
+    for (const effect of again) driver.answer(effect);
     driver.settle();
     expect(driver.coordinator.snapshot().workspaces).toHaveLength(0);
   });

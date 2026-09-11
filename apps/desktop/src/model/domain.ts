@@ -37,7 +37,6 @@ export enum DomainErrorCode {
   WorkspaceHasLiveAgents = "WORKSPACE_HAS_LIVE_AGENTS",
   WorkspaceClosing = "WORKSPACE_CLOSING",
   WorkspaceClosingFailed = "WORKSPACE_CLOSING_FAILED",
-  InvalidCleanupProgress = "INVALID_CLEANUP_PROGRESS",
   InvalidSidebarWidth = "INVALID_SIDEBAR_WIDTH",
   InvalidSplitRatio = "INVALID_SPLIT_RATIO",
 }
@@ -460,6 +459,27 @@ export const DIAGNOSTIC_CODES = [
 ] as const;
 export type DiagnosticCode = (typeof DIAGNOSTIC_CODES)[number];
 
+/**
+ * The steps a close is made of, in the order they run.
+ *
+ * `editor` is the question — VS Code's own unsaved-work dialog, through its
+ * `unload` — and it comes first because every question is resolved before the
+ * first destructive step. The rest are destructive and idempotent: each treats
+ * "already gone" as success, so the next attempt simply repeats them.
+ *
+ * A step names a failure: which one stopped, and that is all a failed close
+ * has to remember, because there is nothing to resume.
+ */
+export const CLOSE_STEPS = [
+  "editor",
+  "agents",
+  "terminal",
+  "view",
+  "worktree",
+  "state",
+] as const;
+export type CloseStep = (typeof CLOSE_STEPS)[number];
+
 /** Product-level control lifecycle, independent of status and health. */
 export type AgentControlState =
   | { readonly kind: "running" }
@@ -823,100 +843,50 @@ export class Agent {
 }
 
 /**
- * Whether a close has run its Agents step, and what it closed if it has.
+ * What this Workspace's close has to say — the one it is running, or the last
+ * one that stopped.
  *
- * A count alone cannot say this. "The step ran and there was nothing to close"
- * and "the step has not run" are both zero, which is why there used to be two
- * constructors — one deriving `agentsStepCompleted` from `agentsClosed > 0`
- * and one setting it to `true` — and a record they disagreed about. A stored
- * `{ closed: 3, completed: false }` came back as completed; the resumed close
- * then skipped or repeated the step, and the symptom was "the close did not
- * finish" with nothing saying why.
- *
- * One constructor per state, and the disagreeing pair cannot be written down.
+ * Never persisted, and deliberately not a progress record. A close is a fixed
+ * sequence of idempotent steps run in one go (`Coordinator.closeWorkspace`);
+ * there is no midpoint worth writing down, because repeating a step that
+ * already ran finds it already done. What survives a failure is *what to say*:
+ * which step stopped, and why.
  */
-export type AgentsCleanupStep =
-  | { readonly kind: "pending" }
-  | { readonly kind: "done"; readonly closed: number };
+export type WorkspaceClose =
+  | { readonly kind: "idle" }
+  | { readonly kind: "running" }
+  | {
+      readonly kind: "failed";
+      readonly step: CloseStep;
+      readonly diagnostic: DiagnosticCode;
+    };
 
-export const AGENTS_PENDING: AgentsCleanupStep = { kind: "pending" };
+export const CLOSE_IDLE: WorkspaceClose = { kind: "idle" };
 
-export function agentsStepDone(closed: number): AgentsCleanupStep {
-  if (!Number.isInteger(closed) || closed < 0) {
-    throw invalid(DomainErrorCode.InvalidCleanupProgress);
+function sameClose(left: WorkspaceClose, right: WorkspaceClose): boolean {
+  if (left.kind !== right.kind) return false;
+  if (left.kind === "failed" && right.kind === "failed") {
+    return left.step === right.step && left.diagnostic === right.diagnostic;
   }
-  return { kind: "done", closed };
+  return true;
 }
 
-/** Progress retained when a Workspace close partially fails. */
-export interface CleanupProgress {
-  readonly agentsStep: AgentsCleanupStep;
-  readonly terminalClosed: boolean;
-  readonly editorClosed: boolean;
-}
-
-export function cleanupProgress(
-  agentsStep: AgentsCleanupStep,
-  terminalClosed: boolean,
-  editorClosed: boolean,
-): CleanupProgress {
-  return { agentsStep, terminalClosed, editorClosed };
-}
-
-export const NO_CLEANUP_PROGRESS: CleanupProgress = cleanupProgress(
-  AGENTS_PENDING,
-  false,
-  false,
-);
-
-export function sameAgentsStep(
-  left: AgentsCleanupStep,
-  right: AgentsCleanupStep,
-): boolean {
-  if (left.kind === "done" && right.kind === "done") {
-    return left.closed === right.closed;
-  }
-  return left.kind === right.kind;
-}
-
-export function sameProgress(
-  left: CleanupProgress,
-  right: CleanupProgress,
-): boolean {
-  return (
-    sameAgentsStep(left.agentsStep, right.agentsStep) &&
-    left.terminalClosed === right.terminalClosed &&
-    left.editorClosed === right.editorClosed
-  );
-}
-
-/** Workspace availability/lifecycle state. */
+/**
+ * Workspace availability: whether its folder is there.
+ *
+ * It does not say anything about a close. It used to carry `closing` and
+ * `closing-failed` too, so a workspace whose root vanished mid-close had one
+ * fact overwrite the other, and a state file could name a close no launch was
+ * running any more. The close lives beside this, in `Workspace.close`.
+ */
 export type WorkspaceState =
   | { readonly kind: "available" }
-  | { readonly kind: "unavailable"; readonly reason: DiagnosticCode }
-  | { readonly kind: "closing"; readonly progress: CleanupProgress }
-  | {
-      readonly kind: "closing-failed";
-      readonly diagnostic: DiagnosticCode;
-      readonly progress: CleanupProgress;
-    };
+  | { readonly kind: "unavailable"; readonly reason: DiagnosticCode };
 
 export const AVAILABLE: WorkspaceState = { kind: "available" };
 
 export function isWorkspaceAvailable(state: WorkspaceState): boolean {
   return state.kind === "available";
-}
-
-export function isWorkspaceClosing(state: WorkspaceState): boolean {
-  return state.kind === "closing";
-}
-
-export function workspaceCleanupProgress(
-  state: WorkspaceState,
-): CleanupProgress | undefined {
-  return state.kind === "closing" || state.kind === "closing-failed"
-    ? state.progress
-    : undefined;
 }
 
 function sameWorkspaceState(
@@ -928,15 +898,6 @@ function sameWorkspaceState(
   }
   if (left.kind === "unavailable" && right.kind === "unavailable") {
     return left.reason === right.reason;
-  }
-  if (left.kind === "closing" && right.kind === "closing") {
-    return sameProgress(left.progress, right.progress);
-  }
-  if (left.kind === "closing-failed" && right.kind === "closing-failed") {
-    return (
-      left.diagnostic === right.diagnostic &&
-      sameProgress(left.progress, right.progress)
-    );
   }
   return true;
 }
@@ -966,6 +927,9 @@ export class Workspace {
     private stateValue: WorkspaceState = AVAILABLE,
   ) {}
 
+  /** See `WorkspaceClose`. In memory only; a launch starts every close idle. */
+  private closeValue: WorkspaceClose = CLOSE_IDLE;
+
   clone(): Workspace {
     const copy = new Workspace(
       this.id,
@@ -974,6 +938,7 @@ export class Workspace {
       this.repositoryIdValue,
       this.stateValue,
     );
+    copy.closeValue = this.closeValue;
     for (const agent of this.agentList) {
       copy.agentList.push(agent.clone());
     }
@@ -996,12 +961,19 @@ export class Workspace {
     return this.stateValue;
   }
 
+  get close(): WorkspaceClose {
+    return this.closeValue;
+  }
+
   get agents(): readonly Agent[] {
     return this.agentList;
   }
 
   get canCreateAgent(): boolean {
-    return isWorkspaceAvailable(this.stateValue);
+    return (
+      isWorkspaceAvailable(this.stateValue) &&
+      this.closeValue.kind !== "running"
+    );
   }
 
   setRepositoryId(next: RepositoryId | undefined): boolean {
@@ -1039,60 +1011,29 @@ export class Workspace {
     return true;
   }
 
-  markClosingFailed(
-    diagnostic: DiagnosticCode,
-    progress: CleanupProgress,
-  ): boolean {
-    const next: WorkspaceState = {
-      kind: "closing-failed",
-      diagnostic,
-      progress,
-    };
-    if (sameWorkspaceState(this.stateValue, next)) {
-      return false;
-    }
-    this.stateValue = next;
-    return true;
-  }
-
   /**
-   * A Workspace whose folder is gone can still be closed. `unavailable` used
-   * to refuse this, which left the row with a Close button that could only
-   * fail: closing is exactly what a person does with a workspace whose folder
-   * is not coming back, and every step of the cleanup already copes with a
-   * root that is missing (the same path a removed worktree takes).
+   * A close is starting. Whatever the last one said is no longer the news.
+   *
+   * A Workspace whose folder is gone can still be closed — closing is exactly
+   * what a person does with a folder that is not coming back, and every step
+   * of the close treats "already gone" as success.
    */
-  markClosing(progress: CleanupProgress): boolean {
-    switch (this.stateValue.kind) {
-      case "available":
-      case "unavailable":
-      case "closing-failed": {
-        const next: WorkspaceState = { kind: "closing", progress };
-        if (sameWorkspaceState(this.stateValue, next)) {
-          return false;
-        }
-        this.stateValue = next;
-        return true;
-      }
-      case "closing":
-        throw invalid(DomainErrorCode.WorkspaceClosing);
+  beginClose(): boolean {
+    if (this.closeValue.kind === "running") {
+      throw invalid(DomainErrorCode.WorkspaceClosing);
     }
+    return this.setClose({ kind: "running" });
   }
 
-  updateClosingProgress(progress: CleanupProgress): boolean {
-    switch (this.stateValue.kind) {
-      case "closing": {
-        if (sameProgress(this.stateValue.progress, progress)) {
-          return false;
-        }
-        this.stateValue = { kind: "closing", progress };
-        return true;
-      }
-      case "closing-failed":
-        throw invalid(DomainErrorCode.WorkspaceClosingFailed);
-      default:
-        throw invalid(DomainErrorCode.WorkspaceUnavailable);
-    }
+  /** A close stopped at this step, for this reason. Final for that attempt. */
+  closeFailed(step: CloseStep, diagnostic: DiagnosticCode): boolean {
+    return this.setClose({ kind: "failed", step, diagnostic });
+  }
+
+  private setClose(next: WorkspaceClose): boolean {
+    if (sameClose(this.closeValue, next)) return false;
+    this.closeValue = next;
+    return true;
   }
 
   agent(id: AgentId): Agent | undefined {
