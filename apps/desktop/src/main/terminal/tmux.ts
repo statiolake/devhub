@@ -58,13 +58,16 @@ import {
 	parseCapture,
 	parseRecords,
 	runBounded,
+	shapeFailure,
 	type CommandOutput,
+	type CommandSpec,
 	type ResolvedExecutable,
 } from "./command.js";
 import {
 	CancellationToken,
 	isSafeTmuxArgument,
 	isValidSocketName,
+	PortFailure,
 	portFailure,
 	socketName,
 	SCRATCH_TARGET,
@@ -407,9 +410,13 @@ function agentIdMarker(raw: string | undefined): string {
  * already carry.
  */
 function sessionsFrom(records: readonly string[][]): SessionInfo[] {
-	if (records.length > MAX_SESSIONS) throw portFailure("failed");
+	if (records.length > MAX_SESSIONS) {
+		throw shapeFailure("more sessions than DevHub will read");
+	}
 	return records.map((record) => {
-		if (record[0] !== SESSION_RECORD) throw portFailure("failed");
+		if (record[0] !== SESSION_RECORD) {
+			throw shapeFailure("a record from a listing DevHub did not ask for");
+		}
 		return {
 			name: record[1],
 			context: markerValue(record[2]),
@@ -694,6 +701,93 @@ export interface TmuxTerminalRuntimeOptions {
 	readonly timeoutMs?: number;
 	/** Where the one-shot bootstrap config is written. */
 	readonly bootstrapDirectory?: string;
+}
+
+const MAX_STDERR_LINE = 200;
+
+/**
+ * What tmux was asked to do, in the word a diagnostic should use.
+ *
+ * The first word of the argv that is not a flag — `kill-session`,
+ * `capture-pane`, `list-sessions`. Several commands sharing one client queue
+ * are named by the first of them, which is the one that says what the queue
+ * was for.
+ */
+export function tmuxSubcommand(args: readonly string[]): string {
+	return args.find((argument) => !argument.startsWith("-")) ?? "tmux";
+}
+
+/** How long a diagnostic says DevHub waited, in seconds and without noise. */
+function seconds(milliseconds: number): string {
+	return String(Math.round(milliseconds / 100) / 10);
+}
+
+/**
+ * tmux's last word about why it refused: one line, bounded.
+ *
+ * The *last* line, because tmux prints the reason it stopped last, and the
+ * lines before it — a usage line, a warning out of a sourced config — describe
+ * the attempt rather than the refusal.
+ */
+function lastStderrLine(stderr: Buffer): string | undefined {
+	const said = stderr
+		.toString("utf8")
+		.split("\n")
+		.map((line) => line.trim())
+		.filter((line) => line.length > 0);
+	return said.at(-1)?.slice(0, MAX_STDERR_LINE);
+}
+
+/** The refusal a non-zero exit of this subcommand raises. */
+export function tmuxRefusal(subcommand: string, stderr: Buffer): PortFailure {
+	const said = lastStderrLine(stderr);
+	return portFailure("failed", {
+		detail:
+			said === undefined
+				? `tmux \`${subcommand}\` failed.`
+				: `tmux \`${subcommand}\` failed: ${said}`,
+	});
+}
+
+/**
+ * A timeout, told which command fell silent and how long DevHub waited.
+ *
+ * Only one that has not already been described: a `timed_out` raised further
+ * in — by a nested command that was already named — is its own answer and is
+ * passed through unchanged, so a diagnostic names the command that actually
+ * stopped answering rather than the outermost one.
+ */
+function tmuxSilence(
+	error: unknown,
+	subcommand: string,
+	deadline: OperationDeadline,
+): unknown {
+	if (
+		!(error instanceof PortFailure) ||
+		error.code !== "timed_out" ||
+		error.detail !== undefined
+	) {
+		return error;
+	}
+	return portFailure("timed_out", {
+		cause: error,
+		detail: `tmux \`${subcommand}\` did not answer within ${seconds(deadline.budgetMs)} s`,
+	});
+}
+
+/**
+ * One tmux command's result, with the refusal it would raise.
+ *
+ * The refusal is built at the one place that knows both what was asked for and
+ * what tmux said about it; a throw site forty lines away knows neither. Every
+ * caller reads `success` itself — a non-zero exit is sometimes an answer
+ * rather than a failure (`isNoServerError`) — and raises this when it decides
+ * the exit really was a failure.
+ *
+ * Lazy, because a refusal is rare and a `PortFailure` captures a stack.
+ */
+export interface TmuxOutput extends CommandOutput {
+	refusal(): PortFailure;
 }
 
 export class TmuxTerminalRuntime {
@@ -1269,7 +1363,7 @@ export class TmuxTerminalRuntime {
 				cancel,
 				deadline,
 			);
-			if (!typed.success) throw portFailure("failed");
+			if (!typed.success) throw typed.refusal();
 			// The Return is a separate command a moment later, not the second
 			// half of this one. See `PASTE_SUBMIT_DELAY_MS`.
 			await new Promise((resolve) =>
@@ -1283,7 +1377,7 @@ export class TmuxTerminalRuntime {
 				cancel,
 				deadline,
 			);
-			if (!submitted.success) throw portFailure("failed");
+			if (!submitted.success) throw submitted.refusal();
 		} finally {
 			release();
 		}
@@ -1396,7 +1490,7 @@ export class TmuxTerminalRuntime {
 			cancel,
 			deadline,
 		);
-		if (!output.success) throw portFailure("failed");
+		if (!output.success) throw output.refusal();
 		// Confirm the destructive operation's result: completion stays
 		// idempotent across a crash, and a replacement is never mistaken for
 		// the session that was meant to be removed.
@@ -1547,7 +1641,7 @@ export class TmuxTerminalRuntime {
 			cancel,
 			deadline,
 		);
-		if (!output.success) throw portFailure("failed");
+		if (!output.success) throw output.refusal();
 	}
 
 	/**
@@ -1788,7 +1882,7 @@ export class TmuxTerminalRuntime {
 			cancel,
 			deadline,
 		);
-		if (!output.success) throw portFailure("failed");
+		if (!output.success) throw output.refusal();
 	}
 
 	private async createSession(
@@ -1933,7 +2027,7 @@ export class TmuxTerminalRuntime {
 		);
 		if (!output.success) {
 			if (isNoServerError(output.stderr)) return [];
-			throw portFailure("failed");
+			throw output.refusal();
 		}
 		return sessionsFrom(parseRecords(output.stdout, SESSION_FIELDS.length));
 	}
@@ -1965,7 +2059,7 @@ export class TmuxTerminalRuntime {
 		);
 		if (!output.success) {
 			if (isNoServerError(output.stderr)) return [];
-			throw portFailure("failed");
+			throw output.refusal();
 		}
 		return parseRecords(output.stdout, CLIENT_FIELDS.length).map((record) => ({
 			tty: record[1] ?? "",
@@ -2031,7 +2125,7 @@ export class TmuxTerminalRuntime {
 		const records = parseRecords(output.stdout, SESSION_FIELDS.length);
 		const first = records[0];
 		if (first === undefined || first[0] !== MARKER_RECORD) {
-			throw portFailure("failed");
+			throw shapeFailure("no marker where the marker record should be");
 		}
 		const marker: MarkerState = first[1] === PROTOCOL_VALUE ? "owned" : "wrong";
 		if (marker !== "owned") return { marker, sessions: [] };
@@ -2039,7 +2133,7 @@ export class TmuxTerminalRuntime {
 			// The server was DevHub's and went away between the two commands,
 			// which is the same answer an absent server gives: nothing is on it.
 			if (isNoServerError(output.stderr)) return { marker, sessions: [] };
-			throw portFailure("failed");
+			throw output.refusal();
 		}
 		return { marker, sessions: sessionsFrom(records.slice(1)) };
 	}
@@ -2076,7 +2170,7 @@ export class TmuxTerminalRuntime {
 			cancel,
 			deadline,
 		);
-		if (!output.success) throw portFailure("failed");
+		if (!output.success) throw output.refusal();
 		const records = parseRecords(output.stdout, 2);
 		const windows = records.filter(
 			(record) => record[0] === WINDOW_RECORD,
@@ -2085,10 +2179,10 @@ export class TmuxTerminalRuntime {
 			.filter((record) => record[0] === PANE_RECORD)
 			.map((record) => record[1]);
 		if (windows > MAX_WINDOWS || panes.length > MAX_PANES) {
-			throw portFailure("failed");
+			throw shapeFailure("more windows or panes than DevHub will read");
 		}
 		if (windows + panes.length !== records.length) {
-			throw portFailure("failed");
+			throw shapeFailure("a record from a listing DevHub did not ask for");
 		}
 		return { windows, panes };
 	}
@@ -2139,7 +2233,7 @@ export class TmuxTerminalRuntime {
 		deadline: OperationDeadline,
 	): Promise<void> {
 		const config = BootstrapConfig.create(this.bootstrapDirectory);
-		let output: CommandOutput;
+		let output: TmuxOutput;
 		try {
 			output = await this.runBootstrapProbe(
 				config,
@@ -2167,7 +2261,7 @@ export class TmuxTerminalRuntime {
 		if (sessions.some((session) => session.name === SCRATCH_SESSION)) {
 			throw portFailure("conflict");
 		}
-		throw portFailure("failed");
+		throw output.refusal();
 	}
 
 	private async runBootstrapProbe(
@@ -2176,8 +2270,8 @@ export class TmuxTerminalRuntime {
 		root: string,
 		cancel: CancellationToken,
 		deadline: OperationDeadline,
-	): Promise<CommandOutput> {
-		return runBounded(
+	): Promise<TmuxOutput> {
+		return this.runTmuxSpec(
 			{
 				file: this.executable().path,
 				args: [
@@ -2204,8 +2298,9 @@ export class TmuxTerminalRuntime {
 					[BOOTSTRAP_ENV_USER_CONFIG]: this.userTmuxConfigPath(),
 				},
 			},
-			deadline,
+			"start-server",
 			cancel,
+			deadline,
 		);
 	}
 
@@ -2229,8 +2324,8 @@ export class TmuxTerminalRuntime {
 		_cwd: string,
 		cancel: CancellationToken,
 		deadline: OperationDeadline,
-	): Promise<CommandOutput> {
-		return runBounded(
+	): Promise<TmuxOutput> {
+		return this.runTmuxSpec(
 			{
 				file: this.executable().path,
 				args: [...this.tmuxArgs, "-L", socket, ...args],
@@ -2240,9 +2335,36 @@ export class TmuxTerminalRuntime {
 				cwd: this.contextHome,
 				env: this.tmuxEnvironment(),
 			},
-			deadline,
+			tmuxSubcommand(args),
 			cancel,
+			deadline,
 		);
+	}
+
+	/**
+	 * The one choke point every tmux DevHub runs goes through.
+	 *
+	 * Both halves of "what went wrong" are known here and only here — the
+	 * subcommand, from the argv about to be run, and tmux's own words, from the
+	 * stderr that comes back — so both halves of the diagnostic are composed
+	 * here: a timeout is named on the way out, and a refusal is carried on the
+	 * result for whichever caller decides the exit was a failure.
+	 */
+	private async runTmuxSpec(
+		spec: CommandSpec,
+		subcommand: string,
+		cancel: CancellationToken,
+		deadline: OperationDeadline,
+	): Promise<TmuxOutput> {
+		const output = await runBounded(spec, deadline, cancel).catch(
+			(error: unknown) => {
+				throw tmuxSilence(error, subcommand, deadline);
+			},
+		);
+		return {
+			...output,
+			refusal: () => tmuxRefusal(subcommand, output.stderr),
+		};
 	}
 
 	/** The argv that attaches one PTY client to an exact marked session. */

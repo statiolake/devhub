@@ -20,6 +20,7 @@ import { activityCounters, COUNTER } from "../diagnostics/counters.js";
 import {
 	CancellationToken,
 	portFailure,
+	type PortFailure,
 	type RuntimeLaunchContext,
 } from "./ports.js";
 
@@ -51,12 +52,23 @@ export const MAX_ROOT_METADATA_BYTES = 16 * 1024;
 export class OperationDeadline {
 	private expiresAt: number;
 
-	private constructor(private readonly budgetMs: number) {
-		this.expiresAt = Date.now() + budgetMs;
+	private constructor(private readonly budget: number) {
+		this.expiresAt = Date.now() + budget;
 	}
 
 	static in(milliseconds: number): OperationDeadline {
 		return new OperationDeadline(milliseconds);
+	}
+
+	/**
+	 * The watchdog's bound, for a timeout diagnostic to name.
+	 *
+	 * The whole of "did not answer in time" is how long the silence had to last
+	 * before DevHub gave up, and a sentence that leaves it out asks the reader
+	 * to guess whether the runtime is wedged or merely slow.
+	 */
+	get budgetMs(): number {
+		return this.budget;
 	}
 
 	get remaining(): number {
@@ -69,7 +81,7 @@ export class OperationDeadline {
 	 * caller that keeps going after it is not waiting on a silent runtime.
 	 */
 	answered(): void {
-		this.expiresAt = Date.now() + this.budgetMs;
+		this.expiresAt = Date.now() + this.budget;
 	}
 
 	/** Cancellation wins over expiry: an abandoned operation is not a timeout. */
@@ -213,7 +225,7 @@ export function runBounded(
 		child.stdout.on("data", (chunk: Buffer) => {
 			stdoutBytes += chunk.byteLength;
 			if (stdoutBytes > MAX_OUTPUT_BYTES) {
-				finish(portFailure("failed"));
+				finish(shapeFailure("more output than DevHub will read"));
 				return;
 			}
 			stdout.push(chunk);
@@ -221,7 +233,7 @@ export function runBounded(
 		child.stderr.on("data", (chunk: Buffer) => {
 			stderrBytes += chunk.byteLength;
 			if (stderrBytes > MAX_STDERR_BYTES) {
-				finish(portFailure("failed"));
+				finish(shapeFailure("more output than DevHub will read"));
 				return;
 			}
 			stderr.push(chunk);
@@ -253,6 +265,22 @@ export function runBounded(
 }
 
 /**
+ * An answer DevHub could not read, and which rule it broke.
+ *
+ * The other half of `PortFailure`'s detail rule: a refusal is described by the
+ * runner in tmux's own words, and a malformed *answer* is described here,
+ * because tmux said nothing about it — it answered, and the answer was not one
+ * of the shapes DevHub asked for. Without the clause, every one of these
+ * reached the pane as the same three words as a refusal, which sent the reader
+ * looking for a tmux error that was never printed.
+ */
+export function shapeFailure(broke: string): PortFailure {
+	return portFailure("failed", {
+		detail: `DevHub could not read what tmux answered: it had ${broke}.`,
+	});
+}
+
+/**
  * Split provider output into records.
  *
  * A NUL byte, an over-long line or too many lines is malformed provider output,
@@ -260,13 +288,13 @@ export function runBounded(
  */
 export function parseLines(output: Buffer): string[] {
 	const text = decodeUtf8(output);
-	if (text.includes("\0")) throw portFailure("failed");
+	if (text.includes("\0")) throw shapeFailure("a NUL byte");
 	const lines: string[] = [];
 	for (const raw of text.split("\n")) {
 		const line = raw.endsWith("\r") ? raw.slice(0, -1) : raw;
 		if (line.length === 0) continue;
 		if (line.length > MAX_LINE_BYTES || lines.length === MAX_LINES) {
-			throw portFailure("failed");
+			throw shapeFailure("more lines, or a longer one, than it can hold");
 		}
 		lines.push(line);
 	}
@@ -298,25 +326,31 @@ export const RECORD_SEPARATOR = "\u001e";
  * provider output, not a partial answer to be used anyway.
  */
 export function parseRecords(output: Buffer, fieldCount: number): string[][] {
-	if (output.byteLength > MAX_OUTPUT_BYTES) throw portFailure("failed");
+	if (output.byteLength > MAX_OUTPUT_BYTES)
+		throw shapeFailure("too much of it");
 	const text = decodeUtf8(output);
-	if (text.includes("\0")) throw portFailure("failed");
+	if (text.includes("\0")) throw shapeFailure("a NUL byte");
 	if (text.length === 0) return [];
 	const chunks = text.split(RECORD_SEPARATOR);
 	// Every record is terminated, so what follows the last one is exactly the
 	// newline tmux appended to it.
-	if (chunks.pop() !== "\n") throw portFailure("failed");
-	if (chunks.length > MAX_LINES) throw portFailure("failed");
+	if (chunks.pop() !== "\n") throw shapeFailure("an unterminated record");
+	if (chunks.length > MAX_LINES)
+		throw shapeFailure("more records than it can hold");
 	const records: string[][] = [];
 	for (const [index, chunk] of chunks.entries()) {
-		if (index > 0 && !chunk.startsWith("\n")) throw portFailure("failed");
+		if (index > 0 && !chunk.startsWith("\n")) {
+			throw shapeFailure("an unterminated record");
+		}
 		const fields = (index === 0 ? chunk : chunk.slice(1)).split(
 			FIELD_SEPARATOR,
 		);
-		if (fields.length !== fieldCount) throw portFailure("failed");
+		if (fields.length !== fieldCount) {
+			throw shapeFailure("a record of the wrong width");
+		}
 		for (const field of fields) {
 			if (field.length > MAX_ROOT_METADATA_BYTES) {
-				throw portFailure("failed");
+				throw shapeFailure("a field longer than it can hold");
 			}
 		}
 		records.push(fields);
@@ -330,12 +364,15 @@ export function parseRecords(output: Buffer, fieldCount: number): string[][] {
  * itself contain newlines and those bytes remain part of identity.
  */
 export function parseOptionValue(output: Buffer): string {
-	if (output.byteLength > MAX_OUTPUT_BYTES) throw portFailure("failed");
+	if (output.byteLength > MAX_OUTPUT_BYTES)
+		throw shapeFailure("too much of it");
 	const text = decodeUtf8(output);
-	if (text.includes("\0")) throw portFailure("failed");
-	if (!text.endsWith("\n")) throw portFailure("failed");
+	if (text.includes("\0")) throw shapeFailure("a NUL byte");
+	if (!text.endsWith("\n")) throw shapeFailure("an unterminated option value");
 	const value = text.slice(0, -1);
-	if (value.length > MAX_ROOT_METADATA_BYTES) throw portFailure("failed");
+	if (value.length > MAX_ROOT_METADATA_BYTES) {
+		throw shapeFailure("an option value longer than it can hold");
+	}
 	return value;
 }
 
@@ -350,7 +387,8 @@ export function parseOptionValue(output: Buffer): string {
  * embedded newlines are the lines the rules read.
  */
 export function parseCapture(output: Buffer): string {
-	if (output.byteLength > MAX_OUTPUT_BYTES) throw portFailure("failed");
+	if (output.byteLength > MAX_OUTPUT_BYTES)
+		throw shapeFailure("too much of it");
 	return decodeUtf8(output);
 }
 
@@ -359,7 +397,7 @@ function decodeUtf8(output: Buffer): string {
 	// Buffer#toString replaces invalid sequences; comparing byte lengths is how
 	// non-UTF-8 provider output is refused instead of silently mangled.
 	if (Buffer.byteLength(text, "utf8") !== output.byteLength) {
-		throw portFailure("failed");
+		throw shapeFailure("bytes that are not UTF-8");
 	}
 	return text;
 }

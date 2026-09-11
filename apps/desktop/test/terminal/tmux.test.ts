@@ -7,7 +7,7 @@
  * are in `tmux.real.test.ts`.
  */
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
@@ -34,6 +34,7 @@ import { terminalFailureFromPort } from "../../src/main/terminal/surfaces";
 import {
 	TmuxTerminalRuntime,
 	isMarked,
+	tmuxSubcommand,
 	isRootMetadata,
 	isWorkspaceSessionName,
 	parseNumericPrefix,
@@ -641,5 +642,85 @@ describe("naming a runtime failure for the person who reads it", () => {
 		expect(terminalFailureFromPort(portFailure("conflict")).code).toBe(
 			"session_unavailable",
 		);
+	});
+});
+
+/**
+ * What a refused or silent tmux tells the person looking at the pane.
+ *
+ * Run against a real child, because the whole point is that the argv and the
+ * stderr meet at one place: a fake that returned a `CommandOutput` would be
+ * asserting the shape of the test's own object.
+ */
+describe("what a tmux command says when it goes wrong", () => {
+	/** A stand-in tmux that does exactly what the script says and nothing else. */
+	function fakeTmux(script: string): { path: string; basename: string } {
+		const directory = home();
+		const path = join(directory, "tmux");
+		writeFileSync(path, `#!/bin/sh\n${script}\n`);
+		chmodSync(path, 0o755);
+		return { path, basename: "tmux" };
+	}
+
+	it("names the subcommand, whatever flags come before or after it", () => {
+		expect(tmuxSubcommand(["kill-session", "-t", "a"])).toBe("kill-session");
+		expect(tmuxSubcommand(["-u", "capture-pane", "-p"])).toBe("capture-pane");
+		// A queue is named by the command that says what the queue was for.
+		expect(
+			tmuxSubcommand(["display-message", "-p", "x", ";", "list-sessions"]),
+		).toBe("display-message");
+	});
+
+	it("carries the subcommand and tmux's last word out of a refusal", async () => {
+		const runner = runtime({
+			tmux: fakeTmux(
+				'echo "usage: kill-session [-t target-session]" >&2\n' +
+					"echo \"can't find session: nope\" >&2\nexit 1",
+			),
+		});
+		const output = await runner.runTmux(
+			socketName("devhub"),
+			["kill-session", "-t", "nope"],
+			SCRATCH_ROOT,
+			new CancellationToken(),
+			OperationDeadline.in(5_000),
+		);
+		expect(output.success).toBe(false);
+		// The last line, not the first: tmux prints the usage line before the
+		// reason it actually stopped.
+		expect(output.refusal()).toMatchObject({
+			code: "failed",
+			detail: "tmux `kill-session` failed: can't find session: nope",
+		});
+	});
+
+	it("says which command fell silent, and how long DevHub waited", async () => {
+		await expect(
+			runtime({ tmux: fakeTmux("sleep 5") }).runTmux(
+				socketName("devhub"),
+				["list-sessions", "-F", "#{session_name}"],
+				SCRATCH_ROOT,
+				new CancellationToken(),
+				OperationDeadline.in(200),
+			),
+		).rejects.toMatchObject({
+			code: "timed_out",
+			detail: "tmux `list-sessions` did not answer within 0.2 s",
+		});
+	});
+
+	it("keeps a malformed answer's own words, which name no command", () => {
+		// Nothing tmux said is involved: it answered, and the answer was not a
+		// shape DevHub asked for. So the sentence is about the shape.
+		let thrown: unknown;
+		try {
+			parseRecords(Buffer.from("one\u001ftwo\n"), 2);
+		} catch (error) {
+			thrown = error;
+		}
+		expect(thrown).toMatchObject({
+			code: "failed",
+			detail: "DevHub could not read what tmux answered: it had an unterminated record.",
+		});
 	});
 });

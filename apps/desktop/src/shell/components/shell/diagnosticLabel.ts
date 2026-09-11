@@ -102,14 +102,24 @@ export function agentFailureSummary(code: AgentFailureWire): string {
  * What this Agent's pane and row say about the last refusal.
  *
  * One sentence, built in one place, for the same reason `closeFailureLabel`
- * is: the pane and the row must not describe one failure two ways. The detail
- * is whatever the raising site was allowed to carry — DevHub's own
- * configuration, never provider output — and is absent far more often than
- * not.
+ * is: the pane and the row must not describe one failure two ways.
+ *
+ * The two tmux codes are the one case where the detail *replaces* the summary
+ * rather than following it. Their summaries say the runtime refused or fell
+ * silent, and their details say which command it refused and what it said
+ * about it — so the summary is the same sentence with the facts taken out, and
+ * putting both on screen reads as a sentence that has been said twice. Every
+ * other code's detail adds something the summary does not have, so every other
+ * code keeps both. See `PortFailure` in `main/terminal/ports.ts` for what a
+ * detail may hold.
  */
 export function agentFailureLabel(failure: AgentFailureStateWire): string {
   const said = failure.detail?.trim();
-  return said === undefined || said.length === 0
-    ? agentFailureSummary(failure.code)
+  if (said === undefined || said.length === 0) {
+    return agentFailureSummary(failure.code);
+  }
+  return failure.code === "tmux_command_failed" ||
+    failure.code === "tmux_command_timed_out"
+    ? said
     : `${agentFailureSummary(failure.code)} ${said}`;
 }

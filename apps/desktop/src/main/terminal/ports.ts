@@ -5,7 +5,8 @@
  * adapter spoke: the domain values it accepts and the inspection values it
  * returns. Everything tmux — socket names, session names, marker options,
  * process output — stops inside the runtime; nothing here names any of it
- * except the socket, which is a configured value the settings window shows.
+ * except the socket, which is a configured value the settings window shows,
+ * and a diagnostic, which may quote what tmux itself said (see `PortFailure`).
  *
  * These types live beside the runtime rather than in the app model because the
  * model must not be able to describe a tmux resource. The model passes targets
@@ -30,19 +31,33 @@ export type PortErrorCode =
 	| "failed";
 
 /**
- * A runtime failure.
+ * A runtime failure: a code, and one optional `detail` sentence.
  *
- * It carries a code, and one optional `detail`: provider stdout, stderr,
- * session names and discovered paths are deliberately not part of it, so no
- * error path can leak the inventory of a foreign tmux server into a diagnostic
- * or a UI string.
+ * # What the isolation between DevHub and a foreign tmux actually protects
  *
- * `detail` is bound by that same rule and is not an exception to it. It may
- * only hold a sentence DevHub composed from its **own configuration** before it
- * spoke to any provider — which executable was configured and where it was
- * looked for. Without it a missing tmux reaches the pane as "runtime
- * unavailable", which names neither the tool nor the search, and is the one
- * failure whose whole diagnostic is those two facts.
+ * The rule that matters runs one way: **a session DevHub owns must not be
+ * casually attachable from a bare `tmux`.** That is what the dedicated socket
+ * name and the marker protocol are for, and nothing here may weaken either of
+ * them — DevHub still refuses a socket it cannot prove is its own, and it
+ * still never names an unmarked session.
+ *
+ * The other direction was a rule this comment used to state and no threat
+ * required: that a diagnostic must never contain a word tmux said, in case
+ * some other server's session names appeared in it. They may. A person reading
+ * a DevHub diagnostic is the person running both tmuxes, and the price of the
+ * silence was paid every time something went wrong: `tmux kill-session`
+ * refusing with a sentence that says exactly what to do next reached the pane
+ * as "the Agent runtime refused the request", which names no command, no
+ * reason and nothing to try.
+ *
+ * So `detail` is one short sentence naming what DevHub asked for and what it
+ * was told — composed at the one place that runs tmux (`runTmux`, in
+ * `tmux.ts`), so what a refusal says is decided once rather than at forty
+ * throw sites. It is bounded: one line, not a transcript, because a diagnostic
+ * is something a person reads on a pane and not a log. A failure raised for
+ * the *shape* of an answer rather than for a refusal carries its own sentence
+ * instead, saying which shape rule the answer broke — no provider output is
+ * involved in one of those, and there is nothing of tmux's to quote.
  */
 export class PortFailure extends Error {
 	readonly code: PortErrorCode;
@@ -59,7 +74,7 @@ export class PortFailure extends Error {
 }
 
 export interface PortFailureOptions extends ErrorOptions {
-	/** A sentence about DevHub's own configuration. Never provider output. */
+	/** One short sentence: what was asked for, and what it was told. */
 	readonly detail?: string;
 }
 
