@@ -859,6 +859,18 @@ export type WorkspaceClose =
       readonly kind: "failed";
       readonly step: CloseStep;
       readonly diagnostic: DiagnosticCode;
+      /**
+       * What the tool that refused actually said — git's last line, an errno.
+       *
+       * The diagnostic is a closed set, so it can only ever say which *kind*
+       * of thing went wrong; "A cleanup step did not finish" is true of every
+       * `git worktree remove` failure there is. The one sentence that tells a
+       * person what to do next is the one git wrote, so it travels instead of
+       * being replaced by a category. Nothing is invented here: this is only
+       * ever the tool's own words, never a sentence DevHub composed at the
+       * raising site.
+       */
+      readonly detail?: string;
     };
 
 export const CLOSE_IDLE: WorkspaceClose = { kind: "idle" };
@@ -866,7 +878,11 @@ export const CLOSE_IDLE: WorkspaceClose = { kind: "idle" };
 function sameClose(left: WorkspaceClose, right: WorkspaceClose): boolean {
   if (left.kind !== right.kind) return false;
   if (left.kind === "failed" && right.kind === "failed") {
-    return left.step === right.step && left.diagnostic === right.diagnostic;
+    return (
+      left.step === right.step &&
+      left.diagnostic === right.diagnostic &&
+      left.detail === right.detail
+    );
   }
   return true;
 }
@@ -1026,8 +1042,17 @@ export class Workspace {
   }
 
   /** A close stopped at this step, for this reason. Final for that attempt. */
-  closeFailed(step: CloseStep, diagnostic: DiagnosticCode): boolean {
-    return this.setClose({ kind: "failed", step, diagnostic });
+  closeFailed(
+    step: CloseStep,
+    diagnostic: DiagnosticCode,
+    detail?: string,
+  ): boolean {
+    return this.setClose({
+      kind: "failed",
+      step,
+      diagnostic,
+      ...(detail === undefined ? {} : { detail }),
+    });
   }
 
   private setClose(next: WorkspaceClose): boolean {

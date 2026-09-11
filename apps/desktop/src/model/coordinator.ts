@@ -541,9 +541,10 @@ export class AppCoordinator {
       }
       case "retry_workspace":
         return this.beginWorkspaceRetry(intent.workspaceId, id);
-      case "workspace_root_missing":
-        return this.markWorkspaceRootMissing(
+      case "workspace_root_unreadable":
+        return this.markWorkspaceRootUnreadable(
           intent.workspaceId,
+          intent.reason,
           beforeRevision,
           id,
         );
@@ -679,8 +680,9 @@ export class AppCoordinator {
    * diagnostic — "the folder is missing" is not a better answer than "this
    * step did not finish" to the question of what to do next.
    */
-  private markWorkspaceRootMissing(
+  private markWorkspaceRootUnreadable(
     workspaceId: WorkspaceId,
+    reason: "root_missing" | "root_inaccessible",
     beforeRevision: number,
     id: OperationId,
   ): IntentOutcome {
@@ -694,7 +696,7 @@ export class AppCoordinator {
       workspace.state.kind === "available" ||
       workspace.state.kind === "unavailable"
     ) {
-      this.model.markWorkspaceUnavailable(workspaceId, "root_missing");
+      this.model.markWorkspaceUnavailable(workspaceId, reason);
     }
     return this.transitionOutcome(beforeRevision, id);
   }
@@ -1678,6 +1680,7 @@ export class AppCoordinator {
         workspaceId,
         result.step,
         result.diagnostic,
+        result.detail,
       );
       const snapshot = this.snapshot();
       this.emit({ kind: "snapshot", snapshot });
@@ -1762,6 +1765,7 @@ export class AppCoordinator {
             workspaceId,
             "state",
             "cleanup_failed",
+            reason,
           );
         }
       }

@@ -484,6 +484,14 @@ export type WorkspaceCloseWire =
 			readonly kind: "failed";
 			readonly step: CloseStepWire;
 			readonly diagnostic: CloseDiagnosticWire;
+			/**
+			 * What the tool that refused actually said — git's last line, an
+			 * errno. The diagnostic names the kind of failure and this names
+			 * *this* failure; without it every `git worktree remove` refusal
+			 * read "A cleanup step did not finish" and the one sentence that
+			 * said what to do about it never left main.
+			 */
+			readonly detail?: string;
 	  };
 export interface WorkspaceWire {
 	readonly agents: readonly AgentWire[];

@@ -215,14 +215,20 @@ export type UserIntent =
   | { readonly type: "new_window"; readonly path?: RequestedPath }
   | { readonly type: "retry_workspace"; readonly workspaceId: WorkspaceId }
   /**
-   * Main found the Workspace's folder gone when it went to open a workbench
-   * in it. Raised by the shell, never by the page: it is a fact about the
-   * disk, and the model's answer is the `unavailable` state the content area
-   * already knows how to draw, with `root_missing` as the reason.
+   * Main could not read the Workspace's folder when it went to open a
+   * workbench in it. Raised by the shell, never by the page: it is a fact
+   * about the disk, and the model's answer is the `unavailable` state the
+   * content area already knows how to draw.
+   *
+   * The reason travels with it because there are two of them and they are not
+   * the same news. A folder that is gone is offered Locate…; a folder DevHub
+   * was not allowed to look at has not moved, and offering to find it again
+   * is an answer to a question nobody asked.
    */
   | {
-      readonly type: "workspace_root_missing";
+      readonly type: "workspace_root_unreadable";
       readonly workspaceId: WorkspaceId;
+      readonly reason: "root_missing" | "root_inaccessible";
     }
   | {
       readonly type: "locate_workspace";
@@ -371,6 +377,8 @@ export type WorkspaceCloseResult =
       readonly kind: "failed";
       readonly step: CloseStep;
       readonly diagnostic: DiagnosticCode;
+      /** What the tool that refused said, in its own words. See `WorkspaceClose`. */
+      readonly detail?: string;
     };
 
 export type ProviderEvent =

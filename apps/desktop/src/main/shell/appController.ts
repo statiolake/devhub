@@ -185,13 +185,16 @@ import {
 	findBranch,
 	refreshOrigin,
 	remoteForRepository,
-	removeWorktree,
-	pruneWorktrees,
 	listBranches,
 	workspaceFailure,
 	worktreeForBranch,
 	type GitCommand,
 } from "./git.js";
+import {
+	disposeWorktreeFolder,
+	folderUnreadableReason,
+	readWorktreeFolder,
+} from "./worktreeFolder.js";
 import { findClones } from "./issues.js";
 import {
 	readGitHubLogin,
@@ -278,15 +281,6 @@ interface PendingRequest {
 	readonly settle: (outcome: IntentOutcome) => void;
 	readonly fail: (error: unknown) => void;
 	readonly timer: ReturnType<typeof setTimeout>;
-}
-
-/** Whether a workbench could be opened in `folder`: it exists, and is a folder. */
-async function folderIsDirectory(folder: string): Promise<boolean> {
-	try {
-		return (await stat(folder)).isDirectory();
-	} catch {
-		return false;
-	}
 }
 
 export class AppController {
@@ -1059,7 +1053,10 @@ export class AppController {
 	 * follows is what takes the workspace out of `syncEditorViews`'s list.
 	 * A folder no workspace owns is nobody's to mark.
 	 */
-	private noteFolderMissing(folder: string): void {
+	private noteFolderUnreadable(
+		folder: string,
+		reason: "root_missing" | "root_inaccessible",
+	): void {
 		const workspace = this.coordinator.model.workspaces.find(
 			(candidate) => candidate.root === folder,
 		);
@@ -1068,7 +1065,11 @@ export class AppController {
 			this.coordinator.dispatchUser({
 				intentId: parseIntentId(randomUUID()),
 				operationId: this.freshOperationId(),
-				intent: { type: "workspace_root_missing", workspaceId: workspace.id },
+				intent: {
+					type: "workspace_root_unreadable",
+					workspaceId: workspace.id,
+					reason,
+				},
 			});
 		} catch (error: unknown) {
 			this.publishError(errorWire(error));
@@ -2225,11 +2226,18 @@ export class AppController {
 			// named step, because the alternative — a row that greys out,
 			// breathes, refuses every operation and never stops, with nothing on
 			// screen saying why — is the bug this exists to prevent.
+			// What the tool said, and only what the tool said. `TypedFailure` is
+			// how git's last stderr line and the errno sentences reach here
+			// (`workspaceFailure`), and passing that through is the difference
+			// between "A cleanup step did not finish" and "fatal: '…' contains
+			// modified or untracked files, use --force to delete it". Nothing is
+			// composed here; a failure with no words of its own carries none.
 			this.failClose(
 				token,
 				workspaceId,
 				step,
 				error instanceof CloseTimeout ? error.diagnostic : "cleanup_failed",
+				error instanceof TypedFailure ? error.wire.summary : undefined,
 			);
 			return;
 		}
@@ -2246,12 +2254,18 @@ export class AppController {
 		workspaceId: WorkspaceId,
 		step: CloseStep,
 		diagnostic: CloseDiagnosticWire,
+		detail?: string,
 	): void {
 		this.accept({
 			type: "workspace_close_completed",
 			token,
 			workspaceId,
-			result: { kind: "failed", step, diagnostic },
+			result: {
+				kind: "failed",
+				step,
+				diagnostic,
+				...(detail === undefined ? {} : { detail }),
+			},
 		});
 	}
 
@@ -2305,13 +2319,22 @@ export class AppController {
 		const repository = this.lastRepositoryStatus.workspaces.find(
 			(entry) => entry.workspaceId === workspaceId,
 		);
-		const mainWorktree = repository?.mainWorktree;
-		if (
-			mainWorktree === undefined ||
-			repository?.worktree === undefined ||
-			repository.worktree === mainWorktree ||
-			repository.worktree !== workspace.root
-		) {
+		// The folder's own claim, read before anything is removed. It is asked
+		// first because it is the claim that survives: `git worktree remove` can
+		// delete its administrative record and then fail, after which git's list
+		// says nothing and only the `.git` file still knows. It is also what the
+		// fallback below is allowed to delete, and a folder that stopped being
+		// readable throws from here rather than being mistaken for one that is
+		// already gone.
+		const folder = await readWorktreeFolder(workspace.root);
+		const gitSaysWorktree =
+			repository?.mainWorktree !== undefined &&
+			repository.worktree === workspace.root &&
+			repository.worktree !== repository.mainWorktree;
+		const mainWorktree = gitSaysWorktree
+			? repository.mainWorktree
+			: folder?.mainWorktree;
+		if (mainWorktree === undefined) {
 			// The repository itself, a folder DevHub has not read yet, or a
 			// subdirectory of a checkout rather than the checkout. Removing a
 			// repository is not what this is for, removing the checkout
@@ -2321,17 +2344,12 @@ export class AppController {
 				"This workspace is not a worktree of a repository DevHub can see.",
 			);
 		}
-		const command = await this.gitCommand();
-		if (await folderIsDirectory(workspace.root)) {
-			await removeWorktree(
-				command,
-				mainWorktree,
-				workspace.root,
-				disposition === "remove-anyway",
-			);
-			return;
-		}
-		await pruneWorktrees(command, mainWorktree);
+		await disposeWorktreeFolder(
+			await this.gitCommand(),
+			mainWorktree,
+			workspace.root,
+			disposition === "remove-anyway",
+		);
 	}
 
 	//#endregion
@@ -2411,10 +2429,17 @@ export class AppController {
 		// so it goes into the model as one: the workspace becomes unavailable,
 		// which the content area draws with Retry, Locate… and Close, and
 		// `syncEditorViews` stops asking for a workbench in it.
-		if (folder !== SCRATCH_EDITOR && !(await folderIsDirectory(folder))) {
-			console.log(`[devhub] open: '${folder}' is not there — no workbench`);
-			this.noteFolderMissing(folder);
-			return undefined;
+		if (folder !== SCRATCH_EDITOR) {
+			// Two answers, not one. A folder that is gone and a folder DevHub was
+			// not allowed to look at are different facts about the workspace, and
+			// offering Locate… for a folder that never moved is an answer to a
+			// question nobody asked.
+			const reason = await folderUnreadableReason(folder);
+			if (reason !== undefined) {
+				console.log(`[devhub] open: '${folder}' — ${reason}, no workbench`);
+				this.noteFolderUnreadable(folder, reason);
+				return undefined;
+			}
 		}
 		const services = await this.services();
 		// Go through VS Code's own open path, which is what creates a

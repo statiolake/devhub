@@ -270,6 +270,7 @@ function workspaceCloseWire(close: WorkspaceClose): WorkspaceCloseWire {
         kind: "failed",
         step: close.step,
         diagnostic: close.diagnostic,
+        ...(close.detail === undefined ? {} : { detail: close.detail }),
       };
   }
 }

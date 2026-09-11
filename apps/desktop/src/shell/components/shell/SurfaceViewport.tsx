@@ -242,7 +242,7 @@ export function Unavailable({
   const closeFailed = close.kind === "failed";
   const detail =
     close.kind === "failed"
-      ? closeFailureLabel(close.step, close.diagnostic)
+      ? closeFailureLabel(close.step, close.diagnostic, close.detail)
       : state.kind === "unavailable"
         ? closeDiagnosticLabel(state.reason)
         : workspace.root;

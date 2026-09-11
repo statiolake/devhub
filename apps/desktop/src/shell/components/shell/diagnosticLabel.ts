@@ -50,16 +50,27 @@ function closeStepLabel(step: CloseStepWire): string {
 }
 
 /**
- * What a close that stopped has to say: the step, and why it stopped.
+ * What a close that stopped has to say: the step, why it stopped, and — when
+ * the thing that refused had words of its own — those words.
  *
  * One sentence, built in one place, so the row and the pane cannot describe
  * the same failure differently. Naming the step is the point — every step
  * reports the same handful of diagnostics, and "a cleanup step did not finish"
  * on its own never said which.
+ *
+ * The detail is the tool's own last line, carried from main rather than
+ * composed here or there. `cleanup_failed` is the whole vocabulary a step has
+ * for "git refused", so without it a person reading the row learned that
+ * something did not finish and never learned that git had told them exactly
+ * what to do about it.
  */
 export function closeFailureLabel(
   step: CloseStepWire,
   diagnostic: CloseDiagnosticWire,
+  detail?: string,
 ): string {
-  return `Closing stopped while ${closeStepLabel(step)}. ${closeDiagnosticLabel(diagnostic)}`;
+  const said = detail?.trim();
+  return `Closing stopped while ${closeStepLabel(step)}. ${closeDiagnosticLabel(diagnostic)}${
+    said === undefined || said.length === 0 ? "" : ` ${said}`
+  }`;
 }

@@ -1016,8 +1016,9 @@ export class AppModel {
     id: WorkspaceId,
     step: CloseStep,
     diagnostic: DiagnosticCode,
+    detail?: string,
   ): void {
-    if (this.requireWorkspace(id).closeFailed(step, diagnostic)) {
+    if (this.requireWorkspace(id).closeFailed(step, diagnostic, detail)) {
       this.bumpRevision();
     }
   }

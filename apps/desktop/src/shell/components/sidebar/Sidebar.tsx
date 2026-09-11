@@ -176,7 +176,7 @@ function WorkspaceRow({
             // for everyone else.
             aria-label={`${workspace.label} workspace, path ${workspace.root}${
               closeFailed
-                ? `, close failed: ${closeFailureLabel(closeFailed.step, closeFailed.diagnostic)}`
+                ? `, close failed: ${closeFailureLabel(closeFailed.step, closeFailed.diagnostic, closeFailed.detail)}`
                 : ""
             }`}
             title={workspace.root}
