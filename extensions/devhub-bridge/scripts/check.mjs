@@ -1,3 +1,14 @@
+/**
+ * The static checks on DevHub's built-in extension.
+ *
+ * The extension is two things — the workbench defaults in the manifest and the
+ * `devhub.installCli` palette command — and this file asserts that both are
+ * still there, and that the extension is still narrow. It used to enumerate a
+ * websocket transport and a frame grammar as well; those were deleted with the
+ * web era, and a check for a thing that no longer exists is a check that has to
+ * be deleted with it rather than left as a reason nobody can explain.
+ */
+
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
@@ -6,28 +17,12 @@ const manifest = JSON.parse(
   await readFile(resolve(root, "package.json"), "utf8"),
 );
 const extension = await readFile(resolve(root, "src/extension.ts"), "utf8");
-const session = await readFile(resolve(root, "src/session.ts"), "utf8");
-const transport = await readFile(resolve(root, "src/transport.ts"), "utf8");
-const controller = await readFile(resolve(root, "src/controller.ts"), "utf8");
-const registry = await readFile(resolve(root, "src/registry.ts"), "utf8");
-const navigation = await readFile(resolve(root, "src/navigation.ts"), "utf8");
+const installCli = await readFile(resolve(root, "src/installCli.ts"), "utf8");
 
 const required = [
-  [extension, "Bridge configuration guard", "DEVHUB_BRIDGE_ENDPOINT"],
-  [extension, "owner registry guard", "DEVHUB_BRIDGE_SURFACE_REGISTRY"],
-  [extension, "public folder command", "devhub.bridge.openFolder"],
-  [extension, "public new-window command", "devhub.bridge.newWindow"],
-  [extension, "public URI handler", "registerUriHandler"],
-  [extension, "remote workspace URI support", "vscode-remote"],
-  [extension, "dirty observer", "onDidChangeTextDocument"],
-  [session, "generated validator consumption", "parseEnvelope"],
-  [session, "generated encoder consumption", "encodeEnvelope"],
-  [session, "bounded request ledger", "requestLedger"],
-  [transport, "loopback-only transport", "127.0.0.1"],
-  [transport, "bearer authentication", "Authorization: Bearer"],
-  [controller, "controller seam", "class BridgeControllerCore"],
-  [registry, "owner registry parser", "parseSurfaceRegistry"],
-  [navigation, "VS Code URI parser", "parseNavigationUri"],
+  [extension, "install-cli command registration", "devhub.installCli"],
+  [installCli, "control socket derivation", "controlSocketFromGlobalStorage"],
+  [installCli, "control socket request", "install-cli"],
 ];
 for (const [source, label, needle] of required) {
   if (!source.includes(needle)) throw new Error(`${label} is missing`);
@@ -36,24 +31,46 @@ if (
   extension.includes("getText(") ||
   extension.includes("TextDocument.getText")
 ) {
-  throw new Error("Bridge source appears to read editor content");
-}
-if (transport.includes("console.log") || transport.includes("console.error")) {
-  throw new Error("transport must not log connection secrets");
+  throw new Error("DevHub's extension appears to read editor content");
 }
 if (manifest.engines?.vscode !== "^1.109.0") {
-  throw new Error("Bridge must target the supported VS Code 1.x API range");
+  throw new Error("DevHub's extension must target the supported VS Code range");
 }
 if (manifest.capabilities?.untrustedWorkspaces?.supported !== true) {
-  throw new Error("Bridge must explicitly support safe untrusted workspaces");
+  throw new Error("DevHub's extension must support safe untrusted workspaces");
 }
 const commands = manifest.contributes?.commands ?? [];
-for (const command of ["devhub.bridge.openFolder", "devhub.bridge.newWindow"]) {
-  if (!commands.some((entry) => entry.command === command)) {
-    throw new Error(`public command is missing: ${command}`);
+if (!commands.some((entry) => entry.command === "devhub.installCli")) {
+  throw new Error("public command is missing: devhub.installCli");
+}
+// The defaults are the half of this extension that needs no code at all, and
+// the half a person notices immediately when it goes: a workbench view drawing
+// its own title bar, or a fresh profile opening behind a chat sign-in dialog.
+for (const key of [
+  "window.title",
+  "window.commandCenter",
+  "workbench.layoutControl.enabled",
+  "workbench.startupEditor",
+  "chat.disableAIFeatures",
+]) {
+  if (!(key in (manifest.contributes?.configurationDefaults ?? {}))) {
+    throw new Error(`contributed workbench default is missing: ${key}`);
   }
 }
-if (extension.includes(": any") || extension.includes("vscode.d.ts")) {
-  throw new Error("Bridge activation must use the pinned VS Code types");
+// Activation has to be narrow now that there is nothing to connect to. `"*"`
+// was the transport's, which had to be running before anybody asked for it;
+// the command is asked for by name.
+const events = manifest.activationEvents ?? [];
+if (
+  events.length !== 1 ||
+  events[0] !== "onCommand:devhub.installCli" ||
+  events.includes("*")
+) {
+  throw new Error(
+    "activation must be onCommand:devhub.installCli and nothing wider",
+  );
 }
-console.log("DevHub Bridge static checks passed");
+if (extension.includes(": any") || extension.includes("vscode.d.ts")) {
+  throw new Error("activation must use the pinned VS Code types");
+}
+console.log("DevHub extension static checks passed");

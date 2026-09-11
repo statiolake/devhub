@@ -9,14 +9,7 @@ await rm(temp, { recursive: true, force: true });
 await mkdir(temp, { recursive: true });
 await build({
   absWorkingDir: root,
-  entryPoints: [
-    "test/session.test.ts",
-    "test/registry.test.ts",
-    "test/controller.test.ts",
-    "test/navigation.test.ts",
-    "test/transport.test.ts",
-    "test/fault.test.ts",
-  ],
+  entryPoints: ["test/installCli.test.ts"],
   bundle: true,
   platform: "node",
   format: "esm",

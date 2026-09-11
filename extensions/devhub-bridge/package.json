@@ -1,7 +1,7 @@
 {
   "name": "@devhub/bridge",
   "displayName": "DevHub Bridge",
-  "description": "The narrow public-API Bridge between DevHub and a supported VS Code Web Workbench.",
+  "description": "DevHub's built-in VS Code integration: the workbench defaults DevHub owes an answer for, and the command that installs the 'devhub' launcher.",
   "version": "0.1.0",
   "publisher": "devhub",
   "license": "MIT",
@@ -19,7 +19,7 @@
     }
   },
   "activationEvents": [
-    "*"
+    "onCommand:devhub.installCli"
   ],
   "contributes": {
     "configurationDefaults": {
@@ -30,14 +30,6 @@
       "chat.disableAIFeatures": true
     },
     "commands": [
-      {
-        "command": "devhub.bridge.openFolder",
-        "title": "DevHub: Open Folder"
-      },
-      {
-        "command": "devhub.bridge.newWindow",
-        "title": "DevHub: New Window"
-      },
       {
         "command": "devhub.installCli",
         "title": "DevHub: Install 'devhub' command in PATH"

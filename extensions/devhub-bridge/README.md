@@ -1,61 +1,55 @@
 # DevHub Bridge
 
-This is the production Web Workbench extension boundary for DevHub. It runs in
-the pinned OpenVSCode fallback and in a supported user-installed official VS
-Code Server. It reports only Workbench identity, readiness, dirty state, and
-supported navigation requests over the frozen Bridge v1 contract. It never
-reads editor content, intercepts keys, or governs the upstream Integrated
-Terminal, Tasks, or Debugger.
+DevHub's own built-in VS Code extension. It is built in rather than installed
+because a person must not be able to uninstall DevHub's integration and be left
+with a broken window; `scripts/stage-builtin-extensions.sh` stages it alongside
+VS Code's own built-ins.
 
-The extension is inactive when the injected loopback endpoint, bearer token,
-or EditorHost-owned `DEVHUB_BRIDGE_SURFACE_REGISTRY` is absent or invalid. The
-registry is a strict owner-only JSON file containing the matching surface and
-workspace IDs for the Global context or the first public workspace folder; it
-never contains the bearer token. Build and package it from the repository root
-with `pnpm --filter @devhub/bridge check`.
+It does two things, and they are the two things a _product_ cannot say to
+VS Code any other way.
 
-The URI boundary uses the standard VS Code extension URI handler with the
-product-provided `vscode.env.uriScheme` and `/open-workspace` or `/new-window`
-paths; it does not claim a custom scheme. Only a single `path` query value is
-accepted and it must be an absolute, lexically normalized path. The two public
-commands in the manifest are the folder/new-window interception fallback.
+**The workbench defaults.** `contributes.configurationDefaults` is the only
+supported way to move a workbench default on the desktop — `product.json` has
+no reader for it and `environmentService.options.configurationDefaults` is
+web-only. `window.title`, `window.commandCenter` and
+`workbench.layoutControl.enabled` are here because a workbench view is chrome
+inside DevHub's own window and must not draw chrome of its own.
+`workbench.startupEditor` is `none` because DevHub decides what a Workspace
+opens with, and `chat.disableAIFeatures` is `true` because DevHub hosts its own
+Agents — left on, a fresh profile opens every workbench behind Copilot's
+sign-in dialog, which takes the keyboard and holds it until somebody dismisses
+it. The defaults a person may still overrule live here; the ones that have to
+be written into the settings file instead are in
+`apps/desktop/src/main/workbenchDefaults.ts`, which says why for each.
 
-The manifest's `configurationDefaults` are the workbench settings DevHub owes
-an answer for and the person may still overrule. Two of them are about what
-comes up on a workbench nobody has configured yet: `workbench.startupEditor`
-is `none` because DevHub decides what a Workspace opens with, and
-`chat.disableAIFeatures` is `true` because DevHub hosts its own Agents — left
-on, a fresh profile opens every workbench behind Copilot's sign-in dialog,
-which takes the keyboard and holds it until somebody dismisses it.
+**`devhub.installCli`.** The palette command "DevHub: Install 'devhub' command
+in PATH", the way VS Code's own "Shell Command: Install 'code' command in PATH"
+works. It writes nothing itself: it asks the running DevHub over the control
+socket in the app's user-data directory and shows the sentence that comes back.
+The socket is derived from the extension's global-storage path, so a scratch
+DevHub and a real one can never be confused, and no environment variable has to
+survive into the extension host.
 
-The manifest declares `capabilities.untrustedWorkspaces.supported: true` so
-the extension can activate in Restricted Mode. Official VS Code's
-`vscode-remote` workspace URI is accepted only after the Rust-owned registry
-confirms the canonical root. DevHub does not redistribute the official VS
-Code application or auto-accept its Server license.
+`activationEvents` is `onCommand:devhub.installCli` and nothing wider. The
+contributed defaults are read from the manifest and need no activation at all,
+so there is nothing left that has to run before somebody asks for it.
 
-## Web Workbench smoke command
+## What used to be here
 
-The pure controller, registry, and RFC6455 tests run with:
+A websocket transport to a DevHub-hosted Bridge endpoint — an RFC6455 frame
+codec, a session ledger over a generated v1 contract, a reconnecting
+controller, an owner-written surface registry, a URI-handler navigation
+grammar, and a fault union to report all of it. That belonged to the web era,
+when DevHub served a Web Workbench and injected `DEVHUB_BRIDGE_ENDPOINT`,
+`DEVHUB_BRIDGE_TOKEN` and `DEVHUB_BRIDGE_SURFACE_REGISTRY` into it. The Electron
+app injects none of them, so none of it ever ran. It is deleted rather than
+kept as a branch that is always taken the same way.
+
+## Checks
 
 ```sh
-CI=true pnpm --filter @devhub/bridge check
+pnpm --filter @devhub/bridge check
 ```
 
-On the pinned Darwin arm64 OpenVSCode artifact, or a user-installed official
-VS Code CLI via `code serve-web`, run the real extension-host activation lane
-with the inherited endpoint/token/registry environment:
-
-```sh
-DEVHUB_BRIDGE_ENDPOINT='ws://127.0.0.1:<host-port>/bridge' \
-DEVHUB_BRIDGE_TOKEN='<ephemeral-token>' \
-DEVHUB_BRIDGE_SURFACE_REGISTRY='/absolute/path/surface-registry.json' \
-/absolute/path/openvscode-server \
-  --host 127.0.0.1 --port <workbench-port> \
-  --install-extension /absolute/path/build/devhub-bridge-0.1.0.vsix
-```
-
-The E3.4 host harness must assert activation/hello, dirty-state changes,
-folder and global new-window requests, endpoint loss/reconnect, and a fresh
-`workbench_instance_id` after extension-host restart. The extension package
-itself never starts or supervises OpenVSCode.
+builds the extension, typechecks it, runs the tests, runs the static checks
+above, packages the VSIX and verifies the VSIX is byte-for-byte reproducible.

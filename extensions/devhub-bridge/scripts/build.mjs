@@ -9,7 +9,7 @@ await mkdir(out, { recursive: true });
 
 await build({
   absWorkingDir: root,
-  entryPoints: ["src/extension.ts", "src/session.ts"],
+  entryPoints: ["src/extension.ts"],
   bundle: true,
   platform: "node",
   format: "cjs",
