@@ -29,7 +29,10 @@ import { SidebarHeader } from "./SidebarHeader";
 import { StatusMark } from "./StatusMark";
 import { statusLabel } from "./status";
 import { mergeExitingRows, useClosingExit } from "./closingExit";
-import { closeDiagnosticLabel } from "../shell/diagnosticLabel";
+import {
+  closeDiagnosticLabel,
+  closeFailureLabel,
+} from "../shell/diagnosticLabel";
 
 function runtimeHealthLabel(health: AgentSnapshot["runtimeHealth"]): string {
   switch (health) {
@@ -117,12 +120,14 @@ function WorkspaceRow({
   );
 
   // A Workspace on its way out takes no instructions. This is the view half
-  // of a state the model already enforces — `closing` refuses the operations
-  // underneath anyway — and it is here so that the refusal is never something
-  // a person has to run into: the row goes quiet at the same moment it stops
-  // being able to answer. It covers the Agents as well as the Workspace
-  // because they are going with it.
-  const closing = workspace.state.kind === "closing";
+  // of a fact the model already enforces — a close that is running refuses the
+  // operations underneath anyway — and it is here so that the refusal is never
+  // something a person has to run into: the row goes quiet at the same moment
+  // it stops being able to answer. It covers the Agents as well as the
+  // Workspace because they are going with it.
+  const closing = workspace.close.kind === "running";
+  const closeFailed =
+    workspace.close.kind === "failed" ? workspace.close : undefined;
 
   // What the close button is about to do, read from the same rule main uses to
   // decide it (`closingDeletesWorktree`). A second copy of the rule here is how
@@ -170,8 +175,8 @@ function WorkspaceRow({
             // is what a sighted reader sees and this is the same statement
             // for everyone else.
             aria-label={`${workspace.label} workspace, path ${workspace.root}${
-              workspace.state.kind === "closing-failed"
-                ? `, close failed: ${closeDiagnosticLabel(workspace.state.diagnostic)}`
+              closeFailed
+                ? `, close failed: ${closeFailureLabel(closeFailed.step, closeFailed.diagnostic)}`
                 : ""
             }`}
             title={workspace.root}
@@ -217,7 +222,7 @@ function WorkspaceRow({
             closing deletes the folder (`closingDeletesWorktree`). The ellipsis
             is the rest of that promise: a question may follow, and does
             whenever there is anything in the folder to lose. */}
-          {workspace.state.kind !== "closing" && (
+          {!closing && (
             <button
               className="row-action-button"
               type="button"
@@ -227,7 +232,7 @@ function WorkspaceRow({
                   : `Close ${workspace.label}`
               }
               title={
-                workspace.state.kind === "closing-failed"
+                closeFailed
                   ? "Retry close"
                   : deletesWorktree
                     ? "Close worktree…"

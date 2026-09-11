@@ -13,7 +13,7 @@ import { readFileSync } from "node:fs";
 import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { AppSnapshot, WorkspaceStateWire } from "../../../ipc/appShell";
+import type { AppSnapshot, WorkspaceCloseWire } from "../../../ipc/appShell";
 import type { RepositoryStatusWire } from "../../client";
 import type { AppShellContextValue } from "../../useAppShell";
 import { AppShellContext } from "../../useAppShell";
@@ -50,6 +50,7 @@ const SNAPSHOT = {
       root: "/projects/widget",
       selectedPath: "/projects/widget",
       state: { kind: "available" },
+      close: { kind: "idle" },
       canCreateAgent: true,
       agents: [],
     },
@@ -59,7 +60,7 @@ const SNAPSHOT = {
 function mount(
   repositoryStatus: RepositoryStatusWire,
   /** The workspace's own state, for the one test that is about a failed close. */
-  workspaceState: WorkspaceStateWire = { kind: "available" },
+  workspaceClose: WorkspaceCloseWire = { kind: "idle" },
 ) {
   const openExternalUrl = vi.fn();
   const answerWorktreeClose = vi.fn(() => Promise.resolve({}));
@@ -80,7 +81,7 @@ function mount(
     ...SNAPSHOT,
     workspaces: SNAPSHOT.workspaces.map((workspace) => ({
       ...workspace,
-      state: workspaceState,
+      close: workspaceClose,
     })),
   } as unknown as AppSnapshot;
   render(
@@ -513,13 +514,9 @@ describe("a workspace row, continued", () => {
       // pane did not: whether a retry went past the worktree rule depended on
       // which control you happened to press.
       const { closeWorkspace, onDispatch } = mount(worktree(false), {
-        kind: "closing-failed",
+        kind: "failed",
+        step: "terminal",
         diagnostic: "cleanup_failed",
-        progress: {
-          agentsStep: { kind: "pending" },
-          terminalClosed: false,
-          editorClosed: false,
-        },
       });
       fireEvent.click(close() as HTMLElement);
       expect(closeWorkspace).toHaveBeenCalledWith("w-1");

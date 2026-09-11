@@ -20,7 +20,7 @@ import type { ContentSurfaceWire } from "../../../ipc/contract";
 import { useAppShell } from "../../useAppShell";
 import { devhub } from "../../client";
 import { runningAgentSurfaces } from "./surfacePool";
-import { closeDiagnosticLabel } from "./diagnosticLabel";
+import { closeDiagnosticLabel, closeFailureLabel } from "./diagnosticLabel";
 import { Failure, Waiting } from "./SurfaceState";
 import { useRestartingEditors } from "./workbenchDialogs";
 import { TerminalSurface } from "../../terminal/TerminalSurface";
@@ -232,18 +232,20 @@ export function Unavailable({
     return <Failure summary="The selected context is no longer available." />;
   }
   const state = workspace.state;
-  if (state.kind === "closing") {
+  const close = workspace.close;
+  if (close.kind === "running") {
     return <Waiting label="Closing the workspace…" />;
   }
-  const closeFailed = state.kind === "closing-failed";
-  // The reason is the state's own, not a field beside it: an `available`
-  // workspace has no diagnostic to read and a failed close always has one.
-  const diagnostic =
-    state.kind === "closing-failed"
-      ? state.diagnostic
+  // Two facts, not one: a folder that has gone missing and a close that
+  // stopped are independent, and either used to overwrite the other. The
+  // close is the newer news, so it is what the pane leads with.
+  const closeFailed = close.kind === "failed";
+  const detail =
+    close.kind === "failed"
+      ? closeFailureLabel(close.step, close.diagnostic)
       : state.kind === "unavailable"
-        ? state.reason
-        : undefined;
+        ? closeDiagnosticLabel(state.reason)
+        : workspace.root;
   return (
     <Failure
       summary={
@@ -251,7 +253,7 @@ export function Unavailable({
           ? "This Workspace could not be closed."
           : "This workspace is unavailable."
       }
-      detail={diagnostic ? closeDiagnosticLabel(diagnostic) : workspace.root}
+      detail={detail}
       /**
        * A failed close is answered where it is read. It used to say "retry
        * close from the Sidebar" and offer nothing: the pane a person was

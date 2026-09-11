@@ -21,7 +21,11 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { AppSnapshot, WorkspaceStateWire } from "../../../ipc/appShell";
+import type {
+  AppSnapshot,
+  WorkspaceCloseWire,
+  WorkspaceStateWire,
+} from "../../../ipc/appShell";
 import type { AppShellContextValue } from "../../useAppShell";
 import { AppShellContext } from "../../useAppShell";
 import { Sidebar } from "../sidebar/Sidebar";
@@ -34,22 +38,29 @@ window.devhub = {
 
 const WORKSPACE_ID = "w-1";
 
-const CLOSING_FAILED: WorkspaceStateWire = {
-  kind: "closing-failed",
-  diagnostic: "close_editor_vetoed",
-  progress: {
-    agentsStep: { kind: "pending" },
-    terminalClosed: false,
-    editorClosed: false,
+const OPEN: Row = { state: { kind: "available" }, close: { kind: "idle" } };
+
+const CLOSE_FAILED: Row = {
+  state: { kind: "available" },
+  close: {
+    kind: "failed",
+    step: "editor",
+    diagnostic: "close_editor_vetoed",
   },
 };
 
-const UNAVAILABLE: WorkspaceStateWire = {
-  kind: "unavailable",
-  reason: "root_missing",
+const UNAVAILABLE: Row = {
+  state: { kind: "unavailable", reason: "root_missing" },
+  close: { kind: "idle" },
 };
 
-function snapshotWith(state: WorkspaceStateWire): AppSnapshot {
+/** The two facts a workspace row is drawn from. See `WorkspaceWire`. */
+interface Row {
+  readonly state: WorkspaceStateWire;
+  readonly close: WorkspaceCloseWire;
+}
+
+function snapshotWith(row: Row): AppSnapshot {
   return {
     schemaVersion: 1,
     revision: 1,
@@ -68,8 +79,10 @@ function snapshotWith(state: WorkspaceStateWire): AppSnapshot {
         label: "widget",
         root: "/projects/widget",
         selectedPath: "/projects/widget",
-        state,
-        canCreateAgent: state.kind === "available",
+        state: row.state,
+        close: row.close,
+        canCreateAgent:
+          row.state.kind === "available" && row.close.kind !== "running",
         agents: [],
       },
     ],
@@ -85,7 +98,7 @@ function snapshotWith(state: WorkspaceStateWire): AppSnapshot {
  * button makes. What the viewport hands it is `closeWorkspace`, main's one
  * close — the same function the Sidebar is given here.
  */
-function mount(where: "sidebar" | "surface", state: WorkspaceStateWire) {
+function mount(where: "sidebar" | "surface", row: Row) {
   const closeWorkspace = vi.fn();
   const dispatch = vi.fn(async () => undefined);
   const onDispatch = vi.fn();
@@ -98,17 +111,17 @@ function mount(where: "sidebar" | "surface", state: WorkspaceStateWire) {
     chooseWorkspaceFolder: vi.fn(),
     agentProfiles: { sequence: 1, availability: "available", profiles: [] },
     repositoryStatus: { sequence: 1, workspaces: [] },
-    state: { status: "ready", snapshot: snapshotWith(state) },
+    state: { status: "ready", snapshot: snapshotWith(row) },
   } as unknown as AppShellContextValue;
   render(
     <AppShellContext.Provider value={value}>
       {where === "sidebar" ? (
-        <Sidebar snapshot={snapshotWith(state)} onDispatch={onDispatch} />
+        <Sidebar snapshot={snapshotWith(row)} onDispatch={onDispatch} />
       ) : (
         <Unavailable
-          workspace={snapshotWith(state).workspaces[0]}
+          workspace={snapshotWith(row).workspaces[0]}
           actions={
-            state.kind === "unavailable"
+            row.state.kind === "unavailable"
               ? [
                   {
                     label: "Close",
@@ -145,14 +158,14 @@ afterEach(cleanup);
 
 describe("closing a Workspace, from wherever it is asked for", () => {
   it("asks main's one close from the Sidebar's button", () => {
-    const mounted = mount("sidebar", { kind: "available" });
+    const mounted = mount("sidebar", OPEN);
     fireEvent.click(screen.getByRole("button", { name: /^Close widget$/ }));
     expect(mounted.closeWorkspace).toHaveBeenCalledWith(WORKSPACE_ID);
     expect(closesAsked(mounted)).toHaveLength(1);
   });
 
   it("asks the same close from the Sidebar when the last one failed", () => {
-    const mounted = mount("sidebar", CLOSING_FAILED);
+    const mounted = mount("sidebar", CLOSE_FAILED);
     fireEvent.click(screen.getByRole("button", { name: /^Close widget$/ }));
     expect(mounted.closeWorkspace).toHaveBeenCalledWith(WORKSPACE_ID);
     expect(closesAsked(mounted)).toHaveLength(1);
@@ -166,7 +179,7 @@ describe("closing a Workspace, from wherever it is asked for", () => {
   });
 
   it("asks the same close from the pane of a close that failed", () => {
-    const mounted = mount("surface", CLOSING_FAILED);
+    const mounted = mount("surface", CLOSE_FAILED);
     fireEvent.click(screen.getByRole("button", { name: "Close Workspace" }));
     expect(mounted.closeWorkspace).toHaveBeenCalledWith(WORKSPACE_ID);
     expect(closesAsked(mounted)).toHaveLength(1);

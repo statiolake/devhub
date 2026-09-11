@@ -57,6 +57,7 @@ function snapshotWithAgent(
         root: "/projects/widget",
         selectedPath: "/projects/widget",
         state: { kind: "available" },
+        close: { kind: "idle" },
         canCreateAgent: true,
         agents: [
           {

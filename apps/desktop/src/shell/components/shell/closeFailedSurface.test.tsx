@@ -15,24 +15,23 @@ import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
   CloseDiagnosticWire,
+  CloseStepWire,
   WorkspaceSnapshot,
 } from "../../../ipc/appShell";
 import { Unavailable } from "./SurfaceViewport";
 
-function closeFailed(diagnostic: CloseDiagnosticWire): WorkspaceSnapshot {
+function closeFailed(
+  diagnostic: CloseDiagnosticWire,
+  step: CloseStepWire = "editor",
+): WorkspaceSnapshot {
   return {
     id: "workspace-1",
     label: "example",
     root: "/example",
-    state: {
-      kind: "closing-failed",
-      diagnostic,
-      progress: {
-        agentsStep: { kind: "pending" },
-        terminalClosed: false,
-        editorClosed: false,
-      },
-    },
+    // Open, with a last-failure note. There is no third state: a Workspace is
+    // either in the list or gone.
+    state: { kind: "available" },
+    close: { kind: "failed", step, diagnostic },
     agents: [],
   } as unknown as WorkspaceSnapshot;
 }
@@ -77,5 +76,21 @@ describe("a workspace whose close failed", () => {
       />,
     );
     expect(screen.getByText(/had not finished starting/)).toBeInTheDocument();
+  });
+
+  it("names the step that stopped, not only the reason", () => {
+    // Every step reports the same handful of diagnostics, so "a cleanup step
+    // did not finish" on its own never said which one — and that is the half
+    // a person needs to know what to do next.
+    render(
+      <Unavailable
+        workspace={closeFailed("cleanup_failed", "worktree")}
+        actions={undefined}
+        onClose={() => undefined}
+      />,
+    );
+    expect(
+      screen.getByText(/removing the worktree folder/),
+    ).toBeInTheDocument();
   });
 });

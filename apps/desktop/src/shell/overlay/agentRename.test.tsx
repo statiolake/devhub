@@ -62,6 +62,7 @@ function snapshotWith(control: "running" | "stopping" | "gone"): AppSnapshot {
         root: "/tmp/folderA",
         selectedPath: "/tmp/folderA",
         state: { kind: "available" } as never,
+        close: { kind: "idle" } as never,
         canCreateAgent: true,
         agents:
           control === "gone"

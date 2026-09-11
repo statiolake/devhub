@@ -11,7 +11,7 @@
 import "@testing-library/jest-dom/vitest";
 import { act, cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { AppSnapshot, WorkspaceStateWire } from "../../../ipc/appShell";
+import type { AppSnapshot, WorkspaceCloseWire } from "../../../ipc/appShell";
 import type { RepositoryStatusWire } from "../../client";
 import type { AppShellContextValue } from "../../useAppShell";
 import { AppShellContext } from "../../useAppShell";
@@ -28,31 +28,26 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-const AVAILABLE: WorkspaceStateWire = { kind: "available" };
-const CLOSING: WorkspaceStateWire = {
-  kind: "closing",
-  progress: {
-    agentsStep: { kind: "pending" },
-    terminalClosed: false,
-    editorClosed: false,
-  },
-};
+const IDLE: WorkspaceCloseWire = { kind: "idle" };
+const CLOSING: WorkspaceCloseWire = { kind: "running" };
 
-function workspace(state: WorkspaceStateWire) {
+function workspace(close: WorkspaceCloseWire) {
   return {
     id: "w-1",
     label: "widget",
     root: "/projects/widget",
     selectedPath: "/projects/widget",
-    state,
-    // The model says a closing Workspace cannot take a new Agent. The row is
-    // given the truthful projection so the test exercises the real pairing.
-    canCreateAgent: state.kind === "available",
+    state: { kind: "available" },
+    close,
+    // The model says a Workspace whose close is running cannot take a new
+    // Agent. The row is given the truthful projection so the test exercises
+    // the real pairing.
+    canCreateAgent: close.kind !== "running",
     agents: [],
   };
 }
 
-function snapshotWith(state: WorkspaceStateWire): AppSnapshot {
+function snapshotWith(state: WorkspaceCloseWire): AppSnapshot {
   return {
     schemaVersion: 1,
     revision: 1,
@@ -136,7 +131,7 @@ describe("a closing workspace row", () => {
   it("still offers all of them while it is merely open", () => {
     // The negatives above are only worth anything if the controls are there to
     // be withdrawn in the first place.
-    mount(snapshotWith(AVAILABLE));
+    mount(snapshotWith(IDLE));
     expect(screen.getByRole("button", { name: /^Close/ })).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: /^Create agent/ }),
@@ -184,7 +179,7 @@ describe("the row's exit", () => {
   it("does not haunt a row that left without closing", () => {
     // Anything other than a close — a restore, a snapshot replaced wholesale —
     // must not play an exit animation for every row it drops.
-    const { rerender } = mount(snapshotWith(AVAILABLE));
+    const { rerender } = mount(snapshotWith(IDLE));
     act(() => {
       rerender(EMPTY);
     });
