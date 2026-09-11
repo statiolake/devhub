@@ -73,6 +73,12 @@ describe("the chord help", () => {
     expect(screen.getByText("Next unread Agent")).toBeInTheDocument();
     expect(screen.getByText("Previous unread Agent")).toBeInTheDocument();
     expect(screen.getByText("Cmd+q }")).toBeInTheDocument();
+    // The two chords that used to share `Shift+J`, now one key each.
+    expect(
+      screen.getByText("Switch between Scratch and where you were"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Cmd+q J")).toBeInTheDocument();
+    expect(screen.getByText("Cmd+q z")).toBeInTheDocument();
   });
 
   it("shows the keyboard the person has, not the one DevHub ships", () => {

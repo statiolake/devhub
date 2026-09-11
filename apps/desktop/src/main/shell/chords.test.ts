@@ -504,7 +504,7 @@ describe("the layout toggles", () => {
 
 	it("leaves the split to the half the keyboard was moved to", () => {
 		// `Cmd+J` in a split swaps the halves; the selection is the record of
-		// which one is in front, so `Shift+J` after it lands on that one.
+		// which one is in front, so `Z` after it lands on that one.
 		expect(
 			run(
 				"toggle_split",
@@ -532,6 +532,23 @@ describe("the layout toggles", () => {
 			),
 		).toBeUndefined();
 		expect(run("toggle_split", snapshotOf())).toBeUndefined();
+	});
+
+	it("asks the model for the jump to Scratch, from either end of it", () => {
+		// The chord layer has no memory and needs none: which selection to come
+		// back to is the model's, so both directions are the same one effect.
+		expect(
+			run(
+				"toggle_scratch",
+				snapshotOf({
+					workspaces: [two],
+					context: { kind: "agent", agentId: "b1" },
+				}),
+			),
+		).toEqual({ kind: "toggle-scratch" });
+		expect(run("toggle_scratch", snapshotOf())).toEqual({
+			kind: "toggle-scratch",
+		});
 	});
 
 	it("moves the keyboard to the other pane of a split, and nowhere else", () => {

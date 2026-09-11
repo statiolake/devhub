@@ -74,16 +74,16 @@ describe("the registry itself", () => {
     }
   });
 
-  it("reaches the split toggle from both of the habits that want it", () => {
-    // `Z` is the multiplexer's `zoom`; `Shift+J` is the split's own key, on the
-    // physical key `Cmd+J` already uses for the other question about the split.
-    expect(commandById("toggle_split")?.defaultKeys).toEqual(["z", "J"]);
+  it("puts one command on each of the three strokes about the other thing", () => {
+    // `Z` is the multiplexer's `zoom`, so the split keeps it and gives up the
+    // second key it had. That frees the physical J for two commands rather
+    // than three: Command steps between the halves of a split, Shift steps out
+    // to Scratch and back.
+    expect(commandById("toggle_split")?.defaultKeys).toEqual(["z"]);
+    expect(commandById("toggle_scratch")?.defaultKeys).toEqual(["J"]);
     const bindings = defaultBindings();
-    for (const key of ["z", "J"]) {
-      expect(commandFor(bindings, key), key).toBe("toggle_split");
-    }
-    // The Command-held stroke on the same letter is a different stroke, and it
-    // is still the other command.
+    expect(commandFor(bindings, "z")).toBe("toggle_split");
+    expect(commandFor(bindings, "J")).toBe("toggle_scratch");
     expect(commandFor(bindings, "Cmd+j")).toBe("toggle_workspace_agent");
   });
 

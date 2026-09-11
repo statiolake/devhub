@@ -522,6 +522,9 @@ export class AppCoordinator {
       case "swap_split_focus":
         this.model.swapSplitFocus();
         return this.transitionOutcome(beforeRevision, id);
+      case "toggle_scratch":
+        this.model.toggleScratch();
+        return this.transitionOutcome(beforeRevision, id);
       case "resize_split":
         this.model.setSplitRatio(intent.ratio);
         return this.transitionOutcome(beforeRevision, id);

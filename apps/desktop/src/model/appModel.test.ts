@@ -185,6 +185,76 @@ describe("layout resolution", () => {
     });
   });
 
+  it("jumps to Scratch and comes back to the whole selection it left", () => {
+    const model = modelWith([WS_A, "/dev/a"]);
+    model.addAgent(WS_A, AG_A, codex);
+    model.selectContext({ kind: "workspace", workspaceId: WS_A });
+    model.toggleScratch();
+    expect(model.snapshot().selection).toEqual({
+      context: { kind: "global" },
+      presentation: "full",
+    });
+    model.toggleScratch();
+    expect(model.snapshot().selection).toEqual({
+      context: { kind: "workspace", workspaceId: WS_A },
+      presentation: "full",
+    });
+  });
+
+  it("comes back to an Agent, and to one that was side by side, as it was", () => {
+    const model = modelWith([WS_A, "/dev/a"]);
+    model.addAgent(WS_A, AG_A, codex);
+    model.selectContext({ kind: "agent", agentId: AG_A });
+    model.toggleScratch();
+    model.toggleScratch();
+    expect(model.snapshot().selection).toEqual({
+      context: { kind: "agent", agentId: AG_A },
+      presentation: "full",
+    });
+    // The presentation is half of "where you were": an Agent left beside its
+    // editor comes back beside it, not alone on top of it.
+    model.selectContext({ kind: "agent", agentId: AG_A }, "beside");
+    model.toggleScratch();
+    model.toggleScratch();
+    expect(model.snapshot().selection).toEqual({
+      context: { kind: "agent", agentId: AG_A },
+      presentation: "beside",
+    });
+  });
+
+  it("stays on Scratch when the way back has been closed, or was never there", () => {
+    const model = modelWith([WS_A, "/dev/a"]);
+    model.selectContext({ kind: "workspace", workspaceId: WS_A });
+    model.toggleScratch();
+    model.closeWorkspace(WS_A, CLEAN_CLOSE_INSPECTION);
+    model.toggleScratch();
+    expect(model.snapshot().selection.context).toEqual({ kind: "global" });
+    // And nothing remembered at all — a fresh model, which is also what a
+    // restart is.
+    const fresh = new AppModel();
+    fresh.toggleScratch();
+    expect(fresh.snapshot().selection).toEqual({
+      context: { kind: "global" },
+      presentation: "full",
+    });
+  });
+
+  it("remembers where the jump out started, not the last thing selected", () => {
+    const model = modelWith([WS_A, "/dev/a"], [WS_B, "/dev/b"]);
+    model.selectContext({ kind: "workspace", workspaceId: WS_A });
+    model.toggleScratch();
+    // Wandering by ordinary selections and ending up back on Scratch does not
+    // move the way out: it is written by the jump and by nothing else, so the
+    // chord still comes back to where the jump started.
+    model.selectContext({ kind: "workspace", workspaceId: WS_B });
+    model.selectContext({ kind: "global" });
+    model.toggleScratch();
+    expect(model.snapshot().selection.context).toEqual({
+      kind: "workspace",
+      workspaceId: WS_A,
+    });
+  });
+
   it("re-selecting the same Agent a different way moves the layout", () => {
     const model = modelWith([WS_A, "/dev/a"]);
     model.addAgent(WS_A, AG_A, codex);

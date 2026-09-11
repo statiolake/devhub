@@ -209,6 +209,14 @@ export type UserIntent =
    * something the model already knows. Outside a split it does nothing.
    */
   | { readonly type: "swap_split_focus" }
+  /**
+   * Scratch, and back again.
+   *
+   * Raised by the shell, never by the page — `Cmd+Q Shift+J` — and it carries
+   * nothing: where to come back to is the one selection the model wrote down
+   * the last time this intent jumped out of one.
+   */
+  | { readonly type: "toggle_scratch" }
   | { readonly type: "resize_sidebar"; readonly width: number }
   | { readonly type: "resize_split"; readonly ratio: number }
   | { readonly type: "open_folder"; readonly path: RequestedPath }

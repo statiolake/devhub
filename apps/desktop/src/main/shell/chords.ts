@@ -133,6 +133,15 @@ export type ChordEffect =
 	  }
 	/** Side by side already: move the keyboard rather than the selection. */
 	| { readonly kind: "swap-split-focus" }
+	/**
+	 * Out to Scratch, or back to wherever the jump out started.
+	 *
+	 * The one effect that carries no target: which selection to come back to is
+	 * a thing only the model remembers, because it is written down by this
+	 * command and by nothing else, and a snapshot of what is on screen cannot
+	 * say where somebody was before it.
+	 */
+	| { readonly kind: "toggle-scratch" }
 	| { readonly kind: "open-workspace-picker" }
 	| { readonly kind: "open-tab-picker" }
 	| { readonly kind: "open-agent-picker"; readonly workspaceId: string }
@@ -359,6 +368,12 @@ export function resolveChord(
 		case "swap_split_focus":
 			// `needs: "split"` has already answered "is there another pane".
 			return { kind: "swap-split-focus" };
+
+		case "toggle_scratch":
+			// Both directions, unconditionally: the model holds the memory this
+			// turns on, so there is nothing here to decide and nothing to gate
+			// on. On Scratch with nothing remembered it is a no-op there.
+			return { kind: "toggle-scratch" };
 
 		case "toggle_split": {
 			// Both halves of one pair, side by side — the twin of

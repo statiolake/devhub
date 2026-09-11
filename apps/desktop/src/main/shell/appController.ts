@@ -644,6 +644,11 @@ export class AppController {
 			swapSplitFocus: () => {
 				this.swapSplitFocus();
 			},
+			toggleScratch: () => {
+				// A selection change like any other, so it needs nothing the
+				// ordinary `select_context` path does not already do.
+				this.dispatchOwn({ type: "toggle_scratch" });
+			},
 			openWorkspacePicker: () => {
 				this.send(CHANNELS.menuCommand, "open_workspace_picker");
 			},
@@ -738,7 +743,7 @@ export class AppController {
 	 * keyboard in a different one — so the swap is a change to the model and
 	 * not a boolean kept out here. It used to be that boolean, which meant two
 	 * answers to "which half am I in": this one, which started on the editor
-	 * whatever had been selected, and the selection, which `Cmd+Q Shift+J` has
+	 * whatever had been selected, and the selection, which `Cmd+Q Z` has
 	 * to read to know which half to leave the split to.
 	 *
 	 * The Agent's pane is drawn by the App Shell page and the workbench is a

@@ -100,6 +100,7 @@ function host() {
 		snapshot: () => SNAPSHOT,
 		selectContext: record("selectContext"),
 		swapSplitFocus: record("swapSplitFocus"),
+		toggleScratch: record("toggleScratch"),
 		openWorkspacePicker: record("openWorkspacePicker"),
 		openTabPicker: record("openTabPicker"),
 		openAgentPicker: record("openAgentPicker"),

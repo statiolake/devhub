@@ -59,6 +59,8 @@ export interface ChordHost {
 	): void;
 	/** Side by side: move the keyboard between the editor and the Agent. */
 	swapSplitFocus(): void;
+	/** Jump out to Scratch, or back to where the jump out started. */
+	toggleScratch(): void;
 	openWorkspacePicker(): void;
 	/** Every workspace and Agent, as a list to choose from. */
 	openTabPicker(): void;
@@ -111,6 +113,9 @@ function perform(host: ChordHost, effect: ChordEffect): void {
 			return;
 		case "swap-split-focus":
 			host.swapSplitFocus();
+			return;
+		case "toggle-scratch":
+			host.toggleScratch();
 			return;
 		case "open-workspace-picker":
 			host.openWorkspacePicker();

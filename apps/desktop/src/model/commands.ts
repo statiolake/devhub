@@ -46,7 +46,8 @@
  * | `Cmd+Q G`                   | `open_tab_picker`         |
  * | `Cmd+Q 1`…`9`               | `select_entry_1`…`9`      |
  * | `Cmd+Q Cmd+J`               | `toggle_workspace_agent`  |
- * | `Cmd+Q Z` / `Shift+J`       | `toggle_split`            |
+ * | `Cmd+Q Z`                   | `toggle_split`            |
+ * | `Cmd+Q Shift+J`             | `toggle_scratch`          |
  * | `Cmd+Q O`                   | `swap_split_focus`        |
  * | `Cmd+Q E`                   | `focus_editor`            |
  * | `Cmd+Q F`                   | `add_workspace`           |
@@ -99,21 +100,21 @@
  * workbench — the same two gestures the workspace picker has, because they mean
  * the same two things.
  *
- * **`Cmd+Q Cmd+J` and `Cmd+Q Shift+J` are twins.** Both are about one pair —
+ * **`Cmd+Q Cmd+J` and `Cmd+Q Z` are twins.** Both are about one pair —
  * a workspace and its Agent: the one you were last in *in that workspace*, or
  * its first Agent if you have not been in any (`pairedAgentId`, the single rule
  * both read). The last one is a fact the model keeps and writes down, because
  * "the Agent I was in" is per workspace, survives a restart, and there is no
  * other way back to it. They differ only in *how* they show the pair: `Cmd+J`
- * **switches** — one of the two, full width — and `Shift+J` **splits** — both
- * of them, side by side. A workspace with no Agents has no pair, so both are
+ * **switches** — one of the two, full width — and `Z` **splits** — both of
+ * them, side by side. A workspace with no Agents has no pair, so both are
  * no-ops there.
  *
  * Side by side, both halves are already on screen, so `Cmd+J` has nothing to
  * select and moves the keyboard between them instead — the same thing
  * `Cmd+Q O` does, so in a split the two keys reach one effect.
  *
- * **`Cmd+Q Shift+J` leaves the split the way it came in.** Entering it from the
+ * **`Cmd+Q Z` leaves the split the way it came in.** Entering it from the
  * editor leaves to the editor; entering it from the Agent leaves to the Agent;
  * and if the keyboard was moved to the other half while the split stood, that
  * is the half it leaves to. One rule, because there is one fact: the half in
@@ -134,13 +135,28 @@
  * second notion of "maximised" the layout would then have to reconcile with the
  * one it has.
  *
- * **`Shift+J` is the same command under the hand that is already there.** The
- * two chords about the split — `Cmd+J`, which moves between the two halves, and
- * this one, which decides whether there are two — sit on one physical key that
- * way, and which of them you get is the modifier: Command steps, Shift changes
- * the arrangement. `Cmd+Q Cmd+J` is a stroke with Command held and `Cmd+Q J` is
- * the bare one, so the pair takes nothing away from each other and `Z` keeps
- * working for the hand that learned it from the multiplexer.
+ * **`Cmd+Q Shift+J` is the way back out of Scratch.** Scratch is where the
+ * global terminal is, and what a person does with it is *leave what they were
+ * doing, use it, and come back* — which is one gesture, not two, and the second
+ * half of it is the half no other chord can do: `Cmd+Q 1` gets you there, and
+ * nothing gets you back except remembering which of nine rows you were on.
+ * So this chord is the pair of jumps under one key, and the thing it remembers
+ * is exactly one selection — where you were *when you jumped*, context and
+ * presentation both, so an Agent left side by side comes back side by side.
+ *
+ * It is written down by this command and by nothing else. "Where you were" is
+ * not "the previous selection": a chord that followed every selection change
+ * would come back to whatever you last clicked on the way to Scratch, which is
+ * not what you left. It is kept in memory only — after a restart there is
+ * nothing to come back to, and the chord is a no-op on Scratch, like every
+ * other chord with nothing to act on. So is a jump back to a workspace or an
+ * Agent that has been closed in the meantime: the way out has gone, and
+ * inventing another one would land you somewhere you never were.
+ *
+ * The key is the one `toggle_split` gave up. Three chords about "the other
+ * thing" on one physical J — Command steps between the halves of a split, and
+ * Shift steps out to Scratch and back — with `Z` left holding the split alone,
+ * where the hand that learned it from the multiplexer already reaches for it.
  *
  * **`Cmd+Q X` closes what is selected, and `Cmd+Q Shift+W` closes the
  * workspace.** They are the same command on a workspace row on purpose: there
@@ -248,6 +264,7 @@ export type CommandId =
   | "open_tab_picker"
   | "toggle_workspace_agent"
   | "toggle_split"
+  | "toggle_scratch"
   | "focus_editor"
   | "add_workspace"
   | "add_agent"
@@ -389,7 +406,15 @@ export const COMMANDS: readonly CommandDefinition[] = [
     id: "toggle_split",
     label: "Show the Agent beside the editor, or alone",
     needs: "workspace",
-    defaultKeys: ["z", "J"],
+    defaultKeys: ["z"],
+  },
+  {
+    // The jump out and the jump back, under one key. The selection it comes
+    // back to is remembered by this command and by nothing else.
+    id: "toggle_scratch",
+    label: "Switch between Scratch and where you were",
+    needs: "nothing",
+    defaultKeys: ["J"],
   },
   {
     id: "swap_split_focus",

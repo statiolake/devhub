@@ -114,7 +114,7 @@ export interface AgentPairSource<Id extends string> {
  * The Agent a workspace is paired with: the one it was last in, else its first.
  *
  * The one answer to "this workspace's other half", shared by everything that
- * asks it — `Cmd+Q Cmd+J`, which switches to it, `Cmd+Q Shift+J`, which puts it
+ * asks it — `Cmd+Q Cmd+J`, which switches to it, `Cmd+Q Z`, which puts it
  * beside the editor, and the layout, which has to know what the split's second
  * pane holds. A workspace with no Agents has no other half, and every one of
  * those callers is a no-op there.
@@ -279,6 +279,23 @@ export class AppModel {
    * there?" — perfectly well.
    */
   private readonly lastAgentByWorkspace = new Map<WorkspaceId, AgentId>();
+  /**
+   * Where `toggle_scratch` (`Cmd+Q Shift+J`) jumped out of, whole.
+   *
+   * The selection, not the context: an Agent left side by side with its editor
+   * has to come back side by side, and the presentation is the half of that
+   * fact the context does not carry.
+   *
+   * Written by `toggleScratch` and by nothing else. "Where you were" means
+   * where you were *when you jumped* — a memory kept in step with every
+   * selection change would come back to whatever was clicked on the way to
+   * Scratch, which is not somewhere anybody left.
+   *
+   * In memory only, and deliberately: it is one gesture's undo, not a fact
+   * about the workspace, so after a restart there is nothing to come back to
+   * and the chord is a no-op until the next jump out.
+   */
+  private scratchReturn: NavigationSelection | undefined;
   private splitRatioValue = SPLIT_DEFAULT_RATIO;
   private editorHost: EditorHostState = { kind: "starting" };
   private revision = 0;
@@ -724,7 +741,7 @@ export class AppModel {
    * `beside` names a split, and a split has two halves that can each be the
    * one in front: the Agent, and the workspace's editor. So a workspace
    * selection carries it too — that is how "the editor half of the split is
-   * what I am in" is written down, and it is the same fact `Cmd+Q Shift+J`
+   * what I am in" is written down, and it is the same fact `Cmd+Q Z`
    * reads to know which half to leave the split to.
    *
    * Anything with no other half to be beside is recorded as `full` whatever
@@ -763,6 +780,32 @@ export class AppModel {
     if (moved || read) {
       this.bumpRevision();
     }
+  }
+
+  /**
+   * Scratch, and back again.
+   *
+   * Off Scratch it writes down the whole selection and goes there; on Scratch
+   * it goes back to what it wrote down. The way back is used once and then
+   * forgotten, so a second jump out is what decides where the next jump back
+   * lands.
+   *
+   * A remembered workspace or Agent that has been closed in the meantime is
+   * not replaced by a guess: the way out has gone, the selection stays on
+   * Scratch, and the chord is a no-op — which is what it is with nothing
+   * remembered at all, and what it is after a restart.
+   */
+  toggleScratch(): void {
+    if (this.selectionValue.context.kind !== "global") {
+      this.scratchReturn = this.selectionValue;
+      this.selectContext(GLOBAL_CONTEXT);
+      return;
+    }
+    const back = this.scratchReturn;
+    if (back === undefined) return;
+    this.scratchReturn = undefined;
+    if (!this.contextExists(back.context)) return;
+    this.selectContext(back.context, back.presentation);
   }
 
   /**
@@ -1062,13 +1105,24 @@ export class AppModel {
     return workspace;
   }
 
+  /** Whether this context still names something. `selectContext`'s gate, asked. */
+  private contextExists(context: NavigationContext): boolean {
+    if (context.kind === "workspace") {
+      return this.workspace(context.workspaceId) !== undefined;
+    }
+    if (context.kind === "agent") {
+      return this.agent(context.agentId) !== undefined;
+    }
+    return true;
+  }
+
   private ensureContextExists(context: NavigationContext): void {
-    if (context.kind === "workspace" && !this.workspace(context.workspaceId)) {
-      fail(DomainErrorCode.UnknownWorkspace);
-    }
-    if (context.kind === "agent" && !this.agent(context.agentId)) {
-      fail(DomainErrorCode.UnknownAgent);
-    }
+    if (this.contextExists(context)) return;
+    fail(
+      context.kind === "workspace"
+        ? DomainErrorCode.UnknownWorkspace
+        : DomainErrorCode.UnknownAgent,
+    );
   }
 
   private findAgentPosition(id: AgentId): {
