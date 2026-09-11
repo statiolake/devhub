@@ -66,6 +66,28 @@ function watching(): { watcher: HeadWatcher; changes: () => number } {
 	return { watcher, changes: () => changes };
 }
 
+/**
+ * A count of the changes this case caused, and nothing else.
+ *
+ * A repository made moments ago is still delivering its own creation events —
+ * macOS hands them over a few hundred milliseconds late — and they reach a
+ * watcher armed on it exactly as a checkout would. So every case waits out the
+ * ceiling once the watcher is armed and takes whatever has arrived by then as
+ * its zero.
+ *
+ * Every case, not only the ones asserting silence. A case asserting silence
+ * fails on somebody else's event, which is the loud way to get this wrong; a
+ * case asserting that a checkout was noticed *passes* on somebody else's event,
+ * which is the quiet way, and leaves a watcher that notices nothing looking
+ * fine. One rule for both: after the settle, a change is a change this case
+ * caused.
+ */
+async function settled(changes: () => number): Promise<() => number> {
+	await new Promise((resolve) => setTimeout(resolve, HEAD_DEBOUNCE_CEILING_MS));
+	const before = changes();
+	return () => changes() - before;
+}
+
 /** Wait for a condition the filesystem will reach, or say it never did. */
 async function until(
 	what: string,
@@ -80,93 +102,127 @@ async function until(
 	throw new Error(`${what} did not happen within ${String(budgetMs)}ms`);
 }
 
+/**
+ * How long one case may take.
+ *
+ * A case is a settle, a handful of `git` runs, and then up to `until`'s budget
+ * of waiting — and vitest's default is five seconds, which is `until`'s budget
+ * exactly. That arrangement can only fail one way: vitest gives up first, and
+ * the sentence naming what did not happen is never printed. So the ceiling
+ * here is the budget with room around it.
+ *
+ * Measured under four spinning CPUs: the git setup of the heaviest case (a
+ * clone plus a linked worktree) took 60–130 ms, and the checkout was noticed
+ * 330–390 ms after the case began. The room is for a machine slower than this
+ * one, not for this one.
+ */
+const CASE_TIMEOUT_MS = HEAD_DEBOUNCE_CEILING_MS * 10;
+
 describe("watching for a checkout", () => {
-	it("notices `git checkout -b` in an ordinary clone", async () => {
-		const root = repository();
-		const { watcher, changes } = watching();
-		await watcher.arm([{ key: "w-1", worktree: root }]);
-		expect(watcher.failures()).toEqual([]);
-		expect(watcher.armedCount).toBe(1);
+	it(
+		"notices `git checkout -b` in an ordinary clone",
+		async () => {
+			const root = repository();
+			const { watcher, changes } = watching();
+			await watcher.arm([{ key: "w-1", worktree: root }]);
+			expect(watcher.failures()).toEqual([]);
+			expect(watcher.armedCount).toBe(1);
+			const since = await settled(changes);
 
-		git(root, "checkout", "-q", "-b", "spike/rework");
-		await until("the checkout was noticed", () => changes() > 0);
-	});
+			git(root, "checkout", "-q", "-b", "spike/rework");
+			await until("the checkout was noticed", () => since() > 0);
+		},
+		CASE_TIMEOUT_MS,
+	);
 
-	it("notices a checkout in a linked worktree, not the main one's", async () => {
-		const root = repository();
-		const linked = join(root, "..", `${root.split("/").pop() ?? ""}-wt`);
-		cleanups.push(() => {
-			rmSync(linked, { recursive: true, force: true });
-		});
-		git(root, "worktree", "add", "-q", "-b", "side", linked);
+	it(
+		"notices a checkout in a linked worktree, not the main one's",
+		async () => {
+			const root = repository();
+			const linked = join(root, "..", `${root.split("/").pop() ?? ""}-wt`);
+			cleanups.push(() => {
+				rmSync(linked, { recursive: true, force: true });
+			});
+			git(root, "worktree", "add", "-q", "-b", "side", linked);
 
-		const { watcher, changes } = watching();
-		await watcher.arm([{ key: "w-1", worktree: linked }]);
-		expect(watcher.failures()).toEqual([]);
+			const { watcher, changes } = watching();
+			await watcher.arm([{ key: "w-1", worktree: linked }]);
+			expect(watcher.failures()).toEqual([]);
+			const since = await settled(changes);
 
-		// The linked worktree's `HEAD` lives under the main repository's
-		// `.git/worktrees/<name>`, which is what `gitDirectoryOf` resolves and
-		// the only place this checkout is written.
-		expect(await gitDirectoryOf(linked)).toContain("worktrees");
-		git(linked, "checkout", "-q", "-b", "side-two");
-		await until("the worktree's checkout was noticed", () => changes() > 0);
-	});
+			// The linked worktree's `HEAD` lives under the main repository's
+			// `.git/worktrees/<name>`, which is what `gitDirectoryOf` resolves and
+			// the only place this checkout is written.
+			expect(await gitDirectoryOf(linked)).toContain("worktrees");
+			git(linked, "checkout", "-q", "-b", "side-two");
+			await until("the worktree's checkout was noticed", () => since() > 0);
+		},
+		CASE_TIMEOUT_MS,
+	);
 
-	it("stays quiet while nothing happens", async () => {
-		const root = repository();
-		const { watcher, changes } = watching();
-		await watcher.arm([{ key: "w-1", worktree: root }]);
+	it(
+		"stays quiet while nothing happens",
+		async () => {
+			const root = repository();
+			const { watcher, changes } = watching();
+			await watcher.arm([{ key: "w-1", worktree: root }]);
+			const since = await settled(changes);
 
-		// The repository was written moments ago, and macOS delivers file
-		// events late enough that its creation can still arrive after the
-		// watcher is armed. Let those land first; the claim under test is
-		// about a window in which nothing happens, not about the first one.
-		await new Promise((resolve) =>
-			setTimeout(resolve, HEAD_DEBOUNCE_CEILING_MS),
-		);
-		const settled = changes();
-		await new Promise((resolve) =>
-			setTimeout(resolve, HEAD_DEBOUNCE_CEILING_MS),
-		);
-		expect(changes()).toBe(settled);
-	});
+			// The claim is about a window in which nothing happens, so the window
+			// is the whole of the case after the settle.
+			await new Promise((resolve) =>
+				setTimeout(resolve, HEAD_DEBOUNCE_CEILING_MS),
+			);
+			expect(since()).toBe(0);
+		},
+		CASE_TIMEOUT_MS,
+	);
 
-	it("says which checkout it could not watch, rather than going quiet", async () => {
-		const plain = mkdtempSync(join(tmpdir(), "devhub-plain-"));
-		cleanups.push(() => {
-			rmSync(plain, { recursive: true, force: true });
-		});
-		const { watcher } = watching();
-		await watcher.arm([{ key: "w-1", worktree: plain }]);
+	it(
+		"says which checkout it could not watch, rather than going quiet",
+		async () => {
+			const plain = mkdtempSync(join(tmpdir(), "devhub-plain-"));
+			cleanups.push(() => {
+				rmSync(plain, { recursive: true, force: true });
+			});
+			const { watcher } = watching();
+			await watcher.arm([{ key: "w-1", worktree: plain }]);
 
-		expect(watcher.armedCount).toBe(0);
-		const failure = watcher.failures()[0];
-		expect(failure?.key).toBe("w-1");
-		expect(failure?.worktree).toBe(plain);
-		expect(failure?.reason).toContain(".git");
-	});
+			expect(watcher.armedCount).toBe(0);
+			const failure = watcher.failures()[0];
+			expect(failure?.key).toBe("w-1");
+			expect(failure?.worktree).toBe(plain);
+			expect(failure?.reason).toContain(".git");
+		},
+		CASE_TIMEOUT_MS,
+	);
 
-	it("keeps a watcher a re-arm asked for again, and drops the rest", async () => {
-		const first = repository();
-		const second = repository();
-		const { watcher, changes } = watching();
-		await watcher.arm([
-			{ key: "w-1", worktree: first },
-			{ key: "w-2", worktree: second },
-		]);
-		expect(watcher.armedCount).toBe(2);
+	it(
+		"keeps a watcher a re-arm asked for again, and drops the rest",
+		async () => {
+			const first = repository();
+			const second = repository();
+			const { watcher, changes } = watching();
+			await watcher.arm([
+				{ key: "w-1", worktree: first },
+				{ key: "w-2", worktree: second },
+			]);
+			expect(watcher.armedCount).toBe(2);
 
-		await watcher.arm([{ key: "w-1", worktree: first }]);
-		expect(watcher.armedCount).toBe(1);
+			await watcher.arm([{ key: "w-1", worktree: first }]);
+			expect(watcher.armedCount).toBe(1);
+			const since = await settled(changes);
 
-		// The one that was dropped is silent; the one that was kept is not.
-		git(second, "checkout", "-q", "-b", "gone");
-		await new Promise((resolve) =>
-			setTimeout(resolve, HEAD_DEBOUNCE_CEILING_MS),
-		);
-		expect(changes()).toBe(0);
+			// The one that was dropped is silent; the one that was kept is not.
+			git(second, "checkout", "-q", "-b", "gone");
+			await new Promise((resolve) =>
+				setTimeout(resolve, HEAD_DEBOUNCE_CEILING_MS),
+			);
+			expect(since()).toBe(0);
 
-		git(first, "checkout", "-q", "-b", "kept");
-		await until("the kept checkout was noticed", () => changes() > 0);
-	});
+			git(first, "checkout", "-q", "-b", "kept");
+			await until("the kept checkout was noticed", () => since() > 0);
+		},
+		CASE_TIMEOUT_MS,
+	);
 });
