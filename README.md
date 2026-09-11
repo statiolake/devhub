@@ -113,8 +113,9 @@ kinds of thing, and each has a rule:
 
 DevHub's own integration ships as a built-in extension,
 [`extensions/devhub-bridge`](extensions/devhub-bridge), so that its workbench
-defaults are in effect and cannot be uninstalled. The narrow protocol between
-them is schema-checked: see [`contracts/bridge/`](contracts/bridge).
+defaults are in effect and cannot be uninstalled. It carries the workbench
+defaults and the `devhub.installCli` palette command, and nothing else: the
+websocket protocol it once spoke to a web-era editor server is gone.
 
 ## Lifecycle
 
@@ -188,7 +189,7 @@ used for it.
 CI=true pnpm install --frozen-lockfile
 pnpm run provision   # submodule, toolchain, patches, compile, Electron
 pnpm dev             # build apps/desktop and run it
-pnpm run check       # bridge contract, format, lint, types, tests
+pnpm run check       # extension checks, format, lint, types, tests
 ```
 
 Provisioning is idempotent and stamped over the submodule commit *and* the
@@ -257,9 +258,5 @@ DevHub's product identity is stated once, in
 and merged into `product.json` by
 [`scripts/product_metadata.py`](scripts/product_metadata.py) for both the source
 run and the packaged app.
-
-The bridge protocol's checked-in artifacts are generated: run
-`pnpm run bridge:generate` after changing that seam, and `pnpm run check`
-detects drift.
 
 DevHub is distributed under the [MIT License](LICENSE).

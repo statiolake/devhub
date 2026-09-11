@@ -5,8 +5,7 @@
   "scripts": {
     "provision": "scripts/provision-vscode.sh",
     "dev": "pnpm --filter @devhub/desktop build && apps/desktop/scripts/dev.sh",
-    "bridge:generate": "scripts/generate-bridge-contract.sh",
-    "bridge:check": "scripts/check-bridge-contract.sh && pnpm --filter @devhub/bridge check",
+    "bridge:check": "pnpm --filter @devhub/bridge check",
     "fmt": "pnpm --filter @devhub/desktop fmt:check && pnpm --filter @devhub/bridge fmt:check",
     "lint": "pnpm --filter @devhub/desktop lint && pnpm --filter @devhub/bridge lint",
     "typecheck": "pnpm --filter @devhub/desktop typecheck && pnpm --filter @devhub/bridge typecheck",
