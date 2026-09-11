@@ -59,7 +59,6 @@ describe("where a workbench is", () => {
 
 /** A running workbench with nothing unsaved: the ordinary case. */
 const RUNNING: EditorInspectionFacts = {
-	editorAgreedToClose: false,
 	runtime: "running",
 	documentEdited: false,
 };
@@ -83,19 +82,6 @@ describe("the unsaved-editor inspection", () => {
 		// workspace whose editor died must not become one nobody can close.
 		expect(
 			editorInspection({ ...RUNNING, runtime: "gone", documentEdited: true }),
-		).toEqual({ kind: "clean" });
-	});
-
-	it("says clean once the workbench has agreed to close", () => {
-		// Agreeing is what being clean means; whether a view object still
-		// exists is not the question.
-		expect(
-			editorInspection({
-				...RUNNING,
-				editorAgreedToClose: true,
-				documentEdited: true,
-				runtime: "starting",
-			}),
 		).toEqual({ kind: "clean" });
 	});
 

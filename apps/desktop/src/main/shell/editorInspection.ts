@@ -94,8 +94,6 @@ export function editorRuntimeState(
 
 /** Everything the rule below looks at, and all it looks at. */
 export interface EditorInspectionFacts {
-	/** The workbench has already agreed to close, which is what clean means. */
-	readonly editorAgreedToClose: boolean;
 	/** Where the workbench is. */
 	readonly runtime: EditorRuntimeState;
 	/** What the running workbench last reported about its unsaved work. */
@@ -105,9 +103,6 @@ export interface EditorInspectionFacts {
 export function editorInspection(
 	facts: EditorInspectionFacts,
 ): ResourceInspection {
-	// Agreeing to close *is* being clean, and it is a better answer than
-	// looking at whether a view object still exists.
-	if (facts.editorAgreedToClose) return { kind: "clean" };
 	switch (facts.runtime) {
 		case "absent":
 		case "gone":

@@ -350,6 +350,22 @@ export async function removeWorktree(
 	);
 }
 
+/**
+ * Forget worktrees whose folders are not there any more.
+ *
+ * The idempotent half of removing one. A close that finds the directory
+ * already gone has nothing to remove and everything still to tidy: git keeps
+ * an administrative record per worktree, and leaving it behind is what makes
+ * the *next* `git worktree add` on that path refuse. Pruning is safe to run
+ * when there is nothing to prune, which is what lets the step be repeated.
+ */
+export async function pruneWorktrees(
+	command: GitCommand,
+	mainWorktree: string,
+): Promise<void> {
+	await runGit(command, ["worktree", "prune"], { cwd: mainWorktree });
+}
+
 export async function readRepository(
 	command: GitCommand,
 	directory: string,

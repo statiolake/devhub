@@ -224,11 +224,22 @@ export function wireAgents(options: AgentWiringOptions): AgentSessions {
 			return injections.cancel(agentId, injectionId);
 		},
 
+		/**
+		 * Stop every Agent of a workspace, and say so if one did not stop.
+		 *
+		 * `sessions.terminate` is idempotent by design — an Agent whose tmux
+		 * session somebody killed from outside is already stopped, and it
+		 * returns — so "already gone" is success. Anything else throws, and the
+		 * close reports *that step* as the one that failed. It used to swallow
+		 * the outcome, which made a kill that did not kill look like a finished
+		 * step and took the workspace out of the list with its Agent still
+		 * running.
+		 */
 		async closeWorkspaceAgents(workspaceId: WorkspaceId): Promise<void> {
 			const workspace = options.model().workspace(workspaceId);
 			if (!workspace) return;
 			for (const agent of workspace.agents) {
-				await terminate(sessions, agent.id);
+				await sessions.terminate(agent.id);
 			}
 		},
 	});

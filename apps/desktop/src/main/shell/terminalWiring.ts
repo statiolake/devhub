@@ -34,7 +34,6 @@ import type { Config } from "../../model/config.js";
 import type { AppModel } from "../../model/appModel.js";
 import {
 	agentId as parseAgentId,
-	isWorkspaceClosing,
 	workspaceId as parseWorkspaceId,
 	type Workspace,
 } from "../../model/domain.js";
@@ -62,7 +61,7 @@ import { registerTerminalAdapter } from "./adapters.js";
  * reading "this workspace is closing" and reading nothing at all.
  */
 function refuseIfClosing(workspace: Workspace): void {
-	if (isWorkspaceClosing(workspace.state)) {
+	if (workspace.close.kind === "running") {
 		throw new TerminalFailure("workspace_closing");
 	}
 }

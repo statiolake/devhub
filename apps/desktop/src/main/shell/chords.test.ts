@@ -76,6 +76,7 @@ function workspace(
 		root: `/workspaces/${id}`,
 		selectedPath: `/workspaces/${id}`,
 		state: { kind: "available" },
+		close: { kind: "idle" },
 		...extra,
 	};
 }

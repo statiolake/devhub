@@ -47,14 +47,15 @@ import type {
 	AppIntentWire,
 	AppOutcomeWire,
 	AppSnapshotWire,
+	CloseDiagnosticWire,
 	ReplayWire,
 } from "../../ipc/appShell.js";
 import { AppCoordinator, type Effect } from "../../model/coordinator.js";
 import { editorReveal } from "./editorReveal.js";
 import {
-	CLEANUP_BUDGET_MS,
-	CleanupTimeout,
-	withCleanupDeadline,
+	CLOSE_BUDGET_MS,
+	CloseTimeout,
+	withCloseDeadline,
 } from "./cleanupDeadline.js";
 import { canonicalise } from "../cli/canonical.js";
 import {
@@ -77,6 +78,7 @@ import {
 	workspaceRoot,
 	type AgentProfileKind,
 	type AgentReconciliation,
+	type CloseStep,
 	type ResourceInspection,
 	type WorkspaceId,
 } from "../../model/domain.js";
@@ -92,6 +94,7 @@ import {
 	type OperationToken,
 	type ProviderEvent,
 	type UserIntent,
+	type WorktreeDisposition,
 } from "../../model/intents.js";
 import { closingDeletesWorktree } from "../../model/worktrees.js";
 import { AppModel, type NavigationSelection } from "../../model/appModel.js";
@@ -140,7 +143,6 @@ import type { ShellPalette } from "../../ipc/palette.js";
 import type { WorkbenchView } from "./workbenchView.js";
 import { agents, inspectWorkspaceResources, terminals } from "./adapters.js";
 import { editorInspection, editorRuntimeState } from "./editorInspection.js";
-import { type EditorCloseAsk, editorCloseStep } from "./editorCloseAsk.js";
 import { wireTerminals, type TerminalWiring } from "./terminalWiring.js";
 import {
 	CancellationToken,
@@ -184,6 +186,7 @@ import {
 	refreshOrigin,
 	remoteForRepository,
 	removeWorktree,
+	pruneWorktrees,
 	listBranches,
 	workspaceFailure,
 	worktreeForBranch,
@@ -236,7 +239,7 @@ const SCRATCH_EDITOR = "";
  * for exactly that scenario and are the only ones that say *what* did not
  * answer. The margin is for the work either side of the steps.
  */
-const OPERATION_TIMEOUT_MS = CLEANUP_BUDGET_MS + 20_000;
+const OPERATION_TIMEOUT_MS = CLOSE_BUDGET_MS + 20_000;
 
 /**
  * What the help overlay says a command wants, one phrase per `CommandNeeds`.
@@ -300,16 +303,6 @@ export class AppController {
 	/** Folder path (or the scratch key) -> the `ICodeWindow` id of its view. */
 	private readonly viewsByFolder = new Map<string, number>();
 
-	/**
-	 * What each workspace's workbench did the last time it was asked to close.
-	 *
-	 * The one piece of memory that makes a close terminate. See
-	 * `askEditorToClose`: the second time a person asks, an editor that never
-	 * answered the first time is closed rather than asked again. Absence is
-	 * `never-asked`; only the ask writes here, and only from its outcome, so a
-	 * close that was *refused* leaves nothing behind.
-	 */
-	private readonly editorCloseAnswers = new Map<WorkspaceId, EditorCloseAsk>();
 	/** How many unasked-for deaths a folder's workbench gets before DevHub stops. */
 	private readonly editorRestarts = new Map<string, number>();
 	/** One in-flight workbench open per folder, shared by concurrent callers. */
@@ -840,13 +833,11 @@ export class AppController {
 		// The same predicate the sidebar's button reads to decide what to call
 		// itself, so the label and the act cannot disagree.
 		if (!closingDeletesWorktree(repository, workspace.root)) {
-			this.requestCloseWorkspace(workspaceId);
+			this.requestCloseWorkspace(workspaceId, "keep");
 			return;
 		}
 		if (repository?.dirty === false) {
-			void this.deleteWorktree(workspaceId, false).catch((error: unknown) => {
-				this.publishError(errorWire(error));
-			});
+			this.requestCloseWorkspace(workspaceId, "remove");
 			return;
 		}
 		shellWindow().modals.openModal({
@@ -899,15 +890,24 @@ export class AppController {
 	 * outcome on the floor, so closing a workspace with an Agent in it — or an
 	 * unsaved editor — did nothing at all and said nothing about why.
 	 */
-	private requestCloseWorkspace(workspaceId: string): void {
+	private requestCloseWorkspace(
+		workspaceId: string,
+		worktree: WorktreeDisposition,
+	): void {
 		// One intent, whatever state the workspace is in. Choosing between a
 		// fresh close and a retry used to happen here, from the workspace's own
 		// state — a branch in a caller, which every other caller then had to
-		// grow its own copy of or send the wrong one. The model owns that state
-		// and now makes the distinction (`Coordinator.closeWorkspace`).
-		void this.dispatchFromPage({ type: "request_close_workspace", workspaceId })
-			.then((outcome) => {
-				this.raiseCloseConfirmation(outcome);
+		// grow its own copy of or send the wrong one. A close that failed is
+		// the same close, asked for again (`Coordinator.closeWorkspace`).
+		void this.dispatchAwaiting({
+			type: "request_close_workspace",
+			workspaceId: parseWorkspaceId(workspaceId),
+			worktree,
+		})
+			.then((settled) => {
+				this.raiseCloseConfirmation(
+					outcomeWire(settled, this.coordinator.readiness, this.repositoryOf),
+				);
 			})
 			.catch((error: unknown) => {
 				this.publishError(errorWire(error));
@@ -1656,8 +1656,12 @@ export class AppController {
 					effect.kind === "reconcile_agent" ? effect.agentId : undefined,
 				);
 				return;
-			case "cleanup_workspace":
-				await this.cleanup(effect.token, effect.workspaceId, effect.step);
+			case "close_workspace":
+				await this.closeWorkspaceResources(
+					effect.token,
+					effect.workspaceId,
+					effect.worktree,
+				);
 				return;
 		}
 	}
@@ -1740,93 +1744,30 @@ export class AppController {
 	}
 
 	/**
-	 * Remove a worktree's folder, then close the workspace that was in it.
-	 *
-	 * **The branch is not touched.** A worktree is a *place*; a branch is
-	 * *work*. Removing the place must not destroy the work — the branch may be
-	 * pushed, may have a pull request open against it, and is the whole of what
-	 * links a workspace to its Issue. It is one rule with no option beside it,
-	 * because an option here is a checkbox whose wrong setting loses commits;
-	 * somebody who wants the branch gone runs `git branch -d`, where git refuses
-	 * if it is unmerged. A second, weaker copy of that check does not belong
-	 * here.
-	 *
-	 * git first, then the close. If git refuses — changes in the worktree, a
-	 * lock — nothing has happened and the refusal is git's own words, shown
-	 * where the question was asked. Only once the folder is gone is the
-	 * workspace closed, and that is best-effort: the destructive half has
-	 * already succeeded, and a workspace left pointing at a missing folder is a
-	 * state DevHub already draws.
-	 */
-	private async deleteWorktree(
-		workspaceId: string,
-		force: boolean,
-	): Promise<AppOutcomeWire> {
-		const workspace = this.coordinator.model.workspaces.find(
-			(candidate) => candidate.id === workspaceId,
-		);
-		if (!workspace) throw workspaceFailure("That workspace is not open.");
-		const repository = this.lastRepositoryStatus.workspaces.find(
-			(entry) => entry.workspaceId === workspaceId,
-		);
-		const mainWorktree = repository?.mainWorktree;
-		if (
-			mainWorktree === undefined ||
-			repository?.worktree === undefined ||
-			repository.worktree === mainWorktree ||
-			repository.worktree !== workspace.root
-		) {
-			// The repository itself, a folder DevHub has not read yet, or a
-			// subdirectory of a checkout rather than the checkout. Removing a
-			// repository is not what this is for, removing the checkout somebody's
-			// row happens to sit inside is not either, and guessing is not either.
-			throw workspaceFailure(
-				"This workspace is not a worktree of a repository DevHub can see.",
-			);
-		}
-		await removeWorktree(
-			await this.gitCommand(),
-			mainWorktree,
-			workspace.root,
-			force,
-		);
-		const settled = await this.dispatchAwaiting({
-			type: "request_close_workspace",
-			workspaceId: workspace.id,
-		});
-		// The folder is gone; whether the *workspace* can close may still be a
-		// question — a busy Agent, an unsaved editor — and it is asked here for
-		// the same reason it is asked in `requestCloseWorkspace`.
-		return this.raiseCloseConfirmation(
-			outcomeWire(settled, this.coordinator.readiness, this.repositoryOf),
-		);
-	}
-
-	/**
 	 * Carry out the answer to the three-way worktree question.
 	 *
 	 * The sheet asked which of three things should happen to the folder, and
-	 * this is where two of them are done — the third is Cancel, which is the
+	 * this is where two of them are said — the third is Cancel, which is the
 	 * sheet dismissing itself and never gets here. The page reports *which
 	 * answer*, not what to do about it: `--force` is what makes removing a
 	 * worktree with uncommitted work possible at all, and that it is allowed is
-	 * exactly what the person was asked, so it is decided here, from the
-	 * answer, and is not a flag the renderer passes.
+	 * exactly what the person was asked, so it is named here, from the answer,
+	 * and is not a flag the renderer passes.
 	 *
-	 * "Just close the workspace" is the ordinary close, so it goes through the
-	 * ordinary close — main's one path — rather than a raw lifecycle intent
-	 * that would skip the worktree rule on the way past.
+	 * Neither answer removes anything *now*. The folder question is the first
+	 * of a close's questions, and a close does nothing destructive until every
+	 * question it has is answered — so the answer travels with the close and
+	 * the removal happens as its `worktree` step, after the workbench has been
+	 * asked about unsaved work and agreed to go.
 	 */
 	private async answerWorktreeClose(
 		workspaceId: string,
 		answer: "close" | "delete",
 	): Promise<AppOutcomeWire> {
-		if (answer === "delete") {
-			return await this.deleteWorktree(workspaceId, true);
-		}
 		const settled = await this.dispatchAwaiting({
 			type: "request_close_workspace",
 			workspaceId: parseWorkspaceId(workspaceId),
+			worktree: answer === "delete" ? "remove-anyway" : "keep",
 		});
 		return this.raiseCloseConfirmation(
 			outcomeWire(settled, this.coordinator.readiness, this.repositoryOf),
@@ -2061,21 +2002,11 @@ export class AppController {
 		workspaceId: WorkspaceId,
 	): Promise<ResourceInspection> {
 		const workspace = this.coordinator.model.workspace(workspaceId);
-		const state = workspace?.state;
-		const editorAgreedToClose =
-			state !== undefined &&
-			(state.kind === "closing" || state.kind === "closing-failed") &&
-			state.progress.editorClosed;
-		if (editorAgreedToClose || workspace === undefined) {
-			return editorInspection({
-				editorAgreedToClose,
-				runtime: "absent",
-				documentEdited: false,
-			});
+		if (workspace === undefined) {
+			return editorInspection({ runtime: "absent", documentEdited: false });
 		}
 		const codeWindow = await this.editorWindowFor(workspace.root);
 		return editorInspection({
-			editorAgreedToClose,
 			runtime: editorRuntimeState(codeWindow),
 			documentEdited: codeWindow?.isDocumentEdited() === true,
 		});
@@ -2217,88 +2148,190 @@ export class AppController {
 		});
 	}
 
-	private async cleanup(
+	/**
+	 * Run the whole close, in order, and answer with one outcome.
+	 *
+	 * The rule is `Coordinator.closeWorkspace`'s; this is the environment half
+	 * of it. Two things are load-bearing here.
+	 *
+	 * **The editor comes first, because it is the last question.** VS Code's
+	 * `unload` is what runs the workbench's own "do you want to save?" and what
+	 * lets it refuse — a veto is an answer, and an answer of "no" must leave
+	 * everything as it was. So it runs before the first destructive step, and a
+	 * veto stops the close with nothing stopped, killed or deleted.
+	 *
+	 * **Every step after it treats "already gone" as success.** A `kill-session`
+	 * on a session somebody killed from outside, a whole tmux server that is not
+	 * there, a view whose renderer already died, a worktree directory that has
+	 * been deleted by hand — all of them are the state the step was trying to
+	 * reach. That is what makes repeating the close after a failure correct: it
+	 * runs the same steps and finds the finished ones done. Nothing is
+	 * remembered between attempts, deliberately.
+	 *
+	 * A step that genuinely fails stops the close there and names itself. Each
+	 * has one deadline (`withCloseDeadline`), so a process that has stopped
+	 * answering cannot hang the close for ever.
+	 */
+	private async closeWorkspaceResources(
 		token: OperationToken,
 		workspaceId: WorkspaceId,
-		step: "agents" | "terminal" | "editor" | "state_committed",
+		worktree: WorktreeDisposition,
 	): Promise<void> {
+		let step: CloseStep = "editor";
 		try {
-			switch (step) {
-				case "agents": {
-					const adapter = agents();
-					if (adapter) {
-						await withCleanupDeadline(
-							step,
-							adapter.closeWorkspaceAgents(workspaceId),
-						);
-					}
-					// With no Agent runtime there are no Agents, so this step is already
-					// true — the model's own Agent list is emptied by the transition.
-					break;
-				}
-				case "terminal": {
-					const adapter = terminals();
-					if (adapter) {
-						await withCleanupDeadline(
-							step,
-							adapter.closeWorkspaceTerminals(workspaceId),
-						);
-					}
-					break;
-				}
-				case "editor": {
-					const closed = await withCleanupDeadline(
-						step,
-						this.askEditorToClose(workspaceId),
-					);
-					if (!closed) {
-						// The workbench refused — unsaved work, most likely, and the
-						// person has just been asked about it. That is a reason, not
-						// an error, and it belongs on the failure surface.
-						this.accept({
-							type: "workspace_cleanup_completed",
-							token,
-							workspaceId,
-							result: {
-								kind: "failed",
-								step,
-								diagnostic: "close_editor_vetoed",
-							},
-						});
-						return;
-					}
-					break;
-				}
-				case "state_committed":
-					break;
+			const vetoed = await withCloseDeadline(
+				step,
+				this.askEditorToClose(workspaceId),
+			);
+			if (vetoed !== undefined) {
+				// The workbench refused — unsaved work, most likely, and the
+				// person has just been asked about it. That is a reason, not an
+				// error, and nothing has been closed.
+				this.failClose(token, workspaceId, step, vetoed);
+				return;
 			}
+
+			step = "agents";
+			const agentAdapter = agents();
+			if (agentAdapter) {
+				await withCloseDeadline(
+					step,
+					agentAdapter.closeWorkspaceAgents(workspaceId),
+				);
+			}
+			// With no Agent runtime there are no Agents, so this step is already
+			// true — the model's own Agent list is emptied by the transition.
+
+			step = "terminal";
+			const terminalAdapter = terminals();
+			if (terminalAdapter) {
+				await withCloseDeadline(
+					step,
+					terminalAdapter.closeWorkspaceTerminals(workspaceId),
+				);
+			}
+
+			step = "view";
+			this.disposeEditorView(workspaceId);
+
+			step = "worktree";
+			await withCloseDeadline(
+				step,
+				this.disposeWorktree(workspaceId, worktree),
+			);
 		} catch (error) {
 			// Every way a step can end is a completion. A step that threw and a
-			// step that never answered both land here as a *failed* close with a
-			// reason, because the alternative — leaving the workspace in
-			// `closing` — is a row that greys out, breathes, refuses every
-			// operation and never stops, with nothing on screen saying why.
-			this.accept({
-				type: "workspace_cleanup_completed",
+			// step that never answered both land here as a close that failed at a
+			// named step, because the alternative — a row that greys out,
+			// breathes, refuses every operation and never stops, with nothing on
+			// screen saying why — is the bug this exists to prevent.
+			this.failClose(
 				token,
 				workspaceId,
-				result: {
-					kind: "failed",
-					step,
-					diagnostic:
-						error instanceof CleanupTimeout
-							? error.diagnostic
-							: "cleanup_failed",
-				},
-			});
+				step,
+				error instanceof CloseTimeout ? error.diagnostic : "cleanup_failed",
+			);
 			return;
 		}
 		this.accept({
-			type: "workspace_cleanup_completed",
+			type: "workspace_close_completed",
 			token,
 			workspaceId,
-			result: { kind: "step_completed", step },
+			result: { kind: "closed" },
 		});
+	}
+
+	private failClose(
+		token: OperationToken,
+		workspaceId: WorkspaceId,
+		step: CloseStep,
+		diagnostic: CloseDiagnosticWire,
+	): void {
+		this.accept({
+			type: "workspace_close_completed",
+			token,
+			workspaceId,
+			result: { kind: "failed", step, diagnostic },
+		});
+	}
+
+	/**
+	 * Take down this workspace's workbench view.
+	 *
+	 * After the unload, not instead of it: the unload is what saves work, and
+	 * this is what takes the window away once nothing is left in it to lose. A
+	 * view that is already gone — destroyed, or never built — is the state this
+	 * was trying to reach, so there is nothing to report.
+	 *
+	 * It happens *before* the worktree is removed, because a workbench with an
+	 * open folder under a directory git is about to delete is a workbench
+	 * watching a directory that stops existing.
+	 */
+	private disposeEditorView(workspaceId: WorkspaceId): void {
+		const root = this.coordinator.model.workspace(workspaceId)?.root;
+		if (root === undefined) return;
+		const viewId = this.viewsByFolder.get(root);
+		this.viewsByFolder.delete(root);
+		if (viewId === undefined) return;
+		shellWindow().getViewById(viewId)?.destroy();
+	}
+
+	/**
+	 * Do what the person said about the folder, if they said anything.
+	 *
+	 * The answer arrived with the close. `remove-anyway` is the only thing that
+	 * forces, and it is only ever reached through the question that named what
+	 * would be destroyed; `remove` lets git refuse, because DevHub's idea of
+	 * "clean" is a poll up to a minute old and git is the authority.
+	 *
+	 * A directory that is already gone is the state this is trying to reach, so
+	 * it is not a failure — but git's administrative record for it is still
+	 * there, and leaving that behind is what makes the next `worktree add` on
+	 * the same path refuse. So the folder being absent means prune, not skip.
+	 *
+	 * **The branch is not touched.** A worktree is a *place*; a branch is
+	 * *work*. Removing the place must not destroy the work — it may be pushed,
+	 * may have a pull request open against it, and is the whole of what links a
+	 * workspace to its Issue. Somebody who wants it gone runs `git branch -d`,
+	 * where git refuses if it is unmerged.
+	 */
+	private async disposeWorktree(
+		workspaceId: WorkspaceId,
+		disposition: WorktreeDisposition,
+	): Promise<void> {
+		if (disposition === "keep") return;
+		const workspace = this.coordinator.model.workspace(workspaceId);
+		if (!workspace) return;
+		const repository = this.lastRepositoryStatus.workspaces.find(
+			(entry) => entry.workspaceId === workspaceId,
+		);
+		const mainWorktree = repository?.mainWorktree;
+		if (
+			mainWorktree === undefined ||
+			repository?.worktree === undefined ||
+			repository.worktree === mainWorktree ||
+			repository.worktree !== workspace.root
+		) {
+			// The repository itself, a folder DevHub has not read yet, or a
+			// subdirectory of a checkout rather than the checkout. Removing a
+			// repository is not what this is for, removing the checkout
+			// somebody's row happens to sit inside is not either, and guessing is
+			// not either.
+			throw workspaceFailure(
+				"This workspace is not a worktree of a repository DevHub can see.",
+			);
+		}
+		const command = await this.gitCommand();
+		if (await folderIsDirectory(workspace.root)) {
+			await removeWorktree(
+				command,
+				mainWorktree,
+				workspace.root,
+				disposition === "remove-anyway",
+			);
+			return;
+		}
+		await pruneWorktrees(command, mainWorktree);
 	}
 
 	//#endregion
@@ -2680,49 +2713,41 @@ export class AppController {
 	 * the `WebContents` instead — which is what this used to do — skipped all
 	 * of that and threw away unsaved work without asking.
 	 *
-	 * It also does not destroy the view. Nothing here does: a view belongs to
-	 * a workspace, and it goes when the workspace does (`syncEditorViews`). A
-	 * step that destroyed it early is how a close that failed later left a
-	 * workspace in the sidebar with a white pane beside it.
+	 * It does not close the view; the close's `view` step does, once this has
+	 * answered. This is the *question*, and it is the last one a close asks.
 	 *
-	 * Asking is not always possible, and a close that cannot ask still has to
-	 * end. A workbench that is `absent` or `gone` holds nothing anybody could
-	 * save, so the step is already true. A workbench that has not answered
-	 * before — it never came up, or the unload ran out of time — is closed
-	 * without asking the *second* time the person asks for the close, because
-	 * a workbench that does not process IPC cannot save anything either and a
-	 * close that repeats the same unanswered question forever is a workspace
-	 * nobody can get rid of. A *veto* is an answer, so it never lands here:
-	 * asking again re-runs VS Code's own save prompt, which is the right thing
-	 * for work that can still be saved.
+	 * Nothing is remembered between attempts. There used to be a mark saying
+	 * "this workbench did not answer last time", so that the second close
+	 * killed it unasked — and the mark was written before the ask, so a
+	 * workbench that was merely still starting got it, and the next close threw
+	 * its work away without a prompt. A workbench that does not answer within
+	 * the step's deadline is a failure of *this* step; the next close asks it
+	 * again, which is the right thing for work that can still be saved.
+	 *
+	 * Answers with the diagnostic that stopped the close, or nothing when the
+	 * workbench agreed — or when there was never anything to ask.
 	 */
-	private async askEditorToClose(workspaceId: WorkspaceId): Promise<boolean> {
+	private async askEditorToClose(
+		workspaceId: WorkspaceId,
+	): Promise<CloseDiagnosticWire | undefined> {
 		const root = this.coordinator.model.workspace(workspaceId)?.root;
-		if (root === undefined) return true;
+		if (root === undefined) return undefined;
 		const services = await this.services();
 		const codeWindow = await this.editorWindowFor(root);
 		const runtime = editorRuntimeState(codeWindow);
-		const step = editorCloseStep({
-			runtime,
-			asked: this.editorCloseAnswers.get(workspaceId) ?? "never-asked",
-		});
-		if (!codeWindow || step === "nothing-to-ask") return true;
-		if (step === "close-without-asking") {
-			this.editorCloseAnswers.delete(workspaceId);
-			return true;
+		// No process holds work anybody could save, so there is nothing to ask
+		// and nothing in the way.
+		if (!codeWindow || runtime === "absent" || runtime === "gone") {
+			return undefined;
 		}
-		// A refusal is not an outcome: it writes nothing, so the next close
-		// still asks.
-		if (step === "not-yet") return false;
-		// Marked *before* the ask, and replaced by the answer. An unload that
-		// never resolves leaves the mark behind, which is exactly the state the
-		// next close reads to stop asking.
-		this.editorCloseAnswers.set(workspaceId, "asked-and-silent");
+		// Still coming up: it cannot answer, and DevHub does not guess about a
+		// workbench a person may be watching load. Said now rather than waited
+		// out, because the answer would not change.
+		if (runtime === "starting") return "close_editor_starting";
 		const vetoed = await services
 			.lifecycle()
 			.unload(codeWindow, UnloadReason.CLOSE);
-		this.editorCloseAnswers.set(workspaceId, "answered");
-		return !vetoed;
+		return vetoed ? "close_editor_vetoed" : undefined;
 	}
 
 	/**
