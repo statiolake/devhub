@@ -153,13 +153,26 @@ describe("the workspace picker's search", () => {
 });
 
 describe("a date source", () => {
-	const dated = (
-		path: string,
-		create_if_missing: boolean,
-	): WorkspaceSource => ({
+	/**
+	 * The template a daily source is configured with, under the scratch root.
+	 *
+	 * The root is bracketed, and that is load-bearing rather than tidiness. A
+	 * template expands its tokens *everywhere* in the path — `mm` and `ss`
+	 * among them — and the scratch root ends in six random characters drawn
+	 * from an alphabet that contains both. Roughly one run in 130 drew a root
+	 * whose suffix held a token, the expansion renamed the root out from under
+	 * the folder the test had just made, and the source offered nothing. That
+	 * is what `[...]` is for: the root is text that is not a date, so it is
+	 * written as text that is not a date.
+	 */
+	const dailyTemplate = () => join(`[${root}]`, "YYYY", "MMDD");
+	/** The folder that template names on `NOW`. */
+	const dailyFolder = () => join(root, "2026", "0901");
+
+	const dated = (create_if_missing: boolean): WorkspaceSource => ({
 		type: "date",
 		id: "daily",
-		path,
+		path: dailyTemplate(),
 		create_if_missing,
 	});
 	// A day chosen so the expanded path is unmistakable in a failure message.
@@ -175,13 +188,10 @@ describe("a date source", () => {
 	const LAST_SECOND_OF_THE_DAY = new Date(2026, 8, 1, 23, 59, 59);
 
 	it("offers the one folder today's date names", async () => {
-		const today = join(root, "2026", "0901");
+		const today = dailyFolder();
 		await mkdir(today, { recursive: true });
 
-		const events = await runAt(
-			configWith([dated(join(root, "YYYY", "MMDD"), false)]),
-			NOW,
-		);
+		const events = await runAt(configWith([dated(false)]), NOW);
 		expect(candidates(events)).toEqual([
 			{ path: today, sourceId: "daily", sourceRank: 0, missing: false },
 		]);
@@ -191,11 +201,11 @@ describe("a date source", () => {
 		// The boundary the run is most likely to sit on, and the one where a
 		// second reading of the clock would have named tomorrow: a second before
 		// midnight is still today, so it is still today's folder.
-		const today = join(root, "2026", "0901");
+		const today = dailyFolder();
 		await mkdir(today, { recursive: true });
 
 		const events = await runAt(
-			configWith([dated(join(root, "YYYY", "MMDD"), false)]),
+			configWith([dated(false)]),
 			LAST_SECOND_OF_THE_DAY,
 		);
 		expect(candidates(events)).toEqual([
@@ -206,31 +216,22 @@ describe("a date source", () => {
 	it("offers a folder nothing has made yet, and says it is not there", async () => {
 		// The case the source exists for: the moment a person wants today's
 		// workspace is the moment before anything has made it.
-		const today = join(root, "2026", "0901");
-		const events = await runAt(
-			configWith([dated(join(root, "YYYY", "MMDD"), true)]),
-			NOW,
-		);
+		const today = dailyFolder();
+		const events = await runAt(configWith([dated(true)]), NOW);
 		expect(candidates(events)).toEqual([
 			{ path: today, sourceId: "daily", sourceRank: 0, missing: true },
 		]);
 	});
 
 	it("says nothing about a missing folder it was told not to offer", async () => {
-		const events = await runAt(
-			configWith([dated(join(root, "YYYY", "MMDD"), false)]),
-			NOW,
-		);
+		const events = await runAt(configWith([dated(false)]), NOW);
 		expect(candidates(events)).toEqual([]);
 	});
 
 	it("runs no program and reports no failure", async () => {
 		// The whole point: a default configuration cannot depend on a command
 		// being installed, so a date source has nothing that can be missing.
-		const events = await runAt(
-			configWith([dated(join(root, "YYYY", "MMDD"), true)]),
-			NOW,
-		);
+		const events = await runAt(configWith([dated(true)]), NOW);
 		expect(events.some((event) => event.kind === "source-error")).toBe(false);
 	});
 });
