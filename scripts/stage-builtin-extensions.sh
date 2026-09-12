@@ -48,6 +48,10 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VSCODE_EXTENSIONS="$REPO_ROOT/vscode/extensions"
 BRIDGE="$REPO_ROOT/extensions/devhub-bridge"
+# Third-party extensions DevHub ships as built-ins, vendored from a published
+# VSIX. See extensions/vendor/README.md for what is there and why it is not
+# downloaded.
+VENDOR="$REPO_ROOT/extensions/vendor"
 BUILD="$REPO_ROOT/vscode/.build"
 STAGED="$BUILD/devhub-builtin-extensions"
 GENERATIONS="$BUILD/devhub-builtin-extensions.generations"
@@ -68,18 +72,28 @@ for entry in "$VSCODE_EXTENSIONS"/*/; do
 	[ -f "$entry/package.json" ] || continue
 	names+=("$(basename "${entry%/}")")
 done
+vendored=()
+for entry in "$VENDOR"/*/; do
+	[ -f "$entry/package.json" ] || continue
+	vendored+=("$(basename "${entry%/}")")
+done
 if [ "${#names[@]}" -eq 0 ]; then
 	echo "no built-in extensions found in $VSCODE_EXTENSIONS — run scripts/provision-vscode.sh" >&2
 	exit 1
 fi
 IFS=$'\n' names=($(printf '%s\n' "${names[@]}" | LC_ALL=C sort)) || true
 unset IFS
+if [ "${#vendored[@]}" -gt 0 ]; then
+	IFS=$'\n' vendored=($(printf '%s\n' "${vendored[@]}" | LC_ALL=C sort)) || true
+	unset IFS
+fi
 
 # What the generation is: these names, linked out of this checkout, plus
 # DevHub's own. Anything that would change the resulting directory has to be in
 # here, or a stale generation would be reused.
 digest="$(
-	printf '%s\n' "$VSCODE_EXTENSIONS" "$BRIDGE" "${names[@]}" |
+	printf '%s\n' "$VSCODE_EXTENSIONS" "$BRIDGE" "$VENDOR" "${names[@]}" \
+		${vendored[@]+"${vendored[@]}"} |
 		shasum -a 256 | cut -d' ' -f1
 )"
 generation="$GENERATIONS/$digest"
@@ -93,6 +107,9 @@ if [ ! -d "$generation" ]; then
 	mkdir -p "$building"
 	for name in "${names[@]}"; do
 		ln -s "$VSCODE_EXTENSIONS/$name" "$building/$name"
+	done
+	for name in ${vendored[@]+"${vendored[@]}"}; do
+		ln -s "$VENDOR/$name" "$building/$name"
 	done
 	# DevHub's own, last, so a name clash would be visible rather than silent.
 	ln -s "$BRIDGE" "$building/devhub-bridge"

@@ -127,6 +127,9 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 VSCODE_DIR = REPO_ROOT / "vscode"
 DESKTOP_DIR = REPO_ROOT / "apps" / "desktop"
 BRIDGE_DIR = REPO_ROOT / "extensions" / "devhub-bridge"
+# Third-party built-ins, vendored from a published VSIX rather than built
+# here. See extensions/vendor/README.md.
+VENDOR_DIR = REPO_ROOT / "extensions" / "vendor"
 
 # Everything DevHub says about itself that VS Code reads out of product.json —
 # its name, its data folders, its extension gallery, and which build this is —
@@ -691,6 +694,14 @@ def assemble_app_directory(app: Path, version: str, staged_extensions: Path) -> 
 		code_oss / "extensions" / "devhub-bridge",
 		ignore=lambda d, names: ignore_tests(d, names) | {"src", "build", "scripts", "tsconfig.json"},
 	)
+	# The vendored set is copied whole: it is a published extension as
+	# published, and `compile-extensions-build` only knows about the ones in
+	# the submodule. This is the same list stage-builtin-extensions.sh links
+	# for a development launch, so the two builds ship the same built-ins.
+	for vendored in sorted(VENDOR_DIR.iterdir()):
+		if not (vendored / "package.json").is_file():
+			continue
+		copy_tree(vendored, code_oss / "extensions" / vendored.name, ignore=ignore_tests)
 	count = len([p for p in (code_oss / "extensions").iterdir() if p.is_dir()])
 	print(f"    {count} built-in extensions")
 
