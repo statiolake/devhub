@@ -7,10 +7,10 @@ system, extensions, language servers — runs over there.
 DevHub does this the way VSCodium does, with two pieces that have never met
 before they are asked to talk to each other.
 
-* **Open Remote - SSH**, `jeanp413.open-remote-ssh`, vendored as a built-in
+- **Open Remote - SSH**, `jeanp413.open-remote-ssh`, vendored as a built-in
   from Open VSX. It is what resolves `ssh-remote://<host>` authorities. See
   `extensions/vendor/README.md`.
-* **The remote extension host**, or REH — VS Code's own server, built from the
+- **The remote extension host**, or REH — VS Code's own server, built from the
   same VS Code commit DevHub's client is built from and published on this
   repository's releases. That is `scripts/build_reh.py` and the `reh-*` jobs in
   `.github/workflows/nightly.yml`.
@@ -18,18 +18,18 @@ before they are asked to talk to each other.
 ## What happens when you open a host
 
 1. The extension SSHes in and runs a shell script it generates from
-   `src/scripts/server-setup.sh` in its own source.
+   `src/scripts/server-setup.sh` in its own source, piped into `sh -l`.
 2. That script reads five things out of DevHub's `product.json` — the client's,
    over the SSH connection's near end — and uses them to work out what to
    fetch and where to put it:
 
-   | key | value | what the remote does with it |
-   | --- | --- | --- |
-   | `serverDownloadUrlTemplate` | see below | the URL, after substitution |
-   | `commit` | the VS Code submodule's HEAD | names the install directory, and is checked against the server's own |
-   | `version` | `1.136.1` | substituted as `${version}`, if the template asks |
-   | `serverApplicationName` | `devhub-server` | the script it runs: `bin/devhub-server` |
-   | `serverDataFolderName` | `.devhub-server` | `$HOME/.devhub-server` on the remote |
+   | key                         | value                        | what the remote does with it                                         |
+   | --------------------------- | ---------------------------- | -------------------------------------------------------------------- |
+   | `serverDownloadUrlTemplate` | see below                    | the URL, after substitution                                          |
+   | `commit`                    | the VS Code submodule's HEAD | names the install directory, and is checked against the server's own |
+   | `version`                   | `1.136.1`                    | substituted as `${version}`, if the template asks                    |
+   | `serverApplicationName`     | `devhub-server`              | the script it runs: `bin/devhub-server`                              |
+   | `serverDataFolderName`      | `.devhub-server`             | `$HOME/.devhub-server` on the remote                                 |
 
 3. It downloads the tarball, unpacks it with `tar --strip-components 1` into
    `$HOME/.devhub-server/bin/<commit>/`, and starts
@@ -41,6 +41,34 @@ The server then checks the connecting client's commit against its own and
 refuses if they differ. That is the extension's default,
 `remote.SSH.serverValidation: strict`, and it is the reason everything below is
 keyed on a commit rather than on a version or a date.
+
+## Everything DevHub sends a host is POSIX `sh`
+
+Upstream's extension writes that install script in bash and pipes it into
+`bash -l`. A host without bash — a NAS whose `/bin/sh` is BusyBox, with no bash
+anywhere on it — answered `sh: bash: not found`, and because the
+script never ran, not one of the result markers it prints was in the output:
+all the extension could say was `Failed parsing install script output`.
+
+So DevHub's copy of the script is POSIX `sh`, and DevHub's copy of the
+extension pipes it into `sh -l`. The port is
+`extensions/vendor/patches/open-remote-ssh/0001-posix-server-setup.patch`, and
+what it changes is only how things are said, never what is said: the lines
+`parseServerInstallOutput` greps for and the `%%…%%` placeholders
+`compileTemplate` fills are byte-identical, and
+`scripts/patch_vendored_extensions_test.py` asserts each of them.
+
+The login shell is deliberate. The script itself only needs the ordinary
+`/bin`, but the extension host it starts inherits that environment, so a remote
+terminal's `PATH` is whatever the login shell set — on the NAS above, that is
+what puts `/usr/local/bin/git` within reach. `-l` is accepted by bash, dash, ksh and
+BusyBox ash alike.
+
+Two portability fixes travel with it, for the same reason: `ps -p` is not a
+BusyBox option, so the "is the server already running" check now scans the
+whole table the way upstream's own fallback did — before, every resolve started
+another extension host — and `sleep 0.5` is asked for once and dropped to a
+whole second where the shell refuses it.
 
 ## The URL
 
@@ -94,7 +122,7 @@ REH package task walks into the output looking for its SDK and throws when it
 is not there. That step is also the reason the script stages the SDK into
 `.build` itself before packaging: the compile that is supposed to put it there
 did on linux-x64 and did not on linux-arm64, and the only symptom was a missing
-directory in the output tree twenty-five minutes in. What it stages is *files*,
+directory in the output tree twenty-five minutes in. What it stages is _files_,
 not a directory — `gulp.dest` recreates the directory entries its source glob
 yielded, so an SDK subtree whose files were all filtered out (or that npm left
 as a symlink into `@github/copilot-<os>-<arch>`, which a glob that does not
@@ -268,7 +296,7 @@ binary `file` does not call statically linked.
 
 ### Terminfo travels with it
 
-A static ncurses has the terminfo code compiled in and no terminfo *database* —
+A static ncurses has the terminfo code compiled in and no terminfo _database_ —
 that is a directory read at runtime, and a bare host may have none. So the
 tarball carries one: eleven names (`xterm-256color`, `screen-256color`,
 `tmux-256color`, `linux`, `vt100` and friends, plus the aliases `tic` writes
@@ -330,9 +358,15 @@ gets it installed by hand, above.
 
 ## Where to look when it does not connect
 
-The extension logs the whole install script and its output to **Output → Remote
-- SSH**. Everything the remote decided is in there: the URL it built, whether
-the download succeeded, and the server's own log path
+The alert over the workspace says why, not only which host: DevHub's copy of
+the extension carries the last line the remote wrote to stderr into the
+dialog's detail, so `sh: bash: not found` is on screen rather than three clicks
+away. That alert belongs to the workspace, and closing the workspace takes it
+with it.
+
+For everything else, the extension logs the whole install script and its output
+to **Output → Remote - SSH**. Everything the remote decided is in there: the
+URL it built, whether the download succeeded, and the server's own log path
 (`~/.devhub-server/.<commit>.log`) if it started and then failed.
 
 ## The integrated terminal of a remote window
@@ -347,18 +381,18 @@ process it starts can reach neither DevHub's launcher nor DevHub's socket.
 
 Nothing about the protocol changes. What changes is where its two ends are.
 
-* **The launcher is written on the host**, by DevHub, over the connection that
+- **The launcher is written on the host**, by DevHub, over the connection that
   is already open: `Runtime.terminalLauncher` puts the compiled asking program
   under `~/.devhub/terminal/js/` and the generated script at
   `~/.devhub/terminal/devhub-terminal-<tag>`. The script is the same text as
   the local one, with the host's own paths in it. The `<tag>` is a digest of
   DevHub's control-socket path, so two DevHub profiles on one Mac reaching one
   host do not adopt each other's files.
-* **It runs on the REH's own Node**, `~/.devhub-server/bin/<commit>/node` — the
+- **It runs on the REH's own Node**, `~/.devhub-server/bin/<commit>/node` — the
   Node the connection installed, at the commit the client states. A
   `command -v node` would find whatever the login shell's PATH happened to
   have, which is a different Node on every host and none at all on some.
-* **DevHub's control socket is reverse-forwarded onto the host**:
+- **DevHub's control socket is reverse-forwarded onto the host**:
   `ssh -O forward -R ~/.devhub/terminal/control-<tag>.sock:<local socket>`,
   added to the ControlMaster that is already up. This is the primary mechanism
   and not a fallback, because it is what lets the launcher, the request and the
@@ -367,7 +401,7 @@ Nothing about the protocol changes. What changes is where its two ends are.
   `StreamLocalBindUnlink yes`, which is the host's business — and then checks
   with one `test -S` that something is actually bound, because `-O forward` can
   report success and leave nothing there.
-* **The request says which machine it came from.** `terminal-profile` carries a
+- **The request says which machine it came from.** `terminal-profile` carries a
   `machine` field, the `RuntimeId` (`local`, or `ssh:<host>`), baked into the
   launcher as `DEVHUB_TERMINAL_MACHINE`. Without it two hosts with the same
   `/srv/app` are one root to the matcher, and the session it answers with is on
@@ -413,32 +447,32 @@ machine (`RuntimeId`), so two hosts with the same `/srv/api` are two sessions
 and every consumer takes its adapter from the target rather than from whichever
 one it is holding.
 
-* **`$HOME`, `tmux` and the shell are resolved on the machine**, by
+- **`$HOME`, `tmux` and the shell are resolved on the machine**, by
   `Runtime.home` and `Runtime.resolveProgram`. A host with no `tmux` makes that
   machine's adapter unavailable, with the sentence naming what was looked for
   and where — git, worktrees and the Issue and pull-request rows on that host
   are unaffected, because none of them needs tmux.
-* **The bootstrap config is written on the machine**, exclusively-created
+- **The bootstrap config is written on the machine**, exclusively-created
   through `Runtime.writeNewTextFile` (`open(…, "wx")` here, `set -C` there) in
   that machine's `~/.devhub/tmp`. A `-f` path is only meaningful on the machine
   tmux is starting on.
-* **One reconcile loop per machine**, at that machine's cadence, and
+- **One reconcile loop per machine**, at that machine's cadence, and
   `reconcile_agents` carries the machine it is about. A round is one question
   to one tmux server: its session list is complete for that server and says
   nothing about any other, so a round scoped to two machines would report the
   other machine's Agents as ended. The coordinator keeps one in-flight
-  reconcile *per scope* — one machine's Agents, or one Agent — so two machines'
+  reconcile _per scope_ — one machine's Agents, or one Agent — so two machines'
   overlapping rounds do not invalidate each other.
-* **An Agent launches, is typed into and is read on its Workspace's machine.**
+- **An Agent launches, is typed into and is read on its Workspace's machine.**
   Its command is resolved there (`Runtime.resolveProgram`), its session is
   created on that machine's tmux, and `send-keys` and `capture-pane` go the
   same way. A failure is the Agent's, reported on its row.
-* **At startup**, the Agents restored from the state file reconcile on their own
+- **At startup**, the Agents restored from the state file reconcile on their own
   machines, and the stray-session sweep runs once per machine that has a
   Workspace on it. A host that is unreachable then is not fatal and adds no
   state: its Workspaces come up with the runtime failure that names the host,
   and the next successful round is when they recover.
-* **A machine no Workspace is on any more is let go of** — its tmux adapter, its
+- **A machine no Workspace is on any more is let go of** — its tmux adapter, its
   launcher installation and its ssh connection together. The sessions over
   there are untouched; reopening a Workspace on that host finds them again by
   their markers, which is what a restart does too.
@@ -461,13 +495,13 @@ been. In order, against a host with a DevHub server already installed:
    `devhub --version` prints.
 3. `ls -l ~/.devhub/terminal/control-*.sock` is a socket, and
    `printf '{"kind":"terminal-profile","machine":"ssh:<host>","root":null}\n' |
-   nc -U ~/.devhub/terminal/control-<tag>.sock` answers a line of JSON. If it
+nc -U ~/.devhub/terminal/control-<tag>.sock` answers a line of JSON. If it
    answers nothing, the forward is the thing that failed; check whether the
    host's sshd left a stale socket, and whether `AllowStreamLocalForwarding` is
    on (some hardened sshd configurations turn it off, and that is a refusal
    DevHub cannot work around).
 4. Opening a terminal in the remote window attaches to a tmux session on the
-   *host* (`tmux -L devhub list-sessions` there shows it, and `ps` on the Mac
+   _host_ (`tmux -L devhub list-sessions` there shows it, and `ps` on the Mac
    shows no new tmux).
 5. Closing the terminal tab leaves the session running and closes the client;
    reopening reattaches to the same session with its scrollback.
@@ -481,7 +515,7 @@ been. In order, against a host with a DevHub server already installed:
    to it arrives in its pane.
 9. `devhub --metrics` names the host with a connected runtime, a median round
    trip and the reconcile interval derived from it. A LAN host should settle at
-   the 500 ms floor; a slow one should be visibly slower and should *not* make
+   the 500 ms floor; a slow one should be visibly slower and should _not_ make
    the local Agents slower.
 10. Stopping the host mid-session: the Workspaces on it show the runtime
     failure naming the host, the local Workspaces are unaffected, and bringing
@@ -497,14 +531,14 @@ Mac's clipboard through **OSC 52**, `ESC ] 52 ; c ; <base64> BEL`. It is the
 only route there is over SSH: the host has no `pbcopy`, and DevHub's pane is
 reading a byte stream, not a shared selection. DevHub's terminal answers the
 sequence the way VS Code's integrated terminal and Ghostty do — it puts the
-text on the clipboard. It answers a *query* (`ESC ] 52 ; c ; ? BEL`) with
+text on the clipboard. It answers a _query_ (`ESC ] 52 ; c ; ? BEL`) with
 nothing at all: that one asks the terminal to send the clipboard's contents
 back down the stream, to a program that over SSH is running on somebody else's
 machine.
 
 Two things have to be true on the tmux side, and both already are:
 
-* `set-clipboard` must be `on`. It is a server option, and tmux's own default
+- `set-clipboard` must be `on`. It is a server option, and tmux's own default
   is `external`, which only forwards a sequence a program inside a pane wrote —
   copy-mode's own copy is not forwarded. So this line is needed:
 
@@ -512,7 +546,7 @@ Two things have to be true on the tmux side, and both already are:
   set -s set-clipboard on
   ```
 
-* the terminfo entry for the *outer* terminal's `TERM` must carry the extended
+- the terminfo entry for the _outer_ terminal's `TERM` must carry the extended
   capability `Ms`, or tmux will not emit OSC 52 whatever `set-clipboard` says.
   DevHub attaches with `TERM=xterm-256color` (`main/terminal/pty.ts`, and the
   `export TERM` in the ssh launcher). macOS's own `xterm-256color` has
@@ -522,10 +556,10 @@ Two things have to be true on the tmux side, and both already are:
   from being dropped on the way (`scripts/build_tmux.py`). Checked in ncurses
   6.6, `Ms` is present on `xterm`, `xterm-256color`, `tmux` and
   `tmux-256color`, and absent from `screen` and `screen-256color`. Only the
-  outer `TERM` — the one the tmux *client* was started with — decides this, so
+  outer `TERM` — the one the tmux _client_ was started with — decides this, so
   that absence matters only to a tmux nested inside another one, whose outer
   terminal is a tmux pane; give such a pane `set -g default-terminal
-  "tmux-256color"` and the inner one can copy too.
+"tmux-256color"` and the inner one can copy too.
 
 What a copy-mode binding should then be depends on the host. `pbcopy` exists
 only on a Mac, so a binding that pipes to it copies nothing on a Linux host and
@@ -606,7 +640,7 @@ The first that answers with a `PATH` wins. A host where none of them does is
 refused by name: DevHub will not run commands on a machine it could not find out
 where the programs are on.
 
-What is *not* carried across is the part of a login that described the login —
+What is _not_ carried across is the part of a login that described the login —
 `SSH_TTY`, `SSH_CONNECTION`, `SSH_AUTH_SOCK`, `PWD`, `SHLVL`, `TERM`, `TMUX` —
 because each is set correctly by whatever opens the next channel, and a stale one
 tells a program it is attached to a terminal that closed. `devhub --metrics`
