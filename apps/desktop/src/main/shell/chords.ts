@@ -141,6 +141,8 @@ export type ChordEffect =
 	 * already written and none of it could be reached; this is the door.
 	 */
 	| { readonly kind: "focus-sidebar" }
+	/** The Sidebar as its icon rail, or back to its width. */
+	| { readonly kind: "toggle-sidebar" }
 	/**
 	 * Out to Scratch, or back to wherever the jump out started.
 	 *
@@ -365,6 +367,9 @@ export function resolveChord(
 
 		case "focus_sidebar":
 			return { kind: "focus-sidebar" };
+
+		case "toggle_sidebar":
+			return { kind: "toggle-sidebar" };
 
 		case "dismiss_alert":
 			// Whether anything is showing is a fact about a page, not about the

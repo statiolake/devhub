@@ -100,6 +100,13 @@ import {
  * collapses the sidebar finds the field missing, which it already reads as
  * "expanded", the only state there is now. Nothing has to be invented, so
  * nothing has to refuse.
+ *
+ * `sidebar.collapsed` came back without a bump for the same reason, run the
+ * other way. The Sidebar collapses again — to an icon rail rather than to
+ * nothing — and the field records it; a file written before it existed has no
+ * such key, which reads as expanded, and a build that does not know the rail
+ * reads the key it does know and ignores this one. Neither direction has to
+ * invent anything, so neither has to refuse.
  */
 export const STATE_SCHEMA_VERSION = 5;
 export { SIDEBAR_DEFAULT_WIDTH };
@@ -252,6 +259,15 @@ export interface WindowFrame {
 
 export interface SidebarState {
   width: number;
+  /**
+   * Whether the Sidebar was left as its icon rail.
+   *
+   * Here and not in `settings.toml` because it is not a taste, it is where the
+   * Sidebar's trailing edge was — the same kind of fact as `width`, restored
+   * in the same breath. `sidebar_density`, which *is* a taste, is a setting;
+   * this is layout, and layout is what this file is for.
+   */
+  collapsed: boolean;
 }
 
 export interface ShutdownMetadata {
@@ -467,7 +483,7 @@ export function freshState(): PersistedAppState {
     schema_version: STATE_SCHEMA_VERSION,
     workspaces: [],
     navigation: { context: { kind: "global" } },
-    sidebar: { width: SIDEBAR_DEFAULT_WIDTH },
+    sidebar: { width: SIDEBAR_DEFAULT_WIDTH, collapsed: false },
     split: { ratio: SPLIT_DEFAULT_RATIO },
     window: {
       frame: {
@@ -999,7 +1015,7 @@ export function hydrateModel(
   }
 
   refuseRecord("the sidebar and the split", () => {
-    model.restoreSidebar(state.sidebar.width);
+    model.restoreSidebar(state.sidebar.width, state.sidebar.collapsed);
     model.restoreSplitRatio(state.split.ratio);
   });
 
@@ -1124,7 +1140,10 @@ export function stateFromSnapshot(
       })),
     })),
     navigation: { context: contextRecord(snapshot.selection.context) },
-    sidebar: { width: snapshot.sidebar.width },
+    sidebar: {
+      width: snapshot.sidebar.width,
+      collapsed: snapshot.sidebar.collapsed,
+    },
     split: { ratio: snapshot.splitRatio },
   };
   validateState(state);
@@ -1823,6 +1842,13 @@ function decodeState(bytes: Buffer): Decoded {
                 "sidebar.width",
                 decodeObject("sidebar", object["sidebar"])["width"],
               ),
+              // Absent means expanded, which is what every file written before
+              // the rail existed means and what a fresh one means. So there is
+              // nothing to invent and no version to bump — the same reasoning
+              // that retired `sidebar.expanded`, run the other way.
+              collapsed:
+                decodeObject("sidebar", object["sidebar"])["collapsed"] ===
+                true,
             },
       split:
         object["split"] === undefined

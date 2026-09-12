@@ -711,6 +711,12 @@ export class AppController {
 			focusSidebar: () => {
 				this.send(CHANNELS.menuCommand, "focus_sidebar");
 			},
+			toggleSidebar: () => {
+				// A change to the model like the resize beside it, so the page
+				// re-renders narrower and the rectangle it reports for the
+				// workbench is the freed width. Nothing here lays anything out.
+				this.dispatchOwn({ type: "toggle_sidebar" });
+			},
 			dismissAlert: () => {
 				// The App Shell page and nowhere else. Every failure main raises
 				// is published to this one page and drawn in one place

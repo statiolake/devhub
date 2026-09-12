@@ -190,6 +190,29 @@
   --titlebar-height: 38px;
   --traffic-light-inset: 88px;
   --sidebar-width: 248px;
+  /*
+   * The Sidebar collapsed: an icon rail, and as narrow as it is allowed to be.
+   *
+   * The floor is not taste, it is the window. The Sidebar is DevHub's title bar
+   * — it carries the traffic lights and it is what the window is dragged by
+   * (`SidebarHeader`) — and on a `hiddenInset` window those lights span to
+   * roughly 70-76 css px from the leading edge. A rail narrower than that would
+   * put the close button on a workbench, which is a native view painted over
+   * everything this page draws, and the lights would be sitting on somebody
+   * else's application.
+   *
+   * So 76: the lights, and nothing more. `--traffic-light-inset` is the *other*
+   * measurement of the same band — where the drag strip may start, which is
+   * past the lights with a gap — and the two are deliberately not one token,
+   * because "as wide as the lights" and "clear of the lights" are two answers
+   * that only happen to be close.
+   *
+   * It comfortably holds what is left of a row — the leading rail and one
+   * glyph, 30px of ink — centred, and it is the width the whole collapse is
+   * worth: a workbench gets 172px back and the two questions the Sidebar
+   * answers at a glance are still answered.
+   */
+  --sidebar-rail-collapsed-width: 76px;
   /* The Sidebar's leading rail. Every row reserves the rail first, then the
      glyph column; a section heading aligns to the glyph so the headings and
      the icons beneath them share one left edge. The rail is the one part of a

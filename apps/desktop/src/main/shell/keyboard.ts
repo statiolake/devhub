@@ -61,6 +61,8 @@ export interface ChordHost {
 	swapSplitFocus(): void;
 	/** Put the keyboard on the Sidebar's selected row — the way into the tree. */
 	focusSidebar(): void;
+	/** Show the Sidebar as its icon rail, or give it its width back. */
+	toggleSidebar(): void;
 	/** Jump out to Scratch, or back to where the jump out started. */
 	toggleScratch(): void;
 	openWorkspacePicker(): void;
@@ -122,6 +124,9 @@ function perform(host: ChordHost, effect: ChordEffect): void {
 			return;
 		case "focus-sidebar":
 			host.focusSidebar();
+			return;
+		case "toggle-sidebar":
+			host.toggleSidebar();
 			return;
 		case "toggle-scratch":
 			host.toggleScratch();

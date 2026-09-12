@@ -97,6 +97,8 @@ export function sameSelection(
 
 export interface SidebarSnapshot {
   readonly width: number;
+  /** Shown as its icon rail. The width is what it goes back to. */
+  readonly collapsed: boolean;
 }
 
 /**
@@ -261,6 +263,15 @@ export class AppModel {
   };
   private sidebarWidthValue = SIDEBAR_DEFAULT_WIDTH;
   /**
+   * Whether the Sidebar is shown as its icon rail.
+   *
+   * Kept beside the width and not instead of it: collapsing does not forget
+   * how wide the Sidebar was, so coming back out of the rail comes back to the
+   * width the person set rather than to the default. Two facts, because a
+   * single "current width" would have to invent one of them on the way back.
+   */
+  private sidebarCollapsedValue = false;
+  /**
    * Whether the DevHub window has the person in front of it.
    *
    * Main owns this fact — a workbench view can hold the keyboard while the
@@ -315,7 +326,10 @@ export class AppModel {
       selection: this.selectionValue,
       layout: this.resolveLayout(this.selectionValue),
       workspaces: this.workspaceSnapshots(),
-      sidebar: { width: this.sidebarWidthValue },
+      sidebar: {
+        width: this.sidebarWidthValue,
+        collapsed: this.sidebarCollapsedValue,
+      },
       splitRatio: this.splitRatioValue,
       editorHost: this.editorHost,
     };
@@ -339,6 +353,10 @@ export class AppModel {
 
   get sidebarWidth(): number {
     return this.sidebarWidthValue;
+  }
+
+  get sidebarCollapsed(): boolean {
+    return this.sidebarCollapsedValue;
   }
 
   /**
@@ -370,14 +388,31 @@ export class AppModel {
     return this.workspaceList;
   }
 
-  restoreSidebar(width: number): boolean {
+  restoreSidebar(width: number, collapsed: boolean): boolean {
     if (width < SIDEBAR_MIN_WIDTH || width > SIDEBAR_MAX_WIDTH) {
       fail(DomainErrorCode.InvalidSidebarWidth);
     }
-    if (this.sidebarWidthValue === width) {
+    if (
+      this.sidebarWidthValue === width &&
+      this.sidebarCollapsedValue === collapsed
+    ) {
       return false;
     }
     this.sidebarWidthValue = width;
+    this.sidebarCollapsedValue = collapsed;
+    this.bumpRevision();
+    return true;
+  }
+
+  /**
+   * The rail, or the width back.
+   *
+   * The width is untouched either way: it is what the Sidebar goes back to,
+   * and how wide the rail is is not a fact about this model — it is what the
+   * window's traffic lights need, which the page knows and this does not.
+   */
+  toggleSidebar(): boolean {
+    this.sidebarCollapsedValue = !this.sidebarCollapsedValue;
     this.bumpRevision();
     return true;
   }

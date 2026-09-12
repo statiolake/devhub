@@ -99,7 +99,7 @@ function snapshotOf({
 		revision: 1,
 		schemaVersion: 1,
 		selection: { context, presentation },
-		sidebar: { width: 248 },
+		sidebar: { width: 248, collapsed: false },
 		splitRatio: 0.55,
 		workspaces,
 	};
@@ -696,6 +696,9 @@ describe("the commands that need nothing at all", () => {
 		});
 		expect(run("open_settings", nothing)).toEqual({ kind: "open-settings" });
 		expect(run("focus_sidebar", nothing)).toEqual({ kind: "focus-sidebar" });
+		// Both directions, unconditionally: the model holds which way round it
+		// is, so there is nothing here to decide and nothing to gate on.
+		expect(run("toggle_sidebar", nothing)).toEqual({ kind: "toggle-sidebar" });
 		expect(run("show_chord_help", nothing)).toEqual({
 			kind: "open-chord-help",
 		});
@@ -743,6 +746,7 @@ describe("the default table", () => {
 
 	it("gives the three new commands the free unshifted letters", () => {
 		expect(press("s", "KeyS")).toBe("focus_sidebar");
+		expect(press("b", "KeyB")).toBe("toggle_sidebar");
 		expect(press("u", "KeyU")).toBe("mark_agent_unread");
 		expect(press("d", "KeyD")).toBe("dismiss_alert");
 	});

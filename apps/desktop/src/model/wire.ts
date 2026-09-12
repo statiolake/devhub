@@ -384,7 +384,10 @@ export function snapshotWire(
     },
     layout: layoutWire(snapshot.layout),
     workspaces,
-    sidebar: { width: snapshot.sidebar.width },
+    sidebar: {
+      width: snapshot.sidebar.width,
+      collapsed: snapshot.sidebar.collapsed,
+    },
     splitRatio: snapshot.splitRatio,
   };
   if (
@@ -747,6 +750,8 @@ export function intentFromWire(wire: AppIntentWire): UserIntent {
         invalid();
       }
       return { type: "resize_sidebar", width: wire.width };
+    case "toggle_sidebar":
+      return { type: "toggle_sidebar" };
     case "open_workspace_picker":
       // The picker is a shell-side dialog; it never reaches the model.
       return invalid();

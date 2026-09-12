@@ -462,10 +462,11 @@ describe("store", () => {
     expect(load.state.split.ratio).toBe(SPLIT_DEFAULT_RATIO);
   });
 
-  it("loads a file that still says the sidebar is collapsed", async () => {
-    // `sidebar.expanded` is retired: there is one sidebar form now. A file that
-    // says it was collapsed still loads, and the field it says it with is
-    // ignored on load and gone from the next save.
+  it("reads the retired `expanded` as nothing, and writes the field there is", async () => {
+    // `sidebar.expanded` is retired and `sidebar.collapsed` is what says the
+    // same thing now — they are not the same field under two names, and the
+    // old one is not translated. A file that carries it loads, the key is
+    // ignored, and the next save writes the one this build has.
     const collapsed = {
       ...freshState(),
       sidebar: { width: 321, expanded: false },
@@ -477,12 +478,27 @@ describe("store", () => {
 
     const model = hydrateModel(load.state, []);
     expect(model.snapshot().sidebar.width).toBe(321);
+    expect(model.snapshot().sidebar.collapsed).toBe(false);
 
     await store.saveState(stateFromSnapshot(model.snapshot()));
     const written: Record<string, unknown> = JSON.parse(
       await readFile(path, "utf8"),
     ) as Record<string, unknown>;
-    expect(written["sidebar"]).toEqual({ width: 321 });
+    expect(written["sidebar"]).toEqual({ width: 321, collapsed: false });
+  });
+
+  it("brings the rail back exactly as it was left", async () => {
+    const store = new JsonStateStore(path);
+    await store.saveState({
+      ...freshState(),
+      sidebar: { width: 321, collapsed: true },
+    });
+
+    const load = await store.loadState();
+    const model = hydrateModel(load.state, []);
+    // Both facts, because there are two: the rail is what is on screen, and
+    // the width is what it goes back to.
+    expect(model.snapshot().sidebar).toEqual({ width: 321, collapsed: true });
   });
 
   it("round-trips an interrupted socket transition", async () => {
@@ -678,7 +694,7 @@ describe("decoding the state file", () => {
       workspaces[0]["issue_url"] = "https://example.invalid/1";
     });
     expect(load.recoveryReason).toBeUndefined();
-    expect(load.state.sidebar).toEqual({ width: 321 });
+    expect(load.state.sidebar).toEqual({ width: 321, collapsed: false });
     expect(load.state.workspaces[0]).not.toHaveProperty("issue_url");
   });
 });

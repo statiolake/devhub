@@ -51,6 +51,7 @@
  * | `Cmd+Q O`                   | `swap_split_focus`        |
  * | `Cmd+Q E`                   | `focus_editor`            |
  * | `Cmd+Q S`                   | `focus_sidebar`           |
+ * | `Cmd+Q B`                   | `toggle_sidebar`          |
  * | `Cmd+Q F`                   | `add_workspace`           |
  * | `Cmd+Q C`                   | `add_agent`               |
  * | `Cmd+Q I`                   | `open_issue_picker`       |
@@ -183,6 +184,15 @@
  * a person chose. With a workspace row or Scratch selected the chord is a
  * no-op, like every other chord with nothing to act on.
  *
+ * **`Cmd+Q B` collapses the Sidebar to an icon rail, and never to nothing.**
+ * The width a workbench gets back is most of it, and what stays is the column
+ * that answers the two questions the Sidebar exists to answer at a glance:
+ * what is open, and which Agent wants you. A Sidebar that vanished would take
+ * both away — and would leave the window's traffic lights sitting on somebody
+ * else's application, because the Sidebar is the window's drag handle and the
+ * lights' band. So the rail is as narrow as the lights allow and no narrower,
+ * and it is the same rows in the same order with the words taken off.
+ *
  * **`Cmd+Q S` is the way *into* the chrome, and Escape is the way out.** Every
  * other chord here changes what is selected and leaves the keyboard on the
  * surface, because that is where a person types (`shell/focusHome.ts`). But the
@@ -298,6 +308,7 @@ export type CommandId =
   | "toggle_scratch"
   | "focus_editor"
   | "focus_sidebar"
+  | "toggle_sidebar"
   | "add_workspace"
   | "add_agent"
   | "rename_agent"
@@ -470,6 +481,12 @@ export const COMMANDS: readonly CommandDefinition[] = [
     label: "Focus the sidebar",
     needs: "nothing",
     defaultKeys: ["s"],
+  },
+  {
+    id: "toggle_sidebar",
+    label: "Collapse the sidebar to its rail, or expand it",
+    needs: "nothing",
+    defaultKeys: ["b"],
   },
 
   {

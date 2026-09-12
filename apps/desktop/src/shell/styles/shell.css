@@ -1967,3 +1967,132 @@ body.is-resizing-split {
 .row-menu-item:focus-visible {
   background: var(--selection);
 }
+
+/* ------------------------------------------------------ the collapsed rail */
+
+/*
+ * The Sidebar with the words taken off.
+ *
+ * It collapses to an icon rail and never to nothing. A Sidebar that vanished
+ * would take away the two things it exists to answer at a glance — what is
+ * open, and which Agent wants you — and it would leave the window's traffic
+ * lights sitting on a workbench, because this pane *is* the title bar and the
+ * drag handle. So what goes is everything that needs width to be read, and
+ * what stays is the glyph column and the marks that carry colour.
+ *
+ * It is drawn and not rendered. The markup is identical in both states — same
+ * rows, same order, same buttons, same labels for a screen reader — so the
+ * tree the arrows walk and the roving tab stop are one set of nodes, and there
+ * is no second arrangement to keep in step with the first. Every rule below is
+ * therefore a *subtraction*: this state adds no mark that the expanded one does
+ * not have.
+ *
+ * What survives, and why each one:
+ *
+ * - The Workspace's silhouette, monochrome. Which of the four kinds of
+ *   Workspace a row is, which is the only thing left to tell rows apart by.
+ * - The Agent's status mark, coloured. The one coloured thing in the Sidebar
+ *   at rest, and the reason a person looks at it from across the room.
+ * - The unread dot, in the leading rail where it already is. "This Agent asked
+ *   for you" outlives whatever the Agent is doing now, and it is the fact a
+ *   rail is least able to afford to lose.
+ * - The selection fill, and hover and focus exactly as they are. Where you are
+ *   does not stop mattering because the pane got narrower.
+ */
+.sidebar[data-collapsed="true"] {
+  width: var(--sidebar-rail-collapsed-width);
+  flex-basis: var(--sidebar-rail-collapsed-width);
+}
+
+/* The glyph column, centred, rather than a row that has lost its right-hand
+   two thirds. A rail reads as a column of marks; the same marks pinned to the
+   leading edge would read as a row that had been cut off. */
+.sidebar[data-collapsed="true"] .row-head {
+  justify-content: center;
+}
+
+/* The unread dot comes out of the flow and hangs in the leading margin.
+ *
+ * It has to, or it decides where the glyph column is: in the flow it is a
+ * 14px column, so a row that has a dot centres two marks and a row that does
+ * not centres one, and the glyphs land in two different places down a rail
+ * 76px wide. Out of the flow, every glyph is on the rail's centre line and the
+ * dot sits beside the one row that has it — which is the arrangement the
+ * expanded Sidebar has too, where the rail is a fixed column to the left of
+ * the glyphs and not something the glyphs are centred with. */
+.sidebar[data-collapsed="true"] .row-rail {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: var(--space-1);
+  width: auto;
+  flex: 0 0 auto;
+}
+
+.sidebar[data-collapsed="true"] .sidebar-context-button {
+  flex: 0 0 auto;
+  padding: 0;
+}
+
+/* Words, and everything that is only words: the label, the branch, the machine
+   name, the Issue and its title, the Sidebar's own notes. Not `visibility` and
+   not a clip — the row's height is the first line's height here, and a hidden
+   second line that still took space would make the rail taller than the marks
+   in it. */
+.sidebar[data-collapsed="true"] .row-label,
+.sidebar[data-collapsed="true"] .row-line,
+.sidebar[data-collapsed="true"] .sidebar-empty,
+.sidebar[data-collapsed="true"] .sidebar-status-note {
+  display: none;
+}
+
+/* The controls that appear under the pointer. There is no room for them beside
+   a glyph, and every one of them has a chord: `Cmd+Q C` makes an Agent,
+   `Cmd+Q X` closes what is selected, `Cmd+Q F` opens the picker, `Cmd+Q I`
+   takes an Issue. Nothing is lost by the collapse that the keyboard did not
+   already reach. */
+.sidebar[data-collapsed="true"] .row-action-button,
+.sidebar[data-collapsed="true"] .sidebar-section-actions {
+  display: none;
+}
+
+/* The section heading becomes the rule it was already acting as.
+ *
+ * "WORKSPACES" is a word wider than the column it labels, and it labels the
+ * only section there is. What the heading actually does here is separate
+ * Scratch from the workspaces under it — so that is all it is: a hairline, on
+ * the same vertical rhythm the heading held, so the rows below do not move
+ * when the pane collapses.
+ *
+ * The words are taken off the screen and not out of the document. A heading
+ * that stopped existing would take the section with it — a screen reader would
+ * find one flat list of rows where there are two groups — and the collapse is
+ * about width, not about what the Sidebar says. So the `h2` keeps its text and
+ * gives up its box, which is the standard way of saying exactly that. */
+.sidebar[data-collapsed="true"] .sidebar-section-heading {
+  height: 1px;
+  padding: 0;
+  margin: var(--sidebar-section-gap) var(--space-2);
+  background: var(--line);
+}
+
+.sidebar[data-collapsed="true"] .sidebar-section-heading h2 {
+  position: absolute;
+  overflow: hidden;
+  width: 1px;
+  height: 1px;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* The tree lines join an Agent to the Workspace above it across an indent that
+   is not there any more. Two rows one above the other, both centred, are
+   already as joined as they can be. */
+.sidebar[data-collapsed="true"] .agent-row::before,
+.sidebar[data-collapsed="true"] .agent-row::after {
+  content: none;
+}
+
+.sidebar[data-collapsed="true"] .agent-row .sidebar-context-button {
+  padding-left: 0;
+}

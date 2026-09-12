@@ -296,6 +296,8 @@ export type AppIntentWire =
 			readonly type: "select_context";
 	  }
 	| { readonly type: "resize_sidebar"; readonly width: number }
+	/** Show the Sidebar as its icon rail, or give it its width back. */
+	| { readonly type: "toggle_sidebar" }
 	| { readonly ratio: number; readonly type: "resize_split" }
 	| { readonly type: "open_workspace_picker" }
 	| {
@@ -471,6 +473,19 @@ export interface SelectionWire {
 }
 export interface SidebarWire {
 	readonly width: number;
+	/**
+	 * Whether the Sidebar is shown as its icon rail.
+	 *
+	 * Not "hidden": a Sidebar with nothing in its place would take away the one
+	 * thing that says what is open and which Agent wants you, and would leave
+	 * the window's traffic lights sitting on a workbench. Collapsed, it keeps
+	 * the same rows in the same order reduced to their glyph column, and the
+	 * width it keeps is the one the lights need anyway.
+	 *
+	 * It is beside `width` because it is the same kind of fact — where the
+	 * Sidebar's trailing edge is — and the two are restored together.
+	 */
+	readonly collapsed: boolean;
 }
 export interface TerminalPaletteWire {
 	readonly ansi: readonly string[];

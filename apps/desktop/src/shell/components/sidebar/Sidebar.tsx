@@ -484,6 +484,11 @@ function WorkspaceRow({
                       tabIndex={agentSelected ? 0 : -1}
                       aria-current={agentSelected ? "page" : undefined}
                       aria-label={`${agent.displayName}, ${statusLabel(agent.status)} agent, ${note ?? runtimeHealthLabel(agent.runtimeHealth)}${agent.unread ? ", unread" : ""}${agent.activity ? `, ${agent.activity}` : ""}`}
+                      // The row's own name, for the rail — where the words are
+                      // off and the pointer is the only way to ask which Agent
+                      // this is. A Workspace row already carries its path here
+                      // for the same reason.
+                      title={agent.displayName}
                       disabled={agent.controlState.kind === "stopping"}
                       // Command-click opens the Agent beside its workbench; a
                       // plain click gives it the whole content area. The same
@@ -718,6 +723,7 @@ function ScratchRow({
       type="button"
       aria-current={selected ? "page" : undefined}
       aria-label="Scratch terminal"
+      title={SCRATCH_NAME}
       onClick={() =>
         onDispatch({ type: "select_context", context: { kind: "global" } })
       }
@@ -1002,6 +1008,7 @@ export function Sidebar({ snapshot, onDispatch }: SidebarProps) {
 
   const [inProgressWidth, setInProgressWidth] = useState<number | null>(null);
   const renderedWidth = inProgressWidth ?? snapshot.sidebar.width;
+  const collapsed = snapshot.sidebar.collapsed;
 
   const openAgentPicker = useCallback((workspaceId: string) => {
     void devhub().openModal({ kind: "agent-picker", workspaceId });
@@ -1053,6 +1060,12 @@ export function Sidebar({ snapshot, onDispatch }: SidebarProps) {
     <aside
       className="sidebar"
       aria-label="Workspace navigation"
+      // Collapsed is drawn and never rendered differently: the same rows in the
+      // same order, with the words taken off. So the tree the arrows walk, the
+      // labels a screen reader reads and the roving tab stop are one set of
+      // markup in both states, and there is no second render path to keep in
+      // step with the first.
+      data-collapsed={collapsed ? "true" : undefined}
       style={{ "--sidebar-width": `${renderedWidth}px` } as React.CSSProperties}
       // Escape leaves the Sidebar, from anywhere in it: a row, the tree, the
       // resize handle. One handler on the pane rather than one per control,
@@ -1227,11 +1240,18 @@ export function Sidebar({ snapshot, onDispatch }: SidebarProps) {
           </p>
         ) : null}
       </div>
-      <SidebarResizeHandle
-        width={renderedWidth}
-        onPreview={previewResize}
-        onCommit={resize}
-      />
+      {/* A rail has no width to set: it is exactly what the window's traffic
+          lights need. The handle is absent rather than disabled, because a
+          disabled separator is a keyboard stop that answers nothing — and the
+          width it would set is still there, waiting, for when the Sidebar
+          comes back. */}
+      {collapsed ? null : (
+        <SidebarResizeHandle
+          width={renderedWidth}
+          onPreview={previewResize}
+          onCommit={resize}
+        />
+      )}
       {agentMenu ? (
         <RowMenu
           at={agentMenu.at}

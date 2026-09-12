@@ -101,6 +101,7 @@ function host() {
 		selectContext: record("selectContext"),
 		swapSplitFocus: record("swapSplitFocus"),
 		focusSidebar: record("focusSidebar"),
+		toggleSidebar: record("toggleSidebar"),
 		toggleScratch: record("toggleScratch"),
 		openWorkspacePicker: record("openWorkspacePicker"),
 		openTabPicker: record("openTabPicker"),

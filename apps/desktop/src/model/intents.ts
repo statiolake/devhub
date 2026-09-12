@@ -253,6 +253,15 @@ export type UserIntent =
    */
   | { readonly type: "toggle_scratch" }
   | { readonly type: "resize_sidebar"; readonly width: number }
+  /**
+   * Show the Sidebar as its icon rail, or give it its width back.
+   *
+   * A toggle and not a `set`, because there is one gesture and it is "the
+   * other one of the two": a chord that had to be told which state to go to
+   * would need the page to read the state first, and a second reader of a
+   * fact the model owns is a second answer waiting to disagree.
+   */
+  | { readonly type: "toggle_sidebar" }
   | { readonly type: "resize_split"; readonly ratio: number }
   | {
       readonly type: "open_folder";
