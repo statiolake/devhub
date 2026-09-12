@@ -11,7 +11,7 @@
  * layout here, because a Surface with nothing in it is not a document.
  */
 
-import type { ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 
 export interface SurfaceAction {
   readonly label: string;
@@ -32,6 +32,25 @@ function Frame({
   readonly actions?: readonly SurfaceAction[];
   readonly role: "status" | "alert";
 }) {
+  const primary = useRef<HTMLButtonElement | null>(null);
+
+  /**
+   * The primary action takes the keyboard when the Surface appears.
+   *
+   * This is the one state in which DevHub's own DOM *is* the content area, so
+   * it is also the only one where the keyboard has anywhere in the page to be —
+   * and where it went instead was `body`, from which Tab walks the whole
+   * Sidebar before it reaches the button the pane exists to offer. A workbench
+   * dialog already does exactly this (`ViewScopedAlert`), and this is the same
+   * gesture in the same words: what a pane is asking for is under Return.
+   *
+   * Only the primary one, and only when there is one. A pane with nothing to
+   * offer, or nothing it would recommend, has nothing to put a caret on.
+   */
+  useEffect(() => {
+    primary.current?.focus();
+  }, [title, message]);
+
   return (
     <div className="mac mac-empty" role={role}>
       <span className="mac-empty-glyph" aria-hidden="true">
@@ -44,6 +63,7 @@ function Frame({
           {actions.map((action) => (
             <button
               key={action.label}
+              ref={action.primary ? primary : undefined}
               type="button"
               className={`mac-button${action.primary ? " default" : ""}`}
               onClick={action.run}
