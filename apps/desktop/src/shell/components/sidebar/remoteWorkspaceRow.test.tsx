@@ -36,9 +36,6 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-const UNAVAILABLE =
-  "Agents and terminals are not available for SSH workspaces yet.";
-
 function mount(
   workspace: Record<string, unknown>,
   repository?: Record<string, unknown>,
@@ -86,8 +83,7 @@ const REMOTE = {
   selectedPath: "/srv/api",
   state: { kind: "available" },
   close: { kind: "idle" },
-  canCreateAgent: false,
-  localAgentsUnavailable: UNAVAILABLE,
+  canCreateAgent: true,
   agents: [],
 };
 
@@ -99,7 +95,6 @@ const LOCAL = {
   key: "/projects/widget",
   selectedPath: "/projects/widget",
   canCreateAgent: true,
-  localAgentsUnavailable: undefined,
 };
 
 describe("a Workspace row whose folder is on another machine", () => {
@@ -149,25 +144,16 @@ describe("a Workspace row whose folder is on another machine", () => {
     ).toBeInTheDocument();
   });
 
-  it("keeps the Agents sentence off the row's own lines", () => {
-    // It is about Agents and terminals, and it lives on the control it
-    // disables. Drawn on the branch line as well it would be one fact said
-    // twice, and the copy on the branch line would be read as a reason the
-    // branch is missing — which it is not any more.
-    mount(REMOTE, { workspaceId: "w-1", branch: "feature/128-tidy" });
-    expect(screen.queryByText(UNAVAILABLE)).not.toBeInTheDocument();
-  });
-
-  it("keeps New Agent on the row, disabled, with the reason on it", () => {
-    // Shown and disabled rather than absent: a button that is not there is
-    // indistinguishable from one this build never had, and the whole point of
-    // the sentence is telling "not yet" from "not a thing".
+  it("offers New Agent on the row, exactly as a local one does", () => {
+    // An Agent runs on the Workspace's machine now, so the row offers it. A
+    // host DevHub cannot reach says so as a failure naming the host, which is
+    // a sentence a person can act on — unlike a button that was never there.
     mount(REMOTE);
     const button = screen.getByRole("button", {
       name: /Create agent in api/u,
     });
-    expect(button).toBeDisabled();
-    expect(button).toHaveAttribute("title", UNAVAILABLE);
+    expect(button).not.toBeDisabled();
+    expect(button).toHaveAttribute("title", "Create agent");
   });
 
   it("says the path is over there, in the tooltip that carries the whole of it", () => {
@@ -177,7 +163,6 @@ describe("a Workspace row whose folder is on another machine", () => {
 
   it("changes nothing about a row whose folder is on this machine", () => {
     mount(LOCAL);
-    expect(screen.queryByText(UNAVAILABLE)).not.toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: /Create agent in widget/u }),
     ).toBeEnabled();

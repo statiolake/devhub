@@ -17,8 +17,6 @@ import {
   type AgentProfile,
   type AgentControlState,
   type WorkspaceClose,
-  LOCAL_AGENTS_UNAVAILABLE,
-  supportsLocalAgents,
   type WorkspaceLocation,
   type CloseInspectionProjection,
   type ResourceInspection,
@@ -366,9 +364,6 @@ export function snapshotWire(
     ...(workspace.lastAgentId === undefined
       ? {}
       : { lastAgentId: workspace.lastAgentId }),
-    ...(supportsLocalAgents(workspace.location)
-      ? {}
-      : { localAgentsUnavailable: LOCAL_AGENTS_UNAVAILABLE }),
   }));
   const workspaces = orderWorkspaces(projected, (workspace) =>
     repositoryOf(workspace.id),

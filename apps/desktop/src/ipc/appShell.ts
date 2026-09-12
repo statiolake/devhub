@@ -552,10 +552,10 @@ export type WorkspaceCloseWire =
 /**
  * Where a Workspace's folder is, as the page is told it.
  *
- * The page needs the machine for two things and neither is optional: the row
- * says which host it is, and every surface that would have shown a git status,
- * a worktree or an Agent has to say why it is not showing one. See
- * `supportsLocalAgents`.
+ * The page needs it to say which host a row is on. Nothing else branches on
+ * it any more: git, worktrees, terminals and Agents all run on the Workspace's
+ * own machine, so a surface either shows what it has or shows the failure that
+ * names the host — there is no third thing for the page to decide.
  */
 export type WorkspaceLocationWire =
 	| { readonly kind: "local" }
@@ -584,16 +584,6 @@ export interface WorkspaceWire {
 	 * What `Cmd+Q Cmd+J` comes back to. See `AppModel.lastAgentIn`.
 	 */
 	readonly lastAgentId?: string;
-	/**
-	 * Why DevHub's own tooling has nothing to show for this Workspace, or absent
-	 * when it has.
-	 *
-	 * One sentence, sent rather than composed here, so the row's repository area,
-	 * the disabled New Agent button and the terminal pane all say the same thing.
-	 * A page that wrote its own would be a second answer to one question, and the
-	 * two would drift the first time the answer changed.
-	 */
-	readonly localAgentsUnavailable?: string;
 }
 
 export type SnapshotReadiness = AppReadiness;

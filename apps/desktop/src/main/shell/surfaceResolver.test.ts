@@ -17,7 +17,6 @@ import {
 	displayPath,
 	Workspace,
 	workspaceId,
-	LOCAL_AGENTS_UNAVAILABLE,
 	workspaceLocation,
 } from "../../model/domain.js";
 import { TerminalFailure } from "../../ipc/terminal.js";
@@ -133,29 +132,37 @@ describe("a workspace whose folder is on another machine", () => {
 				displayPath("/srv/api"),
 			),
 		);
+		model.addAgent(WS, AG, codex);
 		return model;
 	}
 
-	it("refuses its terminal rather than opening one in the wrong place", () => {
-		// tmux runs here and `new-session -c` takes a local directory. A remote
-		// path that happened to exist on this machine would have opened a shell
-		// in the wrong directory on the wrong computer.
+	it("names that machine on its terminal target", () => {
+		// The whole of what "the terminal runs where the folder is" now means:
+		// the target says which machine, and the adapter that answers it is
+		// that machine's tmux. Two hosts' `/srv/api` are two sessions, and a
+		// target without the machine could not tell them apart.
 		expect(
-			refusalOf(() => resolverFor(remoteModel())(`workspace-terminal:${WS}`)),
-		).toBe("workspace_remote");
+			resolverFor(remoteModel())(`workspace-terminal:${WS}`),
+		).toMatchObject({
+			kind: "workspace",
+			machine: "ssh:build.example.com",
+			root: "/srv/api",
+		});
 	});
 
-	it("says why, rather than answering with nothing", () => {
-		// `undefined` here means "no such surface", which is what a key naming a
-		// workspace that is gone answers. A workspace that is right there and
-		// simply has no terminal yet is a different fact, and the refusal is the
-		// only way to carry the sentence that says which.
-		let summary: string | undefined;
-		try {
-			resolverFor(remoteModel())(`workspace-terminal:${WS}`);
-		} catch (error) {
-			summary = error instanceof TerminalFailure ? error.summary : undefined;
-		}
-		expect(summary).toContain(LOCAL_AGENTS_UNAVAILABLE);
+	it("names it on the Agent's target too", () => {
+		expect(resolverFor(remoteModel())(`agent:${AG}`)).toMatchObject({
+			kind: "agent",
+			machine: "ssh:build.example.com",
+			agentId: AG,
+		});
+	});
+
+	it("still refuses one that is closing, in the same words as a local one", () => {
+		const model = remoteModel();
+		model.beginWorkspaceClose(WS);
+		expect(
+			refusalOf(() => resolverFor(model)(`workspace-terminal:${WS}`)),
+		).toBe("workspace_closing");
 	});
 });

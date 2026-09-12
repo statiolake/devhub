@@ -22,7 +22,6 @@ import {
   repositoryId,
   rootBasename,
   sshHost,
-  supportsLocalAgents,
   unknownResource,
   Workspace,
   workspaceId,
@@ -386,34 +385,19 @@ describe("where a Workspace's folder is", () => {
     ).toBeUndefined();
   });
 
-  it("says DevHub's own tooling cannot reach another machine yet", () => {
-    expect(
-      supportsLocalAgents(
-        workspaceLocation({ kind: "local", path: "/dev/api" }),
-      ),
-    ).toBe(true);
-    expect(
-      supportsLocalAgents(
-        workspaceLocation({ kind: "ssh", host: "build", path: "/srv/api" }),
-      ),
-    ).toBe(false);
-  });
-
-  it("refuses an Agent in a Workspace on another machine, before it is asked for", () => {
-    // Not at the launch: the page has to be able to disable New Agent and say
-    // why, which is the difference between a feature that is not here yet and
-    // a button that does nothing.
+  it("offers an Agent in a Workspace on another machine", () => {
+    // An Agent runs where its Workspace's folder is, and that is a machine
+    // DevHub has a runtime for either way. Which machine is no longer one of
+    // the terms: a host that cannot be reached reports that as a failure
+    // naming the host, not as a row that never offered the feature.
     const owner = workspaceId(UUID_A);
     const workspace = new Workspace(
       owner,
       workspaceLocation({ kind: "ssh", host: "build", path: "/srv/api" }),
       displayPath("/srv/api"),
     );
-    expect(workspace.canCreateAgent).toBe(false);
-    expect(
-      codeOf(() =>
-        workspace.addAgent(Agent.create(agentId(UUID_B), owner, profile, 1)),
-      ),
-    ).toBe(DomainErrorCode.WorkspaceUnavailable);
+    expect(workspace.canCreateAgent).toBe(true);
+    workspace.addAgent(Agent.create(agentId(UUID_B), owner, profile, 1));
+    expect(workspace.agents).toHaveLength(1);
   });
 });

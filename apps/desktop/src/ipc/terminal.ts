@@ -73,7 +73,6 @@ export type TerminalErrorCode =
 	| "runtime_timed_out"
 	| "runtime_incompatible"
 	| "workspace_closing"
-	| "workspace_remote"
 	| "workspace_root_missing"
 	| "workspace_root_inaccessible"
 	| "internal";
@@ -102,8 +101,6 @@ const ERROR_SUMMARIES: Readonly<Record<TerminalErrorCode, string>> = {
 	runtime_timed_out: "The terminal runtime did not answer in time.",
 	runtime_incompatible: "This version of tmux is not supported.",
 	workspace_closing: "This workspace is closing.",
-	workspace_remote:
-		"A terminal runs where the folder is, and DevHub does not run one on another machine yet. Agents and terminals are not available for SSH workspaces yet.",
 	workspace_root_missing: "The workspace folder no longer exists.",
 	workspace_root_inaccessible: "The workspace folder cannot be read.",
 	internal: "The terminal runtime could not complete the request.",

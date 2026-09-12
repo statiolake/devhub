@@ -198,37 +198,33 @@ function WorkspaceRow({
             place this differs from the sketch: they are buttons, a button
             cannot go inside the row's own button, and putting them before it
             would move the glyph column that every other row lines up with. */}
-          {/* Shown and disabled rather than absent when the reason is that
-              the folder is on another machine. A button that is simply not
-              there is indistinguishable from one this build never had, and
-              the whole point of the sentence is that a person can tell "not
-              yet" from "not a thing". A closing row still hides it: that one
-              is about to stop existing. */}
-          {(workspace.canCreateAgent ||
-            workspace.localAgentsUnavailable !== undefined) &&
-            !closing && (
-              <button
-                className="row-action-button"
-                type="button"
-                aria-label={`Create agent in ${workspace.label}${workspace.localAgentsUnavailable !== undefined || agentProfilesAvailability === "unavailable" || agentProfiles.length === 0 ? ", unavailable" : ""}`}
-                title={
-                  workspace.localAgentsUnavailable ??
-                  (agentProfilesAvailability === "degraded"
-                    ? "Agent profiles need attention"
-                    : agentProfiles.length > 0
-                      ? "Create agent"
-                      : "No enabled agent profiles")
-                }
-                disabled={
-                  workspace.localAgentsUnavailable !== undefined ||
-                  agentProfilesAvailability === "unavailable" ||
-                  agentProfiles.length === 0
-                }
-                onClick={() => onCreateAgent(workspace.id)}
-              >
-                <Glyph name="plus" />
-              </button>
-            )}
+          {/* Which machine the folder is on is not one of the conditions.
+              An Agent runs where its Workspace is, on this Mac or on a host,
+              so the row offers it either way; a host DevHub cannot reach says
+              so as a failure that names it, which is a different sentence from
+              a button that was never there. A closing row still hides it: that
+              one is about to stop existing. */}
+          {workspace.canCreateAgent && !closing && (
+            <button
+              className="row-action-button"
+              type="button"
+              aria-label={`Create agent in ${workspace.label}${agentProfilesAvailability === "unavailable" || agentProfiles.length === 0 ? ", unavailable" : ""}`}
+              title={
+                agentProfilesAvailability === "degraded"
+                  ? "Agent profiles need attention"
+                  : agentProfiles.length > 0
+                    ? "Create agent"
+                    : "No enabled agent profiles"
+              }
+              disabled={
+                agentProfilesAvailability === "unavailable" ||
+                agentProfiles.length === 0
+              }
+              onClick={() => onCreateAgent(workspace.id)}
+            >
+              <Glyph name="plus" />
+            </button>
+          )}
           {/* One close, whatever state the Workspace is in: a close that failed
             is retried by asking for the same thing again, not by a second
             icon that means the same thing.
