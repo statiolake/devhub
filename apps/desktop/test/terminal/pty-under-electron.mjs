@@ -441,6 +441,7 @@ test(
 					new URL("../../out/test-terminal/main/terminal/devhubTerminal.js", import.meta.url),
 				),
 				socketPath: controlSocket,
+				machine: "local",
 			},
 		);
 
