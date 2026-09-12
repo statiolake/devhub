@@ -45,6 +45,7 @@ import { errorWireAt, TypedFailure, withSummary } from "../../model/wire.js";
 import { OperationDeadline, runBounded } from "../terminal/command.js";
 import { CancellationToken, portFailure } from "../terminal/ports.js";
 import { openPty, type Pty, type PtyFactory } from "../terminal/pty.js";
+import { remoteReconcileIntervalMs } from "./cadence.js";
 import { gitDirectoryOf } from "./gitDirectory.js";
 import { shellQuote } from "./quote.js";
 import {
@@ -100,19 +101,6 @@ const HEAD_WATCH_POLL_MS = 2000;
 
 /** A minute between repository polls, remote or not: the number is the same. */
 const REPOSITORY_POLL_MS = 60 * 1000;
-
-/** The bounds the derived reconcile cadence is held between. */
-const RECONCILE_FLOOR_MS = 500;
-const RECONCILE_CEILING_MS = 3000;
-
-/**
- * What one reconcile round is allowed to cost, as a multiple of a round trip.
- *
- * Eight bounds the duty cycle at 12.5 % by construction, which is the property
- * worth having — not the number. A 5 ms LAN host lands on the floor; a 300 ms
- * satellite link on the ceiling.
- */
-const RECONCILE_ROUND_TRIPS = 8;
 
 /**
  * The prefix every message this file writes into a remote script carries.
@@ -170,7 +158,7 @@ export interface SshRuntimeOptions {
  */
 export function chooseControlDirectory(
 	userDataDirectory: string,
-	home: string = homedir(),
+	home: string,
 ): string {
 	const preferred = join(userDataDirectory, "ssh");
 	if (fitsControlPath(preferred)) return preferred;
@@ -318,10 +306,6 @@ function lastLine(text: string): string {
 	return lines[lines.length - 1] ?? "";
 }
 
-function clamp(value: number, low: number, high: number): number {
-	return Math.min(high, Math.max(low, value));
-}
-
 /**
  * The sentence a host DevHub cannot log into gets, composed once.
  *
@@ -446,13 +430,12 @@ export class SshRuntime implements Runtime {
 
 	get cadence(): RuntimeCadence {
 		return {
-			// A number rather than a constant, because the constant that is right
-			// for a fork on this Mac is an ssh flood on a host across an ocean.
-			reconcileIntervalMs: clamp(
-				RECONCILE_ROUND_TRIPS * this.#medianRoundTripMs(),
-				RECONCILE_FLOOR_MS,
-				RECONCILE_CEILING_MS,
-			),
+			// A number rather than a constant, because the constant that is
+			// right for a fork on this Mac is an ssh flood on a host across an
+			// ocean. The rule itself is `cadence.ts`'s and not this file's: the
+			// reconciler's tests assert the bound it states, and two copies of
+			// one line of arithmetic is one copy that will drift.
+			reconcileIntervalMs: remoteReconcileIntervalMs(this.#medianRoundTripMs()),
 			repositoryPollMs: REPOSITORY_POLL_MS,
 			headWatchPollMs: HEAD_WATCH_POLL_MS,
 		};
