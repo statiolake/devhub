@@ -178,6 +178,130 @@ directory: `"remote.SSH.serverValidation": "force"` rewrites the server's
 `product.json` to match the client. It is a way to get connected, not a way to
 be sure the two halves agree.
 
+## tmux on the host
+
+Every DevHub terminal and every Agent is a tmux session on the machine the
+Workspace lives on — that is the whole of "Agents and terminals on the host",
+further down. The host therefore needs a tmux, and DevHub brings its own rather
+than looking for one.
+
+**The host's own tmux is never used.** Not preferred-if-present, not
+fallen-back-to: not used. tmux's control surface — the `list-sessions` format,
+`capture-pane -e`, `display-message -p` — differs between versions in ways that
+surface as an Agent whose output is subtly wrong rather than as an error, and
+the adapter is written against one version. It is also not a thing every host
+has: the case this exists for is a Synology NAS, where there is no tmux in the
+image, no package manager worth the name and no sudo, and "install tmux" is not
+an instruction the owner of the box can follow.
+
+### What is published, and where
+
+`scripts/build_tmux.py` builds tmux from a pinned release tarball together with
+pinned libevent and ncurses, links all three in statically, and packs:
+
+```
+devhub-tmux-linux-x64/
+  bin/tmux            the statically linked binary, mode 0755
+  terminfo/           a small compiled database — see below
+  licenses/           tmux, libevent and ncurses, whose code is in the binary
+```
+
+The three pins, their checksums and the reasons behind them are at the top of
+the script; the versions as of writing are tmux 3.7c, libevent 2.1.13-stable
+and ncurses 6.6. The tarball is a couple of megabytes.
+
+`linux-x64` and `linux-arm64` are published, each built on a runner of its own
+architecture — there is no cross-build. They go to a release named after the
+tmux version and nothing else:
+
+```
+https://github.com/statiolake/devhub/releases/download/tmux-${tmuxVersion}/devhub-tmux-${os}-${arch}-${tmuxVersion}.tar.gz
+```
+
+stated once, in `apps/desktop/product-overrides.json` as
+`tmuxDownloadUrlTemplate`, and substituted by DevHub itself rather than by
+anything on the host. The three names are its own; `${version}` and
+`${commit}`, which mean VS Code's version and commit in
+`serverDownloadUrlTemplate`, are deliberately not reused here.
+
+Because the release is keyed on the tmux version, it is built once per bump and
+never moved, and a DevHub built months ago goes on installing the version it
+was built against. `tmux-decide` in the nightly asks GitHub whether that
+release exists and costs a minute on every night it does. A change to the build
+that does not move the version — a terminfo entry added, a configure flag
+corrected — is republished deliberately: Actions → Nightly → Run workflow, with
+`force_tmux` ticked.
+
+### Static, and why musl
+
+The binary has to start on a Synology running a glibc from a decade ago and on
+this year's Debian, and may not assume a libevent or an ncurses exists
+anywhere. It is built with `musl-gcc` (Ubuntu's `musl-tools`), not with glibc's
+`-static`: a statically linked glibc still `dlopen`s the NSS modules of the
+machine that built it the moment anything asks who the user is, and tmux does
+exactly that at startup — `getpwuid`, to find the login shell and the home
+directory. On an older host that is a crash or a wrong shell with no message
+attached. A musl static tmux has no libc on the host at all.
+
+The build refuses to fall back to the system compiler, and refuses to pack a
+binary `file` does not call statically linked.
+
+### Terminfo travels with it
+
+A static ncurses has the terminfo code compiled in and no terminfo *database* —
+that is a directory read at runtime, and a bare host may have none. So the
+tarball carries one: eleven names (`xterm-256color`, `screen-256color`,
+`tmux-256color`, `linux`, `vt100` and friends, plus the aliases `tic` writes
+alongside them), compiled by the `tic` the same build produced. DevHub sets `TERMINFO` to the unpacked `terminfo/` directory
+when it runs the binary, so nothing reads the host's database and nothing
+writes to it.
+
+### Where it is installed
+
+```
+~/.devhub-server/tmux/<version>/bin/tmux
+~/.devhub-server/tmux/<version>/terminfo
+```
+
+Beside the remote extension host, under the same `serverDataFolderName`, and
+versioned for the same reason the server is keyed on a commit: two DevHubs of
+different ages on one host each find their own and neither disturbs the other.
+DevHub installs it on first use and skips the download when the binary is
+already there.
+
+### Installing one by hand
+
+For a host with no route to github.com, or to try a build the nightly has not
+published. `<version>` is the one the app asks for; `devhub --version` and the
+pin at the top of `scripts/build_tmux.py` are the same number.
+
+```sh
+# on the host
+version=3.7c
+mkdir -p ~/.devhub-server/tmux/$version
+tar -xzf devhub-tmux-linux-x64-$version.tar.gz \
+    --strip-components 1 -C ~/.devhub-server/tmux/$version
+~/.devhub-server/tmux/$version/bin/tmux -V     # should print: tmux 3.7c
+```
+
+Nothing else about the flow changes: DevHub finds the binary where it would
+have put it and does not download.
+
+### Building one locally
+
+```sh
+sudo apt-get install -y musl-tools build-essential   # on Ubuntu
+scripts/build_tmux.py linux-x64                      # writes dist/devhub-tmux-linux-x64-<version>.tar.gz
+```
+
+Only the target that matches the machine: there is no cross-build, and a binary
+this machine cannot run is a binary the build cannot ask `-V`. On a Mac,
+`scripts/build_tmux.py darwin-arm64` builds and packs the same layout, and the
+result **must not be published** — macOS has no static libc, so the binary
+links dynamically against libSystem. It exists so that the layout, the terminfo
+step and the version pins can be checked without waiting for a runner, and the
+build says so on its own output.
+
 ## Pointing one host somewhere else
 
 `remote.SSH.serverDownloadUrlTemplate` overrides the product's template for
