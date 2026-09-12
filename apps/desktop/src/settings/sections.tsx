@@ -1199,6 +1199,24 @@ function Form({
   );
 }
 
+/**
+ * The id a new action gets, and the only place one is ever chosen.
+ *
+ * An id is DevHub's name for an action, not the person's: the display name is
+ * the human-facing one, and this is what the file keys the table on. So it is
+ * generated once and never changes — which is what this screen used to let
+ * somebody do, and a changed key is a new table, so renaming an action left
+ * the old one in the file and the next read found two.
+ *
+ * A UUID, prefixed because an identifier in this configuration starts with a
+ * letter (`model/config.ts`, `validateId`) and a UUID may start with a digit.
+ * The prefix carries no meaning and nothing reads it — an id somebody typed by
+ * hand years ago is just as opaque, and stays exactly as they wrote it.
+ */
+function newActionId(): string {
+  return `action-${crypto.randomUUID()}`;
+}
+
 function ActionGlyph() {
   return (
     <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
@@ -1259,10 +1277,6 @@ export function ActionsSection({
     });
   };
 
-  const otherIds = actions
-    .filter((_, position) => position !== selected)
-    .map((item) => item.id);
-
   return (
     <Collection
       label="Agent actions"
@@ -1279,10 +1293,7 @@ export function ActionsSection({
       onSelect={setWanted}
       addLabel="Add Action"
       onAdd={() => {
-        const id = freeId(
-          "action",
-          actions.map((item) => item.id),
-        );
+        const id = newActionId();
         // At the end of its own group, which is where a new button appears in
         // the row it will be drawn in — not at the end of a list whose order
         // spans four different triggers.
@@ -1353,21 +1364,6 @@ export function ActionsSection({
                 )}
                 onChange={(next) => {
                   replace({ ...action, trigger: next });
-                }}
-              />
-            </Row>
-            <Row label="Identifier" help="What settings.toml calls it.">
-              <TextField
-                label="Agent action identifier"
-                value={action.id}
-                mono
-                validate={(next) =>
-                  otherIds.includes(next)
-                    ? "Another action already has that identifier."
-                    : idProblem(next)
-                }
-                onCommit={(id) => {
-                  replace({ ...action, id });
                 }}
               />
             </Row>

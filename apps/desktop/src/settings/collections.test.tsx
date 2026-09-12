@@ -349,7 +349,11 @@ describe("the actions an agent is sent", () => {
     await vi.waitFor(() => {
       expect(saves.at(-1)?.agentActions).toHaveLength(2);
     });
-    expect(saves.at(-1)?.agentActions[1]?.id).toBe("action-1");
+    // Generated, not typed: an id is what the file keys the table on, so it is
+    // chosen once here and never again.
+    expect(saves.at(-1)?.agentActions[1]?.id).toMatch(
+      /^action-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
+    );
 
     fireEvent.click(screen.getByRole("button", { name: "Remove Action" }));
     await vi.waitFor(() => {
@@ -473,8 +477,15 @@ describe("the actions an agent is sent", () => {
     expect(link).toHaveClass("sf-reset-link");
   });
 
-  it("refuses two actions with one identifier", async () => {
-    await open(
+  /**
+   * The identifier is DevHub's, not the person's. It used to be a field on
+   * this screen, and changing it wrote a second table under the new key while
+   * the old one stayed — one action became two on the next read. The display
+   * name is the only name there is to change, so there is nothing here to
+   * change the id with and no save can carry a different one.
+   */
+  it("does not offer the identifier, and never changes one", async () => {
+    const { saves } = await open(
       "Actions",
       testConfig({
         agentActions: [
@@ -497,10 +508,20 @@ describe("the actions an agent is sent", () => {
         ],
       }),
     );
-    const id = screen.getByLabelText("Agent action identifier");
-    fireEvent.change(id, { target: { value: "review" } });
-    fireEvent.blur(id);
-    expect(id).toBeInvalid();
+    expect(screen.queryByLabelText("Agent action identifier")).toBeNull();
+
+    const name = screen.getByLabelText("Agent action name");
+    fireEvent.change(name, { target: { value: "Review it too" } });
+    fireEvent.blur(name);
+    await vi.waitFor(() => {
+      expect(saves.at(-1)?.agentActions[0]?.displayName).toBe("Review it too");
+    });
+    for (const save of saves) {
+      expect(save.agentActions.map((item) => item.id)).toEqual([
+        "implement",
+        "review",
+      ]);
+    }
   });
 
   it("says which variables the message may use, and what $name does", async () => {

@@ -22,7 +22,11 @@
  * - A key that is new is appended to the table it belongs to, after that
  *   table's last entry, so it lands under the heading a reader expects.
  * - A key that is gone takes its whole line with it, including a comment that
- *   is only about that line.
+ *   is only about that line. A key spelled as a `[heading]` is the same key:
+ *   it takes its heading, everything under it, and the comment lines written
+ *   immediately above it. The document is what `desired` says and nothing
+ *   else — a heading nobody claims is an entry that comes back on the next
+ *   read.
  * - Array-of-tables entries (`[[workspace_sources]]`, `[[agent_profiles]]`)
  *   are matched by their `id`, not their position: reordering the array in the
  *   UI does not rewrite unrelated blocks, and a removed entry takes its own
@@ -417,6 +421,52 @@ export function updateTomlDocument(
       ? wanted.every((item) => needsTableBlock(item as TomlValue))
       : arrayTableBlocks(path).length > 0;
 
+  /** Whether the document heads anything inside `path`, at any depth. */
+  const hasTablesUnder = (path: readonly (string | number)[]): boolean =>
+    allTables.some(
+      (entry) =>
+        entry.path.length > path.length &&
+        samePath(entry.path.slice(0, path.length), path),
+    );
+
+  /**
+   * Every `[path.something]` heading under `path` that `target` does not claim.
+   *
+   * A key that is gone takes its line with it, and a key spelled as a heading
+   * is the same key: `[agent_actions.issue.mine]` is `agent_actions.issue.mine`
+   * written the long way. Leaving one behind is how a save stopped being a
+   * picture of the model and became a pile of everything the model had ever
+   * said — rename an action's id and the old heading stayed beside the new one,
+   * so the next read found two actions where the person had one.
+   *
+   * Only the topmost unclaimed heading is removed; `blockWithChildrenSpan`
+   * takes the sub-tables written inside it, and dropping the descendants here
+   * would delete the same span twice. Array elements are not addressed by this
+   * — a numeric segment means `[[key]]`, which `reconcileArrayOfTables` already
+   * matches by id and removes by the same rule.
+   */
+  const removeUnclaimedTables = (
+    path: readonly (string | number)[],
+    target: Record<string, TomlValue>,
+  ): void => {
+    const spans: { start: number; end: number }[] = [];
+    for (const entry of allTables) {
+      if (entry.path.length <= path.length) continue;
+      if (!samePath(entry.path.slice(0, path.length), path)) continue;
+      const key = entry.path[path.length];
+      if (typeof key !== "string" || key in target) continue;
+      const span = blockWithChildrenSpan(entry);
+      // The outermost unclaimed heading covers the ones under it.
+      if (spans.some((one) => one.start <= span.start && span.end <= one.end)) {
+        continue;
+      }
+      spans.push(span);
+    }
+    for (const span of spans) {
+      edits.push({ start: span.start, end: span.end, text: "" });
+    }
+  };
+
   /**
    * Reconcile one table's worth of keys.
    *
@@ -510,6 +560,24 @@ export function updateTomlDocument(
           );
           continue;
         }
+        // A table the document defines without ever heading it: writing
+        // `[agent_actions.issue.mine]` defines `agent_actions.issue` too, and
+        // it is defined whether or not anybody wrote the heading. Appending a
+        // block for it — which is what happened before this existed — defines
+        // the key a second time, and the file stops parsing on the next read.
+        // It has no body, so it has no pairs and nothing to insert after; a
+        // scalar it gains is written as a heading of its own, which is legal
+        // after the sub-tables that implied it.
+        if (hasTablesUnder(childPath)) {
+          reconcile(
+            childPath,
+            [],
+            undefined,
+            (existing[key] ?? {}) as Record<string, unknown>,
+            wanted,
+          );
+          continue;
+        }
         const inline = pairs.get(key);
         // An empty inline table is the empty marker, not a claim on the
         // spelling — the same sentence `key = []` gets a few lines above, for
@@ -563,7 +631,17 @@ export function updateTomlDocument(
       }
     }
 
+    removeUnclaimedTables(path, target);
+
     if (newKeys.length > 0) {
+      if (!container && path.length > 0) {
+        // An implicit table: there is no heading to insert after, so the
+        // scalars get one of their own.
+        appended.push(
+          renderTableBlock(path.map(String), Object.fromEntries(newKeys)),
+        );
+        return;
+      }
       const point = container
         ? insertionPoint(source, container)
         : topLevelInsertionPoint(source, ast);
@@ -646,13 +724,30 @@ export function updateTomlDocument(
   return output.endsWith("\n") ? output : `${output}\n`;
 }
 
-/** A whole `[table]` or `[[table]]` block, heading line included. */
+/**
+ * A whole `[table]` or `[[table]]` block: the heading line, what is under it,
+ * and the comment lines written immediately above it.
+ *
+ * The comment goes for the same reason a removed key's trailing comment goes —
+ * a comment left explaining a heading that is gone is worse than no comment,
+ * because it describes something the file no longer says. "Immediately above"
+ * is the whole of the rule: a run of comment lines touching the heading is
+ * about the heading, and a blank line between them is somebody saying it is
+ * not.
+ */
 function blockSpan(
   source: string,
   table: AST.TOMLTable,
 ): { start: number; end: number } {
   let start = table.range[0];
   while (start > 0 && source[start - 1] !== "\n") start -= 1;
+  for (;;) {
+    if (start === 0) break;
+    let above = start - 1;
+    while (above > 0 && source[above - 1] !== "\n") above -= 1;
+    if (!source.slice(above, start).trimStart().startsWith("#")) break;
+    start = above;
+  }
   let end = table.range[1];
   while (end < source.length && source[end] !== "\n") end += 1;
   end = Math.min(source.length, end + 1);

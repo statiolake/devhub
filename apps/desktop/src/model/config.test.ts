@@ -839,6 +839,110 @@ describe("round trip", () => {
     expect(reparsed.workspaceSources).toEqual([]);
     expect(reparsed.agentProfiles).toEqual([]);
   });
+
+  /**
+   * The save is a projection of the model, not an accretion onto the file.
+   *
+   * An action lives under a heading named after its id, and a heading is not a
+   * key-value pair — so a heading nobody claims used to be left exactly where
+   * it was while the model's version was written beside it. Renaming an id
+   * produced two actions out of one, and the extra one came back on the next
+   * read as an entry nobody had ever written.
+   */
+  it("removes the table of an action that is no longer in the model", () => {
+    const source = [
+      "version = 1",
+      "",
+      "# why this one exists",
+      "[agent_actions.issue.mine]",
+      'display_name = "Mine"',
+      'template = "do it"',
+      "confirm_before_send = true",
+      "enabled = true",
+      "order = 1",
+      "",
+    ].join("\n");
+    const config = parseConfig(source);
+    const written = configOntoDocument(source, {
+      ...config,
+      agentActions: config.agentActions.map((action) =>
+        action.id === "mine" ? { ...action, id: "renamed" } : action,
+      ),
+    });
+    expect(
+      parseConfig(written).agentActions.map((action) => action.id),
+    ).toEqual(
+      config.agentActions.map((action) =>
+        action.id === "mine" ? "renamed" : action.id,
+      ),
+    );
+    expect(written).not.toContain("[agent_actions.issue.mine]");
+    // The comment was about that table and goes with it, the way a removed
+    // key's trailing comment does.
+    expect(written).not.toContain("# why this one exists");
+  });
+
+  it("keeps the rest of the file when a stale action's table goes", () => {
+    const source = [
+      "# my configuration",
+      "version = 1",
+      "",
+      "[appearance]",
+      "# I like it large",
+      "terminal_font_size = 19",
+      "",
+      "[agent_actions.issue.gone]",
+      'display_name = "Gone"',
+      'template = "x"',
+      "confirm_before_send = true",
+      "enabled = true",
+      "order = 9",
+      "",
+    ].join("\n");
+    const config = parseConfig(source);
+    const written = configOntoDocument(source, {
+      ...config,
+      agentActions: config.agentActions.filter(
+        (action) => action.id !== "gone",
+      ),
+    });
+    expect(written).toContain("# my configuration");
+    expect(written).toContain("# I like it large");
+    expect(written).toContain("terminal_font_size = 19");
+    expect(written).not.toContain("[agent_actions.issue.gone]");
+    expect(parseConfig(written).appearance.terminalFontSize).toBe(19);
+  });
+
+  /**
+   * Ids DevHub generates are UUIDs now, but an id is opaque either way: a file
+   * that spells one as a slug somebody typed is a file that keeps spelling it
+   * that way, because nothing reads meaning out of it any more.
+   */
+  it("round trips a file whose action ids are hand-written slugs", () => {
+    const source = [
+      "version = 1",
+      "",
+      "[agent_actions.issue.implement]",
+      'display_name = "Work on it"',
+      'template = "implement {{ISSUE_URL}}"',
+      "confirm_before_send = true",
+      "enabled = true",
+      "order = 0",
+      "",
+      "[agent_actions.issue.review]",
+      'display_name = "Review it"',
+      'template = "review {{ISSUE_URL}}"',
+      "confirm_before_send = true",
+      "enabled = true",
+      "order = 1",
+      "",
+    ].join("\n");
+    const config = parseConfig(source);
+    const written = configOntoDocument(source, config);
+    expect(parseConfig(written).agentActions).toEqual(config.agentActions);
+    expect(written).toContain("[agent_actions.issue.implement]");
+    expect(written).toContain("[agent_actions.issue.review]");
+  });
 });
 
 describe("store", () => {

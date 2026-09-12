@@ -29,6 +29,20 @@ describe("the actions DevHub ships", () => {
     }
   });
 
+  /**
+   * A built-in's id is what a file written years ago says, and what a person's
+   * edited wording is merged onto. New actions are given a generated id now,
+   * and that changed nothing here: these four are fixed for good.
+   */
+  it("keeps the ids it has always shipped", () => {
+    expect(BUILT_IN_ACTIONS.map((action) => action.id)).toEqual([
+      "issue_assignment",
+      "commit_changes",
+      "push_commits",
+      "open_pull_request",
+    ]);
+  });
+
   it("says what fires each of them, and calls anything else an Issue action", () => {
     // The extension point: an id DevHub has never heard of is wording somebody
     // wrote for the Issue flow, which is the one trigger that has a picker.
