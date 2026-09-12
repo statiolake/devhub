@@ -238,23 +238,73 @@ on the directory VS Code starts it in, which is not known until the terminal is
 created, so a command line composed in advance would be right for one terminal
 of the window and wrong for the rest.
 
-### What is not wired yet
+### How the window learns its launcher
 
-Two things, and a remote window's terminal does not work without them:
+The patched `TerminalProfileService` reads `DEVHUB_TERMINAL` from the
+renderer's environment, and a renderer's environment is per window:
+`preload.ts` does `Object.assign(process.env, configuration.userEnv)` before
+the workbench modules are imported, and `userEnv` is
+`{ ...initialUserEnv, ...options.userEnv }` from the `IWindowsMainService.open`
+call. So DevHub passes `userEnv: { DEVHUB_TERMINAL: <that machine's launcher> }`
+when it opens the window (`appController.openEditorView`), and
+`patches/vscode/0003-…` needs no change at all — which is why it has none. A
+local window is passed the launcher `bootstrapShell` wrote before any window
+existed, which is the same value `process.env` already carried, so nothing
+about a local window changed.
 
-1. **The window has to be told its launcher.** The patched
-   `TerminalProfileService` reads `DEVHUB_TERMINAL` from the renderer's
-   environment, and a renderer's environment is per window: `preload.ts` does
-   `Object.assign(process.env, configuration.userEnv)` before the workbench
-   modules are imported, and `userEnv` is `{ ...initialUserEnv, ...options
-   .userEnv }` from the `IWindowsMainService.open` call. So DevHub passes
-   `userEnv: { DEVHUB_TERMINAL: <that machine's launcher> }` when it opens the
-   window, and `patches/vscode/0003-…` needs no change at all — which is why it
-   has none.
-2. **DevHub's tmux runtime is still one, on this Mac.** `terminalProfileFor`
-   refuses a request from any machine but `local` rather than answering with an
-   argv that would attach a host's `tmux` to a socket that is not on it. A
-   `TmuxTerminalRuntime` per `Runtime` is what lifts that refusal.
+A machine whose launcher could not be installed contributes no variable rather
+than a path that would not work. That is not a silence: the absent variable is
+exactly what makes the patched profile service refuse to invent a terminal, the
+reason is on DevHub's log, and the launcher run over there says the same thing
+in the terminal tab.
+
+### Agents and terminals on the host
+
+There is one `TmuxTerminalRuntime` per `Runtime`, built on first use and cached
+beside `runtimeFor` (`main/shell/terminalRuntimes.ts`). Everything a tmux
+adapter does — the socket, the marker protocol, the bootstrap probe, the
+inventory, the captures — goes through that machine's `Runtime.exec`, and the
+attaching client's PTY through its `spawnPty`. A terminal target carries its
+machine (`RuntimeId`), so two hosts with the same `/srv/api` are two sessions
+and every consumer takes its adapter from the target rather than from whichever
+one it is holding.
+
+* **`$HOME`, `tmux` and the shell are resolved on the machine**, by
+  `Runtime.home` and `Runtime.resolveProgram`. A host with no `tmux` makes that
+  machine's adapter unavailable, with the sentence naming what was looked for
+  and where — git, worktrees and the Issue and pull-request rows on that host
+  are unaffected, because none of them needs tmux.
+* **The bootstrap config is written on the machine**, exclusively-created
+  through `Runtime.writeNewTextFile` (`open(…, "wx")` here, `set -C` there) in
+  that machine's `~/.devhub/tmp`. A `-f` path is only meaningful on the machine
+  tmux is starting on.
+* **One reconcile loop per machine**, at that machine's cadence, and
+  `reconcile_agents` carries the machine it is about. A round is one question
+  to one tmux server: its session list is complete for that server and says
+  nothing about any other, so a round scoped to two machines would report the
+  other machine's Agents as ended. The coordinator keeps one in-flight
+  reconcile *per scope* — one machine's Agents, or one Agent — so two machines'
+  overlapping rounds do not invalidate each other.
+* **An Agent launches, is typed into and is read on its Workspace's machine.**
+  Its command is resolved there (`Runtime.resolveProgram`), its session is
+  created on that machine's tmux, and `send-keys` and `capture-pane` go the
+  same way. A failure is the Agent's, reported on its row.
+* **At startup**, the Agents restored from the state file reconcile on their own
+  machines, and the stray-session sweep runs once per machine that has a
+  Workspace on it. A host that is unreachable then is not fatal and adds no
+  state: its Workspaces come up with the runtime failure that names the host,
+  and the next successful round is when they recover.
+* **A machine no Workspace is on any more is let go of** — its tmux adapter, its
+  launcher installation and its ssh connection together. The sessions over
+  there are untouched; reopening a Workspace on that host finds them again by
+  their markers, which is what a restart does too.
+
+There is no longer a predicate about which machine a feature works on.
+`supportsLocalAgents`, `LOCAL_AGENTS_UNAVAILABLE` and the terminal error code
+`workspace_remote` are gone, and the Sidebar's New Agent button is offered for
+an ssh row exactly as for a local one. A host DevHub cannot reach reports that
+as a failure naming the host, which is a sentence a person can act on — unlike
+a button that was never there.
 
 ### What a first real run must check
 
@@ -279,3 +329,19 @@ been. In order, against a host with a DevHub server already installed:
    reopening reattaches to the same session with its scrollback.
 6. Two windows on two different hosts with folders at the same path get two
    different sessions.
+7. `tmux -L devhub list-sessions` on the host shows a `workspace-…` session for
+   the folder and, once an Agent is created from the row, an `agent-…` one
+   beside it — and `tmux -L devhub list-sessions` on the Mac shows neither.
+8. Creating an Agent from an ssh row starts it on the host: the process is in
+   `ps` there and not here, its status leaves "Starting runtime", and text sent
+   to it arrives in its pane.
+9. `devhub --metrics` names the host with a connected runtime, a median round
+   trip and the reconcile interval derived from it. A LAN host should settle at
+   the 500 ms floor; a slow one should be visibly slower and should *not* make
+   the local Agents slower.
+10. Stopping the host mid-session: the Workspaces on it show the runtime
+    failure naming the host, the local Workspaces are unaffected, and bringing
+    the host back recovers on the next round with no restart.
+11. A host with no `tmux`: git, the branch and the Issue row still work, and
+    only the terminal and the Agent refuse, with the sentence naming `tmux` and
+    the host.
