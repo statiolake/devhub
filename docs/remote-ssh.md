@@ -76,9 +76,26 @@ devhub-reh-linux-x64/
   node                     the prebuilt Node the server runs on
   out/                     the bundled server
   product.json             DevHub's, with the same `commit` the client states
-  extensions/              the built-in set, minus the UI-only ones
+  extensions/              the built-in set, minus the UI-only ones and
+                           minus copilot
   node_modules/            the server's production dependencies
 ```
+
+**No Copilot.** DevHub pins `chat.disableAIFeatures: true`, so nothing on a
+remote would ever start the agent host, and the `copilot` built-in plus its
+native runtime are about 470 MB of an 810 MB tree — the tarball is 103 MB with
+them gone and 237 MB with them in. `scripts/build_reh.py` deletes them after
+the build rather than asking the build not to make them, because there is
+nothing to ask: `copilot` is a local workspace extension in the submodule, not
+an entry in `product.json`'s `builtInExtensions`, so the product edit the script
+already makes cannot reach it; there is no flag or environment variable for it;
+and leaving it uncompiled does not work either, because the last step of every
+REH package task walks into the output looking for its SDK and throws when it
+is not there. Two small packages stay — `@github/copilot` (12 KB) and
+`@github/copilot-sdk` (736 KB) — because `server-main.js` reads their versions
+at startup. The build runs `bin/devhub-server --version` afterwards whenever the
+target is one the building machine can execute, so a deletion that broke
+startup fails the build rather than the connection.
 
 Published targets are `linux-x64` and `linux-arm64`. Each is built on a runner
 of its own architecture, because `vscode/remote/node_modules` holds native
@@ -121,12 +138,21 @@ beside it are the Mac's. Use CI for anything you intend to connect to. The one
 target a Mac builds correctly is `darwin-arm64`, which is also the one CI does
 not publish.
 
-The tarballs are around 235 MB compressed, and the single largest thing in them
-by a wide margin is the GitHub Copilot native runtime the `copilot` built-in
-carries — two copies of it, 250 MB unpacked, one for the extension and one for
-the server's own `node_modules`. DevHub ships that extension on the desktop, so
-the server ships it too; leaving it out of the server alone would be a decision
-about what remote development includes, not a size tweak.
+The tarballs are around 100 MB: 103 MB for linux-x64, 99 MB for linux-arm64,
+94 MB for darwin-arm64.
+
+## A source run cannot connect
+
+`pnpm dev` has no `commit` — deliberately, and it cannot be given one: VS Code
+reads `product.commit` as "this is a packaged build" and sends a source run
+looking for a `node_modules.asar` that a checkout does not have. But `commit`
+is also what the extension puts in the download URL and what the remote server
+checks the connecting client against, so a source run asks for
+`devhub-reh-linux-x64-undefined.tar.gz` and gets a 404.
+
+**SSH workspaces need a packaged build.** Test them against `pnpm build`'s
+`dist/DevHub.app` or a nightly, not against `pnpm dev`. See
+`scripts/product_metadata.py` for why the field means what it means.
 
 ## Installing a server by hand
 

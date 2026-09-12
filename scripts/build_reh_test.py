@@ -19,12 +19,16 @@ from __future__ import annotations
 
 import json
 import re
+import tempfile
 import unittest
+from pathlib import Path
 
 from build_reh import (
+	COPILOT_KEPT,
 	TARGETS,
 	gulp_task,
 	release_tag,
+	remove_copilot,
 	tarball_name,
 	top_level_dir,
 )
@@ -120,6 +124,53 @@ class BuildNames(unittest.TestCase):
 		# the submodule, and `${commit}` is the only placeholder that can
 		# identify a build. See build_reh.py.
 		self.assertEqual(release_tag(vscode_commit()), f"reh-{vscode_commit()}")
+
+
+class RemoveCopilot(unittest.TestCase):
+	"""Which parts of the built tree the deletion takes, and which it leaves.
+
+	The whole reason `remove_copilot` is a deletion rather than a build option
+	is written down in its docstring; what matters here is that it deletes the
+	two big things, keeps the two small ones `server-main.js` reads versions
+	out of, and refuses to be a silent no-op if upstream renames either.
+	"""
+
+	def setUp(self) -> None:
+		self.staging = Path(tempfile.mkdtemp(prefix="reh-test-"))
+		self.addCleanup(lambda: __import__("shutil").rmtree(self.staging, ignore_errors=True))
+
+	def write(self, relative: str, size: int = 1024) -> Path:
+		path = self.staging / relative
+		path.parent.mkdir(parents=True, exist_ok=True)
+		path.write_bytes(b"\0" * size)
+		return path
+
+	def test_takes_the_extension_and_the_platform_runtime(self) -> None:
+		extension = self.write("extensions/copilot/dist/extension.js")
+		runtime = self.write("node_modules/@github/copilot-linux-x64/prebuilds/runtime.node")
+		other = self.write("extensions/git/dist/main.js")
+
+		remove_copilot(self.staging, "linux", "x64")
+
+		self.assertFalse(extension.parent.parent.exists())
+		self.assertFalse(runtime.parent.parent.exists())
+		self.assertTrue(other.exists())
+
+	def test_keeps_what_startup_reads_versions_from(self) -> None:
+		self.write("extensions/copilot/dist/extension.js")
+		kept = [self.write(f"{package}/package.json") for package in COPILOT_KEPT]
+
+		remove_copilot(self.staging, "linux", "x64")
+
+		for path in kept:
+			self.assertTrue(path.exists(), path)
+
+	def test_refuses_to_find_nothing(self) -> None:
+		# A tree with no Copilot in it means the build changed under us, and a
+		# quietly smaller server is the kind of difference nobody traces back.
+		self.write("extensions/git/dist/main.js")
+		with self.assertRaises(SystemExit):
+			remove_copilot(self.staging, "linux", "x64")
 
 
 if __name__ == "__main__":

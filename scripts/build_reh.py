@@ -71,8 +71,15 @@ prebuilt Node for the *target* platform from nodejs.org, and writes the tree to
 `<repo root>/vscode-reh-<os>-<arch>` (VS Code's build root is the parent of the
 submodule, which for DevHub is the repository itself; both are gitignored).
 
-Cross-building is the normal case: the only per-target binary is that Node
-download, so a Mac builds the Linux tarballs.
+Cross-building mostly works but is not shippable: the Node comes down for the
+target, but `vscode/remote/node_modules` holds native addons the package task
+copies as npm installed them, for the host. So each published target is built
+on a runner of its own architecture.
+
+The Copilot built-in and its native runtime are taken back out afterwards —
+about 470 MB of an 810 MB tree, and DevHub disables AI features outright. See
+`remove_copilot` for why that is a deletion rather than an option passed to the
+build.
 
     scripts/build_reh.py linux-x64 linux-arm64 [--out-dir dist] [--skip-provision]
 """
@@ -82,6 +89,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import platform
 import shutil
 import subprocess
 import sys
@@ -89,7 +97,7 @@ import tarfile
 import time
 from pathlib import Path
 
-from product_metadata import packaged_metadata, vscode_commit
+from product_metadata import PRODUCT_OVERRIDES, packaged_metadata, vscode_commit
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 VSCODE_DIR = REPO_ROOT / "vscode"
@@ -99,10 +107,12 @@ PRODUCT_JSON = VSCODE_DIR / "product.json"
 # (win32, alpine, ppc64le...), but a target nobody has is a target nobody
 # notices is broken, and each one is a download and a few minutes of a runner.
 #
-# linux-x64 and linux-arm64 are what people SSH into. darwin-arm64 is here
-# because the macOS job that packages the app has already compiled everything
-# the task needs, so it costs a Node download and a tar; SSHing into a Mac is
-# rare but the marginal price of supporting it is a minute.
+# linux-x64 and linux-arm64 are what people SSH into, and they are what the
+# nightly publishes. darwin-arm64 is buildable but not published: the native
+# addons in `vscode/remote/node_modules` are the host's, so it is only correct
+# when built on a Mac, and the one job DevHub has on a Mac already runs for two
+# hours against a two-hour timeout. It stays here because a developer with a
+# Mac to SSH into can build and install one by hand; see docs/remote-ssh.md.
 TARGETS = ("linux-x64", "linux-arm64", "darwin-arm64")
 
 
@@ -262,11 +272,106 @@ def build_target(os_name: str, arch: str, commit: str, out_dir: Path) -> Path:
 	if not staging.is_dir():
 		raise SystemExit(f"{gulp_task(os_name, arch)} produced no {staging}")
 
+	remove_copilot(staging, os_name, arch)
+	if runs_here(os_name, arch):
+		verify_server_starts(staging)
+
 	tarball = out_dir / tarball_name(os_name, arch, commit)
 	pack(staging, tarball, top_level_dir(os_name, arch))
 	size_mb = tarball.stat().st_size / 1e6
 	print(f"{tarball.name}: {size_mb:.0f} MB, packaged in {elapsed:.0f}s")
 	return tarball
+
+
+# The `@github/copilot-<platform>-<arch>` runtime package, by the name
+# `build/lib/copilot.ts` computes for it. Only the target's own is in the tree
+# — `getCopilotExcludeFilter` has already stripped the others — so a glob finds
+# the one there is without this script having to reproduce that naming.
+COPILOT_RUNTIME_GLOB = "node_modules/@github/copilot-*-*"
+
+# What stays: 12 KB of loader and 736 KB of SDK. `server-main.js` reads both
+# their `package.json` versions at startup to fill in `product.copilotVersions`
+# — it tolerates their absence, but there is no reason to make it.
+COPILOT_KEPT = ("node_modules/@github/copilot", "node_modules/@github/copilot-sdk")
+
+
+def remove_copilot(staging: Path, os_name: str, arch: str) -> None:
+	"""Take the Copilot built-in and its native runtime back out of the server.
+
+	DevHub pins `chat.disableAIFeatures: true` — fixed, not a preference — so
+	nothing on the remote will ever start the agent host, and what is being
+	deleted is about 470 MB of an 810 MB tree: ~305 MB of built-in extension
+	and ~185 MB of platform runtime, most of it one native binary shipped
+	twice. The tarball goes from 237 MB to 103 MB. Over an SSH connection to a
+	machine being set up for the first time, that is the difference between a
+	wait and a decision.
+
+	This is a deletion after the fact, which is the worse of the two ways to do
+	it, and it is here because the better one does not exist upstream.
+	`packageTask` takes its built-in list from a glob over the submodule's own
+	`extensions/*/package.json` — `copilot` is a local workspace extension, not
+	an entry in `product.json`'s `builtInExtensions`, so the product edit this
+	script already makes cannot reach it — and there is no environment variable
+	or flag that turns it off. Nor can the extension simply be left uncompiled:
+	the last step of every REH package task is `prepareCopilotRipgrepShimTaskREH`,
+	which walks into the *output* directory and throws when the SDK is not
+	there. Both routes end at the same wall, so the build makes the whole thing
+	and this takes half of it away again.
+
+	What it must not break is startup, which is why `verify_server_starts`
+	exists and why the two small packages above are kept.
+	"""
+	targets = [staging / "extensions" / "copilot", *staging.glob(COPILOT_RUNTIME_GLOB)]
+	removed = 0
+	for target in targets:
+		if not target.exists():
+			continue
+		removed += sum(f.stat().st_size for f in target.rglob("*") if f.is_file())
+		shutil.rmtree(target)
+
+	# A build that stopped shipping Copilot for some *other* reason — upstream
+	# renaming the package, say — would silently produce a smaller tarball and
+	# tell nobody, and the next person to wonder where the agent host went
+	# would have no thread to pull. So say what was found, and refuse the
+	# silence.
+	if removed == 0:
+		raise SystemExit(
+			f"no Copilot to remove from {staging}: expected extensions/copilot and "
+			f"{COPILOT_RUNTIME_GLOB}, found neither. Upstream has moved; read "
+			"vscode/build/lib/copilot.ts and fix remove_copilot rather than "
+			"shipping a server that quietly differs from the one before it."
+		)
+	print(f"  removed {removed / 1e6:.0f} MB of Copilot ({os_name}-{arch})")
+
+
+def verify_server_starts(staging: Path) -> None:
+	"""Run the server that was just carved up, and make it say something.
+
+	Only for a target this machine can execute — the Node in a cross-built
+	tarball is the target's. It is a weak check on purpose: `--version` loads
+	`server-main.js`, which is where the product metadata, the
+	`copilotVersions` lookup and the module resolution that `remove_copilot`
+	could plausibly have broken all happen. A failure here means the deletion
+	took something the server needed, which is the one thing worth catching
+	before the tarball leaves the machine.
+	"""
+	launcher = staging / "bin" / PRODUCT_OVERRIDES["serverApplicationName"]
+	result = subprocess.run(
+		[str(launcher), "--version"], capture_output=True, text=True, timeout=120
+	)
+	if result.returncode != 0:
+		raise SystemExit(
+			f"{launcher} --version exited {result.returncode} after remove_copilot:\n"
+			f"{result.stdout}{result.stderr}"
+		)
+	print(f"  {launcher.name} --version: {result.stdout.strip().splitlines()[0]}")
+
+
+def runs_here(os_name: str, arch: str) -> bool:
+	"""Whether this machine can execute the server it just built."""
+	here = {"darwin": "darwin", "linux": "linux"}.get(platform.system().lower())
+	machine = {"arm64": "arm64", "aarch64": "arm64", "x86_64": "x64"}.get(platform.machine())
+	return (os_name, arch) == (here, machine)
 
 
 def pack(staging: Path, tarball: Path, top_level: str) -> None:
