@@ -86,6 +86,7 @@ import {
 	type WorkspaceLocation,
 } from "../../model/domain.js";
 import { SCRATCH_EDITOR_KEY } from "./editorPlace.js";
+import { readSshHosts } from "./sshHosts.js";
 import {
 	operationId as parseOperationId,
 	type OperationId,
@@ -3926,6 +3927,36 @@ export class AppController {
 		);
 		// Creating and cloning end where picking does — `openFolder` — because
 		// they differ only in how the directory came to exist.
+		// The two SSH doors. Listing is read fresh at the moment the picker opens,
+		// so a host added five minutes ago is there; opening goes through
+		// `openFolder`, which is where every way of opening a Workspace meets.
+		handle(CHANNELS.listSshHosts, async () => {
+			try {
+				return await readSshHosts();
+			} catch (error: unknown) {
+				throw asIpcError(errorWire(error));
+			}
+		});
+		handle(
+			CHANNELS.openSshWorkspace,
+			async (
+				_event,
+				host: string,
+				path: string,
+				withAgent: string | undefined,
+			) => {
+				this.cancelPicker?.();
+				this.cancelPicker = undefined;
+				try {
+					return await this.openFolder(
+						requestedLocation({ kind: "ssh", host, path }),
+						withAgent,
+					);
+				} catch (error: unknown) {
+					throw asIpcError(errorWire(error));
+				}
+			},
+		);
 		handle(CHANNELS.projectDefaultDirectory, () =>
 			defaultProjectDirectory(this.config),
 		);

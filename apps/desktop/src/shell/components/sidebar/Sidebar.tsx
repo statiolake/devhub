@@ -13,6 +13,7 @@ import {
   type AgentSnapshot,
   type AppIntent,
   type AppSnapshot,
+  type WorkspaceLocationWire,
   type WorkspaceSnapshot,
 } from "../../../ipc/appShell";
 import { clampSidebarWidth } from "../../../ipc/appShell";
@@ -156,7 +157,10 @@ function WorkspaceRow({
               for this workspace the mark is the link to it, and a button
               cannot go inside a button. It keeps the glyph column either way:
               a folder and a repository start at the same pixel. */}
-          <WorkspaceGlyph repository={repository} />
+          <WorkspaceGlyph
+            location={workspace.location}
+            repository={repository}
+          />
           <button
             className="sidebar-context-button"
             type="button"
@@ -194,27 +198,37 @@ function WorkspaceRow({
             place this differs from the sketch: they are buttons, a button
             cannot go inside the row's own button, and putting them before it
             would move the glyph column that every other row lines up with. */}
-          {workspace.canCreateAgent && (
-            <button
-              className="row-action-button"
-              type="button"
-              aria-label={`Create agent in ${workspace.label}${agentProfilesAvailability === "unavailable" || agentProfiles.length === 0 ? ", unavailable" : ""}`}
-              title={
-                agentProfilesAvailability === "degraded"
-                  ? "Agent profiles need attention"
-                  : agentProfiles.length > 0
-                    ? "Create agent"
-                    : "No enabled agent profiles"
-              }
-              disabled={
-                agentProfilesAvailability === "unavailable" ||
-                agentProfiles.length === 0
-              }
-              onClick={() => onCreateAgent(workspace.id)}
-            >
-              <Glyph name="plus" />
-            </button>
-          )}
+          {/* Shown and disabled rather than absent when the reason is that
+              the folder is on another machine. A button that is simply not
+              there is indistinguishable from one this build never had, and
+              the whole point of the sentence is that a person can tell "not
+              yet" from "not a thing". A closing row still hides it: that one
+              is about to stop existing. */}
+          {(workspace.canCreateAgent ||
+            workspace.localToolingUnavailable !== undefined) &&
+            !closing && (
+              <button
+                className="row-action-button"
+                type="button"
+                aria-label={`Create agent in ${workspace.label}${workspace.localToolingUnavailable !== undefined || agentProfilesAvailability === "unavailable" || agentProfiles.length === 0 ? ", unavailable" : ""}`}
+                title={
+                  workspace.localToolingUnavailable ??
+                  (agentProfilesAvailability === "degraded"
+                    ? "Agent profiles need attention"
+                    : agentProfiles.length > 0
+                      ? "Create agent"
+                      : "No enabled agent profiles")
+                }
+                disabled={
+                  workspace.localToolingUnavailable !== undefined ||
+                  agentProfilesAvailability === "unavailable" ||
+                  agentProfiles.length === 0
+                }
+                onClick={() => onCreateAgent(workspace.id)}
+              >
+                <Glyph name="plus" />
+              </button>
+            )}
           {/* One close, whatever state the Workspace is in: a close that failed
             is retried by asking for the same thing again, not by a second
             icon that means the same thing.
@@ -259,7 +273,22 @@ function WorkspaceRow({
             it, and it is the fact that changes under you — sharing a line it
             got whatever the neighbours left over, and what survived was
             `feature/128-tidy-the…`, the half that says nothing. */}
-        {repository?.branch ? (
+        {workspace.location.kind === "ssh" ? (
+          /* The machine, where a local row has its branch — because it is the
+             same slot for the same reason: the one long fact that identifies
+             the row and is not its name. A remote row has no branch to put
+             here (git is not asked; see `supportsLocalTooling`), and the host
+             is the thing a person with the same folder on three machines is
+             actually reading the row for. */
+          <div className="row-line row-line-secondary">
+            <span
+              className="row-branch"
+              title={`${workspace.location.host}:${workspace.root}`}
+            >
+              {workspace.location.host}
+            </span>
+          </div>
+        ) : repository?.branch ? (
           <div className="row-line row-line-secondary">
             <span className="row-branch" title={repository.branch}>
               {repository.branch}
@@ -281,10 +310,27 @@ function WorkspaceRow({
             starting with its icons. Nothing here is on the name's line any
             more, which is what stopped four buttons from deciding how much of
             a branch name a person got to see. */}
-        {(repository?.issue ??
-        repository?.pullRequest ??
-        repository?.pending ??
-        repository?.unavailable) ? (
+        {/* Nothing DevHub reads itself reaches another machine yet, and the
+            row says which of the two silences this is. Left blank it would
+            look exactly like a repository whose branch is about no Issue —
+            the same mistake `row-issue-unavailable` exists to stop one line
+            down — and a person would go looking for a setting that is not
+            missing. The sentence is the wire's, not this page's, so the row,
+            the disabled New Agent button and the terminal pane all say it in
+            the same words. */}
+        {workspace.localToolingUnavailable ? (
+          <div
+            className="row-line row-line-links"
+            title={workspace.localToolingUnavailable}
+          >
+            <span className="row-issue-unavailable">
+              {workspace.localToolingUnavailable}
+            </span>
+          </div>
+        ) : (repository?.issue ??
+          repository?.pullRequest ??
+          repository?.pending ??
+          repository?.unavailable) ? (
           <div className="row-line row-line-links">
             <RepositoryLinks repository={repository} />
             {/* The Issue's title if there is an Issue, and the pull request's
@@ -521,8 +567,10 @@ function WorkspaceRow({
  * GitHub, and a mark that led somewhere else would be inventing one.
  */
 function WorkspaceGlyph({
+  location,
   repository,
 }: {
+  readonly location: WorkspaceLocationWire;
   readonly repository: WorkspaceRepositoryWire | undefined;
 }) {
   const { openExternalUrl } = useAppShell();
@@ -534,12 +582,19 @@ function WorkspaceGlyph({
   // in the main worktree and is neither of them, and comparing it to
   // `mainWorktree` answered "not the main worktree" — which is true, and is not
   // the question. That is what drew a plain subdirectory as a worktree.
+  // A fourth silhouette, and it comes first: whether the folder is on this
+  // machine is the thing a person needs to know before anything else about the
+  // row, and DevHub has no repository facts for a remote folder to draw
+  // anyway — `supportsLocalTooling` is false, so git was never asked.
   const name: GlyphName =
-    repository?.mainWorktree === undefined || repository.worktree === undefined
-      ? "folder"
-      : repository.worktree === repository.mainWorktree
-        ? "repository"
-        : "worktree";
+    location.kind === "ssh"
+      ? "remote"
+      : repository?.mainWorktree === undefined ||
+          repository.worktree === undefined
+        ? "folder"
+        : repository.worktree === repository.mainWorktree
+          ? "repository"
+          : "worktree";
   const url = repository?.repositoryUrl;
   if (url === undefined) {
     return (

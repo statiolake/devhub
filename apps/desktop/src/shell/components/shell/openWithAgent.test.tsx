@@ -71,6 +71,8 @@ function mount() {
     createProject,
     projectDefaultDirectory,
     chooseWorkspaceFolder: vi.fn(),
+    listSshHosts: vi.fn().mockResolvedValue([]),
+    openSshWorkspace: vi.fn(),
     reportFailure: vi.fn(),
   } as unknown as AppShellContextValue;
   render(

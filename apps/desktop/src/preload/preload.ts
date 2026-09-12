@@ -31,6 +31,7 @@ import {
 	type IssueAssignment,
 	type IssueRepository,
 	type RepositoryStatusWire,
+	type SshHostWire,
 	type WorkspacePickerEvent,
 } from "../ipc/contract.js";
 import type { ShellPalette } from "../ipc/palette.js";
@@ -181,6 +182,17 @@ const devhub: DevhubApi = {
 		) as Promise<AppOutcome>,
 	projectDefaultDirectory: () =>
 		ipcRenderer.invoke(CHANNELS.projectDefaultDirectory) as Promise<string>,
+	listSshHosts: () =>
+		ipcRenderer.invoke(CHANNELS.listSshHosts) as Promise<
+			readonly SshHostWire[]
+		>,
+	openSshWorkspace: (host: string, path: string, withAgent?: string) =>
+		ipcRenderer.invoke(
+			CHANNELS.openSshWorkspace,
+			host,
+			path,
+			withAgent,
+		) as Promise<AppOutcome>,
 
 	findIssueRepositories: (issueUrl: string) =>
 		ipcRenderer.invoke(CHANNELS.findIssueRepositories, issueUrl) as Promise<

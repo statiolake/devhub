@@ -50,6 +50,7 @@ export type GlyphName =
   | "trash"
   | "repository"
   | "worktree"
+  | "remote"
   | "issueOpen"
   | "issueClosed"
   | "pullRequest"
@@ -130,6 +131,16 @@ const GLYPHS: Record<GlyphName, ReactNode> = {
      of lines. */
   folder: (
     <path d="M1.71 4a1.14 1.14 0 0 1 1.15-1.14h3.43l1.6 1.83h5.26a1.14 1.14 0 0 1 1.14 1.14v6.17a1.14 1.14 0 0 1-1.14 1.14H2.86a1.14 1.14 0 0 1-1.15-1.14z" />
+  ),
+
+  /* A folder on another machine. Two stacked slabs — the shape everything from
+     a rack unit to a disk icon has used for forty years — rather than a folder
+     with a badge on it, because this column is scanned and not read: a row on
+     another machine has to be tellable from a row on this one at a glance, and
+     a badge at fourteen units is a smudge. Drawn in the same live area as
+     `folder` so the leading column does not move. */
+  remote: (
+    <path d="M2.29 3.43h11.42v3.43H2.29zM2.29 9.14h11.42v3.43H2.29zM4.57 5.14h.01M4.57 10.86h.01" />
   ),
 
   /* Scratch: a shell prompt. Redrawn to the shared live area, because at 14

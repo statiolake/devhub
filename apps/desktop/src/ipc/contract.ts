@@ -345,6 +345,20 @@ export interface ContentRect {
  * which is why the rank travels with the candidate rather than the list being
  * assumed to arrive in it.
  */
+/**
+ * A machine `~/.ssh/config` names, as the picker is told it.
+ *
+ * The alias is what travels back when the row is chosen: `ssh` resolves it,
+ * and DevHub resolving it too would be a second answer that can disagree the
+ * first time somebody edits a `HostName`. The rest is shown, so a person with
+ * six aliases can tell which is which without opening the file.
+ */
+export interface SshHostWire {
+	readonly alias: string;
+	readonly hostName?: string;
+	readonly user?: string;
+}
+
 export interface WorkspacePickerCandidate {
 	readonly operationId: string;
 	readonly sequence: number;
@@ -518,6 +532,32 @@ export interface DevhubApi {
 	projectDefaultDirectory(): Promise<string>;
 
 	/**
+	 * The machines `~/.ssh/config` already names.
+	 *
+	 * Read on demand rather than pushed with the snapshot, because it is not
+	 * part of what DevHub *is* — it is what the picker offers, and it is asked
+	 * for at the moment the picker opens so a host added five minutes ago is
+	 * there. A machine with no SSH config answers with an empty list, which the
+	 * picker draws as "no rows", not as a failure.
+	 */
+	listSshHosts(): Promise<readonly SshHostWire[]>;
+
+	/**
+	 * Open a folder on another machine as a Workspace.
+	 *
+	 * Beside `selectWorkspacePicker` rather than folded into it, because the
+	 * two questions differ: a local row can be a folder a source is offering to
+	 * *make*, and there is no making a directory on a machine DevHub has not
+	 * connected to. They meet one call later, at `openFolder`, which is where
+	 * "this is a Workspace now" is decided for every way of opening one.
+	 */
+	openSshWorkspace(
+		host: string,
+		path: string,
+		withAgent?: string,
+	): Promise<AppOutcome>;
+
+	/**
 	 * Assigning an Issue, one question at a time.
 	 *
 	 * Four calls rather than one, and the seams are where the flow's questions
@@ -660,6 +700,8 @@ export const CHANNELS = {
 	getRepositoryStatus: "devhub:get-repository-status",
 	cloneProject: "devhub:clone-project",
 	projectDefaultDirectory: "devhub:project-default-directory",
+	listSshHosts: "devhub:list-ssh-hosts",
+	openSshWorkspace: "devhub:open-ssh-workspace",
 	cloneParentDirectories: "devhub:clone-parent-directories",
 	githubLogin: "devhub:github-login",
 	assignmentBranch: "devhub:assignment-branch",

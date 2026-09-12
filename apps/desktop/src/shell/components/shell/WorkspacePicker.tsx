@@ -30,6 +30,13 @@ import { AgentProfilePicker } from "./AgentProfilePicker";
 import { Picker, type PickerItem } from "./Picker";
 import { PathLabel } from "./PathLabel";
 import { CloneProjectSheet, NewProjectSheet } from "./ProjectSheets";
+import {
+  aliasFromRowId,
+  SshDestinationSheet,
+  SshFolderSheet,
+  sshHostItems,
+  useSshHosts,
+} from "./SshSheets";
 
 export interface WorkspacePickerProps {
   readonly onDismiss: () => void;
@@ -51,6 +58,7 @@ interface PoolItem extends PickerItem {
  */
 const NEW_PROJECT = "devhub:new-project";
 const CLONE_PROJECT = "devhub:clone-project";
+const SSH_CONNECT = "devhub:ssh-connect";
 
 function PlusGlyph() {
   return (
@@ -69,6 +77,16 @@ function CloneGlyph() {
   );
 }
 
+function HostGlyph() {
+  return (
+    <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+      <path d="M2.4 3.4h11.2a1 1 0 0 1 1 1v3.2a1 1 0 0 1-1 1H2.4a1 1 0 0 1-1-1V4.4a1 1 0 0 1 1-1z" />
+      <path d="M2.4 10.4h11.2a1 1 0 0 1 1 1v0.2a1 1 0 0 1-1 1H2.4a1 1 0 0 1-1-1v-0.2a1 1 0 0 1 1-1z" />
+      <path d="M4 6h0.01" />
+    </svg>
+  );
+}
+
 const ACTIONS: readonly PickerItem[] = [
   {
     id: NEW_PROJECT,
@@ -81,6 +99,12 @@ const ACTIONS: readonly PickerItem[] = [
     label: "Clone Project…",
     detail: "Clone a Git repository and open it",
     glyph: <CloneGlyph />,
+  },
+  {
+    id: SSH_CONNECT,
+    label: "SSH: Connect…",
+    detail: "Open a folder on another machine",
+    glyph: <HostGlyph />,
   },
 ];
 
@@ -103,16 +127,26 @@ function FolderGlyph() {
 type Chosen =
   | { readonly kind: "open"; readonly path: string; readonly create: boolean }
   | { readonly kind: "new"; readonly query: string }
-  | { readonly kind: "clone"; readonly query: string };
+  | { readonly kind: "clone"; readonly query: string }
+  /**
+   * A machine named, with the folder on it still to ask for. It is a `Chosen`
+   * like the rest so that the Command gesture means the same thing on it: the
+   * agent question goes in front of the act, and the act is still one call.
+   */
+  | { readonly kind: "ssh"; readonly host: string; readonly path?: string }
+  /** No machine named yet: the destination is the next question. */
+  | { readonly kind: "ssh-connect" };
 
 export function WorkspacePicker({ onDismiss }: WorkspacePickerProps) {
   // What this sheet is at the moment: the list, the agent question Command
   // adds in front of the act, or one of the two things the list can start. One
   // state, because they are one modal — the picker is not still standing
   // behind a form it opened.
-  const [asking, setAsking] = useState<"pick" | "agent" | "new" | "clone">(
-    "pick",
-  );
+  const [asking, setAsking] = useState<
+    "pick" | "agent" | "new" | "clone" | "ssh-destination" | "ssh-folder"
+  >("pick");
+  /** The machine an SSH row named, while its folder is being asked for. */
+  const [sshHost, setSshHost] = useState<string>();
   /** What was typed here, for whichever sheet is asked for next. */
   const [typedQuery, setTypedQuery] = useState("");
   /** The row Command took, waiting on the agent question. */
@@ -127,8 +161,14 @@ export function WorkspacePicker({ onDismiss }: WorkspacePickerProps) {
     cancelWorkspacePicker,
     selectWorkspacePicker,
     chooseWorkspaceFolder,
+    openSshWorkspace,
     reportFailure,
   } = useAppShell();
+
+  // The machines `~/.ssh/config` names, as rows in the same list as the
+  // folders the local sources found — because to the person opening one they
+  // are the same question, and two lists would be two places to look.
+  const sshHosts = useSshHosts();
 
   /**
    * Everything any round of this sheet has found, in the order Settings put
@@ -238,13 +278,41 @@ export function WorkspacePicker({ onDismiss }: WorkspacePickerProps) {
    */
   const run = useCallback(
     (row: Chosen, profileId: string | undefined) => {
-      if (row.kind === "open") {
-        finish(() => selectWorkspacePicker(row.path, row.create, profileId));
-        return;
+      switch (row.kind) {
+        case "open":
+          finish(() => selectWorkspacePicker(row.path, row.create, profileId));
+          return;
+        case "ssh-connect":
+          void cancelWorkspacePicker().catch(reportFailure);
+          setAsking("ssh-destination");
+          return;
+        case "ssh": {
+          // A destination with a folder in it is answered; one without still
+          // needs the second question, which is a question and not an act, so
+          // it is asked rather than finished.
+          const { host, path } = row;
+          if (path === undefined) {
+            void cancelWorkspacePicker().catch(reportFailure);
+            setSshHost(host);
+            setAsking("ssh-folder");
+            return;
+          }
+          finish(() => openSshWorkspace(host, path, profileId));
+          return;
+        }
+        case "new":
+        case "clone":
+          ask(row.kind, row.query);
       }
-      ask(row.kind, row.query);
     },
-    [ask, finish, selectWorkspacePicker],
+    [
+      ask,
+      cancelWorkspacePicker,
+      finish,
+      openSshWorkspace,
+      reportFailure,
+      selectWorkspacePicker,
+    ],
   );
 
   // The questions the Command gesture adds are questions, so they are counted:
@@ -267,6 +335,38 @@ export function WorkspacePicker({ onDismiss }: WorkspacePickerProps) {
         step={projectStep}
         withAgent={withAgent}
         onDismiss={onDismiss}
+      />
+    );
+  if (asking === "ssh-destination")
+    return (
+      <SshDestinationSheet
+        step={2}
+        onChoose={(host, path) => {
+          if (path !== undefined) {
+            run({ kind: "ssh", host, path }, withAgent);
+            return;
+          }
+          setSshHost(host);
+          setAsking("ssh-folder");
+        }}
+        onCancel={() => {
+          setAsking("pick");
+        }}
+      />
+    );
+  if (asking === "ssh-folder" && sshHost !== undefined)
+    return (
+      <SshFolderSheet
+        host={sshHost}
+        configured={sshHosts.find((host) => host.alias === sshHost)}
+        step={projectStep}
+        onChoose={(path) => {
+          finish(() => openSshWorkspace(sshHost, path, withAgent));
+        }}
+        onCancel={() => {
+          setSshHost(undefined);
+          setAsking("pick");
+        }}
       />
     );
   if (asking === "agent")
@@ -298,7 +398,7 @@ export function WorkspacePicker({ onDismiss }: WorkspacePickerProps) {
     <Picker
       title="Open Workspace"
       question="Which workspace should this window open? Type to search the folders your sources cover."
-      items={pool}
+      items={[...pool, ...sshHostItems(sshHosts)]}
       pinned={ACTIONS}
       busy={pickerBusy}
       emptyNoMatch="No workspaces match."
@@ -318,22 +418,27 @@ export function WorkspacePicker({ onDismiss }: WorkspacePickerProps) {
         // What the row means, in the same terms whichever row it was — so the
         // modifier is read once, here, rather than by each of the three things
         // a row can lead to.
+        const alias = aliasFromRowId(choice.id);
         const row: Chosen =
           choice.id === NEW_PROJECT
             ? { kind: "new", query: choice.query }
             : choice.id === CLONE_PROJECT
               ? { kind: "clone", query: choice.query }
-              : {
-                  kind: "open",
-                  path: choice.id,
-                  // Only a row that said it is missing may make a folder, and
-                  // the row said it because the source it came from said so.
-                  // Nothing here decides it, and nothing here looks at the disk
-                  // to second-guess it.
-                  create:
-                    pool.find((item) => item.id === choice.id)?.missing ??
-                    false,
-                };
+              : choice.id === SSH_CONNECT
+                ? { kind: "ssh-connect" }
+                : alias !== undefined
+                  ? { kind: "ssh", host: alias }
+                  : {
+                      kind: "open",
+                      path: choice.id,
+                      // Only a row that said it is missing may make a folder, and
+                      // the row said it because the source it came from said so.
+                      // Nothing here decides it, and nothing here looks at the disk
+                      // to second-guess it.
+                      create:
+                        pool.find((item) => item.id === choice.id)?.missing ??
+                        false,
+                    };
         if (choice.split) {
           void cancelWorkspacePicker().catch(reportFailure);
           setChosen(row);

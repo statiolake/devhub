@@ -15,6 +15,7 @@ import type {
   IssueAssignment,
   IssueRepository,
   RepositoryStatusWire,
+  SshHostWire,
   WorkspacePickerCandidate,
 } from "./client";
 
@@ -46,6 +47,14 @@ export interface AppShellContextValue {
     withAgent?: string,
   ) => Promise<AppOutcome | undefined>;
   readonly chooseWorkspaceFolder: () => Promise<string | undefined>;
+  /** The machines `~/.ssh/config` names, read fresh when the picker opens. */
+  readonly listSshHosts: () => Promise<readonly SshHostWire[]>;
+  /** Open a folder on another machine as a Workspace. */
+  readonly openSshWorkspace: (
+    host: string,
+    path: string,
+    withAgent?: string,
+  ) => Promise<AppOutcome | undefined>;
   /** Make a folder and open it. Throws what to do about it when it cannot. */
   readonly createProject: (
     path: string,

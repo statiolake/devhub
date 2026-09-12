@@ -31,6 +31,8 @@ function mount(pickerSourceCount: number | undefined) {
     cancelWorkspacePicker: vi.fn().mockResolvedValue(undefined),
     selectWorkspacePicker: vi.fn(),
     chooseWorkspaceFolder: vi.fn(),
+    listSshHosts: vi.fn().mockResolvedValue([]),
+    openSshWorkspace: vi.fn(),
     reportFailure: vi.fn(),
   } as unknown as AppShellContextValue;
   render(

@@ -26,6 +26,7 @@ import type {
   IssueRepository,
   ModalRequest,
   RepositoryStatusWire,
+  SshHostWire,
   WorkspacePickerCandidate,
   WorkspacePickerEvent,
 } from "../ipc/contract";
@@ -37,6 +38,7 @@ export type {
   IssueAssignment,
   IssueRepository,
   RepositoryStatusWire,
+  SshHostWire,
   WorkspacePickerCandidate,
   WorkspacePickerEvent,
 };
@@ -79,6 +81,12 @@ export interface AppShellClient {
     withAgent?: string,
   ): Promise<AppOutcome>;
   projectDefaultDirectory(): Promise<string>;
+  listSshHosts(): Promise<readonly SshHostWire[]>;
+  openSshWorkspace(
+    host: string,
+    path: string,
+    withAgent?: string,
+  ): Promise<AppOutcome>;
   cloneParentDirectories(): Promise<readonly string[]>;
   githubLogin(): Promise<GitHubLoginWire>;
   assignmentBranch(
@@ -164,6 +172,9 @@ export function createShellClient(api: DevhubApi = devhub()): AppShellClient {
     cloneProject: (url, parentDirectory, withAgent) =>
       api.cloneProject(url, parentDirectory, withAgent),
     projectDefaultDirectory: () => api.projectDefaultDirectory(),
+    listSshHosts: () => api.listSshHosts(),
+    openSshWorkspace: (host, path, withAgent) =>
+      api.openSshWorkspace(host, path, withAgent),
     cloneParentDirectories: () => api.cloneParentDirectories(),
     githubLogin: () => api.githubLogin(),
     assignmentBranch: (url, directory) => api.assignmentBranch(url, directory),

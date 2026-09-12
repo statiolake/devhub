@@ -463,6 +463,27 @@ export function AppShellProvider({
     [transport],
   );
 
+  const listSshHosts = useCallback(() => transport.listSshHosts(), [transport]);
+
+  /**
+   * Open a folder on another machine.
+   *
+   * The same shape as `selectWorkspacePicker` and deliberately not the same
+   * call: a local row can be a folder a source is offering to *make*, and there
+   * is no making a directory on a machine DevHub has not connected to. They
+   * meet in main, at the one function every way of opening a Workspace goes
+   * through.
+   */
+  const openSshWorkspace = useCallback(
+    async (host: string, path: string, withAgent?: string) => {
+      const outcome = await transport.openSshWorkspace(host, path, withAgent);
+      applySnapshot(outcome.snapshot);
+      setPickerBusy(false);
+      return outcome;
+    },
+    [applySnapshot, transport],
+  );
+
   /**
    * Start a workspace that does not exist yet.
    *
@@ -687,6 +708,8 @@ export function AppShellProvider({
       pickerCandidates,
       pickerBusy,
       pickerSourceCount,
+      listSshHosts,
+      openSshWorkspace,
       startWorkspacePicker,
       cancelWorkspacePicker,
       selectWorkspacePicker,
@@ -753,6 +776,8 @@ export function AppShellProvider({
       repositoryStatus,
       retry,
       selectWorkspacePicker,
+      listSshHosts,
+      openSshWorkspace,
       startWorkspacePicker,
       state,
     ],
