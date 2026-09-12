@@ -247,8 +247,9 @@ def bundle_server_sources(commit: str) -> float:
 	compile is one of the steps the mangling half runs; it is one of the things
 	going around that half loses.
 
-	`stage_builtin_copilot_sdk` then checks that the compile actually left the
-	SDK in `.build`, because on linux-arm64 it did not. See that function.
+	`stage_builtin_copilot_sdk` then checks that the compile actually left SDK
+	*files* in `.build`, because on linux-arm64 it left an empty directory. See
+	that function.
 	"""
 	elapsed = gulp("core-ci", commit)
 	# `VSCODE_QUALITY` because that compile refuses to run on a machine with
@@ -285,37 +286,70 @@ def copilot_sdk_staging(vscode_dir: Path) -> tuple[Path, Path]:
 	return vscode_dir / ".build" / BUILT_IN_COPILOT_SDK, vscode_dir / BUILT_IN_COPILOT_SDK
 
 
+def sdk_files(sdk: Path) -> int:
+	"""How many regular files the SDK tree holds, symlinks resolved.
+
+	A directory is not the thing the build needs: it is the files under it. The
+	two ways `.build` can hold a directory that carries nothing into the server
+	tree are an *empty* one — `gulp.dest` writes the directory entries a
+	`gulp.src('**')` yields whether or not any file survived the filters — and a
+	*symlinked* one, which a glob that does not follow symlinks walks past. Both
+	answer `is_dir()` and neither answers this.
+	"""
+	if not sdk.is_dir():
+		return 0
+	return sum(1 for path in sdk.rglob("*") if path.is_file())
+
+
 def stage_builtin_copilot_sdk(vscode_dir: Path) -> None:
-	"""Make sure `.build` carries the SDK before a REH package task runs.
+	"""Make sure `.build` carries the SDK, as real files, before packaging.
 
 	`compile-copilot-extension-build` is supposed to put it there, by way of
 	`getProductionDependencies('extensions/copilot')` — and on linux-x64 it
-	does. On linux-arm64 it did not (nightly 34701651753), and the only thing
-	the build then said was that a directory was missing from the *output*
-	tree, 25 minutes into a job, with nothing pointing at the input that was
-	actually short. Which of the arch-dependent steps between npm and gulp drops
-	it is upstream's business; what this script can do is state the invariant
-	the REH task depends on, satisfy it from the copy npm installed, and stop
-	with the real name of the missing thing when there is no such copy.
+	does. On linux-arm64 it did not (nightlies 34701651753 and 34703272262),
+	and the only thing the build then said was that a directory was missing
+	from the *output* tree, 25 minutes into a job, with nothing pointing at the
+	input that was actually short.
+
+	The first version of this checked `is_dir()` and so answered the wrong
+	question: in run 34703272262 it staged nothing on either architecture and
+	linux-arm64 still failed, because `.build` did hold an `sdk` directory —
+	one with nothing in it that the REH copy could carry. `gulp.dest` recreates
+	the directory entries the source glob yields, so an SDK subtree whose files
+	were all filtered out (or that npm left as a symlink into
+	`@github/copilot-<os>-<arch>`, which a non-following glob walks past)
+	survives into `.build` as an empty shell, and
+	`gulp.src('.build/extensions/copilot/**')` then carries no file out of it
+	and the server tree has no `sdk` at all. So the invariant is stated in
+	files, and satisfied by copying the installed tree with its symlinks
+	resolved — `copytree(symlinks=False)` reads through them, which is what
+	`cp -RL` does and what packaging needs.
 
 	Nothing here silences the assertion — the shim still runs and still throws
 	if the tree is wrong. It is given the same input on both architectures
 	instead of a different one.
 	"""
 	staged, installed = copilot_sdk_staging(vscode_dir)
-	if staged.is_dir():
+	if sdk_files(staged):
 		return
-	if not installed.is_dir():
+	if not sdk_files(installed):
 		raise SystemExit(
-			f"no built-in Copilot SDK at {installed}: `npm ci` in "
-			"extensions/copilot materialises it from the @github/copilot-<os>-"
-			"<arch> package, and every REH package task walks into the copy of "
-			"it in the server tree and fails the build when it is absent. "
-			"Reprovision the submodule (scripts/provision-vscode.sh) rather "
-			"than building a server whose last step cannot run."
+			f"no built-in Copilot SDK files at {installed}: `npm ci` in "
+			"extensions/copilot materialises them from the @github/copilot-"
+			"<os>-<arch> package, and every REH package task walks into the "
+			"copy of them in the server tree and fails the build when they are "
+			"absent. Reprovision the submodule (scripts/provision-vscode.sh) "
+			"rather than building a server whose last step cannot run."
 		)
-	shutil.copytree(installed, staged)
-	print(f"  staged the built-in Copilot SDK into {staged.parent}")
+	# An empty shell left by the compile is in the way of `copytree`, and is
+	# exactly what must not reach the server tree.
+	shutil.rmtree(staged, ignore_errors=True)
+	shutil.copytree(installed, staged, symlinks=False)
+	count = sdk_files(staged)
+	print(
+		f"  staged the built-in Copilot SDK into {staged.parent} "
+		f"({count} file{'' if count == 1 else 's'})"
+	)
 
 
 def build_target(os_name: str, arch: str, commit: str, out_dir: Path) -> Path:

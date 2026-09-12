@@ -221,6 +221,35 @@ class StageBuiltInCopilotSdk(unittest.TestCase):
 
 		self.assertEqual((self.staged / "index.d.ts").read_text(), "// from the compile\n")
 
+	def test_refills_the_empty_shell_the_compile_left(self) -> None:
+		# What linux-arm64 actually had (nightly 34703272262): `gulp.dest`
+		# recreates the directory entries its source glob yielded, so an SDK
+		# whose files were all filtered out reaches `.build` as a directory
+		# with nothing in it. `is_dir()` says yes and the REH copy still
+		# carries no `sdk` into the server tree.
+		self.staged.mkdir(parents=True)
+		self.materialize(self.installed)
+
+		stage_builtin_copilot_sdk(self.vscode)
+
+		self.assertTrue((self.staged / "index.d.ts").is_file())
+
+	def test_materialises_an_sdk_npm_left_as_a_symlink(self) -> None:
+		# The other shape that answers `is_dir()` and carries nothing: npm's
+		# postinstall points `sdk` at the @github/copilot-<os>-<arch> package
+		# instead of copying it, and a glob that does not follow symlinks walks
+		# straight past. Packaging needs real files, so staging reads through.
+		runtime = self.vscode / "node_modules" / "@github" / "copilot-linux-arm64" / "sdk"
+		self.materialize(runtime)
+		self.installed.parent.mkdir(parents=True, exist_ok=True)
+		self.installed.symlink_to(runtime, target_is_directory=True)
+
+		stage_builtin_copilot_sdk(self.vscode)
+
+		self.assertFalse(self.staged.is_symlink())
+		self.assertTrue((self.staged / "index.d.ts").is_file())
+		self.assertFalse((self.staged / "index.d.ts").is_symlink())
+
 	def test_stops_when_there_is_nothing_to_stage(self) -> None:
 		# Building on would spend twenty minutes to reach an error about the
 		# output tree that says nothing about the submodule that is short.
