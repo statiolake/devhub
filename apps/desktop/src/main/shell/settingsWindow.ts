@@ -77,9 +77,27 @@ function requireHost(): SettingsHost {
 	return host;
 }
 
+/**
+ * Open Settings — or, when Settings is already the window in front, close it.
+ *
+ * One chord, one command. `Cmd+Q Shift+,` is the key that puts this window on
+ * screen, so it is the key that puts it away: a palette toggles, and a window
+ * that could only be opened from the keyboard and never closed from it was the
+ * one window in DevHub with no way out. The menu bar's File ▸ Close Settings is
+ * the same close under a pointer, and there is deliberately no second command
+ * for it — there is no state in which both would be offered.
+ *
+ * "In front" and not merely "open": with the App Shell in front this is
+ * somebody asking for Settings, and hiding the window they cannot see would be
+ * a keystroke that appears to do nothing.
+ */
 export function openSettingsWindow(): void {
 	const settings = requireHost();
 	if (window && !window.isDestroyed()) {
+		if (window.isFocused()) {
+			window.close();
+			return;
+		}
 		window.show();
 		window.focus();
 		return;

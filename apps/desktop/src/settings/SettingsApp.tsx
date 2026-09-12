@@ -23,6 +23,21 @@
  * Accelerators live in the menu bar and nowhere else (`main/shell/menu.ts`), so
  * Close Settings is File ▸ Close Settings and nothing on this page competes for
  * a key with whatever is focused.
+ *
+ * Escape is the one key this page answers, and it is not a shortcut: it is what
+ * Escape means in every window on a Mac — *back out of what I am in*. So there
+ * is one rule and it is a ladder, outermost thing last:
+ *
+ * 1. A sheet is up: the sheet answers it and closes. It is a `Picker`, drawn in
+ *    a portal, so it never reaches this handler at all.
+ * 2. A field has the keyboard: the field gives it up. What was typed stays —
+ *    this window applies changes as they are made and has nothing to roll back
+ *    — so this is leaving the field, not losing the edit.
+ * 3. Nothing else is holding it: the window closes.
+ *
+ * A ladder rather than "Escape closes unless something is focused", because
+ * that phrasing has to be re-decided by every control added later; this one is
+ * a single question — what has the keyboard? — asked in one place.
  */
 
 import {
@@ -41,6 +56,7 @@ import {
   type SettingsSnapshot,
   type SettingsSocketPreflightWire,
 } from "../ipc/settings";
+import { isImeComposing } from "../shell/accessibility/ime";
 import { useAlertLifetime } from "../shell/alertLifetime";
 import { Picker } from "../shell/components/shell/Picker";
 import {
@@ -101,6 +117,9 @@ const SECTION_SCOPE: Readonly<
   Terminal: ["appearance"],
   Advanced: ["runtimes"],
 };
+
+/** A control that is being typed into, and so answers Escape before the window does. */
+const A_FIELD = "input, textarea, select, [contenteditable]";
 
 const clone = (config: SettingsConfig): SettingsConfig =>
   JSON.parse(JSON.stringify(config)) as SettingsConfig;
@@ -541,6 +560,33 @@ export function SettingsApp({ client }: { readonly client?: SettingsClient }) {
       adopt(answer.value);
     })();
   };
+
+  /**
+   * Escape, once for the whole window.
+   *
+   * On the document rather than on the page's root element, because the window
+   * opens with nothing focused: a handler hung on a `<main>` only ever sees
+   * keys that started inside it, so the very first Escape — the one somebody
+   * presses on a window they have just opened and do not want — would be the
+   * one it missed.
+   */
+  useEffect(() => {
+    const backOut = (event: KeyboardEvent) => {
+      if (isImeComposing(event)) return;
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      event.preventDefault();
+      const active = document.activeElement;
+      if (active instanceof HTMLElement && active.closest(A_FIELD)) {
+        active.blur();
+        return;
+      }
+      void transport.close();
+    };
+    document.addEventListener("keydown", backOut);
+    return () => {
+      document.removeEventListener("keydown", backOut);
+    };
+  }, [transport]);
 
   if (!snapshot || !draft) {
     return (
