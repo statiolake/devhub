@@ -28,16 +28,9 @@ import type { OperationDeadline } from "../terminal/command.js";
 import type { CancellationToken } from "../terminal/ports.js";
 import type { Pty, PtyLaunch } from "../terminal/pty.js";
 import type { SettingsResolvedRuntimeWire } from "../../ipc/settings.js";
+import type { RuntimeId } from "../../model/domain.js";
 
-/**
- * Which machine, as a key.
- *
- * `local`, or `ssh:<host>`. It is what a per-host cache is filed under and
- * what a metrics reading is named by, so it is a string rather than an object:
- * two runtimes with the same id are the same machine, and that has to be a
- * comparison rather than a convention.
- */
-export type RuntimeId = "local" | `ssh:${string}`;
+export type { RuntimeId } from "../../model/domain.js";
 
 /**
  * What an answer bigger than its cap means.
@@ -268,9 +261,37 @@ export interface Runtime {
 		searchPath: string,
 	): Promise<SettingsResolvedRuntimeWire>;
 
+	/**
+	 * A directory on this machine DevHub may put its own short-lived files in,
+	 * made if it is not there.
+	 *
+	 * The one caller is the tmux bootstrap config (`tmux.ts`), which is a real
+	 * product artifact and not test scratch: it is a path handed to `tmux -f`,
+	 * so it has to be a path on the machine tmux is about to start on. That is
+	 * the whole reason it is on the seam — `userDataPath` is a directory on
+	 * this Mac, and a caller that passed it to a far machine would be naming a
+	 * file that is not there.
+	 */
+	scratchDirectory(): Promise<string>;
+
 	stat(path: string): Promise<FileKind>;
 	readTextFile(path: string, maxBytes: number): Promise<string>;
 	writeTextFile(path: string, text: string, mode: number): Promise<void>;
+	/**
+	 * Write a file only if the name is free, and say which of the two happened.
+	 *
+	 * The one-shot tmux bootstrap config (`tmux.ts`) is the caller, and it needs
+	 * exactly this rather than `writeTextFile`: it picks a random name and
+	 * retries a taken one, and a write that went *through* an existing path
+	 * would be DevHub overwriting a file it did not create — under a name it
+	 * chose at random, so with no way of knowing whose it was.
+	 *
+	 * `false` is an answer and not a failure: the name was taken, which is the
+	 * fact the retry loop is written around. Anything else — a directory that
+	 * is not there, a mode that cannot be set — throws, because those are not
+	 * things another attempt would get past.
+	 */
+	writeNewTextFile(path: string, text: string, mode: number): Promise<boolean>;
 	readdir(path: string): Promise<readonly DirEntry[]>;
 	removeTree(path: string): Promise<void>;
 	makeDirectory(path: string): Promise<void>;

@@ -93,6 +93,12 @@ class RecordingRuntime implements Runtime {
 	writeTextFile(): Promise<void> {
 		return Promise.resolve();
 	}
+	writeNewTextFile(): Promise<boolean> {
+		return Promise.resolve(true);
+	}
+	scratchDirectory(): Promise<string> {
+		return Promise.resolve("/home/fake/.devhub/tmp");
+	}
 	readdir(): Promise<readonly never[]> {
 		return Promise.resolve([]);
 	}

@@ -39,7 +39,7 @@
 import { Buffer } from "node:buffer";
 import { mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, posix } from "node:path";
 import { activityCounters, COUNTER } from "../diagnostics/counters.js";
 import { errorWireAt, TypedFailure, withSummary } from "../../model/wire.js";
 import { OperationDeadline, runBounded } from "../terminal/command.js";
@@ -612,6 +612,25 @@ export class SshRuntime implements Runtime {
 	 * whose folder is still sitting there with work in it. So the absent branch
 	 * asks once more, and only then.
 	 */
+	/**
+	 * `~/.devhub/tmp` on the far machine, made 0700 the first time it is asked
+	 * for.
+	 *
+	 * Under the home directory rather than `/tmp`, for the reason everything
+	 * else DevHub writes over there is: `/tmp` on a shared host is a directory
+	 * other people can write, and a bootstrap config another account could
+	 * replace is a tmux server another account could configure.
+	 */
+	async scratchDirectory(): Promise<string> {
+		const { home } = await this.#describeRemote();
+		const path = posix.join(home, ".devhub", "tmp");
+		const result = await this.#sh(
+			`exec mkdir -p -m 700 -- ${shellQuote(path)}`,
+		);
+		if (result.code !== 0) throw this.#fileError(path, result);
+		return path;
+	}
+
 	async stat(path: string): Promise<FileKind> {
 		const quoted = shellQuote(path);
 		const result = await this.#sh(
@@ -661,6 +680,37 @@ export class SshRuntime implements Runtime {
 			{ stdin: Buffer.from(text, "utf8") },
 		);
 		if (result.code !== 0) throw this.#fileError(path, result);
+	}
+
+	/**
+	 * `set -C` is the remote spelling of `open(…, "wx")`.
+	 *
+	 * The shell's `noclobber` refuses a redirection onto an existing path, and
+	 * it refuses it in the shell that is about to write — so there is no gap
+	 * between asking whether the name is free and taking it. Exit 3 is this
+	 * command's own word for "it was taken"; every other non-zero exit is a
+	 * failure with the far end's own stderr on it, because a caller that
+	 * retried those would retry them for ever.
+	 */
+	async writeNewTextFile(
+		path: string,
+		text: string,
+		mode: number,
+	): Promise<boolean> {
+		const quoted = shellQuote(path);
+		const result = await this.#sh(
+			[
+				`if (set -C; : > ${quoted}) 2>/dev/null; then :`,
+				`elif [ -e ${quoted} ]; then exit 3`,
+				`else (set -C; : > ${quoted}); exit 1`,
+				`fi`,
+				`chmod ${mode.toString(8).padStart(4, "0")} ${quoted} && exec cat > ${quoted}`,
+			].join("\n"),
+			{ stdin: Buffer.from(text, "utf8") },
+		);
+		if (result.code === 3) return false;
+		if (result.code !== 0) throw this.#fileError(path, result);
+		return true;
 	}
 
 	/**

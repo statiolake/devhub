@@ -26,7 +26,7 @@ import {
 	stat,
 	writeFile,
 } from "node:fs/promises";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { activityCounters, COUNTER } from "../diagnostics/counters.js";
 import { runBounded } from "../terminal/command.js";
@@ -86,6 +86,8 @@ function fileError(path: string, error: unknown): RuntimeFileError {
 }
 
 export class LocalRuntime implements Runtime {
+	#scratchDirectory: string | undefined;
+
 	readonly id: RuntimeId = "local";
 	readonly where = "";
 	readonly cadence = LOCAL_CADENCE;
@@ -152,6 +154,27 @@ export class LocalRuntime implements Runtime {
 		return openPty(request);
 	}
 
+	/**
+	 * This DevHub's own user-data directory, or the system temp directory
+	 * before anything has said which profile is running.
+	 *
+	 * Beside its own state rather than in `/tmp`, because that is where it has
+	 * always been written and because two DevHub profiles must not be able to
+	 * pick each other's names. The fallback is what the PTY test program gets:
+	 * it runs without a profile, and a directory it can write is all this
+	 * promises.
+	 */
+	async scratchDirectory(): Promise<string> {
+		return this.#scratchDirectory ?? tmpdir();
+	}
+
+	/**
+	 * Say where this machine's own files go. Called once, by `setRuntimeProfile`.
+	 */
+	keepFilesUnder(userDataDirectory: string): void {
+		this.#scratchDirectory = userDataDirectory;
+	}
+
 	async stat(path: string): Promise<FileKind> {
 		try {
 			return (await stat(path)).isDirectory() ? "directory" : "file";
@@ -190,6 +213,26 @@ export class LocalRuntime implements Runtime {
 		try {
 			await writeFile(path, text, { mode });
 		} catch (error: unknown) {
+			throw fileError(path, error);
+		}
+	}
+
+	async writeNewTextFile(
+		path: string,
+		text: string,
+		mode: number,
+	): Promise<boolean> {
+		try {
+			await writeFile(path, text, { mode, flag: "wx" });
+			return true;
+		} catch (error: unknown) {
+			if (
+				typeof error === "object" &&
+				error !== null &&
+				(error as { code?: string }).code === "EEXIST"
+			) {
+				return false;
+			}
 			throw fileError(path, error);
 		}
 	}
