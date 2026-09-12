@@ -24,11 +24,25 @@
 # different question: the app is rebuilt when *DevHub* moves, and the server is
 # rebuilt when the *VS Code submodule* moves, which is roughly monthly. See
 # docs/remote-ssh.md and scripts/build_reh.py.
+#
+# A third set of jobs publishes a statically linked tmux, on the same shape and
+# for the same reason: DevHub runs every terminal and every Agent inside tmux on
+# the machine the Workspace is on, must not require the host to have one, and
+# must not use the host's if it does. That one answers to the tmux version
+# pinned in scripts/build_tmux.py and to nothing else here.
 name: Nightly
 
 on:
   workflow_dispatch:
     inputs:
+      force_tmux:
+        description: >-
+          Rebuild and replace the tmux tarballs for the pinned version, even
+          though their release already exists. What this is for: a change to
+          scripts/build_tmux.py that does not move the tmux version — a
+          terminfo entry added, a configure flag corrected.
+        type: boolean
+        default: false
       force_reh:
         description: >-
           Rebuild and replace the remote extension host for the current VS Code
@@ -430,5 +444,146 @@ jobs:
               --target "$GITHUB_SHA" \
               --title "Remote extension host $TAG" \
               --notes "The server half of DevHub's SSH remote development, built from the VS Code commit this tag is named after. DevHub downloads it onto a remote machine by itself; see docs/remote-ssh.md for the URL it uses and for installing one by hand." \
+              dist/*.tar.gz
+          fi
+
+  # ---------------------------------------------------------------------------
+  # tmux: the terminal multiplexer every terminal and every Agent runs inside,
+  # on whichever machine the Workspace lives on.
+  #
+  # Shaped like the REH jobs above and for the same two reasons — the answer to
+  # "is one needed?" is cheap and the build is not, and the two architectures
+  # are built on runners of their own architecture rather than cross-built. It
+  # is otherwise independent of them: this is a function of the tmux version
+  # pinned in scripts/build_tmux.py and of nothing in the VS Code submodule, so
+  # the release is named after that version and is built once, ever, per bump.
+  #
+  # Ten minutes of a Linux runner on the night a pin moves, and one minute of
+  # the deciding job on every other night. See scripts/build_tmux.py and
+  # docs/remote-ssh.md, "tmux on the host".
+  # ---------------------------------------------------------------------------
+
+  tmux-decide:
+    name: Is there a new tmux to build?
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      needed: ${{ steps.decision.outputs.needed }}
+      tag: ${{ steps.decision.outputs.tag }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Decide
+        id: decision
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FORCE: ${{ inputs.force_tmux }}
+        run: |
+          set -euo pipefail
+          # Asked of the script rather than written here: the version is pinned
+          # in one place with the checksum that belongs to it, and a second copy
+          # in this file would be the copy that goes stale.
+          version="$(scripts/build_tmux.py --print-version)"
+          tag="tmux-${version}"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+          # A release that exists is a release every DevHub already installs
+          # from, by a URL with that version in it. Rebuilding it would replace
+          # working downloads with identical ones.
+          if [ "$FORCE" = "true" ]; then
+            echo "needed=true" >> "$GITHUB_OUTPUT"
+            echo "asked to rebuild $tag"
+          elif gh release view "$tag" >/dev/null 2>&1; then
+            echo "needed=false" >> "$GITHUB_OUTPUT"
+            echo "$tag is already published"
+          else
+            echo "needed=true" >> "$GITHUB_OUTPUT"
+            echo "no $tag yet"
+          fi
+
+  tmux:
+    name: tmux (${{ matrix.target }})
+    needs: tmux-decide
+    if: needs.tmux-decide.outputs.needed == 'true'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      # As for the server: one failing architecture must not cancel the other.
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-x64
+            runner: ubuntu-latest
+          - target: linux-arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      # No submodule and no Node: this build is three ./configure runs over
+      # pinned upstream tarballs and touches nothing else in the repository.
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      # musl, not glibc. A statically linked glibc still dlopens the NSS
+      # modules of the machine that built it as soon as anything calls
+      # getpwuid, which tmux does at startup to find the login shell — so a
+      # glibc build works on the runner and fails on the old host this exists
+      # for. scripts/build_tmux.py refuses to fall back to the system compiler.
+      - name: Install the musl toolchain
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends musl-tools build-essential
+
+      - name: Build the tmux tarball
+        run: scripts/build_tmux.py ${{ matrix.target }} --out-dir dist
+
+      # Kept whole rather than published here, as the server tarballs are: the
+      # release is created once, by the job below, when both architectures have
+      # one. Half a release is a 404 for half the people who install.
+      - name: Hand the tarball to the publishing job
+        uses: actions/upload-artifact@v4
+        with:
+          name: tmux-${{ matrix.target }}
+          path: dist/*.tar.gz
+          retention-days: 1
+          if-no-files-found: error
+
+  tmux-publish:
+    name: Publish the tmux release
+    needs: [tmux-decide, tmux]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Collect the tarballs
+        uses: actions/download-artifact@v4
+        with:
+          pattern: tmux-*
+          merge-multiple: true
+          path: dist
+
+      # Named after the tmux version and never moved, so a DevHub built before
+      # the next bump goes on installing the version it was built against.
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # This job never checks the repository out, so `gh` has no working
+          # tree to infer the repository from and has to be told.
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.tmux-decide.outputs.tag }}
+        run: |
+          set -euo pipefail
+          ls -l dist
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/*.tar.gz --clobber
+          else
+            gh release create "$TAG" \
+              --prerelease \
+              --target "$GITHUB_SHA" \
+              --title "tmux ${TAG#tmux-}" \
+              --notes "A statically linked tmux, with libevent and ncurses and a small terminfo database, for the machines DevHub runs terminals and Agents on. DevHub installs it into \`~/.devhub-server/tmux/<version>/\` by itself and never uses a tmux the host already has; see docs/remote-ssh.md for the URL and for installing one by hand." \
               dist/*.tar.gz
           fi
