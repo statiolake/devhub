@@ -26,6 +26,7 @@
  * of the behaviour, and it said "could not verify" every time.
  */
 
+import type { RuntimeId } from "../runtime/runtime.js";
 import type {
 	AgentId,
 	AgentProfile,
@@ -48,7 +49,19 @@ export interface AgentAdapter {
 	): Promise<AgentLaunchResult>;
 	stop(agentId: AgentId): Promise<AgentStopResult>;
 	terminate(agentId: AgentId): Promise<AgentStopResult>;
-	reconcile(agentId?: AgentId): Promise<AgentReconciliationResult>;
+	/**
+	 * One round against one machine.
+	 *
+	 * The machine is a parameter and not something the adapter works out,
+	 * because a round *is* one question to one tmux server: the session list it
+	 * comes back with is complete for that server and says nothing at all about
+	 * any other, so an Agent on a second machine judged against it would be
+	 * reported as ended.
+	 */
+	reconcile(
+		machine: RuntimeId,
+		agentId?: AgentId,
+	): Promise<AgentReconciliationResult>;
 	/** Close every Agent belonging to a workspace. Resolves when they are gone. */
 	closeWorkspaceAgents(workspaceId: WorkspaceId): Promise<void>;
 	/**

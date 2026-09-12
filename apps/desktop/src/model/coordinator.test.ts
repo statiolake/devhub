@@ -336,8 +336,9 @@ describe("opening a folder on another machine", () => {
       path: "/srv/api",
     });
     expect(workspace?.key).toBe("ssh://build.example.com/srv/api");
-    // An Agent is a process and a process runs where the folder is.
-    expect(workspace?.canCreateAgent).toBe(false);
+    // An Agent is a process and a process runs where the folder is — which is
+    // now a machine DevHub has a runtime for either way, so the row offers one.
+    expect(workspace?.canCreateAgent).toBe(true);
   });
 
   it("keeps a second machine's identical path as a second Workspace", () => {
@@ -742,7 +743,7 @@ describe("stopping an agent", () => {
     });
     driver.settle();
     if (status !== "unknown") {
-      driver.dispatch({ type: "reconcile_agents" });
+      driver.dispatch({ type: "reconcile_agents", machine: "local" });
       const effect = driver
         .drainEffects()
         .find((candidate) => candidate.kind === "reconcile_agents");
@@ -1008,20 +1009,56 @@ describe("reconciling agents", () => {
 
   it("asks the provider about every agent at once", () => {
     const driver = withAgent();
-    driver.dispatch({ type: "reconcile_agents" });
+    driver.dispatch({ type: "reconcile_agents", machine: "local" });
     expect(driver.drainEffects().map((effect) => effect.kind)).toEqual([
       "reconcile_agents",
     ]);
   });
 
   function reconcileToken(driver: Driver): OperationToken {
-    driver.dispatch({ type: "reconcile_agents" });
+    driver.dispatch({ type: "reconcile_agents", machine: "local" });
     const effect = driver.drainEffects()[0];
     if (effect.kind !== "reconcile_agents") {
       throw new Error("the coordinator did not ask for a reconcile");
     }
     return effect.token;
   }
+
+  it("keeps two machines' rounds apart, so neither is stale on arrival", () => {
+    // Two machines reconcile on two cadences over two tmux servers, so their
+    // rounds overlap by design. With one slot for "the reconcile in flight",
+    // whichever started second invalidated the first, and the first machine's
+    // answer came back as a stale completion for ever.
+    const driver = withAgent();
+    driver.dispatch({ type: "reconcile_agents", machine: "local" });
+    const first = driver.drainEffects()[0];
+    driver.dispatch({
+      type: "reconcile_agents",
+      machine: "ssh:build.example.com",
+    });
+    const second = driver.drainEffects()[0];
+    if (
+      first.kind !== "reconcile_agents" ||
+      second.kind !== "reconcile_agents"
+    ) {
+      throw new Error("the coordinator did not ask for two reconciles");
+    }
+    const empty = { observations: [], exited: [] };
+    driver.accept({
+      type: "agents_reconciled",
+      token: second.token,
+      reconciliation: empty,
+    });
+    // The first machine's round is still the live one for *its* machine, and
+    // its answer lands rather than being thrown away.
+    expect(() =>
+      driver.accept({
+        type: "agents_reconciled",
+        token: first.token,
+        reconciliation: empty,
+      }),
+    ).not.toThrow();
+  });
 
   it("projects what the provider reported onto the rows", () => {
     const driver = withAgent();
@@ -1050,7 +1087,7 @@ describe("reconciling agents", () => {
   it("carries what the Agent says it is doing onto its row", () => {
     const driver = withAgent();
     const said = (activity: string | undefined): string | undefined => {
-      driver.dispatch({ type: "reconcile_agents" });
+      driver.dispatch({ type: "reconcile_agents", machine: "local" });
       const effect = driver
         .drainEffects()
         .find((candidate) => candidate.kind === "reconcile_agents");
@@ -1098,7 +1135,7 @@ describe("reconciling agents", () => {
   it("announces a round it superseded, so nothing waits on the answer", () => {
     const driver = withAgent();
     const superseded = reconcileToken(driver);
-    driver.dispatch({ type: "reconcile_agents" });
+    driver.dispatch({ type: "reconcile_agents", machine: "local" });
     const events = driver.coordinator
       .subscribeFrom(0)
       .events.map(({ event }) => event);

@@ -26,6 +26,7 @@ import type {
   NavigationContext,
   SurfacePresentation,
   RuntimeHealth,
+  RuntimeId,
   SshHost,
   WorkspaceId,
   WorkspaceRoot,
@@ -338,7 +339,7 @@ export type UserIntent =
    * cadence; the page has no way to send it, because nothing about it is a
    * thing a person asks for.
    */
-  | { readonly type: "reconcile_agents" }
+  | { readonly type: "reconcile_agents"; readonly machine: RuntimeId }
   /**
    * Close this Workspace — first attempt or fifth, it is the same request.
    *

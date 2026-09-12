@@ -35,16 +35,31 @@ import type {
 	AgentStopResult,
 } from "../../model/intents.js";
 import type { TmuxTerminalRuntime } from "../terminal/tmux.js";
+import type { RuntimeId } from "../runtime/runtime.js";
 import { registerAgentAdapter } from "./adapters.js";
 
 export interface AgentWiringOptions {
-	readonly runtime: TmuxTerminalRuntime;
+	/** One tmux adapter per machine, built on first use. */
+	readonly runtimeFor: (machine: RuntimeId) => Promise<TmuxTerminalRuntime>;
 	/** The live model: the authority on which Agents exist and where they run. */
 	readonly model: () => AppModel;
+	/** Which machine a Workspace's Agents run on: the one its folder is on. */
+	readonly machineOf: (workspaceId: WorkspaceId) => RuntimeId | undefined;
 }
 
 export function wireAgents(options: AgentWiringOptions): AgentSessions {
-	const sessions = new AgentSessions(options.runtime);
+	const sessions = new AgentSessions(options.runtimeFor);
+	/**
+	 * The machine an Agent is on, from the model.
+	 *
+	 * Never remembered beside the Agent: a Workspace can be relocated, and a
+	 * cached machine would be a second answer to "where does this run" with no
+	 * way to tell which of the two had gone stale.
+	 */
+	const machineOfAgent = (agentId: AgentId): RuntimeId | undefined => {
+		const workspace = options.model().workspaceForAgent(agentId);
+		return workspace ? options.machineOf(workspace.id) : undefined;
+	};
 	const detector = new AgentStatusDetector();
 	const activity = new AgentActivityReader();
 	const injections = new AgentInjectionQueue();
@@ -73,7 +88,14 @@ export function wireAgents(options: AgentWiringOptions): AgentSessions {
 			workspaceRoot: string,
 		): Promise<AgentLaunchResult> {
 			try {
+				const machine = options.machineOf(workspaceId);
+				if (machine === undefined) {
+					throw new Error(
+						"the Workspace this Agent belongs to is no longer open",
+					);
+				}
 				await sessions.launch({
+					machine,
 					agentId,
 					workspaceId,
 					root: workspaceRoot,
@@ -102,8 +124,9 @@ export function wireAgents(options: AgentWiringOptions): AgentSessions {
 			}
 		},
 
-		stop: (agentId) => terminate(sessions, agentId),
-		terminate: (agentId) => terminate(sessions, agentId),
+		stop: (agentId) => terminate(sessions, machineOfAgent(agentId), agentId),
+		terminate: (agentId) =>
+			terminate(sessions, machineOfAgent(agentId), agentId),
 
 		/**
 		 * One round: the socket's Agent sessions, matched against the model's.
@@ -115,8 +138,11 @@ export function wireAgents(options: AgentWiringOptions): AgentSessions {
 		 * Agent whose launch has not returned yet, which is a snapshot taken
 		 * early rather than a process that is gone.
 		 */
-		async reconcile(agentId?: AgentId): Promise<AgentReconciliation> {
-			const health: RuntimeHealth = sessions.available
+		async reconcile(
+			machine: RuntimeId,
+			agentId?: AgentId,
+		): Promise<AgentReconciliation> {
+			const health: RuntimeHealth = (await sessions.availableOn(machine))
 				? "healthy"
 				: "unavailable";
 			// The Agents this round is *about*, read before the socket is asked.
@@ -132,6 +158,11 @@ export function wireAgents(options: AgentWiringOptions): AgentSessions {
 				{ workspaceId: WorkspaceId; kind: string }
 			>();
 			for (const workspace of options.model().workspaces) {
+				// One round is about one machine. A round that judged every
+				// Agent against one machine's session list would report every
+				// Agent on the other machine as ended — the list is complete for
+				// the server it came from and says nothing about any other.
+				if (options.machineOf(workspace.id) !== machine) continue;
 				for (const agent of workspace.agents) {
 					if (agentId !== undefined && agent.id !== agentId) continue;
 					asked.set(agent.id, {
@@ -157,7 +188,7 @@ export function wireAgents(options: AgentWiringOptions): AgentSessions {
 			// anything" — one answer, from one command, as it has to be: two
 			// listings would be two moments, and an Agent could be alive in one
 			// and gone in the other.
-			const round = await sessions.round(captureIds);
+			const round = await sessions.round(machine, captureIds);
 			const listed = round.live;
 			const live = new Set(listed.map((one) => one.agentId));
 			const markers = new Map(
@@ -210,6 +241,7 @@ export function wireAgents(options: AgentWiringOptions): AgentSessions {
 				await deliver(
 					sessions,
 					injections,
+					machine,
 					id,
 					about.workspaceId,
 					reading.status,
@@ -265,8 +297,10 @@ export function wireAgents(options: AgentWiringOptions): AgentSessions {
 		async closeWorkspaceAgents(workspaceId: WorkspaceId): Promise<void> {
 			const workspace = options.model().workspace(workspaceId);
 			if (!workspace) return;
+			const machine = options.machineOf(workspaceId);
+			if (machine === undefined) return;
 			for (const agent of workspace.agents) {
-				await sessions.terminate(agent.id);
+				await sessions.terminate(machine, agent.id);
 			}
 		},
 	});
@@ -342,6 +376,7 @@ function observe(
 async function deliver(
 	sessions: AgentSessions,
 	injections: AgentInjectionQueue,
+	machine: RuntimeId,
 	agentId: AgentId,
 	workspaceId: WorkspaceId,
 	status: AgentStatus,
@@ -349,7 +384,7 @@ async function deliver(
 	const text = injections.due(agentId, status);
 	if (text === undefined) return;
 	try {
-		await sessions.inject(agentId, workspaceId, text);
+		await sessions.inject(machine, agentId, workspaceId, text);
 		injections.sent(agentId);
 	} catch (failure: unknown) {
 		injections.failed(
@@ -361,10 +396,14 @@ async function deliver(
 
 async function terminate(
 	sessions: AgentSessions,
+	machine: RuntimeId | undefined,
 	agentId: AgentId,
 ): Promise<AgentStopResult> {
+	// An Agent whose Workspace has gone has no machine to be stopped on, and
+	// no session either: the Workspace's close killed it on the way out.
+	if (machine === undefined) return { kind: "stopped" };
 	try {
-		await sessions.terminate(agentId);
+		await sessions.terminate(machine, agentId);
 		return { kind: "stopped" };
 	} catch {
 		// A stop that did not stop leaves the Agent retryable rather than

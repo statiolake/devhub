@@ -33,6 +33,7 @@ import {
   type CloseInspectionInputs,
   type CloseInspectionProjection,
   type DisplayPath,
+  type RuntimeId,
   type SurfacePresentation,
   type WorkspaceId,
   type WorkspaceLocation,
@@ -135,7 +136,12 @@ export type Effect =
       readonly token: OperationToken;
       readonly agentId: AgentId;
     }
-  | { readonly kind: "reconcile_agents"; readonly token: OperationToken }
+  | {
+      readonly kind: "reconcile_agents";
+      readonly token: OperationToken;
+      /** The machine this round is about. One round, one tmux server. */
+      readonly machine: RuntimeId;
+    }
   | {
       readonly kind: "reconcile_agent";
       readonly token: OperationToken;
@@ -264,18 +270,33 @@ type PendingConfirmationRequest =
       readonly inspection: CloseInspectionProjection;
     };
 
+/**
+ * One reconcile that has been asked for and has not answered yet.
+ *
+ * There is one per *scope* rather than one altogether, and a scope is either
+ * one machine's Agents or one Agent. Two machines reconcile on two cadences
+ * over two tmux servers, so their rounds overlap by design; a single slot
+ * would make each machine's round invalidate the other's, and the answer that
+ * came back would be thrown away as stale for ever.
+ */
 type ActiveReconcile =
   | {
       readonly kind: "agents";
       readonly token: OperationToken;
-      readonly epoch: number;
+      readonly machine: RuntimeId;
     }
   | {
       readonly kind: "agent";
       readonly token: OperationToken;
       readonly agentId: AgentId;
-      readonly epoch: number;
     };
+
+/** What a reconcile is about, as the key its slot is filed under. */
+function reconcileScope(active: ActiveReconcile): string {
+  return active.kind === "agents"
+    ? `agents:${active.machine}`
+    : `agent:${active.agentId}`;
+}
 
 /**
  * A close that has been asked for and is still asking its questions.
@@ -385,8 +406,7 @@ export class AppCoordinator {
   private nextGeneration = 0;
   private readonly naturalExitStopTokens = new Map<string, AgentId>();
   private readonly naturalExitStopOrder: string[] = [];
-  private activeReconcile: ActiveReconcile | undefined;
-  private reconcileEpoch = 0;
+  private readonly activeReconciles = new Map<string, ActiveReconcile>();
   private readinessValue: AppReadiness = "starting";
   private detached: DetachReason | undefined;
 
@@ -596,7 +616,7 @@ export class AppCoordinator {
       case "reconcile_agent":
         return this.requestAgentReconcile(id, intent.agentId);
       case "reconcile_agents":
-        return this.requestAgentsReconcile(id);
+        return this.requestAgentsReconcile(id, intent.machine);
       case "request_close_workspace":
         return this.closeWorkspace(intent.workspaceId, intent.worktree, id);
       case "confirm_close_workspace":
@@ -636,42 +656,29 @@ export class AppCoordinator {
         DomainErrorCode.UnknownAgent,
       );
     }
-    const nextEpoch = this.reconcileEpoch + 1;
-    this.invalidateReconciliation();
+    this.invalidateReconcileScope(`agent:${agent}`);
     const token = this.startOperation(
       "reconcile_agent",
       { kind: "agent", agentId: agent },
       id,
     );
-    this.reconcileEpoch = nextEpoch;
-    this.activeReconcile = {
-      kind: "agent",
-      token,
-      agentId: agent,
-      epoch: this.reconcileEpoch,
-    };
+    this.setActiveReconcile({ kind: "agent", token, agentId: agent });
     this.emitEffect({ kind: "reconcile_agent", token, agentId: agent });
     return { kind: "deferred", operationId: id, snapshot: this.snapshot() };
   }
 
-  requestAgentsReconcile(id: OperationId): IntentOutcome {
+  requestAgentsReconcile(id: OperationId, machine: RuntimeId): IntentOutcome {
     if (this.pending.has(id)) {
       throw new AppError(AppErrorCode.OperationInProgress).withOperation(id);
     }
-    const nextEpoch = this.reconcileEpoch + 1;
-    this.invalidateReconciliation();
+    this.invalidateReconcileScope(`agents:${machine}`);
     const token = this.startOperation(
       "reconcile_agents",
       { kind: "application" },
       id,
     );
-    this.reconcileEpoch = nextEpoch;
-    this.activeReconcile = {
-      kind: "agents",
-      token,
-      epoch: this.reconcileEpoch,
-    };
-    this.emitEffect({ kind: "reconcile_agents", token });
+    this.setActiveReconcile({ kind: "agents", token, machine });
+    this.emitEffect({ kind: "reconcile_agents", token, machine });
     return { kind: "deferred", operationId: id, snapshot: this.snapshot() };
   }
 
@@ -1158,8 +1165,8 @@ export class AppCoordinator {
         }
       }
     }
-    if (this.activeReconcile && sameToken(this.activeReconcile.token, token)) {
-      this.activeReconcile = undefined;
+    for (const [scope, active] of [...this.activeReconciles]) {
+      if (sameToken(active.token, token)) this.activeReconciles.delete(scope);
     }
   }
 
@@ -1434,11 +1441,8 @@ export class AppCoordinator {
     token: OperationToken,
     reconciliation: import("./domain.js").AgentReconciliation,
   ): IntentOutcome {
-    const current =
-      this.activeReconcile?.kind === "agents" &&
-      sameToken(this.activeReconcile.token, token) &&
-      this.activeReconcile.epoch === this.reconcileEpoch;
-    if (!current) {
+    const scope = this.scopeOfToken(token, "agents");
+    if (scope === undefined) {
       throw new AppError(AppErrorCode.StaleCompletion).withOperation(
         token.operationId,
       );
@@ -1448,7 +1452,7 @@ export class AppCoordinator {
       "reconcile_agents",
       (target) => target.kind === "application",
     );
-    this.activeReconcile = undefined;
+    this.activeReconciles.delete(scope);
     for (const observation of reconciliation.observations) {
       if (!this.model.workspaceForAgent(observation.agentId)) {
         throw new AppError(AppErrorCode.Domain)
@@ -1856,12 +1860,8 @@ export class AppCoordinator {
     status: import("./domain.js").AgentStatus,
     runtimeHealth: import("./domain.js").RuntimeHealth,
   ): IntentOutcome {
-    const current =
-      this.activeReconcile?.kind === "agent" &&
-      sameToken(this.activeReconcile.token, token) &&
-      this.activeReconcile.agentId === agentId &&
-      this.activeReconcile.epoch === this.reconcileEpoch;
-    if (!current) {
+    const active = this.activeReconciles.get(`agent:${agentId}`);
+    if (!active || !sameToken(active.token, token)) {
       throw new AppError(AppErrorCode.StaleCompletion).withOperation(
         token.operationId,
       );
@@ -1871,7 +1871,7 @@ export class AppCoordinator {
       "reconcile_agent",
       (target) => target.kind === "agent" && target.agentId === agentId,
     );
-    this.activeReconcile = undefined;
+    this.activeReconciles.delete(`agent:${agentId}`);
     const beforeRevision = this.model.snapshot().revision;
     this.model.setAgentStatus(agentId, status);
     this.model.setAgentRuntimeHealth(agentId, runtimeHealth);
@@ -1891,12 +1891,8 @@ export class AppCoordinator {
     token: OperationToken,
     agentId: AgentId,
   ): IntentOutcome {
-    const current =
-      this.activeReconcile?.kind === "agent" &&
-      sameToken(this.activeReconcile.token, token) &&
-      this.activeReconcile.agentId === agentId &&
-      this.activeReconcile.epoch === this.reconcileEpoch;
-    if (!current) {
+    const active = this.activeReconciles.get(`agent:${agentId}`);
+    if (!active || !sameToken(active.token, token)) {
       throw new AppError(AppErrorCode.StaleCompletion).withOperation(
         token.operationId,
       );
@@ -1906,7 +1902,7 @@ export class AppCoordinator {
       "reconcile_agent",
       (target) => target.kind === "agent" && target.agentId === agentId,
     );
-    this.activeReconcile = undefined;
+    this.activeReconciles.delete(`agent:${agentId}`);
     const stopTokens = this.cancelAgentStopStateAfterExit(agentId);
     const removed = this.model.workspaceForAgent(agentId) !== undefined;
     if (removed) {
@@ -1974,15 +1970,35 @@ export class AppCoordinator {
     }
   }
 
+  /**
+   * An Agent that has gone invalidates whatever was asking about it.
+   *
+   * Every machine's round, and not just the one the Agent was on: a round in
+   * flight was composed against a model that still had this Agent, so its
+   * answer would name one the model can no longer find, whichever machine it
+   * came from.
+   */
   private invalidateReconciliationAfterAgentRemoval(agentId: AgentId): void {
-    const active = this.activeReconcile;
-    if (!active) return;
-    const shouldInvalidate =
-      active.kind === "agents" ||
-      (active.kind === "agent" && active.agentId === agentId);
-    if (shouldInvalidate) {
-      this.invalidateReconciliation();
+    for (const scope of [...this.activeReconciles.keys()]) {
+      if (scope === `agent:${agentId}` || scope.startsWith("agents:")) {
+        this.invalidateReconcileScope(scope);
+      }
     }
+  }
+
+  private setActiveReconcile(active: ActiveReconcile): void {
+    this.activeReconciles.set(reconcileScope(active), active);
+  }
+
+  /** The scope this token is the live reconcile of, if it still is one. */
+  private scopeOfToken(
+    token: OperationToken,
+    kind: ActiveReconcile["kind"],
+  ): string | undefined {
+    for (const [scope, active] of this.activeReconciles) {
+      if (active.kind === kind && sameToken(active.token, token)) return scope;
+    }
+    return undefined;
   }
 
   private takePending(
@@ -2045,10 +2061,17 @@ export class AppCoordinator {
     return this.pending.has(id);
   }
 
+  /** Every scope at once: the model underneath all of them has moved. */
   private invalidateReconciliation(): void {
-    const active = this.activeReconcile;
+    for (const scope of [...this.activeReconciles.keys()]) {
+      this.invalidateReconcileScope(scope);
+    }
+  }
+
+  private invalidateReconcileScope(scope: string): void {
+    const active = this.activeReconciles.get(scope);
     if (!active) return;
-    this.activeReconcile = undefined;
+    this.activeReconciles.delete(scope);
     if (this.pending.delete(active.token.operationId)) {
       this.rememberCompleted(active.token);
       this.emit({ kind: "operation_completed", token: active.token });

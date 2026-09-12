@@ -40,6 +40,7 @@ import {
 	type TmuxTerminalRuntime,
 } from "../terminal/tmux.js";
 import type { AgentScreen } from "./detect/detector.js";
+import type { RuntimeId } from "../runtime/runtime.js";
 
 /** One Agent, as the runtime needs to see it to start it. */
 export interface AgentLaunchSpec extends AgentTerminalTarget {
@@ -55,7 +56,7 @@ export interface LiveAgentSession {
 }
 
 export class AgentSessions {
-	readonly #runtime: TmuxTerminalRuntime;
+	readonly #runtimeFor: (machine: RuntimeId) => Promise<TmuxTerminalRuntime>;
 	/**
 	 * Agents whose launch has not finished.
 	 *
@@ -69,12 +70,21 @@ export class AgentSessions {
 	 */
 	readonly #launching = new Set<string>();
 
-	constructor(runtime: TmuxTerminalRuntime) {
-		this.#runtime = runtime;
+	constructor(
+		runtimeFor: (machine: RuntimeId) => Promise<TmuxTerminalRuntime>,
+	) {
+		this.#runtimeFor = runtimeFor;
 	}
 
-	get available(): boolean {
-		return this.#runtime.adapterAvailable;
+	/**
+	 * Whether Agents can run on one machine.
+	 *
+	 * Per machine, because it is a fact about a machine: a host with no tmux on
+	 * it is not a DevHub that cannot run Agents, it is one machine that cannot,
+	 * and the Workspaces on every other machine are unaffected.
+	 */
+	async availableOn(machine: RuntimeId): Promise<boolean> {
+		return (await this.#runtimeFor(machine)).adapterAvailable;
 	}
 
 	/**
@@ -92,8 +102,10 @@ export class AgentSessions {
 	): Promise<void> {
 		this.#launching.add(spec.agentId);
 		try {
-			await this.#runtime.launchAgent(
+			const runtime = await this.#runtimeFor(spec.machine);
+			await runtime.launchAgent(
 				{
+					machine: spec.machine,
 					agentId: spec.agentId,
 					workspaceId: spec.workspaceId,
 					root: spec.root,
@@ -111,9 +123,12 @@ export class AgentSessions {
 		return this.#launching.has(agentId);
 	}
 
-	/** Every Agent session on the socket right now. */
-	async list(cancel = new CancellationToken()): Promise<LiveAgentSession[]> {
-		return (await this.round([], cancel)).live;
+	/** Every Agent session on one machine's socket right now. */
+	async list(
+		machine: RuntimeId,
+		cancel = new CancellationToken(),
+	): Promise<LiveAgentSession[]> {
+		return (await this.round(machine, [], cancel)).live;
 	}
 
 	/**
@@ -126,13 +141,15 @@ export class AgentSessions {
 	 * round of lag, in exchange for one invocation instead of one per Agent.
 	 */
 	async round(
+		machine: RuntimeId,
 		captureIds: readonly string[],
 		cancel = new CancellationToken(),
 	): Promise<{
 		readonly live: LiveAgentSession[];
 		readonly screens: ReadonlyMap<string, AgentScreen>;
 	}> {
-		const round = await this.#runtime.agentRound(captureIds, cancel);
+		const runtime = await this.#runtimeFor(machine);
+		const round = await runtime.agentRound(captureIds, cancel);
 		if (round.marker === "wrong") throw portFailure("conflict");
 		const live = round.agents.flatMap((one) =>
 			one.record.kind === "agent"
@@ -159,12 +176,14 @@ export class AgentSessions {
 	 * about which screens may be typed into. This is only the delivery.
 	 */
 	async inject(
+		machine: RuntimeId,
 		agentId: string,
 		workspaceId: string,
 		text: string,
 		cancel = new CancellationToken(),
 	): Promise<void> {
-		await this.#runtime.injectAgentText(
+		const runtime = await this.#runtimeFor(machine);
+		await runtime.injectAgentText(
 			{
 				kind: "agent",
 				agentId,
@@ -190,14 +209,15 @@ export class AgentSessions {
 	 * it would never see.
 	 */
 	async reapUnknown(
+		machine: RuntimeId,
 		known: ReadonlySet<string>,
 		cancel = new CancellationToken(),
 	): Promise<number> {
-		const live = await this.list(cancel);
+		const live = await this.list(machine, cancel);
 		let reaped = 0;
 		for (const session of live) {
 			if (known.has(session.agentId)) continue;
-			await this.terminate(session.agentId, cancel);
+			await this.terminate(machine, session.agentId, cancel);
 			reaped += 1;
 		}
 		return reaped;
@@ -212,6 +232,7 @@ export class AgentSessions {
 	 * those are resources that must stay intact.
 	 */
 	async terminate(
+		machine: RuntimeId,
 		agentId: string,
 		cancel = new CancellationToken(),
 	): Promise<void> {
@@ -220,10 +241,11 @@ export class AgentSessions {
 		// after creating its session: there is no row for that Agent and there
 		// never will be, so a terminate that could only work for Agents the
 		// model knows would leave exactly those sessions running for ever.
-		const listed = (await this.#runtime.listAgents(cancel)).find(
+		const runtime = await this.#runtimeFor(machine);
+		const listed = (await runtime.listAgents(cancel)).find(
 			({ record }) => record.kind === "agent" && record.agentId === agentId,
 		);
 		if (!listed) return;
-		await this.#runtime.closeAgent(listed.record, cancel);
+		await runtime.closeAgent(listed.record, cancel);
 	}
 }
