@@ -318,6 +318,29 @@ jobs:
         id: meta
         run: echo "vscode_sha=$(git -C vscode rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
+      # `npm ci` in vscode/ builds the native addons the server ships, and the
+      # GitHub Linux images carry none of their headers. kerberos is the one
+      # that stops first — `gssapi/gssapi.h: No such file or directory`, on
+      # both architectures — because its prebuild is not for the Node 24 the
+      # toolchain pins, so node-gyp compiles it from source. The rest of the
+      # list is what upstream installs before the same install
+      # (`vscode/build/azure-pipelines/dependencies-check.yml`), minus
+      # `libnotify-bin`, which only its tests use: fixing them one header at a
+      # time would be several nightlies spent rediscovering a list VS Code
+      # already wrote down. macOS needs none of it, which is why this step is
+      # here and not in the packaging job.
+      - name: Install the headers the native addons compile against
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            pkg-config \
+            libkrb5-dev \
+            libx11-dev \
+            libx11-xcb-dev \
+            libxkbfile-dev
+
       - name: Activate pinned pnpm
         run: corepack enable && corepack prepare pnpm@11.20.0 --activate
 
