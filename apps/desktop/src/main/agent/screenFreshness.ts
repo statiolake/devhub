@@ -1,8 +1,8 @@
 /**
  * Which Agents are worth reading the screen of this round.
  *
- * The reconciler runs every 300 ms and used to `capture-pane` every Agent on
- * every round, whatever they were doing. Three Agents sitting at a prompt cost
+ * The reconciler used to `capture-pane` every Agent on every round, whatever
+ * they were doing. Three Agents sitting at a prompt cost
  * nine hundred tmux processes a minute — a fork and an exec each, fifteen a
  * second, from an app nobody was touching. That is most of what an idle DevHub
  * costs, and all of it was spent to learn that nothing had changed.
@@ -21,6 +21,11 @@
  * second it was taken in once that second is over, and until then the Agent is
  * read again. It costs one extra capture per burst of output and it is the
  * difference between an optimisation and a bug.
+ *
+ * Nothing here is about wall-clock, which is why the rule survived a round
+ * becoming one tmux invocation. The caller now asks this question against the
+ * *previous* round's marker, because the screens a round reads have to be named
+ * before the round runs; the answers are the same answers, one round later.
  */
 
 /** What a reader must supply. Injected so a test owns the clock. */

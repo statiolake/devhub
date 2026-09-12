@@ -31,6 +31,7 @@
 
 import {
 	CancellationToken,
+	portFailure,
 	type AgentSessionCommand,
 	type AgentTerminalTarget,
 } from "../terminal/ports.js";
@@ -112,8 +113,28 @@ export class AgentSessions {
 
 	/** Every Agent session on the socket right now. */
 	async list(cancel = new CancellationToken()): Promise<LiveAgentSession[]> {
-		const listed = await this.#runtime.listAgents(cancel);
-		return listed.flatMap((one) =>
+		return (await this.round([], cancel)).live;
+	}
+
+	/**
+	 * One reconcile round: which Agents are alive, and the screens asked for.
+	 *
+	 * Both come out of one tmux invocation (`TmuxTerminalRuntime.agentRound`),
+	 * so a screen and the listing that named its session are one moment. The
+	 * screens to read are decided by the caller from the *previous* round's
+	 * activity markers, because a batch has to be composed before it runs — one
+	 * round of lag, in exchange for one invocation instead of one per Agent.
+	 */
+	async round(
+		captureIds: readonly string[],
+		cancel = new CancellationToken(),
+	): Promise<{
+		readonly live: LiveAgentSession[];
+		readonly screens: ReadonlyMap<string, AgentScreen>;
+	}> {
+		const round = await this.#runtime.agentRound(captureIds, cancel);
+		if (round.marker === "wrong") throw portFailure("conflict");
+		const live = round.agents.flatMap((one) =>
 			one.record.kind === "agent"
 				? [
 						{
@@ -124,30 +145,11 @@ export class AgentSessions {
 					]
 				: [],
 		);
-	}
-
-	/**
-	 * One Agent's screen, for status detection.
-	 *
-	 * `capture-pane`, on the reconcile cadence, is the single source: it works
-	 * with no surface attached, which is what the sidebar needs. See
-	 * `detect/detector.ts` for why there is not a second one.
-	 */
-	async screen(
-		agentId: string,
-		workspaceId: string,
-		cancel = new CancellationToken(),
-	): Promise<AgentScreen> {
-		const captured = await this.#runtime.captureAgent(
-			{
-				kind: "agent",
-				agentId,
-				workspaceId,
-				sessionName: agentSessionName(agentId),
-			},
-			cancel,
-		);
-		return { agentId, ...captured, oscProgress: "" };
+		const screens = new Map<string, AgentScreen>();
+		for (const [agentId, reading] of round.screens) {
+			screens.set(agentId, { agentId, ...reading, oscProgress: "" });
+		}
+		return { live, screens };
 	}
 
 	/**

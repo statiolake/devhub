@@ -62,6 +62,7 @@ import {
 	parseCapture,
 	parseRecords,
 	shapeFailure,
+	splitRecords,
 	type CommandOutput,
 	type CommandSpec,
 	type ResolvedExecutable,
@@ -151,6 +152,53 @@ const MARKER_FORMAT =
 	[MARKER_RECORD, `#{${PROTOCOL_OPTION}}`]
 		.concat(Array.from({ length: SESSION_FIELDS.length - 2 }, () => ""))
 		.join(FIELD_SEPARATOR) + RECORD_SEPARATOR;
+/**
+ * The record that says the listing finished, in a round that reads screens.
+ *
+ * tmux ends a client's queue at the first command that fails, so "how far did
+ * the queue get" is the only way to attribute a failure to a command. Without
+ * this record a round with captures could not tell a `list-sessions` that
+ * failed from a first `capture-pane` that did: both leave the marker and
+ * nothing after it. One extra command in the same client costs no process and
+ * makes the split exact.
+ */
+const LISTED_RECORD = "listed";
+const LISTED_FORMAT = LISTED_RECORD + RECORD_SEPARATOR;
+/**
+ * What a batched round says before each screen it read.
+ *
+ * The Agent id is the ownership check, made in the same client queue as the
+ * read it guards —
+ * the id and the screen come out of one command run, so a session that was
+ * replaced cannot be read as the one that was asked for — and the pane title
+ * rides along because it is the other half of the same observation.
+ */
+const CAPTURE_RECORD = "capture";
+const CAPTURE_FIELDS = [
+	CAPTURE_RECORD,
+	`#{${AGENT_ID_OPTION}}`,
+	"#{pane_title}",
+];
+const CAPTURE_FORMAT = CAPTURE_FIELDS.join(FIELD_SEPARATOR) + RECORD_SEPARATOR;
+/**
+ * What closes a screen, so the record after it starts where DevHub says.
+ *
+ * `capture-pane` is the one answer in the stream that DevHub did not write a
+ * format for, so it cannot terminate itself. A bare separator after it does,
+ * and it cannot be forged from inside the pane: `RECORD_SEPARATOR` is a C0
+ * control character, and a terminal consumes those rather than storing them in
+ * a cell, so `capture-pane` — which renders cells — can never emit one.
+ */
+const CAPTURE_END_FORMAT = RECORD_SEPARATOR;
+/**
+ * How many screens one round will read.
+ *
+ * The whole round shares one answer and therefore one `MAX_OUTPUT_BYTES`, so
+ * an unbounded batch would turn a busy machine's fifteenth Agent into a round
+ * that fails for every Agent. Anything over the cap is simply not asked about
+ * this round: nothing marks it read, so the next round asks first.
+ */
+const MAX_CAPTURES_PER_ROUND = 8;
 /** Which of the two listings a record of `listClients` came from. */
 const CLIENT_RECORD = "client";
 /** One attached client: the tty it draws on and the session it is showing. */
@@ -256,6 +304,35 @@ export interface Inventory {
 	readonly marker: MarkerState;
 	/** Empty unless the marker is `owned`; nothing else may be acted on. */
 	readonly sessions: readonly SessionInfo[];
+}
+
+/** One Agent's visible screen and the title its program set. */
+export interface AgentScreenReading {
+	readonly screen: string;
+	readonly oscTitle: string;
+}
+
+/**
+ * What one reconcile round learned, out of one tmux invocation.
+ *
+ * The listing and the screens are one observation for the same reason the
+ * marker and the listing are: a screen read from a different moment than the
+ * list that named its session could belong to a session that had already been
+ * replaced.
+ */
+export interface AgentRound {
+	readonly marker: MarkerState;
+	/** Empty unless the marker is `owned`; nothing else may be acted on. */
+	readonly agents: readonly ListedAgentSession[];
+	/**
+	 * By Agent id, for the screens this round asked for *and* tmux answered.
+	 *
+	 * A screen that is missing is not a status: the queue stopped before it, or
+	 * the pane turned out to belong to somebody else. Either way nobody knows
+	 * what that screen says, so the reading is not taken and the next round
+	 * asks again.
+	 */
+	readonly screens: ReadonlyMap<string, AgentScreenReading>;
 }
 
 /** The part of a listing that says whether DevHub wrote the session. */
@@ -1233,103 +1310,170 @@ export class TmuxTerminalRuntime {
 	async listAgents(
 		cancel = new CancellationToken(),
 	): Promise<readonly ListedAgentSession[]> {
+		const round = await this.agentRound([], cancel);
+		if (round.marker === "wrong") throw portFailure("conflict");
+		return round.agents;
+	}
+
+	/**
+	 * One reconcile round: the Agent listing and the screens worth reading, in
+	 * one tmux invocation.
+	 *
+	 * A round used to be `inventory()` and then a `capture-pane` per Agent
+	 * whose pane had moved — one fork and one exec each, five times a second.
+	 * tmux takes a command queue, so all of it fits in one client: the marker,
+	 * the listing, and then a `display-message`/`capture-pane` pair per Agent,
+	 * with the records DevHub already frames its listings with telling the
+	 * answers apart. Locally that halves the process count of a busy round;
+	 * remotely it is the difference between one round trip per round and one
+	 * per Agent.
+	 *
+	 * **The batch is composed before the round runs, so `captureIds` comes from
+	 * the *previous* round's activity markers.** A round cannot both ask tmux
+	 * what changed and act on the answer in the same invocation, and one round
+	 * of lag is the price of one invocation: an Agent that writes is read on
+	 * the next round, 300 ms later, instead of this one. The freshness rule
+	 * that decides the set is unchanged (`agent/screenFreshness.ts`) — it was
+	 * always about `#{window_activity}` and never about wall-clock.
+	 *
+	 * **Where a failure is attributed.** tmux ends the queue at the first
+	 * command that fails, so how far the answer got says which command it was:
+	 * nothing at all is the marker probe's (there is no server), the marker
+	 * alone is the listing's, and anything after the end-of-listing record is a
+	 * capture's — which is not fatal, because a screen DevHub could not read
+	 * leaves the Agent's status where it was and the next round asks again.
+	 */
+	async agentRound(
+		captureIds: readonly string[],
+		cancel = new CancellationToken(),
+	): Promise<AgentRound> {
 		const release = await this.gate.acquireOperation(cancel);
 		try {
 			const socket = this.socket();
 			const deadline = OperationDeadline.in(this.timeoutMs);
 			await this.ensureVersion(socket, cancel, deadline);
-			const { marker, sessions } = await this.inventory(
-				socket,
-				cancel,
-				deadline,
-			);
-			if (marker === "absent") return [];
-			if (marker === "wrong") throw portFailure("conflict");
-			return sessions
-				.filter(
-					(session) =>
-						session.context === AGENT_CONTEXT &&
-						isMarked(session, this.contextHome),
-				)
-				.map((session) => ({
-					record: this.ownedSessionRecord(session),
-					activity: session.activity,
-				}));
-		} finally {
-			release();
-		}
-	}
-
-	/**
-	 * One Agent's visible screen, and the title its program set.
-	 *
-	 * `capture-pane` reads the pane whether or not a client is attached, which
-	 * is why status detection uses it rather than the attached surface's
-	 * stream: the sidebar must be able to say what every Agent is doing with no
-	 * surface open at all.
-	 *
-	 * The ownership check is the first command in the *same* client queue as
-	 * the read, rather than a separate `list-sessions` before it. That is both
-	 * cheaper — one tmux invocation per Agent per round instead of a full
-	 * marker inventory — and stricter: a session that was replaced between a
-	 * separate check and the capture could still have been read, and here it
-	 * cannot, because the id and the screen come out of one command run.
-	 *
-	 * There is no OSC-progress equivalent. tmux exposes the pane title (OSC 0
-	 * and 2) as `#{pane_title}` and does not expose OSC 9;4 progress at all, so
-	 * a rule keyed on progress can never match here. That is stated rather than
-	 * worked around: reading it would mean DevHub parsing the pane's byte
-	 * stream itself, which is the rendered-screen indirection this transport
-	 * exists to remove.
-	 */
-	async captureAgent(
-		record: OwnedSessionRecord,
-		cancel = new CancellationToken(),
-	): Promise<{ readonly screen: string; readonly oscTitle: string }> {
-		if (record.kind !== "agent") throw portFailure("failed");
-		activityCounters.record(COUNTER.agentScreenCapture);
-		const release = await this.gate.acquireOperation(cancel);
-		try {
-			const socket = this.socket();
-			const deadline = OperationDeadline.in(this.timeoutMs);
+			const wanted = captureIds.slice(0, MAX_CAPTURES_PER_ROUND);
+			activityCounters.record(COUNTER.tmuxListSessions);
 			const output = await this.runTmux(
 				socket,
 				[
 					"display-message",
 					"-p",
-					"-t",
-					record.sessionName,
-					`#{${AGENT_ID_OPTION}}`,
+					MARKER_FORMAT,
+					";",
+					"list-sessions",
+					"-F",
+					SESSION_FORMAT,
 					";",
 					"display-message",
 					"-p",
-					"-t",
-					record.sessionName,
-					"#{pane_title}",
-					";",
-					"capture-pane",
-					"-p",
-					"-J",
-					"-t",
-					record.sessionName,
+					LISTED_FORMAT,
+					...wanted.flatMap((agentId) => {
+						const session = agentSessionName(agentId);
+						return [
+							";",
+							"display-message",
+							"-p",
+							"-t",
+							session,
+							CAPTURE_FORMAT,
+							";",
+							"capture-pane",
+							"-p",
+							"-J",
+							"-t",
+							session,
+							";",
+							"display-message",
+							"-p",
+							CAPTURE_END_FORMAT,
+						];
+					}),
 				],
 				this.contextHome,
 				cancel,
 				deadline,
 			);
-			if (!output.success) throw portFailure("conflict");
-			// The first two lines are the two `display-message` answers; a pane
-			// title cannot contain a newline, because tmux takes it from an OSC
-			// string and control characters do not survive that.
-			const lines = parseCapture(output.stdout).split("\n");
-			if (lines[0] !== record.agentId) throw portFailure("conflict");
-			return {
-				oscTitle: lines[1] ?? "",
-				screen: lines.slice(2).join("\n"),
-			};
+			return this.readRound(output, wanted);
 		} finally {
 			release();
 		}
+	}
+
+	/** Read what one batched round answered, in the order it was asked. */
+	private readRound(output: TmuxOutput, wanted: readonly string[]): AgentRound {
+		const nothing = { agents: [], screens: new Map() } as const;
+		if (!output.success && output.stdout.byteLength === 0) {
+			// The marker probe itself did not answer. An absent server says so
+			// on stderr; anything else is a reachable server this command could
+			// not read, which is the same fail-closed conflict as a wrong
+			// marker.
+			return {
+				marker: isNoServerError(output.stderr) ? "absent" : "wrong",
+				...nothing,
+			};
+		}
+		const records = splitRecords(output.stdout);
+		const first = records[0]?.split(FIELD_SEPARATOR);
+		if (first === undefined || first[0] !== MARKER_RECORD) {
+			throw shapeFailure("no marker where the marker record should be");
+		}
+		if (first[1] !== PROTOCOL_VALUE) return { marker: "wrong", ...nothing };
+		const sessions: string[][] = [];
+		let index = 1;
+		let listed = false;
+		for (; index < records.length; index += 1) {
+			const fields = (records[index] ?? "").split(FIELD_SEPARATOR);
+			if (fields.length === 1 && fields[0] === LISTED_RECORD) {
+				listed = true;
+				index += 1;
+				break;
+			}
+			if (fields.length !== SESSION_FIELDS.length) {
+				throw shapeFailure("a record of the wrong width");
+			}
+			sessions.push(fields);
+		}
+		if (!listed) {
+			// The server was DevHub's and went away between the two commands,
+			// which is the same answer an absent server gives: nothing is on it.
+			if (isNoServerError(output.stderr))
+				return { marker: "owned", ...nothing };
+			throw output.refusal();
+		}
+		const agents = sessionsFrom(sessions)
+			.filter(
+				(session) =>
+					session.context === AGENT_CONTEXT &&
+					isMarked(session, this.contextHome),
+			)
+			.map((session) => ({
+				record: this.ownedSessionRecord(session),
+				activity: session.activity,
+			}));
+		const screens = new Map<string, AgentScreenReading>();
+		let answered = 0;
+		while (index + 1 < records.length) {
+			const header = (records[index] ?? "").split(FIELD_SEPARATOR);
+			const screen = records[index + 1] ?? "";
+			index += 2;
+			if (
+				header.length !== CAPTURE_FIELDS.length ||
+				header[0] !== CAPTURE_RECORD
+			) {
+				throw shapeFailure("a record of the wrong width");
+			}
+			const asked = wanted[answered];
+			answered += 1;
+			// The pane answered with an Agent id, and it has to be the one the
+			// queue named. A session that was replaced between the model reading
+			// it and tmux running the queue is not a slower answer, it is a
+			// different Agent's screen.
+			if (asked === undefined || header[1] !== asked) continue;
+			activityCounters.record(COUNTER.agentScreenCapture);
+			screens.set(asked, { oscTitle: header[2] ?? "", screen });
+		}
+		return { marker: "owned", agents, screens };
 	}
 
 	/**
@@ -1352,7 +1496,7 @@ export class TmuxTerminalRuntime {
 	 * The Return goes separately, a beat later — see `PASTE_SUBMIT_DELAY_MS`
 	 * for the measured reason it cannot ride along in the same command.
 	 *
-	 * **Why the identity is read again first.** `captureAgent` reads and then
+	 * **Why the identity is read again first.** A round reads and then
 	 * checks, which is safe for a read: a screen that turned out to be somebody
 	 * else's is discarded. This writes, and there is no discarding a keystroke
 	 * that has already been typed into the wrong pane. So the check comes

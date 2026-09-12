@@ -528,6 +528,42 @@ describe.skipIf(TMUX === undefined)(
       expect(test.tmuxRuns() - listStart).toBe(1);
     });
 
+    it("reads three Agents and one of their screens in one process", async () => {
+      const test = fixture("roundcost", undefined, { counting: true });
+      const sessions = new AgentSessions(test.runtime);
+      const agentIds = [
+        "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa61",
+        "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa62",
+        "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa63",
+      ];
+      const workspaceId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbb61";
+      await test.runtime.ensure(SCRATCH_TARGET);
+      for (const agentId of agentIds) {
+        await sessions.launch({
+          agentId,
+          workspaceId,
+          root: test.home,
+          command: { file: "/bin/sh", args: ["-c", "sleep 30"], env: {} },
+        });
+      }
+
+      // The listing and every screen the round asked for come out of one tmux
+      // client. It was one for the listing plus one per Agent whose pane had
+      // moved — five times a second, for as long as an Agent was talking.
+      const roundStart = test.tmuxRuns();
+      const round = await sessions.round([agentIds[1] as string]);
+      expect(test.tmuxRuns() - roundStart).toBe(1);
+      expect(round.live.map((one) => one.agentId).sort()).toEqual(
+        [...agentIds].sort(),
+      );
+      expect([...round.screens.keys()]).toEqual([agentIds[1]]);
+
+      // And a round that needs no screen is still exactly one.
+      const idleStart = test.tmuxRuns();
+      expect((await sessions.round([])).screens.size).toBe(0);
+      expect(test.tmuxRuns() - idleStart).toBe(1);
+    });
+
     it("keeps a root that contains a newline whole in the inventory", async () => {
       const test = fixture("newline-root");
       // The listing is delimited by DevHub's own record separator rather than
@@ -798,15 +834,17 @@ describe.skipIf(TMUX === undefined)(
           env: {},
         },
       });
-      await untilTitle(sessions, agentId, workspaceId);
-      const screen = await sessions.screen(agentId, workspaceId);
-      expect(screen.oscTitle).toBe("a title");
-      expect(screen.screen).toContain("on the screen");
+      await untilTitle(sessions, agentId);
+      const screen = (await sessions.round([agentId])).screens.get(agentId);
+      expect(screen?.oscTitle).toBe("a title");
+      expect(screen?.screen).toContain("on the screen");
 
       // The id is checked in the same tmux command as the read, so asking
-      // about an Agent whose session is not there refuses rather than
-      // returning somebody else's pane.
-      await expect(sessions.screen(other, workspaceId)).rejects.toThrow();
+      // about an Agent whose session is not there answers with no screen at
+      // all rather than with somebody else's pane.
+      const missing = await sessions.round([other]);
+      expect(missing.screens.has(other)).toBe(false);
+      expect(missing.live.map((one) => one.agentId)).toEqual([agentId]);
     });
 
     it("refuses to resurrect an Agent whose session has ended", async () => {
@@ -1010,9 +1048,7 @@ describe.skipIf(TMUX === undefined)(
       const firstIdleAt = { at: 0 };
       let sentAt = 0;
       for (let round = 0; round < 80; round += 1) {
-        const screen = await sessions
-          .screen(agentId, workspaceId)
-          .catch(() => undefined);
+        const screen = (await sessions.round([agentId])).screens.get(agentId);
         if (screen) {
           const status = detector.status("claude", screen);
           if (status === "idle" && firstIdleAt.at === 0) {
@@ -1272,11 +1308,10 @@ async function untilGone(
 async function untilTitle(
   sessions: AgentSessions,
   agentId: string,
-  workspaceId: string,
 ): Promise<void> {
   for (let attempt = 0; attempt < 200; attempt += 1) {
-    const screen = await sessions.screen(agentId, workspaceId);
-    if (screen.oscTitle.length > 0) return;
+    const screen = (await sessions.round([agentId])).screens.get(agentId);
+    if (screen !== undefined && screen.oscTitle.length > 0) return;
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   throw new Error("the Agent never set a title");

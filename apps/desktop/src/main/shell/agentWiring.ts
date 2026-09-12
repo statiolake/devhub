@@ -19,6 +19,7 @@ import { AgentStatusDetector } from "../agent/detect/detector.js";
 import { AgentInjectionQueue } from "../agent/injection.js";
 import { AgentScreenFreshness } from "../agent/screenFreshness.js";
 import { AgentSessions } from "../agent/sessions.js";
+import type { AgentScreen } from "../agent/detect/detector.js";
 import type { AppModel } from "../../model/appModel.js";
 import type {
 	AgentId,
@@ -51,6 +52,18 @@ export function wireAgents(options: AgentWiringOptions): AgentSessions {
 	// every round read every Agent's screen, whether or not there was anything
 	// new on it — see `agent/screenFreshness.ts`.
 	const freshness = new AgentScreenFreshness();
+	/**
+	 * Each Agent's activity marker as the last round found it.
+	 *
+	 * A round is one tmux invocation now, so the screens it reads have to be
+	 * named before it runs, and the only markers that exist by then are the
+	 * previous round's. An Agent that writes is therefore read one round late —
+	 * 300 ms — which is the whole price of the batch. An Agent with no entry
+	 * here has never been listed, and is not asked about until it has been:
+	 * capturing a session that does not exist yet would end tmux's queue and
+	 * cost every Agent behind it in the batch its screen.
+	 */
+	const lastMarkers = new Map<string, string | undefined>();
 
 	registerAgentAdapter({
 		async launch(
@@ -127,16 +140,31 @@ export function wireAgents(options: AgentWiringOptions): AgentSessions {
 					});
 				}
 			}
+			// Which screens this round will read, decided before it runs.
+			//
+			// The listing and the captures are one tmux invocation, so the
+			// question "has this Agent written since its screen was last read"
+			// has to be answered from what the last round saw. `shouldCapture`
+			// is unchanged and does the deciding; all that is new is which
+			// round's markers it is given.
+			const captureIds = [...asked.keys()].filter(
+				(id) =>
+					lastMarkers.has(id) &&
+					freshness.shouldCapture(id, lastMarkers.get(id)),
+			);
 			// The listing carries each Agent's activity marker, so this is both
 			// "which Agents are alive" and "which of them have written
 			// anything" — one answer, from one command, as it has to be: two
 			// listings would be two moments, and an Agent could be alive in one
 			// and gone in the other.
-			const listed = await sessions.list();
+			const round = await sessions.round(captureIds);
+			const listed = round.live;
 			const live = new Set(listed.map((one) => one.agentId));
 			const markers = new Map(
 				listed.map((one) => [one.agentId, one.activity] as const),
 			);
+			lastMarkers.clear();
+			for (const [id, marker] of markers) lastMarkers.set(id, marker);
 			const observations: {
 				agentId: AgentId;
 				status: AgentStatus;
@@ -166,14 +194,13 @@ export function wireAgents(options: AgentWiringOptions): AgentSessions {
 					exited.push(id);
 					continue;
 				}
-				const reading = await observe(
-					sessions,
+				const reading = observe(
 					detector,
 					activity,
 					freshness,
 					markers.get(id),
+					round.screens.get(id),
 					id,
-					about.workspaceId,
 					about.kind,
 				);
 				// The send happens here, on the reading this round settled on,
@@ -255,45 +282,40 @@ export function wireAgents(options: AgentWiringOptions): AgentSessions {
  * command, and asking for them separately would let a row show a status from
  * one instant beside a sentence from another.
  *
- * A capture that fails is not a status: the Agent's session is there — it was
- * in the list a moment ago — and DevHub could not read its screen. Claiming
- * `error` would report the Agent as broken for a failure of DevHub's own, so
- * the reading is simply not taken and the row keeps what it had until the next
- * round, which is the same thing a screen the manifest does not describe does.
- * Its word keeps what it had for the same reason, by the same call shape.
+ * There are three cases and they are not the same. The screen this round did
+ * not *ask* for is an Agent that has written nothing since it was last read:
+ * the reading DevHub has is still the reading, and the detector is told so.
+ * The screen it asked for and did not get is a capture that failed — the
+ * Agent's session is there, it was in the same answer's listing, and DevHub
+ * could not read its pane. Claiming `error` would report the Agent as broken
+ * for a failure of DevHub's own, so the reading is simply not taken and the row
+ * keeps what it had until the next round. Only the third case, a screen that
+ * arrived, is a new status.
  */
-async function observe(
-	sessions: AgentSessions,
+function observe(
 	detector: AgentStatusDetector,
 	activity: AgentActivityReader,
 	freshness: AgentScreenFreshness,
 	marker: string | undefined,
+	screen: AgentScreen | undefined,
 	agentId: AgentId,
-	workspaceId: WorkspaceId,
 	kind: string,
-): Promise<{
+): {
 	readonly status: AgentStatus;
 	readonly activity: string | undefined;
-}> {
-	// An Agent that has written nothing since its screen was last read has the
-	// screen it had, so the reading DevHub already has is the reading. Saying
-	// so costs nothing; asking again costs a process.
-	//
+} {
 	// It is told to the detector rather than answered around it, because "the
 	// screen has not changed" is news: it is what finishes a reading the
 	// debounce has only counted once, and without it an Agent that fell quiet
 	// straight after DevHub first read it stayed `unknown` for ever. A capture
 	// that *failed*, below, is not that news — nobody knows what that screen
 	// says — so it keeps answering with what was last shown.
-	if (!freshness.shouldCapture(agentId, marker)) {
+	if (screen === undefined && !freshness.shouldCapture(agentId, marker)) {
 		return {
 			status: detector.unchanged(agentId),
 			activity: activity.showing(agentId),
 		};
 	}
-	const screen = await sessions
-		.screen(agentId, workspaceId)
-		.catch(() => undefined);
 	if (screen === undefined) {
 		return {
 			status: detector.showing(agentId),

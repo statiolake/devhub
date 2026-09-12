@@ -344,19 +344,24 @@ export const FIELD_SEPARATOR = "\u001f";
 export const RECORD_SEPARATOR = "\u001e";
 
 /**
- * Parse the answer of one `-F` listing into records of fixed width.
+ * Cut one client's whole answer into the records DevHub asked tmux to frame.
  *
  * The newline tmux appends after each expanded format is *not* the record
  * separator here — a marker value may contain newlines (a path legitimately
  * can), and splitting on them would tear one session's identity into two
- * half-read ones. The format itself ends with `RECORD_SEPARATOR`, so a record
- * ends where DevHub said it ends and tmux's newline is only the byte that
- * follows it.
+ * half-read ones. A format ends with `RECORD_SEPARATOR`, so a record ends
+ * where DevHub said it ends and tmux's newline is only the byte that follows
+ * it; that newline is stripped here so a caller never has to know it was
+ * there.
  *
- * A record of the wrong width, a missing terminator or a NUL is malformed
+ * A record is *text*, not fields. That is what lets one client queue mix a
+ * fixed-width listing with a `capture-pane` whose answer is a screen: the
+ * framing is the same for both, and only the reading differs.
+ *
+ * A missing terminator, a NUL or bytes that are not UTF-8 are malformed
  * provider output, not a partial answer to be used anyway.
  */
-export function parseRecords(output: Buffer, fieldCount: number): string[][] {
+export function splitRecords(output: Buffer): string[] {
 	if (output.byteLength > MAX_OUTPUT_BYTES)
 		throw shapeFailure("too much of it");
 	const text = decodeUtf8(output);
@@ -368,14 +373,23 @@ export function parseRecords(output: Buffer, fieldCount: number): string[][] {
 	if (chunks.pop() !== "\n") throw shapeFailure("an unterminated record");
 	if (chunks.length > MAX_LINES)
 		throw shapeFailure("more records than it can hold");
-	const records: string[][] = [];
-	for (const [index, chunk] of chunks.entries()) {
-		if (index > 0 && !chunk.startsWith("\n")) {
-			throw shapeFailure("an unterminated record");
-		}
-		const fields = (index === 0 ? chunk : chunk.slice(1)).split(
-			FIELD_SEPARATOR,
-		);
+	return chunks.map((chunk, index) => {
+		if (index === 0) return chunk;
+		if (!chunk.startsWith("\n")) throw shapeFailure("an unterminated record");
+		return chunk.slice(1);
+	});
+}
+
+/**
+ * Parse the answer of one `-F` listing into records of fixed width.
+ *
+ * A record of the wrong width is malformed provider output, for the same
+ * reason a missing terminator is: DevHub wrote the format, so tmux answering
+ * in a different shape means the two disagree about what was asked.
+ */
+export function parseRecords(output: Buffer, fieldCount: number): string[][] {
+	return splitRecords(output).map((record) => {
+		const fields = record.split(FIELD_SEPARATOR);
 		if (fields.length !== fieldCount) {
 			throw shapeFailure("a record of the wrong width");
 		}
@@ -384,9 +398,8 @@ export function parseRecords(output: Buffer, fieldCount: number): string[][] {
 				throw shapeFailure("a field longer than it can hold");
 			}
 		}
-		records.push(fields);
-	}
-	return records;
+		return fields;
+	});
 }
 
 /**
