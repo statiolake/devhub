@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
 	ReleaseTmuxDelivery,
 	tmuxDownloadUrl,
+	tmuxInstallDirectory,
 	tmuxTarballName,
 	tmuxTopLevelDirectory,
 } from "./tmuxDelivery.js";
@@ -30,6 +31,12 @@ describe("where a platform's tmux comes from", () => {
 			"https://example.com/releases/download/tmux-3.7c/" +
 				"devhub-tmux-linux-arm64-3.7c.tar.gz",
 		);
+	});
+
+	// One statement of it, so the runtime reads it off the delivery rather than
+	// knowing it: a second copy is a copy that will disagree with product.json.
+	it("puts the version directories under the server's own data folder", () => {
+		expect(tmuxInstallDirectory(".devhub-server")).toBe(".devhub-server/tmux");
 	});
 
 	it("names the tarball and its single directory the way the build does", () => {

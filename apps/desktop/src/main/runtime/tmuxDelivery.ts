@@ -100,6 +100,18 @@ export function tmuxDownloadUrl(
 		.replaceAll("${arch}", arch);
 }
 
+/**
+ * Where the version directories go on a machine, relative to its `$HOME`.
+ *
+ * Beside the remote extension host, under the same `serverDataFolderName`, and
+ * one statement of it: the runtime reads it off the delivery it was given
+ * rather than knowing it, so there is no second copy to be right about when
+ * `product.json` says something else.
+ */
+export function tmuxInstallDirectory(serverDataFolderName: string): string {
+	return `${serverDataFolderName}/tmux`;
+}
+
 /** The single directory inside the tarball for one platform. */
 export function tmuxTopLevelDirectory(platform: string): string {
 	return `devhub-tmux-${platform}`;

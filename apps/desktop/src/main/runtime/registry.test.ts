@@ -14,7 +14,7 @@ import {
 	runtimeFor,
 	setRuntimeProfile,
 } from "./registry.js";
-import type { TmuxDelivery } from "./tmuxDelivery.js";
+import { tmuxInstallDirectory, type TmuxDelivery } from "./tmuxDelivery.js";
 
 /**
  * A tmux nobody asks for.
@@ -25,7 +25,7 @@ import type { TmuxDelivery } from "./tmuxDelivery.js";
  */
 const NO_TMUX: TmuxDelivery = {
 	version: "0",
-	directory: ".devhub-server/tmux",
+	directory: tmuxInstallDirectory(".devhub-server"),
 	tarball: () => Promise.reject(new Error("no tarball in this test")),
 };
 

@@ -148,12 +148,27 @@ const FAKE_ENVIRONMENT: Readonly<Record<string, string | undefined>> = {
 	SHELL: "/bin/sh",
 };
 
+/**
+ * The tmux every runtime here is told about, and none of these ask for.
+ *
+ * `runtimeFor` always passes one, so a runtime in a test has one too — the
+ * suite that leaves it out is the one below that is about leaving it out. The
+ * tarball refuses because nothing in these cases installs a tmux, and a test
+ * that started to should say so rather than quietly build one.
+ */
+const FAKE_TMUX: TmuxDelivery = {
+	version: "3.7c",
+	directory: ".devhub-server/tmux",
+	tarball: () => Promise.reject(new Error("no tmux is installed in this test")),
+};
+
 function fakeRuntime(): SshRuntime {
 	return new SshRuntime({
 		host: "build-box.example.com",
 		controlDirectory: control,
 		sshPath: join(bin, "ssh"),
 		localEnvironment: FAKE_ENVIRONMENT,
+		tmux: FAKE_TMUX,
 	});
 }
 
@@ -168,6 +183,7 @@ async function refusing(stderr: string): Promise<SshRuntime> {
 		controlDirectory: control,
 		sshPath: join(bin, name),
 		localEnvironment: FAKE_ENVIRONMENT,
+		tmux: FAKE_TMUX,
 	});
 }
 
@@ -411,6 +427,7 @@ describe("a pseudo-terminal on the other machine", () => {
 			controlDirectory: control,
 			sshPath: join(bin, "ssh"),
 			localEnvironment: FAKE_ENVIRONMENT,
+			tmux: FAKE_TMUX,
 			ptyFactory: (launch) => {
 				launched = launch;
 				return {} as Pty;
@@ -476,6 +493,7 @@ describe("the terminal launcher on the host", () => {
 				DEVHUB_FAKE_SSH_LOG: log,
 				DEVHUB_FAKE_FORWARD: forward,
 			},
+			tmux: FAKE_TMUX,
 		});
 	}
 
@@ -617,6 +635,7 @@ describe("the login environment on the host", () => {
 			controlDirectory: control,
 			sshPath: join(bin, "ssh"),
 			localEnvironment: { ...FAKE_ENVIRONMENT, SHELL: shell, ...extra },
+			tmux: FAKE_TMUX,
 		});
 	}
 
@@ -1009,5 +1028,40 @@ describe("carrying the tmux config to a host", () => {
 		await rm(local);
 		expect(await runtime().userTmuxConfig(local)).toBe("/dev/null");
 		await expect(readFile(answer, "utf8")).rejects.toThrow();
+	});
+});
+
+/**
+ * A runtime built without a tmux delivery is a bug in DevHub.
+ *
+ * `runtimeFor` is the only thing that builds one and it always passes a
+ * delivery, so there is no state of the world in which this is missing. What
+ * makes it worth a case of its own is what the alternative looked like: a
+ * runtime that guessed `~/.devhub-server/tmux` would go on to fail somewhere
+ * on the host and report it as "that host has no tmux", which sends whoever
+ * reads it to the wrong machine entirely.
+ */
+describe("a runtime built without a tmux to deliver", () => {
+	function undelivered(): SshRuntime {
+		return new SshRuntime({
+			host: "build-box.example.com",
+			controlDirectory: control,
+			sshPath: join(bin, "ssh"),
+			localEnvironment: FAKE_ENVIRONMENT,
+		});
+	}
+
+	it("refuses to say which tmux it runs, and says whose bug that is", async () => {
+		await expect(undelivered().tmuxProgram()).rejects.toThrow(
+			/a bug in DevHub and not a fact about that host/u,
+		);
+	});
+
+	// A throw and not an `unavailable`: `tmuxProgram` turns a host that could
+	// not be reached into a reason a person can act on, and this is not one.
+	it("refuses to place the tmux config, rather than guessing where", async () => {
+		await expect(
+			undelivered().userTmuxConfig("/nowhere/tmux.conf"),
+		).rejects.toThrow(/built without a tmux delivery/u);
 	});
 });

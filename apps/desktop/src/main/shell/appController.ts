@@ -197,7 +197,10 @@ import {
 	runtimeMachine,
 	setRuntimeProfile,
 } from "../runtime/registry.js";
-import { ReleaseTmuxDelivery } from "../runtime/tmuxDelivery.js";
+import {
+	ReleaseTmuxDelivery,
+	tmuxInstallDirectory,
+} from "../runtime/tmuxDelivery.js";
 import type {
 	Runtime,
 	RuntimeId,
@@ -4696,7 +4699,9 @@ export async function createAppController(
 		// profile is passed in at all.
 		tmux: new ReleaseTmuxDelivery({
 			version: tmuxProduct.tmuxVersion ?? "",
-			directory: `${vscodeProduct.serverDataFolderName ?? ".vscode-server"}/tmux`,
+			directory: tmuxInstallDirectory(
+				vscodeProduct.serverDataFolderName ?? ".vscode-server",
+			),
 			urlTemplate: tmuxProduct.tmuxDownloadUrlTemplate ?? "",
 			sha256: tmuxProduct.tmuxDownloadSha256 ?? {},
 			cacheDirectory: join(userDataPath, "tmux"),

@@ -836,7 +836,11 @@ export class SshRuntime implements Runtime {
 		_configured?: string,
 		_searchPath?: string,
 	): Promise<TmuxProgram> {
-		this.#tmux ??= this.#installTmux();
+		// Outside the catch below: a missing delivery is not something the next
+		// window should retry, and reporting it as "tmux is unavailable on that
+		// host" would send whoever reads it to look at the host.
+		const delivery = this.#delivery();
+		this.#tmux ??= this.#installTmux(delivery);
 		try {
 			return await this.#tmux;
 		} catch (failure: unknown) {
@@ -850,14 +854,28 @@ export class SshRuntime implements Runtime {
 		}
 	}
 
-	async #installTmux(): Promise<TmuxProgram> {
+	/**
+	 * Where this host's tmux comes from — an invariant, not a case.
+	 *
+	 * `runtimeFor` is the only thing that builds an `SshRuntime` and it always
+	 * passes one, so a runtime without one is a construction bug and nothing a
+	 * host did. It throws rather than falling back to the path it *would* have
+	 * been given: a guessed `~/.devhub-server/tmux` is a second statement of a
+	 * product fact, and the failure it produces would arrive as "that host has
+	 * no tmux" — a sentence about the wrong machine entirely.
+	 */
+	#delivery(): TmuxDelivery {
 		const delivery = this.#tmuxDelivery;
 		if (delivery === undefined) {
 			throw new Error(
-				`this DevHub was not told where to get tmux from, so it cannot put ` +
-					`one on ${this.#host}`,
+				`the runtime for ${this.#host} was built without a tmux delivery, ` +
+					`which is a bug in DevHub and not a fact about that host`,
 			);
 		}
+		return delivery;
+	}
+
+	async #installTmux(delivery: TmuxDelivery): Promise<TmuxProgram> {
 		const { home, platform, architecture } = await this.#describeRemote();
 		const target = `${platformName(platform)}-${architecture}`;
 		const directory = posix.join(home, delivery.directory, delivery.version);
@@ -926,10 +944,7 @@ export class SshRuntime implements Runtime {
 	 */
 	async userTmuxConfig(localPath: string): Promise<string> {
 		const { home } = await this.#describeRemote();
-		const directory = posix.join(
-			home,
-			this.#tmuxDelivery?.directory ?? ".devhub-server/tmux",
-		);
+		const directory = posix.join(home, this.#delivery().directory);
 		const remotePath = posix.join(directory, "tmux.conf");
 		const text = await readFile(localPath, "utf8").catch(() => undefined);
 		if (text === undefined) {
