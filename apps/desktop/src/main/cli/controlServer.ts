@@ -59,8 +59,14 @@ export interface ControlHandlers {
 	/**
 	 * The command line the workbench rooted at `root` — or the folderless one,
 	 * for `null` — starts its integrated terminal with.
+	 *
+	 * `machine` is the `RuntimeId` of the computer that `root` is a path on, so
+	 * that a path is matched against the Workspaces that are actually on it.
 	 */
-	terminalProfile(root: string | null): Promise<TerminalProfileAnswer>;
+	terminalProfile(
+		machine: string,
+		root: string | null,
+	): Promise<TerminalProfileAnswer>;
 }
 
 export interface ControlServer {
@@ -230,7 +236,10 @@ async function handle(
 			case "install-cli":
 				return { ok: true, message: await handlers.installCli() };
 			case "terminal-profile": {
-				const profile = await handlers.terminalProfile(request.root);
+				const profile = await handlers.terminalProfile(
+					request.machine,
+					request.root,
+				);
 				return {
 					ok: true,
 					// The sentence is for a log and for a person who sends this

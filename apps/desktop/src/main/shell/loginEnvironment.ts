@@ -223,6 +223,14 @@ export function launchEnvironment(
  * an environment variable rather than a setting: a setting is a suggestion the
  * person's dotfiles tool can rewrite, and this is not one. See
  * `patches/vscode/0003-devhub-terminal-is-the-terminal.patch`.
+ *
+ * It is also the answer *per window*, which is what a window on another machine
+ * needs. A renderer's environment is not this process's: `preload.ts` assigns
+ * the window configuration's `userEnv` over `process.env` before the workbench
+ * modules are imported, and that `userEnv` is whatever the `open` call passed.
+ * So a window on a host is opened with this name set to the launcher written
+ * *there* (`Runtime.terminalLauncher`), and the patch reads one variable and
+ * still gets one answer per window.
  */
 export const DEVHUB_TERMINAL = "DEVHUB_TERMINAL";
 

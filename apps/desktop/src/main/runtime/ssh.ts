@@ -45,6 +45,10 @@ import { errorWireAt, TypedFailure, withSummary } from "../../model/wire.js";
 import { OperationDeadline, runBounded } from "../terminal/command.js";
 import { CancellationToken, portFailure } from "../terminal/ports.js";
 import { openPty, type Pty, type PtyFactory } from "../terminal/pty.js";
+import {
+	remoteTerminalPaths,
+	terminalLauncherScript,
+} from "../terminal/launcher.js";
 import { remoteReconcileIntervalMs } from "./cadence.js";
 import { gitDirectoryOf } from "./gitDirectory.js";
 import { shellQuote } from "./quote.js";
@@ -60,6 +64,8 @@ import {
 	type RuntimeCadence,
 	type RuntimeId,
 	type RuntimeReading,
+	type TerminalLauncher,
+	type TerminalLauncherSpec,
 	type Watcher,
 } from "./runtime.js";
 
@@ -409,6 +415,7 @@ export class SshRuntime implements Runtime {
 	#masterPid: number | undefined;
 	#askedForMasterPid = false;
 	#remote: Promise<{ home: string; platform: string }> | undefined;
+	#launcher: Promise<TerminalLauncher> | undefined;
 	#controlDirectoryMade: Promise<unknown> | undefined;
 
 	constructor(options: SshRuntimeOptions) {
@@ -763,6 +770,161 @@ export class SshRuntime implements Runtime {
 		);
 		if (result.code !== 0) throw this.#fileError(gitDirectory, result);
 		return result.stdout.toString("utf8").trim();
+	}
+
+	/**
+	 * The `devhub-terminal` a workbench *on this host* runs, installed once.
+	 *
+	 * The problem this solves, stated exactly: an ssh window's pty host runs on
+	 * the host, so the profile's `path` is a path over there, and the process it
+	 * starts can reach neither DevHub's launcher nor DevHub's control socket.
+	 * Both halves are carried across rather than reinvented — the launcher
+	 * script is `terminalLauncherScript`, the same text, with the host's own
+	 * paths in it, and the socket is DevHub's own, reverse-forwarded onto the
+	 * host by the ControlMaster that is already open. So there is one protocol
+	 * and one answering side, and "a terminal is a session DevHub named" is one
+	 * sentence rather than two implementations that agree for now.
+	 *
+	 * The Node that runs it is the REH's own (`~/<serverDataFolderName>/bin/
+	 * <commit>/node`). It is the one Node a host with a workbench on it is
+	 * certain to have, it is the same commit the client states, and it needs no
+	 * probing — a `command -v node` would find whatever a login shell happened
+	 * to have on its PATH, which is a different Node on every host and none at
+	 * all on some.
+	 *
+	 * One file per round trip. That is eight or so at the first window on a
+	 * host, once per DevHub start, on a connection that is already multiplexed —
+	 * and the alternative, one script with the files inlined, would put the
+	 * program's text into the remote shell's argv where `ps` reads it.
+	 */
+	async terminalLauncher(
+		spec: TerminalLauncherSpec,
+	): Promise<TerminalLauncher> {
+		this.#launcher ??= this.#installLauncher(spec);
+		return this.#launcher;
+	}
+
+	async #installLauncher(
+		spec: TerminalLauncherSpec,
+	): Promise<TerminalLauncher> {
+		if (spec.serverCommit === undefined) {
+			throw new Error(
+				`this DevHub was built from a source checkout and states no commit, so there is no ${spec.serverDataFolderName} directory on ${this.#host} it can name — which is the same reason it can open no workbench there`,
+			);
+		}
+		const paths = remoteTerminalPaths({
+			home: await this.home(),
+			serverDataFolderName: spec.serverDataFolderName,
+			serverCommit: spec.serverCommit,
+			controlSocketPath: spec.controlSocketPath,
+			entryName: spec.entryName,
+		});
+		// 0700, like the control directory on this Mac and for the same reason:
+		// what is under it is a path to a socket that runs commands as this user.
+		const made = await this.#sh(
+			`mkdir -p -- ${shellQuote(paths.entryRoot)} && chmod 700 ${shellQuote(paths.directory)} ${shellQuote(paths.entryRoot)}`,
+		);
+		if (made.code !== 0) throw this.#fileError(paths.directory, made);
+		for (const [name, text] of spec.entryFiles) {
+			const path = `${paths.entryRoot}/${name}`;
+			const directory = path.slice(0, path.lastIndexOf("/"));
+			const parent = await this.#sh(
+				`exec mkdir -p -- ${shellQuote(directory)}`,
+			);
+			if (parent.code !== 0) throw this.#fileError(directory, parent);
+			await this.writeTextFile(path, text, 0o600);
+		}
+		// The compiled files are ES modules and none of DevHub's `package.json`
+		// travels with them, so without this Node reads them as CommonJS and the
+		// first `import` is a syntax error.
+		await this.writeTextFile(
+			`${paths.entryRoot}/package.json`,
+			`${JSON.stringify({ type: "module" }, null, "\t")}\n`,
+			0o600,
+		);
+		await this.writeTextFile(
+			paths.launcher,
+			terminalLauncherScript({
+				execPath: paths.node,
+				entryScript: paths.entry,
+				socketPath: paths.socket,
+				machine: this.id,
+			}),
+			0o755,
+		);
+		return {
+			path: paths.launcher,
+			unreachable: await this.#forwardControlSocket(
+				paths.socket,
+				spec.controlSocketPath,
+			),
+		};
+	}
+
+	/**
+	 * DevHub's control socket, made answerable on the host.
+	 *
+	 * `ssh -O forward -R <remote>:<local>` adds the forward to the master that
+	 * is already up, so no second connection and no reconnect: the socket
+	 * appears on the host and every connection to it comes back down this one.
+	 *
+	 * The `rm -f` first is not tidying. A unix socket left behind by a previous
+	 * DevHub is a *file*, and sshd will not bind over one unless the host's
+	 * sshd was configured with `StreamLocalBindUnlink yes` — which is the
+	 * host's business and not something DevHub may assume or set. Removing it
+	 * from this side needs neither, and it is safe for exactly the reason the
+	 * name was chosen: the name is a digest of this DevHub's own socket path,
+	 * so the file being removed is this DevHub's and nobody else's.
+	 *
+	 * The `test -S` afterwards is the point of the whole function. `-O forward`
+	 * can report success and leave nothing bound, and a launcher pointed at a
+	 * socket that is not there is precisely the silent failure this file exists
+	 * to prevent. So the forward is *checked*, and a check that fails is a
+	 * sentence — recorded here, so `devhub --metrics` says it, and returned, so
+	 * whoever asked for the launcher can say it too. The launcher is still
+	 * written: run from the host it says "DevHub is not listening on <socket>",
+	 * which is the same fact in the place a person is actually looking.
+	 */
+	async #forwardControlSocket(
+		remoteSocketPath: string,
+		localSocketPath: string,
+	): Promise<string | undefined> {
+		const removed = await this.#sh(
+			`exec rm -f -- ${shellQuote(remoteSocketPath)}`,
+		);
+		if (removed.code !== 0) {
+			return `${remoteSocketPath} could not be removed on ${this.#host}, so DevHub's control socket could not be forwarded there: ${lastLine(removed.stderr.toString("utf8"))}`;
+		}
+		const forwarded = await runBounded(
+			{
+				file: this.#sshPath,
+				args: [
+					...sshOptionArgv(this.#controlDirectory),
+					"-O",
+					"forward",
+					"-R",
+					`${remoteSocketPath}:${localSocketPath}`,
+					this.#host,
+				],
+				cwd: undefined,
+				env: this.#localEnvironment,
+			},
+			OperationDeadline.in(PROBE_TIMEOUT_MS),
+			new CancellationToken(),
+			PROBE_LIMITS,
+		);
+		if (forwarded.code !== 0) {
+			const said = lastLine(forwarded.stderr.toString("utf8"));
+			this.#lastFailure = said;
+			return `DevHub's control socket could not be forwarded to ${remoteSocketPath} on ${this.#host}: ${said}`;
+		}
+		const bound = await this.#sh(`test -S ${shellQuote(remoteSocketPath)}`);
+		if (bound.code !== 0) {
+			const said = `ssh reported the forward of ${remoteSocketPath} on ${this.#host} succeeded, but nothing is listening there`;
+			this.#lastFailure = said;
+			return said;
+		}
+		return undefined;
 	}
 
 	reading(): RuntimeReading {

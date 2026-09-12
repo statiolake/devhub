@@ -133,6 +133,10 @@ export async function bootstrapShell(
 				"devhubTerminal.js",
 			),
 			socketPath: controlSocketPath(userDataPath),
+			// This launcher is the one for the machine DevHub is running on. A
+			// window on another machine gets another launcher, written there,
+			// naming that machine — see `Runtime.terminalLauncher`.
+			machine: "local",
 		},
 	);
 	exportTerminalLauncher(process.env, launcherPath);
@@ -210,7 +214,8 @@ export async function bootstrapShell(
 			controller.listExtensionsFromCli(showVersions),
 		version: () => controller.versionFromCli(),
 		metrics: () => controller.metricsFromCli(),
-		terminalProfile: (root) => controller.terminalProfileFor(root),
+		terminalProfile: (machine, root) =>
+			controller.terminalProfileFor(machine, root),
 		installCli: () =>
 			Promise.resolve(
 				installLauncher({

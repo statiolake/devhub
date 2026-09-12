@@ -43,6 +43,8 @@ import {
 	type RuntimeCadence,
 	type RuntimeId,
 	type RuntimeReading,
+	type TerminalLauncher,
+	type TerminalLauncherSpec,
 	type Watcher,
 } from "./runtime.js";
 
@@ -247,6 +249,20 @@ export class LocalRuntime implements Runtime {
 				for (const watcher of watchers) watcher.close();
 			},
 		};
+	}
+
+	/**
+	 * The launcher DevHub already wrote for itself, at startup.
+	 *
+	 * Nothing is installed here and nothing is forwarded: this machine is the
+	 * one the control socket is bound on, and `bootstrapShell` wrote the script
+	 * that names it before any window existed. The remote arm does the work; the
+	 * seam is what lets a caller ask both the same question.
+	 */
+	async terminalLauncher(
+		spec: TerminalLauncherSpec,
+	): Promise<TerminalLauncher> {
+		return { path: spec.localLauncherPath, unreachable: undefined };
 	}
 
 	reading(): RuntimeReading {

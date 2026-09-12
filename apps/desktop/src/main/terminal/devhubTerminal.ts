@@ -25,7 +25,11 @@ import { connect } from "node:net";
 import { resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ControlResponse } from "../cli/protocol.js";
-import { terminalCommandLine, terminalRoot } from "./launcher.js";
+import {
+	DEVHUB_TERMINAL_MACHINE,
+	terminalCommandLine,
+	terminalRoot,
+} from "./launcher.js";
 
 /**
  * Ask DevHub for the command line.
@@ -36,6 +40,7 @@ import { terminalCommandLine, terminalRoot } from "./launcher.js";
  */
 export function requestTerminalProfile(
 	socketPath: string,
+	machine: string,
 	root: string | null,
 ): Promise<ControlResponse> {
 	return new Promise<ControlResponse>((resolve, reject) => {
@@ -43,7 +48,9 @@ export function requestTerminalProfile(
 		let buffer = "";
 		socket.setEncoding("utf8");
 		socket.on("connect", () => {
-			socket.write(`${JSON.stringify({ kind: "terminal-profile", root })}\n`);
+			socket.write(
+				`${JSON.stringify({ kind: "terminal-profile", machine, root })}\n`,
+			);
 		});
 		socket.on("data", (chunk: string) => {
 			buffer += chunk;
@@ -71,6 +78,7 @@ export function requestTerminalProfile(
 /** What to run, or the sentence saying why there is nothing to run. */
 export async function resolveTerminalCommand(
 	socketPath: string | undefined,
+	machine: string | undefined,
 	directory: string | undefined,
 ): Promise<{ readonly file: string; readonly args: readonly string[] }> {
 	if (socketPath === undefined || socketPath.length === 0) {
@@ -78,8 +86,14 @@ export async function resolveTerminalCommand(
 			"DEVHUB_CONTROL_SOCKET is not set, so this terminal cannot ask DevHub which session it belongs to. The launcher that sets it is written by DevHub on startup; a copy of it kept somewhere else is not one.",
 		);
 	}
+	if (machine === undefined || machine.length === 0) {
+		throw new Error(
+			`${DEVHUB_TERMINAL_MACHINE} is not set, so this terminal cannot tell DevHub which machine it is on — and a directory without a machine names a different folder on every one of them. The launcher that sets it is written by DevHub on startup; a copy of it kept somewhere else is not one.`,
+		);
+	}
 	const answer = await requestTerminalProfile(
 		socketPath,
+		machine,
 		terminalRoot(directory),
 	);
 	if (!answer.ok || !answer.profile) {
@@ -98,6 +112,7 @@ export async function resolveTerminalCommand(
 export async function main(): Promise<number> {
 	const command = await resolveTerminalCommand(
 		process.env["DEVHUB_CONTROL_SOCKET"],
+		process.env[DEVHUB_TERMINAL_MACHINE],
 		process.cwd(),
 	);
 	process.stdout.write(`${terminalCommandLine(command)}\n`);

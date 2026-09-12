@@ -27,6 +27,8 @@ import {
 	type ExecResult,
 	type FileKind,
 	type Runtime,
+	type TerminalLauncher,
+	type TerminalLauncherSpec,
 	type Watcher,
 } from "./runtime.js";
 
@@ -56,6 +58,12 @@ class RecordingRuntime implements Runtime {
 
 	home(): Promise<string> {
 		return Promise.resolve("/home/fake");
+	}
+	terminalLauncher(spec: TerminalLauncherSpec): Promise<TerminalLauncher> {
+		return Promise.resolve({
+			path: spec.localLauncherPath,
+			unreachable: undefined,
+		});
 	}
 	exec(request: ExecRequest): Promise<ExecResult> {
 		this.execs.push(request);

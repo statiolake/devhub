@@ -8,15 +8,16 @@ import { terminalCommandLine } from "./launcher.js";
 /** A DevHub that answers one `terminal-profile` request, however it likes. */
 function answering(
 	socketPath: string,
-	reply: (root: unknown) => unknown,
+	reply: (root: unknown, machine: unknown) => unknown,
 ): Promise<Server> {
 	const server = createServer((socket) => {
 		socket.setEncoding("utf8");
 		socket.once("data", (line: string) => {
 			const request = JSON.parse(line.split("\n")[0] ?? "") as {
 				root: unknown;
+				machine: unknown;
 			};
-			socket.end(`${JSON.stringify(reply(request.root))}\n`);
+			socket.end(`${JSON.stringify(reply(request.root, request.machine))}\n`);
 		});
 	});
 	return new Promise((resolve) => {
@@ -50,7 +51,11 @@ describe("what a DevHub terminal runs", () => {
 				profile: { file: "/opt/tmux", args: ["-L", "devhub", "attach"] },
 			};
 		});
-		const command = await resolveTerminalCommand(socketPath, "/work/project");
+		const command = await resolveTerminalCommand(
+			socketPath,
+			"local",
+			"/work/project",
+		);
 		expect(asked).toBe("/work/project");
 		expect(command).toEqual({
 			file: "/opt/tmux",
@@ -68,7 +73,7 @@ describe("what a DevHub terminal runs", () => {
 				profile: { file: "/opt/tmux", args: [] },
 			};
 		});
-		await resolveTerminalCommand(socketPath, undefined);
+		await resolveTerminalCommand(socketPath, "local", undefined);
 		expect(asked).toBeNull();
 	});
 
@@ -80,7 +85,7 @@ describe("what a DevHub terminal runs", () => {
 			message: "That workspace is not open in DevHub.",
 		}));
 		await expect(
-			resolveTerminalCommand(socketPath, "/work/gone"),
+			resolveTerminalCommand(socketPath, "local", "/work/gone"),
 		).rejects.toThrow("That workspace is not open in DevHub.");
 	});
 
@@ -95,7 +100,11 @@ describe("what a DevHub terminal runs", () => {
 				args: ["-L", "devhub", "attach-session", "-t", "ws one"],
 			},
 		}));
-		const command = await resolveTerminalCommand(socketPath, "/work/project");
+		const command = await resolveTerminalCommand(
+			socketPath,
+			"local",
+			"/work/project",
+		);
 		expect(terminalCommandLine(command)).toBe(
 			"'/opt/tmux' '-L' 'devhub' 'attach-session' '-t' 'ws one'",
 		);
@@ -103,13 +112,40 @@ describe("what a DevHub terminal runs", () => {
 
 	it("says which socket did not answer when DevHub is not running", async () => {
 		await expect(
-			resolveTerminalCommand(socketPath, "/work/project"),
+			resolveTerminalCommand(socketPath, "local", "/work/project"),
 		).rejects.toThrow(socketPath);
+	});
+
+	// Two machines can spell one directory the same way, and only the launcher
+	// knows which of them it is on. Without it the answer would be a session on
+	// whichever machine happened to have a Workspace at that path.
+	it("says which machine the directory is on", async () => {
+		let asked: unknown;
+		server = await answering(socketPath, (_root, machine) => {
+			asked = machine;
+			return {
+				ok: true,
+				message: "tmux attach",
+				profile: { file: "/opt/tmux", args: [] },
+			};
+		});
+		await resolveTerminalCommand(
+			socketPath,
+			"ssh:build-box.example.com",
+			"/srv/app",
+		);
+		expect(asked).toBe("ssh:build-box.example.com");
+	});
+
+	it("says so when the launcher did not say which machine it is on", async () => {
+		await expect(
+			resolveTerminalCommand(socketPath, undefined, "/srv/app"),
+		).rejects.toThrow("DEVHUB_TERMINAL_MACHINE");
 	});
 
 	it("says so when the launcher did not carry a socket at all", async () => {
 		await expect(
-			resolveTerminalCommand(undefined, "/work/project"),
+			resolveTerminalCommand(undefined, "local", "/work/project"),
 		).rejects.toThrow("DEVHUB_CONTROL_SOCKET");
 	});
 });

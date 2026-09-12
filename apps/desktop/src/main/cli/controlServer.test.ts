@@ -109,8 +109,8 @@ describe("the DevHub control socket", () => {
 				return Promise.resolve('{"processes":[]}');
 			},
 			installCli: () => Promise.resolve("installed"),
-			terminalProfile: (root) => {
-				calls.push(`profile ${root ?? "scratch"}`);
+			terminalProfile: (machine, root) => {
+				calls.push(`profile ${machine} ${root ?? "scratch"}`);
 				if (root === "/work/gone") {
 					return Promise.reject(
 						new Error("no DevHub workspace is rooted at /work/gone"),
@@ -426,28 +426,62 @@ describe("the DevHub control socket", () => {
 	it("answers a workbench's terminal profile with the argv, not a sentence", async () => {
 		const answer = await ask(
 			socketPath,
-			`${JSON.stringify({ kind: "terminal-profile", root: "/work/a" })}\n`,
+			`${JSON.stringify({
+				kind: "terminal-profile",
+				machine: "local",
+				root: "/work/a",
+			})}\n`,
 		);
 		expect(answer.profile).toEqual({
 			file: "/usr/bin/tmux",
 			args: ["-L", "devhub", "attach-session", "-t", "ws-abc"],
 		});
-		expect(calls).toEqual(["profile /work/a"]);
+		expect(calls).toEqual(["profile local /work/a"]);
 	});
 
 	it("takes a folderless workbench as the Scratch context", async () => {
 		const answer = await ask(
 			socketPath,
-			`${JSON.stringify({ kind: "terminal-profile", root: null })}\n`,
+			`${JSON.stringify({ kind: "terminal-profile", machine: "local", root: null })}\n`,
 		);
 		expect(answer.ok).toBe(true);
-		expect(calls).toEqual(["profile scratch"]);
+		expect(calls).toEqual(["profile local scratch"]);
+	});
+
+	// A path is a path on one machine. Two hosts with the same `/srv/app` are
+	// one root to a matcher that was not told which of them is asking, and the
+	// session it would answer with is on the wrong computer — so the field is
+	// required rather than defaulted to this one.
+	it("refuses a terminal profile that does not say which machine asked", async () => {
+		const answer = await ask(
+			socketPath,
+			`${JSON.stringify({ kind: "terminal-profile", root: "/srv/app" })}\n`,
+		);
+		expect(answer.ok).toBe(false);
+		expect(answer.message).toContain("machine");
+		expect(calls).toEqual([]);
+	});
+
+	it("carries the machine the launcher is on through to the answer", async () => {
+		await ask(
+			socketPath,
+			`${JSON.stringify({
+				kind: "terminal-profile",
+				machine: "ssh:build-box.example.com",
+				root: "/srv/app",
+			})}\n`,
+		);
+		expect(calls).toEqual(["profile ssh:build-box.example.com /srv/app"]);
 	});
 
 	it("reports a workbench DevHub has no session for, with no profile", async () => {
 		const answer = await ask(
 			socketPath,
-			`${JSON.stringify({ kind: "terminal-profile", root: "/work/gone" })}\n`,
+			`${JSON.stringify({
+				kind: "terminal-profile",
+				machine: "local",
+				root: "/work/gone",
+			})}\n`,
 		);
 		expect(answer).toEqual({
 			ok: false,

@@ -15,15 +15,31 @@
  */
 
 import { Buffer } from "node:buffer";
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import {
+	chmod,
+	mkdtemp,
+	readFile,
+	rm,
+	stat,
+	writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import {
+	afterAll,
+	afterEach,
+	beforeAll,
+	beforeEach,
+	describe,
+	expect,
+	it,
+} from "vitest";
 import { TypedFailure } from "../../model/wire.js";
 import { OperationDeadline } from "../terminal/command.js";
 import { CancellationToken } from "../terminal/ports.js";
 import type { Pty, PtyLaunch } from "../terminal/pty.js";
 import { describeRuntimeContract } from "./runtime.contract.test.js";
+import type { TerminalLauncherSpec } from "./runtime.js";
 import {
 	chooseControlDirectory,
 	CONTROL_PATH_LIMIT,
@@ -48,13 +64,16 @@ import {
  * path, so the master's lifecycle is observable without a master.
  */
 const FAKE_SSH = `#!/bin/sh
+[ -z "$DEVHUB_FAKE_SSH_LOG" ] || printf '%s\\n' "$*" >> "$DEVHUB_FAKE_SSH_LOG"
 control=''
 operation=''
+forward=''
 host=''
 while [ $# -gt 0 ]; do
   case "$1" in
     -o) case "$2" in ControlPath=*) control="\${2#ControlPath=}";; esac; shift 2;;
     -O) operation="$2"; shift 2;;
+    -R) forward="$2"; shift 2;;
     -tt|-T|-q) shift;;
     --) shift; break;;
     *) host="$1"; shift;;
@@ -65,6 +84,15 @@ case "$operation" in
   check) [ -f "$marker" ] || { echo 'No ControlPath specified' >&2; exit 255; }
          echo "Master running (pid=4242)"; exit 0;;
   exit)  rm -f "$marker"; echo 'Exit request sent.'; exit 0;;
+  forward)
+    case "\${DEVHUB_FAKE_FORWARD:-bind}" in
+      refuse) echo 'unix_listener: cannot bind: Address already in use' >&2; exit 255;;
+      silent) exit 0;;
+      *) exec python3 -c 'import socket,sys
+sock = socket.socket(socket.AF_UNIX)
+sock.bind(sys.argv[1].split(":", 1)[0])
+sock.listen(1)' "$forward";;
+    esac;;
 esac
 [ -n "$host" ] || { echo 'fake ssh: no host' >&2; exit 255; }
 mkdir -p "\${control%/*}" && : > "$marker"
@@ -382,5 +410,149 @@ describe("a pseudo-terminal on the other machine", () => {
 		expect(script).toContain(`exec '/usr/bin/tmux' '-L' 'devhub' 'attach'`);
 		expect(script).toContain(`cd -P -- '/srv/app'`);
 		expect(script).toContain(`export TERM='xterm-256color'`);
+	});
+});
+
+/**
+ * The launcher a workbench *on the host* runs, installed over the same ssh.
+ *
+ * The fake ssh runs the commands here, so the "host" is a scratch `$HOME` and
+ * the files DevHub writes are files this test can read. What that leaves
+ * unexercised is OpenSSH's own `-O forward`, which is why the argv is asserted
+ * from the fake's log rather than inferred from the socket appearing: the
+ * composition is DevHub's, and the binding is OpenSSH's.
+ */
+describe("the terminal launcher on the host", () => {
+	let remoteHome: string;
+	let log: string;
+
+	beforeEach(async () => {
+		remoteHome = await mkdtemp("/tmp/devhub-remote-home-");
+		log = join(remoteHome, "ssh.log");
+	});
+	afterEach(async () => {
+		await rm(remoteHome, { recursive: true, force: true });
+	});
+
+	function runtimeWith(
+		forward: "bind" | "refuse" | "silent" = "bind",
+	): SshRuntime {
+		return new SshRuntime({
+			host: "build-box.example.com",
+			controlDirectory: control,
+			sshPath: join(bin, "ssh"),
+			localEnvironment: {
+				...process.env,
+				HOME: remoteHome,
+				DEVHUB_FAKE_SSH_LOG: log,
+				DEVHUB_FAKE_FORWARD: forward,
+			},
+		});
+	}
+
+	const spec: TerminalLauncherSpec = {
+		localLauncherPath: "/data/devhub/devhub/devhub-terminal",
+		controlSocketPath: "/data/devhub/devhub/control.sock",
+		entryFiles: new Map([
+			[
+				"main/terminal/devhubTerminal.js",
+				'import { l } from "./launcher.js";\nexport const e = l;\n',
+			],
+			["main/terminal/launcher.js", "export const l = 1;\n"],
+		]),
+		entryName: "main/terminal/devhubTerminal.js",
+		serverDataFolderName: ".devhub-server",
+		serverCommit: "c0ffee",
+	};
+
+	it("writes the asking program, its files and a launcher that names them", async () => {
+		const launcher = await runtimeWith().terminalLauncher(spec);
+		expect(launcher.unreachable).toBeUndefined();
+		const script = await readFile(launcher.path, "utf8");
+		// The REH's own Node, at the commit this DevHub states: the one Node a
+		// host with a workbench on it is certain to have.
+		expect(script).toContain(`${remoteHome}/.devhub-server/bin/c0ffee/node`);
+		expect(script).toContain(
+			`${remoteHome}/.devhub/terminal/js/main/terminal/devhubTerminal.js`,
+		);
+		// The machine, so that `/srv/app` here is not `/srv/app` there.
+		expect(script).toContain(
+			"DEVHUB_TERMINAL_MACHINE='ssh:build-box.example.com'",
+		);
+		expect((await stat(launcher.path)).mode & 0o777).toBe(0o755);
+		const entryRoot = join(remoteHome, ".devhub", "terminal", "js");
+		expect(
+			await readFile(
+				join(entryRoot, "main", "terminal", "launcher.js"),
+				"utf8",
+			),
+		).toBe("export const l = 1;\n");
+		// Without this Node reads the compiled ES modules as CommonJS and the
+		// first `import` is a syntax error.
+		expect(
+			JSON.parse(await readFile(join(entryRoot, "package.json"), "utf8")),
+		).toEqual({ type: "module" });
+	});
+
+	it("forwards DevHub's own control socket onto the host", async () => {
+		const launcher = await runtimeWith().terminalLauncher(spec);
+		const remoteSocket = `${remoteHome}/.devhub/terminal/${
+			launcher.path.split("/").pop()?.replace("devhub-terminal-", "control-") ??
+			""
+		}.sock`;
+		const lines = (await readFile(log, "utf8")).split("\n");
+		const forward = lines.find((line) => line.includes("-O forward"));
+		expect(forward).toContain(
+			`-R ${remoteSocket}:/data/devhub/devhub/control.sock`,
+		);
+		expect(forward).toContain("build-box.example.com");
+		// The launcher talks to the forwarded socket, not to a path on this Mac.
+		expect(await readFile(launcher.path, "utf8")).toContain(remoteSocket);
+	});
+
+	// A unix socket left by a previous DevHub is a file, and sshd will not bind
+	// over one unless the host was configured to — which is the host's business.
+	// Removing it from this side needs no such configuration.
+	it("clears its own stale socket before asking for the forward", async () => {
+		await runtimeWith().terminalLauncher(spec);
+		const lines = (await readFile(log, "utf8")).split("\n");
+		const removed = lines.findIndex((line) => line.includes("rm -f --"));
+		const forwarded = lines.findIndex((line) => line.includes("-O forward"));
+		expect(removed).toBeGreaterThanOrEqual(0);
+		expect(removed).toBeLessThan(forwarded);
+	});
+
+	it("says so when ssh refuses the forward, and installs the launcher anyway", async () => {
+		const launcher = await runtimeWith("refuse").terminalLauncher(spec);
+		expect(launcher.unreachable).toContain("build-box.example.com");
+		expect(launcher.unreachable).toContain("cannot bind");
+		// Still written: run from the host it says the socket is not answering,
+		// which is the same fact where a person is actually looking.
+		expect(await readFile(launcher.path, "utf8")).toContain("devhub_argv");
+	});
+
+	// `-O forward` can report success and leave nothing bound. A launcher
+	// pointed at a socket that is not there is the silent failure this whole
+	// arrangement exists to prevent, so the forward is checked and not trusted.
+	it("says so when ssh reports a forward that bound nothing", async () => {
+		const launcher = await runtimeWith("silent").terminalLauncher(spec);
+		expect(launcher.unreachable).toContain("nothing is listening");
+	});
+
+	it("installs once per host per DevHub start", async () => {
+		const runtime = runtimeWith();
+		const first = await runtime.terminalLauncher(spec);
+		const before = (await readFile(log, "utf8")).split("\n").length;
+		const second = await runtime.terminalLauncher(spec);
+		expect(second).toEqual(first);
+		expect((await readFile(log, "utf8")).split("\n")).toHaveLength(before);
+	});
+
+	// A DevHub with no commit is a DevHub that can open no workbench there
+	// either, so it is one fact and one sentence rather than a guessed path.
+	it("refuses when this DevHub states no commit to find the Node under", async () => {
+		await expect(
+			runtimeWith().terminalLauncher({ ...spec, serverCommit: undefined }),
+		).rejects.toThrow(/source checkout/u);
 	});
 });

@@ -1040,11 +1040,18 @@ export class AppController {
 	 * which is the same `scratch` session it has been since before this existed.
 	 */
 	async terminalProfileFor(
+		machine: string,
 		root: string | null,
 	): Promise<{ readonly file: string; readonly args: readonly string[] }> {
 		const wiring = this.terminalsWiring;
 		if (!wiring) throw new Error("the terminal runtime is not running");
-		const workspaces = this.coordinator.model.workspaces;
+		// Only the Workspaces on the machine that is asking. A path is a path on
+		// one computer: `/srv/app` on two hosts is two folders, and a matcher
+		// given both roots would answer one of them with the other's session —
+		// which is not a slower answer, it is a shell in the wrong place.
+		const workspaces = this.coordinator.model.workspaces.filter(
+			(candidate) => runtimeFor(candidate.location).id === machine,
+		);
 		const enclosing = enclosingRoot(
 			workspaces.map((candidate) => candidate.root),
 			root,
@@ -1052,6 +1059,17 @@ export class AppController {
 		const workspace = workspaces.find(
 			(candidate) => candidate.root === enclosing,
 		);
+		// DevHub's tmux server runs on the machine DevHub runs on, and a session
+		// on it is no use to a terminal somewhere else: the argv would attach a
+		// far machine's `tmux` to a socket that is not on it, in a directory
+		// that means something different there. Until the terminal runtime is
+		// per-machine, the honest answer is the sentence rather than an argv
+		// that looks right and opens a shell on the wrong computer.
+		if (machine !== "local") {
+			throw new Error(
+				`DevHub's terminal sessions run on the machine DevHub runs on, and this terminal is on ${machine}. A workbench there has no DevHub session to attach to yet.`,
+			);
+		}
 		if (!workspace) {
 			return wiring.service.surfaces.profile(SCRATCH_TARGET);
 		}

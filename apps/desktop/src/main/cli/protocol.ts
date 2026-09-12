@@ -153,8 +153,17 @@ export type ControlRequest =
 			 * answers with the session of the Workspace that contains it, or the
 			 * Scratch session when none does — which is what the folderless
 			 * window gets, since VS Code starts its terminal in the user's home.
+			 *
+			 * The machine is which computer that directory is on: `local`, or
+			 * `ssh:<host>` — a `RuntimeId`, the same key everything else about a
+			 * machine is filed under. It is required rather than defaulted,
+			 * because a default is a guess, and the guess is wrong in the one
+			 * case that matters: two hosts with the same `/srv/app` are one root
+			 * to a matcher that was not told which of them is asking, and the
+			 * answer it gives is a session on the wrong computer.
 			 */
 			readonly kind: "terminal-profile";
+			readonly machine: string;
 			readonly root: string | null;
 	  };
 
@@ -252,6 +261,7 @@ export function parseControlRequest(line: string): ControlRequest {
 		case "terminal-profile":
 			return {
 				kind: "terminal-profile",
+				machine: requireString(record["machine"], "machine"),
 				root:
 					record["root"] === null
 						? null

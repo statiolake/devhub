@@ -1,10 +1,12 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { readFileSync, statSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { makeScratchDir, removeScratchDir } from "../../model/testScratch.js";
 import {
 	installTerminalLauncher,
+	remoteTerminalPaths,
+	terminalEntryClosure,
 	terminalLauncherPath,
 	terminalCommandLine,
 	terminalLauncherScript,
@@ -28,6 +30,7 @@ describe("the DevHub terminal launcher", () => {
 				"devhubTerminal.js",
 			),
 			socketPath: join(scratch, "user-data", "devhub", "control.sock"),
+			machine: "local",
 		};
 	});
 
@@ -47,6 +50,7 @@ describe("the DevHub terminal launcher", () => {
 	it("carries the socket and runs the entry point as Node", () => {
 		const script = terminalLauncherScript(request);
 		expect(script).toContain(`DEVHUB_CONTROL_SOCKET='${request.socketPath}'`);
+		expect(script).toContain("DEVHUB_TERMINAL_MACHINE='local'");
 		expect(script).toContain("ELECTRON_RUN_AS_NODE=1");
 		expect(script).toContain(
 			`'${request.execPath}' '${request.entryScript}' "$@")`,
@@ -119,6 +123,31 @@ describe("the DevHub terminal launcher", () => {
 		expect(result.stderr).toContain("without a command line");
 	});
 
+	// The machine is baked in for the same reason the socket is: a launcher on
+	// another machine is another launcher, and a directory without a machine
+	// names a different folder on each of them.
+	it("names the machine it was written for", () => {
+		expect(
+			terminalLauncherScript({
+				...request,
+				machine: "ssh:build-box.example.com",
+			}),
+		).toContain("DEVHUB_TERMINAL_MACHINE='ssh:build-box.example.com'");
+	});
+
+	// The likeliest failure on a machine DevHub had to install itself onto: the
+	// launcher can be written before the server whose Node runs it is there.
+	it("says which binary is missing rather than letting /bin/sh say it", () => {
+		const path = installTerminalLauncher(
+			terminalLauncherPath(join(scratch, "user-data")),
+			{ ...request, execPath: join(scratch, "no-such-node") },
+		);
+		const result = spawnSync(path, { encoding: "utf8" });
+		expect(result.status).toBe(1);
+		expect(result.stderr).toContain(join(scratch, "no-such-node"));
+		expect(result.stderr).toContain("no terminal session to attach to");
+	});
+
 	it("is rewritten rather than appended to, so a moved app leaves no stale paths", () => {
 		const path = terminalLauncherPath(join(scratch, "user-data"));
 		installTerminalLauncher(path, request);
@@ -129,6 +158,89 @@ describe("the DevHub terminal launcher", () => {
 		const script = readFileSync(path, "utf8");
 		expect(script).toContain("'/elsewhere/DevHub'");
 		expect(script).not.toContain(request.execPath);
+	});
+
+	// A machine that has no DevHub on it needs the asking program itself, and
+	// there is no bundler in this build — so the files are read as a closure
+	// rather than listed, because a list is what rots when an import is added.
+	describe("the files the asking program is made of", () => {
+		function compiled(name: string, text: string): string {
+			const path = join(scratch, "out", name);
+			mkdirSync(dirname(path), { recursive: true });
+			writeFileSync(path, text);
+			return path;
+		}
+
+		it("is the entry point and everything it imports, and nothing else", () => {
+			compiled("main/runtime/quote.js", "export function q() {}\n");
+			compiled(
+				"main/terminal/launcher.js",
+				'import { q } from "../runtime/quote.js";\nexport const l = q;\n',
+			);
+			const entry = compiled(
+				"main/terminal/devhubTerminal.js",
+				'import { connect } from "node:net";\nimport { l } from "./launcher.js";\nexport const e = [connect, l];\n',
+			);
+			compiled("main/terminal/unrelated.js", "export const nope = 1;\n");
+			const closure = terminalEntryClosure(join(scratch, "out"), entry);
+			expect([...closure.keys()].sort()).toEqual([
+				"main/runtime/quote.js",
+				"main/terminal/devhubTerminal.js",
+				"main/terminal/launcher.js",
+			]);
+			expect(closure.get("main/runtime/quote.js")).toContain(
+				"export function q",
+			);
+		});
+
+		// A dependency is not a file DevHub can ship over ssh, and a program
+		// that grew one has to be found out about here rather than on a host.
+		it("refuses a program that has grown a dependency", () => {
+			const entry = compiled(
+				"main/terminal/devhubTerminal.js",
+				'import x from "minimist";\nexport const e = x;\n',
+			);
+			expect(() => terminalEntryClosure(join(scratch, "out"), entry)).toThrow(
+				/minimist/u,
+			);
+		});
+	});
+
+	describe("where all of it goes on another machine", () => {
+		const paths = {
+			home: "/home/dev",
+			serverDataFolderName: ".devhub-server",
+			serverCommit: "abc123",
+			controlSocketPath: "/data/devhub/devhub/control.sock",
+			entryName: "main/terminal/devhubTerminal.js",
+		};
+
+		it("runs on the Node the connection already installed there", () => {
+			expect(remoteTerminalPaths(paths).node).toBe(
+				"/home/dev/.devhub-server/bin/abc123/node",
+			);
+		});
+
+		it("keeps DevHub's files in one directory of its own", () => {
+			const remote = remoteTerminalPaths(paths);
+			expect(remote.directory).toBe("/home/dev/.devhub/terminal");
+			expect(remote.launcher.startsWith(`${remote.directory}/`)).toBe(true);
+			expect(remote.entry).toBe(
+				"/home/dev/.devhub/terminal/js/main/terminal/devhubTerminal.js",
+			);
+		});
+
+		// Two DevHub profiles on one Mac reaching one host must not adopt each
+		// other's socket, and the socket path is the one thing that tells them
+		// apart before anything has been written.
+		it("gives each DevHub its own socket and launcher on the host", () => {
+			const other = remoteTerminalPaths({
+				...paths,
+				controlSocketPath: "/data/devhub-second/devhub/control.sock",
+			});
+			expect(other.socket).not.toBe(remoteTerminalPaths(paths).socket);
+			expect(other.launcher).not.toBe(remoteTerminalPaths(paths).launcher);
+		});
 	});
 
 	describe("the directory it was started in", () => {
