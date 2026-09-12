@@ -1,14 +1,21 @@
 /**
  * What each workspace is working on, kept up to date.
  *
- * Two questions, on one clock. The local one is free and always answerable:
- * which branch is checked out. The remote one costs a round trip to GitHub and
- * is asked for any workspace whose `origin` is a GitHub repository — *what is
- * this branch about?*, which is one question with two halves: the pull request
- * out from the branch, and the Issue the branch names when it names one. A
- * minute is the interval; nothing here reacts to a filesystem event, because a
- * poll that is late is a stale branch name and a watcher that is wrong is a
- * wrong one.
+ * Two questions. The first is cheap and always answerable: which branch is
+ * checked out, asked of the machine the checkout is on. The second costs a
+ * round trip to GitHub and is asked for any workspace whose `origin` is a
+ * GitHub repository — *what is this branch about?*, which is one question with
+ * two halves: the pull request out from the branch, and the Issue the branch
+ * names when it names one. GitHub is always asked from *this* machine, whatever
+ * machine the checkout is on: the credentials and the network are here, and all
+ * that has to come from the far end is the remote and the branch.
+ *
+ * **A clock per machine, not a clock.** A poll interval is a fact about a link
+ * — the number that is a fork on this Mac is a flood on a host across an ocean
+ * — so each machine with an open Workspace on it gets its own pair of clocks at
+ * its own `cadence.repositoryPollMs`, and a slow host cannot hold this Mac's
+ * rows up. There is still exactly one projection, published by all of them, so
+ * no row can be drawn two ways.
  *
  * **The branch is the unit, and that is a deliberate change.** DevHub used to
  * ask about an Issue, and could therefore only ask on behalf of a branch that
@@ -39,7 +46,7 @@ import {
 	type GitCommand,
 } from "./git.js";
 import { TypedFailure } from "../../model/wire.js";
-import type { Runtime } from "../runtime/runtime.js";
+import type { Runtime, RuntimeId } from "../runtime/runtime.js";
 import {
 	GitHubUnavailable,
 	readBranchStatus,
@@ -52,20 +59,20 @@ import {
 export interface WatchedWorkspace {
 	readonly id: string;
 	readonly root: string;
+	/**
+	 * The machine its folder is on.
+	 *
+	 * On the workspace and not on the watcher, because that is where the fact
+	 * lives: two open Workspaces can sit on two machines, the git that reads
+	 * one of them means nothing on the other, and what a poll may cost is a
+	 * property of the link and not of this class.
+	 */
+	readonly runtime: Runtime;
 }
 
 export interface RepositoryStatusDeps {
-	/**
-	 * The machine these checkouts are on, for what a poll of it may cost.
-	 *
-	 * There is one watcher and one runtime today. When a second machine can
-	 * hold a Workspace there is a watcher per machine, for the reason the
-	 * reconciler has a loop per machine: a poll interval is a fact about a
-	 * link, and one watcher covering two of them would have to pick a number
-	 * for both.
-	 */
-	readonly host: Pick<Runtime, "cadence">;
-	readonly gitCommand: () => Promise<GitCommand>;
+	/** The git for one machine, resolved on it. */
+	readonly gitCommand: (runtime: Runtime) => Promise<GitCommand>;
 	readonly environment: Readonly<Record<string, string | undefined>>;
 	readonly workspaces: () => readonly WatchedWorkspace[];
 	readonly publish: (status: RepositoryStatusWire) => void;
@@ -75,11 +82,11 @@ export interface RepositoryStatusDeps {
  * How often the branch and the Issue are looked at again, and how often the
  * branch is re-read when nothing said it had changed.
  *
- * Both are `cadence.repositoryPollMs`, from the runtime the checkouts are on
- * (`runtime/local.ts`), because both are the same question about the same
- * link: what a poll of this machine may cost. They used to be two constants
- * that happened to be a minute each, and a third copy of the number sat in
- * `local.ts` claiming to be the source.
+ * Both are `cadence.repositoryPollMs`, read from the runtime each Workspace's
+ * folder is on, because both are the same question about the same link: what a
+ * poll of *that* machine may cost. They used to be two constants that happened
+ * to be a minute each, and a third copy of the number sat in `local.ts`
+ * claiming to be the source.
  *
  * The fast one used to be every two seconds, which was thirty-eight `git`
  * processes a minute per workspace to learn thirty-eight times that nothing
@@ -277,64 +284,120 @@ function gitReason(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
 }
 
+/**
+ * The two clocks one machine's checkouts are polled on.
+ *
+ * Per machine and not per watcher, because a poll interval is a fact about a
+ * link: the number that is a fork on this Mac is a flood on a host across an
+ * ocean, and one pair of clocks covering both would have to pick one of them.
+ */
+interface Clocks {
+	readonly runtime: Runtime;
+	readonly slow: ReturnType<typeof setInterval>;
+	readonly fast: ReturnType<typeof setInterval>;
+}
+
 export class RepositoryStatusWatcher {
-	private timer: ReturnType<typeof setInterval> | undefined;
-	private running = false;
+	/** One pair of clocks per machine that has an open Workspace on it. */
+	private readonly clocks = new Map<RuntimeId, Clocks>();
+	/** The machines with a round in flight, so a slow link never stacks them. */
+	private readonly inFlight = new Set<RuntimeId>();
 	private sequence = 0;
 	/** What was being watched when the last look was started. */
 	private watching: string | undefined;
 	/** The last answer for each branch, kept so a failed round shows something. */
 	private readonly known = new Map<string, BranchStatus>();
-	/** The fast clock: what is checked out, which changes while you watch. */
-	private branchTimer: ReturnType<typeof setInterval> | undefined;
-	/** The last full local reading, one entry per workspace, in row order. */
-	private local: LocalReading[] = [];
+	/** The last local reading for each workspace, by workspace id. */
+	private readonly readings = new Map<string, LocalReading>();
 	/** Why each branch could not be read, by branch. Rebuilt each slow round. */
 	private readonly unreadable = new Map<string, string>();
-	/** The last round's note for the foot of the Sidebar. */
-	private lastDiagnostic: string | undefined;
-	/** git, as the last round resolved it, so the fast clock need not re-look. */
-	private command: GitCommand | undefined;
+	/**
+	 * The last round's note, per machine.
+	 *
+	 * Per machine because that is what these notes are about — no `git` here, a
+	 * host that would not answer, no GitHub credentials — and a single slot
+	 * would let one machine's round erase the other's reason a minute at a time.
+	 */
+	private readonly diagnostics = new Map<RuntimeId, string | undefined>();
+	/** git, as each machine's last round resolved it, by machine. */
+	private readonly commands = new Map<RuntimeId, GitCommand>();
 	/** `HEAD`, watched, so a checkout is noticed rather than polled for. */
 	private readonly heads = new HeadWatcher(() => {
 		void this.refreshBranches();
 	});
+	private stopped = false;
 
 	constructor(private readonly deps: RepositoryStatusDeps) {}
 
 	start(): void {
-		if (this.timer) return;
-		this.timer = setInterval(() => {
-			activityCounters.record(COUNTER.repositoryStatusRound);
-			void this.refresh();
-		}, this.deps.host.cadence.repositoryPollMs);
-		// The fast clock, and the whole reason there are two. Which branch is
-		// checked out changes while somebody watches — they run `git switch` and
-		// look at the Sidebar — and it costs one local command to answer. What
-		// GitHub says about an Issue costs a round trip and changes when somebody
-		// on another continent clicks a button. Putting both on the slow clock
-		// meant a branch you had just changed took up to a minute to appear.
-		// The safety net, not the mechanism. `heads` is what makes a checkout
-		// appear at once; this is what keeps a branch from staying wrong forever
-		// if an event is ever missed or a checkout could not be watched at all.
-		this.branchTimer = setInterval(() => {
-			activityCounters.record(COUNTER.repositoryBranchRound);
-			void this.refreshBranches();
-		}, this.deps.host.cadence.repositoryPollMs);
-		// Not `unref`'d: this is a projection the window is drawing, and the
-		// interval is the only thing keeping it true.
-		void this.refresh();
+		this.stopped = false;
+		this.follow();
 	}
 
 	stop(): void {
+		this.stopped = true;
 		this.heads.stop();
-		if (this.branchTimer) {
-			clearInterval(this.branchTimer);
-			this.branchTimer = undefined;
+		for (const id of [...this.clocks.keys()]) this.unfollow(id);
+	}
+
+	/**
+	 * Run a pair of clocks for exactly the machines that have Workspaces on them.
+	 *
+	 * The only place a clock is started or stopped, for the reason the Agent
+	 * reconciler has one: "which loops exist" has to have one answer. A machine
+	 * that has just gained its first Workspace is polled at once rather than
+	 * waiting the interval out, and one that has lost its last stops costing
+	 * anything — an ssh runtime with nothing open on it must not go on paying a
+	 * round trip a minute to be told so.
+	 */
+	private follow(): void {
+		if (this.stopped) return;
+		const wanted = new Map<RuntimeId, Runtime>();
+		for (const workspace of this.deps.workspaces()) {
+			wanted.set(workspace.runtime.id, workspace.runtime);
 		}
-		if (!this.timer) return;
-		clearInterval(this.timer);
-		this.timer = undefined;
+		for (const id of [...this.clocks.keys()]) {
+			if (!wanted.has(id)) this.unfollow(id);
+		}
+		for (const [id, runtime] of wanted) {
+			if (this.clocks.has(id)) continue;
+			// Not `unref`'d: this is a projection the window is drawing, and the
+			// interval is the only thing keeping it true.
+			this.clocks.set(id, {
+				runtime,
+				slow: setInterval(() => {
+					activityCounters.record(COUNTER.repositoryStatusRound);
+					void this.refresh(runtime);
+				}, runtime.cadence.repositoryPollMs),
+				// The fast clock, and the whole reason there are two. Which branch
+				// is checked out changes while somebody watches — they run
+				// `git switch` and look at the Sidebar — and it costs one command
+				// to answer. What GitHub says about an Issue costs a round trip and
+				// changes when somebody on another continent clicks a button.
+				// Putting both on the slow clock meant a branch you had just
+				// changed took up to a minute to appear.
+				//
+				// The safety net, not the mechanism. `heads` is what makes a
+				// checkout appear at once; this is what keeps a branch from staying
+				// wrong forever if an event is ever missed or a checkout could not
+				// be watched at all.
+				fast: setInterval(() => {
+					activityCounters.record(COUNTER.repositoryBranchRound);
+					void this.refreshBranches();
+				}, runtime.cadence.repositoryPollMs),
+			});
+			void this.refresh(runtime);
+		}
+	}
+
+	private unfollow(id: RuntimeId): void {
+		const clocks = this.clocks.get(id);
+		if (!clocks) return;
+		clearInterval(clocks.slow);
+		clearInterval(clocks.fast);
+		this.clocks.delete(id);
+		this.commands.delete(id);
+		this.diagnostics.delete(id);
 	}
 
 	/**
@@ -343,16 +406,22 @@ export class RepositoryStatusWatcher {
 	 * Called whenever the projection changes, which is far more often than
 	 * anything here can have changed — a selection, a resize, an agent's status.
 	 * Comparing what is being watched is what keeps a poll a poll rather than
-	 * something that runs git on every keystroke.
+	 * something that runs git on every keystroke. The machine is part of the
+	 * comparison, because a Workspace relocated to another host is the same id
+	 * asking a different machine.
 	 */
 	observe(): void {
 		const signature = this.deps
 			.workspaces()
-			.map((workspace) => workspace.id)
+			.map((workspace) => `${workspace.id} ${workspace.runtime.id}`)
 			.join("\n");
 		if (signature === this.watching) return;
 		this.watching = signature;
-		void this.refresh();
+		// `follow` polls a machine that has just appeared; the ones that were
+		// already there are asked again because their set of Workspaces moved.
+		const existing = [...this.clocks.values()].map((clocks) => clocks.runtime);
+		this.follow();
+		for (const runtime of existing) void this.refresh(runtime);
 	}
 
 	/**
@@ -366,24 +435,33 @@ export class RepositoryStatusWatcher {
 	 * honest answer to asking for a look while one is happening.
 	 */
 	look(): void {
-		void this.refresh();
+		for (const clocks of this.clocks.values())
+			void this.refresh(clocks.runtime);
 	}
 
 	/**
-	 * One round.
+	 * One round, against one machine.
 	 *
-	 * Rounds never overlap: a slow GitHub would otherwise stack requests every
-	 * minute, and two rounds finishing out of order would publish an older
-	 * answer over a newer one.
+	 * Rounds never overlap *per machine*: a slow GitHub would otherwise stack
+	 * requests every minute, and two rounds finishing out of order would publish
+	 * an older answer over a newer one. Two machines do overlap, and must — that
+	 * is the whole reason a cadence belongs to a link rather than to this class.
 	 */
-	private async refresh(): Promise<void> {
-		if (this.running) return;
-		this.running = true;
+	private async refresh(runtime: Runtime): Promise<void> {
+		if (this.inFlight.has(runtime.id)) return;
+		this.inFlight.add(runtime.id);
 		try {
-			this.deps.publish(await this.read());
+			this.deps.publish(await this.read(runtime));
 		} finally {
-			this.running = false;
+			this.inFlight.delete(runtime.id);
 		}
+	}
+
+	/** The Workspaces whose folder is on one machine, in row order. */
+	private on(runtime: Runtime): readonly WatchedWorkspace[] {
+		return this.deps
+			.workspaces()
+			.filter((workspace) => workspace.runtime.id === runtime.id);
 	}
 
 	/**
@@ -398,24 +476,30 @@ export class RepositoryStatusWatcher {
 	 * A branch that names an Issue nobody has asked about yet does not wait for
 	 * the minute to be up: the slow round is asked for immediately, and until it
 	 * answers the row says it is asking.
+	 *
+	 * Every machine at once, and each row against the git its own machine
+	 * resolved. There is no per-machine version of this: what it costs is one
+	 * cheap command per open Workspace either way, and splitting it would be a
+	 * second answer to "what is checked out" for no saving.
 	 */
 	private async refreshBranches(): Promise<void> {
-		const command = this.command;
-		if (!command || this.running || this.local.length === 0) return;
 		let moved = false;
-		let wantsLook = false;
-		const next = await Promise.all(
-			this.local.map(async (entry): Promise<LocalReading> => {
+		const wantsLook = new Set<RuntimeId>();
+		await Promise.all(
+			this.deps.workspaces().map(async (workspace) => {
+				const command = this.commands.get(workspace.runtime.id);
+				const entry = this.readings.get(workspace.id);
+				if (!command || !entry || this.inFlight.has(workspace.runtime.id)) {
+					return;
+				}
 				// A row that could not be read at all is the slow round's problem:
 				// re-running one command against a repository git refused would only
 				// produce the same refusal, without the reason it collected.
-				if (entry.reason !== undefined && entry.branch === undefined) {
-					return entry;
-				}
+				if (entry.reason !== undefined && entry.branch === undefined) return;
 				const branch = await readBranch(command, entry.workspace.root).catch(
 					() => entry.branch,
 				);
-				if (branch === entry.branch) return entry;
+				if (branch === entry.branch) return;
 				moved = true;
 				// The push name belongs to the branch that has just been left, so it
 				// is dropped rather than carried onto the new one. Until the slow
@@ -432,9 +516,9 @@ export class RepositoryStatusWatcher {
 					reading.kind === "branch" &&
 					!this.known.has(branchKey(reading.reference))
 				) {
-					wantsLook = true;
+					wantsLook.add(workspace.runtime.id);
 				}
-				return {
+				this.readings.set(workspace.id, {
 					workspace: entry.workspace,
 					branch,
 					mainWorktree: entry.mainWorktree,
@@ -454,26 +538,31 @@ export class RepositoryStatusWatcher {
 					...(reading.kind === "unresolved"
 						? { number: reading.number, reason: reading.reason }
 						: {}),
-				};
+				});
 			}),
 		);
 		if (!moved) return;
-		this.local = next;
 		this.deps.publish(this.project());
 		// The branch is on screen; what it is about is now worth asking for
 		// rather than waiting the rest of the minute out.
-		if (wantsLook) void this.refresh();
+		for (const id of wantsLook) {
+			const clocks = this.clocks.get(id);
+			if (clocks) void this.refresh(clocks.runtime);
+		}
 	}
 
-	private async read(): Promise<RepositoryStatusWire> {
-		const workspaces = this.deps.workspaces();
+	private async read(runtime: Runtime): Promise<RepositoryStatusWire> {
+		const workspaces = this.on(runtime);
 		let diagnostic: string | undefined;
 
-		const command = await this.deps.gitCommand().catch((error: unknown) => {
-			diagnostic = error instanceof Error ? error.message : String(error);
-			return undefined;
-		});
-		this.command = command;
+		const command = await this.deps
+			.gitCommand(runtime)
+			.catch((error: unknown) => {
+				diagnostic = error instanceof Error ? error.message : String(error);
+				return undefined;
+			});
+		if (command) this.commands.set(runtime.id, command);
+		else this.commands.delete(runtime.id);
 
 		const local = await Promise.all(
 			workspaces.map(async (workspace): Promise<LocalReading> => {
@@ -489,15 +578,16 @@ export class RepositoryStatusWatcher {
 					// `readRepository` answers `undefined` for the one case that is not
 					// a failure — a plain folder that is not a repository — so anything
 					// thrown here is git refusing: a timeout, a permission, a broken
-					// index, a repository owned by somebody else. This used to be
-					// swallowed whole, which left the row blank with no branch and no
-					// reason, indistinguishable from a workspace nobody had started
-					// work in. It is the failure this file is least able to guess at
-					// and the one most worth reading, so it is git's own last line.
+					// index, a repository owned by somebody else, a host that would not
+					// answer. This used to be swallowed whole, which left the row blank
+					// with no branch and no reason, indistinguishable from a workspace
+					// nobody had started work in. It is the failure this file is least
+					// able to guess at and the one most worth reading, so it is git's
+					// own last line.
 					const reason = `DevHub could not read this repository: ${gitReason(error)}`;
 					// It belongs in the Sidebar's note as well: one workspace whose git
-					// is broken is usually every workspace, and the note is where a
-					// person looks when the whole list has gone quiet.
+					// is broken is usually every workspace on that machine, and the
+					// note is where a person looks when the list has gone quiet.
 					diagnostic ??= reason;
 					return { workspace, reason };
 				}
@@ -538,14 +628,14 @@ export class RepositoryStatusWatcher {
 			}),
 		);
 
-		this.local = local;
+		for (const entry of local) this.readings.set(entry.workspace.id, entry);
 		// Awaited, so a checkout that could not be watched is already known when
 		// this round decides what the Sidebar's note says. Re-arming here and
 		// nowhere else is what makes a worktree created or removed since the last
 		// round pick up, or lose, its watcher.
 		await this.armHeads();
 		diagnostic ??= this.watchDiagnostic();
-		this.lastDiagnostic = diagnostic;
+		this.diagnostics.set(runtime.id, diagnostic);
 		// The local half is done and costs nothing to show, so it is shown now
 		// rather than after a round trip to GitHub. Branches, and the reasons a
 		// row cannot name one, are on screen while the Issues are still being
@@ -574,6 +664,11 @@ export class RepositoryStatusWatcher {
 		// succeeds, and pruned below once the round knows what is still wanted.
 		const unreadable = this.unreadable;
 		if (wanted.size > 0) {
+			// GitHub is asked from *this* machine, whichever machine the checkout
+			// is on. The token and the network are here; the host the repository
+			// sits on may have neither, and would be a second set of credentials
+			// to keep if it did. All that came from the far end is the key — the
+			// remote, and the branch — which is what `read` has just collected.
 			const credentials = await readGitHubToken(this.deps.environment);
 			if (credentials.kind !== "token") {
 				// Two problems with two fixes. Telling somebody who has no `gh` to
@@ -618,21 +713,26 @@ export class RepositoryStatusWatcher {
 		}
 
 		// Reasons for branches nothing is on any more: the rows that carried
-		// them have gone or moved to another branch.
-		for (const key of [...unreadable.keys()]) {
-			if (!wanted.has(key)) unreadable.delete(key);
+		// them have gone or moved to another branch. Every row, not this
+		// machine's — the branch is the key, and two machines can be on one.
+		const live = new Set<string>();
+		for (const entry of this.readings.values()) {
+			if (entry.reference) live.add(branchKey(entry.reference));
 		}
-		this.lastDiagnostic = diagnostic;
+		for (const key of [...unreadable.keys()]) {
+			if (!live.has(key)) unreadable.delete(key);
+		}
+		this.diagnostics.set(runtime.id, diagnostic);
 		return this.project();
 	}
 
 	/**
 	 * The rows, from everything currently known.
 	 *
-	 * Built from state rather than from one round's locals, because two clocks
-	 * publish it: the fast one that has just re-read a branch, and the slow one
-	 * that has just heard back from GitHub. One projection means the two cannot
-	 * draw a row differently.
+	 * Built from state rather than from one round's locals, because three things
+	 * publish it: the fast clock that has just re-read a branch, and one slow
+	 * clock per machine that has just heard back from GitHub. One projection
+	 * means none of them can draw a row differently.
 	 */
 	/**
 	 * Watch every checkout that is open, and nothing else.
@@ -641,30 +741,29 @@ export class RepositoryStatusWatcher {
 	 * folder the workspace was opened at: a workspace opened three directories
 	 * inside a repository has no `.git` of its own, and a linked worktree's
 	 * `HEAD` is not the main one's.
+	 *
+	 * Every machine's checkouts at once, because the watcher is asked for the
+	 * set it should be watching and a set with one machine's rows missing is a
+	 * set that closes the other machine's watchers.
 	 */
 	private async armHeads(): Promise<void> {
-		const command = this.command;
-		if (!command) {
-			// No git means no checkout was read, so there is nothing whose
-			// machine is known — and `local` is empty of worktrees anyway.
-			await this.heads.arm([]);
-			return;
-		}
 		await this.heads.arm(
-			this.local.flatMap((entry) =>
-				entry.worktree === undefined
-					? []
-					: [
-							{
-								key: entry.workspace.id,
-								worktree: entry.worktree,
-								// The machine the checkout is on is the machine its
-								// git ran on. There is not a second answer to ask
-								// for, and asking one would be how the two drift.
-								runtime: command.runtime,
-							},
-						],
-			),
+			[...this.readings.values()].flatMap((entry) => {
+				const command = this.commands.get(entry.workspace.runtime.id);
+				// No git means no checkout was read on that machine, so there is
+				// nothing whose git directory is known.
+				if (entry.worktree === undefined || command === undefined) return [];
+				return [
+					{
+						key: entry.workspace.id,
+						worktree: entry.worktree,
+						// The machine the checkout is on is the machine its git ran
+						// on. There is not a second answer to ask for, and asking one
+						// would be how the two drift.
+						runtime: command.runtime,
+					},
+				];
+			}),
 		);
 	}
 
@@ -686,7 +785,21 @@ export class RepositoryStatusWatcher {
 	}
 
 	private project(): RepositoryStatusWire {
-		const projected: WorkspaceRepositoryWire[] = this.local.map((entry) => {
+		const open = this.deps.workspaces();
+		// A Workspace that has closed keeps no reading: the row it belonged to is
+		// gone, and a reading nothing draws is a reading that goes stale unseen.
+		const ids = new Set(open.map((workspace) => workspace.id));
+		for (const id of [...this.readings.keys()]) {
+			if (!ids.has(id)) this.readings.delete(id);
+		}
+		// In the model's order, and only the Workspaces a round has read: one
+		// that opened a moment ago has no branch to draw yet and its machine's
+		// round is already on its way.
+		const entries = open.flatMap((workspace) => {
+			const entry = this.readings.get(workspace.id);
+			return entry ? [entry] : [];
+		});
+		const projected: WorkspaceRepositoryWire[] = entries.map((entry) => {
 			const key = entry.reference ? branchKey(entry.reference) : undefined;
 			const status = key === undefined ? undefined : this.known.get(key);
 			const issueNumber = entry.reference?.issueNumber;
@@ -749,30 +862,38 @@ export class RepositoryStatusWatcher {
 		});
 
 		this.sequence += 1;
+		// The note carries only what no row carried.
+		//
+		// It used to carry everything, so the ordinary failure — GitHub would
+		// not answer about this branch's Issue — was written twice: in red on
+		// the row it belongs to, and again in grey at the foot of the list,
+		// where it named no row at all. Two places saying one thing is worse
+		// than either alone: the second is read as a second problem, and the
+		// one that is easier to write drifts.
+		//
+		// It is not deleted, because a reason can still be collected that no
+		// row is able to show — `gh` missing on a machine whose workspaces are
+		// all on branches that name no Issue is the real one. That failure has
+		// nowhere else to go, and a failure with nowhere to go is the thing
+		// this whole file is written to avoid. So the rule is not "never show
+		// it" but "show it exactly once", and the note is where once means
+		// when no row can.
+		//
+		// One note for however many machines are being polled: the foot of the
+		// Sidebar is one line, and the first reason collected is the one it
+		// carries. Which machine it came from is in the sentence itself, because
+		// it is git's or the runtime's own words about a path on that machine.
+		const note = [...this.diagnostics.values()].find(
+			(reason) => reason !== undefined,
+		);
 		return {
 			sequence: this.sequence,
 			workspaces: projected,
-			// The note carries only what no row carried.
-			//
-			// It used to carry everything, so the ordinary failure — GitHub would
-			// not answer about this branch's Issue — was written twice: in red on
-			// the row it belongs to, and again in grey at the foot of the list,
-			// where it named no row at all. Two places saying one thing is worse
-			// than either alone: the second is read as a second problem, and the
-			// one that is easier to write drifts.
-			//
-			// It is not deleted, because a reason can still be collected that no
-			// row is able to show — `gh` missing on a machine whose workspaces are
-			// all on branches that name no Issue is the real one. That failure has
-			// nowhere else to go, and a failure with nowhere to go is the thing
-			// this whole file is written to avoid. So the rule is not "never show
-			// it" but "show it exactly once", and the note is where once means
-			// when no row can.
 			diagnostic:
-				this.lastDiagnostic !== undefined &&
-				projected.some((row) => row.unavailable?.reason === this.lastDiagnostic)
+				note !== undefined &&
+				projected.some((row) => row.unavailable?.reason === note)
 					? undefined
-					: this.lastDiagnostic,
+					: note,
 		};
 	}
 }

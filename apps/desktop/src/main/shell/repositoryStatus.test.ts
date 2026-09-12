@@ -16,6 +16,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { RepositoryStatusWire } from "../../ipc/contract.js";
+import type { Runtime, RuntimeId } from "../runtime/runtime.js";
 
 const readRepository = vi.fn();
 const readBranch = vi.fn();
@@ -60,7 +61,26 @@ const { LOCAL_CADENCE } = await import("../runtime/local.js");
  */
 const POLL_MS = LOCAL_CADENCE.repositoryPollMs;
 
-const WORKSPACE = { id: "w-1", root: "/projects/widget" };
+/**
+ * A machine, as the watcher reads one: an id and a cadence.
+ *
+ * The watcher runs a pair of clocks per machine, so a case with two of these
+ * is a case about two links — which is the whole reason the interval stopped
+ * being a constant.
+ */
+function machine(
+	id: RuntimeId,
+	repositoryPollMs = LOCAL_CADENCE.repositoryPollMs,
+): Runtime {
+	return {
+		id,
+		cadence: { ...LOCAL_CADENCE, repositoryPollMs },
+	} as unknown as Runtime;
+}
+
+const HERE = machine("local");
+
+const WORKSPACE = { id: "w-1", root: "/projects/widget", runtime: HERE };
 
 /** What git says is checked out here. */
 function checkedOut(branch: string | undefined) {
@@ -80,7 +100,6 @@ function checkedOut(branch: string | undefined) {
 
 function watcher(published: RepositoryStatusWire[]) {
 	return new RepositoryStatusWatcher({
-		host: { cadence: LOCAL_CADENCE },
 		gitCommand: () => Promise.resolve({} as never),
 		environment: {},
 		workspaces: () => [WORKSPACE],
@@ -234,9 +253,12 @@ describe("what a workspace is about", () => {
 		const { GitHubUnavailable } = await import("./github.js");
 		checkedOut("feature/128-tidy");
 		const published: RepositoryStatusWire[] = [];
-		let watched: readonly { id: string; root: string }[] = [WORKSPACE];
+		let watched: readonly {
+			id: string;
+			root: string;
+			runtime: Runtime;
+		}[] = [WORKSPACE];
 		const running = new RepositoryStatusWatcher({
-			host: { cadence: LOCAL_CADENCE },
 			gitCommand: () => Promise.resolve({} as never),
 			environment: {},
 			workspaces: () => watched,
@@ -252,7 +274,10 @@ describe("what a workspace is about", () => {
 		readBranchStatus.mockRejectedValue(
 			new GitHubUnavailable("GitHub answered 502."),
 		);
-		watched = [WORKSPACE, { id: "w-2", root: "/projects/other" }];
+		watched = [
+			WORKSPACE,
+			{ id: "w-2", root: "/projects/other", runtime: HERE },
+		];
 		const before = published.length;
 		running.observe();
 		await vi.waitFor(() => {
@@ -645,5 +670,143 @@ describe("the pull request out from a branch", () => {
 		running.stop();
 
 		expect(published.at(-1)?.workspaces[0]?.pending).toBeUndefined();
+	});
+});
+
+/**
+ * Two machines, one projection.
+ *
+ * The whole of what step 7 changed here. A Workspace on another machine used
+ * to be left out of the watcher, so its row had no branch, no Issue and no
+ * pull request and said so; git runs on the folder's own machine now, and the
+ * only thing that must not follow it there is the clock — a poll interval is a
+ * fact about a link, and a host across an ocean must not decide how often this
+ * Mac's checkouts are read.
+ */
+describe("checkouts on more than one machine", () => {
+	const THERE = machine("ssh:build.example.com");
+	const REMOTE = { id: "w-2", root: "/srv/api", runtime: THERE };
+
+	it("reads each row with the git its own machine resolved", async () => {
+		checkedOut("main");
+		const asked: string[] = [];
+		const published: RepositoryStatusWire[] = [];
+		const running = new RepositoryStatusWatcher({
+			gitCommand: (runtime) => {
+				asked.push(runtime.id);
+				return Promise.resolve({ runtime, git: "git" } as never);
+			},
+			environment: {},
+			workspaces: () => [WORKSPACE, REMOTE],
+			publish: (status) => published.push(status),
+		});
+		running.start();
+		await vi.waitFor(() => {
+			expect(published.at(-1)?.workspaces).toHaveLength(2);
+		});
+		running.stop();
+
+		// One git per machine, and each row read with its own. A single command
+		// for both would be this Mac's `git` pointed at a path on somebody's
+		// server, which answers "not a repository" and looks like an empty row.
+		expect([...new Set(asked)].toSorted()).toEqual([
+			"local",
+			"ssh:build.example.com",
+		]);
+		for (const call of readRepository.mock.calls) {
+			const [command, root] = call as [{ runtime: { id: string } }, string];
+			expect(command.runtime.id).toBe(
+				root === REMOTE.root ? THERE.id : HERE.id,
+			);
+		}
+	});
+
+	it("gives the remote row the same branch, Issue and pull request", async () => {
+		// The row a person reads. Nothing about it says which machine it came
+		// from, which is the point: the answer is the same shape either way.
+		checkedOut("feature/128-tidy");
+		const published: RepositoryStatusWire[] = [];
+		const running = new RepositoryStatusWatcher({
+			gitCommand: (runtime) => Promise.resolve({ runtime } as never),
+			environment: {},
+			workspaces: () => [REMOTE],
+			publish: (status) => published.push(status),
+		});
+		running.start();
+		await vi.waitFor(() => {
+			expect(published.at(-1)?.workspaces[0]?.issue?.number).toBe(128);
+		});
+		running.stop();
+		expect(published.at(-1)?.workspaces[0]?.branch).toBe("feature/128-tidy");
+	});
+
+	it("polls each machine on its own clock", async () => {
+		// A slow link does not slow the fast one down, and the fast one does not
+		// flood the slow one. One interval for both would have to be one of the
+		// two numbers, and either choice is wrong for the other machine.
+		vi.useFakeTimers();
+		try {
+			checkedOut("main");
+			const slow = machine(
+				"ssh:slow.example.com",
+				LOCAL_CADENCE.repositoryPollMs * 10,
+			);
+			const rounds: string[] = [];
+			const running = new RepositoryStatusWatcher({
+				gitCommand: (runtime) => {
+					rounds.push(runtime.id);
+					return Promise.resolve({ runtime } as never);
+				},
+				environment: {},
+				workspaces: () => [
+					WORKSPACE,
+					{ id: "w-3", root: "/srv/slow", runtime: slow },
+				],
+				publish: () => undefined,
+			});
+			running.start();
+			await vi.advanceTimersByTimeAsync(0);
+			const first = rounds.length;
+			// One local interval on: the fast machine has come round again and the
+			// slow one has not.
+			await vi.advanceTimersByTimeAsync(LOCAL_CADENCE.repositoryPollMs);
+			running.stop();
+			const after = rounds.slice(first);
+			expect(after).toContain("local");
+			expect(after).not.toContain("ssh:slow.example.com");
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("stops polling a machine once nothing is open on it", async () => {
+		// A loop is a cost. An ssh runtime with no Workspace left on it must not
+		// go on paying a round trip a minute to be told there is nothing there.
+		vi.useFakeTimers();
+		try {
+			checkedOut("main");
+			let watched = [WORKSPACE, REMOTE];
+			const rounds: string[] = [];
+			const running = new RepositoryStatusWatcher({
+				gitCommand: (runtime) => {
+					rounds.push(runtime.id);
+					return Promise.resolve({ runtime } as never);
+				},
+				environment: {},
+				workspaces: () => watched,
+				publish: () => undefined,
+			});
+			running.start();
+			await vi.advanceTimersByTimeAsync(0);
+			watched = [WORKSPACE];
+			running.observe();
+			await vi.advanceTimersByTimeAsync(0);
+			const from = rounds.length;
+			await vi.advanceTimersByTimeAsync(LOCAL_CADENCE.repositoryPollMs * 2);
+			running.stop();
+			expect(rounds.slice(from)).not.toContain(THERE.id);
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 });
