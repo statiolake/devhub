@@ -132,6 +132,78 @@ const PROBE_LIMITS: ExecLimits = {
 /** How long a filesystem probe may go without an answer. */
 const PROBE_TIMEOUT_MS = 20_000;
 
+/**
+ * How much of a login environment DevHub will read.
+ *
+ * A profile that exports a megabyte is a profile with a bug in it, and reading
+ * it would put that megabyte on the command line of every command afterwards.
+ */
+const LOGIN_ENVIRONMENT_BYTES = 256 * 1024;
+
+/**
+ * The variables a login shell sets that this connection must not carry.
+ *
+ * Every one of them describes *the login that was read*, not the command about
+ * to run: which socket it came in on, which tty it had, how deep its shell was
+ * nested, which directory it happened to start in. Carrying them across would
+ * tell a program on the host it is attached to a terminal that closed minutes
+ * ago, and would override the ones ssh, tmux and the pty each set correctly for
+ * themselves. What is wanted from a login shell is the part a person put there
+ * — `PATH` above all — and this is the list of everything that is not that.
+ */
+const CONNECTION_VARIABLES: ReadonlySet<string> = new Set([
+	"_",
+	"OLDPWD",
+	"PWD",
+	"SHLVL",
+	"SSH_AUTH_SOCK",
+	"SSH_CLIENT",
+	"SSH_CONNECTION",
+	"SSH_TTY",
+	"TERM",
+	"TMUX",
+	"TMUX_PANE",
+]);
+
+/**
+ * A machine's own environment, as its login shell reports it.
+ *
+ * `env -0` is asked for first because a NUL-separated listing is the only one
+ * that cannot be misread: a value with a newline in it is a value, not two
+ * variables. When `-0` is not there — busybox's `env` on an appliance, say —
+ * the newline-separated listing is parsed with the one rule that recovers the
+ * common case: a line that is not `NAME=…` is the continuation of the value
+ * before it. That is a guess, and it is the only guess in this file, so it is
+ * confined to the fallback and said out loud here.
+ */
+export function parseLoginEnvironment(
+	text: string,
+	separator: string,
+): Record<string, string> {
+	const found: Record<string, string> = {};
+	let last: string | undefined;
+	for (const entry of text.split(separator)) {
+		if (entry.length === 0) continue;
+		const at = entry.indexOf("=");
+		const name = at === -1 ? "" : entry.slice(0, at);
+		if (at === -1 || !ENVIRONMENT_NAME.test(name)) {
+			if (last !== undefined) found[last] = `${found[last] ?? ""}\n${entry}`;
+			continue;
+		}
+		found[name] = entry.slice(at + 1);
+		last = name;
+	}
+	for (const name of CONNECTION_VARIABLES) delete found[name];
+	return found;
+}
+
+/** What one machine's login environment is, and how it was read. */
+interface RemoteMachine {
+	readonly home: string;
+	readonly platform: string;
+	readonly login: Readonly<Record<string, string>>;
+}
+
 export interface SshRuntimeOptions {
 	/** The host as a person wrote it: usually an alias from `~/.ssh/config`. */
 	readonly host: string;
@@ -415,7 +487,19 @@ export class SshRuntime implements Runtime {
 	#connected = false;
 	#masterPid: number | undefined;
 	#askedForMasterPid = false;
-	#remote: Promise<{ home: string; platform: string }> | undefined;
+	#remote: Promise<RemoteMachine> | undefined;
+	/**
+	 * The login environment, once it has been read.
+	 *
+	 * Kept beside the promise because `spawnPty` is synchronous and cannot wait
+	 * for one. Nothing opens a pseudo-terminal on a machine it has not already
+	 * asked for `$HOME` and resolved a program on — the adapter that opens it is
+	 * built out of those answers — so by then this is set, and a `spawnPty` that
+	 * finds it unset is a caller that reached the far machine in an order this
+	 * file does not know about, which is a thing to stop on rather than paper
+	 * over with an environment that is missing the person's `PATH`.
+	 */
+	#login: Readonly<Record<string, string>> | undefined;
 	#launcher: Promise<TerminalLauncher> | undefined;
 	#controlDirectoryMade: Promise<unknown> | undefined;
 
@@ -466,20 +550,82 @@ export class SshRuntime implements Runtime {
 		return (await this.#describeRemote()).platform;
 	}
 
-	#describeRemote(): Promise<{ home: string; platform: string }> {
-		this.#remote ??= (async () => {
+	#describeRemote(): Promise<RemoteMachine> {
+		if (this.#remote) return this.#remote;
+		const pending = (async () => {
 			const result = await this.#sh(
-				`printf '%s\\n%s\\n' "$HOME" "$(uname -s)"`,
+				`printf '%s\\n%s\\n%s\\n' "$HOME" "$(uname -s)" "$SHELL"`,
 			);
-			const [home = "", platform = ""] = result.stdout
+			const [home = "", platform = "", shell = ""] = result.stdout
 				.toString("utf8")
 				.split("\n");
 			if (platform !== "Linux" && platform !== "Darwin") {
 				throw unsupportedPlatformFailure(this.#host, platform);
 			}
-			return { home, platform };
+			const login = await this.#readLoginEnvironment(shell);
+			this.#login = login;
+			return { home, platform, login };
 		})();
-		return this.#remote;
+		// A host that was down when the first command went out must be asked
+		// again by the second: a rejected promise left in the field would answer
+		// every later command with the failure of the first one, and a machine
+		// that came back would never be tried again.
+		pending.catch(() => {
+			if (this.#remote === pending) this.#remote = undefined;
+		});
+		this.#remote = pending;
+		return pending;
+	}
+
+	/**
+	 * What a program on this host runs inside.
+	 *
+	 * The environment `ssh host -- cmd` gives a command is not the one a person
+	 * gets when they log in: sshd runs a *non-login, non-interactive* shell, so
+	 * `~/.profile` has not run and `PATH` is whatever sshd's default is —
+	 * typically `/bin:/usr/bin` and the system directories, and nothing a person
+	 * has added. Every "works in my terminal, not in DevHub" report about a
+	 * remote host is that one fact. So the login environment is read once, from
+	 * the login shell itself, and every command DevHub runs on the host is given
+	 * it.
+	 *
+	 * Three ways of asking, in order, because the answer matters more than the
+	 * spelling: the person's own `$SHELL` with `-lc 'env -0'`, then `/bin/sh`
+	 * with the same, then `/bin/sh -lc 'env'` for an `env` with no `-0`. The
+	 * first that answers with a `PATH` is the answer; a host where none of them
+	 * does is a host DevHub refuses, by name, rather than running commands in an
+	 * environment it could not read.
+	 */
+	async #readLoginEnvironment(
+		shell: string,
+	): Promise<Readonly<Record<string, string>>> {
+		const attempts: { readonly script: string; readonly separator: string }[] =
+			[];
+		if (shell.startsWith("/")) {
+			attempts.push({
+				script: `exec ${shellQuote(shell)} -lc 'env -0'`,
+				separator: "\0",
+			});
+		}
+		attempts.push({ script: `exec /bin/sh -lc 'env -0'`, separator: "\0" });
+		attempts.push({ script: `exec /bin/sh -lc 'env'`, separator: "\n" });
+		for (const attempt of attempts) {
+			const result = await this.#sh(attempt.script, {
+				stdoutBytes: LOGIN_ENVIRONMENT_BYTES,
+			});
+			if (result.code !== 0) continue;
+			const found = parseLoginEnvironment(
+				result.stdout.toString("utf8"),
+				attempt.separator,
+			);
+			if (found["PATH"] !== undefined) return found;
+		}
+		throw new Error(
+			`DevHub could not read the login environment on ${this.#host}: ` +
+				`neither ${shell === "" ? "the login shell" : shell} nor /bin/sh ` +
+				`answered 'env' with a PATH, so it cannot tell where the programs it ` +
+				`runs there are.`,
+		);
 	}
 
 	/**
@@ -491,6 +637,15 @@ export class SshRuntime implements Runtime {
 	 * group, the channel closes, and sshd sends the remote command its `SIGHUP`.
 	 */
 	async exec(request: ExecRequest): Promise<ExecResult> {
+		const { login } = await this.#describeRemote();
+		// The caller's own variables win over the person's, and DevHub's own
+		// `DEVHUB_*` are the caller's: a runtime that let a profile's `PATH`
+		// override the one a command was given would be answering a question the
+		// caller had already answered.
+		return this.#run({ ...request, env: { ...login, ...request.env } });
+	}
+
+	async #run(request: ExecRequest): Promise<ExecResult> {
 		const script = remoteScript(request);
 		// The remote fork is invisible to `getAppMetrics`, so the count is the
 		// only place it exists. Named with the host, so a reading says where.
@@ -560,26 +715,63 @@ export class SshRuntime implements Runtime {
 	 * tmux refuses to attach.
 	 */
 	/**
-	 * The name, unresolved, because the machine that can resolve it is the far
-	 * one.
+	 * What a configured name means on the far machine, asked of the far machine.
 	 *
-	 * Nothing here looks: a lookup would have to read the host's PATH and stat
-	 * its candidates, which is a round trip per program per start for an answer
-	 * `exec` already produces on its way past — `remoteScript` refuses a program
-	 * `command -v` cannot find, with exit 127 and the same `unavailable` a
-	 * missing local binary raises. So the honest answer is the configured name,
-	 * and `command_name` is what that has been called since the Settings window
-	 * had three columns.
+	 * `command -v` under the *login* environment, which is the whole point: the
+	 * `PATH` sshd hands a non-interactive command does not have the person's
+	 * `~/.local/bin` or their Homebrew in it, so a lookup under it would answer
+	 * "not there" for a program that is plainly there when they type its name.
+	 * One round trip per configured program per host per DevHub start, and the
+	 * answer is an absolute path — the same shape the local runtime gives, so
+	 * the Settings window prints one thing and the launcher runs the same thing.
+	 *
+	 * A name that cannot be found is `unavailable` with the directories that
+	 * were searched, in that machine's own `PATH` order, because a search nobody
+	 * can see is a search nobody can correct — and the directories are the
+	 * host's, which is the fact a person is missing when the local answer looked
+	 * fine.
 	 */
-	resolveProgram(configured: string): Promise<SettingsResolvedRuntimeWire> {
-		return Promise.resolve({ kind: "command_name", value: configured });
+	async resolveProgram(
+		configured: string,
+	): Promise<SettingsResolvedRuntimeWire> {
+		const { login } = await this.#describeRemote();
+		const path = login["PATH"] ?? "";
+		const result = await this.#run({
+			argv: ["/bin/sh", "-c", `command -v -- ${shellQuote(configured)}`],
+			env: login,
+			deadline: OperationDeadline.in(PROBE_TIMEOUT_MS),
+			cancel: new CancellationToken(),
+			limits: PROBE_LIMITS,
+		});
+		const found = result.stdout.toString("utf8").trim();
+		if (result.code === 0 && found.startsWith("/")) {
+			return { kind: "absolute_path", value: found };
+		}
+		return {
+			kind: "unavailable",
+			configured,
+			lookup: configured.includes("/")
+				? { kind: "explicit", path: configured }
+				: {
+						kind: "path",
+						directories: path.split(":").filter((entry) => entry.length > 0),
+					},
+		};
 	}
 
 	spawnPty(request: PtyRequest): Pty {
+		const login = this.#login;
+		if (login === undefined) {
+			throw new Error(
+				`a pseudo-terminal was asked for on ${this.#host} before DevHub had ` +
+					`read that machine's login environment, so the program in it would ` +
+					`run without the PATH the person's own shell has`,
+			);
+		}
 		const script = remoteScript({
 			argv: [request.file, ...request.args],
 			cwd: request.cwd,
-			env: request.env,
+			env: { ...login, ...request.env },
 		});
 		return this.#ptyFactory({
 			file: this.#sshPath,
@@ -1004,6 +1196,12 @@ export class SshRuntime implements Runtime {
 			medianRoundTripMs: this.#medianRoundTripMs(),
 			reconcileIntervalMs: this.cadence.reconcileIntervalMs,
 			execsLastMinute: this.#recentExecs.length,
+			// Names and never values. A reading is written into a log and pasted
+			// into an issue, and a person's login environment is where their
+			// tokens are — but "which variables DevHub is putting on every remote
+			// command" is exactly the question a wrong `PATH` or a missing
+			// `LANG` raises, and it is answerable without reading one of them.
+			loginEnvironmentNames: Object.keys(this.#login ?? {}).sort(),
 			lastFailure: this.#lastFailure,
 		};
 	}
@@ -1020,6 +1218,9 @@ export class SshRuntime implements Runtime {
 		this.#connected = false;
 		this.#masterPid = undefined;
 		this.#remote = undefined;
+		// Read again on the next connection rather than remembered across one: a
+		// person who fixes their `~/.profile` and reconnects has fixed it.
+		this.#login = undefined;
 		const result = await runBounded(
 			{
 				file: this.#sshPath,
@@ -1099,7 +1300,14 @@ export class SshRuntime implements Runtime {
 		return this.#controlDirectoryMade;
 	}
 
-	/** One small POSIX script on the other machine, bounded like everything else. */
+	/**
+	 * One small POSIX script on the other machine, bounded like everything else.
+	 *
+	 * Deliberately `#run` and not `exec`: these are DevHub's own scripts, made of
+	 * POSIX tools named the same everywhere, so they need nothing a person's
+	 * profile adds — and reading that profile is itself one of them, which would
+	 * otherwise be a command waiting on its own answer.
+	 */
 	#sh(
 		script: string,
 		extra: {
@@ -1107,7 +1315,7 @@ export class SshRuntime implements Runtime {
 			stdoutBytes?: number;
 		} = {},
 	): Promise<ExecResult> {
-		return this.exec({
+		return this.#run({
 			argv: ["/bin/sh", "-c", script],
 			deadline: OperationDeadline.in(PROBE_TIMEOUT_MS),
 			cancel: new CancellationToken(),

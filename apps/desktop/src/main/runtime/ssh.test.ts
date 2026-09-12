@@ -46,6 +46,7 @@ import {
 	controlPathOf,
 	errnoFromMessage,
 	hostKeyFailure,
+	parseLoginEnvironment,
 	remoteScript,
 	SshRuntime,
 	sshOptionArgv,
@@ -96,6 +97,9 @@ sock.listen(1)' "$forward";;
 esac
 [ -n "$host" ] || { echo 'fake ssh: no host' >&2; exit 255; }
 mkdir -p "\${control%/*}" && : > "$marker"
+if [ -n "\${DEVHUB_FAKE_NO_ENV:-}" ]; then
+  case "$1" in *env*) echo 'sh: env: not found' >&2; exit 127;; esac
+fi
 exec /bin/sh -c "$1"
 `;
 
@@ -127,11 +131,26 @@ afterAll(async () => {
 	await rm(control, { recursive: true, force: true });
 });
 
+/**
+ * The environment the fake ssh inherits, with the login shell pinned.
+ *
+ * The runtime reads `$SHELL` on the far machine and runs `$SHELL -lc env` in
+ * it, and the far machine here is this one — so without this the suite would
+ * source whoever is running it's own `.zshrc`, which is neither reproducible
+ * nor theirs to spend. `/bin/sh` is on every machine a test runs on and its
+ * `-lc` is the path the runtime actually has to work with.
+ */
+const FAKE_ENVIRONMENT: Readonly<Record<string, string | undefined>> = {
+	...process.env,
+	SHELL: "/bin/sh",
+};
+
 function fakeRuntime(): SshRuntime {
 	return new SshRuntime({
 		host: "build-box.example.com",
 		controlDirectory: control,
 		sshPath: join(bin, "ssh"),
+		localEnvironment: FAKE_ENVIRONMENT,
 	});
 }
 
@@ -145,6 +164,7 @@ async function refusing(stderr: string): Promise<SshRuntime> {
 		host: "build-box.example.com",
 		controlDirectory: control,
 		sshPath: join(bin, name),
+		localEnvironment: FAKE_ENVIRONMENT,
 	});
 }
 
@@ -381,17 +401,23 @@ describe("the connection", () => {
 });
 
 describe("a pseudo-terminal on the other machine", () => {
-	it("forces a tty and wraps the argv the local one would have run", () => {
+	it("forces a tty and wraps the argv the local one would have run", async () => {
 		let launched: PtyLaunch | undefined;
 		const runtime = new SshRuntime({
 			host: "build-box.example.com",
 			controlDirectory: control,
 			sshPath: join(bin, "ssh"),
+			localEnvironment: FAKE_ENVIRONMENT,
 			ptyFactory: (launch) => {
 				launched = launch;
 				return {} as Pty;
 			},
 		});
+		// The machine is reached before a pane is opened on it, always: the
+		// adapter that opens one is built out of its `$HOME` and its resolved
+		// programs. Saying so here rather than letting `spawnPty` invent an
+		// environment is the same rule as the throw it would otherwise hit.
+		await runtime.home();
 		runtime.spawnPty({
 			file: "/usr/bin/tmux",
 			args: ["-L", "devhub", "attach"],
@@ -442,7 +468,7 @@ describe("the terminal launcher on the host", () => {
 			controlDirectory: control,
 			sshPath: join(bin, "ssh"),
 			localEnvironment: {
-				...process.env,
+				...FAKE_ENVIRONMENT,
 				HOME: remoteHome,
 				DEVHUB_FAKE_SSH_LOG: log,
 				DEVHUB_FAKE_FORWARD: forward,
@@ -554,5 +580,185 @@ describe("the terminal launcher on the host", () => {
 		await expect(
 			runtimeWith().terminalLauncher({ ...spec, serverCommit: undefined }),
 		).rejects.toThrow(/source checkout/u);
+	});
+});
+
+/**
+ * The environment a command on the host actually runs in.
+ *
+ * `ssh host -- cmd` gets a *non-login, non-interactive* shell: `~/.profile`
+ * has not run and `PATH` is sshd's default, which has nothing a person added
+ * to theirs. Every "it works when I type it, not when DevHub runs it" report
+ * about a remote host is that one fact, so the login shell is asked once and
+ * every command is given the answer. The far machine here is this one, so the
+ * login shell is a five-line script the test writes and can therefore make
+ * answer — or refuse — exactly the way a real one on a real host does.
+ */
+describe("the login environment on the host", () => {
+	let shells: string;
+
+	/** A `$SHELL` that answers `-lc` with a fixed listing, or refuses to. */
+	async function loginShell(name: string, body: string): Promise<string> {
+		const path = join(shells, name);
+		await writeFile(path, `#!/bin/sh\n${body}\n`, { mode: 0o700 });
+		await chmod(path, 0o700);
+		return path;
+	}
+
+	function runtimeWithShell(
+		shell: string,
+		extra: Readonly<Record<string, string>> = {},
+	): SshRuntime {
+		return new SshRuntime({
+			host: "build-box.example.com",
+			controlDirectory: control,
+			sshPath: join(bin, "ssh"),
+			localEnvironment: { ...FAKE_ENVIRONMENT, SHELL: shell, ...extra },
+		});
+	}
+
+	beforeEach(async () => {
+		shells = await mkdtemp("/tmp/devhub-login-shell-");
+	});
+	afterEach(async () => {
+		await rm(shells, { recursive: true, force: true });
+	});
+
+	const ANSWERS = [
+		`case "$2" in`,
+		`  'env -0') printf 'PATH=/opt/devhub/bin:/usr/bin\\0LANG=en_US.UTF-8\\0SSH_TTY=/dev/pts/9\\0TERM=vt100\\0'; exit 0;;`,
+		`esac`,
+		`exit 1`,
+	].join("\n");
+
+	it("puts the login shell's own PATH on every command DevHub runs there", async () => {
+		const runtime = runtimeWithShell(await loginShell("answers", ANSWERS));
+		const result = await run(runtime, [
+			"/bin/sh",
+			"-c",
+			'printf "%s|%s" "$PATH" "$LANG"',
+		]);
+		expect(result.stdout.toString("utf8")).toBe(
+			"/opt/devhub/bin:/usr/bin|en_US.UTF-8",
+		);
+	});
+
+	// They describe the login that was read, not the command about to run, and
+	// each of them is set correctly by whatever opens the next channel.
+	it("leaves behind the variables that belonged to the login, not the host", async () => {
+		const runtime = runtimeWithShell(await loginShell("answers", ANSWERS));
+		const result = await run(runtime, [
+			"/bin/sh",
+			"-c",
+			'printf %s "${SSH_TTY:-none}"',
+		]);
+		expect(result.stdout.toString("utf8")).toBe("none");
+	});
+
+	it("lets the caller's own variables win over the person's", async () => {
+		const runtime = runtimeWithShell(await loginShell("answers", ANSWERS));
+		const result = await runtime.exec({
+			argv: ["/bin/sh", "-c", 'printf %s "$PATH"'],
+			env: { PATH: "/only/this" },
+			deadline: OperationDeadline.in(10_000),
+			cancel: new CancellationToken(),
+			limits: {
+				stdoutBytes: 4096,
+				stderrBytes: 4096,
+				overflow: { kind: "truncate" },
+			},
+		});
+		expect(result.stdout.toString("utf8")).toBe("/only/this");
+	});
+
+	// A reading is pasted into issues, and a login environment is where a
+	// person's tokens are — but "which variables is DevHub putting on every
+	// command" is the question a wrong PATH raises, and names answer it.
+	it("says which variables it carries and never what is in them", async () => {
+		const runtime = runtimeWithShell(await loginShell("answers", ANSWERS));
+		await run(runtime, ["/bin/sh", "-c", ":"]);
+		const reading = runtime.reading();
+		expect(reading.loginEnvironmentNames).toEqual(["LANG", "PATH"]);
+		expect(JSON.stringify(reading)).not.toContain("/opt/devhub/bin");
+	});
+
+	// A `$SHELL` whose `env` has no `-0` is a real host — busybox on an
+	// appliance — and the answer has to come from somewhere else rather than
+	// from nowhere.
+	it("falls back to /bin/sh when the person's own shell cannot answer", async () => {
+		const refuses = await loginShell(
+			"refuses",
+			`printf '%s\\n' "$*" >> "$DEVHUB_LOGIN_LOG"\nexit 1`,
+		);
+		const log = join(shells, "asked");
+		const runtime = runtimeWithShell(refuses, { DEVHUB_LOGIN_LOG: log });
+		const result = await run(runtime, ["/bin/sh", "-c", 'printf %s "$PATH"']);
+		// It was asked first, and what came back is /bin/sh's answer.
+		expect(await readFile(log, "utf8")).toContain("-lc env -0");
+		expect(result.stdout.toString("utf8").length).toBeGreaterThan(0);
+	});
+
+	// Not a swallow and not a guess: a machine whose login environment DevHub
+	// could not read is a machine it cannot say where the programs are on.
+	it("refuses the machine by name when no shell will say what its PATH is", async () => {
+		const runtime = runtimeWithShell(await loginShell("answers", ANSWERS), {
+			DEVHUB_FAKE_NO_ENV: "yes",
+		});
+		await expect(run(runtime, ["/bin/sh", "-c", ":"])).rejects.toThrow(
+			/build-box\.example\.com.*login environment|login environment.*build-box\.example\.com/su,
+		);
+	});
+
+	it("resolves a configured program under that PATH, to an absolute path", async () => {
+		const widget = join(shells, "widget");
+		await writeFile(widget, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+		await chmod(widget, 0o700);
+		const runtime = runtimeWithShell(
+			await loginShell(
+				"found",
+				`case "$2" in 'env -0') printf 'PATH=%s\\0' ${JSON.stringify(shells)}; exit 0;; esac\nexit 1`,
+			),
+		);
+		expect(await runtime.resolveProgram("widget", "")).toEqual({
+			kind: "absolute_path",
+			value: widget,
+		});
+	});
+
+	// The directories are the *host's*, in the host's own order, which is the
+	// fact a person is missing when the answer on their Mac looked fine.
+	it("names the host's own search path when the program is not there", async () => {
+		const runtime = runtimeWithShell(await loginShell("answers", ANSWERS));
+		expect(await runtime.resolveProgram("widget", "")).toEqual({
+			kind: "unavailable",
+			configured: "widget",
+			lookup: { kind: "path", directories: ["/opt/devhub/bin", "/usr/bin"] },
+		});
+	});
+});
+
+describe("reading an env listing", () => {
+	it("keeps a value with a newline in it whole when env said so with NULs", () => {
+		expect(parseLoginEnvironment("A=one\ntwo\0B=three\0", "\0")).toEqual({
+			A: "one\ntwo",
+			B: "three",
+		});
+	});
+
+	// The one guess in the file, confined to the one listing that forces it:
+	// a newline-separated `env` cannot say whether a line is a new variable or
+	// the rest of the last one's value, and the rest of a value is the only
+	// thing it can be.
+	it("puts a stray line back on the value it fell off", () => {
+		expect(parseLoginEnvironment("A=one\ntwo\nB=three\n", "\n")).toEqual({
+			A: "one\ntwo",
+			B: "three",
+		});
+	});
+
+	it("drops the variables that described the login rather than the machine", () => {
+		expect(
+			parseLoginEnvironment("PATH=/bin\0SSH_CONNECTION=a b\0SHLVL=2\0", "\0"),
+		).toEqual({ PATH: "/bin" });
 	});
 });

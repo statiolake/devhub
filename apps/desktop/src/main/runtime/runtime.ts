@@ -168,6 +168,18 @@ export interface RuntimeReading {
 	readonly medianRoundTripMs: number;
 	readonly reconcileIntervalMs: number;
 	readonly execsLastMinute: number;
+	/**
+	 * Which variables this machine puts on every command DevHub runs on it.
+	 *
+	 * Names, never values: a reading is pasted into issues and a login
+	 * environment is where a person's tokens are. Empty on this machine, and
+	 * that is not a gap — DevHub's own children already inherit the environment
+	 * it was started with (`loginEnvironment.ts`), so there is nothing a local
+	 * runtime *adds*. A remote one has to add the whole of it, and this is how
+	 * "why does this host not see my PATH" is answerable without a packet
+	 * capture.
+	 */
+	readonly loginEnvironmentNames: readonly string[];
 	readonly lastFailure: string | undefined;
 }
 

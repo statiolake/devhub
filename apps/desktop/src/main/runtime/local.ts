@@ -337,6 +337,11 @@ export class LocalRuntime implements Runtime {
 			medianRoundTripMs: sorted[Math.floor(sorted.length / 2)] ?? 0,
 			reconcileIntervalMs: this.cadence.reconcileIntervalMs,
 			execsLastMinute: this.#recentExecs.length,
+			// Nothing, and that is the answer rather than a gap: a child of this
+			// process already inherits the environment DevHub imported from the
+			// login shell at startup (`loginEnvironment.ts`), so this machine adds
+			// none of its own on the way past.
+			loginEnvironmentNames: [],
 			lastFailure: this.#lastFailure,
 		};
 	}

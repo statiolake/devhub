@@ -310,6 +310,12 @@ export function describeRuntimeContract(
 
 		describe("reading", () => {
 			it("names the machine and counts what has been run on it", async () => {
+				// Reach the machine first. What a runtime asks a machine it has
+				// not spoken to yet — its `$HOME`, its login environment — is
+				// counted too, because those are round trips and a reading that
+				// hid them would under-report what DevHub costs a host. They
+				// happen once, so the count is taken after they have.
+				await run(runtime, ["/bin/echo", "x"]);
 				const before = runtime.reading();
 				expect(before.id).toBe(runtime.id);
 				await run(runtime, ["/bin/echo", "x"]);

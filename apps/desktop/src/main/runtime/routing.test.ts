@@ -124,6 +124,7 @@ class RecordingRuntime implements Runtime {
 			medianRoundTripMs: 0,
 			reconcileIntervalMs: this.cadence.reconcileIntervalMs,
 			execsLastMinute: this.execs.length,
+			loginEnvironmentNames: [],
 			lastFailure: undefined,
 		};
 	}
