@@ -17,6 +17,11 @@ vscode-toolchain/
 # `npm run gulp vscode-reh-linux-x64-min` writes them here and not under vscode/.
 vscode-reh-*/
 
+# Where scripts/build_tmux.py downloads, unpacks and builds tmux and its two
+# dependencies. Kept between runs so a second one reuses the verified
+# downloads; hundreds of megabytes of upstream sources and object files.
+tmux-build/
+
 # Throwaway spike scratch (captures, logs, sample folders)
 .spike/
 
