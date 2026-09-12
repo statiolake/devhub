@@ -36,6 +36,7 @@ import {
 	type ContentSurfaceWire,
 	type AssignmentBranchWire,
 	type IssueAssignment,
+	type WorkspacePlaceWire,
 	type ModalRequest,
 	type RepositoryStatusWire,
 	type WorkspacePickerEvent,
@@ -74,9 +75,9 @@ import {
 	displayPath,
 	agentId as parseAgentId,
 	remoteAuthorityOf,
-	supportsLocalTooling,
 	surfaceKeyName,
 	workspaceId as parseWorkspaceId,
+	workspaceLocation,
 	workspaceRoot,
 	type AgentProfileKind,
 	type AgentReconciliation,
@@ -173,6 +174,7 @@ import {
 	runtimeFor,
 	setRuntimeProfile,
 } from "../runtime/registry.js";
+import type { Runtime } from "../runtime/runtime.js";
 import { resolveExecutable, resolveRuntimes } from "./runtimes.js";
 import {
 	executableMissingMessage,
@@ -1208,7 +1210,7 @@ export class AppController {
 	 * The machines with at least one Agent on them right now.
 	 *
 	 * There can be exactly one, and it is this Mac: `canCreateAgent` still has
-	 * its `supportsLocalTooling` term, so an ssh Workspace cannot hold an Agent
+	 * its `supportsLocalAgents` term, so an ssh Workspace cannot hold an Agent
 	 * to reconcile. The list is built from the model rather than asserted,
 	 * because that is the fact that will change, and `follow` will then start a
 	 * second loop on its own.
@@ -1440,23 +1442,18 @@ export class AppController {
 	};
 
 	private readonly repositoryStatus = new RepositoryStatusWatcher({
-		// One watcher, and the checkouts it polls are the ones on this machine.
-		host: localRuntime(),
-		gitCommand: () => this.gitCommand(),
+		gitCommand: (runtime) => this.gitCommand(runtime),
 		environment: this.launchEnvironment,
-		// Only the ones whose folder this machine can read. `git`, the HEAD
-		// watcher and the worktree probe are local processes on local paths, and
-		// an ssh Workspace has none of that here — see `supportsLocalTooling`.
-		// It is left out of the *watcher*, not left out silently: it simply has
-		// no repository status, and every surface that would have drawn one says
-		// why instead of drawing nothing.
+		// Every open Workspace, wherever its folder is. git, the HEAD watcher
+		// and the worktree probe all go through the Workspace's own runtime now,
+		// so a checkout on another machine is read the same way as one here —
+		// the same row, with the same branch, Issue and pull request on it.
 		workspaces: () =>
-			this.coordinator.model.workspaces
-				.filter((workspace) => supportsLocalTooling(workspace.location))
-				.map((workspace) => ({
-					id: workspace.id,
-					root: workspace.root,
-				})),
+			this.coordinator.model.workspaces.map((workspace) => ({
+				id: workspace.id,
+				root: workspace.root,
+				runtime: runtimeFor(workspace.location),
+			})),
 		publish: (status) => {
 			// The order the rows are in is git's answer to "which repository is
 			// this a checkout of", so a round that changes that answer changes the
@@ -2578,7 +2575,11 @@ export class AppController {
 			);
 		}
 		await disposeWorktreeFolder(
-			await this.gitCommand(),
+			// The repository's own machine. Everything the disposal does — the
+			// probe, `git worktree remove`, the prune, the folder removal — goes
+			// through the runtime on this command, so a worktree of a repository
+			// on a host is removed there and not looked for here.
+			await this.gitCommand(runtimeFor(workspace.location)),
 			mainWorktree,
 			workspace.root,
 			disposition === "remove-anyway",
@@ -3753,10 +3754,11 @@ export class AppController {
 	 * terminals and Agents get, so a clone can only fail for reasons the person
 	 * can see — and "there is no git here" is one of them, said plainly.
 	 */
-	private async gitCommand(): Promise<GitCommand> {
-		const configured = this.config?.runtimes.git ?? "git";
-		const git = await resolveExecutable(
-			configured,
+	private async gitCommand(
+		runtime: Runtime = localRuntime(),
+	): Promise<GitCommand> {
+		const git = await runtime.resolveProgram(
+			this.config?.runtimes.git ?? "git",
 			this.launchEnvironment["PATH"] ?? "",
 		);
 		if (git.kind === "unavailable") {
@@ -3767,14 +3769,16 @@ export class AppController {
 				),
 			);
 		}
-		// Every Workspace DevHub can run git for is on this machine today; step
-		// five of the SSH work resolves the binary per runtime and threads the
-		// Workspace's own in. Until then this is the one honest answer, and it
-		// is said here rather than left implicit in a bare `spawn`.
 		return {
-			runtime: localRuntime(),
+			runtime,
 			git: git.value,
-			environment: this.launchEnvironment,
+			// The environment goes with the resolution. A path was looked up
+			// *here*, so this Mac's login environment is the one that found it and
+			// the one it should run in; a bare name will be looked up on the far
+			// end, and a PATH composed from this Mac names no directory over
+			// there — exporting it would replace the only PATH that can resolve
+			// anything with one that cannot.
+			environment: git.kind === "absolute_path" ? this.launchEnvironment : {},
 		};
 	}
 
@@ -3797,10 +3801,12 @@ export class AppController {
 		if (!item) {
 			throw workspaceFailure("That is not a GitHub Issue or pull request URL.");
 		}
+		const place = request.place;
+		const location = workspaceLocation(place);
 		const target = request.branch
 			? await ensureWorktree(
-					await this.gitCommand(),
-					request.directory,
+					await this.gitCommand(runtimeFor(location)),
+					place.path,
 					request.branch,
 					{
 						allowStaleBase: request.allowStaleBase,
@@ -3811,7 +3817,7 @@ export class AppController {
 						branchExistsAlready: item.kind === "pull",
 					},
 				)
-			: request.directory;
+			: place.path;
 
 		// Which workspace the opening produced is a fact the model states, and it
 		// states it in one of two ways: a folder that was not open is *added*,
@@ -3819,16 +3825,17 @@ export class AppController {
 		// path instead would be a third answer — the root is canonicalised on the
 		// way in, so it is not the string this call was given.
 		const before = new Set(this.coordinator.model.workspaces.map((w) => w.id));
-		await this.openFolder(requestedLocation({ kind: "local", path: target }));
+		// A worktree of a repository on a host is beside it, on that host: git
+		// made it there, and there is nowhere else it could be. So the place the
+		// flow was working in decides the machine, and only the path moves.
+		const opening = requestedLocation({ ...place, path: target });
+		await this.openFolder(opening);
 		// Not `openFolder(target, profileId)`: this flow has more to do around the
 		// creation than that shortcut can express — the Agent goes beside the
 		// editor when the person asked for that, and the Issue's prompt is queued
 		// against whichever Agent it produced — but *which workspace opening
 		// produced* is the same fact, read the same way.
-		const workspaceId = this.openedWorkspaceId(
-			before,
-			requestedLocation({ kind: "local", path: target }),
-		);
+		const workspaceId = this.openedWorkspaceId(before, opening);
 		// Nothing is written down about which Issue this workspace is for. The
 		// branch the flow just made carries the number (`feature/128-…`), and the
 		// branch is the whole of the link — so a worktree made for the Issue shows
@@ -3870,8 +3877,11 @@ export class AppController {
 	 */
 	private async assignmentBranch(
 		url: string,
-		directory: string,
+		place: WorkspacePlaceWire,
 	): Promise<AssignmentBranchWire> {
+		// Every git question below runs where the repository is; only GitHub is
+		// asked from here, because the token and the network are here.
+		const directory = place.path;
 		const item = parseGitHubItemUrl(url);
 		if (!item) {
 			throw workspaceFailure("That is not a GitHub Issue or pull request URL.");
@@ -3884,7 +3894,7 @@ export class AppController {
 					: `DevHub could not ask GitHub about ${item.owner}/${item.repository}#${String(item.number)}: ${credentials.reason}.`,
 			);
 		}
-		const git = await this.gitCommand();
+		const git = await this.gitCommand(runtimeFor(workspaceLocation(place)));
 		if (item.kind === "pull") {
 			const head = await readPullRequestHead(item, credentials.token);
 			// A branch in somebody else's copy is reachable only through a remote
@@ -4102,9 +4112,9 @@ export class AppController {
 		// shell is unavailable".
 		handle(
 			CHANNELS.assignmentBranch,
-			async (_event, url: string, directory: string) => {
+			async (_event, url: string, place: WorkspacePlaceWire) => {
 				try {
-					return await this.assignmentBranch(url, directory);
+					return await this.assignmentBranch(url, place);
 				} catch (error: unknown) {
 					throw asIpcError(errorWire(error));
 				}
@@ -4172,9 +4182,21 @@ export class AppController {
 			try {
 				return await findClones(
 					config,
-					await this.gitCommand(),
+					(place) => this.gitCommand(runtimeFor(workspaceLocation(place))),
 					issue,
-					this.coordinator.snapshot().workspaces.map((w) => w.root),
+					// Every open Workspace, with the machine it is on. A remote
+					// one used to arrive as a bare path and be read by this Mac's
+					// git, which answered about a directory of the same name here
+					// or about nothing at all.
+					this.coordinator.model.workspaces.map((workspace) =>
+						workspace.location.kind === "local"
+							? { kind: "local" as const, path: workspace.location.path }
+							: {
+									kind: "ssh" as const,
+									host: workspace.location.host,
+									path: workspace.location.path,
+								},
+					),
 				);
 			} catch (error: unknown) {
 				throw asIpcError(errorWire(error));
@@ -4190,9 +4212,12 @@ export class AppController {
 				}
 			},
 		);
-		handle(CHANNELS.listBranches, async (_event, directory: string) => {
+		handle(CHANNELS.listBranches, async (_event, place: WorkspacePlaceWire) => {
 			try {
-				return await listBranches(await this.gitCommand(), directory);
+				return await listBranches(
+					await this.gitCommand(runtimeFor(workspaceLocation(place))),
+					place.path,
+				);
 			} catch (error: unknown) {
 				throw asIpcError(errorWire(error));
 			}
