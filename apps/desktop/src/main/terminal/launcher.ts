@@ -59,7 +59,7 @@
 
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { shellQuote } from "../cli/install.js";
+import { shellQuote, shellQuoteArgv } from "../runtime/quote.js";
 
 /** The launcher's file name, next to the control socket it talks to. */
 export const TERMINAL_LAUNCHER_NAME = "devhub-terminal";
@@ -119,7 +119,7 @@ export function terminalCommandLine(command: {
 	readonly file: string;
 	readonly args: readonly string[];
 }): string {
-	return [command.file, ...command.args].map(shellQuote).join(" ");
+	return shellQuoteArgv([command.file, ...command.args]);
 }
 
 /**

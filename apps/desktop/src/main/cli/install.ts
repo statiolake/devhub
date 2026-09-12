@@ -21,6 +21,7 @@
 
 import { accessSync, constants, mkdirSync, writeFileSync } from "node:fs";
 import { delimiter, join } from "node:path";
+import { shellQuote } from "../runtime/quote.js";
 
 export interface InstallRequest {
 	/** The binary the launcher execs — the app's own Electron. */
@@ -57,10 +58,14 @@ export function defaultCandidates(home: string): readonly string[] {
 	return ["/usr/local/bin", join(home, ".local", "bin")];
 }
 
-/** Quote a path for a POSIX shell, whatever is in it. */
-export function shellQuote(value: string): string {
-	return `'${value.replaceAll("'", `'\\''`)}'`;
-}
+/**
+ * Quote a path for a POSIX shell, whatever is in it.
+ *
+ * Re-exported rather than written twice: the rule now belongs to the runtime
+ * module, because a runtime that runs commands on another machine has to
+ * compose a shell command line and there must not be a second answer to how.
+ */
+export { shellQuote };
 
 export function launcherScript(request: InstallRequest): string {
 	return [

@@ -15,8 +15,8 @@
 
 import { spawn } from "node:child_process";
 import { accessSync, constants, realpathSync, statSync } from "node:fs";
-import { basename, delimiter, isAbsolute, join } from "node:path";
-import { activityCounters, COUNTER } from "../diagnostics/counters.js";
+import { delimiter, isAbsolute, join } from "node:path";
+import type { ExecLimits } from "../runtime/runtime.js";
 import {
 	CancellationToken,
 	portFailure,
@@ -93,6 +93,8 @@ export class OperationDeadline {
 
 export interface CommandOutput {
 	readonly success: boolean;
+	readonly code: number | null;
+	readonly signal: string | null;
 	readonly stdout: Buffer;
 	/**
 	 * Bounded, private, and used only to classify the exact no-server
@@ -104,7 +106,15 @@ export interface CommandOutput {
 export interface CommandSpec {
 	readonly file: string;
 	readonly args: readonly string[];
-	readonly cwd: string;
+	/**
+	 * Where to run it, or `undefined` for "wherever this process is".
+	 *
+	 * tmux always names one — its client's working directory must stay usable
+	 * when a workspace's folder has been deleted — and git mostly does. The
+	 * `undefined` is `spawn`'s own default rather than a second meaning: a
+	 * caller that has no opinion had none before this seam existed either.
+	 */
+	readonly cwd: string | undefined;
 	readonly env: Readonly<Record<string, string | undefined>>;
 }
 
@@ -169,21 +179,29 @@ export function runBounded(
 	spec: CommandSpec,
 	deadline: OperationDeadline,
 	cancel: CancellationToken,
+	limits: ExecLimits,
+	stdin?: Uint8Array,
 ): Promise<CommandOutput> {
 	// The deadline started at the caller's first probe, not when this child
 	// happens to be spawned. Refuse a late spawn outright.
 	deadline.check(cancel);
-	// Every tmux DevHub runs is one of these, and each is a fork and an exec.
-	// They live for milliseconds, so nothing outside the process can see how
-	// many there are; counted here, the rate is a fact rather than a guess.
-	activityCounters.record(COUNTER.process(basename(spec.file)));
 	return new Promise<CommandOutput>((resolve, reject) => {
 		const child = spawn(spec.file, [...spec.args], {
 			cwd: spec.cwd,
 			env: spec.env as NodeJS.ProcessEnv,
-			stdio: ["ignore", "pipe", "pipe"],
+			stdio: [stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"],
 			detached: true,
 		});
+		// Both are pipes by construction, three lines above. If they are not,
+		// the child is not the child this function was asked to run and there is
+		// nothing to read: say so rather than reading nothing for the whole
+		// budget and calling it a timeout.
+		const outPipe = child.stdout;
+		const errPipe = child.stderr;
+		if (outPipe === null || errPipe === null) {
+			throw new Error("a bounded command was spawned without pipes to read");
+		}
+		if (stdin !== undefined) child.stdin?.end(Buffer.from(stdin));
 		const stdout: Buffer[] = [];
 		const stderr: Buffer[] = [];
 		let stdoutBytes = 0;
@@ -222,21 +240,32 @@ export function runBounded(
 				),
 			);
 		});
-		child.stdout.on("data", (chunk: Buffer) => {
-			stdoutBytes += chunk.byteLength;
-			if (stdoutBytes > MAX_OUTPUT_BYTES) {
-				finish(shapeFailure("more output than DevHub will read"));
-				return;
+		// One rule for both streams, so a cap that is right for one of them
+		// cannot be quietly wrong for the other.
+		const capped = (
+			chunks: Buffer[],
+			seen: number,
+			chunk: Buffer,
+			cap: number,
+		): number => {
+			const total = seen + chunk.byteLength;
+			if (seen >= cap) return total;
+			if (total <= cap) {
+				chunks.push(chunk);
+				return total;
 			}
-			stdout.push(chunk);
+			if (limits.overflow.kind === "fail") {
+				finish(limits.overflow.failure());
+				return total;
+			}
+			chunks.push(chunk.subarray(0, cap - seen));
+			return total;
+		};
+		outPipe.on("data", (chunk: Buffer) => {
+			stdoutBytes = capped(stdout, stdoutBytes, chunk, limits.stdoutBytes);
 		});
-		child.stderr.on("data", (chunk: Buffer) => {
-			stderrBytes += chunk.byteLength;
-			if (stderrBytes > MAX_STDERR_BYTES) {
-				finish(shapeFailure("more output than DevHub will read"));
-				return;
-			}
-			stderr.push(chunk);
+		errPipe.on("data", (chunk: Buffer) => {
+			stderrBytes = capped(stderr, stderrBytes, chunk, limits.stderrBytes);
 		});
 		// `close` rather than `exit`: the drain is part of the same budget, so
 		// a descendant holding a pipe open cannot be mistaken for completion.
@@ -247,6 +276,8 @@ export function runBounded(
 			deadline.answered();
 			finish(undefined, {
 				success: code === 0 && signal === null,
+				code,
+				signal,
 				stdout: Buffer.concat(stdout),
 				stderr: Buffer.concat(stderr),
 			});

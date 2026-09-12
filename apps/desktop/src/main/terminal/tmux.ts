@@ -29,6 +29,7 @@
  */
 
 import { activityCounters, COUNTER } from "../diagnostics/counters.js";
+import type { ExecLimits } from "../runtime/runtime.js";
 import { createHash, randomBytes } from "node:crypto";
 import {
 	closeSync,
@@ -51,6 +52,8 @@ import {
 	FIELD_SEPARATOR,
 	MAX_ROOT_METADATA_BYTES,
 	OperationDeadline,
+	MAX_OUTPUT_BYTES,
+	MAX_STDERR_BYTES,
 	RECORD_SEPARATOR,
 	isNoServerError,
 	parseLines,
@@ -704,6 +707,24 @@ export interface TmuxTerminalRuntimeOptions {
 }
 
 const MAX_STDERR_LINE = 200;
+
+/**
+ * How much of an answer tmux is allowed to give, and what an over-long one is.
+ *
+ * A failure, not a truncation: what tmux answers is *identity* — a session
+ * list cut off halfway is not a shorter list of sessions, it is a wrong one,
+ * and DevHub would go on to act on the difference. The sentence is composed in
+ * tmux's own vocabulary because tmux is the only thing this cap is ever
+ * applied to.
+ */
+const TMUX_LIMITS: ExecLimits = {
+	stdoutBytes: MAX_OUTPUT_BYTES,
+	stderrBytes: MAX_STDERR_BYTES,
+	overflow: {
+		kind: "fail",
+		failure: () => shapeFailure("more output than DevHub will read"),
+	},
+};
 
 /**
  * What tmux was asked to do, in the word a diagnostic should use.
@@ -2356,7 +2377,7 @@ export class TmuxTerminalRuntime {
 		cancel: CancellationToken,
 		deadline: OperationDeadline,
 	): Promise<TmuxOutput> {
-		const output = await runBounded(spec, deadline, cancel).catch(
+		const output = await runBounded(spec, deadline, cancel, TMUX_LIMITS).catch(
 			(error: unknown) => {
 				throw tmuxSilence(error, subcommand, deadline);
 			},
