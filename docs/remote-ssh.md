@@ -91,7 +91,10 @@ an entry in `product.json`'s `builtInExtensions`, so the product edit the script
 already makes cannot reach it; there is no flag or environment variable for it;
 and leaving it uncompiled does not work either, because the last step of every
 REH package task walks into the output looking for its SDK and throws when it
-is not there. Two small packages stay — `@github/copilot` (12 KB) and
+is not there. That step is also the reason the script stages the SDK into
+`.build` itself before packaging: the compile that is supposed to put it there
+did on linux-x64 and did not on linux-arm64, and the only symptom was a missing
+directory in the output tree twenty-five minutes in. Two small packages stay — `@github/copilot` (12 KB) and
 `@github/copilot-sdk` (736 KB) — because `server-main.js` reads their versions
 at startup. The build runs `bin/devhub-server --version` afterwards whenever the
 target is one the building machine can execute, so a deletion that broke

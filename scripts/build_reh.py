@@ -246,6 +246,9 @@ def bundle_server_sources(commit: str) -> float:
 	build when it is not there. In the full `vscode-reh-...-min` task that
 	compile is one of the steps the mangling half runs; it is one of the things
 	going around that half loses.
+
+	`stage_builtin_copilot_sdk` then checks that the compile actually left the
+	SDK in `.build`, because on linux-arm64 it did not. See that function.
 	"""
 	elapsed = gulp("core-ci", commit)
 	# `VSCODE_QUALITY` because that compile refuses to run on a machine with
@@ -256,9 +259,63 @@ def bundle_server_sources(commit: str) -> float:
 	# and ships the extension at the version the submodule pins. The variable
 	# reaches nothing else here — `product.json` still states no `quality`, and
 	# the server's version suffix is read from there, not from the environment.
-	return elapsed + gulp(
-		"compile-copilot-extension-build", commit, {"VSCODE_QUALITY": "stable"}
-	)
+	elapsed += gulp("compile-copilot-extension-build", commit, {"VSCODE_QUALITY": "stable"})
+	stage_builtin_copilot_sdk(VSCODE_DIR)
+	return elapsed
+
+
+# Where the built-in Copilot extension's CLI SDK lives, relative to the
+# submodule and relative to `.build`. Both spellings are the same path because
+# `packageCopilotExtensionStream` writes the extension's production
+# dependencies into `.build` under the path they have in the checkout.
+BUILT_IN_COPILOT_SDK = Path("extensions/copilot/node_modules/@github/copilot/sdk")
+
+
+def copilot_sdk_staging(vscode_dir: Path) -> tuple[Path, Path]:
+	"""The SDK the REH package task reads, and the one npm installed.
+
+	The first is what `prepareCopilotRipgrepShimTaskREH` ends up asserting on:
+	the package task copies `.build/extensions/copilot/**` into the server tree,
+	and the shim step then walks into `<tree>/extensions/copilot/node_modules/
+	@github/copilot/sdk` and throws when it is not there. The second is where
+	`extensions/copilot`'s own postinstall materialises it, out of the
+	`@github/copilot-<os>-<arch>` package npm chose for the machine — the base
+	`@github/copilot` tarball ships two files and nothing else.
+	"""
+	return vscode_dir / ".build" / BUILT_IN_COPILOT_SDK, vscode_dir / BUILT_IN_COPILOT_SDK
+
+
+def stage_builtin_copilot_sdk(vscode_dir: Path) -> None:
+	"""Make sure `.build` carries the SDK before a REH package task runs.
+
+	`compile-copilot-extension-build` is supposed to put it there, by way of
+	`getProductionDependencies('extensions/copilot')` — and on linux-x64 it
+	does. On linux-arm64 it did not (nightly 34701651753), and the only thing
+	the build then said was that a directory was missing from the *output*
+	tree, 25 minutes into a job, with nothing pointing at the input that was
+	actually short. Which of the arch-dependent steps between npm and gulp drops
+	it is upstream's business; what this script can do is state the invariant
+	the REH task depends on, satisfy it from the copy npm installed, and stop
+	with the real name of the missing thing when there is no such copy.
+
+	Nothing here silences the assertion — the shim still runs and still throws
+	if the tree is wrong. It is given the same input on both architectures
+	instead of a different one.
+	"""
+	staged, installed = copilot_sdk_staging(vscode_dir)
+	if staged.is_dir():
+		return
+	if not installed.is_dir():
+		raise SystemExit(
+			f"no built-in Copilot SDK at {installed}: `npm ci` in "
+			"extensions/copilot materialises it from the @github/copilot-<os>-"
+			"<arch> package, and every REH package task walks into the copy of "
+			"it in the server tree and fails the build when it is absent. "
+			"Reprovision the submodule (scripts/provision-vscode.sh) rather "
+			"than building a server whose last step cannot run."
+		)
+	shutil.copytree(installed, staged)
+	print(f"  staged the built-in Copilot SDK into {staged.parent}")
 
 
 def build_target(os_name: str, arch: str, commit: str, out_dir: Path) -> Path:

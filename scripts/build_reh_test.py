@@ -19,16 +19,20 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
 
 from build_reh import (
+	BUILT_IN_COPILOT_SDK,
 	COPILOT_KEPT,
 	TARGETS,
+	copilot_sdk_staging,
 	gulp_task,
 	release_tag,
 	remove_copilot,
+	stage_builtin_copilot_sdk,
 	tarball_name,
 	top_level_dir,
 )
@@ -171,6 +175,58 @@ class RemoveCopilot(unittest.TestCase):
 		self.write("extensions/git/dist/main.js")
 		with self.assertRaises(SystemExit):
 			remove_copilot(self.staging, "linux", "x64")
+
+
+class StageBuiltInCopilotSdk(unittest.TestCase):
+	"""The invariant the last step of every REH package task asserts on.
+
+	`prepareCopilotRipgrepShimTaskREH` walks into the server tree's copy of the
+	built-in Copilot extension and throws when the SDK is not under it. The tree
+	is copied out of `.build`, so `.build` is where the build has to be right,
+	and it is the same requirement whatever the target — which is the half that
+	broke: linux-x64 had it and linux-arm64 did not.
+	"""
+
+	def setUp(self) -> None:
+		self.vscode = Path(tempfile.mkdtemp())
+		self.addCleanup(lambda: shutil.rmtree(self.vscode, ignore_errors=True))
+		self.staged, self.installed = copilot_sdk_staging(self.vscode)
+
+	def materialize(self, sdk: Path) -> Path:
+		index = sdk / "index.d.ts"
+		index.parent.mkdir(parents=True, exist_ok=True)
+		index.write_text("export {};\n")
+		return index
+
+	def test_same_paths_for_every_target(self) -> None:
+		# Nothing about the SDK's place in the tree is per-platform: the
+		# extension is built once and the shim step looks in one place. A
+		# target-dependent answer here would be the bug, not the fix.
+		self.assertEqual(self.staged, self.vscode / ".build" / BUILT_IN_COPILOT_SDK)
+		self.assertEqual(self.installed, self.vscode / BUILT_IN_COPILOT_SDK)
+
+	def test_fills_in_what_the_compile_did_not_copy(self) -> None:
+		self.materialize(self.installed)
+
+		stage_builtin_copilot_sdk(self.vscode)
+
+		self.assertTrue((self.staged / "index.d.ts").is_file())
+
+	def test_leaves_a_compile_that_did_its_job_alone(self) -> None:
+		self.materialize(self.staged)
+		self.materialize(self.installed)
+		(self.staged / "index.d.ts").write_text("// from the compile\n")
+
+		stage_builtin_copilot_sdk(self.vscode)
+
+		self.assertEqual((self.staged / "index.d.ts").read_text(), "// from the compile\n")
+
+	def test_stops_when_there_is_nothing_to_stage(self) -> None:
+		# Building on would spend twenty minutes to reach an error about the
+		# output tree that says nothing about the submodule that is short.
+		with self.assertRaises(SystemExit) as caught:
+			stage_builtin_copilot_sdk(self.vscode)
+		self.assertIn(str(self.installed), str(caught.exception))
 
 
 if __name__ == "__main__":
