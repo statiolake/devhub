@@ -15,7 +15,6 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { access, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import vscodeProduct from "code-oss-dev/out/vs/platform/product/common/product.js";
@@ -167,6 +166,7 @@ import { OperationDeadline } from "../terminal/command.js";
 import { wireAgents } from "./agentWiring.js";
 import { AgentReconciler } from "./agentReconciler.js";
 import { MainServicesGate, type MainServices } from "./mainServices.js";
+import { liveRuntimes, localRuntime, runtimeFor } from "../runtime/registry.js";
 import { resolveExecutable, resolveRuntimes } from "./runtimes.js";
 import {
 	executableMissingMessage,
@@ -1865,11 +1865,16 @@ export class AppController {
 					: path.startsWith("~/")
 						? join(homedir(), path.slice(2))
 						: path;
-			const canonical = await realpath(expanded);
-			if (!(await stat(canonical)).isDirectory()) {
+			// A path somebody has just typed belongs to no Workspace yet, so
+			// there is no location to ask about: it is a folder on this machine
+			// or it is nothing. The `access` that used to follow the `stat` is
+			// gone with it — with no mode it asked only whether the path
+			// existed, which the `stat` above had already answered.
+			const runtime = localRuntime();
+			const canonical = await runtime.realpath(expanded);
+			if ((await runtime.stat(canonical)) !== "directory") {
 				throw new Error(`not a directory: ${canonical}`);
 			}
-			await access(canonical);
 			this.accept({
 				type: "workspace_path_resolved",
 				token,
@@ -2494,7 +2499,10 @@ export class AppController {
 		// fallback below is allowed to delete, and a folder that stopped being
 		// readable throws from here rather than being mistaken for one that is
 		// already gone.
-		const folder = await readWorktreeFolder(workspace.root);
+		const folder = await readWorktreeFolder(
+			runtimeFor(workspace.location),
+			workspace.root,
+		);
 		const gitSaysWorktree =
 			repository?.mainWorktree !== undefined &&
 			repository.worktree === workspace.root &&
@@ -2627,7 +2635,10 @@ export class AppController {
 			// not allowed to look at are different facts about the workspace, and
 			// offering Locate… for a folder that never moved is an answer to a
 			// question nobody asked.
-			const reason = await folderUnreadableReason(location.path);
+			const reason = await folderUnreadableReason(
+				runtimeFor(location),
+				location.path,
+			);
 			if (reason !== undefined) {
 				console.log(`[devhub] open: '${editorKey}' — ${reason}, no workbench`);
 				this.noteFolderUnreadable(location.path, reason);
@@ -3474,6 +3485,7 @@ export class AppController {
 				views,
 				counters: activityCounters.read(),
 				terminalClients,
+				runtimes: liveRuntimes().map((runtime) => runtime.reading()),
 			}),
 			null,
 			2,
@@ -3697,7 +3709,15 @@ export class AppController {
 				),
 			);
 		}
-		return { git: git.value, environment: this.launchEnvironment };
+		// Every Workspace DevHub can run git for is on this machine today; step
+		// five of the SSH work resolves the binary per runtime and threads the
+		// Workspace's own in. Until then this is the one honest answer, and it
+		// is said here rather than left implicit in a bare `spawn`.
+		return {
+			runtime: localRuntime(),
+			git: git.value,
+			environment: this.launchEnvironment,
+		};
 	}
 
 	/**

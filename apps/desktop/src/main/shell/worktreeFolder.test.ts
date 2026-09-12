@@ -22,6 +22,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { TypedFailure } from "../../model/wire.js";
+import { localRuntime } from "../runtime/registry.js";
 import { runGit, type GitCommand } from "./git.js";
 import {
 	disposeWorktreeFolder,
@@ -31,6 +32,7 @@ import {
 } from "./worktreeFolder.js";
 
 const command: GitCommand = {
+	runtime: localRuntime(),
 	git: "git",
 	environment: {
 		...process.env,
@@ -87,7 +89,7 @@ afterEach(async () => {
 describe("what a folder says about itself", () => {
 	it("reads a linked worktree's repository off its `.git` file", async () => {
 		const path = await addWorktree("feature");
-		expect(await readWorktreeFolder(path)).toEqual({
+		expect(await readWorktreeFolder(localRuntime(), path)).toEqual({
 			root: path,
 			mainWorktree: repository,
 			gitdir: join(repository, ".git", "worktrees", "feature"),
@@ -95,13 +97,15 @@ describe("what a folder says about itself", () => {
 	});
 
 	it("says nothing about the repository itself, whose `.git` is a directory", async () => {
-		expect(await readWorktreeFolder(repository)).toBeUndefined();
+		expect(
+			await readWorktreeFolder(localRuntime(), repository),
+		).toBeUndefined();
 	});
 
 	it("says nothing about a plain folder", async () => {
 		const plain = join(parent, "plain");
 		await mkdir(plain);
-		expect(await readWorktreeFolder(plain)).toBeUndefined();
+		expect(await readWorktreeFolder(localRuntime(), plain)).toBeUndefined();
 	});
 
 	it("still recognises a worktree git has forgotten", async () => {
@@ -114,7 +118,7 @@ describe("what a folder says about itself", () => {
 			force: true,
 		});
 		expect(await listedWorktrees()).not.toContain(path);
-		expect(await readWorktreeFolder(path)).toEqual({
+		expect(await readWorktreeFolder(localRuntime(), path)).toEqual({
 			root: path,
 			mainWorktree: repository,
 			gitdir: join(repository, ".git", "worktrees", "feature"),
@@ -127,32 +131,40 @@ describe("a folder that cannot be read", () => {
 		const path = await addWorktree("feature");
 		locked = parent;
 		await chmod(parent, 0o000);
-		await expect(folderIsDirectory(path)).rejects.toBeInstanceOf(TypedFailure);
-		await expect(folderIsDirectory(path)).rejects.toMatchObject({
-			wire: { summary: expect.stringContaining("EACCES") },
-		});
+		await expect(
+			folderIsDirectory(localRuntime(), path),
+		).rejects.toBeInstanceOf(TypedFailure);
+		await expect(folderIsDirectory(localRuntime(), path)).rejects.toMatchObject(
+			{
+				wire: { summary: expect.stringContaining("EACCES") },
+			},
+		);
 	});
 
 	it("names the path it could not read", async () => {
 		const path = await addWorktree("feature");
 		locked = parent;
 		await chmod(parent, 0o000);
-		await expect(folderIsDirectory(path)).rejects.toMatchObject({
-			wire: { summary: expect.stringContaining(path) },
-		});
+		await expect(folderIsDirectory(localRuntime(), path)).rejects.toMatchObject(
+			{
+				wire: { summary: expect.stringContaining(path) },
+			},
+		);
 	});
 
 	it("is `root_inaccessible` to a workbench open, not `root_missing`", async () => {
 		const path = await addWorktree("feature");
 		locked = parent;
 		await chmod(parent, 0o000);
-		expect(await folderUnreadableReason(path)).toBe("root_inaccessible");
+		expect(await folderUnreadableReason(localRuntime(), path)).toBe(
+			"root_inaccessible",
+		);
 	});
 
 	it("is `root_missing` when it really is not there", async () => {
-		expect(await folderUnreadableReason(join(parent, "nowhere"))).toBe(
-			"root_missing",
-		);
+		expect(
+			await folderUnreadableReason(localRuntime(), join(parent, "nowhere")),
+		).toBe("root_missing");
 	});
 });
 

@@ -13,10 +13,15 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { defaultConfig, type Config } from "../../model/config.js";
 import { makeScratchDir, removeScratchDir } from "../../model/testScratch.js";
+import { localRuntime } from "../runtime/registry.js";
 import { runGit, type GitCommand } from "./git.js";
 import { findClones } from "./issues.js";
 
-const GIT: GitCommand = { git: "/usr/bin/git", environment: process.env };
+const GIT: GitCommand = {
+	runtime: localRuntime(),
+	git: "/usr/bin/git",
+	environment: process.env,
+};
 const ISSUE = { owner: "example", repository: "widget", number: 128 };
 
 let root: string;

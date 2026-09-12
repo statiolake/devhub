@@ -29,7 +29,8 @@
  */
 
 import { activityCounters, COUNTER } from "../diagnostics/counters.js";
-import type { ExecLimits } from "../runtime/runtime.js";
+import { localRuntime } from "../runtime/registry.js";
+import type { ExecLimits, Runtime } from "../runtime/runtime.js";
 import { createHash, randomBytes } from "node:crypto";
 import {
 	closeSync,
@@ -60,7 +61,6 @@ import {
 	parseOptionValue,
 	parseCapture,
 	parseRecords,
-	runBounded,
 	shapeFailure,
 	type CommandOutput,
 	type CommandSpec,
@@ -704,6 +704,16 @@ export interface TmuxTerminalRuntimeOptions {
 	readonly timeoutMs?: number;
 	/** Where the one-shot bootstrap config is written. */
 	readonly bootstrapDirectory?: string;
+	/**
+	 * The machine tmux runs on.
+	 *
+	 * One tmux server per machine, and this adapter speaks to one of them. It
+	 * is a constructor argument rather than a parameter of every command
+	 * because every command in a queue has to reach the same server: a
+	 * `capture-pane` sent to a different machine than the `list-sessions` that
+	 * named the pane is not a slower answer, it is a wrong one.
+	 */
+	readonly host?: Runtime;
 }
 
 const MAX_STDERR_LINE = 200;
@@ -819,6 +829,7 @@ export class TmuxTerminalRuntime {
 	private effectiveSocket: SocketName | undefined;
 	private readonly gate = new RuntimeOperationGate();
 	private readonly bootstrapDirectory: string;
+	private readonly host: Runtime;
 	/** One in-flight bring-up per socket, shared by concurrent callers. */
 	private readonly serverBootstraps = new Map<SocketName, Promise<void>>();
 	/**
@@ -853,6 +864,7 @@ export class TmuxTerminalRuntime {
 			: undefined;
 		this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 		this.bootstrapDirectory = options.bootstrapDirectory ?? tmpdir();
+		this.host = options.host ?? localRuntime();
 	}
 
 	/** True when a tmux executable and a usable socket name are both present. */
@@ -2377,14 +2389,22 @@ export class TmuxTerminalRuntime {
 		cancel: CancellationToken,
 		deadline: OperationDeadline,
 	): Promise<TmuxOutput> {
-		const output = await runBounded(spec, deadline, cancel, TMUX_LIMITS).catch(
-			(error: unknown) => {
+		const answer = await this.host
+			.exec({
+				argv: [spec.file, ...spec.args],
+				cwd: spec.cwd,
+				env: spec.env,
+				deadline,
+				cancel,
+				limits: TMUX_LIMITS,
+			})
+			.catch((error: unknown) => {
 				throw tmuxSilence(error, subcommand, deadline);
-			},
-		);
+			});
 		return {
-			...output,
-			refusal: () => tmuxRefusal(subcommand, output.stderr),
+			...answer,
+			success: answer.code === 0 && answer.signal === null,
+			refusal: () => tmuxRefusal(subcommand, answer.stderr),
 		};
 	}
 

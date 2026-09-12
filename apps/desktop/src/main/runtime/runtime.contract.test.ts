@@ -255,8 +255,19 @@ export function describeRuntimeContract(
 						fired += 1;
 					},
 				);
-				await writeFile(join(scratch, "repo", ".git", "HEAD"), "ref: x\n");
-				await vi.waitUntil(() => fired > 0, { timeout: 2000 });
+				// Kept writing until it is seen: arming a watch is not
+				// instantaneous on every platform, and a single write racing the
+				// arm would make this a test of the scheduler.
+				await vi.waitUntil(
+					async () => {
+						await writeFile(
+							join(scratch, "repo", ".git", "HEAD"),
+							`ref: x${String(fired)}\n`,
+						);
+						return fired > 0;
+					},
+					{ timeout: 5000, interval: 50 },
+				);
 				watcher.close();
 			});
 
@@ -276,11 +287,16 @@ export function describeRuntimeContract(
 						fired += 1;
 					},
 				);
-				await writeFile(
-					join(scratch, "main", ".git", "worktrees", "w", "HEAD"),
-					"ref: y\n",
+				await vi.waitUntil(
+					async () => {
+						await writeFile(
+							join(scratch, "main", ".git", "worktrees", "w", "HEAD"),
+							`ref: y${String(fired)}\n`,
+						);
+						return fired > 0;
+					},
+					{ timeout: 5000, interval: 50 },
 				);
-				await vi.waitUntil(() => fired > 0, { timeout: 2000 });
 				watcher.close();
 			});
 

@@ -14,9 +14,10 @@
  * field that is already on screen.
  */
 
-import { mkdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
+import { localRuntime } from "../runtime/registry.js";
+import type { Runtime } from "../runtime/runtime.js";
 import type { Config } from "../../model/config.js";
 import { cloneDirectoryName, joinPath } from "../../model/projects.js";
 import {
@@ -58,12 +59,17 @@ function requireAbsolute(path: string): string {
 	return expanded;
 }
 
-async function refuseIfPresent(path: string): Promise<void> {
+async function refuseIfPresent(runtime: Runtime, path: string): Promise<void> {
+	let kind;
 	try {
-		await stat(path);
+		kind = await runtime.stat(path);
 	} catch {
+		// Not a swallow: this is the question. A path DevHub cannot even look
+		// at is not one it can refuse for already existing, and the `mkdir`
+		// below fails with the system's own words a moment later.
 		return;
 	}
+	if (kind === "absent") return;
 	throw projectFailure(`${path} already exists.`);
 }
 
@@ -75,9 +81,12 @@ async function refuseIfPresent(path: string): Promise<void> {
  * looks like it worked and is not what was asked for.
  */
 export async function createProject(path: string): Promise<string> {
+	// A new project is a folder on this machine: nothing has chosen a
+	// Workspace yet, so there is no location to ask about.
+	const runtime = localRuntime();
 	const target = requireAbsolute(path);
-	await refuseIfPresent(target);
-	await mkdir(target, { recursive: true });
+	await refuseIfPresent(runtime, target);
+	await runtime.makeDirectory(target);
 	return target;
 }
 
@@ -94,7 +103,7 @@ export async function createProject(path: string): Promise<string> {
  */
 export async function ensureWorkspaceFolder(path: string): Promise<string> {
 	const target = requireAbsolute(path);
-	await mkdir(target, { recursive: true });
+	await localRuntime().makeDirectory(target);
 	return target;
 }
 
@@ -113,8 +122,8 @@ export async function cloneProject(request: CloneRequest): Promise<string> {
 	}
 	const parent = requireAbsolute(request.parentDirectory);
 	const target = joinPath(parent, name);
-	await refuseIfPresent(target);
-	await mkdir(parent, { recursive: true });
+	await refuseIfPresent(request.command.runtime, target);
+	await request.command.runtime.makeDirectory(parent);
 	// `--` so a URL that begins with a dash is a URL and not an option.
 	await runGit(request.command, ["clone", "--", request.url.trim(), target], {
 		timeoutMs: NETWORK_TIMEOUT_MS,

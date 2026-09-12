@@ -18,13 +18,15 @@
  * holds the loose ones, and none of them move when somebody merely edits a
  * file — which is the whole point, because a watcher on the working tree of a
  * repository being built would fire thousands of times for a branch that never
- * changed.
+ * changed. Which directory that is, and how it is watched, belong to the
+ * checkout's `Runtime` — locally two `fs.watch`es, across a network a poll —
+ * because there is no honest local imitation of the remote answer. Everything
+ * in this file is above that line: the debounce, the re-arm rule and the
+ * record of what could not be watched read the same either way.
  */
 
-import { watch, type FSWatcher } from "node:fs";
-import { readFile, stat } from "node:fs/promises";
-import { isAbsolute, join, resolve } from "node:path";
 import { activityCounters, COUNTER } from "../diagnostics/counters.js";
+import type { Runtime, Watcher } from "../runtime/runtime.js";
 
 /**
  * How long after the last filesystem event the branch is read.
@@ -51,6 +53,16 @@ export interface WatchedRepository {
 	readonly key: string;
 	/** The root of the checkout — the directory whose `.git` is resolved. */
 	readonly worktree: string;
+	/**
+	 * The machine the checkout is on.
+	 *
+	 * Per repository and not per watcher, because two open Workspaces can sit
+	 * on two different machines and the answer to "is this being watched"
+	 * has to be one answer per checkout either way. What the runtime does with
+	 * it — real events here, a poll across a network — is its business; every
+	 * word below this line is the same for both.
+	 */
+	readonly runtime: Runtime;
 }
 
 /** Why one checkout is not being watched, in a sentence a person can read. */
@@ -60,35 +72,10 @@ export interface WatchFailure {
 	readonly reason: string;
 }
 
-/**
- * Where a checkout keeps `HEAD`.
- *
- * `.git` is a directory in an ordinary clone and a file holding `gitdir: …` in
- * a linked worktree, where the real one is `<main>/.git/worktrees/<name>` — and
- * that is the directory whose `HEAD` a checkout in *that* worktree rewrites.
- * Reading the file rather than running `git rev-parse --git-dir` keeps this off
- * the process budget the watcher exists to cut.
- */
-export async function gitDirectoryOf(worktree: string): Promise<string> {
-	const dotGit = join(worktree, ".git");
-	const info = await stat(dotGit);
-	if (info.isDirectory()) return dotGit;
-	const text = await readFile(dotGit, "utf8");
-	const line = text.split("\n")[0]?.trim() ?? "";
-	if (!line.startsWith("gitdir:")) {
-		throw new Error(`${dotGit} is not a directory and does not name one`);
-	}
-	const target = line.slice("gitdir:".length).trim();
-	if (target.length === 0) {
-		throw new Error(`${dotGit} names an empty gitdir`);
-	}
-	return isAbsolute(target) ? target : resolve(worktree, target);
-}
-
-/** One checkout's watchers, and what it took to arm them. */
+/** One checkout's watch, and what it took to arm it. */
 interface Armed {
 	readonly worktree: string;
-	readonly watchers: readonly FSWatcher[];
+	readonly watcher: Watcher;
 }
 
 /**
@@ -135,7 +122,10 @@ export class HeadWatcher {
 			try {
 				this.#armed.set(key, {
 					worktree: repository.worktree,
-					watchers: await this.#watchersFor(repository.worktree),
+					watcher: await repository.runtime.watchGitDirectory(
+						repository.worktree,
+						() => this.#touched(),
+					),
 				});
 				activityCounters.record(COUNTER.repositoryHeadWatch);
 			} catch (error: unknown) {
@@ -172,36 +162,10 @@ export class HeadWatcher {
 		this.#burstStartedAt = undefined;
 	}
 
-	async #watchersFor(worktree: string): Promise<FSWatcher[]> {
-		const gitDirectory = await gitDirectoryOf(worktree);
-		const watchers: FSWatcher[] = [];
-		try {
-			// The git directory itself, not `HEAD`: git replaces `HEAD` by
-			// writing a temporary file and renaming it over the old one, and a
-			// watcher on the file follows the inode that was renamed away. The
-			// directory sees the rename, and sees `packed-refs` too.
-			watchers.push(watch(gitDirectory, () => this.#touched()));
-			watchers.push(
-				watch(join(gitDirectory, "refs"), { recursive: true }, () =>
-					this.#touched(),
-				),
-			);
-		} catch (failure: unknown) {
-			for (const watcher of watchers) watcher.close();
-			throw failure;
-		}
-		for (const watcher of watchers) {
-			// A watcher that dies is a checkout that stopped being watched, and
-			// the caller has to be able to say so.
-			watcher.on("error", () => this.#touched());
-		}
-		return watchers;
-	}
-
 	#close(key: string): void {
 		const armed = this.#armed.get(key);
 		if (!armed) return;
-		for (const watcher of armed.watchers) watcher.close();
+		armed.watcher.close();
 		this.#armed.delete(key);
 	}
 

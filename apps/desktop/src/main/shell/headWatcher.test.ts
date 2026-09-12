@@ -13,11 +13,9 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import {
-	gitDirectoryOf,
-	HEAD_DEBOUNCE_CEILING_MS,
-	HeadWatcher,
-} from "./headWatcher.js";
+import { gitDirectoryOf } from "../runtime/gitDirectory.js";
+import { localRuntime } from "../runtime/registry.js";
+import { HEAD_DEBOUNCE_CEILING_MS, HeadWatcher } from "./headWatcher.js";
 
 const cleanups: (() => void)[] = [];
 
@@ -124,7 +122,9 @@ describe("watching for a checkout", () => {
 		async () => {
 			const root = repository();
 			const { watcher, changes } = watching();
-			await watcher.arm([{ key: "w-1", worktree: root }]);
+			await watcher.arm([
+				{ key: "w-1", worktree: root, runtime: localRuntime() },
+			]);
 			expect(watcher.failures()).toEqual([]);
 			expect(watcher.armedCount).toBe(1);
 			const since = await settled(changes);
@@ -146,14 +146,18 @@ describe("watching for a checkout", () => {
 			git(root, "worktree", "add", "-q", "-b", "side", linked);
 
 			const { watcher, changes } = watching();
-			await watcher.arm([{ key: "w-1", worktree: linked }]);
+			await watcher.arm([
+				{ key: "w-1", worktree: linked, runtime: localRuntime() },
+			]);
 			expect(watcher.failures()).toEqual([]);
 			const since = await settled(changes);
 
 			// The linked worktree's `HEAD` lives under the main repository's
 			// `.git/worktrees/<name>`, which is what `gitDirectoryOf` resolves and
 			// the only place this checkout is written.
-			expect(await gitDirectoryOf(linked)).toContain("worktrees");
+			expect(await gitDirectoryOf(localRuntime(), linked)).toContain(
+				"worktrees",
+			);
 			git(linked, "checkout", "-q", "-b", "side-two");
 			await until("the worktree's checkout was noticed", () => since() > 0);
 		},
@@ -165,7 +169,9 @@ describe("watching for a checkout", () => {
 		async () => {
 			const root = repository();
 			const { watcher, changes } = watching();
-			await watcher.arm([{ key: "w-1", worktree: root }]);
+			await watcher.arm([
+				{ key: "w-1", worktree: root, runtime: localRuntime() },
+			]);
 			const since = await settled(changes);
 
 			// The claim is about a window in which nothing happens, so the window
@@ -186,7 +192,9 @@ describe("watching for a checkout", () => {
 				rmSync(plain, { recursive: true, force: true });
 			});
 			const { watcher } = watching();
-			await watcher.arm([{ key: "w-1", worktree: plain }]);
+			await watcher.arm([
+				{ key: "w-1", worktree: plain, runtime: localRuntime() },
+			]);
 
 			expect(watcher.armedCount).toBe(0);
 			const failure = watcher.failures()[0];
@@ -204,12 +212,14 @@ describe("watching for a checkout", () => {
 			const second = repository();
 			const { watcher, changes } = watching();
 			await watcher.arm([
-				{ key: "w-1", worktree: first },
-				{ key: "w-2", worktree: second },
+				{ key: "w-1", worktree: first, runtime: localRuntime() },
+				{ key: "w-2", worktree: second, runtime: localRuntime() },
 			]);
 			expect(watcher.armedCount).toBe(2);
 
-			await watcher.arm([{ key: "w-1", worktree: first }]);
+			await watcher.arm([
+				{ key: "w-1", worktree: first, runtime: localRuntime() },
+			]);
 			expect(watcher.armedCount).toBe(1);
 			const since = await settled(changes);
 

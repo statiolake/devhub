@@ -42,6 +42,7 @@ describe("metricsReport", () => {
 			views: [view(7, 42, "workspace:one", true)],
 			counters: noCounters,
 			terminalClients: [],
+			runtimes: [],
 		});
 
 		expect(report.processes.map((one) => one.pid)).toEqual([7, 1]);
@@ -64,6 +65,7 @@ describe("metricsReport", () => {
 			views: [],
 			counters: noCounters,
 			terminalClients: [],
+			runtimes: [],
 		});
 		expect(report.processes.map((one) => one.cpuPercent)).toEqual([9, 3, 0.5]);
 		expect(report.totalCpuPercent).toBeCloseTo(12.5);
@@ -81,6 +83,7 @@ describe("metricsReport", () => {
 			],
 			counters: noCounters,
 			terminalClients: [],
+			runtimes: [],
 		});
 		expect(report.processes[0]?.workbench?.surfaceKey).toBe("workspace:shown");
 	});
@@ -100,6 +103,7 @@ describe("metricsReport", () => {
 			views: [],
 			counters,
 			terminalClients: [],
+			runtimes: [],
 		});
 		expect(report.takenAt).toBe("2026-01-02T03:04:05.000Z");
 		expect(report.mainProcessCpu).toEqual({ userMs: 12_000, systemMs: 8_000 });
@@ -119,6 +123,7 @@ describe("the tmux clients a reading carries", () => {
 			processMetrics: [],
 			views: [],
 			counters: noCounters,
+			runtimes: [],
 			terminalClients: [
 				{ tty: "/dev/ttys001", session: "scratch" },
 				{ tty: "/dev/ttys002", session: "ws-abc" },

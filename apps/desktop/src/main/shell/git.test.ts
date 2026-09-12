@@ -20,6 +20,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { TypedFailure } from "../../model/wire.js";
+import { localRuntime } from "../runtime/registry.js";
 import {
 	ensureWorktree,
 	findBranch,
@@ -33,6 +34,7 @@ import {
 } from "./git.js";
 
 const command: GitCommand = {
+	runtime: localRuntime(),
 	git: "git",
 	environment: {
 		...process.env,

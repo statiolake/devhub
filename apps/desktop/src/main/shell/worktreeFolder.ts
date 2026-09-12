@@ -5,14 +5,16 @@
  * kind of fact: read off the filesystem, about one path, with no repository
  * poll behind them.
  *
- * **Is it there.** `stat` failing is not one answer. `ENOENT` and `ENOTDIR`
+ * **Is it there.** A probe failing is not one answer. `ENOENT` and `ENOTDIR`
  * mean the folder is not there, which for a close is the state it was trying
  * to reach. Every *other* errno — `EACCES` on a parent whose permissions
  * changed, `EIO` on a failing disk, a dead network mount — means DevHub could
  * not find out, and a close that reads "could not find out" as "already gone"
  * deletes git's record of a worktree whose folder is still sitting there with
  * work in it, and reports success. So not-there is one answer and could-not-
- * look is a failure, and the errno and the path travel with it.
+ * look is a failure, and the errno and the path travel with it. That split is
+ * the runtime's now (`Runtime.stat` answers `"absent"` or throws), which is
+ * what lets the same rule hold for a folder on another machine.
  *
  * **Is it a worktree.** git's own list is not the authority, because the case
  * that matters is exactly the case where git's list is wrong: `git worktree
@@ -24,8 +26,8 @@
  * DevHub reads.
  */
 
-import { readFile, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
+import { RuntimeFileError, type Runtime } from "../runtime/runtime.js";
 import {
 	pruneWorktrees,
 	removeWorktree,
@@ -33,20 +35,25 @@ import {
 	type GitCommand,
 } from "./git.js";
 
+/** A `.git` file naming a gitdir is a line, not a document. */
+const MAX_MARKER_BYTES = 4096;
+
 /** The segment that makes a `gitdir:` an *administrative record for a linked worktree*. */
 const WORKTREES_SEGMENT = "/.git/worktrees/";
 
-/** The errnos that mean "there is nothing at this path", and only those. */
-function meansAbsent(error: unknown): boolean {
-	const code = (error as NodeJS.ErrnoException | undefined)?.code;
-	return code === "ENOENT" || code === "ENOTDIR";
-}
-
-/** The errno as a sentence, so a failure can quote the system rather than invent. */
+/**
+ * The errno as a sentence, so a failure can quote the system rather than invent.
+ *
+ * The runtime has already made the distinction this file is built on: not-there
+ * is an answer (`"absent"`), and could-not-look is a `RuntimeFileError` with
+ * the errno on it. Anything else that reaches here is not about the path.
+ */
 function unreadable(path: string, error: unknown): Error {
-	const code = (error as NodeJS.ErrnoException | undefined)?.code;
+	if (error instanceof RuntimeFileError) {
+		return workspaceFailure(`${path} could not be read (${error.code}).`);
+	}
 	return workspaceFailure(
-		`${path} could not be read (${code ?? (error instanceof Error ? error.message : String(error))}).`,
+		`${path} could not be read (${error instanceof Error ? error.message : String(error)}).`,
 	);
 }
 
@@ -57,11 +64,13 @@ function unreadable(path: string, error: unknown): Error {
  * move for "it is gone" is destructive or tells the person their folder has
  * vanished, and neither is the right answer to a permission bit.
  */
-export async function folderIsDirectory(folder: string): Promise<boolean> {
+export async function folderIsDirectory(
+	runtime: Runtime,
+	folder: string,
+): Promise<boolean> {
 	try {
-		return (await stat(folder)).isDirectory();
+		return (await runtime.stat(folder)) === "directory";
 	} catch (error: unknown) {
-		if (meansAbsent(error)) return false;
 		throw unreadable(folder, error);
 	}
 }
@@ -85,17 +94,18 @@ export interface WorktreeFolder {
  * be read throws — see the note at the top of this file.
  */
 export async function readWorktreeFolder(
+	runtime: Runtime,
 	folder: string,
 ): Promise<WorktreeFolder | undefined> {
 	const marker = join(folder, ".git");
 	let contents: string;
 	try {
-		const stats = await stat(marker);
+		const kind = await runtime.stat(marker);
+		if (kind === "absent") return undefined;
 		// A repository has a `.git` directory. Only a linked worktree has a file.
-		if (stats.isDirectory()) return undefined;
-		contents = await readFile(marker, "utf8");
+		if (kind === "directory") return undefined;
+		contents = await runtime.readTextFile(marker, MAX_MARKER_BYTES);
 	} catch (error: unknown) {
-		if (meansAbsent(error)) return undefined;
 		throw unreadable(marker, error);
 	}
 	const gitdir = /^gitdir:\s*(.+?)\s*$/mu.exec(contents)?.[1];
@@ -130,12 +140,20 @@ export function isWorktreeOf(
  * `root_inaccessible` does not, because the folder is exactly where it was.
  */
 export async function folderUnreadableReason(
+	runtime: Runtime,
 	folder: string,
 ): Promise<"root_missing" | "root_inaccessible" | undefined> {
 	try {
-		return (await stat(folder)).isDirectory() ? undefined : "root_missing";
-	} catch (error: unknown) {
-		return meansAbsent(error) ? "root_missing" : "root_inaccessible";
+		return (await runtime.stat(folder)) === "directory"
+			? undefined
+			: "root_missing";
+	} catch {
+		// Not a swallow: every failure the runtime raises for a path is
+		// "DevHub could not look", and that is one of the two answers this
+		// function exists to give. Which errno it was does not change the
+		// offer — `root_inaccessible` deliberately does not offer Locate…,
+		// because the folder is exactly where it was.
+		return "root_inaccessible";
 	}
 }
 
@@ -172,8 +190,8 @@ export async function disposeWorktreeFolder(
 	// Read first, and from the folder: this is the claim that survives a
 	// half-finished `git worktree remove`, and it is the only thing that
 	// authorises the fallback to delete anything.
-	const folder = await readWorktreeFolder(root);
-	if (!(await folderIsDirectory(root))) {
+	const folder = await readWorktreeFolder(command.runtime, root);
+	if (!(await folderIsDirectory(command.runtime, root))) {
 		await pruneWorktrees(command, mainWorktree);
 		return;
 	}
@@ -187,8 +205,8 @@ export async function disposeWorktreeFolder(
 		// standing between somebody and work they cannot get back, and taking
 		// the folder anyway would make `--force` mean nothing.
 		if (!isWorktreeOf(folder, mainWorktree)) throw error;
-		if (await folderIsDirectory(folder.gitdir)) throw error;
+		if (await folderIsDirectory(command.runtime, folder.gitdir)) throw error;
 		await pruneWorktrees(command, mainWorktree);
-		await rm(root, { recursive: true, force: true });
+		await command.runtime.removeTree(root);
 	}
 }

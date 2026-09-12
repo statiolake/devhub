@@ -12,9 +12,9 @@
  * before anything is run.
  */
 
-import { spawn } from "node:child_process";
-import { activityCounters, COUNTER } from "../diagnostics/counters.js";
-import { stat } from "node:fs/promises";
+import type { Runtime } from "../runtime/runtime.js";
+import { OperationDeadline } from "../terminal/command.js";
+import { CancellationToken, PortFailure } from "../terminal/ports.js";
 import {
 	remoteIdentity,
 	type RemoteIdentity,
@@ -63,8 +63,17 @@ export function fetchFailure(reason: string): TypedFailure {
 	);
 }
 
-/** The git binary DevHub resolved, and the environment it runs in. */
+/** The git binary DevHub resolved, where it runs, and what it runs in. */
 export interface GitCommand {
+	/**
+	 * The machine the repository is on.
+	 *
+	 * Part of the command rather than a parameter of every call, because it is
+	 * the same fact as *which* `git`: the binary was resolved on that machine
+	 * and means nothing on any other. Sixteen callers pass a `GitCommand`
+	 * around and not one of them has to know there is a question here.
+	 */
+	readonly runtime: Runtime;
 	readonly git: string;
 	readonly environment: Readonly<Record<string, string | undefined>>;
 }
@@ -83,60 +92,89 @@ const MAX_STDERR_BYTES = 8 * 1024;
 const MAX_STDOUT_BYTES = 4 * 1024 * 1024;
 
 /**
+ * How much of git's answer DevHub reads, and what a longer one is.
+ *
+ * Truncation, not a refusal, because that is what it has always been: a
+ * `git log` of a repository with four megabytes of history is a large answer
+ * and not a broken one, and the callers here read prefixes — a branch name, a
+ * URL, the first line of a status. tmux's cap is the other way round for the
+ * opposite reason, and the two live apart so that neither can be changed by
+ * somebody tidying the other.
+ */
+const GIT_LIMITS = {
+	stdoutBytes: MAX_STDOUT_BYTES,
+	stderrBytes: MAX_STDERR_BYTES,
+	overflow: { kind: "truncate" },
+} as const;
+
+/**
  * Run git and answer with what it wrote, or throw what it complained about.
  *
  * Arguments are passed as a list and never through a shell, so a branch name
  * with a space, a quote or a semicolon in it is a branch name.
  */
-export function runGit(
+export async function runGit(
 	command: GitCommand,
 	args: readonly string[],
 	options: GitRunOptions = {},
 ): Promise<string> {
 	const timeoutMs = options.timeoutMs ?? LOCAL_TIMEOUT_MS;
-	activityCounters.record(COUNTER.process("git"));
-	return new Promise<string>((resolve, reject) => {
-		const child = spawn(command.git, args, {
+	let answer;
+	try {
+		answer = await command.runtime.exec({
+			// A list, never a shell string, so a branch name with a space, a
+			// quote or a semicolon in it is a branch name. On another machine
+			// the runtime quotes it back into one; here `spawn` never split it.
+			argv: [command.git, ...args],
 			cwd: options.cwd,
-			env: command.environment as NodeJS.ProcessEnv,
-			stdio: ["ignore", "pipe", "pipe"],
+			env: command.environment,
+			deadline: OperationDeadline.in(timeoutMs),
+			cancel: new CancellationToken(),
+			limits: GIT_LIMITS,
 		});
-		let stdout = "";
-		let stderr = "";
-		child.stdout.on("data", (chunk: Buffer) => {
-			if (stdout.length < MAX_STDOUT_BYTES) stdout += chunk.toString("utf8");
-		});
-		child.stderr.on("data", (chunk: Buffer) => {
-			if (stderr.length < MAX_STDERR_BYTES) stderr += chunk.toString("utf8");
-		});
-		const timer = setTimeout(() => {
-			child.kill("SIGKILL");
-		}, timeoutMs);
-		child.once("error", (failure: Error) => {
-			clearTimeout(timer);
-			reject(workspaceFailure(failure.message));
-		});
-		child.once("close", (code, signal) => {
-			clearTimeout(timer);
-			if (code === 0) {
-				resolve(stdout);
-				return;
-			}
-			// git says why on stderr and DevHub has nothing to add: passing its own
-			// last line through is the difference between "it failed" and
-			// "Repository not found", and only one of those can be acted on.
-			const said = stderr.trim().split("\n").at(-1)?.trim();
-			reject(
-				workspaceFailure(
-					said && said.length > 0
-						? said
-						: signal
-							? `git ${args[0] ?? ""} was stopped (${signal}).`
-							: `git ${args[0] ?? ""} failed (exit ${String(code ?? "unknown")}).`,
-				),
-			);
-		});
-	});
+	} catch (failure: unknown) {
+		throw gitDidNotAnswer(failure, args, timeoutMs);
+	}
+	if (answer.code === 0) return answer.stdout.toString("utf8");
+	// git says why on stderr and DevHub has nothing to add: passing its own
+	// last line through is the difference between "it failed" and
+	// "Repository not found", and only one of those can be acted on.
+	const said = answer.stderr.toString("utf8").trim().split("\n").at(-1)?.trim();
+	throw workspaceFailure(
+		said && said.length > 0
+			? said
+			: answer.signal
+				? `git ${args[0] ?? ""} was stopped (${answer.signal}).`
+				: `git ${args[0] ?? ""} failed (exit ${String(answer.code ?? "unknown")}).`,
+	);
+}
+
+/**
+ * git did not get as far as an answer, in words that say which way.
+ *
+ * The runtime's own failures are about the *runtime* — it could not start a
+ * program, it waited and heard nothing — and a caller that showed them
+ * verbatim would tell somebody looking for a repository that "the terminal
+ * runtime is unavailable". So each one is turned back into a sentence about
+ * git here, at the one place that knows what was being asked.
+ */
+function gitDidNotAnswer(
+	failure: unknown,
+	args: readonly string[],
+	timeoutMs: number,
+): unknown {
+	if (!(failure instanceof PortFailure)) return failure;
+	if (failure.code === "timed_out") {
+		return workspaceFailure(
+			`git ${args[0] ?? ""} did not answer in ${String(Math.round(timeoutMs / 1000))}s.`,
+		);
+	}
+	// The cause is the system's own complaint — "spawn git ENOENT" — which is
+	// exactly what this used to report and exactly what names the fix.
+	const cause = failure.cause;
+	return workspaceFailure(
+		cause instanceof Error ? cause.message : failure.message,
+	);
 }
 
 /**
@@ -761,7 +799,7 @@ export async function ensureWorktree(
 		await fetchOrigin(command, directory, options);
 
 	const target = worktreeDirectory(repository.mainWorktree, name);
-	if (await exists(target)) {
+	if (await exists(command.runtime, target)) {
 		throw workspaceFailure(
 			`${target} already exists and is not a worktree for ${name}.`,
 		);
@@ -896,13 +934,16 @@ async function fetchOrigin(
 	);
 }
 
-async function exists(path: string): Promise<boolean> {
-	try {
-		await stat(path);
-		return true;
-	} catch {
-		return false;
-	}
+/**
+ * Whether there is anything at all at this path, on the repository's machine.
+ *
+ * A probe through the runtime and not `node:fs`, because the path is beside a
+ * checkout that may be on another machine, and a `stat` of it here would be a
+ * question about the wrong disk — one that answers "nothing there" for a
+ * folder that is very much there.
+ */
+async function exists(runtime: Runtime, path: string): Promise<boolean> {
+	return (await runtime.stat(path)) !== "absent";
 }
 
 /** The name a repository's directory carries, for a label or a search. */

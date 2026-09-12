@@ -628,11 +628,27 @@ export class RepositoryStatusWatcher {
 	 * `HEAD` is not the main one's.
 	 */
 	private async armHeads(): Promise<void> {
+		const command = this.command;
+		if (!command) {
+			// No git means no checkout was read, so there is nothing whose
+			// machine is known — and `local` is empty of worktrees anyway.
+			await this.heads.arm([]);
+			return;
+		}
 		await this.heads.arm(
 			this.local.flatMap((entry) =>
 				entry.worktree === undefined
 					? []
-					: [{ key: entry.workspace.id, worktree: entry.worktree }],
+					: [
+							{
+								key: entry.workspace.id,
+								worktree: entry.worktree,
+								// The machine the checkout is on is the machine its
+								// git ran on. There is not a second answer to ask
+								// for, and asking one would be how the two drift.
+								runtime: command.runtime,
+							},
+						],
 			),
 		);
 	}

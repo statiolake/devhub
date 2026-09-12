@@ -65,12 +65,8 @@ import {
 	type TerminalFrame,
 	type TerminalSize,
 } from "../../ipc/terminal.js";
-import {
-	openPty,
-	terminalEnvironment,
-	type Pty,
-	type PtyFactory,
-} from "./pty.js";
+import { localRuntime } from "../runtime/registry.js";
+import { terminalEnvironment, type Pty, type PtyFactory } from "./pty.js";
 import { CancellationToken, sameTarget, type TerminalTarget } from "./ports.js";
 
 const MAX_IN_FLIGHT_FRAMES = 8;
@@ -557,7 +553,10 @@ export class AttachmentManager {
 	private generation: number;
 
 	constructor(options: AttachmentManagerOptions) {
-		this.spawn = options.spawn ?? openPty;
+		// The Agent pane's PTY is opened on the Workspace's machine, and
+		// `openPty` is what that means when the machine is this one. The
+		// injected `spawn` is the tests' fake, which is the only other caller.
+		this.spawn = options.spawn ?? ((launch) => localRuntime().spawnPty(launch));
 		this.randomBytes = options.randomBytes;
 		this.environment = options.environment ?? (() => terminalEnvironment());
 		// The ledger starts somewhere unguessable, so a generation from one run

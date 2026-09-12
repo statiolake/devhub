@@ -10,6 +10,7 @@
  */
 
 import type { CountersReading } from "./counters.js";
+import type { RuntimeReading } from "../runtime/runtime.js";
 
 /** What DevHub knows about one of its own workbench renderers. */
 export interface ViewIdentity {
@@ -82,6 +83,17 @@ export interface MetricsReport {
 	 * a count that climbs across window reloads is clients being left behind.
 	 */
 	readonly terminalClients: readonly TerminalClientReading[];
+	/**
+	 * The machines DevHub is running things on, one entry each.
+	 *
+	 * There is one today and it is this Mac, which is why it reads as no
+	 * latency and no failures. It is a list from the start because the whole
+	 * point of the runtime seam is that there will be more of them, and a
+	 * remote machine's cost is invisible in every other number here: its
+	 * processes are not in `getAppMetrics`, its round trips are not in any
+	 * counter, and "why is this slow" would otherwise need a packet capture.
+	 */
+	readonly runtimes: readonly RuntimeReading[];
 }
 
 /** One attached tmux client, as a reading names it. */
@@ -98,6 +110,7 @@ export interface MetricsInput {
 	readonly views: readonly ViewIdentity[];
 	readonly counters: CountersReading;
 	readonly terminalClients: readonly TerminalClientReading[];
+	readonly runtimes: readonly RuntimeReading[];
 }
 
 /**
@@ -139,5 +152,6 @@ export function metricsReport(input: MetricsInput): MetricsReport {
 		),
 		counters: input.counters,
 		terminalClients: input.terminalClients,
+		runtimes: input.runtimes,
 	};
 }
