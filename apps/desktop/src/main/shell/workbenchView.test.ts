@@ -16,8 +16,14 @@ class FakeWebContents {
 	focus(): void {}
 	close(): void {
 		this.destroyed = true;
+		// Electron drops `WebContentsView.webContents` to `undefined` before it
+		// runs this — measured on Electron 42 — so the fake drops it too. A fake
+		// that kept the property is how a `TypeError` in every workspace
+		// teardown went unnoticed here.
+		this.owner.forget();
 		for (const listener of this.listeners.get("destroyed") ?? []) listener();
 	}
+	constructor(private readonly owner: FakeWebContentsView) {}
 	isDestroyed(): boolean {
 		return this.destroyed;
 	}
@@ -31,13 +37,25 @@ class FakeWebContents {
 	once(event: string, listener: () => void): this {
 		return this.on(event, listener);
 	}
-	removeListener(): this {
+	/** Fire what Electron fires on the contents themselves. */
+	emit(event: string): void {
+		for (const listener of this.listeners.get(event) ?? []) listener();
+	}
+	removeListener(event: string, listener: () => void): this {
+		this.listeners.set(
+			event,
+			(this.listeners.get(event) ?? []).filter((held) => held !== listener),
+		);
 		return this;
 	}
 }
 
 class FakeWebContentsView {
-	readonly webContents = new FakeWebContents();
+	webContents: FakeWebContents = new FakeWebContents(this);
+	/** What Electron does to the property when the contents are destroyed. */
+	forget(): void {
+		this.webContents = undefined as unknown as FakeWebContents;
+	}
 	visible = true;
 	setVisible(visible: boolean): void {
 		this.visible = visible;
@@ -82,8 +100,19 @@ class FakeShellWindow {
 	once(event: string, listener: (...args: unknown[]) => void): this {
 		return this.on(event, listener);
 	}
-	removeListener(): this {
+	removeListener(event: string, listener: (...args: unknown[]) => void): this {
+		this.listeners.set(
+			event,
+			(this.listeners.get(event) ?? []).filter((held) => held !== listener),
+		);
 		return this;
+	}
+	/** How many listeners this window is still holding, of every event. */
+	count(): number {
+		return [...this.listeners.values()].reduce(
+			(total, held) => total + held.length,
+			0,
+		);
 	}
 	/** Fire what Electron fires when the person clicks the red button. */
 	emit(event: string, ...args: unknown[]): void {
@@ -118,7 +147,19 @@ class FakeShell {
 	publishFocus(...views: WorkbenchView[]): void {
 		for (const view of views) view.focusStateChanged();
 	}
-	detach(): void {}
+	/** The shell's table of views, which a view must leave as it ends. */
+	readonly attached: WorkbenchView[] = [];
+	attach(view: WorkbenchView): void {
+		this.attached.push(view);
+	}
+	detach(view: WorkbenchView): void {
+		const at = this.attached.indexOf(view);
+		if (at !== -1) this.attached.splice(at, 1);
+		if (this.revealed === view) this.revealed = undefined;
+		// What the real `ShellWindow.detach` does last: the view that left is
+		// told, and so is everything else that was on screen with it.
+		view.focusStateChanged();
+	}
 }
 
 /**
@@ -245,6 +286,131 @@ describe("a workbench view's window state", () => {
 		view.destroy();
 		expect(view.isDestroyed()).toBe(true);
 		expect(view.isVisible()).toBe(false);
+	});
+});
+
+/**
+ * What is left of a workbench view once it has ended.
+ *
+ * The answer has to be nothing, and the reason is an ordering VS Code owns:
+ * `CodeWindow` listens for `closed`, and what it does with it is dispose
+ * itself — which hands back every listener it ever added, to a window whose
+ * contents Electron destroyed a tick earlier. Electron drops
+ * `WebContentsView.webContents` to `undefined` at that moment, so every one of
+ * those `off` calls used to end in `Cannot read properties of undefined
+ * (reading 'removeListener')`, once per workspace closed.
+ *
+ * So a view that has ended is off the shell's table, holds no subscription on
+ * anything that outlives it, and answers a late caller by doing nothing at all.
+ */
+describe("a workbench view that has ended", () => {
+	let shell: FakeShell;
+	let view: WorkbenchView;
+	let contents: FakeWebContents;
+	let heard: string[];
+
+	beforeEach(() => {
+		shell = new FakeShell();
+		view = new WorkbenchView(
+			shell as unknown as ConstructorParameters<typeof WorkbenchView>[0],
+			{},
+		);
+		shell.attach(view);
+		contents = view.webContents as unknown as FakeWebContents;
+		heard = [];
+		announced.length = 0;
+	});
+
+	/** Everything a `CodeWindow` subscribes to, one listener each. */
+	function listenToEverything(): [string, () => void][] {
+		const events = [
+			"close",
+			"closed",
+			"session-end",
+			"focus",
+			"blur",
+			"responsive",
+			"unresponsive",
+			"maximize",
+			"unmaximize",
+			"enter-full-screen",
+			"leave-full-screen",
+			"always-on-top-changed",
+			"move",
+			"resize",
+		];
+		return events.map((event) => {
+			const listener = () => heard.push(event);
+			view.on(event, listener);
+			return [event, listener] as [string, () => void];
+		});
+	}
+
+	it("takes back every listener it left on the shell's window", () => {
+		listenToEverything();
+		expect(shell.window.count()).toBeGreaterThan(0);
+
+		view.destroy();
+		// Not one dead `CodeWindow` left on an emitter that outlives every
+		// view: a session of opening and closing workspaces would otherwise
+		// accumulate one set per workspace.
+		expect(shell.window.count()).toBe(0);
+		// Its own ending it does hear, once, which is the one event a teardown
+		// is entitled to.
+		expect(heard).toEqual(["closed"]);
+		heard.length = 0;
+		shell.window.emit("maximize");
+		shell.window.emit("enter-full-screen");
+		expect(heard).toEqual([]);
+	});
+
+	it("is off the shell's table the moment it ends, whoever ended it", () => {
+		expect(shell.attached).toEqual([view]);
+		// Killed from underneath — a crashed renderer — with no call to
+		// `destroy()`. The view still leaves, because leaving is what ending
+		// means and there is only one teardown.
+		contents.close();
+		expect(shell.attached).toEqual([]);
+		expect(view.isDestroyed()).toBe(true);
+	});
+
+	it("answers VS Code's dispose without throwing and without doing anything", () => {
+		const listeners = listenToEverything();
+		// The real order: the contents go, `closed` reaches `CodeWindow`, and
+		// `CodeWindow.dispose()` hands every listener back.
+		view.destroy();
+		for (const [event, listener] of listeners) {
+			expect(() => view.off(event, listener)).not.toThrow();
+			expect(() => view.removeListener(event, listener)).not.toThrow();
+		}
+		expect(() => view.removeAllListeners()).not.toThrow();
+	});
+
+	it("registers nothing new, and fires nothing, once it has ended", () => {
+		view.destroy();
+		const listeners = listenToEverything();
+		expect(shell.window.count()).toBe(0);
+
+		// Every path that used to reach a live view, fired at a dead one.
+		shell.window.emit("maximize");
+		shell.window.emit("move");
+		contents.emit("responsive");
+		shell.reveal(view);
+		shell.publishFocus(view);
+		view.focusConfirmed();
+		view.focusStateChanged();
+		expect(heard).toEqual([]);
+		expect(announced).toEqual([]);
+		expect(listeners.length).toBeGreaterThan(0);
+	});
+
+	it("keeps its identity after its contents are gone", () => {
+		const id = view.id;
+		contents.close();
+		// `id` is how every registry in main names this view, including the
+		// ones being asked to forget it while it goes.
+		expect(view.id).toBe(id);
+		expect(view.webContents).toBe(contents);
 	});
 });
 

@@ -88,7 +88,12 @@ type WindowOpenHandler = (details: {
 }) => Electron.WindowOpenHandlerResponse;
 
 class FakeWindow {
-	readonly contentView = new FakeContentView();
+	private readonly children = new FakeContentView();
+	/** Electron's answer once the window is gone, and the reason for it. */
+	get contentView(): FakeContentView {
+		if (this.destroyed) throw new Error("Object has been destroyed");
+		return this.children;
+	}
 	windowOpenHandler: WindowOpenHandler | undefined;
 	readonly navigationListeners: ((
 		event: { preventDefault: () => void },
@@ -112,8 +117,10 @@ class FakeWindow {
 			if (event === "will-navigate") this.navigationListeners.push(listener);
 		},
 	};
+	/** Whether Electron has taken this window away — quitting does. */
+	destroyed = false;
 	isDestroyed(): boolean {
-		return false;
+		return this.destroyed;
 	}
 	/**
 	 * Whether DevHub is the app in front. It is half of what decides whether a
@@ -269,6 +276,18 @@ describe("the shell window's workbench views", () => {
 
 		shell.setContentSurface("workbench");
 		invariantHolds(a);
+	});
+
+	it("lets its views go after the window itself has gone", () => {
+		// Quitting: Electron destroys the window, and every view's contents end
+		// with it. Each one still leaves the table — but there is no window
+		// left to take it out of, and asking one that has been destroyed for
+		// its `contentView` is "Object has been destroyed", uncaught, in main.
+		(shell.window as unknown as { destroyed: boolean }).destroyed = true;
+		expect(() => {
+			for (const view of [a, b, c]) view.webContents.close();
+		}).not.toThrow();
+		expect(shell.getViews()).toEqual([]);
 	});
 
 	it("cannot reveal a view whose contents are gone", () => {

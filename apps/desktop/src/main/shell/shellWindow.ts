@@ -232,14 +232,15 @@ export class ShellWindow {
 		this.window.contentView.addChildView(view.view);
 		view.view.setBounds(this.currentRect());
 		view.view.setVisible(false);
-		// A view whose contents are gone is not a view. It leaves the table the
+		// A view whose contents are gone is not a view. It leaves this table the
 		// instant that happens, before anything can be asked to lay it out or
 		// raise it — Electron answers that with "can't add a destroyed child
 		// view to a parent view", which is a true statement about a table that
-		// should never have still contained it.
-		view.webContents.once("destroyed", () => {
-			this.detach(view);
-		});
+		// should never have still contained it. The view says so itself, from
+		// the one teardown every ending of it runs (`WorkbenchView.end`), so
+		// that leaving this table and dropping its subscriptions are the same
+		// moment rather than two listeners racing to be first.
+		//
 		// A workbench renames itself whenever its active editor changes; that
 		// is the Editor's half of the window's name arriving.
 		view.webContents.on("page-title-updated", () => {
@@ -267,8 +268,17 @@ export class ShellWindow {
 		}
 		this.views.splice(index, 1);
 		allowListenersFor(this.views.length);
-		this.window.contentView.removeChildView(view.view);
 		shellTheme().forgetWindow(view.id);
+		// Every view goes when the window goes, and by then there is no window
+		// left to take them out of: Electron answers a child-view call on a
+		// destroyed window with "Object has been destroyed", which is how
+		// quitting DevHub ended in an uncaught exception in main. The
+		// bookkeeping above is still true and still has to happen; what is
+		// below is about a window on screen, and there is none.
+		if (this.window.isDestroyed()) {
+			return;
+		}
+		this.window.contentView.removeChildView(view.view);
 		if (this.revealed === view) {
 			// Not "some other view": nothing is on screen until the selection
 			// says what is, exactly as at startup.
@@ -752,6 +762,19 @@ let quitting = false;
 /** Called once, when the app has decided to quit. */
 export function beginQuit(): void {
 	quitting = true;
+}
+
+/**
+ * Whether DevHub is on its way out.
+ *
+ * Asked by anything that reacts to something *ending*. Every workbench, every
+ * terminal and every host ends when DevHub quits, and none of those endings is
+ * news: there is no page left to tell and nothing left to restart. Without it,
+ * a workbench dying on the way out was reported as a crash and scheduled for
+ * a restart into a shell that no longer existed.
+ */
+export function isQuitting(): boolean {
+	return quitting;
 }
 
 export function createShellWindow(

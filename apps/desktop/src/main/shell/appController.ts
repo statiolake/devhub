@@ -148,7 +148,7 @@ import {
 	unavailableAgentProfiles,
 	InvalidIntent,
 } from "../../model/wire.js";
-import { shellWindow } from "./shellWindow.js";
+import { isQuitting, shellWindow } from "./shellWindow.js";
 import { shellTheme } from "./shellTheme.js";
 import { appearanceMode } from "./appearanceMode.js";
 import { editorElement, shellTitleFor } from "./shellTitle.js";
@@ -2983,6 +2983,12 @@ export class AppController {
 
 	private superviseEditorView(folder: string, view: WorkbenchView): void {
 		const died = (reason: string) => {
+			// Nor is a view that ended because DevHub is quitting. Every
+			// workbench ends then, and by that point there is no page left to
+			// tell and no shell to restart one into — the App Shell window has
+			// already gone, which is how the report of the crash became a crash
+			// of its own ("the App Shell window has not been created yet").
+			if (isQuitting()) return;
 			// A view DevHub destroyed on purpose is not a casualty: its folder is
 			// no longer in the table, because that is what destroying it means.
 			if (this.viewsByEditorKey.get(folder) !== view.id) return;

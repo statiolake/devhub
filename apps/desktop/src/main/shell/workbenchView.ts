@@ -76,7 +76,50 @@ const EVENT_ALIAS: Readonly<Record<string, string>> = { closed: "destroyed" };
 export class WorkbenchView {
 	readonly view: Electron.WebContentsView;
 
-	private destroyed = false;
+	/**
+	 * This view's contents, and its identity, captured once at construction.
+	 *
+	 * `WebContentsView.webContents` is not a stable reference. Electron drops
+	 * the property to `undefined` the moment the contents are destroyed —
+	 * measured on Electron 42: read from inside the contents' own `destroyed`
+	 * handler, `view.webContents` is already `undefined`, and calling anything
+	 * on it is `Cannot read properties of undefined`.
+	 *
+	 * That is not a hypothetical late read. VS Code's `CodeWindow` listens for
+	 * `closed`, and what it does with it is dispose itself; disposing runs its
+	 * `DisposableStore`, and every listener in it was added through `on` here,
+	 * so each one is handed straight back to `off` — off a window whose
+	 * contents ended a tick ago. The teardown of a workspace therefore ended in
+	 * a `TypeError` every time, for no reason other than reading the property
+	 * late.
+	 *
+	 * The id is captured for the same reason: it is how every registry in main
+	 * names this view, *including* the ones being asked to forget it while it
+	 * goes.
+	 */
+	private readonly contents: Electron.WebContents;
+	private readonly viewId: number;
+
+	/**
+	 * Whether this view has ended — by any of the three ways it can.
+	 *
+	 * DevHub destroying it with its workspace, VS Code closing its contents,
+	 * and a renderer that crashed are one fact with three causes, so they run
+	 * one teardown; see `end`. Nothing may distinguish them afterwards.
+	 */
+	private ended = false;
+	/**
+	 * The listeners this view put on the shell's window, so it can take them
+	 * back.
+	 *
+	 * Most of what a workbench listens for is a fact about the window around it
+	 * — maximize, full screen, move — and those go on an emitter that outlives
+	 * every view. A view that ended without removing them would leave a dead
+	 * `CodeWindow` on the shell window's emitter for the rest of the session,
+	 * one set per workspace opened and closed.
+	 */
+	private readonly shellListeners: [string, (...args: unknown[]) => void][] =
+		[];
 	/**
 	 * Whether something asked this window to be hidden.
 	 *
@@ -121,35 +164,90 @@ export class WorkbenchView {
 		this.view = new electron.WebContentsView({
 			webPreferences: options.webPreferences,
 		});
+		this.contents = this.view.webContents;
+		this.viewId = this.contents.id;
 		if (options.backgroundColor) {
 			this.view.setBackgroundColor(options.backgroundColor);
 		}
+		// The contents ending *is* the view ending, whoever ended them. DevHub's
+		// own `destroy` runs the teardown before it closes them; this is the
+		// same teardown for the two endings DevHub did not ask for — VS Code
+		// closing the contents, and a renderer that crashed — so that there is
+		// no way for a view to outlive its contents on any table in main.
+		this.contents.once("destroyed", () => {
+			this.end();
+		});
 	}
 
 	/** The view's identity everywhere in the main process. `CodeWindow` reads
 	 * `this._win.id` straight into `ICodeWindow.id`, so every `getWindowById`
 	 * path resolves as long as this is the webContents id. */
 	get id(): number {
-		return this.view.webContents.id;
+		return this.viewId;
 	}
 
 	get webContents(): Electron.WebContents {
-		return this.view.webContents;
+		return this.contents;
 	}
 
 	//#region events
 
 	private emitterFor(event: string): NodeJS.EventEmitter {
-		if (event === "closed") return this.view.webContents;
+		if (event === "closed") return this.contents;
 		if (FOCUS_EVENTS.has(event)) return this.focusEvents;
-		if (VIEW_EVENTS.has(event)) return this.view.webContents;
+		if (VIEW_EVENTS.has(event)) return this.contents;
 		if (LIFETIME_EVENTS.has(event)) return this.lifetime;
 		return this.shell.window;
 	}
 
-	on(event: string, listener: (...args: unknown[]) => void): this {
-		this.emitterFor(event).on(EVENT_ALIAS[event] ?? event, listener);
+	/**
+	 * Add or remove one listener — or refuse, because this view has ended.
+	 *
+	 * The refusal is the point. A window that has ended has no events left to
+	 * give and no listeners left to remove: `end` took every one of them off
+	 * every emitter, in the same breath as taking the view off the shell's
+	 * table. So a late caller is answered with nothing done and nothing
+	 * thrown, which is the truth — and it is answered here, once, for all four
+	 * of the methods below, rather than by each of them discovering separately
+	 * that an emitter it wanted is gone.
+	 *
+	 * The one late caller there has always been is VS Code itself: `CodeWindow`
+	 * disposes on `closed`, and disposing hands back every listener it holds.
+	 */
+	private route(
+		operation: "on" | "once" | "removeListener",
+		event: string,
+		listener: (...args: unknown[]) => void,
+	): this {
+		if (this.ended) {
+			return this;
+		}
+		const name = EVENT_ALIAS[event] ?? event;
+		const emitter = this.emitterFor(event);
+		emitter[operation](name, listener);
+		if (emitter === this.shell.window) {
+			this.rememberShellListener(operation, name, listener);
+		}
 		return this;
+	}
+
+	private rememberShellListener(
+		operation: "on" | "once" | "removeListener",
+		event: string,
+		listener: (...args: unknown[]) => void,
+	): void {
+		const at = this.shellListeners.findIndex(
+			([name, held]) => name === event && held === listener,
+		);
+		if (operation === "removeListener") {
+			if (at !== -1) this.shellListeners.splice(at, 1);
+			return;
+		}
+		if (at === -1) this.shellListeners.push([event, listener]);
+	}
+
+	on(event: string, listener: (...args: unknown[]) => void): this {
+		return this.route("on", event, listener);
 	}
 
 	addListener(event: string, listener: (...args: unknown[]) => void): this {
@@ -157,16 +255,11 @@ export class WorkbenchView {
 	}
 
 	once(event: string, listener: (...args: unknown[]) => void): this {
-		this.emitterFor(event).once(EVENT_ALIAS[event] ?? event, listener);
-		return this;
+		return this.route("once", event, listener);
 	}
 
 	off(event: string, listener: (...args: unknown[]) => void): this {
-		this.emitterFor(event).removeListener(
-			EVENT_ALIAS[event] ?? event,
-			listener,
-		);
-		return this;
+		return this.route("removeListener", event, listener);
 	}
 
 	removeListener(event: string, listener: (...args: unknown[]) => void): this {
@@ -182,11 +275,11 @@ export class WorkbenchView {
 	//#region lifecycle and visibility
 
 	loadURL(url: string, options?: Electron.LoadURLOptions): Promise<void> {
-		return this.view.webContents.loadURL(url, options);
+		return this.contents.loadURL(url, options);
 	}
 
 	reload(): void {
-		this.view.webContents.reload();
+		this.contents.reload();
 	}
 
 	/** The shell decides what is on screen; `show()` is a request to be it. */
@@ -262,16 +355,49 @@ export class WorkbenchView {
 	}
 
 	destroy(): void {
-		if (this.destroyed) {
+		if (this.ended) {
 			return;
 		}
-		this.destroyed = true;
+		this.end();
+		this.contents.close();
+	}
+
+	/**
+	 * The end of this view, wherever it came from.
+	 *
+	 * Everything that could still reach the view goes here, and it all goes
+	 * *before* the contents are destroyed: the listeners this view left on the
+	 * shell's window are taken back, its own two emitters are emptied, and the
+	 * shell is told to drop it. A view that is off every table and holds no
+	 * subscription cannot be called into afterwards, which is the whole
+	 * property — a late call has to be impossible rather than survivable.
+	 *
+	 * Idempotent, because it is reached twice by design: DevHub's `destroy`
+	 * runs it and then closes the contents, whose `destroyed` runs it again.
+	 */
+	private end(): void {
+		if (this.ended) {
+			return;
+		}
+		this.ended = true;
+		// Focus is a fact about a window that exists. Cleared before the
+		// listeners go so that nothing can read `isFocused()` off a view that
+		// has ended and put it back on screen.
+		this.focused = false;
+		// As the plain emitter it is: `BrowserWindow`'s own typings name every
+		// event it knows, and these are the events *the workbench* asked for.
+		const shellEmitter: NodeJS.EventEmitter = this.shell.window;
+		for (const [event, listener] of this.shellListeners) {
+			shellEmitter.removeListener(event, listener);
+		}
+		this.shellListeners.length = 0;
+		this.lifetime.removeAllListeners();
+		this.focusEvents.removeAllListeners();
 		this.shell.detach(this);
-		this.view.webContents.close();
 	}
 
 	isDestroyed(): boolean {
-		return this.destroyed || this.view.webContents.isDestroyed();
+		return this.ended || this.contents.isDestroyed();
 	}
 
 	/**
@@ -313,6 +439,7 @@ export class WorkbenchView {
 	 * focus this used to be read from.
 	 */
 	focusStateChanged(): void {
+		if (this.ended) return;
 		const next = this.shell.isSurfaceFocused(this);
 		if (next === this.focused) return;
 		this.focused = next;
@@ -350,6 +477,7 @@ export class WorkbenchView {
 	 * is that answer repeated, never a second opinion.
 	 */
 	focusConfirmed(): void {
+		if (this.ended) return;
 		if (!this.shell.isSurfaceFocused(this)) return;
 		this.announceFocusToTheApplication(true);
 	}
@@ -531,7 +659,7 @@ export class WorkbenchView {
 	setTitle(): void {}
 
 	getTitle(): string {
-		return this.view.webContents.getTitle();
+		return this.contents.getTitle();
 	}
 
 	//#endregion
@@ -608,7 +736,7 @@ export class WorkbenchView {
 	}
 
 	capturePage(rect?: Electron.Rectangle): Promise<Electron.NativeImage> {
-		return this.view.webContents.capturePage(rect);
+		return this.contents.capturePage(rect);
 	}
 
 	moveTop(): void {
