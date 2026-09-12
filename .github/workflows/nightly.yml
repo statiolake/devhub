@@ -17,10 +17,26 @@
 # The result is unsigned beyond an ad-hoc signature. Signing needs a paid Apple
 # Developer identity in the repository's secrets; until there is one, the
 # release notes tell people how to clear the quarantine flag themselves.
+#
+# The other half of a DevHub is the remote extension host — the server SSH
+# development downloads onto the machine you are working on. It is published by
+# a separate set of jobs here, on a separate release, because it answers to a
+# different question: the app is rebuilt when *DevHub* moves, and the server is
+# rebuilt when the *VS Code submodule* moves, which is roughly monthly. See
+# docs/remote-ssh.md and scripts/build_reh.py.
 name: Nightly
 
 on:
   workflow_dispatch:
+    inputs:
+      force_reh:
+        description: >-
+          Rebuild and replace the remote extension host for the current VS Code
+          commit, even though its release already exists. What this is for: a
+          change to patches/vscode that touches server code, which does not
+          move the submodule and so does not change the URL remotes fetch.
+        type: boolean
+        default: false
   schedule:
     # 18:00 UTC = 03:00 JST.
     - cron: "0 18 * * *"
@@ -218,3 +234,178 @@ jobs:
             --title "Nightly ${{ steps.meta.outputs.date }} (${{ steps.meta.outputs.sha }})" \
             --notes-file dist/notes.md \
             dist/*.zip
+
+  # ---------------------------------------------------------------------------
+  # The remote extension host: the server half of SSH development.
+  #
+  # Three jobs rather than one because the answer to "is a new one needed?" is
+  # cheap and the build is not, and because the two architectures cannot be
+  # built on one machine. `vscode/remote/node_modules` holds native addons —
+  # node-pty, @parcel/watcher, kerberos, @vscode/spdlog — and the package task
+  # copies them into the tarball as npm installed them, for the machine doing
+  # the installing. So an arm64 server is built on an arm64 runner and an x64
+  # one on an x64 runner, and there is no cross-building to get subtly wrong.
+  # Both Linux runners are free on a public repository.
+  # ---------------------------------------------------------------------------
+
+  reh-decide:
+    name: Is there a new server to build?
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      needed: ${{ steps.decision.outputs.needed }}
+      tag: ${{ steps.decision.outputs.tag }}
+    steps:
+      # The submodule pointer is all this needs, and `git submodule status`
+      # reads it out of the parent tree without checking anything out.
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Decide
+        id: decision
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FORCE: ${{ inputs.force_reh }}
+        run: |
+          set -euo pipefail
+          vscode_sha="$(git submodule status -- vscode | awk '{print $1}' | tr -d '+-')"
+          tag="reh-${vscode_sha}"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+          # The server is a function of the VS Code commit, and its download URL
+          # names that commit — so a release that exists is a release every
+          # DevHub built from this submodule is already pointing at, and
+          # rebuilding it would replace working downloads with identical ones.
+          if [ "$FORCE" = "true" ]; then
+            echo "needed=true" >> "$GITHUB_OUTPUT"
+            echo "asked to rebuild $tag"
+          elif gh release view "$tag" >/dev/null 2>&1; then
+            echo "needed=false" >> "$GITHUB_OUTPUT"
+            echo "$tag is already published"
+          else
+            echo "needed=true" >> "$GITHUB_OUTPUT"
+            echo "no $tag yet"
+          fi
+
+  reh:
+    name: Server (${{ matrix.target }})
+    needs: reh-decide
+    if: needs.reh-decide.outputs.needed == 'true'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    strategy:
+      # One failing architecture must not cancel the other: knowing that only
+      # arm64 is broken is the whole of the diagnosis.
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-x64
+            runner: ubuntu-latest
+          - target: linux-arm64
+            runner: ubuntu-24.04-arm
+    env:
+      CI: "true"
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+          fetch-depth: 1
+
+      - name: Describe this build
+        id: meta
+        run: echo "vscode_sha=$(git -C vscode rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Activate pinned pnpm
+        run: corepack enable && corepack prepare pnpm@11.20.0 --activate
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.21.1
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      # The same cache the macOS job keeps, keyed the same way and separate from
+      # it by `runner.os` and `runner.arch`. A hit turns provisioning into the
+      # nested npm installs and skips both compiles; the server bundle is then
+      # rebuilt regardless, because it has to be made against DevHub's
+      # product.json rather than the submodule's. See scripts/build_reh.py.
+      - name: Restore the provisioned VS Code build
+        uses: actions/cache@v4
+        with:
+          path: |
+            vscode-toolchain
+            vscode/node_modules
+            vscode/out
+            vscode/out-vscode-min
+            vscode/.build
+          key: >-
+            vscode-${{ runner.os }}-${{ runner.arch }}-${{ steps.meta.outputs.vscode_sha }}-${{
+            hashFiles('vscode/package-lock.json', 'vscode/.nvmrc', 'patches/vscode/*.patch') }}
+
+      - name: Install JavaScript dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Provision the VS Code submodule
+        env:
+          # As on the macOS job: the nested installs and the built-in extension
+          # set pull prebuilt binaries from GitHub releases, and unauthenticated
+          # requests from shared runner addresses hit the rate limit.
+          GITHUB_TOKEN: ${{ github.token }}
+        run: scripts/provision-vscode.sh
+
+      - name: Build the server tarball
+        run: scripts/build_reh.py ${{ matrix.target }} --skip-provision --out-dir dist
+
+      # Kept whole rather than published here: the release is created once, by
+      # the job below, when every architecture has one. A release that exists
+      # with half its assets is a 404 for the other half of the people who
+      # upgrade, and the URL is baked into their app.
+      - name: Hand the tarball to the publishing job
+        uses: actions/upload-artifact@v4
+        with:
+          name: reh-${{ matrix.target }}
+          path: dist/*.tar.gz
+          retention-days: 1
+          if-no-files-found: error
+
+  reh-publish:
+    name: Publish the server release
+    needs: [reh-decide, reh]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Collect the tarballs
+        uses: actions/download-artifact@v4
+        with:
+          pattern: reh-*
+          merge-multiple: true
+          path: dist
+
+      # Not the rolling `nightly` tag. That one is deleted and recreated every
+      # night; this one is named after the VS Code commit and never moves, so
+      # an app built months ago goes on finding the server it was told to fetch.
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # This job never checks the repository out — it only moves two files
+          # from the artifact store to a release — so `gh` has no working tree
+          # to infer the repository from and has to be told.
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.reh-decide.outputs.tag }}
+        run: |
+          set -euo pipefail
+          ls -l dist
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/*.tar.gz --clobber
+          else
+            gh release create "$TAG" \
+              --prerelease \
+              --target "$GITHUB_SHA" \
+              --title "Remote extension host $TAG" \
+              --notes "The server half of DevHub's SSH remote development, built from the VS Code commit this tag is named after. DevHub downloads it onto a remote machine by itself; see docs/remote-ssh.md for the URL it uses and for installing one by hand." \
+              dist/*.tar.gz
+          fi
