@@ -76,9 +76,79 @@ COPYRIGHT = (
 )
 
 
-def patch_plist(path: Path, values: dict[str, str]) -> None:
+def document_types(staged: list[dict]) -> list[dict]:
+	"""The file types DevHub offers to open, from the ones VS Code already declared.
+
+	Every text and source format VS Code handles is listed in
+	`vscode/build/lib/electron.ts` (`darwinBundleDocumentTypes`), and VS Code's
+	own Electron staging step — the `npm run electron` that produces
+	`.build/electron/Code - OSS.app`, the bundle this whole module is a rename
+	of — has already turned that list into `CFBundleDocumentTypes`. So the list
+	is *read from the input bundle* rather than parsed out of the TypeScript.
+
+	That is the version that stays right across a VS Code bump for the least
+	code: the staged bundle is restaged by every bump, so the extensions here
+	are always the ones the pinned VS Code claims, and there is no second parser
+	to keep in step with a build file DevHub does not own. Parsing
+	`electron.ts` would mean running a TypeScript module at package time to
+	recover a list that is already sitting in a plist beside it.
+
+	Two things are DevHub's rather than VS Code's:
+
+	  * **The rank.** Upstream declares no `LSHandlerRank`, which asks Launch
+	    Services to treat the app as a normal candidate for `.md`. DevHub is a
+	    tool somebody installs beside their editors, not a replacement for the
+	    handler they already chose, so every type is `Alternate`: DevHub appears
+	    in "Open With" and never becomes the default by being installed.
+	  * **The icon.** Upstream points each type at its own language icon
+	    (`markdown.icns`, `python.icns`) — artwork drawn for another product.
+	    Every type gets DevHub's icon instead, for the same reason the Dock tile
+	    does: a document that says it belongs to DevHub should look like DevHub.
+
+	The role is left as upstream set it, `Editor`, which is what DevHub does
+	with a file it is given.
+
+	An empty list is fatal. It means the staging step stopped emitting the types
+	— a bump worth reading, not a packaged app that quietly stopped appearing in
+	"Open With" with nothing to say why.
+	"""
+	if not staged:
+		raise ValueError(
+			f"{BASE_APP.name} declares no CFBundleDocumentTypes;"
+			" VS Code's electron staging step no longer emits them"
+		)
+
+	seen: dict[str, str] = {}
+	types: list[dict] = []
+	for entry in staged:
+		name = entry["CFBundleTypeName"]
+		for extension in entry.get("CFBundleTypeExtensions", []):
+			if extension in seen:
+				# Launch Services takes the first declaration of an extension and
+				# ignores the rest, so a duplicate is a type whose entry silently
+				# does nothing. Upstream has none; a bump that introduces one has
+				# to be read.
+				raise ValueError(
+					f"'{extension}' is declared by both '{seen[extension]}' and '{name}'"
+				)
+			seen[extension] = name
+		types.append(
+			{
+				**entry,
+				"LSHandlerRank": "Alternate",
+				"CFBundleTypeIconFile": ICON_FILE.name,
+			}
+		)
+	return types
+
+
+def read_plist(path: Path) -> dict:
 	with path.open("rb") as handle:
-		plist = plistlib.load(handle)
+		return plistlib.load(handle)
+
+
+def patch_plist(path: Path, values: dict[str, object]) -> None:
+	plist = read_plist(path)
 	plist.update(values)
 	with path.open("wb") as handle:
 		plistlib.dump(plist, handle, fmt=plistlib.FMT_XML)
@@ -138,9 +208,17 @@ def rebrand(app: Path, main_plist_extra: dict[str, str] | None = None) -> None:
 			},
 		)
 
+	# The file types are DevHub's answer to "Open With", and they are the same
+	# answer for the source run's bundle and the nightly's — so they are here,
+	# with the name and the icon, rather than in either caller. See
+	# `document_types` for where the list comes from.
+	main_plist = contents / "Info.plist"
 	patch_plist(
-		contents / "Info.plist",
+		main_plist,
 		{
+			"CFBundleDocumentTypes": document_types(
+				read_plist(main_plist).get("CFBundleDocumentTypes", [])
+			),
 			"CFBundleExecutable": APP_NAME,
 			"CFBundleName": APP_NAME,
 			"CFBundleDisplayName": APP_NAME,
