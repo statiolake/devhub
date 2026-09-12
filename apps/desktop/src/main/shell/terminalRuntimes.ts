@@ -3,10 +3,11 @@
  *
  * There is one tmux server per machine, DevHub owns one socket on each of
  * them, and `TmuxTerminalRuntime` speaks to exactly one server — so there is
- * one adapter per machine and it is built the same way for every machine: the
- * tmux and shell names the config gives, resolved *on that machine* by
- * `Runtime.resolveProgram`, its `$HOME` read from it, and every command sent
- * through its `exec`.
+ * one adapter per machine and it is built the same way for every machine: its
+ * `$HOME` read from that machine, the configured shell resolved on it, its tmux
+ * obtained from it — `Runtime.tmuxProgram`, which is where the two machines
+ * differ, because this Mac uses the person's tmux and a host uses the one
+ * DevHub installs there — and every command sent through its `exec`.
  *
  * The cache is not an optimisation, for the same reason `runtimeFor`'s is not:
  * an adapter *owns* things — the in-flight bring-up per socket, the accepted
@@ -22,11 +23,7 @@
  * one adapter, not two that raced.
  */
 
-import {
-	TmuxTerminalRuntime,
-	type RuntimeExecutable,
-} from "../terminal/tmux.js";
-import { runtimeUnavailableMessage } from "../../ipc/settings.js";
+import { TmuxTerminalRuntime } from "../terminal/tmux.js";
 import type { Runtime, RuntimeId } from "../runtime/runtime.js";
 import type { Config } from "../../model/config.js";
 import type { SocketName } from "../terminal/ports.js";
@@ -114,12 +111,26 @@ export class TerminalRuntimes {
 		const [home, scratch, tmux, shell] = await Promise.all([
 			host.home(),
 			host.scratchDirectory(),
-			host.resolveProgram(configuredTmux, searchPath),
+			// Not `resolveProgram`: which tmux a machine runs is that machine's
+			// answer to give, and the two machines answer it differently in kind
+			// — this Mac uses the person's, a host uses the one DevHub installs
+			// on it. See `Runtime.tmuxProgram`.
+			host.tmuxProgram(configuredTmux, searchPath),
 			host.resolveProgram(configuredShell, searchPath),
 		]);
 		return new TmuxTerminalRuntime({
 			context: { home, environment: this.#options.environment },
-			tmux: executable(tmux, configuredTmux, host.where),
+			tmux:
+				tmux.kind === "unavailable"
+					? { kind: "unavailable", reason: tmux.reason }
+					: {
+							kind: "resolved",
+							value: {
+								path: tmux.path,
+								basename: basenameOf(configuredTmux),
+							},
+						},
+			tmuxEnvironment: tmux.kind === "resolved" ? tmux.environment : {},
 			shell:
 				shell.kind === "unavailable"
 					? undefined
@@ -137,31 +148,4 @@ export class TerminalRuntimes {
 
 function basenameOf(configured: string): string {
 	return configured.split("/").at(-1) ?? configured;
-}
-
-/**
- * An executable the runtime can launch, or the sentence saying why not.
- *
- * The reason is kept rather than reduced to `undefined`: a pane that refuses
- * to attach an hour later has no other way to say which executable was missing
- * and where DevHub looked for it — and, now that "where" can be another
- * computer, which machine it looked on. That is the whole of the "hosts
- * without tmux" answer: not a new predicate, the sentence this already had
- * with a host in it.
- */
-function executable(
-	resolved: Awaited<ReturnType<Runtime["resolveProgram"]>>,
-	configured: string,
-	where: string,
-): RuntimeExecutable {
-	if (resolved.kind === "unavailable") {
-		return {
-			kind: "unavailable",
-			reason: `${runtimeUnavailableMessage(resolved)}${where === "" ? "" : ` (looked${where})`}`,
-		};
-	}
-	return {
-		kind: "resolved",
-		value: { path: resolved.value, basename: basenameOf(configured) },
-	};
 }

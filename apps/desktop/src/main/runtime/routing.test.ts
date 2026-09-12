@@ -29,6 +29,7 @@ import {
 	type Runtime,
 	type TerminalLauncher,
 	type TerminalLauncherSpec,
+	type TmuxProgram,
 	type Watcher,
 } from "./runtime.js";
 
@@ -75,6 +76,14 @@ class RecordingRuntime implements Runtime {
 		this.execs.push(request);
 		return Promise.resolve(this.answer);
 	}
+	tmuxProgram(): Promise<TmuxProgram> {
+		return Promise.resolve({
+			kind: "resolved" as const,
+			path: "/usr/bin/tmux",
+			environment: {},
+		});
+	}
+
 	spawnPty(): never {
 		throw new Error("not asked for in these cases");
 	}

@@ -33,7 +33,10 @@ import { runBounded } from "../terminal/command.js";
 import { openPty, type Pty } from "../terminal/pty.js";
 import { gitDirectoryOf } from "./gitDirectory.js";
 import { resolveExecutable } from "../shell/runtimes.js";
-import type { SettingsResolvedRuntimeWire } from "../../ipc/settings.js";
+import {
+	runtimeUnavailableMessage,
+	type SettingsResolvedRuntimeWire,
+} from "../../ipc/settings.js";
 import {
 	RuntimeFileError,
 	type DirEntry,
@@ -47,6 +50,7 @@ import {
 	type RuntimeReading,
 	type TerminalLauncher,
 	type TerminalLauncherSpec,
+	type TmuxProgram,
 	type Watcher,
 } from "./runtime.js";
 
@@ -114,6 +118,36 @@ export class LocalRuntime implements Runtime {
 		searchPath: string,
 	): Promise<SettingsResolvedRuntimeWire> {
 		return resolveExecutable(configured, searchPath);
+	}
+
+	/**
+	 * This machine's own tmux, which is the person's and not DevHub's.
+	 *
+	 * The asymmetry with a host is deliberate, and it is the whole of the
+	 * difference: on a host DevHub installs a tmux it published and ignores
+	 * whatever is there, because the host is a machine nobody administers for
+	 * this purpose and a version DevHub did not choose produces an Agent whose
+	 * output is subtly wrong. Here, the tmux is one the person installed, keeps
+	 * up to date, has a config for and may well be sitting in right now —
+	 * `runtimes.tmux` is the setting that names it, and replacing it with a
+	 * binary DevHub unpacked into their home directory would be DevHub deciding
+	 * something about their own machine that is theirs to decide.
+	 *
+	 * So there is nothing to install and nothing to add to the environment: the
+	 * terminfo this tmux reads is the one the rest of their terminal reads.
+	 */
+	async tmuxProgram(
+		configured: string,
+		searchPath: string,
+	): Promise<TmuxProgram> {
+		const resolved = await this.resolveProgram(configured, searchPath);
+		if (resolved.kind === "unavailable") {
+			return {
+				kind: "unavailable",
+				reason: runtimeUnavailableMessage(resolved),
+			};
+		}
+		return { kind: "resolved", path: resolved.value, environment: {} };
 	}
 
 	async exec(request: ExecRequest): Promise<ExecResult> {

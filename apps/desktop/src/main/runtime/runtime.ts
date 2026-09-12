@@ -223,6 +223,30 @@ export interface TerminalLauncherSpec {
 	readonly serverCommit: string | undefined;
 }
 
+/**
+ * The tmux one machine runs, and the environment it needs to run in.
+ *
+ * It is a method on the seam and not a `resolveProgram` at the caller because
+ * the two machines answer it differently *in kind*, and the difference is a
+ * policy rather than a lookup: this Mac uses the tmux the person installed
+ * (`runtimes.tmux`), and a host uses the one DevHub put there. A caller that
+ * had to choose between those would be a caller asking which machine it was
+ * talking to — the one question this interface exists to stop being asked.
+ *
+ * `environment` is what the resolved binary needs in order to be the tmux it
+ * is: a shipped tmux carries its own compiled terminfo, and `TERMINFO` is how
+ * it is told to read that and not the host's — which on a bare appliance is
+ * not there at all. Locally there is nothing to add, and the empty record says
+ * so rather than the absence of a field.
+ */
+export type TmuxProgram =
+	| {
+			readonly kind: "resolved";
+			readonly path: string;
+			readonly environment: Readonly<Record<string, string>>;
+	  }
+	| { readonly kind: "unavailable"; readonly reason: string };
+
 /** A machine's `devhub-terminal`, and whether it can reach DevHub. */
 export interface TerminalLauncher {
 	/** The path a workbench on that machine names as its terminal profile. */
@@ -272,6 +296,12 @@ export interface Runtime {
 		configured: string,
 		searchPath: string,
 	): Promise<SettingsResolvedRuntimeWire>;
+
+	/**
+	 * The tmux this machine's adapter runs, installed on it if that is what
+	 * this machine needs. Idempotent: one install per machine per DevHub start.
+	 */
+	tmuxProgram(configured: string, searchPath: string): Promise<TmuxProgram>;
 
 	/**
 	 * A directory on this machine DevHub may put its own short-lived files in,

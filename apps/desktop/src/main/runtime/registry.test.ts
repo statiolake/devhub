@@ -14,6 +14,20 @@ import {
 	runtimeFor,
 	setRuntimeProfile,
 } from "./registry.js";
+import type { TmuxDelivery } from "./tmuxDelivery.js";
+
+/**
+ * A tmux nobody asks for.
+ *
+ * Nothing in this file reaches a host, so nothing installs a tmux — and a
+ * delivery that refuses is how a test that started to would say so instead of
+ * quietly downloading two megabytes.
+ */
+const NO_TMUX: TmuxDelivery = {
+	version: "0",
+	directory: ".devhub-server/tmux",
+	tarball: () => Promise.reject(new Error("no tarball in this test")),
+};
 
 /**
  * Short on purpose: a control socket has to fit in 104 bytes, and macOS puts
@@ -24,7 +38,7 @@ let userDataDirectory: string;
 
 beforeAll(async () => {
 	userDataDirectory = await mkdtemp("/tmp/devhub-profile-");
-	setRuntimeProfile({ userDataDirectory, home: homedir() });
+	setRuntimeProfile({ userDataDirectory, home: homedir(), tmux: NO_TMUX });
 });
 afterAll(async () => {
 	forgetRuntimeProfile();
@@ -70,12 +84,12 @@ describe("runtimeFor", () => {
 				workspaceLocation({ kind: "ssh", host: "build-box", path: "/srv/a" }),
 			),
 		).toThrow(/before the runtime profile was set/u);
-		setRuntimeProfile({ userDataDirectory, home: homedir() });
+		setRuntimeProfile({ userDataDirectory, home: homedir(), tmux: NO_TMUX });
 	});
 
 	it("refuses to be told twice, because a socket that moved is unreachable", () => {
 		expect(() =>
-			setRuntimeProfile({ userDataDirectory, home: homedir() }),
+			setRuntimeProfile({ userDataDirectory, home: homedir(), tmux: NO_TMUX }),
 		).toThrow(/already been set/u);
 	});
 

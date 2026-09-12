@@ -23,6 +23,7 @@ import {
 import { LocalRuntime } from "./local.js";
 import type { Runtime, RuntimeId } from "./runtime.js";
 import { chooseControlDirectory, SshRuntime } from "./ssh.js";
+import type { TmuxDelivery } from "./tmuxDelivery.js";
 
 /**
  * This machine. One instance, because there is one of it.
@@ -63,6 +64,15 @@ export interface RuntimeProfile {
 	readonly userDataDirectory: string;
 	/** `$HOME` on this machine, for the short control-path fallback. */
 	readonly home: string;
+	/**
+	 * Where the tmux DevHub installs on a host comes from.
+	 *
+	 * On the profile rather than on the location because the download is cached
+	 * under this profile's own data directory, and because it is one statement
+	 * of one product fact — the release the app was built against — rather than
+	 * a thing each host could be given a different answer to.
+	 */
+	readonly tmux: TmuxDelivery;
 }
 
 let profile: RuntimeProfile | undefined;
@@ -123,6 +133,7 @@ export function runtimeFor(location: WorkspaceLocation): Runtime {
 					profile.userDataDirectory,
 					profile.home,
 				),
+				tmux: profile.tmux,
 			});
 			SSH.set(location.host, runtime);
 			return runtime;

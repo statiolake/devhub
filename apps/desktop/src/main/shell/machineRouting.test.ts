@@ -45,6 +45,7 @@ import type {
 	RuntimeId,
 	TerminalLauncher,
 	TerminalLauncherSpec,
+	TmuxProgram,
 	Watcher,
 } from "../runtime/runtime.js";
 
@@ -89,6 +90,22 @@ class FakeMachine implements Runtime {
 			stderr: Buffer.from(""),
 		});
 	}
+	/**
+	 * A tmux this machine says it has.
+	 *
+	 * A fake machine installs nothing, so the answer is the name itself — which
+	 * is also what makes the routing tests readable: every argv this machine is
+	 * asked to run starts with the word `tmux`, so "which machine was asked" is
+	 * a question the recorded requests answer on their own.
+	 */
+	tmuxProgram(): Promise<TmuxProgram> {
+		return Promise.resolve({
+			kind: "resolved" as const,
+			path: "tmux",
+			environment: {},
+		});
+	}
+
 	spawnPty(request: PtyLaunch): Pty {
 		this.ptys.push(request);
 		return {
@@ -350,10 +367,10 @@ describe("an adapter for a machine with no tmux", () => {
 			" on build.example.com",
 			"/home/there",
 		);
-		const missing = vi.spyOn(b, "resolveProgram").mockResolvedValue({
+		const missing = vi.spyOn(b, "tmuxProgram").mockResolvedValue({
 			kind: "unavailable",
-			configured: "tmux",
-			lookup: { kind: "path", directories: ["/usr/bin"] },
+			reason:
+				"DevHub could not put a tmux on build.example.com: no route to host",
 		});
 		const runtimes = new TerminalRuntimes({
 			config: undefined,

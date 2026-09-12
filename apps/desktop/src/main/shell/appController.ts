@@ -19,6 +19,18 @@ import { homedir } from "node:os";
 import { dirname, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import vscodeProduct from "code-oss-dev/out/vs/platform/product/common/product.js";
+/**
+ * The three tmux facts, which are DevHub's own and not VS Code's.
+ *
+ * `product.json` is one file and VS Code's type for it names only VS Code's
+ * fields, so the fields `apps/desktop/product-overrides.json` adds are read
+ * through this rather than by widening a type that is not DevHub's to widen.
+ */
+const tmuxProduct = vscodeProduct as unknown as {
+	readonly tmuxVersion?: string;
+	readonly tmuxDownloadUrlTemplate?: string;
+	readonly tmuxDownloadSha256?: Readonly<Record<string, string>>;
+};
 import { activityCounters } from "../diagnostics/counters.js";
 import { metricsReport } from "../diagnostics/metrics.js";
 import { reconcileRounds } from "../diagnostics/rounds.js";
@@ -185,6 +197,7 @@ import {
 	runtimeMachine,
 	setRuntimeProfile,
 } from "../runtime/registry.js";
+import { ReleaseTmuxDelivery } from "../runtime/tmuxDelivery.js";
 import type {
 	Runtime,
 	RuntimeId,
@@ -4199,14 +4212,12 @@ export class AppController {
 		handle(CHANNELS.dispatch, (_event, intent: AppIntentWire) =>
 			this.dispatchFromPage(intent),
 		);
-		handle(
-			CHANNELS.replay,
-			(_event, cursor: number): ReplayWire =>
-				replayWire(
-					this.coordinator.replayFrom(cursor),
-					this.coordinator.readiness,
-					this.repositoryOf,
-				),
+		handle(CHANNELS.replay, (_event, cursor: number): ReplayWire =>
+			replayWire(
+				this.coordinator.replayFrom(cursor),
+				this.coordinator.readiness,
+				this.repositoryOf,
+			),
 		);
 
 		handle(CHANNELS.chooseWorkspaceFolder, () => this.pickFolder());
@@ -4520,6 +4531,13 @@ export class AppController {
 		handle(CHANNELS.openExternalUrl, (_event, url: string) =>
 			electron.shell.openExternal(url),
 		);
+		// A copy inside a terminal pane. It is main's clipboard rather than
+		// the renderer's because the write arrives from a PTY: the browser's
+		// clipboard API refuses one while the document is unfocused, and tmux
+		// does not wait for the window to be frontmost.
+		handle(CHANNELS.writeClipboard, (_event, text: string) => {
+			electron.clipboard.writeText(text);
+		});
 		handle(CHANNELS.setContentRect, (_event, rect: ContentRect) => {
 			shellWindow().setContentRect(rect);
 		});
@@ -4661,7 +4679,22 @@ export async function createAppController(
 	// under. Told here, once, because `main/runtime/` must not need Electron at
 	// import time: it is imported by the PTY test program too, and a module
 	// that reaches for `app` makes every importer of it need an app.
-	setRuntimeProfile({ userDataDirectory: userDataPath, home: homedir() });
+	setRuntimeProfile({
+		userDataDirectory: userDataPath,
+		home: homedir(),
+		// Where the tmux DevHub puts on a host comes from. Stated in
+		// `product-overrides.json` beside `serverDownloadUrlTemplate`, because
+		// the release the app installs from is a fact about the build and not a
+		// thing a person configures — and read here for the same reason the
+		// profile is passed in at all.
+		tmux: new ReleaseTmuxDelivery({
+			version: tmuxProduct.tmuxVersion ?? "",
+			directory: `${vscodeProduct.serverDataFolderName ?? ".vscode-server"}/tmux`,
+			urlTemplate: tmuxProduct.tmuxDownloadUrlTemplate ?? "",
+			sha256: tmuxProduct.tmuxDownloadSha256 ?? {},
+			cacheDirectory: join(userDataPath, "tmux"),
+		}),
+	});
 
 	// One switch, resolved once: which DevHub this is, and therefore where its
 	// settings, its state and its tmux server are. See model/profile.ts.

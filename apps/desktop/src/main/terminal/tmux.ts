@@ -767,6 +767,18 @@ export interface TmuxTerminalRuntimeOptions {
 	readonly context: RuntimeLaunchContext;
 	/** The configured `runtimes.tmux`, already resolved; unavailable disables the runtime. */
 	readonly tmux: RuntimeExecutable;
+	/**
+	 * What that particular tmux needs in its environment in order to be itself.
+	 *
+	 * A tmux DevHub shipped to a host carries its own compiled terminfo, because
+	 * a statically linked ncurses has the code and no database and a bare
+	 * appliance has no database either; `TERMINFO` is how it is told to read the
+	 * one that travelled with it. It belongs to the executable and not to the
+	 * context: point `runtimes.tmux` at a different binary and this is wrong,
+	 * which is exactly why it arrives beside the path rather than in the shared
+	 * launch environment.
+	 */
+	readonly tmuxEnvironment?: Readonly<Record<string, string>>;
 	/** The configured `runtimes.shell`; only its basename is used, for inspection. */
 	readonly shell: ResolvedExecutable | undefined;
 	/** The configured `runtimes.tmux_args`. Anything unsafe disables the runtime. */
@@ -896,6 +908,7 @@ export interface TmuxOutput extends CommandOutput {
 export class TmuxTerminalRuntime {
 	private readonly context: RuntimeLaunchContext;
 	private readonly tmux: RuntimeExecutable;
+	private readonly tmuxOwnEnvironment: Readonly<Record<string, string>>;
 	private readonly shellName: string | undefined;
 	private readonly tmuxArgs: readonly string[];
 	private effectiveSocket: SocketName | undefined;
@@ -930,6 +943,7 @@ export class TmuxTerminalRuntime {
 						"DevHub will not run tmux with the configured tmux_args: one of them is not an argument DevHub passes on.",
 				};
 		this.tmuxArgs = argumentsSafe ? [...options.tmuxArgs] : [];
+		this.tmuxOwnEnvironment = options.tmuxEnvironment ?? {};
 		this.shellName = options.shell?.basename;
 		this.effectiveSocket = isValidSocketName(options.effectiveSocketName)
 			? socketName(options.effectiveSocketName)
@@ -2510,7 +2524,7 @@ export class TmuxTerminalRuntime {
 	 * nested-session hints.
 	 */
 	private tmuxEnvironment(): Record<string, string | undefined> {
-		const env = { ...this.context.environment };
+		const env = { ...this.context.environment, ...this.tmuxOwnEnvironment };
 		delete env.TMUX;
 		delete env.TMUX_PANE;
 		return env;
@@ -2587,5 +2601,13 @@ export class TmuxTerminalRuntime {
 
 	tmuxPath(): string {
 		return this.executable().path;
+	}
+
+	/**
+	 * What that tmux needs in its environment, for a client DevHub does not run
+	 * through `runTmuxSpec` — the attaching PTY, and nothing else.
+	 */
+	tmuxEnv(): Readonly<Record<string, string>> {
+		return this.tmuxOwnEnvironment;
 	}
 }

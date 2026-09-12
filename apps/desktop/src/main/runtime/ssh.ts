@@ -67,8 +67,10 @@ import {
 	type RuntimeReading,
 	type TerminalLauncher,
 	type TerminalLauncherSpec,
+	type TmuxProgram,
 	type Watcher,
 } from "./runtime.js";
+import type { TmuxDelivery } from "./tmuxDelivery.js";
 
 /** How many recent round trips a median is taken over. */
 const LATENCY_SAMPLES = 16;
@@ -201,7 +203,32 @@ export function parseLoginEnvironment(
 interface RemoteMachine {
 	readonly home: string;
 	readonly platform: string;
+	/** `uname -m`, as the tarball names it: `x64` or `arm64`. */
+	readonly architecture: string;
 	readonly login: Readonly<Record<string, string>>;
+}
+
+/** `uname -s` as the download URL spells it. */
+function platformName(uname: string): string {
+	return uname.toLowerCase();
+}
+
+/**
+ * `uname -m` as the download URL spells it.
+ *
+ * The two names each architecture answers to are folded into the one the
+ * release uses; anything else keeps its own word, so a machine DevHub has no
+ * tarball for says which machine it is rather than being rounded to one that
+ * looks close.
+ */
+function architectureName(uname: string): string {
+	if (uname === "x86_64" || uname === "amd64") return "x64";
+	if (uname === "aarch64" || uname === "arm64") return "arm64";
+	return uname;
+}
+
+function describe(failure: unknown): string {
+	return failure instanceof Error ? failure.message : String(failure);
 }
 
 export interface SshRuntimeOptions {
@@ -221,6 +248,14 @@ export interface SshRuntimeOptions {
 	readonly ptyFactory?: PtyFactory;
 	/** For tests: the environment the local ssh client starts with. */
 	readonly localEnvironment?: Readonly<Record<string, string | undefined>>;
+	/**
+	 * Where the tmux DevHub installs on this host comes from.
+	 *
+	 * Injected rather than read from `product.json` here, so that this module
+	 * stays importable by things that have no app around them — the PTY test
+	 * program among them — for the same reason the control directory is.
+	 */
+	readonly tmux?: TmuxDelivery;
 }
 
 /**
@@ -480,6 +515,7 @@ export class SshRuntime implements Runtime {
 	readonly #sshPath: string;
 	readonly #ptyFactory: PtyFactory;
 	readonly #localEnvironment: Readonly<Record<string, string | undefined>>;
+	readonly #tmuxDelivery: TmuxDelivery | undefined;
 
 	readonly #latencies: number[] = [];
 	#recentExecs: number[] = [];
@@ -501,6 +537,7 @@ export class SshRuntime implements Runtime {
 	 */
 	#login: Readonly<Record<string, string>> | undefined;
 	#launcher: Promise<TerminalLauncher> | undefined;
+	#tmux: Promise<TmuxProgram> | undefined;
 	#controlDirectoryMade: Promise<unknown> | undefined;
 
 	constructor(options: SshRuntimeOptions) {
@@ -511,6 +548,7 @@ export class SshRuntime implements Runtime {
 		this.#sshPath = options.sshPath ?? "ssh";
 		this.#ptyFactory = options.ptyFactory ?? openPty;
 		this.#localEnvironment = options.localEnvironment ?? process.env;
+		this.#tmuxDelivery = options.tmux;
 		if (!fitsControlPath(this.#controlDirectory)) {
 			throw new Error(
 				`the ssh control socket ${controlPathOf(this.#controlDirectory)} is ` +
@@ -554,9 +592,9 @@ export class SshRuntime implements Runtime {
 		if (this.#remote) return this.#remote;
 		const pending = (async () => {
 			const result = await this.#sh(
-				`printf '%s\\n%s\\n%s\\n' "$HOME" "$(uname -s)" "$SHELL"`,
+				`printf '%s\\n%s\\n%s\\n%s\\n' "$HOME" "$(uname -s)" "$(uname -m)" "$SHELL"`,
 			);
-			const [home = "", platform = "", shell = ""] = result.stdout
+			const [home = "", platform = "", machine = "", shell = ""] = result.stdout
 				.toString("utf8")
 				.split("\n");
 			if (platform !== "Linux" && platform !== "Darwin") {
@@ -564,7 +602,12 @@ export class SshRuntime implements Runtime {
 			}
 			const login = await this.#readLoginEnvironment(shell);
 			this.#login = login;
-			return { home, platform, login };
+			return {
+				home,
+				platform,
+				architecture: architectureName(machine),
+				login,
+			};
 		})();
 		// A host that was down when the first command went out must be asked
 		// again by the second: a rejected promise left in the field would answer
@@ -733,6 +776,9 @@ export class SshRuntime implements Runtime {
 	 */
 	async resolveProgram(
 		configured: string,
+		// This machine's PATH, which is not this question's answer: the search
+		// happens over there, under the environment read from over there.
+		_searchPath?: string,
 	): Promise<SettingsResolvedRuntimeWire> {
 		const { login } = await this.#describeRemote();
 		const path = login["PATH"] ?? "";
@@ -757,6 +803,118 @@ export class SshRuntime implements Runtime {
 						directories: path.split(":").filter((entry) => entry.length > 0),
 					},
 		};
+	}
+
+	/**
+	 * The tmux DevHub put on this host, put there now if it is not already.
+	 *
+	 * `runtimes.tmux` is not consulted and the host's own tmux is never used.
+	 * That is a decision and not an oversight: tmux's control output — the
+	 * `list-sessions` format, `capture-pane -e`, `display-message -p` — differs
+	 * between versions in ways that surface as an Agent whose output is subtly
+	 * wrong rather than as an error, and this adapter is written against one
+	 * version. The host that made this necessary has no tmux at all and no way
+	 * for its owner to install one. One version, published by DevHub, is the
+	 * version the tests are about.
+	 *
+	 * The install is four steps and every one of them names the host when it
+	 * fails, because "tmux did not work" with no machine in it is the least
+	 * useful thing to say about two machines: ask the version already there,
+	 * fetch the tarball *here*, unpack it *there* from a stream on stdin, and
+	 * ask the version again. The last step is the one that makes the first
+	 * meaningful — an unpack that wrote something that will not run is caught
+	 * on the way in rather than at the first attach.
+	 *
+	 * Idempotent by the same question it starts with: a version directory whose
+	 * `bin/tmux -V` answers is an install that has happened, whether this DevHub
+	 * did it, an older one did, or somebody unpacked the tarball by hand.
+	 */
+	async tmuxProgram(
+		// `runtimes.tmux` and this machine's PATH, both deliberately unread:
+		// which tmux runs on a host is not a thing a person configures per
+		// machine, and the search path here names nothing there.
+		_configured?: string,
+		_searchPath?: string,
+	): Promise<TmuxProgram> {
+		this.#tmux ??= this.#installTmux();
+		try {
+			return await this.#tmux;
+		} catch (failure: unknown) {
+			// Tried again by the next window: a host that had no route to the
+			// release when the first one opened may have one by the second.
+			this.#tmux = undefined;
+			return {
+				kind: "unavailable",
+				reason: failure instanceof Error ? failure.message : String(failure),
+			};
+		}
+	}
+
+	async #installTmux(): Promise<TmuxProgram> {
+		const delivery = this.#tmuxDelivery;
+		if (delivery === undefined) {
+			throw new Error(
+				`this DevHub was not told where to get tmux from, so it cannot put ` +
+					`one on ${this.#host}`,
+			);
+		}
+		const { home, platform, architecture } = await this.#describeRemote();
+		const target = `${platformName(platform)}-${architecture}`;
+		const directory = posix.join(home, delivery.directory, delivery.version);
+		const program = posix.join(directory, "bin", "tmux");
+		const environment = { TERMINFO: posix.join(directory, "terminfo") };
+		if (await this.#tmuxAnswers(program)) {
+			return { kind: "resolved", path: program, environment };
+		}
+		let tarball;
+		try {
+			tarball = await delivery.tarball(target);
+		} catch (failure: unknown) {
+			throw new Error(
+				`DevHub could not get the tmux ${delivery.version} it installs on ` +
+					`${this.#host} (${target}): ${describe(failure)}`,
+				{ cause: failure },
+			);
+		}
+		const staging = `${directory}.unpacking`;
+		const unpacked = posix.join(staging, tarball.topLevelDirectory);
+		// `tar` reading a stream from stdin, into a directory of its own, and a
+		// rename at the end. Not `--strip-components`, which is GNU's and
+		// bsdtar's and not POSIX's, and not an unpack straight onto the version
+		// directory, which would leave half an install behind a name that means
+		// "installed" if the connection dropped in the middle.
+		const unpack = await this.#sh(
+			[
+				`rm -rf -- ${shellQuote(staging)} ${shellQuote(directory)}`,
+				`mkdir -p -- ${shellQuote(staging)} || exit 1`,
+				`tar xzf - -C ${shellQuote(staging)} || exit 1`,
+				`[ -d ${shellQuote(unpacked)} ] || { echo "no ${tarball.topLevelDirectory} in the tarball" >&2; exit 1; }`,
+				`mkdir -p -- ${shellQuote(posix.dirname(directory))} || exit 1`,
+				`mv -- ${shellQuote(unpacked)} ${shellQuote(directory)} || exit 1`,
+				`exec rm -rf -- ${shellQuote(staging)}`,
+			].join("\n"),
+			{ stdin: tarball.bytes },
+		);
+		if (unpack.code !== 0) {
+			throw new Error(
+				`DevHub could not unpack tmux ${delivery.version} into ${directory} ` +
+					`on ${this.#host}: ${lastLine(unpack.stderr.toString("utf8"))}`,
+			);
+		}
+		if (!(await this.#tmuxAnswers(program))) {
+			throw new Error(
+				`DevHub unpacked tmux ${delivery.version} into ${directory} on ` +
+					`${this.#host}, but ${program} -V did not answer — the binary that ` +
+					`came out cannot run on that machine`,
+			);
+		}
+		return { kind: "resolved", path: program, environment };
+	}
+
+	/** Whether there is a tmux at this path that this machine can run. */
+	async #tmuxAnswers(program: string): Promise<boolean> {
+		const result = await this.#sh(`exec ${shellQuote(program)} -V`);
+		return result.code === 0;
 	}
 
 	spawnPty(request: PtyRequest): Pty {

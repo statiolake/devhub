@@ -15,8 +15,10 @@
  */
 
 import { Buffer } from "node:buffer";
+import { spawn } from "node:child_process";
 import {
 	chmod,
+	mkdir,
 	mkdtemp,
 	readFile,
 	rm,
@@ -53,6 +55,7 @@ import {
 	unauthenticatedFailure,
 	unreachableFailure,
 } from "./ssh.js";
+import { tmuxTopLevelDirectory, type TmuxDelivery } from "./tmuxDelivery.js";
 
 /**
  * An `ssh` that never leaves this machine.
@@ -760,5 +763,189 @@ describe("reading an env listing", () => {
 		expect(
 			parseLoginEnvironment("PATH=/bin\0SSH_CONNECTION=a b\0SHLVL=2\0", "\0"),
 		).toEqual({ PATH: "/bin" });
+	});
+});
+
+/**
+ * The tmux DevHub puts on a host, and never the host's own.
+ *
+ * The fake ssh runs its commands here, so the "host" is a scratch `$HOME` and
+ * the install is a directory this test can read — which is what makes the
+ * whole of it checkable without a NAS: the tarball is a real gzipped tar
+ * unpacked by a real `tar` reading a real stream from stdin, and the binary at
+ * the end is a script that answers `-V`, because "did the thing that came out
+ * run" is the question the last step asks the host.
+ */
+describe("the tmux DevHub installs on a host", () => {
+	let remoteHome: string;
+	let workshop: string;
+	let asked: string[];
+
+	beforeEach(async () => {
+		remoteHome = await mkdtemp("/tmp/devhub-tmux-home-");
+		workshop = await mkdtemp("/tmp/devhub-tmux-build-");
+		asked = [];
+	});
+	afterEach(async () => {
+		await rm(remoteHome, { recursive: true, force: true });
+		await rm(workshop, { recursive: true, force: true });
+	});
+
+	/** A real `devhub-tmux-<platform>-<version>.tar.gz`, built here. */
+	async function tarballFor(
+		platform: string,
+		version: string,
+		binary = `#!/bin/sh\necho "tmux ${version}"\n`,
+	): Promise<Uint8Array> {
+		const top = tmuxTopLevelDirectory(platform);
+		const root = join(workshop, `${top}-${version}`);
+		await mkdir(join(root, top, "bin"), { recursive: true });
+		await mkdir(join(root, top, "terminfo", "x"), { recursive: true });
+		await writeFile(join(root, top, "bin", "tmux"), binary, { mode: 0o755 });
+		await chmod(join(root, top, "bin", "tmux"), 0o755);
+		await writeFile(join(root, top, "terminfo", "x", "xterm-256color"), "e");
+		const archive = join(workshop, `${top}-${version}.tar.gz`);
+		await new Promise<void>((resolve, reject) => {
+			const tar = spawn("tar", ["czf", archive, "-C", root, top]);
+			tar.on("error", reject);
+			tar.on("exit", (code) =>
+				code === 0
+					? resolve()
+					: reject(new Error(`tar exited ${String(code)}`)),
+			);
+		});
+		return new Uint8Array(await readFile(archive));
+	}
+
+	function delivery(
+		version: string,
+		bytes: (platform: string) => Promise<Uint8Array>,
+	): TmuxDelivery {
+		return {
+			version,
+			directory: ".devhub-server/tmux",
+			tarball: async (platform) => {
+				asked.push(platform);
+				return {
+					bytes: await bytes(platform),
+					topLevelDirectory: tmuxTopLevelDirectory(platform),
+					verifiedSha256: undefined,
+				};
+			},
+		};
+	}
+
+	function runtimeWith(tmux: TmuxDelivery): SshRuntime {
+		return new SshRuntime({
+			host: "build-box.example.com",
+			controlDirectory: control,
+			sshPath: join(bin, "ssh"),
+			localEnvironment: { ...FAKE_ENVIRONMENT, HOME: remoteHome },
+			tmux,
+		});
+	}
+
+	it("unpacks it into the host's own home and names it absolutely", async () => {
+		const runtime = runtimeWith(
+			delivery("3.7c", (platform) => tarballFor(platform, "3.7c")),
+		);
+		const program = await runtime.tmuxProgram();
+		expect(program).toEqual({
+			kind: "resolved",
+			path: `${remoteHome}/.devhub-server/tmux/3.7c/bin/tmux`,
+			// A static ncurses has the terminfo code and no database, and a bare
+			// appliance has no database either: this is how the binary is told
+			// to read the one that travelled with it.
+			environment: {
+				TERMINFO: `${remoteHome}/.devhub-server/tmux/3.7c/terminfo`,
+			},
+		});
+		const installed = await stat(
+			`${remoteHome}/.devhub-server/tmux/3.7c/bin/tmux`,
+		);
+		expect(installed.mode & 0o111).toBeGreaterThan(0);
+	});
+
+	// The version is in the path, so a DevHub of a different age on the same
+	// host finds its own and neither disturbs the other.
+	it("keeps one directory per version, not one directory", async () => {
+		await runtimeWith(
+			delivery("3.7c", (p) => tarballFor(p, "3.7c")),
+		).tmuxProgram();
+		await runtimeWith(
+			delivery("3.8", (p) => tarballFor(p, "3.8")),
+		).tmuxProgram();
+		expect(
+			await stat(`${remoteHome}/.devhub-server/tmux/3.7c/bin/tmux`),
+		).toBeTruthy();
+		expect(
+			await stat(`${remoteHome}/.devhub-server/tmux/3.8/bin/tmux`),
+		).toBeTruthy();
+	});
+
+	// Once per machine per DevHub start, and once per machine ever: the
+	// question the install starts with is what makes it idempotent.
+	it("asks for no tarball when the version is already there and runs", async () => {
+		const first = runtimeWith(delivery("3.7c", (p) => tarballFor(p, "3.7c")));
+		await first.tmuxProgram();
+		await first.tmuxProgram();
+		expect(asked).toHaveLength(1);
+		// A second DevHub, and a second connection: still nothing downloaded.
+		await runtimeWith(
+			delivery("3.7c", (p) => tarballFor(p, "3.7c")),
+		).tmuxProgram();
+		expect(asked).toHaveLength(1);
+	});
+
+	it("says which host and which tarball when it cannot get one", async () => {
+		const program = await runtimeWith(
+			delivery("3.7c", () =>
+				Promise.reject(new Error("github.com answered 404 Not Found")),
+			),
+		).tmuxProgram();
+		expect(program.kind).toBe("unavailable");
+		const reason = program.kind === "unavailable" ? program.reason : "";
+		expect(reason).toContain("build-box.example.com");
+		expect(reason).toContain("3.7c");
+		expect(reason).toContain("404 Not Found");
+	});
+
+	it("says which host and which step when the tarball is not what it should be", async () => {
+		const program = await runtimeWith(
+			// The right archive for the wrong platform: the directory the unpack
+			// looks for is not in it.
+			delivery("3.7c", () => tarballFor("linux-riscv64", "3.7c")),
+		).tmuxProgram();
+		const reason = program.kind === "unavailable" ? program.reason : "";
+		expect(reason).toContain("could not unpack tmux 3.7c");
+		expect(reason).toContain("build-box.example.com");
+	});
+
+	// The step that makes the first one mean anything: an unpack that wrote a
+	// binary this machine cannot run is caught here and not at the first attach.
+	it("says so when what came out will not run on that machine", async () => {
+		const program = await runtimeWith(
+			delivery("3.7c", (p) =>
+				tarballFor(p, "3.7c", "ELF not for this machine\n"),
+			),
+		).tmuxProgram();
+		const reason = program.kind === "unavailable" ? program.reason : "";
+		expect(reason).toContain("-V did not answer");
+		expect(reason).toContain("build-box.example.com");
+	});
+
+	// Not remembered across a failure: a host with no route to the release when
+	// the first window opened may have one by the second.
+	it("tries again after a failure rather than answering with the old one", async () => {
+		let broken = true;
+		const runtime = runtimeWith(
+			delivery("3.7c", async (platform) => {
+				if (broken) throw new Error("no route to host");
+				return tarballFor(platform, "3.7c");
+			}),
+		);
+		expect((await runtime.tmuxProgram()).kind).toBe("unavailable");
+		broken = false;
+		expect((await runtime.tmuxProgram()).kind).toBe("resolved");
 	});
 });

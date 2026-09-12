@@ -162,6 +162,7 @@ export class TerminalSurfaces {
 					// The client runs from the launch home: a workspace folder
 					// that has been deleted must not make the client unusable.
 					cwd: runtime.contextHome,
+					environment: runtime.tmuxEnv(),
 					size: request.size,
 					sink: request.sink,
 				});

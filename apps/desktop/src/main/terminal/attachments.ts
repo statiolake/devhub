@@ -127,6 +127,16 @@ export interface AttachContext {
 	readonly args: readonly string[];
 	/** The client's working directory: the launch home, never a workspace. */
 	readonly cwd: string;
+	/**
+	 * What this particular tmux needs in its environment, over the shared one.
+	 *
+	 * A tmux DevHub shipped to a host reads the terminfo database that travelled
+	 * with it, and a client that did not know that would come up on a machine
+	 * with no database at all and refuse to draw. It belongs to the executable
+	 * and so it arrives with the executable — `TmuxTerminalRuntime.tmuxEnv()` —
+	 * rather than in the one environment every DevHub child shares.
+	 */
+	readonly environment?: Readonly<Record<string, string>>;
 	readonly size: TerminalSize;
 	readonly sink: FrameSink;
 }
@@ -662,7 +672,7 @@ export class AttachmentManager {
 				rows: context.size.rows,
 				pixelWidth: context.size.pixelWidth,
 				pixelHeight: context.size.pixelHeight,
-				env: this.environment(),
+				env: { ...this.environment(), ...context.environment },
 			});
 		} catch (failure: unknown) {
 			// The view asked for a terminal and there is none. Tell it in the
