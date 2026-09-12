@@ -701,6 +701,26 @@ export class AppController {
 			renameAgent: (agentId) => {
 				shellWindow().modals.openModal({ kind: "agent-rename", agentId });
 			},
+			markAgentUnread: (agentId) => {
+				// The same intent the row menu dispatches, through the same
+				// door: a chord is another way to raise a command DevHub has.
+				this.dispatchOwn(
+					intentFromWire({ type: "mark_agent_unread", agentId }),
+				);
+			},
+			focusSidebar: () => {
+				this.send(CHANNELS.menuCommand, "focus_sidebar");
+			},
+			dismissAlert: () => {
+				// The App Shell page and nowhere else. Every failure main raises
+				// is published to this one page and drawn in one place
+				// (`publishError` → `SurfaceViewport`'s inline alert), so there is
+				// one alert to put away however it got there. The Settings
+				// window's own refusal is not this: its Dismiss button is
+				// ordinary DOM in a window where Tab works, so it was never out
+				// of the keyboard's reach.
+				this.send(CHANNELS.menuCommand, "dismiss_alert");
+			},
 			closeAgent: (agentId) => {
 				this.requestCloseAgent(agentId);
 			},
@@ -785,6 +805,23 @@ export class AppController {
 	 */
 	private swapSplitFocus(): void {
 		this.dispatchOwn({ type: "swap_split_focus" });
+		this.placeKeyboardOnSurface();
+	}
+
+	/**
+	 * Put the keyboard on whatever the selection has on screen.
+	 *
+	 * The two halves of one rule, and the only place either is spoken: an
+	 * Agent's pane is drawn by the App Shell page, so the page is asked to find
+	 * it; everything else is a native view the window focuses directly, which is
+	 * `ShellWindow.focusSurface`'s single answer.
+	 *
+	 * Both callers are "the keyboard should go back to the surface now" —
+	 * swapping the halves of a split, and Escape out of the Sidebar — and they
+	 * ask it here rather than each deciding, because two answers to one question
+	 * is how the split ended up focusing the wrong pane once already.
+	 */
+	private placeKeyboardOnSurface(): void {
 		if (this.coordinator.model.selection.context.kind === "agent") {
 			this.send(CHANNELS.menuCommand, "focus_agent_pane");
 			return;
@@ -4171,6 +4208,12 @@ export class AppController {
 		);
 		handle(CHANNELS.setContentRect, (_event, rect: ContentRect) => {
 			shellWindow().setContentRect(rect);
+		});
+		// Escape in the Sidebar. The page can blur its own row but it cannot
+		// focus a native workbench view, so where the keyboard goes stays main's
+		// one answer and this is only the ask.
+		handle(CHANNELS.focusSurface, () => {
+			this.placeKeyboardOnSurface();
 		});
 		handle(
 			CHANNELS.setContentSurface,

@@ -703,13 +703,17 @@ function RepositoryLinks({
 function ScratchRow({
   snapshot,
   onDispatch,
+  rowRef,
 }: {
   readonly snapshot: AppSnapshot;
   readonly onDispatch: (intent: AppIntent) => void;
+  /** Where `Cmd+Q S` lands when Scratch is what is selected. */
+  readonly rowRef: React.Ref<HTMLButtonElement>;
 }) {
   const selected = snapshot.selection.context.kind === "global";
   return (
     <button
+      ref={rowRef}
       className={`sidebar-row scratch-row${selected ? " is-selected" : ""}`}
       type="button"
       aria-current={selected ? "page" : undefined}
@@ -840,8 +844,13 @@ function ClosingGhostRow({ label }: { label: string }) {
 }
 
 export function Sidebar({ snapshot, onDispatch }: SidebarProps) {
-  const { dispatch, agentProfiles, repositoryStatus, closeWorkspace } =
-    useAppShell();
+  const {
+    dispatch,
+    agentProfiles,
+    repositoryStatus,
+    closeWorkspace,
+    dismissIntentError,
+  } = useAppShell();
   const repositories = useMemo(
     () =>
       new Map(
@@ -891,23 +900,45 @@ export function Sidebar({ snapshot, onDispatch }: SidebarProps) {
   const openIssueAssignment = useCallback(() => {
     void devhub().openModal({ kind: "issue-assignment" });
   }, []);
-  // File ▸ Add Workspace… is the same command as the sidebar's +, so it opens
-  // the same picker rather than a second way of adding a workspace.
-  useEffect(
-    () =>
-      devhub().onMenuCommand((command) => {
-        if (command === "open_workspace_picker") openPicker();
-        // The page's half of `Cmd+Q Cmd+J` in the side-by-side layout: main
-        // decides *that* the keyboard should move and this finds the pane,
-        // through the one function that already answers "where does the
-        // keyboard belong in this document".
-        if (command === "focus_agent_pane") focusMainSurface();
-      }),
-    [openPicker],
-  );
   const pickerTriggerRef = useRef<HTMLButtonElement>(null);
   const workspaceTreeRef = useRef<HTMLUListElement>(null);
+  const scratchRowRef = useRef<HTMLButtonElement>(null);
   const treeFocusId = useRef<string | undefined>(undefined);
+  // Which row the keyboard would land on, kept in a ref so that the one
+  // subscription to main's commands does not have to be torn down and remade
+  // every time the selection moves.
+  const onScratch = useRef(false);
+  onScratch.current = snapshot.selection.context.kind === "global";
+
+  /**
+   * `Cmd+Q S`: put the keyboard on the row that is selected.
+   *
+   * The tree's roving tab stop is already the selected row — the layout effect
+   * above keeps it there — so this focuses whatever that is and the tree's own
+   * arrows, Home/End and Return take over from there. Scratch is a button of
+   * its own outside the tree, so a global selection lands on it; a Sidebar with
+   * no workspaces has nothing else to land on either way.
+   */
+  const focusSidebar = useCallback(() => {
+    const tree = workspaceTreeRef.current;
+    const items = tree ? treeContextButtons(tree) : [];
+    const stop = items.find((item) => item.tabIndex === 0) ?? items[0];
+    const target = onScratch.current ? scratchRowRef.current : stop;
+    (target ?? scratchRowRef.current)?.focus();
+  }, []);
+
+  /**
+   * Escape: give the keyboard back.
+   *
+   * The way out of the chrome, and the counterpart of `Cmd+Q S`. It is a
+   * request to main and not a `blur()` here, because the thing that should get
+   * the keyboard is usually a native workbench view this document cannot
+   * focus — `ShellWindow.focusSurface` is the one answer to where it goes, and
+   * writing a second one here is how the two would come to disagree.
+   */
+  const leaveSidebar = useCallback(() => {
+    void devhub().focusSurface();
+  }, []);
 
   useLayoutEffect(() => {
     const tree = workspaceTreeRef.current;
@@ -937,6 +968,37 @@ export function Sidebar({ snapshot, onDispatch }: SidebarProps) {
     treeFocusId.current = target.dataset.treeItemId;
     if (activeWasRemoved) target.focus();
   }, [snapshot.selection.context, snapshot.workspaces]);
+
+  /**
+   * Everything main asks this page to do, in one subscription.
+   *
+   * Every one of these is a command main cannot carry out itself because what
+   * it acts on is drawn here: the picker's trigger, the Agent's pane, the
+   * Sidebar's roving tab stop, the alert's lifetime. They arrive on one channel
+   * and are answered in one place, so a command added later is a line here
+   * rather than a second listener somewhere with its own idea of when it is
+   * mounted.
+   */
+  useEffect(
+    () =>
+      devhub().onMenuCommand((command) => {
+        // File ▸ Add Workspace… is the same command as the sidebar's +, so it
+        // opens the same picker rather than a second way of adding a workspace.
+        if (command === "open_workspace_picker") openPicker();
+        // The page's half of `Cmd+Q Cmd+J` in the side-by-side layout: main
+        // decides *that* the keyboard should move and this finds the pane,
+        // through the one function that already answers "where does the
+        // keyboard belong in this document".
+        if (command === "focus_agent_pane") focusMainSurface();
+        if (command === "focus_sidebar") focusSidebar();
+        // The keyboard's version of the alert's `×`, and the same gesture: the
+        // third of the three things that retire a failure. With nothing on
+        // screen it records nothing and changes nothing, which is what makes
+        // the chord a no-op rather than a case anybody has to check for.
+        if (command === "dismiss_alert") dismissIntentError();
+      }),
+    [dismissIntentError, focusSidebar, openPicker],
+  );
 
   const [inProgressWidth, setInProgressWidth] = useState<number | null>(null);
   const renderedWidth = inProgressWidth ?? snapshot.sidebar.width;
@@ -992,12 +1054,27 @@ export function Sidebar({ snapshot, onDispatch }: SidebarProps) {
       className="sidebar"
       aria-label="Workspace navigation"
       style={{ "--sidebar-width": `${renderedWidth}px` } as React.CSSProperties}
+      // Escape leaves the Sidebar, from anywhere in it: a row, the tree, the
+      // resize handle. One handler on the pane rather than one per control,
+      // because "the way out" is a fact about the pane. Anything inside that
+      // has its own Escape — the row menu — stops the event, so the key means
+      // one thing at a time.
+      onKeyDown={(event) => {
+        if (isImeComposing(event.nativeEvent)) return;
+        if (event.key !== "Escape") return;
+        event.preventDefault();
+        leaveSidebar();
+      }}
     >
       {/* The Sidebar runs the full height of the window, so its own top strip
           is where the window buttons live and where the window is dragged. */}
       <SidebarHeader />
       <div className="sidebar-scroll-region">
-        <ScratchRow snapshot={snapshot} onDispatch={onDispatch} />
+        <ScratchRow
+          snapshot={snapshot}
+          onDispatch={onDispatch}
+          rowRef={scratchRowRef}
+        />
         <div className="sidebar-section-heading">
           <h2>Workspaces</h2>
           {/* The two ways to start work, kept together at the trailing edge:

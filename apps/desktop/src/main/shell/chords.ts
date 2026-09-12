@@ -134,6 +134,14 @@ export type ChordEffect =
 	/** Side by side already: move the keyboard rather than the selection. */
 	| { readonly kind: "swap-split-focus" }
 	/**
+	 * Put the keyboard on the Sidebar's selected row.
+	 *
+	 * The one effect that moves focus into DevHub's own chrome rather than
+	 * acting on the model. Everything the Sidebar can do with a keyboard was
+	 * already written and none of it could be reached; this is the door.
+	 */
+	| { readonly kind: "focus-sidebar" }
+	/**
 	 * Out to Scratch, or back to wherever the jump out started.
 	 *
 	 * The one effect that carries no target: which selection to come back to is
@@ -148,6 +156,9 @@ export type ChordEffect =
 	| { readonly kind: "open-issue-picker" }
 	| { readonly kind: "open-agent-actions"; readonly agentId: string }
 	| { readonly kind: "rename-agent"; readonly agentId: string }
+	| { readonly kind: "mark-agent-unread"; readonly agentId: string }
+	/** Whichever failure is on screen in whichever window is in front. */
+	| { readonly kind: "dismiss-alert" }
 	| { readonly kind: "close-agent"; readonly agentId: string }
 	/** Close it, and delete the worktree if that is what it is. */
 	| { readonly kind: "close-workspace"; readonly workspaceId: string }
@@ -329,6 +340,12 @@ export function resolveChord(
 		case "rename_agent":
 			return agent ? { kind: "rename-agent", agentId: agent.id } : undefined;
 
+		case "mark_agent_unread":
+			// `needs: "agent"` has already answered "is there one".
+			return agent
+				? { kind: "mark-agent-unread", agentId: agent.id }
+				: undefined;
+
 		case "close_selection":
 			// The small thing if you are standing on one, the big thing if you are
 			// not. `close_workspace` is the same second half, under its own key.
@@ -345,6 +362,15 @@ export function resolveChord(
 
 		case "refresh_repositories":
 			return { kind: "refresh-repositories" };
+
+		case "focus_sidebar":
+			return { kind: "focus-sidebar" };
+
+		case "dismiss_alert":
+			// Whether anything is showing is a fact about a page, not about the
+			// model, so it is not decidable here. The page answers with nothing
+			// when it has nothing to put away.
+			return { kind: "dismiss-alert" };
 
 		case "open_settings":
 			return { kind: "open-settings" };

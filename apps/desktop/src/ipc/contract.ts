@@ -663,6 +663,16 @@ export interface DevhubApi {
 	setContentRect(rect: ContentRect): Promise<void>;
 	/** What the page has put in the content area. */
 	setContentSurface(surface: ContentSurfaceWire): Promise<void>;
+	/**
+	 * Hand the keyboard back to whatever is on screen.
+	 *
+	 * Escape in the Sidebar. It is a request to main rather than a `blur()`
+	 * here, because the surface is usually a native `WebContentsView` that this
+	 * document cannot focus — where the keyboard goes is `ShellWindow
+	 * .focusSurface`'s single answer, and asking it is the only way not to
+	 * write a second one.
+	 */
+	focusSurface(): Promise<void>;
 
 	/**
 	 * The Surface runtime.
@@ -715,6 +725,7 @@ export const CHANNELS = {
 	openExternalUrl: "devhub:open-external-url",
 	setContentRect: "devhub:set-content-rect",
 	setContentSurface: "devhub:set-content-surface",
+	focusSurface: "devhub:focus-surface",
 
 	snapshotChanged: "devhub:snapshot-changed",
 	appearanceChanged: "devhub:appearance-changed",
@@ -928,4 +939,20 @@ export type MenuCommand =
 	 * only this half can be a message. See `shell/focusHome.ts`, which is the
 	 * page's half of the focus rule and already knows how to find the pane.
 	 */
-	| "focus_agent_pane";
+	| "focus_agent_pane"
+	/**
+	 * Put the keyboard on the Sidebar's selected row.
+	 *
+	 * The reverse of `focus_agent_pane`, and a message for the same reason: the
+	 * Sidebar is drawn by this page, so only this page can say which row is the
+	 * roving tab stop and focus it.
+	 */
+	| "focus_sidebar"
+	/**
+	 * Put away whichever failure this page is showing.
+	 *
+	 * The page owns the alert's lifetime (`shell/alertLifetime.ts`), so main can
+	 * only ask; a page with nothing on screen answers with nothing, which is
+	 * what makes one chord right in every window.
+	 */
+	| "dismiss_alert";

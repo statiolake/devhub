@@ -69,6 +69,10 @@ export function RowMenu({ items, at, label, onDismiss }: RowMenuProps) {
       onKeyDown={(event) => {
         if (event.key === "Escape") {
           event.preventDefault();
+          // Stopped, not merely handled: the Sidebar answers Escape by giving
+          // the keyboard back to the surface, and a menu closing is not that.
+          // Escape backs out of the innermost thing, one step at a time.
+          event.stopPropagation();
           onDismiss();
         }
       }}

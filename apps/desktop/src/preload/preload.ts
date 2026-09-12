@@ -220,6 +220,8 @@ const devhub: DevhubApi = {
 		ipcRenderer.invoke(CHANNELS.setContentRect, rect) as Promise<void>,
 	setContentSurface: (surface: ContentSurfaceWire) =>
 		ipcRenderer.invoke(CHANNELS.setContentSurface, surface) as Promise<void>,
+	focusSurface: () =>
+		ipcRenderer.invoke(CHANNELS.focusSurface) as Promise<void>,
 
 	terminal: terminalApi,
 };

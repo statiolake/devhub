@@ -634,6 +634,17 @@ describe("the commands that act on what is selected", () => {
 		expect(run("rename_agent", inTwo)).toBeUndefined();
 	});
 
+	it("marks the selected Agent unread, and nothing on a row", () => {
+		// The row menu's own item, under a key. It is the same intent, so a
+		// workspace row — which has no Agent to owe a look to — is a no-op like
+		// every other chord with nothing to act on.
+		expect(run("mark_agent_unread", onAgent)).toEqual({
+			kind: "mark-agent-unread",
+			agentId: "b2",
+		});
+		expect(run("mark_agent_unread", inTwo)).toBeUndefined();
+	});
+
 	it("sends an action to the selected Agent, and nothing on a row", () => {
 		expect(run("send_agent_action", onAgent)).toEqual({
 			kind: "open-agent-actions",
@@ -684,8 +695,19 @@ describe("the commands that need nothing at all", () => {
 			kind: "refresh-repositories",
 		});
 		expect(run("open_settings", nothing)).toEqual({ kind: "open-settings" });
+		expect(run("focus_sidebar", nothing)).toEqual({ kind: "focus-sidebar" });
 		expect(run("show_chord_help", nothing)).toEqual({
 			kind: "open-chord-help",
+		});
+	});
+
+	it("asks for the alert to go whether or not one is showing", () => {
+		// Whether anything is on screen is a fact about a page. This layer says
+		// "put it away" unconditionally and the page answers with nothing when
+		// it has nothing to put away, which is what keeps one chord right in
+		// every state rather than a gate here that cannot see the screen.
+		expect(run("dismiss_alert", snapshotOf())).toEqual({
+			kind: "dismiss-alert",
 		});
 	});
 
@@ -717,6 +739,12 @@ describe("the default table", () => {
 
 	it("reaches the picker by the finder key", () => {
 		expect(press("f", "KeyF")).toBe("add_workspace");
+	});
+
+	it("gives the three new commands the free unshifted letters", () => {
+		expect(press("s", "KeyS")).toBe("focus_sidebar");
+		expect(press("u", "KeyU")).toBe("mark_agent_unread");
+		expect(press("d", "KeyD")).toBe("dismiss_alert");
 	});
 
 	it("keeps the case rule: lower acts inside, upper reaches further", () => {

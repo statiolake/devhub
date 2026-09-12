@@ -50,6 +50,7 @@
  * | `Cmd+Q Shift+J`             | `toggle_scratch`          |
  * | `Cmd+Q O`                   | `swap_split_focus`        |
  * | `Cmd+Q E`                   | `focus_editor`            |
+ * | `Cmd+Q S`                   | `focus_sidebar`           |
  * | `Cmd+Q F`                   | `add_workspace`           |
  * | `Cmd+Q C`                   | `add_agent`               |
  * | `Cmd+Q I`                   | `open_issue_picker`       |
@@ -58,6 +59,8 @@
  * | `Cmd+Q X`                   | `close_selection`         |
  * | `Cmd+Q Shift+W`             | `close_workspace`         |
  * | `Cmd+Q R`                   | `refresh_repositories`    |
+ * | `Cmd+Q U`                   | `mark_agent_unread`       |
+ * | `Cmd+Q D`                   | `dismiss_alert`           |
  * | `Cmd+Q Shift+,`             | `open_settings`           |
  * | `Cmd+Q ?`                   | `show_chord_help`         |
  *
@@ -180,6 +183,34 @@
  * a person chose. With a workspace row or Scratch selected the chord is a
  * no-op, like every other chord with nothing to act on.
  *
+ * **`Cmd+Q S` is the way *into* the chrome, and Escape is the way out.** Every
+ * other chord here changes what is selected and leaves the keyboard on the
+ * surface, because that is where a person types (`shell/focusHome.ts`). But the
+ * Sidebar is a real tree with arrows, Home/End, a row menu and two resize
+ * handles, and none of it could be reached: a workbench is a native view that
+ * never gives Tab back, and the Agent pane is an xterm that eats it. So there
+ * is one key that puts the keyboard on the selected row, and from there the
+ * tree's own keyboard — which was always written and always dead — is live.
+ * Escape hands the keyboard back to whatever is on screen, which is the same
+ * one answer `ShellWindow.focusSurface` gives everybody else.
+ *
+ * **`Cmd+Q U` marks the selected Agent unread.** Reading an Agent is automatic
+ * — opening it is reading it — so un-reading it has to be something you can
+ * say, and until now the only way to say it was a right-click. It is the same
+ * intent the row menu dispatches, not a second one.
+ *
+ * **`Cmd+Q D` puts the alert away.** A failure is retired by three things and
+ * one of them is the person dismissing it (`shell/alertLifetime.ts`); the `×`
+ * that does it is a control in the chrome, which is exactly what the keyboard
+ * could not reach. It is one command rather than one per window: whichever
+ * DevHub window has the keyboard answers it, because "the alert" means the one
+ * you are looking at.
+ *
+ * **`Cmd+Q Shift+,` closes Settings when Settings is in front.** One chord, one
+ * command: the key that opens the window is the key that puts it away, the way
+ * a palette toggles. There is no second command for closing it, because there
+ * is no state in which both would be offered.
+ *
  * **Gone, and why.** `Cmd+Q T` and `Cmd+Q Ctrl+J` toggled the workbench's
  * integrated terminal: that is a workbench command with a workbench key, and
  * putting a DevHub chord in front of it was DevHub claiming a key in order to
@@ -266,15 +297,18 @@ export type CommandId =
   | "toggle_split"
   | "toggle_scratch"
   | "focus_editor"
+  | "focus_sidebar"
   | "add_workspace"
   | "add_agent"
   | "rename_agent"
+  | "mark_agent_unread"
   | "close_selection"
   | "close_workspace"
   | "open_issue_picker"
   | "send_agent_action"
   | "swap_split_focus"
   | "refresh_repositories"
+  | "dismiss_alert"
   | "open_settings"
   | "show_chord_help";
 
@@ -430,6 +464,15 @@ export const COMMANDS: readonly CommandDefinition[] = [
   },
 
   {
+    // The one command that hands the keyboard to DevHub's own chrome. Every
+    // other chord acts on the model and leaves focus where the surface is.
+    id: "focus_sidebar",
+    label: "Focus the sidebar",
+    needs: "nothing",
+    defaultKeys: ["s"],
+  },
+
+  {
     id: "add_workspace",
     label: "Add Workspace…",
     needs: "nothing",
@@ -460,6 +503,14 @@ export const COMMANDS: readonly CommandDefinition[] = [
     defaultKeys: [","],
   },
   {
+    // The one row-menu item that is not also a control on the row, and so the
+    // one act in the Sidebar that had no key at all.
+    id: "mark_agent_unread",
+    label: "Mark this Agent as unread",
+    needs: "agent",
+    defaultKeys: ["u"],
+  },
+  {
     id: "close_selection",
     label: "Close what is selected",
     needs: "nothing",
@@ -477,6 +528,17 @@ export const COMMANDS: readonly CommandDefinition[] = [
     label: "Refresh branch, pull request and Issue information",
     needs: "nothing",
     defaultKeys: ["r"],
+  },
+
+  {
+    // Whichever failure is on screen, put away. `needs` cannot ask "is there
+    // an alert" — that is a fact about a page, not about the selection — so
+    // this is a `nothing` command that is a no-op when nothing is showing,
+    // like every other chord with nothing to act on.
+    id: "dismiss_alert",
+    label: "Dismiss the alert",
+    needs: "nothing",
+    defaultKeys: ["d"],
   },
 
   {

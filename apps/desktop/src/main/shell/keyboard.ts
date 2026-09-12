@@ -59,6 +59,8 @@ export interface ChordHost {
 	): void;
 	/** Side by side: move the keyboard between the editor and the Agent. */
 	swapSplitFocus(): void;
+	/** Put the keyboard on the Sidebar's selected row — the way into the tree. */
+	focusSidebar(): void;
 	/** Jump out to Scratch, or back to where the jump out started. */
 	toggleScratch(): void;
 	openWorkspacePicker(): void;
@@ -72,6 +74,10 @@ export interface ChordHost {
 	openAgentActions(agentId: string): void;
 	/** Ask what this Agent should be called — the row's Rename. */
 	renameAgent(agentId: string): void;
+	/** Owe this Agent a look again — the row menu's Mark as Unread. */
+	markAgentUnread(agentId: string): void;
+	/** Put away whichever failure the window in front is showing. */
+	dismissAlert(): void;
 	/** Stop this Agent, asking first exactly as the row's own close does. */
 	closeAgent(agentId: string): void;
 	/** Close it — and delete the worktree, if that is what it is. */
@@ -114,6 +120,9 @@ function perform(host: ChordHost, effect: ChordEffect): void {
 		case "swap-split-focus":
 			host.swapSplitFocus();
 			return;
+		case "focus-sidebar":
+			host.focusSidebar();
+			return;
 		case "toggle-scratch":
 			host.toggleScratch();
 			return;
@@ -134,6 +143,12 @@ function perform(host: ChordHost, effect: ChordEffect): void {
 			return;
 		case "rename-agent":
 			host.renameAgent(effect.agentId);
+			return;
+		case "mark-agent-unread":
+			host.markAgentUnread(effect.agentId);
+			return;
+		case "dismiss-alert":
+			host.dismissAlert();
 			return;
 		case "close-agent":
 			host.closeAgent(effect.agentId);

@@ -120,6 +120,8 @@ export interface AppShellClient {
     height: number;
   }): Promise<void>;
   setContentSurface(surface: ContentSurfaceWire): Promise<void>;
+  /** Hand the keyboard back to whatever is on screen — Escape in the chrome. */
+  focusSurface(): Promise<void>;
   /** Put a modal on the overlay layer; the id is what takes it off again. */
   openModal(request: ModalRequest): Promise<string>;
   /** Hand main a failure this page has no place to draw. */
@@ -198,6 +200,7 @@ export function createShellClient(api: DevhubApi = devhub()): AppShellClient {
     openExternalUrl: (url) => api.openExternalUrl(url),
     setContentRect: (rect) => api.setContentRect(rect),
     setContentSurface: (surface) => api.setContentSurface(surface),
+    focusSurface: () => api.focusSurface(),
     openModal: (request) => api.openModal(request),
     raiseFailure: (error) => api.raiseFailure(error),
     closeModal: (id, response) => api.closeModal(id, response),
