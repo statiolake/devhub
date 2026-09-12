@@ -22,7 +22,7 @@ import {
   repositoryId,
   rootBasename,
   sshHost,
-  supportsLocalTooling,
+  supportsLocalAgents,
   unknownResource,
   Workspace,
   workspaceId,
@@ -388,12 +388,12 @@ describe("where a Workspace's folder is", () => {
 
   it("says DevHub's own tooling cannot reach another machine yet", () => {
     expect(
-      supportsLocalTooling(
+      supportsLocalAgents(
         workspaceLocation({ kind: "local", path: "/dev/api" }),
       ),
     ).toBe(true);
     expect(
-      supportsLocalTooling(
+      supportsLocalAgents(
         workspaceLocation({ kind: "ssh", host: "build", path: "/srv/api" }),
       ),
     ).toBe(false);

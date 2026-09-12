@@ -446,6 +446,13 @@
   margin-block-start: -2px;
 }
 
+/* The machine a remote row's folder is on, before its branch on the same
+   line. The separator is padding rather than a character with a space either
+   side, so the two facts stay one line's worth of ink. */
+.row-secondary-separator {
+  padding-inline: var(--space-1);
+}
+
 /* What GitHub says, on a line of its own: the marks and then the words about
    the same subject. The marks are the line's leading edge rather than the
    row's trailing one — they belong to the sentence beside them — and the line

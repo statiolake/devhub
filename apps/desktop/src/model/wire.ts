@@ -17,8 +17,8 @@ import {
   type AgentProfile,
   type AgentControlState,
   type WorkspaceClose,
-  LOCAL_TOOLING_UNAVAILABLE,
-  supportsLocalTooling,
+  LOCAL_AGENTS_UNAVAILABLE,
+  supportsLocalAgents,
   type WorkspaceLocation,
   type CloseInspectionProjection,
   type ResourceInspection,
@@ -366,9 +366,9 @@ export function snapshotWire(
     ...(workspace.lastAgentId === undefined
       ? {}
       : { lastAgentId: workspace.lastAgentId }),
-    ...(supportsLocalTooling(workspace.location)
+    ...(supportsLocalAgents(workspace.location)
       ? {}
-      : { localToolingUnavailable: LOCAL_TOOLING_UNAVAILABLE }),
+      : { localAgentsUnavailable: LOCAL_AGENTS_UNAVAILABLE }),
   }));
   const workspaces = orderWorkspaces(projected, (workspace) =>
     repositoryOf(workspace.id),

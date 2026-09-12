@@ -17,7 +17,7 @@ import {
 	displayPath,
 	Workspace,
 	workspaceId,
-	LOCAL_TOOLING_UNAVAILABLE,
+	LOCAL_AGENTS_UNAVAILABLE,
 	workspaceLocation,
 } from "../../model/domain.js";
 import { TerminalFailure } from "../../ipc/terminal.js";
@@ -156,6 +156,6 @@ describe("a workspace whose folder is on another machine", () => {
 		} catch (error) {
 			summary = error instanceof TerminalFailure ? error.summary : undefined;
 		}
-		expect(summary).toContain(LOCAL_TOOLING_UNAVAILABLE);
+		expect(summary).toContain(LOCAL_AGENTS_UNAVAILABLE);
 	});
 });

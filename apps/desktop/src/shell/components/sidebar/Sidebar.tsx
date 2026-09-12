@@ -205,14 +205,14 @@ function WorkspaceRow({
               yet" from "not a thing". A closing row still hides it: that one
               is about to stop existing. */}
           {(workspace.canCreateAgent ||
-            workspace.localToolingUnavailable !== undefined) &&
+            workspace.localAgentsUnavailable !== undefined) &&
             !closing && (
               <button
                 className="row-action-button"
                 type="button"
-                aria-label={`Create agent in ${workspace.label}${workspace.localToolingUnavailable !== undefined || agentProfilesAvailability === "unavailable" || agentProfiles.length === 0 ? ", unavailable" : ""}`}
+                aria-label={`Create agent in ${workspace.label}${workspace.localAgentsUnavailable !== undefined || agentProfilesAvailability === "unavailable" || agentProfiles.length === 0 ? ", unavailable" : ""}`}
                 title={
-                  workspace.localToolingUnavailable ??
+                  workspace.localAgentsUnavailable ??
                   (agentProfilesAvailability === "degraded"
                     ? "Agent profiles need attention"
                     : agentProfiles.length > 0
@@ -220,7 +220,7 @@ function WorkspaceRow({
                       : "No enabled agent profiles")
                 }
                 disabled={
-                  workspace.localToolingUnavailable !== undefined ||
+                  workspace.localAgentsUnavailable !== undefined ||
                   agentProfilesAvailability === "unavailable" ||
                   agentProfiles.length === 0
                 }
@@ -273,26 +273,33 @@ function WorkspaceRow({
             it, and it is the fact that changes under you — sharing a line it
             got whatever the neighbours left over, and what survived was
             `feature/128-tidy-the…`, the half that says nothing. */}
-        {workspace.location.kind === "ssh" ? (
-          /* The machine, where a local row has its branch — because it is the
-             same slot for the same reason: the one long fact that identifies
-             the row and is not its name. A remote row has no branch to put
-             here (git is not asked; see `supportsLocalTooling`), and the host
-             is the thing a person with the same folder on three machines is
-             actually reading the row for. */
+        {workspace.location.kind === "ssh" || repository?.branch ? (
           <div className="row-line row-line-secondary">
-            <span
-              className="row-branch"
-              title={`${workspace.location.host}:${workspace.root}`}
-            >
-              {workspace.location.host}
-            </span>
-          </div>
-        ) : repository?.branch ? (
-          <div className="row-line row-line-secondary">
-            <span className="row-branch" title={repository.branch}>
-              {repository.branch}
-            </span>
+            {/* The machine first, and only when it is not this one: it is the
+                one long fact that identifies the row and is not its name, and
+                somebody with the same folder checked out on three machines is
+                reading the row for exactly this. It used to be *instead* of
+                the branch, because git was never asked about a remote folder;
+                git runs on the folder's own machine now, so the branch is
+                there too and the row says both. */}
+            {workspace.location.kind === "ssh" && (
+              <span
+                className="row-branch"
+                title={`${workspace.location.host}:${workspace.root}`}
+              >
+                {workspace.location.host}
+              </span>
+            )}
+            {workspace.location.kind === "ssh" && repository?.branch && (
+              <span aria-hidden="true" className="row-secondary-separator">
+                ·
+              </span>
+            )}
+            {repository?.branch && (
+              <span className="row-branch" title={repository.branch}>
+                {repository.branch}
+              </span>
+            )}
           </div>
         ) : null}
         {/* Line three: what this branch is working on — the Issue, the pull
@@ -310,27 +317,17 @@ function WorkspaceRow({
             starting with its icons. Nothing here is on the name's line any
             more, which is what stopped four buttons from deciding how much of
             a branch name a person got to see. */}
-        {/* Nothing DevHub reads itself reaches another machine yet, and the
-            row says which of the two silences this is. Left blank it would
-            look exactly like a repository whose branch is about no Issue —
-            the same mistake `row-issue-unavailable` exists to stop one line
-            down — and a person would go looking for a setting that is not
-            missing. The sentence is the wire's, not this page's, so the row,
-            the disabled New Agent button and the terminal pane all say it in
-            the same words. */}
-        {workspace.localToolingUnavailable ? (
-          <div
-            className="row-line row-line-links"
-            title={workspace.localToolingUnavailable}
-          >
-            <span className="row-issue-unavailable">
-              {workspace.localToolingUnavailable}
-            </span>
-          </div>
-        ) : (repository?.issue ??
-          repository?.pullRequest ??
-          repository?.pending ??
-          repository?.unavailable) ? (
+        {/* One line for every row, wherever the folder is. This used to be
+            replaced on a remote row by the sentence saying DevHub could not
+            read anything over there; it can now — git, the HEAD watcher and
+            the Issue lookup all go through the folder's own machine — so the
+            row draws what it found. What is still missing on a remote row is
+            Agents and terminals, and that sentence stays where it is about
+            something: on the New Agent button that is disabled by it. */}
+        {(repository?.issue ??
+        repository?.pullRequest ??
+        repository?.pending ??
+        repository?.unavailable) ? (
           <div className="row-line row-line-links">
             <RepositoryLinks repository={repository} />
             {/* The Issue's title if there is an Issue, and the pull request's
@@ -588,9 +585,10 @@ function WorkspaceGlyph({
   // `mainWorktree` answered "not the main worktree" — which is true, and is not
   // the question. That is what drew a plain subdirectory as a worktree.
   // A fourth silhouette, and it comes first: whether the folder is on this
-  // machine is the thing a person needs to know before anything else about the
-  // row, and DevHub has no repository facts for a remote folder to draw
-  // anyway — `supportsLocalTooling` is false, so git was never asked.
+  // machine is the thing a person needs to know before anything else about
+  // the row, and it outranks whether git calls the checkout a repository or a
+  // worktree — a fact the row's branch line now carries for a remote folder
+  // too.
   const name: GlyphName =
     location.kind === "ssh"
       ? "remote"

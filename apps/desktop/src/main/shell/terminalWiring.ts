@@ -35,7 +35,7 @@ import type { AppModel } from "../../model/appModel.js";
 import {
 	agentId as parseAgentId,
 	workspaceId as parseWorkspaceId,
-	supportsLocalTooling,
+	supportsLocalAgents,
 	type Workspace,
 } from "../../model/domain.js";
 import { TerminalFailure } from "../../ipc/terminal.js";
@@ -77,7 +77,7 @@ function refuseIfClosing(workspace: Workspace): void {
  * every other surface says it, rather than showing an empty terminal.
  */
 function refuseIfRemote(workspace: Workspace): void {
-	if (!supportsLocalTooling(workspace.location)) {
+	if (!supportsLocalAgents(workspace.location)) {
 		throw new TerminalFailure("workspace_remote");
 	}
 }

@@ -555,7 +555,7 @@ export type WorkspaceCloseWire =
  * The page needs the machine for two things and neither is optional: the row
  * says which host it is, and every surface that would have shown a git status,
  * a worktree or an Agent has to say why it is not showing one. See
- * `supportsLocalTooling`.
+ * `supportsLocalAgents`.
  */
 export type WorkspaceLocationWire =
 	| { readonly kind: "local" }
@@ -593,7 +593,7 @@ export interface WorkspaceWire {
 	 * A page that wrote its own would be a second answer to one question, and the
 	 * two would drift the first time the answer changed.
 	 */
-	readonly localToolingUnavailable?: string;
+	readonly localAgentsUnavailable?: string;
 }
 
 export type SnapshotReadiness = AppReadiness;

@@ -280,25 +280,24 @@ export function remoteAuthorityOf(
 }
 
 /**
- * Whether DevHub's own tooling can reach this Workspace's folder.
+ * Whether DevHub can run an Agent or a terminal for this Workspace.
  *
- * Everything DevHub runs itself — `git`, the HEAD watcher, tmux, Agents,
- * worktree removal, the folder-exists probe — runs on the machine main is on,
- * with a local path and a local process. None of that is true of an ssh
- * location, and none of it is *nearly* true: there is no degraded version of
- * `fs.watch` on another host.
+ * All that is left of a much broader predicate. `git`, the `HEAD` watcher, the
+ * worktree probes and the folder-exists check all go through the Workspace's
+ * `Runtime` now (`main/runtime/`), so a repository on another machine has a
+ * branch, an Issue and a pull request on its row exactly like one here. What
+ * has not moved yet is the pair that needs a *process with a terminal on it*:
+ * tmux, and the PTY the Agent pane attaches to.
  *
- * So this is the one predicate, and it is asked rather than the kind being
- * matched, for two reasons. Phase 2 gives an ssh Workspace a runtime on the far
- * end and this becomes true for it — one edit, in one place. And in the
- * meantime "we cannot do this here" is a single fact with a single sentence,
- * `LOCAL_TOOLING_UNAVAILABLE`, rather than a sentence per surface that a
- * seventh surface would get subtly wrong.
+ * So the name says Agents, because Agents and their terminals are the whole of
+ * what it now decides. When they move too this function goes, rather than
+ * quietly becoming a predicate about something else — a gate that outlives its
+ * reason is a gate nobody can tell the truth about.
  *
  * It is never a reason to skip silently. Every surface that would have shown a
  * feature says why it is not showing it; see the callers.
  */
-export function supportsLocalTooling(location: WorkspaceLocation): boolean {
+export function supportsLocalAgents(location: WorkspaceLocation): boolean {
   switch (location.kind) {
     case "local":
       return true;
@@ -307,9 +306,9 @@ export function supportsLocalTooling(location: WorkspaceLocation): boolean {
   }
 }
 
-/** The one sentence every surface says when `supportsLocalTooling` is false. */
-export const LOCAL_TOOLING_UNAVAILABLE =
-  "Not available for SSH workspaces yet.";
+/** The one sentence every surface says when `supportsLocalAgents` is false. */
+export const LOCAL_AGENTS_UNAVAILABLE =
+  "Agents and terminals are not available for SSH workspaces yet.";
 
 type RemoteScheme = "bare" | "scp" | "http" | "https" | "ssh";
 
@@ -1256,14 +1255,14 @@ export class Workspace {
    * An Agent is a process, and a process runs where the folder is.
    *
    * So a Workspace on another machine cannot have one yet — see
-   * `supportsLocalTooling`. Refused here rather than at the launch, because the
+   * `supportsLocalAgents`. Refused here rather than at the launch, because the
    * page has to be able to *say so* before the person asks: New Agent is
    * disabled with the reason on it, which is the whole difference between a
    * feature that is not here yet and a button that does nothing.
    */
   get canCreateAgent(): boolean {
     return (
-      supportsLocalTooling(this.locationValue) &&
+      supportsLocalAgents(this.locationValue) &&
       isWorkspaceAvailable(this.stateValue) &&
       this.closeValue.kind !== "running"
     );
