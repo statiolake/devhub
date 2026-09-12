@@ -7,6 +7,8 @@ import {
 } from "./metrics.js";
 
 const noCounters: CountersReading = { elapsedMs: 0, counters: [] };
+/** No loop has run a round, which is what a report with no runtimes means. */
+const noRounds = (): number => 0;
 const noCpu = { userMs: 0, systemMs: 0 };
 
 function metric(
@@ -42,6 +44,7 @@ describe("metricsReport", () => {
 			views: [view(7, 42, "workspace:one", true)],
 			counters: noCounters,
 			terminalClients: [],
+			roundsLastMinute: noRounds,
 			runtimes: [],
 		});
 
@@ -65,6 +68,7 @@ describe("metricsReport", () => {
 			views: [],
 			counters: noCounters,
 			terminalClients: [],
+			roundsLastMinute: noRounds,
 			runtimes: [],
 		});
 		expect(report.processes.map((one) => one.cpuPercent)).toEqual([9, 3, 0.5]);
@@ -83,6 +87,7 @@ describe("metricsReport", () => {
 			],
 			counters: noCounters,
 			terminalClients: [],
+			roundsLastMinute: noRounds,
 			runtimes: [],
 		});
 		expect(report.processes[0]?.workbench?.surfaceKey).toBe("workspace:shown");
@@ -103,6 +108,7 @@ describe("metricsReport", () => {
 			views: [],
 			counters,
 			terminalClients: [],
+			roundsLastMinute: noRounds,
 			runtimes: [],
 		});
 		expect(report.takenAt).toBe("2026-01-02T03:04:05.000Z");
@@ -124,6 +130,7 @@ describe("the tmux clients a reading carries", () => {
 			views: [],
 			counters: noCounters,
 			runtimes: [],
+			roundsLastMinute: noRounds,
 			terminalClients: [
 				{ tty: "/dev/ttys001", session: "scratch" },
 				{ tty: "/dev/ttys002", session: "ws-abc" },
@@ -135,5 +142,54 @@ describe("the tmux clients a reading carries", () => {
 			tty: "/dev/ttys001",
 			session: "scratch",
 		});
+	});
+});
+
+describe("what a round costs on each machine", () => {
+	const local = {
+		id: "local" as const,
+		connected: true,
+		masterPid: undefined,
+		medianRoundTripMs: 2,
+		reconcileIntervalMs: 300,
+		execsLastMinute: 200,
+		lastFailure: undefined,
+	};
+
+	it("divides a machine's commands into its rounds, which is the number", () => {
+		const report = metricsReport({
+			takenAt: 0,
+			uptimeMs: 0,
+			mainProcessCpu: noCpu,
+			processMetrics: [],
+			views: [],
+			counters: noCounters,
+			terminalClients: [],
+			runtimes: [local],
+			roundsLastMinute: () => 200,
+		});
+
+		expect(report.runtimes[0]?.roundsPerMin).toBe(200);
+		// One command per round is what the batch is for. It was the Agent
+		// count plus one.
+		expect(report.runtimes[0]?.execPerRound).toBe(1);
+		expect(report.runtimes[0]?.medianRoundTripMs).toBe(2);
+	});
+
+	it("says nothing rather than infinity when no round has run", () => {
+		const report = metricsReport({
+			takenAt: 0,
+			uptimeMs: 0,
+			mainProcessCpu: noCpu,
+			processMetrics: [],
+			views: [],
+			counters: noCounters,
+			terminalClients: [],
+			runtimes: [local],
+			roundsLastMinute: noRounds,
+		});
+
+		expect(report.runtimes[0]?.roundsPerMin).toBe(0);
+		expect(report.runtimes[0]?.execPerRound).toBe(0);
 	});
 });

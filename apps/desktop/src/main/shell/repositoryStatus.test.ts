@@ -51,9 +51,14 @@ vi.mock("./github.js", async (importOriginal) => ({
 	readBranchStatus: (...args: unknown[]) => readBranchStatus(...args),
 }));
 
-const { BRANCH_POLL_INTERVAL_MS, RepositoryStatusWatcher } = await import(
-	"./repositoryStatus.js"
-);
+const { RepositoryStatusWatcher } = await import("./repositoryStatus.js");
+const { LOCAL_CADENCE } = await import("../runtime/local.js");
+/**
+ * The one number both of the watcher's clocks run on, from the machine the
+ * checkouts are on. It used to be two constants in `repositoryStatus.ts` that
+ * happened to agree with a third in `local.ts`.
+ */
+const POLL_MS = LOCAL_CADENCE.repositoryPollMs;
 
 const WORKSPACE = { id: "w-1", root: "/projects/widget" };
 
@@ -75,6 +80,7 @@ function checkedOut(branch: string | undefined) {
 
 function watcher(published: RepositoryStatusWire[]) {
 	return new RepositoryStatusWatcher({
+		host: { cadence: LOCAL_CADENCE },
 		gitCommand: () => Promise.resolve({} as never),
 		environment: {},
 		workspaces: () => [WORKSPACE],
@@ -230,6 +236,7 @@ describe("what a workspace is about", () => {
 		const published: RepositoryStatusWire[] = [];
 		let watched: readonly { id: string; root: string }[] = [WORKSPACE];
 		const running = new RepositoryStatusWatcher({
+			host: { cadence: LOCAL_CADENCE },
 			gitCommand: () => Promise.resolve({} as never),
 			environment: {},
 			workspaces: () => watched,
@@ -286,7 +293,7 @@ describe("what a workspace is about", () => {
 				remote: "github.com/example/widget",
 			});
 			const before = published.length;
-			await vi.advanceTimersByTimeAsync(BRANCH_POLL_INTERVAL_MS);
+			await vi.advanceTimersByTimeAsync(POLL_MS);
 
 			// The very next publish is the fast clock's own, made out of one local
 			// command while GitHub is still being waited on.
@@ -316,7 +323,7 @@ describe("what a workspace is about", () => {
 			const rounds = readRepository.mock.calls.length;
 			const branches = readBranch.mock.calls.length;
 
-			await vi.advanceTimersByTimeAsync(BRANCH_POLL_INTERVAL_MS - 20);
+			await vi.advanceTimersByTimeAsync(POLL_MS - 20);
 			expect(readRepository).toHaveBeenCalledTimes(rounds);
 			expect(readBranch).toHaveBeenCalledTimes(branches);
 			running.stop();

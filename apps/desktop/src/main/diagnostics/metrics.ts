@@ -10,7 +10,7 @@
  */
 
 import type { CountersReading } from "./counters.js";
-import type { RuntimeReading } from "../runtime/runtime.js";
+import type { RuntimeId, RuntimeReading } from "../runtime/runtime.js";
 
 /** What DevHub knows about one of its own workbench renderers. */
 export interface ViewIdentity {
@@ -93,7 +93,30 @@ export interface MetricsReport {
 	 * processes are not in `getAppMetrics`, its round trips are not in any
 	 * counter, and "why is this slow" would otherwise need a packet capture.
 	 */
-	readonly runtimes: readonly RuntimeReading[];
+	readonly runtimes: readonly RuntimeCostReading[];
+}
+
+/**
+ * One machine's reading, with what a round of it costs worked out.
+ *
+ * The runtime knows how many commands it ran and how fast they came back; the
+ * reconciler knows how many rounds it ran. Neither half answers "why is this
+ * slow" on its own — a hundred execs a minute is a different fact at two
+ * rounds a minute than at two hundred — so the division happens here, once,
+ * rather than in the head of whoever is reading the JSON.
+ */
+export interface RuntimeCostReading extends RuntimeReading {
+	/** Reconcile rounds this machine completed in the last minute. */
+	readonly roundsPerMin: number;
+	/**
+	 * Commands per round, which is the number the batching is about.
+	 *
+	 * One means a round is one invocation. It was the Agent count plus one, and
+	 * over a network it is the number of round trips a person waits for. Zero
+	 * rounds in the last minute means no Agents on this machine, and the cost
+	 * of a round nobody ran is reported as zero rather than as infinity.
+	 */
+	readonly execPerRound: number;
 }
 
 /** One attached tmux client, as a reading names it. */
@@ -111,6 +134,8 @@ export interface MetricsInput {
 	readonly counters: CountersReading;
 	readonly terminalClients: readonly TerminalClientReading[];
 	readonly runtimes: readonly RuntimeReading[];
+	/** Reconcile rounds in the last minute, by machine. See `rounds.ts`. */
+	readonly roundsLastMinute: (id: RuntimeId) => number;
 }
 
 /**
@@ -152,6 +177,14 @@ export function metricsReport(input: MetricsInput): MetricsReport {
 		),
 		counters: input.counters,
 		terminalClients: input.terminalClients,
-		runtimes: input.runtimes,
+		runtimes: input.runtimes.map((runtime) => {
+			const roundsPerMin = input.roundsLastMinute(runtime.id);
+			return {
+				...runtime,
+				roundsPerMin,
+				execPerRound:
+					roundsPerMin === 0 ? 0 : runtime.execsLastMinute / roundsPerMin,
+			};
+		}),
 	};
 }

@@ -39,6 +39,7 @@ import {
 	type GitCommand,
 } from "./git.js";
 import { TypedFailure } from "../../model/wire.js";
+import type { Runtime } from "../runtime/runtime.js";
 import {
 	GitHubUnavailable,
 	readBranchStatus,
@@ -54,25 +55,39 @@ export interface WatchedWorkspace {
 }
 
 export interface RepositoryStatusDeps {
+	/**
+	 * The machine these checkouts are on, for what a poll of it may cost.
+	 *
+	 * There is one watcher and one runtime today. When a second machine can
+	 * hold a Workspace there is a watcher per machine, for the reason the
+	 * reconciler has a loop per machine: a poll interval is a fact about a
+	 * link, and one watcher covering two of them would have to pick a number
+	 * for both.
+	 */
+	readonly host: Pick<Runtime, "cadence">;
 	readonly gitCommand: () => Promise<GitCommand>;
 	readonly environment: Readonly<Record<string, string | undefined>>;
 	readonly workspaces: () => readonly WatchedWorkspace[];
 	readonly publish: (status: RepositoryStatusWire) => void;
 }
 
-/** How often the branch and the Issue are looked at again. */
-export const POLL_INTERVAL_MS = 60 * 1000;
 /**
- * How often the branch is re-read when nothing said it had changed.
+ * How often the branch and the Issue are looked at again, and how often the
+ * branch is re-read when nothing said it had changed.
  *
- * It used to be every two seconds, which is thirty-eight `git` processes a
- * minute per workspace to learn thirty-eight times that nothing moved. A
- * checkout writes `HEAD`, so `headWatcher.ts` notices one instead, and this is
- * what is left: the safety net under a watcher, not the way the branch is
- * normally learned. A missed event costs a minute of staleness rather than a
- * branch name that is wrong until somebody restarts DevHub.
+ * Both are `cadence.repositoryPollMs`, from the runtime the checkouts are on
+ * (`runtime/local.ts`), because both are the same question about the same
+ * link: what a poll of this machine may cost. They used to be two constants
+ * that happened to be a minute each, and a third copy of the number sat in
+ * `local.ts` claiming to be the source.
+ *
+ * The fast one used to be every two seconds, which was thirty-eight `git`
+ * processes a minute per workspace to learn thirty-eight times that nothing
+ * moved. A checkout writes `HEAD`, so `headWatcher.ts` notices one instead,
+ * and what is left is the safety net under a watcher rather than the way the
+ * branch is normally learned. A missed event costs one interval of staleness
+ * rather than a branch name that is wrong until somebody restarts DevHub.
  */
-export const BRANCH_POLL_INTERVAL_MS = 60 * 1000;
 /** How many branches one round is allowed to ask GitHub about. */
 const MAX_BRANCHES_PER_ROUND = 16;
 
@@ -292,7 +307,7 @@ export class RepositoryStatusWatcher {
 		this.timer = setInterval(() => {
 			activityCounters.record(COUNTER.repositoryStatusRound);
 			void this.refresh();
-		}, POLL_INTERVAL_MS);
+		}, this.deps.host.cadence.repositoryPollMs);
 		// The fast clock, and the whole reason there are two. Which branch is
 		// checked out changes while somebody watches — they run `git switch` and
 		// look at the Sidebar — and it costs one local command to answer. What
@@ -305,7 +320,7 @@ export class RepositoryStatusWatcher {
 		this.branchTimer = setInterval(() => {
 			activityCounters.record(COUNTER.repositoryBranchRound);
 			void this.refreshBranches();
-		}, BRANCH_POLL_INTERVAL_MS);
+		}, this.deps.host.cadence.repositoryPollMs);
 		// Not `unref`'d: this is a projection the window is drawing, and the
 		// interval is the only thing keeping it true.
 		void this.refresh();

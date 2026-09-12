@@ -15,6 +15,17 @@
 
 import { describe, expect, it } from "vitest";
 import { AgentReconciler } from "./agentReconciler.js";
+import type { ReconcileHost } from "./agentReconciler.js";
+
+/** This machine, with a loop that sleeps for no time at all. */
+const instant: ReconcileHost = {
+	id: "local",
+	cadence: {
+		reconcileIntervalMs: 0,
+		repositoryPollMs: 60_000,
+		headWatchPollMs: undefined,
+	},
+};
 import { MainServicesGate, type MainServices } from "./mainServices.js";
 
 /** Nothing here calls into VS Code; only identity is ever checked. */
@@ -82,7 +93,7 @@ describe("a reconciler round that starts before the services exist", () => {
 		const failures: unknown[] = [];
 		let rounds = 0;
 		const reconciler = new AgentReconciler({
-			intervalMs: 0,
+			host: instant,
 			hasAgents: () => true,
 			// The shape of the real chain: a round changes the projection, and a
 			// projection change reaches for a workbench.
@@ -120,7 +131,7 @@ describe("a reconciler round that starts before the services exist", () => {
 		// `hasAgents` is asked outside the round's own try/catch, so a throw from
 		// it is the loop itself failing rather than a round failing.
 		const reconciler = new AgentReconciler({
-			intervalMs: 0,
+			host: instant,
 			hasAgents: () => {
 				throw new Error("the model is gone");
 			},

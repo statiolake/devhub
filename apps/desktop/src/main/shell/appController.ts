@@ -20,6 +20,7 @@ import { join } from "node:path";
 import vscodeProduct from "code-oss-dev/out/vs/platform/product/common/product.js";
 import { activityCounters } from "../diagnostics/counters.js";
 import { metricsReport } from "../diagnostics/metrics.js";
+import { reconcileRounds } from "../diagnostics/rounds.js";
 import { electron } from "../electron.js";
 import { URI } from "code-oss-dev/out/vs/base/common/uri.js";
 import { CancellationToken as VSCancellationToken } from "code-oss-dev/out/vs/base/common/cancellation.js";
@@ -164,7 +165,7 @@ import {
 import { enclosingRoot } from "../terminal/launcher.js";
 import { OperationDeadline } from "../terminal/command.js";
 import { wireAgents } from "./agentWiring.js";
-import { AgentReconciler } from "./agentReconciler.js";
+import { AgentReconcilers, type ReconcileHost } from "./agentReconciler.js";
 import { MainServicesGate, type MainServices } from "./mainServices.js";
 import { liveRuntimes, localRuntime, runtimeFor } from "../runtime/registry.js";
 import { resolveExecutable, resolveRuntimes } from "./runtimes.js";
@@ -380,11 +381,7 @@ export class AppController {
 	 * for an Agent that started, and an exit nobody asked about is a row for a
 	 * process that is gone.
 	 */
-	private readonly agentReconciler = new AgentReconciler({
-		hasAgents: () =>
-			this.coordinator.model.workspaces.some(
-				(workspace) => workspace.agents.length > 0,
-			),
+	private readonly agentReconcilers = new AgentReconcilers({
 		reconcile: () => this.reconcileAllAgents(),
 		onFailure: (error) => {
 			// The round already reported itself: an Agent operation that failed is
@@ -593,7 +590,7 @@ export class AppController {
 				);
 			}
 		}
-		this.agentReconciler.start();
+		this.agentReconcilers.follow(this.agentHosts());
 		this.repositoryStatus.start();
 	}
 
@@ -1184,6 +1181,37 @@ export class AppController {
 		await this.dispatchAwaiting({ type: "reconcile_agents" });
 	}
 
+	/**
+	 * The machines with at least one Agent on them right now.
+	 *
+	 * There can be exactly one, and it is this Mac: `canCreateAgent` still has
+	 * its `supportsLocalTooling` term, so an ssh Workspace cannot hold an Agent
+	 * to reconcile. The list is built from the model rather than asserted,
+	 * because that is the fact that will change, and `follow` will then start a
+	 * second loop on its own.
+	 *
+	 * The round it runs is still the whole model's — `reconcile_agents` carries
+	 * no machine — so a second live runtime here would mean two loops each
+	 * reconciling both machines at the faster of the two cadences. That is a
+	 * wrong answer rather than a slow one, so it stops here rather than
+	 * arriving as a status that flickers: when a runtime can hold Agents, the
+	 * intent gains the machine it is about.
+	 */
+	private agentHosts(): readonly ReconcileHost[] {
+		const hosts = new Map<string, ReconcileHost>();
+		for (const workspace of this.coordinator.model.workspaces) {
+			if (workspace.agents.length === 0) continue;
+			const runtime = runtimeFor(workspace.location);
+			hosts.set(runtime.id, runtime);
+		}
+		if (hosts.size > 1) {
+			throw new Error(
+				`Agents are running on ${String(hosts.size)} machines, and one reconcile round can only be about one`,
+			);
+		}
+		return [...hosts.values()];
+	}
+
 	markReady(): void {
 		const services = this.handedOverServices;
 		if (!services) {
@@ -1214,7 +1242,7 @@ export class AppController {
 		// runtime was slow to let go.
 		markCleanShutdown(this.state);
 		await this.stateStore.saveState(this.state);
-		this.agentReconciler.stop();
+		this.agentReconcilers.stop();
 		this.repositoryStatus.stop();
 		// Quitting detaches clients and leaves every session — an Agent's as
 		// much as a terminal's. That is the point of putting them on the same
@@ -1325,6 +1353,10 @@ export class AppController {
 		// the only thing here the watcher cares about; it compares before it
 		// looks, so this is a nudge and not a poll.
 		this.repositoryStatus.observe();
+		// A machine that has just gained its first Agent needs a loop, and one
+		// that has lost its last needs its loop stopped. `follow` is idempotent
+		// and compares before it acts, so this is a nudge like the line above it.
+		this.agentReconcilers.follow(this.agentHosts());
 		this.syncEditorViews();
 		// What is on screen follows the selection, wherever the selection
 		// changed — a menu command, a restored session, or the page.
@@ -1385,6 +1417,8 @@ export class AppController {
 	};
 
 	private readonly repositoryStatus = new RepositoryStatusWatcher({
+		// One watcher, and the checkouts it polls are the ones on this machine.
+		host: localRuntime(),
 		gitCommand: () => this.gitCommand(),
 		environment: this.launchEnvironment,
 		// Only the ones whose folder this machine can read. `git`, the HEAD
@@ -3486,6 +3520,7 @@ export class AppController {
 				counters: activityCounters.read(),
 				terminalClients,
 				runtimes: liveRuntimes().map((runtime) => runtime.reading()),
+				roundsLastMinute: (id) => reconcileRounds.lastMinute(id),
 			}),
 			null,
 			2,
