@@ -190,3 +190,92 @@ The extension logs the whole install script and its output to **Output → Remot
 - SSH**. Everything the remote decided is in there: the URL it built, whether
 the download succeeded, and the server's own log path
 (`~/.devhub-server/.<commit>.log`) if it started and then failed.
+
+## The integrated terminal of a remote window
+
+A DevHub terminal is a tmux session DevHub owns, and the workbench reaches it
+by running a small launcher — `devhub-terminal` — that asks DevHub over its
+control socket which session the terminal's directory belongs to and `exec`s
+the answer (`main/terminal/launcher.ts`). For a local window all three of those
+things are on this Mac. For an ssh window none of them are: the workbench's pty
+host runs on the host, so the profile's `path` is a path over there, and the
+process it starts can reach neither DevHub's launcher nor DevHub's socket.
+
+Nothing about the protocol changes. What changes is where its two ends are.
+
+* **The launcher is written on the host**, by DevHub, over the connection that
+  is already open: `Runtime.terminalLauncher` puts the compiled asking program
+  under `~/.devhub/terminal/js/` and the generated script at
+  `~/.devhub/terminal/devhub-terminal-<tag>`. The script is the same text as
+  the local one, with the host's own paths in it. The `<tag>` is a digest of
+  DevHub's control-socket path, so two DevHub profiles on one Mac reaching one
+  host do not adopt each other's files.
+* **It runs on the REH's own Node**, `~/.devhub-server/bin/<commit>/node` — the
+  Node the connection installed, at the commit the client states. A
+  `command -v node` would find whatever the login shell's PATH happened to
+  have, which is a different Node on every host and none at all on some.
+* **DevHub's control socket is reverse-forwarded onto the host**:
+  `ssh -O forward -R ~/.devhub/terminal/control-<tag>.sock:<local socket>`,
+  added to the ControlMaster that is already up. This is the primary mechanism
+  and not a fallback, because it is what lets the launcher, the request and the
+  answering side stay one implementation. DevHub removes its own stale socket
+  file first — sshd will not bind over one unless the host was configured with
+  `StreamLocalBindUnlink yes`, which is the host's business — and then checks
+  with one `test -S` that something is actually bound, because `-O forward` can
+  report success and leave nothing there.
+* **The request says which machine it came from.** `terminal-profile` carries a
+  `machine` field, the `RuntimeId` (`local`, or `ssh:<host>`), baked into the
+  launcher as `DEVHUB_TERMINAL_MACHINE`. Without it two hosts with the same
+  `/srv/app` are one root to the matcher, and the session it answers with is on
+  the wrong computer.
+
+When the forward cannot be made, DevHub says so in its log and in
+`devhub --metrics`, and writes the launcher anyway: run from the host it prints
+`DevHub is not listening on <socket>`, which is the same fact in the place a
+person is looking. There is deliberately no second profile that ships a plain
+`tmux attach` command line instead — the session a terminal belongs to depends
+on the directory VS Code starts it in, which is not known until the terminal is
+created, so a command line composed in advance would be right for one terminal
+of the window and wrong for the rest.
+
+### What is not wired yet
+
+Two things, and a remote window's terminal does not work without them:
+
+1. **The window has to be told its launcher.** The patched
+   `TerminalProfileService` reads `DEVHUB_TERMINAL` from the renderer's
+   environment, and a renderer's environment is per window: `preload.ts` does
+   `Object.assign(process.env, configuration.userEnv)` before the workbench
+   modules are imported, and `userEnv` is `{ ...initialUserEnv, ...options
+   .userEnv }` from the `IWindowsMainService.open` call. So DevHub passes
+   `userEnv: { DEVHUB_TERMINAL: <that machine's launcher> }` when it opens the
+   window, and `patches/vscode/0003-…` needs no change at all — which is why it
+   has none.
+2. **DevHub's tmux runtime is still one, on this Mac.** `terminalProfileFor`
+   refuses a request from any machine but `local` rather than answering with an
+   argv that would attach a host's `tmux` to a socket that is not on it. A
+   `TmuxTerminalRuntime` per `Runtime` is what lifts that refusal.
+
+### What a first real run must check
+
+None of this can be verified without a reachable host, so nothing below has
+been. In order, against a host with a DevHub server already installed:
+
+1. `ls -l ~/.devhub/terminal/` on the host after opening an ssh window: the
+   launcher is there, mode 0755, and `js/package.json` says `{"type":"module"}`.
+2. `~/.devhub-server/bin/<commit>/node --version` runs — the commit is the one
+   `devhub --version` prints.
+3. `ls -l ~/.devhub/terminal/control-*.sock` is a socket, and
+   `printf '{"kind":"terminal-profile","machine":"ssh:<host>","root":null}\n' |
+   nc -U ~/.devhub/terminal/control-<tag>.sock` answers a line of JSON. If it
+   answers nothing, the forward is the thing that failed; check whether the
+   host's sshd left a stale socket, and whether `AllowStreamLocalForwarding` is
+   on (some hardened sshd configurations turn it off, and that is a refusal
+   DevHub cannot work around).
+4. Opening a terminal in the remote window attaches to a tmux session on the
+   *host* (`tmux -L devhub list-sessions` there shows it, and `ps` on the Mac
+   shows no new tmux).
+5. Closing the terminal tab leaves the session running and closes the client;
+   reopening reattaches to the same session with its scrollback.
+6. Two windows on two different hosts with folders at the same path get two
+   different sessions.
