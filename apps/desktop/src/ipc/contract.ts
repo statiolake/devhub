@@ -685,6 +685,15 @@ export interface DevhubApi {
 
 	openSettings(): Promise<void>;
 	openExternalUrl(url: string): Promise<void>;
+	/**
+	 * Put text on the Mac's clipboard.
+	 *
+	 * A terminal surface's OSC 52 writes come through here rather than through
+	 * `navigator.clipboard`: the browser API is gated on the document being
+	 * focused, and the write arrives from a PTY at a moment nobody chose. See
+	 * `clipboardProvider` in `shell/surfaces/xtermSession.ts`.
+	 */
+	writeClipboard(text: string): Promise<void>;
 
 	/** Where main must lay the selected workspace's workbench view. */
 	setContentRect(rect: ContentRect): Promise<void>;
@@ -750,6 +759,7 @@ export const CHANNELS = {
 	agentActions: "devhub:agent-actions",
 	openSettings: "devhub:open-settings",
 	openExternalUrl: "devhub:open-external-url",
+	writeClipboard: "devhub:write-clipboard",
 	setContentRect: "devhub:set-content-rect",
 	setContentSurface: "devhub:set-content-surface",
 	focusSurface: "devhub:focus-surface",

@@ -216,6 +216,8 @@ const devhub: DevhubApi = {
 		ipcRenderer.invoke(CHANNELS.openSettings) as Promise<void>,
 	openExternalUrl: (url: string) =>
 		ipcRenderer.invoke(CHANNELS.openExternalUrl, url) as Promise<void>,
+	writeClipboard: (text: string) =>
+		ipcRenderer.invoke(CHANNELS.writeClipboard, text) as Promise<void>,
 
 	setContentRect: (rect: ContentRect) =>
 		ipcRenderer.invoke(CHANNELS.setContentRect, rect) as Promise<void>,

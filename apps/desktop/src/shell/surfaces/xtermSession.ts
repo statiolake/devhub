@@ -14,6 +14,7 @@
  * geometry, and whether it is currently on screen.
  */
 
+import { ClipboardAddon } from "@xterm/addon-clipboard";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { Terminal, type ITheme } from "@xterm/xterm";
@@ -152,6 +153,84 @@ const linkHandler = {
   },
 };
 
+/**
+ * Where a copy inside the pane lands: the Mac's clipboard, through main.
+ *
+ * A program in the pane copies by writing OSC 52 — `ESC ] 52 ; c ; <base64>
+ * BEL` — and that is the only way a copy can travel at all when the program is
+ * tmux on a machine reached over SSH: there is no `pbcopy` at the far end and
+ * no shared X selection, only the byte stream. VS Code's integrated terminal
+ * and Ghostty both honour it, which is why copy-mode works in them and did
+ * nothing here.
+ *
+ * The write does *not* go through `navigator.clipboard`, which is what the
+ * addon does by default. That API is gated on the document being focused and
+ * on a clipboard permission, and the write it has to serve arrives from a PTY:
+ * tmux can emit it while the DevHub window is in the background, or while the
+ * keyboard is in a native workbench view rather than this page, and Chromium
+ * then rejects with "Document is not focused". A copy that works only when the
+ * window happens to be frontmost is worse than none, because the one time it
+ * silently does nothing looks exactly like the times it worked. Main's
+ * `clipboard.writeText` has neither gate, so the same request is answered the
+ * same way every time.
+ *
+ * Any failure of that request is left unhandled on purpose, exactly as
+ * `linkHandler`'s is: the page's root failure handler is the one place a
+ * refused request to main is drawn.
+ */
+const clipboardProvider = {
+  /**
+   * Never reached: `refuseClipboardReads` consumes every OSC 52 query before
+   * the addon can ask. If that ever stops being true, this throwing is the
+   * report — a clipboard silently handed to a remote program is the failure
+   * this whole path exists to prevent.
+   */
+  readText(): never {
+    throw new Error(
+      "an OSC 52 clipboard read reached the provider: the query guard is gone",
+    );
+  },
+  /**
+   * `Pc` names an X11 selection, and a Mac has one pasteboard, so everything
+   * that is not *only* the primary selection is the clipboard.
+   *
+   * Written as a refusal of `p` rather than as a test for `c`, because tmux
+   * does not send `c`. Captured off a real tmux 3.7 client attached with
+   * `TERM=xterm-256color` and `set-clipboard on`, a copy goes out as
+   * `ESC ] 52 ; ; <base64> BEL` — the field is *empty*, which xterm's own
+   * documentation reads as its default of `s0`. A provider that insisted on
+   * `c` accepted nothing tmux ever sends, and that is the whole bug this is
+   * here to fix, so it cannot be the shape of the fix.
+   */
+  writeText(selection: string, text: string): Promise<void> {
+    if (selection === "p") return Promise.resolve();
+    return devhub().writeClipboard(text);
+  },
+};
+
+/**
+ * Answer no OSC 52 query, ever.
+ *
+ * The sequence is a request as well as a write: `ESC ] 52 ; c ; ? BEL` asks the
+ * terminal to send the clipboard's *contents* back up the stream. Whatever is
+ * on the clipboard — a password out of a manager, the contents of a private
+ * file — would be handed to whichever program is reading the PTY, including
+ * one running on a remote host. xterm's addon would answer it, so this is
+ * registered after the addon and therefore runs before it: a query is consumed
+ * here and gets no reply at all, and everything else falls through to the
+ * addon, which is what performs the write.
+ *
+ * Not answering is deliberate rather than replying with an empty clipboard: an
+ * empty reply is still a reply, and it tells a remote program that this
+ * terminal will answer queries.
+ */
+function refuseClipboardReads(terminal: Terminal): void {
+  terminal.parser.registerOscHandler(52, (data) => {
+    const payload = data.split(";")[1];
+    return payload === "?";
+  });
+}
+
 export interface XtermSessionOptions {
   readonly appearance?: TerminalAppearance;
   readonly palette?: TerminalPalette;
@@ -254,6 +333,8 @@ export function openXtermSession(
   });
   const fit = new FitAddon();
   terminal.loadAddon(fit);
+  terminal.loadAddon(new ClipboardAddon(undefined, clipboardProvider));
+  refuseClipboardReads(terminal);
   terminal.open(host);
   // After `open`: the GPU renderer needs the element it will draw into.
   let renderer = attachRenderer(terminal, () => {

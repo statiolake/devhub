@@ -516,7 +516,11 @@ says nothing about it. Piping to tmux itself works everywhere, because tmux
 bind -T copy-mode-vi y send -X copy-pipe-and-cancel "tmux load-buffer -w -"
 ```
 
-These three lines belong in your own `tmux.conf`; DevHub does not write it.
+These three lines belong in the `tmux.conf` DevHub's own tmux server reads —
+the one in DevHub's config directory, beside `settings.toml`, not
+`~/.tmux.conf`, which belongs to the tmux you run yourself. DevHub does not
+write it, and sets no `set-clipboard` of its own, so until that line is there
+tmux stays on its default of `external` and copy-mode copies nothing.
 
 ## What DevHub does on a host, from the app's side
 

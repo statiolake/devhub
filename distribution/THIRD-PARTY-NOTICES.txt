@@ -19,8 +19,10 @@ Shipped application components
   `licenses/Electron-MIT.txt`. Electron embeds Chromium and Node.js, whose
   notices are the ones Electron ships.
 * React 19.1.1 and React DOM 19.1.1 — MIT; see `licenses/React-MIT.txt`.
-* `@xterm/xterm` 6.0.0 and `@xterm/addon-fit` 0.11.0 — MIT; see
-  `licenses/Xterm-MIT.txt`.
+* `@xterm/xterm` 6.0.0, `@xterm/addon-fit` 0.11.0, `@xterm/addon-webgl` 0.19.0
+  and `@xterm/addon-clipboard` 0.2.0 — MIT; see `licenses/Xterm-MIT.txt`.
+* js-base64 3.9.3 — BSD 3-Clause; see `licenses/js-base64-BSD-3-Clause.txt`.
+  `@xterm/addon-clipboard` depends on it, and the App Shell bundle carries it.
 * minimist 1.2.8, toml-eslint-parser 1.0.3 and eslint-visitor-keys 5.0.1 — MIT.
   The main process imports these three at runtime.
 

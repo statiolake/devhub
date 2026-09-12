@@ -32,11 +32,17 @@ vi.mock("@xterm/xterm", () => {
     constructor(options: Record<string, unknown> = {}) {
       Object.assign(this.options, options);
     }
-    loadAddon(addon: { readonly kind?: string }) {
+    loadAddon(addon: {
+      readonly kind?: string;
+      activate?: (terminal: unknown) => void;
+    }) {
       if (addon.kind) mocks.loaded.push(addon.kind);
       if (addon.kind === "webgl" && mocks.webglFails) {
         throw new Error("no WebGL context is available");
       }
+      // Real xterm activates an addon as it loads it, which is when the
+      // clipboard addon registers its OSC 52 handler.
+      addon.activate?.(this);
     }
     open(host: HTMLElement) {
       const element = document.createElement("div");
@@ -45,6 +51,34 @@ vi.mock("@xterm/xterm", () => {
       host.append(element);
     }
     readonly sent: string[] = [];
+    readonly oscHandlers: ((data: string) => boolean | Promise<boolean>)[] = [];
+    readonly parser = {
+      registerOscHandler: (
+        ident: number,
+        handler: (data: string) => boolean | Promise<boolean>,
+      ) => {
+        if (ident !== 52) throw new Error(`unexpected OSC ${ident} handler`);
+        this.oscHandlers.push(handler);
+        return { dispose: () => undefined };
+      },
+    };
+    /**
+     * Dispatch an OSC sequence the way xterm's parser does: the most recently
+     * registered handler first, stopping at the first one that returns true.
+     * That order is the whole of how the query guard gets in front of the
+     * clipboard addon, so a mock that dispatched any other way would prove
+     * nothing.
+     */
+    async write(data: string) {
+      const opener = "\u001b]52;";
+      if (!data.startsWith(opener) || !data.endsWith("\u0007")) {
+        throw new Error(`the mock only speaks OSC 52: ${data}`);
+      }
+      const body = data.slice(opener.length, -1);
+      for (let i = this.oscHandlers.length - 1; i >= 0; i--) {
+        if (await this.oscHandlers[i](body)) return;
+      }
+    }
     keyHandler: ((event: KeyboardEvent) => boolean) | undefined;
     attachCustomKeyEventHandler(handler: (event: KeyboardEvent) => boolean) {
       this.keyHandler = handler;
@@ -81,8 +115,9 @@ vi.mock("@xterm/addon-webgl", () => ({
   },
 }));
 
-const { openXtermSession } =
-  await import("../../src/shell/surfaces/xtermSession");
+const { openXtermSession } = await import(
+  "../../src/shell/surfaces/xtermSession"
+);
 
 function open(terminalFontFamily?: string) {
   const host = document.createElement("div");
@@ -101,6 +136,11 @@ function open(terminalFontFamily?: string) {
     isHidden: () => false,
     onGeometry: () => undefined,
   });
+}
+
+/** The base64 payload of an OSC 52 write, as a program in the pane sends it. */
+function osc52(payload: string): string {
+  return `\u001b]52;c;${payload}\u0007`;
 }
 
 beforeEach(() => {
@@ -407,6 +447,87 @@ describe("the shared xterm session", () => {
       terminalScrollSensitivity: 5,
     } as never);
     expect(session.terminal.options.scrollSensitivity).toBe(5);
+    session.dispose();
+  });
+});
+
+/**
+ * Copying inside the pane.
+ *
+ * tmux's copy-mode has no other way to reach a Mac's clipboard from a machine
+ * on the far end of an SSH connection: it writes `ESC ] 52 ; c ; <base64> BEL`
+ * into the stream and the outer terminal is what puts the text on the
+ * clipboard. VS Code's integrated terminal and Ghostty both do; before the
+ * clipboard addon, DevHub swallowed the sequence and a copy did nothing.
+ */
+describe("OSC 52", () => {
+  let written: string[];
+
+  beforeEach(() => {
+    written = [];
+    window.devhub = {
+      writeClipboard: (text: string) => {
+        written.push(text);
+        return Promise.resolve();
+      },
+    } as unknown as typeof window.devhub;
+  });
+
+  function feed(session: { terminal: unknown }, data: string): Promise<void> {
+    return (session.terminal as { write(data: string): Promise<void> }).write(
+      data,
+    );
+  }
+
+  it("puts what a program copied on the Mac's clipboard, through main", async () => {
+    const session = open();
+    await feed(session, osc52(btoa("hello")));
+    // Through main rather than `navigator.clipboard`, which refuses a write
+    // while the document is unfocused — and a PTY does not wait for the
+    // window to be frontmost.
+    expect(written).toEqual(["hello"]);
+    session.dispose();
+  });
+
+  /**
+   * The field tmux actually sends is empty.
+   *
+   * Captured off a tmux 3.7 client attached with `TERM=xterm-256color` and
+   * `set-clipboard on`: a copy arrives as `ESC ] 52 ; ; <base64> BEL`, with no
+   * `c`. A provider that answered only `c` — which is what the addon's own
+   * default does — copied nothing at all from the one program this is for.
+   */
+  it("copies what tmux sends, whose selection field is empty", async () => {
+    const session = open();
+    await feed(session, `\u001b]52;;${btoa("copied-from-copy-mode")}\u0007`);
+    expect(written).toEqual(["copied-from-copy-mode"]);
+    session.dispose();
+  });
+
+  it("carries the bytes a copy actually contains, multibyte included", async () => {
+    const session = open();
+    await feed(session, osc52("44GC44GE44GG"));
+    expect(written).toEqual(["\u3042\u3044\u3046"]);
+    session.dispose();
+  });
+
+  it("says nothing at all when a program asks what is on the clipboard", async () => {
+    const session = open();
+    const terminal = session.terminal as unknown as { sent: string[] };
+    await feed(session, osc52("?"));
+    // A reply would hand the Mac's clipboard — a password out of a manager,
+    // the last thing copied out of a private file — to whichever program is
+    // reading the PTY, which over SSH is a program on somebody else's machine.
+    // An empty reply is still a reply, so there is none.
+    expect(terminal.sent).toEqual([]);
+    expect(written).toEqual([]);
+    session.dispose();
+  });
+
+  it("leaves the primary selection alone, which a Mac does not have", async () => {
+    const session = open();
+    await feed(session, `\u001b]52;p;${btoa("hello")}\u0007`);
+    expect(written).toEqual([]);
     session.dispose();
   });
 });

@@ -66,6 +66,13 @@ vi.mock("@xterm/xterm", () => {
 
     loadAddon() {}
 
+    // Where the clipboard addon and the OSC 52 query guard register. This
+    // suite is about the surface, not about what they do, so it only has to
+    // exist.
+    readonly parser = {
+      registerOscHandler: () => ({ dispose: vi.fn() }),
+    };
+
     open(host: HTMLElement) {
       const element = document.createElement("div");
       element.className = "xterm";
