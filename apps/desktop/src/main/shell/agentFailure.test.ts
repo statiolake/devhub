@@ -11,6 +11,8 @@ import { describe, expect, it } from "vitest";
 import { agentId as parseAgentId } from "../../model/domain.js";
 import { portFailure } from "../terminal/ports.js";
 import { agentSubject, portRefusal } from "./agentFailure.js";
+import { AppError, AppErrorCode } from "../../model/intents.js";
+import { errorWire } from "../../model/wire.js";
 
 const AGENT = parseAgentId("550e8400-e29b-41d4-a716-4466554400a0");
 
@@ -81,5 +83,41 @@ describe("who a refusal is about", () => {
 		expect(agentSubject(undefined, refusal)).toMatchObject({
 			detail: "no socket",
 		});
+	});
+});
+
+/**
+ * That the name the port chose is the name the person is shown.
+ *
+ * Live on a host, a New Agent that hit a session conflict arrived as
+ * `{"code":"agent_runtime_unavailable","detail":"terminal runtime conflict"}`:
+ * `portRefusal` was never consulted on the launch path, and the wire had
+ * nothing to turn "the agent port failed" into but the runtime being
+ * unavailable. Two hops, and the code has to survive both.
+ */
+describe("the code a refused launch reaches the wire with", () => {
+	it("is the one the port chose, not the port's own name", () => {
+		const refusal = portRefusal(portFailure("conflict"));
+		expect(refusal.code).toBe("tmux_session_conflict");
+
+		const error = new AppError(AppErrorCode.PortUnavailable)
+			.withPort("agent")
+			.withAgentFailure(refusal.code)
+			.withDetail("the session DevHub needs is not the one that is there");
+
+		const wire = errorWire(error);
+		expect(wire.code).toBe("tmux_session_conflict");
+		expect(wire.detail).toBe(
+			"the session DevHub needs is not the one that is there",
+		);
+	});
+
+	// A port failure that never went through `portRefusal` still has to say
+	// something, and "the runtime" is the honest answer for one.
+	it("falls back to the runtime only when nothing chose a code", () => {
+		expect(
+			errorWire(new AppError(AppErrorCode.PortUnavailable).withPort("agent"))
+				.code,
+		).toBe("agent_runtime_unavailable");
 	});
 });

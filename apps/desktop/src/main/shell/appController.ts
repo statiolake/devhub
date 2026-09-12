@@ -16,7 +16,7 @@
 
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, posix } from "node:path";
 import { fileURLToPath } from "node:url";
 import vscodeProduct from "code-oss-dev/out/vs/platform/product/common/product.js";
 /**
@@ -94,7 +94,6 @@ import {
 	surfaceKeyName,
 	workspaceId as parseWorkspaceId,
 	workspaceLocation,
-	workspaceRoot,
 	type AgentProfileKind,
 	type AgentReconciliation,
 	type CloseStep,
@@ -1135,6 +1134,16 @@ export class AppController {
 		// that answers is that machine's and not whichever one is at hand.
 		const asking = runtimeMachine(machine);
 		if (!workspace) {
+			// Scratch is the app's own terminal and the app runs here, so there
+			// is no Scratch on a host to fall back to: a terminal over there in
+			// a directory no Workspace contains has no session, and saying so is
+			// the honest end of it. Creating one would put a `scratch` session on
+			// somebody's host that nothing will ever attach to.
+			if (asking !== "local") {
+				throw new Error(
+					`${root ?? "this directory"}${runtimeById(asking).where} is not inside any Workspace DevHub has open there, so there is no terminal session for it.`,
+				);
+			}
 			return wiring.service.surfaces.profile(scratchTarget(asking));
 		}
 		return wiring.service.surfaces.profile(
@@ -1920,7 +1929,7 @@ export class AppController {
 				await this.persist(effect.token);
 				return;
 			case "resolve_workspace_path":
-				await this.resolvePath(effect.token, effect.path);
+				await this.resolvePath(effect.token, effect.location);
 				return;
 			case "generate_workspace_id":
 				this.accept({
@@ -2030,21 +2039,29 @@ export class AppController {
 
 	private async resolvePath(
 		token: OperationToken,
-		path: string,
+		requested: RequestedWorkspaceLocation,
 	): Promise<void> {
+		const path = requested.path;
+		// The machine the folder is on, which is the only machine that can say
+		// anything true about it. An ssh place used to skip resolution
+		// altogether and become a Workspace with the path as typed; on a host
+		// whose `$HOME` is a symlink that root is not the folder's canonical
+		// name, and `createSession`'s rule — a root that canonicalises
+		// elsewhere is a different directory — refused every session DevHub
+		// tried to create over there.
+		const runtime =
+			requested.kind === "local"
+				? localRuntime()
+				: runtimeFor(workspaceLocation(requested));
 		try {
+			// `~` is the *far* machine's home for a far place. Expanding it here
+			// would name a folder on this Mac and then ask a host about it.
 			const expanded =
 				path === "~"
-					? homedir()
+					? await runtime.home()
 					: path.startsWith("~/")
-						? join(homedir(), path.slice(2))
+						? posix.join(await runtime.home(), path.slice(2))
 						: path;
-			// A path somebody has just typed belongs to no Workspace yet, so
-			// there is no location to ask about: it is a folder on this machine
-			// or it is nothing. The `access` that used to follow the `stat` is
-			// gone with it — with no mode it asked only whether the path
-			// existed, which the `stat` above had already answered.
-			const runtime = localRuntime();
 			const canonical = await runtime.realpath(expanded);
 			if ((await runtime.stat(canonical)) !== "directory") {
 				throw new Error(`not a directory: ${canonical}`);
@@ -2052,7 +2069,11 @@ export class AppController {
 			this.accept({
 				type: "workspace_path_resolved",
 				token,
-				root: workspaceRoot(canonical),
+				location: workspaceLocation(
+					requested.kind === "local"
+						? { kind: "local", path: canonical }
+						: { kind: "ssh", host: requested.host, path: canonical },
+				),
 				selectedPath: displayPath(canonical),
 			});
 		} catch (error) {
@@ -2063,7 +2084,7 @@ export class AppController {
 			this.failOperation(token, {
 				subject: "app",
 				code: "workspace_unavailable",
-				detail: `${path} could not be opened as a workspace: ${error instanceof Error ? error.message : String(error)}`,
+				detail: `${path}${runtime.where} could not be opened as a workspace: ${error instanceof Error ? error.message : String(error)}`,
 			});
 		}
 	}

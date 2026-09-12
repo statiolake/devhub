@@ -32,7 +32,7 @@ import { LOCAL_CADENCE } from "../runtime/local.js";
 import { TerminalRuntimes } from "./terminalRuntimes.js";
 import { windowTerminalEnvironment } from "./loginEnvironment.js";
 import { TerminalSurfaces } from "../terminal/surfaces.js";
-import { workspaceTarget } from "../terminal/ports.js";
+import { portFailure, workspaceTarget } from "../terminal/ports.js";
 import type { AttachmentManager } from "../terminal/attachments.js";
 import type { TmuxTerminalRuntime } from "../terminal/tmux.js";
 import type { Pty, PtyLaunch } from "../terminal/pty.js";
@@ -480,5 +480,55 @@ describe("a reconcile round is about one machine's Agents", () => {
 		const there = await adapter.reconcile("ssh:build.example.com");
 		expect(there.observations.map((one) => one.agentId)).toEqual([THERE]);
 		expect(there.exited).toEqual([]);
+	});
+});
+
+/**
+ * What a refused launch is called on the way out.
+ *
+ * The row a New Agent failed on read "the agent runtime is unavailable" for
+ * every launch that ever failed — the adapter flattened whatever the port had
+ * said into one diagnostic nothing read, and the wire had nothing left to work
+ * from. The port's own word has to reach the caller.
+ */
+describe("a launch the Agent port refuses", () => {
+	it("says what the port called it, not that the runtime is missing", async () => {
+		// The Workspace on the host: the launch that failed live was one of
+		// these, and the machine is what made it different.
+		const WORKSPACE = workspaceId("00000000-0000-4000-8000-0000000000c2");
+		const model = twoMachineModel(
+			"00000000-0000-4000-8000-00000000000a",
+			"00000000-0000-4000-8000-00000000000b",
+		);
+		wireAgents({
+			runtimeFor: () =>
+				Promise.resolve({
+					launchAgent: () => Promise.reject(portFailure("conflict")),
+				} as unknown as TmuxTerminalRuntime),
+			model: () => model.model,
+			machineOf: (workspaceId) => model.machineOf(workspaceId),
+		});
+		const adapter = agents();
+		if (!adapter) throw new Error("the Agent adapter was not registered");
+
+		const result = await adapter.launch(
+			WORKSPACE,
+			agentId("550e8400-e29b-41d4-a716-4466554400a0"),
+			{
+				id: agentProfileId("shell"),
+				kind: "shell",
+				label: "Shell",
+				command: "/bin/sh",
+				args: [],
+				env: new Map(),
+			} as unknown as AgentProfile,
+			"/srv/api",
+		);
+
+		expect(result).toEqual({
+			kind: "failed",
+			code: "tmux_session_conflict",
+			detail: "terminal runtime conflict",
+		});
 	});
 });

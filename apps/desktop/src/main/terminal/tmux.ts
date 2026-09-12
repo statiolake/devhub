@@ -1906,7 +1906,14 @@ export class TmuxTerminalRuntime {
 		if (marker === "absent") {
 			await this.bootstrapAbsentServer(socket, cancel, deadline);
 		}
-		await this.ensureScratch(socket, cancel, deadline);
+		// Scratch is the *app's* terminal, not a folder's, and the app runs on
+		// one machine. A host's tmux got one too, because this ran on every
+		// machine's adapter — a session nothing on that host will ever attach
+		// to, in a directory chosen here, left behind for the life of the
+		// server. Only workspace and Agent sessions belong on a host.
+		if (this.machine === "local") {
+			await this.ensureScratch(socket, cancel, deadline);
+		}
 	}
 
 	/**
@@ -2216,6 +2223,50 @@ export class TmuxTerminalRuntime {
 			// kill could destroy a concurrent or unknown resource.
 			throw portFailure("conflict");
 		}
+		if (this.machine !== "local" && spec.name !== SCRATCH_SESSION) {
+			await this.retireRemoteAnchor(socket, cancel, deadline);
+		}
+	}
+
+	/**
+	 * Take the bootstrap's anchor session off a machine that is not this one.
+	 *
+	 * A tmux server with no sessions exits, so the config that starts one has
+	 * to create a session in the same breath, and the one it creates is
+	 * `scratch`. On this Mac that session is a surface somebody uses. On a host
+	 * it is nothing: Scratch is the *app's* terminal and the app runs here, so
+	 * a workbench over there never asks for one — and it was still sitting in
+	 * the host's `list-sessions`, in a directory chosen by this Mac, for the
+	 * life of the server.
+	 *
+	 * It is retired only once the session that replaces it as the server's
+	 * anchor has been created, and only when it is DevHub's own Scratch,
+	 * marker tuple and all. A session that is not that is somebody else's and
+	 * is left exactly where it is.
+	 */
+	private async retireRemoteAnchor(
+		socket: SocketName,
+		cancel: CancellationToken,
+		deadline: OperationDeadline,
+	): Promise<void> {
+		const sessions = await this.listSessions(socket, cancel, deadline);
+		const anchor = sessions.find((session) => session.name === SCRATCH_SESSION);
+		if (
+			anchor === undefined ||
+			!sessionMatches(anchor, this.targetIdentity(SCRATCH_TARGET, []))
+		) {
+			return;
+		}
+		// Only with something else left to hold the server up. Killing the last
+		// session ends the server, and with it the session just created.
+		if (sessions.length < 2) return;
+		await this.runTmux(
+			socket,
+			["kill-session", "-t", SCRATCH_SESSION],
+			this.contextHome,
+			cancel,
+			deadline,
+		);
 	}
 
 	/**

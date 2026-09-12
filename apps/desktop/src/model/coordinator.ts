@@ -21,12 +21,10 @@ import {
   CLEAN_CLOSE_INSPECTION,
   closeInspectionProjection,
   consolidateCloseInspection,
-  displayPath,
   DomainErrorCode,
   GLOBAL_CONTEXT,
   locationKey,
   Workspace,
-  workspaceLocation,
   type AgentId,
   type AgentProfile,
   type AgentProfileId,
@@ -37,7 +35,6 @@ import {
   type SurfacePresentation,
   type WorkspaceId,
   type WorkspaceLocation,
-  type WorkspaceRoot,
 } from "./domain.js";
 import {
   AppModel,
@@ -50,6 +47,7 @@ import {
   AppErrorCode,
   type PortName,
   operationToken,
+  requestedLocation,
   requestedPath,
   sameToken,
   tokenKey,
@@ -88,7 +86,18 @@ export type Effect =
   | {
       readonly kind: "resolve_workspace_path";
       readonly token: OperationToken;
-      readonly path: RequestedPath;
+      /**
+       * The place as it was asked for, machine and all.
+       *
+       * A path alone was enough while only a local folder was ever resolved.
+       * An ssh place skipped this step entirely and went straight to being a
+       * Workspace with whatever path was typed — so its root was never
+       * canonical on the machine it is on, and every tmux session DevHub tried
+       * to create there was refused as a conflict by the rule that a root which
+       * canonicalises elsewhere is a different directory. Both kinds are
+       * resolved now, each on its own machine.
+       */
+      readonly location: RequestedWorkspaceLocation;
     }
   | {
       readonly kind: "generate_workspace_id";
@@ -687,47 +696,32 @@ export class AppCoordinator {
   /**
    * Open a place, whichever machine it is on.
    *
-   * There is one door because there is one act. What differs between the two
-   * kinds is only whether anything on *this* machine has to be asked first: a
-   * local folder has to be `realpath`ed and stat'ed, which is a question for an
-   * adapter, so it goes out as an effect and comes back through
-   * `completeWorkspacePath`. An ssh folder has nothing here to ask — the
-   * machine that could answer is the one DevHub has not connected to yet, and
-   * connecting is the workbench's job, not a precondition of having a row —
-   * so it is already resolved and joins the same path one step further along.
+   * There is one door because there is one act, and now one path through it.
+   * A place is resolved on the machine it is on: `realpath`ed and stat'ed
+   * there, so the root a Workspace carries is that machine's canonical name
+   * for the folder.
    *
-   * Both ends meet at `beginWorkspaceIdentity`, so everything after the place
-   * is known — duplicate detection, selection, persistence — is written once.
+   * An ssh place used to skip this and become a Workspace with whatever path
+   * was typed. `$HOME` on a NAS is `/home/x` and canonically `/volume1/home/x`;
+   * DevHub's rule that a root which canonicalises elsewhere is a different
+   * directory then refused every session it tried to create over there — every
+   * Agent and every workspace terminal, as a conflict, on a host where nothing
+   * was in conflict with anything.
+   *
+   * Everything after the place is known — duplicate detection, selection,
+   * persistence — is written once, in `beginWorkspaceIdentity`.
    */
   private beginWorkspaceResolution(
     location: RequestedWorkspaceLocation,
     id: OperationId,
   ): IntentOutcome {
-    switch (location.kind) {
-      case "local": {
-        const token = this.startOperation(
-          "resolve_workspace_path",
-          { kind: "location", location },
-          id,
-        );
-        this.emitEffect({
-          kind: "resolve_workspace_path",
-          token,
-          path: location.path,
-        });
-        return { kind: "deferred", operationId: id, snapshot: this.snapshot() };
-      }
-      case "ssh":
-        return this.beginWorkspaceIdentity(
-          workspaceLocation({
-            kind: "ssh",
-            host: location.host,
-            path: location.path,
-          }),
-          displayPath(location.path),
-          id,
-        );
-    }
+    const token = this.startOperation(
+      "resolve_workspace_path",
+      { kind: "location", location },
+      id,
+    );
+    this.emitEffect({ kind: "resolve_workspace_path", token, location });
+    return { kind: "deferred", operationId: id, snapshot: this.snapshot() };
   }
 
   /**
@@ -830,7 +824,18 @@ export class AppCoordinator {
       { kind: "workspace_path", workspaceId },
       id,
     );
-    this.emitEffect({ kind: "resolve_workspace_path", token, path });
+    // On the machine the Workspace is already on. Re-pointing a Workspace at a
+    // folder cannot move it to another computer, and a relocation resolved
+    // here would be this Mac answering about a path that is a host's.
+    this.emitEffect({
+      kind: "resolve_workspace_path",
+      token,
+      location: requestedLocation(
+        workspace.location.kind === "local"
+          ? { kind: "local", path }
+          : { kind: "ssh", host: workspace.location.host, path },
+      ),
+    });
     return { kind: "deferred", operationId: id, snapshot: this.snapshot() };
   }
 
@@ -1058,7 +1063,7 @@ export class AppCoordinator {
       case "workspace_path_resolved":
         return this.completeWorkspacePath(
           event.token,
-          event.root,
+          event.location,
           event.selectedPath,
         );
       case "workspace_id_generated":
@@ -1172,7 +1177,7 @@ export class AppCoordinator {
 
   private completeWorkspacePath(
     token: OperationToken,
-    root: WorkspaceRoot,
+    location: WorkspaceLocation,
     selectedPath: DisplayPath,
   ): IntentOutcome {
     const pending = this.takePending(
@@ -1181,9 +1186,6 @@ export class AppCoordinator {
       (target) =>
         target.kind === "location" || target.kind === "workspace_path",
     );
-    // Only a local folder is ever resolved here — an ssh place has nothing on
-    // this machine to resolve — so what came back is a local place.
-    const location: WorkspaceLocation = { kind: "local", path: root };
     if (pending.target.kind === "workspace_path") {
       const workspaceId = pending.target.workspaceId;
       this.model.relocateWorkspace(workspaceId, location, selectedPath);
@@ -1387,6 +1389,7 @@ export class AppCoordinator {
     if (result.kind === "failed") {
       throw new AppError(AppErrorCode.PortUnavailable)
         .withPort("agent")
+        .withAgentFailure(result.code)
         .withDetail(result.detail)
         .withOperation(token.operationId);
     }

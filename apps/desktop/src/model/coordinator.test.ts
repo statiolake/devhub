@@ -9,7 +9,7 @@ import {
   displayPath,
   DomainErrorCode,
   workspaceId,
-  workspaceRoot,
+  workspaceLocation,
   type CloseInspectionInputs,
   NO_INJECTION,
 } from "./domain.js";
@@ -86,8 +86,16 @@ class Driver {
         return this.accept({
           type: "workspace_path_resolved",
           token: effect.token,
-          root: workspaceRoot(effect.path),
-          selectedPath: displayPath(effect.path),
+          location: workspaceLocation(
+            effect.location.kind === "local"
+              ? { kind: "local", path: effect.location.path }
+              : {
+                  kind: "ssh",
+                  host: effect.location.host,
+                  path: effect.location.path,
+                },
+          ),
+          selectedPath: displayPath(effect.location.path),
         });
       case "generate_workspace_id":
         return this.accept({
@@ -290,12 +298,12 @@ describe("opening a folder", () => {
 });
 
 describe("opening a folder on another machine", () => {
-  it("asks for an identity without asking this machine about the path", () => {
-    // There is nothing here to resolve: the machine that could `realpath` the
-    // folder is the one DevHub has not connected to yet, and connecting is the
-    // workbench's job rather than a precondition of having a row. So the ssh
-    // open joins the local one at the step *after* resolution, and the local
-    // resolver is never asked.
+  // An ssh open used to skip resolution and become a Workspace with the path
+  // as typed. On a host whose `$HOME` is a symlink — `/home/x` canonically
+  // `/volume1/home/x` — that root is not the folder's own name there, and
+  // every tmux session DevHub tried to create on the host was refused as a
+  // conflict: no Agent could start, and no workspace terminal either.
+  it("resolves the path on the machine it is on, host and all", () => {
     const driver = new Driver();
     driver.dispatch({
       type: "open_folder",
@@ -307,10 +315,14 @@ describe("opening a folder on another machine", () => {
     });
     const effects = driver.drainEffects();
     expect(effects.map((effect) => effect.kind)).toEqual([
-      "generate_workspace_id",
+      "resolve_workspace_path",
     ]);
     const [effect] = effects;
-    if (effect?.kind !== "generate_workspace_id") throw new Error("unexpected");
+    if (effect?.kind !== "resolve_workspace_path") {
+      throw new Error("unexpected");
+    }
+    // The machine travels with the path, so the adapter asks that host rather
+    // than this Mac about a folder this Mac has never had.
     expect(effect.location).toEqual({
       kind: "ssh",
       host: "build.example.com",
@@ -356,13 +368,22 @@ describe("opening a folder on another machine", () => {
           path: "/srv/api",
         }),
       });
-      for (const effect of driver.drainEffects()) {
-        if (effect.kind !== "generate_workspace_id") continue;
-        driver.accept({
-          type: "workspace_id_generated",
-          token: effect.token,
-          workspaceId: id,
-        });
+      // The place is resolved on its own machine first, so the identity step
+      // is one round further along than it used to be.
+      for (let round = 0; round < 4; round += 1) {
+        const effects = driver.drainEffects();
+        if (effects.length === 0) break;
+        for (const effect of effects) {
+          if (effect.kind === "generate_workspace_id") {
+            driver.accept({
+              type: "workspace_id_generated",
+              token: effect.token,
+              workspaceId: id,
+            });
+            continue;
+          }
+          driver.answer(effect);
+        }
       }
       driver.settle();
     });
@@ -388,7 +409,10 @@ describe("tokens", () => {
         driver.accept({
           type: "workspace_path_resolved",
           token: stale,
-          root: workspaceRoot("/dev/project"),
+          location: workspaceLocation({
+            kind: "local",
+            path: "/dev/project",
+          }),
           selectedPath: displayPath("/dev/project"),
         }),
       ),
@@ -722,7 +746,7 @@ describe("launching an agent", () => {
           token: launch.token,
           workspaceId: WS_A,
           agentId: AG_A,
-          result: { kind: "failed", diagnostic: "runtime_unavailable" },
+          result: { kind: "failed", code: "agent_runtime_unavailable" },
         }),
       ),
     ).toBe(AppErrorCode.PortUnavailable);

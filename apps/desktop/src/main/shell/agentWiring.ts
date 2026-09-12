@@ -37,6 +37,7 @@ import type {
 import type { TmuxTerminalRuntime } from "../terminal/tmux.js";
 import type { RuntimeId } from "../runtime/runtime.js";
 import { registerAgentAdapter } from "./adapters.js";
+import { portRefusal } from "./agentFailure.js";
 
 export interface AgentWiringOptions {
 	/** One tmux adapter per machine, built on first use. */
@@ -111,15 +112,23 @@ export function wireAgents(options: AgentWiringOptions): AgentSessions {
 				// `failed` result rather than a throw — the row has to be
 				// retryable rather than pretending.
 				//
-				// But it used to stop there, and "the agent runtime is
-				// unavailable" was the whole of what anyone could learn from a
-				// launch that failed for a reason the runtime knew exactly. The
-				// reason travels with the failure now, to the same error surface
-				// every other failure is read on.
+				// What it says is `portRefusal`'s answer, the same translation
+				// every other Agent operation's failure goes through. It used to
+				// be a flat "runtime_unavailable" plus a stringified message, so
+				// a session conflict, a timeout and a tmux that is genuinely not
+				// there all reached the person as "the agent runtime is
+				// unavailable" — which sent every one of them to look at a tmux
+				// that was answering.
+				const refusal = portRefusal(failure);
 				return {
 					kind: "failed",
-					diagnostic: "runtime_unavailable",
-					detail: failure instanceof Error ? failure.message : String(failure),
+					code: refusal.code,
+					...(refusal.detail === undefined
+						? {
+								detail:
+									failure instanceof Error ? failure.message : String(failure),
+							}
+						: { detail: refusal.detail }),
 				};
 			}
 		},

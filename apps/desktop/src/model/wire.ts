@@ -14,6 +14,7 @@ import {
   DomainError,
   DomainErrorCode,
   surfaceKeyName,
+  type AgentFailureCode,
   type AgentProfile,
   type AgentControlState,
   type WorkspaceClose,
@@ -492,6 +493,35 @@ export function replayWire(
 
 const SAFE_ERROR_SUMMARY = APP_ERROR_SUMMARY;
 
+/**
+ * The Agent port's word for a refusal, as the app-wide alert says it.
+ *
+ * Total, so a new `AgentFailureCode` is a compile error here rather than a
+ * failure that quietly reads as "the agent runtime is unavailable" again.
+ * `agent_profile_unavailable` is the one that has no app-wide sentence of its
+ * own — it is drawn on the Agent's row, where the profile is — so it keeps the
+ * runtime's, and `undefined` is a port failure that never went through
+ * `portRefusal` at all.
+ */
+function agentFailureAsAppError(
+  failure: AgentFailureCode | undefined,
+): AppErrorCodeWire {
+  switch (failure) {
+    case "tmux_command_failed":
+      return "tmux_command_failed";
+    case "tmux_command_timed_out":
+      return "tmux_command_timed_out";
+    case "tmux_session_conflict":
+      return "tmux_session_conflict";
+    case "workspace_unavailable":
+      return "workspace_unavailable";
+    case "agent_profile_unavailable":
+    case "agent_runtime_unavailable":
+    case undefined:
+      return "agent_runtime_unavailable";
+  }
+}
+
 function defaultErrorModule(code: AppErrorCodeWire): AppErrorModuleWire {
   switch (code) {
     case "persistence_degraded":
@@ -640,10 +670,13 @@ export function errorWire(error: unknown): AppErrorWire {
       break;
     case AppErrorCode.PortUnavailable:
       // Which port could not answer is the whole difference between a
-      // sentence a person can act on and the app shell's catch-all.
+      // sentence a person can act on and the app shell's catch-all — and for
+      // the Agent port, *what it said*: a session conflict and a tmux that is
+      // not there are two different things to go and do, and both used to
+      // arrive as "the agent runtime is unavailable".
       code =
         error.port === "agent"
-          ? "agent_runtime_unavailable"
+          ? agentFailureAsAppError(error.agentFailure)
           : "native_unavailable";
       break;
     default:

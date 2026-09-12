@@ -39,6 +39,8 @@ import {
   workspaceDigest,
 } from "../../src/main/terminal/tmux";
 import { AgentSessions } from "../../src/main/agent/sessions";
+import { localRuntime } from "../../src/main/runtime/registry";
+import type { Runtime } from "../../src/main/runtime/runtime";
 import { AgentStatusDetector } from "../../src/main/agent/detect/detector";
 import {
   AgentInjectionQueue,
@@ -90,10 +92,30 @@ function countingTmux(home: string): { path: string; runs: () => number } {
   };
 }
 
+/**
+ * This machine, wearing another machine's name.
+ *
+ * Everything a `Runtime` does still happens here — the tmux is the real one on
+ * this Mac — but its `id` says `ssh:`, which is the one thing the adapter
+ * branches on. That is exactly the seam under test: what DevHub does
+ * *differently* on a machine that is not the one it runs on.
+ */
+function machineNamed(id: string): Runtime {
+  const here = localRuntime();
+  return new Proxy(here, {
+    get(target, property) {
+      if (property === "id") return id;
+      if (property === "where") return " on build.example.com";
+      const value = Reflect.get(target, property, target) as unknown;
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  }) as Runtime;
+}
+
 function fixture(
   label: string,
   environment?: Record<string, string>,
-  options?: { readonly counting?: boolean },
+  options?: { readonly counting?: boolean; readonly host?: Runtime },
 ): Fixture {
   sequence += 1;
   const home = realpathSync(scratchDirectory(`tmux-${label}`));
@@ -120,6 +142,7 @@ function fixture(
     // A path and never a search: DevHub owns the location, and `source-file
     // -q` is what makes "there is no such file" the ordinary case.
     userTmuxConfigPath: join(home, "config", "tmux.conf"),
+    ...(options?.host === undefined ? {} : { host: options.host }),
   });
   const created = {
     home,
@@ -1404,3 +1427,101 @@ function windowSize(socket: string, session: string): string {
     },
   ).trim();
 }
+
+/**
+ * What DevHub puts on a machine that is not the one it runs on.
+ *
+ * Live against the NAS, a `New Agent` on an ssh Workspace failed every time
+ * with "terminal runtime conflict", and the host's tmux held exactly one
+ * session: `scratch`. Two facts in one screenshot — the Agent's session was
+ * never created there, and a session that belongs to the app was.
+ *
+ * The machine here is this one wearing an `ssh:` id, because that id is the
+ * whole of what the adapter branches on. A real host would prove the same
+ * thing over a slower wire.
+ */
+describe.skipIf(TMUX === undefined)(
+  "a machine that is not this one",
+  { timeout: 30_000 },
+  () => {
+    const REMOTE = "ssh:build.example.com";
+
+    function remoteFixture(label: string): Fixture {
+      return fixture(label, undefined, { host: machineNamed(REMOTE) });
+    }
+
+    function sessionNames(socket: string): readonly string[] {
+      return execFileSync(
+        TMUX as string,
+        ["-L", socket, "list-sessions", "-F", "#{session_name}"],
+        {
+          encoding: "utf8",
+          env: { ...process.env, TMUX: undefined, TMUX_PANE: undefined } as never,
+        },
+      )
+        .split("\n")
+        .filter((line) => line.length > 0);
+    }
+
+    // Scratch is the app's own terminal and the app runs on one machine. On a
+    // host it is a session nothing will ever attach to, in a directory chosen
+    // here, held for the life of that server.
+    it("brings a server up with no Scratch session on it", async () => {
+      const test = remoteFixture("remote-scratch");
+      mkdirSync(join(test.home, "api"), { recursive: true });
+      const root = realpathSync(join(test.home, "api"));
+      const workspaceId = "00000000-0000-4000-8000-0000000000c1";
+
+      await test.runtime.ensure(workspaceTarget(REMOTE, workspaceId, root));
+
+      expect(sessionNames(test.socket)).not.toContain(SCRATCH_SESSION);
+      expect(sessionNames(test.socket)).toHaveLength(1);
+    });
+
+    it("still keeps one on the machine DevHub is running on", async () => {
+      const test = fixture("local-scratch");
+      await test.runtime.ensure(SCRATCH_TARGET);
+      expect(sessionNames(test.socket)).toEqual([SCRATCH_SESSION]);
+    });
+
+    // The launch creates the session and the attach finds it. When the launch
+    // did not happen, the attach is what reported the trouble —
+    // `ensureSyncOnSocket` refuses to create an Agent's session, because a
+    // missing one means the Agent ended — so a create that never ran arrived
+    // as a conflict on a host where nothing was in conflict.
+    it("creates an Agent's session there, and then attaches to it", async () => {
+      const test = remoteFixture("remote-agent");
+      mkdirSync(join(test.home, "api"), { recursive: true });
+      const root = realpathSync(join(test.home, "api"));
+      const workspaceId = "00000000-0000-4000-8000-0000000000c2";
+      const agentId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaac2";
+      const sessions = new AgentSessions((machine) => {
+        expect(machine).toBe(REMOTE);
+        return Promise.resolve(test.runtime);
+      });
+
+      await sessions.launch({
+        machine: REMOTE,
+        agentId,
+        workspaceId,
+        root,
+        command: { file: "/bin/sh", args: ["-c", "sleep 30"], env: {} },
+      });
+
+      expect(sessionNames(test.socket)).toEqual([agentSessionName(agentId)]);
+      expect((await sessions.list(REMOTE)).map((one) => one.agentId)).toEqual([
+        agentId,
+      ]);
+      // The attach, which is what failed live: it must find the session the
+      // launch made rather than refuse the target.
+      await test.runtime.ensure({
+        kind: "agent",
+        machine: REMOTE,
+        agentId,
+        workspaceId,
+        root,
+      });
+      expect(sessionNames(test.socket)).toEqual([agentSessionName(agentId)]);
+    });
+  },
+);

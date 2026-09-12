@@ -14,6 +14,7 @@
 import type {
   AgentId,
   AgentProfile,
+  AgentFailureCode,
   AgentProfileId,
   AgentReconciliation,
   AgentStatus,
@@ -29,7 +30,7 @@ import type {
   RuntimeId,
   SshHost,
   WorkspaceId,
-  WorkspaceRoot,
+  WorkspaceLocation,
 } from "./domain.js";
 import {
   DomainError,
@@ -132,6 +133,15 @@ export type PortName = "app" | "agent" | "terminal" | "editor" | "state";
 export class AppError extends Error {
   domainCode: DomainErrorCode | undefined;
   port: PortName | undefined;
+  /**
+   * The Agent port's own name for this refusal, when it had one.
+   *
+   * A port failure is not one thing. `withPort("agent")` alone said only
+   * "something about Agents", and the wire had nothing to turn that into but
+   * "the agent runtime is unavailable" — which sent every reader to look at a
+   * tmux that was answering. See `portRefusal`.
+   */
+  agentFailure: AgentFailureCode | undefined;
   /** What the failing side said, for the reader; never for a branch. */
   detail: string | undefined;
   intentId: IntentId | undefined;
@@ -155,6 +165,11 @@ export class AppError extends Error {
 
   withPort(port: PortName): AppError {
     this.port = port;
+    return this;
+  }
+
+  withAgentFailure(code: AgentFailureCode): AppError {
+    this.agentFailure = code;
     return this;
   }
 
@@ -390,7 +405,16 @@ export type AgentLaunchResult =
   | { readonly kind: "started" }
   | {
       readonly kind: "failed";
-      readonly diagnostic: DiagnosticCode;
+      /**
+       * What the Agent port called the refusal — `portRefusal`'s answer.
+       *
+       * It used to be a `DiagnosticCode` nothing read, and the code that
+       * reached the person was whatever the wire made of "the agent port
+       * failed": `agent_runtime_unavailable`, for every launch that ever
+       * failed, including a tmux answering perfectly that had refused one
+       * session. The port's own word travels now, all the way to the wire.
+       */
+      readonly code: AgentFailureCode;
       /**
        * What the adapter could say about the failure, in its own words.
        *
@@ -441,7 +465,15 @@ export type ProviderEvent =
   | {
       readonly type: "workspace_path_resolved";
       readonly token: OperationToken;
-      readonly root: WorkspaceRoot;
+      /**
+       * The place, canonical on the machine it is on.
+       *
+       * The whole location and not a bare root, because resolution is not a
+       * local-only step any more: an ssh place is realpath'd and checked on
+       * *its* host, and a resolution that came back as a path alone would be
+       * read as a folder on this Mac.
+       */
+      readonly location: WorkspaceLocation;
       readonly selectedPath: DisplayPath;
     }
   | {
