@@ -65,6 +65,12 @@ class RecordingRuntime implements Runtime {
 			unreachable: undefined,
 		});
 	}
+	resolveProgram(configured: string) {
+		return Promise.resolve({
+			kind: "command_name" as const,
+			value: configured,
+		});
+	}
 	exec(request: ExecRequest): Promise<ExecResult> {
 		this.execs.push(request);
 		return Promise.resolve(this.answer);

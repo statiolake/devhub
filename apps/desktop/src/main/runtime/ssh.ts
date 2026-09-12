@@ -50,6 +50,7 @@ import {
 	terminalLauncherScript,
 } from "../terminal/launcher.js";
 import { remoteReconcileIntervalMs } from "./cadence.js";
+import type { SettingsResolvedRuntimeWire } from "../../ipc/settings.js";
 import { gitDirectoryOf } from "./gitDirectory.js";
 import { shellQuote } from "./quote.js";
 import {
@@ -558,6 +559,22 @@ export class SshRuntime implements Runtime {
 	 * already one; without it a non-interactive remote command gets no pty and
 	 * tmux refuses to attach.
 	 */
+	/**
+	 * The name, unresolved, because the machine that can resolve it is the far
+	 * one.
+	 *
+	 * Nothing here looks: a lookup would have to read the host's PATH and stat
+	 * its candidates, which is a round trip per program per start for an answer
+	 * `exec` already produces on its way past — `remoteScript` refuses a program
+	 * `command -v` cannot find, with exit 127 and the same `unavailable` a
+	 * missing local binary raises. So the honest answer is the configured name,
+	 * and `command_name` is what that has been called since the Settings window
+	 * had three columns.
+	 */
+	resolveProgram(configured: string): Promise<SettingsResolvedRuntimeWire> {
+		return Promise.resolve({ kind: "command_name", value: configured });
+	}
+
 	spawnPty(request: PtyRequest): Pty {
 		const script = remoteScript({
 			argv: [request.file, ...request.args],

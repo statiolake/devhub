@@ -27,6 +27,7 @@ import type { Buffer } from "node:buffer";
 import type { OperationDeadline } from "../terminal/command.js";
 import type { CancellationToken } from "../terminal/ports.js";
 import type { Pty, PtyLaunch } from "../terminal/pty.js";
+import type { SettingsResolvedRuntimeWire } from "../../ipc/settings.js";
 
 /**
  * Which machine, as a key.
@@ -244,6 +245,28 @@ export interface Runtime {
 	exec(request: ExecRequest): Promise<ExecResult>;
 	spawnPty(request: PtyRequest): Pty;
 
+	/**
+	 * What a configured program name means on this machine.
+	 *
+	 * `runtimes.git` is a string a person wrote, and turning it into something
+	 * runnable is the one part of running a program that cannot be done from
+	 * anywhere else: this Mac's `/opt/homebrew/bin/git` is not a path on
+	 * somebody's server, and a PATH composed here names nothing there. So it is
+	 * on the seam rather than at the caller, which would otherwise have to ask
+	 * which machine it was talking to — the one question this interface exists
+	 * to stop being asked.
+	 *
+	 * Locally the answer is an absolute path or an `unavailable` naming every
+	 * directory that was searched, because the search happened here and a search
+	 * nobody can see is a search nobody can correct. Remotely it is the name
+	 * itself: the far end resolves it when the command runs, and refuses with
+	 * the same `unavailable` in that machine's own words, so a lookup here would
+	 * be a second answer taken from the wrong disk.
+	 */
+	resolveProgram(
+		configured: string,
+		searchPath: string,
+	): Promise<SettingsResolvedRuntimeWire>;
 
 	stat(path: string): Promise<FileKind>;
 	readTextFile(path: string, maxBytes: number): Promise<string>;

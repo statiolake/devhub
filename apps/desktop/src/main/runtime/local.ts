@@ -32,6 +32,8 @@ import { activityCounters, COUNTER } from "../diagnostics/counters.js";
 import { runBounded } from "../terminal/command.js";
 import { openPty, type Pty } from "../terminal/pty.js";
 import { gitDirectoryOf } from "./gitDirectory.js";
+import { resolveExecutable } from "../shell/runtimes.js";
+import type { SettingsResolvedRuntimeWire } from "../../ipc/settings.js";
 import {
 	RuntimeFileError,
 	type DirEntry,
@@ -96,6 +98,20 @@ export class LocalRuntime implements Runtime {
 
 	home(): Promise<string> {
 		return Promise.resolve(homedir());
+	}
+
+	/**
+	 * Look the configured name up the way a shell on this machine would.
+	 *
+	 * The same resolver the Settings window's Runtimes section shows, so "what
+	 * DevHub will run" and "what DevHub says it will run" cannot come to
+	 * disagree.
+	 */
+	resolveProgram(
+		configured: string,
+		searchPath: string,
+	): Promise<SettingsResolvedRuntimeWire> {
+		return resolveExecutable(configured, searchPath);
 	}
 
 	async exec(request: ExecRequest): Promise<ExecResult> {
