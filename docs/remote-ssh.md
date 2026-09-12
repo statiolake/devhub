@@ -659,3 +659,64 @@ There is no bash on a Synology, and no guarantee of one anywhere. Every script
 unpack is the same rule — a staging directory and a `mv`, not
 `tar --strip-components`, which GNU tar and bsdtar have and POSIX does not
 require.
+
+## What a machine gets, and what stays here
+
+Three things a host is given, one thing it is not, and one thing it must be
+told about itself. Each of these was a live failure before it was a rule.
+
+### The asking program is one file
+
+`devhub-terminal` runs a compiled program that asks DevHub for an argv, and
+that program is **one self-contained file**:
+`out/main/terminal/devhub-terminal.bundle.js`, produced by the `build:terminal`
+step of `pnpm --filter @devhub/desktop build` (esbuild, `platform: node`,
+nothing external but `node:*`). `Runtime.terminalLauncher` is given its text
+and writes exactly that file, plus a `package.json` saying `{"type":"module"}`
+so Node reads it as an ES module, plus the launcher script.
+
+It used to be a *closure*: the compiled entry and every compiled file it
+imported, discovered by reading each `.js` as text and following the relative
+specifiers. A text scan cannot tell an `import` from the word in a doc comment,
+and `launcher.ts` documents its own matcher — so the packaged app refused to
+ship the program at all, on this Mac and on every host, and said so once per
+window in a log. One file has no graph to walk.
+
+### Whether it got there is in `devhub --metrics`
+
+    "terminalLauncher": [
+      { "machine": "local", "installed": true,
+        "path": "…/devhub/devhub-terminal", "reason": null },
+      { "machine": "ssh:build.example.com", "installed": false,
+        "path": null, "reason": "…" }
+    ]
+
+One entry per machine a window has been opened on; absent means nothing has
+asked for that machine yet, which is a different answer from failed. With
+`installed: true` a `reason` is the launcher being there but unable to reach
+DevHub's control socket. A window is never refused for this — a folder somebody
+can edit is worth more than no folder — so this reading, and not the window, is
+where "does this DevHub have terminals, and where" is answered.
+
+### A Workspace's root is canonical on its own machine
+
+`resolve_workspace_path` carries the whole requested location and is answered
+on the machine it names: `~` is that machine's home, `realpath` is its
+`realpath`, and the folder is stat'ed there. An ssh place used to skip
+resolution altogether and become a Workspace with the path as typed. On a NAS
+whose `$HOME` is `/home/<user>` and canonically `/volume1/home/<user>`, that
+root is not the folder's own name over there, and DevHub's rule that a root
+which canonicalises elsewhere is a different directory refused **every** tmux
+session it tried to create on the host — every Agent and every workspace
+terminal — as a conflict, on a host where nothing was in conflict.
+
+### Scratch stays here
+
+Scratch is the *app's* terminal, not a folder's, and the app runs on this Mac.
+A host's tmux gets workspace sessions and Agent sessions and nothing else. The
+bootstrap config still has to create some session — a tmux server with none
+exits — so on a machine that is not this one that anchor is retired as soon as
+the session replacing it exists, and only when its whole marker tuple proves it
+is DevHub's own. A workbench terminal on a host, started in a directory no
+Workspace there contains, is refused in words rather than given a Scratch that
+does not belong to that machine.
