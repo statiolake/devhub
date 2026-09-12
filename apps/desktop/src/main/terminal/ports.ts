@@ -14,6 +14,7 @@
  */
 
 import type { ResourceInspection } from "../../model/domain.js";
+import type { RuntimeId } from "../runtime/runtime.js";
 
 /** Why a runtime operation could not complete. */
 export type PortErrorCode =
@@ -148,8 +149,21 @@ export function isSafeTmuxArgument(argument: string): boolean {
 	return argument === "-u" || argument === "-2";
 }
 
+/**
+ * Where a terminal is, as a value.
+ *
+ * A path is a path on one computer: `/srv/app` on two hosts is two folders and
+ * two tmux servers, and a target that carried only the path would be answered
+ * by whichever server was asked. So every target names its machine, and every
+ * consumer takes its tmux adapter from that name rather than from whichever
+ * one it happens to hold.
+ */
+export interface TerminalMachine {
+	readonly machine: RuntimeId;
+}
+
 /** A workspace's terminal: the folder it lives in, named by its workspace id. */
-export interface WorkspaceTerminalTarget {
+export interface WorkspaceTerminalTarget extends TerminalMachine {
 	readonly workspaceId: string;
 	/** Absolute, canonical. */
 	readonly root: string;
@@ -165,7 +179,7 @@ export interface WorkspaceTerminalTarget {
  * demand and outlives whatever runs in it, while an Agent session runs one
  * command and ends when that command ends.
  */
-export interface AgentTerminalTarget {
+export interface AgentTerminalTarget extends TerminalMachine {
 	readonly agentId: string;
 	readonly workspaceId: string;
 	/** Absolute, canonical: the workspace root the Agent runs in. */
@@ -179,25 +193,39 @@ export interface AgentTerminalTarget {
  * is the launch home.
  */
 export type TerminalTarget =
-	| { readonly kind: "scratch" }
+	| ({ readonly kind: "scratch" } & TerminalMachine)
 	| ({ readonly kind: "workspace" } & WorkspaceTerminalTarget)
 	| ({ readonly kind: "agent" } & AgentTerminalTarget);
 
-export const SCRATCH_TARGET: TerminalTarget = { kind: "scratch" };
+/**
+ * The Global context's terminal, on one machine.
+ *
+ * There is one per machine and not one altogether: a workbench opened on a
+ * host starts its terminal in that host's home, nothing there is rooted, and
+ * the session it falls to has to be a session on that host's tmux server.
+ */
+export function scratchTarget(machine: RuntimeId): TerminalTarget {
+	return { kind: "scratch", machine };
+}
+
+/** This machine's Scratch, for the callers that are about this machine. */
+export const SCRATCH_TARGET: TerminalTarget = scratchTarget("local");
 
 export function workspaceTarget(
+	machine: RuntimeId,
 	workspaceId: string,
 	root: string,
 ): TerminalTarget {
-	return { kind: "workspace", workspaceId, root };
+	return { kind: "workspace", machine, workspaceId, root };
 }
 
 export function agentTarget(
+	machine: RuntimeId,
 	agentId: string,
 	workspaceId: string,
 	root: string,
 ): TerminalTarget {
-	return { kind: "agent", agentId, workspaceId, root };
+	return { kind: "agent", machine, agentId, workspaceId, root };
 }
 
 export function sameTarget(
@@ -205,6 +233,7 @@ export function sameTarget(
 	right: TerminalTarget,
 ): boolean {
 	if (left.kind !== right.kind) return false;
+	if (left.machine !== right.machine) return false;
 	if (left.kind === "scratch") return true;
 	if (left.kind === "agent") {
 		// The Agent id is the whole identity: a workspace can be reopened at a

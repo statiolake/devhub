@@ -30,17 +30,9 @@
 
 import { activityCounters, COUNTER } from "../diagnostics/counters.js";
 import { localRuntime } from "../runtime/registry.js";
-import type { ExecLimits, Runtime } from "../runtime/runtime.js";
+import type { ExecLimits, Runtime, RuntimeId } from "../runtime/runtime.js";
+import type { Pty, PtyLaunch } from "./pty.js";
 import { createHash, randomBytes } from "node:crypto";
-import {
-	closeSync,
-	existsSync,
-	openSync,
-	realpathSync,
-	statSync,
-	unlinkSync,
-	writeFileSync,
-} from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import {
@@ -718,38 +710,41 @@ class RuntimeOperationGate {
  * constructor input so the app can put it beside its own state.
  */
 class BootstrapConfig {
-	private constructor(readonly path: string) {}
+	private constructor(
+		private readonly host: Runtime,
+		readonly path: string,
+	) {}
 
-	static create(directory: string): BootstrapConfig {
+	/**
+	 * It is written on the machine tmux is about to start on, because that is
+	 * the only machine the `-f` path means anything on: a config on this Mac
+	 * named to a tmux across a network is a file that is not there.
+	 */
+	static async create(
+		host: Runtime,
+		directory: string,
+	): Promise<BootstrapConfig> {
 		for (let attempt = 0; attempt < 8; attempt += 1) {
 			const path = join(
 				directory,
 				`devhub-tmux-bootstrap-${process.pid}-${randomBytes(6).toString("hex")}`,
 			);
-			let handle: number;
+			let created: boolean;
 			try {
 				// Exclusive create: never write through an existing path.
-				handle = openSync(path, "wx", 0o600);
-			} catch {
-				// Not a swallow: a taken name is retried, which is the loop.
-				continue;
-			}
-			try {
-				writeFileSync(handle, BOOTSTRAP_CONFIG, { encoding: "utf8" });
+				created = await host.writeNewTextFile(path, BOOTSTRAP_CONFIG, 0o600);
 			} catch (failure: unknown) {
-				closeSync(handle);
-				unlinkSync(path);
 				throw portFailure("failed", { cause: failure });
 			}
-			closeSync(handle);
-			return new BootstrapConfig(path);
+			// Not a swallow: a taken name is retried, which is the loop.
+			if (created) return new BootstrapConfig(host, path);
 		}
 		throw portFailure("failed");
 	}
 
-	remove(): void {
+	async remove(): Promise<void> {
 		try {
-			unlinkSync(this.path);
+			await this.host.removeTree(this.path);
 		} catch {
 			// Not a swallow: the file is already gone, which is the goal.
 		}
@@ -942,6 +937,29 @@ export class TmuxTerminalRuntime {
 		this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 		this.bootstrapDirectory = options.bootstrapDirectory ?? tmpdir();
 		this.host = options.host ?? localRuntime();
+	}
+
+	/** Which machine this adapter's tmux server is on. */
+	get machine(): RuntimeId {
+		return this.host.id;
+	}
+
+	/** For a sentence: `""` here, `" on <host>"` there. */
+	get where(): string {
+		return this.host.where;
+	}
+
+	/**
+	 * A PTY on the machine tmux is on.
+	 *
+	 * The attaching client has to run where the server is — a `tmux -L devhub
+	 * attach` on this Mac reaches nothing across a network — so the client is
+	 * opened through the same `Runtime` every other tmux command goes through,
+	 * and the ssh hop, where there is one, is that runtime's business and not
+	 * the attachment logic's.
+	 */
+	spawnPty(launch: PtyLaunch): Pty {
+		return this.host.spawnPty(launch);
 	}
 
 	/** True when a tmux executable and a usable socket name are both present. */
@@ -2068,7 +2086,7 @@ export class TmuxTerminalRuntime {
 		cancel: CancellationToken,
 		deadline: OperationDeadline,
 	): Promise<void> {
-		if (!existsSync(spec.root) || !statSync(spec.root).isDirectory()) {
+		if ((await this.host.stat(spec.root)) !== "directory") {
 			throw portFailure("root_missing");
 		}
 		if ((await this.markerState(socket, cancel, deadline)) !== "owned") {
@@ -2076,7 +2094,7 @@ export class TmuxTerminalRuntime {
 		}
 		let canonical: string;
 		try {
-			canonical = realpathSync(spec.root);
+			canonical = await this.host.realpath(spec.root);
 		} catch (failure: unknown) {
 			throw portFailure("root_inaccessible", { cause: failure });
 		}
@@ -2369,7 +2387,7 @@ export class TmuxTerminalRuntime {
 	 * itself documents. `/dev/null` when there is none, so the bootstrap
 	 * `source-file` always names a real path.
 	 */
-	userTmuxConfigPath(): string {
+	async userTmuxConfigPath(): Promise<string> {
 		const home = this.contextHome;
 		const candidates = [join(home, ".tmux.conf")];
 		const xdg = this.context.environment.XDG_CONFIG_HOME;
@@ -2380,7 +2398,7 @@ export class TmuxTerminalRuntime {
 		);
 		for (const candidate of candidates) {
 			try {
-				if (statSync(candidate).isFile()) return candidate;
+				if ((await this.host.stat(candidate)) === "file") return candidate;
 			} catch {
 				// Not a swallow: a candidate that is not there is not the answer,
 				// and the next one is tried.
@@ -2409,7 +2427,10 @@ export class TmuxTerminalRuntime {
 		cancel: CancellationToken,
 		deadline: OperationDeadline,
 	): Promise<void> {
-		const config = BootstrapConfig.create(this.bootstrapDirectory);
+		const config = await BootstrapConfig.create(
+			this.host,
+			this.bootstrapDirectory,
+		);
 		let output: TmuxOutput;
 		try {
 			output = await this.runBootstrapProbe(
@@ -2420,7 +2441,7 @@ export class TmuxTerminalRuntime {
 				deadline,
 			);
 		} finally {
-			config.remove();
+			await config.remove();
 		}
 		if (output.success) {
 			if (output.stdout.byteLength === 0) throw portFailure("conflict");
@@ -2472,7 +2493,7 @@ export class TmuxTerminalRuntime {
 				env: {
 					...this.tmuxEnvironment(),
 					[BOOTSTRAP_ENV_ROOT]: root,
-					[BOOTSTRAP_ENV_USER_CONFIG]: this.userTmuxConfigPath(),
+					[BOOTSTRAP_ENV_USER_CONFIG]: await this.userTmuxConfigPath(),
 				},
 			},
 			"start-server",

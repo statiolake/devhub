@@ -15,7 +15,11 @@
  * to tell which of the two had gone stale.
  */
 
-import type { WorkspaceLocation } from "../../model/domain.js";
+import {
+	sshHost,
+	workspaceRoot,
+	type WorkspaceLocation,
+} from "../../model/domain.js";
 import { LocalRuntime } from "./local.js";
 import type { Runtime, RuntimeId } from "./runtime.js";
 import { chooseControlDirectory, SshRuntime } from "./ssh.js";
@@ -76,6 +80,10 @@ export function setRuntimeProfile(next: RuntimeProfile): void {
 		throw new Error("the runtime profile has already been set");
 	}
 	profile = next;
+	// This machine keeps its own short-lived files beside this profile's state,
+	// for the same reason every other resource is keyed on the profile: two
+	// DevHubs must not be able to pick each other's names.
+	LOCAL.keepFilesUnder(next.userDataDirectory);
 }
 
 /** For tests, which need a second profile in the same process. */
@@ -120,6 +128,57 @@ export function runtimeFor(location: WorkspaceLocation): Runtime {
 			return runtime;
 		}
 	}
+}
+
+/**
+ * Which machine a location is on, without connecting to it.
+ *
+ * The same switch as `runtimeFor`, answering the half of the question that
+ * costs nothing: a terminal target has to carry the machine, and building an
+ * `SshRuntime` — a control directory, a connection waiting to happen — to read
+ * a string off it would make naming a machine as expensive as reaching one.
+ */
+export function runtimeIdFor(location: WorkspaceLocation): RuntimeId {
+	switch (location.kind) {
+		case "local":
+			return "local";
+		case "ssh":
+			return `ssh:${location.host}`;
+	}
+}
+
+/**
+ * A machine's name as it arrived from outside, checked.
+ *
+ * The `terminal-profile` request carries one, written into a launcher script
+ * on the machine that runs it, and a request is not a place a type holds. A
+ * name that is not one of the two shapes is a request DevHub cannot answer,
+ * and it says so rather than falling back to this machine — which would open
+ * a shell here for a terminal over there.
+ */
+/**
+ * The machine an id names — the inverse of `Runtime.id`.
+ *
+ * It is here, beside `runtimeFor`, because it is the same switch read the
+ * other way round and there must not be two places that know how an id is
+ * spelled. Its callers are the ones that were handed a machine rather than a
+ * location: a terminal target names the machine its session is on, and the
+ * adapter for it is found from that name.
+ */
+export function runtimeMachine(raw: string): RuntimeId {
+	if (raw === "local" || raw.startsWith("ssh:")) return raw as RuntimeId;
+	throw new Error(`${raw} does not name a machine DevHub knows`);
+}
+
+export function runtimeById(id: RuntimeId): Runtime {
+	if (id === "local") return LOCAL;
+	return runtimeFor({
+		kind: "ssh",
+		host: sshHost(id.slice("ssh:".length)),
+		// The path is not part of which machine this is, and `runtimeFor` does
+		// not read it: one runtime per host, whatever folder is being asked about.
+		path: workspaceRoot("/"),
+	});
 }
 
 /**

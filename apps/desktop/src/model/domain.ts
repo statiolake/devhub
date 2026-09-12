@@ -199,6 +199,21 @@ export type WorkspaceLocation =
       readonly path: WorkspaceRoot;
     };
 
+/**
+ * Which machine, as a key.
+ *
+ * `local`, or `ssh:<host>`. It is what a per-host cache is filed under, what a
+ * metrics reading is named by, and what a terminal target carries — so it is a
+ * string rather than an object: two runtimes with the same id are the same
+ * machine, and that has to be a comparison rather than a convention.
+ *
+ * It is in the model and not beside `Runtime` because the model is where a
+ * location is, and this is a location with everything but the machine taken
+ * off. `main/runtime/runtime.ts` re-exports it, beside the implementations
+ * that answer for a machine.
+ */
+export type RuntimeId = "local" | `ssh:${string}`;
+
 /** What a caller says about a place, before any of it has been validated. */
 export type RequestedLocation =
   | { readonly kind: "local"; readonly path: string }
@@ -278,37 +293,6 @@ export function remoteAuthorityOf(
       return `ssh-remote+${location.host}`;
   }
 }
-
-/**
- * Whether DevHub can run an Agent or a terminal for this Workspace.
- *
- * All that is left of a much broader predicate. `git`, the `HEAD` watcher, the
- * worktree probes and the folder-exists check all go through the Workspace's
- * `Runtime` now (`main/runtime/`), so a repository on another machine has a
- * branch, an Issue and a pull request on its row exactly like one here. What
- * has not moved yet is the pair that needs a *process with a terminal on it*:
- * tmux, and the PTY the Agent pane attaches to.
- *
- * So the name says Agents, because Agents and their terminals are the whole of
- * what it now decides. When they move too this function goes, rather than
- * quietly becoming a predicate about something else — a gate that outlives its
- * reason is a gate nobody can tell the truth about.
- *
- * It is never a reason to skip silently. Every surface that would have shown a
- * feature says why it is not showing it; see the callers.
- */
-export function supportsLocalAgents(location: WorkspaceLocation): boolean {
-  switch (location.kind) {
-    case "local":
-      return true;
-    case "ssh":
-      return false;
-  }
-}
-
-/** The one sentence every surface says when `supportsLocalAgents` is false. */
-export const LOCAL_AGENTS_UNAVAILABLE =
-  "Agents and terminals are not available for SSH workspaces yet.";
 
 type RemoteScheme = "bare" | "scp" | "http" | "https" | "ssh";
 
@@ -1254,15 +1238,16 @@ export class Workspace {
   /**
    * An Agent is a process, and a process runs where the folder is.
    *
-   * So a Workspace on another machine cannot have one yet — see
-   * `supportsLocalAgents`. Refused here rather than at the launch, because the
-   * page has to be able to *say so* before the person asks: New Agent is
-   * disabled with the reason on it, which is the whole difference between a
-   * feature that is not here yet and a button that does nothing.
+   * Which machine that is is no longer one of the terms. It used to be: an
+   * Agent needed tmux and a PTY, and both of those were this Mac. They are the
+   * Workspace's `Runtime` now (`main/runtime/`), so a Workspace on a host DevHub
+   * can reach runs its Agents there, and a host it cannot reach reports *that*,
+   * as a failure naming the host, rather than as a button that was never
+   * offered. The two terms left are about the Workspace itself: whether it is
+   * available, and whether it is on its way out.
    */
   get canCreateAgent(): boolean {
     return (
-      supportsLocalAgents(this.locationValue) &&
       isWorkspaceAvailable(this.stateValue) &&
       this.closeValue.kind !== "running"
     );
