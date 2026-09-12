@@ -116,6 +116,10 @@ function fixture(
     timeoutMs: 10_000,
     // Scratch stays inside the repository, never in the OS temp directory.
     bootstrapDirectory: home,
+    // The one user tmux config, where DevHub's config directory would put it.
+    // A path and never a search: DevHub owns the location, and `source-file
+    // -q` is what makes "there is no such file" the ordinary case.
+    userTmuxConfigPath: join(home, "config", "tmux.conf"),
   });
   const created = {
     home,
@@ -176,8 +180,9 @@ describe.skipIf(TMUX === undefined)(
   () => {
     it("adopts an absent socket by creating exactly one marked Scratch", async () => {
       const test = fixture("absent");
+      mkdirSync(join(test.home, "config"), { recursive: true });
       writeFileSync(
-        join(test.home, ".tmux.conf"),
+        join(test.home, "config", "tmux.conf"),
         "set-option -g @devhub-test-user-config home\n",
       );
 
@@ -347,7 +352,11 @@ describe.skipIf(TMUX === undefined)(
         ),
       ).toHaveLength(2);
 
-      await test.runtime.closeWorkspace({ machine: "local", workspaceId, root });
+      await test.runtime.closeWorkspace({
+        machine: "local",
+        workspaceId,
+        root,
+      });
       const afterClose = await test.runtime.listSessions(
         test.socket,
         test.cancel,
@@ -402,7 +411,11 @@ describe.skipIf(TMUX === undefined)(
       // What an explicit close does, in the order the app does it: the Agents
       // first, then the workspace's own terminal.
       await sessions.terminate("local", agentId);
-      await test.runtime.closeWorkspace({ machine: "local", workspaceId, root });
+      await test.runtime.closeWorkspace({
+        machine: "local",
+        workspaceId,
+        root,
+      });
 
       const after = await test.runtime.listSessions(
         test.socket,
@@ -479,7 +492,9 @@ describe.skipIf(TMUX === undefined)(
           `ws-${workspaceDigest(root).slice(0, 20)}`,
         ].sort(),
       );
-      expect(await new AgentSessions(localAdapter(adopted)).list("local")).toEqual([
+      expect(
+        await new AgentSessions(localAdapter(adopted)).list("local"),
+      ).toEqual([
         // The activity marker is tmux's clock, so it is asserted by shape:
         // what matters here is that the listing carries one at all.
         { agentId, workspaceId, activity: expect.stringMatching(/^\d+$/) },
@@ -510,8 +525,8 @@ describe.skipIf(TMUX === undefined)(
         mkdirSync(root, { recursive: true });
         targets.push(
           workspaceTarget(
-        "local",
-        `00000000-0000-4000-8000-00000000005${index}`,
+            "local",
+            `00000000-0000-4000-8000-00000000005${index}`,
             realpathSync(root),
           ),
         );
@@ -658,8 +673,9 @@ describe.skipIf(TMUX === undefined)(
 
     it("never claims a Scratch a trusted user config created first", async () => {
       const test = fixture("foreign-scratch");
+      mkdirSync(join(test.home, "config"), { recursive: true });
       writeFileSync(
-        join(test.home, ".tmux.conf"),
+        join(test.home, "config", "tmux.conf"),
         [
           `new-session -d -s ${SCRATCH_SESSION} -c "$DEVHUB_BOOTSTRAP_ROOT"`,
           `set-option -t ${SCRATCH_SESSION} @devhub-context foreign`,
@@ -857,7 +873,9 @@ describe.skipIf(TMUX === undefined)(
         },
       });
       await untilTitle(sessions, agentId);
-      const screen = (await sessions.round("local", [agentId])).screens.get(agentId);
+      const screen = (await sessions.round("local", [agentId])).screens.get(
+        agentId,
+      );
       expect(screen?.oscTitle).toBe("a title");
       expect(screen?.screen).toContain("on the screen");
 
@@ -969,8 +987,9 @@ describe.skipIf(TMUX === undefined)(
       // launching at all. Both go through `ensureServer`, which is what the
       // mismatch was taking down.
       await test.runtime.ensure(SCRATCH_TARGET);
-      await test.runtime.ensure(workspaceTarget(
-"local", workspaceId, test.home));
+      await test.runtime.ensure(
+        workspaceTarget("local", workspaceId, test.home),
+      );
       await test.runtime.launchAgent(
         { machine: "local", agentId, workspaceId, root: test.home },
         { file: "/bin/sh", args: ["-c", "sleep 30"], env: {} },
@@ -1073,7 +1092,9 @@ describe.skipIf(TMUX === undefined)(
       const firstIdleAt = { at: 0 };
       let sentAt = 0;
       for (let round = 0; round < 80; round += 1) {
-        const screen = (await sessions.round("local", [agentId])).screens.get(agentId);
+        const screen = (await sessions.round("local", [agentId])).screens.get(
+          agentId,
+        );
         if (screen) {
           const status = detector.status("claude", screen);
           if (status === "idle" && firstIdleAt.at === 0) {
@@ -1158,9 +1179,7 @@ describe.skipIf(TMUX === undefined)(
     it("frees a window an older build pinned to a fixed size", async () => {
       const test = fixture("windowsize");
       const workspaceId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb4";
-      const target = workspaceTarget(
-        "local",
-        workspaceId, test.home);
+      const target = workspaceTarget("local", workspaceId, test.home);
       await test.runtime.ensure(SCRATCH_TARGET);
       await test.runtime.ensure(target);
       const session = `ws-${workspaceDigest(test.home).slice(0, 20)}`;
@@ -1200,8 +1219,9 @@ describe.skipIf(TMUX === undefined)(
       const agentId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa3";
       const workspaceId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb3";
       await test.runtime.ensure(SCRATCH_TARGET);
-      await test.runtime.ensure(workspaceTarget(
-"local", workspaceId, test.home));
+      await test.runtime.ensure(
+        workspaceTarget("local", workspaceId, test.home),
+      );
 
       await sessions.launch({
         machine: "local",
@@ -1229,8 +1249,9 @@ describe.skipIf(TMUX === undefined)(
       const agentId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa7";
       const workspaceId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb7";
       await test.runtime.ensure(SCRATCH_TARGET);
-      await test.runtime.ensure(workspaceTarget(
-"local", workspaceId, test.home));
+      await test.runtime.ensure(
+        workspaceTarget("local", workspaceId, test.home),
+      );
 
       await sessions.launch({
         machine: "local",
@@ -1343,7 +1364,9 @@ async function untilTitle(
   agentId: string,
 ): Promise<void> {
   for (let attempt = 0; attempt < 200; attempt += 1) {
-    const screen = (await sessions.round("local", [agentId])).screens.get(agentId);
+    const screen = (await sessions.round("local", [agentId])).screens.get(
+      agentId,
+    );
     if (screen !== undefined && screen.oscTitle.length > 0) return;
     await new Promise((resolve) => setTimeout(resolve, 50));
   }

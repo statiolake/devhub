@@ -789,6 +789,17 @@ export interface TmuxTerminalRuntimeOptions {
 	/** Where the one-shot bootstrap config is written. */
 	readonly bootstrapDirectory?: string;
 	/**
+	 * The one user tmux config this server will source, as a path on its machine.
+	 *
+	 * Resolved by the machine (`Runtime.userTmuxConfig`) when the adapter is
+	 * built, rather than looked for here, because "where the config is" is a
+	 * fact about a machine and this class talks to two kinds of them. It is a
+	 * path and never a search: DevHub owns the location, so there is nothing to
+	 * search for. `/dev/null` when there is none, so the bootstrap's
+	 * `source-file` always names a real path.
+	 */
+	readonly userTmuxConfigPath?: string;
+	/**
 	 * The machine tmux runs on.
 	 *
 	 * One tmux server per machine, and this adapter speaks to one of them. It
@@ -914,6 +925,7 @@ export class TmuxTerminalRuntime {
 	private effectiveSocket: SocketName | undefined;
 	private readonly gate = new RuntimeOperationGate();
 	private readonly bootstrapDirectory: string;
+	private readonly userTmuxConfigPath: string;
 	private readonly host: Runtime;
 	/** One in-flight bring-up per socket, shared by concurrent callers. */
 	private readonly serverBootstraps = new Map<SocketName, Promise<void>>();
@@ -950,6 +962,7 @@ export class TmuxTerminalRuntime {
 			: undefined;
 		this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 		this.bootstrapDirectory = options.bootstrapDirectory ?? tmpdir();
+		this.userTmuxConfigPath = options.userTmuxConfigPath ?? "/dev/null";
 		this.host = options.host ?? localRuntime();
 	}
 
@@ -2396,31 +2409,6 @@ export class TmuxTerminalRuntime {
 		return { windows, panes };
 	}
 
-	/**
-	 * The one user tmux config DevHub will source, by the precedence tmux
-	 * itself documents. `/dev/null` when there is none, so the bootstrap
-	 * `source-file` always names a real path.
-	 */
-	async userTmuxConfigPath(): Promise<string> {
-		const home = this.contextHome;
-		const candidates = [join(home, ".tmux.conf")];
-		const xdg = this.context.environment.XDG_CONFIG_HOME;
-		candidates.push(
-			xdg && isAbsolute(xdg)
-				? join(xdg, "tmux", "tmux.conf")
-				: join(home, ".config", "tmux", "tmux.conf"),
-		);
-		for (const candidate of candidates) {
-			try {
-				if ((await this.host.stat(candidate)) === "file") return candidate;
-			} catch {
-				// Not a swallow: a candidate that is not there is not the answer,
-				// and the next one is tried.
-			}
-		}
-		return "/dev/null";
-	}
-
 	private isConfiguredShellCommand(command: string): boolean {
 		if (this.shellName === undefined) return false;
 		const trimmed = command.replace(/^-+/u, "");
@@ -2507,7 +2495,7 @@ export class TmuxTerminalRuntime {
 				env: {
 					...this.tmuxEnvironment(),
 					[BOOTSTRAP_ENV_ROOT]: root,
-					[BOOTSTRAP_ENV_USER_CONFIG]: await this.userTmuxConfigPath(),
+					[BOOTSTRAP_ENV_USER_CONFIG]: this.userTmuxConfigPath,
 				},
 			},
 			"start-server",

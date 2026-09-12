@@ -949,3 +949,65 @@ describe("the tmux DevHub installs on a host", () => {
 		expect((await runtime.tmuxProgram()).kind).toBe("resolved");
 	});
 });
+
+/**
+ * DevHub's one tmux config, on the machine tmux reads it.
+ *
+ * The contract suite already says the rule — a path on that machine with the
+ * config's own bytes at it, the same on both — so what is left here is the
+ * part only the remote arm has: *where* the copy goes, and that a config a
+ * person deleted stops being sourced over there rather than living on as a
+ * copy nobody can see.
+ */
+describe("carrying the tmux config to a host", () => {
+	let remoteHome: string;
+	let here: string;
+
+	beforeEach(async () => {
+		remoteHome = await mkdtemp("/tmp/devhub-conf-home-");
+		here = await mkdtemp("/tmp/devhub-conf-local-");
+	});
+	afterEach(async () => {
+		await rm(remoteHome, { recursive: true, force: true });
+		await rm(here, { recursive: true, force: true });
+	});
+
+	function runtime(): SshRuntime {
+		return new SshRuntime({
+			host: "build-box.example.com",
+			controlDirectory: control,
+			sshPath: join(bin, "ssh"),
+			localEnvironment: { ...FAKE_ENVIRONMENT, HOME: remoteHome },
+			tmux: {
+				version: "3.7c",
+				directory: ".devhub-server/tmux",
+				tarball: () => Promise.reject(new Error("not asked for here")),
+			},
+		});
+	}
+
+	// Beside the tmux it configures, under the same `serverDataFolderName`, and
+	// not versioned: it is the person's file and not a build artifact, so a
+	// version bump must not leave them configuring a tmux they no longer run.
+	it("puts it beside the tmux it configures", async () => {
+		const local = join(here, "tmux.conf");
+		await writeFile(local, "set -g mouse on\n");
+		const answer = await runtime().userTmuxConfig(local);
+		expect(answer).toBe(`${remoteHome}/.devhub-server/tmux/tmux.conf`);
+		expect(await readFile(answer, "utf8")).toBe("set -g mouse on\n");
+		// It is DevHub's file on somebody else's machine, in a directory whose
+		// other contents run as this user.
+		expect((await stat(answer)).mode & 0o777).toBe(0o600);
+	});
+
+	// "Always current" has to mean both directions or it means neither: a
+	// config a person deleted must stop being sourced, not go on being a copy.
+	it("takes it away again when there is no longer one here", async () => {
+		const local = join(here, "tmux.conf");
+		await writeFile(local, "set -g mouse on\n");
+		const answer = await runtime().userTmuxConfig(local);
+		await rm(local);
+		expect(await runtime().userTmuxConfig(local)).toBe("/dev/null");
+		await expect(readFile(answer, "utf8")).rejects.toThrow();
+	});
+});

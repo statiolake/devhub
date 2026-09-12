@@ -98,6 +98,10 @@ class FakeMachine implements Runtime {
 	 * asked to run starts with the word `tmux`, so "which machine was asked" is
 	 * a question the recorded requests answer on their own.
 	 */
+	userTmuxConfig(): Promise<string> {
+		return Promise.resolve("/dev/null");
+	}
+
 	tmuxProgram(): Promise<TmuxProgram> {
 		return Promise.resolve({
 			kind: "resolved" as const,
@@ -178,6 +182,7 @@ function machines(): {
 			config: undefined,
 			environment: { PATH: "/usr/bin:/bin" },
 			effectiveSocketName: "devhub",
+			userTmuxConfigPath: "/home/here/.config/devhub/tmux.conf",
 		}),
 	};
 }
@@ -376,6 +381,7 @@ describe("an adapter for a machine with no tmux", () => {
 			config: undefined,
 			environment: { PATH: "/usr/bin" },
 			effectiveSocketName: "devhub",
+			userTmuxConfigPath: "/home/here/.config/devhub/tmux.conf",
 		});
 		const adapter = await runtimes.for(b);
 		// Not a new predicate: the sentence `RuntimeExecutable.unavailable`

@@ -469,3 +469,135 @@ been. In order, against a host with a DevHub server already installed:
 11. A host with no `tmux`: git, the branch and the Issue row still work, and
     only the terminal and the Agent refuse, with the sentence naming `tmux` and
     the host.
+
+## Clipboard
+
+Copying in tmux's copy-mode — on the host as much as on the Mac — reaches the
+Mac's clipboard through **OSC 52**, `ESC ] 52 ; c ; <base64> BEL`. It is the
+only route there is over SSH: the host has no `pbcopy`, and DevHub's pane is
+reading a byte stream, not a shared selection. DevHub's terminal answers the
+sequence the way VS Code's integrated terminal and Ghostty do — it puts the
+text on the clipboard. It answers a *query* (`ESC ] 52 ; c ; ? BEL`) with
+nothing at all: that one asks the terminal to send the clipboard's contents
+back down the stream, to a program that over SSH is running on somebody else's
+machine.
+
+Two things have to be true on the tmux side, and both already are:
+
+* `set-clipboard` must be `on`. It is a server option, and tmux's own default
+  is `external`, which only forwards a sequence a program inside a pane wrote —
+  copy-mode's own copy is not forwarded. So this line is needed:
+
+  ```tmux
+  set -s set-clipboard on
+  ```
+
+* the terminfo entry for the *outer* terminal's `TERM` must carry the extended
+  capability `Ms`, or tmux will not emit OSC 52 whatever `set-clipboard` says.
+  DevHub attaches with `TERM=xterm-256color` (`main/terminal/pty.ts`, and the
+  `export TERM` in the ssh launcher). macOS's own `xterm-256color` has
+  `Ms=\E]52;%p1%s;%p2%s\007`, and so does the copy in the tmux tarball: the
+  entries are taken out of ncurses 6.6 with `infocmp -x` and compiled with
+  `tic -x`, and both flags are what keeps a user-defined capability like `Ms`
+  from being dropped on the way (`scripts/build_tmux.py`). Checked in ncurses
+  6.6, `Ms` is present on `xterm`, `xterm-256color`, `tmux` and
+  `tmux-256color`, and absent from `screen` and `screen-256color`. Only the
+  outer `TERM` — the one the tmux *client* was started with — decides this, so
+  that absence matters only to a tmux nested inside another one, whose outer
+  terminal is a tmux pane; give such a pane `set -g default-terminal
+  "tmux-256color"` and the inner one can copy too.
+
+What a copy-mode binding should then be depends on the host. `pbcopy` exists
+only on a Mac, so a binding that pipes to it copies nothing on a Linux host and
+says nothing about it. Piping to tmux itself works everywhere, because tmux
+≥ 3.2 writes a buffer loaded with `-w` out to the clipboard as OSC 52:
+
+```tmux
+bind -T copy-mode-vi y send -X copy-pipe-and-cancel "tmux load-buffer -w -"
+```
+
+These three lines belong in your own `tmux.conf`; DevHub does not write it.
+
+## What DevHub does on a host, from the app's side
+
+Three things the app itself decides, all of them the same on every host and
+none of them configurable per machine.
+
+### One tmux config, and DevHub owns where it is
+
+```
+~/.config/devhub/tmux.conf          the default profile
+~/.config/devhub-dev/tmux.conf      DEVHUB_PROFILE=dev
+```
+
+Beside `settings.toml`, profile-aware with it, and the only user config DevHub
+sources. `~/.tmux.conf` and `~/.config/tmux/tmux.conf` are **not** read. They
+are the config of the tmux a person runs themselves, and DevHub's server is not
+that tmux: it has DevHub's own session names, DevHub's own markers and a status
+line DevHub decided about. Sourcing a config written for one server into the
+other is how a `new-session` in somebody's config ends up creating a session
+DevHub then refuses to adopt.
+
+Move yours there, or symlink it:
+
+```sh
+ln -s ~/.tmux.conf ~/.config/devhub/tmux.conf
+```
+
+There need not be one. A profile with no `tmux.conf` starts tmux with DevHub's
+settings alone, which is the ordinary case; the log says so once per machine so
+that a file put in the wrong place is findable.
+
+For a host, the same file is **copied to the host on every connection** —
+`~/.devhub-server/tmux/tmux.conf`, beside the tmux it configures — and sourced
+from there. On every connection rather than when it changes, because a rule for
+when a copy has gone stale is a rule that is wrong the first time somebody edits
+their config and reconnects to find nothing changed. Delete the file here and
+the copy over there goes with it.
+
+### Commands run in the environment you log in to
+
+`ssh host -- cmd` does not give a command the environment a login gives. sshd
+runs a non-login, non-interactive shell: `~/.profile` has not run, and `PATH` is
+sshd's default with nothing a person added to theirs. On a Synology that is the
+difference between
+
+```
+/sbin:/usr/sbin:/bin:/usr/bin:/usr/builtin/sbin:/usr/builtin/bin:/usr/local/sbin:/usr/local/bin
+```
+
+and the same list with `~/go/bin`, `~/.local/bin` and `/opt/bin` in front of it,
+which is where anything installed without root ends up.
+
+So DevHub reads the login environment once per host and puts it on every command
+it runs there. Three attempts, in the order that trusts your own setup first:
+
+1. `$SHELL -lc 'env -0'`
+2. `/bin/sh -lc 'env -0'`
+3. `/bin/sh -lc 'env'` — for an `env` with no `-0`, busybox's among them. A
+   value with a newline in it cannot be told from two variables in this listing,
+   so a line that is not `NAME=…` is read as the rest of the value before it.
+
+The first that answers with a `PATH` wins. A host where none of them does is
+refused by name: DevHub will not run commands on a machine it could not find out
+where the programs are on.
+
+What is *not* carried across is the part of a login that described the login —
+`SSH_TTY`, `SSH_CONNECTION`, `SSH_AUTH_SOCK`, `PWD`, `SHLVL`, `TERM`, `TMUX` —
+because each is set correctly by whatever opens the next channel, and a stale one
+tells a program it is attached to a terminal that closed. `devhub --metrics`
+lists the variable **names** DevHub carries and never their values.
+
+`runtimes.git` and `runtimes.shell` are resolved with `command -v` under that
+environment, so what the Settings window shows for a host is an absolute path on
+the host. A name that is not found names the host's own search directories, in
+the host's own order.
+
+### Everything DevHub composes for a host is POSIX `sh`
+
+There is no bash on a Synology, and no guarantee of one anywhere. Every script
+`main/runtime/ssh.ts` composes is `sh`: `case`, `[ ]`, `printf`, `command -v`,
+`set -C` for an exclusive create, `cd -P && pwd -P` for a realpath. The tmux
+unpack is the same rule — a staging directory and a `mv`, not
+`tar --strip-components`, which GNU tar and bsdtar have and POSIX does not
+require.

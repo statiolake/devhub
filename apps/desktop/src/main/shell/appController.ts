@@ -607,6 +607,11 @@ export class AppController {
 			config,
 			environment: this.launchEnvironment,
 			effectiveSocketName: this.state.tmux.effective_socket_name,
+			// One tmux config, in DevHub's own config directory, beside
+			// `settings.toml` and profile-aware with it. Not `~/.tmux.conf`:
+			// that is the config of the tmux a person runs themselves, and
+			// DevHub's server is not that tmux.
+			userTmuxConfigPath: join(activeProfile().configDirectory, "tmux.conf"),
 			model: () => this.coordinator.model,
 		});
 		const terminalRuntimes = this.terminalsWiring.runtimes;
@@ -4212,12 +4217,14 @@ export class AppController {
 		handle(CHANNELS.dispatch, (_event, intent: AppIntentWire) =>
 			this.dispatchFromPage(intent),
 		);
-		handle(CHANNELS.replay, (_event, cursor: number): ReplayWire =>
-			replayWire(
-				this.coordinator.replayFrom(cursor),
-				this.coordinator.readiness,
-				this.repositoryOf,
-			),
+		handle(
+			CHANNELS.replay,
+			(_event, cursor: number): ReplayWire =>
+				replayWire(
+					this.coordinator.replayFrom(cursor),
+					this.coordinator.readiness,
+					this.repositoryOf,
+				),
 		);
 
 		handle(CHANNELS.chooseWorkspaceFolder, () => this.pickFolder());

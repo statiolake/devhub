@@ -37,7 +37,7 @@
  */
 
 import { Buffer } from "node:buffer";
-import { mkdir } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, posix } from "node:path";
 import { activityCounters, COUNTER } from "../diagnostics/counters.js";
@@ -909,6 +909,36 @@ export class SshRuntime implements Runtime {
 			);
 		}
 		return { kind: "resolved", path: program, environment };
+	}
+
+	/**
+	 * DevHub's tmux config, carried across on every connection.
+	 *
+	 * The file lives on this Mac — it is beside `settings.toml`, where a person
+	 * edits it — and tmux reads it on the host, so it has to be *there*. Copied
+	 * rather than cached: it is a few hundred bytes over a connection that is
+	 * already open, and the alternative is a rule about when a copy has gone
+	 * stale, which is a rule that will be wrong the first time somebody edits
+	 * their config and reconnects to find nothing changed.
+	 *
+	 * A config that is no longer here is removed from over there for the same
+	 * reason. "Always current" has to mean both directions or it means neither.
+	 */
+	async userTmuxConfig(localPath: string): Promise<string> {
+		const { home } = await this.#describeRemote();
+		const directory = posix.join(
+			home,
+			this.#tmuxDelivery?.directory ?? ".devhub-server/tmux",
+		);
+		const remotePath = posix.join(directory, "tmux.conf");
+		const text = await readFile(localPath, "utf8").catch(() => undefined);
+		if (text === undefined) {
+			await this.removeTree(remotePath);
+			return "/dev/null";
+		}
+		await this.makeDirectory(directory);
+		await this.writeTextFile(remotePath, text, 0o600);
+		return remotePath;
 	}
 
 	/** Whether there is a tmux at this path that this machine can run. */

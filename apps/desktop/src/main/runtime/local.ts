@@ -150,6 +150,17 @@ export class LocalRuntime implements Runtime {
 		return { kind: "resolved", path: resolved.value, environment: {} };
 	}
 
+	/**
+	 * The config file itself, because this is the machine it is on.
+	 *
+	 * The whole of the local arm: DevHub's config directory is here, so the path
+	 * a person edits is the path tmux sources. The remote arm answers the same
+	 * question with a copy, which is the only difference between them.
+	 */
+	async userTmuxConfig(localPath: string): Promise<string> {
+		return (await this.stat(localPath)) === "file" ? localPath : "/dev/null";
+	}
+
 	async exec(request: ExecRequest): Promise<ExecResult> {
 		const file = request.argv[0];
 		if (file === undefined) {

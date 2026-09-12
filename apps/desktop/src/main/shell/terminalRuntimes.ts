@@ -38,6 +38,16 @@ export interface TerminalRuntimesOptions {
 	 */
 	readonly environment: Readonly<Record<string, string | undefined>>;
 	readonly effectiveSocketName: string;
+	/**
+	 * `<configDirectory>/tmux.conf` on this Mac — the one user tmux config.
+	 *
+	 * Profile-aware because the config directory is: a development DevHub reads
+	 * `~/.config/devhub-dev/tmux.conf` and the production one reads
+	 * `~/.config/devhub/tmux.conf`, for the same reason they do not share a
+	 * `settings.toml`. Each machine turns it into a path on itself
+	 * (`Runtime.userTmuxConfig`), which for a host means a copy of it.
+	 */
+	readonly userTmuxConfigPath: string;
 }
 
 export class TerminalRuntimes {
@@ -108,9 +118,10 @@ export class TerminalRuntimes {
 		const searchPath = this.#options.environment["PATH"] ?? "";
 		const configuredTmux = config?.runtimes.tmux ?? "tmux";
 		const configuredShell = config?.runtimes.shell ?? "/bin/zsh";
-		const [home, scratch, tmux, shell] = await Promise.all([
+		const [home, scratch, userConfig, tmux, shell] = await Promise.all([
 			host.home(),
 			host.scratchDirectory(),
+			host.userTmuxConfig(this.#options.userTmuxConfigPath),
 			// Not `resolveProgram`: which tmux a machine runs is that machine's
 			// answer to give, and the two machines answer it differently in kind
 			// — this Mac uses the person's, a host uses the one DevHub installs
@@ -118,6 +129,15 @@ export class TerminalRuntimes {
 			host.tmuxProgram(configuredTmux, searchPath),
 			host.resolveProgram(configuredShell, searchPath),
 		]);
+		if (userConfig === "/dev/null") {
+			// Said once per machine, and not a failure: most people have no tmux
+			// config, and a person who moved theirs to the wrong place has no
+			// other way to find out that DevHub is not reading it.
+			console.log(
+				`[devhub] no tmux config at ${this.#options.userTmuxConfigPath}, so ` +
+					`tmux${host.where} starts with DevHub's settings only`,
+			);
+		}
 		return new TmuxTerminalRuntime({
 			context: { home, environment: this.#options.environment },
 			tmux:
@@ -141,6 +161,7 @@ export class TerminalRuntimes {
 			tmuxArgs: config?.runtimes.tmux_args ?? [],
 			effectiveSocketName: this.#socketName,
 			bootstrapDirectory: scratch,
+			userTmuxConfigPath: userConfig,
 			host,
 		});
 	}

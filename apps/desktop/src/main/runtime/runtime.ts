@@ -304,6 +304,29 @@ export interface Runtime {
 	tmuxProgram(configured: string, searchPath: string): Promise<TmuxProgram>;
 
 	/**
+	 * The user tmux config this machine's tmux will source, as a path on it.
+	 *
+	 * There is one such config and DevHub owns where it lives:
+	 * `<configDirectory>/tmux.conf`, beside `settings.toml` and profile-aware
+	 * with it. `~/.tmux.conf` and `~/.config/tmux/tmux.conf` are *not* read —
+	 * they are the config of the tmux a person runs themselves, and DevHub's
+	 * server is not that tmux: it has DevHub's own key table, DevHub's own
+	 * session names and a status line DevHub decided about. A person who wants
+	 * theirs in it moves it or symlinks it, and then one file means one thing.
+	 *
+	 * `localPath` is that path *on this Mac*, which is where the file a person
+	 * edits actually is. Answering it is what differs: this machine names it,
+	 * and a host is given a copy of it — the same rule on both machines, with
+	 * one transport step in the middle that only one of them needs.
+	 *
+	 * `/dev/null` when there is no such file, because the bootstrap's
+	 * `source-file` always names a real path. Not an error: most people have no
+	 * tmux config, and starting without one is the normal case rather than a
+	 * degraded one.
+	 */
+	userTmuxConfig(localPath: string): Promise<string>;
+
+	/**
 	 * A directory on this machine DevHub may put its own short-lived files in,
 	 * made if it is not there.
 	 *

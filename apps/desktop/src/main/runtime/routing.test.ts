@@ -76,6 +76,10 @@ class RecordingRuntime implements Runtime {
 		this.execs.push(request);
 		return Promise.resolve(this.answer);
 	}
+	userTmuxConfig(): Promise<string> {
+		return Promise.resolve("/dev/null");
+	}
+
 	tmuxProgram(): Promise<TmuxProgram> {
 		return Promise.resolve({
 			kind: "resolved" as const,

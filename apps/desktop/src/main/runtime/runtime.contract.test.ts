@@ -308,6 +308,51 @@ export function describeRuntimeContract(
 			});
 		});
 
+		/**
+		 * One tmux config, in DevHub's own config directory, on both machines.
+		 *
+		 * This is the case that says the rule is one rule: the caller hands the
+		 * path on *this* Mac — `<configDirectory>/tmux.conf`, beside
+		 * `settings.toml` and profile-aware with it — and gets back a path on
+		 * the runtime's machine with the same bytes at it. Locally that is the
+		 * same path; remotely it is a copy, and the difference is the transport
+		 * and nothing else.
+		 */
+		describe("the user tmux config", () => {
+			it("is a path on that machine with the config's own bytes at it", async () => {
+				const local = join(scratch, "tmux.conf");
+				await writeFile(local, "set -g mouse on\n");
+				const answer = await runtime.userTmuxConfig(local);
+				expect(answer).not.toBe("/dev/null");
+				expect(await runtime.readTextFile(answer, 4096)).toBe(
+					"set -g mouse on\n",
+				);
+			});
+
+			// Copied on every connection rather than cached, because the rule for
+			// when a copy has gone stale is a rule that is wrong the first time
+			// somebody edits their config and reconnects to find nothing changed.
+			it("carries an edit across rather than an older copy", async () => {
+				const local = join(scratch, "tmux.conf");
+				await writeFile(local, "set -g mouse on\n");
+				await runtime.userTmuxConfig(local);
+				await writeFile(local, "set -g mouse off\n");
+				const answer = await runtime.userTmuxConfig(local);
+				expect(await runtime.readTextFile(answer, 4096)).toBe(
+					"set -g mouse off\n",
+				);
+			});
+
+			// Not a failure: most people have no tmux config, and the bootstrap's
+			// `source-file` needs a real path either way.
+			it("is /dev/null when there is none, and stops being one when there is", async () => {
+				const local = join(scratch, "tmux.conf");
+				expect(await runtime.userTmuxConfig(local)).toBe("/dev/null");
+				await writeFile(local, "set -g mouse on\n");
+				expect(await runtime.userTmuxConfig(local)).not.toBe("/dev/null");
+			});
+		});
+
 		describe("reading", () => {
 			it("names the machine and counts what has been run on it", async () => {
 				// Reach the machine first. What a runtime asks a machine it has
