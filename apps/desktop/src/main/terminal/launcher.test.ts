@@ -1,12 +1,14 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { makeScratchDir, removeScratchDir } from "../../model/testScratch.js";
 import {
 	installTerminalLauncher,
+	readTerminalEntryBundle,
 	remoteTerminalPaths,
-	terminalEntryClosure,
+	terminalEntryBundlePath,
 	terminalLauncherPath,
 	terminalCommandLine,
 	terminalLauncherScript,
@@ -160,49 +162,44 @@ describe("the DevHub terminal launcher", () => {
 		expect(script).not.toContain(request.execPath);
 	});
 
-	// A machine that has no DevHub on it needs the asking program itself, and
-	// there is no bundler in this build — so the files are read as a closure
-	// rather than listed, because a list is what rots when an import is added.
-	describe("the files the asking program is made of", () => {
-		function compiled(name: string, text: string): string {
-			const path = join(scratch, "out", name);
-			mkdirSync(dirname(path), { recursive: true });
-			writeFileSync(path, text);
-			return path;
-		}
+	// A machine that has no DevHub on it needs the asking program itself. It
+	// used to be shipped as a closure — the compiled entry plus every compiled
+	// file it imported, discovered by reading the `.js` as text. That walker
+	// could not tell an `import` from the word in a doc comment, and
+	// `launcher.js`'s own comment about import specifiers made the packaged app
+	// refuse to ship the program at all: every window opened with no terminal
+	// launcher, here and on every host. One bundled file has no graph to walk.
+	describe("the one file the asking program is", () => {
+		// APP_ROOT as `appController.ts` computes it: src/main/terminal -> the
+		// package. The bundle is a build output, so this is the built one.
+		const appRoot = join(
+			dirname(fileURLToPath(import.meta.url)),
+			"..",
+			"..",
+			"..",
+		);
 
-		it("is the entry point and everything it imports, and nothing else", () => {
-			compiled("main/runtime/quote.js", "export function q() {}\n");
-			compiled(
-				"main/terminal/launcher.js",
-				'import { q } from "../runtime/quote.js";\nexport const l = q;\n',
-			);
-			const entry = compiled(
-				"main/terminal/devhubTerminal.js",
-				'import { connect } from "node:net";\nimport { l } from "./launcher.js";\nexport const e = [connect, l];\n',
-			);
-			compiled("main/terminal/unrelated.js", "export const nope = 1;\n");
-			const closure = terminalEntryClosure(join(scratch, "out"), entry);
-			expect([...closure.keys()].sort()).toEqual([
-				"main/runtime/quote.js",
-				"main/terminal/devhubTerminal.js",
-				"main/terminal/launcher.js",
-			]);
-			expect(closure.get("main/runtime/quote.js")).toContain(
-				"export function q",
-			);
+		it("is produced by the build, beside the compiled main process", () => {
+			expect(statSync(terminalEntryBundlePath(appRoot)).isFile()).toBe(true);
 		});
 
-		// A dependency is not a file DevHub can ship over ssh, and a program
-		// that grew one has to be found out about here rather than on a host.
-		it("refuses a program that has grown a dependency", () => {
-			const entry = compiled(
-				"main/terminal/devhubTerminal.js",
-				'import x from "minimist";\nexport const e = x;\n',
-			);
-			expect(() => terminalEntryClosure(join(scratch, "out"), entry)).toThrow(
-				/minimist/u,
-			);
+		it("imports no file, so there is nothing else to ship", () => {
+			const text = readTerminalEntryBundle(appRoot);
+			// Everything the program needs is inside it; `node:` is on every
+			// machine that has a Node at all.
+			for (const match of text.matchAll(
+				/^\s*(?:import|export)\s[^\n]*?from\s*["']([^"']+)["']/gmu,
+			)) {
+				expect(match[1]).toMatch(/^node:/u);
+			}
+			expect(text).not.toMatch(/\bfrom\s*["']\.{1,2}\//u);
+		});
+
+		// The one failure that is worth a sentence: a checkout where the build
+		// step has not run has no terminals anywhere, and "…is not there" with
+		// no cause named is a morning spent looking at ssh.
+		it("says which build step makes it when it is not there", () => {
+			expect(() => readTerminalEntryBundle(scratch)).toThrow(/build:terminal/u);
 		});
 	});
 
@@ -212,7 +209,7 @@ describe("the DevHub terminal launcher", () => {
 			serverDataFolderName: ".devhub-server",
 			serverCommit: "abc123",
 			controlSocketPath: "/data/devhub/devhub/control.sock",
-			entryName: "main/terminal/devhubTerminal.js",
+			entryName: "devhub-terminal.bundle.js",
 		};
 
 		it("runs on the Node the connection already installed there", () => {
@@ -226,7 +223,7 @@ describe("the DevHub terminal launcher", () => {
 			expect(remote.directory).toBe("/home/dev/.devhub/terminal");
 			expect(remote.launcher.startsWith(`${remote.directory}/`)).toBe(true);
 			expect(remote.entry).toBe(
-				"/home/dev/.devhub/terminal/js/main/terminal/devhubTerminal.js",
+				"/home/dev/.devhub/terminal/js/devhub-terminal.bundle.js",
 			);
 		});
 

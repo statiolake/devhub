@@ -69,7 +69,7 @@
 
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join, posix, relative } from "node:path";
+import { dirname, join, posix } from "node:path";
 import type { RuntimeId } from "../runtime/runtime.js";
 import { shellQuote, shellQuoteArgv } from "../runtime/quote.js";
 
@@ -188,64 +188,45 @@ export function terminalLauncherPath(userDataPath: string): string {
  */
 export const REMOTE_DEVHUB_DIRECTORY = ".devhub/terminal";
 
-/** Where the asking program's files go on such a machine. */
+/** Where the asking program goes on such a machine. */
 export const REMOTE_ENTRY_DIRECTORY = "js";
 
+/** The asking program's file name, in `out/main/terminal` and over there. */
+export const TERMINAL_ENTRY_BUNDLE = "devhub-terminal.bundle.js";
+
 /**
- * The compiled entry point and every compiled file it imports, as text.
+ * The one file the asking program is.
  *
- * There is no bundler in this build, so the program that asks DevHub for an
- * argv is several `.js` files with relative imports between them, and a machine
- * that is to run it needs all of them. Listing them by hand is the version of
- * this that rots: the list would still be four names on the day somebody adds a
- * fifth import, and the failure would be a terminal on one machine and not the
- * other. So the closure is *read*, from the same compiled output DevHub is
- * itself running, by following the relative specifiers.
+ * It used to be several: the compiled `devhubTerminal.js` plus every compiled
+ * file it imported, discovered by reading the output and following the
+ * relative specifiers. That walker read `.js` as text and could not tell an
+ * import from the word "import" in a doc comment, so `launcher.js`'s own
+ * comment about import specifiers made it refuse to ship the program at all —
+ * "launcher.js imports …, which is not a file DevHub can ship". Every window
+ * in the packaged app opened with no terminal launcher, on this Mac and on
+ * every host.
  *
- * Only relative specifiers are followed. `node:*` is on every machine that has
- * a Node at all, and a bare specifier would be a dependency this program does
- * not have — one appearing here is a failure, not a file to copy, because
- * `node_modules` is not something DevHub is going to ship over ssh.
- *
- * Keys are relative to `root`, with `/` separators, so the same map describes
- * the same tree on a machine whose paths are spelled differently.
+ * The answer is not a better parser. A program that is one self-contained file
+ * has no graph to walk, no order to get right, and no `package.json` to ship
+ * beside it: `pnpm --filter @devhub/desktop build` bundles it with esbuild
+ * (`build:terminal`), and this is where it lands. If it is not there the build
+ * did not run, and that is a startup failure rather than a terminal-less
+ * window nobody can explain.
  */
-export function terminalEntryClosure(
-	root: string,
-	entryPath: string,
-): ReadonlyMap<string, string> {
-	const files = new Map<string, string>();
-	const pending = [entryPath];
-	while (pending.length > 0) {
-		const path = pending.pop();
-		if (path === undefined) continue;
-		const name = relative(root, path).split(/[\\/]/u).join("/");
-		if (files.has(name)) continue;
-		const text = readFileSync(path, "utf8");
-		files.set(name, text);
-		for (const specifier of importSpecifiers(text)) {
-			if (specifier.startsWith("node:")) continue;
-			if (!specifier.startsWith(".")) {
-				throw new Error(
-					`${path} imports ${specifier}, which is not a file DevHub can ship: the terminal launcher's program must depend on nothing but Node and itself`,
-				);
-			}
-			pending.push(join(dirname(path), specifier));
-		}
-	}
-	return files;
+export function terminalEntryBundlePath(appRoot: string): string {
+	return join(appRoot, "out", "main", "terminal", TERMINAL_ENTRY_BUNDLE);
 }
 
-/** Every `from "…"` in a compiled module, static and dynamic alike. */
-function importSpecifiers(text: string): readonly string[] {
-	const found: string[] = [];
-	const pattern =
-		/\bfrom\s*["']([^"']+)["']|\bimport\s*\(\s*["']([^"']+)["']/gu;
-	for (const match of text.matchAll(pattern)) {
-		const specifier = match[1] ?? match[2];
-		if (specifier !== undefined) found.push(specifier);
+/** Its text, with the sentence that names the build step when it is missing. */
+export function readTerminalEntryBundle(appRoot: string): string {
+	const path = terminalEntryBundlePath(appRoot);
+	try {
+		return readFileSync(path, "utf8");
+	} catch {
+		throw new Error(
+			`${path} is not there, so no machine can be given a terminal launcher. It is produced by \`pnpm --filter @devhub/desktop build\` (the build:terminal step).`,
+		);
 	}
-	return found;
 }
 
 /**

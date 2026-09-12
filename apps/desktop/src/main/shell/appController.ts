@@ -16,7 +16,7 @@
 
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
-import { dirname, join, relative, sep } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import vscodeProduct from "code-oss-dev/out/vs/platform/product/common/product.js";
 /**
@@ -32,7 +32,10 @@ const tmuxProduct = vscodeProduct as unknown as {
 	readonly tmuxDownloadSha256?: Readonly<Record<string, string>>;
 };
 import { activityCounters } from "../diagnostics/counters.js";
-import { metricsReport } from "../diagnostics/metrics.js";
+import {
+	metricsReport,
+	type TerminalLauncherStatus,
+} from "../diagnostics/metrics.js";
 import { reconcileRounds } from "../diagnostics/rounds.js";
 import { electron } from "../electron.js";
 import { URI } from "code-oss-dev/out/vs/base/common/uri.js";
@@ -178,8 +181,9 @@ import {
 } from "../terminal/ports.js";
 import {
 	enclosingRoot,
-	terminalEntryClosure,
+	readTerminalEntryBundle,
 	terminalLauncherPath,
+	TERMINAL_ENTRY_BUNDLE,
 } from "../terminal/launcher.js";
 import { controlSocketPath } from "../cli/protocol.js";
 import { windowTerminalEnvironment } from "./loginEnvironment.js";
@@ -411,6 +415,11 @@ export class AppController {
 	private userDataPath: string | undefined;
 	/** The launcher installation, asked for once per machine. */
 	private readonly launchers = new Map<RuntimeId, Promise<TerminalLauncher>>();
+	/** What became of each of those, for `devhub --metrics`. */
+	private readonly launcherStatus = new Map<
+		RuntimeId,
+		TerminalLauncherStatus
+	>();
 	private agentSessions: AgentSessions | undefined;
 	/**
 	 * What became of the login-shell environment import, and the environment it
@@ -1288,6 +1297,7 @@ export class AppController {
 			if (runtime.id === "local" || live.has(runtime.id)) continue;
 			this.terminalsWiring?.runtimes.forget(runtime.id);
 			this.launchers.delete(runtime.id);
+			this.launcherStatus.delete(runtime.id);
 			void disposeRuntime(runtime.id).catch((error: unknown) => {
 				console.error(
 					`[devhub] ${runtime.id} could not be let go of`,
@@ -2806,40 +2816,68 @@ export class AppController {
 	 * host must not redo either. It is not remembered *across* a failure: a host
 	 * that was unreachable when the first window opened is asked again by the
 	 * second, which is how it recovers without a restart.
+	 *
+	 * However it ends, it ends in `launcherStatus`, which is what `devhub
+	 * --metrics` prints. A launcher that could not be installed is otherwise a
+	 * line in a log nobody has open and a terminal tab that says it a window at
+	 * a time; the whole of "does this DevHub have terminals, and where" belongs
+	 * in one reading.
 	 */
 	private terminalLauncherFor(runtime: Runtime): Promise<TerminalLauncher> {
 		const existing = this.launchers.get(runtime.id);
 		if (existing) return existing;
+		const installed = this.installTerminalLauncher(runtime);
+		this.launchers.set(runtime.id, installed);
+		void installed.then(
+			(launcher) => {
+				this.launcherStatus.set(runtime.id, {
+					machine: runtime.id,
+					installed: true,
+					path: launcher.path,
+					reason: launcher.unreachable,
+				});
+			},
+			(error: unknown) => {
+				this.launcherStatus.set(runtime.id, {
+					machine: runtime.id,
+					installed: false,
+					path: undefined,
+					reason: error instanceof Error ? error.message : String(error),
+				});
+				if (this.launchers.get(runtime.id) === installed) {
+					this.launchers.delete(runtime.id);
+				}
+			},
+		);
+		return installed;
+	}
+
+	/**
+	 * Ask one machine for its launcher.
+	 *
+	 * `async` so that everything here — a user-data directory that is not there
+	 * yet, a bundle the build did not produce — fails the returned promise
+	 * rather than the caller's stack. One failure path is what lets
+	 * `terminalLauncherFor` record every outcome in one place.
+	 */
+	private async installTerminalLauncher(
+		runtime: Runtime,
+	): Promise<TerminalLauncher> {
 		const userDataPath = this.userDataPath;
 		if (userDataPath === undefined) {
 			throw new Error(
 				"a terminal launcher was asked for before the runtimes were started",
 			);
 		}
-		const entryScript = join(
-			APP_ROOT,
-			"out",
-			"main",
-			"terminal",
-			"devhubTerminal.js",
-		);
-		const entryRoot = join(APP_ROOT, "out", "main");
-		const installed = runtime.terminalLauncher({
+		return runtime.terminalLauncher({
 			localLauncherPath: terminalLauncherPath(userDataPath),
 			controlSocketPath: controlSocketPath(userDataPath),
-			entryFiles: terminalEntryClosure(entryRoot, entryScript),
-			entryName: relative(entryRoot, entryScript).split(sep).join("/"),
+			entryText: readTerminalEntryBundle(APP_ROOT),
+			entryName: TERMINAL_ENTRY_BUNDLE,
 			serverDataFolderName:
 				vscodeProduct.serverDataFolderName ?? ".vscode-server",
 			serverCommit: vscodeProduct.commit,
 		});
-		this.launchers.set(runtime.id, installed);
-		installed.catch(() => {
-			if (this.launchers.get(runtime.id) === installed) {
-				this.launchers.delete(runtime.id);
-			}
-		});
-		return installed;
 	}
 
 	/**
@@ -3770,6 +3808,7 @@ export class AppController {
 				counters: activityCounters.read(),
 				terminalClients,
 				runtimes: liveRuntimes().map((runtime) => runtime.reading()),
+				terminalLauncher: [...this.launcherStatus.values()],
 				roundsLastMinute: (id) => reconcileRounds.lastMinute(id),
 			}),
 			null,

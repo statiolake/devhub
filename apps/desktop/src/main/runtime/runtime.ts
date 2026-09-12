@@ -201,16 +201,15 @@ export interface TerminalLauncherSpec {
 	/** DevHub's control socket, on the machine DevHub is running on. */
 	readonly controlSocketPath: string;
 	/**
-	 * The compiled `devhubTerminal.js`, and every compiled file it imports.
+	 * The asking program: one self-contained file, as text.
 	 *
-	 * A path relative to the module root, against the file's text. It is a
-	 * closure and not one bundled file because there is no bundler in this
-	 * build, and it is computed rather than listed because a list is a thing
-	 * that rots the first time somebody adds an `import` — see
-	 * `terminalEntryClosure`.
+	 * One file rather than a graph of compiled modules, because a graph has to
+	 * be discovered and the discovery is what broke — see
+	 * `readTerminalEntryBundle`. The build bundles it, so a machine that is to
+	 * run it needs this and a Node and nothing else.
 	 */
-	readonly entryFiles: ReadonlyMap<string, string>;
-	/** Which of those is the one to run. */
+	readonly entryText: string;
+	/** What to call it over there. */
 	readonly entryName: string;
 	/** `product.json`'s `serverDataFolderName`: where the REH lives over there. */
 	readonly serverDataFolderName: string;

@@ -7,8 +7,9 @@
   "scripts": {
     "dev": "scripts/dev.sh",
     "build:main": "tsc -p tsconfig.main.json",
+    "build:terminal": "esbuild src/main/terminal/devhubTerminal.ts --bundle --format=esm --platform=node --target=node22 --outfile=out/main/terminal/devhub-terminal.bundle.js",
     "build:shell": "vite build",
-    "build": "pnpm run build:main && pnpm run build:preload && pnpm run build:shell",
+    "build": "pnpm run build:main && pnpm run build:terminal && pnpm run build:preload && pnpm run build:shell",
     "typecheck": "tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.preload.json --noEmit && tsc -p tsconfig.shell.json --noEmit && tsc -p tsconfig.test.json --noEmit",
     "lint": "eslint .",
     "test": "vitest run && pnpm run test:pty",
@@ -36,6 +37,7 @@
     "@types/react-dom": "19.1.7",
     "@vitejs/plugin-react": "5.0.2",
     "electron": "42.10.0",
+    "esbuild": "0.25.12",
     "eslint": "9.34.0",
     "eslint-plugin-react-hooks": "5.2.0",
     "globals": "16.3.0",

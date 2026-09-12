@@ -59,6 +59,9 @@ importers:
       electron:
         specifier: 42.10.0
         version: 42.10.0(supports-color@7.2.0)
+      esbuild:
+        specifier: 0.25.12
+        version: 0.25.12
       eslint:
         specifier: 9.34.0
         version: 9.34.0(supports-color@7.2.0)

@@ -500,19 +500,14 @@ describe("the terminal launcher on the host", () => {
 	const spec: TerminalLauncherSpec = {
 		localLauncherPath: "/data/devhub/devhub/devhub-terminal",
 		controlSocketPath: "/data/devhub/devhub/control.sock",
-		entryFiles: new Map([
-			[
-				"main/terminal/devhubTerminal.js",
-				'import { l } from "./launcher.js";\nexport const e = l;\n',
-			],
-			["main/terminal/launcher.js", "export const l = 1;\n"],
-		]),
-		entryName: "main/terminal/devhubTerminal.js",
+		entryText:
+			'import { connect } from "node:net";\nexport const e = connect;\n',
+		entryName: "devhub-terminal.bundle.js",
 		serverDataFolderName: ".devhub-server",
 		serverCommit: "c0ffee",
 	};
 
-	it("writes the asking program, its files and a launcher that names them", async () => {
+	it("writes the asking program, one file, and a launcher that names it", async () => {
 		const launcher = await runtimeWith().terminalLauncher(spec);
 		expect(launcher.unreachable).toBeUndefined();
 		const script = await readFile(launcher.path, "utf8");
@@ -520,7 +515,7 @@ describe("the terminal launcher on the host", () => {
 		// host with a workbench on it is certain to have.
 		expect(script).toContain(`${remoteHome}/.devhub-server/bin/c0ffee/node`);
 		expect(script).toContain(
-			`${remoteHome}/.devhub/terminal/js/main/terminal/devhubTerminal.js`,
+			`${remoteHome}/.devhub/terminal/js/devhub-terminal.bundle.js`,
 		);
 		// The machine, so that `/srv/app` here is not `/srv/app` there.
 		expect(script).toContain(
@@ -529,12 +524,9 @@ describe("the terminal launcher on the host", () => {
 		expect((await stat(launcher.path)).mode & 0o777).toBe(0o755);
 		const entryRoot = join(remoteHome, ".devhub", "terminal", "js");
 		expect(
-			await readFile(
-				join(entryRoot, "main", "terminal", "launcher.js"),
-				"utf8",
-			),
-		).toBe("export const l = 1;\n");
-		// Without this Node reads the compiled ES modules as CommonJS and the
+			await readFile(join(entryRoot, "devhub-terminal.bundle.js"), "utf8"),
+		).toBe(spec.entryText);
+		// Without this Node reads the bundled ES module as CommonJS and the
 		// first `import` is a syntax error.
 		expect(
 			JSON.parse(await readFile(join(entryRoot, "package.json"), "utf8")),

@@ -43,6 +43,7 @@ describe("metricsReport", () => {
 			processMetrics: [metric(1, "Browser", 2), metric(7, "Tab", 5)],
 			views: [view(7, 42, "workspace:one", true)],
 			counters: noCounters,
+			terminalLauncher: [],
 			terminalClients: [],
 			roundsLastMinute: noRounds,
 			runtimes: [],
@@ -67,6 +68,7 @@ describe("metricsReport", () => {
 			],
 			views: [],
 			counters: noCounters,
+			terminalLauncher: [],
 			terminalClients: [],
 			roundsLastMinute: noRounds,
 			runtimes: [],
@@ -86,6 +88,7 @@ describe("metricsReport", () => {
 				view(7, 2, "workspace:shown", true),
 			],
 			counters: noCounters,
+			terminalLauncher: [],
 			terminalClients: [],
 			roundsLastMinute: noRounds,
 			runtimes: [],
@@ -107,6 +110,7 @@ describe("metricsReport", () => {
 			processMetrics: [],
 			views: [],
 			counters,
+			terminalLauncher: [],
 			terminalClients: [],
 			roundsLastMinute: noRounds,
 			runtimes: [],
@@ -129,6 +133,7 @@ describe("the tmux clients a reading carries", () => {
 			processMetrics: [],
 			views: [],
 			counters: noCounters,
+			terminalLauncher: [],
 			runtimes: [],
 			roundsLastMinute: noRounds,
 			terminalClients: [
@@ -165,6 +170,7 @@ describe("what a round costs on each machine", () => {
 			processMetrics: [],
 			views: [],
 			counters: noCounters,
+			terminalLauncher: [],
 			terminalClients: [],
 			runtimes: [local],
 			roundsLastMinute: () => 200,
@@ -185,6 +191,7 @@ describe("what a round costs on each machine", () => {
 			processMetrics: [],
 			views: [],
 			counters: noCounters,
+			terminalLauncher: [],
 			terminalClients: [],
 			runtimes: [local],
 			roundsLastMinute: noRounds,
@@ -192,5 +199,54 @@ describe("what a round costs on each machine", () => {
 
 		expect(report.runtimes[0]?.roundsPerMin).toBe(0);
 		expect(report.runtimes[0]?.execPerRound).toBe(0);
+	});
+});
+
+// The docs said `--metrics` reported this before it did. A launcher that
+// could not be installed showed in one log line and in the terminal tab of
+// each window that wanted it, which is exactly where nobody was looking when
+// the packaged app opened every window without one.
+describe("whether each machine has a terminal launcher", () => {
+	it("says where it is, per machine, installed or not", () => {
+		const report = metricsReport({
+			takenAt: 0,
+			uptimeMs: 0,
+			mainProcessCpu: noCpu,
+			processMetrics: [],
+			views: [],
+			counters: noCounters,
+			terminalClients: [],
+			runtimes: [],
+			roundsLastMinute: noRounds,
+			terminalLauncher: [
+				{
+					machine: "local",
+					installed: true,
+					path: "/data/devhub/devhub/devhub-terminal",
+					reason: undefined,
+				},
+				{
+					machine: "ssh:build-box.example.com",
+					installed: false,
+					path: undefined,
+					reason: "the bundle is not there",
+				},
+			],
+		});
+
+		expect(report.terminalLauncher).toEqual([
+			{
+				machine: "local",
+				installed: true,
+				path: "/data/devhub/devhub/devhub-terminal",
+				reason: undefined,
+			},
+			{
+				machine: "ssh:build-box.example.com",
+				installed: false,
+				path: undefined,
+				reason: "the bundle is not there",
+			},
+		]);
 	});
 });

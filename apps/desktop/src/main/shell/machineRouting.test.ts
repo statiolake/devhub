@@ -320,8 +320,8 @@ describe("what a window is told its terminal is", () => {
 		const spec: TerminalLauncherSpec = {
 			localLauncherPath: "/here/devhub-terminal",
 			controlSocketPath: "/here/control.sock",
-			entryFiles: new Map(),
-			entryName: "terminal/devhubTerminal.js",
+			entryText: "export const nothing = 1;\n",
+			entryName: "devhub-terminal.bundle.js",
 			serverDataFolderName: ".devhub-server",
 			serverCommit: "abc123",
 		};

@@ -1254,9 +1254,10 @@ export class SshRuntime implements Runtime {
 	 * to have on its PATH, which is a different Node on every host and none at
 	 * all on some.
 	 *
-	 * One file per round trip. That is eight or so at the first window on a
-	 * host, once per DevHub start, on a connection that is already multiplexed —
-	 * and the alternative, one script with the files inlined, would put the
+	 * The program is one bundled file (`readTerminalEntryBundle`), so this is
+	 * three writes at the first window on a host, once per DevHub start, on a
+	 * connection that is already multiplexed. It is written as a file rather
+	 * than inlined into a remote shell command because that would put the
 	 * program's text into the remote shell's argv where `ps` reads it.
 	 */
 	async terminalLauncher(
@@ -1287,17 +1288,9 @@ export class SshRuntime implements Runtime {
 			`mkdir -p -- ${shellQuote(paths.entryRoot)} && chmod 700 ${shellQuote(paths.directory)} ${shellQuote(paths.entryRoot)}`,
 		);
 		if (made.code !== 0) throw this.#fileError(paths.directory, made);
-		for (const [name, text] of spec.entryFiles) {
-			const path = `${paths.entryRoot}/${name}`;
-			const directory = path.slice(0, path.lastIndexOf("/"));
-			const parent = await this.#sh(
-				`exec mkdir -p -- ${shellQuote(directory)}`,
-			);
-			if (parent.code !== 0) throw this.#fileError(directory, parent);
-			await this.writeTextFile(path, text, 0o600);
-		}
-		// The compiled files are ES modules and none of DevHub's `package.json`
-		// travels with them, so without this Node reads them as CommonJS and the
+		await this.writeTextFile(paths.entry, spec.entryText, 0o600);
+		// The bundle is an ES module and none of DevHub's `package.json`
+		// travels with it, so without this Node reads it as CommonJS and the
 		// first `import` is a syntax error.
 		await this.writeTextFile(
 			`${paths.entryRoot}/package.json`,

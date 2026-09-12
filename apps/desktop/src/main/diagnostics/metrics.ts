@@ -94,6 +94,33 @@ export interface MetricsReport {
 	 * counter, and "why is this slow" would otherwise need a packet capture.
 	 */
 	readonly runtimes: readonly RuntimeCostReading[];
+	/**
+	 * Whether each machine has a DevHub terminal launcher on it, and where.
+	 *
+	 * A machine whose launcher could not be installed still gets its windows —
+	 * a folder somebody can edit is worth more than no folder — so the only
+	 * places that failure showed were one line in a log and one sentence in a
+	 * terminal tab, per window. "This DevHub has no terminals, and here is the
+	 * sentence saying why" is a fact about DevHub, and this is where facts
+	 * about DevHub are read.
+	 *
+	 * One entry per machine a window has been opened on; a machine nothing has
+	 * asked for is simply absent, which is a different answer from failed.
+	 */
+	readonly terminalLauncher: readonly TerminalLauncherStatus[];
+}
+
+/** One machine's answer to "is there a `devhub-terminal` on it". */
+export interface TerminalLauncherStatus {
+	readonly machine: RuntimeId;
+	readonly installed: boolean;
+	/** Where it is, when it is. */
+	readonly path: string | undefined;
+	/**
+	 * Why it is not there, or — with `installed` — why it cannot reach DevHub's
+	 * control socket, which is a launcher that will run and then say so.
+	 */
+	readonly reason: string | undefined;
 }
 
 /**
@@ -134,6 +161,7 @@ export interface MetricsInput {
 	readonly counters: CountersReading;
 	readonly terminalClients: readonly TerminalClientReading[];
 	readonly runtimes: readonly RuntimeReading[];
+	readonly terminalLauncher: readonly TerminalLauncherStatus[];
 	/** Reconcile rounds in the last minute, by machine. See `rounds.ts`. */
 	readonly roundsLastMinute: (id: RuntimeId) => number;
 }
@@ -177,6 +205,7 @@ export function metricsReport(input: MetricsInput): MetricsReport {
 		),
 		counters: input.counters,
 		terminalClients: input.terminalClients,
+		terminalLauncher: input.terminalLauncher,
 		runtimes: input.runtimes.map((runtime) => {
 			const roundsPerMin = input.roundsLastMinute(runtime.id);
 			return {
