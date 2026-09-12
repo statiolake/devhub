@@ -2,14 +2,34 @@
  * The one switch, and the fact that it is the only one.
  */
 
-import { describe, expect, it } from "vitest";
+import { mkdtemp, rm } from "node:fs/promises";
+import { homedir } from "node:os";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { workspaceLocation } from "../../model/domain.js";
 import {
 	disposeRuntime,
+	forgetRuntimeProfile,
 	liveRuntimes,
 	localRuntime,
 	runtimeFor,
+	setRuntimeProfile,
 } from "./registry.js";
+
+/**
+ * Short on purpose: a control socket has to fit in 104 bytes, and macOS puts
+ * `TMPDIR` fifty characters deep. Naming the profile's two directories is the
+ * point of the seam — a test gets the real arithmetic, not a stub of it.
+ */
+let userDataDirectory: string;
+
+beforeAll(async () => {
+	userDataDirectory = await mkdtemp("/tmp/devhub-profile-");
+	setRuntimeProfile({ userDataDirectory, home: homedir() });
+});
+afterAll(async () => {
+	forgetRuntimeProfile();
+	await rm(userDataDirectory, { recursive: true, force: true });
+});
 
 describe("runtimeFor", () => {
 	it("gives every local Workspace the one local runtime", () => {
@@ -38,6 +58,25 @@ describe("runtimeFor", () => {
 		expect(one).not.toBe(other);
 		expect(one.id).toBe("ssh:build-box");
 		expect(one.where).toBe(" on build-box");
+	});
+
+	it("refuses a remote Workspace before it has been told which profile", () => {
+		// The local arm never waits for one — this machine is where main is
+		// running. The remote arm does, and a control socket under a directory
+		// nobody chose is a master a second DevHub would find and adopt.
+		forgetRuntimeProfile();
+		expect(() =>
+			runtimeFor(
+				workspaceLocation({ kind: "ssh", host: "build-box", path: "/srv/a" }),
+			),
+		).toThrow(/before the runtime profile was set/u);
+		setRuntimeProfile({ userDataDirectory, home: homedir() });
+	});
+
+	it("refuses to be told twice, because a socket that moved is unreachable", () => {
+		expect(() =>
+			setRuntimeProfile({ userDataDirectory, home: homedir() }),
+		).toThrow(/already been set/u);
 	});
 
 	it("lists the runtimes that are live, for a reading", async () => {

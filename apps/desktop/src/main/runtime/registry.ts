@@ -15,9 +15,6 @@
  * to tell which of the two had gone stale.
  */
 
-import { app } from "electron";
-import { homedir } from "node:os";
-import { join } from "node:path";
 import type { WorkspaceLocation } from "../../model/domain.js";
 import { LocalRuntime } from "./local.js";
 import type { Runtime, RuntimeId } from "./runtime.js";
@@ -42,16 +39,49 @@ const LOCAL = new LocalRuntime();
 const SSH = new Map<string, SshRuntime>();
 
 /**
- * The DevHub profile's directory, as far as the control socket cares.
+ * Where this DevHub keeps its own files, told rather than discovered.
  *
- * `app` is Electron's, and outside Electron — the tests, and the CLI — there is
- * no profile directory to ask about. `~/.devhub` is not a silent default in
- * that case; it is DevHub's own directory, the same one `chooseControlDirectory`
- * names as the short fallback, said out loud in the one place that has no `app`
- * to ask.
+ * The one thing a remote runtime needs that is not on the location: the
+ * directory its control socket is bound under, which is a property of the
+ * *profile* — every other resource DevHub keys on the profile, and a second
+ * DevHub must not adopt the first one's connection.
+ *
+ * It is injected rather than read from `app.getPath("userData")` because this
+ * module is imported by `pty.ts`'s callers and therefore by the PTY test
+ * program, which runs without Electron's named exports: a module that needs
+ * Electron *at import time* makes every importer of it need one too, and the
+ * failure lands in a test program that has nothing to do with ssh. The
+ * argument is also the seam the control-path arithmetic already wanted — a
+ * test names two temp directories and gets the real answer for both.
  */
-function profileDirectory(): string {
-	return app?.getPath?.("userData") ?? join(homedir(), ".devhub");
+export interface RuntimeProfile {
+	/** This profile's user-data directory. */
+	readonly userDataDirectory: string;
+	/** `$HOME` on this machine, for the short control-path fallback. */
+	readonly home: string;
+}
+
+let profile: RuntimeProfile | undefined;
+
+/**
+ * Say which profile is running, once, before anything asks for a runtime.
+ *
+ * `createAppController` calls it with the same `userDataPath` it files state
+ * and settings under. Calling it twice is a bug rather than a reconfiguration:
+ * a control socket that moved would leave a master nothing can reach and no
+ * way to tell that had happened.
+ */
+export function setRuntimeProfile(next: RuntimeProfile): void {
+	if (profile !== undefined) {
+		throw new Error("the runtime profile has already been set");
+	}
+	profile = next;
+}
+
+/** For tests, which need a second profile in the same process. */
+export function forgetRuntimeProfile(): void {
+	profile = undefined;
+	SSH.clear();
 }
 
 /**
@@ -61,6 +91,11 @@ function profileDirectory(): string {
  * runtime, which is what the whole module was arranged for: a caller that runs
  * `git` writes the same line for both machines, and the difference between them
  * lives in `ssh.ts` where it can be named.
+ *
+ * The local arm needs no profile and never waits for one — this machine is
+ * where `main` is running. The remote arm does, and refuses rather than
+ * guessing: a control socket under a directory nobody chose is a master a
+ * second DevHub would find and adopt.
  */
 export function runtimeFor(location: WorkspaceLocation): Runtime {
 	switch (location.kind) {
@@ -69,9 +104,17 @@ export function runtimeFor(location: WorkspaceLocation): Runtime {
 		case "ssh": {
 			const existing = SSH.get(location.host);
 			if (existing) return existing;
+			if (profile === undefined) {
+				throw new Error(
+					"a runtime was asked for before the runtime profile was set",
+				);
+			}
 			const runtime = new SshRuntime({
 				host: location.host,
-				controlDirectory: chooseControlDirectory(profileDirectory()),
+				controlDirectory: chooseControlDirectory(
+					profile.userDataDirectory,
+					profile.home,
+				),
 			});
 			SSH.set(location.host, runtime);
 			return runtime;

@@ -167,7 +167,12 @@ import { OperationDeadline } from "../terminal/command.js";
 import { wireAgents } from "./agentWiring.js";
 import { AgentReconcilers, type ReconcileHost } from "./agentReconciler.js";
 import { MainServicesGate, type MainServices } from "./mainServices.js";
-import { liveRuntimes, localRuntime, runtimeFor } from "../runtime/registry.js";
+import {
+	liveRuntimes,
+	localRuntime,
+	runtimeFor,
+	setRuntimeProfile,
+} from "../runtime/registry.js";
 import { resolveExecutable, resolveRuntimes } from "./runtimes.js";
 import {
 	executableMissingMessage,
@@ -4404,6 +4409,11 @@ export async function createAppController(
 		throw new Error("the App Shell controller already exists");
 	}
 	setRuntimeVersion(electron.app.getVersion());
+	// Which profile's directories a remote runtime binds its control socket
+	// under. Told here, once, because `main/runtime/` must not need Electron at
+	// import time: it is imported by the PTY test program too, and a module
+	// that reaches for `app` makes every importer of it need an app.
+	setRuntimeProfile({ userDataDirectory: userDataPath, home: homedir() });
 
 	// One switch, resolved once: which DevHub this is, and therefore where its
 	// settings, its state and its tmux server are. See model/profile.ts.
