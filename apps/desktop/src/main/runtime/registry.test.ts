@@ -4,8 +4,12 @@
 
 import { describe, expect, it } from "vitest";
 import { workspaceLocation } from "../../model/domain.js";
-import { TypedFailure } from "../../model/wire.js";
-import { liveRuntimes, localRuntime, runtimeFor } from "./registry.js";
+import {
+	disposeRuntime,
+	liveRuntimes,
+	localRuntime,
+	runtimeFor,
+} from "./registry.js";
 
 describe("runtimeFor", () => {
 	it("gives every local Workspace the one local runtime", () => {
@@ -17,25 +21,36 @@ describe("runtimeFor", () => {
 		expect(one.where).toBe("");
 	});
 
-	it("refuses an ssh Workspace at the moment it is asked, naming the host", () => {
-		// Loudly, and here, rather than by handing back something that answers
-		// some calls and swallows others: a runtime that half-works puts the
-		// "not on this machine" branch back into every caller.
-		let thrown: unknown;
-		try {
-			runtimeFor(
-				workspaceLocation({ kind: "ssh", host: "build-box", path: "/srv/app" }),
-			);
-		} catch (error: unknown) {
-			thrown = error;
-		}
-		expect(thrown).toBeInstanceOf(TypedFailure);
-		expect((thrown as TypedFailure).wire.summary).toBe(
-			"DevHub cannot run anything on build-box yet: its SSH runtime is not implemented.",
+	it("gives every Workspace on one host the same runtime", () => {
+		// Not an optimisation: a second runtime for one host would be a second
+		// multiplexed connection, a second `$HOME` and a `devhub --metrics` that
+		// reported half the truth twice.
+		const one = runtimeFor(
+			workspaceLocation({ kind: "ssh", host: "build-box", path: "/srv/a" }),
 		);
+		const two = runtimeFor(
+			workspaceLocation({ kind: "ssh", host: "build-box", path: "/srv/b" }),
+		);
+		const other = runtimeFor(
+			workspaceLocation({ kind: "ssh", host: "other-box", path: "/srv/a" }),
+		);
+		expect(one).toBe(two);
+		expect(one).not.toBe(other);
+		expect(one.id).toBe("ssh:build-box");
+		expect(one.where).toBe(" on build-box");
 	});
 
-	it("lists the runtimes that are live, for a reading", () => {
-		expect(liveRuntimes()).toEqual([localRuntime()]);
+	it("lists the runtimes that are live, for a reading", async () => {
+		expect(liveRuntimes()).toContain(localRuntime());
+		expect(liveRuntimes()[0]).toBe(localRuntime());
+	});
+
+	it("forgets a host nothing is on any more", async () => {
+		const before = runtimeFor(
+			workspaceLocation({ kind: "ssh", host: "gone-box", path: "/srv/a" }),
+		);
+		expect(liveRuntimes()).toContain(before);
+		await disposeRuntime(before.id);
+		expect(liveRuntimes()).not.toContain(before);
 	});
 });
