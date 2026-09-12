@@ -1,4 +1,19 @@
 # Server installation script
+#
+# DevHub patch: this script is POSIX sh (dash / BusyBox ash / ksh), not bash.
+# It is piped into `sh -l` on the remote host, and plenty of hosts DevHub is
+# expected to reach have no bash at all -- a NAS whose /bin/sh is BusyBox,
+# for one, where the unpatched script died with `sh: bash: not found`
+# before printing a single marker, so the extension could only report "Failed
+# parsing install script output". Every construct below is one the POSIX shell
+# command language defines: the `test` builtin rather than bash's conditional
+# keyword, `cd` rather than a directory stack, a counted `while` rather than a
+# brace range, an explicit `>file 2>&1` rather than bash's combining redirect,
+# and no arrays. `local` is not used anywhere, so the question of which shells
+# have it does not arise.
+#
+# The lines print_install_results_and_exit writes are the extension's parse
+# format and are unchanged, byte for byte.
 
 TMP_DIR="${XDG_RUNTIME_DIR:-"/tmp"}"
 
@@ -57,7 +72,7 @@ if command -v flock >/dev/null 2>&1; then
   else
     ELAPSED=0
 
-    while [[ $ELAPSED -lt 30 ]]; do
+    while [ "$ELAPSED" -lt 30 ]; do
         if flock -n -x $FD; then
             break
         fi
@@ -67,7 +82,7 @@ if command -v flock >/dev/null 2>&1; then
         ELAPSED=$((ELAPSED + 1))
     done
 
-    if [[ $ELAPSED -ge 30 ]]; then
+    if [ "$ELAPSED" -ge 30 ]; then
       echo "Warning: flock cannot acquire the install lock"
       print_install_results_and_exit 1
     fi
@@ -140,31 +155,30 @@ esac
 
 # https://www.freedesktop.org/software/systemd/man/os-release.html
 OS_RELEASE_ID="$(grep -i '^ID=' /etc/os-release 2>/dev/null | sed 's/^ID=//gi' | sed 's/"//g')"
-if [[ -z $OS_RELEASE_ID ]]; then
+if [ -z "$OS_RELEASE_ID" ]; then
   OS_RELEASE_ID="$(grep -i '^ID=' /usr/lib/os-release 2>/dev/null | sed 's/^ID=//gi' | sed 's/"//g')"
-  if [[ -z $OS_RELEASE_ID ]]; then
+  if [ -z "$OS_RELEASE_ID" ]; then
     OS_RELEASE_ID="unknown"
   fi
 fi
 
 # Create installation folder
-if [[ ! -d $SERVER_DIR ]]; then
-  mkdir -p $SERVER_DIR
-  if (( $? > 0 )); then
+if [ ! -d "$SERVER_DIR" ]; then
+  if ! mkdir -p "$SERVER_DIR"; then
     echo "Error: creating server install directory"
     print_install_results_and_exit 1
   fi
 fi
 
 # adjust platform for vscodium download, if needed
-if [[ $OS_RELEASE_ID = alpine ]]; then
+if [ "$OS_RELEASE_ID" = alpine ]; then
   PLATFORM=$OS_RELEASE_ID
 fi
 
 SERVER_DOWNLOAD_URL="$(echo "%%SERVER_DOWNLOAD_URL_TEMPLATE%%" | sed "s/\${quality}/$DISTRO_QUALITY/g" | sed "s/\${version}/$DISTRO_VERSION/g" | sed "s/\${commit}/$DISTRO_COMMIT/g" | sed "s/\${os}/$PLATFORM/g" | sed "s/\${arch}/$SERVER_ARCH/g" | sed "s/\${release}/$DISTRO_VSCODIUM_RELEASE/g")"
 
 # Check if server script is already installed
-if [[ ! -f $SERVER_SCRIPT ]]; then
+if [ ! -f "$SERVER_SCRIPT" ]; then
   case "$PLATFORM" in
     darwin | linux | alpine | freebsd )
       ;;
@@ -174,48 +188,54 @@ if [[ ! -f $SERVER_SCRIPT ]]; then
       ;;
   esac
 
-  pushd $SERVER_DIR > /dev/null
+  # A directory stack is a bash builtin. The download and extract below are
+  # the only thing that needs the install directory as its working directory,
+  # so remember where we were and go back by hand.
+  SERVER_DIR_PREVIOUS_PWD="$(pwd)"
+  if ! cd "$SERVER_DIR"; then
+    echo "Error: cannot enter server install directory $SERVER_DIR"
+    print_install_results_and_exit 1
+  fi
 
+  DOWNLOAD_OK=0
   if command -v wget >/dev/null 2>&1; then
-    wget --tries=3 --timeout=10 --continue --no-verbose -O vscode-server.tar.gz $SERVER_DOWNLOAD_URL
+    wget --tries=3 --timeout=10 --continue --no-verbose -O vscode-server.tar.gz "$SERVER_DOWNLOAD_URL" && DOWNLOAD_OK=1
   elif command -v curl >/dev/null 2>&1; then
-    curl --retry 3 --connect-timeout 10 --location --show-error --silent --output vscode-server.tar.gz $SERVER_DOWNLOAD_URL
+    curl --retry 3 --connect-timeout 10 --location --show-error --silent --output vscode-server.tar.gz "$SERVER_DOWNLOAD_URL" && DOWNLOAD_OK=1
   elif command -v fetch >/dev/null 2>&1; then
-    fetch --retry --timeout=10 --quiet --output=vscode-server.tar.gz $SERVER_DOWNLOAD_URL
+    fetch --retry --timeout=10 --quiet --output=vscode-server.tar.gz "$SERVER_DOWNLOAD_URL" && DOWNLOAD_OK=1
   else
     echo "Error: no tool to download server binary"
     print_install_results_and_exit 1
   fi
 
-  if (( $? > 0 )); then
+  if [ "$DOWNLOAD_OK" -ne 1 ]; then
     echo "Error downloading server from $SERVER_DOWNLOAD_URL"
     rm -rf vscode-server.tar.gz
     print_install_results_and_exit 1
   fi
 
-  tar -xOf vscode-server.tar.gz > /dev/null 2>&1
-  if (( $? > 0 )); then
+  if ! tar -xOf vscode-server.tar.gz >/dev/null 2>&1; then
     echo "Error downloaded tarball is corrupt or incomplete"
     rm -rf vscode-server.tar.gz
     print_install_results_and_exit 1
   fi
 
-  tar -xf vscode-server.tar.gz --strip-components 1
-  if (( $? > 0 )); then
+  if ! tar -xf vscode-server.tar.gz --strip-components 1; then
     echo "Error while extracting server contents"
     rm -rf vscode-server.tar.gz
     print_install_results_and_exit 1
   fi
 
-  if [[ ! -f $SERVER_SCRIPT ]] || [[ ! -s $SERVER_SCRIPT ]]; then
-    rm -rf $SERVER_DIR/*
+  if [ ! -f "$SERVER_SCRIPT" ] || [ ! -s "$SERVER_SCRIPT" ]; then
+    rm -rf "$SERVER_DIR"/*
     echo "Error: server contents are corrupted"
     print_install_results_and_exit 1
   fi
 
   rm -f vscode-server.tar.gz
 
-  popd > /dev/null
+  cd "$SERVER_DIR_PREVIOUS_PWD" || true
 else
   echo "Server script already installed in $SERVER_SCRIPT"
 fi
@@ -230,56 +250,70 @@ if %%MODIFY_PRODUCT_JSON%%; then
   fi
 fi
 
-# Try to find if server is already running
-if [[ -f $SERVER_PIDFILE ]]; then
-  SERVER_PID="$(cat $SERVER_PIDFILE)"
-  SERVER_RUNNING_PROCESS="$(ps -o pid,args -p $SERVER_PID | grep $SERVER_SCRIPT)"
-else
-  SERVER_RUNNING_PROCESS="$(ps -o pid,args -A | grep $SERVER_SCRIPT | grep -v grep)"
-fi
+# Try to find if server is already running.
+#
+# Upstream asked `ps -p "$(cat $SERVER_PIDFILE)"` when a pid file was there and
+# `ps -A` otherwise. BusyBox `ps` accepts neither `-p` nor `-A` -- it lists
+# every process and ignores the rest -- so on such a host the pid-file branch
+# printed a usage error, found nothing, and started a second extension host on
+# every resolve. One branch for both cases: scan the full table for the server
+# script, which is what upstream's fallback already did and what BusyBox gives
+# us anyway.
+SERVER_RUNNING_PROCESS="$(ps -o pid,args -A 2>/dev/null | grep "$SERVER_SCRIPT" | grep -v grep)"
 
-if [[ -z $SERVER_RUNNING_PROCESS ]]; then
-  if [[ -f $SERVER_LOGFILE ]]; then
-    rm $SERVER_LOGFILE
+if [ -z "$SERVER_RUNNING_PROCESS" ]; then
+  if [ -f "$SERVER_LOGFILE" ]; then
+    rm "$SERVER_LOGFILE"
   fi
-  if [[ -f $SERVER_TOKENFILE ]]; then
-    rm $SERVER_TOKENFILE
+  if [ -f "$SERVER_TOKENFILE" ]; then
+    rm "$SERVER_TOKENFILE"
   fi
 
-  touch $SERVER_TOKENFILE
-  chmod 600 $SERVER_TOKENFILE
+  touch "$SERVER_TOKENFILE"
+  chmod 600 "$SERVER_TOKENFILE"
   SERVER_CONNECTION_TOKEN="%%SERVER_CONNECTION_TOKEN%%"
-  echo $SERVER_CONNECTION_TOKEN > $SERVER_TOKENFILE
+  echo $SERVER_CONNECTION_TOKEN > "$SERVER_TOKENFILE"
 
-  $SERVER_SCRIPT --start-server --host=127.0.0.1 $SERVER_LISTEN_FLAG $SERVER_DATA_DIR_FLAG $SERVER_VALIDATION_FLAG $SERVER_INITIAL_EXTENSIONS --connection-token-file $SERVER_TOKENFILE --telemetry-level off --enable-remote-auto-shutdown --accept-server-license-terms &> $SERVER_LOGFILE &
-  echo $! > $SERVER_PIDFILE
+  $SERVER_SCRIPT --start-server --host=127.0.0.1 $SERVER_LISTEN_FLAG $SERVER_DATA_DIR_FLAG $SERVER_VALIDATION_FLAG $SERVER_INITIAL_EXTENSIONS --connection-token-file "$SERVER_TOKENFILE" --telemetry-level off --enable-remote-auto-shutdown --accept-server-license-terms > "$SERVER_LOGFILE" 2>&1 &
+  echo $! > "$SERVER_PIDFILE"
 else
   echo "Server script is already running $SERVER_SCRIPT"
 fi
 
-if [[ -f $SERVER_TOKENFILE ]]; then
-  SERVER_CONNECTION_TOKEN="$(cat $SERVER_TOKENFILE)"
+if [ -f "$SERVER_TOKENFILE" ]; then
+  SERVER_CONNECTION_TOKEN="$(cat "$SERVER_TOKENFILE")"
 else
   echo "Error: server token file not found $SERVER_TOKENFILE"
   print_install_results_and_exit 1
 fi
 
-if [[ -f $SERVER_LOGFILE ]]; then
-  for i in {1..35}; do
-    if [[ -n "$(cat $SERVER_LOGFILE | grep 'Error loading shared library libstdc++.so')" ]]; then
-      echo "Error: missing libstdc++"
-      break;
-    fi
+# `sleep` with a fractional argument is a GNU/BusyBox extension, not POSIX.
+# Ask once: where it is refused, wait a whole second instead, which trades a
+# slower resolve for a resolve that happens at all.
+SERVER_POLL_SLEEP=0.5
+if ! sleep 0.5 >/dev/null 2>&1; then
+  SERVER_POLL_SLEEP=1
+fi
 
-    LISTENING_ON="$(cat $SERVER_LOGFILE | grep -E 'Extension host agent listening on .+' | sed 's/Extension host agent listening on //')"
-    if [[ -n $LISTENING_ON ]]; then
+if [ -f "$SERVER_LOGFILE" ]; then
+  POLLS_LEFT=35
+  while [ "$POLLS_LEFT" -gt 0 ]; do
+    if [ -n "$(grep 'Error loading shared library libstdc++.so' "$SERVER_LOGFILE")" ]; then
+      echo "Error: missing libstdc++"
       break
     fi
 
-    sleep 0.5
+    LISTENING_ON="$(grep -E 'Extension host agent listening on .+' "$SERVER_LOGFILE" | sed 's/Extension host agent listening on //')"
+    if [ -n "$LISTENING_ON" ]; then
+      break
+    fi
+
+    sleep "$SERVER_POLL_SLEEP"
+
+    POLLS_LEFT=$((POLLS_LEFT - 1))
   done
 
-  if [[ -z $LISTENING_ON ]]; then
+  if [ -z "$LISTENING_ON" ]; then
     echo "Error: server did not start successfully"
     print_install_results_and_exit 1
   fi
