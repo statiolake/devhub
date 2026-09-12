@@ -41,6 +41,7 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { basename } from "node:path";
+import type { TerminalLauncher } from "../runtime/runtime.js";
 
 /** How long the login shell gets before DevHub stops waiting for it. */
 export const LOGIN_ENVIRONMENT_TIMEOUT_MS = 10_000;
@@ -240,6 +241,26 @@ export const DEVHUB_TERMINAL = "DEVHUB_TERMINAL";
  * Nothing is caught and nothing is optional: a workbench that cannot read this
  * has no DevHub terminal, and the patch it feeds refuses to invent one.
  */
+/**
+ * What one window is told its DevHub terminal is.
+ *
+ * Per window, because a workbench's integrated terminal runs where its pty
+ * host runs: a window on a host must name the launcher written *there*. The
+ * renderer's environment is the window configuration's `userEnv`, so one entry
+ * here is one answer per window and the patch still reads one variable.
+ *
+ * A launcher that cannot reach DevHub contributes nothing rather than a path
+ * that would not work. That is not a silence: the variable being absent is
+ * exactly what makes the patched profile service refuse to invent a terminal,
+ * and the reason is logged where the launcher was installed.
+ */
+export function windowTerminalEnvironment(
+	launcher: TerminalLauncher,
+): Record<string, string> {
+	if (launcher.unreachable !== undefined) return {};
+	return { [DEVHUB_TERMINAL]: launcher.path };
+}
+
 export function exportTerminalLauncher(
 	target: Record<string, string | undefined>,
 	launcherPath: string,

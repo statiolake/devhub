@@ -16,7 +16,8 @@
 
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, relative, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 import vscodeProduct from "code-oss-dev/out/vs/platform/product/common/product.js";
 import { activityCounters } from "../diagnostics/counters.js";
 import { metricsReport } from "../diagnostics/metrics.js";
@@ -158,24 +159,38 @@ import { editorInspection, editorRuntimeState } from "./editorInspection.js";
 import { wireTerminals, type TerminalWiring } from "./terminalWiring.js";
 import {
 	CancellationToken,
-	SCRATCH_TARGET,
+	scratchTarget,
 	socketName,
 	workspaceTarget,
 	type TerminalPreflight,
 } from "../terminal/ports.js";
-import { enclosingRoot } from "../terminal/launcher.js";
+import {
+	enclosingRoot,
+	terminalEntryClosure,
+	terminalLauncherPath,
+} from "../terminal/launcher.js";
+import { controlSocketPath } from "../cli/protocol.js";
+import { windowTerminalEnvironment } from "./loginEnvironment.js";
 import { OperationDeadline } from "../terminal/command.js";
 import { wireAgents } from "./agentWiring.js";
 import { AgentReconcilers, type ReconcileHost } from "./agentReconciler.js";
 import { MainServicesGate, type MainServices } from "./mainServices.js";
 import {
+	disposeRuntime,
 	liveRuntimes,
 	localRuntime,
+	runtimeById,
 	runtimeFor,
+	runtimeIdFor,
+	runtimeMachine,
 	setRuntimeProfile,
 } from "../runtime/registry.js";
-import type { Runtime } from "../runtime/runtime.js";
-import { resolveExecutable, resolveRuntimes } from "./runtimes.js";
+import type {
+	Runtime,
+	RuntimeId,
+	TerminalLauncher,
+} from "../runtime/runtime.js";
+import { resolveExecutable } from "./runtimes.js";
 import {
 	executableMissingMessage,
 	type SettingsUnavailableRuntimeWire,
@@ -246,6 +261,14 @@ import {
 	settingsWindowContents,
 	settingsWindowIsFocused,
 } from "./settingsWindow.js";
+
+/** `apps/desktop/out/main/shell` -> `apps/desktop`. */
+const APP_ROOT = join(
+	dirname(fileURLToPath(import.meta.url)),
+	"..",
+	"..",
+	"..",
+);
 
 /** The folder key a scratch (folderless) workbench view is filed under. */
 const SCRATCH_EDITOR = SCRATCH_EDITOR_KEY;
@@ -368,6 +391,10 @@ export class AppController {
 	/** Page requests still waiting on a deferred chain, by operation identity. */
 	private readonly pendingRequests = new Map<OperationId, PendingRequest>();
 	private terminalsWiring: TerminalWiring | undefined;
+	/** This profile's user-data directory, from `startRuntimes`. */
+	private userDataPath: string | undefined;
+	/** The launcher installation, asked for once per machine. */
+	private readonly launchers = new Map<RuntimeId, Promise<TerminalLauncher>>();
 	private agentSessions: AgentSessions | undefined;
 	/**
 	 * What became of the login-shell environment import, and the environment it
@@ -389,7 +416,7 @@ export class AppController {
 	 * process that is gone.
 	 */
 	private readonly agentReconcilers = new AgentReconcilers({
-		reconcile: () => this.reconcileAllAgents(),
+		reconcile: (host) => this.reconcileAgentsOn(host.id),
 		onFailure: (error) => {
 			// The round already reported itself: an Agent operation that failed is
 			// published where every operation failure is published. What is left
@@ -516,6 +543,7 @@ export class AppController {
 	 * protocol and one client for both.
 	 */
 	async startRuntimes(userDataPath: string): Promise<void> {
+		this.userDataPath = userDataPath;
 		const config = this.config;
 		// On a state file that has never existed, the configured socket *is* the
 		// effective one: there are no sessions to migrate, so adopting it is the
@@ -557,27 +585,22 @@ export class AppController {
 		// `CodeApplication.startup()`, so none of them exists yet.
 		adoptLoginEnvironment(process.env, this.loginEnvironment);
 		this.launchEnvironment = launchEnvironment(process.env);
-		const resolved = await resolveRuntimes(
-			config?.runtimes ?? {
-				shell: "/bin/zsh",
-				git: "git",
-				tmux: "tmux",
-				tmux_socket_name: activeProfile().tmuxSocketName,
-				tmux_args: [],
-			},
-			this.launchEnvironment["PATH"] ?? "",
-		);
+		// Nothing is resolved here any more. Which `tmux` and which shell a
+		// Workspace's terminals run is a question about that Workspace's
+		// machine, so it is asked on that machine, once, when its adapter is
+		// built (`terminalRuntimes.ts`) — and the Settings window asks its own
+		// for this Mac, which is what that window is about.
 		this.terminalsWiring = wireTerminals({
 			config,
-			resolved: { tmux: resolved.tmux, shell: resolved.shell },
 			environment: this.launchEnvironment,
 			effectiveSocketName: this.state.tmux.effective_socket_name,
-			userDataPath,
 			model: () => this.coordinator.model,
 		});
+		const terminalRuntimes = this.terminalsWiring.runtimes;
 		this.agentSessions = wireAgents({
-			runtime: this.terminalsWiring.runtime,
+			runtimeFor: (machine) => terminalRuntimes.for(runtimeById(machine)),
 			model: () => this.coordinator.model,
+			machineOf: (workspaceId) => this.machineOf(workspaceId),
 		});
 		// Everything restored from the state file describes the previous run,
 		// and the sessions on the socket are what is left of it. Nothing has to
@@ -589,11 +612,25 @@ export class AppController {
 		for (const workspace of this.coordinator.model.workspaces) {
 			for (const agent of workspace.agents) known.add(agent.id);
 		}
-		if (this.agentSessions.available) {
-			const reaped = await this.agentSessions.reapUnknown(known);
-			if (reaped > 0) {
-				console.info(
-					`[devhub] agents: closed ${String(reaped)} Agent session(s) no longer known to this DevHub`,
+		// One sweep per machine that has a Workspace on it, because the sessions
+		// to sweep are one tmux server's and a machine DevHub never asks is a
+		// machine whose stray Agents nothing will ever reach. A host that is
+		// unreachable at startup is not swept and not fatal: the Workspaces on
+		// it come up in the state every other runtime failure puts them in, and
+		// the next successful round is when they recover.
+		for (const machine of this.workspaceMachines()) {
+			try {
+				if (!(await this.agentSessions.availableOn(machine))) continue;
+				const reaped = await this.agentSessions.reapUnknown(machine, known);
+				if (reaped > 0) {
+					console.info(
+						`[devhub] agents: closed ${String(reaped)} Agent session(s) no longer known to this DevHub on ${machine}`,
+					);
+				}
+			} catch (error: unknown) {
+				console.error(
+					`[devhub] agents: ${machine} could not be swept at startup`,
+					error instanceof Error ? error.stack : error,
 				);
 			}
 		}
@@ -1052,7 +1089,7 @@ export class AppController {
 		// given both roots would answer one of them with the other's session —
 		// which is not a slower answer, it is a shell in the wrong place.
 		const workspaces = this.coordinator.model.workspaces.filter(
-			(candidate) => runtimeFor(candidate.location).id === machine,
+			(candidate) => runtimeIdFor(candidate.location) === machine,
 		);
 		const enclosing = enclosingRoot(
 			workspaces.map((candidate) => candidate.root),
@@ -1061,22 +1098,17 @@ export class AppController {
 		const workspace = workspaces.find(
 			(candidate) => candidate.root === enclosing,
 		);
-		// DevHub's tmux server runs on the machine DevHub runs on, and a session
-		// on it is no use to a terminal somewhere else: the argv would attach a
-		// far machine's `tmux` to a socket that is not on it, in a directory
-		// that means something different there. Until the terminal runtime is
-		// per-machine, the honest answer is the sentence rather than an argv
-		// that looks right and opens a shell on the wrong computer.
-		if (machine !== "local") {
-			throw new Error(
-				`DevHub's terminal sessions run on the machine DevHub runs on, and this terminal is on ${machine}. A workbench there has no DevHub session to attach to yet.`,
-			);
-		}
+		// The session is on the machine that asked, because that is the machine
+		// its tmux server is on: a workbench's integrated terminal runs where
+		// its pty host runs, and an argv naming this Mac's socket would attach
+		// nothing over there. The target carries the machine, so the adapter
+		// that answers is that machine's and not whichever one is at hand.
+		const asking = runtimeMachine(machine);
 		if (!workspace) {
-			return wiring.service.surfaces.profile(SCRATCH_TARGET);
+			return wiring.service.surfaces.profile(scratchTarget(asking));
 		}
 		return wiring.service.surfaces.profile(
-			workspaceTarget(workspace.id, workspace.root),
+			workspaceTarget(asking, workspace.id, workspace.root),
 		);
 	}
 
@@ -1089,7 +1121,7 @@ export class AppController {
 	async preflightTerminalSocket(name: string): Promise<TerminalPreflight> {
 		const wiring = this.terminalsWiring;
 		if (!wiring) throw new Error("the terminal runtime is not running");
-		return wiring.runtime.preflight(socketName(name));
+		return (await wiring.local()).preflight(socketName(name));
 	}
 
 	/**
@@ -1115,32 +1147,39 @@ export class AppController {
 		if (next === previous) return;
 
 		wiring.service.surfaces.detachAll();
-		const release = await wiring.runtime.beginTransition();
-		try {
-			const cancel = new CancellationToken();
-			const old = socketName(previous);
-			const owned = await wiring.runtime.transitionInspectOwnedSessions(
-				old,
-				cancel,
-			);
-			for (const record of owned.sessions) {
-				await wiring.runtime.transitionCloseOwnedSession(old, record, cancel);
+		const cancel = new CancellationToken();
+		const old = socketName(previous);
+		// One migration per machine, because a socket is one tmux server's and
+		// the config names it for every machine at once. A host left behind
+		// would keep its sessions on the old socket, which DevHub would never
+		// look at again — the sessions would be running with nothing that can
+		// reach them, which is the one outcome this whole flow exists to avoid.
+		for (const machine of this.workspaceMachines()) {
+			const runtime = await wiring.runtimes.for(runtimeById(machine));
+			const release = await runtime.beginTransition();
+			try {
+				const owned = await runtime.transitionInspectOwnedSessions(old, cancel);
+				for (const record of owned.sessions) {
+					await runtime.transitionCloseOwnedSession(old, record, cancel);
+				}
+				const targets = [
+					...(machine === "local" ? [scratchTarget("local")] : []),
+					...this.coordinator.model.workspaces
+						.filter((workspace) => this.machineOf(workspace.id) === machine)
+						.map((workspace) =>
+							workspaceTarget(machine, workspace.id, workspace.root),
+						),
+				];
+				for (const target of targets) {
+					await runtime.transitionEnsureOnSocket(next, target, cancel);
+				}
+			} finally {
+				release();
 			}
-			const targets = [
-				SCRATCH_TARGET,
-				...this.coordinator.model.workspaces.map((workspace) =>
-					workspaceTarget(workspace.id, workspace.root),
-				),
-			];
-			for (const target of targets) {
-				await wiring.runtime.transitionEnsureOnSocket(next, target, cancel);
-			}
-			wiring.runtime.setEffectiveSocket(next);
-			this.state.tmux.effective_socket_name = next;
-			await this.stateStore.saveState(this.state);
-		} finally {
-			release();
 		}
+		await wiring.runtimes.setEffectiveSocket(next);
+		this.state.tmux.effective_socket_name = next;
+		await this.stateStore.saveState(this.state);
 	}
 
 	/**
@@ -1199,40 +1238,88 @@ export class AppController {
 	}
 
 	/**
-	 * One round of the reconciler: ask the provider about every Agent and let
-	 * the model settle before the next round is scheduled.
+	 * One round of the reconciler, about one machine.
+	 *
+	 * The machine is carried by the intent rather than worked out downstream,
+	 * because a round *is* one question to one tmux server: the loop that asked
+	 * is the loop that knows which one, and the answer is only ever complete
+	 * for that machine.
 	 */
-	private async reconcileAllAgents(): Promise<void> {
-		await this.dispatchAwaiting({ type: "reconcile_agents" });
+	private async reconcileAgentsOn(machine: RuntimeId): Promise<void> {
+		await this.dispatchAwaiting({ type: "reconcile_agents", machine });
+	}
+
+	/**
+	 * Let go of a machine no Workspace is on any more.
+	 *
+	 * Both halves together, because they are one machine: the connection and
+	 * the tmux adapter that speaks over it. Keeping either would be a
+	 * multiplexed ssh master held open for a host nothing is asking about, and
+	 * a `devhub --metrics` reading for a machine that has gone.
+	 *
+	 * The sessions over there are untouched. Reopening a Workspace on that host
+	 * builds both again and finds them by their markers, which is the same
+	 * thing a restart does.
+	 */
+	private releaseIdleMachines(): void {
+		const live = new Set(this.workspaceMachines());
+		for (const runtime of liveRuntimes()) {
+			if (runtime.id === "local" || live.has(runtime.id)) continue;
+			this.terminalsWiring?.runtimes.forget(runtime.id);
+			this.launchers.delete(runtime.id);
+			void disposeRuntime(runtime.id).catch((error: unknown) => {
+				console.error(
+					`[devhub] ${runtime.id} could not be let go of`,
+					error instanceof Error ? error.stack : error,
+				);
+			});
+		}
+	}
+
+	/** The machine one Agent runs on: its Workspace's. */
+	private machineOfAgent(
+		agentId: ReturnType<typeof parseAgentId>,
+	): RuntimeId | undefined {
+		const workspace = this.coordinator.model.workspaceForAgent(agentId);
+		return workspace ? runtimeIdFor(workspace.location) : undefined;
+	}
+
+	/** The machine a Workspace's folder — and therefore its Agents — is on. */
+	private machineOf(workspaceId: WorkspaceId): RuntimeId | undefined {
+		const workspace = this.coordinator.model.workspace(workspaceId);
+		return workspace ? runtimeIdFor(workspace.location) : undefined;
+	}
+
+	/**
+	 * Every machine a Workspace is open on, this one always among them.
+	 *
+	 * This one always, because Scratch is on it and because DevHub itself runs
+	 * there: a sweep or a socket migration that skipped it would leave the
+	 * app's own sessions behind.
+	 */
+	private workspaceMachines(): readonly RuntimeId[] {
+		const machines = new Set<RuntimeId>(["local"]);
+		for (const workspace of this.coordinator.model.workspaces) {
+			machines.add(runtimeIdFor(workspace.location));
+		}
+		return [...machines];
 	}
 
 	/**
 	 * The machines with at least one Agent on them right now.
 	 *
-	 * There can be exactly one, and it is this Mac: `canCreateAgent` still has
-	 * its `supportsLocalAgents` term, so an ssh Workspace cannot hold an Agent
-	 * to reconcile. The list is built from the model rather than asserted,
-	 * because that is the fact that will change, and `follow` will then start a
-	 * second loop on its own.
-	 *
-	 * The round it runs is still the whole model's — `reconcile_agents` carries
-	 * no machine — so a second live runtime here would mean two loops each
-	 * reconciling both machines at the faster of the two cadences. That is a
-	 * wrong answer rather than a slow one, so it stops here rather than
-	 * arriving as a status that flickers: when a runtime can hold Agents, the
-	 * intent gains the machine it is about.
+	 * One loop each, at each machine's own cadence, each round about that
+	 * machine's Agents only — which is what `reconcile_agents` carrying a
+	 * machine buys. A host across an ocean does not slow this Mac's Agents
+	 * down, and neither of the two loops can report the other's Agents as
+	 * ended, because neither is ever shown the other's session list.
 	 */
 	private agentHosts(): readonly ReconcileHost[] {
-		const hosts = new Map<string, ReconcileHost>();
+		const hosts = new Map<RuntimeId, ReconcileHost>();
 		for (const workspace of this.coordinator.model.workspaces) {
 			if (workspace.agents.length === 0) continue;
 			const runtime = runtimeFor(workspace.location);
 			hosts.set(runtime.id, runtime);
-		}
-		if (hosts.size > 1) {
-			throw new Error(
-				`Agents are running on ${String(hosts.size)} machines, and one reconcile round can only be about one`,
-			);
 		}
 		return [...hosts.values()];
 	}
@@ -1382,6 +1469,7 @@ export class AppController {
 		// that has lost its last needs its loop stopped. `follow` is idempotent
 		// and compares before it acts, so this is a nudge like the line above it.
 		this.agentReconcilers.follow(this.agentHosts());
+		this.releaseIdleMachines();
 		this.syncEditorViews();
 		// What is on screen follows the selection, wherever the selection
 		// changed — a menu command, a restored session, or the page.
@@ -1853,6 +1941,7 @@ export class AppController {
 				await this.reconcile(
 					effect.token,
 					effect.kind === "reconcile_agent" ? effect.agentId : undefined,
+					effect.kind === "reconcile_agents" ? effect.machine : undefined,
 				);
 				return;
 			case "close_workspace":
@@ -2320,6 +2409,7 @@ export class AppController {
 	private async reconcile(
 		token: OperationToken,
 		agentId: ReturnType<typeof parseAgentId> | undefined,
+		machine: RuntimeId | undefined,
 	): Promise<void> {
 		const adapter = agents();
 		if (!adapter) {
@@ -2332,9 +2422,27 @@ export class AppController {
 			);
 			return;
 		}
+		// One Agent's round is about the machine that Agent is on; a whole
+		// machine's round says which in the effect. Neither is a search: an
+		// Agent whose Workspace has gone has no machine, and it has no session
+		// to ask about either, so the round is over before it starts.
+		const asked =
+			machine ??
+			(agentId === undefined ? undefined : this.machineOfAgent(agentId));
+		if (asked === undefined) {
+			this.failOperation(
+				token,
+				agentSubject(agentId, {
+					code: "agent_runtime_unavailable",
+					detail:
+						"The Workspace this Agent belongs to is no longer open, so there is no machine to ask about it.",
+				}),
+			);
+			return;
+		}
 		let reconciliation: AgentReconciliation;
 		try {
-			reconciliation = await adapter.reconcile(agentId);
+			reconciliation = await adapter.reconcile(asked, agentId);
 		} catch (error) {
 			// A provider that would not answer is a failure of the Agent port, and
 			// the model has to be told so: an effect nobody completes leaves the
@@ -2669,6 +2777,89 @@ export class AppController {
 		)?.location;
 	}
 
+	/**
+	 * The `devhub-terminal` a window on this machine names, installed if need be.
+	 *
+	 * One answer per machine, remembered, because installing it is files written
+	 * over a network and a socket forwarded, and a second window on the same
+	 * host must not redo either. It is not remembered *across* a failure: a host
+	 * that was unreachable when the first window opened is asked again by the
+	 * second, which is how it recovers without a restart.
+	 */
+	private terminalLauncherFor(runtime: Runtime): Promise<TerminalLauncher> {
+		const existing = this.launchers.get(runtime.id);
+		if (existing) return existing;
+		const userDataPath = this.userDataPath;
+		if (userDataPath === undefined) {
+			throw new Error(
+				"a terminal launcher was asked for before the runtimes were started",
+			);
+		}
+		const entryScript = join(
+			APP_ROOT,
+			"out",
+			"main",
+			"terminal",
+			"devhubTerminal.js",
+		);
+		const entryRoot = join(APP_ROOT, "out", "main");
+		const installed = runtime.terminalLauncher({
+			localLauncherPath: terminalLauncherPath(userDataPath),
+			controlSocketPath: controlSocketPath(userDataPath),
+			entryFiles: terminalEntryClosure(entryRoot, entryScript),
+			entryName: relative(entryRoot, entryScript).split(sep).join("/"),
+			serverDataFolderName:
+				vscodeProduct.serverDataFolderName ?? ".vscode-server",
+			serverCommit: vscodeProduct.commit,
+		});
+		this.launchers.set(runtime.id, installed);
+		installed.catch(() => {
+			if (this.launchers.get(runtime.id) === installed) {
+				this.launchers.delete(runtime.id);
+			}
+		});
+		return installed;
+	}
+
+	/**
+	 * What a window is told its DevHub terminal is.
+	 *
+	 * Per window, because the workbench's integrated terminal runs where its pty
+	 * host runs: a window on a host must name the launcher written *there*, and
+	 * naming this Mac's would be a path that machine has never heard of. The
+	 * patched `platform.ts` reads one variable and the renderer's environment is
+	 * the window configuration's `userEnv`, so one value here is one answer per
+	 * window without a second protocol.
+	 *
+	 * A machine whose launcher could not be installed is not a reason to refuse
+	 * the window: the person asked for a folder, and a folder they can edit
+	 * without a DevHub terminal is worth more than no folder at all. It is said
+	 * out loud rather than swallowed — in the log here, and in the terminal tab
+	 * over there, because the variable is simply absent and the patch refuses to
+	 * invent a launcher.
+	 */
+	private async windowTerminalEnvironment(
+		location: WorkspaceLocation | undefined,
+	): Promise<Record<string, string>> {
+		const runtime =
+			location === undefined ? localRuntime() : runtimeFor(location);
+		try {
+			const launcher = await this.terminalLauncherFor(runtime);
+			if (launcher.unreachable !== undefined) {
+				console.error(
+					`[devhub] terminal launcher on ${runtime.id}: ${launcher.unreachable}`,
+				);
+			}
+			return windowTerminalEnvironment(launcher);
+		} catch (error: unknown) {
+			console.error(
+				`[devhub] terminal launcher on ${runtime.id} could not be installed`,
+				error instanceof Error ? error.stack : error,
+			);
+			return {};
+		}
+	}
+
 	private async openEditorView(
 		editorKey: string,
 	): Promise<WorkbenchView | undefined> {
@@ -2704,6 +2895,12 @@ export class AppController {
 			}
 		}
 		const services = await this.services();
+		// Which `devhub-terminal` this window names, decided here because this
+		// is where the window's machine is already known. A local window gets
+		// the launcher `bootstrapShell` wrote before any window existed, which
+		// is the same path `process.env` already carries — so nothing about a
+		// local window changes.
+		const terminalEnvironment = await this.windowTerminalEnvironment(location);
 		// Go through VS Code's own open path, which is what creates a
 		// `CodeWindow` — and therefore, through the shim, a view in the shell.
 		// The same call for both kinds of place: an ssh folder differs only in
@@ -2711,6 +2908,7 @@ export class AppController {
 		const windows = await services.windows().open({
 			context: OpenContext.API,
 			cli: this.cliArgs,
+			userEnv: terminalEnvironment,
 			urisToOpen:
 				location === undefined ? [] : [{ folderUri: folderUriFor(location) }],
 			forceEmpty: location === undefined,
@@ -3525,8 +3723,9 @@ export class AppController {
 		// answer is a fact about DevHub, and `--metrics` is where facts about
 		// DevHub are read.
 		const wiring = this.terminalsWiring;
-		const terminalClients = wiring?.runtime.adapterAvailable
-			? await wiring.runtime.listClientsUnlocked(
+		const localTmux = wiring ? await wiring.local() : undefined;
+		const terminalClients = localTmux?.adapterAvailable
+			? await localTmux.listClientsUnlocked(
 					new CancellationToken(),
 					OperationDeadline.in(METRICS_CLIENT_TIMEOUT_MS),
 				)
