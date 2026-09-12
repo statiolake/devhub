@@ -5,6 +5,8 @@
 	"dataFolderName": ".devhub",
 	"sharedDataFolderName": ".devhub-shared",
 	"serverDataFolderName": ".devhub-server",
+	"serverApplicationName": "devhub-server",
+	"serverDownloadUrlTemplate": "https://github.com/statiolake/devhub/releases/download/reh-${commit}/devhub-reh-${os}-${arch}-${commit}.tar.gz",
 	"darwinBundleIdentifier": "net.statiolake.devhub",
 	"urlProtocol": "devhub",
 	"win32MutexName": "devhub",

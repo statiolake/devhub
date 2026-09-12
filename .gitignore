@@ -12,6 +12,11 @@ apps/desktop/dist/
 # The Node version vscode/'s build pins, fetched by scripts/provision-vscode.sh
 vscode-toolchain/
 
+# The remote extension host trees scripts/build_reh.py packs. VS Code's build
+# root is the parent of the submodule, which for DevHub is this repository, so
+# `npm run gulp vscode-reh-linux-x64-min` writes them here and not under vscode/.
+vscode-reh-*/
+
 # Throwaway spike scratch (captures, logs, sample folders)
 .spike/
 
@@ -40,3 +45,8 @@ apps/desktop/.test-scratch/
 *.dmg
 *.zip
 *.app/
+# Where scripts/build-app.sh and scripts/build_reh.py leave what they made.
+# `*.zip` and `*.app/` already covered the app; the server tarballs are a
+# quarter of a gigabyte each and would otherwise be one `git add .` from the
+# history.
+dist/
