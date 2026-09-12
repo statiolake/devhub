@@ -42,7 +42,7 @@ export class DevHubDialogMainService extends DialogMainService {
 			? appController().editorSurfaceKeyForView(window.id)
 			: undefined;
 		if (view && surfaceKey !== undefined) {
-			return askWorkbenchDialog(options, surfaceKey);
+			return askWorkbenchDialog(options, surfaceKey, view);
 		}
 		return super.showMessageBox(options, parentWindow(window));
 	}

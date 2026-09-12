@@ -16,6 +16,7 @@
  */
 
 import { shellWindow } from "./shellWindow.js";
+import type { WorkbenchView } from "./workbenchView.js";
 
 /**
  * Button labels carry Windows mnemonics — "&&Save All", "Do&&n't Save".
@@ -49,21 +50,45 @@ function toneOf(
  * There is deliberately no timeout: this is a question with no default answer,
  * and answering it for them — either way — is worse than waiting. The promise
  * settles if the window goes away, because then there is nobody to ask.
+ *
+ * It also settles when the *workbench* goes away, and that is the whole reason
+ * this takes the view rather than only its key. A question stands until the
+ * person answers it, until something newer replaces it, or until its subject
+ * is gone — and closing a workspace is that third case. Without this, a remote
+ * that could not be resolved left "Could not establish connection to …" on
+ * screen over a workspace that no longer existed, one per attempt, with no
+ * button in DevHub that could take it away: the view it belonged to had been
+ * destroyed, so nothing was left to answer it. The alert's lifetime is a
+ * property of its subject, not of whoever raised it.
  */
 export async function askWorkbenchDialog(
 	options: Electron.MessageBoxOptions,
 	surfaceKey: string,
+	view: WorkbenchView,
 ): Promise<Electron.MessageBoxReturnValue> {
+	const modals = shellWindow().modals;
 	const buttons = options.buttons ?? ["OK"];
-	const response = await shellWindow().modals.ask({
-		kind: "workbench-dialog",
-		surfaceKey,
-		message: options.message,
-		detail: options.detail,
-		buttons: buttons.map(withoutMnemonics),
-		defaultId: options.defaultId ?? 0,
-		cancelId: options.cancelId ?? Math.max(0, buttons.length - 1),
-		tone: toneOf(options.type),
-	});
-	return { response, checkboxChecked: false };
+	const subjectGone = (): void => {
+		modals.closeWhere(
+			(modal) =>
+				modal.request.kind === "workbench-dialog" &&
+				modal.request.surfaceKey === surfaceKey,
+		);
+	};
+	view.once("closed", subjectGone);
+	try {
+		const response = await modals.ask({
+			kind: "workbench-dialog",
+			surfaceKey,
+			message: options.message,
+			detail: options.detail,
+			buttons: buttons.map(withoutMnemonics),
+			defaultId: options.defaultId ?? 0,
+			cancelId: options.cancelId ?? Math.max(0, buttons.length - 1),
+			tone: toneOf(options.type),
+		});
+		return { response, checkboxChecked: false };
+	} finally {
+		view.off("closed", subjectGone);
+	}
 }
