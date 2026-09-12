@@ -397,10 +397,12 @@ jobs:
       - name: Build the server tarball
         run: scripts/build_reh.py ${{ matrix.target }} --skip-provision --out-dir dist
 
-      # Kept whole rather than published here: the release is created once, by
-      # the job below, when every architecture has one. A release that exists
-      # with half its assets is a 404 for the other half of the people who
-      # upgrade, and the URL is baked into their app.
+      # Not published here: the release is created once, by the job below, out
+      # of whichever architectures got this far. A missing `<os>-<arch>` asset
+      # is a 404 for the people on that architecture — which the extension
+      # reports by name, see docs/remote-ssh.md — but withholding the ones that
+      # did build makes it a 404 for everyone, and leaves a red run whose only
+      # fix is to rebuild both.
       - name: Hand the tarball to the publishing job
         uses: actions/upload-artifact@v4
         with:
@@ -409,9 +411,18 @@ jobs:
           retention-days: 1
           if-no-files-found: error
 
+  # `always()` so one architecture failing does not withhold the other. The
+  # failed leg stays red in the run — nothing here reports success on its
+  # behalf — and the release carries the assets that exist. `needed` is still
+  # the gate: nothing is published on a night the deciding job said there was
+  # no new server, and nothing is published if that job itself did not answer.
   reh-publish:
     name: Publish the server release
     needs: [reh-decide, reh]
+    if: >-
+      always()
+      && needs.reh-decide.result == 'success'
+      && needs.reh-decide.outputs.needed == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -435,6 +446,13 @@ jobs:
           TAG: ${{ needs.reh-decide.outputs.tag }}
         run: |
           set -euo pipefail
+          shopt -s nullglob
+          tarballs=(dist/*.tar.gz)
+          if [ ${#tarballs[@]} -eq 0 ]; then
+            echo "every Server leg failed: there is nothing to publish for $TAG." >&2
+            echo "Read the red legs above; the release is left as it was." >&2
+            exit 1
+          fi
           ls -l dist
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" dist/*.tar.gz --clobber
@@ -541,9 +559,9 @@ jobs:
       - name: Build the tmux tarball
         run: scripts/build_tmux.py ${{ matrix.target }} --out-dir dist
 
-      # Kept whole rather than published here, as the server tarballs are: the
-      # release is created once, by the job below, when both architectures have
-      # one. Half a release is a 404 for half the people who install.
+      # Not published here, as the server tarballs are not: the release is
+      # created once, by the job below, out of whichever architectures got this
+      # far. A missing one is a 404 for that architecture alone.
       - name: Hand the tarball to the publishing job
         uses: actions/upload-artifact@v4
         with:
@@ -552,9 +570,14 @@ jobs:
           retention-days: 1
           if-no-files-found: error
 
+  # Same rule as `reh-publish` above, and for the same reason.
   tmux-publish:
     name: Publish the tmux release
     needs: [tmux-decide, tmux]
+    if: >-
+      always()
+      && needs.tmux-decide.result == 'success'
+      && needs.tmux-decide.outputs.needed == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -576,6 +599,13 @@ jobs:
           TAG: ${{ needs.tmux-decide.outputs.tag }}
         run: |
           set -euo pipefail
+          shopt -s nullglob
+          tarballs=(dist/*.tar.gz)
+          if [ ${#tarballs[@]} -eq 0 ]; then
+            echo "every tmux leg failed: there is nothing to publish for $TAG." >&2
+            echo "Read the red legs above; the release is left as it was." >&2
+            exit 1
+          fi
           ls -l dist
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" dist/*.tar.gz --clobber

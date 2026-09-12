@@ -94,7 +94,12 @@ REH package task walks into the output looking for its SDK and throws when it
 is not there. That step is also the reason the script stages the SDK into
 `.build` itself before packaging: the compile that is supposed to put it there
 did on linux-x64 and did not on linux-arm64, and the only symptom was a missing
-directory in the output tree twenty-five minutes in. Two small packages stay — `@github/copilot` (12 KB) and
+directory in the output tree twenty-five minutes in. What it stages is *files*,
+not a directory — `gulp.dest` recreates the directory entries its source glob
+yielded, so an SDK subtree whose files were all filtered out (or that npm left
+as a symlink into `@github/copilot-<os>-<arch>`, which a glob that does not
+follow symlinks walks past) reaches `.build` as an empty shell that satisfies
+every existence check and carries nothing into the server tree. Two small packages stay — `@github/copilot` (12 KB) and
 `@github/copilot-sdk` (736 KB) — because `server-main.js` reads their versions
 at startup. The build runs `bin/devhub-server --version` afterwards whenever the
 target is one the building machine can execute, so a deletion that broke
@@ -106,6 +111,18 @@ addons — node-pty, `@parcel/watcher`, kerberos, `@vscode/spdlog` — and the
 package task ships them as npm installed them, for the machine that did the
 installing. Cross-building produces a tarball that unpacks, starts, and then
 fails to open a terminal.
+
+**One architecture at a time.** Each target is a job of its own and the release
+is cut from whichever of them succeeded: a leg that fails stays red in the run,
+and the other leg's tarball is still published. So a release can exist with
+`linux-x64` in it and no `linux-arm64`. That is deliberate — the alternative
+withholds a server that built fine from everyone on the architecture that was
+never broken. What a host on the missing architecture sees is a 404 on the URL
+above, with the `<os>-<arch>` in the filename: `server-setup.sh` reports
+`Error downloading server from <url>`, so the name of the missing asset is in
+the message rather than left to be guessed at. The fix is to
+make the red leg green and rerun the workflow with `force_reh`; the release is
+named after the VS Code commit and is added to, not replaced.
 
 `darwin-arm64` is not published yet, for the same reason and one more: it would
 have to be built on the macOS job, which already runs for two hours against a
