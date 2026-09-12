@@ -42,6 +42,7 @@ import { exportTerminalLauncher } from "./loginEnvironment.js";
 import { activeProfile } from "../../model/profile.js";
 import type { AppErrorWire } from "../../ipc/appShell.js";
 import { errorWireAt, withDetail } from "../../model/wire.js";
+import { answerFinderOpens, finderOpen } from "./openFromFinder.js";
 
 /** How long a quit waits for the runtimes to let go before leaving anyway. */
 const SHUTDOWN_DEADLINE_MS = 3_000;
@@ -177,6 +178,15 @@ export async function bootstrapShell(
 	});
 	await controller.startRuntimes(userDataPath);
 	openShellPage();
+
+	// The desktop's door, opened at the same moment and onto the same room.
+	// `open-file` has been collecting paths since before `ready` (see
+	// `openFromFinder.ts`); this is the point where there is a DevHub to open
+	// them in, and what opens them is `openFromCli` — the `devhub` command's own
+	// entry point, one line below where the socket is handed the same function.
+	answerFinderOpens(finderOpen(controller), (error) =>
+		controller.noteFailure(error),
+	);
 
 	// DevHub's own front door. It is opened here, once the model and the
 	// runtimes behind it exist, because every request it accepts is answered by

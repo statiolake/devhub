@@ -3058,6 +3058,21 @@ export class AppController {
 	//#region the devhub command line
 
 	/**
+	 * A request that came from outside DevHub and failed, said out loud.
+	 *
+	 * The `devhub` command has a terminal to be refused in, and the App Shell
+	 * page has the request it made. Finder has neither: it hands DevHub a path
+	 * and stops listening. So the failure has nowhere to go but the one place
+	 * DevHub shows failures that belong to the application rather than to a
+	 * workspace or an Agent — the same `publishError` every other rootless
+	 * failure ends at. Without it, "Open With ▸ DevHub" on a file DevHub cannot
+	 * open does nothing at all, and nothing is the one report nobody can act on.
+	 */
+	noteFailure(error: unknown): void {
+		this.publishError(errorWire(error));
+	}
+
+	/**
 	 * `devhub`, with nothing after it.
 	 *
 	 * There is nothing to open and nothing to choose, so nothing is chosen: the

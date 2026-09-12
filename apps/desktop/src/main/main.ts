@@ -22,6 +22,9 @@
  *       from package.json, so without this it calls DevHub "@devhub/desktop".
  *    6. `migrateUserDataDirectory` runs the moment the user-data path is
  *       resolved, before anything derives a path from it. See its own file.
+ *    7. `registerListeners`' `open-file` handler is DevHub's
+ *       (`shell/openFromFinder.ts`), because upstream's parks the paths for an
+ *       `openFirstWindow` DevHub has replaced.
  *
  *  Everything else is upstream, including the copyright below.
  *--------------------------------------------------------------------------------------------*/
@@ -52,6 +55,7 @@ import { INLSConfiguration } from 'code-oss-dev/out/vs/nls.js';
 import { NativeParsedArgs } from 'code-oss-dev/out/vs/platform/environment/common/argv.js';
 import { createRequire } from 'node:module';
 import { migrateUserDataDirectory } from './userDataMigration.js';
+import { watchForFinderOpens } from './shell/openFromFinder.js';
 import { activeProfile } from '../model/profile.js';
 
 /**
@@ -661,12 +665,15 @@ function registerListeners(): void {
 	/**
 	 * macOS: when someone drops a file to the not-yet running VSCode, the open-file event fires even before
 	 * the app-ready event. We listen very early for open-file and remember this upon startup as path to open.
+	 *
+	 * DevHub: substitution 7. Upstream parks the paths in `globalThis.macOpenFiles`
+	 * for `CodeApplication.openFirstWindow` to consume, and DevHub replaces that
+	 * method with one that opens no window at all — so the array had no reader
+	 * and grew for the life of the process. `shell/openFromFinder.ts` is the
+	 * reader instead: same early listener, same queue-until-there-is-somebody-to-tell,
+	 * and the answer is DevHub's own `devhub <path>` rule rather than a new window.
 	 */
-	const macOpenFiles: string[] = [];
-	(globalThis as { macOpenFiles?: string[] }).macOpenFiles = macOpenFiles;
-	app.on('open-file', function (event, path) {
-		macOpenFiles.push(path);
-	});
+	watchForFinderOpens();
 
 	/**
 	 * macOS: react to open-url requests.

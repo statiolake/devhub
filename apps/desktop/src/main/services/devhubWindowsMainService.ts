@@ -30,7 +30,10 @@
 
 import { WindowsMainService } from "code-oss-dev/out/vs/platform/windows/electron-main/windowsMainService.js";
 import type { ICodeWindow } from "code-oss-dev/out/vs/platform/window/electron-main/window.js";
-import type { IOpenEmptyConfiguration } from "code-oss-dev/out/vs/platform/windows/electron-main/windows.js";
+import type {
+	IOpenConfiguration,
+	IOpenEmptyConfiguration,
+} from "code-oss-dev/out/vs/platform/windows/electron-main/windows.js";
 import { OpenContext } from "code-oss-dev/out/vs/platform/windows/electron-main/windows.js";
 import type { IOpenEmptyWindowOptions } from "code-oss-dev/out/vs/platform/window/common/window.js";
 import { isSingleFolderWorkspaceIdentifier } from "code-oss-dev/out/vs/platform/workspace/common/workspace.js";
@@ -82,6 +85,37 @@ export class DevHubWindowsMainService extends WindowsMainService {
 			return Promise.resolve([]);
 		}
 		return super.openEmptyWindow(openConfig, options);
+	}
+
+	/**
+	 * A document handed over by the desktop has one answer too, and it is
+	 * DevHub's.
+	 *
+	 * `OpenContext.DOCK` reaches `open` from exactly one place upstream: the
+	 * `app.on('open-file')` handler in `vs/code/electron-main/app.ts`, which is
+	 * Finder's "Open With", a drop on the Dock tile and `open -a DevHub <file>`.
+	 * Upstream answers it with `preferNewWindow: true` — a new window holding
+	 * that file. DevHub has one window, and where a file lands in it is
+	 * `AppController.openFromCli`'s rule: the workspace whose root contains it,
+	 * or the Scratch editor. Left in place, upstream's answer ran *as well as*
+	 * DevHub's and the file was opened twice, the second time in the wrong place.
+	 *
+	 * So this drops it, and `shell/openFromFinder.ts` is the only listener that
+	 * acts. Two answers to one question is the problem, the same one the Dock
+	 * icon above has; they are next to each other because they are one rule.
+	 *
+	 * A VS Code bump has to re-check that `open` still receives `DOCK` only from
+	 * that handler. The other `DOCK` caller, `openFirstWindow`, is already
+	 * DevHub's own and opens nothing.
+	 */
+	override open(openConfig: IOpenConfiguration): Promise<ICodeWindow[]> {
+		if (openConfig.context === OpenContext.DOCK) {
+			console.log(
+				"[devhub] open: a document from the desktop is openFromFinder's to answer",
+			);
+			return Promise.resolve([]);
+		}
+		return super.open(openConfig);
 	}
 }
 
