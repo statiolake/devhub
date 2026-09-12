@@ -28,6 +28,7 @@ import {
 	type DevhubApi,
 	type GitHubLoginWire,
 	type AssignmentBranchWire,
+	type WorkspacePlaceWire,
 	type IssueAssignment,
 	type IssueRepository,
 	type RepositoryStatusWire,
@@ -130,11 +131,11 @@ const devhub: DevhubApi = {
 		>,
 	githubLogin: () =>
 		ipcRenderer.invoke(CHANNELS.githubLogin) as Promise<GitHubLoginWire>,
-	assignmentBranch: (url: string, directory: string) =>
+	assignmentBranch: (url: string, place: WorkspacePlaceWire) =>
 		ipcRenderer.invoke(
 			CHANNELS.assignmentBranch,
 			url,
-			directory,
+			place,
 		) as Promise<AssignmentBranchWire>,
 	closeWorkspace: (workspaceId: string) =>
 		ipcRenderer.invoke(CHANNELS.closeWorkspace, workspaceId) as Promise<void>,
@@ -204,8 +205,8 @@ const devhub: DevhubApi = {
 			url,
 			parentDirectory,
 		) as Promise<string>,
-	listBranches: (directory: string) =>
-		ipcRenderer.invoke(CHANNELS.listBranches, directory) as Promise<
+	listBranches: (place: WorkspacePlaceWire) =>
+		ipcRenderer.invoke(CHANNELS.listBranches, place) as Promise<
 			readonly string[]
 		>,
 	assignIssue: (request: IssueAssignment) =>

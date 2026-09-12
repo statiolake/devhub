@@ -38,6 +38,7 @@ import {
 } from "../components/shell/cloneDestination";
 import type { AgentActionWire, IssueRepository } from "../client";
 import { folderName, githubCloneTarget } from "../../model/projects";
+import { placeLabel, type WorkspacePlaceWire } from "../../ipc/contract";
 import { toAppError } from "../failure";
 import { useAppShell } from "../useAppShell";
 
@@ -135,7 +136,7 @@ interface FlowServices {
   readonly cloneRepository: (url: string, parent: string) => Promise<string>;
   readonly assignIssue: (request: {
     readonly issueUrl: string;
-    readonly directory: string;
+    readonly place: WorkspacePlaceWire;
     readonly branch?: string;
     readonly profileId: string;
     readonly actionId?: string;
@@ -145,7 +146,7 @@ interface FlowServices {
   readonly cloneParentDirectories: () => Promise<readonly string[]>;
   readonly assignmentBranch: (
     url: string,
-    directory: string,
+    place: WorkspacePlaceWire,
   ) => Promise<AssignmentBranchWire>;
   readonly agentActions: () => Promise<readonly AgentActionWire[]>;
 }
@@ -287,15 +288,15 @@ function repositoryStep(
       return cloneDestinationStep(services, item, agent, nothingCloned(item));
     }
     const only = repositories.length === 1 ? repositories[0] : undefined;
-    if (only) return branchStep(services, item, agent, only.mainWorktree);
+    if (only) return branchStep(services, item, agent, only.place);
     const answer = await input.ask({
       ...SHEET,
       title: `Which ${item.owner}/${item.repository}`,
       question: `This machine has more than one clone of ${item.owner}/${item.repository}. Choose the one to work in, or clone it again somewhere else.`,
       items: repositories.map((repository) => ({
-        id: repository.mainWorktree,
-        label: repository.mainWorktree,
-        searchText: repository.mainWorktree,
+        id: placeLabel(repository.place),
+        label: placeLabel(repository.place),
+        searchText: placeLabel(repository.place),
         detail: worktreeCount(repository.worktrees.length),
       })),
       pinned: [
@@ -317,10 +318,10 @@ function repositoryStep(
       );
     }
     const chosen = repositories.find(
-      (repository) => repository.mainWorktree === answer.id,
+      (repository) => placeLabel(repository.place) === answer.id,
     );
     return chosen
-      ? branchStep(services, item, agent, chosen.mainWorktree)
+      ? branchStep(services, item, agent, chosen.place)
       : cloneDestinationStep(services, item, agent, nothingCloned(item));
   };
 }
@@ -371,11 +372,12 @@ function branchStep(
   services: FlowServices,
   item: GitHubItem,
   agent: AgentChoice,
-  root: string,
+  place: WorkspacePlaceWire,
 ): WizardStep {
+  const root = place.path;
   return async (input) => {
     const plan = await input.working(`Reading ${itemLabel(item)}…`, () =>
-      services.assignmentBranch(gitHubItemUrl(item), root),
+      services.assignmentBranch(gitHubItemUrl(item), place),
     );
     const wip = wipBranchForIssue(item.number);
     const answer = await input.ask({
@@ -404,13 +406,21 @@ function branchStep(
       note: unreachableBranch(plan),
     });
     if (answer.id === OPEN_CHECKOUT && plan.checkedOutAt !== undefined) {
-      return finishStep(services, item, agent, plan.checkedOutAt, undefined);
+      // Somewhere the same repository is checked out, so the same machine: git
+      // answered from there and could not have named a folder anywhere else.
+      return finishStep(
+        services,
+        item,
+        agent,
+        { ...place, path: plan.checkedOutAt },
+        undefined,
+      );
     }
     return finishStep(
       services,
       item,
       agent,
-      root,
+      place,
       answer.id === NEW_WORKTREE
         ? wip
         : answer.id === EXISTING_BRANCH
@@ -533,7 +543,10 @@ function cloneDestinationStep(
     // place, so the location question is asked over that one place and a new
     // worktree — which is the same question everybody else gets, from the same
     // step, rather than a second arrangement of it.
-    return branchStep(services, item, agent, directory);
+    return branchStep(services, item, agent, {
+      kind: "local",
+      path: directory,
+    });
   };
 }
 
@@ -551,7 +564,7 @@ function finishStep(
   services: FlowServices,
   item: GitHubItem,
   agent: AgentChoice,
-  directory: string,
+  place: WorkspacePlaceWire,
   branch: string | undefined,
   allowStaleBase = false,
 ): WizardStep {
@@ -560,7 +573,7 @@ function finishStep(
       await input.working(`Setting up ${itemLabel(item)}…`, () =>
         services.assignIssue({
           issueUrl: gitHubItemUrl(item),
-          directory,
+          place,
           branch,
           profileId: agent.profileId,
           actionId: agent.actionId,
@@ -570,7 +583,7 @@ function finishStep(
       );
     } catch (error: unknown) {
       if (toAppError(error).code !== "git_fetch_failed") throw error;
-      return staleBaseStep(services, item, agent, directory, branch, error);
+      return staleBaseStep(services, item, agent, place, branch, error);
     }
     return undefined;
   };
@@ -581,7 +594,7 @@ function staleBaseStep(
   services: FlowServices,
   item: GitHubItem,
   agent: AgentChoice,
-  directory: string,
+  place: WorkspacePlaceWire,
   branch: string | undefined,
   failure: unknown,
 ): WizardStep {
@@ -603,7 +616,7 @@ function staleBaseStep(
     // Escape is the other answer, and it is the runner's: back to the branch,
     // where a branch that already exists needs no fetch at all.
     return answer.id === USE_STALE_BASE
-      ? finishStep(services, item, agent, directory, branch, true)
+      ? finishStep(services, item, agent, place, branch, true)
       : undefined;
   };
 }

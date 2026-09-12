@@ -87,11 +87,16 @@ describe("finding the clones of an Issue's repository", () => {
 			join(root, "widget_feature_9-old"),
 		);
 
-		const found = await findClones(configWith(), GIT, ISSUE, []);
+		const found = await findClones(
+			configWith(),
+			() => Promise.resolve(GIT),
+			ISSUE,
+			[],
+		);
 
 		// One repository, not two directories.
 		expect(found).toHaveLength(1);
-		expect(found[0]?.mainWorktree).toBe(main);
+		expect(found[0]?.place.path).toBe(main);
 		expect(found[0]?.worktrees.map((w) => w.branch)).toEqual([
 			expect.anything(),
 			"feature/9-old",
@@ -117,7 +122,12 @@ describe("finding the clones of an Issue's repository", () => {
 				join(hidden, "somewhere"),
 			);
 
-			const found = await findClones(configWith(), GIT, ISSUE, []);
+			const found = await findClones(
+				configWith(),
+				() => Promise.resolve(GIT),
+				ISSUE,
+				[],
+			);
 
 			expect(found[0]?.worktrees.map((w) => w.branch)).toContain(
 				"feature/9-hidden",
@@ -132,9 +142,79 @@ describe("finding the clones of an Issue's repository", () => {
 		const second = await repository("widget_two");
 		// Named so the search reaches it; what makes them separate is that git
 		// gives each its own main worktree.
-		const found = await findClones(configWith(), GIT, ISSUE, []);
-		expect(found.map((entry) => entry.mainWorktree).toSorted()).toEqual(
+		const found = await findClones(
+			configWith(),
+			() => Promise.resolve(GIT),
+			ISSUE,
+			[],
+		);
+		expect(found.map((entry) => entry.place.path).toSorted()).toEqual(
 			[first, second].toSorted(),
 		);
+	});
+});
+
+/**
+ * A clone that is not on this machine.
+ *
+ * The search walks this Mac's disk, so everything it finds is here. What can
+ * be anywhere is a Workspace that is already open, and it arrives with the
+ * machine it is on — because a path is not an identity: two hosts can both
+ * have `/srv/app`, and a candidate read with the wrong machine's git is
+ * answered "not a repository" and silently dropped.
+ *
+ * These use a real directory under two host labels, because what is being
+ * pinned is which place each git was resolved from and which place ends up on
+ * the answer. Whether a host is reachable is `SshRuntime`'s to say, and it
+ * says it in its own tests.
+ */
+describe("a clone on another machine", () => {
+	it("is inspected with the git of the machine it names", async () => {
+		const here = await repository("widget");
+		const asked: string[] = [];
+		const found = await findClones(
+			configWith(),
+			(place) => {
+				asked.push(
+					place.kind === "ssh" ? `${place.host}:${place.path}` : place.path,
+				);
+				return Promise.resolve(GIT);
+			},
+			ISSUE,
+			[{ kind: "ssh", host: "build.example.com", path: here }],
+		);
+		// The candidate was resolved from its own place, not from a path with
+		// the machine dropped off it.
+		expect(asked).toContain(`build.example.com:${here}`);
+		// And the place travels onto the answer, so the worktree the flow makes
+		// next lands on the machine the repository is on.
+		expect(found.map((entry) => entry.place)).toContainEqual({
+			kind: "ssh",
+			host: "build.example.com",
+			path: here,
+		});
+	});
+
+	it("keeps two hosts with the same path apart", async () => {
+		// The whole reason a place and not a path. Folded by path alone these
+		// would be one repository, and choosing it would open a folder on
+		// whichever of the two machines happened to be inspected first.
+		const here = await repository("widget");
+		const found = await findClones(
+			configWith(),
+			() => Promise.resolve(GIT),
+			ISSUE,
+			[
+				{ kind: "ssh", host: "one.example.com", path: here },
+				{ kind: "ssh", host: "two.example.com", path: here },
+			],
+		);
+		expect(
+			found
+				.flatMap((entry) =>
+					entry.place.kind === "ssh" ? [entry.place.host] : [],
+				)
+				.toSorted(),
+		).toEqual(["one.example.com", "two.example.com"]);
 	});
 });

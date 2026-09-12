@@ -13,6 +13,7 @@ import type {
   AssignmentBranchWire,
   GitHubLoginWire,
   IssueAssignment,
+  WorkspacePlaceWire,
   IssueRepository,
   RepositoryStatusWire,
   SshHostWire,
@@ -81,7 +82,7 @@ export interface AppShellContextValue {
    */
   readonly assignmentBranch: (
     url: string,
-    directory: string,
+    place: WorkspacePlaceWire,
   ) => Promise<AssignmentBranchWire>;
   /** The ways of starting an agent on an Issue, as Settings lists them. */
   readonly agentActions: () => Promise<readonly AgentActionWire[]>;
@@ -150,7 +151,9 @@ export interface AppShellContextValue {
     url: string,
     parentDirectory: string,
   ) => Promise<string>;
-  readonly listBranches: (directory: string) => Promise<readonly string[]>;
+  readonly listBranches: (
+    place: WorkspacePlaceWire,
+  ) => Promise<readonly string[]>;
   readonly assignIssue: (request: IssueAssignment) => Promise<AppOutcome>;
   readonly agentProfiles: AgentProfiles;
   /**

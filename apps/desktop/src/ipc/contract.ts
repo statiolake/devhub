@@ -34,6 +34,24 @@ export interface IssueWorktree {
 }
 
 /**
+ * A folder, and the machine it is on.
+ *
+ * The shape `requestedLocation` already takes, so a place that crossed the wire
+ * becomes a `WorkspaceLocation` — and therefore a `Runtime` — without anything
+ * in between having to ask which machine it was. A bare path would be the same
+ * question asked again at every step, with a different answer each time
+ * somebody forgot.
+ */
+export type WorkspacePlaceWire =
+	| { readonly kind: "local"; readonly path: string }
+	| { readonly kind: "ssh"; readonly host: string; readonly path: string };
+
+/** A place as a person reads it: `host:path` when the machine is not this one. */
+export function placeLabel(place: WorkspacePlaceWire): string {
+	return place.kind === "ssh" ? `${place.host}:${place.path}` : place.path;
+}
+
+/**
  * One clone of the repository an Issue lives in, with everywhere it is checked
  * out.
  *
@@ -49,8 +67,17 @@ export interface IssueWorktree {
  * are the same repository exactly when git says they are.
  */
 export interface IssueRepository {
-	/** The repository's own directory, and its identity. */
-	readonly mainWorktree: string;
+	/**
+	 * The repository's own directory, and its identity — with the machine it is
+	 * on, because a path alone is not one.
+	 *
+	 * Two hosts can both have `/srv/app`, and a flow that carried only the path
+	 * would run git on this Mac against a directory on somebody's server and be
+	 * told it is not a repository. So every step after this one carries the
+	 * place, and the worktree it makes is a place on the same machine by
+	 * construction.
+	 */
+	readonly place: WorkspacePlaceWire;
 	/** Everywhere it is checked out, the repository itself first. */
 	readonly worktrees: readonly IssueWorktree[];
 }
@@ -116,8 +143,8 @@ export interface AssignmentBranchWire {
 /** Everything the Issue flow asked, once it has all the answers. */
 export interface IssueAssignment {
 	readonly issueUrl: string;
-	/** The clone to work in. */
-	readonly directory: string;
+	/** The clone to work in, and the machine it is on. */
+	readonly place: WorkspacePlaceWire;
 	/**
 	 * The branch to make a worktree for. Absent means the person chose to work
 	 * in the clone itself, which is a workspace they may already have open.
@@ -644,9 +671,9 @@ export interface DevhubApi {
 	 */
 	assignmentBranch(
 		url: string,
-		directory: string,
+		place: WorkspacePlaceWire,
 	): Promise<AssignmentBranchWire>;
-	listBranches(directory: string): Promise<readonly string[]>;
+	listBranches(place: WorkspacePlaceWire): Promise<readonly string[]>;
 	/**
 	 * Do what the answers add up to: make the worktree if one was asked for,
 	 * open it, write the Issue down against it, and start the agent.

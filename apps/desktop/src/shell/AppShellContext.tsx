@@ -21,6 +21,7 @@ import {
   type AgentActionWire,
   type AppShellClient,
   type IssueAssignment,
+  type WorkspacePlaceWire,
   type RepositoryStatusWire,
   type WorkspacePickerCandidate,
   type WorkspacePickerEvent,
@@ -524,8 +525,8 @@ export function AppShellProvider({
   const githubLogin = useCallback(() => transport.githubLogin(), [transport]);
 
   const assignmentBranch = useCallback(
-    (url: string, directory: string) =>
-      transport.assignmentBranch(url, directory),
+    (url: string, place: WorkspacePlaceWire) =>
+      transport.assignmentBranch(url, place),
     [transport],
   );
 
@@ -635,7 +636,7 @@ export function AppShellProvider({
   );
 
   const listBranches = useCallback(
-    (directory: string) => transport.listBranches(directory),
+    (place: WorkspacePlaceWire) => transport.listBranches(place),
     [transport],
   );
 

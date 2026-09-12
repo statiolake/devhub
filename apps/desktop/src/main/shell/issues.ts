@@ -18,7 +18,10 @@ import type { Config } from "../../model/config.js";
 import { remoteIdentity, type RemoteIdentity } from "../../model/domain.js";
 import type { IssueReference } from "../../model/github.js";
 import { baseName } from "../../model/worktrees.js";
-import type { WorkspacePickerEvent } from "../../ipc/contract.js";
+import type {
+	WorkspacePickerEvent,
+	WorkspacePlaceWire,
+} from "../../ipc/contract.js";
 import {
 	parseWorktrees,
 	readRepository,
@@ -29,7 +32,7 @@ import { startWorkspacePicker } from "./workspacePicker.js";
 
 /** One place work can happen: a repository itself, or one of its worktrees. */
 export interface WorktreeCandidate {
-	readonly path: string;
+	readonly place: WorkspacePlaceWire;
 	/** What is checked out there, so the person can tell two worktrees apart. */
 	readonly branch: string | undefined;
 	/** This is the repository itself rather than one of its worktrees. */
@@ -38,8 +41,14 @@ export interface WorktreeCandidate {
 
 /** One clone of the Issue's repository, with everywhere it is checked out. */
 export interface RepositoryCandidate {
-	readonly mainWorktree: string;
+	/** The main worktree, and the machine it is on. */
+	readonly place: WorkspacePlaceWire;
 	readonly worktrees: readonly WorktreeCandidate[];
+}
+
+/** What makes two places the same place: the machine as well as the path. */
+function placeKey(place: WorkspacePlaceWire): string {
+	return place.kind === "ssh" ? `ssh://${place.host}${place.path}` : place.path;
 }
 
 /** How many named-alike directories are worth asking git about. */
@@ -76,30 +85,43 @@ export function remoteForIssue(issue: IssueReference): RemoteIdentity {
  */
 export async function findClones(
 	config: Config,
-	command: GitCommand,
+	gitFor: (place: WorkspacePlaceWire) => Promise<GitCommand>,
 	issue: IssueReference,
-	openRoots: readonly string[],
+	openPlaces: readonly WorkspacePlaceWire[],
 ): Promise<readonly RepositoryCandidate[]> {
 	const wanted = remoteForIssue(issue);
-	const named = [
-		...new Set([
-			...openRoots,
-			...(await searchSources(config, issue.repository)),
-		]),
-	].filter((path) => namesRepository(path, issue.repository));
+	// The sources walk *this* machine's disk, so what they find is on it. A
+	// Workspace that is already open may be anywhere, and it arrives with the
+	// machine it is on — which is what makes the git below the right git, and
+	// what stops a path from a host being handed to this Mac's git and coming
+	// back "not a repository".
+	const candidates = new Map<string, WorkspacePlaceWire>();
+	for (const place of [
+		...openPlaces,
+		...(await searchSources(config, issue.repository)).map(
+			(path): WorkspacePlaceWire => ({ kind: "local", path }),
+		),
+	]) {
+		if (!namesRepository(place.path, issue.repository)) continue;
+		candidates.set(placeKey(place), place);
+	}
 
-	const repositories = new Set<string>();
-	for (const path of named.slice(0, MAX_INSPECTED)) {
-		const facts = await readRepository(command, path);
+	const repositories = new Map<string, WorkspacePlaceWire>();
+	for (const place of [...candidates.values()].slice(0, MAX_INSPECTED)) {
+		const command = await gitFor(place);
+		const facts = await readRepository(command, place.path);
 		if (!facts || facts.remote !== wanted) continue;
-		repositories.add(facts.mainWorktree);
+		// A repository's main worktree is on the same machine as the checkout
+		// git read it from; there is nowhere else it could be.
+		const main = { ...place, path: facts.mainWorktree };
+		repositories.set(placeKey(main), main);
 	}
 
 	const found: RepositoryCandidate[] = [];
-	for (const mainWorktree of repositories) {
+	for (const place of repositories.values()) {
 		found.push({
-			mainWorktree,
-			worktrees: await worktreesOf(command, mainWorktree),
+			place,
+			worktrees: await worktreesOf(await gitFor(place), place),
 		});
 	}
 	return found;
@@ -116,23 +138,24 @@ export async function findClones(
  */
 async function worktreesOf(
 	command: GitCommand,
-	mainWorktree: string,
+	main: WorkspacePlaceWire,
 ): Promise<readonly WorktreeCandidate[]> {
 	const itself: WorktreeCandidate = {
-		path: mainWorktree,
+		place: main,
 		branch: undefined,
 		isMainWorktree: true,
 	};
 	const output = await runGit(command, ["worktree", "list", "--porcelain"], {
-		cwd: mainWorktree,
+		cwd: main.path,
 	}).catch(() => undefined);
 	if (output === undefined) return [itself];
 	const records = parseWorktrees(output);
 	return records
 		.map((record) => ({
-			path: record.path,
+			// git lists paths on the machine it ran on, which is this repository's.
+			place: { ...main, path: record.path },
 			branch: record.branch,
-			isMainWorktree: record.path === mainWorktree,
+			isMainWorktree: record.path === main.path,
 		}))
 		.sort(
 			(left, right) =>

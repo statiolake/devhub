@@ -29,6 +29,7 @@ import type {
   SshHostWire,
   WorkspacePickerCandidate,
   WorkspacePickerEvent,
+  WorkspacePlaceWire,
 } from "../ipc/contract";
 
 export type {
@@ -41,6 +42,7 @@ export type {
   SshHostWire,
   WorkspacePickerCandidate,
   WorkspacePickerEvent,
+  WorkspacePlaceWire,
 };
 
 export interface AppShellClient {
@@ -91,7 +93,7 @@ export interface AppShellClient {
   githubLogin(): Promise<GitHubLoginWire>;
   assignmentBranch(
     url: string,
-    directory: string,
+    place: WorkspacePlaceWire,
   ): Promise<AssignmentBranchWire>;
   agentActions(): Promise<readonly AgentActionWire[]>;
   closeWorkspace(workspaceId: string): Promise<void>;
@@ -108,7 +110,7 @@ export interface AppShellClient {
   cancelInjection(agentId: string, injectionId: string): Promise<AppOutcome>;
   findIssueRepositories(issueUrl: string): Promise<readonly IssueRepository[]>;
   cloneRepository(url: string, parentDirectory: string): Promise<string>;
-  listBranches(directory: string): Promise<readonly string[]>;
+  listBranches(place: WorkspacePlaceWire): Promise<readonly string[]>;
   assignIssue(request: IssueAssignment): Promise<AppOutcome>;
   chooseWorkspaceFolder(): Promise<string | undefined>;
   openSettings(): Promise<void>;
@@ -179,7 +181,7 @@ export function createShellClient(api: DevhubApi = devhub()): AppShellClient {
       api.openSshWorkspace(host, path, withAgent),
     cloneParentDirectories: () => api.cloneParentDirectories(),
     githubLogin: () => api.githubLogin(),
-    assignmentBranch: (url, directory) => api.assignmentBranch(url, directory),
+    assignmentBranch: (url, place) => api.assignmentBranch(url, place),
     agentActions: () => api.agentActions(),
     closeWorkspace: (workspaceId) => api.closeWorkspace(workspaceId),
     answerWorktreeClose: (workspaceId, answer) =>
@@ -193,7 +195,7 @@ export function createShellClient(api: DevhubApi = devhub()): AppShellClient {
     findIssueRepositories: (issueUrl) => api.findIssueRepositories(issueUrl),
     cloneRepository: (url, parentDirectory) =>
       api.cloneRepository(url, parentDirectory),
-    listBranches: (directory) => api.listBranches(directory),
+    listBranches: (place) => api.listBranches(place),
     assignIssue: (request) => api.assignIssue(request),
     chooseWorkspaceFolder: () => api.chooseWorkspaceFolder(),
     openSettings: () => api.openSettings(),

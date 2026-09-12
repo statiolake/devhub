@@ -27,9 +27,13 @@ function mount(overrides: Partial<AppShellContextValue> = {}) {
   // One repository, checked out in one place: the shape most of these walk.
   const findIssueRepositories = vi.fn().mockResolvedValue([
     {
-      mainWorktree: "/projects/widget",
+      place: { kind: "local", path: "/projects/widget" },
       worktrees: [
-        { path: "/projects/widget", branch: "main", isMainWorktree: true },
+        {
+          place: { kind: "local", path: "/projects/widget" },
+          branch: "main",
+          isMainWorktree: true,
+        },
       ],
     },
   ]);
@@ -150,7 +154,7 @@ describe("assigning an Issue", () => {
     await vi.waitFor(() => {
       expect(assignIssue).toHaveBeenCalledWith({
         issueUrl: ISSUE,
-        directory: "/projects/widget",
+        place: { kind: "local", path: "/projects/widget" },
         branch: "feature/128-wip",
         profileId: "claude",
         actionId: "implement",
@@ -164,13 +168,13 @@ describe("assigning an Issue", () => {
     const { assignIssue } = mount({
       findIssueRepositories: vi.fn().mockResolvedValue([
         {
-          mainWorktree: "/projects/widget",
+          place: { kind: "local", path: "/projects/widget" },
           worktrees: [
             { path: "/projects/widget", branch: "main", isMainWorktree: true },
           ],
         },
         {
-          mainWorktree: "/other/widget",
+          place: { kind: "local", path: "/other/widget" },
           worktrees: [
             { path: "/other/widget", branch: "main", isMainWorktree: true },
           ],
@@ -186,7 +190,7 @@ describe("assigning an Issue", () => {
     await vi.waitFor(() => {
       expect(assignIssue).toHaveBeenCalledWith(
         expect.objectContaining({
-          directory: "/other/widget",
+          place: { kind: "local", path: "/other/widget" },
           branch: undefined,
         }),
       );
@@ -212,11 +216,45 @@ describe("assigning an Issue", () => {
     await vi.waitFor(() => {
       expect(assignIssue).toHaveBeenCalledWith(
         expect.objectContaining({
-          directory: "/projects/widget_alice_fix-the-crash",
+          place: {
+            kind: "local",
+            path: "/projects/widget_alice_fix-the-crash",
+          },
           branch: undefined,
         }),
       );
     });
+  });
+
+  it("keeps the machine on every step once the clone is on one", async () => {
+    // A repository on a host. Every git question after this is asked of that
+    // host, and the worktree the flow makes is beside the repository — on the
+    // host, because a worktree of a remote repository cannot be anywhere else.
+    const place = {
+      kind: "ssh",
+      host: "build.example.com",
+      path: "/srv/widget",
+    };
+    const assignmentBranch = vi.fn().mockResolvedValue({ reachable: false });
+    const { assignIssue } = mount({
+      findIssueRepositories: vi.fn().mockResolvedValue([
+        {
+          place,
+          worktrees: [{ place, branch: "main", isMainWorktree: true }],
+        },
+      ]),
+      assignmentBranch,
+    } as unknown as Partial<AppShellContextValue>);
+    await answer("Assign Issue", ISSUE);
+    await answer(/Agent for/u);
+    await choose(/Where to work on/u, /New branch/u);
+
+    await vi.waitFor(() => {
+      expect(assignIssue).toHaveBeenCalledWith(
+        expect.objectContaining({ place, branch: "feature/128-wip" }),
+      );
+    });
+    expect(assignmentBranch).toHaveBeenCalledWith(ISSUE, place);
   });
 
   it("says a fork's branch cannot be checked out here, and offers the rest", async () => {
@@ -259,7 +297,7 @@ describe("assigning an Issue", () => {
     await vi.waitFor(() => {
       expect(assignIssue).toHaveBeenCalledWith({
         issueUrl: ISSUE,
-        directory: "/projects/widget",
+        place: { kind: "local", path: "/projects/widget" },
         branch: undefined,
         profileId: "claude",
         actionId: "implement",
@@ -350,15 +388,15 @@ describe("assigning an Issue", () => {
       expect(assignIssue).toHaveBeenCalledWith(
         expect.objectContaining({
           issueUrl: PULL_REQUEST,
-          directory: "/projects/widget",
+          place: { kind: "local", path: "/projects/widget" },
           branch: "alice/fix-the-crash",
         }),
       );
     });
-    expect(assignmentBranch).toHaveBeenCalledWith(
-      PULL_REQUEST,
-      "/projects/widget",
-    );
+    expect(assignmentBranch).toHaveBeenCalledWith(PULL_REQUEST, {
+      kind: "local",
+      path: "/projects/widget",
+    });
   });
 
   it("checks nothing out when the work stays in the repository itself", async () => {
@@ -379,7 +417,7 @@ describe("assigning an Issue", () => {
       expect(assignIssue).toHaveBeenCalledWith(
         expect.objectContaining({
           issueUrl: PULL_REQUEST,
-          directory: "/projects/widget",
+          place: { kind: "local", path: "/projects/widget" },
           branch: undefined,
         }),
       );
