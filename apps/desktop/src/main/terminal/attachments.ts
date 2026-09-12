@@ -65,7 +65,6 @@ import {
 	type TerminalFrame,
 	type TerminalSize,
 } from "../../ipc/terminal.js";
-import { localRuntime } from "../runtime/registry.js";
 import { terminalEnvironment, type Pty, type PtyFactory } from "./pty.js";
 import { CancellationToken, sameTarget, type TerminalTarget } from "./ports.js";
 
@@ -113,6 +112,16 @@ export interface AttachContext {
 	readonly viewLabel: string;
 	/** The semantic terminal this attachment is a client of. */
 	readonly target: TerminalTarget;
+	/**
+	 * Where the tmux client is opened: on the machine its session is on.
+	 *
+	 * A `tmux attach` runs where the server is, so the PTY belongs to the
+	 * target's machine and not to whichever machine the ledger happens to be
+	 * running on. The ledger itself is one — a page's surfaces are released
+	 * together whichever machines they reach — so the machine travels with the
+	 * attachment rather than with the manager.
+	 */
+	readonly spawn: PtyFactory;
 	/** The tmux client to run, resolved against an exact marked session. */
 	readonly file: string;
 	readonly args: readonly string[];
@@ -531,6 +540,7 @@ class Attachment {
 }
 
 export interface AttachmentManagerOptions {
+	/** Overridden only by tests; production opens the target machine's PTY. */
 	readonly spawn?: PtyFactory;
 	readonly randomBytes: (count: number) => Uint8Array;
 	readonly environment?: () => Record<string, string | undefined>;
@@ -547,16 +557,16 @@ export class AttachmentManager {
 	private readonly attachments = new Map<string, Attachment>();
 	private readonly inFlight = new Map<number, InFlightAttach>();
 	private nextAttachKey = 1;
-	private readonly spawn: PtyFactory;
+	private readonly spawn: PtyFactory | undefined;
 	private readonly randomBytes: (count: number) => Uint8Array;
 	private readonly environment: () => Record<string, string | undefined>;
 	private generation: number;
 
 	constructor(options: AttachmentManagerOptions) {
-		// The Agent pane's PTY is opened on the Workspace's machine, and
-		// `openPty` is what that means when the machine is this one. The
-		// injected `spawn` is the tests' fake, which is the only other caller.
-		this.spawn = options.spawn ?? ((launch) => localRuntime().spawnPty(launch));
+		// The Agent pane's PTY is opened on the Workspace's machine, which the
+		// attach context names. The injected one is the tests' fake, and it
+		// stands in for every machine at once — which is what a test wants.
+		this.spawn = options.spawn;
 		this.randomBytes = options.randomBytes;
 		this.environment = options.environment ?? (() => terminalEnvironment());
 		// The ledger starts somewhere unguessable, so a generation from one run
@@ -644,7 +654,7 @@ export class AttachmentManager {
 		const targetGeneration = this.nextGeneration();
 		let pty: Pty;
 		try {
-			pty = this.spawn({
+			pty = (this.spawn ?? context.spawn)({
 				file: context.file,
 				args: context.args,
 				cwd: context.cwd,

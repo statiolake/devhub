@@ -30,6 +30,7 @@ import {
 	type WorkspaceTerminalTarget,
 } from "./ports.js";
 import { sessionMatches, type TmuxTerminalRuntime } from "./tmux.js";
+import type { RuntimeId } from "../runtime/runtime.js";
 
 /**
  * A runtime failure as the view sees it.
@@ -84,16 +85,27 @@ export interface AttachSurfaceRequest {
 }
 
 export interface TerminalSurfacesOptions {
-	readonly runtime: TmuxTerminalRuntime;
+	/**
+	 * The tmux adapter for one machine.
+	 *
+	 * A function and not a value, because a target names the machine its
+	 * session is on and there is one adapter per machine: a surface holding one
+	 * adapter would answer a Workspace on another computer with this Mac's tmux
+	 * server, which is not a slower answer but a session that is not the one
+	 * asked for.
+	 */
+	readonly runtimeFor: (machine: RuntimeId) => Promise<TmuxTerminalRuntime>;
 	readonly attachments: AttachmentManager;
 }
 
 export class TerminalSurfaces {
-	private readonly runtime: TmuxTerminalRuntime;
+	private readonly runtimeFor: (
+		machine: RuntimeId,
+	) => Promise<TmuxTerminalRuntime>;
 	private readonly attachments: AttachmentManager;
 
 	constructor(options: TerminalSurfacesOptions) {
-		this.runtime = options.runtime;
+		this.runtimeFor = options.runtimeFor;
 		this.attachments = options.attachments;
 	}
 
@@ -120,15 +132,16 @@ export class TerminalSurfaces {
 		);
 		try {
 			const operation = permit.cancel;
-			const release = await this.runtime.acquireOperation(operation);
+			const runtime = await this.runtimeFor(request.target.machine);
+			const release = await runtime.acquireOperation(operation);
 			try {
-				const deadline = OperationDeadline.in(this.runtime.timeoutMs);
-				await this.runtime.ensureUnlocked(request.target, operation);
-				const sessions = await this.runtime.listSessionsUnlocked(
+				const deadline = OperationDeadline.in(runtime.timeoutMs);
+				await runtime.ensureUnlocked(request.target, operation);
+				const sessions = await runtime.listSessionsUnlocked(
 					operation,
 					deadline,
 				);
-				const identity = this.runtime.targetIdentity(request.target, sessions);
+				const identity = runtime.targetIdentity(request.target, sessions);
 				const exact = sessions.find(
 					(session) =>
 						session.name === identity.sessionName &&
@@ -143,11 +156,12 @@ export class TerminalSurfaces {
 					surfaceKey: request.surfaceKey,
 					viewLabel: request.viewLabel,
 					target: request.target,
-					file: this.runtime.tmuxPath(),
-					args: this.runtime.attachArgv(exact.name),
+					spawn: (launch) => runtime.spawnPty(launch),
+					file: runtime.tmuxPath(),
+					args: runtime.attachArgv(exact.name),
 					// The client runs from the launch home: a workspace folder
 					// that has been deleted must not make the client unusable.
-					cwd: this.runtime.contextHome,
+					cwd: runtime.contextHome,
 					size: request.size,
 					sink: request.sink,
 				});
@@ -179,15 +193,13 @@ export class TerminalSurfaces {
 		target: TerminalTarget,
 		cancel = new CancellationToken(),
 	): Promise<{ readonly file: string; readonly args: readonly string[] }> {
-		const release = await this.runtime.acquireOperation(cancel);
+		const runtime = await this.runtimeFor(target.machine);
+		const release = await runtime.acquireOperation(cancel);
 		try {
-			const deadline = OperationDeadline.in(this.runtime.timeoutMs);
-			await this.runtime.ensureUnlocked(target, cancel);
-			const sessions = await this.runtime.listSessionsUnlocked(
-				cancel,
-				deadline,
-			);
-			const identity = this.runtime.targetIdentity(target, sessions);
+			const deadline = OperationDeadline.in(runtime.timeoutMs);
+			await runtime.ensureUnlocked(target, cancel);
+			const sessions = await runtime.listSessionsUnlocked(cancel, deadline);
+			const identity = runtime.targetIdentity(target, sessions);
 			const exact = sessions.find(
 				(session) =>
 					session.name === identity.sessionName &&
@@ -195,8 +207,8 @@ export class TerminalSurfaces {
 			);
 			if (!exact) throw new TerminalFailure("session_unavailable");
 			return {
-				file: this.runtime.tmuxPath(),
-				args: this.runtime.attachArgv(exact.name),
+				file: runtime.tmuxPath(),
+				args: runtime.attachArgv(exact.name),
 			};
 		} catch (failure: unknown) {
 			throw terminalFailureFromPort(failure);
@@ -258,6 +270,7 @@ export class TerminalSurfaces {
 		cancel = new CancellationToken(),
 	): Promise<void> {
 		this.attachments.detachTarget({ kind: "workspace", ...target });
-		await this.runtime.closeWorkspace(target, cancel);
+		const runtime = await this.runtimeFor(target.machine);
+		await runtime.closeWorkspace(target, cancel);
 	}
 }

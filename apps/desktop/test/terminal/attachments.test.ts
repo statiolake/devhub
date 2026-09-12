@@ -82,10 +82,26 @@ const OTHER_WORKSPACE_SURFACE =
 function targetFor(surfaceKey: string): TerminalTarget {
   if (surfaceKey === "global-terminal") return SCRATCH_TARGET;
   if (surfaceKey === OTHER_WORKSPACE_SURFACE) {
-    return workspaceTarget("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "/other");
+    return workspaceTarget(
+      "local",
+      "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      "/other",
+    );
   }
-  return workspaceTarget("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "/ws");
+  return workspaceTarget("local", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "/ws");
 }
+
+/**
+ * The per-attach factory these tests never reach.
+ *
+ * Production takes the PTY from the target's machine, through the context;
+ * these tests give the manager one fake for every machine at once, which is
+ * the override that wins. A factory that throws says so rather than letting a
+ * mistake here open something real.
+ */
+const unusedSpawn = (): never => {
+  throw new Error("the manager's injected spawn should have been used");
+};
 
 interface Harness {
   readonly manager: AttachmentManager;
@@ -131,6 +147,7 @@ function harness(): Harness {
         surfaceKey,
         viewLabel,
         target,
+        spawn: unusedSpawn,
         file: "/usr/bin/tmux",
         args: ["-L", "devhub", "attach-session", "-t", "scratch"],
         cwd: ".",
@@ -263,6 +280,7 @@ describe("attach", () => {
       surfaceKey: "global-terminal",
       viewLabel: "shell:1",
       target: SCRATCH_TARGET,
+      spawn: unusedSpawn,
       file: "/usr/bin/tmux",
       args: [],
       cwd: ".",
@@ -302,6 +320,7 @@ describe("attach", () => {
         surfaceKey: "global-terminal",
         viewLabel: "shell:1",
         target: SCRATCH_TARGET,
+        spawn: unusedSpawn,
         file: "/usr/bin/tmux",
         args: [],
         cwd: ".",
@@ -582,6 +601,7 @@ describe("output", () => {
         surfaceKey: "global-terminal",
         viewLabel: "shell:1",
         target: SCRATCH_TARGET,
+        spawn: unusedSpawn,
         file: "/usr/bin/tmux",
         args: [],
         cwd: ".",

@@ -170,7 +170,14 @@ test(
 			bootstrapDirectory: home,
 		});
 		const surfaces = new TerminalSurfaces({
-			runtime,
+			// One real tmux, on this machine. The lookup asserts the machine it
+			// is asked for rather than ignoring it: a target naming another one
+			// and being answered with this server would be a green test about
+			// nothing.
+			runtimeFor: (machine) => {
+				assert.equal(machine, "local");
+				return Promise.resolve(runtime);
+			},
 			attachments: new AttachmentManager({
 				randomBytes: (count) => new Uint8Array(randomBytes(count)),
 				environment: () => terminalEnvironment(process.env),

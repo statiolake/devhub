@@ -279,7 +279,7 @@ describe("configuration", () => {
 		expect(parseNumericPrefix("next")).toBe(0);
 	});
 
-	it("selects one trusted user config by precedence", () => {
+	it("selects one trusted user config by precedence", async () => {
 		const root = home();
 		const xdg = join(root, "xdg");
 		mkdirSync(join(xdg, "tmux"), { recursive: true });
@@ -288,15 +288,17 @@ describe("configuration", () => {
 			home: root,
 			environment: { PATH: "/usr/bin", XDG_CONFIG_HOME: xdg },
 		});
-		expect(configured.userTmuxConfigPath()).toBe(join(xdg, "tmux", "tmux.conf"));
+		expect(await configured.userTmuxConfigPath()).toBe(
+			join(xdg, "tmux", "tmux.conf"),
+		);
 
 		writeFileSync(join(root, ".tmux.conf"), "# home\n");
-		expect(configured.userTmuxConfigPath()).toBe(join(root, ".tmux.conf"));
+		expect(await configured.userTmuxConfigPath()).toBe(join(root, ".tmux.conf"));
 
 		rmSync(join(root, ".tmux.conf"));
 		rmSync(xdg, { recursive: true, force: true });
 		// Never an absent path: the bootstrap `source-file` always names one.
-		expect(configured.userTmuxConfigPath()).toBe("/dev/null");
+		expect(await configured.userTmuxConfigPath()).toBe("/dev/null");
 	});
 });
 
@@ -350,7 +352,7 @@ describe("inspection", () => {
 		const cancel = new CancellationToken();
 		cancel.cancel();
 		await expect(
-			runtime({}).inspect(workspaceTarget("a", "/ws"), cancel),
+			runtime({}).inspect(workspaceTarget("local", "a", "/ws"), cancel),
 		).rejects.toThrowError(
 			expect.objectContaining({ code: "cancelled" }) as unknown as Error,
 		);

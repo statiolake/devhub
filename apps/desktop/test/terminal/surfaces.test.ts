@@ -44,15 +44,23 @@ function surfacesWith(
   attachments: ReturnType<typeof spyAttachments>,
 ): TerminalSurfaces {
   return new TerminalSurfaces({
-    runtime: runtime as unknown as TmuxTerminalRuntime,
+    runtimeFor: (machine) => {
+      // One adapter per machine, and these targets are all on this one. A
+      // second machine asked for here would be a test whose target and whose
+      // adapter had drifted apart, which is the mistake the lookup exists to
+      // make impossible.
+      expect(machine).toBe("local");
+      return Promise.resolve(runtime as unknown as TmuxTerminalRuntime);
+    },
     attachments: attachments as unknown as AttachmentManager,
   });
 }
 
 const TARGET = {
+  machine: "local",
   workspaceId: "00000000-0000-4000-8000-0000000000aa",
   root: "/projects/widget",
-};
+} as const;
 
 describe("letting go of a terminal", () => {
   it("detaches every client and asks the runtime for nothing", () => {

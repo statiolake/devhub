@@ -153,6 +153,19 @@ afterEach(() => {
   }
 });
 
+/**
+ * These suites run against one real tmux on this machine, so the per-machine
+ * lookup has one entry. It is asserted rather than ignored: a test that asked
+ * about another machine and got this one's tmux would be a green test about
+ * nothing.
+ */
+const localAdapter =
+  (runtime: TmuxTerminalRuntime) =>
+  (machine: string): Promise<TmuxTerminalRuntime> => {
+    expect(machine).toBe("local");
+    return Promise.resolve(runtime);
+  };
+
 const deadline = (runtime: TmuxTerminalRuntime) =>
   OperationDeadline.in(runtime.timeoutMs);
 
@@ -309,7 +322,7 @@ describe.skipIf(TMUX === undefined)(
       mkdirSync(join(test.home, "workspace"), { recursive: true });
       const root = realpathSync(join(test.home, "workspace"));
       const workspaceId = "00000000-0000-4000-8000-000000000042";
-      const target = workspaceTarget(workspaceId, root);
+      const target = workspaceTarget("local", workspaceId, root);
       await test.runtime.ensure(target);
 
       const sessions = await test.runtime.listSessions(
@@ -334,7 +347,7 @@ describe.skipIf(TMUX === undefined)(
         ),
       ).toHaveLength(2);
 
-      await test.runtime.closeWorkspace({ workspaceId, root });
+      await test.runtime.closeWorkspace({ machine: "local", workspaceId, root });
       const afterClose = await test.runtime.listSessions(
         test.socket,
         test.cancel,
@@ -367,11 +380,12 @@ describe.skipIf(TMUX === undefined)(
       const otherRoot = realpathSync(join(test.home, "other"));
       const otherId = "00000000-0000-4000-8000-000000000045";
 
-      const sessions = new AgentSessions(test.runtime);
+      const sessions = new AgentSessions(localAdapter(test.runtime));
       await test.runtime.ensure(SCRATCH_TARGET);
-      await test.runtime.ensure(workspaceTarget(workspaceId, root));
-      await test.runtime.ensure(workspaceTarget(otherId, otherRoot));
+      await test.runtime.ensure(workspaceTarget("local", workspaceId, root));
+      await test.runtime.ensure(workspaceTarget("local", otherId, otherRoot));
       await sessions.launch({
+        machine: "local",
         agentId,
         workspaceId,
         root,
@@ -387,8 +401,8 @@ describe.skipIf(TMUX === undefined)(
 
       // What an explicit close does, in the order the app does it: the Agents
       // first, then the workspace's own terminal.
-      await sessions.terminate(agentId);
-      await test.runtime.closeWorkspace({ workspaceId, root });
+      await sessions.terminate("local", agentId);
+      await test.runtime.closeWorkspace({ machine: "local", workspaceId, root });
 
       const after = await test.runtime.listSessions(
         test.socket,
@@ -401,7 +415,7 @@ describe.skipIf(TMUX === undefined)(
           `ws-${workspaceDigest(otherRoot).slice(0, 20)}`,
         ].sort(),
       );
-      expect(await sessions.list()).toEqual([]);
+      expect(await sessions.list("local")).toEqual([]);
     });
 
     /**
@@ -425,10 +439,11 @@ describe.skipIf(TMUX === undefined)(
       const workspaceId = "00000000-0000-4000-8000-000000000046";
       const agentId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaab0";
 
-      const sessions = new AgentSessions(test.runtime);
+      const sessions = new AgentSessions(localAdapter(test.runtime));
       await test.runtime.ensure(SCRATCH_TARGET);
-      await test.runtime.ensure(workspaceTarget(workspaceId, root));
+      await test.runtime.ensure(workspaceTarget("local", workspaceId, root));
       await sessions.launch({
+        machine: "local",
         agentId,
         workspaceId,
         root,
@@ -464,7 +479,7 @@ describe.skipIf(TMUX === undefined)(
           `ws-${workspaceDigest(root).slice(0, 20)}`,
         ].sort(),
       );
-      expect(await new AgentSessions(adopted).list()).toEqual([
+      expect(await new AgentSessions(localAdapter(adopted)).list("local")).toEqual([
         // The activity marker is tmux's clock, so it is asserted by shape:
         // what matters here is that the listing carries one at all.
         { agentId, workspaceId, activity: expect.stringMatching(/^\d+$/) },
@@ -476,6 +491,7 @@ describe.skipIf(TMUX === undefined)(
       mkdirSync(join(test.home, "workspace"), { recursive: true });
       const root = realpathSync(join(test.home, "workspace"));
       const target = workspaceTarget(
+        "local",
         "00000000-0000-4000-8000-000000000043",
         root,
       );
@@ -494,7 +510,8 @@ describe.skipIf(TMUX === undefined)(
         mkdirSync(root, { recursive: true });
         targets.push(
           workspaceTarget(
-            `00000000-0000-4000-8000-00000000005${index}`,
+        "local",
+        `00000000-0000-4000-8000-00000000005${index}`,
             realpathSync(root),
           ),
         );
@@ -530,7 +547,7 @@ describe.skipIf(TMUX === undefined)(
 
     it("reads three Agents and one of their screens in one process", async () => {
       const test = fixture("roundcost", undefined, { counting: true });
-      const sessions = new AgentSessions(test.runtime);
+      const sessions = new AgentSessions(localAdapter(test.runtime));
       const agentIds = [
         "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa61",
         "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa62",
@@ -540,6 +557,7 @@ describe.skipIf(TMUX === undefined)(
       await test.runtime.ensure(SCRATCH_TARGET);
       for (const agentId of agentIds) {
         await sessions.launch({
+          machine: "local",
           agentId,
           workspaceId,
           root: test.home,
@@ -551,7 +569,7 @@ describe.skipIf(TMUX === undefined)(
       // client. It was one for the listing plus one per Agent whose pane had
       // moved — five times a second, for as long as an Agent was talking.
       const roundStart = test.tmuxRuns();
-      const round = await sessions.round([agentIds[1] as string]);
+      const round = await sessions.round("local", [agentIds[1] as string]);
       expect(test.tmuxRuns() - roundStart).toBe(1);
       expect(round.live.map((one) => one.agentId).sort()).toEqual(
         [...agentIds].sort(),
@@ -560,7 +578,7 @@ describe.skipIf(TMUX === undefined)(
 
       // And a round that needs no screen is still exactly one.
       const idleStart = test.tmuxRuns();
-      expect((await sessions.round([])).screens.size).toBe(0);
+      expect((await sessions.round("local", [])).screens.size).toBe(0);
       expect(test.tmuxRuns() - idleStart).toBe(1);
     });
 
@@ -572,6 +590,7 @@ describe.skipIf(TMUX === undefined)(
       mkdirSync(join(test.home, "two\nlines"), { recursive: true });
       const root = realpathSync(join(test.home, "two\nlines"));
       const target = workspaceTarget(
+        "local",
         "00000000-0000-4000-8000-000000000044",
         root,
       );
@@ -740,12 +759,13 @@ describe.skipIf(TMUX === undefined)(
      */
     it("ends an Agent session when the Agent's own command exits", async () => {
       const test = fixture("agentexit");
-      const sessions = new AgentSessions(test.runtime);
+      const sessions = new AgentSessions(localAdapter(test.runtime));
       const agentId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1";
       const workspaceId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1";
       await test.runtime.ensure(SCRATCH_TARGET);
 
       await sessions.launch({
+        machine: "local",
         agentId,
         workspaceId,
         root: test.home,
@@ -754,7 +774,7 @@ describe.skipIf(TMUX === undefined)(
         command: { file: "/bin/sh", args: ["-c", "sleep 30"], env: {} },
       });
 
-      expect(await sessions.list()).toEqual([
+      expect(await sessions.list("local")).toEqual([
         { agentId, workspaceId, activity: expect.stringMatching(/^\d+$/) },
       ]);
       const listed = await test.runtime.listSessions(
@@ -778,18 +798,19 @@ describe.skipIf(TMUX === undefined)(
         "C-c",
       ]);
       await untilGone(sessions, agentId);
-      expect(await sessions.list()).toEqual([]);
+      expect(await sessions.list("local")).toEqual([]);
     });
 
     it("carries the profile's environment into the Agent's pane", async () => {
       const test = fixture("agentenv");
-      const sessions = new AgentSessions(test.runtime);
+      const sessions = new AgentSessions(localAdapter(test.runtime));
       const agentId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2";
       const workspaceId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2";
       const marker = join(test.home, "agent-env.txt");
       await test.runtime.ensure(SCRATCH_TARGET);
 
       await sessions.launch({
+        machine: "local",
         agentId,
         workspaceId,
         root: test.home,
@@ -808,19 +829,20 @@ describe.skipIf(TMUX === undefined)(
       expect(readFileSync(marker, "utf8")).toBe("carried");
 
       // Terminating is the exact-record kill, and it takes the pane with it.
-      await sessions.terminate(agentId);
-      expect(await sessions.list()).toEqual([]);
+      await sessions.terminate("local", agentId);
+      expect(await sessions.list("local")).toEqual([]);
     });
 
     it("reads an Agent's own screen and title, and only that Agent's", async () => {
       const test = fixture("agentcap");
-      const sessions = new AgentSessions(test.runtime);
+      const sessions = new AgentSessions(localAdapter(test.runtime));
       const agentId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa4";
       const other = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa5";
       const workspaceId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb4";
       await test.runtime.ensure(SCRATCH_TARGET);
 
       await sessions.launch({
+        machine: "local",
         agentId,
         workspaceId,
         root: test.home,
@@ -835,14 +857,14 @@ describe.skipIf(TMUX === undefined)(
         },
       });
       await untilTitle(sessions, agentId);
-      const screen = (await sessions.round([agentId])).screens.get(agentId);
+      const screen = (await sessions.round("local", [agentId])).screens.get(agentId);
       expect(screen?.oscTitle).toBe("a title");
       expect(screen?.screen).toContain("on the screen");
 
       // The id is checked in the same tmux command as the read, so asking
       // about an Agent whose session is not there answers with no screen at
       // all rather than with somebody else's pane.
-      const missing = await sessions.round([other]);
+      const missing = await sessions.round("local", [other]);
       expect(missing.screens.has(other)).toBe(false);
       expect(missing.live.map((one) => one.agentId)).toEqual([agentId]);
     });
@@ -859,6 +881,7 @@ describe.skipIf(TMUX === undefined)(
       await expect(
         test.runtime.ensure({
           kind: "agent",
+          machine: "local",
           agentId,
           workspaceId,
           root: test.home,
@@ -946,9 +969,10 @@ describe.skipIf(TMUX === undefined)(
       // launching at all. Both go through `ensureServer`, which is what the
       // mismatch was taking down.
       await test.runtime.ensure(SCRATCH_TARGET);
-      await test.runtime.ensure(workspaceTarget(workspaceId, test.home));
+      await test.runtime.ensure(workspaceTarget(
+"local", workspaceId, test.home));
       await test.runtime.launchAgent(
-        { agentId, workspaceId, root: test.home },
+        { machine: "local", agentId, workspaceId, root: test.home },
         { file: "/bin/sh", args: ["-c", "sleep 30"], env: {} },
       );
 
@@ -985,7 +1009,7 @@ describe.skipIf(TMUX === undefined)(
      */
     it("types queued text into an Agent once its prompt has settled", async () => {
       const test = fixture("inject");
-      const sessions = new AgentSessions(test.runtime);
+      const sessions = new AgentSessions(localAdapter(test.runtime));
       const detector = new AgentStatusDetector();
       const queue = new AgentInjectionQueue();
       const agentId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa5";
@@ -1030,6 +1054,7 @@ describe.skipIf(TMUX === undefined)(
       await test.runtime.ensure(SCRATCH_TARGET);
 
       await sessions.launch({
+        machine: "local",
         agentId,
         workspaceId,
         root: test.home,
@@ -1048,7 +1073,7 @@ describe.skipIf(TMUX === undefined)(
       const firstIdleAt = { at: 0 };
       let sentAt = 0;
       for (let round = 0; round < 80; round += 1) {
-        const screen = (await sessions.round([agentId])).screens.get(agentId);
+        const screen = (await sessions.round("local", [agentId])).screens.get(agentId);
         if (screen) {
           const status = detector.status("claude", screen);
           if (status === "idle" && firstIdleAt.at === 0) {
@@ -1056,7 +1081,7 @@ describe.skipIf(TMUX === undefined)(
           }
           const due = queue.due(agentId, status);
           if (due !== undefined) {
-            await sessions.inject(agentId, workspaceId, due);
+            await sessions.inject("local", agentId, workspaceId, due);
             queue.sent(agentId);
             sends += 1;
             sentAt = Date.now();
@@ -1133,7 +1158,9 @@ describe.skipIf(TMUX === undefined)(
     it("frees a window an older build pinned to a fixed size", async () => {
       const test = fixture("windowsize");
       const workspaceId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb4";
-      const target = workspaceTarget(workspaceId, test.home);
+      const target = workspaceTarget(
+        "local",
+        workspaceId, test.home);
       await test.runtime.ensure(SCRATCH_TARGET);
       await test.runtime.ensure(target);
       const session = `ws-${workspaceDigest(test.home).slice(0, 20)}`;
@@ -1169,13 +1196,15 @@ describe.skipIf(TMUX === undefined)(
      */
     it("gives an Agent a blank pane title, and leaves a workspace's alone", async () => {
       const test = fixture("panetitle");
-      const sessions = new AgentSessions(test.runtime);
+      const sessions = new AgentSessions(localAdapter(test.runtime));
       const agentId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa3";
       const workspaceId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb3";
       await test.runtime.ensure(SCRATCH_TARGET);
-      await test.runtime.ensure(workspaceTarget(workspaceId, test.home));
+      await test.runtime.ensure(workspaceTarget(
+"local", workspaceId, test.home));
 
       await sessions.launch({
+        machine: "local",
         agentId,
         workspaceId,
         root: test.home,
@@ -1196,13 +1225,15 @@ describe.skipIf(TMUX === undefined)(
      */
     it("turns the status bar off for an Agent, and leaves it alone elsewhere", async () => {
       const test = fixture("agentstatus");
-      const sessions = new AgentSessions(test.runtime);
+      const sessions = new AgentSessions(localAdapter(test.runtime));
       const agentId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa7";
       const workspaceId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb7";
       await test.runtime.ensure(SCRATCH_TARGET);
-      await test.runtime.ensure(workspaceTarget(workspaceId, test.home));
+      await test.runtime.ensure(workspaceTarget(
+"local", workspaceId, test.home));
 
       await sessions.launch({
+        machine: "local",
         agentId,
         workspaceId,
         root: test.home,
@@ -1231,11 +1262,12 @@ describe.skipIf(TMUX === undefined)(
      */
     it("takes the status bar off an Agent session an older build created", async () => {
       const test = fixture("agentmigrate");
-      const sessions = new AgentSessions(test.runtime);
+      const sessions = new AgentSessions(localAdapter(test.runtime));
       const agentId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa8";
       const workspaceId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb8";
       await test.runtime.ensure(SCRATCH_TARGET);
       await sessions.launch({
+        machine: "local",
         agentId,
         workspaceId,
         root: test.home,
@@ -1255,6 +1287,7 @@ describe.skipIf(TMUX === undefined)(
       // The path every open takes.
       await test.runtime.ensure({
         kind: "agent",
+        machine: "local",
         agentId,
         workspaceId,
         root: test.home,
@@ -1298,7 +1331,7 @@ async function untilGone(
   agentId: string,
 ): Promise<void> {
   for (let attempt = 0; attempt < 200; attempt += 1) {
-    const live = await sessions.list();
+    const live = await sessions.list("local");
     if (!live.some((one) => one.agentId === agentId)) return;
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
@@ -1310,7 +1343,7 @@ async function untilTitle(
   agentId: string,
 ): Promise<void> {
   for (let attempt = 0; attempt < 200; attempt += 1) {
-    const screen = (await sessions.round([agentId])).screens.get(agentId);
+    const screen = (await sessions.round("local", [agentId])).screens.get(agentId);
     if (screen !== undefined && screen.oscTitle.length > 0) return;
     await new Promise((resolve) => setTimeout(resolve, 50));
   }

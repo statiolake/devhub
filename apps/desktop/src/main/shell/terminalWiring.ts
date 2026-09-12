@@ -14,18 +14,14 @@
  * the runtime's targets.
  */
 
-import { homedir } from "node:os";
 import {
-	SCRATCH_TARGET,
 	agentTarget,
+	scratchTarget,
 	socketName,
 	workspaceTarget,
 	type TerminalTarget,
 } from "../terminal/ports.js";
-import {
-	TmuxTerminalRuntime,
-	type RuntimeExecutable,
-} from "../terminal/tmux.js";
+import type { TmuxTerminalRuntime } from "../terminal/tmux.js";
 import {
 	registerTerminalService,
 	type TerminalService,
@@ -35,14 +31,16 @@ import type { AppModel } from "../../model/appModel.js";
 import {
 	agentId as parseAgentId,
 	workspaceId as parseWorkspaceId,
-	supportsLocalAgents,
 	type Workspace,
 } from "../../model/domain.js";
 import { TerminalFailure } from "../../ipc/terminal.js";
 import {
-	runtimeUnavailableMessage,
-	type SettingsResolvedRuntimeWire,
-} from "../../ipc/settings.js";
+	localRuntime,
+	runtimeById,
+	runtimeIdFor,
+} from "../runtime/registry.js";
+import type { RuntimeId } from "../runtime/runtime.js";
+import { TerminalRuntimes } from "./terminalRuntimes.js";
 import { registerTerminalAdapter } from "./adapters.js";
 
 /**
@@ -68,18 +66,15 @@ function refuseIfClosing(workspace: Workspace): void {
 }
 
 /**
- * A terminal runs where the folder is, and tmux runs here.
+ * The machine a Workspace's terminals and Agents run on.
  *
- * Refused rather than started somewhere else: `createSession` passes the root
- * to `tmux new-session -c`, and a remote path that happens to exist on this
- * machine would open a shell in the wrong directory on the wrong computer,
- * which is worse than not opening one. The pane says so, in the same words
- * every other surface says it, rather than showing an empty terminal.
+ * The same one its folder is on, and the same one `git` runs on: a terminal
+ * whose shell started somewhere the folder is not is a shell in the wrong
+ * directory on the wrong computer. There is no second rule for it, which is
+ * why this is `runtimeFor` and not a predicate.
  */
-function refuseIfRemote(workspace: Workspace): void {
-	if (!supportsLocalAgents(workspace.location)) {
-		throw new TerminalFailure("workspace_remote");
-	}
+function machineOf(workspace: Workspace): RuntimeId {
+	return runtimeIdFor(workspace.location);
 }
 
 /**
@@ -98,7 +93,10 @@ export function createSurfaceResolver(
 	model: () => AppModel,
 ): (surfaceKey: string) => TerminalTarget | undefined {
 	return (surfaceKey) => {
-		if (surfaceKey === "global-terminal") return SCRATCH_TARGET;
+		// The Global context is not a Workspace and is on no machine of its
+		// own, so it is this one: DevHub is running here, and Scratch is the
+		// terminal of the app rather than of a folder.
+		if (surfaceKey === "global-terminal") return scratchTarget("local");
 		const agentPrefix = "agent:";
 		if (surfaceKey.startsWith(agentPrefix)) {
 			const raw = surfaceKey.slice(agentPrefix.length);
@@ -113,8 +111,12 @@ export function createSurfaceResolver(
 			// An Agent closes with its Workspace, so it is refused for the same
 			// reason and in the same words.
 			refuseIfClosing(workspace);
-			refuseIfRemote(workspace);
-			return agentTarget(agent, workspace.id, workspace.root);
+			return agentTarget(
+				machineOf(workspace),
+				agent,
+				workspace.id,
+				workspace.root,
+			);
 		}
 		const prefix = "workspace-terminal:";
 		if (!surfaceKey.startsWith(prefix)) return undefined;
@@ -129,93 +131,69 @@ export function createSurfaceResolver(
 		}
 		if (!workspace) return undefined;
 		refuseIfClosing(workspace);
-		refuseIfRemote(workspace);
-		return workspaceTarget(workspace.id, workspace.root);
-	};
-}
-
-/**
- * An executable the runtime can launch, or the sentence saying why not.
- *
- * The reason is kept rather than reduced to `undefined`: a pane that refuses
- * to attach an hour later has no other way to say which executable was missing
- * and where DevHub looked for it.
- */
-function executable(
-	resolved: SettingsResolvedRuntimeWire,
-	configured: string,
-): RuntimeExecutable {
-	if (resolved.kind === "unavailable") {
-		return {
-			kind: "unavailable",
-			reason: runtimeUnavailableMessage(resolved),
-		};
-	}
-	return {
-		kind: "resolved",
-		value: {
-			path: resolved.value,
-			basename: configured.split("/").at(-1) ?? configured,
-		},
+		return workspaceTarget(machineOf(workspace), workspace.id, workspace.root);
 	};
 }
 
 export interface TerminalWiringOptions {
 	readonly config: Config | undefined;
-	readonly resolved: {
-		readonly tmux: SettingsResolvedRuntimeWire;
-		readonly shell: SettingsResolvedRuntimeWire;
-	};
 	/**
 	 * The one environment every DevHub child is launched with, resolved once at
 	 * startup (see `loginEnvironment.ts`). The terminal must not observe an
 	 * environment that changed under it, and the shell inside tmux inherits
-	 * exactly this — the same environment the executables above were resolved
-	 * in, so a tmux DevHub found is a tmux the shell can find too.
+	 * exactly this — the same environment the executables are resolved in, so a
+	 * tmux DevHub found is a tmux the shell can find too.
 	 */
 	readonly environment: Readonly<Record<string, string | undefined>>;
 	readonly effectiveSocketName: string;
-	readonly userDataPath: string;
 	/** The live model, for turning a workspace id into its canonical root. */
 	readonly model: () => AppModel;
 }
 
 export interface TerminalWiring {
-	readonly runtime: TmuxTerminalRuntime;
+	/** One tmux adapter per machine, built on first use. */
+	readonly runtimes: TerminalRuntimes;
+	/** This machine's, for the flows that are about this machine. */
+	local(): Promise<TmuxTerminalRuntime>;
 	readonly service: TerminalService;
 }
 
 /**
- * Build the terminal runtime and put it behind the surface keys the App Shell
- * already uses. `global-terminal` is the scratch session; a workspace's
- * terminal is named from its canonical root, which is what makes the session
- * findable again after a restart.
+ * Build the per-machine terminal adapters and put them behind the surface keys
+ * the App Shell already uses.
+ *
+ * `global-terminal` is this machine's scratch session; a workspace's terminal
+ * is named from its canonical root on its own machine, which is what makes the
+ * session findable again after a restart — and what keeps two hosts with the
+ * same path from being one terminal.
  */
 export function wireTerminals(options: TerminalWiringOptions): TerminalWiring {
-	const config = options.config;
-	const runtime = new TmuxTerminalRuntime({
-		context: {
-			home: homedir(),
-			environment: options.environment,
-		},
-		tmux: executable(options.resolved.tmux, config?.runtimes.tmux ?? "tmux"),
-		shell: shellExecutable(options.resolved.shell, config),
-		tmuxArgs: config?.runtimes.tmux_args ?? [],
+	const runtimes = new TerminalRuntimes({
+		config: options.config,
+		environment: options.environment,
 		effectiveSocketName: options.effectiveSocketName,
-		bootstrapDirectory: options.userDataPath,
 	});
+	const runtimeFromId = async (
+		machine: RuntimeId,
+	): Promise<TmuxTerminalRuntime> => runtimes.for(runtimeById(machine));
 
 	const resolveSurface = createSurfaceResolver(options.model);
 
-	const service = registerTerminalService({ runtime, resolveSurface });
+	const service = registerTerminalService({
+		runtimeFor: runtimeFromId,
+		environment: options.environment,
+		resolveSurface,
+	});
 
 	// What a close confirmation says about this workspace's terminals, and what
-	// closing it actually does, both come from the runtime.
+	// closing it actually does, both come from the adapter of the machine the
+	// workspace is on.
 	registerTerminalAdapter({
 		async closeWorkspaceTerminals(id) {
 			const workspace = options.model().workspace(id);
 			if (!workspace) return;
 			await service.surfaces.closeWorkspace({
+				machine: machineOf(workspace),
 				workspaceId: workspace.id,
 				root: workspace.root,
 			});
@@ -223,11 +201,14 @@ export function wireTerminals(options: TerminalWiringOptions): TerminalWiring {
 		async inspect(id) {
 			const workspace = options.model().workspace(id);
 			const clean = { kind: "clean" } as const;
-			if (!workspace || !runtime.adapterAvailable) {
+			if (!workspace) return { processes: clean, panes: clean, windows: clean };
+			const machine = machineOf(workspace);
+			const runtime = await runtimeFromId(machine);
+			if (!runtime.adapterAvailable) {
 				return { processes: clean, panes: clean, windows: clean };
 			}
 			const inspection = await runtime.inspect(
-				workspaceTarget(workspace.id, workspace.root),
+				workspaceTarget(machine, workspace.id, workspace.root),
 			);
 			return {
 				processes: inspection.process,
@@ -237,23 +218,10 @@ export function wireTerminals(options: TerminalWiringOptions): TerminalWiring {
 		},
 	});
 
-	return { runtime, service };
-}
-
-/**
- * The shell is used for its basename only — tmux is told which shell to start,
- * and inspection reads it back — so an unresolved one is simply absent. It has
- * no failure of its own to report: nothing attaches to a shell.
- */
-function shellExecutable(
-	resolved: SettingsResolvedRuntimeWire,
-	config: Config | undefined,
-): { path: string; basename: string } | undefined {
-	if (resolved.kind === "unavailable") return undefined;
-	const configured = config?.runtimes.shell ?? "/bin/zsh";
 	return {
-		path: resolved.value,
-		basename: configured.split("/").at(-1) ?? configured,
+		runtimes,
+		local: () => runtimes.for(localRuntime()),
+		service,
 	};
 }
 

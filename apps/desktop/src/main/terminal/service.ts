@@ -37,6 +37,7 @@ import { terminalEnvironment, type PtyFactory } from "./pty.js";
 import type { TerminalTarget } from "./ports.js";
 import { TerminalSurfaces, terminalFailureFromPort } from "./surfaces.js";
 import type { TmuxTerminalRuntime } from "./tmux.js";
+import type { RuntimeId } from "../runtime/runtime.js";
 
 /**
  * What a surface key means.
@@ -49,7 +50,13 @@ export type SurfaceResolver = (
 ) => TerminalTarget | undefined;
 
 export interface TerminalServiceOptions {
-	readonly runtime: TmuxTerminalRuntime;
+	/** One tmux adapter per machine; a target says which. */
+	readonly runtimeFor: (machine: RuntimeId) => Promise<TmuxTerminalRuntime>;
+	/**
+	 * The environment the local tmux client — or the local `ssh` that carries
+	 * one — starts with. DevHub's frozen launch environment, resolved once.
+	 */
+	readonly environment: Readonly<Record<string, string | undefined>>;
 	readonly resolveSurface: SurfaceResolver;
 	/** Overridden only by tests; production always opens a real PTY. */
 	readonly spawn?: PtyFactory;
@@ -59,8 +66,6 @@ export interface TerminalService {
 	/** Detaches every client and unregisters the IPC handlers. */
 	dispose(): void;
 	readonly attachmentCount: number;
-	/** The session owner, for the app's lifecycle and settings flows. */
-	readonly runtime: TmuxTerminalRuntime;
 	readonly surfaces: TerminalSurfaces;
 }
 
@@ -87,10 +92,10 @@ export function registerTerminalService(
 		randomBytes: (count) => new Uint8Array(randomBytes(count)),
 		// The client inherits the app's frozen launch environment, with the
 		// terminal's own TERM and without the parent's tmux hints.
-		environment: () => terminalEnvironment(options.runtime.environment),
+		environment: () => terminalEnvironment(options.environment),
 	});
 	const surfaces = new TerminalSurfaces({
-		runtime: options.runtime,
+		runtimeFor: options.runtimeFor,
 		attachments,
 	});
 	const watched = new Set<WebContents>();
@@ -262,7 +267,6 @@ export function registerTerminalService(
 	app.on("will-quit", onQuit);
 
 	return {
-		runtime: options.runtime,
 		surfaces,
 		get attachmentCount() {
 			return surfaces.attachmentCount;
