@@ -73,6 +73,8 @@ import {
 	agentProfileId,
 	displayPath,
 	agentId as parseAgentId,
+	remoteAuthorityOf,
+	supportsLocalTooling,
 	surfaceKeyName,
 	workspaceId as parseWorkspaceId,
 	workspaceRoot,
@@ -81,13 +83,16 @@ import {
 	type CloseStep,
 	type ResourceInspection,
 	type WorkspaceId,
+	type WorkspaceLocation,
 } from "../../model/domain.js";
+import { SCRATCH_EDITOR_KEY } from "./editorPlace.js";
 import {
 	operationId as parseOperationId,
 	type OperationId,
 	confirmationId as parseConfirmationId,
 	intentId as parseIntentId,
-	requestedPath,
+	requestedLocation,
+	type RequestedWorkspaceLocation,
 	AppError,
 	AppErrorCode,
 	type IntentOutcome,
@@ -234,7 +239,23 @@ import {
 } from "./settingsWindow.js";
 
 /** The folder key a scratch (folderless) workbench view is filed under. */
-const SCRATCH_EDITOR = "";
+const SCRATCH_EDITOR = SCRATCH_EDITOR_KEY;
+
+/**
+ * The folder URI a workbench is opened on.
+ *
+ * One function for both kinds, because the difference between them *is* this
+ * URI and nothing else: everything on either side of the open — the view, the
+ * supervision, the surface key — is the same code. `remoteAuthorityOf` composes
+ * the authority, so the string this hands VS Code and the string Open Remote -
+ * SSH is asked to resolve come from one place.
+ */
+function folderUriFor(location: WorkspaceLocation): URI {
+	const authority = remoteAuthorityOf(location);
+	return authority === undefined
+		? URI.file(location.path)
+		: URI.from({ scheme: "vscode-remote", authority, path: location.path });
+}
 
 /**
  * How long the page waits for a deferred operation before it is a failure.
@@ -300,7 +321,17 @@ export class AppController {
 	private readonly waitReturns = new WaitSelectionReturns();
 
 	/** Folder path (or the scratch key) -> the `ICodeWindow` id of its view. */
-	private readonly viewsByFolder = new Map<string, number>();
+	/**
+	 * The workbench view showing each place, by that place's key.
+	 *
+	 * The key is `locationKey` — a local folder's canonical path, unchanged from
+	 * when that was the only kind, and `ssh://host/path` for a folder on another
+	 * machine — or `SCRATCH_EDITOR_KEY` for Scratch. A path stopped being enough
+	 * the moment two machines could both have `/src/api`: they are two
+	 * Workspaces, two windows and two rows, and one map entry would have made
+	 * them share a workbench.
+	 */
+	private readonly viewsByEditorKey = new Map<string, number>();
 
 	/** How many unasked-for deaths a folder's workbench gets before DevHub stops. */
 	private readonly editorRestarts = new Map<string, number>();
@@ -1312,11 +1343,19 @@ export class AppController {
 	private readonly repositoryStatus = new RepositoryStatusWatcher({
 		gitCommand: () => this.gitCommand(),
 		environment: this.launchEnvironment,
+		// Only the ones whose folder this machine can read. `git`, the HEAD
+		// watcher and the worktree probe are local processes on local paths, and
+		// an ssh Workspace has none of that here — see `supportsLocalTooling`.
+		// It is left out of the *watcher*, not left out silently: it simply has
+		// no repository status, and every surface that would have drawn one says
+		// why instead of drawing nothing.
 		workspaces: () =>
-			this.coordinator.model.workspaces.map((workspace) => ({
-				id: workspace.id,
-				root: workspace.root,
-			})),
+			this.coordinator.model.workspaces
+				.filter((workspace) => supportsLocalTooling(workspace.location))
+				.map((workspace) => ({
+					id: workspace.id,
+					root: workspace.root,
+				})),
 		publish: (status) => {
 			// The order the rows are in is git's answer to "which repository is
 			// this a checkout of", so a round that changes that answer changes the
@@ -2075,7 +2114,7 @@ export class AppController {
 		if (workspace === undefined) {
 			return editorInspection({ runtime: "absent", documentEdited: false });
 		}
-		const codeWindow = await this.editorWindowFor(workspace.root);
+		const codeWindow = await this.editorWindowFor(workspace.key);
 		return editorInspection({
 			runtime: editorRuntimeState(codeWindow),
 			documentEdited: codeWindow?.isDocumentEdited() === true,
@@ -2086,7 +2125,7 @@ export class AppController {
 	 * The `CodeWindow` bound to a folder, or nothing when there is no workbench
 	 * for it any more.
 	 *
-	 * The binding in `viewsByFolder` outlives the view it names: a workbench
+	 * The binding in `viewsByEditorKey` outlives the view it names: a workbench
 	 * that VS Code closed, or whose view DevHub destroyed, leaves its id
 	 * behind. So "there is an entry in the map" is not "there is a workbench",
 	 * and asking the window service is the only answer worth having. Reading
@@ -2096,7 +2135,7 @@ export class AppController {
 	private async editorWindowFor(
 		folder: string,
 	): Promise<ICodeWindow | undefined> {
-		const viewId = this.viewsByFolder.get(folder);
+		const viewId = this.viewsByEditorKey.get(folder);
 		if (viewId === undefined) return undefined;
 		return (await this.services())
 			.windows()
@@ -2367,10 +2406,10 @@ export class AppController {
 	 * watching a directory that stops existing.
 	 */
 	private disposeEditorView(workspaceId: WorkspaceId): void {
-		const root = this.coordinator.model.workspace(workspaceId)?.root;
-		if (root === undefined) return;
-		const viewId = this.viewsByFolder.get(root);
-		this.viewsByFolder.delete(root);
+		const key = this.coordinator.model.workspace(workspaceId)?.key;
+		if (key === undefined) return;
+		const viewId = this.viewsByEditorKey.get(key);
+		this.viewsByEditorKey.delete(key);
 		if (viewId === undefined) return;
 		shellWindow().getViewById(viewId)?.destroy();
 	}
@@ -2451,7 +2490,7 @@ export class AppController {
 	 * click in the sidebar land on the same view without an ordering rule.
 	 */
 	private async revealEditorFor(surfaceKey: string): Promise<void> {
-		const folder = this.folderForSurfaceKey(surfaceKey);
+		const folder = this.editorKeyForSurfaceKey(surfaceKey);
 		if (folder === undefined) return;
 		const view = await this.ensureEditorView(folder);
 		if (!view) return;
@@ -2475,7 +2514,7 @@ export class AppController {
 	 * folder.
 	 */
 	private ensureEditorView(folder: string): Promise<WorkbenchView | undefined> {
-		const existingId = this.viewsByFolder.get(folder);
+		const existingId = this.viewsByEditorKey.get(folder);
 		const existing =
 			existingId === undefined
 				? undefined
@@ -2503,47 +2542,74 @@ export class AppController {
 	 * container is, and a workbench asked for in that window is early, not
 	 * impossible. Everything after the wait is the same whenever it was asked.
 	 */
+	/**
+	 * The place a workbench key names, or nothing for Scratch.
+	 *
+	 * Read out of the model rather than remembered beside the map, because the
+	 * model is where a Workspace's place lives and a second copy is a second
+	 * thing that can be stale. A key with no Workspace behind it any more is
+	 * Scratch's answer too — there is nothing to open a folder on.
+	 */
+	private locationForEditorKey(
+		editorKey: string,
+	): WorkspaceLocation | undefined {
+		if (editorKey === SCRATCH_EDITOR) return undefined;
+		return this.coordinator.model.workspaces.find(
+			(workspace) => workspace.key === editorKey,
+		)?.location;
+	}
+
 	private async openEditorView(
-		folder: string,
+		editorKey: string,
 	): Promise<WorkbenchView | undefined> {
-		// Look before asking. VS Code answers an open for a folder that is not
-		// there with a modal box — "The path '…' does not exist on this
-		// computer." — and it answered it on every launch and on every
-		// selection of a workspace whose folder had gone, because nothing here
-		// had looked first. The folder's absence is a fact about the workspace,
-		// so it goes into the model as one: the workspace becomes unavailable,
-		// which the content area draws with Retry, Locate… and Close, and
-		// `syncEditorViews` stops asking for a workbench in it.
-		if (folder !== SCRATCH_EDITOR) {
+		const location = this.locationForEditorKey(editorKey);
+		// Look before asking, for a folder DevHub can look at. VS Code answers an
+		// open for a folder that is not there with a modal box — "The path '…'
+		// does not exist on this computer." — and it answered it on every launch
+		// and on every selection of a workspace whose folder had gone, because
+		// nothing here had looked first. The folder's absence is a fact about the
+		// workspace, so it goes into the model as one: the workspace becomes
+		// unavailable, which the content area draws with Retry, Locate… and
+		// Close, and `syncEditorViews` stops asking for a workbench in it.
+		//
+		// An ssh folder is not looked at, because there is nothing here that
+		// could look: the machine that knows is the one the workbench is about to
+		// connect to. Its "the folder is not there" arrives from the far end,
+		// inside that pane, as Open Remote - SSH's own failure — which is where a
+		// connection problem belongs, and where the person can retry it. Guessing
+		// from here would put a second, wronger answer on screen.
+		if (location?.kind === "local") {
 			// Two answers, not one. A folder that is gone and a folder DevHub was
 			// not allowed to look at are different facts about the workspace, and
 			// offering Locate… for a folder that never moved is an answer to a
 			// question nobody asked.
-			const reason = await folderUnreadableReason(folder);
+			const reason = await folderUnreadableReason(location.path);
 			if (reason !== undefined) {
-				console.log(`[devhub] open: '${folder}' — ${reason}, no workbench`);
-				this.noteFolderUnreadable(folder, reason);
+				console.log(`[devhub] open: '${editorKey}' — ${reason}, no workbench`);
+				this.noteFolderUnreadable(location.path, reason);
 				return undefined;
 			}
 		}
 		const services = await this.services();
 		// Go through VS Code's own open path, which is what creates a
 		// `CodeWindow` — and therefore, through the shim, a view in the shell.
+		// The same call for both kinds of place: an ssh folder differs only in
+		// the URI, which carries the authority Open Remote - SSH answers for.
 		const windows = await services.windows().open({
 			context: OpenContext.API,
 			cli: this.cliArgs,
 			urisToOpen:
-				folder === SCRATCH_EDITOR ? [] : [{ folderUri: URI.file(folder) }],
-			forceEmpty: folder === SCRATCH_EDITOR,
+				location === undefined ? [] : [{ folderUri: folderUriFor(location) }],
+			forceEmpty: location === undefined,
 			forceNewWindow: true,
 			noRecentEntry: true,
 		});
 		const opened = windows.at(0);
-		if (opened) this.viewsByFolder.set(folder, opened.id);
+		if (opened) this.viewsByEditorKey.set(editorKey, opened.id);
 		const view =
 			opened === undefined ? undefined : shellWindow().getViewById(opened.id);
 		if (view) {
-			this.superviseEditorView(folder, view);
+			this.superviseEditorView(editorKey, view);
 			// A workbench that is up again is no longer restarting. Waiting for
 			// `did-finish-load` is not enough on its own: a fast workbench can
 			// have finished loading before this promise resolved, and a `once` on
@@ -2551,8 +2617,8 @@ export class AppController {
 			// page saying "restarting" for ever about a workbench that is right
 			// there.
 			const settled = () => {
-				this.editorRestarts.delete(folder);
-				this.announceRestarting(folder, false);
+				this.editorRestarts.delete(editorKey);
+				this.announceRestarting(editorKey, false);
 			};
 			if (view.webContents.isLoading()) {
 				view.webContents.once("did-finish-load", settled);
@@ -2608,8 +2674,8 @@ export class AppController {
 		const died = (reason: string) => {
 			// A view DevHub destroyed on purpose is not a casualty: its folder is
 			// no longer in the table, because that is what destroying it means.
-			if (this.viewsByFolder.get(folder) !== view.id) return;
-			this.viewsByFolder.delete(folder);
+			if (this.viewsByEditorKey.get(folder) !== view.id) return;
+			this.viewsByEditorKey.delete(folder);
 			this.announceRestarting(folder, true);
 			const failures = (this.editorRestarts.get(folder) ?? 0) + 1;
 			this.editorRestarts.set(folder, failures);
@@ -2726,7 +2792,7 @@ export class AppController {
 		const selected =
 			selectedKey === undefined
 				? undefined
-				: this.folderForSurfaceKey(selectedKey);
+				: this.editorKeyForSurfaceKey(selectedKey);
 
 		// Not every workspace wants a workbench: one whose folder is gone
 		// (`unavailable`) has nothing to open a workbench *in*, and asking is
@@ -2737,12 +2803,12 @@ export class AppController {
 			SCRATCH_EDITOR,
 			...this.coordinator.model.workspaces
 				.filter((workspace) => workspace.state.kind !== "unavailable")
-				.map((workspace) => workspace.root),
+				.map((workspace) => workspace.key),
 		]);
-		for (const folder of [...this.viewsByFolder.keys()]) {
+		for (const folder of [...this.viewsByEditorKey.keys()]) {
 			if (wanted.has(folder)) continue;
-			const viewId = this.viewsByFolder.get(folder);
-			this.viewsByFolder.delete(folder);
+			const viewId = this.viewsByEditorKey.get(folder);
+			this.viewsByEditorKey.delete(folder);
 			if (viewId !== undefined) {
 				shellWindow().getViewById(viewId)?.destroy();
 			}
@@ -2774,14 +2840,14 @@ export class AppController {
 		const folder =
 			surfaceKey === undefined
 				? undefined
-				: this.folderForSurfaceKey(surfaceKey);
+				: this.editorKeyForSurfaceKey(surfaceKey);
 		// *This* folder's view, not "some workbench is revealed". Reading the
 		// second as the first meant that selecting a workspace whose view was
 		// not yet built, while another workbench was on screen, returned
 		// "on-screen" with the wrong editor showing — rescued only by whichever
 		// of `syncEditorViewInBackground` and this ran first.
 		const viewId =
-			folder === undefined ? undefined : this.viewsByFolder.get(folder);
+			folder === undefined ? undefined : this.viewsByEditorKey.get(folder);
 		const revealed = shellWindow().revealedView();
 		const reveal = editorReveal({
 			revealed: viewId !== undefined && revealed?.id === viewId,
@@ -2794,7 +2860,7 @@ export class AppController {
 			if (
 				now !== undefined &&
 				folder !== undefined &&
-				this.viewsByFolder.get(folder) === now.id
+				this.viewsByEditorKey.get(folder) === now.id
 			) {
 				return;
 			}
@@ -2807,12 +2873,12 @@ export class AppController {
 		);
 	}
 
-	private folderForSurfaceKey(surfaceKey: string): string | undefined {
+	private editorKeyForSurfaceKey(surfaceKey: string): string | undefined {
 		if (surfaceKey === "global-editor") return SCRATCH_EDITOR;
 		const prefix = "workspace-editor:";
 		if (!surfaceKey.startsWith(prefix)) return undefined;
 		const id = surfaceKey.slice(prefix.length) as WorkspaceId;
-		return this.coordinator.model.workspace(id)?.root;
+		return this.coordinator.model.workspace(id)?.key;
 	}
 
 	/**
@@ -2840,10 +2906,10 @@ export class AppController {
 	private async askEditorToClose(
 		workspaceId: WorkspaceId,
 	): Promise<CloseDiagnosticWire | undefined> {
-		const root = this.coordinator.model.workspace(workspaceId)?.root;
-		if (root === undefined) return undefined;
+		const key = this.coordinator.model.workspace(workspaceId)?.key;
+		if (key === undefined) return undefined;
 		const services = await this.services();
-		const codeWindow = await this.editorWindowFor(root);
+		const codeWindow = await this.editorWindowFor(key);
 		const runtime = editorRuntimeState(codeWindow);
 		// No process holds work anybody could save, so there is nothing to ask
 		// and nothing in the way.
@@ -2867,11 +2933,11 @@ export class AppController {
 	 * the page knows its surfaces by key, not by view id.
 	 */
 	editorSurfaceKeyForView(viewId: number): string | undefined {
-		for (const [folder, id] of this.viewsByFolder) {
+		for (const [key, id] of this.viewsByEditorKey) {
 			if (id !== viewId) continue;
-			if (folder === SCRATCH_EDITOR) return "global-editor";
+			if (key === SCRATCH_EDITOR) return "global-editor";
 			const workspace = this.coordinator.model.workspaces.find(
-				(candidate) => candidate.root === folder,
+				(candidate) => candidate.key === key,
 			);
 			return workspace ? `workspace-editor:${workspace.id}` : undefined;
 		}
@@ -2879,21 +2945,31 @@ export class AppController {
 	}
 
 	/** The `openInBrowserWindow` override's half of the folder binding. */
-	viewIdForFolder(folder: string): number | undefined {
-		return this.viewsByFolder.get(folder);
+	viewIdForEditorKey(folder: string): number | undefined {
+		return this.viewsByEditorKey.get(folder);
 	}
 
-	bindFolderView(folder: string, viewId: number): void {
-		this.viewsByFolder.set(folder, viewId);
+	bindEditorKeyView(folder: string, viewId: number): void {
+		this.viewsByEditorKey.set(folder, viewId);
 	}
 
 	/**
-	 * A folder DevHub was asked to open. Its policy is that this is a Workspace:
+	 * A place DevHub was asked to open. Its policy is that this is a Workspace:
 	 * the model learns about it, and opening the same one twice selects the one
 	 * that already exists rather than making a second.
 	 */
-	noteFolder(folder: string): void {
-		this.dispatchOwn({ type: "open_folder", path: requestedPath(folder) });
+	noteLocation(location: WorkspaceLocation): void {
+		this.dispatchOwn({
+			type: "open_folder",
+			location:
+				location.kind === "local"
+					? requestedLocation({ kind: "local", path: location.path })
+					: requestedLocation({
+							kind: "ssh",
+							host: location.host,
+							path: location.path,
+						}),
+		});
 	}
 
 	/**
@@ -2908,7 +2984,7 @@ export class AppController {
 	 * just created and one just cloned.
 	 */
 	private async openFolder(
-		path: string,
+		location: RequestedWorkspaceLocation,
 		withAgent?: string,
 	): Promise<AppOutcomeWire> {
 		const before = new Set(
@@ -2916,7 +2992,7 @@ export class AppController {
 		);
 		const opened = await this.dispatchAwaiting({
 			type: "open_folder",
-			path: requestedPath(path),
+			location,
 		});
 		if (withAgent === undefined) {
 			await this.syncEditorView();
@@ -2924,7 +3000,7 @@ export class AppController {
 		}
 		const settled = await this.dispatchAwaiting({
 			type: "create_agent",
-			workspaceId: this.openedWorkspaceId(before, path),
+			workspaceId: this.openedWorkspaceId(before, location),
 			profileId: agentProfileId(withAgent),
 			// The person answered "which profile", not "where to put it". The
 			// Agent gets the plain arrangement, the same one `devhub --agent`
@@ -2949,7 +3025,7 @@ export class AppController {
 	 */
 	private openedWorkspaceId(
 		before: ReadonlySet<WorkspaceId>,
-		target: string,
+		target: RequestedWorkspaceLocation,
 	): WorkspaceId {
 		const added = this.coordinator.model.workspaces.find(
 			(workspace) => !before.has(workspace.id),
@@ -2961,7 +3037,7 @@ export class AppController {
 		// took place; going on would attach whatever comes next to whatever else
 		// was selected.
 		throw new Error(
-			`opening ${target} neither added a workspace nor selected one`,
+			`opening ${target.path} neither added a workspace nor selected one`,
 		);
 	}
 
@@ -3037,7 +3113,7 @@ export class AppController {
 
 	/** The `ICodeWindow` behind a folder's view; a missing one is a bug. */
 	private async workbenchWindow(folder: string): Promise<ICodeWindow> {
-		const viewId = this.viewsByFolder.get(folder);
+		const viewId = this.viewsByEditorKey.get(folder);
 		const window =
 			viewId === undefined
 				? undefined
@@ -3137,7 +3213,9 @@ export class AppController {
 					`${target.path} is a folder, and --wait waits for an editor to be closed.`,
 				);
 			}
-			await this.openFolder(target.path);
+			await this.openFolder(
+				requestedLocation({ kind: "local", path: target.path }),
+			);
 			await this.syncEditorView();
 			this.bringToFront();
 			return `${target.path} is open in DevHub.`;
@@ -3453,8 +3531,8 @@ export class AppController {
 
 	//#region workbench views
 
-	revealFolderView(folder: string): void {
-		const viewId = this.viewsByFolder.get(folder);
+	revealEditorKeyView(folder: string): void {
+		const viewId = this.viewsByEditorKey.get(folder);
 		const view =
 			viewId === undefined ? undefined : shellWindow().getViewById(viewId);
 		if (view) shellWindow().reveal(view);
@@ -3619,13 +3697,16 @@ export class AppController {
 		// path instead would be a third answer — the root is canonicalised on the
 		// way in, so it is not the string this call was given.
 		const before = new Set(this.coordinator.model.workspaces.map((w) => w.id));
-		await this.openFolder(target);
+		await this.openFolder(requestedLocation({ kind: "local", path: target }));
 		// Not `openFolder(target, profileId)`: this flow has more to do around the
 		// creation than that shortcut can express — the Agent goes beside the
 		// editor when the person asked for that, and the Issue's prompt is queued
 		// against whichever Agent it produced — but *which workspace opening
 		// produced* is the same fact, read the same way.
-		const workspaceId = this.openedWorkspaceId(before, target);
+		const workspaceId = this.openedWorkspaceId(
+			before,
+			requestedLocation({ kind: "local", path: target }),
+		);
 		// Nothing is written down about which Issue this workspace is for. The
 		// branch the flow just made carries the number (`feature/128-…`), and the
 		// branch is the whole of the link — so a worktree made for the Issue shows
@@ -3832,7 +3913,10 @@ export class AppController {
 				// is already there".
 				try {
 					return this.openFolder(
-						create ? await ensureWorkspaceFolder(path) : path,
+						requestedLocation({
+							kind: "local",
+							path: create ? await ensureWorkspaceFolder(path) : path,
+						}),
 						withAgent,
 					);
 				} catch (error: unknown) {
@@ -3883,7 +3967,13 @@ export class AppController {
 				this.cancelPicker?.();
 				this.cancelPicker = undefined;
 				try {
-					return this.openFolder(await createProject(path), withAgent);
+					return this.openFolder(
+						requestedLocation({
+							kind: "local",
+							path: await createProject(path),
+						}),
+						withAgent,
+					);
 				} catch (error: unknown) {
 					throw asIpcError(errorWire(error));
 				}
@@ -3901,7 +3991,10 @@ export class AppController {
 				this.cancelPicker = undefined;
 				try {
 					return this.openFolder(
-						await this.clone(url, parentDirectory),
+						requestedLocation({
+							kind: "local",
+							path: await this.clone(url, parentDirectory),
+						}),
 						withAgent,
 					);
 				} catch (error: unknown) {

@@ -59,7 +59,9 @@ function snapshotWith(control: "running" | "stopping" | "gone"): AppSnapshot {
       {
         id: WORKSPACE_ID,
         label: "folderA",
+        location: { kind: "local" },
         root: "/tmp/folderA",
+        key: "/tmp/folderA",
         selectedPath: "/tmp/folderA",
         state: { kind: "available" } as never,
         close: { kind: "idle" } as never,

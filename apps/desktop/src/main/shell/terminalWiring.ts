@@ -35,6 +35,7 @@ import type { AppModel } from "../../model/appModel.js";
 import {
 	agentId as parseAgentId,
 	workspaceId as parseWorkspaceId,
+	supportsLocalTooling,
 	type Workspace,
 } from "../../model/domain.js";
 import { TerminalFailure } from "../../ipc/terminal.js";
@@ -63,6 +64,21 @@ import { registerTerminalAdapter } from "./adapters.js";
 function refuseIfClosing(workspace: Workspace): void {
 	if (workspace.close.kind === "running") {
 		throw new TerminalFailure("workspace_closing");
+	}
+}
+
+/**
+ * A terminal runs where the folder is, and tmux runs here.
+ *
+ * Refused rather than started somewhere else: `createSession` passes the root
+ * to `tmux new-session -c`, and a remote path that happens to exist on this
+ * machine would open a shell in the wrong directory on the wrong computer,
+ * which is worse than not opening one. The pane says so, in the same words
+ * every other surface says it, rather than showing an empty terminal.
+ */
+function refuseIfRemote(workspace: Workspace): void {
+	if (!supportsLocalTooling(workspace.location)) {
+		throw new TerminalFailure("workspace_remote");
 	}
 }
 
@@ -97,6 +113,7 @@ export function createSurfaceResolver(
 			// An Agent closes with its Workspace, so it is refused for the same
 			// reason and in the same words.
 			refuseIfClosing(workspace);
+			refuseIfRemote(workspace);
 			return agentTarget(agent, workspace.id, workspace.root);
 		}
 		const prefix = "workspace-terminal:";
@@ -112,6 +129,7 @@ export function createSurfaceResolver(
 		}
 		if (!workspace) return undefined;
 		refuseIfClosing(workspace);
+		refuseIfRemote(workspace);
 		return workspaceTarget(workspace.id, workspace.root);
 	};
 }

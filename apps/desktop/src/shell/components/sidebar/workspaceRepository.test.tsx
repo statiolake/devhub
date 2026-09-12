@@ -47,7 +47,9 @@ const SNAPSHOT = {
     {
       id: "w-1",
       label: "widget",
+      location: { kind: "local" },
       root: "/projects/widget",
+      key: "/projects/widget",
       selectedPath: "/projects/widget",
       state: { kind: "available" },
       close: { kind: "idle" },

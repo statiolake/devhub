@@ -21,9 +21,12 @@ import {
   CLEAN_CLOSE_INSPECTION,
   closeInspectionProjection,
   consolidateCloseInspection,
+  displayPath,
   DomainErrorCode,
   GLOBAL_CONTEXT,
+  locationKey,
   Workspace,
+  workspaceLocation,
   type AgentId,
   type AgentProfile,
   type AgentProfileId,
@@ -32,6 +35,7 @@ import {
   type DisplayPath,
   type SurfacePresentation,
   type WorkspaceId,
+  type WorkspaceLocation,
   type WorkspaceRoot,
 } from "./domain.js";
 import {
@@ -64,6 +68,7 @@ import {
   type ProviderEventEnvelope,
   type ProviderEventId,
   type RequestedPath,
+  type RequestedWorkspaceLocation,
   type UserIntent,
   type WorkspaceCloseResult,
   type WorktreeDisposition,
@@ -87,7 +92,7 @@ export type Effect =
   | {
       readonly kind: "generate_workspace_id";
       readonly token: OperationToken;
-      readonly root: WorkspaceRoot;
+      readonly location: WorkspaceLocation;
       readonly selectedPath: DisplayPath;
     }
   | {
@@ -200,11 +205,14 @@ function portFor(kind: OperationKind): PortName {
 }
 
 type OperationTarget =
-  | { readonly kind: "path"; readonly path: RequestedPath }
+  | {
+      readonly kind: "location";
+      readonly location: RequestedWorkspaceLocation;
+    }
   | { readonly kind: "workspace_path"; readonly workspaceId: WorkspaceId }
   | {
-      readonly kind: "resolved_path";
-      readonly root: WorkspaceRoot;
+      readonly kind: "resolved_location";
+      readonly location: WorkspaceLocation;
       readonly selectedPath: DisplayPath;
     }
   | { readonly kind: "workspace"; readonly workspaceId: WorkspaceId }
@@ -328,9 +336,9 @@ export class AppCoordinator {
   private readonly pending = new Map<OperationId, PendingOperation>();
   private readonly completedTokens = new Map<OperationId, OperationToken>();
   private readonly completedTokenOrder: [OperationId, OperationToken][] = [];
-  private readonly resolvedPaths = new Map<
+  private readonly resolvedLocations = new Map<
     OperationId,
-    { root: WorkspaceRoot; selectedPath: DisplayPath }
+    { location: WorkspaceLocation; selectedPath: DisplayPath }
   >();
   // The presentation rides along with the profile from the moment the request
   // is made until the Agent is in the model, because "open it beside the
@@ -367,7 +375,9 @@ export class AppCoordinator {
   private confirmations: PendingConfirmationState[] = [];
   private readonly finalizationPending = new Set<OperationId>();
   private readonly finalizationWorkspaces = new Map<OperationId, WorkspaceId>();
-  private readonly finalizationRoots = new Map<WorkspaceRoot, OperationId>();
+  // Keyed by `locationKey`, not by the path: a close in flight holds *that
+  // place* against a second opening, and two hosts' `/src/api` are two places.
+  private readonly finalizationRoots = new Map<string, OperationId>();
   private readonly finalizationBackups = new Map<
     OperationId,
     WorkspaceCloseRollback
@@ -532,10 +542,13 @@ export class AppCoordinator {
         this.model.setSidebarWidth(intent.width);
         return this.transitionOutcome(beforeRevision, id);
       case "open_folder":
-        return this.beginWorkspaceResolution(intent.path, id);
+        return this.beginWorkspaceResolution(intent.location, id);
       case "new_window": {
         if (intent.path !== undefined) {
-          return this.beginWorkspaceResolution(intent.path, id);
+          return this.beginWorkspaceResolution(
+            { kind: "local", path: intent.path },
+            id,
+          );
         }
         if (this.model.selection.context.kind !== "global") {
           this.model.selectContext(GLOBAL_CONTEXT);
@@ -661,17 +674,77 @@ export class AppCoordinator {
 
   // ------------------------------------------------------------- beginnings
 
+  /**
+   * Open a place, whichever machine it is on.
+   *
+   * There is one door because there is one act. What differs between the two
+   * kinds is only whether anything on *this* machine has to be asked first: a
+   * local folder has to be `realpath`ed and stat'ed, which is a question for an
+   * adapter, so it goes out as an effect and comes back through
+   * `completeWorkspacePath`. An ssh folder has nothing here to ask — the
+   * machine that could answer is the one DevHub has not connected to yet, and
+   * connecting is the workbench's job, not a precondition of having a row —
+   * so it is already resolved and joins the same path one step further along.
+   *
+   * Both ends meet at `beginWorkspaceIdentity`, so everything after the place
+   * is known — duplicate detection, selection, persistence — is written once.
+   */
   private beginWorkspaceResolution(
-    path: RequestedPath,
+    location: RequestedWorkspaceLocation,
+    id: OperationId,
+  ): IntentOutcome {
+    switch (location.kind) {
+      case "local": {
+        const token = this.startOperation(
+          "resolve_workspace_path",
+          { kind: "location", location },
+          id,
+        );
+        this.emitEffect({
+          kind: "resolve_workspace_path",
+          token,
+          path: location.path,
+        });
+        return { kind: "deferred", operationId: id, snapshot: this.snapshot() };
+      }
+      case "ssh":
+        return this.beginWorkspaceIdentity(
+          workspaceLocation({
+            kind: "ssh",
+            host: location.host,
+            path: location.path,
+          }),
+          displayPath(location.path),
+          id,
+        );
+    }
+  }
+
+  /**
+   * The place is known; a Workspace needs an id before it can be one.
+   */
+  private beginWorkspaceIdentity(
+    location: WorkspaceLocation,
+    selectedPath: DisplayPath,
     id: OperationId,
   ): IntentOutcome {
     const token = this.startOperation(
-      "resolve_workspace_path",
-      { kind: "path", path },
+      "generate_workspace_id",
+      { kind: "resolved_location", location, selectedPath },
       id,
     );
-    this.emitEffect({ kind: "resolve_workspace_path", token, path });
-    return { kind: "deferred", operationId: id, snapshot: this.snapshot() };
+    this.resolvedLocations.set(token.operationId, { location, selectedPath });
+    this.emitEffect({
+      kind: "generate_workspace_id",
+      token,
+      location,
+      selectedPath,
+    });
+    return {
+      kind: "deferred",
+      operationId: token.operationId,
+      snapshot: this.snapshot(),
+    };
   }
 
   /**
@@ -1065,7 +1138,7 @@ export class AppCoordinator {
 
   private clearOperationAuxiliaryState(token: OperationToken): void {
     const id = token.operationId;
-    this.resolvedPaths.delete(id);
+    this.resolvedLocations.delete(id);
     this.requestedPresentations.delete(id);
     this.resolvedProfiles.delete(id);
     this.launchProfiles.delete(id);
@@ -1095,11 +1168,15 @@ export class AppCoordinator {
     const pending = this.takePending(
       token,
       "resolve_workspace_path",
-      (target) => target.kind === "path" || target.kind === "workspace_path",
+      (target) =>
+        target.kind === "location" || target.kind === "workspace_path",
     );
+    // Only a local folder is ever resolved here — an ssh place has nothing on
+    // this machine to resolve — so what came back is a local place.
+    const location: WorkspaceLocation = { kind: "local", path: root };
     if (pending.target.kind === "workspace_path") {
       const workspaceId = pending.target.workspaceId;
-      this.model.relocateWorkspace(workspaceId, root, selectedPath);
+      this.model.relocateWorkspace(workspaceId, location, selectedPath);
       this.model.selectContext({ kind: "workspace", workspaceId });
       const snapshot = this.snapshot();
       this.emit({ kind: "snapshot", snapshot });
@@ -1108,24 +1185,11 @@ export class AppCoordinator {
       return { kind: "updated", snapshot };
     }
 
-    const previousId = pending.token.operationId;
-    const nextToken = this.startOperation(
-      "generate_workspace_id",
-      { kind: "resolved_path", root, selectedPath },
-      previousId,
-    );
-    this.resolvedPaths.set(nextToken.operationId, { root, selectedPath });
-    this.emitEffect({
-      kind: "generate_workspace_id",
-      token: nextToken,
-      root,
+    return this.beginWorkspaceIdentity(
+      location,
       selectedPath,
-    });
-    return {
-      kind: "deferred",
-      operationId: nextToken.operationId,
-      snapshot: this.snapshot(),
-    };
+      pending.token.operationId,
+    );
   }
 
   private completeWorkspaceId(
@@ -1135,24 +1199,24 @@ export class AppCoordinator {
     this.takePending(
       token,
       "generate_workspace_id",
-      (target) => target.kind === "resolved_path",
+      (target) => target.kind === "resolved_location",
     );
-    const resolved = this.resolvedPaths.get(token.operationId);
-    this.resolvedPaths.delete(token.operationId);
+    const resolved = this.resolvedLocations.get(token.operationId);
+    this.resolvedLocations.delete(token.operationId);
     if (!resolved) {
       throw new AppError(AppErrorCode.UnknownOperation).withOperation(
         token.operationId,
       );
     }
-    if (this.finalizationRoots.has(resolved.root)) {
+    const key = locationKey(resolved.location);
+    if (this.finalizationRoots.has(key)) {
       throw new AppError(AppErrorCode.Domain)
         .withDomain(DomainErrorCode.DuplicateWorkspaceRoot)
         .withOperation(token.operationId);
     }
     const existing = this.model.workspaces.find(
       (workspace) =>
-        workspace.state.kind === "available" &&
-        workspace.root === resolved.root,
+        workspace.state.kind === "available" && workspace.key === key,
     );
     if (existing) {
       const beforeRevision = this.model.snapshot().revision;
@@ -1172,7 +1236,7 @@ export class AppCoordinator {
       return { kind: "noop", snapshot };
     }
     this.model.addWorkspace(
-      new Workspace(workspaceId, resolved.root, resolved.selectedPath),
+      new Workspace(workspaceId, resolved.location, resolved.selectedPath),
     );
     const snapshot = this.snapshot();
     this.emit({ kind: "snapshot", snapshot });
@@ -1708,7 +1772,7 @@ export class AppCoordinator {
       workspaceId,
       CLEAN_CLOSE_INSPECTION,
     );
-    this.finalizationRoots.set(backup.workspace.root, token.operationId);
+    this.finalizationRoots.set(backup.workspace.key, token.operationId);
     this.finalizationPending.add(token.operationId);
     this.finalizationWorkspaces.set(token.operationId, workspaceId);
     this.finalizationBackups.set(token.operationId, backup);
@@ -1731,7 +1795,7 @@ export class AppCoordinator {
       const backup = this.finalizationBackups.get(token.operationId);
       if (backup) {
         this.finalizationBackups.delete(token.operationId);
-        this.finalizationRoots.delete(backup.workspace.root);
+        this.finalizationRoots.delete(backup.workspace.key);
       }
     }
     return { kind: "noop", snapshot: this.snapshot() };
@@ -1760,9 +1824,9 @@ export class AppCoordinator {
       const backup = this.finalizationBackups.get(token.operationId);
       if (backup) {
         this.finalizationBackups.delete(token.operationId);
-        const root = backup.workspace.root;
+        const key = backup.workspace.key;
         this.model.rollbackWorkspaceClose(backup);
-        this.finalizationRoots.delete(root);
+        this.finalizationRoots.delete(key);
         if (workspaceId !== undefined) {
           this.model.markWorkspaceCloseFailed(
             workspaceId,

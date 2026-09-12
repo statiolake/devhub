@@ -17,7 +17,8 @@ import {
 	displayPath,
 	Workspace,
 	workspaceId,
-	workspaceRoot,
+	LOCAL_TOOLING_UNAVAILABLE,
+	workspaceLocation,
 } from "../../model/domain.js";
 import { TerminalFailure } from "../../ipc/terminal.js";
 import { createSurfaceResolver } from "./terminalWiring.js";
@@ -35,7 +36,13 @@ const codex = AgentProfile.create(
 
 function modelWithWorkspace(): AppModel {
 	const model = new AppModel();
-	model.addWorkspace(new Workspace(WS, workspaceRoot(ROOT), displayPath(ROOT)));
+	model.addWorkspace(
+		new Workspace(
+			WS,
+			workspaceLocation({ kind: "local", path: ROOT }),
+			displayPath(ROOT),
+		),
+	);
 	model.addAgent(WS, AG, codex);
 	return model;
 }
@@ -109,5 +116,46 @@ describe("keys that name nothing", () => {
 		expect(resolverFor(model)("global-terminal")).toMatchObject({
 			kind: "scratch",
 		});
+	});
+});
+
+describe("a workspace whose folder is on another machine", () => {
+	function remoteModel(): AppModel {
+		const model = new AppModel();
+		model.addWorkspace(
+			new Workspace(
+				WS,
+				workspaceLocation({
+					kind: "ssh",
+					host: "build.example.com",
+					path: "/srv/api",
+				}),
+				displayPath("/srv/api"),
+			),
+		);
+		return model;
+	}
+
+	it("refuses its terminal rather than opening one in the wrong place", () => {
+		// tmux runs here and `new-session -c` takes a local directory. A remote
+		// path that happened to exist on this machine would have opened a shell
+		// in the wrong directory on the wrong computer.
+		expect(
+			refusalOf(() => resolverFor(remoteModel())(`workspace-terminal:${WS}`)),
+		).toBe("workspace_remote");
+	});
+
+	it("says why, rather than answering with nothing", () => {
+		// `undefined` here means "no such surface", which is what a key naming a
+		// workspace that is gone answers. A workspace that is right there and
+		// simply has no terminal yet is a different fact, and the refusal is the
+		// only way to carry the sentence that says which.
+		let summary: string | undefined;
+		try {
+			resolverFor(remoteModel())(`workspace-terminal:${WS}`);
+		} catch (error) {
+			summary = error instanceof TerminalFailure ? error.summary : undefined;
+		}
+		expect(summary).toContain(LOCAL_TOOLING_UNAVAILABLE);
 	});
 });

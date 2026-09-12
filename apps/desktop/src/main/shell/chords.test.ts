@@ -15,7 +15,7 @@ import {
 	displayPath,
 	Workspace,
 	workspaceId,
-	workspaceRoot,
+	workspaceLocation,
 } from "../../model/domain.js";
 import { snapshotWire } from "../../model/wire.js";
 import type {
@@ -73,7 +73,9 @@ function workspace(
 		canCreateAgent: true,
 		id,
 		label: id,
+		location: { kind: "local" },
 		root: `/workspaces/${id}`,
+		key: `/workspaces/${id}`,
 		selectedPath: `/workspaces/${id}`,
 		state: { kind: "available" },
 		close: { kind: "idle" },
@@ -811,7 +813,11 @@ describe("the order every cycle walks", () => {
 			[MIDDLE, "/src/middle"],
 		] as const) {
 			model.addWorkspace(
-				new Workspace(workspace, workspaceRoot(path), displayPath(path)),
+				new Workspace(
+					workspace,
+					workspaceLocation({ kind: "local", path }),
+					displayPath(path),
+				),
 			);
 		}
 		model.addAgent(ZEBRA, agentOf("4000b1"), codex);

@@ -61,7 +61,9 @@ function workspace(
   return {
     id: "22222222-2222-4222-8222-222222222222",
     label: "example",
+    location: { kind: "local", path: "/example" },
     root: "/example",
+    key: "/example",
     selectedPath: "example",
     repositoryId: undefined,
     state,

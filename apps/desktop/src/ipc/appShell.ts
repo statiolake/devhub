@@ -534,12 +534,32 @@ export type WorkspaceCloseWire =
 			 */
 			readonly detail?: string;
 	  };
+/**
+ * Where a Workspace's folder is, as the page is told it.
+ *
+ * The page needs the machine for two things and neither is optional: the row
+ * says which host it is, and every surface that would have shown a git status,
+ * a worktree or an Agent has to say why it is not showing one. See
+ * `supportsLocalTooling`.
+ */
+export type WorkspaceLocationWire =
+	| { readonly kind: "local" }
+	| { readonly kind: "ssh"; readonly host: string };
+
 export interface WorkspaceWire {
 	readonly agents: readonly AgentWire[];
 	readonly canCreateAgent: boolean;
 	readonly id: string;
 	readonly label: string;
+	readonly location: WorkspaceLocationWire;
+	/** The folder's path, whichever machine it is on. */
 	readonly root: string;
+	/**
+	 * What makes this Workspace this one: the path for a local folder, and the
+	 * host and path together for a remote one. Two hosts' `/src/api` are two
+	 * rows, and only this tells them apart.
+	 */
+	readonly key: string;
 	readonly selectedPath: string;
 	readonly state: WorkspaceStateWire;
 	readonly close: WorkspaceCloseWire;
@@ -549,6 +569,16 @@ export interface WorkspaceWire {
 	 * What `Cmd+Q Cmd+J` comes back to. See `AppModel.lastAgentIn`.
 	 */
 	readonly lastAgentId?: string;
+	/**
+	 * Why DevHub's own tooling has nothing to show for this Workspace, or absent
+	 * when it has.
+	 *
+	 * One sentence, sent rather than composed here, so the row's repository area,
+	 * the disabled New Agent button and the terminal pane all say the same thing.
+	 * A page that wrote its own would be a second answer to one question, and the
+	 * two would drift the first time the answer changed.
+	 */
+	readonly localToolingUnavailable?: string;
 }
 
 export type SnapshotReadiness = AppReadiness;

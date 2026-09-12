@@ -77,7 +77,9 @@ function snapshotWith(row: Row): AppSnapshot {
       {
         id: WORKSPACE_ID,
         label: "widget",
+        location: { kind: "local" },
         root: "/projects/widget",
+        key: "/projects/widget",
         selectedPath: "/projects/widget",
         state: row.state,
         close: row.close,

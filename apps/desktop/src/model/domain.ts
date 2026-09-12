@@ -14,6 +14,7 @@
 export enum DomainErrorCode {
   InvalidId = "INVALID_ID",
   InvalidPath = "INVALID_PATH",
+  InvalidHost = "INVALID_HOST",
   InvalidRemote = "INVALID_REMOTE",
   InvalidDisplayName = "INVALID_DISPLAY_NAME",
   InvalidOrdinal = "INVALID_ORDINAL",
@@ -66,6 +67,7 @@ export type AgentProfileId = Brand<string, "AgentProfileId">;
 export type WorkspaceRoot = Brand<string, "WorkspaceRoot">;
 export type DisplayPath = Brand<string, "DisplayPath">;
 export type RemoteIdentity = Brand<string, "RemoteIdentity">;
+export type SshHost = Brand<string, "SshHost">;
 
 export function isCanonicalUuid(raw: string): boolean {
   return (
@@ -147,6 +149,167 @@ export function rootBasename(root: WorkspaceRoot): string {
 export function rootParentComponents(root: WorkspaceRoot): string[] {
   return root.split("/").filter(Boolean).slice(0, -1).reverse();
 }
+
+/**
+ * The machine an SSH Workspace's folder is on, named the way `ssh` names it.
+ *
+ * Either a `Host` alias out of `~/.ssh/config` or `user@hostname`, optionally
+ * with `:port` — which is the whole of what `ssh` itself accepts as a
+ * destination, and therefore the whole of what Open Remote - SSH can resolve.
+ * DevHub does not resolve it, look it up, or check that it is reachable: the
+ * alias is the person's word for the machine, and expanding it here would mean
+ * DevHub and `ssh` could disagree about which machine that is.
+ *
+ * What is rejected is only what cannot survive being an authority in
+ * `vscode-remote://ssh-remote+<host>/<path>`: a slash, whitespace, or a control
+ * character would silently re-parse into a different URI.
+ */
+export function sshHost(raw: string): SshHost {
+  const trimmed = raw.trim();
+  if (
+    !/^[A-Za-z0-9._~%-]+(?:@[A-Za-z0-9._~%[\]-]+)?(?::[0-9]+)?$/.test(trimmed)
+  ) {
+    throw invalid(DomainErrorCode.InvalidHost);
+  }
+  return trimmed as SshHost;
+}
+
+/**
+ * Where a Workspace's folder is.
+ *
+ * A Workspace used to be a local directory and nothing else, so its root was
+ * both "the folder" and "which folder, out of all the folders there are". Once
+ * a folder can be on another machine those are two different facts: `/src/api`
+ * on two hosts is two Workspaces, and `/src/api` here is a third.
+ *
+ * So the place is one value with the machine in it, and identity is
+ * `locationKey`, not the path. Every question that used to be asked of the path
+ * — is it a duplicate, which window is showing it, which group does it order
+ * into — is asked of the key instead, and gets the same answer as before for a
+ * local folder because a local folder's key *is* its path.
+ *
+ * There is no third kind planned and no `kind: "unknown"`. Phase 2 puts Agents
+ * and git on the far end of an ssh location; it does not add a location.
+ */
+export type WorkspaceLocation =
+  | { readonly kind: "local"; readonly path: WorkspaceRoot }
+  | {
+      readonly kind: "ssh";
+      readonly host: SshHost;
+      readonly path: WorkspaceRoot;
+    };
+
+/** What a caller says about a place, before any of it has been validated. */
+export type RequestedLocation =
+  | { readonly kind: "local"; readonly path: string }
+  | { readonly kind: "ssh"; readonly host: string; readonly path: string };
+
+/**
+ * The one way a `WorkspaceLocation` is made.
+ *
+ * One constructor rather than one per kind, because the thing that must not
+ * drift is the *set* of kinds: a second constructor is a second place to forget
+ * when a third kind arrives, and the exhaustive switch that would have caught
+ * it is in here.
+ */
+export function workspaceLocation(
+  requested: RequestedLocation,
+): WorkspaceLocation {
+  switch (requested.kind) {
+    case "local":
+      return { kind: "local", path: workspaceRoot(requested.path) };
+    case "ssh":
+      return {
+        kind: "ssh",
+        host: sshHost(requested.host),
+        path: workspaceRoot(requested.path),
+      };
+  }
+}
+
+/**
+ * What makes two Workspaces the same Workspace.
+ *
+ * A local folder's key is its canonical path, unchanged, so every comparison
+ * that predates SSH keeps the answer it had — including the ones that compare a
+ * key against a path git handed over, such as a main worktree.
+ */
+export function locationKey(location: WorkspaceLocation): string {
+  switch (location.kind) {
+    case "local":
+      return location.path;
+    case "ssh":
+      return `ssh://${location.host}${location.path}`;
+  }
+}
+
+/**
+ * The place, spelled out for a person: the path, with the machine in front of
+ * it when the machine is not this one.
+ *
+ * `host:path` rather than the key's `ssh://host/path`, because this is read and
+ * the key is compared. It is what `scp` writes and what the person typed.
+ */
+export function locationLabel(location: WorkspaceLocation): string {
+  switch (location.kind) {
+    case "local":
+      return location.path;
+    case "ssh":
+      return `${location.host}:${location.path}`;
+  }
+}
+
+/**
+ * The authority a workbench is opened on, or nothing for a folder on this
+ * machine.
+ *
+ * `ssh-remote+<host>` is Open Remote - SSH's, declared by its
+ * `onResolveRemoteAuthority:ssh-remote` and its `ssh-remote+*` resource label
+ * formatter. Composed here, once, so that the URI the window is opened with and
+ * the authority the extension is asked to resolve cannot come to disagree.
+ */
+export function remoteAuthorityOf(
+  location: WorkspaceLocation,
+): string | undefined {
+  switch (location.kind) {
+    case "local":
+      return undefined;
+    case "ssh":
+      return `ssh-remote+${location.host}`;
+  }
+}
+
+/**
+ * Whether DevHub's own tooling can reach this Workspace's folder.
+ *
+ * Everything DevHub runs itself — `git`, the HEAD watcher, tmux, Agents,
+ * worktree removal, the folder-exists probe — runs on the machine main is on,
+ * with a local path and a local process. None of that is true of an ssh
+ * location, and none of it is *nearly* true: there is no degraded version of
+ * `fs.watch` on another host.
+ *
+ * So this is the one predicate, and it is asked rather than the kind being
+ * matched, for two reasons. Phase 2 gives an ssh Workspace a runtime on the far
+ * end and this becomes true for it — one edit, in one place. And in the
+ * meantime "we cannot do this here" is a single fact with a single sentence,
+ * `LOCAL_TOOLING_UNAVAILABLE`, rather than a sentence per surface that a
+ * seventh surface would get subtly wrong.
+ *
+ * It is never a reason to skip silently. Every surface that would have shown a
+ * feature says why it is not showing it; see the callers.
+ */
+export function supportsLocalTooling(location: WorkspaceLocation): boolean {
+  switch (location.kind) {
+    case "local":
+      return true;
+    case "ssh":
+      return false;
+  }
+}
+
+/** The one sentence every surface says when `supportsLocalTooling` is false. */
+export const LOCAL_TOOLING_UNAVAILABLE =
+  "Not available for SSH workspaces yet.";
 
 type RemoteScheme = "bare" | "scp" | "http" | "https" | "ssh";
 
@@ -1023,7 +1186,7 @@ export class Workspace {
 
   constructor(
     readonly id: WorkspaceId,
-    private rootValue: WorkspaceRoot,
+    private locationValue: WorkspaceLocation,
     private selectedPathValue: DisplayPath,
     private repositoryIdValue: RepositoryId | undefined = undefined,
     private stateValue: WorkspaceState = AVAILABLE,
@@ -1035,7 +1198,7 @@ export class Workspace {
   clone(): Workspace {
     const copy = new Workspace(
       this.id,
-      this.rootValue,
+      this.locationValue,
       this.selectedPathValue,
       this.repositoryIdValue,
       this.stateValue,
@@ -1047,8 +1210,26 @@ export class Workspace {
     return copy;
   }
 
+  get location(): WorkspaceLocation {
+    return this.locationValue;
+  }
+
+  /**
+   * The folder's path, wherever the folder is.
+   *
+   * Still here, and still the path and nothing else, because every reader that
+   * wants a *name* wants this: the label, the tooltip, the basename, the
+   * disambiguation. What used to also use it — "is this the same Workspace" —
+   * asks `key` now, which is the only question a path stopped being able to
+   * answer once a folder could be on another machine.
+   */
   get root(): WorkspaceRoot {
-    return this.rootValue;
+    return this.locationValue.path;
+  }
+
+  /** What makes this Workspace this one. See `locationKey`. */
+  get key(): string {
+    return locationKey(this.locationValue);
   }
 
   get selectedPath(): DisplayPath {
@@ -1071,8 +1252,18 @@ export class Workspace {
     return this.agentList;
   }
 
+  /**
+   * An Agent is a process, and a process runs where the folder is.
+   *
+   * So a Workspace on another machine cannot have one yet — see
+   * `supportsLocalTooling`. Refused here rather than at the launch, because the
+   * page has to be able to *say so* before the person asks: New Agent is
+   * disabled with the reason on it, which is the whole difference between a
+   * feature that is not here yet and a button that does nothing.
+   */
   get canCreateAgent(): boolean {
     return (
+      supportsLocalTooling(this.locationValue) &&
       isWorkspaceAvailable(this.stateValue) &&
       this.closeValue.kind !== "running"
     );
@@ -1090,8 +1281,8 @@ export class Workspace {
    * Rebind an unavailable Workspace to a newly located canonical root while
    * preserving its WorkspaceId and its live Agents.
    */
-  relocate(root: WorkspaceRoot, selectedPath: DisplayPath): void {
-    this.rootValue = root;
+  relocate(location: WorkspaceLocation, selectedPath: DisplayPath): void {
+    this.locationValue = location;
     this.selectedPathValue = selectedPath;
     this.stateValue = AVAILABLE;
   }

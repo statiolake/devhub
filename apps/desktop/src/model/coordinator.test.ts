@@ -19,7 +19,7 @@ import {
   confirmationId,
   intentId,
   operationId,
-  requestedPath,
+  requestedLocation,
   type IntentOutcome,
   type OperationToken,
   type ProviderEvent,
@@ -169,7 +169,10 @@ class Driver {
   }
 
   openFolder(path: string): void {
-    this.dispatch({ type: "open_folder", path: requestedPath(path) });
+    this.dispatch({
+      type: "open_folder",
+      location: requestedLocation({ kind: "local", path }),
+    });
     this.settle();
   }
 }
@@ -258,7 +261,7 @@ describe("opening a folder", () => {
     const driver = new Driver();
     const outcome = driver.dispatch({
       type: "open_folder",
-      path: requestedPath("/dev/project"),
+      location: requestedLocation({ kind: "local", path: "/dev/project" }),
     });
     expect(outcome.kind).toBe("deferred");
     driver.settle();
@@ -286,12 +289,92 @@ describe("opening a folder", () => {
   });
 });
 
+describe("opening a folder on another machine", () => {
+  it("asks for an identity without asking this machine about the path", () => {
+    // There is nothing here to resolve: the machine that could `realpath` the
+    // folder is the one DevHub has not connected to yet, and connecting is the
+    // workbench's job rather than a precondition of having a row. So the ssh
+    // open joins the local one at the step *after* resolution, and the local
+    // resolver is never asked.
+    const driver = new Driver();
+    driver.dispatch({
+      type: "open_folder",
+      location: requestedLocation({
+        kind: "ssh",
+        host: "build.example.com",
+        path: "/srv/api",
+      }),
+    });
+    const effects = driver.drainEffects();
+    expect(effects.map((effect) => effect.kind)).toEqual([
+      "generate_workspace_id",
+    ]);
+    const [effect] = effects;
+    if (effect?.kind !== "generate_workspace_id") throw new Error("unexpected");
+    expect(effect.location).toEqual({
+      kind: "ssh",
+      host: "build.example.com",
+      path: "/srv/api",
+    });
+  });
+
+  it("adds it as a Workspace like any other, and keeps the machine", () => {
+    const driver = new Driver();
+    driver.dispatch({
+      type: "open_folder",
+      location: requestedLocation({
+        kind: "ssh",
+        host: "build.example.com",
+        path: "/srv/api",
+      }),
+    });
+    driver.settle();
+    const [workspace] = driver.coordinator.snapshot().workspaces;
+    expect(workspace?.location).toEqual({
+      kind: "ssh",
+      host: "build.example.com",
+      path: "/srv/api",
+    });
+    expect(workspace?.key).toBe("ssh://build.example.com/srv/api");
+    // An Agent is a process and a process runs where the folder is.
+    expect(workspace?.canCreateAgent).toBe(false);
+  });
+
+  it("keeps a second machine's identical path as a second Workspace", () => {
+    // The identity of a place is the machine and the path together. Keyed on
+    // the path, the second open would have selected the first row instead of
+    // asking for an identity at all.
+    const driver = new Driver();
+    const ids = [WS_A, workspaceId("550e8400-e29b-41d4-a716-4466554400b1")];
+    ids.forEach((id, index) => {
+      driver.dispatch({
+        type: "open_folder",
+        location: requestedLocation({
+          kind: "ssh",
+          host: index === 0 ? "build.example.com" : "staging.example.com",
+          path: "/srv/api",
+        }),
+      });
+      for (const effect of driver.drainEffects()) {
+        if (effect.kind !== "generate_workspace_id") continue;
+        driver.accept({
+          type: "workspace_id_generated",
+          token: effect.token,
+          workspaceId: id,
+        });
+      }
+      driver.settle();
+    });
+    expect(driver.coordinator.snapshot().workspaces).toHaveLength(2);
+  });
+});
+
 describe("tokens", () => {
   it("rejects a completion for a superseded generation", () => {
     const driver = new Driver();
     driver.dispatch({
       type: "open_folder",
-      path: requestedPath("/dev/project"),
+      location: requestedLocation({ kind: "local", path: "/dev/project" }),
     });
     const [effect] = driver.drainEffects();
     if (effect.kind !== "resolve_workspace_path") throw new Error("unexpected");

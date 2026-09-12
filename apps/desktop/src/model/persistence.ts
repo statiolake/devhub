@@ -48,13 +48,15 @@ import {
   DomainError,
   validDisplayName,
   Workspace,
-  workspaceRoot,
+  sshHost,
+  workspaceLocation,
   type AgentControlState,
   type DiagnosticCode,
   type AgentProfileKind,
   type AgentStatus,
   type UnreadReason,
   type RuntimeHealth,
+  type WorkspaceLocation,
 } from "./domain.js";
 import {
   AppModel,
@@ -84,6 +86,14 @@ import {
  * to invent one or refuse the file as corrupt — which quarantines the session.
  * `newer_version` is the refusal that does neither.
  *
+ * Version 5 added `location`, which is what makes a Workspace's folder able to
+ * be on another machine. A version-4 record has no such key and every one of
+ * them is a folder on this machine, so it loads as `{ kind: "local" }` and
+ * nothing is invented — which is why the bump is for the other direction, as
+ * always: a version-4 DevHub reading a version-5 file would find a Workspace
+ * whose `canonical_path` names a directory on a host it has never heard of,
+ * and would open a window on a path that is not there.
+ *
  * `sidebar.expanded` was retired *without* a bump, for the same reason those
  * needed one and it did not. It is read like the activity — ignored on load,
  * dropped on the next save — and in the other direction a build that still
@@ -91,7 +101,7 @@ import {
  * "expanded", the only state there is now. Nothing has to be invented, so
  * nothing has to refuse.
  */
-export const STATE_SCHEMA_VERSION = 4;
+export const STATE_SCHEMA_VERSION = 5;
 export { SIDEBAR_DEFAULT_WIDTH };
 
 const MIN_SIDEBAR_WIDTH = 200;
@@ -304,10 +314,28 @@ export interface AgentStateRecord {
   provider_mapping?: string;
 }
 
+/**
+ * Where the folder is, on the wire.
+ *
+ * The path stays where it was, in `canonical_path`, and this says which machine
+ * that path is on. Two keys rather than one URI because `canonical_path` is
+ * what every version of this file has held and what every older DevHub reads;
+ * folding it into a URI would have made a version-4 file unreadable in order to
+ * say something a version-4 file never needed to say.
+ */
+export type WorkspaceLocationRecord =
+  | { kind: "local" }
+  | { kind: "ssh"; host: string };
+
 export interface WorkspaceStateRecord {
   workspace_id: string;
   selected_path: string;
   canonical_path: string;
+  /**
+   * Absent in a version-4 file, where every Workspace was a folder on this
+   * machine. That absence *is* the migration: there is nothing to invent.
+   */
+  location?: WorkspaceLocationRecord;
   repository_id?: string;
   /**
    * There is deliberately no `issue_url` here any more.
@@ -601,6 +629,13 @@ function validateWorkspaceRecord(record: WorkspaceStateRecord): void {
   validateUuid(record.workspace_id);
   validateAbsolutePath(record.selected_path);
   validateAbsolutePath(record.canonical_path);
+  if (record.location?.kind === "ssh") {
+    // The same rule the domain applies, applied to the file, so a hand-edited
+    // or truncated host is refused here rather than throwing three layers in.
+    refuseRecord(`workspace ${record.workspace_id}'s host`, () =>
+      sshHost(record.location?.kind === "ssh" ? record.location.host : ""),
+    );
+  }
   if (record.repository_id !== undefined) {
     validateUuid(record.repository_id);
   }
@@ -783,19 +818,18 @@ export function validateState(state: PersistedAppState): void {
     fail("STATE_NEWER_VERSION");
   }
   const workspaceIds = new Set<string>();
-  const canonicalPaths = new Set<string>();
+  const locations = new Set<string>();
   const agentIds = new Set<string>();
   for (const workspace of state.workspaces) {
     validateWorkspaceRecord(workspace);
-    const canonical = normalizePathString(workspace.canonical_path);
-    if (
-      workspaceIds.has(workspace.workspace_id) ||
-      canonicalPaths.has(canonical)
-    ) {
+    // The same identity the model enforces: the place, machine included. Two
+    // hosts' `/src/api` are two Workspaces and must both survive a reload.
+    const key = `${workspace.location?.kind === "ssh" ? workspace.location.host : ""}\u0000${normalizePathString(workspace.canonical_path)}`;
+    if (workspaceIds.has(workspace.workspace_id) || locations.has(key)) {
       fail("STATE_INVALID");
     }
     workspaceIds.add(workspace.workspace_id);
-    canonicalPaths.add(canonical);
+    locations.add(key);
     for (const agent of workspace.agents) {
       if (agentIds.has(agent.agent_id)) {
         fail("STATE_INVALID");
@@ -908,13 +942,21 @@ export function hydrateModel(
   const model = new AppModel();
   for (const record of state.workspaces) {
     const where = `workspace ${record.workspace_id}`;
-    const { id, root, selected } = refuseRecord(where, () => ({
+    const { id, location, selected } = refuseRecord(where, () => ({
       id: parseWorkspaceId(record.workspace_id),
-      root: workspaceRoot(record.canonical_path),
+      location: workspaceLocation(
+        record.location?.kind === "ssh"
+          ? {
+              kind: "ssh",
+              host: record.location.host,
+              path: record.canonical_path,
+            }
+          : { kind: "local", path: record.canonical_path },
+      ),
       selected: displayPath(record.selected_path),
     }));
     refuseRecord(where, () => {
-      model.addWorkspace(new Workspace(id, root, selected));
+      model.addWorkspace(new Workspace(id, location, selected));
     });
     refuseRecord(`${where}'s lifecycle`, () => {
       switch (record.lifecycle.kind) {
@@ -1060,6 +1102,7 @@ export function stateFromSnapshot(
       workspace_id: workspace.id,
       selected_path: workspace.selectedPath,
       canonical_path: workspace.root,
+      location: locationRecord(workspace.location),
       repository_id: workspace.repositoryId,
       last_agent_id: workspace.lastAgentId,
       lifecycle: lifecycleFrom(workspace.state),
@@ -1336,6 +1379,7 @@ const LIFECYCLE_KINDS = [
   "closing",
   "closing_failed",
 ] as const;
+const WORKSPACE_LOCATION_KINDS = ["local", "ssh"] as const;
 const NAVIGATION_KINDS = ["global", "workspace", "agent"] as const;
 const OWNED_SESSION_KINDS = ["scratch", "workspace"] as const;
 const CLEANUP_SESSION_STATUSES = [
@@ -1371,6 +1415,31 @@ function decodeDiagnostic(
 function decodeUnread(where: string, value: unknown): UnreadReason | boolean {
   if (typeof value === "boolean") return value;
   return decodeMember(where, value, AGENT_STATUSES);
+}
+
+/** The place, as the file spells it. The path travels in `canonical_path`. */
+function locationRecord(location: WorkspaceLocation): WorkspaceLocationRecord {
+  switch (location.kind) {
+    case "local":
+      return { kind: "local" };
+    case "ssh":
+      return { kind: "ssh", host: location.host };
+  }
+}
+
+function decodeWorkspaceLocation(
+  where: string,
+  value: unknown,
+): WorkspaceLocationRecord {
+  const object = decodeObject(where, value);
+  const kind = decodeMember(
+    `${where}.kind`,
+    object["kind"],
+    WORKSPACE_LOCATION_KINDS,
+  );
+  return kind === "local"
+    ? { kind }
+    : { kind, host: decodeString(`${where}.host`, object["host"]) };
 }
 
 function decodeAgentRecord(where: string, value: unknown): AgentStateRecord {
@@ -1454,6 +1523,12 @@ function decodeWorkspaceRecord(
       at("canonical_path"),
       object["canonical_path"],
     ),
+    // A version-4 record has no `location`, and a version-4 record is a folder
+    // on this machine. Absent is not a missing value here; it is the answer.
+    location:
+      object["location"] === undefined
+        ? { kind: "local" }
+        : decodeWorkspaceLocation(at("location"), object["location"]),
     repository_id: decodeOptional(object["repository_id"], (entry) =>
       decodeString(at("repository_id"), entry),
     ),

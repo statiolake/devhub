@@ -37,7 +37,8 @@ import type {
 import { OpenContext } from "code-oss-dev/out/vs/platform/windows/electron-main/windows.js";
 import type { IOpenEmptyWindowOptions } from "code-oss-dev/out/vs/platform/window/common/window.js";
 import { isSingleFolderWorkspaceIdentifier } from "code-oss-dev/out/vs/platform/workspace/common/workspace.js";
-import { Schemas } from "code-oss-dev/out/vs/base/common/network.js";
+import { locationKey } from "../../model/domain.js";
+import { locationFromWorkspaceUri } from "../shell/editorPlace.js";
 import { appController } from "../shell/appController.js";
 
 /** The part of the upstream options DevHub reads, plus the method it replaces. */
@@ -130,15 +131,17 @@ const upstreamOpenInBrowserWindow = (
 	options,
 ) {
 	const workspace = options.workspace;
-	const folder =
-		isSingleFolderWorkspaceIdentifier(workspace) &&
-		workspace.uri.scheme === Schemas.file
-			? workspace.uri.fsPath
-			: undefined;
+	// Which *place*, not which path: a folder on another machine has no local
+	// path at all, and reading `fsPath` off a `vscode-remote://` URI produces
+	// something that looks like one and names nowhere. See `editorPlace.ts`.
+	const location = isSingleFolderWorkspaceIdentifier(workspace)
+		? locationFromWorkspaceUri(workspace.uri)
+		: undefined;
+	const editorKey = location === undefined ? undefined : locationKey(location);
 
 	const controller = appController();
 
-	if (!folder) {
+	if (!location || editorKey === undefined) {
 		// The one no-folder request that is not a request for Scratch is
 		// DevHub building Scratch itself: answering that with "here is the
 		// Scratch workbench" would be asking for the thing being created.
@@ -154,24 +157,26 @@ const upstreamOpenInBrowserWindow = (
 		return scratch;
 	}
 
-	// The folder is the key, not the Workspace identity: a view and a Workspace
-	// are two objects with two lifetimes, and the folder is the only thing both
+	// The place is the key, not the Workspace identity: a view and a Workspace
+	// are two objects with two lifetimes, and the place is the only thing both
 	// agree about — which is what lets this path and a click in the Sidebar land
 	// on the same view without an ordering rule between them.
-	const existingId = controller.viewIdForFolder(folder);
+	const existingId = controller.viewIdForEditorKey(editorKey);
 	const existing =
 		existingId === undefined ? undefined : this.getWindowById(existingId);
 	if (existing) {
-		console.log(`[devhub] open: '${folder}' already has a view — showing it`);
-		controller.revealFolderView(folder);
+		console.log(
+			`[devhub] open: '${editorKey}' already has a view — showing it`,
+		);
+		controller.revealEditorKeyView(editorKey);
 		return existing;
 	}
 
 	console.log(
-		`[devhub] open: '${folder}' is new — a workbench view in the shell`,
+		`[devhub] open: '${editorKey}' is new — a workbench view in the shell`,
 	);
 	const window = await upstreamOpenInBrowserWindow.call(this, options);
-	controller.bindFolderView(folder, window.id);
-	controller.noteFolder(folder);
+	controller.bindEditorKeyView(editorKey, window.id);
+	controller.noteLocation(location);
 	return window;
 };

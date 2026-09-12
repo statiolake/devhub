@@ -17,6 +17,9 @@ import {
   type AgentProfile,
   type AgentControlState,
   type WorkspaceClose,
+  LOCAL_TOOLING_UNAVAILABLE,
+  supportsLocalTooling,
+  type WorkspaceLocation,
   type CloseInspectionProjection,
   type ResourceInspection,
   type SurfaceLayout,
@@ -71,6 +74,7 @@ import {
   type ReplayEventKindWire,
   type ReplayWire,
   type LayoutWire,
+  type WorkspaceLocationWire,
   type WorkspaceStateWire,
   type WorkspaceWire,
 } from "../ipc/appShell.js";
@@ -247,6 +251,18 @@ function contextWire(
  * the same reason the model carries it: whoever draws the state has to be able
  * to say why it is that state.
  */
+/** Where the folder is, variant for variant. */
+function workspaceLocationWire(
+  location: WorkspaceLocation,
+): WorkspaceLocationWire {
+  switch (location.kind) {
+    case "local":
+      return { kind: "local" };
+    case "ssh":
+      return { kind: "ssh", host: location.host };
+  }
+}
+
 function workspaceStateWire(
   state: WorkspaceSnapshot["state"],
 ): WorkspaceStateWire {
@@ -339,7 +355,9 @@ export function snapshotWire(
   const projected: WorkspaceWire[] = snapshot.workspaces.map((workspace) => ({
     id: workspace.id,
     label: workspace.label,
+    location: workspaceLocationWire(workspace.location),
     root: workspace.root,
+    key: workspace.key,
     selectedPath: workspace.selectedPath,
     state: workspaceStateWire(workspace.state),
     close: workspaceCloseWire(workspace.close),
@@ -348,6 +366,9 @@ export function snapshotWire(
     ...(workspace.lastAgentId === undefined
       ? {}
       : { lastAgentId: workspace.lastAgentId }),
+    ...(supportsLocalTooling(workspace.location)
+      ? {}
+      : { localToolingUnavailable: LOCAL_TOOLING_UNAVAILABLE }),
   }));
   const workspaces = orderWorkspaces(projected, (workspace) =>
     repositoryOf(workspace.id),

@@ -35,7 +35,15 @@
 export interface OrderableWorkspace {
   readonly id: string;
   readonly label: string;
-  readonly root: string;
+  /**
+   * What makes this workspace this one: a local folder's path, and a remote
+   * folder's host and path together. It is the key rather than the path
+   * because grouping is an identity question, and `/src/api` on two machines
+   * is two workspaces that must not be folded into one group. A local
+   * workspace's key *is* its path, which is what lets it be compared against
+   * the main worktree git names below.
+   */
+  readonly key: string;
 }
 
 /** Names sort the way the reader's language sorts them, digits included. */
@@ -59,18 +67,18 @@ export function orderWorkspaces<T extends OrderableWorkspace>(
 ): readonly T[] {
   const groups = new Map<string, T[]>();
   for (const workspace of workspaces) {
-    const key = mainWorktreeOf(workspace) ?? workspace.root;
-    const group = groups.get(key);
+    const groupKey = mainWorktreeOf(workspace) ?? workspace.key;
+    const group = groups.get(groupKey);
     if (group) group.push(workspace);
-    else groups.set(key, [workspace]);
+    else groups.set(groupKey, [workspace]);
   }
 
   const ordered = [...groups.entries()].map(([key, members]) => {
     const sorted = [...members].sort((left, right) => {
       // The repository itself leads its own group, whatever it is called: it is
       // the thing the others are checkouts of.
-      if (left.root === key) return -1;
-      if (right.root === key) return 1;
+      if (left.key === key) return -1;
+      if (right.key === key) return 1;
       return byName(left.label, right.label);
     });
     return sorted;

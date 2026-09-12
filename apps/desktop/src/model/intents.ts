@@ -26,6 +26,7 @@ import type {
   NavigationContext,
   SurfacePresentation,
   RuntimeHealth,
+  SshHost,
   WorkspaceId,
   WorkspaceRoot,
 } from "./domain.js";
@@ -33,6 +34,7 @@ import {
   DomainError,
   DomainErrorCode as Code,
   isCanonicalUuid,
+  sshHost,
 } from "./domain.js";
 import type { AppSnapshot } from "./appModel.js";
 
@@ -194,6 +196,39 @@ export function requestedPath(raw: string): RequestedPath {
   return raw as RequestedPath;
 }
 
+/**
+ * Where a caller asked DevHub to open, before anything has resolved it.
+ *
+ * The same two kinds as `WorkspaceLocation` and deliberately not that type: a
+ * request is what somebody typed, and a location is what survived being
+ * checked. Only a resolver completion may make the second out of the first.
+ */
+export type RequestedWorkspaceLocation =
+  | { readonly kind: "local"; readonly path: RequestedPath }
+  | {
+      readonly kind: "ssh";
+      readonly host: SshHost;
+      readonly path: RequestedPath;
+    };
+
+/** The one way a `RequestedWorkspaceLocation` is made. See `workspaceLocation`. */
+export function requestedLocation(
+  requested:
+    | { readonly kind: "local"; readonly path: string }
+    | { readonly kind: "ssh"; readonly host: string; readonly path: string },
+): RequestedWorkspaceLocation {
+  switch (requested.kind) {
+    case "local":
+      return { kind: "local", path: requestedPath(requested.path) };
+    case "ssh":
+      return {
+        kind: "ssh",
+        host: sshHost(requested.host),
+        path: requestedPath(requested.path),
+      };
+  }
+}
+
 export type UserIntent =
   | {
       readonly type: "select_context";
@@ -219,7 +254,10 @@ export type UserIntent =
   | { readonly type: "toggle_scratch" }
   | { readonly type: "resize_sidebar"; readonly width: number }
   | { readonly type: "resize_split"; readonly ratio: number }
-  | { readonly type: "open_folder"; readonly path: RequestedPath }
+  | {
+      readonly type: "open_folder";
+      readonly location: RequestedWorkspaceLocation;
+    }
   | { readonly type: "new_window"; readonly path?: RequestedPath }
   | { readonly type: "retry_workspace"; readonly workspaceId: WorkspaceId }
   /**

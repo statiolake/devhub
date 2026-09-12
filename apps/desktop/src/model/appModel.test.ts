@@ -10,7 +10,7 @@ import {
   CLEAN_CLOSE_INSPECTION,
   Workspace,
   workspaceId,
-  workspaceRoot,
+  workspaceLocation,
   type AgentStatus,
   type NavigationContext,
 } from "./domain.js";
@@ -40,7 +40,11 @@ function modelWith(...roots: [ReturnType<typeof workspaceId>, string][]) {
   const model = new AppModel();
   for (const [id, path] of roots) {
     model.addWorkspace(
-      new Workspace(id, workspaceRoot(path), displayPath(path)),
+      new Workspace(
+        id,
+        workspaceLocation({ kind: "local", path }),
+        displayPath(path),
+      ),
     );
   }
   return model;
@@ -466,7 +470,7 @@ describe("relocation", () => {
       codeOf(() => {
         model.relocateWorkspace(
           WS_A,
-          workspaceRoot("/dev/moved"),
+          workspaceLocation({ kind: "local", path: "/dev/moved" }),
           displayPath("/dev/moved"),
         );
       }),
@@ -474,7 +478,7 @@ describe("relocation", () => {
     model.markWorkspaceUnavailable(WS_A, "root_missing");
     model.relocateWorkspace(
       WS_A,
-      workspaceRoot("/dev/moved"),
+      workspaceLocation({ kind: "local", path: "/dev/moved" }),
       displayPath("/dev/moved"),
     );
     expect(model.workspace(WS_A)?.root).toBe("/dev/moved");
@@ -488,7 +492,11 @@ describe("duplicates", () => {
     expect(
       codeOf(() => {
         model.addWorkspace(
-          new Workspace(WS_B, workspaceRoot("/dev/a"), displayPath("/dev/a")),
+          new Workspace(
+            WS_B,
+            workspaceLocation({ kind: "local", path: "/dev/a" }),
+            displayPath("/dev/a"),
+          ),
         );
       }),
     ).toBe(DomainErrorCode.DuplicateWorkspaceRoot);

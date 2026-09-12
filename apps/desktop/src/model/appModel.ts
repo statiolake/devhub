@@ -16,6 +16,8 @@ import {
   DomainErrorCode,
   GLOBAL_CONTEXT,
   isWorkspaceAvailable,
+  locationKey,
+  locationLabel,
   rootBasename,
   rootParentComponents,
   sameContext,
@@ -41,6 +43,7 @@ import {
   type SurfacePresentation,
   type UnreadReason,
   type WorkspaceId,
+  type WorkspaceLocation,
   type WorkspaceRoot,
   type WorkspaceState,
 } from "./domain.js";
@@ -154,8 +157,13 @@ export interface AgentSnapshot {
 export interface WorkspaceSnapshot {
   readonly id: WorkspaceId;
   readonly label: string;
+  /** Where the folder is, machine included. See `WorkspaceLocation`. */
+  readonly location: WorkspaceLocation;
+  /** The folder's path, whichever machine it is on. `location.path`. */
   readonly root: WorkspaceRoot;
   readonly selectedPath: DisplayPath;
+  /** What makes this Workspace this one. See `locationKey`. */
+  readonly key: string;
   readonly repositoryId: RepositoryId | undefined;
   readonly state: WorkspaceState;
   /** What its close has to say. See `WorkspaceClose`. */
@@ -447,7 +455,7 @@ export class AppModel {
       fail(DomainErrorCode.DuplicateWorkspace);
     }
     if (
-      this.workspaceList.some((candidate) => candidate.root === workspace.root)
+      this.workspaceList.some((candidate) => candidate.key === workspace.key)
     ) {
       fail(DomainErrorCode.DuplicateWorkspaceRoot);
     }
@@ -997,7 +1005,7 @@ export class AppModel {
     }
     if (
       this.workspaceList.some(
-        (workspace) => workspace.root === rollback.workspace.root,
+        (workspace) => workspace.key === rollback.workspace.key,
       )
     ) {
       fail(DomainErrorCode.DuplicateWorkspaceRoot);
@@ -1012,7 +1020,7 @@ export class AppModel {
 
   relocateWorkspace(
     id: WorkspaceId,
-    root: WorkspaceRoot,
+    location: WorkspaceLocation,
     selectedPath: DisplayPath,
   ): void {
     const index = this.workspaceList.findIndex(
@@ -1028,18 +1036,21 @@ export class AppModel {
     if (
       this.workspaceList.some(
         (candidate, candidateIndex) =>
-          candidateIndex !== index && candidate.root === root,
+          candidateIndex !== index && candidate.key === locationKey(location),
       )
     ) {
       fail(DomainErrorCode.DuplicateWorkspaceRoot);
     }
-    if (workspace.root === root && workspace.selectedPath === selectedPath) {
+    if (
+      workspace.key === locationKey(location) &&
+      workspace.selectedPath === selectedPath
+    ) {
       if (workspace.markAvailable()) {
         this.bumpRevision();
       }
       return;
     }
-    workspace.relocate(root, selectedPath);
+    workspace.relocate(location, selectedPath);
     this.bumpRevision();
   }
 
@@ -1146,7 +1157,9 @@ export class AppModel {
     return this.workspaceList.map((workspace) => ({
       id: workspace.id,
       label: this.labelFor(workspace),
+      location: workspace.location,
       root: workspace.root,
+      key: workspace.key,
       selectedPath: workspace.selectedPath,
       repositoryId: workspace.repositoryId,
       state: workspace.state,
@@ -1199,7 +1212,11 @@ export class AppModel {
         return `${basename} — ${parents.slice(0, depth).reverse().join("/")}`;
       }
     }
-    return `${basename} — ${workspace.root}`;
+    // The last resort has to be *unique*, and a path stopped being unique when
+    // a folder could be on another machine: `/src/api` on two hosts collides
+    // through every depth above and arrives here twice. The place, spelled out,
+    // is the thing that differs.
+    return `${basename} — ${locationLabel(workspace.location)}`;
   }
 }
 

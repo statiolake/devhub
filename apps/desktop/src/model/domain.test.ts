@@ -14,13 +14,19 @@ import {
   DomainError,
   DomainErrorCode,
   displayPath,
+  locationKey,
+  locationLabel,
+  remoteAuthorityOf,
   remoteIdentity,
   Repository,
   repositoryId,
   rootBasename,
+  sshHost,
+  supportsLocalTooling,
   unknownResource,
   Workspace,
   workspaceId,
+  workspaceLocation,
   workspaceRoot,
 } from "./domain.js";
 
@@ -183,7 +189,7 @@ describe("workspace lifecycle", () => {
     // action on the unavailable surface used to fail on this.
     const workspace = new Workspace(
       workspaceId(UUID_A),
-      workspaceRoot("/dev/project"),
+      workspaceLocation({ kind: "local", path: "/dev/project" }),
       displayPath("/dev/project"),
     );
     workspace.markUnavailable("root_missing");
@@ -198,7 +204,7 @@ describe("workspace lifecycle", () => {
     const owner = workspaceId(UUID_A);
     const workspace = new Workspace(
       owner,
-      workspaceRoot("/dev/project"),
+      workspaceLocation({ kind: "local", path: "/dev/project" }),
       displayPath("/dev/project"),
     );
     workspace.addAgent(Agent.create(agentId(UUID_B), owner, profile, 1));
@@ -307,5 +313,107 @@ describe("what the Agents in a workspace amount to for a close", () => {
     // Agent throws away.
     expect(agentsInspection(["unknown"])).toEqual(busy(1));
     expect(agentsInspection(["error"])).toEqual(busy(1));
+  });
+});
+
+describe("where a Workspace's folder is", () => {
+  const profile = AgentProfile.create(
+    agentProfileId("codex"),
+    "Codex",
+    "codex",
+    "codex",
+  );
+
+  it("names a machine, or says the folder is on this one", () => {
+    expect(workspaceLocation({ kind: "local", path: "/dev/api" })).toEqual({
+      kind: "local",
+      path: "/dev/api",
+    });
+    expect(
+      workspaceLocation({
+        kind: "ssh",
+        host: "build.example.com",
+        path: "/srv/./api",
+      }),
+    ).toEqual({ kind: "ssh", host: "build.example.com", path: "/srv/api" });
+  });
+
+  it("takes an alias, a user@host and a port, and nothing that would re-parse", () => {
+    expect(sshHost("build")).toBe("build");
+    expect(sshHost("  deploy@build.example.com  ")).toBe(
+      "deploy@build.example.com",
+    );
+    expect(sshHost("build.example.com:2222")).toBe("build.example.com:2222");
+    // Each of these would silently become a different URI as an authority.
+    for (const bad of ["", "a b", "build/etc", "build\nx", "ssh://build"]) {
+      expect(codeOf(() => sshHost(bad))).toBe(DomainErrorCode.InvalidHost);
+    }
+  });
+
+  it("makes a local folder's identity its path, exactly as it always was", () => {
+    // The whole reason `locationKey` can replace every path comparison that
+    // predates SSH: for a local folder it *is* the path, so a key compared
+    // against a main worktree git named still matches.
+    expect(
+      locationKey(workspaceLocation({ kind: "local", path: "/dev/api" })),
+    ).toBe("/dev/api");
+  });
+
+  it("tells two machines' identical paths apart", () => {
+    const one = workspaceLocation({
+      kind: "ssh",
+      host: "a.example.com",
+      path: "/srv/api",
+    });
+    const two = workspaceLocation({
+      kind: "ssh",
+      host: "b.example.com",
+      path: "/srv/api",
+    });
+    expect(locationKey(one)).not.toBe(locationKey(two));
+    expect(locationLabel(one)).toBe("a.example.com:/srv/api");
+    expect(locationLabel(two)).toBe("b.example.com:/srv/api");
+  });
+
+  it("composes the authority Open Remote - SSH answers for", () => {
+    expect(
+      remoteAuthorityOf(
+        workspaceLocation({ kind: "ssh", host: "build", path: "/srv/api" }),
+      ),
+    ).toBe("ssh-remote+build");
+    expect(
+      remoteAuthorityOf(workspaceLocation({ kind: "local", path: "/dev/api" })),
+    ).toBeUndefined();
+  });
+
+  it("says DevHub's own tooling cannot reach another machine yet", () => {
+    expect(
+      supportsLocalTooling(
+        workspaceLocation({ kind: "local", path: "/dev/api" }),
+      ),
+    ).toBe(true);
+    expect(
+      supportsLocalTooling(
+        workspaceLocation({ kind: "ssh", host: "build", path: "/srv/api" }),
+      ),
+    ).toBe(false);
+  });
+
+  it("refuses an Agent in a Workspace on another machine, before it is asked for", () => {
+    // Not at the launch: the page has to be able to disable New Agent and say
+    // why, which is the difference between a feature that is not here yet and
+    // a button that does nothing.
+    const owner = workspaceId(UUID_A);
+    const workspace = new Workspace(
+      owner,
+      workspaceLocation({ kind: "ssh", host: "build", path: "/srv/api" }),
+      displayPath("/srv/api"),
+    );
+    expect(workspace.canCreateAgent).toBe(false);
+    expect(
+      codeOf(() =>
+        workspace.addAgent(Agent.create(agentId(UUID_B), owner, profile, 1)),
+      ),
+    ).toBe(DomainErrorCode.WorkspaceUnavailable);
   });
 });

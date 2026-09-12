@@ -9,7 +9,8 @@ import {
   displayPath,
   Workspace,
   workspaceId,
-  workspaceRoot,
+  workspaceId as parseWorkspaceId,
+  workspaceLocation,
 } from "./domain.js";
 import {
   applySnapshot,
@@ -52,10 +53,18 @@ function emptied(state: PersistedAppState): PersistedAppState {
 function populatedModel(): AppModel {
   const model = new AppModel();
   model.addWorkspace(
-    new Workspace(WS_A, workspaceRoot("/dev/a"), displayPath("/dev/a")),
+    new Workspace(
+      WS_A,
+      workspaceLocation({ kind: "local", path: "/dev/a" }),
+      displayPath("/dev/a"),
+    ),
   );
   model.addWorkspace(
-    new Workspace(WS_B, workspaceRoot("/dev/b"), displayPath("/dev/b")),
+    new Workspace(
+      WS_B,
+      workspaceLocation({ kind: "local", path: "/dev/b" }),
+      displayPath("/dev/b"),
+    ),
   );
   model.addAgent(WS_A, AG_A, codex);
   return model;
@@ -710,5 +719,131 @@ describe("projecting a state file that will not project", () => {
       { id: "codex" },
     ] as unknown as AgentProfile[];
     expect(() => hydrateModel(state, notProfiles)).toThrow(TypeError);
+  });
+});
+
+/**
+ * Version 5's whole story is one absent key.
+ *
+ * A version-4 record has no `location`, and every Workspace a version-4 DevHub
+ * could hold was a folder on this machine — so absence is the answer, not a
+ * missing value, and there is no migration step to get wrong. The bump is for
+ * the other direction: a version-4 build reading a version-5 file would find a
+ * `canonical_path` naming a directory on a machine it has never heard of.
+ */
+describe("a Workspace's place across a restart", () => {
+  const WS_C = "33333333-3333-4333-8333-333333333333";
+
+  function remoteModel(): AppModel {
+    const model = new AppModel();
+    model.addWorkspace(
+      new Workspace(
+        WS_A,
+        workspaceLocation({ kind: "local", path: "/dev/a" }),
+        displayPath("/dev/a"),
+      ),
+    );
+    model.addWorkspace(
+      new Workspace(
+        WS_B,
+        workspaceLocation({
+          kind: "ssh",
+          host: "build.example.com",
+          path: "/srv/api",
+        }),
+        displayPath("/srv/api"),
+      ),
+    );
+    // The same path on a second machine: two Workspaces, and the file has to
+    // keep them apart or one of them does not come back.
+    model.addWorkspace(
+      new Workspace(
+        parseWorkspaceId(WS_C),
+        workspaceLocation({
+          kind: "ssh",
+          host: "staging.example.com",
+          path: "/srv/api",
+        }),
+        displayPath("/srv/api"),
+      ),
+    );
+    return model;
+  }
+
+  it("round-trips the machine, not just the path", () => {
+    const state = stateFromSnapshot(remoteModel().snapshot());
+    expect(state.workspaces.map((record) => record.location)).toEqual([
+      { kind: "local" },
+      { kind: "ssh", host: "build.example.com" },
+      { kind: "ssh", host: "staging.example.com" },
+    ]);
+    validateState(state);
+    const restored = hydrateModel(state, []).snapshot();
+    expect(restored.workspaces.map((workspace) => workspace.key)).toEqual([
+      "/dev/a",
+      "ssh://build.example.com/srv/api",
+      "ssh://staging.example.com/srv/api",
+    ]);
+  });
+
+  it("loads a version-4 record as a folder on this machine", async () => {
+    const state = freshState();
+    state.schema_version = 4;
+    state.workspaces = [
+      {
+        workspace_id: WS_A,
+        selected_path: "/dev/a",
+        canonical_path: "/dev/a",
+        lifecycle: { kind: "available" },
+        agents: [],
+      },
+    ];
+    // Written without `location` at all — the shape a version-4 DevHub wrote —
+    // and read back through the store, which is the only path a real file
+    // takes.
+    const directory = makeScratchDir("state");
+    const path = join(directory, "state.json");
+    const document = JSON.parse(JSON.stringify(state)) as {
+      workspaces: Record<string, unknown>[];
+    };
+    delete document.workspaces[0]!["location"];
+    await writeFile(path, JSON.stringify(document), { mode: 0o600 });
+    const loaded = (await new JsonStateStore(path).loadState()).state;
+    expect(loaded.schema_version).toBe(STATE_SCHEMA_VERSION);
+    expect(loaded.workspaces[0]!.location).toEqual({ kind: "local" });
+    expect(hydrateModel(loaded, []).snapshot().workspaces[0]!.location).toEqual(
+      {
+        kind: "local",
+        path: "/dev/a",
+      },
+    );
+    removeScratchDir(directory);
+  });
+
+  it("refuses a host that could not survive being a URI authority", () => {
+    const state = freshState();
+    state.workspaces = [
+      {
+        workspace_id: WS_A,
+        selected_path: "/srv/api",
+        canonical_path: "/srv/api",
+        location: { kind: "ssh", host: "build/etc" },
+        lifecycle: { kind: "available" },
+        agents: [],
+      },
+    ];
+    expect(() => {
+      validateState(state);
+    }).toThrow();
+  });
+
+  it("keeps two machines' identical paths as two records", () => {
+    const state = stateFromSnapshot(remoteModel().snapshot());
+    // The uniqueness rule is about the place, not the path: this used to be a
+    // set of canonical paths, and the second remote Workspace would have been
+    // refused as a duplicate of the first.
+    expect(() => {
+      validateState(state);
+    }).not.toThrow();
   });
 });
