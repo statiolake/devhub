@@ -2049,11 +2049,16 @@ export class AppController {
 		// name, and `createSession`'s rule — a root that canonicalises
 		// elsewhere is a different directory — refused every session DevHub
 		// tried to create over there.
-		const runtime =
-			requested.kind === "local"
-				? localRuntime()
-				: runtimeFor(workspaceLocation(requested));
+		// By machine and not by place, and inside the `try`. `runtimeFor` wants a
+		// `WorkspaceLocation`, and the whole point of this step is that there is
+		// not one yet: the path is still whatever somebody typed, `~` and all,
+		// and building a location out of it threw `INVALID_PATH` where nothing
+		// was catching — an open that ended in silence.
 		try {
+			const runtime =
+				requested.kind === "local"
+					? localRuntime()
+					: runtimeById(`ssh:${requested.host}`);
 			// `~` is the *far* machine's home for a far place. Expanding it here
 			// would name a folder on this Mac and then ask a host about it.
 			const expanded =
@@ -2084,7 +2089,7 @@ export class AppController {
 			this.failOperation(token, {
 				subject: "app",
 				code: "workspace_unavailable",
-				detail: `${path}${runtime.where} could not be opened as a workspace: ${error instanceof Error ? error.message : String(error)}`,
+				detail: `${path}${requested.kind === "local" ? "" : ` on ${requested.host}`} could not be opened as a workspace: ${error instanceof Error ? error.message : String(error)}`,
 			});
 		}
 	}
