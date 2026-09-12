@@ -778,7 +778,12 @@
 
 .picker-actions {
   display: flex;
-  justify-content: space-between;
+  /* Cancel is the only thing here and it sits at the trailing end, which is
+     where a Mac puts the one that dismisses. It used to be `space-between`
+     over two buttons, with an empty span standing in for the second whenever a
+     caller passed none; there is no second button any more — every answer this
+     control offers is a row. */
+  justify-content: flex-end;
   align-items: center;
   gap: var(--space-2);
 }

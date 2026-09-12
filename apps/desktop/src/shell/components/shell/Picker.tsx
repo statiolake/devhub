@@ -51,6 +51,15 @@
  * modal of its own — `InjectionReviewSheet`, the only one there is — and it says
  * so by looking like an editor rather than a list.
  *
+ * **The footer holds Cancel and nothing else.** There used to be a second
+ * button beside it for the answer no list could carry — "Other…", the native
+ * folder chooser — and it was `tabIndex={-1}` like Cancel is, which in a
+ * control that keeps focus in its field means it could only ever be clicked.
+ * An answer is a row: the arrows reach a row, Return takes it, and the pinned
+ * rows are already where the answers that *do* something rather than name
+ * something live. So the escape hatch is a pinned row, and the footer has no
+ * slot for a caller to put a mouse-only answer in again.
+ *
  * The other two things not drawn by this control are not questions at all, and
  * so are not exceptions to a rule about questions: `ChordHelpSheet` is a
  * reference one reads and closes, and `ViewScopedAlert` is a workbench's own
@@ -197,8 +206,6 @@ export interface PickerProps {
   readonly queryDelayMs?: number;
   readonly onChoose: (choice: PickerChoice) => void;
   readonly onCancel: () => void;
-  /** The escape hatch beside Cancel — "Other…", and nothing else so far. */
-  readonly extraAction?: { readonly label: string; readonly run: () => void };
 }
 
 function SearchGlyph() {
@@ -233,7 +240,6 @@ export function Picker({
   queryDelayMs = 150,
   onChoose,
   onCancel,
-  extraAction,
 }: PickerProps) {
   const [query, setQuery] = useState(initialQuery);
   const [active, setActive] = useState(0);
@@ -574,18 +580,6 @@ export function Picker({
             </div>
           ) : null}
           <div className="picker-actions">
-            {extraAction ? (
-              <button
-                type="button"
-                className="mac-button plain"
-                tabIndex={-1}
-                onClick={extraAction.run}
-              >
-                {extraAction.label}
-              </button>
-            ) : (
-              <span />
-            )}
             <button
               type="button"
               className="mac-button"

@@ -50,15 +50,16 @@ interface PoolItem extends PickerItem {
 }
 
 /**
- * The two rows that are not workspaces.
+ * The rows that are not workspaces.
  *
  * A path can never be one of these ids — a candidate's id is its absolute path
- * — so the answer the picker gives back says which of the three things
- * happened without anything having to be tagged.
+ * — so the answer the picker gives back says which of the things happened
+ * without anything having to be tagged.
  */
 const NEW_PROJECT = "devhub:new-project";
 const CLONE_PROJECT = "devhub:clone-project";
 const SSH_CONNECT = "devhub:ssh-connect";
+const OTHER_FOLDER = "devhub:other-folder";
 
 function PlusGlyph() {
   return (
@@ -106,7 +107,33 @@ const ACTIONS: readonly PickerItem[] = [
     detail: "Open a folder on another machine",
     glyph: <HostGlyph />,
   },
+  /**
+   * The answer no source covers, and so the answer no list can hold.
+   *
+   * A row and not a button in the footer. It was a footer button, and a footer
+   * button in this control is `tabIndex={-1}` — focus stays in the field — so
+   * the one answer for a folder DevHub does not know about was the one answer
+   * only a mouse could give. Every other answer here is a row; so is this.
+   *
+   * It goes last of the four because it is the last resort: the three above it
+   * are what a person means most of the time, and this is what they mean when
+   * none of those is it.
+   */
+  {
+    id: OTHER_FOLDER,
+    label: "Other…",
+    detail: "Choose a folder DevHub does not know about",
+    glyph: <EllipsisGlyph />,
+  },
 ];
+
+function EllipsisGlyph() {
+  return (
+    <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+      <path d="M4 8h0.01M8 8h0.01M12 8h0.01" />
+    </svg>
+  );
+}
 
 function FolderGlyph() {
   return (
@@ -418,6 +445,17 @@ export function WorkspacePicker({ onDismiss }: WorkspacePickerProps) {
         // What the row means, in the same terms whichever row it was — so the
         // modifier is read once, here, rather than by each of the three things
         // a row can lead to.
+        if (choice.id === OTHER_FOLDER) {
+          // The native chooser is a question of its own, asked by the machine
+          // rather than by DevHub, so the sheet gets out of its way first.
+          finish(async () => {
+            const path = await chooseWorkspaceFolder();
+            // A folder the person picked in the native chooser is one that
+            // exists; there is nothing to make.
+            if (path) await selectWorkspacePicker(path, false);
+          });
+          return;
+        }
         const alias = aliasFromRowId(choice.id);
         const row: Chosen =
           choice.id === NEW_PROJECT
@@ -449,17 +487,6 @@ export function WorkspacePicker({ onDismiss }: WorkspacePickerProps) {
       }}
       onCancel={() => {
         finish();
-      }}
-      extraAction={{
-        label: "Other…",
-        run: () => {
-          finish(async () => {
-            const path = await chooseWorkspaceFolder();
-            // A folder the person picked in the native chooser is one that
-            // exists; there is nothing to make.
-            if (path) await selectWorkspacePicker(path, false);
-          });
-        },
       }}
     />
   );
