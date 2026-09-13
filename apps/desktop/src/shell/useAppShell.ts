@@ -24,6 +24,14 @@ export interface AppShellContextValue {
   readonly state: AppLoadState;
   readonly appearance: AppAppearance | undefined;
   /**
+   * What this window is called — the string main composed and gave the OS.
+   *
+   * The page letters it into the title bar it draws. It is read, never
+   * computed: one window, one name, and nothing here that could disagree with
+   * what Mission Control shows.
+   */
+  readonly windowTitle: string;
+  /**
    * What the application itself has to say right now, oldest first.
    *
    * App-scoped only, and drawn in exactly one place (`Toasts`). A failure

@@ -48,6 +48,8 @@ export type {
 export interface AppShellClient {
   getSnapshot(): Promise<AppSnapshot>;
   getAppearance(): Promise<AppAppearance>;
+  /** What the window is called — the name main composed. See `DevhubApi`. */
+  getWindowTitle(): Promise<string>;
   getAgentProfiles(): Promise<AgentProfiles>;
   dispatch(intent: AppIntent): Promise<AppOutcome>;
   replay(cursor: number): Promise<ReplayWire>;
@@ -55,6 +57,7 @@ export interface AppShellClient {
   subscribeAppearance(
     listener: (appearance: AppAppearance) => void,
   ): () => void;
+  subscribeWindowTitle(listener: (title: string) => void): () => void;
   subscribeAgentProfiles(
     listener: (profiles: AgentProfiles) => void,
   ): () => void;
@@ -157,11 +160,13 @@ export function createShellClient(api: DevhubApi = devhub()): AppShellClient {
   return {
     getSnapshot: () => api.getSnapshot(),
     getAppearance: () => api.getAppearance(),
+    getWindowTitle: () => api.getWindowTitle(),
     getAgentProfiles: () => api.getAgentProfiles(),
     dispatch: (intent) => api.dispatch(intent),
     replay: (cursor) => api.replay(cursor),
     subscribe: (listener) => api.onSnapshot(listener),
     subscribeAppearance: (listener) => api.onAppearance(listener),
+    subscribeWindowTitle: (listener) => api.onWindowTitle(listener),
     subscribeAgentProfiles: (listener) => api.onAgentProfiles(listener),
     subscribeAgentActions: (listener) => api.onAgentActions(listener),
     subscribeNativeError: (listener) => api.onNativeError(listener),

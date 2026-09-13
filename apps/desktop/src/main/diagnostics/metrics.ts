@@ -59,7 +59,9 @@ export interface MetricsReport {
 	readonly uptimeMs: number;
 	/**
 	 * Which chrome the window was built with — `appearance.title_bar`, as the
-	 * window actually took it rather than as the file says it now.
+	 * window actually took it rather than as the file says it now. `shown` is
+	 * the bar DevHub draws itself; `hidden` is no bar, with the traffic lights
+	 * on the Sidebar.
 	 *
 	 * It is here because it changes the geometry of everything else DevHub
 	 * draws, and it only changes at launch: a reading that does not name it is

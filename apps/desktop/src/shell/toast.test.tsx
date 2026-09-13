@@ -88,6 +88,8 @@ function mount() {
     dispatch: vi.fn(async () => ({ kind: "updated", snapshot: SNAPSHOT })),
     subscribe: () => () => undefined,
     subscribeAppearance: () => () => undefined,
+    getWindowTitle: async () => "DevHub",
+    subscribeWindowTitle: () => () => undefined,
     subscribeAgentProfiles: () => () => undefined,
     subscribeNativeError: (listener: (error: AppError) => void) => {
       publishError = listener;

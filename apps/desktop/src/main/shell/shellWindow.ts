@@ -19,19 +19,23 @@ import type { ShellPalette } from "../../ipc/palette.js";
 import type { WorkbenchView } from "./workbenchView.js";
 
 /**
- * The one window's construction options, as a function of the two things that
- * decide them.
+ * The one window's construction options.
  *
- * A pure function so the choice can be read — and tested — without an app.
- * `titleBar` is the whole of the difference between DevHub's two chromes, and
- * it is settled here so that nothing downstream has to ask again: see
- * `TitleBarMode`, and `data-title-bar` in the page, which is the same fact
- * spelled for CSS.
+ * A pure function so the shape can be read — and tested — without an app.
+ *
+ * **The mode is not among the arguments, and that is the point.** DevHub's
+ * title bar has to be the Sidebar's colour, in both themes, and a native
+ * `titleBarStyle: "default"` bar cannot be: it is painted by the window server
+ * in the system's colour, from a palette DevHub does not hold. So the bar is
+ * drawn by the page, and the window is the same window either way — a
+ * `hiddenInset` window, which is a transparent bar with the traffic lights
+ * inset and no title text of its own. `shown` and `hidden` are then two
+ * arrangements of the *page*, and the whole of the difference between them is
+ * in `data-title-bar`. See `TitleBarMode`.
  */
 export function shellWindowOptions(
 	preloadPath: string,
 	palette: ShellPalette | undefined,
-	titleBar: TitleBarMode,
 ): Electron.BrowserWindowConstructorOptions {
 	return {
 		width: 1440,
@@ -39,12 +43,7 @@ export function shellWindowOptions(
 		minWidth: 720,
 		minHeight: 480,
 		title: WINDOW_TITLES.shell,
-		// `system` is a macOS window: a title bar carrying the name
-		// `shellTitle.ts` composes, with the traffic lights in it, and the
-		// content area — sidebar, workbench and all — beginning below it.
-		// `hidden` is the Tauri app's chrome: no bar, the page paints its own
-		// band over the window's material, and the lights sit on the Sidebar.
-		titleBarStyle: titleBar === "system" ? "default" : "hiddenInset",
+		titleBarStyle: "hiddenInset",
 		// The window's material and its background are the same decision as
 		// the page's `data-window-material`, made in the same breath: a shell
 		// that follows the Workbench's colour theme cannot also show a system
@@ -69,10 +68,11 @@ export class ShellWindow {
 	/**
 	 * The chrome this window was built with.
 	 *
-	 * Kept because it cannot be asked for afterwards — Electron has no getter
-	 * for `titleBarStyle` — and because a reading of DevHub that does not say
-	 * which of the two shapes was on screen cannot be compared with another.
-	 * See `--metrics`.
+	 * Not a fact about the `BrowserWindow` — both modes build the same one —
+	 * but a fact about what is on screen, which is decided once at launch and
+	 * cannot be asked for afterwards. A reading of DevHub that does not say
+	 * which of the two shapes was up cannot be compared with another. See
+	 * `--metrics`.
 	 */
 	readonly titleBar: TitleBarMode;
 
@@ -140,7 +140,7 @@ export class ShellWindow {
 	) {
 		this.titleBar = titleBar;
 		this.window = new electron.BrowserWindow(
-			shellWindowOptions(preloadPath, palette, titleBar),
+			shellWindowOptions(preloadPath, palette),
 		);
 
 		sendLinksToTheBrowser(this.window.webContents);

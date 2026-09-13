@@ -99,6 +99,15 @@ export function AppShellProvider({
   const [attempt, setAttempt] = useState(0);
   const [state, setState] = useState<AppLoadState>({ status: "loading" });
   const [appearance, setAppearance] = useState<AppAppearance>();
+  /**
+   * What the window is called, as main last said.
+   *
+   * Empty until the first answer arrives. The bar draws nothing rather than a
+   * placeholder for the frame or two before it: a title bar that says
+   * "Loading…" and then something else reads as a window that changed, and it
+   * did not.
+   */
+  const [windowTitle, setWindowTitle] = useState("");
   const [agentProfiles, setAgentProfiles] = useState<AgentProfiles>({
     sequence: 1,
     availability: "unavailable",
@@ -300,6 +309,11 @@ export function AppShellProvider({
         );
         disposers.push(transport.subscribeAppearance(applyAppearanceIfActive));
         disposers.push(
+          transport.subscribeWindowTitle((title) => {
+            if (live()) setWindowTitle(title);
+          }),
+        );
+        disposers.push(
           transport.subscribeRepositoryStatus((status) => {
             // Ordered by the watcher's own sequence, not by arrival: a round
             // that answered late must not replace a newer one.
@@ -317,6 +331,14 @@ export function AppShellProvider({
         // worth not saying.
         try {
           applyAppearanceIfActive(await transport.getAppearance());
+        } catch (error: unknown) {
+          reportFailure(error);
+        }
+        // The name between two pushes. Main pushes it whenever it moves, and
+        // it moved for the last time before this page existed.
+        try {
+          const title = await transport.getWindowTitle();
+          if (live()) setWindowTitle(title);
         } catch (error: unknown) {
           reportFailure(error);
         }
@@ -720,6 +742,7 @@ export function AppShellProvider({
     () => ({
       state,
       appearance,
+      windowTitle,
       notices,
       dismissNotice,
       dismissNewestNotice,
@@ -765,6 +788,7 @@ export function AppShellProvider({
       adoptConfirmation,
       agentProfiles,
       appearance,
+      windowTitle,
       cancelWorkspacePicker,
       chooseWorkspaceFolder,
       cloneProject,

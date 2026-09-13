@@ -159,13 +159,16 @@ export interface AppAppearanceWire {
 	readonly sequence: number;
 	readonly sidebarDensity: AppSidebarDensityWire;
 	/**
-	 * Which chrome the window was built with.
+	 * Which chrome this window was built with.
 	 *
-	 * The page cannot see its own window's `titleBarStyle`, and the two shapes
-	 * are two different geometries for the Sidebar — a top strip and a rail wide
-	 * enough for the traffic lights, or neither. It is fixed for the life of the
-	 * window (changing it takes a relaunch), and it rides here because the page
-	 * already has one channel for "what does the chrome look like".
+	 * The window itself is the same either way — a transparent native bar with
+	 * the traffic lights inset — so this is not something the page could work
+	 * out by looking: it is the whole instruction. With `shown` the page draws
+	 * the bar and the Sidebar starts below it; with `hidden` there is no bar
+	 * and the Sidebar keeps the lights' band clear itself. It is fixed for the
+	 * life of the window (changing it takes a relaunch), and it rides here
+	 * because the page already has one channel for "what does the chrome look
+	 * like".
 	 */
 	readonly titleBar: AppTitleBarWire;
 	readonly terminalFontFamily: string;
@@ -417,7 +420,7 @@ export type AppOutcomeWire =
 	  };
 export type AppReadiness = "starting" | "ready" | "unavailable";
 export type AppSidebarDensityWire = "compact" | "comfortable";
-export type AppTitleBarWire = "system" | "hidden";
+export type AppTitleBarWire = "shown" | "hidden";
 export interface AppSnapshotWire {
 	readonly editorHost: EditorHostWire;
 	/** What the content area holds for the selected context. */

@@ -475,6 +475,20 @@ export interface DevhubApi {
 	 * to follow and the tokens keep their own light/dark defaults.
 	 */
 	getTheme(): Promise<ShellPalette | null>;
+	/**
+	 * What this window is called, right now.
+	 *
+	 * The name is composed in main (`shellTitle.ts`) out of the model and what
+	 * the workbench on screen calls itself, and it is *the* name — the one the
+	 * OS shows in Mission Control and the window menu. When DevHub draws its
+	 * own title bar the page has to letter that same string, and asking for it
+	 * is the only way to do that without a second composition that could say
+	 * something different from the window it is written on.
+	 *
+	 * Pushed by `onWindowTitle` whenever it moves; read here once on mount,
+	 * for the moments between two pushes.
+	 */
+	getWindowTitle(): Promise<string>;
 	getAgentProfiles(): Promise<AgentProfiles>;
 	dispatch(intent: AppIntent): Promise<AppOutcome>;
 	replay(cursor: number): Promise<ReplayWire>;
@@ -482,6 +496,7 @@ export interface DevhubApi {
 	onSnapshot(listener: (snapshot: AppSnapshot) => void): () => void;
 	onAppearance(listener: (appearance: AppAppearance) => void): () => void;
 	onTheme(listener: (palette: ShellPalette) => void): () => void;
+	onWindowTitle(listener: (title: string) => void): () => void;
 	onAgentProfiles(listener: (profiles: AgentProfiles) => void): () => void;
 	onAgentActions(
 		listener: (actions: readonly AgentActionWire[]) => void,
@@ -731,6 +746,7 @@ export const CHANNELS = {
 	getSnapshot: "devhub:get-snapshot",
 	getAppearance: "devhub:get-appearance",
 	getTheme: "devhub:get-theme",
+	getWindowTitle: "devhub:get-window-title",
 	getAgentProfiles: "devhub:get-agent-profiles",
 	dispatch: "devhub:dispatch",
 	replay: "devhub:replay",
@@ -768,6 +784,8 @@ export const CHANNELS = {
 	appearanceChanged: "devhub:appearance-changed",
 	/** The Workbench changed colour theme, so DevHub's chrome changes with it. */
 	themeChanged: "devhub:theme-changed",
+	/** The window's name moved, and DevHub's own title bar letters it. */
+	windowTitleChanged: "devhub:window-title-changed",
 	agentProfilesChanged: "devhub:agent-profiles-changed",
 	/**
 	 * The actions changed, because the configuration they live in did.

@@ -1,13 +1,15 @@
 /**
  * The two chromes, as the page sees them.
  *
- * `appearance.title_bar` decides how the window is built, and main is the only
- * side that can act on that — but the Sidebar's geometry depends on it just as
- * much: with no title bar the Sidebar keeps a band clear for the traffic
- * lights and its collapsed rail has to be wide enough to hold them, and with
- * one it owes the window nothing. This is the test that the two answers stay
- * two answers, and that neither of them is "the other one with a rule
- * missing".
+ * The window is the same window in both — `titleBarStyle: "hiddenInset"`, a
+ * transparent native bar with the traffic lights inset — so `appearance
+ * .title_bar` is acted on *here* and nowhere else. With `shown` DevHub draws
+ * its own bar across the top of the window and the Sidebar owes the window
+ * nothing; with `hidden` there is no bar and the Sidebar keeps the lights'
+ * band clear itself, with a rail wide enough to hold them.
+ *
+ * This is the test that the two answers stay two answers, and that neither of
+ * them is "the other one with a rule missing".
  */
 
 import { readFileSync } from "node:fs";
@@ -28,22 +30,38 @@ function declared(selector: string, property: string): string | undefined {
 }
 
 describe("the window's two chromes", () => {
-  it("is stamped on the root, and is a system title bar when nothing says otherwise", () => {
+  it("is stamped on the root, and is a bar DevHub draws when nothing says otherwise", () => {
     expect(appShell).toContain(
-      'data-title-bar={appearance?.titleBar ?? "system"}',
+      'data-title-bar={appearance?.titleBar ?? "shown"}',
     );
   });
 
-  it("keeps no band and no light inset with a system title bar", () => {
+  it("puts the bar above both the Sidebar and the content area", () => {
+    // Order in the flow *is* the geometry: `.app-shell` is a column, so a bar
+    // written before `.app-shell-content` is a bar the Sidebar and the
+    // workbench hole both start below. Nothing measures or offsets anything.
+    expect(appShell.indexOf("<TitleBar")).toBeGreaterThan(0);
+    expect(appShell.indexOf("<TitleBar")).toBeLessThan(
+      appShell.indexOf('<div className="app-shell-content">'),
+    );
+  });
+
+  it("draws the bar, and no band on the Sidebar, with one", () => {
     expect(
-      declared('.app-shell[data-title-bar="system"]', "--titlebar-reserve"),
+      declared('.app-shell[data-title-bar="shown"]', "--titlebar-bar"),
+    ).toBe("var(--titlebar-height)");
+    expect(
+      declared('.app-shell[data-title-bar="shown"]', "--titlebar-reserve"),
     ).toBe("0px");
     expect(
-      declared('.app-shell[data-title-bar="system"]', "--traffic-light-inset"),
+      declared('.app-shell[data-title-bar="shown"]', "--traffic-light-inset"),
     ).toBe("0px");
   });
 
-  it("keeps the traffic lights' band, and starts past them, with none", () => {
+  it("draws no bar, and keeps the lights' band on the Sidebar, with none", () => {
+    expect(
+      declared('.app-shell[data-title-bar="hidden"]', "--titlebar-bar"),
+    ).toBe("0px");
     expect(
       declared('.app-shell[data-title-bar="hidden"]', "--titlebar-reserve"),
     ).toBe("var(--titlebar-height)");
@@ -52,7 +70,78 @@ describe("the window's two chromes", () => {
     ).toBe("88px");
   });
 
-  it("collapses the Sidebar to its glyph column with a system title bar, and to the lights without one", () => {
+  it("gives the bar the height the lights are placed for, and the room they take", () => {
+    // Both are measurements of the same window — `hiddenInset` puts the lights
+    // in the same place whichever chrome is up — so both are at the root, once.
+    expect(/--titlebar-height: (\d+)px;/.exec(tokens)?.[1]).toBe("38");
+    expect(/--traffic-light-span: (\d+)px;/.exec(tokens)?.[1]).toBe("76");
+    expect(shell).toContain("height: var(--titlebar-bar);");
+    expect(shell).toContain(
+      "padding: 0 var(--space-3) 0 var(--traffic-light-span);",
+    );
+  });
+
+  it("centres the name on the window, between two insets of the same size", () => {
+    // Equal ends is the whole of what centring on the *window* means here: the
+    // middle of what is between them is the middle of the window, whether or
+    // not the trailing end has anything in it.
+    expect(
+      declared(
+        '.app-shell[data-title-bar="shown"]',
+        "--titlebar-controls-inset",
+      ),
+    ).toBe(
+      "calc( var(--traffic-light-span) + var(--space-2) + var(--titlebar-control-size) + var(--space-3) )",
+    );
+    expect(shell).toMatch(
+      /\.title-bar-name \{[^}]*right: var\(--titlebar-controls-inset\);[^}]*left: var\(--titlebar-controls-inset\);/s,
+    );
+  });
+
+  it("makes the bar the handle, and its one control not part of it", () => {
+    expect(shell).toMatch(/\.title-bar \{[^}]*-webkit-app-region: drag;/s);
+    expect(shell).toMatch(
+      /\.title-bar-button \{[^}]*-webkit-app-region: no-drag;/s,
+    );
+    // The name is not a control, but it must not swallow the drag either.
+    expect(shell).toMatch(/\.title-bar-name \{[^}]*pointer-events: none;/s);
+  });
+
+  it("takes the bar out of the page entirely in the other chrome", () => {
+    // Not a bar of zero height: a control nobody can see and everybody can tab
+    // to is worse than no control.
+    expect(shell).toContain(`.app-shell[data-title-bar="hidden"] .title-bar {
+  display: none;
+}`);
+  });
+
+  it("gives the bar the Sidebar's surface, by the Sidebar's own rule", () => {
+    // Written the same way, so the two cannot come apart: transparent over the
+    // window's material, painted `--chrome` when there is no material to show.
+    // A colour of its own would be a seam in whichever case it did not match.
+    expect(shell).toMatch(/\.title-bar \{[^}]*background: transparent;/s);
+    expect(shell).toContain(`:root[data-window-material="none"] .title-bar {
+  background: var(--chrome);
+}`);
+    expect(shell).toContain(`@media (prefers-reduced-transparency: reduce) {
+  .title-bar {
+    background: var(--chrome);
+  }
+}`);
+  });
+
+  it("draws its one hairline where chrome meets content, and nowhere else", () => {
+    // On the content area's top edge, not the bar's bottom one: the bar and
+    // the Sidebar are one surface, and a line between them would cut it.
+    expect(shell)
+      .toContain(`.app-shell[data-title-bar="shown"] .app-shell-content > .surface {
+  border-top: 1px solid var(--line-strong);
+}`);
+    expect(shell).not.toMatch(/\.title-bar \{[^}]*border-bottom:/s);
+    expect(shell).not.toMatch(/\.title-bar \{[^}]*border-radius:/s);
+  });
+
+  it("collapses the Sidebar to its glyph column with a bar, and to the lights without one", () => {
     // The rail is a token, not a number, so what is asserted is the arithmetic
     // it stands for: the density's glyph with the leading rail on each side.
     const rail = Number(/--sidebar-rail-width: (\d+)px;/.exec(tokens)?.[1]);
@@ -71,18 +160,20 @@ describe("the window's two chromes", () => {
     expect(comfortable + 2 * rail).toBe(46);
     expect(
       declared(
-        '.app-shell[data-title-bar="system"]',
+        '.app-shell[data-title-bar="shown"]',
         "--sidebar-rail-collapsed-width",
       ),
     ).toBe(
       "calc( var(--sidebar-glyph-width) + 2 * var(--sidebar-rail-width) )",
     );
+    // The rail with no bar is the lights' span, said once at the root and read
+    // here rather than written out a second time.
     expect(
       declared(
         '.app-shell[data-title-bar="hidden"]',
         "--sidebar-rail-collapsed-width",
       ),
-    ).toBe("76px");
+    ).toBe("var(--traffic-light-span)");
   });
 
   it("leaves the rail and the header strip reading one token each", () => {
@@ -114,5 +205,6 @@ describe("the window's two chromes", () => {
     expect(body).not.toContain("--traffic-light-inset:");
     expect(body).not.toContain("--sidebar-rail-collapsed-width:");
     expect(body).not.toContain("--titlebar-reserve:");
+    expect(body).not.toContain("--titlebar-bar:");
   });
 });

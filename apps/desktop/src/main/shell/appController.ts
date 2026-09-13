@@ -1568,16 +1568,20 @@ export class AppController {
 		const shell = shellWindow();
 		if (shell.window.isDestroyed()) return;
 		const snapshot = this.coordinator.snapshot();
-		shell.window.setTitle(
-			shellTitleFor({
-				selection: snapshot.selection,
-				workspaces: snapshot.workspaces,
-				editorElement: editorElement(
-					shell.revealedTitle(),
-					vscodeProduct.nameLong,
-				),
-			}),
-		);
+		const title = shellTitleFor({
+			selection: snapshot.selection,
+			workspaces: snapshot.workspaces,
+			editorElement: editorElement(
+				shell.revealedTitle(),
+				vscodeProduct.nameLong,
+			),
+		});
+		shell.window.setTitle(title);
+		// The same string, once, to both places that show it. DevHub's own
+		// title bar is drawn by the page, and a page that composed the name a
+		// second time would be a window whose bar and whose Mission Control
+		// entry could disagree — about the very thing a title is for.
+		this.send(CHANNELS.windowTitleChanged, title);
 	}
 
 	private publishAppearance(): void {
@@ -4419,6 +4423,9 @@ export class AppController {
 		});
 		handle(CHANNELS.getAppearance, () => this.appearance());
 		handle(CHANNELS.getTheme, () => shellTheme().palette() ?? null);
+		// Read back off the window rather than composed again: this is the
+		// name the OS is showing, which is the only thing the bar may letter.
+		handle(CHANNELS.getWindowTitle, () => shellWindow().window.getTitle());
 		handle(CHANNELS.getAgentProfiles, () => this.agentProfiles());
 		handle(CHANNELS.dispatch, (_event, intent: AppIntentWire) =>
 			this.dispatchFromPage(intent),

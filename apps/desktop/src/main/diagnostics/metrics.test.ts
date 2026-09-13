@@ -39,7 +39,7 @@ describe("metricsReport", () => {
 		const report = metricsReport({
 			takenAt: 0,
 			uptimeMs: 1_000,
-			titleBar: "system",
+			titleBar: "shown",
 			mainProcessCpu: noCpu,
 			processMetrics: [metric(1, "Browser", 2), metric(7, "Tab", 5)],
 			views: [view(7, 42, "workspace:one", true)],
@@ -62,7 +62,7 @@ describe("metricsReport", () => {
 		const report = metricsReport({
 			takenAt: 0,
 			uptimeMs: 0,
-			titleBar: "system",
+			titleBar: "shown",
 			mainProcessCpu: noCpu,
 			processMetrics: [
 				metric(1, "Tab", 0.5),
@@ -85,7 +85,7 @@ describe("metricsReport", () => {
 		const report = metricsReport({
 			takenAt: 0,
 			uptimeMs: 0,
-			titleBar: "system",
+			titleBar: "shown",
 			mainProcessCpu: noCpu,
 			processMetrics: [metric(7, "Tab", 1)],
 			views: [
@@ -112,7 +112,7 @@ describe("metricsReport", () => {
 		const report = metricsReport({
 			takenAt: Date.UTC(2026, 0, 2, 3, 4, 5),
 			uptimeMs: 60_000,
-			titleBar: "system",
+			titleBar: "shown",
 			mainProcessCpu: { userMs: 12_000, systemMs: 8_000 },
 			processMetrics: [],
 			views: [],
@@ -137,7 +137,7 @@ describe("the tmux clients a reading carries", () => {
 		const report = metricsReport({
 			takenAt: 0,
 			uptimeMs: 0,
-			titleBar: "system",
+			titleBar: "shown",
 			mainProcessCpu: noCpu,
 			processMetrics: [],
 			views: [],
@@ -179,7 +179,7 @@ describe("what a round costs on each machine", () => {
 		const report = metricsReport({
 			takenAt: 0,
 			uptimeMs: 0,
-			titleBar: "system",
+			titleBar: "shown",
 			mainProcessCpu: noCpu,
 			processMetrics: [],
 			views: [],
@@ -202,7 +202,7 @@ describe("what a round costs on each machine", () => {
 		const report = metricsReport({
 			takenAt: 0,
 			uptimeMs: 0,
-			titleBar: "system",
+			titleBar: "shown",
 			mainProcessCpu: noCpu,
 			processMetrics: [],
 			views: [],
@@ -228,7 +228,7 @@ describe("whether each machine has a terminal launcher", () => {
 		const report = metricsReport({
 			takenAt: 0,
 			uptimeMs: 0,
-			titleBar: "system",
+			titleBar: "shown",
 			mainProcessCpu: noCpu,
 			processMetrics: [],
 			views: [],
@@ -278,7 +278,7 @@ describe("the machines a sweep could not finish with", () => {
 		const input = {
 			takenAt: 0,
 			uptimeMs: 0,
-			titleBar: "system",
+			titleBar: "shown",
 			mainProcessCpu: noCpu,
 			processMetrics: [],
 			views: [],

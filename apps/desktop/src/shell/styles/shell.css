@@ -3,11 +3,13 @@
  *
  * The shell is native chrome around provider-owned Surfaces: a source-list
  * Sidebar and, beside it, the content area. Whether there is a title bar above
- * it is `appearance.title_bar`: with `system` the window has a macOS bar and
+ * both of them is `appearance.title_bar`: with `shown` DevHub draws one and
  * the Sidebar is only a sidebar; with `hidden` there is none, the workbench
  * spans the content area's full height and the Sidebar is what the window is
- * dragged by. The geometry of each is in tokens.css under `data-title-bar`;
- * everything here follows the active colour theme through those same tokens.
+ * dragged by. The window itself is the same window either way — see
+ * `shellWindowOptions`. The geometry of each chrome is in tokens.css under
+ * `data-title-bar`; everything here follows the active colour theme through
+ * those same tokens.
  */
 
 /* ---------------------------------------------------------------- layout */
@@ -21,13 +23,141 @@
   background: transparent;
 }
 
-/* The Sidebar spans the full height of the window, and the content area beside
-   it spans it too: there is no band above either of them. */
+/* Whatever is left under the bar — which is the whole window when there is no
+   bar, `--titlebar-bar` being zero then. */
 .app-shell-content {
   display: flex;
   overflow: hidden;
   flex: 1;
   min-height: 0;
+}
+
+/* ----------------------------------------------------- the title bar */
+
+/*
+ * The bar DevHub draws for itself, across the top of the window.
+ *
+ * It is the same surface as the Sidebar and continues into it: no border
+ * between the two, no shade between them, and the Sidebar's top edge simply
+ * runs on upwards. That is why the background is written exactly as the
+ * Sidebar's is — transparent over the window's material, painted `--chrome`
+ * when there is no material to show — and not as a colour of its own. Two
+ * spellings of "the chrome's colour" is how a seam appears in one theme.
+ *
+ * The corners are the window's. macOS masks the window to its own radius, so
+ * the bar is square and is clipped; giving it a radius of its own would put a
+ * second curve inside the first, with the window's material showing in the
+ * sliver between them.
+ */
+.title-bar {
+  position: relative;
+  display: flex;
+  flex: 0 0 var(--titlebar-bar);
+  align-items: center;
+  padding: 0 var(--space-3) 0 var(--traffic-light-span);
+  height: var(--titlebar-bar);
+  background: transparent;
+  -webkit-app-region: drag;
+}
+
+/* Not drawn at all in the other chrome. The Sidebar keeps the lights' band
+   itself there, and a bar of zero height that still held a focusable control
+   would be a button nobody can see and everybody can tab to. */
+.app-shell[data-title-bar="hidden"] .title-bar {
+  display: none;
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .title-bar {
+    background: var(--chrome);
+  }
+}
+
+:root[data-window-material="none"] .title-bar {
+  background: var(--chrome);
+}
+
+/* The leading end: the room the window's own traffic lights are drawn into is
+   the bar's padding, and this is what follows them. */
+.title-bar-leading {
+  display: flex;
+  align-items: center;
+  padding-left: var(--space-2);
+  gap: var(--space-2);
+}
+
+/*
+ * The window's name, centred on the window.
+ *
+ * Taken out of the flow so that it is centred on the *window* rather than on
+ * whatever the leading end left over, which is what macOS does — and the two
+ * ends are the same inset, so the centre of what is between them is the centre
+ * of the window. Inert to the pointer: the band under it is the drag handle,
+ * and a title that could be selected instead of dragged would be a title bar
+ * that sometimes does not move the window.
+ *
+ * 13px/590 is the system's own title weight. `--primary` because it is the
+ * most specific true thing the window says about itself, and the one piece of
+ * text in this band.
+ */
+.title-bar-name {
+  position: absolute;
+  right: var(--titlebar-controls-inset);
+  left: var(--titlebar-controls-inset);
+  overflow: hidden;
+  color: var(--primary);
+  font-size: 13px;
+  font-weight: 590;
+  pointer-events: none;
+  text-align: center;
+  text-overflow: ellipsis;
+  user-select: none;
+  white-space: nowrap;
+}
+
+/* A chrome control: the Sidebar's ink, a step below the name, and the wash
+   every other small control in this window uses to answer the pointer. */
+.title-bar-button {
+  display: flex;
+  width: var(--titlebar-control-size);
+  height: var(--titlebar-control-size);
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--secondary);
+  -webkit-app-region: no-drag;
+}
+
+.title-bar-button svg {
+  width: 16px;
+  height: 16px;
+}
+
+.title-bar-button:hover {
+  background: var(--wash-strong);
+  color: var(--primary);
+}
+
+/* Pressed means the Sidebar is open — the state the button reports with
+   `aria-pressed`, said again in ink so the two cannot disagree. */
+.title-bar-button[aria-pressed="true"] {
+  color: var(--primary);
+}
+
+/*
+ * The one hairline: where the chrome stops and the content begins.
+ *
+ * On the bar's bottom edge it would cut the chrome in half, drawing a line
+ * between the bar and the Sidebar that are the same surface. So it is on the
+ * content area's top edge instead — the exact counterpart of the border the
+ * Sidebar carries on its trailing edge, and the same colour — and it runs
+ * only across the width the content actually has.
+ */
+.app-shell[data-title-bar="shown"] .app-shell-content > .surface {
+  border-top: 1px solid var(--line-strong);
 }
 
 /* --------------------------------------------------- the sidebar's header */

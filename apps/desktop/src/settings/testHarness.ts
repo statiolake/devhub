@@ -49,7 +49,7 @@ export function testConfig(
     },
     appearance: {
       mode: "auto",
-      titleBar: "system",
+      titleBar: "shown",
       sidebarDensity: "compact",
       terminalFontFamily: "SF Mono",
       terminalFontSize: 13,

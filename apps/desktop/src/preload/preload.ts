@@ -73,6 +73,8 @@ const devhub: DevhubApi = {
 		ipcRenderer.invoke(CHANNELS.getAppearance) as Promise<AppAppearance>,
 	getTheme: () =>
 		ipcRenderer.invoke(CHANNELS.getTheme) as Promise<ShellPalette | null>,
+	getWindowTitle: () =>
+		ipcRenderer.invoke(CHANNELS.getWindowTitle) as Promise<string>,
 	getAgentProfiles: () =>
 		ipcRenderer.invoke(CHANNELS.getAgentProfiles) as Promise<AgentProfiles>,
 	dispatch: (intent: AppIntent) =>
@@ -84,6 +86,8 @@ const devhub: DevhubApi = {
 	onAppearance: (listener) =>
 		on<AppAppearance>(CHANNELS.appearanceChanged, listener),
 	onTheme: (listener) => on<ShellPalette>(CHANNELS.themeChanged, listener),
+	onWindowTitle: (listener) =>
+		on<string>(CHANNELS.windowTitleChanged, listener),
 	onAgentProfiles: (listener) =>
 		on<AgentProfiles>(CHANNELS.agentProfilesChanged, listener),
 	onAgentActions: (listener) =>

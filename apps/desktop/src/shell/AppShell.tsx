@@ -1,12 +1,13 @@
 /**
  * DevHub's App Shell: the thing outside VS Code.
  *
- * A Sidebar of Workspaces and their Agents, and the content area beside it.
- * There is no title bar and no activity switcher: a Workspace *is* its
- * workbench, full height and full width, and an Agent is that workbench with
- * the Agent's pane beside it. The content area is deliberately a hole — main
- * lays a workbench `WebContentsView` over it — and everything else on this page
- * is DOM, the window's drag handle included, which is now the Sidebar.
+ * A Sidebar of Workspaces and their Agents, and the content area beside it,
+ * with a title bar over both of them when `appearance.title_bar` says so.
+ * There is no activity switcher: a Workspace *is* its workbench, and an Agent
+ * is that workbench with the Agent's pane beside it. The content area is
+ * deliberately a hole — main lays a workbench `WebContentsView` over it — and
+ * everything else on this page is DOM, the window's drag handle included,
+ * which is the bar when there is one and the Sidebar when there is not.
  */
 
 import { useCallback } from "react";
@@ -14,6 +15,7 @@ import { AppShellProvider } from "./AppShellContext";
 import { devhub, type AppShellClient } from "./client";
 import { useAppShell } from "./useAppShell";
 import { Sidebar } from "./components/sidebar/Sidebar";
+import { TitleBar } from "./components/shell/TitleBar";
 import { SurfaceViewport } from "./components/shell/SurfaceViewport";
 import type { AppError } from "../ipc/appShell";
 import { Failure, Waiting } from "./components/shell/SurfaceState";
@@ -147,13 +149,21 @@ function Workbench() {
       className="app-shell"
       data-readiness={state.snapshot.readiness}
       data-sidebar-density={appearance?.sidebarDensity ?? "compact"}
-      data-title-bar={appearance?.titleBar ?? "system"}
+      data-title-bar={appearance?.titleBar ?? "shown"}
       data-attention={attention ? "true" : undefined}
     >
       {/* A thin edge that breathes, drawn over the window's own inset — the
           macOS way of saying "over here" without a banner. It is inert to the
           pointer, so nothing under it stops working while it is up. */}
       <div className="attention-glow" aria-hidden="true" />
+      {/* Written once, for both chromes, the way `SidebarHeader` is: which of
+          the two windows this page is in is answered in the stylesheet and
+          nowhere else, so nothing here has to ask. With `hidden` the bar is
+          not drawn and the Sidebar keeps the lights' band itself. */}
+      <TitleBar
+        sidebarCollapsed={state.snapshot.sidebar.collapsed}
+        onDispatch={onDispatch}
+      />
       <div className="app-shell-content">
         <Sidebar snapshot={state.snapshot} onDispatch={onDispatch} />
         <SurfaceViewport snapshot={state.snapshot} appearance={appearance} />

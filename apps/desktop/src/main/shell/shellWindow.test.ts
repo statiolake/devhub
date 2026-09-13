@@ -1025,45 +1025,35 @@ describe("when the shell window may come to the front", () => {
 });
 
 /**
- * The window is built one of two ways, and nothing afterwards can change it.
+ * There is one window, and the chrome mode is not one of its arguments.
  *
- * `titleBarStyle` is a constructor option: there is no setter, so the choice
- * `appearance.title_bar` makes is made here or not at all. Everything else
- * about the window is the same in both, which is the point of asserting the
- * whole difference in one place — a second thing that started depending on the
- * mode would show up as a second assertion here.
+ * DevHub's title bar has to be the Sidebar's colour, which a native bar cannot
+ * be, so the bar is drawn by the page and the window is a `hiddenInset` one in
+ * both modes. That is worth a test of its own: an option builder that took the
+ * mode again would be a second place the two chromes could differ, and the
+ * whole point is that there is exactly one — `data-title-bar`, in the page.
  */
 describe("shellWindowOptions", () => {
-	it("gives the window a macOS title bar for `system`", () => {
-		expect(shellWindowOptions("preload.js", undefined, "system")).toMatchObject(
-			{ titleBarStyle: "default", title: WINDOW_TITLES.shell },
-		);
-	});
-
-	it("takes the bar away for `hidden`, as DevHub has always had it", () => {
-		expect(shellWindowOptions("preload.js", undefined, "hidden")).toMatchObject(
-			{ titleBarStyle: "hiddenInset" },
-		);
-	});
-
-	it("changes nothing else between the two", () => {
-		const system = shellWindowOptions("preload.js", undefined, "system");
-		const hidden = shellWindowOptions("preload.js", undefined, "hidden");
-		expect({ ...system, titleBarStyle: undefined }).toEqual({
-			...hidden,
-			titleBarStyle: undefined,
+	it("builds the same transparent-bar window whatever the mode says", () => {
+		expect(shellWindowOptions("preload.js", undefined)).toMatchObject({
+			titleBarStyle: "hiddenInset",
+			title: WINDOW_TITLES.shell,
 		});
 	});
 
+	it("does not take the mode at all", () => {
+		// The signature is the assertion: two arguments, neither of them the
+		// chrome. A third would mean the window had started to care again.
+		expect(shellWindowOptions).toHaveLength(2);
+	});
+
 	it("still decides its material by whether there is a palette", () => {
-		expect(shellWindowOptions("preload.js", undefined, "system").vibrancy).toBe(
+		expect(shellWindowOptions("preload.js", undefined).vibrancy).toBe(
 			"sidebar",
 		);
-		const painted = shellWindowOptions(
-			"preload.js",
-			{ canvas: "#101010" } as ShellPalette,
-			"system",
-		);
+		const painted = shellWindowOptions("preload.js", {
+			canvas: "#101010",
+		} as ShellPalette);
 		expect(painted.vibrancy).toBeUndefined();
 		expect(painted.backgroundColor).toBe("#101010");
 	});

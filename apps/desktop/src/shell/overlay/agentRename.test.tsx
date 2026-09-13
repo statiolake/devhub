@@ -125,6 +125,8 @@ function client(
     dispatch,
     subscribe: () => () => undefined,
     subscribeAppearance: () => () => undefined,
+    getWindowTitle: async () => "DevHub",
+    subscribeWindowTitle: () => () => undefined,
     subscribeAgentProfiles: () => () => undefined,
     subscribeNativeError: () => () => undefined,
     subscribeWorkspacePicker: () => () => undefined,

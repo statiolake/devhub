@@ -312,30 +312,38 @@ export const APPEARANCE_MODES: readonly string[] = ["auto", "light", "dark"];
 /**
  * The two kinds of chrome the one window can be built with.
  *
- * `system` is a macOS title bar: the bar carries the window's name and the
- * traffic lights, and the Sidebar is a sidebar and nothing else. `hidden` is
- * `titleBarStyle: "hiddenInset"` — no bar, the lights over the Sidebar's top
- * corner, and the Sidebar doubling as the window's handle.
+ * `shown` gives DevHub a title bar it draws itself: a full-width band at the
+ * top of the window in the Sidebar's own colour, carrying the traffic lights
+ * at its leading end and the window's name in its middle. `hidden` is no bar
+ * at all — the lights over the Sidebar's top corner, and the Sidebar doubling
+ * as the window's handle.
+ *
+ * The window is built the same way for both. `titleBarStyle: "hiddenInset"`
+ * is a transparent native bar with the lights inset and no title text of its
+ * own, which is the only shape a bar the *page* paints can live in: a real
+ * macOS bar is painted by the window server in the system's colour, and no
+ * amount of CSS underneath it will make it the Sidebar's. So the whole of the
+ * difference between the two is in the page — see `data-title-bar`.
  *
  * It is one list for the same reason `APPEARANCE_MODES` is: the validator, the
- * Settings popup, the window's options and the page's `data-title-bar` all
- * have to agree, and a fourth spelling is how a value becomes selectable in
- * one place and rejected in another.
+ * Settings popup and the page's `data-title-bar` all have to agree, and a
+ * fourth spelling is how a value becomes selectable in one place and rejected
+ * in another.
  */
-export const TITLE_BAR_MODES: readonly string[] = ["system", "hidden"];
+export const TITLE_BAR_MODES: readonly string[] = ["shown", "hidden"];
 
 /** What `title_bar` says, once it is known to be one of the two. */
-export type TitleBarMode = "system" | "hidden";
+export type TitleBarMode = "shown" | "hidden";
 
 /**
  * `appearance.title_bar` as read from the settings file, for the one caller
  * that needs it before the settings can be loaded.
  *
  * The window is created before the config is: the controller is built around
- * the window, and `titleBarStyle` is a `BrowserWindow` constructor option, so
- * this one value has to be known earlier than everything else in the table.
- * It takes the file's text rather than reading it, so it stays a pure function
- * of what is on disk.
+ * the window, and the mode is stamped on the window the moment it exists — it
+ * is what `--metrics` reports, and it is in the first appearance the page is
+ * given. It takes the file's text rather than reading it, so it stays a pure
+ * function of what is on disk.
  *
  * A file that will not parse answers with the default. That is not a swallowed
  * failure: the real load runs moments later on the same text, and *it* is what
@@ -356,18 +364,19 @@ export function titleBarModeIn(text: string | undefined): TitleBarMode {
     return DEFAULT_TITLE_BAR;
   }
   const value = (appearance as Record<string, unknown>)["title_bar"];
-  return value === "hidden" || value === "system" ? value : DEFAULT_TITLE_BAR;
+  return value === "hidden" || value === "shown" ? value : DEFAULT_TITLE_BAR;
 }
 
-const DEFAULT_TITLE_BAR: TitleBarMode = "system";
+const DEFAULT_TITLE_BAR: TitleBarMode = "shown";
 
 export interface AppearanceConfig {
   /**
-   * Whether the window wears a macOS title bar. See `TITLE_BAR_MODES`.
+   * Whether DevHub draws a title bar at the top of the window. See
+   * `TITLE_BAR_MODES`.
    *
-   * Read once, when the window is made, because that is the only moment
-   * `titleBarStyle` can be chosen; changing it takes a relaunch, which the
-   * Settings row says.
+   * Read once, when the window is made, because the geometry of everything
+   * else follows from it; changing it takes a relaunch, which the Settings row
+   * says.
    */
   readonly titleBar: string;
   /**

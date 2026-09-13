@@ -125,7 +125,7 @@ export function appearanceWire(
     sequence,
     sidebarDensity:
       config.sidebarDensity === "comfortable" ? "comfortable" : "compact",
-    titleBar: config.titleBar === "hidden" ? "hidden" : "system",
+    titleBar: config.titleBar === "hidden" ? "hidden" : "shown",
     terminalFontFamily: config.terminalFontFamily,
     terminalFontSize: config.terminalFontSize,
     terminalLineHeight: config.terminalLineHeight,
