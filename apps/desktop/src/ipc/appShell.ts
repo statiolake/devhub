@@ -212,6 +212,16 @@ export type AppErrorCodeWire =
 	 * to be told which ones and where to go and fix it.
 	 */
 	| "workbench_settings_unreadable"
+	/**
+	 * A window opened on a machine whose `devhub-terminal` could not be put
+	 * there, so that window has no DevHub terminal.
+	 *
+	 * Its own code because, like the settings file, the consequence is a
+	 * *missing* feature rather than a failed action: the folder is open and
+	 * editable, and the one thing that is not there is the thing nobody would
+	 * think to check until they pressed Ctrl+` and got a bare shell.
+	 */
+	| "terminal_launcher_unavailable"
 	/** tmux ran DevHub's command and refused it. */
 	| "tmux_command_failed"
 	/** tmux did not answer DevHub's command inside its bound. */
@@ -254,6 +264,8 @@ export const APP_ERROR_SUMMARY: Readonly<Record<AppErrorCodeWire, string>> = {
 	git_fetch_failed: "The latest changes could not be fetched from the remote.",
 	workbench_settings_unreadable:
 		"The editor's settings file is not valid JSON.",
+	terminal_launcher_unavailable:
+		"This window has no DevHub terminal: its launcher could not be installed.",
 	// Three sentences rather than one, because they are three different things
 	// to do next. "The agent runtime is unavailable" was said for all of them,
 	// which sent the reader to look at a tmux that was answering perfectly.

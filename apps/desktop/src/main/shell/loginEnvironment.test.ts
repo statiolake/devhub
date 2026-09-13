@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
 	adoptLoginEnvironment,
-	exportTerminalLauncher,
+	windowTerminalEnvironment,
 	launchEnvironment,
 	loginEnvironmentSummary,
 	resolveLoginEnvironment,
@@ -277,25 +277,54 @@ describe("launchEnvironment", () => {
 	});
 });
 
-describe("exportTerminalLauncher", () => {
-	// The one DEVHUB_* variable that goes the other way: into DevHub's own
-	// process, so the workbench windows, the extension host and the pty host —
-	// none of which DevHub hands an environment to — read the launcher its
-	// terminal must run. It is an environment variable rather than a setting
-	// because a setting is a suggestion, and this is not one.
-	it("puts the launcher where every process DevHub starts will see it", () => {
-		const environment: Record<string, string | undefined> = {};
-		exportTerminalLauncher(environment, "/data/devhub/devhub-terminal");
-		expect(environment["DEVHUB_TERMINAL"]).toBe("/data/devhub/devhub-terminal");
+describe("what one window is told its DevHub terminal is", () => {
+	// Always an entry, never a gap. VS Code's preload merges `userEnv` over an
+	// environment the window already inherited from this process, and this
+	// process's environment is not one DevHub fully owns — the login shell
+	// import copies in whatever the person's dotfiles export. A window that
+	// said nothing therefore did not get silence, it got whatever was already
+	// there, which for a window on a host was this Mac's launcher.
+	it("names the launcher of the machine that window is on", () => {
+		expect(
+			windowTerminalEnvironment({
+				path: "/home/there/.devhub/terminal/devhub-terminal",
+				unreachable: undefined,
+			}),
+		).toEqual({
+			DEVHUB_TERMINAL: "/home/there/.devhub/terminal/devhub-terminal",
+		});
+	});
+
+	it("says 'none' out loud when the launcher cannot reach DevHub", () => {
+		// Empty rather than absent: the patched `platform.ts` reads
+		// `env['DEVHUB_TERMINAL'] || undefined`, so an empty value is the same
+		// "no launcher" it already refuses to invent one for — and unlike an
+		// absent name, nothing else can answer for it.
+		expect(
+			windowTerminalEnvironment({
+				path: "/home/there/.devhub/terminal/devhub-terminal",
+				unreachable: "the control socket could not be forwarded",
+			}),
+		).toEqual({ DEVHUB_TERMINAL: "" });
+	});
+
+	it("says 'none' out loud when there is no launcher at all", () => {
+		expect(windowTerminalEnvironment(undefined)).toEqual({
+			DEVHUB_TERMINAL: "",
+		});
 	});
 
 	// And it is still DEVHUB_*, so no shell a person types into inherits it.
 	it("is taken back out of every child DevHub spawns itself", () => {
-		const environment: Record<string, string | undefined> = {
-			PATH: LAUNCHD_PATH,
-		};
-		exportTerminalLauncher(environment, "/data/devhub/devhub-terminal");
-		expect(launchEnvironment(environment)["DEVHUB_TERMINAL"]).toBeUndefined();
+		expect(
+			launchEnvironment({
+				PATH: LAUNCHD_PATH,
+				...windowTerminalEnvironment({
+					path: "/data/devhub/devhub-terminal",
+					unreachable: undefined,
+				}),
+			})["DEVHUB_TERMINAL"],
+		).toBeUndefined();
 	});
 });
 

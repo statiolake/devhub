@@ -236,12 +236,6 @@ export function launchEnvironment(
 export const DEVHUB_TERMINAL = "DEVHUB_TERMINAL";
 
 /**
- * Tell every process this one starts which launcher a DevHub terminal runs.
- *
- * Nothing is caught and nothing is optional: a workbench that cannot read this
- * has no DevHub terminal, and the patch it feeds refuses to invent one.
- */
-/**
  * What one window is told its DevHub terminal is.
  *
  * Per window, because a workbench's integrated terminal runs where its pty
@@ -249,23 +243,31 @@ export const DEVHUB_TERMINAL = "DEVHUB_TERMINAL";
  * renderer's environment is the window configuration's `userEnv`, so one entry
  * here is one answer per window and the patch still reads one variable.
  *
- * A launcher that cannot reach DevHub contributes nothing rather than a path
- * that would not work. That is not a silence: the variable being absent is
- * exactly what makes the patched profile service refuse to invent a terminal,
- * and the reason is logged where the launcher was installed.
+ * **Always an entry, even when there is no launcher.** A renderer's environment
+ * does not start empty: Electron gives it this process's, VS Code's preload
+ * then does `Object.assign(process.env, userEnv)`, and this process's
+ * environment is one DevHub does not fully own — the login shell import
+ * (`importLoginEnvironment`) copies in whatever the person's dotfiles export,
+ * `DEVHUB_TERMINAL` included. So a window that contributed *nothing* did not
+ * get silence, it got whatever was already there: a window on a host inherited
+ * this Mac's launcher, a path that machine has never heard of, and the
+ * workbench over there fell back to `/bin/sh` while saying so only in a log
+ * nobody had open.
+ *
+ * Empty is therefore the way "this machine has no DevHub terminal" is said out
+ * loud. The patched `platform.ts` reads `env['DEVHUB_TERMINAL'] || undefined`,
+ * so an empty value is the same "no launcher" the patch already refuses to
+ * invent one for — and unlike an absent name, it cannot be answered by
+ * something else. One entry, always written, is what makes the answer this
+ * window's and only this window's.
  */
 export function windowTerminalEnvironment(
-	launcher: TerminalLauncher,
+	launcher: TerminalLauncher | undefined,
 ): Record<string, string> {
-	if (launcher.unreachable !== undefined) return {};
+	if (launcher === undefined || launcher.unreachable !== undefined) {
+		return { [DEVHUB_TERMINAL]: "" };
+	}
 	return { [DEVHUB_TERMINAL]: launcher.path };
-}
-
-export function exportTerminalLauncher(
-	target: Record<string, string | undefined>,
-	launcherPath: string,
-): void {
-	target[DEVHUB_TERMINAL] = launcherPath;
 }
 
 /**

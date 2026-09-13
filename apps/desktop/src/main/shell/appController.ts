@@ -2918,10 +2918,20 @@ export class AppController {
 	 *
 	 * A machine whose launcher could not be installed is not a reason to refuse
 	 * the window: the person asked for a folder, and a folder they can edit
-	 * without a DevHub terminal is worth more than no folder at all. It is said
-	 * out loud rather than swallowed — in the log here, and in the terminal tab
-	 * over there, because the variable is simply absent and the patch refuses to
-	 * invent a launcher.
+	 * without a DevHub terminal is worth more than no folder at all. But it is
+	 * never silent, and never guessed. Three things happen instead, and they
+	 * are three because they are three different readers: the log gets the
+	 * stack, `devhub --metrics` gets the machine and the reason (through
+	 * `terminalLauncherFor`), and the person gets the app's own alert — because
+	 * a window that opened and quietly has no terminal is exactly the failure
+	 * nobody goes looking for.
+	 *
+	 * What is *not* done is falling back to this Mac's launcher. That was the
+	 * bug: contributing nothing left the window with whatever `process.env`
+	 * already carried, VS Code's preload merges `userEnv` *over* the inherited
+	 * environment, and an ssh window inherited a path its host had never heard
+	 * of — so the workbench there silently opened `/bin/sh`. The answer is
+	 * always written, empty when there is none; see `windowTerminalEnvironment`.
 	 */
 	private async windowTerminalEnvironment(
 		location: WorkspaceLocation | undefined,
@@ -2934,6 +2944,12 @@ export class AppController {
 				console.error(
 					`[devhub] terminal launcher on ${runtime.id}: ${launcher.unreachable}`,
 				);
+				this.publishError(
+					withDetail(
+						errorWireAt("terminal_launcher_unavailable"),
+						`${runtime.id}: ${launcher.unreachable}`,
+					),
+				);
 			}
 			return windowTerminalEnvironment(launcher);
 		} catch (error: unknown) {
@@ -2941,7 +2957,13 @@ export class AppController {
 				`[devhub] terminal launcher on ${runtime.id} could not be installed`,
 				error instanceof Error ? error.stack : error,
 			);
-			return {};
+			this.publishError(
+				withDetail(
+					errorWireAt("terminal_launcher_unavailable"),
+					`${runtime.id}: ${error instanceof Error ? error.message : String(error)}`,
+				),
+			);
+			return windowTerminalEnvironment(undefined);
 		}
 	}
 
@@ -2981,11 +3003,22 @@ export class AppController {
 		}
 		const services = await this.services();
 		// Which `devhub-terminal` this window names, decided here because this
-		// is where the window's machine is already known. A local window gets
-		// the launcher `bootstrapShell` wrote before any window existed, which
-		// is the same path `process.env` already carries — so nothing about a
-		// local window changes.
+		// is where the window's machine is already known. This is the *only*
+		// place that decides it: DevHub's own process carries no
+		// `DEVHUB_TERMINAL` for a window to fall back on, so a window that is
+		// not told here has none, which is what the patched workbench is
+		// written to say out loud.
 		const terminalEnvironment = await this.windowTerminalEnvironment(location);
+		// Said in the log, every time, because this is the value whose being
+		// wrong is invisible from the outside: a window with another machine's
+		// launcher opens perfectly and only fails when somebody presses Ctrl+`.
+		console.log(
+			`[devhub] open: '${editorKey}' terminal launcher — ${
+				terminalEnvironment["DEVHUB_TERMINAL"] === ""
+					? "none on this machine"
+					: terminalEnvironment["DEVHUB_TERMINAL"]
+			}`,
+		);
 		// Go through VS Code's own open path, which is what creates a
 		// `CodeWindow` — and therefore, through the shim, a view in the shell.
 		// The same call for both kinds of place: an ssh folder differs only in

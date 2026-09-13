@@ -425,10 +425,24 @@ the workbench modules are imported, and `userEnv` is
 `{ ...initialUserEnv, ...options.userEnv }` from the `IWindowsMainService.open`
 call. So DevHub passes `userEnv: { DEVHUB_TERMINAL: <that machine's launcher> }`
 when it opens the window (`appController.openEditorView`), and
-`patches/vscode/0003-…` needs no change at all — which is why it has none. A
-local window is passed the launcher `bootstrapShell` wrote before any window
-existed, which is the same value `process.env` already carried, so nothing
-about a local window changed.
+`patches/vscode/0003-…` needs no change at all — which is why it has none.
+
+**The value is always written, empty when the machine has no launcher.** That
+`Object.assign` is a merge *over* an environment the renderer already inherited
+from DevHub's own process, and that process's environment is not one DevHub
+fully owns: the login shell import copies in whatever the person's dotfiles
+export. A window that contributed nothing therefore did not get silence, it got
+whatever was already there — and an ssh window got this Mac's launcher, a path
+the host has never heard of, so the workbench over there logged
+`resolved shell "…" does not exist, falling back to "/bin/sh"` and opened a bare
+shell. `DEVHUB_TERMINAL=` is how "this machine has none" is said out loud;
+`platform.ts` reads `env['DEVHUB_TERMINAL'] || undefined`, so an empty value is
+the same "no launcher" it already refuses to invent one for, and unlike an
+absent name nothing else can answer for it.
+
+For the same reason `bootstrapShell` no longer exports the local launcher into
+`process.env`. One question — which `devhub-terminal` does this window run —
+now has exactly one answerer, and a window that was not told has none.
 
 A machine whose launcher could not be installed contributes no variable rather
 than a path that would not work. That is not a silence: the absent variable is

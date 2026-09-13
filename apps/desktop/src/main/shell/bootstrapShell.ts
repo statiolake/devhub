@@ -38,7 +38,6 @@ import {
 	workbenchSettingsPlan,
 	type SettingsProblem,
 } from "../workbenchDefaults.js";
-import { exportTerminalLauncher } from "./loginEnvironment.js";
 import { activeProfile } from "../../model/profile.js";
 import type { AppErrorWire } from "../../ipc/appShell.js";
 import { errorWireAt, withDetail } from "../../model/wire.js";
@@ -112,34 +111,30 @@ export async function bootstrapShell(
 	cliArgs: NativeParsedArgs,
 	themeMainService: IThemeMainService,
 ): Promise<void> {
-	// The terminal launcher first, and its path into DevHub's own environment
-	// before any window exists: the patched workbench reads `DEVHUB_TERMINAL`
-	// synchronously as it builds its terminal profile service, and a window
-	// created before this line would build one without an answer. That is why
-	// `bootstrapShell` runs before `startup()`. See `codeMain.ts`,
-	// `terminal/launcher.ts` and `loginEnvironment.ts`.
-	const launcherPath = installTerminalLauncher(
-		terminalLauncherPath(userDataPath),
-		{
-			// The binary running this process is the app's own Electron, in a
-			// checkout and in a bundle alike — the same fact the `devhub` CLI's
-			// launcher is written with.
-			execPath: process.execPath,
-			entryScript: join(
-				APP_ROOT,
-				"out",
-				"main",
-				"terminal",
-				"devhubTerminal.js",
-			),
-			socketPath: controlSocketPath(userDataPath),
-			// This launcher is the one for the machine DevHub is running on. A
-			// window on another machine gets another launcher, written there,
-			// naming that machine — see `Runtime.terminalLauncher`.
-			machine: "local",
-		},
-	);
-	exportTerminalLauncher(process.env, launcherPath);
+	// The terminal launcher for this machine, written before any window exists
+	// because the local `Runtime` does not install one — it hands back the path
+	// this line wrote. See `terminal/launcher.ts` and `runtime/local.ts`.
+	//
+	// Its path is deliberately *not* put into `process.env`. It used to be, so
+	// that every process descending from this one read it; but a workbench
+	// window on another machine descends from this one too, and inherited this
+	// Mac's launcher — a path that host has never heard of — whenever its own
+	// could not be named. One question with two answerers is the bug, so there
+	// is now one answerer: `AppController.openEditorView` tells each window
+	// which launcher is its own, and a window it cannot tell is told so
+	// explicitly. See `loginEnvironment.windowTerminalEnvironment`.
+	installTerminalLauncher(terminalLauncherPath(userDataPath), {
+		// The binary running this process is the app's own Electron, in a
+		// checkout and in a bundle alike — the same fact the `devhub` CLI's
+		// launcher is written with.
+		execPath: process.execPath,
+		entryScript: join(APP_ROOT, "out", "main", "terminal", "devhubTerminal.js"),
+		socketPath: controlSocketPath(userDataPath),
+		// This launcher is the one for the machine DevHub is running on. A
+		// window on another machine gets another launcher, written there,
+		// naming that machine — see `Runtime.terminalLauncher`.
+		machine: "local",
+	});
 	const settingsProblem = ensureWorkbenchDefaults(userDataPath);
 
 	// The colour theme comes first, before the page is servable and before the

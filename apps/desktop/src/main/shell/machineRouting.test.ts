@@ -336,16 +336,49 @@ describe("what a window is told its terminal is", () => {
 		});
 	});
 
-	it("says nothing at all when the launcher cannot reach DevHub", () => {
-		// Absent rather than wrong: the patched workbench refuses to invent a
-		// launcher, so the terminal tab over there says why, which is the same
-		// sentence in the place the person is looking.
+	it("says 'none' out loud when the launcher cannot reach DevHub", () => {
+		// Empty rather than absent. Absent was the bug: the renderer inherits
+		// this process's environment before `userEnv` is merged over it, so a
+		// window that contributed nothing kept whatever was already there — and
+		// a window on a host kept this Mac's launcher, which that host has never
+		// heard of. The patched workbench reads `|| undefined`, so empty is the
+		// same "no launcher" it refuses to invent one for, and it is an answer
+		// nothing else can overwrite.
 		expect(
 			windowTerminalEnvironment({
 				path: "/home/there/.devhub/devhub-terminal",
 				unreachable: "the control socket could not be forwarded",
 			}),
-		).toEqual({});
+		).toEqual({ DEVHUB_TERMINAL: "" });
+	});
+
+	it("never lets one machine's launcher be the answer for another", () => {
+		// The whole point, as one assertion: two machines, two launchers, and
+		// no way for the second window to end up holding the first's path —
+		// including when the second machine has none, which is the case that
+		// used to fall through to whatever DevHub's own process carried.
+		const { a, b } = machines();
+		const spec: TerminalLauncherSpec = {
+			localLauncherPath: "/here/devhub-terminal",
+			controlSocketPath: "/here/control.sock",
+			entryText: "export const nothing = 1;\n",
+			entryName: "devhub-terminal.bundle.js",
+			serverDataFolderName: ".devhub-server",
+			serverCommit: "abc123",
+		};
+		return Promise.all([
+			a.terminalLauncher(spec),
+			b.terminalLauncher(spec),
+		]).then(([here, there]) => {
+			const forA = windowTerminalEnvironment(here);
+			const forB = windowTerminalEnvironment({
+				...there,
+				unreachable: "no route to host",
+			});
+			expect(forA["DEVHUB_TERMINAL"]).toBe(here.path);
+			expect(forB["DEVHUB_TERMINAL"]).toBe("");
+			expect(forB["DEVHUB_TERMINAL"]).not.toBe(here.path);
+		});
 	});
 });
 
