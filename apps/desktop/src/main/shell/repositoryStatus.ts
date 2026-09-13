@@ -39,7 +39,7 @@
  * | trigger  | what fires it                        | what it runs               |
  * | -------- | ------------------------------------ | -------------------------- |
  * | `poll`   | a clock at `cadence.repositoryPollMs`| a full round (and, on a second clock, a branch round) |
- * | `head`   | `HEAD`/`refs/`/`packed-refs` written | a branch round, and a full round only where the new branch has never been looked up |
+ * | `head`   | `HEAD`/`refs/`/`packed-refs` written | a branch round, then a full round for each machine whose branch moved |
  * | `focus`  | the window coming to the front       | a full round per machine, at most one per `cadence.repositoryFocusRefreshMinIntervalMs` |
  * | `manual` | the refresh chord (`Cmd+Q R`)        | a full round per machine   |
  *
@@ -49,9 +49,9 @@
  * | ------------------- | ----------------------------- | ---------- |
  * | branch              | `head`, and every trigger     | ~1 s after a checkout (250 ms debounce, 1 s ceiling); a minute if the watch could not be armed |
  * | dirty               | full rounds only — no watcher | a minute, or 10 s if the window is re-focused |
- * | ahead (upstream)    | full rounds only              | as dirty |
+ * | ahead (upstream)    | full rounds only              | as dirty; a commit writes `HEAD`, so `head` now covers it too |
  * | remote / push name  | full rounds only              | a minute; these change about never |
- * | pull request state  | full rounds only              | a minute, or 10 s on re-focus; a checkout onto a branch already looked up does *not* re-ask |
+ * | pull request state  | full rounds only              | a minute, or 10 s on re-focus; a checkout drags it along via `head` |
  * | Issue linkage       | full rounds only              | as the pull request |
  *
  * The one fact with no event behind it is *dirty*. A watcher on the working
@@ -627,12 +627,17 @@ export class RepositoryStatusWatcher {
 					branch,
 					undefined,
 				);
-				if (
-					reading.kind === "branch" &&
-					!this.known.has(branchKey(reading.reference))
-				) {
-					wantsLook.add(workspace.runtime.id);
-				}
+				// Every branch that moved, not only the ones nothing is known
+				// about. A checkout changes what the row says about far more than
+				// the branch name: the pull request out from the new branch, the
+				// Issue it names, how far ahead of its upstream it is, and whether
+				// switching left anything uncommitted behind. It used to ask only
+				// when the new branch had never been looked up, which meant
+				// switching *back* to a branch showed that branch's pull request as
+				// it stood the last time anybody asked — up to a minute stale, and
+				// unboundedly stale for a branch whose pull request was merged
+				// while DevHub was watching a different one.
+				wantsLook.add(workspace.runtime.id);
 				this.readings.set(workspace.id, {
 					workspace: entry.workspace,
 					branch,
@@ -659,7 +664,14 @@ export class RepositoryStatusWatcher {
 		if (!moved) return;
 		this.deps.publish(this.project());
 		// The branch is on screen; what it is about is now worth asking for
-		// rather than waiting the rest of the minute out.
+		// rather than waiting the rest of the minute out. A full round, and not a
+		// GitHub lookup bolted on here: the round is the one thing that reads
+		// every fact a checkout can change, and a second path that read some of
+		// them would be the second answer this file exists to avoid. It re-asks
+		// GitHub for every branch it finds — `known` is what was last *said*, not
+		// a cache anything is served from — so a branch whose pull request moved
+		// while DevHub was on another one is corrected rather than replayed. The
+		// only budget over it is the round's own sixteen branches.
 		for (const id of wantsLook) {
 			const clocks = this.clocks.get(id);
 			if (clocks) void this.refresh(clocks.runtime, "head");

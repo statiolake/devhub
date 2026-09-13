@@ -973,6 +973,42 @@ describe("coming back to the window", () => {
 	});
 });
 
+describe("a checkout somebody has just made", () => {
+	it("asks GitHub about the new branch, not only about a new one", async () => {
+		// The bug this pins: the full round used to be asked for only when the
+		// new branch had never been looked up, so switching *back* to a branch
+		// showed that branch's pull request as it stood the last time anybody
+		// asked — and a pull request merged in between stayed drawn as open.
+		vi.useFakeTimers();
+		try {
+			checkedOut("main");
+			const published: RepositoryStatusWire[] = [];
+			const running = watcher(published);
+			running.start();
+			await vi.advanceTimersByTimeAsync(0);
+
+			// Away to a second branch and back, so `main` is a branch GitHub has
+			// already answered about once.
+			checkedOut("feature/128-tidy");
+			headChanged();
+			await vi.advanceTimersByTimeAsync(0);
+			checkedOut("main");
+			readBranchStatus.mockClear();
+
+			headChanged();
+			await vi.advanceTimersByTimeAsync(0);
+			running.stop();
+			expect(
+				readBranchStatus.mock.calls.map(
+					(call) => (call[0] as { branch: string }).branch,
+				),
+			).toContain("main");
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+});
+
 describe("what `devhub --metrics` says fired", () => {
 	it("names the trigger of each Workspace's last round", async () => {
 		vi.useFakeTimers();
