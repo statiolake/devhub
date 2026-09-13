@@ -147,6 +147,7 @@ function Workbench() {
       className="app-shell"
       data-readiness={state.snapshot.readiness}
       data-sidebar-density={appearance?.sidebarDensity ?? "compact"}
+      data-title-bar={appearance?.titleBar ?? "system"}
       data-attention={attention ? "true" : undefined}
     >
       {/* A thin edge that breathes, drawn over the window's own inset — the

@@ -201,31 +201,7 @@
   /* A compact band, not a macOS document titlebar: DevHub has no document
      title to carry, so the row is only as tall as the Activity control needs. */
   --titlebar-height: 38px;
-  --traffic-light-inset: 88px;
   --sidebar-width: 248px;
-  /*
-   * The Sidebar collapsed: an icon rail, and as narrow as it is allowed to be.
-   *
-   * The floor is not taste, it is the window. The Sidebar is DevHub's title bar
-   * — it carries the traffic lights and it is what the window is dragged by
-   * (`SidebarHeader`) — and on a `hiddenInset` window those lights span to
-   * roughly 70-76 css px from the leading edge. A rail narrower than that would
-   * put the close button on a workbench, which is a native view painted over
-   * everything this page draws, and the lights would be sitting on somebody
-   * else's application.
-   *
-   * So 76: the lights, and nothing more. `--traffic-light-inset` is the *other*
-   * measurement of the same band — where the drag strip may start, which is
-   * past the lights with a gap — and the two are deliberately not one token,
-   * because "as wide as the lights" and "clear of the lights" are two answers
-   * that only happen to be close.
-   *
-   * It comfortably holds what is left of a row — the leading rail and one
-   * glyph, 30px of ink — centred, and it is the width the whole collapse is
-   * worth: a workbench gets 172px back and the two questions the Sidebar
-   * answers at a glance are still answered.
-   */
-  --sidebar-rail-collapsed-width: 76px;
   /* The Sidebar's leading rail. Every row reserves the rail first, then the
      glyph column; a section heading aligns to the glyph so the headings and
      the icons beneath them share one left edge. The rail is the one part of a
@@ -306,6 +282,65 @@
   --sidebar-row-gap: var(--space-2);
   --sidebar-section-gap: var(--space-5);
   --sidebar-scroll-inset: var(--space-3);
+}
+
+/*
+ * The window's two chromes, as geometry.
+ *
+ * `appearance.title_bar` decides how the window is built, and the whole of
+ * what that means to this page is here. Both are written out, neither is "the
+ * other one with a rule missing", and the App Shell always stamps the
+ * attribute — so exactly one of these always applies and no rule below has to
+ * ask which window it is in.
+ *
+ * `--titlebar-reserve` is the band the Sidebar keeps clear at its top, and
+ * `--traffic-light-inset` is how far into that band its content starts. In
+ * `system` both are zero, because the bar above the content area is already
+ * the band and the lights are already in it: reserving a second one would be
+ * a strip of nothing under a title bar.
+ */
+.app-shell[data-title-bar="system"] {
+  --titlebar-reserve: 0px;
+  --traffic-light-inset: 0px;
+  /*
+   * The rail, with the window's lights taken out of it.
+   *
+   * With a native title bar the collapsed Sidebar owes the window nothing:
+   * what is left is the glyph column and the room around it, so that is what
+   * it is — the density's glyph, with the leading rail's width on each side of
+   * it. 44px compact and 46px comfortable, and it moves with the density
+   * rather than being a number that happens to suit one of them.
+   */
+  --sidebar-rail-collapsed-width: calc(
+    var(--sidebar-glyph-width) + 2 * var(--sidebar-rail-width)
+  );
+}
+
+.app-shell[data-title-bar="hidden"] {
+  /* The band the traffic lights sit in, which is the Sidebar's to keep clear:
+     with no title bar there is nothing else above the content area. */
+  --titlebar-reserve: var(--titlebar-height);
+  /* Where the drag strip may start — past the lights, with a gap. Deliberately
+     not the same token as the rail width below: "as wide as the lights" and
+     "clear of the lights" are two answers that only happen to be close. */
+  --traffic-light-inset: 88px;
+  /*
+   * The Sidebar collapsed: an icon rail, and as narrow as it is allowed to be.
+   *
+   * The floor is not taste, it is the window. Here the Sidebar *is* DevHub's
+   * title bar — it carries the traffic lights and it is what the window is
+   * dragged by (`SidebarHeader`) — and on a `hiddenInset` window those lights
+   * span to roughly 70-76 css px from the leading edge. A rail narrower than
+   * that would put the close button on a workbench, which is a native view
+   * painted over everything this page draws, and the lights would be sitting
+   * on somebody else's application.
+   *
+   * So 76: the lights, and nothing more. It comfortably holds what is left of
+   * a row — the leading rail and one glyph, 30px of ink — centred, and it is
+   * the width the whole collapse is worth: a workbench gets 172px back and the
+   * two questions the Sidebar answers at a glance are still answered.
+   */
+  --sidebar-rail-collapsed-width: 76px;
 }
 
 @supports (color: AccentColor) {

@@ -2,10 +2,12 @@
  * DevHub App Shell.
  *
  * The shell is native chrome around provider-owned Surfaces: a source-list
- * Sidebar and, beside it, the content area. There is no titlebar — the
- * workbench spans the content area's full height and the Sidebar is what the
- * window is dragged by. Everything here follows the active colour theme
- * through the tokens in tokens.css.
+ * Sidebar and, beside it, the content area. Whether there is a title bar above
+ * it is `appearance.title_bar`: with `system` the window has a macOS bar and
+ * the Sidebar is only a sidebar; with `hidden` there is none, the workbench
+ * spans the content area's full height and the Sidebar is what the window is
+ * dragged by. The geometry of each is in tokens.css under `data-title-bar`;
+ * everything here follows the active colour theme through those same tokens.
  */
 
 /* ---------------------------------------------------------------- layout */
@@ -30,15 +32,20 @@
 
 /* --------------------------------------------------- the sidebar's header */
 
-/* The strip the window is dragged by. Exactly the traffic lights' band height
-   and inset past the lights, so the row the lights sit in stays theirs alone.
-   It carries no control: the Sidebar is always the pane. */
+/* The strip the window is dragged by, when the window has no bar of its own.
+   Exactly the traffic lights' band height and inset past the lights, so the
+   row the lights sit in stays theirs alone. It carries no control: the Sidebar
+   is always the pane.
+
+   With a system title bar `--titlebar-reserve` is zero and the strip collapses
+   to nothing — there is a real bar above the content area doing this job, and
+   a second empty band under it would only push the Sidebar down. */
 .sidebar-header {
   display: flex;
-  flex: 0 0 var(--titlebar-height);
+  flex: 0 0 var(--titlebar-reserve);
   align-items: center;
   padding: 0 var(--space-2) 0 var(--traffic-light-inset);
-  height: var(--titlebar-height);
+  height: var(--titlebar-reserve);
 }
 
 /* --------------------------------------------------------------- sidebar */
@@ -1718,8 +1725,12 @@ body.is-resizing-split {
    clicks that land on it — so a control added later that is not on the list
    would be a control nobody can press, and it would look like a bug in the
    control rather than in this rule. What is left draggable is what is left
-   over: the header strip and the pane's own edges. */
-.sidebar {
+   over: the header strip and the pane's own edges.
+
+   Only when there is no title bar. With a system bar the window already has a
+   handle, and a draggable Sidebar would be a pane whose empty room swallows
+   clicks for no reason anybody could see. */
+.app-shell[data-title-bar="hidden"] .sidebar {
   -webkit-app-region: drag;
 }
 
@@ -1904,10 +1915,15 @@ body.is-resizing-split {
  *
  * It collapses to an icon rail and never to nothing. A Sidebar that vanished
  * would take away the two things it exists to answer at a glance — what is
- * open, and which Agent wants you — and it would leave the window's traffic
- * lights sitting on a workbench, because this pane *is* the title bar and the
- * drag handle. So what goes is everything that needs width to be read, and
- * what stays is the glyph column and the marks that carry colour.
+ * open, and which Agent wants you — and, on a window with no title bar, it
+ * would leave the traffic lights sitting on a workbench, because there the
+ * pane *is* the title bar and the drag handle. So what goes is everything that
+ * needs width to be read, and what stays is the glyph column and the marks
+ * that carry colour.
+ *
+ * How narrow the rail is allowed to be is therefore the window's answer and
+ * not this rule's: `--sidebar-rail-collapsed-width`, under `data-title-bar` in
+ * tokens.css.
  *
  * It is drawn and not rendered. The markup is identical in both states — same
  * rows, same order, same buttons, same labels for a screen reader — so the
@@ -1944,8 +1960,8 @@ body.is-resizing-split {
  *
  * It has to, or it decides where the glyph column is: in the flow it is a
  * 14px column, so a row that has a dot centres two marks and a row that does
- * not centres one, and the glyphs land in two different places down a rail
- * 76px wide. Out of the flow, every glyph is on the rail's centre line and the
+ * not centres one, and the glyphs land in two different places down the rail,
+ * at whatever width the window's chrome allows it. Out of the flow, every glyph is on the rail's centre line and the
  * dot sits beside the one row that has it — which is the arrangement the
  * expanded Sidebar has too, where the rail is a fixed column to the left of
  * the glyphs and not something the glyphs are centred with. */

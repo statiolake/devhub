@@ -1225,8 +1225,9 @@ export function Sidebar({ snapshot, onDispatch }: SidebarProps) {
           <p className="sidebar-empty">No workspaces open</p>
         )}
       </div>
-      {/* A rail has no width to set: it is exactly what the window's traffic
-          lights need. The handle is absent rather than disabled, because a
+      {/* A rail has no width to set: it is exactly its glyph column, or — on a
+          window with no title bar — exactly what the traffic lights need. The
+          handle is absent rather than disabled, because a
           disabled separator is a keyboard stop that answers nothing — and the
           width it would set is still there, waiting, for when the Sidebar
           comes back. */}
