@@ -48,13 +48,12 @@ import {
 } from "../../src/main/agent/injection";
 import { CLAUDE_IDLE } from "../../src/main/agent/detect/claudeScreens.fixture";
 import { scratchDirectory } from "./scratch";
-
-const TMUX_CANDIDATES = [
-  "/opt/homebrew/bin/tmux",
-  "/usr/local/bin/tmux",
-  "/usr/bin/tmux",
-];
-const TMUX = TMUX_CANDIDATES.find((path) => existsSync(path));
+import {
+  TMUX,
+  killTmuxServer,
+  tmuxSocketDirectory,
+  tmuxSocketFiles,
+} from "../tmuxSockets";
 
 let sequence = 0;
 
@@ -155,16 +154,6 @@ function fixture(
   return created;
 }
 
-function killServer(socket: string): void {
-  try {
-    execFileSync(TMUX as string, ["-L", socket, "kill-server"], {
-      stdio: "ignore",
-    });
-  } catch {
-    // Not a swallow: no server on that socket is the state this wants.
-  }
-}
-
 function tmuxOutside(socket: string, args: readonly string[]): void {
   execFileSync(TMUX as string, ["-f", "/dev/null", "-L", socket, ...args], {
     stdio: "ignore",
@@ -172,12 +161,26 @@ function tmuxOutside(socket: string, args: readonly string[]): void {
   });
 }
 
+/**
+ * Every server this case started is stopped, and the socket file is gone.
+ *
+ * Both halves matter, because tmux leaves the socket file behind however the
+ * server ends — `kill-server` included. `killTmuxServer` does the removal, so
+ * a file still here means a server this case started is still running, and the
+ * assertion says which case. Without it the global teardown would report the
+ * same socket much later, with nothing to point at.
+ */
 afterEach(() => {
+  const started: string[] = [];
   while (fixtures.length > 0) {
     const current = fixtures.pop() as Fixture;
-    killServer(current.socket);
+    killTmuxServer(current.socket);
     rmSync(current.home, { recursive: true, force: true });
+    started.push(current.socket);
   }
+  if (started.length === 0) return;
+  const left = tmuxSocketFiles().filter((name) => started.includes(name));
+  expect(left, `sockets left in ${tmuxSocketDirectory()}`).toEqual([]);
 });
 
 /**
@@ -201,6 +204,24 @@ describe.skipIf(TMUX === undefined)(
   "the tmux runtime, for real",
   { timeout: 30_000 },
   () => {
+    /**
+     * The isolation itself, asserted once rather than assumed everywhere.
+     *
+     * Every other case here proves something about tmux; this one proves the
+     * ground they all stand on. If `TMUX_TMPDIR` stopped reaching the child
+     * processes, nothing would fail — the servers would come up fine, in the
+     * developer's own socket directory, and quietly litter it again.
+     */
+    it("puts its sockets in the run's own directory, not the shared one", async () => {
+      const test = fixture("isolated");
+      await test.runtime.ensure(SCRATCH_TARGET);
+
+      const directory = tmuxSocketDirectory();
+      expect(directory.startsWith("/tmp/")).toBe(false);
+      expect(directory.startsWith("/private/tmp/")).toBe(false);
+      expect(tmuxSocketFiles()).toContain(test.socket);
+    });
+
     it("adopts an absent socket by creating exactly one marked Scratch", async () => {
       const test = fixture("absent");
       mkdirSync(join(test.home, "config"), { recursive: true });

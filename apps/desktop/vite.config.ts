@@ -31,5 +31,12 @@ export default defineConfig({
     // The sources are the tests; the build output is not.
     exclude: ["**/node_modules/**", "out/**", "dist/**"],
     alias: { electron: electronStub },
+    // A run owns its tmux socket directory. Without this the suites that start
+    // a real tmux server drop their sockets in the shared `/tmp/tmux-<uid>/`
+    // next to the developer's own, and tmux leaves a dead file there whenever
+    // a server does not exit through `kill-server`. See the file.
+    globalSetup: [
+      fileURLToPath(new URL("./test/tmuxSockets.ts", import.meta.url)),
+    ],
   },
 });

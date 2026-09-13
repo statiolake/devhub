@@ -36,6 +36,40 @@ fi
 # Scratch directories the tests create live under .spike/, never in $TMPDIR.
 mkdir -p "$REPO_ROOT/.spike"
 
-ELECTRON_RUN_AS_NODE=1 exec "$ELECTRON" \
+# This run owns its tmux socket directory. tmux never unlinks a socket file —
+# not when the server is killed, and not when it exits through `kill-server`
+# either — and `tmux -L <name>` puts it in the shared /tmp/tmux-<uid>/ beside
+# the developer's own live sockets, where nothing can safely sweep it up.
+# TMUX_TMPDIR moves every socket these tests create into one directory that goes
+# away with the run, which is also what makes it safe for a test to delete its
+# own socket. The vitest side does the same thing in test/tmuxSockets.ts.
+TMUX_TMPDIR="$REPO_ROOT/.spike/tmux-pty-$$"
+export TMUX_TMPDIR
+rm -rf "$TMUX_TMPDIR"
+mkdir -p "$TMUX_TMPDIR"
+trap 'rm -rf "$TMUX_TMPDIR"' EXIT
+
+# Not `exec`: the socket directory has to be read for leaks and removed after
+# the tests, which a replaced process could not do.
+status=0
+ELECTRON_RUN_AS_NODE=1 "$ELECTRON" \
 	--test \
-	"$TEST_DIR/pty-under-electron.mjs"
+	"$TEST_DIR/pty-under-electron.mjs" || status=$?
+
+# Deleting the directory would hide a leak as well as clean one up, so read it
+# first. Anything still here is a server a test did not end.
+SOCKET_DIR="$TMUX_TMPDIR/tmux-$(id -u)"
+if [ -d "$SOCKET_DIR" ]; then
+	for socket in "$SOCKET_DIR"/*; do
+		[ -e "$socket" ] || continue
+		echo "the PTY tests left a tmux socket behind: $(basename "$socket") — every test that starts a tmux server has to kill it" >&2
+		for candidate in /opt/homebrew/bin/tmux /usr/local/bin/tmux /usr/bin/tmux; do
+			[ -x "$candidate" ] || continue
+			"$candidate" -L "$(basename "$socket")" kill-server >/dev/null 2>&1 || true
+			break
+		done
+		status=1
+	done
+fi
+
+exit "$status"

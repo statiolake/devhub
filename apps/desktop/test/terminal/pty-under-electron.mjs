@@ -55,6 +55,36 @@ function scratchDirectory(label) {
 	return realpathSync(mkdtempSync(join(SCRATCH_ROOT, `devhub-${label}-`)));
 }
 
+/**
+ * Stop the server on one of this run's sockets, and take the socket with it.
+ *
+ * tmux never unlinks a socket file — not when the server is killed, and not
+ * when it exits through `kill-server` either — so removing it is this test's
+ * job. That is safe here only because `run-under-electron.sh` gave the run its
+ * own `TMUX_TMPDIR`; without it these files would pile up for ever in the
+ * shared directory beside the developer's own live sockets. The vitest side
+ * says the same thing at more length in `test/tmuxSockets.ts`; this copy exists
+ * because that file is TypeScript and this interpreter has none.
+ */
+function killTmuxServer(socket) {
+	try {
+		execFileSync(TMUX, ["-L", socket, "kill-server"], { stdio: "ignore" });
+	} catch {
+		// Not a swallow: no server on that socket is the state this wants.
+	}
+	rmSync(join(process.env.TMUX_TMPDIR, `tmux-${process.getuid()}`, socket), {
+		force: true,
+	});
+}
+
+// Set by `run-under-electron.sh`, and checked rather than defaulted: unset, the
+// tmux servers these tests start would put their sockets in the shared
+// /tmp/tmux-<uid>/ and leave them there for ever.
+assert.ok(
+	process.env.TMUX_TMPDIR,
+	"TMUX_TMPDIR is unset — run these tests through test/terminal/run-under-electron.sh, which gives the run its own tmux socket directory",
+);
+
 function deadline(promise, milliseconds, what) {
 	let timer;
 	return Promise.race([
@@ -151,11 +181,7 @@ test(
 		const home = scratchDirectory("tmux-pty");
 		const socket = `dhpty${process.pid}`;
 		t.after(() => {
-			try {
-				execFileSync(TMUX, ["-L", socket, "kill-server"], { stdio: "ignore" });
-			} catch {
-				// Not a swallow: no server on that socket is the goal.
-			}
+			killTmuxServer(socket);
 			rmSync(home, { recursive: true, force: true });
 		});
 
@@ -404,11 +430,7 @@ test(
 		const home = scratchDirectory("tmux-launcher");
 		const socket = `dhlaunch${process.pid}`;
 		t.after(() => {
-			try {
-				execFileSync(TMUX, ["-L", socket, "kill-server"], { stdio: "ignore" });
-			} catch {
-				// Not a swallow: no server on that socket is the goal.
-			}
+			killTmuxServer(socket);
 			rmSync(home, { recursive: true, force: true });
 		});
 
