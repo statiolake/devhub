@@ -621,16 +621,6 @@
   color: var(--state-ink, var(--row-glyph-ink));
 }
 
-/* Why the marks above may be out of date. It is not an error the person did
-   anything to cause, so it is a caption and not an alert — but it stays until
-   a later look succeeds, which is the whole point of drawing it. */
-.sidebar-status-note {
-  padding: var(--space-1) var(--space-3);
-  margin: 0;
-  color: var(--secondary);
-  font-size: 11px;
-}
-
 /*
  * An Agent row is indented by exactly one glyph column, and no further.
  *
@@ -1974,14 +1964,13 @@ body.is-resizing-split {
 }
 
 /* Words, and everything that is only words: the label, the branch, the machine
-   name, the Issue and its title, the Sidebar's own notes. Not `visibility` and
+   name, the Issue and its title. Not `visibility` and
    not a clip — the row's height is the first line's height here, and a hidden
    second line that still took space would make the rail taller than the marks
    in it. */
 .sidebar[data-collapsed="true"] .row-label,
 .sidebar[data-collapsed="true"] .row-line,
-.sidebar[data-collapsed="true"] .sidebar-empty,
-.sidebar[data-collapsed="true"] .sidebar-status-note {
+.sidebar[data-collapsed="true"] .sidebar-empty {
   display: none;
 }
 

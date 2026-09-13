@@ -602,11 +602,14 @@ describe("a workspace row, continued", () => {
     expect(note?.textContent).not.toMatch(/undefined|^#/u);
   });
 
-  it("keeps what it knows when a look fails, and says why beside it", () => {
-    // A network that dropped must not read as an issue that closed.
+  it("keeps what it knows when a look fails, and leaves the why to the toast", () => {
+    // A network that dropped must not read as an issue that closed — and the
+    // reason it dropped is about the whole application, not about this list,
+    // so the Sidebar's foot is not where it is said. See `shell/notices.ts`.
     mount({ ...WORKING_ON, diagnostic: "GitHub answered 502." });
     expect(screen.getByText("Tidy the picker")).toBeInTheDocument();
-    expect(screen.getByText("GitHub answered 502.")).toBeInTheDocument();
+    expect(screen.queryByText("GitHub answered 502.")).not.toBeInTheDocument();
+    expect(document.querySelector(".sidebar-status-note")).toBeNull();
   });
 });
 

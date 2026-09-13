@@ -31,6 +31,15 @@ import { useAppNotices } from "./notices";
 import { AppShellContext, type AppShellContextValue } from "./useAppShell";
 
 /**
+ * Which app-wide condition the repository watcher's diagnostic is.
+ *
+ * One source, so one name: every look publishes either a reason the last round
+ * was incomplete or nothing at all, so a notice raised under this name is
+ * replaced or retracted by the next look and by nothing else.
+ */
+const REPOSITORY_STATUS_CONDITION = "repository_status";
+
+/**
  * What a dispatch came back asking to have confirmed.
  *
  * The token, and what the question is about. There used to be an `agentId`
@@ -110,6 +119,7 @@ export function AppShellProvider({
   const {
     notices,
     raiseFailure: raiseHere,
+    observeCondition,
     clearFailure: clearIntentError,
     dismiss: dismissNotice,
     dismissNewest: dismissNewestNotice,
@@ -135,6 +145,22 @@ export function AppShellProvider({
   const [repositoryStatus, setRepositoryStatus] =
     useState<RepositoryStatusWire>({ sequence: 0, workspaces: [] });
 
+  /**
+   * Why what the rows say may be out of date, said where the application says
+   * everything else it has to say.
+   *
+   * It is a *condition*, not a failed action: nobody asked for the look that
+   * did not finish, and the reason it did not — `gh` missing, a network that
+   * dropped — is still true after the person's next click. So it is raised as
+   * one, which is what makes the exception the watcher has always documented
+   * ("it is gone when a later round succeeds, and by no other rule") an
+   * ordinary property of a notice rather than a rule the Sidebar kept for
+   * itself: a round that succeeds publishes no diagnostic, and the source
+   * retracting it is the only thing besides the person that takes it away.
+   */
+  useEffect(() => {
+    observeCondition(REPOSITORY_STATUS_CONDITION, repositoryStatus.diagnostic);
+  }, [observeCondition, repositoryStatus.diagnostic]);
   const [pickerBusy, setPickerBusy] = useState(false);
   /**
    * How many sources the last run had to ask.

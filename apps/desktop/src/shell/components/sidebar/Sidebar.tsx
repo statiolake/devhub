@@ -1224,15 +1224,6 @@ export function Sidebar({ snapshot, onDispatch }: SidebarProps) {
         ) : (
           <p className="sidebar-empty">No workspaces open</p>
         )}
-        {/* Why what is on the rows may be out of date. It stands beside what
-            is still known rather than replacing it, and it goes when a later
-            look succeeds — a network that dropped must not read as an issue
-            that closed. */}
-        {repositoryStatus.diagnostic ? (
-          <p className="sidebar-status-note" role="status">
-            {repositoryStatus.diagnostic}
-          </p>
-        ) : null}
       </div>
       {/* A rail has no width to set: it is exactly what the window's traffic
           lights need. The handle is absent rather than disabled, because a
