@@ -570,6 +570,12 @@ export class AppCoordinator {
       case "resize_sidebar":
         this.model.setSidebarWidth(intent.width);
         return this.transitionOutcome(beforeRevision, id);
+      case "reorder_workspaces":
+        this.model.setWorkspaceOrder(intent.order);
+        return this.transitionOutcome(beforeRevision, id);
+      case "reorder_agents":
+        this.model.setAgentOrder(intent.workspaceId, intent.order);
+        return this.transitionOutcome(beforeRevision, id);
       case "toggle_sidebar":
         this.model.toggleSidebar();
         return this.transitionOutcome(beforeRevision, id);

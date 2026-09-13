@@ -336,6 +336,21 @@ export type AppIntentWire =
 	| { readonly type: "resize_sidebar"; readonly width: number }
 	/** Show the Sidebar as its icon rail, or give it its width back. */
 	| { readonly type: "toggle_sidebar" }
+	/**
+	 * Where the top-level rows go, whole, as the person just arranged them.
+	 *
+	 * See `model/workspaceOrder.ts` for what may move where. It is the whole
+	 * list and not "this one moved there" so that the model has nothing to work
+	 * out, and cannot come to a different answer from the sidebar the person was
+	 * looking at.
+	 */
+	| { readonly type: "reorder_workspaces"; readonly order: readonly string[] }
+	/** The same, one level down: every Agent of this workspace, in order. */
+	| {
+			readonly type: "reorder_agents";
+			readonly workspaceId: string;
+			readonly order: readonly string[];
+	  }
 	| { readonly ratio: number; readonly type: "resize_split" }
 	| { readonly type: "open_workspace_picker" }
 	| {
@@ -619,6 +634,18 @@ export interface WorkspaceWire {
 	 * rows, and only this tells them apart.
 	 */
 	readonly key: string;
+	/**
+	 * The rows this one is grouped with: a repository and its worktrees share
+	 * one, and everything else is a group of one.
+	 *
+	 * It is git's answer (the main worktree's path) where git had one, and the
+	 * workspace's own key where it did not. It travels on the row because two
+	 * readers need it — the sidebar, to know which drops are legal, and the
+	 * chords, to know what a row moves among — and the projection is the one
+	 * place that has git's answer. A second reader working it out for itself is
+	 * a second answer waiting to disagree with the order on screen.
+	 */
+	readonly groupKey: string;
 	readonly selectedPath: string;
 	readonly state: WorkspaceStateWire;
 	readonly close: WorkspaceCloseWire;

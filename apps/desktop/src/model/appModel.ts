@@ -201,6 +201,17 @@ export interface AppSnapshot {
   readonly layout: SurfaceLayout;
   readonly workspaces: readonly WorkspaceSnapshot[];
   readonly sidebar: SidebarSnapshot;
+  /**
+   * The order the person put the top-level rows in, if they have.
+   *
+   * Workspace ids and nothing else, because it is a statement about where rows
+   * go and not about what they are. It is carried on the snapshot rather than
+   * applied here because applying it needs git's answer about which workspaces
+   * are checkouts of one repository, which this model does not know and must
+   * not learn — the projection has that answer already, and `orderWorkspaces`
+   * is where the two meet.
+   */
+  readonly workspaceOrder: readonly WorkspaceId[];
   /** Where the divider sits when the layout is a split. */
   readonly splitRatio: number;
   readonly editorHost: EditorHostState;
@@ -272,6 +283,22 @@ export class AppModel {
    */
   private sidebarCollapsedValue = false;
   /**
+   * The order the person put the top-level rows in.
+   *
+   * Empty until somebody arranges something, which is what "the automatic
+   * order" is — see `model/workspaceOrder.ts`, where the two meet and where the
+   * whole rule for reading this lives. It is kept as ids rather than as the
+   * list's own order because the list's order is *not* what the sidebar draws:
+   * the projection groups worktrees under their repositories, and a model that
+   * tried to hold the drawn order would have to know about git to do it.
+   *
+   * Ids of workspaces that are no longer open stay. A folder closed and
+   * reopened comes back where it was, and dropping the id the moment the row
+   * left would make closing a workspace a way of forgetting where its
+   * neighbours went.
+   */
+  private workspaceOrderValue: readonly WorkspaceId[] = [];
+  /**
    * Whether the DevHub window has the person in front of it.
    *
    * Main owns this fact — a workbench view can hold the keyboard while the
@@ -330,6 +357,7 @@ export class AppModel {
         width: this.sidebarWidthValue,
         collapsed: this.sidebarCollapsedValue,
       },
+      workspaceOrder: this.workspaceOrderValue,
       splitRatio: this.splitRatioValue,
       editorHost: this.editorHost,
     };
@@ -400,6 +428,65 @@ export class AppModel {
     }
     this.sidebarWidthValue = width;
     this.sidebarCollapsedValue = collapsed;
+    this.bumpRevision();
+    return true;
+  }
+
+  get workspaceOrder(): readonly WorkspaceId[] {
+    return this.workspaceOrderValue;
+  }
+
+  /**
+   * Write down where the rows go.
+   *
+   * The whole list, always, and no check that it names the workspaces that are
+   * open: the order is read as a permutation request over whatever is there
+   * (`orderWorkspaces`), so an id for a workspace that has closed is a row that
+   * will be put back where it was if it is opened again, and an open workspace
+   * the list forgot to name lands where the automatic rule would put it. There
+   * is no order this can be given that produces a sidebar that is wrong, which
+   * is why there is nothing here to refuse.
+   */
+  setWorkspaceOrder(order: readonly WorkspaceId[]): boolean {
+    if (
+      this.workspaceOrderValue.length === order.length &&
+      this.workspaceOrderValue.every((id, at) => id === order[at])
+    ) {
+      return false;
+    }
+    this.workspaceOrderValue = [...order];
+    this.bumpRevision();
+    return true;
+  }
+
+  /** Restoring is setting, minus the revision bump on an unchanged value. */
+  restoreWorkspaceOrder(order: readonly WorkspaceId[]): boolean {
+    return this.setWorkspaceOrder(order);
+  }
+
+  /**
+   * Put a workspace's Agents in the order a person arranged them.
+   *
+   * Straight through to the Workspace, because for Agents the list *is* the
+   * order and there is nothing else to keep in step with it. Unknown workspace
+   * or an order that does not name exactly the Agents it has is a failure and
+   * not a silent partial rearrangement: both mean the caller was working from a
+   * list that no longer exists, and guessing which half of it still holds would
+   * put Agents somewhere nobody asked for.
+   */
+  setAgentOrder(workspaceId: WorkspaceId, order: readonly AgentId[]): boolean {
+    const workspace = this.workspace(workspaceId);
+    if (!workspace) {
+      fail(DomainErrorCode.UnknownWorkspace);
+    }
+    const before = workspace.agents.map((agent) => agent.id);
+    if (
+      before.length === order.length &&
+      before.every((id, at) => id === order[at])
+    ) {
+      return false;
+    }
+    workspace.reorderAgents(order);
     this.bumpRevision();
     return true;
   }

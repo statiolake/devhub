@@ -211,3 +211,48 @@ describe("an Agent's control state across the wire", () => {
     }
   });
 });
+
+describe("the order the projection puts the rows in", () => {
+  const row = (id: string, label: string, key: string): WorkspaceSnapshot =>
+    ({
+      ...workspace({ kind: "available" }),
+      id,
+      label,
+      key,
+      root: key,
+    }) as unknown as WorkspaceSnapshot;
+
+  const A = "22222222-2222-4222-8222-22222222000a";
+  const B = "22222222-2222-4222-8222-22222222000b";
+  const W = "22222222-2222-4222-8222-22222222000c";
+
+  const project = (order: readonly string[]) =>
+    snapshotWire(
+      {
+        ...snapshotOf([
+          row(B, "beta", "/b"),
+          row(A, "alpha", "/a"),
+          row(W, "alpha_wt", "/a_wt"),
+        ]),
+        workspaceOrder: order,
+      } as unknown as AppSnapshot,
+      "ready",
+      (id) => (id === A || id === W ? "/a" : undefined),
+    ).workspaces;
+
+  it("says which group each row is in, so nobody has to work it out twice", () => {
+    expect(project([]).map((one) => [one.label, one.groupKey])).toEqual([
+      ["alpha", "/a"],
+      ["alpha_wt", "/a"],
+      ["beta", "/b"],
+    ]);
+  });
+
+  it("applies the person's arrangement over the automatic rule", () => {
+    expect(project([B, A]).map((one) => one.label)).toEqual([
+      "beta",
+      "alpha",
+      "alpha_wt",
+    ]);
+  });
+});

@@ -76,6 +76,7 @@ function workspace(
 		location: { kind: "local" },
 		root: `/workspaces/${id}`,
 		key: `/workspaces/${id}`,
+		groupKey: `/workspaces/${id}`,
 		selectedPath: `/workspaces/${id}`,
 		state: { kind: "available" },
 		close: { kind: "idle" },

@@ -1347,6 +1347,35 @@ export class Workspace {
     const index = this.agentList.findIndex((agent) => agent.id === id);
     return index < 0 ? undefined : this.agentList.splice(index, 1)[0];
   }
+
+  /**
+   * Put the Agents in the order a person arranged them.
+   *
+   * The list *is* the order — it is what the sidebar draws, what the Agent
+   * cycles step, and what the state file writes out — so arranging Agents is
+   * this and nothing else. There is no separate order to keep in step with the
+   * list, and therefore no way for the two to disagree.
+   *
+   * The order given has to name exactly the Agents this workspace has. A
+   * caller that computed it from a stale snapshot is a caller working from a
+   * list that no longer exists, and quietly rearranging whatever overlaps
+   * would put Agents somewhere nobody asked for.
+   */
+  reorderAgents(order: readonly AgentId[]): void {
+    if (order.length !== this.agentList.length) {
+      throw invalid(DomainErrorCode.UnknownAgent);
+    }
+    const moved: Agent[] = [];
+    for (const id of order) {
+      const agent = this.agent(id);
+      if (!agent || moved.includes(agent)) {
+        throw invalid(DomainErrorCode.UnknownAgent);
+      }
+      moved.push(agent);
+    }
+    this.agentList.length = 0;
+    this.agentList.push(...moved);
+  }
 }
 
 /** The left-pane Navigation Context, and the whole of the selection. */

@@ -37,7 +37,7 @@ import {
   SPLIT_MIN_RATIO,
 } from "./appModel.js";
 import { isValidFontFamily } from "./fontFamily.js";
-import { orderWorkspaces } from "./workspaceOrder.js";
+import { groupKeyFor, orderWorkspaces } from "./workspaceOrder.js";
 import {
   AppError,
   AppErrorCode,
@@ -358,6 +358,7 @@ export function snapshotWire(
     location: workspaceLocationWire(workspace.location),
     root: workspace.root,
     key: workspace.key,
+    groupKey: groupKeyFor(workspace.key, repositoryOf(workspace.id)),
     selectedPath: workspace.selectedPath,
     state: workspaceStateWire(workspace.state),
     close: workspaceCloseWire(workspace.close),
@@ -367,8 +368,12 @@ export function snapshotWire(
       ? {}
       : { lastAgentId: workspace.lastAgentId }),
   }));
-  const workspaces = orderWorkspaces(projected, (workspace) =>
-    repositoryOf(workspace.id),
+  // The person's arrangement over the automatic rule, in the one place the
+  // list is put in order. See `model/workspaceOrder.ts`.
+  const workspaces = orderWorkspaces(
+    projected,
+    (workspace) => workspace.groupKey,
+    snapshot.workspaceOrder,
   );
   const wire: AppSnapshotWire = {
     schemaVersion: APP_SHELL_SCHEMA_VERSION,
@@ -793,6 +798,19 @@ export function intentFromWire(wire: AppIntentWire): UserIntent {
       return { type: "resize_sidebar", width: wire.width };
     case "toggle_sidebar":
       return { type: "toggle_sidebar" };
+    case "reorder_workspaces":
+      if (!Array.isArray(wire.order)) invalid();
+      return {
+        type: "reorder_workspaces",
+        order: wire.order.map((id) => tryParse(() => parseWorkspaceId(id))),
+      };
+    case "reorder_agents":
+      if (!Array.isArray(wire.order)) invalid();
+      return {
+        type: "reorder_agents",
+        workspaceId: tryParse(() => parseWorkspaceId(wire.workspaceId)),
+        order: wire.order.map((id) => tryParse(() => parseAgentId(id))),
+      };
     case "open_workspace_picker":
       // The picker is a shell-side dialog; it never reaches the model.
       return invalid();

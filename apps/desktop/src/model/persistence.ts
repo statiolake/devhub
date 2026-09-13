@@ -118,8 +118,21 @@ import {
  * such key, which reads as expanded, and a build that does not know the rail
  * reads the key it does know and ignores this one. Neither direction has to
  * invent anything, so neither has to refuse.
+ *
+ * Version 7 added `sidebar.order`: the top-level rows in the order the person
+ * put them, as workspace ids. A version-6 DevHub reading a version-7 file
+ * would drop the list on its next save and the sidebar would silently fall
+ * back to the automatic order — which looks like the arrangement was never
+ * made, so it is a bump. A version-6 file has no such key and loads as the
+ * empty list, which *is* the automatic order and not a gap.
+ *
+ * An Agent's order needed no key at all. The Agents of a workspace are written
+ * out in the order the model holds them and loaded back into it, so the array
+ * has always been the order; arranging Agents moves them in that array, and a
+ * file from before this existed loads as the order they were created in, which
+ * is what it has always meant.
  */
-export const STATE_SCHEMA_VERSION = 6;
+export const STATE_SCHEMA_VERSION = 7;
 export { SIDEBAR_DEFAULT_WIDTH };
 
 const MIN_SIDEBAR_WIDTH = 200;
@@ -279,6 +292,24 @@ export interface SidebarState {
    * this is layout, and layout is what this file is for.
    */
   collapsed: boolean;
+  /**
+   * The top-level rows in the order the person put them, as workspace ids.
+   *
+   * Empty means nobody has arranged anything, which is the automatic order —
+   * worktrees under their repository, everything else by name — and is what
+   * every file written before version 7 loads as. See
+   * `model/workspaceOrder.ts`, where the arrangement and the automatic rule
+   * meet.
+   *
+   * It is here beside the width for the same reason `collapsed` is: it is
+   * where the Sidebar's rows *were*, which is layout, and layout is what this
+   * file is for.
+   *
+   * Ids of workspaces that are no longer open are kept. A folder closed and
+   * reopened comes back where it was, and pruning the list on save would make
+   * closing one workspace a way of forgetting where its neighbours went.
+   */
+  order: string[];
 }
 
 export interface ShutdownMetadata {
@@ -507,7 +538,7 @@ export function freshState(): PersistedAppState {
     workspaces: [],
     session_machines: [],
     navigation: { context: { kind: "global" } },
-    sidebar: { width: SIDEBAR_DEFAULT_WIDTH, collapsed: false },
+    sidebar: { width: SIDEBAR_DEFAULT_WIDTH, collapsed: false, order: [] },
     split: { ratio: SPLIT_DEFAULT_RATIO },
     window: {
       frame: {
@@ -894,6 +925,9 @@ export function validateState(state: PersistedAppState): void {
   ) {
     fail("STATE_INVALID");
   }
+  // Ids only, and not "is this workspace open": a row that has been closed
+  // keeps its place for when it comes back. See `SidebarState.order`.
+  for (const id of state.sidebar.order) validateUuid(id);
   const context = state.navigation.context;
   if (context.kind === "workspace") validateUuid(context.workspace_id);
   if (context.kind === "agent") validateUuid(context.agent_id);
@@ -1040,6 +1074,10 @@ export function hydrateModel(
 
   refuseRecord("the sidebar and the split", () => {
     model.restoreSidebar(state.sidebar.width, state.sidebar.collapsed);
+    // Not validated against the workspaces that came back: an id whose folder
+    // is closed is a row that goes back where it was if it is opened again,
+    // and the order is read as a permutation request over whatever is there.
+    model.restoreWorkspaceOrder(state.sidebar.order.map(parseWorkspaceId));
     model.restoreSplitRatio(state.split.ratio);
   });
 
@@ -1167,6 +1205,7 @@ export function stateFromSnapshot(
     sidebar: {
       width: snapshot.sidebar.width,
       collapsed: snapshot.sidebar.collapsed,
+      order: [...snapshot.workspaceOrder],
     },
     split: { ratio: snapshot.splitRatio },
   };
@@ -1881,6 +1920,12 @@ function decodeState(bytes: Buffer): Decoded {
               collapsed:
                 decodeObject("sidebar", object["sidebar"])["collapsed"] ===
                 true,
+              // Absent means nobody has arranged anything, which is the
+              // automatic order and what every version-6 file means.
+              order: decodeStringArray(
+                "sidebar.order",
+                decodeObject("sidebar", object["sidebar"])["order"] ?? [],
+              ),
             },
       split:
         object["split"] === undefined

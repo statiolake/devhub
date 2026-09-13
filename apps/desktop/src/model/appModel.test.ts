@@ -743,3 +743,64 @@ describe("a refusal about one Agent", () => {
     expect(failureOf(model)).toEqual({ code: "tmux_command_timed_out" });
   });
 });
+
+describe("arranging the rows", () => {
+  function withTwoAgents(): AppModel {
+    const model = new AppModel();
+    model.addWorkspace(
+      new Workspace(
+        WS_A,
+        workspaceLocation({ kind: "local", path: "/srv/api" }),
+        displayPath("/srv/api"),
+      ),
+    );
+    model.addAgent(WS_A, AG_A, codex);
+    model.addAgent(WS_A, AG_B, codex);
+    return model;
+  }
+
+  it("takes any order for the rows, because none of them can be wrong", () => {
+    // The order is read as a permutation request over the grouping
+    // (`orderWorkspaces`), so there is no list here that produces a sidebar
+    // that is wrong — and therefore nothing to refuse.
+    const model = new AppModel();
+    expect(model.workspaceOrder).toEqual([]);
+    expect(model.setWorkspaceOrder([WS_B, WS_A])).toBe(true);
+    expect(model.workspaceOrder).toEqual([WS_B, WS_A]);
+  });
+
+  it("publishes nothing when the order is the one it already had", () => {
+    const model = new AppModel();
+    model.setWorkspaceOrder([WS_B, WS_A]);
+    const before = model.snapshot().revision;
+    expect(model.setWorkspaceOrder([WS_B, WS_A])).toBe(false);
+    expect(model.snapshot().revision).toBe(before);
+  });
+
+  it("moves an Agent within its workspace, which is where the order lives", () => {
+    const model = withTwoAgents();
+    expect(model.setAgentOrder(WS_A, [AG_B, AG_A])).toBe(true);
+    expect(
+      model.snapshot().workspaces[0].agents.map((agent) => agent.id),
+    ).toEqual([AG_B, AG_A]);
+    expect(model.setAgentOrder(WS_A, [AG_B, AG_A])).toBe(false);
+  });
+
+  it("refuses an Agent order that is not the Agents it has", () => {
+    // A caller working from a list that no longer exists. Rearranging the half
+    // that still overlaps would put Agents somewhere nobody asked for.
+    const model = withTwoAgents();
+    expect(codeOf(() => model.setAgentOrder(WS_A, [AG_B]))).toBe(
+      DomainErrorCode.UnknownAgent,
+    );
+    expect(codeOf(() => model.setAgentOrder(WS_A, [AG_A, AG_A]))).toBe(
+      DomainErrorCode.UnknownAgent,
+    );
+    expect(codeOf(() => model.setAgentOrder(WS_B, [AG_A, AG_B]))).toBe(
+      DomainErrorCode.UnknownWorkspace,
+    );
+    expect(
+      model.snapshot().workspaces[0].agents.map((agent) => agent.id),
+    ).toEqual([AG_A, AG_B]);
+  });
+});

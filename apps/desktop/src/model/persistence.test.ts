@@ -484,14 +484,18 @@ describe("store", () => {
     const written: Record<string, unknown> = JSON.parse(
       await readFile(path, "utf8"),
     ) as Record<string, unknown>;
-    expect(written["sidebar"]).toEqual({ width: 321, collapsed: false });
+    expect(written["sidebar"]).toEqual({
+      width: 321,
+      collapsed: false,
+      order: [],
+    });
   });
 
   it("brings the rail back exactly as it was left", async () => {
     const store = new JsonStateStore(path);
     await store.saveState({
       ...freshState(),
-      sidebar: { width: 321, collapsed: true },
+      sidebar: { width: 321, collapsed: true, order: [] },
     });
 
     const load = await store.loadState();
@@ -694,7 +698,11 @@ describe("decoding the state file", () => {
       workspaces[0]["issue_url"] = "https://example.invalid/1";
     });
     expect(load.recoveryReason).toBeUndefined();
-    expect(load.state.sidebar).toEqual({ width: 321, collapsed: false });
+    expect(load.state.sidebar).toEqual({
+      width: 321,
+      collapsed: false,
+      order: [],
+    });
     expect(load.state.workspaces[0]).not.toHaveProperty("issue_url");
   });
 });
@@ -905,5 +913,126 @@ describe("a Workspace's place across a restart", () => {
     expect(() => {
       validateState(state);
     }).not.toThrow();
+  });
+});
+
+describe("the order a person put the rows in, across a restart", () => {
+  /**
+   * Version 7's whole story is one absent key.
+   *
+   * A version-6 file has no `sidebar.order`, and the empty list is not a gap:
+   * it *is* the automatic order, which is what that file always meant. The
+   * bump is for the other direction — a version-6 build would drop the list on
+   * its next save and the sidebar would fall back to the automatic order,
+   * which looks like the arrangement was never made.
+   */
+  it("loads a version-6 file as the automatic order, and writes one back", async () => {
+    const state = freshState();
+    state.schema_version = 6;
+    state.workspaces = [
+      {
+        workspace_id: WS_A,
+        selected_path: "/srv/api",
+        canonical_path: "/srv/api",
+        lifecycle: { kind: "available" },
+        agents: [],
+      },
+    ];
+    const directory = makeScratchDir("state");
+    const path = join(directory, "state.json");
+    const document = JSON.parse(JSON.stringify(state)) as Record<
+      string,
+      unknown
+    >;
+    document["sidebar"] = { width: 260, collapsed: false };
+    await writeFile(path, JSON.stringify(document), { mode: 0o600 });
+
+    const store = new JsonStateStore(path);
+    const load = await store.loadState();
+    expect(load.state.schema_version).toBe(STATE_SCHEMA_VERSION);
+    expect(load.state.sidebar.order).toEqual([]);
+    expect(hydrateModel(load.state, []).workspaceOrder).toEqual([]);
+
+    load.state.sidebar.order = [WS_A];
+    await store.saveState(load.state);
+    const again = await new JsonStateStore(path).loadState();
+    expect(again.state.sidebar.order).toEqual([WS_A]);
+    removeScratchDir(directory);
+  });
+
+  it("carries an arrangement from the model to the file and back", () => {
+    const model = new AppModel();
+    model.addWorkspace(
+      new Workspace(
+        WS_A,
+        workspaceLocation({ kind: "local", path: "/srv/api" }),
+        displayPath("/srv/api"),
+      ),
+    );
+    model.addWorkspace(
+      new Workspace(
+        WS_B,
+        workspaceLocation({ kind: "local", path: "/srv/web" }),
+        displayPath("/srv/web"),
+      ),
+    );
+    model.setWorkspaceOrder([WS_B, WS_A]);
+
+    const state = stateFromSnapshot(model.snapshot());
+    expect(state.sidebar.order).toEqual([WS_B, WS_A]);
+    expect(hydrateModel(state, []).workspaceOrder).toEqual([WS_B, WS_A]);
+  });
+
+  it("keeps an id whose workspace has closed", () => {
+    // The row comes back where it was if the folder is opened again, and
+    // pruning here would make closing one workspace a way of forgetting where
+    // its neighbours went.
+    const model = new AppModel();
+    model.addWorkspace(
+      new Workspace(
+        WS_A,
+        workspaceLocation({ kind: "local", path: "/srv/api" }),
+        displayPath("/srv/api"),
+      ),
+    );
+    model.setWorkspaceOrder([WS_B, WS_A]);
+    const state = stateFromSnapshot(model.snapshot());
+    expect(state.sidebar.order).toEqual([WS_B, WS_A]);
+    expect(hydrateModel(state, []).workspaceOrder).toEqual([WS_B, WS_A]);
+  });
+
+  it("refuses an order entry that is not an identity", () => {
+    const state = freshState();
+    state.sidebar.order = ["not-a-uuid"];
+    expect(() => {
+      validateState(state);
+    }).toThrow();
+  });
+
+  it("writes an Agent's place out as the place it is in the list", () => {
+    // Agents need no key of their own: the array *is* the order, so arranging
+    // them is moving them in it, and the file already says what that is.
+    const model = new AppModel();
+    model.addWorkspace(
+      new Workspace(
+        WS_A,
+        workspaceLocation({ kind: "local", path: "/srv/api" }),
+        displayPath("/srv/api"),
+      ),
+    );
+    model.addAgent(WS_A, AG_A, codex);
+    model.addAgent(WS_A, AG_B, codex);
+    model.setAgentOrder(WS_A, [AG_B, AG_A]);
+
+    const state = stateFromSnapshot(model.snapshot());
+    expect(state.workspaces[0].agents.map((agent) => agent.agent_id)).toEqual([
+      AG_B,
+      AG_A,
+    ]);
+    expect(
+      hydrateModel(state, [codex])
+        .snapshot()
+        .workspaces[0].agents.map((agent) => agent.id),
+    ).toEqual([AG_B, AG_A]);
   });
 });

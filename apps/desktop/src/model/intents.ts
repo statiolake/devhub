@@ -268,6 +268,30 @@ export type UserIntent =
    * the last time this intent jumped out of one.
    */
   | { readonly type: "toggle_scratch" }
+  /**
+   * Where the top-level rows go, as the person just arranged them.
+   *
+   * The whole list afterwards, rather than "this one moved there", so the model
+   * has nothing to work out and cannot come to a different answer from the
+   * sidebar the person was looking at. The rule for what may move where lives
+   * in `model/workspaceOrder.ts` and is applied by whoever raised this — which
+   * is not a hole: an order that rule would never produce is still read as a
+   * permutation request over the grouping, and no permutation can separate a
+   * worktree from its repository.
+   */
+  | {
+      readonly type: "reorder_workspaces";
+      readonly order: readonly WorkspaceId[];
+    }
+  /**
+   * Where one workspace's Agents go. The twin of `reorder_workspaces`, at the
+   * other level of the tree, and it must name every Agent that workspace has.
+   */
+  | {
+      readonly type: "reorder_agents";
+      readonly workspaceId: WorkspaceId;
+      readonly order: readonly AgentId[];
+    }
   | { readonly type: "resize_sidebar"; readonly width: number }
   /**
    * Show the Sidebar as its icon rail, or give it its width back.

@@ -62,6 +62,7 @@ function snapshotWith(control: "running" | "stopping" | "gone"): AppSnapshot {
         location: { kind: "local" },
         root: "/tmp/folderA",
         key: "/tmp/folderA",
+        groupKey: "/tmp/folderA",
         selectedPath: "/tmp/folderA",
         state: { kind: "available" } as never,
         close: { kind: "idle" } as never,
