@@ -21,6 +21,7 @@ import { WINDOW_TITLES, windowKindOf } from "../ipc/windowTitles";
 import "./styles/tokens.css";
 import "./styles/shell.css";
 import "./styles/macos.css";
+import "./styles/reorder.css";
 import "./styles/toast.css";
 import "./overlay/overlay.css";
 

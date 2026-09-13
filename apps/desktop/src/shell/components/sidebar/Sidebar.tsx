@@ -30,6 +30,7 @@ import { SidebarHeader } from "./SidebarHeader";
 import { StatusMark } from "./StatusMark";
 import { statusLabel } from "./status";
 import { mergeExitingRows, useClosingExit } from "./closingExit";
+import { useReorder, type Reorder } from "./useReorder";
 import {
   closeDiagnosticLabel,
   agentFailureLabel,
@@ -84,6 +85,7 @@ function WorkspaceRow({
   onCloseWorkspace,
   onRenameAgent,
   onAgentMenu,
+  reorder,
 }: {
   readonly workspace: WorkspaceSnapshot;
   /** What it is working on, as of the last look. Absent until the first one. */
@@ -107,6 +109,8 @@ function WorkspaceRow({
     agent: AgentSnapshot,
     at: { x: number; y: number },
   ) => void;
+  /** What this row and its Agents need while something is being dragged. */
+  readonly reorder: Reorder;
 }) {
   const selected =
     snapshot.selection.context.kind === "workspace" &&
@@ -140,6 +144,10 @@ function WorkspaceRow({
     <li
       className={`sidebar-tree-item${closing ? " is-closing" : ""}`}
       role="treeitem"
+      {...reorder.rowProps({ kind: "workspace", id: workspace.id })}
+      // A Workspace on its way out is not somewhere to put anything, and is
+      // not something to pick up: it is leaving.
+      draggable={!closing}
       aria-level={1}
       aria-selected={selected}
       aria-busy={closing || undefined}
@@ -431,6 +439,12 @@ function WorkspaceRow({
               <li
                 key={agent.id}
                 role="treeitem"
+                {...reorder.rowProps({
+                  kind: "agent",
+                  id: agent.id,
+                  workspaceId: workspace.id,
+                })}
+                draggable={!closing}
                 aria-level={2}
                 aria-selected={agentSelected}
               >
@@ -1050,6 +1064,15 @@ export function Sidebar({ snapshot, onDispatch }: SidebarProps) {
     setInProgressWidth(width);
   }, []);
 
+  /**
+   * Rearranging the list by hand.
+   *
+   * One piece of state for the whole tree, like the row menu above it: only one
+   * row can be in the air. Where it may land is `model/workspaceOrder.ts`'s
+   * answer and not this component's — the same answer `Alt+↑` gets.
+   */
+  const reorder = useReorder(snapshot, onDispatch);
+
   return (
     <aside
       className="sidebar"
@@ -1060,6 +1083,9 @@ export function Sidebar({ snapshot, onDispatch }: SidebarProps) {
       // markup in both states, and there is no second render path to keep in
       // step with the first.
       data-collapsed={collapsed ? "true" : undefined}
+      // A row is in the air, so the rows it may not land among are dimmed:
+      // the lit part of the list is the range. See `styles/reorder.css`.
+      data-reordering={reorder.active ? "true" : undefined}
       style={{ "--sidebar-width": `${renderedWidth}px` } as React.CSSProperties}
       // Escape leaves the Sidebar, from anywhere in it: a row, the tree, the
       // resize handle. One handler on the pane rather than one per control,
@@ -1217,6 +1243,7 @@ export function Sidebar({ snapshot, onDispatch }: SidebarProps) {
                   onCloseWorkspace={closeWorkspaceRow}
                   onRenameAgent={openRename}
                   onAgentMenu={openAgentMenu}
+                  reorder={reorder}
                 />
               ),
             )}

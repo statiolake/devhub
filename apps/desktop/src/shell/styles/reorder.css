@@ -1,0 +1,106 @@
+/*
+ * Dragging a row somewhere else in the Sidebar.
+ *
+ * Three statements and no more, because a source list being rearranged is a
+ * quiet thing in every application that has one:
+ *
+ * **The row being dragged goes faint.** It has not left yet and it is not where
+ * it is going to be, and a row at rest that is about to move somewhere is a lie
+ * about the list. Fading it is how Finder says "this one is in the air".
+ *
+ * **The line is the only saturated thing on screen.** It is the accent, 2px,
+ * and it is the answer to the one question a person is asking while they drag:
+ * *where will it land*. Everything else in this Sidebar is grey at rest — that
+ * is the rule the status column already lives by — so the accent has nothing
+ * to compete with and needs no size to be seen.
+ *
+ * **The rows it may not land among dim.** The lit part of the list *is* the
+ * range, which is a thing to see rather than a rule to be told: a worktree
+ * dragged inside its repository lights three rows out of twenty, and nobody has
+ * to be told why the line will not go anywhere else. See `reorder.ts`.
+ *
+ * The line starts at the row's text inset rather than at the pane's edge, so it
+ * begins under the first letter of the names it is being inserted between —
+ * which is the same column the whole list is read down.
+ */
+
+.sidebar-tree-item[data-dragging="true"] .sidebar-row,
+.agent-tree li[data-dragging="true"] .sidebar-row {
+  opacity: 0.4;
+}
+
+/* Not a target, while something is being dragged. It is the label and the marks
+   that dim and not the row's fill: a row that lost its background as well would
+   read as having been removed from the list rather than as being out of
+   range. */
+.sidebar[data-reordering="true"] [data-reorder-target="false"] > .sidebar-row {
+  opacity: 0.35;
+}
+
+.sidebar[data-reordering="true"] [data-reorder-target] > .sidebar-row {
+  transition: opacity 120ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+/*
+ * The insertion line.
+ *
+ * A pseudo-element on the row rather than a element of its own, because it sits
+ * *between* two rows and belongs to neither: giving it a box in the flow would
+ * make the list a pixel taller the moment a drag began, and every row below it
+ * would step down as the pointer moved. It is drawn at the row's own edge with
+ * half its thickness either side, so it reads as a gap being opened rather than
+ * as a border one of the two rows has grown.
+ */
+.sidebar-row::after {
+  position: absolute;
+  z-index: 1;
+  right: 0;
+  left: var(--row-text-inset);
+  height: 2px;
+  border-radius: 1px;
+  background: var(--accent);
+  content: "";
+  opacity: 0;
+  pointer-events: none;
+}
+
+[data-drop-before="true"] > .sidebar-row::after {
+  top: -1px;
+  opacity: 1;
+}
+
+[data-drop-after="true"] > .sidebar-row::after {
+  bottom: -1px;
+  opacity: 1;
+}
+
+/* In the rail there are no words for the line to start under, so it runs the
+   width of the glyph column it is pointing at. */
+.sidebar[data-collapsed="true"] .sidebar-row::after {
+  left: var(--sidebar-rail-width);
+}
+
+/*
+ * The row is picked up by its glyph, and the glyph says so.
+ *
+ * `grab` and not `move`: nothing has moved yet. It is on the glyph column
+ * because that is the one part of every row — expanded or collapsed — that is
+ * not a control with a job of its own, and because it is the whole of the row
+ * in the rail. The rest of the row still drags; this is where the invitation
+ * is.
+ */
+.sidebar-tree-item[draggable="true"] .row-glyph,
+.agent-tree li[draggable="true"] .row-rail {
+  cursor: grab;
+}
+
+.sidebar[data-reordering="true"] .row-glyph,
+.sidebar[data-reordering="true"] .row-rail {
+  cursor: grabbing;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar[data-reordering="true"] [data-reorder-target] > .sidebar-row {
+    transition: none;
+  }
+}
