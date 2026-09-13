@@ -47,6 +47,7 @@ describe("metricsReport", () => {
 			terminalLauncher: [],
 			pendingSweeps: [],
 			terminalClients: [],
+			repositoryRounds: [],
 			roundsLastMinute: noRounds,
 			runtimes: [],
 		});
@@ -74,6 +75,7 @@ describe("metricsReport", () => {
 			terminalLauncher: [],
 			pendingSweeps: [],
 			terminalClients: [],
+			repositoryRounds: [],
 			roundsLastMinute: noRounds,
 			runtimes: [],
 		});
@@ -96,6 +98,7 @@ describe("metricsReport", () => {
 			terminalLauncher: [],
 			pendingSweeps: [],
 			terminalClients: [],
+			repositoryRounds: [],
 			roundsLastMinute: noRounds,
 			runtimes: [],
 		});
@@ -120,6 +123,7 @@ describe("metricsReport", () => {
 			terminalLauncher: [],
 			pendingSweeps: [],
 			terminalClients: [],
+			repositoryRounds: [],
 			roundsLastMinute: noRounds,
 			runtimes: [],
 		});
@@ -145,6 +149,7 @@ describe("the tmux clients a reading carries", () => {
 			terminalLauncher: [],
 			pendingSweeps: [],
 			runtimes: [],
+			repositoryRounds: [],
 			roundsLastMinute: noRounds,
 			terminalClients: [
 				{ tty: "/dev/ttys001", session: "scratch" },
@@ -188,6 +193,7 @@ describe("what a round costs on each machine", () => {
 			pendingSweeps: [],
 			terminalClients: [],
 			runtimes: [local],
+			repositoryRounds: [],
 			roundsLastMinute: () => 200,
 		});
 
@@ -211,6 +217,7 @@ describe("what a round costs on each machine", () => {
 			pendingSweeps: [],
 			terminalClients: [],
 			runtimes: [local],
+			repositoryRounds: [],
 			roundsLastMinute: noRounds,
 		});
 
@@ -235,6 +242,7 @@ describe("whether each machine has a terminal launcher", () => {
 			counters: noCounters,
 			terminalClients: [],
 			runtimes: [],
+			repositoryRounds: [],
 			roundsLastMinute: noRounds,
 			pendingSweeps: [],
 			terminalLauncher: [
@@ -286,6 +294,7 @@ describe("the machines a sweep could not finish with", () => {
 			terminalClients: [],
 			runtimes: [],
 			terminalLauncher: [],
+			repositoryRounds: [],
 			roundsLastMinute: noRounds,
 		} as const;
 

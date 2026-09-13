@@ -12,6 +12,7 @@
 import type { CountersReading } from "./counters.js";
 import type { TitleBarMode } from "../../model/config.js";
 import type { RuntimeId, RuntimeReading } from "../runtime/runtime.js";
+import type { WorkspaceRepositoryRound } from "./rounds.js";
 
 /** What DevHub knows about one of its own workbench renderers. */
 export interface ViewIdentity {
@@ -130,6 +131,21 @@ export interface MetricsReport {
 	 * running over there, which is otherwise a fact with nowhere to be seen.
 	 */
 	readonly pendingSweeps: readonly RuntimeId[];
+	/**
+	 * When each open Workspace's git, pull request and Issue were last read, and
+	 * what made that happen.
+	 *
+	 * "The sidebar feels slow" is not an answerable complaint without this. Four
+	 * things can refresh a row — the poll, a write under `.git`, the window
+	 * coming to the front, and the refresh chord — and they have wildly
+	 * different latencies, so which of them last fired *is* the diagnosis. A
+	 * `trigger` that is always `poll` on a machine somebody has been switching
+	 * branches on is a `HEAD` watch that is not firing; a `focus` stamp minutes
+	 * old on a window in front of you is the focus trigger not arriving.
+	 *
+	 * A Workspace no round has finished for yet is simply absent.
+	 */
+	readonly repositoryRounds: readonly WorkspaceRepositoryRound[];
 }
 
 /** One machine's answer to "is there a `devhub-terminal` on it". */
@@ -186,6 +202,7 @@ export interface MetricsInput {
 	readonly runtimes: readonly RuntimeReading[];
 	readonly terminalLauncher: readonly TerminalLauncherStatus[];
 	readonly pendingSweeps: readonly RuntimeId[];
+	readonly repositoryRounds: readonly WorkspaceRepositoryRound[];
 	/** Reconcile rounds in the last minute, by machine. See `rounds.ts`. */
 	readonly roundsLastMinute: (id: RuntimeId) => number;
 }
@@ -232,6 +249,7 @@ export function metricsReport(input: MetricsInput): MetricsReport {
 		terminalClients: input.terminalClients,
 		terminalLauncher: input.terminalLauncher,
 		pendingSweeps: input.pendingSweeps,
+		repositoryRounds: input.repositoryRounds,
 		runtimes: input.runtimes.map((runtime) => {
 			const roundsPerMin = input.roundsLastMinute(runtime.id);
 			return {

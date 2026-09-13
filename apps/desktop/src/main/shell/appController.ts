@@ -1286,6 +1286,15 @@ export class AppController {
 	}
 
 	windowFocusChanged(focused: boolean): void {
+		// Coming back to the window is a reason to look at the repositories
+		// again, and the trigger DevHub was missing: a person leaves for a
+		// terminal, commits, switches a branch, comes back — and until the poll's
+		// minute was up the Sidebar showed them what it looked like before they
+		// left. This is what VS Code's git extension does on
+		// `window.onDidChangeWindowState`, and what the GitHub Pull Requests
+		// extension does with its own queries. The watcher decides whether it is
+		// worth a round; blur is not a trigger for anything.
+		if (focused) this.repositoryStatus.focused();
 		// Dispatched rather than awaited: nothing about a focus change has an
 		// effect to wait for, and this is called from a window event that has
 		// nowhere to put a rejected promise. A throw here is a bug in the model
@@ -3977,6 +3986,7 @@ export class AppController {
 				runtimes: liveRuntimes().map((runtime) => runtime.reading()),
 				terminalLauncher: [...this.launcherStatus.values()],
 				pendingSweeps: this.sessionSweeper?.pending ?? [],
+				repositoryRounds: this.repositoryStatus.rounds(),
 				roundsLastMinute: (id) => reconcileRounds.lastMinute(id),
 			}),
 			null,
