@@ -42,7 +42,8 @@
  * | `Cmd+Q ]` / `[`             | `next_agent` / `previous_agent` |
  * | `Cmd+Q Cmd+]` / `Cmd+[`     | `next_agent` / `previous_agent` |
  * | `Cmd+Q }` / `{`             | `next_unread_agent` / `previous_unread_agent` |
- * | `Cmd+Q Cmd+N` / `Cmd+P`     | `next_tab` / `previous_tab` |
+ * | `Cmd+Q Cmd+N` / `N`         | `next_tab`                |
+ * | `Cmd+Q Cmd+P` / `P`         | `previous_tab`            |
  * | `Cmd+Q G`                   | `open_tab_picker`         |
  * | `Cmd+Q 1`…`9`               | `select_entry_1`…`9`      |
  * | `Cmd+Q Cmd+J`               | `toggle_workspace_agent`  |
@@ -425,13 +426,13 @@ export const COMMANDS: readonly CommandDefinition[] = [
     id: "next_tab",
     label: "Next sidebar row",
     needs: "nothing",
-    defaultKeys: ["Cmd+n"],
+    defaultKeys: ["Cmd+n", "n"],
   },
   {
     id: "previous_tab",
     label: "Previous sidebar row",
     needs: "nothing",
-    defaultKeys: ["Cmd+p"],
+    defaultKeys: ["Cmd+p", "p"],
   },
   {
     id: "open_tab_picker",

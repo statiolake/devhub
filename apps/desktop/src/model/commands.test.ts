@@ -87,6 +87,21 @@ describe("the registry itself", () => {
     expect(commandFor(bindings, "Cmd+j")).toBe("toggle_workspace_agent");
   });
 
+  it("lets the sidebar step take the bare letter as well as the Command one", () => {
+    // `Cmd+Q Cmd+N` is the multiplexer habit; `Cmd+Q N` is the one hand that
+    // has already let go of Command. Both are the same step, and the shifted
+    // letters stay the Workspace step, so the bare ones were free to take.
+    expect(commandById("next_tab")?.defaultKeys).toEqual(["Cmd+n", "n"]);
+    expect(commandById("previous_tab")?.defaultKeys).toEqual(["Cmd+p", "p"]);
+    const bindings = defaultBindings();
+    expect(commandFor(bindings, "Cmd+n")).toBe("next_tab");
+    expect(commandFor(bindings, "n")).toBe("next_tab");
+    expect(commandFor(bindings, "Cmd+p")).toBe("previous_tab");
+    expect(commandFor(bindings, "p")).toBe("previous_tab");
+    expect(commandFor(bindings, "N")).toBe("next_workspace");
+    expect(commandFor(bindings, "P")).toBe("previous_workspace");
+  });
+
   it("knows its own ids and nobody else's", () => {
     expect(isCommandId("next_workspace")).toBe(true);
     expect(isCommandId("nope")).toBe(false);
