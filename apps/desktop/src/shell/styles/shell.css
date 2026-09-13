@@ -1009,6 +1009,8 @@ body.is-resizing-sidebar {
   justify-content: center;
   border-radius: 50%;
   color: var(--status-idle);
+  /* The ground an unread row's halo is drawn on, below. */
+  position: relative;
   /* The same drop the folder glyph takes: an Agent's status mark is a row's
      leading glyph, and it sits level with the Agent's name for the same
      reason. Carried here rather than on `.status-glyph`, which is the element
@@ -1861,34 +1863,95 @@ body.is-resizing-split {
  * the far end of the row mean something, so the eye had to sweep it. One end
  * carries the marks now, and it is the end every row already starts at.
  */
+/*
+ * How loud it is is `--unread-dot` and `--unread-halo`, in `tokens.css`, and
+ * every unread mark on the screen is drawn from them. What is per-status here
+ * is the *ink* and nothing else: the dot takes the status colour as its
+ * `color` and paints itself and its halo out of `currentcolor`, so a status
+ * names its colour once and the two strengths that colour is used at are not
+ * written five times each.
+ */
 .row-unread {
+  position: relative;
   flex: none;
-  width: 6px;
-  height: 6px;
+  width: var(--unread-dot);
+  height: var(--unread-dot);
   border-radius: 50%;
-  background: var(--status-waiting);
+  background: currentcolor;
+  color: var(--status-waiting);
 }
 
 .row-unread-working {
-  background: var(--status-working);
+  color: var(--status-working);
 }
 
 .row-unread-waiting {
-  background: var(--status-waiting);
+  color: var(--status-waiting);
 }
 
 .row-unread-idle {
-  background: var(--status-idle);
+  color: var(--status-idle);
 }
 
 .row-unread-error {
-  background: var(--status-error);
+  color: var(--status-error);
 }
 
 /* No detector read this Agent's screen; the same secondary ink the `unknown`
    status mark takes, for the same reason — it is visibly not a verdict. */
 .row-unread-unknown {
-  background: var(--secondary);
+  color: var(--secondary);
+}
+
+/*
+ * And the status mark is lit too, in the same breath.
+ *
+ * The dot alone puts the whole of "come back to this one" into a mark 8px
+ * across at the very edge of the pane — the first thing lost to a glance from
+ * across the room, and in the collapsed rail there is no label beside it to
+ * catch the eye on the way past. So the row's other mark carries it as well:
+ * the status mark takes a halo of its own ink at the same strength, which is
+ * the one thing in the row already coloured, already round, and already the
+ * thing a person looks at.
+ *
+ * `currentcolor` and not a status token, so this is one rule and not five: the
+ * mark's colour *is* its status, set thirty lines up. The halo is therefore
+ * the status the Agent is in now, while the dot is the status that earned the
+ * unread — which is the same two facts the two marks have always carried, now
+ * said twice as loudly.
+ *
+ * The halo is one ring drawn for both marks, and a ring of the mark's own ink
+ * at a fraction of it: it reads as the mark being *lit* rather than as a
+ * second, larger mark around it, and it is the same ring in both places
+ * because a person should recognise the second mark from the first.
+ *
+ * A pseudo-element and not a `box-shadow` spread, which is what this was
+ * first: Blink grows a spread shadow's box by the spread but leaves its corner
+ * radius where it was, so a round mark came out inside a rounded *square*
+ * halo. It is out of flow, so neither mark's box grows and no row moves.
+ *
+ * The radius is a length past any size this ring can be, and not the `50%`
+ * every other round thing in this file is drawn with, for the same reason: on
+ * a ring this small Blink rounds a percentage radius to something visibly
+ * short of the half it asked for, and the halo comes out a squircle around a
+ * circle. A radius that cannot be reached is clamped to exactly half of
+ * whichever side is shorter, which is the circle that was wanted.
+ */
+.row-unread::before,
+.agent-row.is-unread .status-mark::before {
+  position: absolute;
+  border: var(--unread-halo-spread) solid
+    color-mix(in srgb, currentcolor var(--unread-halo), transparent);
+  border-radius: 999px;
+  content: "";
+  inset: calc(-1 * var(--unread-halo-spread));
+}
+
+/* Waiting is the errand that is about you, and it stays the loudest of the
+   five when it is also unread. */
+.agent-row.is-unread .status-mark-waiting,
+.row-unread-waiting {
+  --unread-halo: var(--unread-halo-waiting);
 }
 
 .agent-row.is-unread .row-label {
