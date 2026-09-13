@@ -34,6 +34,7 @@
 
 import { chordKeyId, type ChordKey } from "../../model/chordKeys.js";
 import { pairedAgentId } from "../../model/appModel.js";
+import { moveAgent, moveWorkspace } from "../../model/workspaceOrder.js";
 import {
 	commandById,
 	defaultBindings,
@@ -164,6 +165,20 @@ export type ChordEffect =
 	| { readonly kind: "close-agent"; readonly agentId: string }
 	/** Close it, and delete the worktree if that is what it is. */
 	| { readonly kind: "close-workspace"; readonly workspaceId: string }
+	/**
+	 * The rows, in the order the person has just put them.
+	 *
+	 * The whole list and not "this one moved there", because that is what the
+	 * intent carries and what the model stores — and because the rule that
+	 * produced it (`model/workspaceOrder.ts`) has already been applied here,
+	 * against the same projection the Sidebar drew. `workspaceId` says which
+	 * list: absent for the top-level rows, present for that workspace's Agents.
+	 */
+	| {
+			readonly kind: "reorder-entries";
+			readonly workspaceId?: string;
+			readonly order: readonly string[];
+	  }
 	| { readonly kind: "refresh-repositories" }
 	| { readonly kind: "open-chord-help" }
 	| { readonly kind: "open-settings" };
@@ -503,6 +518,37 @@ export function resolveChord(
 				forwards ? 1 : -1,
 				onlyUnread ? (index) => agents[index].unread !== undefined : undefined,
 			);
+		}
+
+		case "move_entry_up":
+		case "move_entry_down": {
+			// The one command that changes where the rows *are* rather than which
+			// of them is selected, and it acts on whatever is selected — which is
+			// why it needs nothing: Scratch is not a row that moves, and a chord
+			// with nothing to act on is a no-op like every other.
+			const direction = commandId === "move_entry_up" ? -1 : 1;
+			const context = snapshot.selection.context;
+			if (context.kind === "global") return undefined;
+			if (context.kind === "agent") {
+				if (!workspace) return undefined;
+				const order = moveAgent(
+					workspace.agents.map((one) => one.id),
+					context.agentId,
+					direction,
+				);
+				return order === undefined
+					? undefined
+					: { kind: "reorder-entries", workspaceId: workspace.id, order };
+			}
+			const order = moveWorkspace(
+				snapshot.workspaces,
+				(one) => one.groupKey,
+				context.workspaceId,
+				direction,
+			);
+			return order === undefined
+				? undefined
+				: { kind: "reorder-entries", order };
 		}
 
 		case "next_tab":

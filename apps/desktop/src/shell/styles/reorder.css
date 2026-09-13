@@ -24,17 +24,19 @@
  * which is the same column the whole list is read down.
  */
 
+/* The faintest thing in the list, and further down than anything merely out of
+   range: the row in the air is the only one that is not where it says it is. */
 .sidebar-tree-item[data-dragging="true"] .sidebar-row,
 .agent-tree li[data-dragging="true"] .sidebar-row {
-  opacity: 0.4;
+  opacity: 0.3;
 }
 
-/* Not a target, while something is being dragged. It is the label and the marks
-   that dim and not the row's fill: a row that lost its background as well would
-   read as having been removed from the list rather than as being out of
-   range. */
+/* Not a target, while something is being dragged. Receded rather than removed —
+   it is the label and the marks that dim and not the row's fill, because a row
+   that lost its background as well would read as having gone from the list
+   rather than as being out of range. */
 .sidebar[data-reordering="true"] [data-reorder-target="false"] > .sidebar-row {
-  opacity: 0.35;
+  opacity: 0.5;
 }
 
 .sidebar[data-reordering="true"] [data-reorder-target] > .sidebar-row {
@@ -44,39 +46,67 @@
 /*
  * The insertion line.
  *
- * A pseudo-element on the row rather than a element of its own, because it sits
- * *between* two rows and belongs to neither: giving it a box in the flow would
- * make the list a pixel taller the moment a drag began, and every row below it
- * would step down as the pointer moved. It is drawn at the row's own edge with
- * half its thickness either side, so it reads as a gap being opened rather than
- * as a border one of the two rows has grown.
+ * A pseudo-element rather than an element of its own, because it sits *between*
+ * two rows and belongs to neither: giving it a box in the flow would make the
+ * list a pixel taller the moment a drag began, and every row below it would
+ * step down as the pointer moved. It is drawn at the edge with half its
+ * thickness either side, so it reads as a gap being opened rather than as a
+ * border one of the two rows has grown.
+ *
+ * It hangs off the *tree item* and not off the row inside it, for two reasons
+ * that are really one. The row clips what overflows it — which is what keeps a
+ * long branch name from running out of the Sidebar — and a line sitting a pixel
+ * proud of its own top edge is exactly the thing that clipping removes. And a
+ * workspace's tree item is the whole group, its worktrees and its Agents
+ * included, so the gap after it is the gap after all of them, which is the gap
+ * a person dropping a group means.
  */
-.sidebar-row::after {
+[data-drop-before="true"],
+[data-drop-after="true"] {
+  position: relative;
+}
+
+[data-drop-before="true"]::after,
+[data-drop-after="true"]::after {
   position: absolute;
   z-index: 1;
   right: 0;
-  left: var(--row-text-inset);
+  /* The row's own `--row-text-inset` is set on the row and not on the item this
+     hangs from, so the terms are restated rather than inherited. The one thing
+     the line has to line up with is where the names start. */
+  left: calc(
+    var(--sidebar-rail-width) + var(--sidebar-glyph-width) + var(--space-2)
+  );
   height: 2px;
   border-radius: 1px;
   background: var(--accent);
   content: "";
-  opacity: 0;
   pointer-events: none;
 }
 
-[data-drop-before="true"] > .sidebar-row::after {
+[data-drop-before="true"]::after {
   top: -1px;
-  opacity: 1;
 }
 
-[data-drop-after="true"] > .sidebar-row::after {
+[data-drop-after="true"]::after {
   bottom: -1px;
-  opacity: 1;
 }
 
-/* In the rail there are no words for the line to start under, so it runs the
-   width of the glyph column it is pointing at. */
-.sidebar[data-collapsed="true"] .sidebar-row::after {
+/* An Agent sits a step in from its Workspace, and its line starts where its own
+   name does — the same two terms `--row-agent-inset` is made of, in the same
+   order, because they are the same column. */
+.agent-tree [data-drop-before="true"]::after,
+.agent-tree [data-drop-after="true"]::after {
+  left: calc(
+    var(--sidebar-rail-width) + var(--sidebar-glyph-width) + var(--space-2) +
+      var(--sidebar-glyph-width) + var(--space-2)
+  );
+}
+
+/* In the rail there are no words for the line to start under, so it runs from
+   the glyph column it is pointing at. */
+.sidebar[data-collapsed="true"] [data-drop-before="true"]::after,
+.sidebar[data-collapsed="true"] [data-drop-after="true"]::after {
   left: var(--sidebar-rail-width);
 }
 

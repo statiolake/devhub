@@ -84,6 +84,14 @@ export interface ChordHost {
 	closeAgent(agentId: string): void;
 	/** Close it — and delete the worktree, if that is what it is. */
 	closeWorkspace(workspaceId: string): void;
+	/**
+	 * Put the rows in this order — the Sidebar's own drag, under a key.
+	 *
+	 * `workspaceId` absent is the top-level rows; present is that workspace's
+	 * Agents. Where a row may go was decided before this was raised, by the one
+	 * rule the pointer obeys too.
+	 */
+	reorderEntries(order: readonly string[], workspaceId?: string): void;
 	/** Look at every workspace's branch, pull request and Issue again, now. */
 	refreshRepositories(): void;
 	/** The list of chords, drawn from the registry they are run from. */
@@ -160,6 +168,9 @@ function perform(host: ChordHost, effect: ChordEffect): void {
 			return;
 		case "close-workspace":
 			host.closeWorkspace(effect.workspaceId);
+			return;
+		case "reorder-entries":
+			host.reorderEntries(effect.order, effect.workspaceId);
 			return;
 		case "refresh-repositories":
 			host.refreshRepositories();

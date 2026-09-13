@@ -30,9 +30,12 @@
 
 import type { AppSnapshot, WorkspaceSnapshot } from "../../../ipc/appShell";
 import {
+  moveAgent,
+  moveWorkspace,
   placeAgent,
   placeWorkspace,
   siblingsOf,
+  type MoveDirection,
 } from "../../../model/workspaceOrder";
 
 /**
@@ -153,6 +156,68 @@ export function dropIntent(
     (workspace) => workspace.groupKey,
     source.id,
     before,
+  );
+  return order === undefined
+    ? undefined
+    : { type: "reorder_workspaces", order };
+}
+
+/**
+ * A row from the id the tree walks it by. `workspace:<id>` or `agent:<id>`.
+ *
+ * The Sidebar's roving tab stop already identifies a row this way, and reusing
+ * it is what lets `Alt+↑` act on the row the keyboard is *on* rather than on
+ * the row that happens to be selected — which in a tree a person is walking are
+ * two different rows.
+ */
+export function sourceOfTreeItem(
+  snapshot: AppSnapshot,
+  treeItemId: string,
+): DragSource | undefined {
+  const [kind, id] = [
+    treeItemId.slice(0, treeItemId.indexOf(":")),
+    treeItemId.slice(treeItemId.indexOf(":") + 1),
+  ];
+  if (kind === "workspace") return { kind: "workspace", id };
+  if (kind !== "agent") return undefined;
+  const owner = snapshot.workspaces.find((workspace) =>
+    workspace.agents.some((agent) => agent.id === id),
+  );
+  return owner === undefined
+    ? undefined
+    : { kind: "agent", id, workspaceId: owner.id };
+}
+
+/**
+ * One step up or down, as the intent it comes to.
+ *
+ * The keyboard's whole half of rearranging, and it is the drop rule with the
+ * gap chosen for it: `moveWorkspace` and `moveAgent` are `placeWorkspace` and
+ * `placeAgent` aimed at the neighbouring gap, so a step the pointer could not
+ * have made is a step this cannot make either. Nothing at the ends of the
+ * range, which is a no-op and not a wrap — one keystroke that jumped the length
+ * of the Sidebar would be a keystroke nobody could aim.
+ */
+export function moveIntent(
+  snapshot: AppSnapshot,
+  source: DragSource,
+  direction: MoveDirection,
+): ReturnType<typeof dropIntent> {
+  if (source.kind === "agent") {
+    const order = moveAgent(
+      agentsOf(snapshot, source.workspaceId),
+      source.id,
+      direction,
+    );
+    return order === undefined
+      ? undefined
+      : { type: "reorder_agents", workspaceId: source.workspaceId, order };
+  }
+  const order = moveWorkspace(
+    snapshot.workspaces,
+    (workspace) => workspace.groupKey,
+    source.id,
+    direction,
   );
   return order === undefined
     ? undefined

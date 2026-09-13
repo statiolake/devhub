@@ -30,6 +30,7 @@ import { SidebarHeader } from "./SidebarHeader";
 import { StatusMark } from "./StatusMark";
 import { statusLabel } from "./status";
 import { mergeExitingRows, useClosingExit } from "./closingExit";
+import { moveIntent, sourceOfTreeItem } from "./reorder";
 import { useReorder, type Reorder } from "./useReorder";
 import {
   closeDiagnosticLabel,
@@ -1193,6 +1194,25 @@ export function Sidebar({ snapshot, onDispatch }: SidebarProps) {
               if (event.key === "ArrowDown" || event.key === "ArrowUp") {
                 event.preventDefault();
                 const delta = event.key === "ArrowDown" ? 1 : -1;
+                // Option moves the row instead of moving to it — the drag,
+                // under a key, so that a list nobody can drag is still a list
+                // that can be arranged. The chord `Cmd+Q Alt+↑` raises the
+                // same intent through the same rule; this is the version that
+                // needs no prefix once the keyboard is already in the tree.
+                if (event.altKey) {
+                  const treeItemId = activeItem.dataset.treeItemId;
+                  const source = treeItemId
+                    ? sourceOfTreeItem(snapshot, treeItemId)
+                    : undefined;
+                  const intent = source
+                    ? moveIntent(snapshot, source, delta)
+                    : undefined;
+                  // The roving tab stop is keyed to the row's id, and the row
+                  // keeps its id wherever it lands, so the keyboard follows it
+                  // without anything here having to put it back.
+                  if (intent) onDispatch(intent);
+                  return;
+                }
                 focusItem(items[(index + delta + items.length) % items.length]);
                 return;
               }

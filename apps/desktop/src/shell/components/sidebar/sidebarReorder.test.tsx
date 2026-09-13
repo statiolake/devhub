@@ -345,3 +345,70 @@ describe("what does not move", () => {
     expect(scratch.closest("[draggable]")).toBeNull();
   });
 });
+
+/**
+ * `Cmd+Q S` and then Option and an arrow.
+ *
+ * The chord `Cmd+Q Alt+↑` does the same thing from anywhere, and this is the
+ * version that needs no prefix once the keyboard is already in the tree — so
+ * arranging a whole list is one arming and then arrows. It raises the same
+ * intent, computed by the same rule, which is why a step the pointer could not
+ * have made is a step this cannot make either.
+ */
+describe("moving a row with the keyboard", () => {
+  function focus(name: RegExp): HTMLElement {
+    const button = screen.getByRole("button", { name });
+    button.focus();
+    return button;
+  }
+
+  const arrow = (on: HTMLElement, key: "ArrowUp" | "ArrowDown") =>
+    fireEvent.keyDown(on, { key, altKey: true });
+
+  it("moves a repository past the group below it, worktrees and all", () => {
+    const onDispatch = vi.fn();
+    mount(onDispatch);
+    arrow(focus(WIDGET), "ArrowDown");
+    expect(onDispatch).toHaveBeenCalledWith({
+      type: "reorder_workspaces",
+      order: ["w-alpha", "w-zebra", "w-widget", "w-wt-a", "w-wt-b"],
+    });
+  });
+
+  it("moves an Agent within its own workspace", () => {
+    const onDispatch = vi.fn();
+    mount(onDispatch);
+    arrow(focus(/^a-1,/), "ArrowDown");
+    expect(onDispatch).toHaveBeenCalledWith({
+      type: "reorder_agents",
+      workspaceId: "w-alpha",
+      order: ["a-2", "a-1"],
+    });
+  });
+
+  it("will not lift a worktree over its own repository", () => {
+    const onDispatch = vi.fn();
+    mount(onDispatch);
+    arrow(focus(WT_A), "ArrowUp");
+    expect(onDispatch).not.toHaveBeenCalled();
+  });
+
+  it("is a no-op at the ends, and moves the focus nowhere doing it", () => {
+    const onDispatch = vi.fn();
+    mount(onDispatch);
+    const top = focus(ALPHA);
+    arrow(top, "ArrowUp");
+    expect(onDispatch).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(top);
+  });
+
+  it("leaves the plain arrows walking the tree", () => {
+    const onDispatch = vi.fn();
+    mount(onDispatch);
+    fireEvent.keyDown(focus(ALPHA), { key: "ArrowDown" });
+    expect(onDispatch).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(
+      screen.getByRole("button", { name: /^a-1,/ }),
+    );
+  });
+});

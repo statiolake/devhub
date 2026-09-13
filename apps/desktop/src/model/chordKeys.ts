@@ -353,6 +353,13 @@ export function sameChordKey(binding: ChordKey, stroke: ChordKey): boolean {
  */
 const SHOWN: Readonly<Record<string, string>> = {
   " ": "Space",
+  // The arrows are drawn, not spelled. They are what is printed on the keys —
+  // this is a Mac, and every menu on it says ↑ — and "Arrowup" is a name only
+  // the canonical lower-cased spelling of a named key ever produces.
+  arrowup: "↑",
+  arrowdown: "↓",
+  arrowleft: "←",
+  arrowright: "→",
 };
 
 export function describeChordKey(chord: ChordKey): string {

@@ -43,6 +43,7 @@
  * | `Cmd+Q Cmd+]` / `Cmd+[`     | `next_agent` / `previous_agent` |
  * | `Cmd+Q }` / `{`             | `next_unread_agent` / `previous_unread_agent` |
  * | `Cmd+Q Cmd+N` / `N`         | `next_tab`                |
+ * | `Cmd+Q Alt+↑` / `Alt+↓`     | `move_entry_up` / `move_entry_down` |
  * | `Cmd+Q Cmd+P` / `P`         | `previous_tab`            |
  * | `Cmd+Q G`                   | `open_tab_picker`         |
  * | `Cmd+Q 1`…`9`               | `select_entry_1`…`9`      |
@@ -73,6 +74,22 @@
  * workbench live, and a cycle that skipped it would make `Cmd+Q Shift+N` and
  * `Cmd+Q 1` disagree about what the list is. One list, one order: Scratch, then
  * the workspaces in sidebar order, wrapping at both ends.
+ *
+ * **`Alt+↑` and `Alt+↓` move the row instead of moving to it.** The order of
+ * the Sidebar is something a person can set (`model/workspaceOrder.ts`), and
+ * every act in DevHub has to be reachable from the keyboard — a list that could
+ * only be arranged by dragging would be a list some people cannot arrange. The
+ * row moves among its siblings and no further: a repository past the other
+ * repositories, taking its worktrees; a worktree within its own group; an Agent
+ * within its own workspace. That is the same rule the drag obeys, so a move the
+ * pointer cannot make is a move this cannot make either, and it is a no-op at
+ * either end rather than a wrap — one keystroke that jumped the length of the
+ * Sidebar would be a keystroke nobody could aim.
+ *
+ * The arrows are also live in the Sidebar itself, unmodified by the prefix, so
+ * `Cmd+Q S` and then `Alt+↑` arranges a whole list without re-arming anything.
+ * That is not a second implementation: the Sidebar raises the same intent this
+ * command does, computed by the same function.
  *
  * **Three ways of stepping, because there are three lists.** The sidebar is a
  * tree, and "the next thing" means something different depending on which level
@@ -303,6 +320,8 @@ export type CommandId =
   | "next_unread_agent"
   | "previous_tab"
   | "next_tab"
+  | "move_entry_up"
+  | "move_entry_down"
   | "open_tab_picker"
   | "toggle_workspace_agent"
   | "toggle_split"
@@ -433,6 +452,25 @@ export const COMMANDS: readonly CommandDefinition[] = [
     label: "Previous sidebar row",
     needs: "nothing",
     defaultKeys: ["Cmd+p", "p"],
+  },
+  {
+    // Not a way of getting somewhere, like everything above it, but the one
+    // way of changing where things *are* — and it is here because the row it
+    // moves is the row those cycles are standing on.
+    id: "move_entry_up",
+    label: "Move this row up",
+    needs: "nothing",
+    // Lower case because that is the canonical spelling of a *named* key —
+    // there is no character for Shift to fold into, so the name is the
+    // identity and it is compared without regard to case. `Alt+ArrowUp` in a
+    // configuration file is the same stroke and parses to this.
+    defaultKeys: ["Alt+arrowup"],
+  },
+  {
+    id: "move_entry_down",
+    label: "Move this row down",
+    needs: "nothing",
+    defaultKeys: ["Alt+arrowdown"],
   },
   {
     id: "open_tab_picker",

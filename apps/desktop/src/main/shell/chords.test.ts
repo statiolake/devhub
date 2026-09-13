@@ -938,3 +938,79 @@ describe("the order every cycle walks", () => {
 		);
 	});
 });
+
+describe("moving the row that is selected", () => {
+	/** A repository with two worktrees, between two folders it may move past. */
+	const alpha = workspace("alpha", ["a1", "a2"]);
+	const widget = workspace("widget", []);
+	const wtA = workspace("widget_a", [], { groupKey: "/workspaces/widget" });
+	const wtB = workspace("widget_b", [], { groupKey: "/workspaces/widget" });
+	const zebra = workspace("zebra", []);
+	const tree = [alpha, widget, wtA, wtB, zebra];
+
+	const move = (context: NavigationContext, commandId: CommandId) =>
+		run(commandId, snapshotOf({ workspaces: tree, context }));
+
+	const onWorkspace = (id: string): NavigationContext => ({
+		kind: "workspace",
+		workspaceId: id,
+	});
+
+	it("moves a repository past the group below it, worktrees and all", () => {
+		expect(move(onWorkspace("widget"), "move_entry_down")).toEqual({
+			kind: "reorder-entries",
+			order: ["alpha", "zebra", "widget", "widget_a", "widget_b"],
+		});
+	});
+
+	it("moves a worktree within its own group", () => {
+		expect(move(onWorkspace("widget_b"), "move_entry_up")).toEqual({
+			kind: "reorder-entries",
+			order: ["alpha", "widget", "widget_b", "widget_a", "zebra"],
+		});
+	});
+
+	it("will not lift a worktree over its own repository", () => {
+		expect(move(onWorkspace("widget_a"), "move_entry_up")).toBeUndefined();
+	});
+
+	it("is a no-op at either end of the range", () => {
+		expect(move(onWorkspace("alpha"), "move_entry_up")).toBeUndefined();
+		expect(move(onWorkspace("zebra"), "move_entry_down")).toBeUndefined();
+		expect(move(onWorkspace("widget_b"), "move_entry_down")).toBeUndefined();
+	});
+
+	it("moves an Agent within its own workspace", () => {
+		expect(move({ kind: "agent", agentId: "a2" }, "move_entry_up")).toEqual({
+			kind: "reorder-entries",
+			workspaceId: "alpha",
+			order: ["a2", "a1"],
+		});
+		expect(
+			move({ kind: "agent", agentId: "a1" }, "move_entry_up"),
+		).toBeUndefined();
+	});
+
+	it("does nothing on Scratch, which is the first row by definition", () => {
+		expect(move({ kind: "global" }, "move_entry_down")).toBeUndefined();
+		expect(move({ kind: "global" }, "move_entry_up")).toBeUndefined();
+	});
+
+	it("is reached by Option and an arrow, on any keyboard", () => {
+		// An arrow key carries a name rather than a character, so there is no
+		// layout for the two to differ under: a US and a JIS keyboard both report
+		// `ArrowUp`, and the physical-key table is never consulted for it.
+		const press = (key: string) =>
+			matchChord(defaultChordTable(), {
+				keys: strokeKeys(key, key, false),
+				code: key,
+				command: false,
+				shift: false,
+				option: true,
+				control: false,
+				isAutoRepeat: false,
+			})?.commandId;
+		expect(press("ArrowUp")).toBe("move_entry_up");
+		expect(press("ArrowDown")).toBe("move_entry_down");
+	});
+});

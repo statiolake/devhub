@@ -814,6 +814,17 @@ export class AppController {
 			closeWorkspace: (workspaceId) => {
 				this.closeWorkspaceOrWorktree(workspaceId);
 			},
+			reorderEntries: (order, workspaceId) => {
+				// The same intents the Sidebar's own drag raises, through the same
+				// door: a chord is another way to raise a command DevHub has.
+				this.dispatchOwn(
+					intentFromWire(
+						workspaceId === undefined
+							? { type: "reorder_workspaces", order }
+							: { type: "reorder_agents", workspaceId, order },
+					),
+				);
+			},
 			refreshRepositories: () => {
 				this.repositoryStatus.look();
 			},

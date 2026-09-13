@@ -113,6 +113,7 @@ function host() {
 		dismissAlert: record("dismissAlert"),
 		closeAgent: record("closeAgent"),
 		closeWorkspace: record("closeWorkspace"),
+		reorderEntries: record("reorderEntries"),
 		refreshRepositories: record("refreshRepositories"),
 		openChordHelp: record("openChordHelp"),
 		openSettings: record("openSettings"),
