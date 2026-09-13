@@ -137,6 +137,9 @@ class RecordingRuntime implements Runtime {
 			medianRoundTripMs: 0,
 			reconcileIntervalMs: this.cadence.reconcileIntervalMs,
 			execsLastMinute: this.execs.length,
+			muxSessionsHeld: 0,
+			muxSessionsWaiting: 0,
+			muxFallbacks: 0,
 			loginEnvironmentNames: [],
 			lastFailure: undefined,
 		};

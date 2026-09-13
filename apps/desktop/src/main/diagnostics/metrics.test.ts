@@ -158,6 +158,9 @@ describe("what a round costs on each machine", () => {
 		medianRoundTripMs: 2,
 		reconcileIntervalMs: 300,
 		execsLastMinute: 200,
+		muxSessionsHeld: 0,
+		muxSessionsWaiting: 0,
+		muxFallbacks: 0,
 		loginEnvironmentNames: [],
 		lastFailure: undefined,
 	};

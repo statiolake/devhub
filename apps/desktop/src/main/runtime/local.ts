@@ -382,6 +382,10 @@ export class LocalRuntime implements Runtime {
 			medianRoundTripMs: sorted[Math.floor(sorted.length / 2)] ?? 0,
 			reconcileIntervalMs: this.cadence.reconcileIntervalMs,
 			execsLastMinute: this.#recentExecs.length,
+			// Nothing to multiplex: main is already on this machine.
+			muxSessionsHeld: 0,
+			muxSessionsWaiting: 0,
+			muxFallbacks: 0,
 			// Nothing, and that is the answer rather than a gap: a child of this
 			// process already inherits the environment DevHub imported from the
 			// login shell at startup (`loginEnvironment.ts`), so this machine adds

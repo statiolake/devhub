@@ -48,6 +48,7 @@ import {
 	controlPathOf,
 	errnoFromMessage,
 	hostKeyFailure,
+	MuxSessions,
 	parseLoginEnvironment,
 	remoteScript,
 	SshRuntime,
@@ -201,6 +202,19 @@ function run(runtime: SshRuntime, argv: readonly string[]) {
 }
 
 describe("the ssh DevHub runs", () => {
+	it("says 'no master' out loud for the one-off connection", () => {
+		// Left out is not the same as off: a `~/.ssh/config` that sets
+		// `ControlMaster` would otherwise put the retry back on the very master
+		// it exists to get away from.
+		const options = sshOptionArgv(undefined).join(" ");
+		expect(options).toContain("-o ControlMaster=no");
+		expect(options).toContain("-o ControlPath=none");
+		expect(options).not.toContain("ControlPersist");
+		// Everything else is the same ssh, because it is the same host.
+		expect(options).toContain("-o BatchMode=yes");
+		expect(options).toContain("-o ConnectTimeout=10");
+	});
+
 	it("multiplexes, refuses to prompt, and leaves host checking to the user", () => {
 		const options = sshOptionArgv("/tmp/devhub/ssh").join(" ");
 		// Each of these is load-bearing, and the one that is absent is the most
@@ -226,11 +240,27 @@ describe("the ssh DevHub runs", () => {
 		expect(controlPathOf(short).length).toBeLessThanOrEqual(CONTROL_PATH_LIMIT);
 	});
 
-	it("falls back to the short path when the profile's is too long", () => {
-		const long = `/Users/example/Library/Application Support/DevHub-${"x".repeat(30)}`;
-		expect(chooseControlDirectory(long, "/home/dev")).toBe(
-			"/home/dev/.devhub/ssh",
+	it("falls back to a short path that is still this profile's", () => {
+		// `%C` hashes the connection and nothing about DevHub, so the shared
+		// `~/.devhub/ssh` would give two profiles the same socket name and the
+		// second DevHub would adopt the first one's master — the one thing the
+		// preferred path exists to prevent.
+		const one = `/Users/example/Library/Application Support/DevHub-${"x".repeat(30)}`;
+		const two = `/Users/example/Library/Application Support/DevHub-${"y".repeat(30)}`;
+		expect(chooseControlDirectory(one, "/home/dev")).toMatch(
+			/^\/home\/dev\/\.devhub\/ssh\/[0-9a-f]{8}$/u,
 		);
+		expect(chooseControlDirectory(one, "/home/dev")).not.toBe(
+			chooseControlDirectory(two, "/home/dev"),
+		);
+		// And the same profile always answers the same way, or a restart would
+		// leave the previous run's master behind with nothing pointing at it.
+		expect(chooseControlDirectory(one, "/home/dev")).toBe(
+			chooseControlDirectory(one, "/home/dev"),
+		);
+		expect(
+			controlPathOf(chooseControlDirectory(one, "/home/dev")).length,
+		).toBeLessThanOrEqual(CONTROL_PATH_LIMIT);
 	});
 
 	it("refuses when even the short path does not fit", () => {
@@ -430,7 +460,10 @@ describe("a pseudo-terminal on the other machine", () => {
 			tmux: FAKE_TMUX,
 			ptyFactory: (launch) => {
 				launched = launch;
-				return {} as Pty;
+				// `onExit` is no longer optional decoration: a pty holds one of
+				// the master's sessions for its whole life and gives it back
+				// here. See `MuxSessions`.
+				return { onExit: () => {} } as unknown as Pty;
 			},
 		});
 		// The machine is reached before a pane is opened on it, always: the
@@ -1055,5 +1088,170 @@ describe("a runtime built without a tmux to deliver", () => {
 		await expect(
 			undelivered().userTmuxConfig("/nowhere/tmux.conf"),
 		).rejects.toThrow(/built without a tmux delivery/u);
+	});
+});
+
+/**
+ * sshd allows ten sessions per connection, and DevHub asks for more.
+ *
+ * The failure this is about was measured on a packaged run: a close that
+ * stopped twice at the terminal step saying `DevHub cannot reach <host>:
+ * mux_client_request_session: send fds failed`, while the ControlMaster was
+ * alive and `execsLastMinute` was 155. Nothing was wrong with the host. The
+ * multiplexed client had run out of sessions, and OpenSSH reports that as exit
+ * 255 with nothing on stdout — the same shape as a machine that is down.
+ */
+describe("the sessions in flight through one master", () => {
+	it("lets a bounded number through and queues the rest, in order", async () => {
+		const sessions = new MuxSessions(2);
+		const order: number[] = [];
+		const held = await Promise.all([sessions.acquire(), sessions.acquire()]);
+		expect(sessions.held).toBe(2);
+		const later: (() => void)[] = [];
+		const queued = [3, 4, 5].map(async (n) => {
+			const release = await sessions.acquire();
+			order.push(n);
+			later.push(release);
+		});
+		const settle = () => new Promise<void>((done) => setImmediate(done));
+		// Nothing has moved: two are held and three are waiting for one of them.
+		await settle();
+		expect(order).toEqual([]);
+		expect(sessions.waiting).toBe(3);
+		held[0]?.();
+		held[1]?.();
+		await settle();
+		// Two slots came free, so exactly the first two in the queue took them.
+		expect(order).toEqual([3, 4]);
+		expect(sessions.held).toBe(2);
+		later[0]?.();
+		await Promise.all(queued);
+		expect(order).toEqual([3, 4, 5]);
+		for (const release of later) release();
+		expect(sessions.held).toBe(0);
+		expect(sessions.waiting).toBe(0);
+	});
+
+	it("gives a pseudo-terminal a slot whether or not one is free", () => {
+		// A person pressed Ctrl+` and an exec did not. A terminal that queued
+		// behind a reconcile round is a terminal that looks hung, so `take`
+		// never waits — it may push the count past the limit, and the effect is
+		// that execs give way to terminals rather than the other way round.
+		const sessions = new MuxSessions(1);
+		const first = sessions.take();
+		const second = sessions.take();
+		expect(sessions.held).toBe(2);
+		expect(sessions.waiting).toBe(0);
+		first();
+		second();
+		expect(sessions.held).toBe(0);
+	});
+
+	it("counts a slot given back twice as given back once", () => {
+		// A pty's exit can be reported more than once, and a release that ran
+		// twice would quietly let two extra sessions onto the connection.
+		const sessions = new MuxSessions(2);
+		const release = sessions.take();
+		release();
+		release();
+		expect(sessions.held).toBe(0);
+	});
+
+	it("never runs more commands at once than the limit", async () => {
+		// The semaphore against a real `ssh` process rather than against
+		// itself: the fake records when each invocation starts and ends, and
+		// the deepest overlap in that log is the number sshd would have been
+		// asked for.
+		const log = join(bin, `conc-${String(Math.random()).slice(2)}.log`);
+		const name = `ssh-conc-${String(Math.random()).slice(2)}`;
+		await writeFile(
+			join(bin, name),
+			`#!/bin/sh
+while [ $# -gt 0 ]; do case "$1" in --) shift; break;; *) shift;; esac; done
+printf 'start\\n' >> ${JSON.stringify(log)}
+/bin/sh -c "$1"; status=$?
+printf 'end\\n' >> ${JSON.stringify(log)}
+exit $status
+`,
+			{ mode: 0o700 },
+		);
+		await chmod(join(bin, name), 0o700);
+		const runtime = new SshRuntime({
+			host: "build-box.example.com",
+			controlDirectory: control,
+			sshPath: join(bin, name),
+			localEnvironment: FAKE_ENVIRONMENT,
+			tmux: FAKE_TMUX,
+		});
+		await runtime.home();
+		await Promise.all(
+			Array.from({ length: 24 }, () =>
+				run(runtime, ["/bin/sh", "-c", "sleep 0.05"]),
+			),
+		);
+		let open = 0;
+		let deepest = 0;
+		for (const line of (await readFile(log, "utf8")).split("\n")) {
+			if (line === "start") open += 1;
+			if (line === "end") open -= 1;
+			deepest = Math.max(deepest, open);
+		}
+		// Twenty-four commands asked for at once; six on the wire at a time.
+		expect(deepest).toBeGreaterThan(1);
+		expect(deepest).toBeLessThanOrEqual(6);
+	});
+});
+
+describe("a master that refuses a session", () => {
+	/** An `ssh` that only works when it is told not to multiplex. */
+	async function muxRefusing(alsoDirect: boolean): Promise<SshRuntime> {
+		const name = `ssh-mux-${String(Math.random()).slice(2)}`;
+		await writeFile(
+			join(bin, name),
+			`#!/bin/sh
+direct=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -o) case "$2" in ControlPath=none) direct=1;; esac; shift 2;;
+    --) shift; break;;
+    *) shift;;
+  esac
+done
+if [ $direct -eq 0 ]${alsoDirect ? " || true" : ""}; then
+  echo 'mux_client_request_session: send fds failed' >&2
+  exit 255
+fi
+exec /bin/sh -c "$1"
+`,
+			{ mode: 0o700 },
+		);
+		await chmod(join(bin, name), 0o700);
+		return new SshRuntime({
+			host: "build-box.example.com",
+			controlDirectory: control,
+			sshPath: join(bin, name),
+			localEnvironment: FAKE_ENVIRONMENT,
+			tmux: FAKE_TMUX,
+		});
+	}
+
+	it("runs the command again on a connection of its own", async () => {
+		const runtime = await muxRefusing(false);
+		const result = await run(runtime, ["/bin/echo", "still here"]);
+		expect(result.code).toBe(0);
+		expect(result.stdout.toString("utf8").trim()).toBe("still here");
+		// And it is not silent: a host whose `MaxSessions` makes DevHub open a
+		// fresh connection per command is a fact about that host, and nothing
+		// else would ever say it out loud.
+		expect(runtime.reading().muxFallbacks).toBeGreaterThan(0);
+	});
+
+	it("stops after one retry and reports what the second attempt said", async () => {
+		// A second failure is a fact about the connection, not about
+		// multiplexing, and it belongs to the caller.
+		const runtime = await muxRefusing(true);
+		await expect(run(runtime, ["/bin/echo", "hi"])).rejects.toBeInstanceOf(
+			TypedFailure,
+		);
 	});
 });

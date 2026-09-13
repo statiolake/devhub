@@ -37,6 +37,7 @@
  */
 
 import { Buffer } from "node:buffer";
+import { createHash } from "node:crypto";
 import { mkdir, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, posix } from "node:path";
@@ -96,6 +97,114 @@ const CONTROL_TOKEN_LENGTH = 40;
 
 /** How long the multiplexed connection outlives the last command on it. */
 const CONTROL_PERSIST = "10m";
+
+/**
+ * How many commands may be in flight through one ControlMaster at once.
+ *
+ * sshd's `MaxSessions` is 10 per connection by default, and a multiplexed
+ * client that asks for an eleventh does not queue — it fails, with
+ * `mux_client_request_session: send fds failed`, and OpenSSH exits 255 with
+ * nothing on stdout, which is indistinguishable from the host being down. That
+ * is what a packaged run measured: a close that failed twice at the terminal
+ * step saying `DevHub cannot reach <host>` while the master was alive and
+ * DevHub was running 155 execs a minute through it.
+ *
+ * Six rather than ten, because the master is shared with things DevHub did not
+ * count: the reverse-forwarded control socket's channel, the person's own
+ * `ssh` if they reuse it, and the pty of every terminal and Agent, each of
+ * which holds a session for as long as it is open. The headroom is the point —
+ * a limit that is exactly the server's is a limit that is exceeded whenever
+ * anything else uses the connection.
+ */
+const MUX_SESSION_LIMIT = 6;
+
+/**
+ * The sessions in flight through one host's ControlMaster.
+ *
+ * A counting semaphore, and it is here rather than in a general utility
+ * because the thing it counts is specific: sshd's per-connection session
+ * limit. Two ways in, because there are two kinds of caller and only one of
+ * them can wait.
+ *
+ * `acquire` is for `exec`, which is a promise already and is the flood — the
+ * reconcile loop, the repository poll, the head watch. It queues, in order,
+ * and that queueing is the whole fix: a bounded number of round trips takes
+ * marginally longer and always arrives, where an unbounded number fails and
+ * reports the host as unreachable.
+ *
+ * `take` is for `spawnPty`, which is synchronous and must not wait: a person
+ * pressed Ctrl+` and a terminal that queues behind a reconcile round is a
+ * terminal that appears to hang. So a pty takes a slot whether or not one is
+ * free — it may push the count over the limit — and holds it for its whole
+ * life. The effect is that terminals and Agents are always served and execs
+ * give way to them, which is the right order: one is a person waiting and the
+ * other is a poll.
+ */
+export class MuxSessions {
+	readonly #limit: number;
+	readonly #waiting: (() => void)[] = [];
+	#held = 0;
+
+	constructor(limit: number = MUX_SESSION_LIMIT) {
+		this.#limit = limit;
+	}
+
+	/** How many sessions are open through the master right now. */
+	get held(): number {
+		return this.#held;
+	}
+
+	/** How many commands are queued for a slot. */
+	get waiting(): number {
+		return this.#waiting.length;
+	}
+
+	/** A slot, when there is one. Release exactly once, in a `finally`. */
+	async acquire(): Promise<() => void> {
+		if (this.#held >= this.#limit) {
+			await new Promise<void>((resolve) => this.#waiting.push(resolve));
+		}
+		return this.#hold();
+	}
+
+	/** A slot now, free or not. See the class comment. */
+	take(): () => void {
+		return this.#hold();
+	}
+
+	#hold(): () => void {
+		this.#held += 1;
+		let released = false;
+		return () => {
+			// Idempotent because a pty's exit can be reported more than once and
+			// a release that ran twice would let two extra sessions through.
+			if (released) return;
+			released = true;
+			this.#held -= 1;
+			this.#waiting.shift()?.();
+		};
+	}
+}
+
+/**
+ * Whether ssh's own multiplexing is what refused, rather than the host.
+ *
+ * OpenSSH's mux client writes these to stderr and exits 255 with no stdout,
+ * which `clientFailure` would otherwise read as "the host is unreachable" —
+ * and that sentence sent a person to check a host that was answering fine.
+ * The strings are the mux client's own (`mux_client_*`), plus the two the
+ * master writes when it is going away underneath a command.
+ */
+export function isMuxFailure(result: ExecResult): boolean {
+	if (result.code !== 255 || result.stdout.byteLength > 0) return false;
+	const said = result.stderr.toString("utf8").toLowerCase();
+	return (
+		said.includes("mux_client") ||
+		said.includes("control socket connect") ||
+		said.includes("multiplexing") ||
+		said.includes("session open refused")
+	);
+}
 
 /**
  * How often a remote `HEAD` is asked about.
@@ -276,7 +385,7 @@ export function chooseControlDirectory(
 ): string {
 	const preferred = join(userDataDirectory, "ssh");
 	if (fitsControlPath(preferred)) return preferred;
-	const fallback = join(home, ".devhub", "ssh");
+	const fallback = join(home, ".devhub", "ssh", profileTag(userDataDirectory));
 	if (fitsControlPath(fallback)) return fallback;
 	throw new Error(
 		`no ssh control socket fits: ${controlPathOf(preferred)} and ` +
@@ -284,6 +393,25 @@ export function chooseControlDirectory(
 				CONTROL_PATH_LIMIT,
 			)} bytes`,
 	);
+}
+
+/**
+ * Which DevHub a fallback control directory belongs to.
+ *
+ * `%C` hashes the *connection* — local host, remote host, port, user — and
+ * nothing about DevHub, so two profiles reaching the same host expand to the
+ * same socket name. Under `<userData>/ssh` that is harmless, because the
+ * directory is already the profile's; under the shared `~/.devhub/ssh` it
+ * meant a second DevHub adopting the first one's master, which is the one
+ * thing the preferred path exists to prevent. So the fallback carries the
+ * profile too — eight hex characters of the user data directory, because the
+ * whole reason this branch exists is that the full path was too long.
+ */
+function profileTag(userDataDirectory: string): string {
+	return createHash("sha256")
+		.update(userDataDirectory)
+		.digest("hex")
+		.slice(0, 8);
 }
 
 /** The path OpenSSH will actually bind, with `%C` at its expanded length. */
@@ -311,16 +439,26 @@ function fitsControlPath(directory: string): boolean {
  * has no pane to prompt in, so it must fail rather than sit at a password
  * prompt no one can see.
  */
-export function sshOptionArgv(controlDirectory: string): string[] {
+export function sshOptionArgv(
+	// `undefined` is the one-off connection: no master, and said out loud
+	// rather than left out, because a `~/.ssh/config` that sets `ControlMaster`
+	// would otherwise put DevHub back on the master this call exists to avoid.
+	// See `#run`'s mux retry.
+	controlDirectory: string | undefined,
+): string[] {
 	return [
 		"-o",
 		"BatchMode=yes",
-		"-o",
-		"ControlMaster=auto",
-		"-o",
-		`ControlPath=${join(controlDirectory, "%C")}`,
-		"-o",
-		`ControlPersist=${CONTROL_PERSIST}`,
+		...(controlDirectory === undefined
+			? ["-o", "ControlMaster=no", "-o", "ControlPath=none"]
+			: [
+					"-o",
+					"ControlMaster=auto",
+					"-o",
+					`ControlPath=${join(controlDirectory, "%C")}`,
+					"-o",
+					`ControlPersist=${CONTROL_PERSIST}`,
+				]),
 		"-o",
 		"ServerAliveInterval=15",
 		"-o",
@@ -524,6 +662,10 @@ export class SshRuntime implements Runtime {
 	#masterPid: number | undefined;
 	#askedForMasterPid = false;
 	#remote: Promise<RemoteMachine> | undefined;
+	/** Sessions in flight through this host's ControlMaster. */
+	readonly #sessions = new MuxSessions();
+	/** How many commands the master refused and a one-off connection ran. */
+	#muxFallbacks = 0;
 	/**
 	 * The login environment, once it has been read.
 	 *
@@ -688,6 +830,34 @@ export class SshRuntime implements Runtime {
 		return this.#run({ ...request, env: { ...login, ...request.env } });
 	}
 
+	/**
+	 * One ssh, through the master or beside it.
+	 *
+	 * The only difference between the two is the option set, which is why they
+	 * are one function: a retry that composed its own argv would be a second
+	 * place the remote command line is built, and the two would drift.
+	 */
+	#send(
+		controlDirectory: string | undefined,
+		script: string,
+		request: ExecRequest,
+	): Promise<ExecResult> {
+		return runBounded(
+			{
+				file: this.#sshPath,
+				args: [...sshOptionArgv(controlDirectory), this.#host, "--", script],
+				// The client's own working directory is nobody's business: the
+				// caller's `cwd` is a `cd` in the script, on the other machine.
+				cwd: undefined,
+				env: this.#localEnvironment,
+			},
+			request.deadline,
+			request.cancel,
+			request.limits,
+			request.stdin,
+		);
+	}
+
 	async #run(request: ExecRequest): Promise<ExecResult> {
 		const script = remoteScript(request);
 		// The remote fork is invisible to `getAppMetrics`, so the count is the
@@ -699,32 +869,43 @@ export class SshRuntime implements Runtime {
 		const startedAt = Date.now();
 		this.#recentExecs.push(startedAt);
 		let result: ExecResult;
+		// Queued behind the other commands on this master, because sshd counts
+		// sessions per connection and refuses the one over its limit. See
+		// `MuxSessions`.
+		const release = await this.#sessions.acquire();
 		try {
-			result = await runBounded(
-				{
-					file: this.#sshPath,
-					args: [
-						...sshOptionArgv(this.#controlDirectory),
-						this.#host,
-						"--",
-						script,
-					],
-					// The client's own working directory is nobody's business: the
-					// caller's `cwd` is a `cd` in the script, on the other machine.
-					cwd: undefined,
-					env: this.#localEnvironment,
-				},
-				request.deadline,
-				request.cancel,
-				request.limits,
-				request.stdin,
-			);
+			result = await this.#send(this.#controlDirectory, script, request);
 		} catch (failure: unknown) {
 			this.#record(startedAt);
 			this.#connected = false;
 			this.#lastFailure =
 				failure instanceof Error ? failure.message : String(failure);
 			throw failure;
+		} finally {
+			release();
+		}
+		// The master refused, not the host. One more try, on a connection of its
+		// own, so that a limit DevHub cannot see from here costs a slower command
+		// rather than a workspace that reports its machine as down. Once: a
+		// second failure is a fact about the connection and belongs to the
+		// caller.
+		if (isMuxFailure(result)) {
+			this.#muxFallbacks += 1;
+			activityCounters.record(COUNTER.sshMuxFallback);
+			console.warn(
+				`[devhub] ${this.id}: the ssh ControlMaster refused a session ` +
+					`(${lastLine(result.stderr.toString("utf8"))}); retrying without ` +
+					`it`,
+			);
+			try {
+				result = await this.#send(undefined, script, request);
+			} catch (failure: unknown) {
+				this.#record(startedAt);
+				this.#connected = false;
+				this.#lastFailure =
+					failure instanceof Error ? failure.message : String(failure);
+				throw failure;
+			}
 		}
 		this.#record(startedAt);
 		const refused = clientFailure(this.#host, result);
@@ -976,7 +1157,11 @@ export class SshRuntime implements Runtime {
 			cwd: request.cwd,
 			env: { ...login, ...request.env },
 		});
-		return this.#ptyFactory({
+		// A pty holds a session for as long as it is open, so it holds a slot
+		// for as long as it is open. It takes one without waiting — see
+		// `MuxSessions` — because a person pressed a key and an exec did not.
+		const release = this.#sessions.take();
+		const pty = this.#ptyFactory({
 			file: this.#sshPath,
 			args: [
 				...sshOptionArgv(this.#controlDirectory),
@@ -993,6 +1178,8 @@ export class SshRuntime implements Runtime {
 			pixelHeight: request.pixelHeight,
 			env: this.#localEnvironment,
 		});
+		pty.onExit(release);
+		return pty;
 	}
 
 	/**
@@ -1392,6 +1579,9 @@ export class SshRuntime implements Runtime {
 			medianRoundTripMs: this.#medianRoundTripMs(),
 			reconcileIntervalMs: this.cadence.reconcileIntervalMs,
 			execsLastMinute: this.#recentExecs.length,
+			muxSessionsHeld: this.#sessions.held,
+			muxSessionsWaiting: this.#sessions.waiting,
+			muxFallbacks: this.#muxFallbacks,
 			// Names and never values. A reading is written into a log and pasted
 			// into an issue, and a person's login environment is where their
 			// tokens are — but "which variables DevHub is putting on every remote

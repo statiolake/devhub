@@ -169,6 +169,23 @@ export interface RuntimeReading {
 	readonly reconcileIntervalMs: number;
 	readonly execsLastMinute: number;
 	/**
+	 * Sessions in flight through this machine's ssh ControlMaster, and the
+	 * commands queued for one.
+	 *
+	 * Here because the failure they prevent is unreadable without them: sshd
+	 * allows ten sessions per connection and refuses the eleventh with
+	 * `mux_client_request_session: send fds failed`, which OpenSSH reports as
+	 * exit 255 with nothing on stdout — the same shape as a host that is down.
+	 * A reading that shows six held and forty waiting says "DevHub is asking
+	 * this host too much"; without it the only visible fact was a workspace
+	 * whose machine had apparently gone. Zero on this machine, which has no
+	 * connection to multiplex.
+	 */
+	readonly muxSessionsHeld: number;
+	readonly muxSessionsWaiting: number;
+	/** How many commands the master refused and a one-off connection ran. */
+	readonly muxFallbacks: number;
+	/**
 	 * Which variables this machine puts on every command DevHub runs on it.
 	 *
 	 * Names, never values: a reading is pasted into issues and a login

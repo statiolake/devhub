@@ -66,6 +66,15 @@ export const COUNTER = {
 	 * to be safe, not invisible.
 	 */
 	repositoryHeadWatchFailed: "repository.head.watch.failed",
+	/**
+	 * One command the ssh ControlMaster refused, run on its own connection.
+	 *
+	 * Here because the fallback is meant to be safe, not invisible: a host that
+	 * makes DevHub open a fresh connection per command is a host whose
+	 * `MaxSessions` is lower than DevHub's own limit, and that is a fact about
+	 * the host that nothing else would ever say out loud.
+	 */
+	sshMuxFallback: "ssh.mux.fallback",
 } as const;
 
 export class ActivityCounters {
