@@ -72,6 +72,8 @@ export interface SettingsAppearanceWire {
 	/** `auto`, `light` or `dark` — see `model/config.ts`. */
 	readonly mode: string;
 	readonly sidebarDensity: string;
+	/** `system` or `hidden` — see `model/config.ts`. Takes a relaunch. */
+	readonly titleBar: string;
 	readonly terminalFontFamily: string;
 	readonly terminalFontSize: number;
 	readonly terminalLineHeight: number;

@@ -158,6 +158,16 @@ export interface AgentWire {
 export interface AppAppearanceWire {
 	readonly sequence: number;
 	readonly sidebarDensity: AppSidebarDensityWire;
+	/**
+	 * Which chrome the window was built with.
+	 *
+	 * The page cannot see its own window's `titleBarStyle`, and the two shapes
+	 * are two different geometries for the Sidebar — a top strip and a rail wide
+	 * enough for the traffic lights, or neither. It is fixed for the life of the
+	 * window (changing it takes a relaunch), and it rides here because the page
+	 * already has one channel for "what does the chrome look like".
+	 */
+	readonly titleBar: AppTitleBarWire;
 	readonly terminalFontFamily: string;
 	readonly terminalFontSize: number;
 	readonly terminalLineHeight: number;
@@ -392,6 +402,7 @@ export type AppOutcomeWire =
 	  };
 export type AppReadiness = "starting" | "ready" | "unavailable";
 export type AppSidebarDensityWire = "compact" | "comfortable";
+export type AppTitleBarWire = "system" | "hidden";
 export interface AppSnapshotWire {
 	readonly editorHost: EditorHostWire;
 	/** What the content area holds for the selected context. */

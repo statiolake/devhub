@@ -309,7 +309,67 @@ export interface TerminalThemeConfig {
  */
 export const APPEARANCE_MODES: readonly string[] = ["auto", "light", "dark"];
 
+/**
+ * The two kinds of chrome the one window can be built with.
+ *
+ * `system` is a macOS title bar: the bar carries the window's name and the
+ * traffic lights, and the Sidebar is a sidebar and nothing else. `hidden` is
+ * `titleBarStyle: "hiddenInset"` — no bar, the lights over the Sidebar's top
+ * corner, and the Sidebar doubling as the window's handle.
+ *
+ * It is one list for the same reason `APPEARANCE_MODES` is: the validator, the
+ * Settings popup, the window's options and the page's `data-title-bar` all
+ * have to agree, and a fourth spelling is how a value becomes selectable in
+ * one place and rejected in another.
+ */
+export const TITLE_BAR_MODES: readonly string[] = ["system", "hidden"];
+
+/** What `title_bar` says, once it is known to be one of the two. */
+export type TitleBarMode = "system" | "hidden";
+
+/**
+ * `appearance.title_bar` as read from the settings file, for the one caller
+ * that needs it before the settings can be loaded.
+ *
+ * The window is created before the config is: the controller is built around
+ * the window, and `titleBarStyle` is a `BrowserWindow` constructor option, so
+ * this one value has to be known earlier than everything else in the table.
+ * It takes the file's text rather than reading it, so it stays a pure function
+ * of what is on disk.
+ *
+ * A file that will not parse answers with the default. That is not a swallowed
+ * failure: the real load runs moments later on the same text, and *it* is what
+ * reports the problem — to the page, to the Settings window and to the log.
+ * The window in the meantime has to be some shape, and the default is the one
+ * shape that is right when nothing is known.
+ */
+export function titleBarModeIn(text: string | undefined): TitleBarMode {
+  if (text === undefined) return DEFAULT_TITLE_BAR;
+  let table: Record<string, unknown>;
+  try {
+    table = parseConfigText(text);
+  } catch {
+    return DEFAULT_TITLE_BAR;
+  }
+  const appearance = table["appearance"];
+  if (typeof appearance !== "object" || appearance === null) {
+    return DEFAULT_TITLE_BAR;
+  }
+  const value = (appearance as Record<string, unknown>)["title_bar"];
+  return value === "hidden" || value === "system" ? value : DEFAULT_TITLE_BAR;
+}
+
+const DEFAULT_TITLE_BAR: TitleBarMode = "system";
+
 export interface AppearanceConfig {
+  /**
+   * Whether the window wears a macOS title bar. See `TITLE_BAR_MODES`.
+   *
+   * Read once, when the window is made, because that is the only moment
+   * `titleBarStyle` can be chosen; changing it takes a relaunch, which the
+   * Settings row says.
+   */
+  readonly titleBar: string;
   /**
    * Which appearance DevHub runs in: `auto`, `light` or `dark`.
    *
@@ -483,6 +543,7 @@ export function defaultTerminalDark(): TerminalPalette {
 export function defaultAppearance(): AppearanceConfig {
   return {
     mode: "auto",
+    titleBar: DEFAULT_TITLE_BAR,
     terminalFontFamily: DEFAULT_FONT_FAMILY,
     terminalFontSize: 13,
     terminalLineHeight: 1,
@@ -999,6 +1060,7 @@ function validateAppearance(appearance: AppearanceConfig): void {
     appearance.terminalScrollSensitivity < 0.1 ||
     appearance.terminalScrollSensitivity > 20 ||
     !APPEARANCE_MODES.includes(appearance.mode) ||
+    !TITLE_BAR_MODES.includes(appearance.titleBar) ||
     (appearance.sidebarDensity !== "compact" &&
       appearance.sidebarDensity !== "comfortable") ||
     appearance.terminalMargin > MAX_TERMINAL_MARGIN ||
@@ -1643,6 +1705,7 @@ export function interpretConfig(document: unknown): Config {
     appearanceTable,
     [
       "mode",
+      "title_bar",
       "terminal_font_family",
       "terminal_font_size",
       "terminal_line_height",
@@ -1738,6 +1801,12 @@ export function interpretConfig(document: unknown): Config {
         3,
       ),
       mode: optionalString(appearanceTable, "mode", "appearance", "auto"),
+      titleBar: optionalString(
+        appearanceTable,
+        "title_bar",
+        "appearance",
+        DEFAULT_TITLE_BAR,
+      ),
       sidebarDensity: optionalString(
         appearanceTable,
         "sidebar_density",
@@ -1849,6 +1918,7 @@ export function configDocument(config: Config): Record<string, TomlValue> {
     },
     appearance: {
       mode: config.appearance.mode,
+      title_bar: config.appearance.titleBar,
       terminal_font_family: config.appearance.terminalFontFamily,
       terminal_font_size: config.appearance.terminalFontSize,
       terminal_line_height: config.appearance.terminalLineHeight,

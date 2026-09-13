@@ -49,6 +49,7 @@ export function testConfig(
     },
     appearance: {
       mode: "auto",
+      titleBar: "system",
       sidebarDensity: "compact",
       terminalFontFamily: "SF Mono",
       terminalFontSize: 13,

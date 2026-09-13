@@ -53,6 +53,10 @@ class FakeView {
 		focus: () => {
 			focused = this.webContents.id;
 		},
+		// One keyboard in the window, so "do I have it" is "was I the last one
+		// told to take it". The modal layer asks this of itself before asking
+		// for it again.
+		isFocused: () => focused === this.webContents.id,
 		devToolsFocused: false,
 		isDevToolsFocused: () => this.webContents.devToolsFocused,
 		loadURL: () => Promise.resolve(),
@@ -105,6 +109,7 @@ class FakeWindow {
 		focus: () => {
 			focused = this.webContents.id;
 		},
+		isFocused: () => focused === this.webContents.id,
 		devToolsFocused: false,
 		isDevToolsFocused: () => this.webContents.devToolsFocused,
 		setWindowOpenHandler: (handler: WindowOpenHandler) => {
@@ -215,7 +220,9 @@ vi.mock("../electron.js", () => ({
 	},
 }));
 
-const { ShellWindow } = await import("./shellWindow.js");
+const { ShellWindow, shellWindowOptions } = await import("./shellWindow.js");
+const { WINDOW_TITLES } = await import("../../ipc/windowTitles.js");
+type ShellPalette = import("../../ipc/palette.js").ShellPalette;
 const { WorkbenchView } = await import("./workbenchView.js");
 type ShellWindow = InstanceType<typeof ShellWindow>;
 type WorkbenchView = InstanceType<typeof WorkbenchView>;
@@ -231,6 +238,7 @@ describe("the shell window's workbench views", () => {
 			"preload.js",
 			"devhub-app://shell/index.html",
 			undefined,
+			"hidden",
 		);
 		shell.setContentRect({ x: 248, y: 38, width: 1192, height: 837 });
 		a = new WorkbenchView(shell, {});
@@ -407,14 +415,53 @@ describe("the shell window's workbench views", () => {
 			expect(focused).toBe(contentsOf(a));
 		});
 
+		const theWindow = () => shell.window as unknown as FakeWindow;
+		/** The modal layer's own contents, once a sheet has put it on screen. */
+		const layer = () =>
+			(shell.modals.contents() as unknown as { id: number } | undefined)?.id;
+
 		it("does not take the keyboard out of an open modal", () => {
 			shell.reveal(a);
 			shell.modals.openModal({ kind: "workspace-picker" });
 			focused = undefined;
 			shell.setContentSurface("page");
 			shell.reveal(b);
-			// A dialog no key reaches is a dialog nobody can answer.
-			expect(focused).toBeUndefined();
+			// A dialog no key reaches is a dialog nobody can answer, so the
+			// keyboard goes nowhere but the layer for as long as one stands.
+			expect(focused).not.toBe(contentsOf(b));
+			expect(focused).not.toBe(page());
+		});
+
+		it("gives the keyboard to the sheet, not to what is behind it", () => {
+			shell.reveal(a);
+			shell.modals.openModal({ kind: "workspace-picker" });
+			expect(focused).toBe(layer());
+		});
+
+		/**
+		 * Coming back to DevHub with a sheet standing.
+		 *
+		 * macOS restores the keyboard to whatever held it before the app went
+		 * away — measured on an isolated instance, the App Shell page — and the
+		 * window's own `focus` event is the only thing that runs. It used to
+		 * stand aside for the modal layer, which read as "the modal already has
+		 * it" and was not the same fact: the sheet came back unreachable from
+		 * the keyboard, and clicking into it was the only way on.
+		 */
+		it("puts the keyboard back in the sheet when the window comes forward", () => {
+			shell.reveal(a);
+			const id = shell.modals.openModal({ kind: "workspace-picker" });
+			theWindow().inFront = false;
+			theWindow().emit("blur");
+			focused = undefined;
+
+			theWindow().inFront = true;
+			theWindow().emit("focus");
+			expect(focused).toBe(layer());
+
+			// And when the sheet goes, the surface has it again.
+			shell.modals.closeModal(id);
+			expect(focused).toBe(contentsOf(a));
 		});
 	});
 
@@ -460,6 +507,7 @@ describe("the shell window's modal layer", () => {
 			"preload.js",
 			"devhub-app://shell/index.html",
 			undefined,
+			"hidden",
 		);
 		shell.setContentRect({ x: 248, y: 38, width: 1192, height: 837 });
 		editor = new WorkbenchView(shell, {});
@@ -592,6 +640,7 @@ describe("links out of the App Shell page", () => {
 			"preload.js",
 			"devhub-app://shell/index.html",
 			undefined,
+			"hidden",
 		);
 	});
 
@@ -659,6 +708,7 @@ describe("the shell window's focus reporting", () => {
 			"preload.js",
 			"devhub-app://shell/index.html",
 			undefined,
+			"hidden",
 		);
 		shell.setContentRect({ x: 248, y: 38, width: 1192, height: 837 });
 		window = shell.window as unknown as FakeWindow;
@@ -849,6 +899,7 @@ describe("when the shell window may come to the front", () => {
 			"preload.js",
 			"devhub-app://shell/index.html",
 			undefined,
+			"hidden",
 		);
 		shell.setContentRect({ x: 248, y: 38, width: 1192, height: 837 });
 		window = shell.window as unknown as FakeWindow;
@@ -970,5 +1021,50 @@ describe("when the shell window may come to the front", () => {
 		a.webContents.emit("focus");
 		expect(announced).toEqual([`browser-window-focus:${a.webContents.id}`]);
 		expect(raised).toEqual([]);
+	});
+});
+
+/**
+ * The window is built one of two ways, and nothing afterwards can change it.
+ *
+ * `titleBarStyle` is a constructor option: there is no setter, so the choice
+ * `appearance.title_bar` makes is made here or not at all. Everything else
+ * about the window is the same in both, which is the point of asserting the
+ * whole difference in one place — a second thing that started depending on the
+ * mode would show up as a second assertion here.
+ */
+describe("shellWindowOptions", () => {
+	it("gives the window a macOS title bar for `system`", () => {
+		expect(shellWindowOptions("preload.js", undefined, "system")).toMatchObject(
+			{ titleBarStyle: "default", title: WINDOW_TITLES.shell },
+		);
+	});
+
+	it("takes the bar away for `hidden`, as DevHub has always had it", () => {
+		expect(shellWindowOptions("preload.js", undefined, "hidden")).toMatchObject(
+			{ titleBarStyle: "hiddenInset" },
+		);
+	});
+
+	it("changes nothing else between the two", () => {
+		const system = shellWindowOptions("preload.js", undefined, "system");
+		const hidden = shellWindowOptions("preload.js", undefined, "hidden");
+		expect({ ...system, titleBarStyle: undefined }).toEqual({
+			...hidden,
+			titleBarStyle: undefined,
+		});
+	});
+
+	it("still decides its material by whether there is a palette", () => {
+		expect(shellWindowOptions("preload.js", undefined, "system").vibrancy).toBe(
+			"sidebar",
+		);
+		const painted = shellWindowOptions(
+			"preload.js",
+			{ canvas: "#101010" } as ShellPalette,
+			"system",
+		);
+		expect(painted.vibrancy).toBeUndefined();
+		expect(painted.backgroundColor).toBe("#101010");
 	});
 });

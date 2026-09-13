@@ -165,6 +165,25 @@ export function GeneralSection({
             }}
           />
         </Row>
+        <Row
+          label="Title bar"
+          help="System gives the window a macOS title bar and lets the collapsed sidebar be as narrow as its icons; Hidden puts the traffic lights on the sidebar instead. The window is built either way at launch, so this takes effect the next time DevHub starts."
+        >
+          <Popup
+            label="Title bar"
+            value={config.appearance.titleBar}
+            options={[
+              ["system", "System"],
+              ["hidden", "Hidden"],
+            ]}
+            onChange={(titleBar) => {
+              update({
+                ...config,
+                appearance: { ...config.appearance, titleBar },
+              });
+            }}
+          />
+        </Row>
       </Group>
 
       <Group heading="Sidebar">

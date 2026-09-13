@@ -11,14 +11,70 @@ import { electron } from "../electron.js";
 import { allowListenersFor } from "./appListenerCeiling.js";
 import { sendLinksToTheBrowser } from "./externalLinks.js";
 import type { ContentRect, ContentSurfaceWire } from "../../ipc/contract.js";
+import type { TitleBarMode } from "../../model/config.js";
 import { WINDOW_TITLES } from "../../ipc/windowTitles.js";
 import { ModalOverlay } from "./modalOverlay.js";
 import { shellTheme } from "./shellTheme.js";
 import type { ShellPalette } from "../../ipc/palette.js";
 import type { WorkbenchView } from "./workbenchView.js";
 
+/**
+ * The one window's construction options, as a function of the two things that
+ * decide them.
+ *
+ * A pure function so the choice can be read — and tested — without an app.
+ * `titleBar` is the whole of the difference between DevHub's two chromes, and
+ * it is settled here so that nothing downstream has to ask again: see
+ * `TitleBarMode`, and `data-title-bar` in the page, which is the same fact
+ * spelled for CSS.
+ */
+export function shellWindowOptions(
+	preloadPath: string,
+	palette: ShellPalette | undefined,
+	titleBar: TitleBarMode,
+): Electron.BrowserWindowConstructorOptions {
+	return {
+		width: 1440,
+		height: 900,
+		minWidth: 720,
+		minHeight: 480,
+		title: WINDOW_TITLES.shell,
+		// `system` is a macOS window: a title bar carrying the name
+		// `shellTitle.ts` composes, with the traffic lights in it, and the
+		// content area — sidebar, workbench and all — beginning below it.
+		// `hidden` is the Tauri app's chrome: no bar, the page paints its own
+		// band over the window's material, and the lights sit on the Sidebar.
+		titleBarStyle: titleBar === "system" ? "default" : "hiddenInset",
+		// The window's material and its background are the same decision as
+		// the page's `data-window-material`, made in the same breath: a shell
+		// that follows the Workbench's colour theme cannot also show a system
+		// material through its chrome, because the material follows the
+		// *system* appearance and the theme does not. With a palette the
+		// window is opaque and painted; without one it is the macOS sidebar
+		// material, as it was before any workbench ever ran.
+		vibrancy: palette ? undefined : "sidebar",
+		backgroundColor: palette ? palette.canvas : "#00000000",
+		show: false,
+		webPreferences: {
+			preload: preloadPath,
+			sandbox: false,
+			contextIsolation: true,
+			nodeIntegration: false,
+		},
+	};
+}
+
 export class ShellWindow {
 	readonly window: Electron.BrowserWindow;
+	/**
+	 * The chrome this window was built with.
+	 *
+	 * Kept because it cannot be asked for afterwards — Electron has no getter
+	 * for `titleBarStyle` — and because a reading of DevHub that does not say
+	 * which of the two shapes was on screen cannot be compared with another.
+	 * See `--metrics`.
+	 */
+	readonly titleBar: TitleBarMode;
 
 	private readonly views: WorkbenchView[] = [];
 	private revealed: WorkbenchView | undefined;
@@ -80,34 +136,12 @@ export class ShellWindow {
 		preloadPath: string,
 		pageUrl: string,
 		palette: ShellPalette | undefined,
+		titleBar: TitleBarMode,
 	) {
-		this.window = new electron.BrowserWindow({
-			width: 1440,
-			height: 900,
-			minWidth: 720,
-			minHeight: 480,
-			title: WINDOW_TITLES.shell,
-			// The Tauri app's chrome: the page paints the titlebar band itself
-			// over the window's own material, and the traffic lights sit on the
-			// sidebar rather than above it.
-			titleBarStyle: "hiddenInset",
-			// The window's material and its background are the same decision as
-			// the page's `data-window-material`, made in the same breath: a shell
-			// that follows the Workbench's colour theme cannot also show a system
-			// material through its chrome, because the material follows the
-			// *system* appearance and the theme does not. With a palette the
-			// window is opaque and painted; without one it is the macOS sidebar
-			// material, as it was before any workbench ever ran.
-			vibrancy: palette ? undefined : "sidebar",
-			backgroundColor: palette ? palette.canvas : "#00000000",
-			show: false,
-			webPreferences: {
-				preload: preloadPath,
-				sandbox: false,
-				contextIsolation: true,
-				nodeIntegration: false,
-			},
-		});
+		this.titleBar = titleBar;
+		this.window = new electron.BrowserWindow(
+			shellWindowOptions(preloadPath, palette, titleBar),
+		);
 
 		sendLinksToTheBrowser(this.window.webContents);
 
@@ -372,7 +406,18 @@ export class ShellWindow {
 		// *which* contents, not about whether DevHub may take the front, which
 		// is why it is here and not in `mayPlaceTheKeyboard` — the modal layer
 		// places its own keyboard through the same gate.
-		if (this.modals.isPresent()) return;
+		//
+		// It is placed *in* the layer rather than left alone. Standing aside
+		// read as "the modal already has it", and that was not the same fact:
+		// coming back to DevHub with a sheet standing arrives here through the
+		// window's `focus` event, macOS having restored the keyboard to
+		// whatever held it before — measured, the App Shell page — and standing
+		// aside left the sheet on screen with the keys going behind it.
+		if (this.modals.isPresent()) {
+			const modal = this.modals.contents();
+			if (modal) this.placeKeyboardIn(modal);
+			return;
+		}
 		this.placeKeyboardIn(this.focusTarget());
 	}
 
@@ -781,11 +826,12 @@ export function createShellWindow(
 	preloadPath: string,
 	pageUrl: string,
 	palette: ShellPalette | undefined,
+	titleBar: TitleBarMode,
 ): ShellWindow {
 	if (current) {
 		throw new Error("the App Shell window already exists");
 	}
-	current = new ShellWindow(preloadPath, pageUrl, palette);
+	current = new ShellWindow(preloadPath, pageUrl, palette, titleBar);
 	return current;
 }
 

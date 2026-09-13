@@ -39,6 +39,7 @@ import {
 	type SettingsProblem,
 } from "../workbenchDefaults.js";
 import { activeProfile } from "../../model/profile.js";
+import { defaultConfigPaths, titleBarModeIn } from "../../model/config.js";
 import type { AppErrorWire } from "../../ipc/appShell.js";
 import { errorWireAt, withDetail } from "../../model/wire.js";
 import { answerFinderOpens, finderOpen } from "./openFromFinder.js";
@@ -106,6 +107,16 @@ function unreadableSettingsError(
 	);
 }
 
+/** The settings file's text, or nothing when there is not one yet. */
+function readSettingsText(): string | undefined {
+	try {
+		return readFileSync(defaultConfigPaths(homedir()).file, "utf8");
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+		throw error;
+	}
+}
+
 export async function bootstrapShell(
 	userDataPath: string,
 	cliArgs: NativeParsedArgs,
@@ -137,6 +148,13 @@ export async function bootstrapShell(
 	});
 	const settingsProblem = ensureWorkbenchDefaults(userDataPath);
 
+	// The one setting the window is *made* from, so it is read before the rest
+	// of the settings are: `titleBarStyle` is a constructor option, and the
+	// window has to exist before the controller that loads the config does.
+	// Everything else in the file is read once, by the controller, and a file
+	// that will not parse is reported from there. See `titleBarModeIn`.
+	const titleBar = titleBarModeIn(readSettingsText());
+
 	// The colour theme comes first, before the page is servable and before the
 	// window exists, because both are created wearing it. VS Code stores the
 	// last workbench's window splash for exactly this purpose — it paints its
@@ -161,7 +179,12 @@ export async function bootstrapShell(
 	// The race was always there; asking the login shell for its environment
 	// (which is part of starting the runtimes) turned it from unlucky into
 	// normal. Ordering is the fix, not speed.
-	createShellWindow(preloadPath, `${SHELL_ORIGIN}/index.html`, palette);
+	createShellWindow(
+		preloadPath,
+		`${SHELL_ORIGIN}/index.html`,
+		palette,
+		titleBar,
+	);
 	const controller = await createAppController(userDataPath, cliArgs);
 	if (settingsProblem) {
 		controller.noteStartupFailure(
@@ -247,6 +270,7 @@ export async function bootstrapShell(
 			preloadPath,
 			`${SHELL_ORIGIN}/index.html`,
 			shellTheme().palette(),
+			titleBar,
 		);
 		openShellPage();
 	});

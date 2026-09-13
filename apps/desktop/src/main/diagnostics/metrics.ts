@@ -10,6 +10,7 @@
  */
 
 import type { CountersReading } from "./counters.js";
+import type { TitleBarMode } from "../../model/config.js";
 import type { RuntimeId, RuntimeReading } from "../runtime/runtime.js";
 
 /** What DevHub knows about one of its own workbench renderers. */
@@ -56,6 +57,15 @@ export interface MetricsReport {
 	readonly takenAt: string;
 	/** How long the app has been running, in milliseconds. */
 	readonly uptimeMs: number;
+	/**
+	 * Which chrome the window was built with — `appearance.title_bar`, as the
+	 * window actually took it rather than as the file says it now.
+	 *
+	 * It is here because it changes the geometry of everything else DevHub
+	 * draws, and it only changes at launch: a reading that does not name it is
+	 * a reading nobody can compare with another taken in the other mode.
+	 */
+	readonly titleBar: TitleBarMode;
 	/**
 	 * What the OS has charged the main process since it started.
 	 *
@@ -165,6 +175,7 @@ export interface TerminalClientReading {
 export interface MetricsInput {
 	readonly takenAt: number;
 	readonly uptimeMs: number;
+	readonly titleBar: TitleBarMode;
 	readonly mainProcessCpu: CpuTime;
 	readonly processMetrics: readonly ProcessMetricInput[];
 	readonly views: readonly ViewIdentity[];
@@ -208,6 +219,7 @@ export function metricsReport(input: MetricsInput): MetricsReport {
 	return {
 		takenAt: new Date(input.takenAt).toISOString(),
 		uptimeMs: input.uptimeMs,
+		titleBar: input.titleBar,
 		mainProcessCpu: input.mainProcessCpu,
 		processes,
 		totalCpuPercent: processes.reduce(

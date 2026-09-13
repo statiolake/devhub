@@ -14,6 +14,7 @@ import {
   parseConfig,
   parseConfigText,
   retiredKeysIn,
+  titleBarModeIn,
   type ValidationCode,
 } from "./config.js";
 import { chordKeyId } from "./chordKeys.js";
@@ -531,6 +532,46 @@ describe("parsing", () => {
         parseConfig('version = 1\n[appearance]\nmode = "midnight"\n'),
       ),
     ).toBe("invalid_appearance");
+    expect(
+      codeOf(() =>
+        parseConfig('version = 1\n[appearance]\ntitle_bar = "floating"\n'),
+      ),
+    ).toBe("invalid_appearance");
+  });
+
+  describe("appearance.title_bar", () => {
+    it("is a system title bar unless the file says otherwise", () => {
+      expect(defaultConfig().appearance.titleBar).toBe("system");
+      expect(parseConfig("version = 1\n").appearance.titleBar).toBe("system");
+    });
+
+    it("is read, kept and written back", () => {
+      const config = parseConfig(
+        'version = 1\n[appearance]\ntitle_bar = "hidden"\n',
+      );
+      expect(config.appearance.titleBar).toBe("hidden");
+      expect(configToToml(config)).toContain('title_bar = "hidden"');
+    });
+
+    it("is readable on its own, before the rest of the settings are", () => {
+      // The window is made from this one value and made before the config is
+      // loaded, so it has its own reader. It has to agree with the loader.
+      expect(titleBarModeIn(undefined)).toBe("system");
+      expect(titleBarModeIn("version = 1\n")).toBe("system");
+      expect(
+        titleBarModeIn('version = 1\n[appearance]\ntitle_bar = "hidden"\n'),
+      ).toBe("hidden");
+      expect(
+        titleBarModeIn('version = 1\n[appearance]\ntitle_bar = "system"\n'),
+      ).toBe("system");
+    });
+
+    it("answers with the default for a file it cannot read, and does not throw", () => {
+      // A window has to be some shape. The load that runs moments later on the
+      // same text is what reports the problem; see `titleBarModeIn`.
+      expect(titleBarModeIn("this is not toml = = =")).toBe("system");
+      expect(titleBarModeIn("[appearance]\ntitle_bar = 7\n")).toBe("system");
+    });
   });
 
   it("scrolls an Agent pane three lines a notch until told otherwise", () => {

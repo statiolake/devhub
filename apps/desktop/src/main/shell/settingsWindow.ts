@@ -173,6 +173,7 @@ function toWireConfig(config: Config): SettingsConfigWire {
 		appearance: {
 			mode: config.appearance.mode,
 			sidebarDensity: config.appearance.sidebarDensity,
+			titleBar: config.appearance.titleBar,
 			terminalFontFamily: config.appearance.terminalFontFamily,
 			terminalFontSize: config.appearance.terminalFontSize,
 			terminalLineHeight: config.appearance.terminalLineHeight,
@@ -292,6 +293,7 @@ function fromWireConfig(wire: SettingsConfigWire): Config {
 		appearance: {
 			mode: wire.appearance.mode,
 			sidebarDensity: wire.appearance.sidebarDensity,
+			titleBar: wire.appearance.titleBar,
 			terminalFontFamily: wire.appearance.terminalFontFamily,
 			terminalFontSize: wire.appearance.terminalFontSize,
 			terminalLineHeight: wire.appearance.terminalLineHeight,

@@ -3950,6 +3950,7 @@ export class AppController {
 			metricsReport({
 				takenAt: Date.now(),
 				uptimeMs: Math.round(process.uptime() * 1000),
+				titleBar: shellWindow().titleBar,
 				mainProcessCpu: {
 					userMs: Math.round(cpu.user / 1000),
 					systemMs: Math.round(cpu.system / 1000),
