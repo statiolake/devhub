@@ -70,6 +70,47 @@ function closeResourceStatus(resource: CloseResourceWire): string {
   }
 }
 
+/**
+ * The status a row shows, with the reason in it when there is one.
+ *
+ * The category on its own was not enough for a Workspace on another machine:
+ * "Could not verify terminal state" said nothing about which machine, and
+ * nothing about whether it was refusing DevHub or simply not there.
+ */
+function closeResourceText(resource: CloseResourceWire): string {
+  const status = closeResourceStatus(resource);
+  if (resource.kind !== "unknown" || resource.reason === undefined) {
+    return status;
+  }
+  return `${status} — ${resource.reason}`;
+}
+
+/**
+ * The rows to draw, with rows that are the same fact drawn once.
+ *
+ * Three resources live behind one tmux, so one unreachable machine produced
+ * three identical lines — "Terminal processes / Terminal panes / Terminal
+ * windows — Could not verify terminal state" — which reads as three problems
+ * and is one. Neighbouring rows whose status is word-for-word the same are
+ * therefore joined under their labels, in the order they were listed. Rows
+ * that genuinely differ are untouched, because they are genuinely different.
+ */
+function collapsed(
+  rows: readonly (readonly [string, CloseResourceWire])[],
+): readonly (readonly [string, string])[] {
+  const joined: (readonly [string, string])[] = [];
+  for (const [label, resource] of rows) {
+    const text = closeResourceText(resource);
+    const previous = joined.at(-1);
+    if (previous && previous[1] === text) {
+      joined[joined.length - 1] = [`${previous[0]}, ${label}`, text];
+      continue;
+    }
+    joined.push([label, text]);
+  }
+  return joined;
+}
+
 /** The safe row, and therefore the first one. */
 const CANCEL = "devhub:cancel";
 /** The row that does the thing being asked about. */
@@ -212,10 +253,10 @@ export function CloseConfirmationSheet({
           ) : null}
           {diagnostics.length > 0 ? (
             <ul className="mac-detail-list">
-              {diagnostics.map(([label, resource]) => (
+              {collapsed(diagnostics).map(([label, text]) => (
                 <li key={label}>
                   <span>{label}</span>
-                  <span>{closeResourceStatus(resource)}</span>
+                  <span>{text}</span>
                 </li>
               ))}
             </ul>

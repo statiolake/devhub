@@ -1454,7 +1454,21 @@ export type SurfacePresentation = "full" | "beside";
 export type ResourceInspection =
   | { readonly kind: "clean" }
   | { readonly kind: "busy"; readonly count: number }
-  | { readonly kind: "unknown"; readonly diagnostic: DiagnosticCode };
+  | {
+      readonly kind: "unknown";
+      readonly diagnostic: DiagnosticCode;
+      /**
+       * The one sentence that says *why*, when the diagnostic's stock words
+       * leave the reader nowhere to go.
+       *
+       * A Workspace on another machine made this necessary. "Could not verify
+       * terminal state", said three times about one unreachable host, names
+       * neither the host nor the reason, and the person reading it cannot tell
+       * a tmux that refused a command from a machine that is simply not there.
+       * The diagnostic stays the category; this is the fact.
+       */
+      readonly reason?: string;
+    };
 
 export const CLEAN: ResourceInspection = { kind: "clean" };
 
@@ -1483,8 +1497,11 @@ export function agentsInspection(
 
 export function unknownResource(
   diagnostic: DiagnosticCode,
+  reason?: string,
 ): ResourceInspection {
-  return { kind: "unknown", diagnostic };
+  return reason === undefined || reason.length === 0
+    ? { kind: "unknown", diagnostic }
+    : { kind: "unknown", diagnostic, reason };
 }
 
 /** Resource counts collected before a Workspace close confirmation. */

@@ -402,7 +402,13 @@ function closeResourceWire(value: ResourceInspection): CloseResourceWire {
     case "busy":
       return { kind: "busy", count: value.count };
     case "unknown":
-      return { kind: "unknown", diagnostic: value.diagnostic };
+      return value.reason === undefined
+        ? { kind: "unknown", diagnostic: value.diagnostic }
+        : {
+            kind: "unknown",
+            diagnostic: value.diagnostic,
+            reason: value.reason,
+          };
   }
 }
 

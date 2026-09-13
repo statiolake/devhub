@@ -421,7 +421,44 @@ describe("an adapter for a machine with no tmux", () => {
 		// already carried, with the host in it. Only terminals and Agents
 		// refuse — git and worktrees on that host are unaffected.
 		expect(adapter.adapterAvailable).toBe(false);
+		// And the sentence is *kept*, not reduced to the boolean. A close
+		// confirmation for a Workspace on this host used to draw three rows
+		// saying "Could not verify terminal state", which names neither the
+		// host nor what went wrong; the reason is what turns that back into a
+		// fact somebody can act on.
+		expect(adapter.unavailableReason).toBe(
+			"DevHub could not put a tmux on build.example.com: no route to host",
+		);
 		missing.mockRestore();
+	});
+});
+
+describe("what a close confirmation is told about a Workspace's terminals", () => {
+	it("is asked of that Workspace's machine, and says which machine when it cannot answer", async () => {
+		const { a, b, runtimes } = machines();
+		const here = await runtimes.for(a);
+		const there = await runtimes.for(b);
+		const inspection = await there.inspect(
+			workspaceTarget(
+				"ssh:build.example.com",
+				"00000000-0000-4000-8000-0000000000w1",
+				"/srv/api",
+			),
+		);
+		// The fake refuses every tmux command, so this is the fail-closed path:
+		// unknown, never clean. What is asserted is the part that was missing —
+		// that the sentence names the machine that did not answer.
+		expect(inspection.process.kind).toBe("unknown");
+		const reason =
+			inspection.process.kind === "unknown"
+				? inspection.process.reason
+				: undefined;
+		expect(reason).toContain("build.example.com");
+		// Only that machine was asked. A Workspace on the host must not be
+		// answered for by the tmux on this Mac.
+		expect(b.execs.length).toBeGreaterThan(0);
+		expect(a.execs).toHaveLength(0);
+		expect(here.machine).toBe("local");
 	});
 });
 

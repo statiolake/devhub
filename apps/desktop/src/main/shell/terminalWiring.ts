@@ -30,6 +30,7 @@ import type { Config } from "../../model/config.js";
 import type { AppModel } from "../../model/appModel.js";
 import {
 	agentId as parseAgentId,
+	unknownResource,
 	workspaceId as parseWorkspaceId,
 	type Workspace,
 } from "../../model/domain.js";
@@ -206,10 +207,34 @@ export function wireTerminals(options: TerminalWiringOptions): TerminalWiring {
 			const clean = { kind: "clean" } as const;
 			if (!workspace) return { processes: clean, panes: clean, windows: clean };
 			const machine = machineOf(workspace);
-			const runtime = await runtimeFromId(machine);
-			if (!runtime.adapterAvailable) {
-				return { processes: clean, panes: clean, windows: clean };
+			// A machine DevHub cannot reach is the one answer this used to get
+			// wrong in both directions. An adapter that could not be built threw
+			// out of here, and an adapter with no tmux behind it reported *clean*
+			// — so a Workspace on an unreachable host said "Ready" three times
+			// and the close went ahead over terminals nobody had looked at.
+			//
+			// Both are now the same fact, said once and with the host in it:
+			// there is no answer from that machine, and that is not the same as
+			// there being nothing there. Every other unknown in this path is
+			// fail-closed already (`inspectionFailure`); this makes the machine's
+			// own absence fail-closed too, and gives the sheet a sentence to draw
+			// instead of a category repeated three times.
+			const unreachable = (reason: string) => {
+				const unknown = unknownResource("runtime_unavailable", reason);
+				return { processes: unknown, panes: unknown, windows: unknown };
+			};
+			let runtime;
+			try {
+				runtime = await runtimeFromId(machine);
+			} catch (failure: unknown) {
+				return unreachable(
+					`DevHub could not reach ${machine}: ${
+						failure instanceof Error ? failure.message : String(failure)
+					}`,
+				);
 			}
+			const missing = runtime.unavailableReason;
+			if (missing !== undefined) return unreachable(missing);
 			const inspection = await runtime.inspect(
 				workspaceTarget(machine, workspace.id, workspace.root),
 			);

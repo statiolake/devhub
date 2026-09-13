@@ -319,10 +319,21 @@ describe("inspection", () => {
 		// Fail-closed: an unverified terminal must never look empty to a close
 		// confirmation, or the viewer loses work to a dialog that said "clean".
 		const inspection = await runtime({}).inspect(SCRATCH_TARGET);
-		expect(inspection.process).toEqual({
-			kind: "unknown",
-			diagnostic: "close_terminal_unknown",
-		});
+		expect(inspection.process.kind).toBe("unknown");
+		expect(
+			inspection.process.kind === "unknown"
+				? inspection.process.diagnostic
+				: undefined,
+		).toBe("close_terminal_unknown");
+		// And the provider's own words come with it. The category alone was all
+		// a close confirmation could draw, which for a Workspace on another
+		// machine was three rows of "Could not verify terminal state" and no
+		// way to tell a refusing tmux from an unreachable host.
+		expect(
+			inspection.process.kind === "unknown"
+				? inspection.process.reason
+				: undefined,
+		).toContain("tmux");
 		expect(inspection.extraPanes.kind).toBe("unknown");
 		expect(inspection.extraWindows.kind).toBe("unknown");
 	});

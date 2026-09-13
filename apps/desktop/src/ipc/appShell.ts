@@ -434,7 +434,12 @@ export interface CloseInspectionWire {
 export type CloseResourceWire =
 	| { readonly kind: "clean" }
 	| { readonly count: number; readonly kind: "busy" }
-	| { readonly diagnostic: CloseDiagnosticWire; readonly kind: "unknown" };
+	| {
+			readonly diagnostic: CloseDiagnosticWire;
+			readonly kind: "unknown";
+			/** Why, when the diagnostic's stock words do not say. */
+			readonly reason?: string;
+	  };
 export type ConfirmationPurposeWire =
 	| {
 			readonly inspection: CloseInspectionWire;

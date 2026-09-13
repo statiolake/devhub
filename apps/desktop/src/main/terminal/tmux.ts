@@ -615,8 +615,8 @@ function envArguments(
 	return args;
 }
 
-function unknownInspection(): TerminalInspection {
-	const unknown = unknownResource("close_terminal_unknown");
+function unknownInspection(reason: string): TerminalInspection {
+	const unknown = unknownResource("close_terminal_unknown", reason);
 	return { process: unknown, extraPanes: unknown, extraWindows: unknown };
 }
 
@@ -627,7 +627,10 @@ function unknownInspection(): TerminalInspection {
  * clean. Cancellation stays an error, so lifecycle code can still tell an
  * explicit abort from an unavailable inspection.
  */
-function inspectionFailure(failure: unknown): TerminalInspection {
+function inspectionFailure(
+	failure: unknown,
+	where: string,
+): TerminalInspection {
 	if (
 		failure instanceof Error &&
 		"code" in failure &&
@@ -635,7 +638,14 @@ function inspectionFailure(failure: unknown): TerminalInspection {
 	) {
 		throw failure;
 	}
-	return unknownInspection();
+	// The provider's own words, kept. "Could not verify terminal state" is the
+	// category; which tmux, on which machine, refused what is the part the
+	// person reading a close confirmation can act on.
+	return unknownInspection(
+		`DevHub could not read the tmux${where}: ${
+			failure instanceof Error ? failure.message : String(failure)
+		}`,
+	);
 }
 
 /**
@@ -989,9 +999,27 @@ export class TmuxTerminalRuntime {
 		return this.host.spawnPty(launch);
 	}
 
+	/**
+	 * Why this machine has no usable tmux, or nothing when it has one.
+	 *
+	 * `adapterAvailable` is this same question with the answer thrown away, and
+	 * throwing it away is what let "DevHub cannot talk to this host at all" be
+	 * drawn as three rows saying "Could not verify terminal state" — a sentence
+	 * that names neither the host nor the reason. One accessor, two readers: a
+	 * caller that only needs the boolean asks for the boolean, and a caller
+	 * that has to *tell somebody* asks for the sentence.
+	 */
+	get unavailableReason(): string | undefined {
+		if (this.tmux.kind === "unavailable") return this.tmux.reason;
+		if (this.effectiveSocket === undefined) {
+			return `DevHub has no usable tmux socket name for the terminals${this.where}.`;
+		}
+		return undefined;
+	}
+
 	/** True when a tmux executable and a usable socket name are both present. */
 	get adapterAvailable(): boolean {
-		return this.tmux.kind === "resolved" && this.effectiveSocket !== undefined;
+		return this.unavailableReason === undefined;
 	}
 
 	get contextHome(): string {
@@ -1791,18 +1819,28 @@ export class TmuxTerminalRuntime {
 				deadline,
 			);
 			if (marker === "absent") return cleanInspection();
-			if (marker === "wrong") return unknownInspection();
+			if (marker === "wrong") {
+				return unknownInspection(
+					`The tmux server${this.where} is not the one DevHub started, so DevHub will not speak for what is in it.`,
+				);
+			}
 			const identity = this.targetIdentity(target, sessions);
 			const session = sessions.find(
 				(candidate) => candidate.name === identity.sessionName,
 			);
 			if (!session) return cleanInspection();
 			if (!sessionMatches(session, identity)) {
-				return unknownInspection();
+				return unknownInspection(
+					`A tmux session${this.where} already has the name DevHub uses for this workspace, and it is not DevHub's.`,
+				);
 			}
 			// Without the configured shell's name there is no way to tell a
 			// pane that is only a shell from one running the viewer's work.
-			if (this.shellName === undefined) return unknownInspection();
+			if (this.shellName === undefined) {
+				return unknownInspection(
+					`DevHub does not know which shell${this.where} is the configured one, so it cannot tell an idle pane from a working one.`,
+				);
+			}
 			const { windows, panes } = await this.listWindowsAndPanes(
 				socket,
 				session.name,
@@ -1817,7 +1855,7 @@ export class TmuxTerminalRuntime {
 				extraWindows: resourceCount(Math.max(0, windows - 1)),
 			};
 		} catch (failure: unknown) {
-			return inspectionFailure(failure);
+			return inspectionFailure(failure, this.where);
 		}
 	}
 
