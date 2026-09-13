@@ -544,6 +544,7 @@ function defaultErrorModule(code: AppErrorCodeWire): AppErrorModuleWire {
     case "agent_attach_timed_out":
       return "agent";
     case "terminal_launcher_unavailable":
+    case "workspace_sessions_left_running":
     case "tmux_command_failed":
     case "tmux_command_timed_out":
     case "tmux_session_conflict":

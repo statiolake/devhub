@@ -222,6 +222,17 @@ export type AppErrorCodeWire =
 	 * think to check until they pressed Ctrl+` and got a bare shell.
 	 */
 	| "terminal_launcher_unavailable"
+	/**
+	 * A workspace was closed while its machine was unreachable, so the sessions
+	 * on that machine are still running.
+	 *
+	 * Its own code because the close *succeeded* — the row is gone, the folder
+	 * is forgotten — and the one thing that did not happen is invisible from
+	 * here: processes on a computer this one cannot currently reach. A close
+	 * that stayed stuck instead was the old behaviour and the worse one; a
+	 * close that completed and said nothing would be worse still.
+	 */
+	| "workspace_sessions_left_running"
 	/** tmux ran DevHub's command and refused it. */
 	| "tmux_command_failed"
 	/** tmux did not answer DevHub's command inside its bound. */
@@ -266,6 +277,11 @@ export const APP_ERROR_SUMMARY: Readonly<Record<AppErrorCodeWire, string>> = {
 		"The editor's settings file is not valid JSON.",
 	terminal_launcher_unavailable:
 		"This window has no DevHub terminal: its launcher could not be installed.",
+	// It names no host, because the detail does: one workspace's close can
+	// leave things behind on exactly one machine, and which one is the fact
+	// worth carrying rather than repeating in two places.
+	workspace_sessions_left_running:
+		"The workspace was closed, but its sessions are still running on a machine DevHub could not reach.",
 	// Three sentences rather than one, because they are three different things
 	// to do next. "The agent runtime is unavailable" was said for all of them,
 	// which sent the reader to look at a tmux that was answering perfectly.
