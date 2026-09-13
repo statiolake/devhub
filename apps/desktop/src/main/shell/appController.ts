@@ -72,6 +72,8 @@ import { editorReveal } from "./editorReveal.js";
 import {
 	CLOSE_BUDGET_MS,
 	CloseTimeout,
+	sessionsLeftRunning,
+	sessionsLeftRunningDetail,
 	withCloseDeadline,
 } from "./cleanupDeadline.js";
 import { canonicalise } from "../cli/canonical.js";
@@ -185,7 +187,7 @@ import {
 	TERMINAL_ENTRY_BUNDLE,
 } from "../terminal/launcher.js";
 import { controlSocketPath } from "../cli/protocol.js";
-import { windowTerminalEnvironment } from "./loginEnvironment.js";
+import { windowTerminalLauncher } from "./loginEnvironment.js";
 import { OperationDeadline } from "../terminal/command.js";
 import { wireAgents } from "./agentWiring.js";
 import { AgentReconcilers, type ReconcileHost } from "./agentReconciler.js";
@@ -2571,6 +2573,9 @@ export class AppController {
 		worktree: WorktreeDisposition,
 	): Promise<void> {
 		let step: CloseStep = "editor";
+		// What the close could not stop, because the machine it is on did not
+		// answer. Collected rather than thrown; see `closeSessionsOnMachine`.
+		const leftRunning: string[] = [];
 		try {
 			const vetoed = await withCloseDeadline(
 				step,
@@ -2587,9 +2592,11 @@ export class AppController {
 			step = "agents";
 			const agentAdapter = agents();
 			if (agentAdapter) {
-				await withCloseDeadline(
+				await this.closeSessionsOnMachine(
 					step,
-					agentAdapter.closeWorkspaceAgents(workspaceId),
+					workspaceId,
+					() => agentAdapter.closeWorkspaceAgents(workspaceId),
+					leftRunning,
 				);
 			}
 			// With no Agent runtime there are no Agents, so this step is already
@@ -2598,9 +2605,11 @@ export class AppController {
 			step = "terminal";
 			const terminalAdapter = terminals();
 			if (terminalAdapter) {
-				await withCloseDeadline(
+				await this.closeSessionsOnMachine(
 					step,
-					terminalAdapter.closeWorkspaceTerminals(workspaceId),
+					workspaceId,
+					() => terminalAdapter.closeWorkspaceTerminals(workspaceId),
+					leftRunning,
 				);
 			}
 
@@ -2633,12 +2642,75 @@ export class AppController {
 			);
 			return;
 		}
+		// Once, and after the close rather than during it, because it is a note
+		// about a close that finished — not a step that failed. It goes down the
+		// same path every other failure the person sees goes down, so there is
+		// one alert to read and one to dismiss.
+		if (leftRunning.length > 0) {
+			this.publishError(
+				withDetail(
+					errorWireAt("workspace_sessions_left_running"),
+					sessionsLeftRunningDetail(leftRunning),
+				),
+			);
+		}
 		this.accept({
 			type: "workspace_close_completed",
 			token,
 			workspaceId,
 			result: { kind: "closed" },
 		});
+	}
+
+	/**
+	 * A close step that stops sessions on the workspace's machine.
+	 *
+	 * The two of them — Agents and terminals — are the steps whose subject is
+	 * on another computer, and they are the two that used to strand a row. A
+	 * close would stop at `terminal` with `DevHub cannot reach <host>`, and the
+	 * workspace stayed in the list, greyed out, refusing every operation,
+	 * for ever: repeating the close asked the same unreachable machine the same
+	 * question.
+	 *
+	 * The rule is the owner's — *as few resources as possible left behind, but
+	 * the close always completes*. A machine that does not answer cannot have
+	 * anything stopped on it, and waiting does not change that; so the close
+	 * goes on, DevHub forgets the workspace, and the sessions are named out
+	 * loud instead of being lost silently. They are DevHub-marked, so the
+	 * startup sweep (`wireAgents` → `reapUnknown`, one round per machine that
+	 * has a Workspace on it) closes them the next time that host is both
+	 * reachable and in use.
+	 *
+	 * Only "the machine did not answer" is continued past. A tmux that answered
+	 * and refused, or a step that ran out of its deadline while the host was
+	 * up, is a failure about DevHub's own work and still stops the close —
+	 * those are the ones a person can act on by trying again.
+	 */
+	private async closeSessionsOnMachine(
+		step: CloseStep,
+		workspaceId: WorkspaceId,
+		work: () => Promise<unknown>,
+		leftRunning: string[],
+	): Promise<void> {
+		try {
+			await withCloseDeadline(step, work());
+		} catch (error: unknown) {
+			// A workspace the model no longer has is one nothing can be reported
+			// about — there is no machine to name — so that failure stays a
+			// failure rather than becoming a note with a hole in it.
+			const machine = this.machineOf(workspaceId);
+			const left =
+				machine === undefined
+					? undefined
+					: sessionsLeftRunning(step, machine, error);
+			if (left === undefined) throw error;
+			console.error(
+				`[devhub] close: ${left} could not be stopped — ${
+					error instanceof Error ? error.message : String(error)
+				}`,
+			);
+			leftRunning.push(left);
+		}
 	}
 
 	private failClose(
@@ -2911,10 +2983,10 @@ export class AppController {
 	 *
 	 * Per window, because the workbench's integrated terminal runs where its pty
 	 * host runs: a window on a host must name the launcher written *there*, and
-	 * naming this Mac's would be a path that machine has never heard of. The
-	 * patched `platform.ts` reads one variable and the renderer's environment is
-	 * the window configuration's `userEnv`, so one value here is one answer per
-	 * window without a second protocol.
+	 * naming this Mac's would be a path that machine has never heard of. It
+	 * travels as a field of the window configuration, which is the channel that
+	 * carries per-window facts — see `loginEnvironment.windowTerminalLauncher`
+	 * for why it is not an environment variable any more.
 	 *
 	 * A machine whose launcher could not be installed is not a reason to refuse
 	 * the window: the person asked for a folder, and a folder they can edit
@@ -2927,15 +2999,13 @@ export class AppController {
 	 * nobody goes looking for.
 	 *
 	 * What is *not* done is falling back to this Mac's launcher. That was the
-	 * bug: contributing nothing left the window with whatever `process.env`
-	 * already carried, VS Code's preload merges `userEnv` *over* the inherited
-	 * environment, and an ssh window inherited a path its host had never heard
-	 * of — so the workbench there silently opened `/bin/sh`. The answer is
-	 * always written, empty when there is none; see `windowTerminalEnvironment`.
+	 * bug: a window told nothing inherited whatever was already around, and an
+	 * ssh window opened `/bin/sh` in silence. Undefined is the answer for a
+	 * machine with none, and the patch refuses to invent one.
 	 */
-	private async windowTerminalEnvironment(
+	private async windowTerminalLauncher(
 		location: WorkspaceLocation | undefined,
-	): Promise<Record<string, string>> {
+	): Promise<string | undefined> {
 		const runtime =
 			location === undefined ? localRuntime() : runtimeFor(location);
 		try {
@@ -2951,7 +3021,7 @@ export class AppController {
 					),
 				);
 			}
-			return windowTerminalEnvironment(launcher);
+			return windowTerminalLauncher(launcher);
 		} catch (error: unknown) {
 			console.error(
 				`[devhub] terminal launcher on ${runtime.id} could not be installed`,
@@ -2963,7 +3033,7 @@ export class AppController {
 					`${runtime.id}: ${error instanceof Error ? error.message : String(error)}`,
 				),
 			);
-			return windowTerminalEnvironment(undefined);
+			return windowTerminalLauncher(undefined);
 		}
 	}
 
@@ -3004,19 +3074,16 @@ export class AppController {
 		const services = await this.services();
 		// Which `devhub-terminal` this window names, decided here because this
 		// is where the window's machine is already known. This is the *only*
-		// place that decides it: DevHub's own process carries no
-		// `DEVHUB_TERMINAL` for a window to fall back on, so a window that is
+		// place that decides it: nothing else names one, so a window that is
 		// not told here has none, which is what the patched workbench is
 		// written to say out loud.
-		const terminalEnvironment = await this.windowTerminalEnvironment(location);
+		const launcher = await this.windowTerminalLauncher(location);
 		// Said in the log, every time, because this is the value whose being
 		// wrong is invisible from the outside: a window with another machine's
 		// launcher opens perfectly and only fails when somebody presses Ctrl+`.
 		console.log(
 			`[devhub] open: '${editorKey}' terminal launcher — ${
-				terminalEnvironment["DEVHUB_TERMINAL"] === ""
-					? "none on this machine"
-					: terminalEnvironment["DEVHUB_TERMINAL"]
+				launcher ?? "none on this machine"
 			}`,
 		);
 		// Go through VS Code's own open path, which is what creates a
@@ -3026,7 +3093,7 @@ export class AppController {
 		const windows = await services.windows().open({
 			context: OpenContext.API,
 			cli: this.cliArgs,
-			userEnv: terminalEnvironment,
+			devhubTerminalLauncher: launcher,
 			urisToOpen:
 				location === undefined ? [] : [{ folderUri: folderUriFor(location) }],
 			forceEmpty: location === undefined,

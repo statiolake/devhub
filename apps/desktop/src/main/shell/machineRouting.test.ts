@@ -30,7 +30,7 @@ import { agents } from "./adapters.js";
 import { wireAgents } from "./agentWiring.js";
 import { LOCAL_CADENCE } from "../runtime/local.js";
 import { TerminalRuntimes } from "./terminalRuntimes.js";
-import { windowTerminalEnvironment } from "./loginEnvironment.js";
+import { windowTerminalLauncher } from "./loginEnvironment.js";
 import { TerminalSurfaces } from "../terminal/surfaces.js";
 import { portFailure, workspaceTarget } from "../terminal/ports.js";
 import type { AttachmentManager } from "../terminal/attachments.js";
@@ -315,70 +315,50 @@ describe("the Agent pane's PTY", () => {
 });
 
 describe("what a window is told its terminal is", () => {
+	const spec: TerminalLauncherSpec = {
+		localLauncherPath: "/here/devhub-terminal",
+		controlSocketPath: "/here/control.sock",
+		entryText: "export const nothing = 1;\n",
+		entryName: "devhub-terminal.bundle.js",
+		serverDataFolderName: ".devhub-server",
+		serverCommit: "abc123",
+	};
+
 	it("names the launcher of the machine that window is on", async () => {
 		const { a, b } = machines();
-		const spec: TerminalLauncherSpec = {
-			localLauncherPath: "/here/devhub-terminal",
-			controlSocketPath: "/here/control.sock",
-			entryText: "export const nothing = 1;\n",
-			entryName: "devhub-terminal.bundle.js",
-			serverDataFolderName: ".devhub-server",
-			serverCommit: "abc123",
-		};
-		expect(windowTerminalEnvironment(await a.terminalLauncher(spec))).toEqual({
-			DEVHUB_TERMINAL: "/home/here/.devhub/devhub-terminal",
-		});
+		expect(windowTerminalLauncher(await a.terminalLauncher(spec))).toBe(
+			"/home/here/.devhub/devhub-terminal",
+		);
 		// A window on a host names a path on that host. This Mac's launcher is
 		// a file that machine has never heard of, and naming it would give the
 		// workbench there a terminal profile that cannot start.
-		expect(windowTerminalEnvironment(await b.terminalLauncher(spec))).toEqual({
-			DEVHUB_TERMINAL: "/home/there/.devhub/devhub-terminal",
-		});
+		expect(windowTerminalLauncher(await b.terminalLauncher(spec))).toBe(
+			"/home/there/.devhub/devhub-terminal",
+		);
 	});
 
-	it("says 'none' out loud when the launcher cannot reach DevHub", () => {
-		// Empty rather than absent. Absent was the bug: the renderer inherits
-		// this process's environment before `userEnv` is merged over it, so a
-		// window that contributed nothing kept whatever was already there — and
-		// a window on a host kept this Mac's launcher, which that host has never
-		// heard of. The patched workbench reads `|| undefined`, so empty is the
-		// same "no launcher" it refuses to invent one for, and it is an answer
-		// nothing else can overwrite.
+	it("says 'none' when the launcher cannot reach DevHub", () => {
 		expect(
-			windowTerminalEnvironment({
+			windowTerminalLauncher({
 				path: "/home/there/.devhub/devhub-terminal",
 				unreachable: "the control socket could not be forwarded",
 			}),
-		).toEqual({ DEVHUB_TERMINAL: "" });
+		).toBeUndefined();
 	});
 
-	it("never lets one machine's launcher be the answer for another", () => {
+	it("never lets one machine's launcher be the answer for another", async () => {
 		// The whole point, as one assertion: two machines, two launchers, and
 		// no way for the second window to end up holding the first's path —
-		// including when the second machine has none, which is the case that
-		// used to fall through to whatever DevHub's own process carried.
+		// including when the second machine has none.
 		const { a, b } = machines();
-		const spec: TerminalLauncherSpec = {
-			localLauncherPath: "/here/devhub-terminal",
-			controlSocketPath: "/here/control.sock",
-			entryText: "export const nothing = 1;\n",
-			entryName: "devhub-terminal.bundle.js",
-			serverDataFolderName: ".devhub-server",
-			serverCommit: "abc123",
-		};
-		return Promise.all([
+		const [here, there] = await Promise.all([
 			a.terminalLauncher(spec),
 			b.terminalLauncher(spec),
-		]).then(([here, there]) => {
-			const forA = windowTerminalEnvironment(here);
-			const forB = windowTerminalEnvironment({
-				...there,
-				unreachable: "no route to host",
-			});
-			expect(forA["DEVHUB_TERMINAL"]).toBe(here.path);
-			expect(forB["DEVHUB_TERMINAL"]).toBe("");
-			expect(forB["DEVHUB_TERMINAL"]).not.toBe(here.path);
-		});
+		]);
+		expect(windowTerminalLauncher(here)).toBe(here.path);
+		expect(
+			windowTerminalLauncher({ ...there, unreachable: "no route to host" }),
+		).toBeUndefined();
 	});
 });
 

@@ -212,62 +212,33 @@ export function launchEnvironment(
 }
 
 /**
- * The name a DevHub-hosted workbench reads its terminal launcher from.
- *
- * `DEVHUB_*` is a family a terminal must never inherit, and `withoutDevHubRuntime`
- * already takes the whole family out of every child DevHub spawns itself. This
- * one goes the other way: it is written into DevHub's *own* process, before any
- * window exists, so that the workbench windows, the extension host and the pty
- * host — all of which descend from `process.env` and none of which DevHub hands
- * an environment to — read it. The patched `TerminalProfileService` reads it
- * synchronously in its constructor and makes it the terminal, which is why it is
- * an environment variable rather than a setting: a setting is a suggestion the
- * person's dotfiles tool can rewrite, and this is not one. See
- * `patches/vscode/0003-devhub-terminal-is-the-terminal.patch`.
- *
- * It is also the answer *per window*, which is what a window on another machine
- * needs. A renderer's environment is not this process's: `preload.ts` assigns
- * the window configuration's `userEnv` over `process.env` before the workbench
- * modules are imported, and that `userEnv` is whatever the `open` call passed.
- * So a window on a host is opened with this name set to the launcher written
- * *there* (`Runtime.terminalLauncher`), and the patch reads one variable and
- * still gets one answer per window.
- */
-export const DEVHUB_TERMINAL = "DEVHUB_TERMINAL";
-
-/**
  * What one window is told its DevHub terminal is.
  *
  * Per window, because a workbench's integrated terminal runs where its pty
- * host runs: a window on a host must name the launcher written *there*. The
- * renderer's environment is the window configuration's `userEnv`, so one entry
- * here is one answer per window and the patch still reads one variable.
+ * host runs: a window on a host must name the launcher written *there*, and
+ * naming this Mac's would be a path that machine has never heard of.
  *
- * **Always an entry, even when there is no launcher.** A renderer's environment
- * does not start empty: Electron gives it this process's, VS Code's preload
- * then does `Object.assign(process.env, userEnv)`, and this process's
- * environment is one DevHub does not fully own — the login shell import
- * (`importLoginEnvironment`) copies in whatever the person's dotfiles export,
- * `DEVHUB_TERMINAL` included. So a window that contributed *nothing* did not
- * get silence, it got whatever was already there: a window on a host inherited
- * this Mac's launcher, a path that machine has never heard of, and the
- * workbench over there fell back to `/bin/sh` while saying so only in a log
- * nobody had open.
+ * It travels as a field of the window configuration
+ * (`INativeWindowConfiguration.devhubTerminalLauncher`), which the patched
+ * `platform.ts` reads. It used to travel as a `DEVHUB_TERMINAL` entry in
+ * `userEnv`, and it never arrived: VS Code's preload does
+ * `Object.assign(process.env, userEnv)`, but the `process` a sandboxed
+ * renderer's preload sees materialises `env` from a snapshot, so the
+ * assignment landed on a copy and every window read null while its own
+ * configuration held the right path. One channel now, and it is the one that
+ * carries per-window facts already.
  *
- * Empty is therefore the way "this machine has no DevHub terminal" is said out
- * loud. The patched `platform.ts` reads `env['DEVHUB_TERMINAL'] || undefined`,
- * so an empty value is the same "no launcher" the patch already refuses to
- * invent one for — and unlike an absent name, it cannot be answered by
- * something else. One entry, always written, is what makes the answer this
- * window's and only this window's.
+ * `undefined` is how "this machine has no DevHub terminal" is said: the patch
+ * refuses to invent a launcher for it, and the person is told separately —
+ * see `AppController.windowTerminalLauncher`.
  */
-export function windowTerminalEnvironment(
+export function windowTerminalLauncher(
 	launcher: TerminalLauncher | undefined,
-): Record<string, string> {
+): string | undefined {
 	if (launcher === undefined || launcher.unreachable !== undefined) {
-		return { [DEVHUB_TERMINAL]: "" };
+		return undefined;
 	}
-	return { [DEVHUB_TERMINAL]: launcher.path };
+	return launcher.path;
 }
 
 /**

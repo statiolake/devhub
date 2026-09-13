@@ -1,8 +1,8 @@
 diff --git a/src/vs/base/common/platform.ts b/src/vs/base/common/platform.ts
-index d2072dea83c..e2ae5e1a646 100644
+index d2072dea83c..7cb61dae4c8 100644
 --- a/src/vs/base/common/platform.ts
 +++ b/src/vs/base/common/platform.ts
-@@ -60,6 +60,18 @@ if (typeof $globalThis.vscode !== 'undefined' && typeof $globalThis.vscode.proce
+@@ -60,6 +60,34 @@ if (typeof $globalThis.vscode !== 'undefined' && typeof $globalThis.vscode.proce
  	nodeProcess = process;
  }
  
@@ -10,17 +10,135 @@ index d2072dea83c..e2ae5e1a646 100644
 +// undefined in a workbench nothing hosts.
 +//
 +// DevHub hosts this workbench, and its terminal is the tmux session DevHub
-+// owns — not a shell the workbench chooses. DevHub puts the launcher's
-+// absolute path in its own environment before it creates a window, so every
-+// process descending from it reads the same answer. It is read here, beside
-+// the other facts about the process this code is running in, because the
-+// terminal profile service needs it synchronously in its constructor, before
-+// any configuration has been read or any shell detected.
-+export const devhubTerminalLauncher: string | undefined = nodeProcess?.env['DEVHUB_TERMINAL'] || undefined;
++// owns — not a shell the workbench chooses. It is per window, because a window
++// on a host must run the launcher written *there*, so DevHub names it on the
++// window configuration it opens the window with.
++//
++// From the *configuration*, not from `nodeProcess.env`. `preload.ts` does
++// `Object.assign(process.env, resolvedConfiguration.userEnv)`, but the
++// `process` a sandboxed renderer's preload sees materialises `env` from a
++// snapshot, so that assignment lands on a copy nothing reads back — every
++// window's `vscode.process.env['DEVHUB_TERMINAL']` was null while its
++// configuration held the right path. Nothing upstream noticed because nothing
++// upstream reads `userEnv` out of the renderer's environment. The window
++// configuration is the channel that actually carries a per-window fact, so it
++// is the only one DevHub uses.
++//
++// Read here, beside the other facts about the process this code is running in,
++// because the terminal profile service needs it synchronously in its
++// constructor, before any configuration has been read or any shell detected.
++// It is populated by then: the renderer awaits `resolveConfiguration()` before
++// it imports the workbench (`workbench.ts`, `load`), so the object this reads
++// exists before this module is evaluated.
++export const devhubTerminalLauncher: string | undefined = (typeof $globalThis.vscode !== 'undefined' && typeof $globalThis.vscode.context !== 'undefined'
++	? ($globalThis.vscode.context.configuration() as { devhubTerminalLauncher?: string } | undefined)?.devhubTerminalLauncher
++	: undefined) || undefined;
 +
  const isElectronProcess = typeof nodeProcess?.versions?.electron === 'string';
  const isElectronRenderer = isElectronProcess && nodeProcess?.type === 'renderer';
  
+diff --git a/src/vs/platform/window/common/window.ts b/src/vs/platform/window/common/window.ts
+index d073d011d56..4c1af75f15f 100644
+--- a/src/vs/platform/window/common/window.ts
++++ b/src/vs/platform/window/common/window.ts
+@@ -460,6 +460,19 @@ export interface INativeWindowConfiguration extends IWindowConfiguration, Native
+ 	mainPid: number;
+ 	handle?: VSBuffer;
+ 
++	/**
++	 * DevHub: the `devhub-terminal` this window's integrated terminal runs.
++	 *
++	 * A first-class field rather than an entry in `userEnv`, because it is a
++	 * per-window fact the renderer has to read synchronously and `userEnv` is
++	 * not a channel that delivers one: the preload's
++	 * `Object.assign(process.env, userEnv)` lands on a copy of the sandboxed
++	 * renderer's environment snapshot, so the value never reaches
++	 * `vscode.process.env`. Read by `devhubTerminalLauncher` in
++	 * `base/common/platform.ts`; absent in a window nothing hosts.
++	 */
++	devhubTerminalLauncher?: string;
++
+ 	machineId: string;
+ 	sqmId: string;
+ 	devDeviceId: string;
+diff --git a/src/vs/platform/windows/electron-main/windows.ts b/src/vs/platform/windows/electron-main/windows.ts
+index 7c4f02efdfa..66ac1c16cf5 100644
+--- a/src/vs/platform/windows/electron-main/windows.ts
++++ b/src/vs/platform/windows/electron-main/windows.ts
+@@ -94,6 +94,12 @@ export interface IBaseOpenConfiguration {
+ export interface IOpenConfiguration extends IBaseOpenConfiguration {
+ 	readonly cli: NativeParsedArgs;
+ 	readonly userEnv?: IProcessEnvironment;
++	/**
++	 * DevHub: the `devhub-terminal` the opened window's terminal runs.
++	 * Travels exactly where `userEnv` travels; see
++	 * `INativeWindowConfiguration.devhubTerminalLauncher`.
++	 */
++	readonly devhubTerminalLauncher?: string;
+ 	readonly urisToOpen?: IWindowOpenable[];
+ 	readonly waitMarkerFileURI?: URI;
+ 	readonly preferNewWindow?: boolean;
+diff --git a/src/vs/platform/windows/electron-main/windowsMainService.ts b/src/vs/platform/windows/electron-main/windowsMainService.ts
+index d8428b529b2..aae40c023ee 100644
+--- a/src/vs/platform/windows/electron-main/windowsMainService.ts
++++ b/src/vs/platform/windows/electron-main/windowsMainService.ts
+@@ -66,6 +66,8 @@ type RestoreWindowsSetting = 'preserve' | 'all' | 'folders' | 'one' | 'none';
+ 
+ interface IOpenBrowserWindowOptions {
+ 	readonly userEnv?: IProcessEnvironment;
++	/** DevHub: see `INativeWindowConfiguration.devhubTerminalLauncher`. */
++	readonly devhubTerminalLauncher?: string;
+ 	readonly cli?: NativeParsedArgs;
+ 
+ 	readonly workspace?: IWorkspaceIdentifier | ISingleFolderWorkspaceIdentifier;
+@@ -326,6 +328,7 @@ export class WindowsMainService extends Disposable implements IWindowsMainServic
+ 		return {
+ 			urisToOpen: [{ workspaceUri: agentSessionsWorkspaceUri }],
+ 			userEnv: openConfig.userEnv,
++			devhubTerminalLauncher: openConfig.devhubTerminalLauncher,
+ 			cli: openConfig.cli,
+ 			noRecentEntry: true,
+ 			context: openConfig.context,
+@@ -625,6 +628,7 @@ export class WindowsMainService extends Disposable implements IWindowsMainServic
+ 			else {
+ 				addUsedWindow(await this.openInBrowserWindow({
+ 					userEnv: openConfig.userEnv,
++			devhubTerminalLauncher: openConfig.devhubTerminalLauncher,
+ 					cli: openConfig.cli,
+ 					initialStartup: openConfig.initialStartup,
+ 					filesToOpen,
+@@ -787,6 +791,7 @@ export class WindowsMainService extends Disposable implements IWindowsMainServic
+ 
+ 		return this.openInBrowserWindow({
+ 			userEnv: openConfig.userEnv,
++			devhubTerminalLauncher: openConfig.devhubTerminalLauncher,
+ 			cli: openConfig.cli,
+ 			initialStartup: openConfig.initialStartup,
+ 			remoteAuthority,
+@@ -812,6 +817,7 @@ export class WindowsMainService extends Disposable implements IWindowsMainServic
+ 		return this.openInBrowserWindow({
+ 			workspace: folderOrWorkspace.workspace,
+ 			userEnv: openConfig.userEnv,
++			devhubTerminalLauncher: openConfig.devhubTerminalLauncher,
+ 			cli: openConfig.cli,
+ 			initialStartup: openConfig.initialStartup,
+ 			remoteAuthority: folderOrWorkspace.remoteAuthority,
+@@ -1500,6 +1506,7 @@ export class WindowsMainService extends Disposable implements IWindowsMainServic
+ 			forceNewWindow: true,
+ 			forceEmpty: !cliArgs.length && !folderUris.length && !fileUris.length,
+ 			userEnv: openConfig.userEnv,
++			devhubTerminalLauncher: openConfig.devhubTerminalLauncher,
+ 			noRecentEntry: true,
+ 			waitMarkerFileURI: openConfig.waitMarkerFileURI,
+ 			remoteAuthority,
+@@ -1568,6 +1575,7 @@ export class WindowsMainService extends Disposable implements IWindowsMainServic
+ 			remoteAuthority: options.remoteAuthority,
+ 			workspace: options.workspace,
+ 			userEnv: { ...this.initialUserEnv, ...options.userEnv },
++			devhubTerminalLauncher: options.devhubTerminalLauncher,
+ 
+ 			nls: {
+ 				messages: getNLSMessages(),
 diff --git a/src/vs/workbench/contrib/terminal/browser/terminalConfigurationService.ts b/src/vs/workbench/contrib/terminal/browser/terminalConfigurationService.ts
 index 385e1b055d1..28cb1d99d5c 100644
 --- a/src/vs/workbench/contrib/terminal/browser/terminalConfigurationService.ts

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
 	adoptLoginEnvironment,
-	windowTerminalEnvironment,
+	windowTerminalLauncher,
 	launchEnvironment,
 	loginEnvironmentSummary,
 	resolveLoginEnvironment,
@@ -278,53 +278,35 @@ describe("launchEnvironment", () => {
 });
 
 describe("what one window is told its DevHub terminal is", () => {
-	// Always an entry, never a gap. VS Code's preload merges `userEnv` over an
-	// environment the window already inherited from this process, and this
-	// process's environment is not one DevHub fully owns — the login shell
-	// import copies in whatever the person's dotfiles export. A window that
-	// said nothing therefore did not get silence, it got whatever was already
-	// there, which for a window on a host was this Mac's launcher.
+	// One answer per window, and it travels as a field of the window
+	// configuration. It used to travel as a `DEVHUB_TERMINAL` entry in
+	// `userEnv` and never arrived — VS Code's preload assigns `userEnv` onto a
+	// copy of the sandboxed renderer's environment snapshot, so every window
+	// read null while its own configuration held the right path.
 	it("names the launcher of the machine that window is on", () => {
 		expect(
-			windowTerminalEnvironment({
+			windowTerminalLauncher({
 				path: "/home/there/.devhub/terminal/devhub-terminal",
 				unreachable: undefined,
 			}),
-		).toEqual({
-			DEVHUB_TERMINAL: "/home/there/.devhub/terminal/devhub-terminal",
-		});
+		).toBe("/home/there/.devhub/terminal/devhub-terminal");
 	});
 
-	it("says 'none' out loud when the launcher cannot reach DevHub", () => {
-		// Empty rather than absent: the patched `platform.ts` reads
-		// `env['DEVHUB_TERMINAL'] || undefined`, so an empty value is the same
-		// "no launcher" it already refuses to invent one for — and unlike an
-		// absent name, nothing else can answer for it.
+	it("says 'none' when the launcher cannot reach DevHub", () => {
+		// Undefined, and undefined is safe here in a way it was not in an
+		// environment: a field the window is not given is a field nothing else
+		// can have already answered, so there is no inherited path to fall
+		// back onto.
 		expect(
-			windowTerminalEnvironment({
+			windowTerminalLauncher({
 				path: "/home/there/.devhub/terminal/devhub-terminal",
 				unreachable: "the control socket could not be forwarded",
 			}),
-		).toEqual({ DEVHUB_TERMINAL: "" });
-	});
-
-	it("says 'none' out loud when there is no launcher at all", () => {
-		expect(windowTerminalEnvironment(undefined)).toEqual({
-			DEVHUB_TERMINAL: "",
-		});
-	});
-
-	// And it is still DEVHUB_*, so no shell a person types into inherits it.
-	it("is taken back out of every child DevHub spawns itself", () => {
-		expect(
-			launchEnvironment({
-				PATH: LAUNCHD_PATH,
-				...windowTerminalEnvironment({
-					path: "/data/devhub/devhub-terminal",
-					unreachable: undefined,
-				}),
-			})["DEVHUB_TERMINAL"],
 		).toBeUndefined();
+	});
+
+	it("says 'none' when there is no launcher at all", () => {
+		expect(windowTerminalLauncher(undefined)).toBeUndefined();
 	});
 });
 

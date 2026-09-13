@@ -122,7 +122,7 @@ export async function bootstrapShell(
 	// could not be named. One question with two answerers is the bug, so there
 	// is now one answerer: `AppController.openEditorView` tells each window
 	// which launcher is its own, and a window it cannot tell is told so
-	// explicitly. See `loginEnvironment.windowTerminalEnvironment`.
+	// explicitly. See `loginEnvironment.windowTerminalLauncher`.
 	installTerminalLauncher(terminalLauncherPath(userDataPath), {
 		// The binary running this process is the app's own Electron, in a
 		// checkout and in a bundle alike — the same fact the `devhub` CLI's

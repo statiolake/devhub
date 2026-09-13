@@ -418,37 +418,36 @@ of the window and wrong for the rest.
 
 ### How the window learns its launcher
 
-The patched `TerminalProfileService` reads `DEVHUB_TERMINAL` from the
-renderer's environment, and a renderer's environment is per window:
-`preload.ts` does `Object.assign(process.env, configuration.userEnv)` before
-the workbench modules are imported, and `userEnv` is
-`{ ...initialUserEnv, ...options.userEnv }` from the `IWindowsMainService.open`
-call. So DevHub passes `userEnv: { DEVHUB_TERMINAL: <that machine's launcher> }`
-when it opens the window (`appController.openEditorView`), and
-`patches/vscode/0003-…` needs no change at all — which is why it has none.
+The launcher is a **field of the window configuration**:
+`INativeWindowConfiguration.devhubTerminalLauncher`, set per window by
+`appController.openEditorView` through `IWindowsMainService.open`, threaded
+through `windowsMainService` exactly where `userEnv` is threaded, and read by
+the patched `platform.ts` from `window.vscode.context.configuration()`. The
+renderer awaits `resolveConfiguration()` before it imports the workbench
+(`workbench.ts`, `load`), so the value exists before `platform.ts` is
+evaluated, which is what lets `TerminalProfileService` answer it synchronously
+in its constructor.
 
-**The value is always written, empty when the machine has no launcher.** That
-`Object.assign` is a merge *over* an environment the renderer already inherited
-from DevHub's own process, and that process's environment is not one DevHub
-fully owns: the login shell import copies in whatever the person's dotfiles
-export. A window that contributed nothing therefore did not get silence, it got
-whatever was already there — and an ssh window got this Mac's launcher, a path
-the host has never heard of, so the workbench over there logged
-`resolved shell "…" does not exist, falling back to "/bin/sh"` and opened a bare
-shell. `DEVHUB_TERMINAL=` is how "this machine has none" is said out loud;
-`platform.ts` reads `env['DEVHUB_TERMINAL'] || undefined`, so an empty value is
-the same "no launcher" it already refuses to invent one for, and unlike an
-absent name nothing else can answer for it.
+**It used to be an environment variable, and it never arrived.** `preload.ts`
+does `Object.assign(process.env, configuration.userEnv)`, which reads like the
+window's environment getting `userEnv` merged into it — but the `process` a
+sandboxed renderer's preload sees materialises `env` from a snapshot, so that
+assignment lands on a copy nothing reads back. Measured on a packaged run:
+`configuration.userEnv.DEVHUB_TERMINAL` held the right per-machine path in both
+windows and `vscode.process.env.DEVHUB_TERMINAL` was `null` in both, so every
+integrated terminal fell back to a bare shell. Nothing upstream notices,
+because nothing upstream reads `userEnv` back out of the renderer's
+environment.
 
-For the same reason `bootstrapShell` no longer exports the local launcher into
-`process.env`. One question — which `devhub-terminal` does this window run —
-now has exactly one answerer, and a window that was not told has none.
-
-A machine whose launcher could not be installed contributes no variable rather
-than a path that would not work. That is not a silence: the absent variable is
-exactly what makes the patched profile service refuse to invent a terminal, the
-reason is on DevHub's log, and the launcher run over there says the same thing
-in the terminal tab.
+There is therefore **one channel**, and `DEVHUB_TERMINAL` no longer exists:
+`bootstrapShell` does not export it, `loginEnvironment` does not compose it,
+and a window that was not told has no launcher. Undefined is safe as the "this
+machine has none" answer in a way an absent environment variable was not — a
+configuration field nobody set cannot have been answered by something the
+process inherited, so there is no path for one machine's launcher to become
+another's. The patched profile service refuses to invent one, the reason is on
+DevHub's log and in `devhub --metrics`, and the person gets the app's own
+alert.
 
 **A task is not a terminal.** The launcher is what a *person* opens — one tmux
 session, kept, with its history. A task, a debug console and anything else the

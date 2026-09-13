@@ -1,5 +1,5 @@
 diff --git a/src/vs/platform/windows/electron-main/windowImpl.ts b/src/vs/platform/windows/electron-main/windowImpl.ts
-index 94aee9da976..65bdf6c7515 100644
+index 94aee9da976..d22cd862501 100644
 --- a/src/vs/platform/windows/electron-main/windowImpl.ts
 +++ b/src/vs/platform/windows/electron-main/windowImpl.ts
 @@ -772,7 +772,15 @@ export class CodeWindow extends BaseWindow implements ICodeWindow {
@@ -19,3 +19,15 @@ index 94aee9da976..65bdf6c7515 100644
  			mark('code/didCreateCodeBrowserWindow');
  
  			this._id = this._win.id;
+@@ -1117,6 +1125,11 @@ export class CodeWindow extends BaseWindow implements ICodeWindow {
+ 				const window = (await this.windowsMainService.open({
+ 					context: OpenContext.API,
+ 					userEnv: this._config.userEnv,
++					// DevHub: a window that is reopened after its renderer died is
++					// the same window on the same machine, so it runs the same
++					// `devhub-terminal`. Without this it would come back with a
++					// bare shell and nothing saying why.
++					devhubTerminalLauncher: this._config.devhubTerminalLauncher,
+ 					cli: {
+ 						...this.environmentMainService.args,
+ 						_: [] // we pass in the workspace to open explicitly via `urisToOpen`
