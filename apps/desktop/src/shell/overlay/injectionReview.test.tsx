@@ -176,6 +176,39 @@ describe("reviewing what DevHub is about to say", () => {
     ).toBeVisible();
   });
 
+  /**
+   * The keyboard is in the field, not in the field's general direction.
+   *
+   * Reported as "I have to click into the textarea first". Half of it was main
+   * handing the modal layer the keyboard only on the pass where it arrived
+   * (`modalKeyboard.test.ts`); the other half is here — the sheet's own field
+   * has to be what holds it, including on the render where the field first
+   * exists rather than only on the mount, and again if the page is handed the
+   * keyboard back with nothing in it focused.
+   */
+  it("puts the caret in the message, at the end of the template", () => {
+    mount(snapshotWith("running"));
+    const field = screen.getByLabelText(
+      "Message to send",
+    ) as HTMLTextAreaElement;
+    expect(document.activeElement).toBe(field);
+    expect(field.selectionStart).toBe(TEMPLATE.length);
+    expect(field.selectionEnd).toBe(TEMPLATE.length);
+  });
+
+  it("takes the field back when the page is given the keyboard with nothing in it", () => {
+    mount(snapshotWith("running"));
+    const field = screen.getByLabelText("Message to send");
+
+    // What switching away from DevHub and back leaves behind: the page has the
+    // keyboard again and nothing inside it is focused.
+    (document.activeElement as HTMLElement | null)?.blur();
+    expect(document.activeElement).toBe(document.body);
+    fireEvent.focus(window);
+
+    expect(document.activeElement).toBe(field);
+  });
+
   it("sends what the person left in the field, not what was rendered", async () => {
     const applied = snapshotWith("running");
     const confirmInjection = vi.fn(

@@ -80,6 +80,7 @@ import {
 import { createPortal } from "react-dom";
 import { score } from "../../../model/fuzzy";
 import { isImeComposing } from "../../accessibility/ime";
+import { useInitialFocus } from "../../accessibility/initialFocus";
 
 /** One row: what is drawn, and what the query is matched against. */
 export interface PickerItem {
@@ -246,9 +247,30 @@ export function Picker({
   const headingId = useId();
   const questionId = useId();
   const composing = useRef(false);
-  const input = useRef<HTMLInputElement | null>(null);
-  const listRef = useRef<HTMLUListElement | null>(null);
   const restoreTo = useRef<HTMLElement | null>(null);
+
+  // Where the keyboard was before this sheet, recorded before anything here
+  // moves it — which is why it is its own effect, declared above the one that
+  // does the moving. Effects run in the order they are written.
+  useEffect(() => {
+    restoreTo.current = document.activeElement as HTMLElement | null;
+  }, []);
+
+  /**
+   * The field, focused for as long as this sheet stands.
+   *
+   * The shared rule rather than a mount effect of this control's own: a picker
+   * drawn as a second sheet over a first, or one standing when DevHub is
+   * switched away from and back, is exactly where a once-only `focus()` leaves
+   * a sheet nothing can be typed into. A starting value is a prefix to be typed
+   * on, not a selection to be replaced, so the caret goes after it.
+   */
+  const input = useInitialFocus<HTMLInputElement>((element) => {
+    if (initialQuery.length > 0) {
+      element.setSelectionRange(initialQuery.length, initialQuery.length);
+    }
+  });
+  const listRef = useRef<HTMLUListElement | null>(null);
 
   const ranked = useMemo(() => {
     const scored = items.flatMap((item) => {
@@ -292,22 +314,26 @@ export function Picker({
   const focusField = useCallback(() => {
     const field = input.current;
     if (field && document.activeElement !== field) field.focus();
-  }, []);
+  }, [input]);
 
-  useEffect(() => {
-    restoreTo.current = document.activeElement as HTMLElement | null;
-    focusField();
-    // A starting value is a prefix to be typed on, not a selection to be
-    // replaced: the caret goes after it.
-    const field = input.current;
-    if (field && initialQuery.length > 0) {
-      field.setSelectionRange(initialQuery.length, initialQuery.length);
-    }
-    return () => {
+  useEffect(
+    () => () => {
+      // Going away, the keyboard goes back where it was — unless something
+      // else has taken it in the meantime. A sheet that opened over this one
+      // is holding it on purpose, and handing it back to what this one
+      // interrupted would put the caret behind the sheet the person is now
+      // looking at. Measured in the Issue flow, where the review sheet opens
+      // while the wizard is still up and the wizard closes a moment later.
       const target = restoreTo.current;
-      if (target?.isConnected) target.focus();
-    };
-  }, [focusField, initialQuery]);
+      if (!target?.isConnected) return;
+      const active = document.activeElement;
+      const ours =
+        active === null || active === document.body || active === input.current;
+      if (!ours) return;
+      target.focus();
+    },
+    [input],
+  );
 
   // There is deliberately no "take the keyboard back whenever this window is
   // focused" rule here. It was written, and it made the app unusable: every

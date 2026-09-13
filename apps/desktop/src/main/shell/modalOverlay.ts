@@ -241,8 +241,31 @@ export class ModalOverlay {
 		// took the clicks over the content area, which is a picker that cannot
 		// be used and an editor that looks like it activates itself.
 		this.host.window.contentView.addChildView(view);
-		if (!this.present) {
-			this.present = true;
+		this.present = true;
+		// The keyboard is placed *after* the view is attached, and on every
+		// pass rather than only on the one where the layer arrived.
+		//
+		// It used to be only that one, and whether a sheet could be typed into
+		// was decided by whether the window happened to be key at that single
+		// instant: `placeKeyboardIn` declines outright while anything else is
+		// in front, and nothing asked again. Measured on an isolated instance
+		// (`webContents.isFocused()` in main, `document.hasFocus()` in the
+		// overlay page):
+		//
+		// - a sheet opened while DevHub was not the front app never received
+		//   the keyboard at all — `focusModal` was called and declined;
+		// - a sheet standing when DevHub was switched away from and back got
+		//   the keyboard given to the *App Shell page* instead, because the
+		//   window's `focus` event asks `focusSurface`, which stands aside for
+		//   a modal (`placeTheKeyboard`) rather than serving one.
+		//
+		// Both are the same missing sentence, so it is said once here as a
+		// state rather than as an event: while this layer stands, this layer
+		// has the keyboard, and any pass that finds it elsewhere puts it back.
+		// Asking first is what keeps that idempotent — re-adding a child view
+		// does not disturb focus (measured), so a pass that changes nothing
+		// moves nothing.
+		if (!view.webContents.isFocused()) {
 			this.host.focusModal(view.webContents);
 		}
 		this.publish(modals);

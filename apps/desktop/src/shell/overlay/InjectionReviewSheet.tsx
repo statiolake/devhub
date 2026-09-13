@@ -20,9 +20,10 @@
  * are looking at to know what the keys do.
  */
 
-import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { useCallback, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { isImeComposing } from "../accessibility/ime";
+import { useInitialFocus } from "../accessibility/initialFocus";
 import { useAppShell } from "../useAppShell";
 
 export interface InjectionReviewSheetProps {
@@ -44,7 +45,13 @@ export function InjectionReviewSheet({
   const [value, setValue] = useState(text);
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string>();
-  const field = useRef<HTMLTextAreaElement>(null);
+  /**
+   * The caret at the end rather than the whole template selected: this is a
+   * sentence to amend, not a name to type over.
+   */
+  const field = useInitialFocus<HTMLTextAreaElement>((element) => {
+    element.setSelectionRange(element.value.length, element.value.length);
+  });
   const composing = useRef(false);
   const headingId = useId();
   const questionId = useId();
@@ -79,14 +86,6 @@ export function InjectionReviewSheet({
         ? "That agent has ended, so this message cannot be sent."
         : "That agent is no longer running, so this message cannot be sent."
       : undefined;
-
-  useEffect(() => {
-    field.current?.focus();
-    // The caret at the end rather than the whole template selected: this is a
-    // sentence to amend, not a name to type over.
-    const length = field.current?.value.length ?? 0;
-    field.current?.setSelectionRange(length, length);
-  }, []);
 
   const send = useCallback(async () => {
     if (busy || gone !== undefined || value.trim().length === 0) return;

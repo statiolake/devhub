@@ -13,8 +13,8 @@
  * close.
  */
 
-import { useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
+import { useInitialFocus } from "../accessibility/initialFocus";
 import type { ChordHelpRowWire } from "../../ipc/contract";
 
 export interface ChordHelpSheetProps {
@@ -23,14 +23,10 @@ export interface ChordHelpSheetProps {
 }
 
 export function ChordHelpSheet({ rows, onDismiss }: ChordHelpSheetProps) {
-  const sheet = useRef<HTMLDivElement>(null);
-
   // The sheet takes the keyboard so that Escape reaches it. Nothing else on
   // this layer is focusable while it stands, so there is nowhere for a key to
   // go that is not here.
-  useEffect(() => {
-    sheet.current?.focus();
-  }, []);
+  const sheet = useInitialFocus<HTMLDivElement>();
 
   return createPortal(
     <div className="mac-scrim mac" role="presentation">
