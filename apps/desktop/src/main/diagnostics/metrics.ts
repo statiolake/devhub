@@ -108,6 +108,16 @@ export interface MetricsReport {
 	 * asked for is simply absent, which is a different answer from failed.
 	 */
 	readonly terminalLauncher: readonly TerminalLauncherStatus[];
+	/**
+	 * Machines DevHub still owes a session sweep.
+	 *
+	 * A machine that did not answer when its stray sessions were to be closed
+	 * stays here until one does — DevHub asks it again the moment a runtime for
+	 * it connects. Empty is the normal reading. A name that stays in it across
+	 * readings is a host DevHub cannot reach with sessions of its own still
+	 * running over there, which is otherwise a fact with nowhere to be seen.
+	 */
+	readonly pendingSweeps: readonly RuntimeId[];
 }
 
 /** One machine's answer to "is there a `devhub-terminal` on it". */
@@ -162,6 +172,7 @@ export interface MetricsInput {
 	readonly terminalClients: readonly TerminalClientReading[];
 	readonly runtimes: readonly RuntimeReading[];
 	readonly terminalLauncher: readonly TerminalLauncherStatus[];
+	readonly pendingSweeps: readonly RuntimeId[];
 	/** Reconcile rounds in the last minute, by machine. See `rounds.ts`. */
 	readonly roundsLastMinute: (id: RuntimeId) => number;
 }
@@ -206,6 +217,7 @@ export function metricsReport(input: MetricsInput): MetricsReport {
 		counters: input.counters,
 		terminalClients: input.terminalClients,
 		terminalLauncher: input.terminalLauncher,
+		pendingSweeps: input.pendingSweeps,
 		runtimes: input.runtimes.map((runtime) => {
 			const roundsPerMin = input.roundsLastMinute(runtime.id);
 			return {

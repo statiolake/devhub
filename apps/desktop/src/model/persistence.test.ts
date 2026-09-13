@@ -836,6 +836,50 @@ describe("a Workspace's place across a restart", () => {
     removeScratchDir(directory);
   });
 
+  /**
+   * Version 6's whole story is one absent key, run the other way.
+   *
+   * A version-5 file has no `session_machines`, and the empty list is not a
+   * gap: the sweep asks the persisted set *and* every machine a Workspace is
+   * on, so a v5 file's machines are exactly the ones its Workspaces name. The
+   * bump is for the other direction — a version-5 build would drop the list on
+   * its next save, and the machines in it would stop being swept.
+   */
+  it("loads a version-5 file with no machines remembered, and writes them back", async () => {
+    const state = freshState();
+    state.schema_version = 5;
+    state.workspaces = [
+      {
+        workspace_id: WS_A,
+        selected_path: "/srv/api",
+        canonical_path: "/srv/api",
+        location: { kind: "ssh", host: "build.example.com" },
+        lifecycle: { kind: "available" },
+        agents: [],
+      },
+    ];
+    const directory = makeScratchDir("state");
+    const path = join(directory, "state.json");
+    const document = JSON.parse(JSON.stringify(state)) as Record<
+      string,
+      unknown
+    >;
+    delete document["session_machines"];
+    await writeFile(path, JSON.stringify(document), { mode: 0o600 });
+
+    const store = new JsonStateStore(path);
+    const load = await store.loadState();
+    expect(load.state.schema_version).toBe(STATE_SCHEMA_VERSION);
+    expect(load.state.session_machines).toEqual([]);
+
+    // And the key is a plain list of machine ids once something writes one.
+    load.state.session_machines = ["ssh:build.example.com"];
+    await store.saveState(load.state);
+    const again = await new JsonStateStore(path).loadState();
+    expect(again.state.session_machines).toEqual(["ssh:build.example.com"]);
+    removeScratchDir(directory);
+  });
+
   it("refuses a host that could not survive being a URI authority", () => {
     const state = freshState();
     state.workspaces = [

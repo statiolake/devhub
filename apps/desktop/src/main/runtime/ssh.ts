@@ -51,6 +51,7 @@ import {
 	terminalLauncherScript,
 } from "../terminal/launcher.js";
 import { remoteReconcileIntervalMs } from "./cadence.js";
+import { runtimeConnected } from "./connectivity.js";
 import type { SettingsResolvedRuntimeWire } from "../../ipc/settings.js";
 import { gitDirectoryOf } from "./gitDirectory.js";
 import { shellQuote } from "./quote.js";
@@ -914,7 +915,7 @@ export class SshRuntime implements Runtime {
 			this.#lastFailure = refused.message;
 			throw refused;
 		}
-		this.#connected = true;
+		this.#markConnected();
 		// A program that is not there is `ENOENT` locally and a marker here; both
 		// arrive at the caller as `unavailable`, which is the point of having a
 		// contract rather than two runtimes that mostly agree.
@@ -1600,6 +1601,21 @@ export class SshRuntime implements Runtime {
 	 * minutes. No master is not a failure — it is the state this call exists to
 	 * reach — so only a master that refused to exit is reported.
 	 */
+	/**
+	 * The host answered, and says so once when that is a change.
+	 *
+	 * Only on the transition. Work that waited for this machine — the sweep of
+	 * the sessions DevHub owns on it, above all — has to run when it comes
+	 * back and exactly then: announced on every successful command it would
+	 * run once per exec, and announced not at all, a host that was away at
+	 * startup would not be asked again until the next launch.
+	 */
+	#markConnected(): void {
+		const was = this.#connected;
+		this.#connected = true;
+		if (!was) runtimeConnected(this.id);
+	}
+
 	async dispose(): Promise<void> {
 		this.#connected = false;
 		this.#masterPid = undefined;

@@ -224,6 +224,8 @@ import {
 	type LoginEnvironment,
 } from "./loginEnvironment.js";
 import type { AgentSessions } from "../agent/sessions.js";
+import { onRuntimeConnected } from "../runtime/connectivity.js";
+import { SessionSweeper } from "./sessionSweep.js";
 import {
 	collectParentDirectories,
 	startWorkspacePicker,
@@ -422,6 +424,9 @@ export class AppController {
 		TerminalLauncherStatus
 	>();
 	private agentSessions: AgentSessions | undefined;
+	/** The sweep of DevHub's own stray sessions, and the machines it owes. */
+	private sessionSweeper: SessionSweeper | undefined;
+	private stopHearingReconnections: (() => void) | undefined;
 	/**
 	 * What became of the login-shell environment import, and the environment it
 	 * produced. Both are answered once, at `startRuntimes`, and every executable
@@ -592,7 +597,7 @@ export class AppController {
 			this.state.tmux.effective_socket_name !== configuredSocket
 		) {
 			this.state.tmux.effective_socket_name = configuredSocket;
-			await this.stateStore.saveState(this.state);
+			await this.saveState();
 		}
 		// The environment is resolved before anything is looked up in it, and
 		// once. A DevHub launched from Finder inherits launchd's four-entry PATH,
@@ -635,36 +640,40 @@ export class AppController {
 		});
 		// Everything restored from the state file describes the previous run,
 		// and the sessions on the socket are what is left of it. Nothing has to
-		// be told which Agent belongs where: the session carries its own
-		// workspace and Agent id in its markers, so restoring a row is finding
-		// its session again. What is left over is swept once, here, because a
-		// session no row can show is a process nobody can reach.
-		const known = new Set<string>();
-		for (const workspace of this.coordinator.model.workspaces) {
-			for (const agent of workspace.agents) known.add(agent.id);
-		}
-		// One sweep per machine that has a Workspace on it, because the sessions
-		// to sweep are one tmux server's and a machine DevHub never asks is a
-		// machine whose stray Agents nothing will ever reach. A host that is
-		// unreachable at startup is not swept and not fatal: the Workspaces on
-		// it come up in the state every other runtime failure puts them in, and
-		// the next successful round is when they recover.
-		for (const machine of this.workspaceMachines()) {
-			try {
-				if (!(await this.agentSessions.availableOn(machine))) continue;
-				const reaped = await this.agentSessions.reapUnknown(machine, known);
-				if (reaped > 0) {
-					console.info(
-						`[devhub] agents: closed ${String(reaped)} Agent session(s) no longer known to this DevHub on ${machine}`,
-					);
+		// be told which session belongs where: each carries its own workspace
+		// and Agent id in its markers, so restoring a row is finding its
+		// session again. What is left over is swept once, here, because a
+		// session no row can show is a process nobody can reach — on every
+		// machine DevHub has ever owned sessions on, which is more than the
+		// machines it still has Workspaces on. See `sessionSweep.ts`.
+		this.sessionSweeper = new SessionSweeper({
+			adapterFor: (machine) => terminalRuntimes.for(runtimeById(machine)),
+			accounted: () => {
+				const workspaces = new Set<string>();
+				const agents = new Set<string>();
+				for (const workspace of this.coordinator.model.workspaces) {
+					workspaces.add(workspace.id);
+					for (const agent of workspace.agents) agents.add(agent.id);
 				}
-			} catch (error: unknown) {
-				console.error(
-					`[devhub] agents: ${machine} could not be swept at startup`,
-					error instanceof Error ? error.stack : error,
+				return { workspaces, agents };
+			},
+			workspaceMachines: () => this.workspaceMachines(),
+			remembered: () => this.state.session_machines,
+			forget: (machine) => {
+				this.state.session_machines = this.state.session_machines.filter(
+					(remembered) => remembered !== machine,
 				);
-			}
-		}
+				void this.saveState();
+			},
+		});
+		// Before the sweep, not after: a machine that answers is one this run
+		// owns sessions on, and a crash between the sweep and the first save
+		// must not be what makes DevHub forget where they are.
+		await this.saveState();
+		this.stopHearingReconnections = onRuntimeConnected((machine) => {
+			this.sessionSweeper?.machineCameBack(machine);
+		});
+		await this.sessionSweeper.sweepAll();
 		this.agentReconcilers.follow(this.agentHosts());
 		this.repositoryStatus.start();
 	}
@@ -1220,7 +1229,7 @@ export class AppController {
 		}
 		await wiring.runtimes.setEffectiveSocket(next);
 		this.state.tmux.effective_socket_name = next;
-		await this.stateStore.saveState(this.state);
+		await this.saveState();
 	}
 
 	/**
@@ -1318,6 +1327,23 @@ export class AppController {
 		}
 	}
 
+	/**
+	 * Write the state file, with the machines DevHub owns sessions on brought
+	 * up to date.
+	 *
+	 * Every save goes through here, because "this DevHub has owned sessions on
+	 * that machine" becomes true the moment a Workspace is open on it and there
+	 * is no later moment at which anything else would notice. The list only
+	 * grows here; the sweep is the one thing that shortens it, and only for a
+	 * machine it found clean and unused.
+	 */
+	private async saveState(): Promise<void> {
+		const remembered = new Set(this.state.session_machines);
+		for (const machine of this.workspaceMachines()) remembered.add(machine);
+		this.state.session_machines = [...remembered];
+		await this.stateStore.saveState(this.state);
+	}
+
 	/** The machine one Agent runs on: its Workspace's. */
 	private machineOfAgent(
 		agentId: ReturnType<typeof parseAgentId>,
@@ -1390,12 +1416,13 @@ export class AppController {
 	 */
 	async shutdown(): Promise<void> {
 		this.stopWatchingConfig?.();
+		this.stopHearingReconnections?.();
 		// The flag is written first, and on purpose: it records that the person
 		// asked to quit, which is true whether or not the teardown below manages
 		// to finish. Writing it afterwards would report a crash every time a
 		// runtime was slow to let go.
 		markCleanShutdown(this.state);
-		await this.stateStore.saveState(this.state);
+		await this.saveState();
 		this.agentReconcilers.stop();
 		this.repositoryStatus.stop();
 		// Quitting detaches clients and leaves every session — an Agent's as
@@ -2017,7 +2044,7 @@ export class AppController {
 	private async persist(token: OperationToken): Promise<void> {
 		try {
 			this.state = applySnapshot(this.state, this.coordinator.snapshot());
-			await this.stateStore.saveState(this.state);
+			await this.saveState();
 		} catch (error) {
 			// A save that did not happen is reported as degraded, so the model can
 			// roll back a close that depended on it rather than believing it landed
@@ -3933,6 +3960,7 @@ export class AppController {
 				terminalClients,
 				runtimes: liveRuntimes().map((runtime) => runtime.reading()),
 				terminalLauncher: [...this.launcherStatus.values()],
+				pendingSweeps: this.sessionSweeper?.pending ?? [],
 				roundsLastMinute: (id) => reconcileRounds.lastMinute(id),
 			}),
 			null,

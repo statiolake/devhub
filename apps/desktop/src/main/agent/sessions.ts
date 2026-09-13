@@ -196,34 +196,6 @@ export class AgentSessions {
 	}
 
 	/**
-	 * Kill every Agent session that no row can ever show.
-	 *
-	 * Run once, at startup, after the state file has been restored. A marked
-	 * Agent session with no Agent in the model is DevHub's own resource with
-	 * nothing left that knows about it — a row lost to a state file that never
-	 * got written — and it would otherwise hold its process for the life of the
-	 * tmux server with no way to reach or stop it.
-	 *
-	 * It is deliberately not part of the reconcile loop: that loop runs only
-	 * while there are Agents, so the one case this exists for is the one case
-	 * it would never see.
-	 */
-	async reapUnknown(
-		machine: RuntimeId,
-		known: ReadonlySet<string>,
-		cancel = new CancellationToken(),
-	): Promise<number> {
-		const live = await this.list(machine, cancel);
-		let reaped = 0;
-		for (const session of live) {
-			if (known.has(session.agentId)) continue;
-			await this.terminate(machine, session.agentId, cancel);
-			reaped += 1;
-		}
-		return reaped;
-	}
-
-	/**
 	 * Kill one Agent's session.
 	 *
 	 * An Agent that is already gone is not a failure: the caller asked for it

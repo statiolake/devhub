@@ -101,6 +101,17 @@ import {
  * "expanded", the only state there is now. Nothing has to be invented, so
  * nothing has to refuse.
  *
+ * Version 6 added `session_machines`: every machine this DevHub has owned tmux
+ * sessions on, so that the startup sweep can ask a host whose last Workspace
+ * has been closed. It is a bump for the usual direction — a version-5 DevHub
+ * reading this file would drop the list on its next save, and the machines in
+ * it would stop being swept without anything saying so. A version-5 file has
+ * no such key and loads as the empty list, which is not a gap: the sweep asks
+ * the persisted set *and* every machine a Workspace is on, so a v5 file's
+ * machines are exactly the ones its Workspaces name — derived by the one
+ * switch that knows how a machine is named (`runtimeIdFor`), rather than by a
+ * second copy of it here.
+ *
  * `sidebar.collapsed` came back without a bump for the same reason, run the
  * other way. The Sidebar collapses again — to an icon rail rather than to
  * nothing — and the field records it; a file written before it existed has no
@@ -108,7 +119,7 @@ import {
  * reads the key it does know and ignores this one. Neither direction has to
  * invent anything, so neither has to refuse.
  */
-export const STATE_SCHEMA_VERSION = 5;
+export const STATE_SCHEMA_VERSION = 6;
 export { SIDEBAR_DEFAULT_WIDTH };
 
 const MIN_SIDEBAR_WIDTH = 200;
@@ -470,6 +481,18 @@ export const DEFAULT_TMUX_SOCKET_NAME = "devhub";
 export interface PersistedAppState {
   schema_version: number;
   workspaces: WorkspaceStateRecord[];
+  /**
+   * Every machine DevHub has owned tmux sessions on, whether or not a
+   * Workspace is still open there.
+   *
+   * The set the startup sweep walks. A Workspace closed while its host was
+   * unreachable leaves sessions running on it, and the machine leaves the
+   * model with the Workspace — so without this list there would be nothing
+   * left that knows to ask that host again, and the sessions would stay for
+   * the life of its tmux server. An entry is dropped once a sweep found
+   * nothing to reap there and no Workspace remains.
+   */
+  session_machines: string[];
   navigation: NavigationState;
   sidebar: SidebarState;
   split: SplitState;
@@ -482,6 +505,7 @@ export function freshState(): PersistedAppState {
   return {
     schema_version: STATE_SCHEMA_VERSION,
     workspaces: [],
+    session_machines: [],
     navigation: { context: { kind: "global" } },
     sidebar: { width: SIDEBAR_DEFAULT_WIDTH, collapsed: false },
     split: { ratio: SPLIT_DEFAULT_RATIO },
@@ -1829,6 +1853,14 @@ function decodeState(bytes: Buffer): Decoded {
       schema_version: STATE_SCHEMA_VERSION,
       workspaces: decodeArray("workspaces", object["workspaces"] ?? []).map(
         (entry, index) => decodeWorkspaceRecord(`workspaces[${index}]`, entry),
+      ),
+      // Strings, and only strings, checked here. What a machine id may spell
+      // is `runtimeMachine`'s answer and it is the only one; a second copy of
+      // that switch in the state file would be a second thing to keep in step
+      // with the day a third kind of machine exists.
+      session_machines: decodeStringArray(
+        "session_machines",
+        object["session_machines"] ?? [],
       ),
       navigation:
         object["navigation"] === undefined

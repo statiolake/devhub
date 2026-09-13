@@ -1638,6 +1638,29 @@ export class TmuxTerminalRuntime {
 		record: OwnedSessionRecord,
 		cancel = new CancellationToken(),
 	): Promise<void> {
+		await this.closeMarkedSession(record, cancel);
+	}
+
+	/**
+	 * Every DevHub-marked session on this machine's effective socket.
+	 *
+	 * The socket-taking `inspectOwnedSessions` is for the one caller that has a
+	 * socket other than this adapter's — a migration, which is about the socket
+	 * being left. Everything else means *this* machine's server, and having to
+	 * name the socket to ask about it is a second place the effective name
+	 * could be got wrong.
+	 */
+	async markedSessions(
+		cancel = new CancellationToken(),
+	): Promise<readonly OwnedSessionRecord[]> {
+		return (await this.inspectOwnedSessions(this.socket(), cancel)).sessions;
+	}
+
+	/** Kill one marked session on this machine's effective socket. */
+	async closeMarkedSession(
+		record: OwnedSessionRecord,
+		cancel = new CancellationToken(),
+	): Promise<void> {
 		const release = await this.gate.acquireOperation(cancel);
 		try {
 			await this.closeOwnedSessionSync(this.socket(), record, cancel);

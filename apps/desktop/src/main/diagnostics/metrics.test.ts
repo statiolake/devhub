@@ -44,6 +44,7 @@ describe("metricsReport", () => {
 			views: [view(7, 42, "workspace:one", true)],
 			counters: noCounters,
 			terminalLauncher: [],
+			pendingSweeps: [],
 			terminalClients: [],
 			roundsLastMinute: noRounds,
 			runtimes: [],
@@ -69,6 +70,7 @@ describe("metricsReport", () => {
 			views: [],
 			counters: noCounters,
 			terminalLauncher: [],
+			pendingSweeps: [],
 			terminalClients: [],
 			roundsLastMinute: noRounds,
 			runtimes: [],
@@ -89,6 +91,7 @@ describe("metricsReport", () => {
 			],
 			counters: noCounters,
 			terminalLauncher: [],
+			pendingSweeps: [],
 			terminalClients: [],
 			roundsLastMinute: noRounds,
 			runtimes: [],
@@ -111,6 +114,7 @@ describe("metricsReport", () => {
 			views: [],
 			counters,
 			terminalLauncher: [],
+			pendingSweeps: [],
 			terminalClients: [],
 			roundsLastMinute: noRounds,
 			runtimes: [],
@@ -134,6 +138,7 @@ describe("the tmux clients a reading carries", () => {
 			views: [],
 			counters: noCounters,
 			terminalLauncher: [],
+			pendingSweeps: [],
 			runtimes: [],
 			roundsLastMinute: noRounds,
 			terminalClients: [
@@ -174,6 +179,7 @@ describe("what a round costs on each machine", () => {
 			views: [],
 			counters: noCounters,
 			terminalLauncher: [],
+			pendingSweeps: [],
 			terminalClients: [],
 			runtimes: [local],
 			roundsLastMinute: () => 200,
@@ -195,6 +201,7 @@ describe("what a round costs on each machine", () => {
 			views: [],
 			counters: noCounters,
 			terminalLauncher: [],
+			pendingSweeps: [],
 			terminalClients: [],
 			runtimes: [local],
 			roundsLastMinute: noRounds,
@@ -221,6 +228,7 @@ describe("whether each machine has a terminal launcher", () => {
 			terminalClients: [],
 			runtimes: [],
 			roundsLastMinute: noRounds,
+			pendingSweeps: [],
 			terminalLauncher: [
 				{
 					machine: "local",
@@ -251,5 +259,33 @@ describe("whether each machine has a terminal launcher", () => {
 				reason: "the bundle is not there",
 			},
 		]);
+	});
+});
+
+// A machine DevHub still owes a session sweep is otherwise invisible: the
+// sessions are running on a host nothing here can reach, and the only record
+// of that is a line in a log nobody has open.
+describe("the machines a sweep could not finish with", () => {
+	it("names them, and reads empty when there are none", () => {
+		const input = {
+			takenAt: 0,
+			uptimeMs: 0,
+			mainProcessCpu: noCpu,
+			processMetrics: [],
+			views: [],
+			counters: noCounters,
+			terminalClients: [],
+			runtimes: [],
+			terminalLauncher: [],
+			roundsLastMinute: noRounds,
+		} as const;
+
+		expect(
+			metricsReport({ ...input, pendingSweeps: [] }).pendingSweeps,
+		).toEqual([]);
+		expect(
+			metricsReport({ ...input, pendingSweeps: ["ssh:build-box.example.com"] })
+				.pendingSweeps,
+		).toEqual(["ssh:build-box.example.com"]);
 	});
 });
