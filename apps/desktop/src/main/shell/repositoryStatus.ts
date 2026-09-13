@@ -28,10 +28,47 @@
  * screen and the reason travels beside it, until a later look succeeds and
  * replaces both. The alternative — clearing on failure — makes a flaky network
  * look like an Issue that was closed.
+ *
+ * **What makes a row change, and how late it can be.** Four triggers, named in
+ * `diagnostics/rounds.ts` and reported per Workspace by `devhub --metrics`, so
+ * "the sidebar feels slow" can be answered with which one last fired rather
+ * than with a guess. A *full round* is `read` — every local fact for every
+ * Workspace on one machine, then GitHub for every branch among them. A *branch
+ * round* is `refreshBranches` — one `git` per Workspace and nothing else.
+ *
+ * | trigger  | what fires it                        | what it runs               |
+ * | -------- | ------------------------------------ | -------------------------- |
+ * | `poll`   | a clock at `cadence.repositoryPollMs`| a full round (and, on a second clock, a branch round) |
+ * | `head`   | `HEAD`/`refs/`/`packed-refs` written | a branch round, and a full round only where the new branch has never been looked up |
+ * | `focus`  | the window coming to the front       | a full round per machine, at most one per `cadence.repositoryFocusRefreshMinIntervalMs` |
+ * | `manual` | the refresh chord (`Cmd+Q R`)        | a full round per machine   |
+ *
+ * Worst case per fact, on this Mac's minute:
+ *
+ * | fact                | refreshed by                  | worst case |
+ * | ------------------- | ----------------------------- | ---------- |
+ * | branch              | `head`, and every trigger     | ~1 s after a checkout (250 ms debounce, 1 s ceiling); a minute if the watch could not be armed |
+ * | dirty               | full rounds only — no watcher | a minute, or 10 s if the window is re-focused |
+ * | ahead (upstream)    | full rounds only              | as dirty |
+ * | remote / push name  | full rounds only              | a minute; these change about never |
+ * | pull request state  | full rounds only              | a minute, or 10 s on re-focus; a checkout onto a branch already looked up does *not* re-ask |
+ * | Issue linkage       | full rounds only              | as the pull request |
+ *
+ * The one fact with no event behind it is *dirty*. A watcher on the working
+ * tree would give it one, and it is deliberately not here: a repository being
+ * built writes thousands of files a second, and the watch would have to be
+ * taught every `.gitignore` in the tree to stay quiet — which is `git status`
+ * again, run on every write. A focus round is the cheap answer to the case
+ * that actually bites, which is coming back from a terminal where you just
+ * edited something.
  */
 
 import type { RemoteIdentity } from "../../model/domain.js";
 import { activityCounters, COUNTER } from "../diagnostics/counters.js";
+import type {
+	RepositoryRoundTrigger,
+	WorkspaceRepositoryRound,
+} from "../diagnostics/rounds.js";
 import { issueNumberFromBranch } from "../../model/github.js";
 import { HeadWatcher } from "./headWatcher.js";
 import type {
@@ -322,6 +359,22 @@ export class RepositoryStatusWatcher {
 	/** git, as each machine's last round resolved it, by machine. */
 	private readonly commands = new Map<RuntimeId, GitCommand>();
 	/** `HEAD`, watched, so a checkout is noticed rather than polled for. */
+	/**
+	 * When each machine's last full round finished, so a focus can tell whether
+	 * asking again would learn anything.
+	 *
+	 * Per machine and not per Workspace, because a round *is* per machine: the
+	 * unit that reads git once and asks GitHub once covers every Workspace on
+	 * that host at the same time, and a per-Workspace budget over a shared round
+	 * would be two answers to "may this run now". What is per Workspace is the
+	 * *reading* below — which is a report of what happened, not a decision.
+	 */
+	private readonly lastRoundAt = new Map<RuntimeId, number>();
+	/** Each Workspace's last full round, by workspace id, for `--metrics`. */
+	private readonly lastRound = new Map<
+		string,
+		{ readonly at: number; readonly trigger: RepositoryRoundTrigger }
+	>();
 	private readonly heads = new HeadWatcher(() => {
 		void this.refreshBranches();
 	});
@@ -367,7 +420,7 @@ export class RepositoryStatusWatcher {
 				runtime,
 				slow: setInterval(() => {
 					activityCounters.record(COUNTER.repositoryStatusRound);
-					void this.refresh(runtime);
+					void this.refresh(runtime, "poll");
 				}, runtime.cadence.repositoryPollMs),
 				// The fast clock, and the whole reason there are two. Which branch
 				// is checked out changes while somebody watches — they run
@@ -386,7 +439,7 @@ export class RepositoryStatusWatcher {
 					void this.refreshBranches();
 				}, runtime.cadence.repositoryPollMs),
 			});
-			void this.refresh(runtime);
+			void this.refresh(runtime, "poll");
 		}
 	}
 
@@ -398,6 +451,10 @@ export class RepositoryStatusWatcher {
 		this.clocks.delete(id);
 		this.commands.delete(id);
 		this.diagnostics.delete(id);
+		// A machine nothing is open on any more has no round to have been recent:
+		// keeping the stamp would make the first focus after re-opening a
+		// Workspace on it the one focus that decides not to look.
+		this.lastRoundAt.delete(id);
 	}
 
 	/**
@@ -413,7 +470,7 @@ export class RepositoryStatusWatcher {
 	observe(): void {
 		const signature = this.deps
 			.workspaces()
-			.map((workspace) => `${workspace.id} ${workspace.runtime.id}`)
+			.map((workspace) => `${workspace.id}${workspace.runtime.id}`)
 			.join("\n");
 		if (signature === this.watching) return;
 		this.watching = signature;
@@ -421,7 +478,7 @@ export class RepositoryStatusWatcher {
 		// already there are asked again because their set of Workspaces moved.
 		const existing = [...this.clocks.values()].map((clocks) => clocks.runtime);
 		this.follow();
-		for (const runtime of existing) void this.refresh(runtime);
+		for (const runtime of existing) void this.refresh(runtime, "poll");
 	}
 
 	/**
@@ -436,7 +493,7 @@ export class RepositoryStatusWatcher {
 	 */
 	look(): void {
 		for (const clocks of this.clocks.values())
-			void this.refresh(clocks.runtime);
+			void this.refresh(clocks.runtime, "manual");
 	}
 
 	/**
@@ -447,14 +504,72 @@ export class RepositoryStatusWatcher {
 	 * an older answer over a newer one. Two machines do overlap, and must — that
 	 * is the whole reason a cadence belongs to a link rather than to this class.
 	 */
-	private async refresh(runtime: Runtime): Promise<void> {
+	private async refresh(
+		runtime: Runtime,
+		trigger: RepositoryRoundTrigger,
+	): Promise<void> {
 		if (this.inFlight.has(runtime.id)) return;
 		this.inFlight.add(runtime.id);
 		try {
 			this.deps.publish(await this.read(runtime));
+			// Stamped on the way out rather than on the way in, because what the
+			// focus rule and the reading both mean by "a round" is a round that
+			// *answered*. A round that started a minute ago and is still waiting on
+			// GitHub has told nobody anything, and letting it hold a focus round
+			// off would be the in-flight guard's job twice over.
+			const at = Date.now();
+			this.lastRoundAt.set(runtime.id, at);
+			for (const workspace of this.on(runtime)) {
+				this.lastRound.set(workspace.id, { at, trigger });
+			}
 		} finally {
 			this.inFlight.delete(runtime.id);
 		}
+	}
+
+	/**
+	 * The window has come back to the front: look, unless one just looked.
+	 *
+	 * This is the trigger VS Code's own git extension has had all along — it
+	 * refreshes on `window.onDidChangeWindowState` — and the reason is that the
+	 * moment a person's attention returns is the moment the rows are most likely
+	 * to be wrong: they went to a terminal, ran `git commit`, and came back.
+	 * Nothing in DevHub was watching for that, so until the next minute was up
+	 * the Sidebar showed what the repository looked like before they left.
+	 *
+	 * Rate-limited per machine, because focus is not a request: alt-tabbing back
+	 * a dozen times in a minute must not be a dozen rounds. A round already in
+	 * flight is left alone by `refresh` itself, which is the same rule and not a
+	 * second one.
+	 */
+	focused(): void {
+		const now = Date.now();
+		for (const clocks of this.clocks.values()) {
+			const runtime = clocks.runtime;
+			// A host that is not answering is a host a round would spend its
+			// timeout on and learn nothing from. The poll keeps trying; a focus
+			// does not queue up behind it.
+			if (!runtime.reading().connected) continue;
+			const last = this.lastRoundAt.get(runtime.id);
+			if (
+				last !== undefined &&
+				now - last < runtime.cadence.repositoryFocusRefreshMinIntervalMs
+			) {
+				continue;
+			}
+			void this.refresh(runtime, "focus");
+		}
+	}
+
+	/** Each Workspace's last full round, for `devhub --metrics`. */
+	rounds(): readonly WorkspaceRepositoryRound[] {
+		return [...this.lastRound].map(([workspaceId, round]) => ({
+			workspaceId,
+			lastRepositoryRound: {
+				at: new Date(round.at).toISOString(),
+				trigger: round.trigger,
+			},
+		}));
 	}
 
 	/** The Workspaces whose folder is on one machine, in row order. */
@@ -547,7 +662,7 @@ export class RepositoryStatusWatcher {
 		// rather than waiting the rest of the minute out.
 		for (const id of wantsLook) {
 			const clocks = this.clocks.get(id);
-			if (clocks) void this.refresh(clocks.runtime);
+			if (clocks) void this.refresh(clocks.runtime, "head");
 		}
 	}
 
@@ -791,6 +906,11 @@ export class RepositoryStatusWatcher {
 		const ids = new Set(open.map((workspace) => workspace.id));
 		for (const id of [...this.readings.keys()]) {
 			if (!ids.has(id)) this.readings.delete(id);
+		}
+		// The same rule for the reading `--metrics` takes: a round against a
+		// Workspace that has closed is not a fact about anything still on screen.
+		for (const id of [...this.lastRound.keys()]) {
+			if (!ids.has(id)) this.lastRound.delete(id);
 		}
 		// In the model's order, and only the Workspaces a round has read: one
 		// that opened a moment ago has no branch to draw yet and its machine's

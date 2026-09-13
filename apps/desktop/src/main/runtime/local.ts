@@ -17,6 +17,7 @@
 
 import { Buffer } from "node:buffer";
 import { watch, type FSWatcher } from "node:fs";
+import { REPOSITORY_FOCUS_REFRESH_MIN_INTERVAL_MS } from "./cadence.js";
 import {
 	mkdir,
 	open,
@@ -63,10 +64,16 @@ import {
  * something anybody has to ask about. Until the loops are taught to read a
  * cadence they still hold their own copies of these two numbers; when they are,
  * these are the copies that survive.
+ *
+ * `repositoryFocusRefreshMinIntervalMs` is the odd one out: it is not how often
+ * a loop runs but how recently one must have run for focusing the window to
+ * skip its own round, and it is stated in `cadence.ts` rather than here because
+ * the remote arm needs the same rule with a different number.
  */
 export const LOCAL_CADENCE: RuntimeCadence = {
 	reconcileIntervalMs: 300,
 	repositoryPollMs: 60 * 1000,
+	repositoryFocusRefreshMinIntervalMs: REPOSITORY_FOCUS_REFRESH_MIN_INTERVAL_MS,
 	headWatchPollMs: undefined,
 };
 

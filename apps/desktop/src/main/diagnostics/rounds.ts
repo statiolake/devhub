@@ -47,3 +47,27 @@ export class ReconcileRounds {
  * dependency. Tests construct their own and never touch this.
  */
 export const reconcileRounds = new ReconcileRounds();
+
+/**
+ * What made a repository round happen.
+ *
+ * There are four ways a Workspace's branch, dirty flag, pull request and Issue
+ * get looked at again, and until this existed a person watching a row go stale
+ * had no way to tell which of them had last fired — "the sidebar feels slow"
+ * and "the poll is the only thing that ever runs" are the same observation
+ * until the reading says which trigger it was.
+ *
+ * `poll` is the clock a minute, `head` is git writing `HEAD` under a checkout,
+ * `focus` is the window coming back to the front, and `manual` is somebody
+ * pressing the refresh chord.
+ */
+export type RepositoryRoundTrigger = "poll" | "head" | "focus" | "manual";
+
+/** One Workspace's last full round, for `devhub --metrics`. */
+export interface WorkspaceRepositoryRound {
+	readonly workspaceId: string;
+	readonly lastRepositoryRound: {
+		readonly at: string;
+		readonly trigger: RepositoryRoundTrigger;
+	};
+}

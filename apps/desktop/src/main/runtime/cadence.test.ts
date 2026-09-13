@@ -4,6 +4,8 @@ import {
 	RECONCILE_DUTY_CYCLE,
 	REMOTE_RECONCILE_CEILING_MS,
 	REMOTE_RECONCILE_FLOOR_MS,
+	REMOTE_REPOSITORY_FOCUS_REFRESH_MIN_INTERVAL_MS,
+	REPOSITORY_FOCUS_REFRESH_MIN_INTERVAL_MS,
 	remoteReconcileIntervalMs,
 } from "./cadence.js";
 
@@ -52,5 +54,22 @@ describe("what a reconcile loop over a network costs", () => {
 		// states the numbers instead.
 		expect(remoteReconcileIntervalMs(0)).toBe(REMOTE_RECONCILE_FLOOR_MS);
 		expect(LOCAL_CADENCE.reconcileIntervalMs).toBe(300);
+	});
+});
+
+describe("how often focusing the window may cost a round", () => {
+	it("is shorter here than over a network, and both are under the poll", () => {
+		// The floor exists so alt-tabbing is not traffic, and it is worth having
+		// only while it is well under the poll it is short-circuiting: a floor at
+		// the poll interval would be a trigger that never fires.
+		expect(LOCAL_CADENCE.repositoryFocusRefreshMinIntervalMs).toBe(
+			REPOSITORY_FOCUS_REFRESH_MIN_INTERVAL_MS,
+		);
+		expect(REPOSITORY_FOCUS_REFRESH_MIN_INTERVAL_MS).toBeLessThan(
+			REMOTE_REPOSITORY_FOCUS_REFRESH_MIN_INTERVAL_MS,
+		);
+		expect(REMOTE_REPOSITORY_FOCUS_REFRESH_MIN_INTERVAL_MS).toBeLessThan(
+			LOCAL_CADENCE.repositoryPollMs,
+		);
 	});
 });

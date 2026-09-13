@@ -60,3 +60,31 @@ export function remoteReconcileIntervalMs(medianRoundTripMs: number): number {
 		),
 	);
 }
+
+/**
+ * How recently a full round must have finished for a focus to skip its own.
+ *
+ * Focusing the window is a trigger and not a request: a person alt-tabs back a
+ * dozen times while they work, and a round per return would be a dozen `git`
+ * invocations and a dozen GraphQL queries to learn what the last one learned
+ * ten seconds ago. So a focus asks only when the last full round for that
+ * machine is older than this.
+ *
+ * Ten seconds on this Mac, because that is the longest a person who has just
+ * come back would call the row "current" and the shortest that stops a rapid
+ * tab-dance from turning into traffic. It is per machine for the reason every
+ * other number here is: what is a fork locally is a flood over ssh.
+ */
+export const REPOSITORY_FOCUS_REFRESH_MIN_INTERVAL_MS = 10_000;
+
+/**
+ * The same rule for a machine across a network.
+ *
+ * Longer, and not by arithmetic on the round trip: what a focus round costs on
+ * a remote is not one exec but one per open Workspace over ssh, and the person
+ * who alt-tabs is not waiting on it — the poll a minute is still underneath.
+ * Half a minute is the answer to "how stale may a remote row be when I come
+ * back", and it is a number rather than a derivation because there is nothing
+ * measured here for a derivation to read.
+ */
+export const REMOTE_REPOSITORY_FOCUS_REFRESH_MIN_INTERVAL_MS = 30_000;

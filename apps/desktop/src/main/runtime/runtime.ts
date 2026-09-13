@@ -148,6 +148,11 @@ export interface Watcher {
 export interface RuntimeCadence {
 	readonly reconcileIntervalMs: number;
 	readonly repositoryPollMs: number;
+	/**
+	 * How recently a full repository round must have finished for focusing the
+	 * window to skip asking again. See `cadence.ts`.
+	 */
+	readonly repositoryFocusRefreshMinIntervalMs: number;
 	/** `undefined` means real filesystem events, not a poll. */
 	readonly headWatchPollMs: number | undefined;
 }

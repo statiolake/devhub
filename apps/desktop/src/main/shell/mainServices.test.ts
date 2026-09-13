@@ -23,6 +23,7 @@ const instant: ReconcileHost = {
 	cadence: {
 		reconcileIntervalMs: 0,
 		repositoryPollMs: 60_000,
+		repositoryFocusRefreshMinIntervalMs: 5_000,
 		headWatchPollMs: undefined,
 	},
 };

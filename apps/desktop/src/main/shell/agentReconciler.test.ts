@@ -8,6 +8,7 @@ function host(id: RuntimeId, reconcileIntervalMs = 0): ReconcileHost {
 	const cadence: RuntimeCadence = {
 		reconcileIntervalMs,
 		repositoryPollMs: 60_000,
+		repositoryFocusRefreshMinIntervalMs: 5_000,
 		headWatchPollMs: undefined,
 	};
 	return { id, cadence };

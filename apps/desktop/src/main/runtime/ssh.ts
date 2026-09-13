@@ -50,7 +50,10 @@ import {
 	remoteTerminalPaths,
 	terminalLauncherScript,
 } from "../terminal/launcher.js";
-import { remoteReconcileIntervalMs } from "./cadence.js";
+import {
+	REMOTE_REPOSITORY_FOCUS_REFRESH_MIN_INTERVAL_MS,
+	remoteReconcileIntervalMs,
+} from "./cadence.js";
 import { runtimeConnected } from "./connectivity.js";
 import type { SettingsResolvedRuntimeWire } from "../../ipc/settings.js";
 import { gitDirectoryOf } from "./gitDirectory.js";
@@ -710,6 +713,8 @@ export class SshRuntime implements Runtime {
 			// one line of arithmetic is one copy that will drift.
 			reconcileIntervalMs: remoteReconcileIntervalMs(this.#medianRoundTripMs()),
 			repositoryPollMs: REPOSITORY_POLL_MS,
+			repositoryFocusRefreshMinIntervalMs:
+				REMOTE_REPOSITORY_FOCUS_REFRESH_MIN_INTERVAL_MS,
 			headWatchPollMs: HEAD_WATCH_POLL_MS,
 		};
 	}

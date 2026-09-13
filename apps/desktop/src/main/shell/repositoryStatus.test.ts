@@ -31,12 +31,23 @@ vi.mock("./git.js", () => ({
 	readDirty: (...args: unknown[]) => readDirty(...args),
 	readAhead: (...args: unknown[]) => readAhead(...args),
 }));
-// The watcher has its own tests, against a real repository, because what it
-// does is filesystem behaviour and nothing about it can be learned from a
-// stand-in. Here it is out of the way: these cases are about the clocks and
-// the projection, and the roots they use are names rather than directories.
+/**
+ * What the `HEAD` watcher would call when git writes under a `.git`.
+ *
+ * The watcher has its own tests, against a real repository, because what it
+ * does is filesystem behaviour and nothing about it can be learned from a
+ * stand-in. Here it is a stand-in with one wire out of it, so a case can *be* a
+ * checkout: the real thing calls this after its debounce, and everything above
+ * that line — the branch round, and the full round it asks for — is what these
+ * cases are about.
+ */
+let headChanged: () => void = () => undefined;
+
 vi.mock("./headWatcher.js", () => ({
 	HeadWatcher: class {
+		constructor(onChange: () => void) {
+			headChanged = onChange;
+		}
 		arm(): Promise<void> {
 			return Promise.resolve();
 		}
@@ -71,12 +82,19 @@ const POLL_MS = LOCAL_CADENCE.repositoryPollMs;
 function machine(
 	id: RuntimeId,
 	repositoryPollMs = LOCAL_CADENCE.repositoryPollMs,
+	connected = true,
 ): Runtime {
 	return {
 		id,
 		cadence: { ...LOCAL_CADENCE, repositoryPollMs },
+		// The focus trigger asks this before it spends a round: a host that is
+		// not answering is a host the round would spend its timeout on.
+		reading: () => ({ id, connected }),
 	} as unknown as Runtime;
 }
+
+/** The focus rule's own number, from the machine the checkouts are on. */
+const FOCUS_MIN_MS = LOCAL_CADENCE.repositoryFocusRefreshMinIntervalMs;
 
 const HERE = machine("local");
 
@@ -805,6 +823,186 @@ describe("checkouts on more than one machine", () => {
 			await vi.advanceTimersByTimeAsync(LOCAL_CADENCE.repositoryPollMs * 2);
 			running.stop();
 			expect(rounds.slice(from)).not.toContain(THERE.id);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+});
+
+/**
+ * The trigger DevHub was missing, and the reason the Sidebar felt slow.
+ *
+ * A person leaves the window for a terminal, commits, switches a branch, comes
+ * back — and until this existed the only thing that would look again was a
+ * clock a minute wide. VS Code's git extension has refreshed on
+ * `window.onDidChangeWindowState` all along, and the GitHub Pull Requests
+ * extension re-runs its queries on the same event; this is that, with a
+ * per-machine floor under it so alt-tabbing is not traffic.
+ */
+describe("coming back to the window", () => {
+	/** A watcher over one machine, with every round it starts recorded. */
+	function counting(runtime: Runtime, workspaces = [WORKSPACE]) {
+		const rounds: string[] = [];
+		const running = new RepositoryStatusWatcher({
+			gitCommand: (which) => {
+				rounds.push(which.id);
+				return Promise.resolve({ runtime: which } as never);
+			},
+			environment: {},
+			workspaces: () => workspaces,
+			publish: () => undefined,
+		});
+		return { rounds, running };
+	}
+
+	it("runs one round for every machine a Workspace is open on", async () => {
+		vi.useFakeTimers();
+		try {
+			checkedOut("main");
+			const there = machine("ssh:build.example.com");
+			const { rounds, running } = counting(HERE, [
+				WORKSPACE,
+				{ id: "w-2", root: "/srv/api", runtime: there },
+			]);
+			running.start();
+			await vi.advanceTimersByTimeAsync(0);
+			const from = rounds.length;
+
+			await vi.advanceTimersByTimeAsync(FOCUS_MIN_MS);
+			running.focused();
+			await vi.advanceTimersByTimeAsync(0);
+			running.stop();
+			expect(rounds.slice(from).toSorted()).toEqual([
+				"local",
+				"ssh:build.example.com",
+			]);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("skips a second focus inside the machine's own minimum", async () => {
+		// Alt-tabbing back a dozen times must not be a dozen `git` runs and a
+		// dozen GraphQL queries to learn what the last one learned a second ago.
+		vi.useFakeTimers();
+		try {
+			checkedOut("main");
+			const { rounds, running } = counting(HERE);
+			running.start();
+			await vi.advanceTimersByTimeAsync(0);
+
+			await vi.advanceTimersByTimeAsync(FOCUS_MIN_MS);
+			running.focused();
+			await vi.advanceTimersByTimeAsync(0);
+			const from = rounds.length;
+
+			// Straight back again, well inside the floor.
+			await vi.advanceTimersByTimeAsync(FOCUS_MIN_MS / 2);
+			running.focused();
+			running.focused();
+			await vi.advanceTimersByTimeAsync(0);
+			expect(rounds.slice(from)).toEqual([]);
+
+			// And once the floor is behind it, it looks again.
+			await vi.advanceTimersByTimeAsync(FOCUS_MIN_MS);
+			running.focused();
+			await vi.advanceTimersByTimeAsync(0);
+			running.stop();
+			expect(rounds.slice(from)).toEqual(["local"]);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("does not double a round that is already in flight", async () => {
+		// The same guard the clock has, not a second one. A round waiting on
+		// GitHub is a round that will publish; a focus must not stack another on
+		// top of it.
+		vi.useFakeTimers();
+		try {
+			checkedOut("main");
+			let release: (() => void) | undefined;
+			readBranchStatus.mockImplementation(
+				() =>
+					new Promise<Record<string, never>>((resolve) => {
+						release = () => {
+							resolve({});
+						};
+					}),
+			);
+			const { rounds, running } = counting(HERE);
+			running.start();
+			await vi.advanceTimersByTimeAsync(0);
+			expect(rounds).toEqual(["local"]);
+
+			// The first round is still hanging on GitHub. Focus, twice.
+			await vi.advanceTimersByTimeAsync(FOCUS_MIN_MS * 2);
+			running.focused();
+			running.focused();
+			await vi.advanceTimersByTimeAsync(0);
+			expect(rounds).toEqual(["local"]);
+
+			release?.();
+			await vi.advanceTimersByTimeAsync(0);
+			running.stop();
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("leaves a machine that is not answering alone", async () => {
+		vi.useFakeTimers();
+		try {
+			checkedOut("main");
+			const gone = machine("ssh:gone.example.com", POLL_MS, false);
+			const { rounds, running } = counting(HERE, [
+				{ id: "w-4", root: "/srv/gone", runtime: gone },
+			]);
+			running.start();
+			await vi.advanceTimersByTimeAsync(0);
+			const from = rounds.length;
+
+			await vi.advanceTimersByTimeAsync(FOCUS_MIN_MS);
+			running.focused();
+			await vi.advanceTimersByTimeAsync(0);
+			running.stop();
+			expect(rounds.slice(from)).toEqual([]);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+});
+
+describe("what `devhub --metrics` says fired", () => {
+	it("names the trigger of each Workspace's last round", async () => {
+		vi.useFakeTimers();
+		try {
+			checkedOut("main");
+			const published: RepositoryStatusWire[] = [];
+			const running = watcher(published);
+			running.start();
+			await vi.advanceTimersByTimeAsync(0);
+			const round = () => running.rounds()[0]?.lastRepositoryRound;
+			expect(round()?.trigger).toBe("poll");
+			expect(round()?.at).toMatch(/^\d{4}-\d\d-\d\dT/u);
+
+			running.look();
+			await vi.advanceTimersByTimeAsync(0);
+			expect(round()?.trigger).toBe("manual");
+
+			await vi.advanceTimersByTimeAsync(FOCUS_MIN_MS);
+			running.focused();
+			await vi.advanceTimersByTimeAsync(0);
+			expect(round()?.trigger).toBe("focus");
+
+			checkedOut("release-2");
+			headChanged();
+			await vi.advanceTimersByTimeAsync(0);
+			expect(round()?.trigger).toBe("head");
+
+			await vi.advanceTimersByTimeAsync(POLL_MS);
+			running.stop();
+			expect(round()?.trigger).toBe("poll");
 		} finally {
 			vi.useRealTimers();
 		}
