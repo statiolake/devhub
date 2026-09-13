@@ -450,6 +450,19 @@ exactly what makes the patched profile service refuse to invent a terminal, the
 reason is on DevHub's log, and the launcher run over there says the same thing
 in the terminal tab.
 
+**A task is not a terminal.** The launcher is what a *person* opens — one tmux
+session, kept, with its history. A task, a debug console and anything else the
+automation path resolves is throwaway: it is created to run one command, it is
+read once, and it is thrown away, so joining a tmux session a person is working
+in is the wrong answer to every part of that. `terminalProfileResolverService`
+therefore skips the DevHub default when `allowAutomationShell` is set and falls
+through to the OS default shell — the plain `/bin/zsh -l -c …` VS Code would
+have run before DevHub. A `terminal.integrated.automationProfile.<os>` the
+person configured still wins; it is answered before this ever comes up. The
+interactive default is untouched, which is the whole of the rule: one pty host
+in one window runs `tmux attach-session` for the terminal you opened and a bare
+login shell for the task that just started.
+
 ### Agents and terminals on the host
 
 There is one `TmuxTerminalRuntime` per `Runtime`, built on first use and cached

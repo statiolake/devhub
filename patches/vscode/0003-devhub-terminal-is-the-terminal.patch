@@ -74,6 +74,35 @@ index f7ce1dab62b..f0875b9538c 100644
  			if (shouldPersistTerminals) {
  				instance.detachProcessAndDispose(TerminalExitReason.Shutdown);
  			} else {
+diff --git a/src/vs/workbench/contrib/terminal/browser/terminalProfileResolverService.ts b/src/vs/workbench/contrib/terminal/browser/terminalProfileResolverService.ts
+index 275ab34615d..22009a292e4 100644
+--- a/src/vs/workbench/contrib/terminal/browser/terminalProfileResolverService.ts
++++ b/src/vs/workbench/contrib/terminal/browser/terminalProfileResolverService.ts
+@@ -9,7 +9,7 @@ import { IConfigurationService } from '../../../../platform/configuration/common
+ import { IWorkspaceContextService, IWorkspaceFolder } from '../../../../platform/workspace/common/workspace.js';
+ import { IConfigurationResolverService } from '../../../services/configurationResolver/common/configurationResolver.js';
+ import { IHistoryService } from '../../../services/history/common/history.js';
+-import { IProcessEnvironment, OperatingSystem, OS } from '../../../../base/common/platform.js';
++import { devhubTerminalLauncher, IProcessEnvironment, OperatingSystem, OS } from '../../../../base/common/platform.js';
+ import { IShellLaunchConfig, ITerminalLogService, ITerminalProfile, TerminalIcon, TerminalSettingId } from '../../../../platform/terminal/common/terminal.js';
+ import { IShellLaunchConfigResolveOptions, ITerminalProfileResolverService, ITerminalProfileService } from '../common/terminal.js';
+ import * as path from '../../../../base/common/path.js';
+@@ -213,7 +213,14 @@ export abstract class BaseTerminalProfileResolverService extends Disposable impl
+ 		// if the window just opened
+ 		await this._terminalProfileService.profilesReady;
+ 		const defaultProfile = this._getUnresolvedRealDefaultProfile(options.os);
+-		if (defaultProfile) {
++		// DevHub: the launcher is the interactive terminal, and only that. A
++		// task or a debug console is throwaway — it must run a plain shell it
++		// owns, never join the tmux session a person is working in. So when
++		// DevHub's launcher is the default and no `automationProfile` is
++		// configured, fall through to the OS default shell below. A configured
++		// `automationProfile` still wins; it was answered above.
++		const devhubIsDefault = !!devhubTerminalLauncher && defaultProfile?.path === devhubTerminalLauncher;
++		if (defaultProfile && !(devhubIsDefault && options.allowAutomationShell)) {
+ 			return this._setIconForAutomation(options, defaultProfile);
+ 		}
+ 
 diff --git a/src/vs/workbench/contrib/terminal/browser/terminalProfileService.ts b/src/vs/workbench/contrib/terminal/browser/terminalProfileService.ts
 index d4d6ba9ee53..21ac092103b 100644
 --- a/src/vs/workbench/contrib/terminal/browser/terminalProfileService.ts
