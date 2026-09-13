@@ -15,6 +15,7 @@
  * leading line is never empty.
  */
 
+import { readFileSync } from "node:fs";
 import "@testing-library/jest-dom/vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -173,9 +174,24 @@ describe("where an Agent's unread mark is", () => {
     }
   });
 
-  // Which colour each reason is drawn in, and how loud the mark is, are facts
-  // about the stylesheet rather than about the markup: they are asserted in
-  // `workspaceRepository.test.tsx`, with the rest of what a row rests at.
+  it("draws each reason in that status's own colour, and invents none", () => {
+    // Vitest runs from the package root, and the stylesheet is one file, not
+    // a module this test can import under jsdom.
+    const css = readFileSync("src/shell/styles/shell.css", "utf8");
+    for (const [reason, token] of [
+      ["waiting", "--status-waiting"],
+      ["idle", "--status-idle"],
+      ["error", "--status-error"],
+      ["working", "--status-working"],
+      // Not a verdict, and it does not get a status colour: the same secondary
+      // ink the `unknown` status mark takes.
+      ["unknown", "--secondary"],
+    ] as const) {
+      expect(css).toContain(
+        `.row-unread-${reason} {\n  background: var(${token});\n}`,
+      );
+    }
+  });
 });
 
 /**
