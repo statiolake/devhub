@@ -1,5 +1,5 @@
 diff --git a/src/vs/platform/windows/electron-main/windowImpl.ts b/src/vs/platform/windows/electron-main/windowImpl.ts
-index 94aee9da976..d22cd862501 100644
+index 94aee9da976..cdf8016b11c 100644
 --- a/src/vs/platform/windows/electron-main/windowImpl.ts
 +++ b/src/vs/platform/windows/electron-main/windowImpl.ts
 @@ -772,7 +772,15 @@ export class CodeWindow extends BaseWindow implements ICodeWindow {
@@ -31,3 +31,20 @@ index 94aee9da976..d22cd862501 100644
  					cli: {
  						...this.environmentMainService.args,
  						_: [] // we pass in the workspace to open explicitly via `urisToOpen`
+@@ -1312,6 +1325,16 @@ export class CodeWindow extends BaseWindow implements ICodeWindow {
+ 			}
+ 		}
+ 
++		// DevHub: the `devhub-terminal` belongs to the window's *machine*, and a
++		// reload does not change which machine that is. Remote-SSH resolves its
++		// authority by reloading the window through `IWindowsMainService.open`,
++		// which builds a fresh configuration that nobody told — so without this
++		// the remote window came back with the field unset and its integrated
++		// terminal fell back to a bare shell, while the local window beside it
++		// was fine. Preserved unconditionally, unlike `userEnv` above: a window
++		// is only ever told this once, by the DevHub call that opened it.
++		configuration.devhubTerminalLauncher ??= (this._config ?? this.pendingLoadConfig)?.devhubTerminalLauncher;
++
+ 		// If named pipe was instantiated for the crashpad_handler process, reuse the same
+ 		// pipe for new app instances connecting to the original app instance.
+ 		// Ref: https://github.com/microsoft/vscode/issues/115874
