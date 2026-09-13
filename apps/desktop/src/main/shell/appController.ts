@@ -2676,10 +2676,8 @@ export class AppController {
 	 * the close always completes*. A machine that does not answer cannot have
 	 * anything stopped on it, and waiting does not change that; so the close
 	 * goes on, DevHub forgets the workspace, and the sessions are named out
-	 * loud instead of being lost silently. They are DevHub-marked, so the
-	 * startup sweep (`wireAgents` → `reapUnknown`, one round per machine that
-	 * has a Workspace on it) closes them the next time that host is both
-	 * reachable and in use.
+	 * loud instead of being lost silently — see `sessionsLeftRunning` for what
+	 * is and is not promised about them afterwards.
 	 *
 	 * Only "the machine did not answer" is continued past. A tmux that answered
 	 * and refused, or a step that ran out of its deadline while the host was

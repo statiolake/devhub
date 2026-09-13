@@ -60,7 +60,11 @@ describe("a close whose machine does not answer", () => {
 		]);
 		expect(said).toContain("Agent sessions on ssh:build-box.example.com");
 		expect(said).toContain("terminal sessions on ssh:build-box.example.com");
-		expect(said).toContain("still running");
+		// It promises nothing about what happens to them next: the Agent sweep
+		// only runs on machines that still have a Workspace, and there is no
+		// terminal sweep at all.
+		expect(said).toContain("tmux");
+		expect(said).not.toMatch(/next time|will be closed/u);
 	});
 
 	it("does not continue past a machine that answered and refused", () => {
