@@ -27,19 +27,8 @@ import {
   type WorkspacePickerEvent,
 } from "./client";
 import { subscribeToUnhandled, toAppError } from "./failure";
-import { useAlertLifetime } from "./alertLifetime";
+import { useAppNotices } from "./notices";
 import { AppShellContext, type AppShellContextValue } from "./useAppShell";
-
-/**
- * What makes two failures the same failure.
- *
- * The code and the words: a save that keeps failing for the same reason is
- * one failure being re-raised, and a save that starts failing for a different
- * reason is news.
- */
-function errorIdentity(error: AppError): string {
-  return `${error.code}\u0000${error.detail ?? ""}`;
-}
 
 /**
  * What a dispatch came back asking to have confirmed.
@@ -108,18 +97,23 @@ export function AppShellProvider({
     profiles: [],
   });
   /**
-   * The failure on screen, and the one rule that decides when it goes.
+   * What the application has to say, and the one rule that decides when it
+   * stops saying it.
    *
-   * The rule itself is `useAlertLifetime` and is shared with every other
-   * window DevHub has, so there is no second implementation to drift from.
-   * All this page supplies is what makes two failures "the same" one.
+   * The rule is `useAlertLifetime`, shared with every other window DevHub has,
+   * so there is no second implementation to drift from; `useAppNotices` is
+   * what says which sources share a slot under it and which of them the
+   * person's next action retires. Everything here is app-scoped: a failure
+   * about one Agent or one workspace never reaches this page's alert channel,
+   * because main routed it to that Agent or that workspace instead.
    */
   const {
-    alert: intentError,
-    raise: raiseHere,
-    clear: clearIntentError,
-    dismiss: dismissIntentError,
-  } = useAlertLifetime<AppError>(errorIdentity);
+    notices,
+    raiseFailure: raiseHere,
+    clearFailure: clearIntentError,
+    dismiss: dismissNotice,
+    dismissNewest: dismissNewestNotice,
+  } = useAppNotices();
 
   const setIntentError = useCallback(
     (error: AppError) => {
@@ -140,6 +134,7 @@ export function AppShellProvider({
   >([]);
   const [repositoryStatus, setRepositoryStatus] =
     useState<RepositoryStatusWire>({ sequence: 0, workspaces: [] });
+
   const [pickerBusy, setPickerBusy] = useState(false);
   /**
    * How many sources the last run had to ask.
@@ -699,8 +694,9 @@ export function AppShellProvider({
     () => ({
       state,
       appearance,
-      intentError,
-      dismissIntentError,
+      notices,
+      dismissNotice,
+      dismissNewestNotice,
       reportFailure,
       dispatch,
       retry,
@@ -764,9 +760,10 @@ export function AppShellProvider({
       assignIssue,
       confirmPending,
       dismissCloseConfirmation,
-      dismissIntentError,
+      dismissNotice,
+      dismissNewestNotice,
       dispatch,
-      intentError,
+      notices,
       openExternalUrl,
       openSettings,
       pendingConfirmation,

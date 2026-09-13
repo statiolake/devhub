@@ -58,15 +58,14 @@ function failure(detail: string): AppError {
 
 /** The page's view of the alert, and the two gestures that retire it. */
 function Probe() {
-  const { intentError, dismissIntentError, dispatch } = useAppShell();
+  const { notices, dismissNewestNotice, dispatch } = useAppShell();
+  const alert = notices[notices.length - 1];
   return (
     <div>
       <p data-testid="alert">
-        {intentError
-          ? `${intentError.summary} ${intentError.detail ?? ""}`
-          : ""}
+        {alert ? `${alert.summary} ${alert.detail ?? ""}` : ""}
       </p>
-      <button type="button" onClick={dismissIntentError}>
+      <button type="button" onClick={dismissNewestNotice}>
         Dismiss
       </button>
       <button

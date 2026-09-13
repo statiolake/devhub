@@ -12,7 +12,6 @@ import {
   clampSplitRatio,
   workspaceForContext,
   type AppAppearance,
-  type AppError,
   type AppSnapshot,
   type WorkspaceSnapshot,
 } from "../../../ipc/appShell";
@@ -29,48 +28,11 @@ import { Failure, Waiting } from "./SurfaceState";
 import { useRestartingEditors } from "./workbenchDialogs";
 import { TerminalSurface } from "../../terminal/TerminalSurface";
 import { AgentShortcuts } from "./AgentShortcuts";
+import { Toasts } from "./Toasts";
 
 export interface SurfaceViewportProps {
   readonly snapshot: AppSnapshot;
-  readonly intentError?: AppError;
   readonly appearance?: AppAppearance;
-}
-
-function InlineIntentError({
-  message,
-  detail,
-  onDismiss,
-}: {
-  readonly message: string;
-  readonly detail?: string;
-  readonly onDismiss: () => void;
-}) {
-  return (
-    <div className="surface-inline-alert" role="alert">
-      <span className="surface-inline-alert-mark" aria-hidden="true">
-        !
-      </span>
-      <span className="surface-inline-alert-message">
-        {message}
-        {/* The summary says what to do; the detail says what happened. */}
-        {detail ? (
-          <span className="surface-inline-alert-detail">{detail}</span>
-        ) : null}
-      </span>
-      {/* The alert covers the top of the Surface and nothing else retires it,
-          so the user needs a way to put it away once they have read it. */}
-      <button
-        className="surface-inline-alert-close"
-        type="button"
-        aria-label="Dismiss"
-        onClick={onDismiss}
-      >
-        <svg viewBox="0 0 12 12" aria-hidden="true" focusable="false">
-          <path d="M3 3l6 6M9 3l-6 6" />
-        </svg>
-      </button>
-    </div>
-  );
 }
 
 /**
@@ -317,16 +279,10 @@ export function Unavailable({
  */
 export function SurfaceViewport({
   snapshot,
-  intentError,
   appearance,
 }: SurfaceViewportProps) {
-  const {
-    dispatch,
-    closeWorkspace,
-    chooseWorkspaceFolder,
-    dismissIntentError,
-    reportFailure,
-  } = useAppShell();
+  const { dispatch, closeWorkspace, chooseWorkspaceFolder, reportFailure } =
+    useAppShell();
   const layout = snapshot.layout;
   const workspace = workspaceForContext(snapshot, snapshot.selection.context);
   const restartingEditors = useRestartingEditors();
@@ -501,13 +457,6 @@ export function SurfaceViewport({
       data-surface-state={surfaceState}
       ref={contentRef}
     >
-      {intentError && (
-        <InlineIntentError
-          message={intentError.summary}
-          detail={intentError.detail ?? undefined}
-          onDismiss={dismissIntentError}
-        />
-      )}
       <div className="surface-panes">
         <div
           className="workbench-hole"
@@ -535,6 +484,11 @@ export function SurfaceViewport({
           presentation={agentPresentation}
         />
       </div>
+      {/* Under the panes and not over them: the workbench is a native view and
+          paints over anything in this document that overlaps it, so the one
+          place an app-wide notice is certain to be seen is a strip the hole
+          gives up. See `Toasts`. */}
+      <Toasts />
     </section>
   );
 }

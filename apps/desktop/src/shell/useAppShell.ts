@@ -2,7 +2,6 @@ import { createContext, useContext } from "react";
 import type {
   AgentProfiles,
   AppAppearance,
-  AppError,
   AppIntent,
   AppLoadState,
   AppOutcome,
@@ -19,12 +18,23 @@ import type {
   SshHostWire,
   WorkspacePickerCandidate,
 } from "./client";
+import type { Notice } from "./notices";
 
 export interface AppShellContextValue {
   readonly state: AppLoadState;
   readonly appearance: AppAppearance | undefined;
-  readonly intentError: AppError | null;
-  readonly dismissIntentError: () => void;
+  /**
+   * What the application itself has to say right now, oldest first.
+   *
+   * App-scoped only, and drawn in exactly one place (`Toasts`). A failure
+   * about one Agent or one workspace is not here: main routes it to that
+   * Agent's pane or that workspace's surface instead.
+   */
+  readonly notices: readonly Notice[];
+  /** The person put one notice away. */
+  readonly dismissNotice: (identity: string) => void;
+  /** The person put the newest notice away — what `dismiss_alert` reaches. */
+  readonly dismissNewestNotice: () => void;
   /** Hand a failure to the shell rather than explaining it locally. */
   readonly reportFailure: (error: unknown) => void;
   readonly dispatch: (intent: AppIntent) => Promise<AppOutcome | undefined>;

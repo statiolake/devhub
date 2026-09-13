@@ -849,7 +849,7 @@ export function Sidebar({ snapshot, onDispatch }: SidebarProps) {
     agentProfiles,
     repositoryStatus,
     closeWorkspace,
-    dismissIntentError,
+    dismissNewestNotice,
   } = useAppShell();
   const repositories = useMemo(
     () =>
@@ -995,9 +995,9 @@ export function Sidebar({ snapshot, onDispatch }: SidebarProps) {
         // third of the three things that retire a failure. With nothing on
         // screen it records nothing and changes nothing, which is what makes
         // the chord a no-op rather than a case anybody has to check for.
-        if (command === "dismiss_alert") dismissIntentError();
+        if (command === "dismiss_alert") dismissNewestNotice();
       }),
-    [dismissIntentError, focusSidebar, openPicker],
+    [dismissNewestNotice, focusSidebar, openPicker],
   );
 
   const [inProgressWidth, setInProgressWidth] = useState<number | null>(null);

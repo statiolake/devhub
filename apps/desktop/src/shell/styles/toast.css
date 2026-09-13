@@ -1,0 +1,152 @@
+/*
+ * The app-wide notice stack.
+ *
+ * A separate sheet because it is a separate surface: one stack, one set of
+ * rules, nothing else in DevHub draws with them. Everything here is the
+ * shell's own vocabulary — the raised material, the hairline, the 4px grid,
+ * the 13/11 pair the rows use — because a notice is part of the workbench and
+ * not a visitor to it.
+ *
+ * It sits in the flow at the foot of the content area rather than over it: a
+ * native workbench view paints over this document, so a floating toast is a
+ * toast nobody sees. See `components/shell/Toasts.tsx`.
+ */
+
+.toast-stack {
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  padding: var(--space-2) var(--space-3) var(--space-3);
+  gap: var(--space-2);
+}
+
+/*
+ * One notice. Its width is its sentence's, up to a measure that stays readable
+ * — a line of prose across a wide editor is a line nobody finishes.
+ */
+.toast {
+  display: flex;
+  max-width: min(520px, 100%);
+  align-items: flex-start;
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+  background: var(--raised);
+  box-shadow: var(--shadow-raised);
+  gap: var(--space-2);
+}
+
+/* The one place a notice takes a colour: the mark, and only when something
+   actually failed. A standing condition is not an error the person caused, so
+   it stays in the quiet ink the Sidebar's own notes use. */
+.toast[role="alert"] {
+  border-color: color-mix(in srgb, var(--danger) 38%, transparent);
+}
+
+.toast-mark {
+  display: flex;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  margin-top: 1px;
+  background: var(--wash);
+  color: var(--secondary);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.toast[role="alert"] .toast-mark {
+  background: color-mix(in srgb, var(--danger) 16%, transparent);
+  color: var(--danger);
+}
+
+.toast-text {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.toast-summary {
+  margin: 0;
+  color: var(--primary);
+  font-size: 13px;
+  line-height: 1.35;
+  text-wrap: pretty;
+}
+
+/* The concrete cause under the summary's instruction: secondary in weight
+   because it is secondary in what the reader needs. */
+.toast-detail {
+  margin: 0;
+  color: var(--secondary);
+  font-size: 11px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  text-wrap: pretty;
+}
+
+.toast-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.toast-action {
+  padding: 3px var(--space-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--primary);
+  font-size: 12px;
+  transition: background 120ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.toast-action:hover {
+  background: var(--wash);
+}
+
+.toast-action:active {
+  background: var(--wash-strong);
+}
+
+.toast-close {
+  display: flex;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--tertiary);
+}
+
+.toast-close svg {
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: currentcolor;
+  stroke-linecap: round;
+  stroke-width: 1.5;
+}
+
+.toast-close:hover {
+  background: var(--wash);
+  color: var(--primary);
+}
+
+/* The keyboard reaches every toast, so every toast has to show where it is. */
+.toast:focus-visible,
+.toast-action:focus-visible,
+.toast-close:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}

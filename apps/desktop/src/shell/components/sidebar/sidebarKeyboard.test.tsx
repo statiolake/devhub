@@ -100,7 +100,7 @@ function snapshotOn(context: AppSnapshot["selection"]["context"]): AppSnapshot {
   } as unknown as AppSnapshot;
 }
 
-const dismissIntentError = vi.fn();
+const dismissNewestNotice = vi.fn();
 
 function mount(snapshot: AppSnapshot) {
   const value = {
@@ -109,7 +109,7 @@ function mount(snapshot: AppSnapshot) {
     answerWorktreeClose: vi.fn(() => Promise.resolve({})),
     closeWorkspace: vi.fn(),
     reportFailure: vi.fn(),
-    dismissIntentError,
+    dismissNewestNotice,
     agentProfiles: { sequence: 1, availability: "available", profiles: [] },
     repositoryStatus: { sequence: 1, workspaces: [] },
   } as unknown as AppShellContextValue;
@@ -190,9 +190,9 @@ describe("Escape in the Sidebar", () => {
 });
 
 describe("dismiss_alert", () => {
-  it("retires the failure the page is showing", () => {
+  it("retires the newest notice the page is showing", () => {
     mount(snapshotOn({ kind: "global" }));
     send("dismiss_alert");
-    expect(dismissIntentError).toHaveBeenCalledTimes(1);
+    expect(dismissNewestNotice).toHaveBeenCalledTimes(1);
   });
 });

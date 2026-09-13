@@ -88,8 +88,7 @@ function ErrorSurface({
 }
 
 function Workbench() {
-  const { state, appearance, intentError, dispatch, retry, openSettings } =
-    useAppShell();
+  const { state, appearance, dispatch, retry, openSettings } = useAppShell();
   const onDispatch = useCallback(
     (intent: Parameters<typeof dispatch>[0]) => {
       void dispatch(intent);
@@ -156,11 +155,7 @@ function Workbench() {
       <div className="attention-glow" aria-hidden="true" />
       <div className="app-shell-content">
         <Sidebar snapshot={state.snapshot} onDispatch={onDispatch} />
-        <SurfaceViewport
-          snapshot={state.snapshot}
-          intentError={intentError ?? undefined}
-          appearance={appearance}
-        />
+        <SurfaceViewport snapshot={state.snapshot} appearance={appearance} />
       </div>
     </main>
   );
