@@ -1898,10 +1898,14 @@ body.is-resizing-split {
 /*
  * The window says "over here" with its own edge, not with a banner.
  *
- * A one-pixel inset ring that breathes: at rest it is invisible, at its peak it
- * is a faint tint of the same blue. It is drawn over everything, including a
- * workbench view, because a native view paints outside the DOM and an overlay
- * that sat under it would be hidden exactly when there is something to say.
+ * An inset ring that breathes, with the same blue spilling inward behind it:
+ * at rest it is nearly out, at its peak the whole window is visibly rimmed. A
+ * hairline was not enough — on a large display the frame merely tinted, which
+ * is exactly the failure the affordance exists to avoid, so the edge is thick
+ * enough to read from across a desk and the halo gives it somewhere to fade
+ * into. It is drawn over everything, including a workbench view, because a
+ * native view paints outside the DOM and an overlay that sat under it would be
+ * hidden exactly when there is something to say.
  */
 .attention-glow {
   position: fixed;
@@ -1910,7 +1914,9 @@ body.is-resizing-split {
   pointer-events: none;
   border-radius: inherit;
   opacity: 0;
-  box-shadow: inset 0 0 0 1.5px var(--status-waiting);
+  box-shadow:
+    inset 0 0 0 3.5px var(--status-waiting),
+    inset 0 0 24px var(--attention-halo);
 }
 
 .app-shell[data-attention="true"] .attention-glow {
@@ -1923,7 +1929,7 @@ body.is-resizing-split {
     opacity: 0.15;
   }
   50% {
-    opacity: 0.55;
+    opacity: var(--attention-peak);
   }
 }
 
@@ -1935,7 +1941,9 @@ body.is-resizing-split {
 @media (prefers-reduced-motion: reduce) {
   .app-shell[data-attention="true"] .attention-glow {
     animation: none;
-    opacity: 0.4;
+    /* Just under the breath's peak: still unmistakable, but a shade quieter
+       than the brightest instant of something that was moving. */
+    opacity: calc(var(--attention-peak) - 0.2);
   }
 }
 
