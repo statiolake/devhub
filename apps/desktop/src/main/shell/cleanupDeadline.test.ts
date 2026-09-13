@@ -60,11 +60,11 @@ describe("a close whose machine does not answer", () => {
 		]);
 		expect(said).toContain("Agent sessions on ssh:build-box.example.com");
 		expect(said).toContain("terminal sessions on ssh:build-box.example.com");
-		// It promises nothing about what happens to them next: the Agent sweep
-		// only runs on machines that still have a Workspace, and there is no
-		// terminal sweep at all.
+		// And it says what happens to them next, because now something does:
+		// the machine stays in `session_machines`, so the sweep asks it again
+		// and closes exactly these (`sessionSweep.ts`).
 		expect(said).toContain("tmux");
-		expect(said).not.toMatch(/next time|will be closed/u);
+		expect(said).toMatch(/next time it can reach it/u);
 	});
 
 	it("does not continue past a machine that answered and refused", () => {

@@ -97,12 +97,13 @@ export function withCloseDeadline<T>(
  * of its deadline while the host was up — is a failure about DevHub's own work
  * and still stops the close, because those are the ones trying again can fix.
  *
- * What happens to the sessions afterwards is deliberately *not* promised. The
- * Agent sweep at startup (`reapUnknown`) does run once per machine that has a
- * Workspace on it, so a stray Agent on a host DevHub still uses is closed; a
- * host it no longer uses is never asked, and there is no equivalent sweep for
- * terminal sessions at all. So the sentence names what is there and where,
- * and stops.
+ * What happens to the sessions afterwards is the sweep's, and the sweep now
+ * covers exactly this case: the machine stays in `session_machines` when its
+ * last Workspace goes, so DevHub asks it again — at the next startup, or the
+ * moment a runtime for it connects — and closes every marked session no
+ * Workspace and no Agent accounts for (`sessionSweep.ts`). The sentence says
+ * so, because a person who has been told what is running and when it will be
+ * cleaned up does not have to go and look.
  *
  * `undefined` therefore means "this is not that": rethrow it.
  */
@@ -127,6 +128,6 @@ export function sessionsLeftRunning(
 export function sessionsLeftRunningDetail(left: readonly string[]): string {
 	return (
 		`${left.join(", ")}. They are marked as DevHub's on that machine's tmux ` +
-		`server, and nothing here can stop them until DevHub can reach it again.`
+		`server; DevHub closes them the next time it can reach it.`
 	);
 }
