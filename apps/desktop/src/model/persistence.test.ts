@@ -1036,3 +1036,251 @@ describe("the order a person put the rows in, across a restart", () => {
     ).toEqual([AG_B, AG_A]);
   });
 });
+
+/**
+ * One gate, not two.
+ *
+ * The state file used to have two validators that disagreed. `validateState`
+ * checked the schema and called a record valid; `hydrateModel` then read
+ * fields the schema check had never looked at, and a record without a
+ * `control_state` came out of `controlStateFrom` as a bare `TypeError` — on a
+ * state that had just been pronounced good. An unnamed crash is not a refusal:
+ * the store's integrity path quarantines a `StateError` and recovers from the
+ * backup with a notice, and a `TypeError` goes past it to the top of the app.
+ *
+ * So the rule these tests hold to: validation is the single gate, and every
+ * field hydration reads is checked there, by the same decoder the file is read
+ * with. Past it, hydration is total for shape.
+ */
+describe("what validation checks and hydration may then assume", () => {
+  /** A good state with one record broken, and the refusal it produced. */
+  function refusalFrom(mutate: (state: PersistedAppState) => void): StateError {
+    const state = stateFromSnapshot(populatedModel().snapshot());
+    mutate(state);
+    let refusal: unknown;
+    try {
+      validateState(state);
+    } catch (error) {
+      refusal = error;
+    }
+    expect(refusal).toBeInstanceOf(StateError);
+    // The same state through the other road: hydration must refuse it the same
+    // way, and never with the unnamed error this whole rule exists to stop.
+    expect(() => hydrateModel(state, [codex])).toThrow(StateError);
+    expect(() => hydrateModel(state, [codex])).not.toThrow(TypeError);
+    return refusal as StateError;
+  }
+
+  /**
+   * Every field hydration reads that the schema check used to skip.
+   *
+   * `control_state` is the one that was reported, and it was never the only
+   * one: `status`, `runtime_health`, `profile_kind`, `unread`, a workspace's
+   * `lifecycle` and `location`, the sidebar's width and collapse, the split's
+   * ratio and the navigation context's kind were all read by hydration and
+   * checked by nothing, because the decoder that checks them is only on the
+   * road that comes from a file.
+   */
+  const gaps: readonly (readonly [
+    string,
+    string,
+    (state: PersistedAppState) => void,
+  ])[] = [
+    [
+      "an agent with no control state",
+      "workspaces[0].agents[0].control_state",
+      (state) => {
+        delete (
+          state.workspaces[0].agents[0] as unknown as Record<string, unknown>
+        )["control_state"];
+      },
+    ],
+    [
+      "an agent whose control state names no kind",
+      "workspaces[0].agents[0].control_state.kind",
+      (state) => {
+        state.workspaces[0].agents[0].control_state = {} as never;
+      },
+    ],
+    [
+      "a stop that failed without saying why",
+      "workspaces[0].agents[0].control_state.diagnostic",
+      (state) => {
+        state.workspaces[0].agents[0].control_state = {
+          kind: "stop_failed",
+        } as never;
+      },
+    ],
+    [
+      "an agent with no status",
+      "workspaces[0].agents[0].status",
+      (state) => {
+        delete (
+          state.workspaces[0].agents[0] as unknown as Record<string, unknown>
+        )["status"];
+      },
+    ],
+    [
+      "an agent whose status is not one",
+      "workspaces[0].agents[0].status",
+      (state) => {
+        state.workspaces[0].agents[0].status = "banana" as never;
+      },
+    ],
+    [
+      "an agent with no runtime health",
+      "workspaces[0].agents[0].runtime_health",
+      (state) => {
+        delete (
+          state.workspaces[0].agents[0] as unknown as Record<string, unknown>
+        )["runtime_health"];
+      },
+    ],
+    [
+      "an agent whose profile kind is not one",
+      "workspaces[0].agents[0].profile_kind",
+      (state) => {
+        state.workspaces[0].agents[0].profile_kind = "banana" as never;
+      },
+    ],
+    [
+      "an agent owed a look for a reason that is not one",
+      "workspaces[0].agents[0].unread",
+      (state) => {
+        state.workspaces[0].agents[0].unread = "banana" as never;
+      },
+    ],
+    [
+      "a workspace with no lifecycle",
+      "workspaces[0].lifecycle",
+      (state) => {
+        delete (state.workspaces[0] as unknown as Record<string, unknown>)[
+          "lifecycle"
+        ];
+      },
+    ],
+    [
+      "a workspace unavailable for a reason that is not one",
+      "workspaces[0].lifecycle.reason",
+      (state) => {
+        state.workspaces[0].lifecycle = {
+          kind: "unavailable",
+          reason: "banana",
+        } as never;
+      },
+    ],
+    [
+      "a workspace on a kind of place there is none of",
+      "workspaces[0].location.kind",
+      (state) => {
+        state.workspaces[0].location = { kind: "banana" } as never;
+      },
+    ],
+    [
+      "a sidebar width written as a string",
+      "sidebar.width",
+      (state) => {
+        state.sidebar.width = "300" as never;
+      },
+    ],
+    [
+      "a sidebar collapse that is not a yes or a no",
+      "sidebar.collapsed",
+      (state) => {
+        state.sidebar.collapsed = "yes" as never;
+      },
+    ],
+    [
+      "a split ratio written as a string",
+      "split.ratio",
+      (state) => {
+        state.split.ratio = "0.5" as never;
+      },
+    ],
+    [
+      "a selection of a kind there is none of",
+      "navigation.context.kind",
+      (state) => {
+        state.navigation.context = { kind: "banana" } as never;
+      },
+    ],
+  ];
+
+  for (const [what, path, mutate] of gaps) {
+    it(`refuses ${what}, and names the field`, () => {
+      const refusal = refusalFrom(mutate);
+      expect(refusal.code).toBe("STATE_INVALID");
+      expect(refusal.describe("state.json")).toContain(path);
+    });
+  }
+
+  /**
+   * The property, over the records this build can write.
+   *
+   * Every optional key dropped, one at a time, from a good state: whatever
+   * `validateState` accepts, `hydrateModel` projects. The absent ones that are
+   * migrations — `location`, `profile_kind` and the rest of the launch
+   * snapshot, `last_agent_id` — are accepted and hydrate; the ones that are
+   * gaps are refused as `StateError`. Neither road ends in a `TypeError`.
+   */
+  it("hydrates every record it accepts, whichever key is absent", () => {
+    const good = stateFromSnapshot(populatedModel().snapshot());
+    const paths: string[] = [
+      ...Object.keys(good.workspaces[0].agents[0]).map(
+        (key) => `workspaces.0.agents.0.${key}`,
+      ),
+      ...Object.keys(good.workspaces[0])
+        .filter((key) => key !== "agents")
+        .map((key) => `workspaces.0.${key}`),
+      ...Object.keys(good.sidebar).map((key) => `sidebar.${key}`),
+      "split.ratio",
+      "navigation.context",
+    ];
+    let accepted = 0;
+    for (const path of paths) {
+      const state = JSON.parse(JSON.stringify(good)) as PersistedAppState;
+      const steps = path.split(".");
+      let node = state as unknown as Record<string, unknown>;
+      for (const step of steps.slice(0, -1)) {
+        node = node[step] as Record<string, unknown>;
+      }
+      delete node[steps[steps.length - 1]!];
+      try {
+        validateState(state);
+      } catch (error) {
+        expect(error, `${path} was refused by something else`).toBeInstanceOf(
+          StateError,
+        );
+        continue;
+      }
+      accepted += 1;
+      expect(() => hydrateModel(state, [codex]), path).not.toThrow();
+    }
+    // The absences that are migrations, not gaps — if this ever reaches zero
+    // the loop is passing because nothing gets through it.
+    expect(accepted).toBeGreaterThan(0);
+  });
+
+  it("quarantines a file whose agent has no control state", async () => {
+    const directory = makeScratchDir("gate");
+    const path = join(directory, "state.json");
+    const store = new JsonStateStore(path);
+    const good = stateFromSnapshot(populatedModel().snapshot());
+    await store.saveState(good);
+    await store.saveState(emptied(good));
+    const document = JSON.parse(JSON.stringify(good)) as PersistedAppState;
+    delete (
+      document.workspaces[0].agents[0] as unknown as Record<string, unknown>
+    )["control_state"];
+    await writeFile(path, JSON.stringify(document), { mode: 0o600 });
+
+    const load = await store.loadState();
+    expect(load.metadata.recoveryReason).toBe("corrupt_primary");
+    expect(load.metadata.primaryQuarantined).toBe(true);
+    expect(load.metadata.corruptionDetail).toContain(
+      "workspaces[0].agents[0].control_state",
+    );
+    expect(load.state).toEqual(good);
+    removeScratchDir(directory);
+  });
+});

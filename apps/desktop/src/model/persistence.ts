@@ -559,15 +559,16 @@ export function freshState(): PersistedAppState {
 
 // ------------------------------------------------------------- validation
 
-function validateUuid(value: string): void {
-  if (!isCanonicalUuid(value)) {
-    fail("STATE_INVALID");
+function validateUuid(where: string, value: string): void {
+  if (!isCanonicalUuid(decodeString(where, value))) {
+    refuse(where, "an identity", value);
   }
 }
 
-function validateAbsolutePath(value: string): void {
-  if (value.length === 0 || value.includes("\0") || !value.startsWith("/")) {
-    fail("STATE_INVALID");
+function validateAbsolutePath(where: string, value: string): void {
+  const path = decodeString(where, value);
+  if (path.length === 0 || path.includes("\0") || !path.startsWith("/")) {
+    refuse(where, "an absolute path", value);
   }
 }
 
@@ -615,26 +616,65 @@ function unreadFrom(
   return value === true ? "waiting" : value;
 }
 
-function validateAgentRecord(record: AgentStateRecord): void {
-  validateUuid(record.agent_id);
-  validateUuid(record.workspace_id);
-  if (!isSlug(record.profile_id)) {
-    fail("STATE_INVALID");
+/**
+ * The fields of a record hydration reads, checked here and only here.
+ *
+ * Validation is the single gate: after it, `hydrateModel` is total for shape,
+ * and a record that reaches projection can be read field by field without a
+ * `?.` or a throw path. The checks below are the decoders themselves, run for
+ * their refusals — one owner per fact, so the membership list a file is read
+ * against and the one a record is validated against cannot drift apart.
+ *
+ * They matter because `validateState` is reached by two roads. A file arrives
+ * already decoded, so `control_state` is an object or the file was refused;
+ * a record built in process — a test, a caller assembling a
+ * `PersistedAppState` by hand — arrives having been checked by nothing at all,
+ * and `control_state` could be missing. It used to reach `controlStateFrom`
+ * and come out as a bare `TypeError` on a state the schema check had just
+ * called valid, which is two validators disagreeing about the same file.
+ */
+function validateAgentShape(where: string, record: AgentStateRecord): void {
+  const at = (key: string): string => `${where}.${key}`;
+  if (record.profile_kind !== undefined) {
+    decodeMember(at("profile_kind"), record.profile_kind, AGENT_PROFILE_KINDS);
   }
-  if (!Number.isInteger(record.ordinal) || record.ordinal === 0) {
-    fail("STATE_INVALID");
+  decodeMember(at("status"), record.status, AGENT_STATUSES);
+  if (record.unread !== undefined) {
+    decodeUnread(at("unread"), record.unread);
+  }
+  decodeMember(at("runtime_health"), record.runtime_health, RUNTIME_HEALTHS);
+  decodeControlState(at("control_state"), record.control_state);
+}
+
+function validateAgentRecord(where: string, record: AgentStateRecord): void {
+  validateAgentShape(where, record);
+  validateUuid(`${where}.agent_id`, record.agent_id);
+  validateUuid(`${where}.workspace_id`, record.workspace_id);
+  if (!isSlug(decodeString(`${where}.profile_id`, record.profile_id))) {
+    refuse(`${where}.profile_id`, "a profile id", record.profile_id);
+  }
+  if (
+    !Number.isInteger(decodeNumber(`${where}.ordinal`, record.ordinal)) ||
+    record.ordinal === 0
+  ) {
+    refuse(`${where}.ordinal`, "a non-zero whole number", record.ordinal);
   }
   if (
     record.profile_command !== undefined &&
-    (record.profile_command.trim().length === 0 ||
+    (decodeString(`${where}.profile_command`, record.profile_command).trim()
+      .length === 0 ||
       record.profile_command.includes("\0") ||
       Buffer.byteLength(record.profile_command, "utf8") >
         MAX_AGENT_PROFILE_ARG_BYTES)
   ) {
     fail("STATE_INVALID");
   }
-  for (const name of [record.temporary_name, record.profile_display_name]) {
+  for (const [key, name] of [
+    ["temporary_name", record.temporary_name],
+    ["profile_display_name", record.profile_display_name],
+  ] as const) {
     if (name === undefined) continue;
+    decodeString(`${where}.${key}`, name);
     if (
       !validDisplayName(name) ||
       Buffer.byteLength(name, "utf8") > MAX_AGENT_NAME_BYTES
@@ -642,7 +682,8 @@ function validateAgentRecord(record: AgentStateRecord): void {
       fail("STATE_INVALID");
     }
   }
-  if (record.profile_args) {
+  if (record.profile_args !== undefined) {
+    decodeStringArray(`${where}.profile_args`, record.profile_args);
     if (
       record.profile_args.length > MAX_AGENT_PROFILE_ARGS ||
       record.profile_args.some(
@@ -654,8 +695,10 @@ function validateAgentRecord(record: AgentStateRecord): void {
       fail("STATE_INVALID");
     }
   }
-  if (record.profile_env) {
-    const entries = Object.entries(record.profile_env);
+  if (record.profile_env !== undefined) {
+    const entries = Object.entries(
+      decodeStringMap(`${where}.profile_env`, record.profile_env),
+    );
     if (
       entries.length > MAX_AGENT_PROFILE_ENV_ENTRIES ||
       entries.some(
@@ -685,7 +728,10 @@ function validateAgentRecord(record: AgentStateRecord): void {
     fail("STATE_INVALID");
   }
   if (record.provider_mapping !== undefined) {
-    const mapping = record.provider_mapping;
+    const mapping = decodeString(
+      `${where}.provider_mapping`,
+      record.provider_mapping,
+    );
     if (
       mapping.length === 0 ||
       mapping.length > MAX_OPAQUE_MAPPING_BYTES ||
@@ -696,10 +742,18 @@ function validateAgentRecord(record: AgentStateRecord): void {
   }
 }
 
-function validateWorkspaceRecord(record: WorkspaceStateRecord): void {
-  validateUuid(record.workspace_id);
-  validateAbsolutePath(record.selected_path);
-  validateAbsolutePath(record.canonical_path);
+function validateWorkspaceRecord(
+  where: string,
+  record: WorkspaceStateRecord,
+): void {
+  if (record.location !== undefined) {
+    decodeWorkspaceLocation(`${where}.location`, record.location);
+  }
+  decodeLifecycle(`${where}.lifecycle`, record.lifecycle);
+  decodeArray(`${where}.agents`, record.agents);
+  validateUuid(`${where}.workspace_id`, record.workspace_id);
+  validateAbsolutePath(`${where}.selected_path`, record.selected_path);
+  validateAbsolutePath(`${where}.canonical_path`, record.canonical_path);
   if (record.location?.kind === "ssh") {
     // The same rule the domain applies, applied to the file, so a hand-edited
     // or truncated host is refused here rather than throwing three layers in.
@@ -708,14 +762,14 @@ function validateWorkspaceRecord(record: WorkspaceStateRecord): void {
     );
   }
   if (record.repository_id !== undefined) {
-    validateUuid(record.repository_id);
+    validateUuid(`${where}.repository_id`, record.repository_id);
   }
   if (record.last_agent_id !== undefined) {
-    validateUuid(record.last_agent_id);
+    validateUuid(`${where}.last_agent_id`, record.last_agent_id);
   }
   const ids = new Set<string>();
-  for (const agent of record.agents) {
-    validateAgentRecord(agent);
+  for (const [index, agent] of record.agents.entries()) {
+    validateAgentRecord(`${where}.agents[${index}]`, agent);
     if (agent.workspace_id !== record.workspace_id || ids.has(agent.agent_id)) {
       fail("STATE_INVALID");
     }
@@ -730,7 +784,7 @@ function isValidSocketName(value: string): boolean {
 }
 
 function validateOwnedSession(session: OwnedSessionRecord): void {
-  const name = session.session_name;
+  const name = decodeString("the session's name", session.session_name);
   if (name.length === 0 || name.length > 256 || name.includes("\0")) {
     fail("STATE_INVALID");
   }
@@ -738,7 +792,7 @@ function validateOwnedSession(session: OwnedSessionRecord): void {
     if (name !== "scratch") fail("STATE_INVALID");
     return;
   }
-  validateUuid(session.workspace_id);
+  validateUuid("the session's workspace_id", session.workspace_id);
   // A workspace session is named from a digest of its canonical root, which is
   // what lets the name be rebuilt from the snapshot after a crash.
   const digest = name.startsWith("ws-") ? name.slice(3) : undefined;
@@ -891,8 +945,9 @@ export function validateState(state: PersistedAppState): void {
   const workspaceIds = new Set<string>();
   const locations = new Set<string>();
   const agentIds = new Set<string>();
-  for (const workspace of state.workspaces) {
-    validateWorkspaceRecord(workspace);
+  decodeArray("workspaces", state.workspaces);
+  for (const [index, workspace] of state.workspaces.entries()) {
+    validateWorkspaceRecord(`workspaces[${index}]`, workspace);
     // The same identity the model enforces: the place, machine included. Two
     // hosts' `/src/api` are two Workspaces and must both survive a reload.
     const key = `${workspace.location?.kind === "ssh" ? workspace.location.host : ""}\u0000${normalizePathString(workspace.canonical_path)}`;
@@ -908,6 +963,19 @@ export function validateState(state: PersistedAppState): void {
       agentIds.add(agent.agent_id);
     }
   }
+  decodeObject("navigation", state.navigation);
+  decodeObject("navigation.context", state.navigation.context);
+  decodeObject("sidebar", state.sidebar);
+  decodeObject("split", state.split);
+  decodeObject("window", state.window);
+  decodeObject("window.frame", state.window.frame);
+  decodeObject("tmux", state.tmux);
+  // Typed before compared. `"300" < 200 || "300" > 400` is false twice, so a
+  // width that is a string passes every range check and reaches the model as
+  // one; the range is only meaningful once the value is known to be a number.
+  decodeNumber("sidebar.width", state.sidebar.width);
+  decodeBoolean("sidebar.collapsed", state.sidebar.collapsed);
+  decodeNumber("split.ratio", state.split.ratio);
   if (
     state.sidebar.width < MIN_SIDEBAR_WIDTH ||
     state.sidebar.width > MAX_SIDEBAR_WIDTH ||
@@ -917,6 +985,8 @@ export function validateState(state: PersistedAppState): void {
     fail("STATE_INVALID");
   }
   const frame = state.window.frame;
+  decodeNumber("window.frame.width", frame.width);
+  decodeNumber("window.frame.height", frame.height);
   if (
     frame.width === 0 ||
     frame.height === 0 ||
@@ -927,10 +997,18 @@ export function validateState(state: PersistedAppState): void {
   }
   // Ids only, and not "is this workspace open": a row that has been closed
   // keeps its place for when it comes back. See `SidebarState.order`.
-  for (const id of state.sidebar.order) validateUuid(id);
+  decodeStringArray("sidebar.order", state.sidebar.order);
+  for (const [index, id] of state.sidebar.order.entries()) {
+    validateUuid(`sidebar.order[${index}]`, id);
+  }
   const context = state.navigation.context;
-  if (context.kind === "workspace") validateUuid(context.workspace_id);
-  if (context.kind === "agent") validateUuid(context.agent_id);
+  decodeMember("navigation.context.kind", context.kind, NAVIGATION_KINDS);
+  if (context.kind === "workspace") {
+    validateUuid("navigation.context.workspace_id", context.workspace_id);
+  }
+  if (context.kind === "agent") {
+    validateUuid("navigation.context.agent_id", context.agent_id);
+  }
   validateTmux(state.tmux, workspaceIds);
 }
 
@@ -998,6 +1076,15 @@ function launchProfile(
  * An Agent whose profile is no longer configured is not dropped: it comes back
  * as Waiting with an unavailable runtime, because the session may still exist
  * and pretending it never did would lose it silently.
+ *
+ * `validateState` is the gate, and it is the only one. Past it, this function
+ * is total for shape: every field it reads has been checked to be there and to
+ * be what it claims, so there is no throw path here for a malformed record and
+ * no `TypeError` a state file can produce. What still refuses is what only the
+ * domain can judge — a path that climbs out of its root, a display name the
+ * domain will not have — and that comes back as `STATE_INVALID` naming the
+ * record, through `refuseRecord`. A throw of any other kind is a bug in this
+ * code and is left alone to crash with its cause attached.
  */
 export function hydrateModel(
   state: PersistedAppState,
