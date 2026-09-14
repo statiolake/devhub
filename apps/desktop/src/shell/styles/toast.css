@@ -25,7 +25,12 @@
  * a different thing: it is present only while something is true, it can be
  * dismissed, and it costs the Sidebar nothing when it is not up.
  *
- * The remaining honest limit: with the Sidebar collapsed to the rail, the
+ * The floor is 240px, which an ordinary Sidebar is already wider than, so in
+ * the ordinary case the stack ends exactly where the Sidebar does and overhangs
+ * nothing.
+ *
+ * The remaining honest limit: with the Sidebar collapsed to the rail, or
+ * dragged narrower than the floor, the
  * stack keeps a readable width and therefore overhangs the Surface, where the
  * workbench may paint over the overhanging part. The only placement with
  * neither limit is the overlay `WebContentsView` the modals already use, which
@@ -41,7 +46,7 @@
   left: 0;
   /* The Sidebar's width, with a floor: a notice narrower than its sentence is
      not a notice. `min()` keeps it inside a very narrow window. */
-  width: min(100%, max(var(--sidebar-width), 300px));
+  width: min(100%, max(var(--sidebar-width), 240px));
   display: flex;
   flex-direction: column;
   align-items: stretch;
