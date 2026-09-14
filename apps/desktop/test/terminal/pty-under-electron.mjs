@@ -467,7 +467,7 @@ test(
 			{
 				execPath: process.execPath,
 				entryScript: fileURLToPath(
-					new URL("../../out/test-terminal/main/terminal/devhubTerminal.js", import.meta.url),
+					new URL("../../out/test-terminal/main/terminal/devhubTerminalEntry.js", import.meta.url),
 				),
 				socketPath: controlSocket,
 				machine: "local",

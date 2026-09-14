@@ -18,7 +18,7 @@
     "../../src/ipc/terminal.ts",
     "../../src/main/terminal/pty.ts",
     "../../src/main/terminal/launcher.ts",
-    "../../src/main/terminal/devhubTerminal.ts",
+    "../../src/main/terminal/devhubTerminalEntry.ts",
     "../../src/main/terminal/attachments.ts",
     "../../src/main/terminal/service.ts"
   ]
