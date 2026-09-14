@@ -85,6 +85,22 @@ export type ControlRequest =
 			 * wrong disk into a window that is not showing it.
 			 */
 			readonly machine?: string;
+			/**
+			 * Which workbench the request came from: `<machine>\t<workspaceId |
+			 * "scratch">`, as the pane's `DEVHUB_ORIGIN` spells it.
+			 *
+			 * Separate from `machine` because they answer separate questions.
+			 * `machine` is which computer the *path* is on; `origin` is which
+			 * window is *asking*. A local terminal inside an SSH Workspace's
+			 * window does not exist, but a local terminal opening a path while
+			 * an SSH Workspace shares the root does — so one cannot be read off
+			 * the other.
+			 *
+			 * Absent whenever the caller was not started from a DevHub pane: a
+			 * login shell, a script, a Finder drop. That is the honest unknown
+			 * and the containing-Workspace rule answers for it.
+			 */
+			readonly origin?: string;
 			readonly position?: ControlPosition;
 			/**
 			 * `--wait`: the file the CLI is holding a terminal open for.
@@ -235,6 +251,9 @@ export function parseControlRequest(line: string): ControlRequest {
 				...(record["machine"] === undefined
 					? {}
 					: { machine: requireString(record["machine"], "machine") }),
+				...(record["origin"] === undefined
+					? {}
+					: { origin: requireString(record["origin"], "origin") }),
 				...(record["position"] === undefined
 					? {}
 					: { position: requirePosition(record["position"]) }),

@@ -154,6 +154,26 @@ function fixture(
   return created;
 }
 
+/** One variable of a session's environment, as tmux will hand it to a pane. */
+function sessionEnvironment(
+  socket: string,
+  session: string,
+  name: string,
+): string | undefined {
+  const output = execFileSync(
+    TMUX as string,
+    ["-f", "/dev/null", "-L", socket, "show-environment", "-t", session, name],
+    { encoding: "utf8", env: { ...process.env, TMUX: undefined } as never },
+  ).trim();
+  return output.startsWith(`${name}=`)
+    ? output.slice(name.length + 1)
+    : undefined;
+}
+
+function sessionOrigin(socket: string, session: string): string | undefined {
+  return sessionEnvironment(socket, session, "DEVHUB_ORIGIN");
+}
+
 function tmuxOutside(socket: string, args: readonly string[]): void {
   execFileSync(TMUX as string, ["-f", "/dev/null", "-L", socket, ...args], {
     stdio: "ignore",
@@ -715,6 +735,87 @@ describe.skipIf(TMUX === undefined)(
       expect(created?.context).toBe("workspace");
       // And the identity it read back is the one an attach accepts.
       await test.runtime.ensure(target);
+    });
+
+    /**
+     * The fact a pane needs in order for `devhub <file>` to mean "here".
+     *
+     * Read out of a real tmux rather than out of the argv DevHub composed,
+     * because what matters is not that `-e` was passed — it is that a process
+     * started in that pane sees it. `show-environment -t` reads exactly what
+     * tmux will hand the next one.
+     */
+    it("gives every session it creates its own DEVHUB_ORIGIN", async () => {
+      const test = fixture("origin");
+      const workspaceId = "00000000-0000-4000-8000-0000000000a1";
+      const root = realpathSync(test.home);
+      await test.runtime.ensure(workspaceTarget("local", workspaceId, root));
+
+      // Scratch is created by the bootstrap config and a Workspace session by
+      // `createSession` — two different code paths, and the pane cannot tell
+      // which one made it, so neither may leave the variable out.
+      expect(sessionOrigin(test.socket, SCRATCH_SESSION)).toBe("local\tscratch");
+      const workspaceSession = `ws-${workspaceDigest(root).slice(0, 20)}`;
+      expect(sessionOrigin(test.socket, workspaceSession)).toBe(
+        `local\t${workspaceId}`,
+      );
+    });
+
+    /**
+     * An Agent belongs to a Workspace, so an Agent's pane is that Workspace's
+     * window. That is what the owner asked for, and it is why the Agent's
+     * origin is its Workspace's id and not its own.
+     */
+    it("gives an Agent's session its Workspace's origin, not one of its own", async () => {
+      const test = fixture("origin-agent");
+      const workspaceId = "00000000-0000-4000-8000-0000000000a2";
+      const agentId = "00000000-0000-4000-8000-0000000000b2";
+      await test.runtime.ensure(SCRATCH_TARGET);
+      await test.runtime.launchAgent(
+        { machine: "local", agentId, workspaceId, root: realpathSync(test.home) },
+        { file: "/bin/sh", args: ["-c", "sleep 30"], env: {} },
+      );
+
+      expect(sessionOrigin(test.socket, agentSessionName(agentId))).toBe(
+        `local\t${workspaceId}`,
+      );
+    });
+
+    /** An Agent profile's own variables sit beside the origin, never over it. */
+    it("does not let an Agent profile's environment take the origin's name", async () => {
+      const test = fixture("origin-agent-env");
+      const workspaceId = "00000000-0000-4000-8000-0000000000a3";
+      const agentId = "00000000-0000-4000-8000-0000000000b3";
+      await test.runtime.ensure(SCRATCH_TARGET);
+      await test.runtime.launchAgent(
+        { machine: "local", agentId, workspaceId, root: realpathSync(test.home) },
+        {
+          file: "/bin/sh",
+          args: ["-c", "sleep 30"],
+          env: { AGENT_OWN_VARIABLE: "yes" },
+        },
+      );
+
+      const session = agentSessionName(agentId);
+      expect(sessionOrigin(test.socket, session)).toBe(`local\t${workspaceId}`);
+      expect(sessionEnvironment(test.socket, session, "AGENT_OWN_VARIABLE")).toBe(
+        "yes",
+      );
+    });
+
+    /**
+     * The machine is half of the origin, and it is the half that keeps two
+     * hosts' identical roots apart once a `devhub` on one of them can ask.
+     */
+    it("names the machine the session is on, not the machine DevHub is on", async () => {
+      const test = fixture("origin-remote", undefined, {
+        host: machineNamed("ssh:build.example.com"),
+      });
+      await test.runtime.ensure(SCRATCH_TARGET);
+
+      expect(sessionOrigin(test.socket, SCRATCH_SESSION)).toBe(
+        "ssh:build.example.com\tscratch",
+      );
     });
 
     it("refuses a server whose marker is not DevHub's, and leaves it alone", async () => {

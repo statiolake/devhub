@@ -3,7 +3,13 @@ import { join } from "node:path";
 import { Readable } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { makeScratchDir, removeScratchDir } from "../../model/testScratch.js";
-import { main, parseArguments, requestFor, USAGE } from "./devhubCli.js";
+import {
+	callerContext,
+	main,
+	parseArguments,
+	requestFor,
+	USAGE,
+} from "./devhubCli.js";
 
 describe("what the devhub command was asked to do", () => {
 	it("takes a lone path as something to open", () => {
@@ -141,6 +147,52 @@ describe("what the devhub command was asked to do", () => {
 		});
 		// Without --wait there is no marker, and the message is byte for byte
 		// the one devhub has always sent.
+		expect(
+			requestFor(parseArguments(["notes.md"]), "/work/a", "/home/d"),
+		).toEqual({ kind: "open", path: "/work/a/notes.md", cwd: "/work/a" });
+	});
+
+	/**
+	 * Where the request came from is carried, never worked out. DevHub stated
+	 * it on the tmux session when it made the session; this command's job is
+	 * to hand it back.
+	 */
+	it("carries the pane's origin and machine into the open", () => {
+		const caller = callerContext({
+			DEVHUB_ORIGIN: "ssh:build-host\t00000000-0000-4000-8000-000000000001",
+			DEVHUB_MACHINE: "ssh:build-host",
+		});
+
+		expect(
+			requestFor(
+				parseArguments(["notes.md"]),
+				"/srv/app",
+				"/home/user",
+				undefined,
+				caller,
+			),
+		).toEqual({
+			kind: "open",
+			path: "/srv/app/notes.md",
+			cwd: "/srv/app",
+			machine: "ssh:build-host",
+			origin: "ssh:build-host\t00000000-0000-4000-8000-000000000001",
+		});
+	});
+
+	/**
+	 * A login shell, a script, a cron job. Absent is the honest unknown, and it
+	 * has to stay absent on the wire — a `local` invented here would be a
+	 * second place deciding what DevHub already decides in `route.ts`.
+	 */
+	it("says nothing about an origin it was not given", () => {
+		expect(callerContext({})).toEqual({});
+		// An empty variable is the shape a shell leaves behind when something
+		// exported it and gave it nothing, and it is not an origin.
+		expect(callerContext({ DEVHUB_ORIGIN: "", DEVHUB_MACHINE: "" })).toEqual(
+			{},
+		);
+		// Byte for byte the message devhub has always sent from a login shell.
 		expect(
 			requestFor(parseArguments(["notes.md"]), "/work/a", "/home/d"),
 		).toEqual({ kind: "open", path: "/work/a/notes.md", cwd: "/work/a" });

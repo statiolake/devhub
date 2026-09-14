@@ -348,11 +348,39 @@ function needsValue(option: string, what: string): Command {
 	return { kind: "invalid", message: `${option} needs ${what}.` };
 }
 
+/**
+ * What a `devhub` run knows about where it is running.
+ *
+ * Read from the environment because that is where DevHub put it — on the tmux
+ * session, at the moment DevHub created it (`terminal/tmux.ts`). A run from a
+ * login shell, a script or a cron job has neither, and says so by leaving them
+ * out rather than by guessing at this end.
+ */
+export interface CallerContext {
+	/** The pane's `DEVHUB_ORIGIN`: which workbench this terminal belongs to. */
+	readonly origin?: string;
+	/** Which computer this `devhub` is running on, and so which the paths are on. */
+	readonly machine?: string;
+}
+
+/** The environment read once, so that nothing downstream reaches for it again. */
+export function callerContext(
+	env: Readonly<Record<string, string | undefined>>,
+): CallerContext {
+	const origin = env["DEVHUB_ORIGIN"];
+	const machine = env["DEVHUB_MACHINE"];
+	return {
+		...(origin === undefined || origin.length === 0 ? {} : { origin }),
+		...(machine === undefined || machine.length === 0 ? {} : { machine }),
+	};
+}
+
 export function requestFor(
 	command: Command,
 	cwd: string,
 	home: string,
 	waitMarkerPath?: string,
+	caller: CallerContext = {},
 ): ControlRequest | undefined {
 	switch (command.kind) {
 		case "usage":
@@ -372,6 +400,11 @@ export function requestFor(
 				kind: "open",
 				path: expandPath(command.path, cwd, home),
 				cwd,
+				// Passed through exactly as it arrived, including not at all.
+				// Which window this is and which computer it is on are facts
+				// DevHub stated on the session; this command's job is to carry
+				// them, not to have an opinion about them.
+				...caller,
 				...(command.position === undefined
 					? {}
 					: { position: command.position }),
@@ -528,7 +561,13 @@ async function run(
 	launchCommand: readonly string[],
 	marker: string | undefined,
 ): Promise<number> {
-	const request = requestFor(command, process.cwd(), homedir(), marker);
+	const request = requestFor(
+		command,
+		process.cwd(),
+		homedir(),
+		marker,
+		callerContext(process.env),
+	);
 	if (!request) return 2;
 	// A DevHub that is not running is started and then asked, so what comes
 	// back is always an answer to the request above; see `launch.ts`.

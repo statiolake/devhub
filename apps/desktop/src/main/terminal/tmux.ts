@@ -236,6 +236,40 @@ const DEFAULT_TIMEOUT_MS = 3_000;
 const PASTE_SUBMIT_DELAY_MS = 250;
 const BOOTSTRAP_ENV_ROOT = "DEVHUB_BOOTSTRAP_ROOT";
 const BOOTSTRAP_ENV_USER_CONFIG = "DEVHUB_USER_TMUX_CONFIG";
+const BOOTSTRAP_ENV_ORIGIN = "DEVHUB_BOOTSTRAP_ORIGIN";
+
+/**
+ * The variable a pane says which workbench it belongs to with.
+ *
+ * It is set once, on the session, at the moment DevHub creates it — because
+ * that is the moment DevHub already knows the answer, and because a tmux
+ * pane's environment is the one thing a shell, an editor spawned by `git
+ * commit` and an Agent's child process all inherit identically.
+ *
+ * Deliberately *per session*, not per terminal. Two terminals of one Workspace
+ * are one origin because they are one window, which is the whole claim.
+ *
+ * Absent is the honest "unknown", not a default: a `devhub` run from a login
+ * shell or from a script has no origin, and the containing-Workspace rule is
+ * what answers for it. See `routeOpen` in `../cli/route.ts`.
+ */
+export const DEVHUB_ORIGIN = "DEVHUB_ORIGIN";
+
+/**
+ * `<machine>\t<workspaceId | "scratch">`.
+ *
+ * A tab, because the two halves must stay unambiguous and neither can contain
+ * one: a `RuntimeId` is `local` or `ssh:<host>`, and a workspace id is a UUID.
+ * Not a general-purpose bag — one variable saying one thing, and a second fact
+ * about a pane gets a second variable rather than another field in here.
+ */
+export function originValue(
+	machine: RuntimeId,
+	context: string,
+	workspaceId: string,
+): string {
+	return `${machine}\t${context === GLOBAL_CONTEXT ? "scratch" : workspaceId}`;
+}
 
 /**
  * The startup config an absent server is created with.
@@ -279,9 +313,15 @@ const BOOTSTRAP_CONFIG = [
 	[
 		`set-environment -gu ${BOOTSTRAP_ENV_ROOT}`,
 		`set-environment -gu ${BOOTSTRAP_ENV_USER_CONFIG}`,
+		`set-environment -gu ${BOOTSTRAP_ENV_ORIGIN}`,
 	].join(" ; "),
 	[
-		`new-session -d -s ${SCRATCH_SESSION} -c "$${BOOTSTRAP_ENV_ROOT}"`,
+		// Scratch is created here and not by `createSession`, so its origin has
+		// to be stated here too. The same `new-session -e` channel, the same
+		// value — a session DevHub made without one would be a pane whose
+		// `devhub` falls back to the containing-Workspace rule for no reason
+		// anybody could see.
+		`new-session -d -s ${SCRATCH_SESSION} -c "$${BOOTSTRAP_ENV_ROOT}" -e ${DEVHUB_ORIGIN}="$${BOOTSTRAP_ENV_ORIGIN}"`,
 		`set-option -t ${SCRATCH_SESSION} ${CONTEXT_OPTION} ${GLOBAL_CONTEXT}`,
 		`set-option -t ${SCRATCH_SESSION} ${WORKSPACE_ID_OPTION} ${GLOBAL_ID}`,
 		`set-option -t ${SCRATCH_SESSION} ${ROOT_OPTION} "$${BOOTSTRAP_ENV_ROOT}"`,
@@ -604,11 +644,12 @@ function cleanInspection(): TerminalInspection {
 }
 
 /**
- * `new-session -e KEY=VALUE` for each of a command's own variables.
+ * `new-session -e KEY=VALUE` for each of a session's own variables.
  *
- * Sorted, so the argv a launch produces depends on the profile and nothing
- * else. The server's environment — the app's frozen launch environment — is
- * already what every pane inherits; these are the profile's additions to it.
+ * Sorted, so the argv a launch produces depends on what is being launched and
+ * nothing else. The server's environment — the app's frozen launch environment
+ * — is already what every pane inherits; these are the additions to it: the
+ * session's origin, always, and an Agent profile's own variables on top.
  */
 function envArguments(
 	env: Readonly<Record<string, string>> | undefined,
@@ -2216,6 +2257,23 @@ export class TmuxTerminalRuntime {
 		if (!output.success) throw output.refusal();
 	}
 
+	/**
+	 * What every pane of a session DevHub creates is given, beyond the server's.
+	 *
+	 * One place, because a pane's environment is the one thing about a terminal
+	 * that is DevHub's to set, and two places setting it would be two answers
+	 * about what a pane knows.
+	 */
+	private sessionEnvironment(spec: SessionSpec): Record<string, string> {
+		return {
+			[DEVHUB_ORIGIN]: originValue(
+				this.machine,
+				spec.context,
+				spec.workspaceId,
+			),
+		};
+	}
+
 	private async createSession(
 		socket: SocketName,
 		spec: SessionSpec,
@@ -2249,7 +2307,15 @@ export class TmuxTerminalRuntime {
 			spec.name,
 			"-c",
 			spec.root,
-			...envArguments(spec.command?.env),
+			...envArguments({
+				// The session environment is applied whether or not there is a
+				// command, because it is about the *session* — what a pane in it
+				// belongs to — and a Workspace terminal is as much a pane as an
+				// Agent is. A profile's own variables go on top of it, so a
+				// profile can never quietly take the origin's name.
+				...this.sessionEnvironment(spec),
+				...spec.command?.env,
+			}),
 			...(spec.command ? ["--", spec.command.file, ...spec.command.args] : []),
 			";",
 			"set-option",
@@ -2649,6 +2715,11 @@ export class TmuxTerminalRuntime {
 					...this.tmuxEnvironment(),
 					[BOOTSTRAP_ENV_ROOT]: root,
 					[BOOTSTRAP_ENV_USER_CONFIG]: this.userTmuxConfigPath,
+					[BOOTSTRAP_ENV_ORIGIN]: originValue(
+						this.machine,
+						GLOBAL_CONTEXT,
+						GLOBAL_ID,
+					),
 				},
 			},
 			"start-server",
