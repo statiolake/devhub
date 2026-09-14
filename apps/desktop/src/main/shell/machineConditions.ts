@@ -44,7 +44,12 @@ export interface MachineConditionsOptions {
 	 * Where a raise and a retraction go. Called only on a change: once when an
 	 * episode starts, once when it ends, and never in between.
 	 */
-	readonly publish: (source: string, summary: string | undefined) => void;
+	readonly publish: (
+		source: string,
+		summary: string | undefined,
+		/** Why it moved, for the line the journal writes. See `diagnostics/notices.ts`. */
+		reason: string,
+	) => void;
 	/** Consecutive answered rounds a recovery needs. */
 	readonly successesToRetract?: number;
 	/** How long a raised condition stays up at the very least. */
@@ -96,7 +101,11 @@ export class MachineConditions {
 			raisedAt: this.#now(),
 			successes: 0,
 		});
-		this.#publish(machineConditionSource(machine), summary);
+		this.#publish(
+			machineConditionSource(machine),
+			summary,
+			"a reconcile round got no answer",
+		);
 	}
 
 	/** A round against this machine got its answer. */
@@ -107,7 +116,11 @@ export class MachineConditions {
 		if (episode.successes < this.#successesToRetract) return;
 		if (this.#now() - episode.raisedAt < this.#minimumAgeMs) return;
 		this.#episodes.delete(machine);
-		this.#publish(machineConditionSource(machine), undefined);
+		this.#publish(
+			machineConditionSource(machine),
+			undefined,
+			`${String(this.#successesToRetract)} rounds answered`,
+		);
 	}
 
 	/**
@@ -117,6 +130,10 @@ export class MachineConditions {
 	 */
 	forget(machine: RuntimeId): void {
 		if (!this.#episodes.delete(machine)) return;
-		this.#publish(machineConditionSource(machine), undefined);
+		this.#publish(
+			machineConditionSource(machine),
+			undefined,
+			"the machine left the model",
+		);
 	}
 }

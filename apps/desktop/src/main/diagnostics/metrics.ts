@@ -12,6 +12,7 @@
 import type { CountersReading } from "./counters.js";
 import type { TitleBarMode } from "../../model/config.js";
 import type { RuntimeId, RuntimeReading } from "../runtime/runtime.js";
+import type { NoticesReading } from "./notices.js";
 import type { WorkspaceRepositoryRound } from "./rounds.js";
 
 /** What DevHub knows about one of its own workbench renderers. */
@@ -146,6 +147,19 @@ export interface MetricsReport {
 	 * A Workspace no round has finished for yet is simply absent.
 	 */
 	readonly repositoryRounds: readonly WorkspaceRepositoryRound[];
+	/**
+	 * What the application has been saying for itself, and how often.
+	 *
+	 * A notice is the one thing DevHub does that a person can watch happen and
+	 * still not report: it appears and is gone before it can be read, and every
+	 * other reading here would look perfectly healthy while it did. So the
+	 * counts are per code — a code with far more raises than retractions in a
+	 * minute is a source re-raising into an occupied slot — and `flickering`
+	 * names the identities that went up faster than a second could hold them.
+	 * An empty `flickering` is the normal reading; a name in it is a bug with a
+	 * stack waiting in the main log. See `notices.ts`.
+	 */
+	readonly notices: NoticesReading;
 }
 
 /** One machine's answer to "is there a `devhub-terminal` on it". */
@@ -203,6 +217,7 @@ export interface MetricsInput {
 	readonly terminalLauncher: readonly TerminalLauncherStatus[];
 	readonly pendingSweeps: readonly RuntimeId[];
 	readonly repositoryRounds: readonly WorkspaceRepositoryRound[];
+	readonly notices: NoticesReading;
 	/** Reconcile rounds in the last minute, by machine. See `rounds.ts`. */
 	readonly roundsLastMinute: (id: RuntimeId) => number;
 }
@@ -250,6 +265,7 @@ export function metricsReport(input: MetricsInput): MetricsReport {
 		terminalLauncher: input.terminalLauncher,
 		pendingSweeps: input.pendingSweeps,
 		repositoryRounds: input.repositoryRounds,
+		notices: input.notices,
 		runtimes: input.runtimes.map((runtime) => {
 			const roundsPerMin = input.roundsLastMinute(runtime.id);
 			return {

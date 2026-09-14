@@ -21,6 +21,7 @@ import type {
 	AppOutcome,
 	AppSnapshot,
 	ConfirmationPurposeWire,
+	NoticeRetiredWire,
 	ReplayWire,
 } from "./appShell.js";
 
@@ -554,6 +555,20 @@ export interface DevhubApi {
 	 */
 	raiseFailure(error: AppError): Promise<void>;
 	/**
+	 * Tell main a notice has left the screen, and by which rule.
+	 *
+	 * Main publishes every app-scoped notice and would otherwise never learn
+	 * that one came down: two of the three rules that retire a notice are
+	 * gestures in the page — the person dismissing it, and the person starting
+	 * another action — and the third is main's own retraction. A log that saw
+	 * only the raises could not tell a notice that stood for a minute from one
+	 * that blinked, which is the whole question a flicker report asks.
+	 *
+	 * It reports and nothing more: nothing in main acts on it, and a page that
+	 * cannot reach main loses a log line rather than a notice.
+	 */
+	reportNoticeRetired(retired: NoticeRetiredWire): Promise<void>;
+	/**
 	 * Take one modal off screen.
 	 *
 	 * `response` is the button a workbench's own question was answered with;
@@ -821,6 +836,8 @@ export const CHANNELS = {
 	appCondition: "devhub:app-condition",
 	/** A page handing main a failure it has no place to draw. */
 	raiseFailure: "devhub:raise-failure",
+	/** A page telling main that a notice has left the screen, and why. */
+	noticeRetired: "devhub:notice-retired",
 	workspacePicker: "devhub:workspace-picker",
 	/** A menu command the page has to carry out itself, e.g. open the picker. */
 	menuCommand: "devhub:menu-command",

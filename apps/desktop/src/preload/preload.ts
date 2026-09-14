@@ -44,6 +44,7 @@ import type {
 	AppIntent,
 	AppOutcome,
 	AppSnapshot,
+	NoticeRetiredWire,
 	ReplayWire,
 } from "../ipc/appShell.js";
 import { terminalApi } from "./terminal.js";
@@ -110,6 +111,8 @@ const devhub: DevhubApi = {
 		ipcRenderer.invoke(CHANNELS.openModal, request) as Promise<string>,
 	raiseFailure: (error: AppError) =>
 		ipcRenderer.invoke(CHANNELS.raiseFailure, error) as Promise<void>,
+	reportNoticeRetired: (retired: NoticeRetiredWire) =>
+		ipcRenderer.invoke(CHANNELS.noticeRetired, retired) as Promise<void>,
 	closeModal: (id: string, response?: number) =>
 		ipcRenderer.invoke(CHANNELS.closeModal, id, response) as Promise<void>,
 	onModals: (listener) =>

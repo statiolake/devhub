@@ -313,6 +313,58 @@ export type AppErrorModuleWire =
 	| "terminal"
 	| "settings"
 	| "diagnostics";
+/**
+ * What makes two app-scoped notices the same notice — the one definition.
+ *
+ * It is **the code and the subject, and never the sentence**. A notice's words
+ * move while the condition behind them stands still: a tmux that will not
+ * answer names a different subcommand and a different budget every round
+ * (`main/terminal/tmux.ts`), an editor that keeps restarting counts its
+ * attempts, and a detail that carries any of that makes every publish a
+ * *different* notice. The page keys its stack by identity, so a different
+ * identity is a DOM node removed and another added — which, at the rate a
+ * reconcile round publishes, is the flicker the owner saw.
+ *
+ * So identity is the stable part. The sentence still changes on screen when
+ * the source has better words; what does not change is which notice it is, and
+ * therefore which slot it occupies, whether it was dismissed, and which node
+ * draws it.
+ *
+ * Main and the page both compute it, and they compute it here, because two
+ * implementations of "the same notice" are two things that will disagree the
+ * first time one of them learns about a new field.
+ */
+export function appFailureIdentity(code: AppErrorCodeWire): string {
+	return `app\u0000${code}`;
+}
+
+/**
+ * A condition's identity is its source, because its source *is* its slot.
+ *
+ * One source holds one condition — that is what a channel means — so a source
+ * that goes on saying the same thing replaces itself in place, and one that
+ * changes its words is the same standing fact described better rather than a
+ * new fact.
+ */
+export function appConditionIdentity(source: string): string {
+	return `condition\u0000${source}`;
+}
+
+/**
+ * How the page took a notice off screen.
+ *
+ * Main publishes notices and never sees them go: a dismissal and the person's
+ * next action are gestures that happen in the page. Without this, a log
+ * showing a raise with nothing after it cannot say whether the notice is still
+ * up — which is the difference between "it flickered" and "it is standing".
+ */
+export type NoticeRetirementWire = "person" | "next_action" | "source";
+
+export interface NoticeRetiredWire {
+	readonly identity: string;
+	readonly reason: NoticeRetirementWire;
+}
+
 export interface AppErrorWire {
 	readonly actions: readonly AppErrorActionWire[];
 	readonly code: AppErrorCodeWire;

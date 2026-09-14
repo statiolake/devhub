@@ -36,6 +36,7 @@ import {
 	metricsReport,
 	type TerminalLauncherStatus,
 } from "../diagnostics/metrics.js";
+import { NoticeJournal } from "../diagnostics/notices.js";
 import { reconcileRounds } from "../diagnostics/rounds.js";
 import { electron } from "../electron.js";
 import { URI } from "code-oss-dev/out/vs/base/common/uri.js";
@@ -58,15 +59,18 @@ import {
 	type RepositoryStatusWire,
 	type WorkspacePickerEvent,
 } from "../../ipc/contract.js";
-import type {
-	AgentProfiles,
-	AppAppearance,
-	AppErrorWire,
-	AppIntentWire,
-	AppOutcomeWire,
-	AppSnapshotWire,
-	CloseDiagnosticWire,
-	ReplayWire,
+import {
+	appConditionIdentity,
+	appFailureIdentity,
+	type AgentProfiles,
+	type AppAppearance,
+	type AppErrorWire,
+	type AppIntentWire,
+	type AppOutcomeWire,
+	type AppSnapshotWire,
+	type CloseDiagnosticWire,
+	type NoticeRetiredWire,
+	type ReplayWire,
 } from "../../ipc/appShell.js";
 import { AppCoordinator, type Effect } from "../../model/coordinator.js";
 import { editorReveal } from "./editorReveal.js";
@@ -459,8 +463,26 @@ export class AppController {
 	 * failure's lifetime is), the next round put it back, and the notice took
 	 * layout room, so an unreachable host made the whole workbench shake.
 	 */
+	/**
+	 * Every notice this process publishes, written down once.
+	 *
+	 * Here rather than inside each raising site because the question it answers
+	 * — "did this go up and down a hundred times, and who kept raising it" —
+	 * is about the *sequence* of notices and no single site can see one. See
+	 * `diagnostics/notices.ts`.
+	 */
+	private readonly notices = new NoticeJournal();
 	private readonly machineConditions = new MachineConditions({
-		publish: (source, summary) => {
+		publish: (source, summary, reason) => {
+			const event = {
+				code: summary === undefined ? "" : "machine_not_answering",
+				subject: source,
+				source: "reconcile",
+				identity: appConditionIdentity(source),
+				reason,
+			};
+			if (summary === undefined) this.notices.retracted(event);
+			else this.notices.raised(event);
 			this.send(CHANNELS.appCondition, {
 				source,
 				...(summary === undefined ? {} : { summary }),
@@ -1728,6 +1750,18 @@ export class AppController {
 	}
 
 	private publishError(error: AppErrorWire): void {
+		// The journal first, so a failure that never reaches a page — published
+		// before there is one, or into a window that has gone — is still in the
+		// log. `module` is the source: it is already the wire's own answer to
+		// "which part of DevHub said this", so no raising site has to be told
+		// about the journal to appear in it.
+		this.notices.raised({
+			code: error.code,
+			subject: "app",
+			source: error.module,
+			identity: appFailureIdentity(error.code),
+			reason: error.detail ?? error.summary,
+		});
 		this.send(CHANNELS.nativeError, error);
 	}
 
@@ -4065,6 +4099,7 @@ export class AppController {
 				terminalLauncher: [...this.launcherStatus.values()],
 				pendingSweeps: this.sessionSweeper?.pending ?? [],
 				repositoryRounds: this.repositoryStatus.rounds(),
+				notices: this.notices.reading(),
 				roundsLastMinute: (id) => reconcileRounds.lastMinute(id),
 			}),
 			null,
@@ -4885,6 +4920,12 @@ export class AppController {
 		// display site, one lifetime rule, whichever page the failure began on.
 		handle(CHANNELS.raiseFailure, (_event, error: AppErrorWire) => {
 			this.publishError(error);
+		});
+		// The other half of the journal: main sees every raise and none of the
+		// ways a notice leaves the screen, two of which are gestures in the
+		// page. See `diagnostics/notices.ts`.
+		handle(CHANNELS.noticeRetired, (_event, retired: NoticeRetiredWire) => {
+			this.notices.retiredByPage(retired.identity, retired.reason);
 		});
 		handle(
 			CHANNELS.closeModal,

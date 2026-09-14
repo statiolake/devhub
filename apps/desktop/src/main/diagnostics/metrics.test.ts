@@ -10,6 +10,8 @@ const noCounters: CountersReading = { elapsedMs: 0, counters: [] };
 /** No loop has run a round, which is what a report with no runtimes means. */
 const noRounds = (): number => 0;
 const noCpu = { userMs: 0, systemMs: 0 };
+/** Nothing has been said for the application, which is the normal reading. */
+const noNotices = { lastMinute: {}, flickering: [] };
 
 function metric(
 	pid: number,
@@ -46,6 +48,7 @@ describe("metricsReport", () => {
 			counters: noCounters,
 			terminalLauncher: [],
 			pendingSweeps: [],
+			notices: noNotices,
 			terminalClients: [],
 			repositoryRounds: [],
 			roundsLastMinute: noRounds,
@@ -74,6 +77,7 @@ describe("metricsReport", () => {
 			counters: noCounters,
 			terminalLauncher: [],
 			pendingSweeps: [],
+			notices: noNotices,
 			terminalClients: [],
 			repositoryRounds: [],
 			roundsLastMinute: noRounds,
@@ -97,6 +101,7 @@ describe("metricsReport", () => {
 			counters: noCounters,
 			terminalLauncher: [],
 			pendingSweeps: [],
+			notices: noNotices,
 			terminalClients: [],
 			repositoryRounds: [],
 			roundsLastMinute: noRounds,
@@ -122,6 +127,7 @@ describe("metricsReport", () => {
 			counters,
 			terminalLauncher: [],
 			pendingSweeps: [],
+			notices: noNotices,
 			terminalClients: [],
 			repositoryRounds: [],
 			roundsLastMinute: noRounds,
@@ -148,6 +154,7 @@ describe("the tmux clients a reading carries", () => {
 			counters: noCounters,
 			terminalLauncher: [],
 			pendingSweeps: [],
+			notices: noNotices,
 			runtimes: [],
 			repositoryRounds: [],
 			roundsLastMinute: noRounds,
@@ -191,6 +198,7 @@ describe("what a round costs on each machine", () => {
 			counters: noCounters,
 			terminalLauncher: [],
 			pendingSweeps: [],
+			notices: noNotices,
 			terminalClients: [],
 			runtimes: [local],
 			repositoryRounds: [],
@@ -215,6 +223,7 @@ describe("what a round costs on each machine", () => {
 			counters: noCounters,
 			terminalLauncher: [],
 			pendingSweeps: [],
+			notices: noNotices,
 			terminalClients: [],
 			runtimes: [local],
 			repositoryRounds: [],
@@ -245,6 +254,7 @@ describe("whether each machine has a terminal launcher", () => {
 			repositoryRounds: [],
 			roundsLastMinute: noRounds,
 			pendingSweeps: [],
+			notices: noNotices,
 			terminalLauncher: [
 				{
 					machine: "local",
@@ -295,6 +305,7 @@ describe("the machines a sweep could not finish with", () => {
 			runtimes: [],
 			terminalLauncher: [],
 			repositoryRounds: [],
+			notices: noNotices,
 			roundsLastMinute: noRounds,
 		} as const;
 
