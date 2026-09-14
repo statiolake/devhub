@@ -183,6 +183,15 @@ const CAPTURE_FORMAT = CAPTURE_FIELDS.join(FIELD_SEPARATOR) + RECORD_SEPARATOR;
  */
 const CAPTURE_END_FORMAT = RECORD_SEPARATOR;
 /**
+ * The guard that makes one Agent's dead session that Agent's business alone.
+ *
+ * `if-shell -F` evaluates a *format*, not a shell command, so this costs no
+ * process and no round trip. A target tmux cannot resolve expands to the empty
+ * string — which is false — rather than failing, so the guard itself can never
+ * be the command that ends the queue. See `agentRound` for the measurement.
+ */
+const SESSION_EXISTS_FORMAT = "#{session_name}";
+/**
  * How many screens one round will read.
  *
  * The whole round shares one answer and therefore one `MAX_OUTPUT_BYTES`, so
@@ -1409,12 +1418,33 @@ export class TmuxTerminalRuntime {
 	 * that decides the set is unchanged (`agent/screenFreshness.ts`) — it was
 	 * always about `#{window_activity}` and never about wall-clock.
 	 *
-	 * **Where a failure is attributed.** tmux ends the queue at the first
-	 * command that fails, so how far the answer got says which command it was:
-	 * nothing at all is the marker probe's (there is no server), the marker
-	 * alone is the listing's, and anything after the end-of-listing record is a
-	 * capture's — which is not fatal, because a screen DevHub could not read
-	 * leaves the Agent's status where it was and the next round asks again.
+	 * **A session's absence is a fact about that session, never about the
+	 * machine.** tmux ends a client's queue at the first command that fails, so
+	 * one `capture-pane` naming a session that has gone used to take the whole
+	 * rest of the batch down with it: the Agents queued behind it were never
+	 * read that round, and the round's non-zero exit was the machine's answer
+	 * rather than that one session's. Measured against a real tmux 3.5:
+	 * `capture-pane -t <gone>` exits 1 and everything after it is dropped,
+	 * while `display-message -p -t <gone>` exits 0 and expands every field to
+	 * empty.
+	 *
+	 * So the only command in the batch that can fail on a target is guarded by
+	 * `if-shell -F -t <session> '#{session_name}'`, which is a format test
+	 * rather than a shell (no fork, no process, no round trip): it runs the
+	 * capture when the session is there and does nothing when it is not. The
+	 * guard and the capture are the same server-side queue run, so there is no
+	 * window between them for the session to die in. A session that is gone
+	 * therefore contributes an empty screen record and nothing else, the Agents
+	 * behind it are read exactly as if it had never been asked for, and the
+	 * *listing* — which ran first and is the only truth about which sessions
+	 * exist — is what marks that Agent as having exited.
+	 *
+	 * **Where a failure is attributed.** How far the answer got says which
+	 * command it was: nothing at all is the marker probe's (there is no
+	 * server), and the marker alone is the listing's. Those two are the
+	 * machine not answering, and they are the only things that are. Once the
+	 * end-of-listing record is in hand the round has the machine's answer, and
+	 * no later exit code may take it back.
 	 */
 	async agentRound(
 		captureIds: readonly string[],
@@ -1451,11 +1481,14 @@ export class TmuxTerminalRuntime {
 							session,
 							CAPTURE_FORMAT,
 							";",
-							"capture-pane",
-							"-p",
-							"-J",
+							// The one command here that can fail on its target, and
+							// the reason the whole batch used to fail with it.
+							"if-shell",
+							"-F",
 							"-t",
 							session,
+							SESSION_EXISTS_FORMAT,
+							`capture-pane -p -J -t ${session}`,
 							";",
 							"display-message",
 							"-p",
@@ -1525,8 +1558,16 @@ export class TmuxTerminalRuntime {
 				activity: session.activity,
 			}));
 		const screens = new Map<string, AgentScreenReading>();
-		let answered = 0;
-		while (index + 1 < records.length) {
+		// Every Agent the batch named answers with exactly two records — the
+		// header and the screen — whether its session was there or not, because
+		// nothing in the capture part of the queue is allowed to fail. So the
+		// answer is read *by position against what was asked for*, and a count
+		// that does not match is tmux disagreeing with the batch DevHub wrote:
+		// malformed output, not a partial reading to be used anyway.
+		if (records.length - index !== wanted.length * 2) {
+			throw shapeFailure("a screen for every Agent the round asked about");
+		}
+		for (const asked of wanted) {
 			const header = (records[index] ?? "").split(FIELD_SEPARATOR);
 			const screen = records[index + 1] ?? "";
 			index += 2;
@@ -1536,13 +1577,13 @@ export class TmuxTerminalRuntime {
 			) {
 				throw shapeFailure("a record of the wrong width");
 			}
-			const asked = wanted[answered];
-			answered += 1;
 			// The pane answered with an Agent id, and it has to be the one the
-			// queue named. A session that was replaced between the model reading
-			// it and tmux running the queue is not a slower answer, it is a
-			// different Agent's screen.
-			if (asked === undefined || header[1] !== asked) continue;
+			// queue named. A session that has gone answers with an empty one and
+			// a session that was replaced between the model reading it and tmux
+			// running the queue answers with somebody else's: neither is a
+			// slower answer to the question asked, so neither is taken. What
+			// became of that Agent is the listing's to say, not this record's.
+			if (header[1] !== asked) continue;
 			activityCounters.record(COUNTER.agentScreenCapture);
 			screens.set(asked, { oscTitle: header[2] ?? "", screen });
 		}

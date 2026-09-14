@@ -641,6 +641,56 @@ describe.skipIf(TMUX === undefined)(
       expect(test.tmuxRuns() - idleStart).toBe(1);
     });
 
+    it("reads the Agents behind one whose session was killed from outside", async () => {
+      const test = fixture("deadsession", undefined, { counting: true });
+      const sessions = new AgentSessions(localAdapter(test.runtime));
+      const agentIds = [
+        "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa71",
+        "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa72",
+        "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa73",
+      ];
+      const workspaceId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbb71";
+      await test.runtime.ensure(SCRATCH_TARGET);
+      for (const agentId of agentIds) {
+        await sessions.launch({
+          machine: "local",
+          agentId,
+          workspaceId,
+          root: test.home,
+          command: { file: "/bin/sh", args: ["-c", "sleep 30"], env: {} },
+        });
+      }
+      // The failure the owner reported: an Agent DevHub still knows about
+      // whose session is gone — cleanup that did not happen, a kill from
+      // another terminal, a server restarted underneath it. It is asked about
+      // in the middle of the batch, so everything queued behind it is what
+      // used to be lost.
+      tmuxOutside(test.socket, [
+        "kill-session",
+        "-t",
+        agentSessionName(agentIds[1] as string),
+      ]);
+
+      const roundStart = test.tmuxRuns();
+      const round = await sessions.round("local", agentIds);
+      // Still one client: the guard that skips a session that is not there is
+      // a format test, not a shell, so isolating the failure costs nothing.
+      expect(test.tmuxRuns() - roundStart).toBe(1);
+      // The listing is the truth about which sessions exist, and it is the
+      // only thing that says this Agent has ended.
+      expect(round.live.map((one) => one.agentId).sort()).toEqual(
+        [agentIds[0], agentIds[2]].sort(),
+      );
+      // And the Agents on either side of it were both read. Before the guard,
+      // the `capture-pane` naming the dead session ended the queue and the
+      // third Agent's screen was never reached — every round, for as long as
+      // the model still asked about the second.
+      expect([...round.screens.keys()].sort()).toEqual(
+        [agentIds[0], agentIds[2]].sort(),
+      );
+      expect(round.screens.has(agentIds[1] as string)).toBe(false);
+    });
+
     it("keeps a root that contains a newline whole in the inventory", async () => {
       const test = fixture("newline-root");
       // The listing is delimited by DevHub's own record separator rather than
