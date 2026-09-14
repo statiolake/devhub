@@ -47,11 +47,16 @@ interface SentMessage {
 	readonly channel: string;
 	readonly payload: {
 		readonly filesToOpenOrCreate?: readonly {
-			readonly fileUri: { readonly scheme: string; readonly path: string };
+			readonly fileUri: {
+				readonly scheme: string;
+				readonly authority: string;
+				readonly path: string;
+			};
 		}[];
 		readonly filesToWait?: {
 			readonly waitMarkerFileUri: {
 				readonly scheme: string;
+				readonly authority: string;
 				readonly path: string;
 			};
 		};
@@ -79,8 +84,9 @@ describe("a local file opened into a window with a remote authority", () => {
 		const local = recordingWindow(undefined);
 		const file = { path: "/work/notes.md", exists: true, isDirectory: false };
 
-		openFileInWorkbench(remote.window, file, undefined, undefined);
-		openFileInWorkbench(local.window, file, undefined, undefined);
+		// The same machine — this one — into two different windows.
+		openFileInWorkbench(remote.window, "local", file, undefined, undefined);
+		openFileInWorkbench(local.window, "local", file, undefined, undefined);
 
 		const opened = remote.sent[0]?.payload.filesToOpenOrCreate?.[0]?.fileUri;
 		expect(opened?.scheme).toBe("file");
@@ -100,6 +106,7 @@ describe("a local file opened into a window with a remote authority", () => {
 
 		openFileInWorkbench(
 			remote.window,
+			"local",
 			{ path: "/work/COMMIT_EDITMSG", exists: true, isDirectory: false },
 			undefined,
 			"/var/folders/devhub-wait/marker",
@@ -108,6 +115,81 @@ describe("a local file opened into a window with a remote authority", () => {
 		const marker = remote.sent[0]?.payload.filesToWait?.waitMarkerFileUri;
 		expect(marker?.scheme).toBe("file");
 		expect(marker?.path).toBe("/var/folders/devhub-wait/marker");
+	});
+});
+
+/**
+ * The one genuinely dangerous edge in this whole design.
+ *
+ * A remote file's `--wait` marker is a path **on the host** — the CLI over
+ * there created it, and the CLI over there is polling it. Sent as `file:` it is
+ * resolved against the local disk (see above, and that is exactly why), so the
+ * workbench deletes `/tmp/devhub-wait-…/marker` on *this Mac* while the CLI on
+ * the host waits forever for a file nothing will ever remove.
+ *
+ * The symptom is `git commit` on the host hanging after the editor is closed,
+ * with no error anywhere — which is why this is written as a test rather than
+ * trusted to review.
+ */
+describe("a file on another machine", () => {
+	const machine = "ssh:build-host";
+	const authority = "ssh-remote+build-host";
+
+	it("is sent as a vscode-remote: URI on that machine's authority", () => {
+		const window = recordingWindow(authority);
+
+		openFileInWorkbench(
+			window.window,
+			machine,
+			{ path: "/srv/app/main.ts", exists: true, isDirectory: false },
+			undefined,
+			undefined,
+		);
+
+		const opened = window.sent[0]?.payload.filesToOpenOrCreate?.[0]?.fileUri;
+		expect(opened?.scheme).toBe("vscode-remote");
+		expect(opened?.authority).toBe(authority);
+		expect(opened?.path).toBe("/srv/app/main.ts");
+	});
+
+	it("has its --wait marker deleted on that machine, not on this one", () => {
+		const window = recordingWindow(authority);
+
+		openFileInWorkbench(
+			window.window,
+			machine,
+			{ path: "/srv/app/COMMIT_EDITMSG", exists: true, isDirectory: false },
+			undefined,
+			"/tmp/devhub-wait-abc/marker",
+		);
+
+		const marker = window.sent[0]?.payload.filesToWait?.waitMarkerFileUri;
+		// `file:` here is the bug: the workbench would delete this Mac's
+		// /tmp/devhub-wait-abc/marker, which nothing created and nothing is
+		// watching, and the CLI on the host would never return.
+		expect(marker?.scheme).toBe("vscode-remote");
+		expect(marker?.authority).toBe(authority);
+		expect(marker?.path).toBe("/tmp/devhub-wait-abc/marker");
+	});
+
+	/** The local case keeps no authority at all, so the two cannot converge. */
+	it("leaves a local open on a bare file: URI with no authority", () => {
+		const window = recordingWindow(undefined);
+
+		openFileInWorkbench(
+			window.window,
+			"local",
+			{ path: "/work/notes.md", exists: true, isDirectory: false },
+			undefined,
+			"/var/folders/devhub-wait/marker",
+		);
+
+		const opened = window.sent[0]?.payload.filesToOpenOrCreate?.[0]?.fileUri;
+		expect(opened?.scheme).toBe("file");
+		expect(opened?.authority).toBe("");
+		expect(window.sent[0]?.payload.filesToWait?.waitMarkerFileUri.scheme).toBe(
+			"file",
+		);
 	});
 });
 
@@ -191,6 +273,7 @@ describe("a --wait open", () => {
 		const window = recordingWindow(undefined);
 		openFileInWorkbench(
 			window.window,
+			"local",
 			{ path, exists: true, isDirectory: false },
 			undefined,
 			marker,

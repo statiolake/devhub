@@ -36,6 +36,7 @@ import type { ExtensionManagementCLI } from "code-oss-dev/out/vs/platform/extens
 import type { InstallOptions } from "code-oss-dev/out/vs/platform/extensionManagement/common/extensionManagement.js";
 import { URI } from "code-oss-dev/out/vs/base/common/uri.js";
 import { canonicalise } from "./canonical.js";
+import { localRuntime } from "../runtime/registry.js";
 import { expandPath } from "./resolve.js";
 
 /**
@@ -107,7 +108,12 @@ export async function installExtensions(
 			// A `.vsix` is a path, and a path from a command line may be relative
 			// or start with `~`. It is canonicalised by the same rule every other
 			// path DevHub is given goes through.
-			const file = await canonicalise(expandPath(target, cwd, home));
+			// A `.vsix` is installed into the directory the running app owns, so
+			// it is a path on this machine whatever else is going on.
+			const file = await canonicalise(
+				localRuntime(),
+				expandPath(target, cwd, home),
+			);
 			if (!file.exists) {
 				throw new Error(`there is no file at ${file.path}.`);
 			}

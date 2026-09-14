@@ -16,9 +16,11 @@
  */
 
 import {
+	remoteAuthorityOf,
 	sshHost,
 	workspaceRoot,
 	type WorkspaceLocation,
+	type WorkspaceRoot,
 } from "../../model/domain.js";
 import { LocalRuntime } from "./local.js";
 import type { Runtime, RuntimeId } from "./runtime.js";
@@ -181,15 +183,41 @@ export function runtimeMachine(raw: string): RuntimeId {
 	throw new Error(`${raw} does not name a machine DevHub knows`);
 }
 
+/**
+ * The remote authority a machine's workbench is opened on, or nothing for this
+ * one.
+ *
+ * The same switch as `runtimeFor`, read a third way, and here for the same
+ * reason the other two are: it is the one place that knows how a machine id is
+ * spelled. `remoteAuthorityOf` composes the authority itself, so the string a
+ * window is opened with and the string a file in that window is named with
+ * come from one function and cannot drift apart.
+ */
+export function remoteAuthorityForMachine(id: RuntimeId): string | undefined {
+	return remoteAuthorityOf(locationOnMachine(id, workspaceRoot("/")));
+}
+
+/**
+ * A path on a machine, as a `WorkspaceLocation`.
+ *
+ * The inverse of `runtimeIdFor`, and the only one. A caller that was handed a
+ * machine and a path — the `devhub` CLI on a host, above all — has to be able
+ * to say where that is without spelling `kind: "ssh"` itself.
+ */
+export function locationOnMachine(
+	id: RuntimeId,
+	path: WorkspaceRoot,
+): WorkspaceLocation {
+	return id === "local"
+		? { kind: "local", path }
+		: { kind: "ssh", host: sshHost(id.slice("ssh:".length)), path };
+}
+
 export function runtimeById(id: RuntimeId): Runtime {
 	if (id === "local") return LOCAL;
-	return runtimeFor({
-		kind: "ssh",
-		host: sshHost(id.slice("ssh:".length)),
-		// The path is not part of which machine this is, and `runtimeFor` does
-		// not read it: one runtime per host, whatever folder is being asked about.
-		path: workspaceRoot("/"),
-	});
+	// The path is not part of which machine this is, and `runtimeFor` does not
+	// read it: one runtime per host, whatever folder is being asked about.
+	return runtimeFor(locationOnMachine(id, workspaceRoot("/")));
 }
 
 /**

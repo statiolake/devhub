@@ -24,12 +24,27 @@
  * field upstream fills in `windowsMainService.ts` when `code -g file:10:2` is
  * parsed in `gotoLineMode`. `pathsToEditors` copies `options` onto the editor
  * input unchanged, so a caret placed here is the caret `code` would place.
+ *
+ * The one thing that *is* a branch here is which machine the path is on, and
+ * it is a branch about the URI rather than about the window. A path on this
+ * Mac is `file:`, in every window, remote authority or not — see
+ * `openFiles.test.ts` for why that is upstream's behaviour and not a hope. A
+ * path on a host is `vscode-remote://<authority>/<path>`, because there is no
+ * other way to name it: `file:` in a remote window means *this* disk.
+ *
+ * That applies to the wait marker as much as to the file, and the marker is
+ * where being wrong has no symptom. A remote marker sent as `file:` is deleted
+ * on this Mac, while the CLI on the host polls a file nothing will ever
+ * remove — `git commit` over there hangs forever after the tab is closed, with
+ * no error anywhere.
  */
 
 import { CancellationToken } from "code-oss-dev/out/vs/base/common/cancellation.js";
 import { URI } from "code-oss-dev/out/vs/base/common/uri.js";
 import { FileType } from "code-oss-dev/out/vs/platform/files/common/files.js";
 import type { ICodeWindow } from "code-oss-dev/out/vs/platform/window/electron-main/window.js";
+import { remoteAuthorityForMachine } from "../runtime/registry.js";
+import type { RuntimeId } from "../runtime/runtime.js";
 import type { ResolvedPath } from "./canonical.js";
 import type { ControlPosition } from "./protocol.js";
 
@@ -45,11 +60,12 @@ import type { ControlPosition } from "./protocol.js";
  */
 export function openFileInWorkbench(
 	window: ICodeWindow,
+	machine: RuntimeId,
 	file: ResolvedPath,
 	position: ControlPosition | undefined,
 	waitMarkerPath: string | undefined,
 ): void {
-	const fileUri = URI.file(file.path);
+	const fileUri = workbenchUri(machine, file.path);
 	window.sendWhenReady("vscode:openFiles", CancellationToken.None, {
 		filesToOpenOrCreate: [
 			{
@@ -78,8 +94,24 @@ export function openFileInWorkbench(
 			: {
 					filesToWait: {
 						paths: [{ fileUri }],
-						waitMarkerFileUri: URI.file(waitMarkerPath),
+						// The same machine as the file, because it is a path the
+						// same `devhub` made, in the same place.
+						waitMarkerFileUri: workbenchUri(machine, waitMarkerPath),
 					},
 				}),
 	});
+}
+
+/**
+ * How a workbench names a path on a machine.
+ *
+ * One function for both kinds, so the URI the file is opened with and the URI
+ * its wait marker is deleted by cannot come to disagree — which is the whole
+ * of the failure this exists to prevent.
+ */
+function workbenchUri(machine: RuntimeId, path: string): URI {
+	const authority = remoteAuthorityForMachine(machine);
+	return authority === undefined
+		? URI.file(path)
+		: URI.from({ scheme: "vscode-remote", authority, path });
 }

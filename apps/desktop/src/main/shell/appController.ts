@@ -4145,15 +4145,14 @@ export class AppController {
 		// host says which host it is. Checked here, once, so that everything
 		// below is talking about one machine's disk.
 		const machine = runtimeMachine(request.machine ?? "local");
-		if (machine !== "local") {
-			throw new Error(
-				`DevHub cannot yet open ${path}${runtimeById(machine).where}: the paths on another machine are not canonicalised there yet.`,
-			);
-		}
 		// Taken before anything is selected: this is the "before" a `--wait`
 		// goes back to when its editor is closed.
 		const before = this.coordinator.model.selection;
-		const target = await canonicalise(path);
+		// Resolved on the machine that owns the path, because that is where its
+		// symlinks are. Doing it here would answer about this disk — a refusal
+		// about a path that is fine over there, or a different folder that
+		// happens to exist here under the same name.
+		const target = await canonicalise(runtimeById(machine), path);
 		if (target.isDirectory) {
 			if (position) {
 				throw new Error(
@@ -4170,7 +4169,15 @@ export class AppController {
 				);
 			}
 			await this.openFolder(
-				requestedLocation({ kind: "local", path: target.path }),
+				requestedLocation(
+					machine === "local"
+						? { kind: "local", path: target.path }
+						: {
+								kind: "ssh",
+								host: machine.slice("ssh:".length),
+								path: target.path,
+							},
+				),
 			);
 			await this.syncEditorView();
 			this.bringToFront();
@@ -4190,6 +4197,7 @@ export class AppController {
 			await this.syncEditorView();
 			openFileInWorkbench(
 				await this.workbenchWindow(SCRATCH_EDITOR),
+				machine,
 				target,
 				position,
 				waitMarkerPath,
@@ -4216,6 +4224,7 @@ export class AppController {
 		await this.syncEditorView();
 		openFileInWorkbench(
 			await this.workbenchWindow(root),
+			machine,
 			target,
 			position,
 			waitMarkerPath,
@@ -4442,7 +4451,7 @@ export class AppController {
 				`there is no agent profile called '${profileId}'. Configured profiles: ${known.length > 0 ? known : "none"}.`,
 			);
 		}
-		const here = await canonicalise(cwd);
+		const here = await canonicalise(localRuntime(), cwd);
 		// `devhub --agent` is the launcher in this Mac's PATH, so the directory
 		// it was run in is a directory here — and a Workspace on a host whose
 		// root spells the same thing is a different folder entirely.
