@@ -28,30 +28,19 @@ import { RowMenu, type RowMenuItem } from "./RowMenu";
 import { focusMainSurface } from "../../focusHome";
 import { SidebarHeader } from "./SidebarHeader";
 import { StatusMark } from "./StatusMark";
-import { statusLabel } from "./status";
 import { mergeExitingRows, useClosingExit } from "./closingExit";
 import { moveIntent, sourceOfTreeItem } from "./reorder";
 import { useReorder, type Reorder } from "./useReorder";
 import {
-  closeDiagnosticLabel,
-  agentFailureLabel,
-  closeFailureLabel,
-} from "../shell/diagnosticLabel";
-
-function runtimeHealthLabel(health: AgentSnapshot["runtimeHealth"]): string {
-  switch (health) {
-    case "starting":
-      return "Starting runtime";
-    case "degraded":
-      return "Runtime needs attention";
-    case "unavailable":
-      return "Runtime unavailable";
-    case "failed":
-      return "Runtime unavailable";
-    case "healthy":
-      return "Connected";
-  }
-}
+  agentNote,
+  agentRowDescription,
+  issueLabel,
+  issueMark,
+  pullRequestLabel,
+  pullRequestMark,
+  unavailableText,
+  workspaceRowDescription,
+} from "./rowDescription";
 
 export interface SidebarProps {
   readonly snapshot: AppSnapshot;
@@ -141,6 +130,12 @@ function WorkspaceRow({
   // a button ends up promising a close and performing a deletion.
   const deletesWorktree = closingDeletesWorktree(repository, workspace.root);
 
+  // What this row says, for whoever is not reading the row: the screen reader
+  // and, in the rail, the pointer. One composition (`rowDescription`), so the
+  // two cannot come to say different things.
+  const description = workspaceRowDescription(workspace, repository);
+  const collapsed = snapshot.sidebar.collapsed;
+
   return (
     <li
       className={`sidebar-tree-item${closing ? " is-closing" : ""}`}
@@ -165,11 +160,21 @@ function WorkspaceRow({
           {/* Outside the row's own button, because when there is a GitHub page
               for this workspace the mark is the link to it, and a button
               cannot go inside a button. It keeps the glyph column either way:
-              a folder and a repository start at the same pixel. */}
-          <WorkspaceGlyph
-            location={workspace.location}
-            repository={repository}
-          />
+              a folder and a repository start at the same pixel.
+
+              In the rail it is inside the button instead, because in the rail
+              the glyph *is* the entry: the label it sits beside is off, so a
+              mark that opened GitHub would be the only thing left to click and
+              the row could not be selected with a pointer at all. The rule is
+              one sentence — in the rail, the whole entry is the select control
+              — and it is said by rendering the glyph as part of that control
+              rather than by catching the link's click and refusing it. */}
+          {collapsed ? null : (
+            <WorkspaceGlyph
+              location={workspace.location}
+              repository={repository}
+            />
+          )}
           <button
             className="sidebar-context-button"
             type="button"
@@ -188,12 +193,12 @@ function WorkspaceRow({
             // A close that stopped is said, not only drawn: the row's colour
             // is what a sighted reader sees and this is the same statement
             // for everyone else.
-            aria-label={`${workspace.label} workspace, path ${workspace.root}${
-              closeFailed
-                ? `, close failed: ${closeFailureLabel(closeFailed.step, closeFailed.diagnostic, closeFailed.detail)}`
-                : ""
-            }`}
-            title={workspace.root}
+            aria-label={description}
+            // The same sentence, for the rail. It used to be the path alone,
+            // which named the row and said nothing about the branch it is on
+            // or the Issue it is for — the two facts the expanded row spends
+            // its other two lines on, and the two a rail is hiding.
+            title={description}
             onClick={() =>
               dispatch({
                 type: "select_context",
@@ -201,6 +206,13 @@ function WorkspaceRow({
               })
             }
           >
+            {collapsed ? (
+              <span className="row-glyph" aria-hidden="true">
+                <Glyph
+                  name={workspaceGlyphName(workspace.location, repository)}
+                />
+              </span>
+            ) : null}
             <span className="row-label">{workspace.label}</span>
           </button>
           {/* The links trail the label rather than leading it, which is the one
@@ -383,9 +395,7 @@ function WorkspaceRow({
                     : `Issue #${String(repository.unavailable.number)}: ${repository.unavailable.reason}`
                 }
               >
-                {repository.unavailable.number === undefined
-                  ? repository.unavailable.reason
-                  : `#${String(repository.unavailable.number)} · ${repository.unavailable.reason}`}
+                {unavailableText(repository.unavailable)}
               </span>
             ) : null}
           </div>
@@ -410,16 +420,10 @@ function WorkspaceRow({
             // news about it and it is news nothing else on screen carries: it
             // is delivered to this Agent rather than to an app-wide banner,
             // and it is retired by the next reconcile that reads the Agent.
-            const note =
-              control.kind === "stopping"
-                ? "Stopping"
-                : control.kind === "stop-failed"
-                  ? closeDiagnosticLabel(control.diagnostic)
-                  : agent.failure
-                    ? agentFailureLabel(agent.failure)
-                    : agent.runtimeHealth === "healthy"
-                      ? undefined
-                      : runtimeHealthLabel(agent.runtimeHealth);
+            // It is computed beside the sentence that says it
+            // (`rowDescription`), so the line the row draws and the name a
+            // screen reader hears cannot disagree about what stopped.
+            const note = agentNote(agent);
             /**
              * A row leads with whatever tells it from the rows beside it.
              *
@@ -435,6 +439,7 @@ function WorkspaceRow({
              * was 11px dimmed would be a row you cannot read the name of.
              */
             const leading = agent.activity ?? agent.displayName;
+            const agentDescription = agentRowDescription(agent);
             const naming = agent.activity ? agent.displayName : undefined;
             return (
               <li
@@ -491,12 +496,13 @@ function WorkspaceRow({
                       data-tree-item-id={`agent:${agent.id}`}
                       tabIndex={agentSelected ? 0 : -1}
                       aria-current={agentSelected ? "page" : undefined}
-                      aria-label={`${agent.displayName}, ${statusLabel(agent.status)} agent, ${note ?? runtimeHealthLabel(agent.runtimeHealth)}${agent.unread ? ", unread" : ""}${agent.activity ? `, ${agent.activity}` : ""}`}
-                      // The row's own name, for the rail — where the words are
+                      aria-label={agentDescription}
+                      // The same sentence, for the rail — where the words are
                       // off and the pointer is the only way to ask which Agent
-                      // this is. A Workspace row already carries its path here
-                      // for the same reason.
-                      title={agent.displayName}
+                      // this is. It is the accessible name and not a shorter
+                      // version of it: a rail is the sighted reader's turn at
+                      // being told rather than shown.
+                      title={agentDescription}
                       disabled={agent.controlState.kind === "stopping"}
                       // Command-click opens the Agent beside its workbench; a
                       // plain click gives it the whole content area. The same
@@ -587,28 +593,7 @@ function WorkspaceGlyph({
   readonly repository: WorkspaceRepositoryWire | undefined;
 }) {
   const { openExternalUrl } = useAppShell();
-  // `mainWorktree` is git's own answer to "which repository is this a checkout
-  // of", so its absence is the whole of what "not a repository" means here.
-  //
-  // Which *kind* of checkout is the two roots compared with each other, and
-  // never with the row's own path: a workspace opened at `repo/packages/app` is
-  // in the main worktree and is neither of them, and comparing it to
-  // `mainWorktree` answered "not the main worktree" — which is true, and is not
-  // the question. That is what drew a plain subdirectory as a worktree.
-  // A fourth silhouette, and it comes first: whether the folder is on this
-  // machine is the thing a person needs to know before anything else about
-  // the row, and it outranks whether git calls the checkout a repository or a
-  // worktree — a fact the row's branch line now carries for a remote folder
-  // too.
-  const name: GlyphName =
-    location.kind === "ssh"
-      ? "remote"
-      : repository?.mainWorktree === undefined ||
-          repository.worktree === undefined
-        ? "folder"
-        : repository.worktree === repository.mainWorktree
-          ? "repository"
-          : "worktree";
+  const name = workspaceGlyphName(location, repository);
   const url = repository?.repositoryUrl;
   if (url === undefined) {
     return (
@@ -631,6 +616,39 @@ function WorkspaceGlyph({
       <Glyph name={name} />
     </button>
   );
+}
+
+/**
+ * Which of the four silhouettes a Workspace wears.
+ *
+ * Its own function because the rail draws the same mark inside the row's
+ * select button, where there is no link to hang it on.
+ */
+function workspaceGlyphName(
+  location: WorkspaceLocationWire,
+  repository: WorkspaceRepositoryWire | undefined,
+): GlyphName {
+  // `mainWorktree` is git's own answer to "which repository is this a checkout
+  // of", so its absence is the whole of what "not a repository" means here.
+  //
+  // Which *kind* of checkout is the two roots compared with each other, and
+  // never with the row's own path: a workspace opened at `repo/packages/app` is
+  // in the main worktree and is neither of them, and comparing it to
+  // `mainWorktree` answered "not the main worktree" — which is true, and is not
+  // the question. That is what drew a plain subdirectory as a worktree.
+  // A fourth silhouette, and it comes first: whether the folder is on this
+  // machine is the thing a person needs to know before anything else about
+  // the row, and it outranks whether git calls the checkout a repository or a
+  // worktree — a fact the row's branch line now carries for a remote folder
+  // too.
+  return location.kind === "ssh"
+    ? "remote"
+    : repository?.mainWorktree === undefined ||
+        repository.worktree === undefined
+      ? "folder"
+      : repository.worktree === repository.mainWorktree
+        ? "repository"
+        : "worktree";
 }
 
 /**
@@ -686,8 +704,8 @@ function RepositoryLinks({
         <button
           className={`row-link-button is-issue-${issue.state}`}
           type="button"
-          aria-label={`Issue #${String(issue.number)}, ${issue.state}: ${issue.title}`}
-          title={`Issue #${String(issue.number)} (${issue.state})`}
+          aria-label={issueLabel(issue)}
+          title={issueMark(issue)}
           onClick={() => {
             openExternalUrl(issue.url);
           }}
@@ -701,8 +719,8 @@ function RepositoryLinks({
         <button
           className={`row-link-button is-pr-${pullRequest.state}`}
           type="button"
-          aria-label={`Pull request #${String(pullRequest.number)}, ${pullRequest.state}: ${pullRequest.title}`}
-          title={`Pull request #${String(pullRequest.number)} (${pullRequest.state})`}
+          aria-label={pullRequestLabel(pullRequest)}
+          title={pullRequestMark(pullRequest)}
           onClick={() => {
             openExternalUrl(pullRequest.url);
           }}

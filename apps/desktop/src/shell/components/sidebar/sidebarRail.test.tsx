@@ -79,23 +79,55 @@ function snapshot(collapsed: boolean): AppSnapshot {
   } as unknown as AppSnapshot;
 }
 
-function mount(collapsed: boolean) {
+/** A repository row with every line the expanded Sidebar can draw. */
+const REPOSITORY = {
+  workspaceId: "w-1",
+  branch: "feature/128-tidy",
+  worktree: "/projects/widget",
+  mainWorktree: "/projects/widget",
+  repositoryUrl: "https://github.com/example/widget",
+  issue: {
+    number: 128,
+    state: "open",
+    title: "Tidy the rail",
+    url: "https://github.com/example/widget/issues/128",
+  },
+  pullRequest: {
+    number: 131,
+    state: "draft",
+    title: "Tidy the rail",
+    url: "https://github.com/example/widget/pull/131",
+  },
+} as const;
+
+function mount(
+  collapsed: boolean,
+  repository?: typeof REPOSITORY,
+  openExternalUrl = vi.fn(),
+) {
+  const dispatch = vi.fn();
   const value = {
     dispatch: vi.fn(),
-    openExternalUrl: vi.fn(),
+    openExternalUrl,
     answerWorktreeClose: vi.fn(() => Promise.resolve({})),
     closeWorkspace: vi.fn(),
     reportFailure: vi.fn(),
     dismissIntentError: vi.fn(),
     agentProfiles: { sequence: 1, availability: "available", profiles: [] },
-    repositoryStatus: { sequence: 1, workspaces: [] },
+    repositoryStatus: {
+      sequence: 1,
+      workspaces: repository ? [repository] : [],
+    },
   } as unknown as AppShellContextValue;
   render(
     <AppShellContext.Provider value={value}>
-      <Sidebar snapshot={snapshot(collapsed)} onDispatch={vi.fn()} />
+      <Sidebar snapshot={snapshot(collapsed)} onDispatch={dispatch} />
     </AppShellContext.Provider>,
   );
-  return screen.getByRole("complementary", { name: "Workspace navigation" });
+  return Object.assign(
+    screen.getByRole("complementary", { name: "Workspace navigation" }),
+    { dispatch, openExternalUrl },
+  );
 }
 
 describe("the collapsed rail", () => {
@@ -133,10 +165,6 @@ describe("the collapsed rail", () => {
 
   it("names each row in a tooltip, since the words are off", () => {
     mount(true);
-    expect(screen.getByRole("button", { name: /^Codex,/ })).toHaveAttribute(
-      "title",
-      "Codex",
-    );
     expect(
       screen.getByRole("button", { name: "Scratch terminal" }),
     ).toHaveAttribute("title", "Scratch");
@@ -163,5 +191,69 @@ describe("what the model remembers about the rail", () => {
     expect(model.snapshot().sidebar).toEqual({ width: 321, collapsed: true });
     model.toggleSidebar();
     expect(model.snapshot().sidebar).toEqual({ width: 321, collapsed: false });
+  });
+});
+
+/**
+ * The pointer, in a rail, is in the position a screen reader is always in: the
+ * words are off and the glyph is all there is. So it is told the same thing —
+ * one composition, handed to `aria-label` when the row is drawn and to `title`
+ * when it is not — and the entry it points at selects the row, because in the
+ * rail the entry is the whole of what there is to click.
+ */
+describe("what a rail entry does under the pointer", () => {
+  it("selects the row, and does not open the repository", () => {
+    const rail = mount(true, REPOSITORY);
+    expect(screen.queryByRole("button", { name: /on GitHub$/ })).toBeNull();
+    screen.getByRole("button", { name: /widget workspace/ }).click();
+    expect(rail.openExternalUrl).not.toHaveBeenCalled();
+    expect(rail.dispatch).toHaveBeenCalledWith({
+      type: "select_context",
+      context: { kind: "workspace", workspaceId: "w-1" },
+    });
+  });
+
+  it("leaves the expanded row's mark as the link it is", () => {
+    const expanded = mount(false, REPOSITORY);
+    screen
+      .getByRole("button", { name: "Open example/widget on GitHub" })
+      .click();
+    expect(expanded.openExternalUrl).toHaveBeenCalledWith(
+      "https://github.com/example/widget",
+    );
+    expect(expanded.dispatch).not.toHaveBeenCalled();
+  });
+
+  it("says in the tooltip exactly what the expanded row is named", () => {
+    mount(false, REPOSITORY);
+    const expandedWorkspace = screen
+      .getByRole("button", { name: /widget workspace/ })
+      .getAttribute("aria-label");
+    const expandedAgent = screen
+      .getByRole("button", { name: /^Codex,/ })
+      .getAttribute("aria-label");
+    cleanup();
+    mount(true, REPOSITORY);
+    expect(
+      screen.getByRole("button", { name: /widget workspace/ }),
+    ).toHaveAttribute("title", expandedWorkspace);
+    expect(screen.getByRole("button", { name: /^Codex,/ })).toHaveAttribute(
+      "title",
+      expandedAgent,
+    );
+  });
+
+  it("carries the branch and the work into the name, not only the path", () => {
+    mount(true, REPOSITORY);
+    const title = screen
+      .getByRole("button", { name: /widget workspace/ })
+      .getAttribute("title");
+    expect(title).toBe(
+      [
+        "widget workspace, path /projects/widget",
+        "branch feature/128-tidy",
+        "Issue #128 (open), Pull request #131 (draft), Tidy the rail",
+      ].join("\n"),
+    );
   });
 });
