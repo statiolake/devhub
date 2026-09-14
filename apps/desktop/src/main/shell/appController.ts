@@ -1749,12 +1749,23 @@ export class AppController {
 		this.send(CHANNELS.agentActionsChanged, this.agentActionsWire());
 	}
 
+	/**
+	 * Publish an app-scoped failure, and write down that it happened.
+	 *
+	 * Deliberately *not* throttled. The rule that stops a notice flapping is
+	 * `model/noticeEpisodes.ts`, and it is applied at the one seam every
+	 * app-scoped notice passes through — `shell/notices.ts`, in the page that
+	 * draws them — because main is not the only publisher: the App Shell page
+	 * raises its own failures without coming through here at all. Throttling
+	 * here as well would be a second implementation of the rule, and the log
+	 * would then record the rate main *allowed* rather than the rate something
+	 * published at. The second number is the whole point of the journal.
+	 */
 	private publishError(error: AppErrorWire): void {
-		// The journal first, so a failure that never reaches a page — published
-		// before there is one, or into a window that has gone — is still in the
-		// log. `module` is the source: it is already the wire's own answer to
-		// "which part of DevHub said this", so no raising site has to be told
-		// about the journal to appear in it.
+		// A failure published before there is a page — or into a window that has
+		// gone — is in the log too. `module` is the source: it is already the
+		// wire's own answer to "which part of DevHub said this", so no raising
+		// site has to be told about the journal to appear in it.
 		this.notices.raised({
 			code: error.code,
 			subject: "app",

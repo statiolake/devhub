@@ -155,6 +155,41 @@ function mount() {
 const toasts = () => Array.from(document.querySelectorAll(".toast"));
 const said = () => toasts().map((toast) => toast.textContent ?? "");
 
+/**
+ * Every toast node added or removed while this was watching.
+ *
+ * `takeRecords()` and not the callback: a `MutationObserver` delivers its
+ * records in a microtask, and a synchronous test that disconnects first would
+ * read an empty list and call it proof. That is a test that passes because it
+ * saw nothing rather than because nothing happened, which is the one kind of
+ * green worth less than red.
+ */
+function watchToastChurn() {
+  const seen: string[] = [];
+  const take = (records: readonly MutationRecord[]) => {
+    for (const record of records) {
+      for (const node of record.addedNodes) {
+        if (node instanceof HTMLElement && node.querySelector(".toast-summary"))
+          seen.push("added");
+      }
+      for (const node of record.removedNodes) {
+        if (node instanceof HTMLElement && node.querySelector(".toast-summary"))
+          seen.push("removed");
+      }
+    }
+  };
+  const watcher = new MutationObserver(take);
+  watcher.observe(document.body, { childList: true, subtree: true });
+  return {
+    churn: seen,
+    stop: () => {
+      take(watcher.takeRecords());
+      watcher.disconnect();
+      return seen;
+    },
+  };
+}
+
 describe("a condition about the whole application", () => {
   afterEach(cleanup);
 
@@ -293,22 +328,7 @@ describe("a condition that holds while its words move", () => {
     observe("machine:ssh:build-box", "DevHub is not getting an answer.");
 
     const first = screen.getByRole("status");
-    const churn: string[] = [];
-    const watcher = new MutationObserver((records) => {
-      for (const record of records) {
-        for (const node of record.addedNodes) {
-          if (node instanceof HTMLElement && node.classList.contains("toast")) {
-            churn.push("added");
-          }
-        }
-        for (const node of record.removedNodes) {
-          if (node instanceof HTMLElement && node.classList.contains("toast")) {
-            churn.push("removed");
-          }
-        }
-      }
-    });
-    watcher.observe(document.body, { childList: true, subtree: true });
+    const seen = watchToastChurn();
 
     for (let round = 1; round <= 50; round += 1) {
       observe(
@@ -316,10 +336,7 @@ describe("a condition that holds while its words move", () => {
         `DevHub is not getting an answer. tmux \`list-panes\` did not answer within ${String(round)} s`,
       );
     }
-    watcher.takeRecords();
-    watcher.disconnect();
-
-    expect(churn).toEqual([]);
+    expect(seen.stop()).toEqual([]);
     expect(toasts()).toHaveLength(1);
     // Element identity, not text: a node that was replaced by an identical one
     // is exactly the bug, and it reads the same to `toHaveTextContent`.
@@ -340,14 +357,7 @@ describe("a condition that holds while its words move", () => {
     fail(raise("tmux `list-panes` did not answer within 1 s"));
 
     const first = screen.getByRole("alert");
-    const churn: string[] = [];
-    const watcher = new MutationObserver((records) => {
-      for (const record of records) {
-        if (record.addedNodes.length > 0) churn.push("added");
-        if (record.removedNodes.length > 0) churn.push("removed");
-      }
-    });
-    watcher.observe(document.body, { childList: true, subtree: true });
+    const seen = watchToastChurn();
 
     for (let round = 1; round <= 50; round += 1) {
       fail(
@@ -356,11 +366,152 @@ describe("a condition that holds while its words move", () => {
         ),
       );
     }
-    watcher.takeRecords();
-    watcher.disconnect();
-
-    expect(churn).toEqual([]);
+    expect(seen.stop()).toEqual([]);
     expect(toasts()).toHaveLength(1);
     expect(screen.getByRole("alert")).toBe(first);
+  });
+});
+
+/**
+ * The publisher's rate, made to stop mattering.
+ *
+ * The audit that went with this found no single 5–10 Hz publisher and several
+ * that could become one: `syncEditorViews` publishes one failure per folder on
+ * every projection change, and a projection change happens at the local
+ * reconcile cadence of 300 ms, so two open workspaces is already ten publishes
+ * a second; the editor restart backoff starts at 250 ms and resets its counter
+ * whenever the workbench manages to load, so it can sit at four a second
+ * indefinitely; and a `ResizeObserver` that reports a rejected `setContentRect`
+ * publishes at whatever rate the layout is churning at, which after a wake is
+ * frame rate. None of them is wrong to say what it says as often as it says it.
+ *
+ * So the test is not about any of them. It hammers the seam they all arrive
+ * at, at twenty a second, with the detail alternating the way a real one does,
+ * and asks for the only two things that matter on screen: one node, and the
+ * same node.
+ */
+describe("a publisher hammering the seam", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    cleanup();
+  });
+
+  const HAMMER_HZ = 20;
+  const PERIOD_MS = 1000 / HAMMER_HZ;
+
+  it("moves one condition node and no other, for three seconds", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const { observe } = mount();
+    observe("machine:ssh:build-box", "DevHub is not getting an answer.");
+
+    const first = screen.getByRole("status");
+    const seen = watchToastChurn();
+    for (let publish = 1; publish <= HAMMER_HZ * 3; publish += 1) {
+      vi.setSystemTime(publish * PERIOD_MS);
+      observe(
+        "machine:ssh:build-box",
+        publish % 2 === 0
+          ? "DevHub is not getting an answer. tmux `list-panes` did not answer within 2 s"
+          : "DevHub is not getting an answer. tmux `display-message` did not answer within 4 s",
+      );
+    }
+    expect(seen.stop()).toEqual([]);
+    expect(toasts()).toHaveLength(1);
+    expect(screen.getByRole("status")).toBe(first);
+  });
+
+  it("moves one failure node and no other, for three seconds", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const { fail } = mount();
+    const raise = (detail: string): AppError => ({
+      code: "native_unavailable",
+      summary: "The native app shell is unavailable.",
+      module: "editor",
+      timestampMs: 1,
+      runtimeVersion: "test",
+      actions: ["retry", "open_settings"],
+      detail,
+    });
+    fail(raise("the workbench view could not be opened"));
+
+    const first = screen.getByRole("alert");
+    const seen = watchToastChurn();
+    for (let publish = 1; publish <= HAMMER_HZ * 3; publish += 1) {
+      vi.setSystemTime(publish * PERIOD_MS);
+      fail(
+        raise(
+          publish % 2 === 0
+            ? "the workbench view could not be opened"
+            : `the workbench stopped unexpectedly (attempt ${String(publish)})`,
+        ),
+      );
+    }
+    expect(seen.stop()).toEqual([]);
+    expect(toasts()).toHaveLength(1);
+    expect(screen.getByRole("alert")).toBe(first);
+  });
+
+  it("keeps two codes taking turns down to one node apiece", () => {
+    // The case a stable identity cannot help with, and the reason the rule is
+    // at the seam rather than in the key. Two codes are two identities and two
+    // toasts, so swapping them twenty times a second is a real remove and add
+    // whatever the stack keys by. Held to one raise each by the episode.
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const { fail } = mount();
+    const raise = (code: AppError["code"]): AppError => ({
+      code,
+      summary: "Something is wrong.",
+      module: "editor",
+      timestampMs: 1,
+      runtimeVersion: "test",
+      actions: ["retry"],
+    });
+    fail(raise("native_unavailable"));
+
+    const seen = watchToastChurn();
+    for (let publish = 1; publish <= HAMMER_HZ * 3; publish += 1) {
+      vi.setSystemTime(publish * PERIOD_MS);
+      fail(
+        raise(publish % 2 === 0 ? "native_unavailable" : "editor_unavailable"),
+      );
+    }
+    const churn = seen.stop();
+
+    // The second code's one and only raise: the failure channel holds one
+    // slot, so the newcomer took the first one's place — one node out, one in,
+    // once, instead of sixty times.
+    expect(churn.filter((what) => what === "removed")).toHaveLength(1);
+    expect(churn.filter((what) => what === "added")).toHaveLength(1);
+    expect(toasts()).toHaveLength(1);
+  });
+
+  it("still has news for the person once they have acted on it", async () => {
+    // The other half of the same rule, and the half a throttle gets wrong: a
+    // notice the person has put away is a slot that is empty again, so the
+    // next failure — inside the quiet window or not — is theirs to see.
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const { fail } = mount();
+    const error: AppError = {
+      code: "native_unavailable",
+      summary: "The native app shell is unavailable.",
+      module: "editor",
+      timestampMs: 1,
+      runtimeVersion: "test",
+      actions: ["retry"],
+    };
+    fail(error);
+    expect(toasts()).toHaveLength(1);
+
+    await act(async () => {
+      screen.getByRole("button", { name: "Dismiss" }).click();
+    });
+    vi.setSystemTime(PERIOD_MS);
+    fail(error);
+    // Dismissed stays dismissed — that is `alertLifetime`, not the episode.
+    expect(toasts()).toHaveLength(0);
   });
 });

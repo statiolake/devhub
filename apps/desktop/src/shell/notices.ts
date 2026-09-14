@@ -53,6 +53,7 @@ import {
   type AppErrorActionWire,
   type NoticeRetiredWire,
 } from "../ipc/appShell";
+import { NoticeEpisodes } from "../model/noticeEpisodes";
 import { useAlertLifetime } from "./alertLifetime";
 
 /**
@@ -191,6 +192,24 @@ export function useAppNotices(
   const reportRef = useRef(report);
   reportRef.current = report;
 
+  /**
+   * The seam every app-scoped notice passes through, and the one rule that
+   * makes a publisher's rate stop mattering.
+   *
+   * Everything arrives here: main's `devhub:native-error`, the overlay handing
+   * its failures over, this page's own `reportFailure` — including the ones
+   * that fire from a `ResizeObserver` or an unhandled rejection, which have no
+   * rate of their own and take the rate of whatever is failing. Below this
+   * line there is one notice per episode, so none of them can flap.
+   *
+   * One per channel, for the same reason there is one `useAlertLifetime` per
+   * channel: a failure's episode ends when the person starts another action
+   * and a condition's does not, and a single gate would have had to be told
+   * which kind it was holding.
+   */
+  const failureEpisodes = useRef(new NoticeEpisodes());
+  const conditionEpisodes = useRef(new NoticeEpisodes());
+
   const clearFailure = useCallback(() => {
     const retiring = held.current.failure;
     if (retiring) {
@@ -199,6 +218,12 @@ export function useAppNotices(
         reason: "next_action",
       });
     }
+    // Unconditionally, and not only for what was on screen: the person's next
+    // action retires every failure, including the ones held back because one
+    // of them already was. A publisher that fails again after that has news,
+    // and holding *that* back would turn a failure into silence — which is
+    // worse than the flicker the holding back is for.
+    failureEpisodes.current.endedAll();
     clearFailureNotice();
   }, [clearFailureNotice]);
 
@@ -230,8 +255,13 @@ export function useAppNotices(
 
   const raiseFailure = useCallback(
     (error: AppError) => {
+      const notice = failureNotice(error);
+      // Not a failure dropped: what it would raise is already on screen,
+      // saying the same thing about the same subject. Its own words went to
+      // the main log, where a second reason is worth having.
+      if (!failureEpisodes.current.begins(notice.identity)) return;
       promote("failure");
-      raiseFailureNotice(failureNotice(error));
+      raiseFailureNotice(notice);
     },
     [raiseFailureNotice, promote],
   );
@@ -244,10 +274,13 @@ export function useAppNotices(
         const retiring = held.current.condition;
         if (retiring) {
           reportRef.current({ identity: retiring.identity, reason: "source" });
+          conditionEpisodes.current.ended(retiring.identity);
         }
         clearCondition();
         return;
       }
+      const identity = appConditionIdentity(source);
+      if (!conditionEpisodes.current.begins(identity)) return;
       promote("condition");
       raiseConditionNotice({
         // The source alone is the identity, because the source *is* the slot:
@@ -255,7 +288,7 @@ export function useAppNotices(
         // a source that reworded a standing fact — which is what a round that
         // fails differently does — then read as one condition ending and
         // another beginning, i.e. a remove and an add, i.e. a blink.
-        identity: appConditionIdentity(source),
+        identity,
         summary,
         actions: [],
         live: "status",
@@ -271,7 +304,16 @@ export function useAppNotices(
         failureAlert?.identity === identity;
       if (conditionAlert?.identity === identity) dismissCondition();
       if (failureAlert?.identity === identity) dismissFailure();
-      if (matched) reportRef.current({ identity, reason: "person" });
+      if (!matched) return;
+      reportRef.current({ identity, reason: "person" });
+      // Ended in the channel it was drawn in, so a dismissal of one does not
+      // let the other start over.
+      if (conditionAlert?.identity === identity) {
+        conditionEpisodes.current.ended(identity);
+      }
+      if (failureAlert?.identity === identity) {
+        failureEpisodes.current.ended(identity);
+      }
     },
     [conditionAlert, failureAlert, dismissCondition, dismissFailure],
   );
