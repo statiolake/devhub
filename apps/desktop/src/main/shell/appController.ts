@@ -4231,7 +4231,12 @@ export class AppController {
 		});
 		await this.syncEditorView();
 		openFileInWorkbench(
-			await this.workbenchWindow(root),
+			// The view is filed under the Workspace's key, not its root. For a
+			// local folder those are the same string; for one on a host the key
+			// carries the machine, and asking for the bare path finds nothing —
+			// which reached the person as "the workbench for <path> is not
+			// running" about a window that was on screen.
+			await this.workbenchWindow(workspace.key),
 			machine,
 			target,
 			position,
