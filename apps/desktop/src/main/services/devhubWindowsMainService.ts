@@ -3,9 +3,9 @@
  *
  * VS Code funnels every open — the sidebar, File > Open Folder, `--new-window`
  * from the command line, a window restored from the last session — through
- * `openInBrowserWindow`. DevHub never makes a second window, and it never
- * makes a workbench that belongs to nothing: every request is reinterpreted as
- * one of DevHub's own two operations.
+ * `openInBrowserWindow`. DevHub never makes a second window for a workbench,
+ * and it never makes a workbench that belongs to nothing: every request is
+ * reinterpreted as one of DevHub's own two operations.
  *
  *   - **With a folder** it is a Workspace: one DevHub already knows gets its
  *     view shown, one it does not becomes a Workspace in the sidebar and a
@@ -16,6 +16,11 @@
  *     get back to it. Any files the request carried go to Scratch too, which
  *     is the same rule `devhub <file>` follows for a file no open Workspace
  *     contains: one policy, two entrances.
+ *
+ * The one request that is neither is an **Extension Development Host**: not a
+ * place DevHub can hold a Workspace for, but a whole second VS Code that a
+ * debug session opens and closes. That one goes to upstream untouched, and
+ * gets a real window; see the override below.
  *
  * The `devhub` CLI does **not** come through here. It talks to DevHub's control
  * socket (`src/main/cli/`), which is DevHub's own front door; this path is
@@ -52,6 +57,12 @@ interface OpenBrowserWindowOptions {
 	readonly forceNewWindow?: boolean;
 	/** Upstream's `IFilesToOpen`, passed on untouched. */
 	readonly filesToOpen?: unknown;
+	/**
+	 * Upstream's `NativeParsedArgs`. Only the one field DevHub reads is named:
+	 * `openInBrowserWindow` spreads this over the window configuration, so it is
+	 * where "this window is an Extension Development Host" is decided.
+	 */
+	readonly cli?: { readonly extensionDevelopmentPath?: string[] };
 }
 
 export class DevHubWindowsMainService extends WindowsMainService {
@@ -130,6 +141,22 @@ const upstreamOpenInBrowserWindow = (
 	this: WindowsMainServiceInternals,
 	options,
 ) {
+	// An Extension Development Host is not a DevHub Workspace and is not placed
+	// like one. It is a second VS Code, started by a debug session and closed by
+	// it, running the extension under development in its own extension host —
+	// DevHub has no row to give it, no view to reveal, and nothing to reveal it
+	// *in* once the debugger stops. It was reaching here with no folder, which
+	// is DevHub's signal for Scratch, so pressing F5 in an extension repository
+	// silently re-showed the Scratch editor and the debug session had nothing to
+	// attach to. Upstream's path is the whole answer, so upstream gets the whole
+	// request; `browserWindowShim.ts` gives it a real `BrowserWindow` to match.
+	if (options.cli?.extensionDevelopmentPath?.length) {
+		console.log(
+			"[devhub] open: an Extension Development Host is a window of its own",
+		);
+		return upstreamOpenInBrowserWindow.call(this, options);
+	}
+
 	const workspace = options.workspace;
 	// Which *place*, not which path: a folder on another machine has no local
 	// path at all, and reading `fsPath` off a `vscode-remote://` URI produces

@@ -73,6 +73,11 @@ const LIFETIME_EVENTS = new Set(["close", "closed", "session-end"]);
 /** `BrowserWindow`'s 'closed' is `WebContents`' 'destroyed'. */
 const EVENT_ALIAS: Readonly<Record<string, string>> = { closed: "destroyed" };
 
+/**
+ * Where view ids start, far above anything Electron counts to. See `id`.
+ */
+const VIEW_ID_BASE = 1_000_000;
+
 export class WorkbenchView {
 	readonly view: Electron.WebContentsView;
 
@@ -165,7 +170,7 @@ export class WorkbenchView {
 			webPreferences: options.webPreferences,
 		});
 		this.contents = this.view.webContents;
-		this.viewId = this.contents.id;
+		this.viewId = VIEW_ID_BASE + this.contents.id;
 		if (options.backgroundColor) {
 			this.view.setBackgroundColor(options.backgroundColor);
 		}
@@ -179,9 +184,23 @@ export class WorkbenchView {
 		});
 	}
 
-	/** The view's identity everywhere in the main process. `CodeWindow` reads
-	 * `this._win.id` straight into `ICodeWindow.id`, so every `getWindowById`
-	 * path resolves as long as this is the webContents id. */
+	/**
+	 * The view's identity everywhere in the main process.
+	 *
+	 * `CodeWindow` reads `this._win.id` straight into `ICodeWindow.id`, and VS
+	 * Code keys every window it knows by that number — its own table, the
+	 * `windowId` each renderer carries, `getWindowById` on the way back. So the
+	 * number has to be unique among everything VS Code ever calls a window, and
+	 * that now includes real windows: an Extension Development Host is one (see
+	 * `browserWindowShim.ts`). Electron counts windows and web contents on two
+	 * separate counters, so "window 2" and "web contents 2" both exist and mean
+	 * different things, and a view identified by its contents id would sooner or
+	 * later share a key with a real window — which is not a lookup that fails
+	 * but one that confidently returns somebody else's window.
+	 *
+	 * The base keeps the two apart by construction. It is not an Electron id and
+	 * never will be: both counters start at 1 and climb one per object.
+	 */
 	get id(): number {
 		return this.viewId;
 	}

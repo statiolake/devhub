@@ -6,15 +6,18 @@
  * workbenches are not windows but `WebContentsView`s inside the one App Shell
  * window, so those four are replaced here, once, before any VS Code module
  * loads. Everything upstream that resolves a window by id then keeps working
- * unmodified: `CodeWindow.id` is its window's id, and a view's id is its
- * webContents id.
+ * unmodified: `CodeWindow.id` is whatever this hands it, and a view's id is a
+ * number no Electron window can ever wear — see `WorkbenchView.id`, which says
+ * why that matters now that one real window goes through here too.
  *
  * The construction site cannot be reached this way. `electron.BrowserWindow`
  * is a non-configurable accessor on the module object, so the class itself
  * cannot be swapped for a subclass whose constructor returns a view. That one
  * site is therefore the single source patch DevHub carries against the
  * submodule — patches/vscode/0001-workbench-window-is-a-view.patch — and it
- * calls the factory installed here as a global.
+ * calls the factory installed here as a global. It is also the only place that
+ * still knows what the window is *for*, which is why the factory is told:
+ * see `WindowPurpose`.
  *
  * Both facts are checked at startup and fail loudly. A silent fallback would
  * leave the workbench quietly opening real windows of its own.
@@ -24,17 +27,41 @@ import { electron } from "../electron.js";
 import { shellWindow, shellWindowIfCreated } from "./shellWindow.js";
 import { asBrowserWindow, WorkbenchView } from "./workbenchView.js";
 
+/**
+ * What the window being created is for.
+ *
+ * The two answers are not two styles of the same thing. A workbench is one of
+ * DevHub's surfaces and lives in the App Shell window beside the others; an
+ * Extension Development Host is a whole second VS Code — its own extension
+ * host, its own window state, opened and closed by a debug session that DevHub
+ * has no part in — and DevHub holds no Workspace for it, gives it no sidebar
+ * row, and would have nowhere to put it if it tried.
+ */
+export type WindowPurpose = "workbench" | "extension-development-host";
+
 declare global {
-	var __devhubCreateWorkbenchWindow:
+	var __devhubCreateWindow:
 		| ((
 				options: Electron.BrowserWindowConstructorOptions,
+				purpose: WindowPurpose,
 		  ) => Electron.BrowserWindow)
 		| undefined;
 }
 
-function createWorkbenchWindow(
+function createWindow(
 	options: Electron.BrowserWindowConstructorOptions,
+	purpose: WindowPurpose,
 ): Electron.BrowserWindow {
+	if (purpose === "extension-development-host") {
+		// Upstream's own window, unchanged: VS Code's chrome, VS Code's title
+		// bar, VS Code's `Cmd+W`. Anything DevHub added here would be a second
+		// owner of a window whose lifetime the debugger already decides.
+		const window = new electron.BrowserWindow(options);
+		console.log(
+			`[devhub] window ${window.id} created — an Extension Development Host`,
+		);
+		return window;
+	}
 	const shell = shellWindow();
 	const view = new WorkbenchView(shell, options);
 	shell.attach(view);
@@ -95,7 +122,7 @@ export function installBrowserWindowShim(): void {
 	};
 
 	BrowserWindow.fromWebContents = (webContents) => {
-		const view = shellWindowIfCreated()?.getViewById(webContents.id);
+		const view = shellWindowIfCreated()?.getViewByContents(webContents);
 		return view ? asBrowserWindow(view) : realFromWebContents(webContents);
 	};
 
@@ -127,7 +154,7 @@ export function installBrowserWindowShim(): void {
 		return view ? asBrowserWindow(view) : null;
 	};
 
-	globalThis.__devhubCreateWorkbenchWindow = createWorkbenchWindow;
+	globalThis.__devhubCreateWindow = createWindow;
 
 	console.log("[devhub] BrowserWindow shim installed");
 }

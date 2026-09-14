@@ -170,6 +170,22 @@ function looksLikeAFailedStart(view: WorkbenchView): boolean {
 	return !view.isVisible() && !view.isMinimized();
 }
 
+describe("a workbench view's identity", () => {
+	it("is a number no Electron window could be wearing", () => {
+		// VS Code keys every window it knows — views and the Extension
+		// Development Host alike — by `ICodeWindow.id`. Electron counts windows
+		// and web contents separately, so a view identified by its contents id
+		// would eventually share a key with a real window, and `getWindowById`
+		// would hand out somebody else's window rather than fail.
+		const shell = new FakeShell() as unknown as ConstructorParameters<
+			typeof WorkbenchView
+		>[0];
+		const view = new WorkbenchView(shell, {});
+		expect(view.id).not.toBe(view.webContents.id);
+		expect(view.id).toBeGreaterThan(1_000_000);
+	});
+});
+
 describe("a workbench view's window state", () => {
 	let shell: FakeShell;
 	let view: WorkbenchView;

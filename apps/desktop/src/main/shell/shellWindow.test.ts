@@ -817,12 +817,12 @@ describe("the shell window's focus reporting", () => {
 		// trust prompt starts listening.
 		announced.length = 0;
 		shell.reveal(a);
-		expect(announced).toEqual([`browser-window-focus:${a.webContents.id}`]);
+		expect(announced).toEqual([`browser-window-focus:${a.id}`]);
 
 		a.webContents.emit("focus");
 		expect(announced).toEqual([
-			`browser-window-focus:${a.webContents.id}`,
-			`browser-window-focus:${a.webContents.id}`,
+			`browser-window-focus:${a.id}`,
+			`browser-window-focus:${a.id}`,
 		]);
 	});
 
@@ -857,7 +857,7 @@ describe("the shell window's focus reporting", () => {
 		shell.modals.closeWhere(() => true);
 		expect(focused).toBe(a.webContents.id);
 		expect(a.isFocused()).toBe(true);
-		expect(announced).toEqual([`browser-window-focus:${a.webContents.id}`]);
+		expect(announced).toEqual([`browser-window-focus:${a.id}`]);
 	});
 
 	it("still reports a workbench losing the keyboard to a modal it must not take back", () => {
@@ -1019,7 +1019,7 @@ describe("when the shell window may come to the front", () => {
 		announced.length = 0;
 
 		a.webContents.emit("focus");
-		expect(announced).toEqual([`browser-window-focus:${a.webContents.id}`]);
+		expect(announced).toEqual([`browser-window-focus:${a.id}`]);
 		expect(raised).toEqual([]);
 	});
 });

@@ -1,25 +1,30 @@
 diff --git a/src/vs/platform/windows/electron-main/windowImpl.ts b/src/vs/platform/windows/electron-main/windowImpl.ts
-index 94aee9da976..cdf8016b11c 100644
+index 94aee9da976..37995f9f754 100644
 --- a/src/vs/platform/windows/electron-main/windowImpl.ts
 +++ b/src/vs/platform/windows/electron-main/windowImpl.ts
-@@ -772,7 +772,15 @@ export class CodeWindow extends BaseWindow implements ICodeWindow {
+@@ -772,7 +772,20 @@ export class CodeWindow extends BaseWindow implements ICodeWindow {
  
  			// Create the browser window
  			mark('code/willCreateCodeBrowserWindow');
 -			this._win = new electron.BrowserWindow(options);
 +			// DevHub: a workbench window is a view inside DevHub's App Shell
-+			// window, never a window of its own. The factory is installed by
++			// window, never a window of its own — except an Extension
++			// Development Host, which is a separate VS Code window with its own
++			// extension host and its own lifecycle and therefore a real
++			// `BrowserWindow`. Which of the two this is, is decided here because
++			// this is the only point that still has the creation options; the
++			// factory is installed by
 +			// apps/desktop/src/main/shell/browserWindowShim.ts before any VS Code
-+			// module loads; its absence is a broken invariant, not a fallback.
-+			const devhubCreateWorkbenchWindow = (globalThis as { __devhubCreateWorkbenchWindow?: (options: electron.BrowserWindowConstructorOptions) => electron.BrowserWindow }).__devhubCreateWorkbenchWindow;
-+			if (typeof devhubCreateWorkbenchWindow !== 'function') {
-+				throw new Error('DevHub: __devhubCreateWorkbenchWindow is not installed');
++			// module loads, and its absence is a broken invariant, not a fallback.
++			const devhubCreateWindow = (globalThis as { __devhubCreateWindow?: (options: electron.BrowserWindowConstructorOptions, purpose: 'workbench' | 'extension-development-host') => electron.BrowserWindow }).__devhubCreateWindow;
++			if (typeof devhubCreateWindow !== 'function') {
++				throw new Error('DevHub: __devhubCreateWindow is not installed');
 +			}
-+			this._win = devhubCreateWorkbenchWindow(options);
++			this._win = devhubCreateWindow(options, config.extensionDevelopmentPath?.length ? 'extension-development-host' : 'workbench');
  			mark('code/didCreateCodeBrowserWindow');
  
  			this._id = this._win.id;
-@@ -1117,6 +1125,11 @@ export class CodeWindow extends BaseWindow implements ICodeWindow {
+@@ -1117,6 +1130,11 @@ export class CodeWindow extends BaseWindow implements ICodeWindow {
  				const window = (await this.windowsMainService.open({
  					context: OpenContext.API,
  					userEnv: this._config.userEnv,
@@ -31,7 +36,7 @@ index 94aee9da976..cdf8016b11c 100644
  					cli: {
  						...this.environmentMainService.args,
  						_: [] // we pass in the workspace to open explicitly via `urisToOpen`
-@@ -1312,6 +1325,16 @@ export class CodeWindow extends BaseWindow implements ICodeWindow {
+@@ -1312,6 +1330,16 @@ export class CodeWindow extends BaseWindow implements ICodeWindow {
  			}
  		}
  

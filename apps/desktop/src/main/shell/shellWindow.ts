@@ -336,6 +336,17 @@ export class ShellWindow {
 	}
 
 	/**
+	 * The view those contents belong to, asked for by the contents themselves.
+	 *
+	 * A view's id is not its contents' id — see `WorkbenchView.id` — so this is
+	 * the only way to go from one to the other, and the two questions stay two
+	 * methods rather than one method with a number that means either.
+	 */
+	getViewByContents(contents: Electron.WebContents): WorkbenchView | undefined {
+		return this.views.find((view) => view.webContents === contents);
+	}
+
+	/**
 	 * Put one workbench on screen, and no other.
 	 *
 	 * The whole of it happens here, in this order, synchronously: the view is
