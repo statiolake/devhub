@@ -273,6 +273,14 @@ def build_builtin_extensions() -> Path:
 	every extension — 3.5 GB of it. `compile-extensions-build` is the task
 	upstream's own packaging uses: esbuild bundles each extension and only its
 	production dependencies land in `.build/extensions`.
+
+	It covers both halves of VS Code's built-in set. Its first step is
+	`bundle-marketplace-extensions-build`, which walks
+	`product.builtInExtensions` — js-debug and its companions, the ones upstream
+	downloads rather than carries in the repository — and writes each one into
+	`.build/extensions` as a real directory: out of `.build/builtInExtensions`
+	when provisioning has already fetched it, straight from the network
+	otherwise.
 	"""
 	env = dict(os.environ, PATH=f"{toolchain_node_bin()}:{os.environ['PATH']}")
 	run(["npm", "run", "gulp", "compile-extensions-build"], cwd=VSCODE_DIR, env=env)
@@ -280,6 +288,33 @@ def build_builtin_extensions() -> Path:
 	if not staged.is_dir():
 		fail(f"compile-extensions-build produced no {staged}")
 	return staged
+
+
+def check_downloaded_builtins(staged: Path) -> None:
+	"""Refuse to package a built-in set missing the half product.json downloads.
+
+	Nothing about their absence looks like a failure: the app starts, every
+	editor works, and only F5 quietly does nothing — with no js-debug there is
+	no debug adapter for `node`, `node-terminal` or `extensionHost` for it to
+	reach. That symptom is a long way from this script, so the check is here.
+	The way to get there is `--skip-extension-build` over a `.build/extensions`
+	built before these were part of the set, or from a different product.json.
+	"""
+	product = json.loads((VSCODE_DIR / "product.json").read_text())
+	for extension in product.get("builtInExtensions", []):
+		name = extension["name"]
+		manifest = staged / name / "package.json"
+		if not manifest.is_file():
+			fail(
+				f"product.builtInExtensions names {name}, but {staged / name} has no "
+				"package.json — rebuild the set without --skip-extension-build"
+			)
+		version = json.loads(manifest.read_text()).get("version")
+		if version != extension["version"]:
+			fail(
+				f"{name} in {staged} is {version}, but product.json pins "
+				f"{extension['version']} — rebuild the set without --skip-extension-build"
+			)
 
 
 def production_dependencies() -> list[Path]:
@@ -712,9 +747,10 @@ def assemble_app_directory(app: Path, version: str, staged_extensions: Path) -> 
 		ignore=lambda d, names: ignore_tests(d, names) | {"src", "build", "scripts", "tsconfig.json"},
 	)
 	# The vendored set is copied whole: it is a published extension as
-	# published, and `compile-extensions-build` only knows about the ones in
-	# the submodule. This is the same list stage-builtin-extensions.sh links
-	# for a development launch, so the two builds ship the same built-ins.
+	# published, and `compile-extensions-build` knows only about VS Code's own
+	# two halves — the submodule's extensions and the ones product.json
+	# downloads. This is the same list stage-builtin-extensions.sh links for a
+	# development launch, so the two builds ship the same built-ins.
 	for vendored in sorted(VENDOR_DIR.iterdir()):
 		if not (vendored / "package.json").is_file():
 			continue
@@ -789,6 +825,7 @@ def main() -> int:
 		print(f"    reusing {staged}")
 	else:
 		staged = build_builtin_extensions()
+	check_downloaded_builtins(staged)
 
 	out_dir = Path(args.out_dir).resolve()
 	app = out_dir / f"{APP_NAME}.app"

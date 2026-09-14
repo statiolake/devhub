@@ -12,8 +12,12 @@ module. These tests pin the fix where it can regress: in the generated source.
 from __future__ import annotations
 
 import importlib.util
+import json
+import shutil
+import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 SCRIPTS = Path(__file__).resolve().parent
 
@@ -61,6 +65,54 @@ class GeneratedEntry(unittest.TestCase):
 
 	def test_explicit_arguments_still_win(self) -> None:
 		self.assertIn("process.argv.some", self.source)
+
+
+class DownloadedBuiltins(unittest.TestCase):
+	"""The half of VS Code's built-in set product.json downloads.
+
+	Without js-debug there is no debug adapter for `node`, `node-terminal` or
+	`extensionHost`, and nothing else about the app looks wrong — so packaging a
+	set that is missing one has to be an error here rather than a dead F5 later.
+	"""
+
+	def setUp(self) -> None:
+		root = Path(tempfile.mkdtemp())
+		self.addCleanup(shutil.rmtree, root, True)
+		self.vscode = root / "vscode"
+		self.vscode.mkdir()
+		(self.vscode / "product.json").write_text(
+			json.dumps({"builtInExtensions": [{"name": "ms-vscode.js-debug", "version": "1.117.0"}]})
+		)
+		self.staged = root / "extensions"
+		self.staged.mkdir()
+		patcher = mock.patch.object(package_nightly, "VSCODE_DIR", self.vscode)
+		patcher.start()
+		self.addCleanup(patcher.stop)
+
+	def _stage(self, version: str) -> None:
+		extension = self.staged / "ms-vscode.js-debug"
+		extension.mkdir()
+		(extension / "package.json").write_text(json.dumps({"version": version}))
+
+	def test_a_staged_set_at_the_pinned_version_passes(self) -> None:
+		self._stage("1.117.0")
+		package_nightly.check_downloaded_builtins(self.staged)
+
+	def test_a_missing_one_is_refused(self) -> None:
+		with self.assertRaises(SystemExit):
+			package_nightly.check_downloaded_builtins(self.staged)
+
+	def test_a_stale_version_is_refused(self) -> None:
+		self._stage("1.100.0")
+		with self.assertRaises(SystemExit):
+			package_nightly.check_downloaded_builtins(self.staged)
+
+	def test_the_real_product_json_names_a_javascript_debugger(self) -> None:
+		# The rule this whole check exists for: DevHub's built-in set is VS
+		# Code's, and VS Code's includes the debugger it downloads.
+		product = json.loads((package_nightly.REPO_ROOT / "vscode" / "product.json").read_text())
+		names = {extension["name"] for extension in product.get("builtInExtensions", [])}
+		self.assertIn("ms-vscode.js-debug", names)
 
 
 if __name__ == "__main__":

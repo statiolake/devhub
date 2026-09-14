@@ -274,7 +274,17 @@ fi
 # DevHub's own integration ships as a built-in so that its workbench defaults
 # (contributes.configurationDefaults) are in effect and cannot be uninstalled.
 # See the script for why the whole set has to be staged.
+#
+# VS Code's own set is in two halves. The submodule carries most of it, and
+# `product.builtInExtensions` names the rest — js-debug, its companion, and the
+# JS profile table — which upstream downloads at build time, pinned to a version
+# and a sha256. `npm run download-builtin-extensions` is that mechanism; it
+# checks each extension's version on disk first, so a run that has them costs
+# nothing. Without this DevHub has no debug adapter for `node`, `node-terminal`
+# or `extensionHost`, which is to say F5 does nothing at all, on a JavaScript
+# project and on an extension repo alike.
 step "built-in extensions"
+(cd "$VSCODE_DIR" && npm run download-builtin-extensions)
 (cd "$REPO_ROOT/extensions/devhub-bridge" && node scripts/build.mjs)
 "$REPO_ROOT/scripts/stage-builtin-extensions.sh"
 

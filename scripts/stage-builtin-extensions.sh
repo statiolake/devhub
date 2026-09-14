@@ -53,6 +53,17 @@ BRIDGE="$REPO_ROOT/extensions/devhub-bridge"
 # downloaded.
 VENDOR="$REPO_ROOT/extensions/vendor"
 BUILD="$REPO_ROOT/vscode/.build"
+# VS Code's built-in set is not all in the submodule. `product.builtInExtensions`
+# names the ones upstream *downloads* at build time — js-debug and friends — and
+# `npm run download-builtin-extensions` puts them here, pinned to the version and
+# sha256 in product.json. They are as built-in as the bundled ones: without
+# js-debug there is no debug adapter for `node`, `node-terminal` or
+# `extensionHost` at all, so F5 on a JavaScript project or on an extension repo
+# has nothing to answer it. The packaged app gets them by a different route —
+# `compile-extensions-build` runs `bundle-marketplace-extensions-build`, which
+# reads this same directory into `.build/extensions` — so this is the source
+# run's half of the same rule, not a second rule.
+DOWNLOADED="$BUILD/builtInExtensions"
 STAGED="$BUILD/devhub-builtin-extensions"
 GENERATIONS="$BUILD/devhub-builtin-extensions.generations"
 
@@ -77,6 +88,25 @@ for entry in "$VENDOR"/*/; do
 	[ -f "$entry/package.json" ] || continue
 	vendored+=("$(basename "${entry%/}")")
 done
+# The downloaded half of VS Code's own set. The names come from product.json
+# rather than from whatever happens to be on disk, so a download that did not
+# happen is an error here instead of a debugger that silently is not there.
+downloaded=()
+while IFS= read -r name; do
+	[ -n "$name" ] || continue
+	if [ ! -f "$DOWNLOADED/$name/package.json" ]; then
+		echo "product.builtInExtensions names $name, but $DOWNLOADED/$name is not there — run scripts/provision-vscode.sh (or 'npm run download-builtin-extensions' in vscode/)" >&2
+		exit 1
+	fi
+	downloaded+=("$name")
+done < <(python3 - "$REPO_ROOT/vscode/product.json" <<'PY'
+import json, sys
+
+product = json.load(open(sys.argv[1]))
+for extension in sorted(product.get("builtInExtensions", []), key=lambda e: e["name"]):
+	print(extension["name"])
+PY
+)
 if [ "${#names[@]}" -eq 0 ]; then
 	echo "no built-in extensions found in $VSCODE_EXTENSIONS — run scripts/provision-vscode.sh" >&2
 	exit 1
@@ -92,8 +122,8 @@ fi
 # DevHub's own. Anything that would change the resulting directory has to be in
 # here, or a stale generation would be reused.
 digest="$(
-	printf '%s\n' "$VSCODE_EXTENSIONS" "$BRIDGE" "$VENDOR" "${names[@]}" \
-		${vendored[@]+"${vendored[@]}"} |
+	printf '%s\n' "$VSCODE_EXTENSIONS" "$BRIDGE" "$VENDOR" "$DOWNLOADED" "${names[@]}" \
+		${vendored[@]+"${vendored[@]}"} ${downloaded[@]+"${downloaded[@]}"} |
 		shasum -a 256 | cut -d' ' -f1
 )"
 generation="$GENERATIONS/$digest"
@@ -110,6 +140,9 @@ if [ ! -d "$generation" ]; then
 	done
 	for name in ${vendored[@]+"${vendored[@]}"}; do
 		ln -s "$VENDOR/$name" "$building/$name"
+	done
+	for name in ${downloaded[@]+"${downloaded[@]}"}; do
+		ln -s "$DOWNLOADED/$name" "$building/$name"
 	done
 	# DevHub's own, last, so a name clash would be visible rather than silent.
 	ln -s "$BRIDGE" "$building/devhub-bridge"
