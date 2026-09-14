@@ -140,7 +140,13 @@ export async function bootstrapShell(
 		// checkout and in a bundle alike — the same fact the `devhub` CLI's
 		// launcher is written with.
 		execPath: process.execPath,
-		entryScript: join(APP_ROOT, "out", "main", "terminal", "devhubTerminal.js"),
+		entryScript: join(
+			APP_ROOT,
+			"out",
+			"main",
+			"terminal",
+			"devhubTerminalEntry.js",
+		),
 		socketPath: controlSocketPath(userDataPath),
 		// This launcher is the one for the machine DevHub is running on. A
 		// window on another machine gets another launcher, written there,
@@ -253,7 +259,7 @@ export async function bootstrapShell(
 					// in a checkout and in a bundle alike, and it is what the
 					// launcher runs the CLI with as Node.
 					execPath: process.execPath,
-					cliScript: join(APP_ROOT, "out", "main", "cli", "devhubCli.js"),
+					cliScript: join(APP_ROOT, "out", "main", "cli", "devhubCliEntry.js"),
 					socketPath,
 					commandName: activeProfile().cliCommandName,
 					profile: activeProfile().profile,

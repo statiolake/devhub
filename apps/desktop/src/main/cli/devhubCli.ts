@@ -27,8 +27,6 @@
 
 import { connect } from "node:net";
 import { homedir, tmpdir } from "node:os";
-import { resolve as resolvePath } from "node:path";
-import { fileURLToPath } from "node:url";
 import { parseFileAndPosition, type FilePosition } from "./goto.js";
 import {
 	commandLauncher,
@@ -611,22 +609,4 @@ async function run(
 		console.error(messageOf(error));
 	}
 	return 0;
-}
-
-// `import.meta.url` is the module's own path; `process.argv[1]` is the script
-// the runtime was given. They are the same file exactly when this module is
-// the entry point, which is how an ESM module knows it is being run rather
-// than imported by its own tests.
-if (
-	process.argv[1] !== undefined &&
-	fileURLToPath(import.meta.url) === resolvePath(process.argv[1])
-) {
-	main(process.argv.slice(2))
-		.then((code) => {
-			process.exitCode = code;
-		})
-		.catch((error: unknown) => {
-			console.error(messageOf(error));
-			process.exitCode = 1;
-		});
 }

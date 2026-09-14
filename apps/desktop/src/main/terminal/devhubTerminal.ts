@@ -22,8 +22,6 @@
  */
 
 import { connect } from "node:net";
-import { resolve as resolvePath } from "node:path";
-import { fileURLToPath } from "node:url";
 import type { ControlResponse } from "../cli/protocol.js";
 import {
 	DEVHUB_TERMINAL_MACHINE,
@@ -117,24 +115,4 @@ export async function main(): Promise<number> {
 	);
 	process.stdout.write(`${terminalCommandLine(command)}\n`);
 	return 0;
-}
-
-function messageOf(error: unknown): string {
-	return error instanceof Error ? error.message : String(error);
-}
-
-// The same entry-point test as `../cli/devhubCli.ts`: this module is the entry
-// exactly when the runtime was given its own file.
-if (
-	process.argv[1] !== undefined &&
-	fileURLToPath(import.meta.url) === resolvePath(process.argv[1])
-) {
-	main()
-		.then((code) => {
-			process.exitCode = code;
-		})
-		.catch((error: unknown) => {
-			console.error(`devhub-terminal: ${messageOf(error)}`);
-			process.exitCode = 1;
-		});
 }
