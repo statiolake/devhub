@@ -12,6 +12,7 @@
  * makes the terminal survive a window close, a workspace switch, and a restart.
  */
 
+import type { TerminalProfileAnswer } from "../cli/protocol.js";
 import {
 	TerminalFailure,
 	type TerminalAttachReceipt,
@@ -193,7 +194,7 @@ export class TerminalSurfaces {
 	async profile(
 		target: TerminalTarget,
 		cancel = new CancellationToken(),
-	): Promise<{ readonly file: string; readonly args: readonly string[] }> {
+	): Promise<TerminalProfileAnswer> {
 		const runtime = await this.runtimeFor(target.machine);
 		const release = await runtime.acquireOperation(cancel);
 		try {
@@ -210,6 +211,10 @@ export class TerminalSurfaces {
 			return {
 				file: runtime.tmuxPath(),
 				args: runtime.attachArgv(exact.name),
+				// The executable's own needs travel with the executable. This
+				// client is started by VS Code's pty host and not by DevHub, so
+				// this is the only channel there is for them.
+				env: runtime.tmuxRequires(),
 			};
 		} catch (failure: unknown) {
 			throw terminalFailureFromPort(failure);

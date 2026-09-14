@@ -89,7 +89,11 @@ import {
 } from "../cli/extensionCommands.js";
 import { openFileInWorkbench } from "../cli/openFiles.js";
 import { WaitSelectionReturns } from "../cli/waitReturn.js";
-import type { ControlOpenRequest, ControlPosition } from "../cli/protocol.js";
+import type {
+	ControlOpenRequest,
+	ControlPosition,
+	TerminalProfileAnswer,
+} from "../cli/protocol.js";
 import { workspaceRootFor } from "../cli/resolve.js";
 import {
 	routeOpen,
@@ -1294,7 +1298,7 @@ export class AppController {
 	async terminalProfileFor(
 		machine: string,
 		root: string | null,
-	): Promise<{ readonly file: string; readonly args: readonly string[] }> {
+	): Promise<TerminalProfileAnswer> {
 		const wiring = this.terminalsWiring;
 		if (!wiring) throw new Error("the terminal runtime is not running");
 		// Only the Workspaces on the machine that is asking. A path is a path on

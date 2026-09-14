@@ -119,7 +119,14 @@ class FakeMachine implements Runtime {
 		return Promise.resolve({
 			kind: "resolved" as const,
 			path: "tmux",
-			environment: {},
+			// A machine DevHub shipped a tmux to has one thing that tmux needs
+			// and the machine cannot supply: the terminfo database that came
+			// with it. This machine's own tmux needs nothing.
+			environment: (this.id === "local"
+				? {}
+				: {
+						TERMINFO: `${this.homeDirectory}/.devhub-server/tmux/3.7c/terminfo`,
+					}) as Readonly<Record<string, string>>,
 		});
 	}
 
@@ -274,6 +281,22 @@ describe("one tmux adapter per machine", () => {
 		expect(there.tmuxEnv()["LANG"]).toBe("C.UTF-8");
 		expect(there.tmuxEnv()["TMPDIR"]).toBeUndefined();
 		expect(there.tmuxEnv()["TERM"]).toBe("xterm-256color");
+	});
+
+	/**
+	 * What a client DevHub does *not* start is told what the executable needs.
+	 *
+	 * The workbench's integrated terminal is spawned by VS Code's pty host from
+	 * the launcher script, so the profile answer is the only channel there is.
+	 * Without it the tmux on the host refused with `missing or unsuitable
+	 * terminal: xterm-256color` and the tab closed as fast as it opened.
+	 */
+	it("tells a workbench's own client what that machine's tmux needs", async () => {
+		const { a, b, runtimes } = machines();
+		expect((await runtimes.for(a)).tmuxRequires()).toEqual({});
+		expect((await runtimes.for(b)).tmuxRequires()).toEqual({
+			TERMINFO: "/home/there/.devhub-server/tmux/3.7c/terminfo",
+		});
 	});
 
 	it("forgets a machine no Workspace is on any more", async () => {

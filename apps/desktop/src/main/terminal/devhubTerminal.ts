@@ -22,7 +22,10 @@
  */
 
 import { connect } from "node:net";
-import type { ControlResponse } from "../cli/protocol.js";
+import type {
+	ControlResponse,
+	TerminalProfileAnswer,
+} from "../cli/protocol.js";
 import {
 	DEVHUB_TERMINAL_MACHINE,
 	terminalCommandLine,
@@ -78,7 +81,7 @@ export async function resolveTerminalCommand(
 	socketPath: string | undefined,
 	machine: string | undefined,
 	directory: string | undefined,
-): Promise<{ readonly file: string; readonly args: readonly string[] }> {
+): Promise<TerminalProfileAnswer> {
 	if (socketPath === undefined || socketPath.length === 0) {
 		throw new Error(
 			"DEVHUB_CONTROL_SOCKET is not set, so this terminal cannot ask DevHub which session it belongs to. The launcher that sets it is written by DevHub on startup; a copy of it kept somewhere else is not one.",

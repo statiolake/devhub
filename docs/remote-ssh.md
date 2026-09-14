@@ -504,6 +504,28 @@ rule of its own.
 `DEVHUB_ORIGIN` stays on `new-session -e`, where it works: the client-beats-all
 behaviour is `PATH`'s alone.
 
+#### The answer says what to run, and what it needs to run
+
+`terminal-profile` answers with a program, its arguments **and the environment
+that program needs**. The third is not decoration. A tmux DevHub shipped to a
+host carries its own compiled terminfo database and is told where it is with
+`TERMINFO`; nothing else on that machine knows. Every tmux client DevHub starts
+itself is given it — but the workbench's integrated terminal is started by VS
+Code's pty host from the launcher script, so the answer is the only channel
+there is. Without it the client on a bare host refuses with
+
+```
+missing or unsuitable terminal: xterm-256color
+```
+
+and the tab closes as fast as it opened, which is what a host with no terminfo
+database at all did.
+
+It rides in the command line through `env`, because the launcher `exec`s the
+answer and a shell takes no assignments in front of an `exec`. `env` execs too,
+so the pty still holds the tmux client itself. A machine whose tmux needs
+nothing added — this Mac — gets no `env` and the line it always had.
+
 `-`, `--wait` and `--goto` are the same `stdin.ts`, `wait.ts` and `goto.ts` the
 local command uses — that is the point of there being one protocol. Two things
 the shim says that the local launcher does not have to:

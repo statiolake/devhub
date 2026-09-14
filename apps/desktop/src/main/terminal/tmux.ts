@@ -2949,4 +2949,23 @@ export class TmuxTerminalRuntime {
 	tmuxEnv(): Readonly<Record<string, string>> {
 		return definedEnvironment(terminalEnvironment(this.tmuxEnvironment()));
 	}
+
+	/**
+	 * What this tmux needs added to whatever environment it is started in.
+	 *
+	 * For a client DevHub does **not** start: the workbench's integrated
+	 * terminal, which VS Code's pty host spawns from the launcher script. That
+	 * client already has the machine's environment — it is a child of the REH
+	 * over there — so what it is missing is only what belongs to the executable,
+	 * and a tmux DevHub shipped to a host carries its own compiled terminfo
+	 * database that nothing else on the machine knows about. Without `TERMINFO`
+	 * it refuses with `missing or unsuitable terminal: xterm-256color` and the
+	 * tab closes as fast as it opened.
+	 *
+	 * Empty here, where tmux is the person's own and reads the machine's own
+	 * database.
+	 */
+	tmuxRequires(): Readonly<Record<string, string>> {
+		return this.tmuxOwnEnvironment;
+	}
 }

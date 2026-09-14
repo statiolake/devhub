@@ -232,6 +232,23 @@ export type ControlOpenRequest = Extract<ControlRequest, { kind: "open" }>;
 export interface TerminalProfileAnswer {
 	readonly file: string;
 	readonly args: readonly string[];
+	/**
+	 * What that command needs in its environment in order to be itself.
+	 *
+	 * Part of the answer and not of the launcher, because it belongs to the
+	 * executable and the executable is chosen here: a tmux DevHub shipped to a
+	 * host carries its own compiled terminfo database, and `TERMINFO` is how it
+	 * is told to read that rather than the host's — which on a bare appliance is
+	 * not there at all. A launcher written before any of that was known could
+	 * only have guessed.
+	 *
+	 * It was missing, and the whole of the symptom was a terminal tab that
+	 * opened and closed: `missing or unsuitable terminal: xterm-256color`, from
+	 * a tmux that could not find a single terminal description on the machine.
+	 *
+	 * Empty on a machine whose tmux needs nothing added, which is this one.
+	 */
+	readonly env: Readonly<Record<string, string>>;
 }
 
 export interface ControlResponse {

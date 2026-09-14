@@ -31,7 +31,7 @@ function everythingSaysOk(): ControlHandlers {
 		metrics: () => Promise.resolve("ok"),
 		version: () => Promise.resolve("ok"),
 		installCli: () => Promise.resolve("ok"),
-		terminalProfile: () => Promise.resolve({ file: "tmux", args: [] }),
+		terminalProfile: () => Promise.resolve({ file: "tmux", args: [], env: {} }),
 	};
 }
 
@@ -119,6 +119,7 @@ describe("the DevHub control socket", () => {
 				return Promise.resolve({
 					file: "/usr/bin/tmux",
 					args: ["-L", "devhub", "attach-session", "-t", "ws-abc"],
+					env: { TERMINFO: "/home/dev/.devhub-server/tmux/3.7c/terminfo" },
 				});
 			},
 		});
@@ -477,6 +478,10 @@ describe("the DevHub control socket", () => {
 		expect(answer.profile).toEqual({
 			file: "/usr/bin/tmux",
 			args: ["-L", "devhub", "attach-session", "-t", "ws-abc"],
+			// What the executable needs to be itself travels with it: a tmux
+			// DevHub shipped to a host reads the terminfo database that came
+			// with it, and nothing else on that machine knows where it is.
+			env: { TERMINFO: "/home/dev/.devhub-server/tmux/3.7c/terminfo" },
 		});
 		expect(calls).toEqual(["profile local /work/a"]);
 	});

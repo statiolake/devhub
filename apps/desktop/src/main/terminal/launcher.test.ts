@@ -86,6 +86,43 @@ describe("the DevHub terminal launcher", () => {
 		).toBe("'/opt/tmux' '-L' 'devhub' 'attach-session' '-t' 'ws with space'");
 	});
 
+	/**
+	 * What the executable needs in order to be itself, on a client DevHub does
+	 * not start.
+	 *
+	 * The workbench's integrated terminal is spawned by VS Code's pty host from
+	 * this script, so the only way to tell it anything is through the answer.
+	 * A tmux DevHub shipped to a host reads the terminfo database that came with
+	 * it, and without `TERMINFO` it refuses with `missing or unsuitable
+	 * terminal: xterm-256color` — which on the host was a tab that opened and
+	 * closed with nothing in it.
+	 */
+	it("carries the environment the command needs, through env", () => {
+		expect(
+			terminalCommandLine({
+				file: "/opt/tmux",
+				args: ["-L", "devhub", "attach-session", "-t", "ws"],
+				env: { TERMINFO: "/home/dev/.devhub-server/tmux/3.7c/terminfo" },
+			}),
+		).toBe(
+			"'env' 'TERMINFO=/home/dev/.devhub-server/tmux/3.7c/terminfo' " +
+				"'/opt/tmux' '-L' 'devhub' 'attach-session' '-t' 'ws'",
+		);
+	});
+
+	// `env` execs, so it is not a process standing between the pty and tmux —
+	// and a machine with nothing to add gets no `env` at all, so the ordinary
+	// line is the one it has always been.
+	it("adds nothing when the command needs nothing added", () => {
+		expect(
+			terminalCommandLine({
+				file: "/opt/tmux",
+				args: ["-L", "devhub"],
+				env: {},
+			}),
+		).toBe("'/opt/tmux' '-L' 'devhub'");
+	});
+
 	// Not a reading of the script but a run of it: the process that ends up
 	// running the answer is the launcher's own, which is what "the pty holds
 	// tmux" means when VS Code is the one holding the pty.

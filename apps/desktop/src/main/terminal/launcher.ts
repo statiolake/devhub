@@ -151,12 +151,27 @@ export function terminalLauncherScript(
  * into the script above — so the argv crosses the one gap between DevHub and
  * `/bin/sh` in the language the receiving side actually parses. Nothing here
  * ever sees a word split on a space in a path.
+ *
+ * The environment the command needs rides in the same line, through `env`,
+ * which is the only way it can: the launcher `exec`s this, and a shell will not
+ * take variable assignments in front of an `exec`. `env` replaces itself with
+ * the command, so what the pty holds is still the tmux client itself and not a
+ * process standing between the two — which is the whole shape this launcher
+ * exists to keep. Nothing is prefixed when there is nothing to add, so the
+ * ordinary local line is exactly what it has always been.
  */
 export function terminalCommandLine(command: {
 	readonly file: string;
 	readonly args: readonly string[];
+	readonly env?: Readonly<Record<string, string>>;
 }): string {
-	return shellQuoteArgv([command.file, ...command.args]);
+	const assignments = Object.entries(command.env ?? {})
+		.sort(([left], [right]) => (left < right ? -1 : 1))
+		.map(([name, value]) => `${name}=${value}`);
+	const argv = [command.file, ...command.args];
+	return shellQuoteArgv(
+		assignments.length === 0 ? argv : ["env", ...assignments, ...argv],
+	);
 }
 
 /**
