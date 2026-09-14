@@ -15,12 +15,14 @@
  * printed from somewhere other than the running app is a version of something
  * else. One front door, and it is the socket.
  *
- * When DevHub is not running the command says so and stops. The one exception
- * is a bare `devhub`, which starts it — see `launch.ts` for why that command
- * and not the others. Nothing here ever starts a second instance against a
- * user-data directory the first one owns, which is the failure mode the whole
- * single-instance design exists to avoid: macOS is asked to open the installed
- * bundle, and macOS raises the running one if there is one.
+ * When DevHub is not running the command starts it, waits for its socket, and
+ * then sends the request it was given — see `launch.ts`. Every command does
+ * this, so nothing downstream of the send is written twice, once for a warm
+ * DevHub and once for a cold one. Nothing here ever starts a second instance
+ * against a user-data directory the first one owns, which is the failure mode
+ * the whole single-instance design exists to avoid: the app's own
+ * single-instance lock makes a second start a no-op, and the CLI only ever
+ * waits for the one socket.
  */
 
 import { connect } from "node:net";
@@ -28,8 +30,13 @@ import { homedir, tmpdir } from "node:os";
 import { resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseFileAndPosition, type FilePosition } from "./goto.js";
-import { bundleLauncher, NotRunning, sendOrLaunch } from "./launch.js";
-import { activeProfile } from "../../model/profile.js";
+import {
+	commandLauncher,
+	LAUNCH_COMMAND_ENVIRONMENT_VARIABLE,
+	NotRunning,
+	parseLaunchCommand,
+	sendOrLaunch,
+} from "./launch.js";
 import { expandPath } from "./resolve.js";
 import { spoolStdin, stdinSpoolPath } from "./stdin.js";
 import {
@@ -43,8 +50,7 @@ import type { ControlRequest, ControlResponse } from "./protocol.js";
 export const USAGE = `devhub — drive the running DevHub from a terminal.
 
 usage:
-  devhub                           bring DevHub to the front, starting it if
-                                   it is not running
+  devhub                           bring DevHub to the front
   devhub <folder>                  make the folder a workspace, show it, and
                                    bring DevHub to the front
   devhub <file>                    open the file in the workspace whose root
@@ -88,8 +94,8 @@ extensions:
                                    readings a known time apart to get a rate.
   devhub -h|--help                 show this text
 
-The command talks to a running DevHub over its control socket. If DevHub is
-not running, start it and try again.`;
+The command talks to DevHub over its control socket. If DevHub is not running
+it is started first, and the command then does what it was asked.`;
 
 /** What to say after a refusal, so nobody has to guess where the list is. */
 const HINT = "Run 'devhub --help' to see what devhub takes.";
@@ -482,6 +488,19 @@ export async function main(argv: readonly string[]): Promise<number> {
 		);
 		return 1;
 	}
+	// Read before anything is sent, not at the moment DevHub turns out to be
+	// missing: a launcher that cannot say how to start DevHub is broken whether
+	// or not this particular run needed it, and finding that out only on the
+	// cold start is finding it out in front of the person least able to act.
+	let launchCommand: readonly string[];
+	try {
+		launchCommand = parseLaunchCommand(
+			process.env[LAUNCH_COMMAND_ENVIRONMENT_VARIABLE],
+		);
+	} catch (error) {
+		console.error(messageOf(error));
+		return 1;
+	}
 	// The marker exists before the request that names it, because the workbench
 	// deletes it to say the editor was closed — and a file that is not there
 	// yet cannot be deleted, which would read as "closed already".
@@ -490,7 +509,7 @@ export async function main(argv: readonly string[]): Promise<number> {
 			? await createMarker(tmpdir())
 			: undefined;
 	try {
-		return await run(command, socketPath, marker);
+		return await run(command, socketPath, launchCommand, marker);
 	} finally {
 		if (marker !== undefined) await removeMarker(marker);
 	}
@@ -506,24 +525,17 @@ export async function main(argv: readonly string[]): Promise<number> {
 async function run(
 	command: Command,
 	socketPath: string,
+	launchCommand: readonly string[],
 	marker: string | undefined,
 ): Promise<number> {
 	const request = requestFor(command, process.cwd(), homedir(), marker);
 	if (!request) return 2;
-	// Only a bare `devhub` starts DevHub. A command that carries something to
-	// do is answered by the DevHub that exists, or not at all; see `launch.ts`.
+	// A DevHub that is not running is started and then asked, so what comes
+	// back is always an answer to the request above; see `launch.ts`.
 	const response = await sendOrLaunch(
 		() => ask(socketPath, request),
-		command.kind === "activate"
-			? bundleLauncher(socketPath, activeProfile().bundleIdentifier)
-			: undefined,
+		commandLauncher(socketPath, launchCommand),
 	);
-	if (response === undefined) {
-		// `open -b` brings the app forward on its way, so there is nothing left
-		// to ask for — and nothing was answered, so nothing is quoted.
-		console.log("DevHub was not running, so it was started.");
-		return 0;
-	}
 	if (!response.ok) {
 		console.error(response.message);
 		return 1;

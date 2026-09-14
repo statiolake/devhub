@@ -2,25 +2,28 @@
  * Starting DevHub when there is no DevHub to talk to.
  *
  * The launcher is faked, because the three things it needs from the world are
- * an application, a socket and a clock, and none of them can be had in a unit
- * test without making the test about them instead. The real one is exercised
- * on a machine; what is worth pinning down here is the decision — who starts
- * DevHub, when, and what is said when it cannot be started.
+ * a command that starts an application, a socket and a clock, and none of them
+ * can be had in a unit test without making the test about them instead. The
+ * real one is exercised on a machine; what is worth pinning down here is the
+ * decision — when DevHub is started, that the request is then sent anyway, and
+ * what is said when it cannot be started or never comes up.
  */
 
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { DEFAULT_PROFILE, profileLocations } from "../../model/profile.js";
 import {
-	LAUNCH_TIMEOUT_MS,
+	commandLauncher,
 	launchAndWait,
+	launchCommandFor,
+	LAUNCH_TIMEOUT_MS,
 	NotRunning,
+	parseLaunchCommand,
 	sendOrLaunch,
 	type Launcher,
 } from "./launch.js";
 import type { ControlResponse } from "./protocol.js";
+
+const SOCKET = "/tmp/devhub-test/control.sock";
+const DESCRIPTION = "/usr/bin/open -a /Applications/DevHub.app --background";
 
 /**
  * A DevHub that answers after `answersAfter` probes, or never. Time moves only
@@ -35,16 +38,17 @@ function fakeLauncher(options: {
 	let probes = 0;
 	let clock = 0;
 	return {
-		bundleIdentifier: BUNDLE_ID,
+		description: DESCRIPTION,
+		socketPath: SOCKET,
 		opened,
 		probes: () => probes,
 		open: () => {
-			opened.push(BUNDLE_ID);
+			opened.push(DESCRIPTION);
+			// A launch that works reports nothing: the socket is what says
+			// whether there is a DevHub now.
 			return options.opens === false
-				? Promise.reject(
-						new Error(`Unable to find application for bundle ${BUNDLE_ID}.`),
-					)
-				: Promise.resolve();
+				? Promise.reject(new Error("spawn ENOENT"))
+				: new Promise<never>(() => undefined);
 		},
 		answers: () => {
 			probes += 1;
@@ -60,39 +64,23 @@ function fakeLauncher(options: {
 	};
 }
 
-const BUNDLE_ID = profileLocations(
-	DEFAULT_PROFILE,
-	"/home/tester",
-).bundleIdentifier;
+const ANSWER: ControlResponse = { ok: true, message: "Opened README.md." };
 
-const ANSWER: ControlResponse = { ok: true, message: "DevHub is in front." };
+/** A `send` that fails until DevHub exists, then answers. */
+function sendAfterLaunch(launcher: { readonly opened: string[] }) {
+	let sends = 0;
+	return {
+		send: () => {
+			sends += 1;
+			return launcher.opened.length === 0
+				? Promise.reject(new NotRunning())
+				: Promise.resolve(ANSWER);
+		},
+		sends: () => sends,
+	};
+}
 
-describe("starting DevHub when a bare devhub finds none", () => {
-	/**
-	 * The default profile's identifier is derived rather than read from
-	 * product.json, because the CLI is a plain script run under the app's
-	 * Electron as Node and cannot load VS Code's product. A derivation that can
-	 * drift silently is worth exactly one test:
-	 * the day somebody renames the bundle, `open -b` would start looking for an
-	 * application nobody ships, and the CLI would report that DevHub is not
-	 * installed on a machine where it is.
-	 */
-	it("asks for the bundle the packaging actually builds", () => {
-		const overrides = JSON.parse(
-			readFileSync(
-				join(
-					dirname(fileURLToPath(import.meta.url)),
-					"..",
-					"..",
-					"..",
-					"product-overrides.json",
-				),
-				"utf8",
-			),
-		) as { readonly darwinBundleIdentifier: string };
-		expect(BUNDLE_ID).toBe(overrides.darwinBundleIdentifier);
-	});
-
+describe("starting DevHub when devhub finds none", () => {
 	/**
 	 * The ordinary case, and the one that must not change: DevHub is running,
 	 * so it is asked and nothing is started.
@@ -108,55 +96,56 @@ describe("starting DevHub when a bare devhub finds none", () => {
 	});
 
 	/**
-	 * No DevHub, so one is made, and the command waits for it to be able to
-	 * answer rather than reporting success at a thing that is still starting.
+	 * The whole sequence: the send fails, DevHub is started, the socket is
+	 * waited for, and then the *same* request is sent again and its answer is
+	 * what comes back. Not a second shape of success meaning "started it, ask
+	 * again yourself" — every caller past `sendOrLaunch` is written once.
 	 */
-	it("starts DevHub, then waits until its socket answers", async () => {
+	it("starts DevHub, waits for its socket, and sends the request again", async () => {
 		const launcher = fakeLauncher({ answersAfter: 4 });
-		const response = await sendOrLaunch(
-			() => Promise.reject(new NotRunning()),
-			launcher,
-		);
-		expect(launcher.opened).toEqual([BUNDLE_ID]);
+		const sender = sendAfterLaunch(launcher);
+		const response = await sendOrLaunch(sender.send, launcher);
+		expect(launcher.opened).toEqual([DESCRIPTION]);
 		expect(launcher.probes()).toBe(4);
-		// Nothing was answered, so nothing is returned to be printed: `open -b`
-		// has already brought DevHub forward, and asking again would be asking
-		// for something that is already true.
-		expect(response).toBeUndefined();
+		expect(sender.sends()).toBe(2);
+		expect(response).toEqual(ANSWER);
 	});
 
 	/**
-	 * The report that must not be swallowed. Falling back to the old "DevHub is
-	 * not running" here would say nothing was attempted, when something was.
+	 * The report that must not be swallowed. Falling back to "DevHub is not
+	 * running" here would say nothing was attempted, when something was.
 	 */
 	it("says that it tried to start DevHub and could not", async () => {
 		const launcher = fakeLauncher({ answersAfter: "never", opens: false });
 		await expect(launchAndWait(launcher)).rejects.toThrow(
-			/could not be started: Unable to find application for bundle net\.statiolake\.devhub/,
+			/could not be started: spawn ENOENT/,
 		);
 		await expect(launchAndWait(launcher)).rejects.toThrow(
-			/source checkout is not registered with macOS/,
+			/starts DevHub with \/usr\/bin\/open -a/,
 		);
-	});
-
-	/** A DevHub that never comes up is reported, not waited on forever. */
-	it("gives up on a DevHub that never answers, and says so", async () => {
-		const launcher = fakeLauncher({ answersAfter: "never" });
-		await expect(launchAndWait(launcher)).rejects.toThrow(
-			new RegExp(`did not answer within ${LAUNCH_TIMEOUT_MS / 1000} seconds`),
-		);
-		expect(launcher.opened).toEqual([BUNDLE_ID]);
 	});
 
 	/**
-	 * Every command that carries something to do is answered by the DevHub that
-	 * exists, or not at all. Starting an application as a side effect of being
-	 * asked to open a file is a much bigger thing than what was asked.
+	 * A DevHub that never comes up is reported, not waited on forever — and the
+	 * report names both halves of what was being waited for, so that the next
+	 * question ("is it the app or the socket?") has somewhere to start.
 	 */
-	it("starts nothing for a command that was given no launcher", async () => {
-		await expect(
-			sendOrLaunch(() => Promise.reject(new NotRunning()), undefined),
-		).rejects.toThrow(/DevHub is not running\. Start DevHub/);
+	it("gives up on a DevHub that never answers, naming the socket and the app", async () => {
+		const launcher = fakeLauncher({ answersAfter: "never" });
+		await expect(launchAndWait(launcher)).rejects.toThrow(
+			new RegExp(
+				`started with /usr/bin/open -a .*nothing was listening on ${SOCKET} within ${LAUNCH_TIMEOUT_MS / 1000} seconds`,
+			),
+		);
+		expect(launcher.opened).toEqual([DESCRIPTION]);
+	});
+
+	/** Exactly one bound, and the poll is what fills it. */
+	it("polls until the bound and no further", async () => {
+		const launcher = fakeLauncher({ answersAfter: "never" });
+		await expect(launchAndWait(launcher)).rejects.toThrow();
+		expect(launcher.now()).toBeGreaterThanOrEqual(LAUNCH_TIMEOUT_MS);
+		expect(launcher.probes()).toBeGreaterThan(1);
 	});
 
 	/** A failure that is not "there is no DevHub" is not answered by making one. */
@@ -169,5 +158,96 @@ describe("starting DevHub when a bare devhub finds none", () => {
 			),
 		).rejects.toThrow(/closed the connection/);
 		expect(launcher.opened).toEqual([]);
+	});
+});
+
+describe("the command that starts this DevHub", () => {
+	/**
+	 * A checkout is told apart from a bundle by what is on disk, not by an
+	 * environment variable: `dev.sh` is there or it is not.
+	 */
+	it("runs dev.sh for a DevHub running from a checkout", () => {
+		expect(
+			launchCommandFor(
+				"/repo/apps/desktop",
+				(path) => path === "/repo/apps/desktop/scripts/dev.sh",
+			),
+		).toEqual(["/repo/apps/desktop/scripts/dev.sh"]);
+	});
+
+	/**
+	 * The path of the running bundle, not its identifier: a DevHub that has
+	 * never been opened from the Finder is not known to Launch Services, and
+	 * `open -b` would report it missing on a machine where it is installed.
+	 */
+	it("opens the running bundle, in the background, for a packaged DevHub", () => {
+		expect(
+			launchCommandFor(
+				"/Applications/DevHub.app/Contents/Resources/app",
+				() => false,
+			),
+		).toEqual([
+			"/usr/bin/open",
+			"-a",
+			"/Applications/DevHub.app",
+			"--background",
+		]);
+	});
+});
+
+describe("what the launcher script recorded", () => {
+	it("reads the command back", () => {
+		expect(parseLaunchCommand('["/usr/bin/open","-a","/x.app"]')).toEqual([
+			"/usr/bin/open",
+			"-a",
+			"/x.app",
+		]);
+	});
+
+	/** An older launcher is named for what it is, with the way to fix it. */
+	it("refuses a launcher that does not say how to start DevHub", () => {
+		expect(() => parseLaunchCommand(undefined)).toThrow(
+			/DEVHUB_LAUNCH_COMMAND is not set.*Install 'devhub' command in PATH/s,
+		);
+		expect(() => parseLaunchCommand("[]")).toThrow(/is not a command/);
+		expect(() => parseLaunchCommand('"open"')).toThrow(/is not a command/);
+	});
+});
+
+describe("running the launch command for real", () => {
+	/**
+	 * A command that is not there is reported at once rather than waited out:
+	 * thirty seconds of silence is a bad way to learn that a path is wrong.
+	 */
+	it("reports a launch command that cannot be started", async () => {
+		await expect(
+			commandLauncher(SOCKET, ["/no/such/devhub-launcher"]).open(),
+		).rejects.toThrow(/ENOENT/);
+	});
+
+	/** And one that starts, fails, and exits is reported for what it is. */
+	it("reports a launch command that exits non-zero", async () => {
+		await expect(
+			commandLauncher(SOCKET, ["/bin/sh", "-c", "exit 3"]).open(),
+		).rejects.toThrow(/exited with status 3/);
+	});
+
+	/**
+	 * The ordinary case reports nothing at all — including `open`, which exits
+	 * successfully the moment it has handed the request to Launch Services and
+	 * long before there is a DevHub. Reporting that as "started" is how a wait
+	 * for the socket turns into a claim that never checked.
+	 */
+	it("says nothing about a launch command that started", async () => {
+		const settled = await Promise.race([
+			commandLauncher(SOCKET, ["/bin/sh", "-c", "exit 0"])
+				.open()
+				.then(
+					() => "resolved",
+					() => "rejected",
+				),
+			new Promise((resolve) => setTimeout(() => resolve("waiting"), 200)),
+		]);
+		expect(settled).toBe("waiting");
 	});
 });

@@ -1,5 +1,9 @@
-import { describe, expect, it } from "vitest";
-import { parseArguments, requestFor, USAGE } from "./devhubCli.js";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { Readable } from "node:stream";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { makeScratchDir, removeScratchDir } from "../../model/testScratch.js";
+import { main, parseArguments, requestFor, USAGE } from "./devhubCli.js";
 
 describe("what the devhub command was asked to do", () => {
 	it("takes a lone path as something to open", () => {
@@ -40,7 +44,7 @@ describe("what the devhub command was asked to do", () => {
 		expect(requestFor(parseArguments([]), "/work", "/home/d")).toEqual({
 			kind: "activate",
 		});
-		expect(USAGE).toContain("bring DevHub to the front, starting it if");
+		expect(USAGE).toContain("bring DevHub to the front");
 	});
 
 	/**
@@ -379,5 +383,91 @@ describe("what the devhub command was asked to do", () => {
 		expect(
 			requestFor(parseArguments(["--help"]), "/work", "/home/d"),
 		).toBeUndefined();
+	});
+});
+
+/**
+ * The cold start, end to end and with nothing faked but DevHub itself.
+ *
+ * `main` is given a socket path with nothing on it and a launch command that
+ * puts a one-request server there after a moment, which is the shape of every
+ * real cold start: connect, fail, launch, wait, ask. What is checked is that
+ * the request which finally arrives is the request that was typed — including
+ * the bytes that were piped in, which were read before anything was launched.
+ */
+describe("devhub when DevHub is not running", () => {
+	let scratch: string;
+	let previousStdin: PropertyDescriptor | undefined;
+
+	beforeEach(() => {
+		scratch = makeScratchDir("cli-cold");
+		previousStdin = Object.getOwnPropertyDescriptor(process, "stdin");
+	});
+
+	afterEach(() => {
+		if (previousStdin !== undefined) {
+			Object.defineProperty(process, "stdin", previousStdin);
+		}
+		removeScratchDir(scratch);
+	});
+
+	/** A DevHub that appears `delayMs` after it is started, answers once, and goes. */
+	function fakeDevHub(socketPath: string, recordPath: string): string {
+		return `
+const { createServer } = require("node:net");
+const { writeFileSync } = require("node:fs");
+setTimeout(() => {
+	const server = createServer((socket) => {
+		let buffer = "";
+		socket.on("data", (chunk) => {
+			buffer += chunk;
+			if (!buffer.includes("\\n")) return;
+			writeFileSync(${JSON.stringify(recordPath)}, buffer.split("\\n")[0]);
+			socket.end(JSON.stringify({ ok: true, message: "opened" }) + "\\n");
+			server.close();
+		});
+	});
+	server.listen(${JSON.stringify(socketPath)});
+}, 300);
+`;
+	}
+
+	it("starts DevHub, waits for it, and then opens what was piped in", async () => {
+		const socketPath = join(scratch, "c.sock");
+		const recordPath = join(scratch, "request.json");
+		Object.defineProperty(process, "stdin", {
+			configurable: true,
+			value: Readable.from([Buffer.from("hello from the pipe")]),
+		});
+		process.env["DEVHUB_CONTROL_SOCKET"] = socketPath;
+		process.env["DEVHUB_LAUNCH_COMMAND"] = JSON.stringify([
+			process.execPath,
+			"-e",
+			fakeDevHub(socketPath, recordPath),
+		]);
+		try {
+			expect(await main(["-"])).toBe(0);
+		} finally {
+			delete process.env["DEVHUB_CONTROL_SOCKET"];
+			delete process.env["DEVHUB_LAUNCH_COMMAND"];
+		}
+		const request = JSON.parse(readFileSync(recordPath, "utf8")) as {
+			kind: string;
+			path: string;
+		};
+		expect(request.kind).toBe("open");
+		// Read before the launch, so the pipe cannot be lost to a cold start.
+		expect(readFileSync(request.path, "utf8")).toBe("hello from the pipe");
+	});
+
+	/** A launcher that cannot say how to start DevHub says so, and fails. */
+	it("refuses a launcher that does not record how to start DevHub", async () => {
+		process.env["DEVHUB_CONTROL_SOCKET"] = join(scratch, "c.sock");
+		delete process.env["DEVHUB_LAUNCH_COMMAND"];
+		try {
+			expect(await main(["--version"])).toBe(1);
+		} finally {
+			delete process.env["DEVHUB_CONTROL_SOCKET"];
+		}
 	});
 });

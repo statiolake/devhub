@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -16,6 +17,7 @@ describe("installing the devhub launcher", () => {
 			socketPath: join(scratch, "user-data", "devhub", "control.sock"),
 			commandName: "devhub",
 			profile: "default",
+			launchCommand: ["/usr/bin/open", "-a", "/Applications/DevHub.app"],
 			home: scratch,
 			pathValue: "/usr/bin:/bin",
 		};
@@ -37,6 +39,36 @@ describe("installing the devhub launcher", () => {
 		expect(readFileSync(result.launcherPath, "utf8")).toContain(
 			"ELECTRON_RUN_AS_NODE=1",
 		);
+	});
+
+	/**
+	 * The CLI cannot work out how to start DevHub — a checkout and a bundle are
+	 * started in different ways, and only the app that wrote this script knows
+	 * which it is. So the script carries the answer, and a shell can read it
+	 * back exactly as it was written.
+	 */
+	it("records how to start DevHub, so the CLI does not have to guess", () => {
+		const launcher = join(scratch, "bin");
+		const result = installLauncher({
+			...request,
+			launchCommand: ["/usr/bin/open", "-a", "/Applications/My DevHub.app"],
+			candidates: [launcher],
+		});
+		const script = readFileSync(result.launcherPath, "utf8");
+		expect(script).toContain("DEVHUB_LAUNCH_COMMAND=");
+		// The value the shell would set, read back through a shell rather than
+		// by unquoting it here: a second unquoting rule is how the quoting and
+		// the reading come to disagree about a path with a space in it.
+		const value = execFileSync(
+			"/bin/sh",
+			["-c", `${launcherLine(script)}; printf %s "$DEVHUB_LAUNCH_COMMAND"`],
+			{ encoding: "utf8" },
+		);
+		expect(JSON.parse(value)).toEqual([
+			"/usr/bin/open",
+			"-a",
+			"/Applications/My DevHub.app",
+		]);
 	});
 
 	it("falls back to the next candidate when one is not writable, and never uses sudo", () => {
@@ -100,3 +132,12 @@ describe("installing the devhub launcher", () => {
 		);
 	});
 });
+
+/** The `DEVHUB_LAUNCH_COMMAND=...` assignment out of the generated script. */
+function launcherLine(script: string): string {
+	const line = script
+		.split("\n")
+		.find((candidate) => candidate.startsWith("DEVHUB_LAUNCH_COMMAND="));
+	if (line === undefined) throw new Error("the launcher records no command");
+	return line.replace(/\\$/, "");
+}

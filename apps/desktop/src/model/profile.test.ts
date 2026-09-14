@@ -22,7 +22,6 @@ describe("the default profile", () => {
       profile: "default",
       isDefault: true,
       applicationName: "DevHub",
-      bundleIdentifier: "net.statiolake.devhub",
       cliCommandName: "devhub",
       dataDirectory: "/home/tester/Library/Application Support/DevHub",
       userDataDirectory:
@@ -64,7 +63,6 @@ describe("a second profile", () => {
     const production = profileLocations(DEFAULT_PROFILE, HOME, {});
     const keys = [
       "applicationName",
-      "bundleIdentifier",
       "cliCommandName",
       "dataDirectory",
       "userDataDirectory",
@@ -82,7 +80,6 @@ describe("a second profile", () => {
       profile: "dev",
       isDefault: false,
       applicationName: "DevHub Dev",
-      bundleIdentifier: "net.statiolake.devhub.dev",
       cliCommandName: "devhub-dev",
       dataDirectory: "/home/tester/Library/Application Support/DevHub Dev",
       userDataDirectory:

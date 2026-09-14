@@ -6,8 +6,8 @@
  * owns — the editor's user-data directory (which VS Code makes single-instance
  * per directory, so the second one simply does not start), the extensions
  * directory, `~/.config/devhub`, the tmux socket the terminals and Agents live
- * on, the control socket the `devhub` CLI talks to, and the bundle macOS
- * activates. Somebody who develops DevHub inside DevHub needs both at once, so
+ * on, and the control socket the `devhub` CLI talks to — which is also how the
+ * `devhub` command knows which of them to start. Somebody who develops DevHub inside DevHub needs both at once, so
  * one of them has to be somewhere else.
  *
  * `DEVHUB_PROFILE` names which. Unset — every packaged run, and any source run
@@ -33,8 +33,8 @@ export const DEFAULT_PROFILE = "default";
 export const PROFILE_ENVIRONMENT_VARIABLE = "DEVHUB_PROFILE";
 
 /**
- * A profile name is a path component, a socket name and part of a bundle
- * identifier at once, so it is held to what all three accept.
+ * A profile name is a path component, a socket name and a command name at
+ * once, so it is held to what all three accept.
  */
 const PROFILE_PATTERN = /^[a-z][a-z0-9-]*$/;
 
@@ -44,8 +44,6 @@ export interface ProfileLocations {
   readonly isDefault: boolean;
   /** What Electron and JavaScript call the app. */
   readonly applicationName: string;
-  /** The bundle `open -b` activates, for the `devhub` CLI's cold start. */
-  readonly bundleIdentifier: string;
   /** The launcher's file name in a PATH directory. */
   readonly cliCommandName: string;
   /** Everything this DevHub owns on disk, under Application Support. */
@@ -119,9 +117,6 @@ export function profileLocations(
     profile,
     isDefault,
     applicationName: isDefault ? "DevHub" : `DevHub ${titleCase(profile)}`,
-    bundleIdentifier: isDefault
-      ? "net.statiolake.devhub"
-      : `net.statiolake.devhub.${profile}`,
     cliCommandName: `devhub${suffix}`,
     dataDirectory,
     userDataDirectory: join(dataDirectory, "editor"),

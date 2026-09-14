@@ -43,6 +43,7 @@ import { defaultConfigPaths, titleBarModeIn } from "../../model/config.js";
 import type { AppErrorWire } from "../../ipc/appShell.js";
 import { errorWireAt, withDetail } from "../../model/wire.js";
 import { answerFinderOpens, finderOpen } from "./openFromFinder.js";
+import { launchCommandFor } from "../cli/launch.js";
 
 /** How long a quit waits for the runtimes to let go before leaving anyway. */
 const SHUTDOWN_DEADLINE_MS = 3_000;
@@ -245,6 +246,10 @@ export async function bootstrapShell(
 					socketPath,
 					commandName: activeProfile().cliCommandName,
 					profile: activeProfile().profile,
+					// How this DevHub is started, written down by the DevHub
+					// that is running: a bundle the Finder can open, or the
+					// checkout's own dev.sh. See `launch.ts`.
+					launchCommand: launchCommandFor(APP_ROOT),
 					home: homedir(),
 					pathValue: process.env["PATH"] ?? "",
 				}).message,
