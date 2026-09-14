@@ -43,7 +43,11 @@ import { homedir } from "node:os";
 import { join, posix } from "node:path";
 import { activityCounters, COUNTER } from "../diagnostics/counters.js";
 import { errorWireAt, TypedFailure, withSummary } from "../../model/wire.js";
-import { OperationDeadline, runBounded } from "../terminal/command.js";
+import {
+	OperationDeadline,
+	runBounded,
+	type CommandOutput,
+} from "../terminal/command.js";
 import { CancellationToken, portFailure } from "../terminal/ports.js";
 import { openPty, type Pty, type PtyFactory } from "../terminal/pty.js";
 import {
@@ -1556,6 +1560,22 @@ export class SshRuntime implements Runtime {
 	 * name was chosen: the name is a digest of this DevHub's own socket path,
 	 * so the file being removed is this DevHub's and nobody else's.
 	 *
+	 * The `-O cancel` first is what makes a restart work. A ControlMaster
+	 * outlives the DevHub that started it — that is what a master is for — so a
+	 * DevHub that comes back to a live one finds the *previous* DevHub's
+	 * forward of this same remote path still registered on it, pointing at a
+	 * local socket nothing is behind any more. OpenSSH answers a second
+	 * `-O forward` for a path it already forwards with success and binds
+	 * nothing, so the `test -S` below failed, the window came up with no
+	 * launcher, and the only way back was to kill the master by hand.
+	 *
+	 * Cancelling first rather than detecting-and-recovering, because the two
+	 * cases are not different: DevHub wants *its* forward of this path, and the
+	 * way to have it is to take away whatever forward of it there is and make
+	 * one. A cancel with nothing to cancel is a non-zero exit and is the
+	 * answer "there was none", which is the state being asked for; it is not
+	 * ignored so much as satisfied.
+	 *
 	 * The `test -S` afterwards is the point of the whole function. `-O forward`
 	 * can report success and leave nothing bound, and a launcher pointed at a
 	 * socket that is not there is precisely the silent failure this file exists
@@ -1569,29 +1589,17 @@ export class SshRuntime implements Runtime {
 		remoteSocketPath: string,
 		localSocketPath: string,
 	): Promise<string | undefined> {
+		await this.#mux("cancel", remoteSocketPath, localSocketPath);
 		const removed = await this.#sh(
 			`exec rm -f -- ${shellQuote(remoteSocketPath)}`,
 		);
 		if (removed.code !== 0) {
 			return `${remoteSocketPath} could not be removed on ${this.#host}, so DevHub's control socket could not be forwarded there: ${lastLine(removed.stderr.toString("utf8"))}`;
 		}
-		const forwarded = await runBounded(
-			{
-				file: this.#sshPath,
-				args: [
-					...sshOptionArgv(this.#controlDirectory),
-					"-O",
-					"forward",
-					"-R",
-					`${remoteSocketPath}:${localSocketPath}`,
-					this.#host,
-				],
-				cwd: undefined,
-				env: this.#localEnvironment,
-			},
-			OperationDeadline.in(PROBE_TIMEOUT_MS),
-			new CancellationToken(),
-			PROBE_LIMITS,
+		const forwarded = await this.#mux(
+			"forward",
+			remoteSocketPath,
+			localSocketPath,
 		);
 		if (forwarded.code !== 0) {
 			const said = lastLine(forwarded.stderr.toString("utf8"));
@@ -1605,6 +1613,38 @@ export class SshRuntime implements Runtime {
 			return said;
 		}
 		return undefined;
+	}
+
+	/**
+	 * One `-R` request to the ControlMaster: `forward`, or `cancel`.
+	 *
+	 * Both name the same `<remote>:<local>` pair, because that pair *is* the
+	 * forward's name to OpenSSH — a cancel that named it differently would
+	 * cancel nothing and report that it had.
+	 */
+	#mux(
+		operation: "forward" | "cancel",
+		remoteSocketPath: string,
+		localSocketPath: string,
+	): Promise<CommandOutput> {
+		return runBounded(
+			{
+				file: this.#sshPath,
+				args: [
+					...sshOptionArgv(this.#controlDirectory),
+					"-O",
+					operation,
+					"-R",
+					`${remoteSocketPath}:${localSocketPath}`,
+					this.#host,
+				],
+				cwd: undefined,
+				env: this.#localEnvironment,
+			},
+			OperationDeadline.in(PROBE_TIMEOUT_MS),
+			new CancellationToken(),
+			PROBE_LIMITS,
+		);
 	}
 
 	reading(): RuntimeReading {

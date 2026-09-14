@@ -93,11 +93,21 @@ case "$operation" in
     case "\${DEVHUB_FAKE_FORWARD:-bind}" in
       refuse) echo 'unix_listener: cannot bind: Address already in use' >&2; exit 255;;
       silent) exit 0;;
-      *) exec python3 -c 'import socket,sys
+      # A master that already forwards this path answers the second request
+      # with success and binds nothing, which is what OpenSSH does and what a
+      # DevHub restarting onto a live master used to run into.
+      *) remote="\${forward%%:*}"
+         [ ! -f "$remote.fwd" ] || exit 0
+         : > "$remote.fwd"
+         exec python3 -c 'import socket,sys
 sock = socket.socket(socket.AF_UNIX)
 sock.bind(sys.argv[1].split(":", 1)[0])
 sock.listen(1)' "$forward";;
     esac;;
+  cancel)
+    remote="\${forward%%:*}"
+    [ -f "$remote.fwd" ] || { echo 'Cancel forwarding request failed.' >&2; exit 255; }
+    rm -f "$remote.fwd" "$remote"; echo 'Cancel forwarding request accepted.'; exit 0;;
 esac
 [ -n "$host" ] || { echo 'fake ssh: no host' >&2; exit 255; }
 mkdir -p "\${control%/*}" && : > "$marker"
@@ -594,6 +604,41 @@ describe("the terminal launcher on the host", () => {
 		const forwarded = lines.findIndex((line) => line.includes("-O forward"));
 		expect(removed).toBeGreaterThanOrEqual(0);
 		expect(removed).toBeLessThan(forwarded);
+	});
+
+	/**
+	 * Defect (F): a restart onto a ControlMaster that is still up.
+	 *
+	 * A master outlives the DevHub that started it — that is what a master is
+	 * for — so the next DevHub finds the previous one's forward of this same
+	 * remote path still registered, pointing at a local socket nothing is
+	 * behind. OpenSSH answers a second `-O forward` for a path it already
+	 * forwards with success and binds nothing, so DevHub correctly reported
+	 * "nothing is listening there" and the window then had no launcher at all,
+	 * with no way back but killing the master by hand.
+	 */
+	it("re-establishes its forward on a master that is still holding the last one", async () => {
+		const first = await runtimeWith().terminalLauncher(spec);
+		expect(first.unreachable).toBeUndefined();
+
+		// A second DevHub, the same paths, the same live master.
+		const second = await runtimeWith().terminalLauncher(spec);
+		expect(second.unreachable).toBeUndefined();
+
+		const lines = (await readFile(log, "utf8")).split("\n");
+		const cancels = lines.filter((line) => line.includes("-O cancel"));
+		expect(cancels).toHaveLength(2);
+		// The cancel names the same `<remote>:<local>` pair the forward does,
+		// because to OpenSSH that pair *is* the forward's name.
+		const forward = lines.find((line) => line.includes("-O forward")) ?? "";
+		const pair = forward.slice(forward.indexOf("-R ") + 3).split(" ")[0] ?? "";
+		expect(pair).not.toBe("");
+		expect(cancels[0]).toContain(`-R ${pair}`);
+		// And it comes before the forward it is making room for.
+		const firstCancel = lines.findIndex((line) => line.includes("-O cancel"));
+		expect(firstCancel).toBeLessThan(
+			lines.findIndex((line) => line.includes("-O forward")),
+		);
 	});
 
 	it("says so when ssh refuses the forward, and installs the launcher anyway", async () => {
