@@ -171,7 +171,16 @@ function sessionEnvironment(
   try {
     output = execFileSync(
       TMUX as string,
-      ["-f", "/dev/null", "-L", socket, "show-environment", "-t", session, name],
+      [
+        "-f",
+        "/dev/null",
+        "-L",
+        socket,
+        "show-environment",
+        "-t",
+        session,
+        name,
+      ],
       {
         encoding: "utf8",
         stdio: ["ignore", "pipe", "ignore"],
@@ -190,6 +199,24 @@ function sessionEnvironment(
 
 function sessionOrigin(socket: string, session: string): string | undefined {
   return sessionEnvironment(socket, session, "DEVHUB_ORIGIN");
+}
+
+/**
+ * What a pane wrote, once it has written it.
+ *
+ * The pane is a process tmux started, so there is a moment between the session
+ * existing and its command having run. Polling for the file rather than
+ * sleeping: the question is whether the pane got there, not how long it took.
+ */
+async function paneWrote(path: string): Promise<string> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (existsSync(path)) {
+      const text = readFileSync(path, "utf8");
+      if (text.length > 0) return text;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error(`the pane never wrote ${path}`);
 }
 
 function tmuxOutside(socket: string, args: readonly string[]): void {
@@ -772,7 +799,9 @@ describe.skipIf(TMUX === undefined)(
       // Scratch is created by the bootstrap config and a Workspace session by
       // `createSession` — two different code paths, and the pane cannot tell
       // which one made it, so neither may leave the variable out.
-      expect(sessionOrigin(test.socket, SCRATCH_SESSION)).toBe("local\tscratch");
+      expect(sessionOrigin(test.socket, SCRATCH_SESSION)).toBe(
+        "local\tscratch",
+      );
       const workspaceSession = `ws-${workspaceDigest(root).slice(0, 20)}`;
       expect(sessionOrigin(test.socket, workspaceSession)).toBe(
         `local\t${workspaceId}`,
@@ -790,7 +819,12 @@ describe.skipIf(TMUX === undefined)(
       const agentId = "00000000-0000-4000-8000-0000000000b2";
       await test.runtime.ensure(SCRATCH_TARGET);
       await test.runtime.launchAgent(
-        { machine: "local", agentId, workspaceId, root: realpathSync(test.home) },
+        {
+          machine: "local",
+          agentId,
+          workspaceId,
+          root: realpathSync(test.home),
+        },
         { file: "/bin/sh", args: ["-c", "sleep 30"], env: {} },
       );
 
@@ -806,7 +840,12 @@ describe.skipIf(TMUX === undefined)(
       const agentId = "00000000-0000-4000-8000-0000000000b3";
       await test.runtime.ensure(SCRATCH_TARGET);
       await test.runtime.launchAgent(
-        { machine: "local", agentId, workspaceId, root: realpathSync(test.home) },
+        {
+          machine: "local",
+          agentId,
+          workspaceId,
+          root: realpathSync(test.home),
+        },
         {
           file: "/bin/sh",
           args: ["-c", "sleep 30"],
@@ -816,9 +855,9 @@ describe.skipIf(TMUX === undefined)(
 
       const session = agentSessionName(agentId);
       expect(sessionOrigin(test.socket, session)).toBe(`local\t${workspaceId}`);
-      expect(sessionEnvironment(test.socket, session, "AGENT_OWN_VARIABLE")).toBe(
-        "yes",
-      );
+      expect(
+        sessionEnvironment(test.socket, session, "AGENT_OWN_VARIABLE"),
+      ).toBe("yes");
     });
 
     /**
@@ -839,19 +878,38 @@ describe.skipIf(TMUX === undefined)(
     /**
      * The `devhub` command on a host, reachable from its panes.
      *
-     * The directory is derived from the machine's `$HOME` and this DevHub's
-     * socket, not reported back by the install, so a session created before the
-     * first window on that host still has the right PATH.
+     * Read out of a **pane**, and that is the whole point. This used to be
+     * asserted with `show-environment -t`, which agreed with DevHub and with
+     * nothing else: tmux takes a new pane's PATH from the client that created
+     * the session, over the server's environment and over `new-session -e`
+     * alike, so on the host the session environment named the tagged directory
+     * and `command -v devhub` in the pane was empty. The only honest question
+     * is what the process in the pane actually got, so the pane's own command
+     * writes it down.
      */
     it("puts DevHub's own bin directory in front of a pane's PATH, on a machine that is not this one", async () => {
       const test = fixture("pane-path", undefined, {
         host: machineNamed("ssh:build.example.com"),
         paneBinDirectory: "/home/dev/.devhub/terminal/bin-abcdef",
       });
+      const written = join(test.home, "pane-path");
       await test.runtime.ensure(SCRATCH_TARGET);
+      await test.runtime.launchAgent(
+        {
+          machine: "ssh:build.example.com",
+          agentId: "00000000-0000-4000-8000-0000000000c1",
+          workspaceId: "00000000-0000-4000-8000-0000000000a4",
+          root: realpathSync(test.home),
+        },
+        {
+          file: "/bin/sh",
+          args: ["-c", `printf '%s' "$PATH" > ${written}; sleep 30`],
+          env: {},
+        },
+      );
 
-      const path = sessionEnvironment(test.socket, SCRATCH_SESSION, "PATH");
-      expect(path?.startsWith("/home/dev/.devhub/terminal/bin-abcdef:")).toBe(
+      const path = await paneWrote(written);
+      expect(path.startsWith("/home/dev/.devhub/terminal/bin-abcdef:")).toBe(
         true,
       );
       // In *front* of, and not instead of: a pane that can run `devhub` and
@@ -866,10 +924,27 @@ describe.skipIf(TMUX === undefined)(
      */
     it("leaves this machine's panes' PATH exactly as the server's", async () => {
       const test = fixture("pane-path-local");
+      const written = join(test.home, "pane-path");
       await test.runtime.ensure(SCRATCH_TARGET);
+      await test.runtime.launchAgent(
+        {
+          machine: "local",
+          agentId: "00000000-0000-4000-8000-0000000000c2",
+          workspaceId: "00000000-0000-4000-8000-0000000000a5",
+          root: realpathSync(test.home),
+        },
+        {
+          file: "/bin/sh",
+          args: ["-c", `printf '%s' "$PATH" > ${written}; sleep 30`],
+          env: {},
+        },
+      );
 
-      // Not "PATH is right" but "PATH was never stated": the session carries no
-      // PATH of its own, so a pane simply inherits the server's.
+      // Not "PATH is right" but "PATH was never touched": the pane gets this
+      // machine's own, with nothing of DevHub's in front of it.
+      expect(await paneWrote(written)).toBe(process.env.PATH as string);
+      // And the session states no PATH of its own, on either machine: stating
+      // it there is what did not work.
       expect(
         sessionEnvironment(test.socket, SCRATCH_SESSION, "PATH"),
       ).toBeUndefined();
@@ -1685,7 +1760,11 @@ describe.skipIf(TMUX === undefined)(
         ["-L", socket, "list-sessions", "-F", "#{session_name}"],
         {
           encoding: "utf8",
-          env: { ...process.env, TMUX: undefined, TMUX_PANE: undefined } as never,
+          env: {
+            ...process.env,
+            TMUX: undefined,
+            TMUX_PANE: undefined,
+          } as never,
         },
       )
         .split("\n")

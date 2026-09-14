@@ -434,9 +434,11 @@ is enough:
 
 1. **A tmux pane does not inherit the pty's environment.** The REH's terminal
    channel creates `VSCODE_IPC_HOOK_CLI` per terminal and hands it to the
-   process it spawns — which here is the launcher, not the pane's shell. A pane
-   inherits the **tmux server's** environment plus explicit `new-session -e`
-   entries, and nothing else.
+   process it spawns — which here is the launcher, not the pane's shell. What a
+   pane does inherit is the tmux **server's** environment, the session's own
+   `new-session -e` entries — and, for `PATH` specifically, the environment of
+   the **client that created the session**, which beats both of the others.
+   See "The PATH a pane gets", below.
 2. **That server environment is DevHub's**, resolved for the machine and used
    to start the server over SSH — never composed by the REH's pty host.
 3. **DevHub strips the whole `VSCODE_*` family** from terminal environments on
@@ -465,13 +467,42 @@ that is **already** reverse-forwarded onto the host. Nothing new is opened:
   facts in it: the REH's `node`, that bundle, and
   `~/.devhub/terminal/control-<tag>.sock`
 - it goes at `~/.devhub/terminal/bin-<tag>/devhub`, and that **directory** is
-  what is put in front of every pane's PATH, through the same
-  `new-session -e` channel `DEVHUB_ORIGIN` travels on. A tagged directory
-  rather than a tagged file, because two DevHub profiles reaching one host
-  would otherwise put two `devhub` scripts at one name
-- the PATH is the server's own with one entry in front. A server with no PATH
+  what is put in front of every pane's PATH. A tagged directory rather than a
+  tagged file, because two DevHub profiles reaching one host would otherwise
+  put two `devhub` scripts at one name
+- the PATH is the machine's own with one entry in front. A machine with no PATH
   at all gets no PATH set: a pane that can run `devhub` and not `ls` would be
   worse than a pane with no `devhub`
+
+#### The PATH a pane gets
+
+Not through `new-session -e`, and that is not a detail. tmux takes a new pane's
+`PATH` from **the client that created the session**, and it beats both the
+server's environment and the session's own `-e` entry. Measured against tmux
+3.7c, the version DevHub ships:
+
+```sh
+# server started by a client holding PATH=/serverpath
+tmux -L x new-session -d -s base 'sleep 300'
+# session created by a client holding PATH=/clientpath, with -e PATH=/epath
+PATH=/clientpath tmux -L x new-session -d -s probe -e PATH=/epath -- sh -c 'echo $PATH'
+```
+
+`show-environment -t probe` answers `/epath`; the pane answers `/clientpath`.
+
+On the host that read as everything being in place and nothing working:
+`DEVHUB_ORIGIN` arrived, `tmux show-environment` named the tagged directory,
+and `command -v devhub` in the pane was empty.
+
+So DevHub states the pane's PATH on **every tmux client it runs** — the
+`new-session` and the attaching PTY alike, from the one place that composes a
+client's environment (`TmuxTerminalRuntime.tmuxEnvironment`). One rule for both
+machines: on this Mac there is nothing to put in front, so nothing is. A pane a
+person splits from inside another pane inherits that pane's PATH and needs no
+rule of its own.
+
+`DEVHUB_ORIGIN` stays on `new-session -e`, where it works: the client-beats-all
+behaviour is `PATH`'s alone.
 
 `-`, `--wait` and `--goto` are the same `stdin.ts`, `wait.ts` and `goto.ts` the
 local command uses — that is the point of there being one protocol. Two things

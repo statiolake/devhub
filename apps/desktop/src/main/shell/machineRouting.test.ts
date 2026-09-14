@@ -30,6 +30,7 @@ import { agents } from "./adapters.js";
 import { wireAgents } from "./agentWiring.js";
 import { LOCAL_CADENCE } from "../runtime/local.js";
 import { TerminalRuntimes } from "./terminalRuntimes.js";
+import { remoteCliBinDirectory } from "../terminal/launcher.js";
 import { windowTerminalLauncher } from "./loginEnvironment.js";
 import { TerminalSurfaces } from "../terminal/surfaces.js";
 import { portFailure, workspaceTarget } from "../terminal/ports.js";
@@ -206,6 +207,14 @@ function machines(): {
 	};
 }
 
+/** Where that machine's `devhub` shim lives, derived the way the adapter does. */
+async function binDirectoryOn(machine: FakeMachine): Promise<string> {
+	return remoteCliBinDirectory(
+		await machine.home(),
+		"/home/here/.devhub/control.sock",
+	);
+}
+
 describe("one tmux adapter per machine", () => {
 	it("builds one for each, on that machine's own home", async () => {
 		const { a, b, runtimes } = machines();
@@ -259,7 +268,9 @@ describe("one tmux adapter per machine", () => {
 		// DevHub starts: the same machine's environment, with the terminal's own
 		// TERM on it, composed in the one place rather than merged at the
 		// attachment ledger over whatever this Mac happened to have.
-		expect(there.tmuxEnv()["PATH"]).toBe("/opt/there/bin:/usr/bin");
+		expect(there.tmuxEnv()["PATH"]).toBe(
+			`${await binDirectoryOn(b)}:/opt/there/bin:/usr/bin`,
+		);
 		expect(there.tmuxEnv()["LANG"]).toBe("C.UTF-8");
 		expect(there.tmuxEnv()["TMPDIR"]).toBeUndefined();
 		expect(there.tmuxEnv()["TERM"]).toBe("xterm-256color");

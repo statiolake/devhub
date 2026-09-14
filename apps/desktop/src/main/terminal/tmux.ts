@@ -2333,32 +2333,46 @@ export class TmuxTerminalRuntime {
 				spec.context,
 				spec.workspaceId,
 			),
-			...this.panePath(),
 		};
 	}
 
 	/**
-	 * The pane's PATH, with DevHub's own `devhub` in front of it.
+	 * The PATH a pane DevHub creates gets, with DevHub's own `devhub` in front.
 	 *
-	 * Only on a machine DevHub is not running on: here, `devhub` is whatever
-	 * the person installed on their own PATH, and putting a second one ahead of
-	 * it would be DevHub overruling a choice they made. There, nothing is on
-	 * the PATH that can reach DevHub at all, so this is the difference between
-	 * having the command and not.
+	 * `undefined` on the machine DevHub runs on: here `devhub` is whatever the
+	 * person installed on their own PATH, and putting a second one ahead of it
+	 * would be DevHub overruling a choice they made. On a host nothing on the
+	 * PATH can reach DevHub at all, so this is the difference between having
+	 * the command and not having it.
 	 *
-	 * The base is the environment the tmux *server* was started with, which is
-	 * the environment every pane on it inherits — so this states the server's
-	 * own PATH with one directory in front, and never a PATH assembled from
-	 * somewhere else. A server with no PATH at all gets nothing rather than a
-	 * PATH of one directory: a pane that can run `devhub` and not `ls` is worse
-	 * than a pane with no `devhub`, and it would be DevHub that broke it.
+	 * `undefined` too when the machine has no PATH of its own: a pane that can
+	 * run `devhub` and not `ls` is worse than a pane with no `devhub`, and it
+	 * would be DevHub that broke it.
+	 *
+	 * **Where this is applied is the whole of defect (C).** It used to be a
+	 * `new-session -e PATH=…` entry, on the belief — written down in
+	 * `docs/remote-ssh.md` — that a pane inherits the tmux server's environment
+	 * plus the session's explicit entries. For PATH that is false, and tmux
+	 * means it to be: a new pane's PATH comes from **the client that created
+	 * the session**, and it beats both the server's environment and the
+	 * session's own `-e`. Measured against tmux 3.7c, the version DevHub ships:
+	 * a server started with `/serverpath`, a session created with
+	 * `-e PATH=/epath` by a client holding `/clientpath`, gives
+	 * `show-environment -t` of `/epath` and a pane of `/clientpath`. On the
+	 * host that read as `DEVHUB_ORIGIN` arriving, the session environment
+	 * naming the tagged directory, and `command -v devhub` in the pane being
+	 * empty.
+	 *
+	 * So it is stated on the client, which DevHub runs and therefore controls —
+	 * every tmux client DevHub starts, the exec'd ones and the attaching PTY
+	 * alike, through the one `tmuxEnvironment`. One rule for both machines: on
+	 * this one there is nothing to put in front, so nothing is.
 	 */
-	private panePath(): Record<string, string> {
+	private panePath(base: string | undefined): string | undefined {
 		const directory = this.paneBinDirectory;
-		if (directory === undefined) return {};
-		const base = this.tmuxEnvironment()["PATH"];
-		if (base === undefined || base.length === 0) return {};
-		return { PATH: `${directory}:${base}` };
+		if (directory === undefined) return undefined;
+		if (base === undefined || base.length === 0) return undefined;
+		return `${directory}:${base}`;
 	}
 
 	private async createSession(
@@ -2824,16 +2838,27 @@ export class TmuxTerminalRuntime {
 	}
 
 	/**
-	 * The client's environment.
+	 * The client's environment: this machine's, and what a pane here must get.
+	 *
+	 * Two things are true of every tmux client DevHub starts, so both are said
+	 * here and nowhere else.
 	 *
 	 * A DevHub launched from inside a tmux pane must still create and inspect
 	 * its own dedicated server rather than inheriting the parent client's
-	 * nested-session hints.
+	 * nested-session hints, so `TMUX` and `TMUX_PANE` go.
+	 *
+	 * And the PATH a pane DevHub creates will have is the *client's* PATH —
+	 * tmux takes it from the client that created the session, over the server's
+	 * environment and over `new-session -e` alike — so the pane's PATH is
+	 * stated here, on the client, and not as a session variable that a pane
+	 * will never read. See `panePath`.
 	 */
 	private tmuxEnvironment(): Record<string, string | undefined> {
 		const env = { ...this.context.environment, ...this.tmuxOwnEnvironment };
 		delete env.TMUX;
 		delete env.TMUX_PANE;
+		const pane = this.panePath(env["PATH"]);
+		if (pane !== undefined) env["PATH"] = pane;
 		return env;
 	}
 
