@@ -99,8 +99,9 @@ single directory:
 ```
 devhub-reh-linux-x64/
   bin/devhub-server        the launcher; runs ./node ./out/server-main.js
-  bin/remote-cli/devhub    the `code` equivalent, for opening files from the
-                           remote's own shell
+  bin/remote-cli/devhub    upstream's remote CLI. It is in the tarball because
+                           the REH build puts it there, and DevHub does not use
+                           it — see "The `devhub` command on a host"
   node                     the prebuilt Node the server runs on
   out/                     the bundled server
   product.json             DevHub's, with the same `commit` the client states
@@ -415,6 +416,81 @@ person is looking. There is deliberately no second profile that ships a plain
 on the directory VS Code starts it in, which is not known until the terminal is
 created, so a command line composed in advance would be right for one terminal
 of the window and wrong for the rest.
+
+### The `devhub` command on a host
+
+A pane on a host has a `devhub` on its PATH, and it is **DevHub's, not
+upstream's**.
+
+Upstream's `bin/remote-cli/devhub` ships in the tarball — `gulpfile.reh.ts`
+writes it from `resources/server/bin/remote-cli/code-linux.sh` under
+`product.applicationName`, which for DevHub is `devhub` — and it can never work
+in a DevHub terminal. It is a client for one environment variable,
+`VSCODE_IPC_HOOK_CLI`, and without it it prints *"Command is only available in
+WSL or inside a Visual Studio Code terminal."* and exits.
+
+That variable never arrives, for three independent reasons, any one of which
+is enough:
+
+1. **A tmux pane does not inherit the pty's environment.** The REH's terminal
+   channel creates `VSCODE_IPC_HOOK_CLI` per terminal and hands it to the
+   process it spawns — which here is the launcher, not the pane's shell. A pane
+   inherits the **tmux server's** environment plus explicit `new-session -e`
+   entries, and nothing else.
+2. **That server environment is DevHub's**, resolved for the machine and used
+   to start the server over SSH — never composed by the REH's pty host.
+3. **DevHub strips the whole `VSCODE_*` family** from terminal environments on
+   purpose (`main/shell/loginEnvironment.ts`), and `bin/remote-cli` is not on a
+   pane's PATH for the same reason.
+
+This is worth stating rather than rediscovering: it is the same fact that makes
+the control socket be written *into* the launcher script instead of exported,
+and it is why delivering `VSCODE_IPC_HOOK_CLI` into a pane was never the fix.
+The check, inside a DevHub terminal on a host, is:
+
+```
+printenv VSCODE_IPC_HOOK_CLI; command -v devhub
+```
+
+The first is empty. The second is DevHub's shim.
+
+So DevHub ships its own, speaking DevHub's own control protocol over the socket
+that is **already** reverse-forwarded onto the host. Nothing new is opened:
+
+- the CLI is bundled the way the asking program is —
+  `out/main/cli/devhub-cli.bundle.js`, from the `build:cli` step of
+  `pnpm --filter @devhub/desktop build` — and written to
+  `~/.devhub/terminal/js/` beside it
+- the shim is generated like the launcher, with the host's own three absolute
+  facts in it: the REH's `node`, that bundle, and
+  `~/.devhub/terminal/control-<tag>.sock`
+- it goes at `~/.devhub/terminal/bin-<tag>/devhub`, and that **directory** is
+  what is put in front of every pane's PATH, through the same
+  `new-session -e` channel `DEVHUB_ORIGIN` travels on. A tagged directory
+  rather than a tagged file, because two DevHub profiles reaching one host
+  would otherwise put two `devhub` scripts at one name
+- the PATH is the server's own with one entry in front. A server with no PATH
+  at all gets no PATH set: a pane that can run `devhub` and not `ls` would be
+  worse than a pane with no `devhub`
+
+`-`, `--wait` and `--goto` are the same `stdin.ts`, `wait.ts` and `goto.ts` the
+local command uses — that is the point of there being one protocol. Two things
+the shim says that the local launcher does not have to:
+
+- `DEVHUB_MACHINE=ssh:<host>`, which is which computer the paths typed into
+  that pane are paths on. Without it a host's `/srv/app` is matched against a
+  Workspace of the same name on this Mac, and the file opens off the wrong disk
+- nothing about how to start DevHub, because there is no way to. DevHub runs on
+  the machine the window is on, and this socket is forwarded from it. A
+  `devhub` there that finds nothing listening says
+  `DevHub is not listening on <socket>` — the same sentence the launcher prints
+  from the same situation, rather than a second explanation of one fact
+
+A remote `--wait` marker is a path **on the host**, and the workbench is told so
+with a `vscode-remote://` URI. Sent as `file:` it would be deleted on this Mac
+while the CLI over there polled a file nothing would ever remove, and
+`git commit` on the host would hang forever after the tab was closed with no
+error anywhere.
 
 ### How the window learns its launcher
 
