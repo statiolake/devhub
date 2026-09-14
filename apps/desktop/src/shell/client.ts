@@ -18,6 +18,7 @@ import type {
 } from "../ipc/appShell";
 import type {
   AgentActionWire,
+  AppConditionWire,
   AssignmentBranchWire,
   ContentSurfaceWire,
   DevhubApi,
@@ -34,6 +35,7 @@ import type {
 
 export type {
   AgentActionWire,
+  AppConditionWire,
   AssignmentBranchWire,
   GitHubLoginWire,
   IssueAssignment,
@@ -65,6 +67,14 @@ export interface AppShellClient {
     listener: (actions: readonly AgentActionWire[]) => void,
   ): () => void;
   subscribeNativeError(listener: (error: AppError) => void): () => void;
+  /**
+   * Standing facts main watches: a machine that is not answering, and the one
+   * message that says it is answering again. Not failures — nothing the person
+   * did raised them, so nothing they do next retires them.
+   */
+  subscribeAppCondition(
+    listener: (condition: AppConditionWire) => void,
+  ): () => void;
   subscribeWorkspacePicker(
     listener: (event: WorkspacePickerEvent) => void,
   ): () => void;
@@ -170,6 +180,7 @@ export function createShellClient(api: DevhubApi = devhub()): AppShellClient {
     subscribeAgentProfiles: (listener) => api.onAgentProfiles(listener),
     subscribeAgentActions: (listener) => api.onAgentActions(listener),
     subscribeNativeError: (listener) => api.onNativeError(listener),
+    subscribeAppCondition: (listener) => api.onAppCondition(listener),
     subscribeWorkspacePicker: (listener) => api.onWorkspacePicker(listener),
     getRepositoryStatus: () => api.getRepositoryStatus(),
     subscribeRepositoryStatus: (listener) => api.onRepositoryStatus(listener),

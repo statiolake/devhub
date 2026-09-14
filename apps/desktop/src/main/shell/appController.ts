@@ -47,6 +47,7 @@ import { UnloadReason } from "code-oss-dev/out/vs/platform/window/electron-main/
 import {
 	CHANNELS,
 	type AgentActionWire,
+	type AppConditionWire,
 	type ChordHelpRowWire,
 	type ContentRect,
 	type ContentSurfaceWire,
@@ -191,6 +192,7 @@ import { windowTerminalLauncher } from "./loginEnvironment.js";
 import { OperationDeadline } from "../terminal/command.js";
 import { wireAgents } from "./agentWiring.js";
 import { AgentReconcilers, type ReconcileHost } from "./agentReconciler.js";
+import { MachineConditions } from "./machineConditions.js";
 import { MainServicesGate, type MainServices } from "./mainServices.js";
 import {
 	disposeRuntime,
@@ -446,6 +448,25 @@ export class AppController {
 	 * for an Agent that started, and an exit nobody asked about is a row for a
 	 * process that is gone.
 	 */
+	/**
+	 * Which machines are not answering, as a condition rather than an event.
+	 *
+	 * A machine-wide round runs once a cadence tick for as long as that machine
+	 * has Agents, so its failure is not something that *happened* — it is
+	 * something that is *true*, and it is published once per episode with the
+	 * hysteresis in `machineConditions.ts`. It used to be an app-wide failure
+	 * raised every round: the person's next click retired it (that is what a
+	 * failure's lifetime is), the next round put it back, and the notice took
+	 * layout room, so an unreachable host made the whole workbench shake.
+	 */
+	private readonly machineConditions = new MachineConditions({
+		publish: (source, summary) => {
+			this.send(CHANNELS.appCondition, {
+				source,
+				...(summary === undefined ? {} : { summary }),
+			} satisfies AppConditionWire);
+		},
+	});
 	private readonly agentReconcilers = new AgentReconcilers({
 		reconcile: (host) => this.reconcileAgentsOn(host.id),
 		onFailure: (error) => {
@@ -676,7 +697,32 @@ export class AppController {
 		await this.sessionSweeper.sweepAll();
 		this.agentReconcilers.follow(this.agentHosts());
 		this.repositoryStatus.start();
+		this.watchForWake();
 	}
+
+	/**
+	 * What a sleep does to every connection, answered in one place.
+	 *
+	 * A suspended Mac leaves an ssh ControlMaster holding a socket whose other
+	 * end is long gone, and OpenSSH keeps it for `ControlPersist` — so without
+	 * this, waking up buys minutes of rounds that cannot work, against a host
+	 * that is in fact reachable. Told to every runtime rather than to the ones
+	 * this file thinks are remote (`Runtime.resumed`), because which of them
+	 * have a connection to rebuild is theirs to know; and followed by one wake,
+	 * so the answer arrives at the next round instead of at the next tick.
+	 */
+	private watchForWake(): void {
+		const wake = (): void => {
+			for (const runtime of liveRuntimes()) runtime.resumed();
+			this.agentReconcilers.wake();
+		};
+		electron.powerMonitor.on("resume", wake);
+		this.stopWatchingWake = (): void => {
+			electron.powerMonitor.off("resume", wake);
+		};
+	}
+
+	private stopWatchingWake: (() => void) | undefined;
 
 	/**
 	 * Wire the menu bar to the same model everything else uses.
@@ -1336,6 +1382,9 @@ export class AppController {
 		for (const runtime of liveRuntimes()) {
 			if (runtime.id === "local" || live.has(runtime.id)) continue;
 			this.terminalsWiring?.runtimes.forget(runtime.id);
+			// Nothing will ask this machine again, so nothing could ever retract
+			// a condition about it: it goes now, with the machine.
+			this.machineConditions.forget(runtime.id);
 			this.launchers.delete(runtime.id);
 			this.launcherStatus.delete(runtime.id);
 			void disposeRuntime(runtime.id).catch((error: unknown) => {
@@ -1444,6 +1493,7 @@ export class AppController {
 		markCleanShutdown(this.state);
 		await this.saveState();
 		this.agentReconcilers.stop();
+		this.stopWatchingWake?.();
 		this.repositoryStatus.stop();
 		// Quitting detaches clients and leaves every session — an Agent's as
 		// much as a terminal's. That is the point of putting them on the same
@@ -1759,6 +1809,22 @@ export class AppController {
 					failure.code,
 				);
 				this.publishSnapshot();
+				return;
+			case "machine":
+				// Not a toast per round. The condition goes up once for the
+				// episode and comes down when the machine has been answering
+				// again for long enough to believe — one place, one rule.
+				this.machineConditions.failed(
+					failure.id,
+					// The machine is named, because that is the whole of what the
+					// person can act on: "the agent runtime is unavailable" sent
+					// them to look at a tmux, and the tmux was fine — the host was
+					// not answering. The detail is DevHub's own words about its own
+					// configuration and never the provider's (see `PortFailure`).
+					failure.detail === undefined
+						? `DevHub is not getting an answer from ${failure.id}.`
+						: `DevHub is not getting an answer from ${failure.id}. ${failure.detail}`,
+				);
 				return;
 			case "app":
 				this.publishError(
@@ -2525,10 +2591,14 @@ export class AppController {
 		if (!adapter) {
 			this.failOperation(
 				token,
-				agentSubject(agentId, {
-					code: "agent_runtime_unavailable",
-					detail: "The Agent runtime is not running.",
-				}),
+				agentSubject(
+					agentId,
+					{
+						code: "agent_runtime_unavailable",
+						detail: "The Agent runtime is not running.",
+					},
+					machine,
+				),
 			);
 			return;
 		}
@@ -2561,9 +2631,17 @@ export class AppController {
 			// failed, in that port's own words, by the one path that reports
 			// operation failures.
 			console.error(error instanceof Error ? error.stack : error);
-			this.failOperation(token, agentSubject(agentId, portRefusal(error)));
+			this.failOperation(
+				token,
+				agentSubject(agentId, portRefusal(error), asked),
+			);
 			return;
 		}
+		// The machine answered. Which round asked does not matter: an answer is
+		// an answer, and the condition is about the machine, not about the
+		// round. Whether it is enough of an answer to take a notice down is
+		// `machineConditions`' decision and nobody else's.
+		this.machineConditions.succeeded(asked);
 		if (agentId === undefined) {
 			this.accept({ type: "agents_reconciled", token, reconciliation });
 			return;

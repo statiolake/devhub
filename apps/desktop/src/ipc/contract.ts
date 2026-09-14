@@ -316,6 +316,25 @@ export interface WorkspaceRepositoryWire {
 	};
 }
 
+/**
+ * A standing fact about DevHub, and whether it still holds.
+ *
+ * The counterpart of `nativeError` for the things that are not events. A
+ * failure is about something the person just asked for and is retired by their
+ * next action; a condition — a machine that is not answering — is about
+ * nothing they did, so only its own source can say it is over. That is what
+ * `summary` being absent means, and it is the *only* thing that takes one off
+ * screen besides the person putting it away.
+ *
+ * `source` is the slot: one source holds at most one condition, so a source
+ * that keeps saying the same thing replaces itself in place and never blinks.
+ */
+export interface AppConditionWire {
+	readonly source: string;
+	/** Absent: the source retracts it. */
+	readonly summary?: string;
+}
+
 export interface RepositoryStatusWire {
 	readonly sequence: number;
 	readonly workspaces: readonly WorkspaceRepositoryWire[];
@@ -503,6 +522,8 @@ export interface DevhubApi {
 	): () => void;
 	/** Failures that happen between requests, such as a startup mount. */
 	onNativeError(listener: (error: AppError) => void): () => void;
+	/** Standing facts, raised and retracted by the source that watches them. */
+	onAppCondition(listener: (condition: AppConditionWire) => void): () => void;
 	onMenuCommand(listener: (command: MenuCommand) => void): () => void;
 	onEditorRestarting(
 		listener: (event: EditorRestartingWire) => void,
@@ -796,6 +817,8 @@ export const CHANNELS = {
 	 */
 	agentActionsChanged: "devhub:agent-actions-changed",
 	nativeError: "devhub:native-error",
+	/** A standing condition going up, or the source taking it down again. */
+	appCondition: "devhub:app-condition",
 	/** A page handing main a failure it has no place to draw. */
 	raiseFailure: "devhub:raise-failure",
 	workspacePicker: "devhub:workspace-picker",

@@ -1615,6 +1615,52 @@ export class SshRuntime implements Runtime {
 	 * run once per exec, and announced not at all, a host that was away at
 	 * startup would not be asked again until the next launch.
 	 */
+	/**
+	 * The Mac woke up, so the ControlMaster is suspect until proven otherwise.
+	 *
+	 * A master that slept through a suspend usually has a dead TCP connection
+	 * under a live local socket: `ssh` happily hands new commands to it and
+	 * every one of them hangs and then fails, for as long as `ControlPersist`
+	 * keeps the corpse around — which is minutes of rounds that cannot work,
+	 * and (before `machineConditions`) minutes of a notice flapping about it.
+	 * Nothing DevHub can ask distinguishes that master from a healthy one
+	 * without paying a round trip, so it is not asked: the master is dropped,
+	 * and the next command builds a new one, which costs one connection on a
+	 * machine DevHub is about to talk to anyway.
+	 *
+	 * Only when nothing is in flight through it. Killing a master with an
+	 * attached pty under it would take a person's terminal down to save a
+	 * connection — the wrong trade every time — and a busy master is a master
+	 * that is demonstrably working.
+	 */
+	resumed(): void {
+		if (this.#sessions.held > 0 || this.#sessions.waiting > 0) return;
+		this.#connected = false;
+		this.#masterPid = undefined;
+		this.#askedForMasterPid = false;
+		void runBounded(
+			{
+				file: this.#sshPath,
+				args: [
+					...sshOptionArgv(this.#controlDirectory),
+					"-O",
+					"exit",
+					this.#host,
+				],
+				cwd: undefined,
+				env: this.#localEnvironment,
+			},
+			OperationDeadline.in(PROBE_TIMEOUT_MS),
+			new CancellationToken(),
+			PROBE_LIMITS,
+		).catch((failure: unknown) => {
+			// No master to exit is the state this call wants, not a failure; a
+			// master that refused to go is a line in `devhub --metrics`.
+			this.#lastFailure =
+				failure instanceof Error ? failure.message : String(failure);
+		});
+	}
+
 	#markConnected(): void {
 		const was = this.#connected;
 		this.#connected = true;

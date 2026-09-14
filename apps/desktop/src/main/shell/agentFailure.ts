@@ -22,6 +22,7 @@ import type {
 	AgentFailureCode,
 	AgentId,
 	DiagnosticCode,
+	RuntimeId,
 	WorkspaceId,
 } from "../../model/domain.js";
 import { PortFailure } from "../terminal/ports.js";
@@ -53,6 +54,25 @@ export type RefusedOperation =
 			readonly subject: "workspace";
 			readonly id: WorkspaceId;
 			readonly code: DiagnosticCode;
+			readonly detail?: string;
+	  }
+	| {
+			/**
+			 * A machine that would not answer a round asked about all of its
+			 * Agents.
+			 *
+			 * Its own subject, because it is the one refusal that is not an event:
+			 * the round that raised it runs again a cadence tick later and will
+			 * raise it again, so what is true is not "this failed" but "this host
+			 * is not answering". Published as a *condition*, once per episode,
+			 * with the hysteresis in `machineConditions.ts`; an app-wide failure
+			 * is what it used to be, and one unreachable host then produced a
+			 * notice that the person's next click cleared and the next round put
+			 * back, every second, reflowing the workbench each way.
+			 */
+			readonly subject: "machine";
+			readonly id: RuntimeId;
+			readonly code: AgentFailureCode;
 			readonly detail?: string;
 	  }
 	| {
@@ -97,24 +117,28 @@ export function portRefusal(error: unknown): {
 }
 
 /**
- * Send a failure to the Agent it is about, or to the app when it is about all
- * of them.
+ * Send a failure to the Agent it is about, to the machine when it is about all
+ * of them, and to the app when there is not even a machine to name.
  *
- * A reconcile is asked either for one Agent or for every Agent there is, and
- * that is exactly the line between the two surfaces: a sweep that could not run
- * is the runtime being unreachable for everything, which has no single pane to
- * stand in.
+ * A reconcile is asked either for one Agent or for every Agent on one machine,
+ * and that is exactly the line between the surfaces: a round that could not run
+ * is that machine being unreachable for everything, which has no single pane to
+ * stand in — but it does have a machine, and the machine is what the person
+ * needs told. Only a refusal with no machine either (there is no runtime at
+ * all) is the application speaking.
  */
 export function agentSubject(
 	agentId: AgentId | undefined,
 	refusal: { readonly code: AgentFailureCode; readonly detail?: string },
+	machine?: RuntimeId,
 ): RefusedOperation {
-	if (agentId === undefined) {
-		return {
-			subject: "app",
-			code: "agent_runtime_unavailable",
-			...(refusal.detail === undefined ? {} : { detail: refusal.detail }),
-		};
-	}
-	return { subject: "agent", id: agentId, ...refusal };
+	if (agentId !== undefined)
+		return { subject: "agent", id: agentId, ...refusal };
+	if (machine !== undefined)
+		return { subject: "machine", id: machine, ...refusal };
+	return {
+		subject: "app",
+		code: "agent_runtime_unavailable",
+		...(refusal.detail === undefined ? {} : { detail: refusal.detail }),
+	};
 }

@@ -307,6 +307,16 @@ export function AppShellProvider({
             if (live()) setIntentError(error);
           }),
         );
+        // A condition, not a failure: it is drawn until its own source
+        // retracts it (`summary` absent) or the person puts it away, and the
+        // same source saying the same thing again replaces itself in its one
+        // slot rather than blinking. See `notices.ts` and, for what main does
+        // before it says anything at all, `main/shell/machineConditions.ts`.
+        disposers.push(
+          transport.subscribeAppCondition((condition) => {
+            if (live()) observeCondition(condition.source, condition.summary);
+          }),
+        );
         disposers.push(transport.subscribeAppearance(applyAppearanceIfActive));
         disposers.push(
           transport.subscribeWindowTitle((title) => {
@@ -386,7 +396,14 @@ export function AppShellProvider({
         dispose();
       }
     };
-  }, [applySnapshot, attempt, transport, reportFailure, setIntentError]);
+  }, [
+    applySnapshot,
+    attempt,
+    transport,
+    reportFailure,
+    setIntentError,
+    observeCondition,
+  ]);
 
   const dispatch = useCallback(
     async (intent: AppIntent): Promise<AppOutcome | undefined> => {

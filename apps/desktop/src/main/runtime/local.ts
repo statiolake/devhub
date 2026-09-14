@@ -376,6 +376,11 @@ export class LocalRuntime implements Runtime {
 		return { path: spec.localLauncherPath, unreachable: undefined };
 	}
 
+	/** Nothing is multiplexed to this Mac from this Mac. */
+	resumed(): void {
+		// Deliberately nothing: see `Runtime.resumed`.
+	}
+
 	reading(): RuntimeReading {
 		const since = Date.now() - A_MINUTE;
 		this.#recentExecs = this.#recentExecs.filter((at) => at >= since);

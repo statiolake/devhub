@@ -1255,3 +1255,74 @@ exec /bin/sh -c "$1"
 		);
 	});
 });
+
+/**
+ * Waking up, which is the state the flapping notice was reported after.
+ *
+ * A ControlMaster that slept through a suspend keeps a live local socket over
+ * a dead connection, and every command handed to it fails until
+ * `ControlPersist` gives up — minutes of rounds that cannot work against a host
+ * that is reachable. So the master is dropped on `resume` and the next command
+ * builds a new one. See `Runtime.resumed`.
+ */
+describe("waking up", () => {
+	let remoteHome: string;
+	let log: string;
+
+	beforeEach(async () => {
+		remoteHome = await mkdtemp("/tmp/devhub-remote-home-");
+		log = join(remoteHome, "ssh.log");
+	});
+	afterEach(async () => {
+		await rm(remoteHome, { recursive: true, force: true });
+	});
+
+	function waking(): SshRuntime {
+		return new SshRuntime({
+			host: "build-box.example.com",
+			controlDirectory: control,
+			sshPath: join(bin, "ssh"),
+			localEnvironment: {
+				...FAKE_ENVIRONMENT,
+				HOME: remoteHome,
+				DEVHUB_FAKE_SSH_LOG: log,
+			},
+			tmux: FAKE_TMUX,
+		});
+	}
+
+	it("drops the master, so the next command builds one that is awake", async () => {
+		const runtime = waking();
+		await run(runtime, ["true"]);
+		expect(runtime.reading().connected).toBe(true);
+		runtime.resumed();
+		expect(runtime.reading().connected).toBe(false);
+		const deadline = Date.now() + 2_000;
+		let said = "";
+		while (!/-O exit/u.test(said)) {
+			if (Date.now() > deadline) {
+				throw new Error(`no master was asked to exit; ssh saw:\n${said}`);
+			}
+			await new Promise((resolve) => setTimeout(resolve, 5));
+			said = await readFile(log, "utf8").catch(() => "");
+		}
+	});
+
+	it("leaves a master that is carrying work alone", async () => {
+		const runtime = waking();
+		await run(runtime, ["true"]);
+		// Something in flight through the master: it is demonstrably working,
+		// and taking it down would take the work with it.
+		const inFlight = run(runtime, ["sleep", "0.4"]);
+		// The slot is taken a tick after the call: wait for the master to be
+		// carrying it, which is the state this is about.
+		const deadline = Date.now() + 2_000;
+		while (runtime.reading().muxSessionsHeld === 0) {
+			if (Date.now() > deadline) throw new Error("no session was ever held");
+			await new Promise((resolve) => setTimeout(resolve, 5));
+		}
+		runtime.resumed();
+		expect(runtime.reading().connected).toBe(true);
+		await inFlight;
+	});
+});

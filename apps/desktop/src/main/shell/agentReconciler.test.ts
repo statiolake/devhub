@@ -211,4 +211,31 @@ describe("one reconciler loop per machine", () => {
 		expect(rounds).toBe(after);
 		expect(after).toBeGreaterThan(seen);
 	});
+	/**
+	 * The emptied machine, which is where the flapping notice was suspected to
+	 * come from: a host with no Workspace left on screen, still being asked,
+	 * still failing, still raising a notice about it every round.
+	 */
+	it("raises nothing more about a machine whose Agents have gone", async () => {
+		let rounds = 0;
+		const failures: unknown[] = [];
+		const loops = new AgentReconcilers({
+			reconcile: () => {
+				rounds += 1;
+				return Promise.reject(new Error("the host is not answering"));
+			},
+			onFailure: (error: unknown) => {
+				failures.push(error);
+			},
+		});
+		loops.follow([host("ssh:far")]);
+		await until(() => failures.length >= 2);
+		loops.follow([]);
+		const stoppedAt = rounds;
+		const said = failures.length;
+		await new Promise((resolve) => setTimeout(resolve, 25));
+		expect(rounds).toBe(stoppedAt);
+		expect(failures).toHaveLength(said);
+		loops.stop();
+	});
 });

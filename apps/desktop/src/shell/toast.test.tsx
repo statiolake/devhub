@@ -91,6 +91,7 @@ function mount() {
     getWindowTitle: async () => "DevHub",
     subscribeWindowTitle: () => () => undefined,
     subscribeAgentProfiles: () => () => undefined,
+    subscribeAppCondition: () => () => undefined,
     subscribeNativeError: (listener: (error: AppError) => void) => {
       publishError = listener;
       return () => undefined;

@@ -51,6 +51,10 @@ import type {
 
 /** A machine that runs nothing and remembers everything it was asked. */
 class FakeMachine implements Runtime {
+	resumed(): void {
+		// Nothing to re-establish in a double.
+	}
+
 	readonly execs: ExecRequest[] = [];
 	readonly ptys: PtyLaunch[] = [];
 

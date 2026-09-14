@@ -393,5 +393,20 @@ export interface Runtime {
 	terminalLauncher(spec: TerminalLauncherSpec): Promise<TerminalLauncher>;
 
 	readonly cadence: RuntimeCadence;
+	/**
+	 * This Mac woke up, so anything this machine was holding may be a corpse.
+	 *
+	 * On every runtime and not only the ssh one, because "what a sleep did to
+	 * this connection" is a fact about a machine, and a caller that had to ask
+	 * which kind of runtime it was holding is the branch `registry.ts` exists
+	 * to prevent. Locally there is nothing to re-establish and the answer is to
+	 * do nothing — which is an answer, not an omission.
+	 *
+	 * It must not throw and must not be waited on: it is a *hint* that the next
+	 * command should build its connection again rather than reuse one that has
+	 * been asleep. The round that follows is the same round the loop would have
+	 * run anyway.
+	 */
+	resumed(): void;
 	reading(): RuntimeReading;
 }

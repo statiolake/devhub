@@ -128,6 +128,7 @@ function client(
     getWindowTitle: async () => "DevHub",
     subscribeWindowTitle: () => () => undefined,
     subscribeAgentProfiles: () => () => undefined,
+    subscribeAppCondition: () => () => undefined,
     subscribeNativeError: () => () => undefined,
     subscribeWorkspacePicker: () => () => undefined,
     getRepositoryStatus: () => later({ sequence: 0, workspaces: [] }),

@@ -40,6 +40,10 @@ import {
  * cannot accidentally pass by doing the real thing on this machine.
  */
 class RecordingRuntime implements Runtime {
+	resumed(): void {
+		// Nothing to re-establish in a double.
+	}
+
 	readonly id = "local" as const;
 	readonly where = " on the fake";
 	readonly cadence = LOCAL_CADENCE;

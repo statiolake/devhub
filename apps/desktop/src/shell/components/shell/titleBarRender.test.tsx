@@ -52,6 +52,7 @@ function mount(collapsed: boolean) {
       return () => undefined;
     },
     subscribeAgentProfiles: () => () => undefined,
+    subscribeAppCondition: () => () => undefined,
     subscribeNativeError: () => () => undefined,
     subscribeWorkspacePicker: () => () => undefined,
     getRepositoryStatus: async () => ({ sequence: 0, workspaces: [] }),

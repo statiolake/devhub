@@ -27,6 +27,7 @@ import {
 	type ContentSurfaceWire,
 	type DevhubApi,
 	type GitHubLoginWire,
+	type AppConditionWire,
 	type AssignmentBranchWire,
 	type WorkspacePlaceWire,
 	type IssueAssignment,
@@ -93,6 +94,8 @@ const devhub: DevhubApi = {
 	onAgentActions: (listener) =>
 		on<readonly AgentActionWire[]>(CHANNELS.agentActionsChanged, listener),
 	onNativeError: (listener) => on<AppError>(CHANNELS.nativeError, listener),
+	onAppCondition: (listener) =>
+		on<AppConditionWire>(CHANNELS.appCondition, listener),
 	onMenuCommand: (listener) => on<MenuCommand>(CHANNELS.menuCommand, listener),
 	onEditorRestarting: (listener) =>
 		on<EditorRestartingWire>(CHANNELS.editorRestarting, listener),
