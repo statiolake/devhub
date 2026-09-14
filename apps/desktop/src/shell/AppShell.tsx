@@ -14,6 +14,7 @@ import { useCallback } from "react";
 import { AppShellProvider } from "./AppShellContext";
 import { devhub, type AppShellClient } from "./client";
 import { useAppShell } from "./useAppShell";
+import { Toasts } from "./components/shell/Toasts";
 import { Sidebar } from "./components/sidebar/Sidebar";
 import { TitleBar } from "./components/shell/TitleBar";
 import { SurfaceViewport } from "./components/shell/SurfaceViewport";
@@ -167,6 +168,11 @@ function Workbench() {
       <div className="app-shell-content">
         <Sidebar snapshot={state.snapshot} onDispatch={onDispatch} />
         <SurfaceViewport snapshot={state.snapshot} appearance={appearance} />
+        {/* Laid over the Sidebar's column, last so it is above it, and outside
+            the Surface so that a notice arriving or leaving moves nothing: the
+            Sidebar is the one column no native view is ever put over. See
+            `styles/toast.css` for the trade-off this settles. */}
+        <Toasts />
       </div>
     </main>
   );

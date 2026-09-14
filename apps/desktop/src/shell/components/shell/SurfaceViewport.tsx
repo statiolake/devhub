@@ -28,7 +28,6 @@ import { Failure, Waiting } from "./SurfaceState";
 import { useRestartingEditors } from "./workbenchDialogs";
 import { TerminalSurface } from "../../terminal/TerminalSurface";
 import { AgentShortcuts } from "./AgentShortcuts";
-import { Toasts } from "./Toasts";
 
 export interface SurfaceViewportProps {
   readonly snapshot: AppSnapshot;
@@ -484,11 +483,6 @@ export function SurfaceViewport({
           presentation={agentPresentation}
         />
       </div>
-      {/* Under the panes and not over them: the workbench is a native view and
-          paints over anything in this document that overlaps it, so the one
-          place an app-wide notice is certain to be seen is a strip the hole
-          gives up. See `Toasts`. */}
-      <Toasts />
     </section>
   );
 }

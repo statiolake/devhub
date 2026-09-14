@@ -10,19 +10,25 @@
  * Agent or about one workspace are not here at all; they are drawn at their
  * subject, which is the rule `main/shell/agentFailure.ts` routes by.
  *
- * # Why it takes room rather than floating over the content
+ * # Where it is drawn, and why not over the workbench
  *
- * A toast normally hovers. This one cannot: the workbench is a native
- * `WebContentsView` and a native view paints over everything in this document,
- * so anything drawn on top of the workbench rectangle is a notice nobody will
- * ever see — which is the failure mode this whole surface exists to end. So
- * the stack sits *below* the panes, in the flow, and the workbench hole gives
- * up the height. The hole is measured rather than computed, so main follows
- * the new rectangle with no arithmetic here (see `SurfaceViewport`).
+ * A native `WebContentsView` paints over everything in this document, so a
+ * toast over the workbench rectangle is a toast nobody sees. This stack used
+ * to answer that by taking room — sitting below the panes, in the flow, with
+ * the workbench hole giving up the height — and that answer cost the thing it
+ * was protecting: every appearance and disappearance reflowed the window, so
+ * one host that would not answer made the whole workbench shake once a second.
  *
- * It is bottom-right of the content area and never wider than it needs to be,
- * so the Sidebar is untouched and the thing the person is reading loses a strip
- * at the bottom rather than the top of the editor.
+ * So it floats over the Sidebar's column instead, which is the one column no
+ * native view is ever laid over: nothing in the Surface moves, main is told
+ * nothing, and the notice is still certain to be seen. The placement lives in
+ * `styles/toast.css`, with the trade-off written out there.
+ *
+ * The other half of the same fix is upstream: a machine that is not answering
+ * is published *once per episode*, as a condition with hysteresis
+ * (`main/shell/machineConditions.ts`), rather than as a failure raised every
+ * round. A stack that cannot flap and a notice that does not flap are two
+ * different guarantees, and both are wanted.
  */
 
 import { useEffect, useRef } from "react";

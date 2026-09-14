@@ -26,6 +26,9 @@
 /* Whatever is left under the bar — which is the whole window when there is no
    bar, `--titlebar-bar` being zero then. */
 .app-shell-content {
+  /* The notice stack is laid over this box rather than inside the Surface, so
+     a notice coming and going moves nothing. See `styles/toast.css`. */
+  position: relative;
   display: flex;
   overflow: hidden;
   flex: 1;

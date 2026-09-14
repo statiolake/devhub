@@ -7,18 +7,53 @@
  * the 13/11 pair the rows use — because a notice is part of the workbench and
  * not a visitor to it.
  *
- * It sits in the flow at the foot of the content area rather than over it: a
- * native workbench view paints over this document, so a floating toast is a
- * toast nobody sees. See `components/shell/Toasts.tsx`.
+ * It floats at the foot of the *Sidebar's* column, over the page and not in
+ * its flow. Two constraints meet here and only one placement satisfies both.
+ * A native `WebContentsView` paints over everything in this document, so a
+ * toast over the workbench is a toast nobody sees — that is why this stack
+ * used to sit in the flow, below the panes, with the workbench hole giving up
+ * the height. But taking room means every appearance and every disappearance
+ * reflows the workbench, and the owner watched the window shake while an
+ * unreachable host raised and retired one notice a second.
+ *
+ * The Sidebar's column is the one part of this page no native view is ever
+ * laid over, so a notice anchored there can float: the Surface keeps its
+ * rectangle, main is told nothing, and nothing moves. The trade-off, said out
+ * loud for the owner to judge: this is the foot of the Sidebar, which the
+ * owner has already rejected once — as a *permanent status line*, a caption
+ * that was always there saying nothing most of the time. A transient toast is
+ * a different thing: it is present only while something is true, it can be
+ * dismissed, and it costs the Sidebar nothing when it is not up.
+ *
+ * The remaining honest limit: with the Sidebar collapsed to the rail, the
+ * stack keeps a readable width and therefore overhangs the Surface, where the
+ * workbench may paint over the overhanging part. The only placement with
+ * neither limit is the overlay `WebContentsView` the modals already use, which
+ * is where this belongs if the collapsed case ever bites.
+ *
+ * See `components/shell/Toasts.tsx`.
  */
 
 .toast-stack {
-  z-index: 1;
+  position: absolute;
+  z-index: 30;
+  bottom: 0;
+  left: 0;
+  /* The Sidebar's width, with a floor: a notice narrower than its sentence is
+     not a notice. `min()` keeps it inside a very narrow window. */
+  width: min(100%, max(var(--sidebar-width), 300px));
   display: flex;
   flex-direction: column;
-  align-items: flex-end;
+  align-items: stretch;
   padding: var(--space-2) var(--space-3) var(--space-3);
   gap: var(--space-2);
+  /* The column is a layer, not a target: only the toasts in it take the
+     pointer, so the Sidebar underneath goes on working around them. */
+  pointer-events: none;
+}
+
+.toast-stack > * {
+  pointer-events: auto;
 }
 
 /*
