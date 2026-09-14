@@ -176,6 +176,12 @@ async function handle(
 	}
 	try {
 		switch (request.kind) {
+			// Answered here rather than by a handler, and that is the point: what
+			// is being asked is whether there is a DevHub behind this socket, and
+			// an answer that depended on the app being able to do something would
+			// be a different question with the same name. See `protocol.ts`.
+			case "ping":
+				return { ok: true, message: "DevHub is running." };
 			case "activate":
 				return { ok: true, message: await handlers.activate() };
 			case "open":

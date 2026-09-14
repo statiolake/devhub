@@ -29,10 +29,16 @@
  * The other way a wait can end is that DevHub is no longer there to close
  * anything. A person who quits DevHub with the commit message still open would
  * otherwise be left with a terminal that never comes back, and no clue why, so
- * the socket is asked on the same timer and its disappearance ends the wait
- * with a sentence and a failing status. The marker is checked first, so a
+ * DevHub is asked on the same timer and a DevHub that does not answer ends the
+ * wait with a sentence and a failing status. The marker is checked first, so a
  * DevHub that deletes the marker and quits in the same instant still counts as
  * having finished the job.
+ *
+ * *Asked*, not connected to. On a host the socket is one `ssh -R` forwarded
+ * onto it and belongs to the host's sshd, which goes on accepting connections
+ * after the DevHub behind it has quit — so a wait that ended on a refused
+ * connection ended on this Mac and never on a host, where `git commit` simply
+ * hung. See `socketAnswers` in `launch.ts`.
  */
 
 import { access, mkdir, rm, writeFile } from "node:fs/promises";
@@ -55,6 +61,8 @@ export interface WaitWorld {
 	markerExists(): Promise<boolean>;
 	/** Whether DevHub is still answering its socket. */
 	devhubAnswers(): Promise<boolean>;
+	/** Named in the sentence when it stops answering, so there is a thing to look at. */
+	readonly socketPath: string;
 	pause(ms: number): Promise<void>;
 }
 
@@ -73,7 +81,7 @@ export async function waitForClose(world: WaitWorld): Promise<void> {
 		if (!(await world.markerExists())) return;
 		if (!(await world.devhubAnswers())) {
 			throw new Error(
-				"DevHub stopped while the file was still open, so it was never closed and nothing was saved by closing it.",
+				`DevHub is not listening on ${world.socketPath}: it stopped while the file was still open, so the file was never closed and nothing was saved by closing it.`,
 			);
 		}
 		await world.pause(WAIT_POLL_MS);
@@ -83,6 +91,7 @@ export async function waitForClose(world: WaitWorld): Promise<void> {
 /** The real thing: a file on disk, a socket, and the clock. */
 export function markerWorld(markerPath: string, socketPath: string): WaitWorld {
 	return {
+		socketPath,
 		markerExists: () =>
 			access(markerPath).then(
 				() => true,

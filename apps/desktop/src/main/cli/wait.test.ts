@@ -9,9 +9,11 @@
  */
 
 import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
+import { createServer, type Socket } from "node:net";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { makeScratchDir, removeScratchDir } from "../../model/testScratch.js";
+import { socketAnswers } from "./launch.js";
 import {
 	createMarker,
 	markerWorld,
@@ -32,6 +34,7 @@ function fakeWorld(options: {
 	let pauses = 0;
 	return {
 		pauses: () => pauses,
+		socketPath: "/nowhere/control.sock",
 		markerExists: () => {
 			looks += 1;
 			return Promise.resolve(
@@ -86,7 +89,7 @@ describe("waiting for an editor to be closed", () => {
 	it("stops with a sentence when DevHub goes away first", async () => {
 		const world = fakeWorld({ closesAfter: "never", stopsAfter: 3 });
 		await expect(waitForClose(world)).rejects.toThrow(
-			/DevHub stopped while the file was still open/,
+			/DevHub is not listening on .*: it stopped while the file was still open/,
 		);
 	});
 
@@ -144,5 +147,61 @@ describe("waiting for an editor to be closed", () => {
 
 		await removeMarker(marker);
 		await expect(world.markerExists()).resolves.toBe(false);
+	});
+
+	/**
+	 * The defect this probe exists for.
+	 *
+	 * Over `ssh -R` the listening socket belongs to the host's sshd, so it goes
+	 * on accepting connections after the DevHub behind it has quit. A server
+	 * that accepts and never answers is exactly that shape, and a wait that
+	 * ends only on a refused connection waits forever — which is what
+	 * `git commit` on the host did.
+	 */
+	it("ends the wait when the socket accepts and never answers", async () => {
+		const socketPath = join(scratch, "accepts.sock");
+		const listener = createServer((socket) => {
+			// Deliberately: held open, read, and never replied to.
+			socket.resume();
+			held.push(socket);
+		});
+		const held: Socket[] = [];
+		await new Promise<void>((resolve) => listener.listen(socketPath, resolve));
+		try {
+			await expect(socketAnswers(socketPath, 50)).resolves.toBe(false);
+
+			const directory = join(scratch, "hangs");
+			mkdirSync(directory);
+			const marker = join(directory, "marker");
+			writeFileSync(marker, "");
+			const world = markerWorld(marker, socketPath);
+			await expect(
+				waitForClose({
+					...world,
+					devhubAnswers: () => socketAnswers(socketPath, 50),
+				}),
+			).rejects.toThrow(`DevHub is not listening on ${socketPath}`);
+		} finally {
+			for (const socket of held) socket.destroy();
+			await new Promise<void>((resolve) => listener.close(() => resolve()));
+		}
+	});
+
+	/** And a socket that does answer is a DevHub that is running. */
+	it("keeps waiting while the socket answers the ping", async () => {
+		const socketPath = join(scratch, "answers.sock");
+		const listener = createServer((socket) => {
+			socket.once("data", () => {
+				socket.end(
+					`${JSON.stringify({ ok: true, message: "DevHub is running." })}\n`,
+				);
+			});
+		});
+		await new Promise<void>((resolve) => listener.listen(socketPath, resolve));
+		try {
+			await expect(socketAnswers(socketPath, 1_000)).resolves.toBe(true);
+		} finally {
+			await new Promise<void>((resolve) => listener.close(() => resolve()));
+		}
 	});
 });

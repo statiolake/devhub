@@ -464,6 +464,14 @@ describe("devhub when DevHub is not running", () => {
 	});
 
 	/** A DevHub that appears `delayMs` after it is started, answers once, and goes. */
+	/**
+	 * A DevHub that comes up late and then speaks the protocol.
+	 *
+	 * It answers a `ping` like the real server does — from the socket loop,
+	 * saying nothing about itself — because that is how the CLI asks whether it
+	 * is there at all. A fake that treated the liveness question as the one
+	 * request it was waiting for would be a fake of a different protocol.
+	 */
 	function fakeDevHub(socketPath: string, recordPath: string): string {
 		return `
 const { createServer } = require("node:net");
@@ -474,7 +482,12 @@ setTimeout(() => {
 		socket.on("data", (chunk) => {
 			buffer += chunk;
 			if (!buffer.includes("\\n")) return;
-			writeFileSync(${JSON.stringify(recordPath)}, buffer.split("\\n")[0]);
+			const line = buffer.split("\\n")[0];
+			if (JSON.parse(line).kind === "ping") {
+				socket.end(JSON.stringify({ ok: true, message: "DevHub is running." }) + "\\n");
+				return;
+			}
+			writeFileSync(${JSON.stringify(recordPath)}, line);
 			socket.end(JSON.stringify({ ok: true, message: "opened" }) + "\\n");
 			server.close();
 		});

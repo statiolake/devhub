@@ -50,6 +50,26 @@ export interface ControlPosition {
 export type ControlRequest =
 	| {
 			/**
+			 * Is there a DevHub behind this socket?
+			 *
+			 * Not a command: the answer is the *fact that an answer came back*,
+			 * which is the one thing a connection does not establish. A unix
+			 * socket reverse-forwarded onto a host with `ssh -R` belongs to the
+			 * host's sshd, so `connect()` there succeeds long after the DevHub at
+			 * the far end has quit — and `devhub --wait` on the host, whose whole
+			 * job is to stop waiting when there is nobody left to close the file,
+			 * waited forever. `git commit` over there never came back.
+			 *
+			 * So it is answered here, by the server loop itself, without going
+			 * through a handler. "DevHub is running" must not be a claim about
+			 * what DevHub can currently *do*: an app too busy to open a window is
+			 * still an app that will close the editor, and an app that is gone
+			 * answers nothing at all, which is the whole distinction.
+			 */
+			readonly kind: "ping";
+	  }
+	| {
+			/**
 			 * `devhub`, with nothing after it: bring DevHub to the front.
 			 *
 			 * It is a request of its own rather than an `open` with no path
@@ -241,6 +261,8 @@ export function parseControlRequest(line: string): ControlRequest {
 	}
 	const record = value as Record<string, unknown>;
 	switch (record["kind"]) {
+		case "ping":
+			return { kind: "ping" };
 		case "activate":
 			return { kind: "activate" };
 		case "open":

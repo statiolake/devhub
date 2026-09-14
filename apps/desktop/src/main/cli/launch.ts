@@ -284,23 +284,66 @@ function runDetached(command: readonly string[]): Promise<never> {
 }
 
 /**
- * Whether anything is listening yet.
+ * How long a `ping` is given before the silence is the answer.
  *
- * Connecting is the whole test, and it is the same test the app itself uses
- * before it claims the socket (`controlServer.ts`): a connection that is
- * accepted means a DevHub is serving there. Nothing is sent, so a DevHub that
- * is midway through starting is not handed a request it is not ready for.
+ * Generous against a real DevHub — the request is answered by the socket
+ * server itself and never reaches the app's work — and short enough that the
+ * two callers who ask on a timer (`launchAndWait` every 200 ms, `--wait` every
+ * 250 ms) never queue up behind it.
  */
-export function socketAnswers(socketPath: string): Promise<boolean> {
+export const LIVENESS_TIMEOUT_MS = 2_000;
+
+/**
+ * Whether there is a DevHub there.
+ *
+ * It **asks**, and the answer coming back is the whole test. Connecting is not,
+ * and that is not a subtlety: a `devhub` on a host talks over a unix socket
+ * that `ssh -R` reverse-forwarded onto it, and that socket belongs to the
+ * host's **sshd**. It accepts a connection whether or not anything is still
+ * listening at the far end, so a `connect()` there answers "DevHub is running"
+ * about a DevHub that quit an hour ago. `devhub --wait` on the host — whose
+ * one job is to stop waiting when there is nobody left to close the file —
+ * waited forever, and `git commit` over there never returned.
+ *
+ * One probe for both machines, because there is one question. The local socket
+ * happens to be honest about connections and the forwarded one is not, and a
+ * rule that held only where it was already true would be no rule at all.
+ *
+ * A bound is part of the test rather than a safety net over it: a socket that
+ * accepts and then says nothing is exactly what a dead far end looks like, so
+ * "no answer in time" *is* the answer "not running", and it is reported as
+ * that rather than as a failure of the probe.
+ */
+export function socketAnswers(
+	socketPath: string,
+	timeoutMs: number = LIVENESS_TIMEOUT_MS,
+): Promise<boolean> {
 	return new Promise((resolve) => {
 		const probe = connect(socketPath);
-		probe.once("connect", () => {
+		let buffer = "";
+		const done = (answered: boolean) => {
+			clearTimeout(timer);
 			probe.destroy();
-			resolve(true);
+			resolve(answered);
+		};
+		const timer = setTimeout(() => {
+			done(false);
+		}, timeoutMs);
+		probe.setEncoding("utf8");
+		probe.once("connect", () => {
+			probe.write(`${JSON.stringify({ kind: "ping" })}\n`);
+		});
+		probe.on("data", (chunk: string) => {
+			buffer += chunk;
+			// One line of JSON is the protocol's whole answer; anything that
+			// answers at all is a DevHub, and what it said is not read here.
+			if (buffer.includes("\n")) done(true);
 		});
 		probe.once("error", () => {
-			probe.destroy();
-			resolve(false);
+			done(false);
+		});
+		probe.once("close", () => {
+			done(buffer.includes("\n"));
 		});
 	});
 }
