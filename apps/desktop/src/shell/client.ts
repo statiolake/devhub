@@ -14,6 +14,7 @@ import type {
   AppIntent,
   AppOutcome,
   AppSnapshot,
+  NoticeRetiredWire,
   ReplayWire,
 } from "../ipc/appShell";
 import type {
@@ -141,6 +142,14 @@ export interface AppShellClient {
   openModal(request: ModalRequest): Promise<string>;
   /** Hand main a failure this page has no place to draw. */
   raiseFailure(error: AppError): Promise<void>;
+  /**
+   * Say that a notice has left the screen, and by which of the three rules.
+   *
+   * Main publishes notices and cannot see them go: two of the three exits are
+   * gestures that happen here. Reported so the main log can tell a notice that
+   * stood from one that blinked — see `ipc/contract.ts`.
+   */
+  reportNoticeRetired(retired: NoticeRetiredWire): Promise<void>;
   closeModal(id: string, response?: number): Promise<void>;
 }
 
@@ -221,6 +230,7 @@ export function createShellClient(api: DevhubApi = devhub()): AppShellClient {
     focusSurface: () => api.focusSurface(),
     openModal: (request) => api.openModal(request),
     raiseFailure: (error) => api.raiseFailure(error),
+    reportNoticeRetired: (retired) => api.reportNoticeRetired(retired),
     closeModal: (id, response) => api.closeModal(id, response),
   };
 }

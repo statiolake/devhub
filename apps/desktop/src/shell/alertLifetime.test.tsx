@@ -113,6 +113,7 @@ function mount(options?: {
     setContentSurface: async () => undefined,
     openModal: async () => "",
     closeModal: async () => undefined,
+    reportNoticeRetired: async () => undefined,
   } as unknown as AppShellClient;
   render(
     <AppShellProvider client={client} raiseFailure={options?.raiseFailure}>
@@ -157,8 +158,31 @@ describe("the failure on screen", () => {
       screen.getByText("Dismiss").click();
     });
 
+    raise({
+      code: "native_unavailable",
+      summary: "The native app shell is unavailable.",
+      module: "app",
+      timestampMs: 1,
+      runtimeVersion: "test",
+      actions: ["retry"],
+    });
+    expect(alert()).toContain("The native app shell is unavailable.");
+  });
+
+  it("keeps a dismissed failure away when it comes back in other words", async () => {
+    // The same failure re-worded is the same failure. A save that cannot
+    // write has a different reason every time the disk is asked — permission
+    // one moment, no space the next — and if the words decided which failure
+    // it was, the source would only have to reword itself to put a dismissed
+    // alert straight back. It is the code that says what a failure is.
+    const { raise } = mount();
+    raise(failure("/tmp/state.json: permission was denied (EACCES)"));
+    await act(async () => {
+      screen.getByText("Dismiss").click();
+    });
+
     raise(failure("/tmp/state.json: the file could not be written (ENOSPC)"));
-    expect(alert()).toContain("ENOSPC");
+    expect(alert()).toBe("");
   });
 
   it("keeps a dismissed close failure away until the next close is asked for", async () => {

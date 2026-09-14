@@ -45,8 +45,14 @@
  * coming back is news rather than the repeat the dismissal was about.
  */
 
-import { useCallback, useMemo, useState } from "react";
-import type { AppError, AppErrorActionWire } from "../ipc/appShell";
+import { useCallback, useMemo, useRef, useState } from "react";
+import {
+  appConditionIdentity,
+  appFailureIdentity,
+  type AppError,
+  type AppErrorActionWire,
+  type NoticeRetiredWire,
+} from "../ipc/appShell";
 import { useAlertLifetime } from "./alertLifetime";
 
 /**
@@ -62,8 +68,13 @@ export interface Notice {
    * What makes two notices the same notice.
    *
    * The shared lifetime rule reads it, so it is what decides whether a repeat
-   * is suppressed and whether a dismissal still holds. Two notices with the
-   * same identity are one thing being re-raised; a different identity is news.
+   * is suppressed and whether a dismissal still holds — and the toast stack
+   * keys by it, so it also decides which DOM node draws it. Two notices with
+   * the same identity are one thing being re-raised; a different identity is
+   * news, *and a node removed and another added*.
+   *
+   * It is the code and the subject and never the sentence, and the one
+   * definition of that is `ipc/appShell.ts`, which main computes from too.
    */
   readonly identity: string;
   readonly summary: string;
@@ -90,13 +101,25 @@ function identityOf(notice: Notice): string {
 /**
  * What a failure the application published looks like as a notice.
  *
- * The code and the words are the identity, the same pair the App Shell has
- * always used: a save that keeps failing for the same reason is one failure
- * being re-raised, and one that starts failing differently is news.
+ * The **code alone** is the identity, on this app-scoped channel where the
+ * subject is always the application. The words used to be part of it, and that
+ * was the flicker: a failure's detail is the failing side's own sentence, and
+ * that sentence moves while the condition behind it stands still. A tmux that
+ * will not answer names a different subcommand and a different budget every
+ * round (`main/terminal/tmux.ts`), a workbench that keeps restarting counts
+ * its attempts — so every publish was a *different* notice, the stack is keyed
+ * by identity, and a different key is a node removed and another added. At the
+ * rate a reconcile round publishes, that is a sentence blinking several times
+ * a second.
+ *
+ * What it costs is that a failure the person dismissed stays dismissed even if
+ * the next one of that code says something new. That is the right way round:
+ * the alternative is an alert that cannot be got out of the way of, because
+ * the source only has to word itself differently to put it straight back.
  */
 function failureNotice(error: AppError): Notice {
   return {
-    identity: `${error.code}\u0000${error.detail ?? ""}`,
+    identity: appFailureIdentity(error.code),
     summary: error.summary,
     ...(error.detail == null ? {} : { detail: error.detail }),
     actions: error.actions,
@@ -127,7 +150,17 @@ export interface AppNotices {
   readonly dismissNewest: () => void;
 }
 
-export function useAppNotices(): AppNotices {
+export function useAppNotices(
+  /**
+   * Where a retirement is reported, so main can log it.
+   *
+   * Main publishes every notice and sees none of them go: two of the three
+   * exits are gestures that only happen here. Required rather than optional,
+   * because a page that quietly did not report would produce a log saying a
+   * notice went up and never came down — which is a worse answer than none.
+   */
+  report: (retired: NoticeRetiredWire) => void,
+): AppNotices {
   // Destructured rather than kept whole: `useAlertLifetime` returns a fresh
   // object every render and its callbacks are the stable part, so anything
   // built on the object would change identity on every render — and an effect
@@ -142,15 +175,47 @@ export function useAppNotices(): AppNotices {
   const {
     alert: failureAlert,
     raise: raiseFailureNotice,
-    clear: clearFailure,
+    clear: clearFailureNotice,
     dismiss: dismissFailure,
   } = useAlertLifetime<Notice>(identityOf);
+
+  // What is on screen, readable from a callback that must not depend on it:
+  // a `clearFailure` that changed identity whenever a notice arrived would run
+  // every effect built on it again, which is the loop `useAlertLifetime`'s own
+  // comment warns about.
+  const held = useRef<{ condition: Notice | null; failure: Notice | null }>({
+    condition: null,
+    failure: null,
+  });
+  held.current = { condition: conditionAlert, failure: failureAlert };
+  const reportRef = useRef(report);
+  reportRef.current = report;
+
+  const clearFailure = useCallback(() => {
+    const retiring = held.current.failure;
+    if (retiring) {
+      reportRef.current({
+        identity: retiring.identity,
+        reason: "next_action",
+      });
+    }
+    clearFailureNotice();
+  }, [clearFailureNotice]);
 
   // Which channel spoke last, kept as state rather than a ref because the
   // order the stack is drawn in is something the render reads.
   const [order, setOrder] = useState<readonly Channel[]>(CHANNELS);
   const promote = useCallback((channel: Channel) => {
-    setOrder((current) => [...current.filter((c) => c !== channel), channel]);
+    setOrder((current) => {
+      // The same channel speaking again does not change the order, and saying
+      // so is what stops it becoming work: a fresh array here is a fresh
+      // `notices`, which is a fresh context value and a re-render of the stack
+      // — at the rate a reconcile round publishes into a condition that is
+      // already up, which is once a second per machine and nothing to show
+      // for it.
+      if (current[current.length - 1] === channel) return current;
+      return [...current.filter((c) => c !== channel), channel];
+    });
   }, []);
 
   const notices = useMemo(() => {
@@ -176,15 +241,21 @@ export function useAppNotices(): AppNotices {
       if (summary === undefined) {
         // The source retracted it. `clear` and not `dismiss`: the condition
         // ended, so nothing about it is being kept away.
+        const retiring = held.current.condition;
+        if (retiring) {
+          reportRef.current({ identity: retiring.identity, reason: "source" });
+        }
         clearCondition();
         return;
       }
       promote("condition");
       raiseConditionNotice({
-        // The words are part of the identity: a network that dropped and a
-        // `gh` that is missing are two conditions from one source, and having
-        // put one away is no reason not to be told about the other.
-        identity: `${source}\u0000${summary}`,
+        // The source alone is the identity, because the source *is* the slot:
+        // one source holds one condition. The words used to be part of it, and
+        // a source that reworded a standing fact — which is what a round that
+        // fails differently does — then read as one condition ending and
+        // another beginning, i.e. a remove and an add, i.e. a blink.
+        identity: appConditionIdentity(source),
         summary,
         actions: [],
         live: "status",
@@ -195,8 +266,12 @@ export function useAppNotices(): AppNotices {
 
   const dismiss = useCallback(
     (identity: string) => {
+      const matched =
+        conditionAlert?.identity === identity ||
+        failureAlert?.identity === identity;
       if (conditionAlert?.identity === identity) dismissCondition();
       if (failureAlert?.identity === identity) dismissFailure();
+      if (matched) reportRef.current({ identity, reason: "person" });
     },
     [conditionAlert, failureAlert, dismissCondition, dismissFailure],
   );

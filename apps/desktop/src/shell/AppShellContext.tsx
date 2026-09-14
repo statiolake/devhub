@@ -132,7 +132,17 @@ export function AppShellProvider({
     clearFailure: clearIntentError,
     dismiss: dismissNotice,
     dismissNewest: dismissNewestNotice,
-  } = useAppNotices();
+  } = useAppNotices(
+    // Straight to main, where the log is. `void` and not awaited: a retirement
+    // is a thing to write down, and a page that waited on the write would make
+    // closing a toast depend on main answering.
+    useCallback(
+      (retired) => {
+        void transport.reportNoticeRetired(retired);
+      },
+      [transport],
+    ),
+  );
 
   const setIntentError = useCallback(
     (error: AppError) => {

@@ -72,6 +72,10 @@ let menuCommand: (command: string) => void = () => undefined;
 function mount() {
   let publishStatus: (next: RepositoryStatusWire) => void = () => undefined;
   let publishError: (error: AppError) => void = () => undefined;
+  let publishCondition: (condition: {
+    source: string;
+    summary?: string;
+  }) => void = () => undefined;
   window.devhub = {
     openModal: () => Promise.resolve(""),
     onMenuCommand: (listener: (command: string) => void) => {
@@ -91,7 +95,12 @@ function mount() {
     getWindowTitle: async () => "DevHub",
     subscribeWindowTitle: () => () => undefined,
     subscribeAgentProfiles: () => () => undefined,
-    subscribeAppCondition: () => () => undefined,
+    subscribeAppCondition: (
+      listener: (condition: { source: string; summary?: string }) => void,
+    ) => {
+      publishCondition = listener;
+      return () => undefined;
+    },
     subscribeNativeError: (listener: (error: AppError) => void) => {
       publishError = listener;
       return () => undefined;
@@ -114,6 +123,7 @@ function mount() {
     setContentSurface: async () => undefined,
     openModal: async () => "",
     closeModal: async () => undefined,
+    reportNoticeRetired: async () => undefined,
   } as unknown as AppShellClient;
 
   render(
@@ -131,6 +141,13 @@ function mount() {
     fail: (error: AppError) =>
       act(() => {
         publishError(error);
+      }),
+    observe: (source: string, summary?: string) =>
+      act(() => {
+        publishCondition({
+          source,
+          ...(summary === undefined ? {} : { summary }),
+        });
       }),
   };
 }
@@ -248,5 +265,102 @@ describe("a failure and a condition at once", () => {
       menuCommand("dismiss_alert");
     });
     expect(toasts()).toHaveLength(0);
+  });
+});
+
+/**
+ * The flicker, as a test: a condition that holds and a source that keeps
+ * describing it differently.
+ *
+ * This is what the owner saw — a sentence blinking five to ten times a second
+ * on a machine after a sleep — and every part of it is ordinary. A reconcile
+ * round republishes while the condition holds, and the words it publishes
+ * carry the failing side's own detail, which moves: `main/terminal/tmux.ts`
+ * names the subcommand and the budget it gave up after, so "did not answer
+ * within 2 s" becomes "within 4 s" becomes a different subcommand entirely.
+ *
+ * If any of that reached the notice's identity, each publish would be a
+ * different notice, the stack keys by identity, and React would take one node
+ * out and put another in — at the publish rate. So the assertion is not about
+ * what the toast says: it is that the *same DOM element* is still there after
+ * fifty publishes, and that nothing was added or removed on the way.
+ */
+describe("a condition that holds while its words move", () => {
+  afterEach(cleanup);
+
+  it("is one node that never leaves, however often the sentence changes", () => {
+    const { observe } = mount();
+    observe("machine:ssh:build-box", "DevHub is not getting an answer.");
+
+    const first = screen.getByRole("status");
+    const churn: string[] = [];
+    const watcher = new MutationObserver((records) => {
+      for (const record of records) {
+        for (const node of record.addedNodes) {
+          if (node instanceof HTMLElement && node.classList.contains("toast")) {
+            churn.push("added");
+          }
+        }
+        for (const node of record.removedNodes) {
+          if (node instanceof HTMLElement && node.classList.contains("toast")) {
+            churn.push("removed");
+          }
+        }
+      }
+    });
+    watcher.observe(document.body, { childList: true, subtree: true });
+
+    for (let round = 1; round <= 50; round += 1) {
+      observe(
+        "machine:ssh:build-box",
+        `DevHub is not getting an answer. tmux \`list-panes\` did not answer within ${String(round)} s`,
+      );
+    }
+    watcher.takeRecords();
+    watcher.disconnect();
+
+    expect(churn).toEqual([]);
+    expect(toasts()).toHaveLength(1);
+    // Element identity, not text: a node that was replaced by an identical one
+    // is exactly the bug, and it reads the same to `toHaveTextContent`.
+    expect(screen.getByRole("status")).toBe(first);
+  });
+
+  it("is one node for a failure whose detail moves, too", () => {
+    const { fail } = mount();
+    const raise = (detail: string): AppError => ({
+      code: "native_unavailable",
+      summary: "The native app shell is unavailable.",
+      module: "terminal",
+      timestampMs: 1,
+      runtimeVersion: "test",
+      actions: ["retry", "open_settings"],
+      detail,
+    });
+    fail(raise("tmux `list-panes` did not answer within 1 s"));
+
+    const first = screen.getByRole("alert");
+    const churn: string[] = [];
+    const watcher = new MutationObserver((records) => {
+      for (const record of records) {
+        if (record.addedNodes.length > 0) churn.push("added");
+        if (record.removedNodes.length > 0) churn.push("removed");
+      }
+    });
+    watcher.observe(document.body, { childList: true, subtree: true });
+
+    for (let round = 1; round <= 50; round += 1) {
+      fail(
+        raise(
+          `tmux \`display-message\` did not answer within ${String(round)} s`,
+        ),
+      );
+    }
+    watcher.takeRecords();
+    watcher.disconnect();
+
+    expect(churn).toEqual([]);
+    expect(toasts()).toHaveLength(1);
+    expect(screen.getByRole("alert")).toBe(first);
   });
 });
