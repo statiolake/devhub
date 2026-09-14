@@ -84,7 +84,9 @@ vi.mock("../electron.js", () => ({
 	},
 }));
 
-const { WorkbenchView } = await import("./workbenchView.js");
+const { WorkbenchView, asBrowserWindow, workbenchViewOf } = await import(
+	"./workbenchView.js"
+);
 type WorkbenchView = InstanceType<typeof WorkbenchView>;
 
 /** Only the part of the shell a view touches while being shown or hidden. */
@@ -169,6 +171,93 @@ class FakeShell {
 function looksLikeAFailedStart(view: WorkbenchView): boolean {
 	return !view.isVisible() && !view.isMinimized();
 }
+
+describe("telling one of DevHub's views from a real window", () => {
+	// Electron decides from the *shape* of `dialog.show*`'s first argument
+	// whether it was handed a parent window or an options object, and a view
+	// passes for neither: it reads the options off the view and throws from
+	// inside the dialog queue, uncaught, in main. So whoever hands Electron a
+	// window has to know which of the two it is holding — and has to still know
+	// after the view has ended, because a dialog about a workbench that just
+	// died is exactly the one upstream raises next.
+	it("sees the view through the object VS Code actually holds", () => {
+		const shell = new FakeShell();
+		const view = new WorkbenchView(
+			shell as unknown as ConstructorParameters<typeof WorkbenchView>[0],
+			{},
+		);
+		expect(workbenchViewOf(asBrowserWindow(view))?.id).toBe(view.id);
+	});
+
+	it("still says so once the view has ended", () => {
+		const shell = new FakeShell();
+		const view = new WorkbenchView(
+			shell as unknown as ConstructorParameters<typeof WorkbenchView>[0],
+			{},
+		);
+		shell.attach(view);
+		const window = asBrowserWindow(view);
+		(view.webContents as unknown as FakeWebContents).emit(
+			"render-process-gone",
+		);
+		expect(shell.attached).toEqual([]);
+		expect(workbenchViewOf(window)?.id).toBe(view.id);
+		expect(workbenchViewOf(window)?.isDestroyed()).toBe(true);
+	});
+
+	it("says nothing about a window that is not one of DevHub's", () => {
+		expect(workbenchViewOf(undefined)).toBeUndefined();
+		expect(
+			workbenchViewOf({ id: 3 } as unknown as Electron.BrowserWindow),
+		).toBeUndefined();
+	});
+});
+
+describe("a workbench view whose renderer died", () => {
+	let shell: FakeShell;
+	let view: WorkbenchView;
+	let contents: FakeWebContents;
+
+	beforeEach(() => {
+		shell = new FakeShell();
+		view = new WorkbenchView(
+			shell as unknown as ConstructorParameters<typeof WorkbenchView>[0],
+			{},
+		);
+		contents = view.webContents as unknown as FakeWebContents;
+		shell.attach(view);
+	});
+
+	it("stops being a window the moment the renderer goes", () => {
+		// A `WebContents` whose render process was killed is not destroyed: it
+		// keeps its id and answers `isDestroyed()` with `false`. Left at that,
+		// the view stayed on the shell's table and in VS Code's, and the next
+		// open for the folder was routed into the corpse.
+		contents.emit("render-process-gone");
+		expect(view.isDestroyed()).toBe(true);
+		expect(shell.attached).toEqual([]);
+	});
+
+	it("destroys the contents, which is what unregisters the window", () => {
+		// Being off DevHub's tables is only half of it. `CodeWindow` takes its
+		// window out of VS Code's table when the contents are destroyed, so the
+		// contents have to actually end — dropping the view would leave the
+		// window registered and routable.
+		const closed: string[] = [];
+		contents.on("destroyed", () => closed.push("destroyed"));
+		contents.emit("render-process-gone");
+		expect(closed).toEqual(["destroyed"]);
+	});
+
+	it("says nothing more when the same death is reported twice", () => {
+		contents.emit("render-process-gone");
+		shell.attach(view);
+		contents.emit("render-process-gone");
+		// The second report found a view that had already ended, so it did not
+		// run the teardown again over contents that are gone.
+		expect(shell.attached).toEqual([view]);
+	});
+});
 
 describe("a workbench view's identity", () => {
 	it("is a number no Electron window could be wearing", () => {

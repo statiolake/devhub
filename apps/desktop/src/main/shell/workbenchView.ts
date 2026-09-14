@@ -176,11 +176,36 @@ export class WorkbenchView {
 		}
 		// The contents ending *is* the view ending, whoever ended them. DevHub's
 		// own `destroy` runs the teardown before it closes them; this is the
-		// same teardown for the two endings DevHub did not ask for — VS Code
-		// closing the contents, and a renderer that crashed — so that there is
-		// no way for a view to outlive its contents on any table in main.
+		// same teardown for the ending DevHub did not ask for — VS Code closing
+		// the contents — so that there is no way for a view to outlive its
+		// contents on any table in main.
 		this.contents.once("destroyed", () => {
 			this.end();
+		});
+		// A renderer that died is a third ending, and it does not come through
+		// the one above: a `WebContents` whose render process is gone is not
+		// destroyed. It keeps its id, answers `isDestroyed()` with `false`, and
+		// stays exactly as much of a window as it was — so nothing fired, this
+		// view stayed attached to the shell, and `CodeWindow` stayed in VS
+		// Code's window table with everything that table decides still pointing
+		// at it. The next open for that folder was then routed *into the
+		// corpse*: `doOpenFilesInExistingWindow` reaches for its frame, Electron
+		// answers "Render frame was disposed before WebFrameMain could be
+		// accessed", and the open never settles.
+		//
+		// So the death is the ending, taken at the moment it happens rather
+		// than whenever somebody next tries to use the view and finds out. The
+		// contents are destroyed rather than merely dropped, because being off
+		// DevHub's tables is only half of it: `CodeWindow`'s own close
+		// bookkeeping hangs off their `destroyed`, and that is what takes the
+		// window out of VS Code's table. Destroying contents whose renderer is
+		// already gone is exactly what `destroy` does for a live one — there is
+		// no renderer left to ask, so nothing can refuse.
+		this.contents.once("render-process-gone", () => {
+			console.log(
+				`[devhub] workbench view ${this.id}: its renderer is gone — it is not a window any more`,
+			);
+			this.destroy();
 		});
 	}
 
@@ -773,6 +798,27 @@ export class WorkbenchView {
  * above does not implement.
  */
 const proxies = new WeakMap<WorkbenchView, Electron.BrowserWindow>();
+
+/**
+ * The view one of those objects is, if that is what it is.
+ *
+ * What comes back is the object that was passed in — the proxy is the view, it
+ * only forwards the members the class does not carry — so the caller may use it
+ * as either.
+ *
+ * Asked of the object itself, never of a table it might be in. A view leaves
+ * the shell's table the moment it ends, so "is this a view" answered by
+ * looking it up there says *no* for exactly the views that most need the
+ * answer — the ones that have just died — and the caller then hands Electron a
+ * `WorkbenchView` where a `BrowserWindow` is required. `instanceof` sees
+ * through the proxy (its prototype chain is the view's) and keeps saying what
+ * the object is for as long as anybody holds it.
+ */
+export function workbenchViewOf(
+	window: Electron.BrowserWindow | undefined,
+): WorkbenchView | undefined {
+	return window instanceof WorkbenchView ? window : undefined;
+}
 
 export function asBrowserWindow(view: WorkbenchView): Electron.BrowserWindow {
 	const existing = proxies.get(view);
