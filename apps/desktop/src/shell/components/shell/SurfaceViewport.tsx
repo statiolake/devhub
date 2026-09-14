@@ -422,16 +422,25 @@ export function SurfaceViewport({
   useLayoutEffect(() => {
     const element = holeRef.current;
     if (!element) return;
+    // Only a rectangle that is *different* is news. A `ResizeObserver` fires
+    // for every layout pass the element takes part in, most of which leave it
+    // exactly where it was, and each one used to be a round trip to main — and
+    // when main was refusing them, a republished alert per frame. The hole's
+    // position is the fact being reported, so reporting the same one twice
+    // says nothing either time.
+    let last = "";
     const report = () => {
       const rect = element.getBoundingClientRect();
-      void devhub()
-        .setContentRect({
-          x: rect.left,
-          y: rect.top,
-          width: rect.width,
-          height: rect.height,
-        })
-        .catch(reportFailure);
+      const measured = {
+        x: rect.left,
+        y: rect.top,
+        width: rect.width,
+        height: rect.height,
+      };
+      const identity = JSON.stringify(measured);
+      if (identity === last) return;
+      last = identity;
+      void devhub().setContentRect(measured).catch(reportFailure);
     };
     const observer = new ResizeObserver(report);
     observer.observe(element);

@@ -33,6 +33,10 @@ export function closeDiagnosticLabel(diagnostic: CloseDiagnosticWire): string {
       return "A cleanup step did not finish.";
     case "runtime_unavailable":
       return "A runtime DevHub needs is unavailable.";
+    case "editor_restart_exhausted":
+      return "The editor for this workspace kept stopping, so DevHub stopped restarting it.";
+    case "editor_unavailable":
+      return "The editor for this workspace could not be started.";
   }
 }
 

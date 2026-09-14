@@ -518,7 +518,9 @@ export type CloseDiagnosticWire =
 	| "close_editor_unresponsive"
 	| "close_editor_vetoed"
 	| "cleanup_failed"
-	| "runtime_unavailable";
+	| "runtime_unavailable"
+	| "editor_restart_exhausted"
+	| "editor_unavailable";
 export interface CloseInspectionWire {
 	readonly agents: CloseResourceWire;
 	readonly terminalPanes: CloseResourceWire;

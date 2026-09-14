@@ -66,6 +66,10 @@ function closeResourceStatus(resource: CloseResourceWire): string {
           return "Could not verify cleanup state";
         case "runtime_unavailable":
           return "Could not verify: runtime unavailable";
+        case "editor_restart_exhausted":
+          return "Could not verify: the editor kept stopping";
+        case "editor_unavailable":
+          return "Could not verify: the editor could not be started";
       }
   }
 }

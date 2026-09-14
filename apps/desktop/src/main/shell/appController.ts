@@ -169,7 +169,21 @@ import {
 	unavailableAgentProfiles,
 	InvalidIntent,
 } from "../../model/wire.js";
-import { isQuitting, shellWindow } from "./shellWindow.js";
+import {
+	isQuitting,
+	shellWindow,
+	shellWindowIfCreated,
+} from "./shellWindow.js";
+import {
+	crash,
+	InvariantViolation,
+	isInvariantViolation,
+} from "./invariant.js";
+import {
+	deadEditorKeys,
+	editorGaveUpFailure,
+	EditorSupervisor,
+} from "./editorSupervisor.js";
 import { shellTheme } from "./shellTheme.js";
 import { appearanceMode } from "./appearanceMode.js";
 import { editorElement, shellTitleFor } from "./shellTitle.js";
@@ -303,6 +317,72 @@ const APP_ROOT = join(
 const SCRATCH_EDITOR = SCRATCH_EDITOR_KEY;
 
 /**
+ * What a thrown thing said, for a detail line.
+ *
+ * Not `errorWire`: that turns anything unrecognised into
+ * `native_unavailable`, an app-wide sentence, and the whole point of routing a
+ * workbench failure to its Workspace is that it is not one.
+ */
+/**
+ * Whether this view is a workbench somebody could type into.
+ *
+ * Three states are one fact. A view DevHub destroyed, a view whose contents
+ * Electron destroyed, and a view whose renderer was killed — by the OS during
+ * sleep, or by hand — are all "there is no workbench here", and only the first
+ * two answer `isDestroyed`. The third keeps the `WebContents` object, so a
+ * check that asked only that question said yes about a dead process.
+ */
+function isLiveWorkbench(view: WorkbenchView): boolean {
+	return !view.isDestroyed() && !view.webContents.isCrashed();
+}
+
+function describeFailure(error: unknown): string {
+	return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * How long an open may take before it counts as having failed.
+ *
+ * Because an open that never settles is the one failure with no symptom at
+ * all: the promise stays in `editorOpens`, every later caller joins it, and
+ * the folder has no workbench, no restart and nothing on screen for ever. It
+ * is reachable — VS Code's window service, asked to open a folder whose window
+ * is a renderer that has just been killed, can route the request into that
+ * dead window and never answer. Generous, because a cold workbench really does
+ * take seconds; finite, because silence is not an outcome.
+ */
+const EDITOR_OPEN_TIMEOUT_MS = 30_000;
+
+/**
+ * The same promise, with "it never answered" as one of its answers.
+ *
+ * The timer is cleared on either outcome and never keeps the process alive, so
+ * an open that succeeds costs one timer and nothing else.
+ */
+function withDeadline<T>(
+	work: Promise<T>,
+	timeoutMs: number,
+	message: string,
+): Promise<T> {
+	return new Promise<T>((resolve, reject) => {
+		const timer = setTimeout(() => {
+			reject(new Error(message));
+		}, timeoutMs);
+		(timer as unknown as { unref?: () => void }).unref?.();
+		work.then(
+			(value) => {
+				clearTimeout(timer);
+				resolve(value);
+			},
+			(error: unknown) => {
+				clearTimeout(timer);
+				reject(error instanceof Error ? error : new Error(String(error)));
+			},
+		);
+	});
+}
+
+/**
  * The folder URI a workbench is opened on.
  *
  * One function for both kinds, because the difference between them *is* this
@@ -359,10 +439,6 @@ const MAX_DRAIN_ROUNDS = 512;
  */
 const METRICS_CLIENT_TIMEOUT_MS = 2_000;
 
-/** A crash loop is a bug to report, not a thing to keep feeding. */
-const MAX_EDITOR_RESTARTS = 5;
-const RESTART_BACKOFF_MS = 250;
-
 interface PendingRequest {
 	readonly promise: Promise<IntentOutcome>;
 	readonly settle: (outcome: IntentOutcome) => void;
@@ -394,8 +470,14 @@ export class AppController {
 	 */
 	private readonly viewsByEditorKey = new Map<string, number>();
 
-	/** How many unasked-for deaths a folder's workbench gets before DevHub stops. */
-	private readonly editorRestarts = new Map<string, number>();
+	/**
+	 * The one budget for "this folder has no workbench and the last try failed".
+	 *
+	 * Every way that can happen — a renderer the OS killed, an open that
+	 * rejected, a view that never arrived — is counted here, against one
+	 * ceiling, with one backoff. See `editorSupervisor.ts`.
+	 */
+	private readonly editorSupervisor = new EditorSupervisor();
 	/** One in-flight workbench open per folder, shared by concurrent callers. */
 	private readonly editorOpens = new Map<
 		string,
@@ -737,6 +819,7 @@ export class AppController {
 		const wake = (): void => {
 			for (const runtime of liveRuntimes()) runtime.resumed();
 			this.agentReconcilers.wake();
+			this.checkEditorHealth();
 		};
 		electron.powerMonitor.on("resume", wake);
 		this.stopWatchingWake = (): void => {
@@ -1925,7 +2008,16 @@ export class AppController {
 			// reconciler supersedes its own rounds by design, and a person told
 			// "an operation went stale" every time DevHub asked the provider a
 			// fresher question learns nothing and stops reading the error area.
-			if (!isStaleCompletion(error)) {
+			if (isUnknownOperation(error)) {
+				// A completion for an operation that was never started cannot be
+				// answered by anybody: there is no request waiting, no surface it
+				// belongs to, and no action to offer. It used to be published as an
+				// app-wide notice — through `errorWire`, so under whatever code that
+				// mapping happened to pick — from inside a loop, which is how one
+				// wiring bug became a sentence that flickered. It is a bug in
+				// DevHub's own flow and it stops the process.
+				crash(error);
+			} else if (!isStaleCompletion(error)) {
 				this.publishError(errorWire(error));
 			}
 			this.reject(id, error);
@@ -2069,6 +2161,15 @@ export class AppController {
 					// same rule applies: a failure goes to the error surface, never
 					// to `unhandledRejection`.
 					void this.perform(effect).catch((error: unknown) => {
+						// An effect that failed because the world did is news, and goes
+						// to the error surface. An effect that failed because DevHub's
+						// own assumption broke is not, and no amount of drawing it
+						// would help: effects run in loops, so it would be drawn at the
+						// loop's cadence. See `invariant.ts`.
+						if (isInvariantViolation(error)) {
+							crash(error);
+							return;
+						}
 						this.publishError(errorWire(error));
 					});
 				}
@@ -2634,18 +2735,16 @@ export class AppController {
 	): Promise<void> {
 		const adapter = agents();
 		if (!adapter) {
-			this.failOperation(
-				token,
-				agentSubject(
-					agentId,
-					{
-						code: "agent_runtime_unavailable",
-						detail: "The Agent runtime is not running.",
-					},
-					machine,
-				),
+			// Not `agent_runtime_unavailable`, and above all not the *machine's*
+			// failure. `agentSubject` with no Agent blames the machine, so a round
+			// dispatched before `wireAgents` had run said "DevHub is not getting an
+			// answer from local" about a tmux that was answering perfectly — and
+			// said it again on every round. DevHub's own adapter not being there
+			// is DevHub's bug, and a bug is not a notice. See `invariant.ts`, and
+			// `bootstrapShell` for the ordering that makes this unreachable.
+			throw new InvariantViolation(
+				"a reconcile round was dispatched before the Agent adapter was wired",
 			);
-			return;
 		}
 		// One Agent's round is about the machine that Agent is on; a whole
 		// machine's round says which in the effect. Neither is a search: an
@@ -3038,7 +3137,14 @@ export class AppController {
 			existingId === undefined
 				? undefined
 				: shellWindow().getViewById(existingId);
-		if (existing) return Promise.resolve(existing);
+		// Present is not the same as alive. A renderer the OS killed while the
+		// Mac slept leaves the view where it was, with contents nothing can be
+		// asked of; handing that back said "there is a workbench here" to every
+		// caller and nothing ever built the replacement. The table is corrected
+		// here rather than anywhere else, because this is the one place that
+		// reads it and can act on the answer.
+		if (existing && isLiveWorkbench(existing)) return Promise.resolve(existing);
+		if (existing) this.viewsByEditorKey.delete(folder);
 
 		const inFlight = this.editorOpens.get(folder);
 		if (inFlight) return inFlight;
@@ -3047,7 +3153,13 @@ export class AppController {
 		// in the same tick is still one open. An open that has to wait for VS
 		// Code's services is in flight from the moment it is asked for, which is
 		// what stops startup from queuing one attempt per projection change.
-		const attempt = this.openEditorView(folder).finally(() => {
+		const attempt = withDeadline(
+			this.openEditorView(folder),
+			EDITOR_OPEN_TIMEOUT_MS,
+			`the workbench for this folder did not open within ${String(
+				EDITOR_OPEN_TIMEOUT_MS / 1_000,
+			)} seconds`,
+		).finally(() => {
 			this.editorOpens.delete(folder);
 		});
 		this.editorOpens.set(folder, attempt);
@@ -3273,9 +3385,18 @@ export class AppController {
 			noRecentEntry: true,
 		});
 		const opened = windows.at(0);
-		if (opened) this.viewsByEditorKey.set(editorKey, opened.id);
-		const view =
+		const candidate =
 			opened === undefined ? undefined : shellWindow().getViewById(opened.id);
+		// An open can come back with a window that is not a workbench any more.
+		// VS Code's window service answers an open for a folder it already has a
+		// window for by routing the request *into that window* — and after a
+		// renderer has been killed, that window is a shell with a dead process
+		// in it. Taking it as the answer put a zombie in the table: the folder
+		// had no workbench, the supervisor had nothing to count, and nothing on
+		// screen said so. A dead view is not an answer, so the open failed.
+		const view =
+			candidate && isLiveWorkbench(candidate) ? candidate : undefined;
+		if (opened && view) this.viewsByEditorKey.set(editorKey, opened.id);
 		if (view) {
 			this.superviseEditorView(editorKey, view);
 			// A workbench that is up again is no longer restarting. Waiting for
@@ -3285,7 +3406,7 @@ export class AppController {
 			// page saying "restarting" for ever about a workbench that is right
 			// there.
 			const settled = () => {
-				this.editorRestarts.delete(editorKey);
+				this.editorSupervisor.loaded(editorKey, Date.now());
 				this.announceRestarting(editorKey, false);
 			};
 			if (view.webContents.isLoading()) {
@@ -3350,42 +3471,7 @@ export class AppController {
 			// no longer in the table, because that is what destroying it means.
 			if (this.viewsByEditorKey.get(folder) !== view.id) return;
 			this.viewsByEditorKey.delete(folder);
-			this.announceRestarting(folder, true);
-			const failures = (this.editorRestarts.get(folder) ?? 0) + 1;
-			this.editorRestarts.set(folder, failures);
-
-			// The summary is what happened and how far along the recovery is; the
-			// detail is why. A summary that named something else — "the native
-			// app shell is unavailable", say — would be a false statement on the
-			// one surface errors are read from, which is worse than no message.
-			if (failures > MAX_EDITOR_RESTARTS) {
-				this.publishError(
-					withDetail(
-						withSummary(
-							errorWireAt("editor_restart_exhausted"),
-							`The workbench stopped ${String(failures)} times and will not be restarted again.`,
-						),
-						reason,
-					),
-				);
-				return;
-			}
-			this.publishError(
-				withDetail(
-					withSummary(
-						errorWireAt("editor_restarting"),
-						`The workbench stopped unexpectedly and is restarting (attempt ${String(failures)} of ${String(MAX_EDITOR_RESTARTS)}).`,
-					),
-					reason,
-				),
-			);
-			const delay = RESTART_BACKOFF_MS * 2 ** (failures - 1);
-			const timer = setTimeout(() => {
-				void this.ensureEditorView(folder).catch((error: unknown) => {
-					this.publishError(errorWire(error));
-				});
-			}, delay);
-			(timer as unknown as { unref?: () => void }).unref?.();
+			this.editorFailed(folder, reason);
 		};
 		view.webContents.once("destroyed", () => {
 			died("The workbench process ended.");
@@ -3400,9 +3486,158 @@ export class AppController {
 			);
 		});
 		view.webContents.once("did-finish-load", () => {
-			this.editorRestarts.delete(folder);
+			// Loading is news for the page and not for the supervisor: the page
+			// has a workbench to draw again, and the supervisor has a workbench
+			// that has not yet proved anything. See `EDITOR_HEALTHY_MS`.
+			this.editorSupervisor.loaded(folder, Date.now());
 			this.announceRestarting(folder, false);
 		});
+	}
+
+	/**
+	 * There is no workbench for this folder and the last attempt did not make
+	 * one. The only place that decides what happens next.
+	 *
+	 * Every caller funnels here — the death watcher, a rejected open, an open
+	 * that returned no view — because they are one condition with several
+	 * causes, and a budget per cause is no budget. What comes out is either a
+	 * bounded restart, at a delay that doubles, or a terminal state on the
+	 * thing the failure is *about*.
+	 *
+	 * Nothing here publishes app-wide for a folder that has a Workspace. The
+	 * failure of one workspace's workbench is that workspace's news: it goes on
+	 * its row and its surface, where the person can retry it, and every other
+	 * row keeps its editor. `native_unavailable` — what a bare
+	 * `catch (e) => publishError(errorWire(e))` said here — was a sentence
+	 * about the whole application, published once per folder per projection
+	 * tick, which after a wake is several times a second.
+	 */
+	private editorFailed(folder: string, reason: string): void {
+		if (isQuitting()) return;
+		this.announceRestarting(folder, true);
+		console.error(`[devhub] workbench '${folder}' failed: ${reason}`);
+		const verdict = this.editorSupervisor.failed(folder, Date.now());
+		if (verdict.kind === "gave-up") {
+			this.reportEditorGaveUp(folder, reason, verdict.attempt);
+			return;
+		}
+		// One timer per folder. `syncEditorViews` also skips a folder with one
+		// pending, so a projection tick landing inside the wait cannot turn the
+		// backoff back into a restart per tick — which is the whole point of
+		// having a backoff.
+		if (this.editorRestartTimers.has(folder)) return;
+		const timer = setTimeout(() => {
+			this.editorRestartTimers.delete(folder);
+			if (this.editorSupervisor.gaveUp(folder)) return;
+			void this.ensureEditorView(folder).then(
+				(view) => {
+					if (!view && this.wantsWorkbench(folder)) {
+						this.editorFailed(folder, "No workbench view was created.");
+					}
+				},
+				(error: unknown) => {
+					this.editorFailed(folder, describeFailure(error));
+				},
+			);
+		}, verdict.delayMs);
+		(timer as unknown as { unref?: () => void }).unref?.();
+		this.editorRestartTimers.set(folder, timer);
+	}
+
+	/**
+	 * One deliberate look at every workbench, after the Mac has woken up.
+	 *
+	 * Sleep is the one event that can kill a renderer without anything in main
+	 * hearing an event it trusts: the view is still in the table, its contents
+	 * are gone or crashed, and the only thing that would ever have noticed is
+	 * the next caller who tried to use it. Waiting for that is how a wake turns
+	 * into a projection loop discovering a dead workbench a tick at a time.
+	 *
+	 * So it is asked once, on `resume`, and answered once per folder: a dead
+	 * view leaves the table and is rebuilt through the same supervisor as any
+	 * other failure — one restart, counted, bounded — rather than by a fresh
+	 * mechanism with its own budget.
+	 */
+	checkEditorHealth(): void {
+		if (isQuitting()) return;
+		const shell = shellWindowIfCreated();
+		if (!shell) return;
+		const dead = deadEditorKeys(
+			[...this.viewsByEditorKey].map(([key, viewId]) => {
+				const view = shell.getViewById(viewId);
+				return { key, alive: view !== undefined && isLiveWorkbench(view) };
+			}),
+		);
+		for (const folder of dead) {
+			this.viewsByEditorKey.delete(folder);
+			this.editorFailed(
+				folder,
+				"The workbench did not survive the computer going to sleep.",
+			);
+		}
+	}
+
+	/** A restart waiting out its backoff, by folder. */
+	private readonly editorRestartTimers = new Map<
+		string,
+		ReturnType<typeof setTimeout>
+	>();
+
+	/**
+	 * DevHub has stopped building this folder's workbench. Say so where it is
+	 * about, once, and stay said.
+	 *
+	 * A Workspace becomes `unavailable` with `editor_restart_exhausted`, which
+	 * is the state the content area already draws with Retry, Locate… and
+	 * Close — so the terminal state is visible, is on the right row, and has
+	 * the person's way out attached to it. It also takes the workspace out of
+	 * `syncEditorViews`'s list, which is the second half of "never retried by
+	 * a projection tick".
+	 *
+	 * Scratch has no row, so it is the one editor whose giving up really is
+	 * the application speaking, and it says so app-wide — once, because the
+	 * supervisor never reaches this verdict twice.
+	 */
+	private reportEditorGaveUp(
+		folder: string,
+		reason: string,
+		attempt: number,
+	): void {
+		const workspace = this.coordinator.model.workspaces.find(
+			(candidate) => candidate.key === folder,
+		);
+		const failure = editorGaveUpFailure({
+			workspaceId: workspace?.id,
+			attempt,
+			reason,
+		});
+		if (failure.subject === "workspace") {
+			this.reportFailure({
+				subject: "workspace",
+				id: failure.id as WorkspaceId,
+				code: failure.code,
+				detail: failure.detail,
+			});
+			return;
+		}
+		this.publishError(
+			withDetail(
+				withSummary(
+					errorWireAt(failure.code),
+					`The workbench stopped ${String(attempt)} times and will not be restarted again.`,
+				),
+				reason,
+			),
+		);
+	}
+
+	/** Whether this folder is one `syncEditorViews` would keep a workbench for. */
+	private wantsWorkbench(folder: string): boolean {
+		if (folder === SCRATCH_EDITOR) return true;
+		const workspace = this.coordinator.model.workspaces.find(
+			(candidate) => candidate.key === folder,
+		);
+		return workspace !== undefined && workspace.state.kind !== "unavailable";
 	}
 
 	/**
@@ -3488,15 +3723,53 @@ export class AppController {
 			}
 		}
 
+		// The one way out of the supervisor's verdict, and it is a person's.
+		//
+		// Giving up on a Workspace's workbench makes that Workspace
+		// `unavailable`, which takes it out of `wanted`; it comes back only
+		// when somebody presses Retry or Locate…. So "was out, and is back" is
+		// exactly "a person asked again", read off the model rather than hooked
+		// onto the retry intent — the model is where availability is decided,
+		// and a second copy of that decision is a second thing to disagree with
+		// it. Scratch never leaves `wanted`, so it never parks and never
+		// forgets itself: its giving up is terminal for the run, which is what
+		// an app-wide notice that cannot be retried should mean.
+		for (const folder of this.editorSupervisor.gaveUpKeys()) {
+			if (!wanted.has(folder)) {
+				this.editorSupervisor.park(folder);
+			} else if (this.editorSupervisor.parked(folder)) {
+				this.editorSupervisor.forget(folder);
+			}
+		}
+
 		// The selected workbench first: it is the one being waited for.
 		const ordered =
 			selected === undefined
 				? [...wanted]
 				: [selected, ...[...wanted].filter((folder) => folder !== selected)];
 		for (const folder of ordered) {
-			void this.ensureEditorView(folder).catch((error: unknown) => {
-				this.publishError(errorWire(error));
-			});
+			// A folder the supervisor has given up on, and one whose restart is
+			// waiting out its backoff, are both already answered. Asking again
+			// here is what turned a bounded supervisor into a retry per
+			// projection tick — which after a wake is the reconcile cadence, and
+			// which is what the person saw flickering.
+			if (this.editorSupervisor.gaveUp(folder)) continue;
+			if (this.editorRestartTimers.has(folder)) continue;
+			void this.ensureEditorView(folder).then(
+				(view) => {
+					// No view and still wanted is a failure that said nothing:
+					// the next tick would simply open another window for the same
+					// folder. A folder whose workspace went `unavailable` during
+					// the open — the root is not readable — is not one of these:
+					// it has its own state and is no longer wanted.
+					if (!view && this.wantsWorkbench(folder)) {
+						this.editorFailed(folder, "No workbench view was created.");
+					}
+				},
+				(error: unknown) => {
+					this.editorFailed(folder, describeFailure(error));
+				},
+			);
 		}
 	}
 
@@ -4892,8 +5165,15 @@ export class AppController {
 		handle(CHANNELS.writeClipboard, (_event, text: string) => {
 			electron.clipboard.writeText(text);
 		});
+		// Reported from a `ResizeObserver`, so it arrives at whatever rate the
+		// layout is churning at — which after a wake is frame rate — and it
+		// keeps arriving through teardown, when the window it is about is
+		// already gone. A window that is not there is not a failure: it is the
+		// answer to "where should the workbench be" being "nowhere", and
+		// throwing it made the page republish an app-wide alert per frame. A
+		// real failure still throws, and still reaches the page.
 		handle(CHANNELS.setContentRect, (_event, rect: ContentRect) => {
-			shellWindow().setContentRect(rect);
+			shellWindowIfCreated()?.setContentRect(rect);
 		});
 		// Escape in the Sidebar. The page can blur its own row but it cannot
 		// focus a native workbench view, so where the keyboard goes stays main's
@@ -4953,6 +5233,20 @@ export class AppController {
 function isStaleCompletion(error: unknown): boolean {
 	return (
 		error instanceof AppError && error.code === AppErrorCode.StaleCompletion
+	);
+}
+
+/**
+ * A completion for an operation the coordinator never started.
+ *
+ * Told apart from a *stale* one, which is ordinary: a stale completion answers
+ * an operation something newer already settled, on purpose. An unknown one has
+ * no such story — it means main invented a token, or completed one twice, and
+ * both are bugs in main.
+ */
+function isUnknownOperation(error: unknown): boolean {
+	return (
+		error instanceof AppError && error.code === AppErrorCode.UnknownOperation
 	);
 }
 

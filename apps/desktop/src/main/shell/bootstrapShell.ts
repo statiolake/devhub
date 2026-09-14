@@ -192,14 +192,26 @@ export async function bootstrapShell(
 			unreadableSettingsError(userDataPath, settingsProblem),
 		);
 	}
-	shellWindowIfCreated()?.onWindowFocusChanged((focused) => {
-		controller.windowFocusChanged(focused);
-	});
 	shellTheme().onDidChange((next) => {
 		shellWindowIfCreated()?.applyPalette(next);
 		controller.publishTheme(next);
 	});
 	await controller.startRuntimes(userDataPath);
+	// After the runtimes, and this order is load-bearing.
+	//
+	// Registering this listener *publishes the current answer* — that is what
+	// makes a reader start in step with the window rather than with whatever it
+	// assumed — so it dispatches an intent, which drains, which runs the
+	// reconcile round the model asks for when the window comes into focus.
+	// Before `startRuntimes` there is no Agent adapter yet, because
+	// `wireAgents` runs inside it: the round found `agents()` undefined and
+	// reported it as the *machine* not answering, app-wide, for a tmux that was
+	// answering perfectly. The round is now unreachable before its adapter
+	// exists, and `AppController.reconcile` stops the process if it is ever
+	// reached that way again rather than blaming a host for DevHub's wiring.
+	shellWindowIfCreated()?.onWindowFocusChanged((focused) => {
+		controller.windowFocusChanged(focused);
+	});
 	openShellPage();
 
 	// The desktop's door, opened at the same moment and onto the same room.

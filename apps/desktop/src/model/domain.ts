@@ -645,6 +645,18 @@ export const DIAGNOSTIC_CODES = [
   "close_editor_vetoed",
   "cleanup_failed",
   "runtime_unavailable",
+  /**
+   * The workspace's workbench kept stopping, so DevHub stopped building it.
+   *
+   * A workspace diagnostic and not an app-wide notice, because the workbench
+   * that gave up belongs to exactly one workspace: every other row still has
+   * its editor, and saying "the native app shell is unavailable" about one
+   * dead workbench was a false sentence on the one surface errors are read
+   * from. It is terminal — only a person's Retry leaves it.
+   */
+  "editor_restart_exhausted",
+  /** The workspace's workbench could not be started at all. */
+  "editor_unavailable",
 ] as const;
 export type DiagnosticCode = (typeof DIAGNOSTIC_CODES)[number];
 
