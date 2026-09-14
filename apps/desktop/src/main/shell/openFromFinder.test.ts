@@ -1,15 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 import { FinderOpens, finderOpen, type CliOpener } from "./openFromFinder.js";
+import type { ControlOpenRequest } from "../cli/protocol.js";
 
 /** A stand-in for `AppController`, recording what the CLI entry point was asked. */
-function opener(): CliOpener & {
-	calls: [string, string, undefined, undefined][];
-} {
-	const calls: [string, string, undefined, undefined][] = [];
+function opener(): CliOpener & { calls: ControlOpenRequest[] } {
+	const calls: ControlOpenRequest[] = [];
 	return {
 		calls,
-		openFromCli(path, cwd, position, waitMarkerPath) {
-			calls.push([path, cwd, position, waitMarkerPath]);
+		openFromCli(request) {
+			calls.push(request);
 			return Promise.resolve("open");
 		},
 	};
@@ -24,18 +23,21 @@ describe("finderOpen", () => {
 		// The parity the whole design rests on: Finder and the CLI reach the
 		// same function, so where a file lands cannot differ between them.
 		expect(controller.calls).toEqual([
-			["/tmp/notes.md", "/tmp", undefined, undefined],
+			{ kind: "open", path: "/tmp/notes.md", cwd: "/tmp" },
 		]);
 	});
 
-	it("asks for no position and no wait marker, because Finder cannot mean either", async () => {
+	it("asks for no position, no wait marker and no machine, because Finder cannot mean any of them", async () => {
 		const controller = opener();
 
 		await finderOpen(controller)("/tmp/deep/file.txt");
 
-		const [, , position, waitMarkerPath] = controller.calls[0] ?? [];
-		expect(position).toBeUndefined();
-		expect(waitMarkerPath).toBeUndefined();
+		const request = controller.calls[0];
+		expect(request?.position).toBeUndefined();
+		expect(request?.waitMarkerPath).toBeUndefined();
+		// Absent, not `local`: a drop on the Dock is a file on this Mac, and
+		// the request says nothing rather than saying it twice.
+		expect(request?.machine).toBeUndefined();
 	});
 });
 

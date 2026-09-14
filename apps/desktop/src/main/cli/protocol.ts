@@ -71,6 +71,20 @@ export type ControlRequest =
 			readonly kind: "open";
 			readonly path: string;
 			readonly cwd: string;
+			/**
+			 * Which computer `path` is a path on: `local`, or `ssh:<host>` — a
+			 * `RuntimeId`, the same key `terminal-profile` carries and the same
+			 * key everything else about a machine is filed under.
+			 *
+			 * Absent means `local`, because that is what every caller that
+			 * cannot say is: the launcher in this Mac's PATH, and a Finder
+			 * open. A `devhub` run on a host says so, and it must — a path is
+			 * a path on one computer, and `/srv/app` on two of them is one
+			 * root to a matcher that was not told which is asking. The answer
+			 * it gives then is not a slower open, it is a file opened from the
+			 * wrong disk into a window that is not showing it.
+			 */
+			readonly machine?: string;
 			readonly position?: ControlPosition;
 			/**
 			 * `--wait`: the file the CLI is holding a terminal open for.
@@ -167,6 +181,17 @@ export type ControlRequest =
 			readonly root: string | null;
 	  };
 
+/**
+ * An `open`, whole.
+ *
+ * The handler takes the request rather than its fields spread out, because the
+ * fields are what an open *is* — a path, the machine it is on, where in it,
+ * and what is waiting for it — and a positional list of them is a list every
+ * caller has to keep in the same order as every other one. Extracted from the
+ * union rather than declared beside it so there is one statement of the shape.
+ */
+export type ControlOpenRequest = Extract<ControlRequest, { kind: "open" }>;
+
 /** The command line a workbench's integrated terminal is started with. */
 export interface TerminalProfileAnswer {
 	readonly file: string;
@@ -207,6 +232,9 @@ export function parseControlRequest(line: string): ControlRequest {
 				kind: "open",
 				path: requireAbsolute(record["path"], "path"),
 				cwd: requireAbsolute(record["cwd"], "cwd"),
+				...(record["machine"] === undefined
+					? {}
+					: { machine: requireString(record["machine"], "machine") }),
 				...(record["position"] === undefined
 					? {}
 					: { position: requirePosition(record["position"]) }),

@@ -16,7 +16,7 @@ import { connect, createServer, type Server, type Socket } from "node:net";
 import { dirname } from "node:path";
 import {
 	parseControlRequest,
-	type ControlPosition,
+	type ControlOpenRequest,
 	type ControlRequest,
 	type ControlResponse,
 	type TerminalProfileAnswer,
@@ -29,12 +29,7 @@ export interface ControlHandlers {
 	/** Bring DevHub to the front, and change nothing else. */
 	activate(): Promise<string>;
 	/** A folder or a file. Answers with the text the CLI prints. */
-	open(
-		path: string,
-		cwd: string,
-		position: ControlPosition | undefined,
-		waitMarkerPath: string | undefined,
-	): Promise<string>;
+	open(request: ControlOpenRequest): Promise<string>;
 	/**
 	 * A `--wait` ended: its editor was closed. Answers with the text the CLI
 	 * would print if anyone were reading it.
@@ -184,15 +179,7 @@ async function handle(
 			case "activate":
 				return { ok: true, message: await handlers.activate() };
 			case "open":
-				return {
-					ok: true,
-					message: await handlers.open(
-						request.path,
-						request.cwd,
-						request.position,
-						request.waitMarkerPath,
-					),
-				};
+				return { ok: true, message: await handlers.open(request) };
 			case "wait-ended":
 				return {
 					ok: true,

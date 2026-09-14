@@ -32,6 +32,7 @@
 
 import { dirname } from "node:path";
 import { electron } from "../electron.js";
+import type { ControlOpenRequest } from "../cli/protocol.js";
 
 /** Open one path the way `devhub <path>` opens it. */
 export type OpenPath = (path: string) => Promise<unknown>;
@@ -41,12 +42,7 @@ export type ReportFailure = (error: unknown) => void;
 
 /** The part of `AppController` a Finder open needs, named so a test can stand in for it. */
 export interface CliOpener {
-	openFromCli(
-		path: string,
-		cwd: string,
-		position: undefined,
-		waitMarkerPath: undefined,
-	): Promise<string>;
+	openFromCli(request: ControlOpenRequest): Promise<string>;
 }
 
 /**
@@ -58,11 +54,12 @@ export interface CliOpener {
  * only honest answer to "where did this come from" if it ever starts reading
  * it. There is no `--goto` position and no `--wait` marker: Finder has no way
  * to ask for either, and inventing one here would be a second dialect of a
- * request that has one.
+ * request that has one. No `machine` either, for the strongest of those
+ * reasons — a file dropped on this Dock is a file on this Mac.
  */
 export function finderOpen(controller: CliOpener): OpenPath {
 	return (path) =>
-		controller.openFromCli(path, dirname(path), undefined, undefined);
+		controller.openFromCli({ kind: "open", path, cwd: dirname(path) });
 }
 
 /**

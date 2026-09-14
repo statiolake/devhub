@@ -67,9 +67,9 @@ describe("the DevHub control socket", () => {
 				calls.push("activate");
 				return Promise.resolve("DevHub is in front.");
 			},
-			open: (path, cwd, position, waitMarkerPath) => {
+			open: ({ path, cwd, machine, position, waitMarkerPath }) => {
 				calls.push(
-					`open ${path} ${cwd}${position ? ` @${position.line}:${position.column}` : ""}${waitMarkerPath ? ` wait=${waitMarkerPath}` : ""}`,
+					`open ${path} ${cwd}${machine ? ` on=${machine}` : ""}${position ? ` @${position.line}:${position.column}` : ""}${waitMarkerPath ? ` wait=${waitMarkerPath}` : ""}`,
 				);
 				return Promise.resolve(`opened ${path}`);
 			},
@@ -150,6 +150,48 @@ describe("the DevHub control socket", () => {
 		);
 		expect(answer).toEqual({ ok: true, message: "opened /work/a/f.txt" });
 		expect(calls).toEqual(["open /work/a/f.txt /work/a"]);
+	});
+
+	/**
+	 * Which computer the path is on rides with it, because it is the fact that
+	 * keeps `/srv/app` on two hosts from being one root.
+	 */
+	it("carries the machine an open's path is on through to the handler", async () => {
+		const answer = await ask(
+			socketPath,
+			`${JSON.stringify({
+				kind: "open",
+				path: "/srv/app/f.txt",
+				cwd: "/srv/app",
+				machine: "ssh:build-host",
+			})}\n`,
+		);
+		expect(answer.ok).toBe(true);
+		expect(calls).toEqual(["open /srv/app/f.txt /srv/app on=ssh:build-host"]);
+	});
+
+	/** Absent is the honest "this Mac", and it stays absent rather than becoming a default here. */
+	it("leaves an open with no machine saying nothing about one", async () => {
+		await ask(
+			socketPath,
+			`${JSON.stringify({ kind: "open", path: "/work/a/f.txt", cwd: "/work/a" })}\n`,
+		);
+		expect(calls).toEqual(["open /work/a/f.txt /work/a"]);
+	});
+
+	it("refuses an open whose machine is not a string", async () => {
+		const answer = await ask(
+			socketPath,
+			`${JSON.stringify({
+				kind: "open",
+				path: "/work/a/f.txt",
+				cwd: "/work/a",
+				machine: 7,
+			})}\n`,
+		);
+		expect(answer.ok).toBe(false);
+		expect(answer.message).toMatch(/machine must be a non-empty string/);
+		expect(calls).toEqual([]);
 	});
 
 	/** `--wait` reaches the app as part of the open it belongs to. */

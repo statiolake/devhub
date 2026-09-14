@@ -89,8 +89,9 @@ import {
 } from "../cli/extensionCommands.js";
 import { openFileInWorkbench } from "../cli/openFiles.js";
 import { WaitSelectionReturns } from "../cli/waitReturn.js";
-import type { ControlPosition } from "../cli/protocol.js";
+import type { ControlOpenRequest, ControlPosition } from "../cli/protocol.js";
 import { workspaceRootFor } from "../cli/resolve.js";
+import { routeOpen, type RoutableWorkspace } from "../cli/route.js";
 import {
 	AgentProfile,
 	agentsInspection,
@@ -105,6 +106,7 @@ import {
 	type AgentReconciliation,
 	type CloseStep,
 	type ResourceInspection,
+	type Workspace,
 	type WorkspaceId,
 	type WorkspaceLocation,
 } from "../../model/domain.js";
@@ -4127,20 +4129,23 @@ export class AppController {
 	 * the sidebar, with the Editor activity showing and the window in front —
 	 * because a command that opens something you cannot see has not opened it.
 	 */
-	async openFromCli(
-		path: string,
-		_cwd: string,
-		position: ControlPosition | undefined,
-		waitMarkerPath: string | undefined,
-	): Promise<string> {
-		return asSentence(() => this.doOpenFromCli(path, position, waitMarkerPath));
+	async openFromCli(request: ControlOpenRequest): Promise<string> {
+		return asSentence(() => this.doOpenFromCli(request));
 	}
 
-	private async doOpenFromCli(
-		path: string,
-		position: ControlPosition | undefined,
-		waitMarkerPath: string | undefined,
-	): Promise<string> {
+	private async doOpenFromCli(request: ControlOpenRequest): Promise<string> {
+		const { path, position, waitMarkerPath } = request;
+		// A path is a path on one computer, and which one is a fact the
+		// request carries rather than a default this reaches for: an absent
+		// `machine` is every caller that runs on this Mac, and a `devhub` on a
+		// host says which host it is. Checked here, once, so that everything
+		// below is talking about one machine's disk.
+		const machine = runtimeMachine(request.machine ?? "local");
+		if (machine !== "local") {
+			throw new Error(
+				`DevHub cannot yet open ${path}${runtimeById(machine).where}: the paths on another machine are not canonicalised there yet.`,
+			);
+		}
 		// Taken before anything is selected: this is the "before" a `--wait`
 		// goes back to when its editor is closed.
 		const before = this.coordinator.model.selection;
@@ -4168,8 +4173,14 @@ export class AppController {
 			return `${target.path} is open in DevHub.`;
 		}
 
-		const root = workspaceRootFor(target.path, this.workspaceRoots());
-		if (root === undefined) {
+		// The rule itself is `routeOpen`, and it is the only thing that decides
+		// this. Everything below is the carrying out of its answer.
+		const destination = routeOpen(
+			target.path,
+			machine,
+			this.routableWorkspaces(),
+		);
+		if (destination.kind === "scratch") {
 			await this.dispatchAwaiting({ type: "new_window" });
 			await this.syncEditorView();
 			openFileInWorkbench(
@@ -4183,12 +4194,8 @@ export class AppController {
 			return `${target.path}${at(position)} is open in the Scratch editor: no open workspace contains it.`;
 		}
 
-		const workspace = this.coordinator.model.workspaces.find(
-			(candidate) => candidate.root === root,
-		);
-		if (!workspace) {
-			throw new Error(`no workspace is rooted at ${root}`);
-		}
+		const root = destination.workspace.root;
+		const workspace = this.workspaceAt(root, machine);
 		await this.dispatchAwaiting({
 			type: "select_context",
 			context: { kind: "workspace", workspaceId: workspace.id },
@@ -4424,18 +4431,16 @@ export class AppController {
 			);
 		}
 		const here = await canonicalise(cwd);
-		const root = workspaceRootFor(here.path, this.workspaceRoots());
+		// `devhub --agent` is the launcher in this Mac's PATH, so the directory
+		// it was run in is a directory here — and a Workspace on a host whose
+		// root spells the same thing is a different folder entirely.
+		const root = workspaceRootFor(here.path, this.workspaceRoots("local"));
 		if (root === undefined) {
 			throw new Error(
 				`${here.path} is not inside any open DevHub workspace, and an agent needs one — open the folder first with 'devhub <folder>'.`,
 			);
 		}
-		const workspace = this.coordinator.model.workspaces.find(
-			(candidate) => candidate.root === root,
-		);
-		if (!workspace) {
-			throw new Error(`no workspace is rooted at ${root}`);
-		}
+		const workspace = this.workspaceAt(root, "local");
 		await this.dispatchAwaiting({
 			type: "create_agent",
 			workspaceId: workspace.id,
@@ -4457,8 +4462,40 @@ export class AppController {
 		return `${agent?.displayName ?? "The agent"} is running in the workspace at ${root}.`;
 	}
 
-	private workspaceRoots(): readonly string[] {
-		return this.coordinator.model.workspaces.map((workspace) => workspace.root);
+	/**
+	 * The roots of the open Workspaces **on one machine**.
+	 *
+	 * Machine-scoped for the same reason `terminalProfileFor` is: `/srv/app` on
+	 * two computers is two folders, and a matcher handed both roots answers one
+	 * of them with the other's Workspace. That is not a near miss — it is a
+	 * file from this Mac opened into a window showing somebody's server, or the
+	 * reverse, and neither of them says anything is wrong.
+	 */
+	/** Every open Workspace, as the routing rule (`route.ts`) reads one. */
+	private routableWorkspaces(): readonly RoutableWorkspace[] {
+		return this.coordinator.model.workspaces.map((workspace) => ({
+			workspaceId: workspace.id,
+			root: workspace.root,
+			machine: runtimeIdFor(workspace.location),
+		}));
+	}
+
+	/** The one Workspace rooted at a path on a machine — `workspaceRoots`' inverse. */
+	private workspaceAt(root: string, machine: RuntimeId): Workspace {
+		const workspace = this.coordinator.model.workspaces.find(
+			(candidate) =>
+				candidate.root === root && runtimeIdFor(candidate.location) === machine,
+		);
+		if (!workspace) {
+			throw new Error(`no workspace is rooted at ${root}`);
+		}
+		return workspace;
+	}
+
+	private workspaceRoots(machine: RuntimeId): readonly string[] {
+		return this.coordinator.model.workspaces
+			.filter((workspace) => runtimeIdFor(workspace.location) === machine)
+			.map((workspace) => workspace.root);
 	}
 
 	/**

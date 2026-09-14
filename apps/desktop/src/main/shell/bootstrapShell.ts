@@ -232,8 +232,7 @@ export async function bootstrapShell(
 
 	const control = await startControlServer(socketPath, {
 		activate: () => controller.activateFromCli(),
-		open: (path, cwd, position, waitMarkerPath) =>
-			controller.openFromCli(path, cwd, position, waitMarkerPath),
+		open: (request) => controller.openFromCli(request),
 		waitEnded: (waitMarkerPath) => controller.waitEndedFromCli(waitMarkerPath),
 		addAgent: (profileId, args, cwd) =>
 			controller.addAgentFromCli(profileId, args, cwd),
