@@ -536,6 +536,8 @@ describe("the terminal launcher on the host", () => {
 		entryText:
 			'import { connect } from "node:net";\nexport const e = connect;\n',
 		entryName: "devhub-terminal.bundle.js",
+		cliText: 'import { connect } from "node:net";\nexport const c = connect;\n',
+		cliEntryName: "devhub-cli.bundle.js",
 		serverDataFolderName: ".devhub-server",
 		serverCommit: "c0ffee",
 	};

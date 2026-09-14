@@ -32,10 +32,12 @@ import { fileURLToPath } from "node:url";
 import { parseFileAndPosition, type FilePosition } from "./goto.js";
 import {
 	commandLauncher,
+	forwardedSocketLauncher,
 	LAUNCH_COMMAND_ENVIRONMENT_VARIABLE,
 	NotRunning,
 	parseLaunchCommand,
 	sendOrLaunch,
+	type Launcher,
 } from "./launch.js";
 import { expandPath } from "./resolve.js";
 import { spoolStdin, stdinSpoolPath } from "./stdin.js";
@@ -521,15 +523,27 @@ export async function main(argv: readonly string[]): Promise<number> {
 		);
 		return 1;
 	}
+	const caller = callerContext(process.env);
+	// What to do when nothing is listening — and the two machines answer it
+	// differently in kind, not in degree. On DevHub's own machine there is an
+	// app to start; on a host there is not, because DevHub runs where the
+	// window is and this socket is forwarded from there.
+	//
 	// Read before anything is sent, not at the moment DevHub turns out to be
 	// missing: a launcher that cannot say how to start DevHub is broken whether
 	// or not this particular run needed it, and finding that out only on the
 	// cold start is finding it out in front of the person least able to act.
-	let launchCommand: readonly string[];
+	let launcher: Launcher;
 	try {
-		launchCommand = parseLaunchCommand(
-			process.env[LAUNCH_COMMAND_ENVIRONMENT_VARIABLE],
-		);
+		launcher =
+			caller.machine === undefined || caller.machine === "local"
+				? commandLauncher(
+						socketPath,
+						parseLaunchCommand(
+							process.env[LAUNCH_COMMAND_ENVIRONMENT_VARIABLE],
+						),
+					)
+				: forwardedSocketLauncher(socketPath, caller.machine);
 	} catch (error) {
 		console.error(messageOf(error));
 		return 1;
@@ -542,7 +556,7 @@ export async function main(argv: readonly string[]): Promise<number> {
 			? await createMarker(tmpdir())
 			: undefined;
 	try {
-		return await run(command, socketPath, launchCommand, marker);
+		return await run(command, socketPath, launcher, caller, marker);
 	} finally {
 		if (marker !== undefined) await removeMarker(marker);
 	}
@@ -558,23 +572,15 @@ export async function main(argv: readonly string[]): Promise<number> {
 async function run(
 	command: Command,
 	socketPath: string,
-	launchCommand: readonly string[],
+	launcher: Launcher,
+	caller: CallerContext,
 	marker: string | undefined,
 ): Promise<number> {
-	const request = requestFor(
-		command,
-		process.cwd(),
-		homedir(),
-		marker,
-		callerContext(process.env),
-	);
+	const request = requestFor(command, process.cwd(), homedir(), marker, caller);
 	if (!request) return 2;
 	// A DevHub that is not running is started and then asked, so what comes
 	// back is always an answer to the request above; see `launch.ts`.
-	const response = await sendOrLaunch(
-		() => ask(socketPath, request),
-		commandLauncher(socketPath, launchCommand),
-	);
+	const response = await sendOrLaunch(() => ask(socketPath, request), launcher);
 	if (!response.ok) {
 		console.error(response.message);
 		return 1;

@@ -114,7 +114,11 @@ function machineNamed(id: string): Runtime {
 function fixture(
   label: string,
   environment?: Record<string, string>,
-  options?: { readonly counting?: boolean; readonly host?: Runtime },
+  options?: {
+    readonly counting?: boolean;
+    readonly host?: Runtime;
+    readonly paneBinDirectory?: string;
+  },
 ): Fixture {
   sequence += 1;
   const home = realpathSync(scratchDirectory(`tmux-${label}`));
@@ -142,6 +146,9 @@ function fixture(
     // -q` is what makes "there is no such file" the ordinary case.
     userTmuxConfigPath: join(home, "config", "tmux.conf"),
     ...(options?.host === undefined ? {} : { host: options.host }),
+    ...(options?.paneBinDirectory === undefined
+      ? {}
+      : { paneBinDirectory: options.paneBinDirectory }),
   });
   const created = {
     home,
@@ -160,11 +167,22 @@ function sessionEnvironment(
   session: string,
   name: string,
 ): string | undefined {
-  const output = execFileSync(
-    TMUX as string,
-    ["-f", "/dev/null", "-L", socket, "show-environment", "-t", session, name],
-    { encoding: "utf8", env: { ...process.env, TMUX: undefined } as never },
-  ).trim();
+  let output: string;
+  try {
+    output = execFileSync(
+      TMUX as string,
+      ["-f", "/dev/null", "-L", socket, "show-environment", "-t", session, name],
+      {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+        env: { ...process.env, TMUX: undefined } as never,
+      },
+    ).trim();
+  } catch {
+    // Not a swallow: `unknown variable` is tmux's answer to "this session sets
+    // no such variable", and that is the answer being asked for.
+    return undefined;
+  }
   return output.startsWith(`${name}=`)
     ? output.slice(name.length + 1)
     : undefined;
@@ -816,6 +834,45 @@ describe.skipIf(TMUX === undefined)(
       expect(sessionOrigin(test.socket, SCRATCH_SESSION)).toBe(
         "ssh:build.example.com\tscratch",
       );
+    });
+
+    /**
+     * The `devhub` command on a host, reachable from its panes.
+     *
+     * The directory is derived from the machine's `$HOME` and this DevHub's
+     * socket, not reported back by the install, so a session created before the
+     * first window on that host still has the right PATH.
+     */
+    it("puts DevHub's own bin directory in front of a pane's PATH, on a machine that is not this one", async () => {
+      const test = fixture("pane-path", undefined, {
+        host: machineNamed("ssh:build.example.com"),
+        paneBinDirectory: "/home/dev/.devhub/terminal/bin-abcdef",
+      });
+      await test.runtime.ensure(SCRATCH_TARGET);
+
+      const path = sessionEnvironment(test.socket, SCRATCH_SESSION, "PATH");
+      expect(path?.startsWith("/home/dev/.devhub/terminal/bin-abcdef:")).toBe(
+        true,
+      );
+      // In *front* of, and not instead of: a pane that can run `devhub` and
+      // not `ls` would be worse than a pane with no `devhub`, and it would be
+      // DevHub that broke it.
+      expect(path).toContain(process.env.PATH as string);
+    });
+
+    /**
+     * On this machine `devhub` is whatever the person installed on their own
+     * PATH, and DevHub does not get to put a second one in front of it.
+     */
+    it("leaves this machine's panes' PATH exactly as the server's", async () => {
+      const test = fixture("pane-path-local");
+      await test.runtime.ensure(SCRATCH_TARGET);
+
+      // Not "PATH is right" but "PATH was never stated": the session carries no
+      // PATH of its own, so a pane simply inherits the server's.
+      expect(
+        sessionEnvironment(test.socket, SCRATCH_SESSION, "PATH"),
+      ).toBeUndefined();
     });
 
     it("refuses a server whose marker is not DevHub's, and leaves it alone", async () => {

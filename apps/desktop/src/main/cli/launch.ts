@@ -138,6 +138,18 @@ export interface Launcher {
 	 * exits the moment it has handed over (`open`) from being mistaken for one.
 	 */
 	open(): Promise<never>;
+	/**
+	 * What to say when DevHub is not answering and `open` did not fix it.
+	 *
+	 * On the launcher rather than in `launchAndWait`, because the two machines
+	 * have genuinely different things to say and neither of them is a variation
+	 * of the other. Here, DevHub could not be started and the fix is to look at
+	 * the launcher. On a host, DevHub was never startable from there — it runs
+	 * on the machine the window is on, and this socket is forwarded from it —
+	 * so advice about reinstalling a launcher would send somebody to the wrong
+	 * computer.
+	 */
+	cannotStart(reason: string): string;
 	/** What was started, named in the message when it never answers. */
 	readonly description: string;
 	/** The socket being waited on, named in the same message. */
@@ -182,9 +194,9 @@ export async function sendOrLaunch(
 export async function launchAndWait(launcher: Launcher): Promise<void> {
 	const failed = launcher.open().catch((error: unknown) => {
 		throw new Error(
-			`DevHub is not running, and it could not be started: ${
-				error instanceof Error ? error.message : String(error)
-			}\nThe 'devhub' launcher starts DevHub with ${launcher.description}. If DevHub has moved, run "DevHub: Install 'devhub' command in PATH" from DevHub's command palette again.`,
+			launcher.cannotStart(
+				error instanceof Error ? error.message : String(error),
+			),
 		);
 	});
 	try {
@@ -218,6 +230,8 @@ export function commandLauncher(
 	return {
 		socketPath,
 		description: command.join(" "),
+		cannotStart: (reason) =>
+			`DevHub is not running, and it could not be started: ${reason}\nThe 'devhub' launcher starts DevHub with ${command.join(" ")}. If DevHub has moved, run "DevHub: Install 'devhub' command in PATH" from DevHub's command palette again.`,
 		open: () => runDetached(command),
 		answers: () => socketAnswers(socketPath),
 		pause: (ms) =>
@@ -289,4 +303,38 @@ export function socketAnswers(socketPath: string): Promise<boolean> {
 			resolve(false);
 		});
 	});
+}
+
+/**
+ * The other machine's answer: there is nothing here to start.
+ *
+ * A `devhub` on a host talks to DevHub over a socket **forwarded from the
+ * machine the window is on**. DevHub does not run on the host and cannot be
+ * made to, so "not running" is the end of the matter rather than a step to
+ * take — and the sentence is the one the terminal launcher already prints from
+ * the same place for the same reason, so a person who has seen one recognises
+ * the other instead of chasing two explanations of one fact.
+ *
+ * `open` rejects at once rather than being absent, so that `sendOrLaunch` has
+ * one shape for both machines and no caller has to ask which kind of machine
+ * it is on.
+ */
+export function forwardedSocketLauncher(
+	socketPath: string,
+	machine: string,
+): Launcher {
+	const nothing = `DevHub is not listening on ${socketPath}.`;
+	return {
+		socketPath,
+		description: `nothing — DevHub does not run on ${machine}`,
+		cannotStart: () =>
+			`${nothing}\nDevHub runs on the machine this window belongs to, and reaches ${machine} over a socket forwarded onto it, so it cannot be started from here. Check that DevHub is running and that the window for ${machine} is still open.`,
+		open: () => Promise.reject(new Error(nothing)),
+		answers: () => socketAnswers(socketPath),
+		pause: (ms) =>
+			new Promise((resolve) => {
+				setTimeout(resolve, ms);
+			}),
+		now: () => Date.now(),
+	};
 }

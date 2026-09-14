@@ -233,6 +233,13 @@ export interface TerminalLauncherSpec {
 	readonly entryText: string;
 	/** What to call it over there. */
 	readonly entryName: string;
+	/**
+	 * The `devhub` command itself, bundled the same way and for the same
+	 * reason, so that a pane on a host can open a file in the window it belongs
+	 * to. See `remoteCliScript`.
+	 */
+	readonly cliText: string;
+	readonly cliEntryName: string;
 	/** `product.json`'s `serverDataFolderName`: where the REH lives over there. */
 	readonly serverDataFolderName: string;
 	/**
@@ -282,6 +289,13 @@ export interface TerminalLauncher {
 	 * in the log and in `devhub --metrics`.
 	 */
 	readonly unreachable: string | undefined;
+	/**
+	 * The directory holding this machine's `devhub` command, to be put on the
+	 * PATH of every pane there — or `undefined` on the machine DevHub runs on,
+	 * where `devhub` is on the person's PATH already and where putting a second
+	 * one in front of it would be DevHub overruling a choice they made.
+	 */
+	readonly binDirectory: string | undefined;
 }
 
 export interface Runtime {

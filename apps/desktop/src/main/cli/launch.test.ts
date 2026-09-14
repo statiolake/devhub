@@ -12,6 +12,7 @@
 import { describe, expect, it } from "vitest";
 import {
 	commandLauncher,
+	forwardedSocketLauncher,
 	launchAndWait,
 	launchCommandFor,
 	LAUNCH_TIMEOUT_MS,
@@ -40,6 +41,10 @@ function fakeLauncher(options: {
 	return {
 		description: DESCRIPTION,
 		socketPath: SOCKET,
+		// The real one's wording, so the assertions below are about the text a
+		// person actually reads.
+		cannotStart: (reason: string) =>
+			`DevHub is not running, and it could not be started: ${reason}\nThe 'devhub' launcher starts DevHub with ${DESCRIPTION}. If DevHub has moved, run "DevHub: Install 'devhub' command in PATH" from DevHub's command palette again.`,
 		opened,
 		probes: () => probes,
 		open: () => {
@@ -249,5 +254,57 @@ describe("running the launch command for real", () => {
 			new Promise((resolve) => setTimeout(() => resolve("waiting"), 200)),
 		]);
 		expect(settled).toBe("waiting");
+	});
+});
+
+/**
+ * A `devhub` on a host cannot start DevHub, and that is a fact rather than a
+ * gap.
+ *
+ * DevHub runs on the machine the window is on; the socket over there is
+ * forwarded from it. So "not running" is the end of the matter, and the
+ * sentence must not send somebody to reinstall a launcher on the wrong
+ * computer.
+ */
+describe("the launcher for a machine DevHub does not run on", () => {
+	const REMOTE_SOCKET = "/home/dev/.devhub/terminal/control-abcdef.sock";
+
+	it("refuses to start anything, naming the socket that is not answering", async () => {
+		const launcher = forwardedSocketLauncher(REMOTE_SOCKET, "ssh:build-host");
+
+		await expect(launcher.open()).rejects.toThrow(
+			`DevHub is not listening on ${REMOTE_SOCKET}.`,
+		);
+	});
+
+	it("says where DevHub actually is, and not how to reinstall a launcher", () => {
+		const said = forwardedSocketLauncher(
+			REMOTE_SOCKET,
+			"ssh:build-host",
+		).cannotStart("ignored");
+
+		expect(said).toContain(`DevHub is not listening on ${REMOTE_SOCKET}.`);
+		expect(said).toContain("ssh:build-host");
+		// The local advice would be actively misleading over there: there is no
+		// launcher on that machine to reinstall, and the command that would do
+		// it is in a window on another computer.
+		expect(said).not.toContain("Install 'devhub' command in PATH");
+	});
+
+	/**
+	 * Same shape as the local one, so `sendOrLaunch` is written once and no
+	 * caller asks which kind of machine it is on.
+	 */
+	it("is a Launcher like any other, so nothing downstream branches", async () => {
+		const launcher: Launcher = forwardedSocketLauncher(
+			REMOTE_SOCKET,
+			"ssh:build-host",
+		);
+
+		expect(launcher.socketPath).toBe(REMOTE_SOCKET);
+		expect(typeof launcher.now()).toBe("number");
+		// Nothing is listening on a path that does not exist, and asking is the
+		// same probe the local launcher uses.
+		expect(await launcher.answers()).toBe(false);
 	});
 });

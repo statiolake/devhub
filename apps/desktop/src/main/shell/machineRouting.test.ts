@@ -76,6 +76,7 @@ class FakeMachine implements Runtime {
 		return Promise.resolve({
 			path: `${this.homeDirectory}/.devhub/devhub-terminal`,
 			unreachable: undefined,
+			binDirectory: `${this.homeDirectory}/.devhub/terminal/bin-tag`,
 		});
 	}
 	resolveProgram(configured: string): Promise<SettingsResolvedRuntimeWire> {
@@ -190,6 +191,7 @@ function machines(): {
 			environment: { PATH: "/usr/bin:/bin" },
 			effectiveSocketName: "devhub",
 			userTmuxConfigPath: "/home/here/.config/devhub/tmux.conf",
+			controlSocketPath: "/home/here/.devhub/control.sock",
 		}),
 	};
 }
@@ -327,6 +329,8 @@ describe("what a window is told its terminal is", () => {
 		controlSocketPath: "/here/control.sock",
 		entryText: "export const nothing = 1;\n",
 		entryName: "devhub-terminal.bundle.js",
+		cliText: "",
+		cliEntryName: "devhub-cli.bundle.js",
 		serverDataFolderName: ".devhub-server",
 		serverCommit: "abc123",
 	};
@@ -349,6 +353,7 @@ describe("what a window is told its terminal is", () => {
 			windowTerminalLauncher({
 				path: "/home/there/.devhub/devhub-terminal",
 				unreachable: "the control socket could not be forwarded",
+				binDirectory: undefined,
 			}),
 		).toBeUndefined();
 	});
@@ -402,6 +407,7 @@ describe("an adapter for a machine with no tmux", () => {
 			environment: { PATH: "/usr/bin" },
 			effectiveSocketName: "devhub",
 			userTmuxConfigPath: "/home/here/.config/devhub/tmux.conf",
+			controlSocketPath: "/home/here/.devhub/control.sock",
 		});
 		const adapter = await runtimes.for(b);
 		// Not a new predicate: the sentence `RuntimeExecutable.unavailable`

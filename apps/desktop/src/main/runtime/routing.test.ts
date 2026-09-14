@@ -68,6 +68,7 @@ class RecordingRuntime implements Runtime {
 		return Promise.resolve({
 			path: spec.localLauncherPath,
 			unreachable: undefined,
+			binDirectory: undefined,
 		});
 	}
 	resolveProgram(configured: string) {

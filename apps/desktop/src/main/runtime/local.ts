@@ -373,7 +373,14 @@ export class LocalRuntime implements Runtime {
 	async terminalLauncher(
 		spec: TerminalLauncherSpec,
 	): Promise<TerminalLauncher> {
-		return { path: spec.localLauncherPath, unreachable: undefined };
+		// No bin directory: `devhub` on this machine is the launcher the person
+		// installed on their own PATH, and DevHub does not get to put another
+		// one in front of it.
+		return {
+			path: spec.localLauncherPath,
+			unreachable: undefined,
+			binDirectory: undefined,
+		};
 	}
 
 	/** Nothing is multiplexed to this Mac from this Mac. */

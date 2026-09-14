@@ -24,6 +24,7 @@
  */
 
 import { TmuxTerminalRuntime } from "../terminal/tmux.js";
+import { remoteCliBinDirectory } from "../terminal/launcher.js";
 import type { Runtime, RuntimeId } from "../runtime/runtime.js";
 import type { Config } from "../../model/config.js";
 import type { SocketName } from "../terminal/ports.js";
@@ -48,6 +49,15 @@ export interface TerminalRuntimesOptions {
 	 * (`Runtime.userTmuxConfig`), which for a host means a copy of it.
 	 */
 	readonly userTmuxConfigPath: string;
+	/**
+	 * This DevHub's control socket, on this Mac.
+	 *
+	 * Read here only to name a directory on *another* machine: the `devhub`
+	 * command DevHub writes on a host lives under a directory tagged with a
+	 * digest of this path, so that two DevHub profiles reaching one host do not
+	 * put two `devhub` scripts at one name. See `remoteCliBinDirectory`.
+	 */
+	readonly controlSocketPath: string;
 }
 
 export class TerminalRuntimes {
@@ -162,6 +172,17 @@ export class TerminalRuntimes {
 			effectiveSocketName: this.#socketName,
 			bootstrapDirectory: scratch,
 			userTmuxConfigPath: userConfig,
+			// Only for a machine that is not this one. The directory is derived
+			// rather than reported by the launcher install, so a session created
+			// before the first window on that host still has the right PATH.
+			...(host.id === "local"
+				? {}
+				: {
+						paneBinDirectory: remoteCliBinDirectory(
+							home,
+							this.#options.controlSocketPath,
+						),
+					}),
 			host,
 		});
 	}

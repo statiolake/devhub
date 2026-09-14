@@ -288,6 +288,7 @@ describe("what one window is told its DevHub terminal is", () => {
 			windowTerminalLauncher({
 				path: "/home/there/.devhub/terminal/devhub-terminal",
 				unreachable: undefined,
+				binDirectory: undefined,
 			}),
 		).toBe("/home/there/.devhub/terminal/devhub-terminal");
 	});
@@ -301,6 +302,7 @@ describe("what one window is told its DevHub terminal is", () => {
 			windowTerminalLauncher({
 				path: "/home/there/.devhub/terminal/devhub-terminal",
 				unreachable: "the control socket could not be forwarded",
+				binDirectory: undefined,
 			}),
 		).toBeUndefined();
 	});

@@ -48,6 +48,7 @@ import { CancellationToken, portFailure } from "../terminal/ports.js";
 import { openPty, type Pty, type PtyFactory } from "../terminal/pty.js";
 import {
 	remoteTerminalPaths,
+	remoteCliScript,
 	terminalLauncherScript,
 } from "../terminal/launcher.js";
 import {
@@ -1474,11 +1475,12 @@ export class SshRuntime implements Runtime {
 			serverCommit: spec.serverCommit,
 			controlSocketPath: spec.controlSocketPath,
 			entryName: spec.entryName,
+			cliEntryName: spec.cliEntryName,
 		});
 		// 0700, like the control directory on this Mac and for the same reason:
 		// what is under it is a path to a socket that runs commands as this user.
 		const made = await this.#sh(
-			`mkdir -p -- ${shellQuote(paths.entryRoot)} && chmod 700 ${shellQuote(paths.directory)} ${shellQuote(paths.entryRoot)}`,
+			`mkdir -p -- ${shellQuote(paths.entryRoot)} ${shellQuote(paths.cliBinDirectory)} && chmod 700 ${shellQuote(paths.directory)} ${shellQuote(paths.entryRoot)} ${shellQuote(paths.cliBinDirectory)}`,
 		);
 		if (made.code !== 0) throw this.#fileError(paths.directory, made);
 		await this.writeTextFile(paths.entry, spec.entryText, 0o600);
@@ -1500,12 +1502,29 @@ export class SshRuntime implements Runtime {
 			}),
 			0o755,
 		);
+		// The `devhub` command, beside the asking program and run by the same
+		// Node, over the same socket. Two files rather than one because they
+		// are two programs — the launcher prints an argv and exits, `devhub`
+		// opens a file and may wait for it — and bundling them together would
+		// be one program with two entry points and a flag to choose.
+		await this.writeTextFile(paths.cliEntry, spec.cliText, 0o600);
+		await this.writeTextFile(
+			paths.cli,
+			remoteCliScript({
+				execPath: paths.node,
+				cliScript: paths.cliEntry,
+				socketPath: paths.socket,
+				machine: this.id,
+			}),
+			0o755,
+		);
 		return {
 			path: paths.launcher,
 			unreachable: await this.#forwardControlSocket(
 				paths.socket,
 				spec.controlSocketPath,
 			),
+			binDirectory: paths.cliBinDirectory,
 		};
 	}
 

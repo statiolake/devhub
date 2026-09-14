@@ -149,6 +149,8 @@ export interface TerminalWiringOptions {
 	readonly effectiveSocketName: string;
 	/** `<configDirectory>/tmux.conf`: the one user tmux config, on this Mac. */
 	readonly userTmuxConfigPath: string;
+	/** This DevHub's control socket, which tags what it owns on other machines. */
+	readonly controlSocketPath: string;
 	/** The live model, for turning a workspace id into its canonical root. */
 	readonly model: () => AppModel;
 }
@@ -176,6 +178,7 @@ export function wireTerminals(options: TerminalWiringOptions): TerminalWiring {
 		environment: options.environment,
 		effectiveSocketName: options.effectiveSocketName,
 		userTmuxConfigPath: options.userTmuxConfigPath,
+		controlSocketPath: options.controlSocketPath,
 	});
 	const runtimeFromId = async (
 		machine: RuntimeId,

@@ -207,7 +207,9 @@ import {
 } from "../terminal/ports.js";
 import {
 	enclosingRoot,
+	readCliEntryBundle,
 	readTerminalEntryBundle,
+	CLI_ENTRY_BUNDLE,
 	terminalLauncherPath,
 	TERMINAL_ENTRY_BUNDLE,
 } from "../terminal/launcher.js";
@@ -761,6 +763,10 @@ export class AppController {
 			// that is the config of the tmux a person runs themselves, and
 			// DevHub's server is not that tmux.
 			userTmuxConfigPath: join(activeProfile().configDirectory, "tmux.conf"),
+			// Not for talking to: it is what tags the directory DevHub owns on
+			// every *other* machine, so that two profiles reaching one host stay
+			// apart. See `remoteCliBinDirectory`.
+			controlSocketPath: controlSocketPath(userDataPath),
 			model: () => this.coordinator.model,
 		});
 		const terminalRuntimes = this.terminalsWiring.runtimes;
@@ -3262,6 +3268,8 @@ export class AppController {
 			controlSocketPath: controlSocketPath(userDataPath),
 			entryText: readTerminalEntryBundle(APP_ROOT),
 			entryName: TERMINAL_ENTRY_BUNDLE,
+			cliText: readCliEntryBundle(APP_ROOT),
+			cliEntryName: CLI_ENTRY_BUNDLE,
 			serverDataFolderName:
 				vscodeProduct.serverDataFolderName ?? ".vscode-server",
 			serverCommit: vscodeProduct.commit,

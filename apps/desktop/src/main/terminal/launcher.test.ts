@@ -8,6 +8,8 @@ import {
 	installTerminalLauncher,
 	readTerminalEntryBundle,
 	remoteTerminalPaths,
+	remoteCliBinDirectory,
+	remoteCliScript,
 	terminalEntryBundlePath,
 	terminalLauncherPath,
 	terminalCommandLine,
@@ -210,6 +212,7 @@ describe("the DevHub terminal launcher", () => {
 			serverCommit: "abc123",
 			controlSocketPath: "/data/devhub/devhub/control.sock",
 			entryName: "devhub-terminal.bundle.js",
+			cliEntryName: "devhub-cli.bundle.js",
 		};
 
 		it("runs on the Node the connection already installed there", () => {
@@ -237,6 +240,92 @@ describe("the DevHub terminal launcher", () => {
 			});
 			expect(other.socket).not.toBe(remoteTerminalPaths(paths).socket);
 			expect(other.launcher).not.toBe(remoteTerminalPaths(paths).launcher);
+		});
+
+		it("puts the `devhub` command in a directory of its own, beside the rest", () => {
+			const remote = remoteTerminalPaths(paths);
+			expect(remote.cliBinDirectory.startsWith(`${remote.directory}/`)).toBe(
+				true,
+			);
+			expect(remote.cli).toBe(`${remote.cliBinDirectory}/devhub`);
+			expect(remote.cliEntry).toBe(
+				"/home/dev/.devhub/terminal/js/devhub-cli.bundle.js",
+			);
+		});
+
+		/**
+		 * The *directory* is what goes on a pane's PATH, so it is the directory
+		 * that has to differ per DevHub: two profiles sharing one would put two
+		 * `devhub` scripts at one path, and the second to start would silently
+		 * take the first one's name.
+		 */
+		it("gives each DevHub its own bin directory, not just its own file", () => {
+			const other = remoteTerminalPaths({
+				...paths,
+				controlSocketPath: "/data/devhub-second/devhub/control.sock",
+			});
+			expect(other.cliBinDirectory).not.toBe(
+				remoteTerminalPaths(paths).cliBinDirectory,
+			);
+			// And the derived spelling is the same one, so the PATH a session is
+			// given names the directory the shim was actually written into.
+			expect(remoteCliBinDirectory(paths.home, paths.controlSocketPath)).toBe(
+				remoteTerminalPaths(paths).cliBinDirectory,
+			);
+		});
+	});
+
+	/**
+	 * The `devhub` a pane on a host runs.
+	 *
+	 * Upstream's `bin/remote-cli/devhub` ships in the REH tarball and can never
+	 * work here: it is a client for `VSCODE_IPC_HOOK_CLI`, which the REH's own
+	 * terminal channel sets per terminal, and a DevHub pane inherits the tmux
+	 * server's environment instead. This is DevHub's own, over DevHub's own
+	 * socket.
+	 */
+	describe("the `devhub` command written on another machine", () => {
+		const script = remoteCliScript({
+			execPath: "/home/dev/.devhub-server/bin/abc123/node",
+			cliScript: "/home/dev/.devhub/terminal/js/devhub-cli.bundle.js",
+			socketPath: "/home/dev/.devhub/terminal/control-abcdef.sock",
+			machine: "ssh:build-host",
+		});
+
+		it("runs the REH's own Node on the forwarded socket", () => {
+			expect(script).toContain(
+				"exec '/home/dev/.devhub-server/bin/abc123/node' '/home/dev/.devhub/terminal/js/devhub-cli.bundle.js' \"$@\"",
+			);
+			expect(script).toContain(
+				"DEVHUB_CONTROL_SOCKET='/home/dev/.devhub/terminal/control-abcdef.sock'",
+			);
+		});
+
+		/**
+		 * Without this a host's `/srv/app` is matched against a Workspace of the
+		 * same name on this Mac, and the file opens off the wrong disk.
+		 */
+		it("says which machine the paths typed into it are paths on", () => {
+			expect(script).toContain("DEVHUB_MACHINE='ssh:build-host'");
+		});
+
+		/**
+		 * Its absence is the truth, not an omission: DevHub runs on the machine
+		 * the window is on, and nothing over there can start it.
+		 */
+		it("records no way to start DevHub, because there is none from there", () => {
+			expect(script).not.toContain("DEVHUB_LAUNCH_COMMAND");
+		});
+
+		/** A missing REH Node says which file, rather than `exec: not found`. */
+		it("names the Node it cannot find rather than failing as a shell", () => {
+			expect(script).toContain(
+				"if [ ! -x '/home/dev/.devhub-server/bin/abc123/node' ]; then",
+			);
+		});
+
+		it("is a POSIX shell script, because a host may have no bash", () => {
+			expect(script.startsWith("#!/bin/sh\n")).toBe(true);
 		});
 	});
 

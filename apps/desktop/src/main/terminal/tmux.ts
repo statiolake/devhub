@@ -236,7 +236,17 @@ const DEFAULT_TIMEOUT_MS = 3_000;
 const PASTE_SUBMIT_DELAY_MS = 250;
 const BOOTSTRAP_ENV_ROOT = "DEVHUB_BOOTSTRAP_ROOT";
 const BOOTSTRAP_ENV_USER_CONFIG = "DEVHUB_USER_TMUX_CONFIG";
-const BOOTSTRAP_ENV_ORIGIN = "DEVHUB_BOOTSTRAP_ORIGIN";
+/**
+ * The prefix a session-environment entry is handed to the bootstrap under.
+ *
+ * Scratch is created by the config below rather than by `createSession`, and a
+ * pane cannot tell which of the two made it — so both have to state the same
+ * session environment. Rather than write it twice, the config is generated from
+ * the same map: one `-e KEY="$DEVHUB_BOOTSTRAP_E_KEY"` per entry, and the
+ * values arrive in the environment the server is started with, which is where
+ * tmux expands `$VAR` in a config file from.
+ */
+const BOOTSTRAP_ENV_PREFIX = "DEVHUB_BOOTSTRAP_E_";
 
 /**
  * The variable a pane says which workbench it belongs to with.
@@ -271,6 +281,18 @@ export function originValue(
 	return `${machine}\t${context === GLOBAL_CONTEXT ? "scratch" : workspaceId}`;
 }
 
+/** The session environment, as the variables the bootstrap config reads it from. */
+function bootstrapEnvironment(
+	sessionEnvironment: Readonly<Record<string, string>>,
+): Record<string, string> {
+	return Object.fromEntries(
+		Object.entries(sessionEnvironment).map(([name, value]) => [
+			`${BOOTSTRAP_ENV_PREFIX}${name}`,
+			value,
+		]),
+	);
+}
+
 /**
  * The startup config an absent server is created with.
  *
@@ -281,55 +303,64 @@ export function originValue(
  * made a foreign session with that name, say — stops every following metadata
  * and marker command, so a half-owned server cannot exist.
  */
-const BOOTSTRAP_CONFIG = [
-	'source-file -q "$DEVHUB_USER_TMUX_CONFIG"',
-	// Every client this server will ever have is an xterm.js in DevHub's own
-	// window, and xterm.js renders 24-bit colour. Saying so once, on the server,
-	// is what makes a pane's programs emit 24-bit sequences instead of asking
-	// terminfo and quantising to 256 — the visible symptom being a colour ramp
-	// that comes out in bands.
-	//
-	// `-a` appends to whatever the user's config just set, so a user who
-	// declares features for their own outside terminal keeps them; `-s` because
-	// `terminal-features` is a server option. The leading comma is the empty
-	// first entry of the list tmux parses, which is how a pattern:feature pair
-	// is spelled.
-	//
-	// No `terminal-overrides Tc` fallback: `terminal-features` arrived in tmux
-	// 3.2 and DevHub already refuses anything below 3.3 (`MIN_TMUX_MINOR`), so
-	// the older spelling is unreachable and would only be a second way to say
-	// the same thing.
-	"set -as terminal-features ',*:RGB'",
-	// The two variables above are DevHub's, not the user's, and a tmux server
-	// hands its whole environment to every shell it ever starts — so left in
-	// place they would show up in `env` in every pane, for the life of the
-	// server, long after the one command that needed them.
-	//
-	// Unsetting them here, *before* the session is created, is what keeps that
-	// out of the very first pane as well. It costs nothing: tmux expands `$VAR`
-	// in a config file from the environment the server was started with, not
-	// from the global environment this edits, so the `new-session` below still
-	// sees the root.
-	[
-		`set-environment -gu ${BOOTSTRAP_ENV_ROOT}`,
-		`set-environment -gu ${BOOTSTRAP_ENV_USER_CONFIG}`,
-		`set-environment -gu ${BOOTSTRAP_ENV_ORIGIN}`,
-	].join(" ; "),
-	[
-		// Scratch is created here and not by `createSession`, so its origin has
-		// to be stated here too. The same `new-session -e` channel, the same
-		// value — a session DevHub made without one would be a pane whose
-		// `devhub` falls back to the containing-Workspace rule for no reason
-		// anybody could see.
-		`new-session -d -s ${SCRATCH_SESSION} -c "$${BOOTSTRAP_ENV_ROOT}" -e ${DEVHUB_ORIGIN}="$${BOOTSTRAP_ENV_ORIGIN}"`,
-		`set-option -t ${SCRATCH_SESSION} ${CONTEXT_OPTION} ${GLOBAL_CONTEXT}`,
-		`set-option -t ${SCRATCH_SESSION} ${WORKSPACE_ID_OPTION} ${GLOBAL_ID}`,
-		`set-option -t ${SCRATCH_SESSION} ${ROOT_OPTION} "$${BOOTSTRAP_ENV_ROOT}"`,
-		`set-option -t ${SCRATCH_SESSION} ${AGENT_ID_OPTION} ${NO_AGENT}`,
-		`set-option -g ${PROTOCOL_OPTION} ${PROTOCOL_VALUE}`,
-	].join(" ; "),
-	"",
-].join("\n");
+function bootstrapConfig(
+	sessionEnvironment: Readonly<Record<string, string>>,
+): string {
+	const names = Object.keys(sessionEnvironment).sort();
+	return [
+		'source-file -q "$DEVHUB_USER_TMUX_CONFIG"',
+		// Every client this server will ever have is an xterm.js in DevHub's own
+		// window, and xterm.js renders 24-bit colour. Saying so once, on the server,
+		// is what makes a pane's programs emit 24-bit sequences instead of asking
+		// terminfo and quantising to 256 — the visible symptom being a colour ramp
+		// that comes out in bands.
+		//
+		// `-a` appends to whatever the user's config just set, so a user who
+		// declares features for their own outside terminal keeps them; `-s` because
+		// `terminal-features` is a server option. The leading comma is the empty
+		// first entry of the list tmux parses, which is how a pattern:feature pair
+		// is spelled.
+		//
+		// No `terminal-overrides Tc` fallback: `terminal-features` arrived in tmux
+		// 3.2 and DevHub already refuses anything below 3.3 (`MIN_TMUX_MINOR`), so
+		// the older spelling is unreachable and would only be a second way to say
+		// the same thing.
+		"set -as terminal-features ',*:RGB'",
+		// The two variables above are DevHub's, not the user's, and a tmux server
+		// hands its whole environment to every shell it ever starts — so left in
+		// place they would show up in `env` in every pane, for the life of the
+		// server, long after the one command that needed them.
+		//
+		// Unsetting them here, *before* the session is created, is what keeps that
+		// out of the very first pane as well. It costs nothing: tmux expands `$VAR`
+		// in a config file from the environment the server was started with, not
+		// from the global environment this edits, so the `new-session` below still
+		// sees the root.
+		[
+			`set-environment -gu ${BOOTSTRAP_ENV_ROOT}`,
+			`set-environment -gu ${BOOTSTRAP_ENV_USER_CONFIG}`,
+			...names.map(
+				(name) => `set-environment -gu ${BOOTSTRAP_ENV_PREFIX}${name}`,
+			),
+		].join(" ; "),
+		[
+			// Scratch is created here and not by `createSession`, so its session
+			// environment has to be stated here too — the same `new-session -e`
+			// channel and the same values, from the same map. A Scratch pane
+			// without them would be a pane whose `devhub` is missing or falls back
+			// to the containing-Workspace rule, for no reason anybody could see.
+			`new-session -d -s ${SCRATCH_SESSION} -c "$${BOOTSTRAP_ENV_ROOT}"${names
+				.map((name) => ` -e ${name}="$${BOOTSTRAP_ENV_PREFIX}${name}"`)
+				.join("")}`,
+			`set-option -t ${SCRATCH_SESSION} ${CONTEXT_OPTION} ${GLOBAL_CONTEXT}`,
+			`set-option -t ${SCRATCH_SESSION} ${WORKSPACE_ID_OPTION} ${GLOBAL_ID}`,
+			`set-option -t ${SCRATCH_SESSION} ${ROOT_OPTION} "$${BOOTSTRAP_ENV_ROOT}"`,
+			`set-option -t ${SCRATCH_SESSION} ${AGENT_ID_OPTION} ${NO_AGENT}`,
+			`set-option -g ${PROTOCOL_OPTION} ${PROTOCOL_VALUE}`,
+		].join(" ; "),
+		"",
+	].join("\n");
+}
 
 /** What the server's global marker says about who owns it. */
 export type MarkerState = "absent" | "wrong" | "owned";
@@ -783,6 +814,7 @@ class BootstrapConfig {
 	static async create(
 		host: Runtime,
 		directory: string,
+		text: string,
 	): Promise<BootstrapConfig> {
 		for (let attempt = 0; attempt < 8; attempt += 1) {
 			const path = join(
@@ -792,7 +824,7 @@ class BootstrapConfig {
 			let created: boolean;
 			try {
 				// Exclusive create: never write through an existing path.
-				created = await host.writeNewTextFile(path, BOOTSTRAP_CONFIG, 0o600);
+				created = await host.writeNewTextFile(path, text, 0o600);
 			} catch (failure: unknown) {
 				throw portFailure("failed", { cause: failure });
 			}
@@ -845,6 +877,17 @@ export interface TmuxTerminalRuntimeOptions {
 	readonly tmuxArgs: readonly string[];
 	/** The configured `runtimes.tmux_socket_name`. */
 	readonly effectiveSocketName: string;
+	/**
+	 * The directory holding this machine's own `devhub` command, put in front
+	 * of every pane's PATH.
+	 *
+	 * Absent on the machine DevHub runs on, where `devhub` is already on the
+	 * person's PATH and is theirs. Present on every other one, where nothing
+	 * on the PATH can reach DevHub at all — see `remoteCliBinDirectory`, which
+	 * derives it from the machine's `$HOME` and this DevHub's socket, so it can
+	 * be stated before the file it names has been written.
+	 */
+	readonly paneBinDirectory?: string;
 	readonly timeoutMs?: number;
 	/** Where the one-shot bootstrap config is written. */
 	readonly bootstrapDirectory?: string;
@@ -987,6 +1030,7 @@ export class TmuxTerminalRuntime {
 	private readonly bootstrapDirectory: string;
 	private readonly userTmuxConfigPath: string;
 	private readonly host: Runtime;
+	private readonly paneBinDirectory: string | undefined;
 	/** One in-flight bring-up per socket, shared by concurrent callers. */
 	private readonly serverBootstraps = new Map<SocketName, Promise<void>>();
 	/**
@@ -1024,6 +1068,7 @@ export class TmuxTerminalRuntime {
 		this.bootstrapDirectory = options.bootstrapDirectory ?? tmpdir();
 		this.userTmuxConfigPath = options.userTmuxConfigPath ?? "/dev/null";
 		this.host = options.host ?? localRuntime();
+		this.paneBinDirectory = options.paneBinDirectory;
 	}
 
 	/** Which machine this adapter's tmux server is on. */
@@ -2271,7 +2316,32 @@ export class TmuxTerminalRuntime {
 				spec.context,
 				spec.workspaceId,
 			),
+			...this.panePath(),
 		};
+	}
+
+	/**
+	 * The pane's PATH, with DevHub's own `devhub` in front of it.
+	 *
+	 * Only on a machine DevHub is not running on: here, `devhub` is whatever
+	 * the person installed on their own PATH, and putting a second one ahead of
+	 * it would be DevHub overruling a choice they made. There, nothing is on
+	 * the PATH that can reach DevHub at all, so this is the difference between
+	 * having the command and not.
+	 *
+	 * The base is the environment the tmux *server* was started with, which is
+	 * the environment every pane on it inherits — so this states the server's
+	 * own PATH with one directory in front, and never a PATH assembled from
+	 * somewhere else. A server with no PATH at all gets nothing rather than a
+	 * PATH of one directory: a pane that can run `devhub` and not `ls` is worse
+	 * than a pane with no `devhub`, and it would be DevHub that broke it.
+	 */
+	private panePath(): Record<string, string> {
+		const directory = this.paneBinDirectory;
+		if (directory === undefined) return {};
+		const base = this.tmuxEnvironment()["PATH"];
+		if (base === undefined || base.length === 0) return {};
+		return { PATH: `${directory}:${base}` };
 	}
 
 	private async createSession(
@@ -2648,9 +2718,19 @@ export class TmuxTerminalRuntime {
 		cancel: CancellationToken,
 		deadline: OperationDeadline,
 	): Promise<void> {
+		// The same session environment `createSession` states, from the same
+		// method, because Scratch is a session DevHub made like any other.
+		const scratchEnvironment = this.sessionEnvironment({
+			name: SCRATCH_SESSION,
+			root: this.contextHome,
+			context: GLOBAL_CONTEXT,
+			workspaceId: GLOBAL_ID,
+			agentId: NO_AGENT,
+		});
 		const config = await BootstrapConfig.create(
 			this.host,
 			this.bootstrapDirectory,
+			bootstrapConfig(scratchEnvironment),
 		);
 		let output: TmuxOutput;
 		try {
@@ -2658,6 +2738,7 @@ export class TmuxTerminalRuntime {
 				config,
 				socket,
 				this.contextHome,
+				scratchEnvironment,
 				cancel,
 				deadline,
 			);
@@ -2687,6 +2768,7 @@ export class TmuxTerminalRuntime {
 		config: BootstrapConfig,
 		socket: SocketName,
 		root: string,
+		sessionEnvironment: Readonly<Record<string, string>>,
 		cancel: CancellationToken,
 		deadline: OperationDeadline,
 	): Promise<TmuxOutput> {
@@ -2715,11 +2797,7 @@ export class TmuxTerminalRuntime {
 					...this.tmuxEnvironment(),
 					[BOOTSTRAP_ENV_ROOT]: root,
 					[BOOTSTRAP_ENV_USER_CONFIG]: this.userTmuxConfigPath,
-					[BOOTSTRAP_ENV_ORIGIN]: originValue(
-						this.machine,
-						GLOBAL_CONTEXT,
-						GLOBAL_ID,
-					),
+					...bootstrapEnvironment(sessionEnvironment),
 				},
 			},
 			"start-server",
