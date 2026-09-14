@@ -733,6 +733,19 @@ export class SshRuntime implements Runtime {
 		return (await this.#describeRemote()).home;
 	}
 
+	/**
+	 * What a command on this host runs in: the host's own login environment.
+	 *
+	 * Read once from its own login shell (`#readLoginEnvironment`) and already
+	 * the base of every `exec` and every pty here — this is that same answer,
+	 * said out loud, so that a caller who needs to *compose* something on top of
+	 * it (a pane's PATH, a tmux server's environment) builds it from the host's
+	 * own and never from this Mac's. See `Runtime.environment`.
+	 */
+	async environment(): Promise<Readonly<Record<string, string>>> {
+		return (await this.#describeRemote()).login;
+	}
+
 	async platform(): Promise<string> {
 		return (await this.#describeRemote()).platform;
 	}

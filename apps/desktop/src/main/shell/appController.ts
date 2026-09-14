@@ -756,7 +756,6 @@ export class AppController {
 		// for this Mac, which is what that window is about.
 		this.terminalsWiring = wireTerminals({
 			config,
-			environment: this.launchEnvironment,
 			effectiveSocketName: this.state.tmux.effective_socket_name,
 			// One tmux config, in DevHub's own config directory, beside
 			// `settings.toml` and profile-aware with it. Not `~/.tmux.conf`:

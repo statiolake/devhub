@@ -138,14 +138,6 @@ export function createSurfaceResolver(
 
 export interface TerminalWiringOptions {
 	readonly config: Config | undefined;
-	/**
-	 * The one environment every DevHub child is launched with, resolved once at
-	 * startup (see `loginEnvironment.ts`). The terminal must not observe an
-	 * environment that changed under it, and the shell inside tmux inherits
-	 * exactly this — the same environment the executables are resolved in, so a
-	 * tmux DevHub found is a tmux the shell can find too.
-	 */
-	readonly environment: Readonly<Record<string, string | undefined>>;
 	readonly effectiveSocketName: string;
 	/** `<configDirectory>/tmux.conf`: the one user tmux config, on this Mac. */
 	readonly userTmuxConfigPath: string;
@@ -175,7 +167,6 @@ export interface TerminalWiring {
 export function wireTerminals(options: TerminalWiringOptions): TerminalWiring {
 	const runtimes = new TerminalRuntimes({
 		config: options.config,
-		environment: options.environment,
 		effectiveSocketName: options.effectiveSocketName,
 		userTmuxConfigPath: options.userTmuxConfigPath,
 		controlSocketPath: options.controlSocketPath,
@@ -188,7 +179,6 @@ export function wireTerminals(options: TerminalWiringOptions): TerminalWiring {
 
 	const service = registerTerminalService({
 		runtimeFor: runtimeFromId,
-		environment: options.environment,
 		resolveSurface,
 	});
 

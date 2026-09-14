@@ -64,6 +64,9 @@ class RecordingRuntime implements Runtime {
 	home(): Promise<string> {
 		return Promise.resolve("/home/fake");
 	}
+	environment(): Promise<Readonly<Record<string, string>>> {
+		return Promise.resolve({ PATH: "/fake/bin" });
+	}
 	terminalLauncher(spec: TerminalLauncherSpec): Promise<TerminalLauncher> {
 		return Promise.resolve({
 			path: spec.localLauncherPath,

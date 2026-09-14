@@ -306,6 +306,35 @@ export interface Runtime {
 	/** `$HOME` on that machine; resolved once, at first use. */
 	home(): Promise<string>;
 
+	/**
+	 * The environment a command DevHub runs on this machine runs in.
+	 *
+	 * On the seam because it is a fact about a machine and about nothing else,
+	 * and because the alternative was the bug: a tmux server on a host was being
+	 * started with *this Mac's* environment, which the caller had to hand.
+	 * `PATH` then named directories that do not exist over there, `TMPDIR` named
+	 * a `/var/folders/…` the host has never had — so `os.tmpdir()` in the CLI on
+	 * the host wrote its `--wait` marker into nowhere and every `devhub -`
+	 * failed with ENOENT — and `__CFBundleIdentifier` told programs on a NAS
+	 * they were inside a macOS application bundle.
+	 *
+	 * The rule it makes structural: a machine's programs run in that machine's
+	 * environment, and what DevHub adds to it is stated explicitly, per session,
+	 * by the thing that needs it. Nothing of the calling process's environment
+	 * crosses a machine boundary — not because a list of variables is filtered
+	 * out of it, but because the caller never supplies one.
+	 *
+	 * Here it is the frozen launch environment (`loginEnvironment.ts`), which is
+	 * this machine's login environment with DevHub's own runtime variables taken
+	 * back out. There it is the host's login environment, read once from its own
+	 * login shell. Both are "what a person's shell on that machine has", which
+	 * is one rule with two answers rather than two rules.
+	 *
+	 * Resolved once per machine and then constant: a terminal must not observe
+	 * an environment that changed under it.
+	 */
+	environment(): Promise<Readonly<Record<string, string>>>;
+
 	exec(request: ExecRequest): Promise<ExecResult>;
 	spawnPty(request: PtyRequest): Pty;
 

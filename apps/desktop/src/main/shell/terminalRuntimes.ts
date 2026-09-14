@@ -31,13 +31,6 @@ import type { SocketName } from "../terminal/ports.js";
 
 export interface TerminalRuntimesOptions {
 	readonly config: Config | undefined;
-	/**
-	 * The one environment every DevHub child is launched with, resolved once at
-	 * startup (see `loginEnvironment.ts`). The terminal must not observe an
-	 * environment that changed under it, and the shell inside tmux inherits
-	 * exactly this.
-	 */
-	readonly environment: Readonly<Record<string, string | undefined>>;
 	readonly effectiveSocketName: string;
 	/**
 	 * `<configDirectory>/tmux.conf` on this Mac — the one user tmux config.
@@ -125,7 +118,15 @@ export class TerminalRuntimes {
 
 	async #build(host: Runtime): Promise<TmuxTerminalRuntime> {
 		const config = this.#options.config;
-		const searchPath = this.#options.environment["PATH"] ?? "";
+		// The machine's own environment, asked of the machine. It used to be
+		// this Mac's, handed in from `appController`, and a host's tmux server
+		// was then started with this Mac's `PATH`, `TMPDIR` and
+		// `__CFBundleIdentifier` on it — so `os.tmpdir()` in a pane over there
+		// named a `/var/folders/…` that host has never had, and every `devhub -`
+		// and `devhub --wait` failed with ENOENT on a path nothing could create.
+		// See `Runtime.environment`.
+		const environment = await host.environment();
+		const searchPath = environment["PATH"] ?? "";
 		const configuredTmux = config?.runtimes.tmux ?? "tmux";
 		const configuredShell = config?.runtimes.shell ?? "/bin/zsh";
 		const [home, scratch, userConfig, tmux, shell] = await Promise.all([
@@ -149,7 +150,7 @@ export class TerminalRuntimes {
 			);
 		}
 		return new TmuxTerminalRuntime({
-			context: { home, environment: this.#options.environment },
+			context: { home, environment },
 			tmux:
 				tmux.kind === "unavailable"
 					? { kind: "unavailable", reason: tmux.reason }

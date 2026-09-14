@@ -88,7 +88,11 @@ function targetFor(surfaceKey: string): TerminalTarget {
       "/other",
     );
   }
-  return workspaceTarget("local", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "/ws");
+  return workspaceTarget(
+    "local",
+    "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    "/ws",
+  );
 }
 
 /**
@@ -119,7 +123,6 @@ function harness(): Harness {
   const manager = new AttachmentManager({
     randomBytes: (count) =>
       Uint8Array.from({ length: count }, () => (counter += 7) & 0xff),
-    environment: () => ({ TERM: "xterm-256color" }),
     spawn: (launch) => {
       const pty = new FakePty(launch);
       ptys.push(pty);
@@ -151,6 +154,7 @@ function harness(): Harness {
         file: "/usr/bin/tmux",
         args: ["-L", "devhub", "attach-session", "-t", "scratch"],
         cwd: ".",
+        environment: { TERM: "xterm-256color" },
         size: { cols: 80, rows: 24, pixelWidth: 0, pixelHeight: 0 },
         // The frames are encoded and decoded exactly as they cross the real
         // boundary, so a test can never assert on a frame the page could not
@@ -284,6 +288,7 @@ describe("attach", () => {
       file: "/usr/bin/tmux",
       args: [],
       cwd: ".",
+      environment: { TERM: "xterm-256color" },
       size: { cols: 80, rows: 24, pixelWidth: 0, pixelHeight: 0 },
       sink: () => true,
     } as const;
@@ -324,6 +329,7 @@ describe("attach", () => {
         file: "/usr/bin/tmux",
         args: [],
         cwd: ".",
+        environment: { TERM: "xterm-256color" },
         size: { cols: 80, rows: 24, pixelWidth: 0, pixelHeight: 0 },
         sink: (frame) => {
           frames.push(frame);
@@ -605,6 +611,7 @@ describe("output", () => {
         file: "/usr/bin/tmux",
         args: [],
         cwd: ".",
+        environment: { TERM: "xterm-256color" },
         size: { cols: 80, rows: 24, pixelWidth: 0, pixelHeight: 0 },
         sink: () => false,
       }),

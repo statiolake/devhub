@@ -65,7 +65,7 @@ import {
 	type TerminalFrame,
 	type TerminalSize,
 } from "../../ipc/terminal.js";
-import { terminalEnvironment, type Pty, type PtyFactory } from "./pty.js";
+import { type Pty, type PtyFactory } from "./pty.js";
 import { CancellationToken, sameTarget, type TerminalTarget } from "./ports.js";
 
 const MAX_IN_FLIGHT_FRAMES = 8;
@@ -128,15 +128,21 @@ export interface AttachContext {
 	/** The client's working directory: the launch home, never a workspace. */
 	readonly cwd: string;
 	/**
-	 * What this particular tmux needs in its environment, over the shared one.
+	 * The environment this client runs in, whole.
 	 *
-	 * A tmux DevHub shipped to a host reads the terminfo database that travelled
-	 * with it, and a client that did not know that would come up on a machine
-	 * with no database at all and refuse to draw. It belongs to the executable
-	 * and so it arrives with the executable — `TmuxTerminalRuntime.tmuxEnv()` —
-	 * rather than in the one environment every DevHub child shares.
+	 * Composed by the adapter of the machine the client runs on
+	 * (`TmuxTerminalRuntime.tmuxEnv`), from that machine's own environment — not
+	 * merged here over "the one environment every DevHub child shares", which
+	 * was this Mac's and was therefore wrong for every client that runs
+	 * somewhere else. A tmux DevHub shipped to a host also needs the terminfo
+	 * database that travelled with it, and that belongs to the executable, so it
+	 * arrives with the executable in the same answer.
+	 *
+	 * Required, because "the environment this runs in" has no sensible default:
+	 * the one the ledger could have supplied names a different machine's
+	 * directories.
 	 */
-	readonly environment?: Readonly<Record<string, string>>;
+	readonly environment: Readonly<Record<string, string>>;
 	readonly size: TerminalSize;
 	readonly sink: FrameSink;
 }
@@ -553,7 +559,6 @@ export interface AttachmentManagerOptions {
 	/** Overridden only by tests; production opens the target machine's PTY. */
 	readonly spawn?: PtyFactory;
 	readonly randomBytes: (count: number) => Uint8Array;
-	readonly environment?: () => Record<string, string | undefined>;
 }
 
 interface InFlightAttach {
@@ -569,7 +574,6 @@ export class AttachmentManager {
 	private nextAttachKey = 1;
 	private readonly spawn: PtyFactory | undefined;
 	private readonly randomBytes: (count: number) => Uint8Array;
-	private readonly environment: () => Record<string, string | undefined>;
 	private generation: number;
 
 	constructor(options: AttachmentManagerOptions) {
@@ -578,7 +582,6 @@ export class AttachmentManager {
 		// stands in for every machine at once — which is what a test wants.
 		this.spawn = options.spawn;
 		this.randomBytes = options.randomBytes;
-		this.environment = options.environment ?? (() => terminalEnvironment());
 		// The ledger starts somewhere unguessable, so a generation from one run
 		// of the app is not a usable capability in the next.
 		// Six bytes: unguessable, and still an exact integer.
@@ -672,7 +675,7 @@ export class AttachmentManager {
 				rows: context.size.rows,
 				pixelWidth: context.size.pixelWidth,
 				pixelHeight: context.size.pixelHeight,
-				env: { ...this.environment(), ...context.environment },
+				env: { ...context.environment },
 			});
 		} catch (failure: unknown) {
 			// The view asked for a terminal and there is none. Tell it in the

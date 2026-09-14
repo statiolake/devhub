@@ -31,7 +31,7 @@
 import { activityCounters, COUNTER } from "../diagnostics/counters.js";
 import { localRuntime } from "../runtime/registry.js";
 import type { ExecLimits, Runtime, RuntimeId } from "../runtime/runtime.js";
-import type { Pty, PtyLaunch } from "./pty.js";
+import { terminalEnvironment, type Pty, type PtyLaunch } from "./pty.js";
 import { createHash, randomBytes } from "node:crypto";
 import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
@@ -658,6 +658,23 @@ export function sessionMatches(
 		session.root === identity.root &&
 		session.agentId === identity.agentId
 	);
+}
+
+/**
+ * The variables that have a value, which is all an environment ever is.
+ *
+ * `process.env` and everything derived from it can hold `undefined`, and a PTY
+ * is handed a map of strings. Dropping rather than stringifying: a variable
+ * whose value is the word "undefined" is a variable a shell will act on.
+ */
+function definedEnvironment(
+	environment: Readonly<Record<string, string | undefined>>,
+): Record<string, string> {
+	const defined: Record<string, string> = {};
+	for (const [name, value] of Object.entries(environment)) {
+		if (value !== undefined) defined[name] = value;
+	}
+	return defined;
 }
 
 function isUuid(value: string): boolean {
@@ -2894,10 +2911,17 @@ export class TmuxTerminalRuntime {
 	}
 
 	/**
-	 * What that tmux needs in its environment, for a client DevHub does not run
-	 * through `runTmuxSpec` — the attaching PTY, and nothing else.
+	 * The environment a tmux client DevHub opens a PTY on runs in, whole.
+	 *
+	 * The same environment `runTmuxSpec` gives every other tmux client DevHub
+	 * runs — this machine's own, plus what the executable needs to be itself —
+	 * with the terminal's own `TERM` and `COLORTERM` on it. It used to be only
+	 * the executable's own two variables, merged at the ledger over *this Mac's*
+	 * environment, which is a Mac `PATH` and a Mac `TMPDIR` handed to a client
+	 * on somebody's NAS. One machine's environment is composed in one place, and
+	 * this is the same place.
 	 */
 	tmuxEnv(): Readonly<Record<string, string>> {
-		return this.tmuxOwnEnvironment;
+		return definedEnvironment(terminalEnvironment(this.tmuxEnvironment()));
 	}
 }

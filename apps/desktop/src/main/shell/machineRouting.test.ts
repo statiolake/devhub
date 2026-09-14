@@ -62,12 +62,19 @@ class FakeMachine implements Runtime {
 		readonly id: RuntimeId,
 		readonly where: string,
 		private readonly homeDirectory: string,
+		/** What a shell on *this* machine has, which is nobody else's business. */
+		private readonly loginEnvironment: Readonly<Record<string, string>> = {
+			PATH: "/fake/bin",
+		},
 	) {}
 
 	readonly cadence = LOCAL_CADENCE;
 
 	home(): Promise<string> {
 		return Promise.resolve(this.homeDirectory);
+	}
+	environment(): Promise<Readonly<Record<string, string>>> {
+		return Promise.resolve(this.loginEnvironment);
 	}
 	scratchDirectory(): Promise<string> {
 		return Promise.resolve(`${this.homeDirectory}/.devhub/tmp`);
@@ -177,18 +184,21 @@ function machines(): {
 	b: FakeMachine;
 	runtimes: TerminalRuntimes;
 } {
-	const a = new FakeMachine("local", "", "/home/here");
+	const a = new FakeMachine("local", "", "/home/here", {
+		PATH: "/opt/here/bin:/usr/bin",
+		TMPDIR: "/var/folders/here/T/",
+	});
 	const b = new FakeMachine(
 		"ssh:build.example.com",
 		" on build.example.com",
 		"/home/there",
+		{ PATH: "/opt/there/bin:/usr/bin", LANG: "C.UTF-8" },
 	);
 	return {
 		a,
 		b,
 		runtimes: new TerminalRuntimes({
 			config: undefined,
-			environment: { PATH: "/usr/bin:/bin" },
 			effectiveSocketName: "devhub",
 			userTmuxConfigPath: "/home/here/.config/devhub/tmux.conf",
 			controlSocketPath: "/home/here/.devhub/control.sock",
@@ -220,6 +230,39 @@ describe("one tmux adapter per machine", () => {
 		// other.
 		expect(first).toBe(second);
 		expect(await runtimes.live()).toEqual([first]);
+	});
+
+	/**
+	 * Defect (B): a machine's tmux server ran in *this Mac's* environment.
+	 *
+	 * The adapter was handed `launchEnvironment(process.env)` by
+	 * `appController`, and `ssh.ts` merges what it is given *over* the host's
+	 * login environment — so a host's tmux server came up with a Mac `PATH`
+	 * naming directories that are not there and a Mac `TMPDIR` naming a
+	 * `/var/folders/…` that host has never had. `os.tmpdir()` in a pane then
+	 * answered with it, and `devhub -` and `devhub --wait` on the host both
+	 * failed with ENOENT on a path nothing could create.
+	 */
+	it("runs each machine's tmux in that machine's own environment", async () => {
+		const { a, b, runtimes } = machines();
+		const here = await runtimes.for(a);
+		const there = await runtimes.for(b);
+
+		expect(here.environment["PATH"]).toBe("/opt/here/bin:/usr/bin");
+		// Not this Mac's PATH, and not this Mac's TMPDIR either: nothing of the
+		// other machine is in here, because nothing of it was ever offered.
+		expect(there.environment["PATH"]).toBe("/opt/there/bin:/usr/bin");
+		expect(there.environment["TMPDIR"]).toBeUndefined();
+		expect(here.environment["LANG"]).toBeUndefined();
+
+		// And the attaching client, which is the other kind of tmux client
+		// DevHub starts: the same machine's environment, with the terminal's own
+		// TERM on it, composed in the one place rather than merged at the
+		// attachment ledger over whatever this Mac happened to have.
+		expect(there.tmuxEnv()["PATH"]).toBe("/opt/there/bin:/usr/bin");
+		expect(there.tmuxEnv()["LANG"]).toBe("C.UTF-8");
+		expect(there.tmuxEnv()["TMPDIR"]).toBeUndefined();
+		expect(there.tmuxEnv()["TERM"]).toBe("xterm-256color");
 	});
 
 	it("forgets a machine no Workspace is on any more", async () => {
@@ -404,7 +447,6 @@ describe("an adapter for a machine with no tmux", () => {
 		});
 		const runtimes = new TerminalRuntimes({
 			config: undefined,
-			environment: { PATH: "/usr/bin" },
 			effectiveSocketName: "devhub",
 			userTmuxConfigPath: "/home/here/.config/devhub/tmux.conf",
 			controlSocketPath: "/home/here/.devhub/control.sock",

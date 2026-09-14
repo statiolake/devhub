@@ -34,6 +34,7 @@ import { runBounded } from "../terminal/command.js";
 import { openPty, type Pty } from "../terminal/pty.js";
 import { gitDirectoryOf } from "./gitDirectory.js";
 import { resolveExecutable } from "../shell/runtimes.js";
+import { launchEnvironment } from "../shell/loginEnvironment.js";
 import {
 	runtimeUnavailableMessage,
 	type SettingsResolvedRuntimeWire,
@@ -87,6 +88,17 @@ function meansAbsent(error: unknown): boolean {
 	return code === "ENOENT" || code === "ENOTDIR";
 }
 
+/** The variables that have a value, which is all a shell's environment is. */
+function definedOnly(
+	environment: Readonly<Record<string, string | undefined>>,
+): Record<string, string> {
+	const defined: Record<string, string> = {};
+	for (const [name, value] of Object.entries(environment)) {
+		if (value !== undefined) defined[name] = value;
+	}
+	return defined;
+}
+
 function fileError(path: string, error: unknown): RuntimeFileError {
 	const code = (error as NodeJS.ErrnoException | undefined)?.code;
 	return new RuntimeFileError(
@@ -98,6 +110,7 @@ function fileError(path: string, error: unknown): RuntimeFileError {
 
 export class LocalRuntime implements Runtime {
 	#scratchDirectory: string | undefined;
+	#environment: Readonly<Record<string, string>> | undefined;
 
 	readonly id: RuntimeId = "local";
 	readonly where = "";
@@ -111,6 +124,26 @@ export class LocalRuntime implements Runtime {
 
 	home(): Promise<string> {
 		return Promise.resolve(homedir());
+	}
+
+	/**
+	 * What a command on this machine runs in: the frozen launch environment.
+	 *
+	 * The same one every DevHub child has always had — this Mac's login
+	 * environment with DevHub's own runtime variables taken back out
+	 * (`loginEnvironment.ts`) — read from `process.env`, which is where the
+	 * import landed. Read once and kept, because a terminal must not observe an
+	 * environment that changed under it.
+	 *
+	 * The undefined values `process.env` can hold are dropped rather than
+	 * carried: "this machine's environment" is what a shell here would have, and
+	 * a shell has no variable whose value is undefined.
+	 */
+	environment(): Promise<Readonly<Record<string, string>>> {
+		this.#environment ??= Object.freeze(
+			definedOnly(launchEnvironment(process.env)),
+		);
+		return Promise.resolve(this.#environment);
 	}
 
 	/**
