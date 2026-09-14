@@ -657,6 +657,21 @@ nc -U ~/.devhub/terminal/control-<tag>.sock` answers a line of JSON. If it
     only the terminal and the Agent refuse, with the sentence naming `tmux` and
     the host.
 
+## Two facts about running one by hand
+
+**A profile's shared-data directory is the profile's.** VS Code derives
+`~/.devhub-shared` from `product.json`'s `sharedDataFolderName`, which is one
+string for the whole build — so every profile wrote its `sharedStorage` into
+one directory until `resolveArgs` began passing `--shared-data-dir`. A
+non-default profile gets `~/.devhub-shared-<profile>`; the default one has not
+moved.
+
+**Keep `--user-data-dir` short.** VS Code's IPC socket is a unix socket under
+the user-data directory, and a unix socket path has a hard limit of around 104
+bytes on macOS. A user-data directory much past 100 characters — a scratch run
+under a long temporary path, say — fails at startup with `listen EINVAL` and
+nothing that names the length. Point isolated runs at something like `~/.dhX`.
+
 ## Clipboard
 
 Copying in tmux's copy-mode — on the host as much as on the Mac — reaches the
@@ -783,6 +798,22 @@ lists the variable **names** DevHub carries and never their values.
 environment, so what the Settings window shows for a host is an absolute path on
 the host. A name that is not found names the host's own search directories, in
 the host's own order.
+
+**And nothing of this Mac's goes with them.** `Runtime.environment()` is what a
+command on a machine runs in — the frozen launch environment here, the login
+environment above there — and it is asked of the machine rather than handed to
+it. The tmux server on a host, the PATH its tmux and shell are looked up under,
+and the environment its attaching client runs in all come from that one answer.
+
+That is a rule and not a filter, because the filter was the bug. The adapter
+used to be given `launchEnvironment(process.env)` — this Mac's — and `ssh.ts`
+merges what it is given *over* the login environment, so a host's tmux server
+came up with a Mac `PATH` naming directories that are not there, a Mac `TMPDIR`
+naming a `/var/folders/…` no host has ever had (so `os.tmpdir()` in a pane
+answered with it and `devhub -` and `devhub --wait` both failed with ENOENT),
+and `__CFBundleIdentifier` telling programs on a NAS they were inside a macOS
+application bundle. A list of variables to strip would be a record of what has
+broken so far; the caller simply has no environment to offer now.
 
 ### Everything DevHub composes for a host is POSIX `sh`
 

@@ -38,6 +38,9 @@
  *    7. `--force-disable-user-env` is on, because DevHub resolves the login
  *       shell's environment itself and upstream's copy would be a second
  *       answer to the same question. See `resolveArgs`.
+ *    8. `--shared-data-dir` is the profile's, because `sharedDataFolderName` is
+ *       one string for the whole build and every other directory a profile owns
+ *       is the profile's. See `resolveArgs`.
  *
  *  Everything else is upstream, including the copyright below.
  *--------------------------------------------------------------------------------------------*/
@@ -73,6 +76,7 @@ import { DevHubApplication } from './devhubApplication.js';
 import { bootstrapShell } from './shell/bootstrapShell.js';
 import { installAppFence } from './shell/appFence.js';
 import { appController } from './shell/appController.js';
+import { activeProfile } from '../model/profile.js';
 import { localize } from 'code-oss-dev/out/vs/nls.js';
 import { IConfigurationService } from 'code-oss-dev/out/vs/platform/configuration/common/configuration.js';
 import { ConfigurationService } from 'code-oss-dev/out/vs/platform/configuration/common/configurationService.js';
@@ -665,6 +669,19 @@ class CodeMain {
 		// which `dev.sh` sets on every source run. One import means one answer,
 		// so upstream's is turned off rather than left to disagree with DevHub's.
 		args['force-disable-user-env'] = true;
+
+		// DevHub: the shared-data directory is a profile's, like every other
+		// directory a profile owns. It comes from `product.json`'s
+		// `sharedDataFolderName`, which is one string for the whole build, so
+		// without this every profile wrote its `sharedStorage` into
+		// `~/.devhub-shared` — two DevHubs in one directory, which is exactly the
+		// state `model/profile.ts` exists to prevent. The default profile is left
+		// where it has always been, and an explicit `--shared-data-dir` still
+		// wins, for the scratch runs that pass one.
+		const devhubProfile = activeProfile();
+		if (!devhubProfile.isDefault && !args['shared-data-dir']) {
+			args['shared-data-dir'] = devhubProfile.sharedDataDirectory;
+		}
 
 		if (args.wait && !args.waitMarkerFilePath) {
 			// If we are started with --wait create a random temporary file

@@ -55,6 +55,17 @@ export interface ProfileLocations {
   readonly configDirectory: string;
   /** The tmux server the terminals and Agents live on. */
   readonly tmuxSocketName: string;
+  /**
+   * VS Code's shared-data directory — `~/.devhub-shared` for the default
+   * profile.
+   *
+   * It is derived from `product.json`'s `sharedDataFolderName`, which is one
+   * string for the whole build and therefore the same for every profile: two
+   * DevHubs wrote their `sharedStorage` into one directory, which is the state
+   * every other location here exists to prevent. VS Code takes
+   * `--shared-data-dir` for it, so the profile answers it like everything else.
+   */
+  readonly sharedDataDirectory: string;
 }
 
 /**
@@ -123,6 +134,7 @@ export function profileLocations(
     extensionsDirectory: join(dataDirectory, "extensions"),
     configDirectory: join(configRoot, `devhub${suffix}`),
     tmuxSocketName: `devhub${suffix}`,
+    sharedDataDirectory: join(home, `.devhub-shared${suffix}`),
   };
 }
 

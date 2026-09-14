@@ -30,6 +30,7 @@ describe("the default profile", () => {
         "/home/tester/Library/Application Support/DevHub/extensions",
       configDirectory: "/home/tester/.config/devhub",
       tmuxSocketName: "devhub",
+      sharedDataDirectory: "/home/tester/.devhub-shared",
     });
   });
 
@@ -61,15 +62,14 @@ describe("a second profile", () => {
 
   it("shares no location with the default one", () => {
     const production = profileLocations(DEFAULT_PROFILE, HOME, {});
-    const keys = [
-      "applicationName",
-      "cliCommandName",
-      "dataDirectory",
-      "userDataDirectory",
-      "extensionsDirectory",
-      "configDirectory",
-      "tmuxSocketName",
-    ] as const;
+    // Every location there is, read off the object rather than listed here.
+    // A hand-written list is how `sharedDataDirectory` came to be the one
+    // directory two profiles shared: it was added to the product and never to
+    // the list, so this test went on passing about the seven it knew.
+    const keys = Object.keys(dev).filter(
+      (key) => key !== "profile" && key !== "isDefault",
+    ) as (keyof typeof dev)[];
+    expect(keys.length).toBeGreaterThan(7);
     for (const key of keys) {
       expect(dev[key], key).not.toBe(production[key]);
     }
@@ -88,6 +88,7 @@ describe("a second profile", () => {
         "/home/tester/Library/Application Support/DevHub Dev/extensions",
       configDirectory: "/home/tester/.config/devhub-dev",
       tmuxSocketName: "devhub-dev",
+      sharedDataDirectory: "/home/tester/.devhub-shared-dev",
     });
   });
 
