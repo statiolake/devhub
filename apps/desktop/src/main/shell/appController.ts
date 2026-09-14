@@ -91,7 +91,11 @@ import { openFileInWorkbench } from "../cli/openFiles.js";
 import { WaitSelectionReturns } from "../cli/waitReturn.js";
 import type { ControlOpenRequest, ControlPosition } from "../cli/protocol.js";
 import { workspaceRootFor } from "../cli/resolve.js";
-import { routeOpen, type RoutableWorkspace } from "../cli/route.js";
+import {
+	routeOpen,
+	type OpenReason,
+	type RoutableWorkspace,
+} from "../cli/route.js";
 import {
 	AgentProfile,
 	agentsInspection,
@@ -4179,6 +4183,7 @@ export class AppController {
 			target.path,
 			machine,
 			this.routableWorkspaces(),
+			request.origin,
 		);
 		if (destination.kind === "scratch") {
 			await this.dispatchAwaiting({ type: "new_window" });
@@ -4191,11 +4196,18 @@ export class AppController {
 			);
 			this.rememberWaitReturn(waitMarkerPath, before);
 			this.bringToFront();
-			return `${target.path}${at(position)} is open in the Scratch editor: no open workspace contains it.`;
+			return `${target.path}${at(position)} is open in the Scratch editor: ${because(destination.reason)}`;
 		}
 
 		const root = destination.workspace.root;
-		const workspace = this.workspaceAt(root, machine);
+		// The Workspace's own machine, not the request's. They are the same for
+		// the containing rule and can differ for the origin one — a pane on a
+		// host naming its window is the case — and the window addressed has to
+		// be the one the rule actually chose.
+		const workspace = this.workspaceAt(
+			root,
+			runtimeMachine(destination.workspace.machine),
+		);
 		await this.dispatchAwaiting({
 			type: "select_context",
 			context: { kind: "workspace", workspaceId: workspace.id },
@@ -4210,7 +4222,7 @@ export class AppController {
 		);
 		this.rememberWaitReturn(waitMarkerPath, before);
 		this.bringToFront();
-		return `${target.path}${at(position)} is open in the workspace at ${root}.`;
+		return `${target.path}${at(position)} is open in the workspace at ${root}: ${because(destination.reason)}`;
 	}
 
 	/**
@@ -5288,6 +5300,25 @@ function isUnknownOperation(error: unknown): boolean {
 }
 
 /** How a `--goto` position reads back in the sentence the command prints. */
+/**
+ * Why an open landed where it did, as the end of the sentence the CLI prints.
+ *
+ * A misrouted open is only visible if the answer says which of the three
+ * clauses answered — in the terminal that asked, where somebody is actually
+ * looking. Written here, once, so that the same reason cannot come out in two
+ * wordings depending on which branch produced it.
+ */
+function because(reason: OpenReason): string {
+	switch (reason) {
+		case "origin":
+			return "it is the window this terminal belongs to.";
+		case "containing":
+			return "it is the open workspace that contains it.";
+		case "no-containing-workspace":
+			return "no open workspace contains it.";
+	}
+}
+
 function at(position: ControlPosition | undefined): string {
 	return position === undefined
 		? ""

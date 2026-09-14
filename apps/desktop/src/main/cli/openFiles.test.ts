@@ -27,6 +27,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import type { ICodeWindow } from "code-oss-dev/out/vs/platform/window/electron-main/window.js";
 import { openFileInWorkbench } from "./openFiles.js";
+import { routeOpen } from "./route.js";
 
 /** The repo root, from this file's own location. */
 const REPO_ROOT = resolve(
@@ -158,5 +159,93 @@ describe("the workbench's file: provider", () => {
 		// which is why a remote window can hold both kinds of editor at once.
 		expect(source).toMatch(/registerProvider\(\s*Schemas\.vscodeRemote\s*,/u);
 		expect(source).not.toMatch(/registerProvider\(\s*Schemas\.file\s*,/u);
+	});
+});
+
+/**
+ * `--wait` through each of the three answers the routing rule gives.
+ *
+ * The two halves are written separately on purpose — one decides the window,
+ * the other talks to it — so this is the seam between them: whichever window
+ * the rule chose is the window that gets the marker, and the presence of a
+ * marker never changes which window that is. Getting this wrong is the failure
+ * with no symptom: `git commit` hangs forever after the tab is closed, because
+ * the marker was handed to a workbench that never opened the file.
+ */
+describe("a --wait open", () => {
+	const alpha = {
+		workspaceId: "alpha-id",
+		root: "/work/alpha",
+		machine: "local",
+	};
+	const beta = { workspaceId: "beta-id", root: "/work/beta", machine: "local" };
+	const open = [alpha, beta];
+	const marker = "/var/folders/devhub-wait/marker";
+
+	/** Route, then send, and report which window was talked to. */
+	function openThrough(
+		path: string,
+		origin: string | undefined,
+	): { readonly landedIn: string; readonly marker: string | undefined } {
+		const destination = routeOpen(path, "local", open, origin);
+		const window = recordingWindow(undefined);
+		openFileInWorkbench(
+			window.window,
+			{ path, exists: true, isDirectory: false },
+			undefined,
+			marker,
+		);
+		return {
+			landedIn:
+				destination.kind === "scratch"
+					? "scratch"
+					: destination.workspace.workspaceId,
+			marker: window.sent[0]?.payload.filesToWait?.waitMarkerFileUri.path,
+		};
+	}
+
+	it("carries its marker into the window the origin named", () => {
+		// Outside every Workspace, so without the origin this would be Scratch.
+		expect(openThrough("/etc/hosts", "local\talpha-id")).toEqual({
+			landedIn: "alpha-id",
+			marker,
+		});
+	});
+
+	it("carries its marker into the containing Workspace when there is no origin", () => {
+		expect(openThrough("/work/beta/x.ts", undefined)).toEqual({
+			landedIn: "beta-id",
+			marker,
+		});
+	});
+
+	it("carries its marker into Scratch when nothing else claims the path", () => {
+		expect(openThrough("/etc/hosts", undefined)).toEqual({
+			landedIn: "scratch",
+			marker,
+		});
+	});
+
+	/** A pane that outlived its window still ends its wait somewhere real. */
+	it("carries its marker through a stale origin to the containing Workspace", () => {
+		expect(openThrough("/work/beta/x.ts", "local\tclosed-id")).toEqual({
+			landedIn: "beta-id",
+			marker,
+		});
+	});
+
+	it("routes exactly as it would without a marker", () => {
+		for (const [path, origin] of [
+			["/etc/hosts", "local\talpha-id"],
+			["/work/beta/x.ts", undefined],
+			["/etc/hosts", undefined],
+			["/work/beta/x.ts", "local\tclosed-id"],
+		] as const) {
+			const withMarker = openThrough(path, origin);
+			const plain = routeOpen(path, "local", open, origin);
+			expect(withMarker.landedIn).toBe(
+				plain.kind === "scratch" ? "scratch" : plain.workspace.workspaceId,
+			);
+		}
 	});
 });
