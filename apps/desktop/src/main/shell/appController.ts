@@ -4579,14 +4579,28 @@ export class AppController {
 			}));
 		// DevHub's own pages, named the same way, because a reading that can
 		// only name workbenches cannot answer what splitting the pages cost.
-		// `onScreen` for these is "in the window's child list", which for the
-		// two that come and go is the fact worth reading back: a notice layer
-		// standing with nothing on it is a rectangle taking clicks for nothing.
+		// `onScreen` for these is "drawn": for the two layers that come and go
+		// it is presence in the window's child list, because a notice layer
+		// standing with nothing on it is a rectangle taking clicks for
+		// nothing; for the Sidebar and the Agents it is visibility, because
+		// both are always in the list and only one of them is always drawn.
+		// Reading it back is how `--metrics` answers "exactly one of the
+		// Agents and a workbench is on the content area" without a screenshot.
 		const chrome = [
 			{
 				contents: shell.window.webContents,
 				name: "shell",
 				present: true,
+			},
+			{
+				contents: shell.sidebar.contents(),
+				name: "sidebar",
+				present: shell.sidebar.isVisible(),
+			},
+			{
+				contents: shell.agents.contents(),
+				name: "agents",
+				present: shell.agents.isVisible(),
 			},
 			{
 				contents: shell.toasts.contents(),
@@ -5124,6 +5138,14 @@ export class AppController {
 				this.startupFailure = undefined;
 				this.publishError(pending);
 			}
+			// A page asking for the world is also a page that has just started
+			// and has none of the pushes yet. The rectangle the owner leaves
+			// for a workbench is one of those, and the window's own page draws
+			// nothing at all until it has one — deliberately, because a guessed
+			// rectangle is the page having an opinion about the layout. So it
+			// is said again here, where "a page has just started" is a fact
+			// main can see.
+			this.publishLayoutState();
 			return this.snapshot();
 		});
 		handle(CHANNELS.getAppearance, () => this.appearance());

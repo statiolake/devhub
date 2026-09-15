@@ -1223,14 +1223,17 @@ body.is-resizing-sidebar {
  * there.
  *
  * Laid at the owner's rectangle rather than flexed into a row: the row is
- * gone. The Sidebar, the workbenches and the Agents are sibling views over
+ * gone. `fixed` and not `absolute`, because the owner's numbers are the
+ * window's own and the bar above this is in the flow — measured, an absolute
+ * rectangle inside the content box arrived 38 pixels too low, which is the bar
+ * counted twice. The Sidebar, the workbenches and the Agents are sibling views over
  * this page now, and what this element draws is the three states in which none
  * of them has anything to show — so it is positioned exactly where the missing
  * child would have been, and the page's own document is simply the ground
  * under all of them.
  */
 .surface {
-  position: absolute;
+  position: fixed;
   display: flex;
   overflow: hidden;
   min-width: 0;
@@ -1254,7 +1257,7 @@ body.is-resizing-sidebar {
    the window's chrome either side of it, so what the eye sees is still a seam
    and what the hand finds is the whole strip. */
 .split-seam {
-  position: absolute;
+  position: fixed;
   display: flex;
   width: 6px;
   justify-content: center;

@@ -195,6 +195,35 @@ describe("a chord, as Electron delivers it", () => {
 		expect(calls).toEqual(["openWorkspacePicker"]);
 	});
 
+	/**
+	 * And between DevHub's own pages, which is the move that became routine.
+	 *
+	 * Clicking a Sidebar row and then typing into an Agent used to be one
+	 * document; it is two `WebContents` now, and so is arming a chord over one
+	 * of them and finishing it over the other. Every pair is asserted rather
+	 * than one of them, because the thing being asserted is that this layer
+	 * does not know which page it is on.
+	 */
+	it("completes a chord across any two of DevHub's own pages", () => {
+		const pages = [
+			`${SHELL_ORIGIN}/index.html`,
+			`${SHELL_ORIGIN}/sidebar.html`,
+			`${SHELL_ORIGIN}/agents.html`,
+			`${SHELL_ORIGIN}/toasts.html`,
+			`${SHELL_ORIGIN}/picker.html`,
+			WORKBENCH,
+		];
+		for (const armed of pages) {
+			for (const finished of pages) {
+				resetChordRouterForTests();
+				const { calls, chordHost } = host();
+				expect(type(chordHost, [PREFIX], armed)).toEqual([true]);
+				expect(type(chordHost, [input("KeyF", "f")], finished)).toEqual([true]);
+				expect(calls).toEqual(["openWorkspacePicker"]);
+			}
+		}
+	});
+
 	it("keeps the chord through the Shift that arrives before the key", () => {
 		// The sequence the reporter typed. `ShiftLeft` is not taken, because a
 		// surface underneath is entitled to know Shift went down; the `P` is.
