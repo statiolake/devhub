@@ -80,10 +80,9 @@ function Probe() {
   );
 }
 
-function mount(options?: {
-  readonly raiseFailure?: (error: AppError) => void;
-}) {
+function mount() {
   let raise: (error: AppError) => void = () => undefined;
+  const raised: AppError[] = [];
   const client = {
     getSnapshot: async () => SNAPSHOT,
     getAppearance: async () => APPEARANCE,
@@ -114,14 +113,18 @@ function mount(options?: {
     openModal: async () => "",
     closeModal: async () => undefined,
     reportNoticeRetired: async () => undefined,
+    raiseFailure: (error: AppError) => {
+      raised.push(error);
+    },
   } as unknown as AppShellClient;
   render(
-    <AppShellProvider client={client} raiseFailure={options?.raiseFailure}>
+    <AppShellProvider client={client}>
       <Probe />
     </AppShellProvider>,
   );
   return {
     client,
+    raised,
     raise: (error: AppError) => act(() => raise(error)),
   };
 }
@@ -235,25 +238,40 @@ describe("the failure on screen", () => {
 });
 
 /**
- * The overlay page collects failures and has nowhere to draw them.
+ * The rule with two halves: what began here is raised, what arrived is drawn.
  *
- * It is a sheet of glass main takes off screen the moment the last modal
- * closes — and every sheet dismisses itself as it acts, so a `--force` worktree
- * removal that fails, a failed Agent action and every unhandled rejection on
- * that page set a state nobody would ever see. The rule is not a second
- * renderer: the page that cannot draw hands the failure to main, which
- * publishes it to the page that can.
+ * Both halves used to live in one callback, and which one ran was decided by a
+ * prop the overlay page set. That made "a failure arrived" and "a failure
+ * happened" the same event on a page that had nowhere to draw one: the overlay
+ * received `nativeError`, took itself to be the raiser, handed it back to main,
+ * and main published it again. Nothing in the loop was wrong on its own. The
+ * fix is not de-duplication; it is that the two halves are two functions, and
+ * the delivered one has no way to raise.
  */
-describe("a failure raised on a page with nowhere to draw it", () => {
+describe("a failure delivered to a page", () => {
   afterEach(cleanup);
 
-  it("is handed on instead of being held where nobody draws it", async () => {
-    const raised: AppError[] = [];
-    const { client } = mount({
-      raiseFailure: (error) => {
-        raised.push(error);
-      },
-    });
+  it("is never raised back to main", () => {
+    const { raise, raised } = mount();
+    // Delivery, over and over — the shape the echo had.
+    raise(failure("the worktree could not be removed"));
+    raise(failure("the worktree could not be removed"));
+    raise(failure("the worktree could not be removed"));
+    expect(raised).toEqual([]);
+  });
+
+  it("is drawn, which is the only thing a delivered failure is for", () => {
+    const { raise } = mount();
+    raise(failure("the worktree could not be removed"));
+    expect(alert()).toContain("the worktree could not be removed");
+  });
+});
+
+describe("a failure that began on this page", () => {
+  afterEach(cleanup);
+
+  it("goes to main, which decides where it is drawn", async () => {
+    const { client, raised } = mount();
     (
       client as unknown as { dispatch: ReturnType<typeof vi.fn> }
     ).dispatch.mockRejectedValueOnce(
@@ -268,15 +286,8 @@ describe("a failure raised on a page with nowhere to draw it", () => {
     expect(raised[0].detail ?? raised[0].summary).toContain(
       "the worktree could not be removed",
     );
-    // And nothing was drawn here, because here is not where failures are drawn.
+    // Not drawn from here: main publishes it to the page that draws failures,
+    // and that page draws it when it arrives — one lifetime rule, one site.
     expect(alert()).toBe("");
-  });
-
-  it("still draws it on the page that does have somewhere", () => {
-    const { raise } = mount();
-    // What main does with a handed-on failure: it goes out on `nativeError`,
-    // which is the same channel every failure main raises goes out on.
-    raise(failure("the worktree could not be removed"));
-    expect(alert()).toContain("the worktree could not be removed");
   });
 });

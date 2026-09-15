@@ -544,16 +544,20 @@ export interface DevhubApi {
 	 */
 	openModal(request: ModalRequest): Promise<string>;
 	/**
-	 * Hand a failure to main, so it is drawn where failures are drawn.
+	 * Say that a failure *began on this page*, so main can journal it and
+	 * publish it to the page that draws failures.
 	 *
-	 * The counterpart of `openModal`, and for the same reason. A page that
-	 * cannot show a thing does not show it badly: the overlay layer is taken
-	 * off screen the moment the last modal closes, which is exactly when a
-	 * sheet's action fails, so a failure held there is a failure nobody sees.
-	 * Main publishes it on `nativeError`, and the App Shell — the page that is
-	 * always on screen — draws it under the one lifetime rule there is.
+	 * This is one half of a rule with exactly two halves. A page raises only
+	 * what originated in it — its root handler's `error` and
+	 * `unhandledrejection`, and the intents it started — and it draws only what
+	 * arrived on `nativeError`. A failure that arrived is never raised again;
+	 * that is what keeps a failure from going round main and the page forever.
+	 *
+	 * It answers nothing, and it cannot: a call that could reject would raise
+	 * its own rejection through the very root handler that calls this, which is
+	 * the same loop by another route. Telling main is not asking it.
 	 */
-	raiseFailure(error: AppError): Promise<void>;
+	raiseFailure(error: AppError): void;
 	/**
 	 * Tell main a notice has left the screen, and by which rule.
 	 *

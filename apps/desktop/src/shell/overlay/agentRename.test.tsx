@@ -143,6 +143,7 @@ function client(
     setContentSurface: async () => undefined,
     openModal: async () => "",
     closeModal: async () => undefined,
+    raiseFailure: () => undefined,
   } as unknown as AppShellClient;
 }
 

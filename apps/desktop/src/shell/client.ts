@@ -140,8 +140,8 @@ export interface AppShellClient {
   focusSurface(): Promise<void>;
   /** Put a modal on the overlay layer; the id is what takes it off again. */
   openModal(request: ModalRequest): Promise<string>;
-  /** Hand main a failure this page has no place to draw. */
-  raiseFailure(error: AppError): Promise<void>;
+  /** Say that a failure began on this page. One way; see `ipc/contract.ts`. */
+  raiseFailure(error: AppError): void;
   /**
    * Say that a notice has left the screen, and by which of the three rules.
    *
@@ -229,7 +229,9 @@ export function createShellClient(api: DevhubApi = devhub()): AppShellClient {
     setContentSurface: (surface) => api.setContentSurface(surface),
     focusSurface: () => api.focusSurface(),
     openModal: (request) => api.openModal(request),
-    raiseFailure: (error) => api.raiseFailure(error),
+    raiseFailure: (error) => {
+      api.raiseFailure(error);
+    },
     reportNoticeRetired: (retired) => api.reportNoticeRetired(retired),
     closeModal: (id, response) => api.closeModal(id, response),
   };

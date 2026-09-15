@@ -66,19 +66,6 @@ export interface AppShellProviderProps {
    * the alert *is* the thing on screen.
    */
   readonly raiseConfirmation?: (confirmation: PendingConfirmation) => void;
-  /**
-   * Where a failure goes when this page has no place to draw one.
-   *
-   * The exact counterpart of `raiseConfirmation`, and for the same reason. The
-   * overlay page is a sheet of glass that main takes off screen the moment the
-   * last modal closes — which is precisely when a sheet's action fails, since
-   * every sheet dismisses itself as it acts. So the overlay hands its failures
-   * to main, main publishes them, and the App Shell — the page that is always
-   * on screen — draws them under the one lifetime rule there is. The App Shell
-   * keeps the default, which is to hold the failure right here, because there
-   * the alert *is* the thing on screen.
-   */
-  readonly raiseFailure?: (error: AppError) => void;
   readonly children: ReactNode;
 }
 
@@ -92,7 +79,6 @@ export interface AppShellProviderProps {
 export function AppShellProvider({
   client,
   raiseConfirmation,
-  raiseFailure,
   children,
 }: AppShellProviderProps) {
   const transport = useMemo(() => client ?? createShellClient(), [client]);
@@ -144,19 +130,22 @@ export function AppShellProvider({
     ),
   );
 
-  const setIntentError = useCallback(
+  /**
+   * A failure that began here, said once, to main.
+   *
+   * Every page raises the same way and none of them decides where the failure
+   * is drawn: main journals it and publishes it to the page that draws
+   * failures, which may or may not be this one. The counterpart is
+   * `drawFailure` below, and the line between them is the whole rule — what
+   * arrived is drawn and never raised again, what began here is raised and
+   * never drawn here. A page that did both would hand main back what main just
+   * told it, forever.
+   */
+  const raiseFailureToMain = useCallback(
     (error: AppError) => {
-      if (raiseFailure) {
-        // Not held here and not drawn here: this page has no display site, and
-        // a failure kept where nobody draws it is the failure that does not
-        // exist. The identity and lifetime rules belong to the page that draws
-        // it, so they are applied there and only there.
-        raiseFailure(error);
-        return;
-      }
-      raiseHere(error);
+      transport.raiseFailure(error);
     },
-    [raiseFailure, raiseHere],
+    [transport],
   );
   const [pickerCandidates, setPickerCandidates] = useState<
     WorkspacePickerCandidate[]
@@ -218,14 +207,18 @@ export function AppShellProvider({
    */
   const reportFailure = useCallback(
     (error: unknown) => {
-      setIntentError(toAppError(error));
+      raiseFailureToMain(toAppError(error));
     },
-    [setIntentError],
+    [raiseFailureToMain],
   );
 
-  // Whatever the root handler caught is a failure like any other, and it is
-  // shown where every other failure is shown.
-  useEffect(() => subscribeToUnhandled(setIntentError), [setIntentError]);
+  // The root handler is the only thing on a page that says a failure began
+  // here. Everything it caught goes to main, and comes back to whichever page
+  // draws failures.
+  useEffect(
+    () => subscribeToUnhandled(raiseFailureToMain),
+    [raiseFailureToMain],
+  );
 
   const applySnapshot = useCallback((snapshot: AppSnapshot) => {
     if (snapshot.revision < lastRevision.current) return;
@@ -312,9 +305,11 @@ export function AppShellProvider({
             processPickerEvent(event);
           }),
         );
+        // Delivered for display, so it is drawn and nothing else. It is never
+        // handed back to main: that is the half of the rule that lives here.
         disposers.push(
           transport.subscribeNativeError((error) => {
-            if (live()) setIntentError(error);
+            if (live()) raiseHere(error);
           }),
         );
         // A condition, not a failure: it is drawn until its own source
@@ -411,7 +406,7 @@ export function AppShellProvider({
     attempt,
     transport,
     reportFailure,
-    setIntentError,
+    raiseHere,
     observeCondition,
   ]);
 
@@ -436,7 +431,7 @@ export function AppShellProvider({
         return outcome;
       } catch (error) {
         if (generation.current !== dispatchGeneration) return undefined;
-        setIntentError(toAppError(error));
+        raiseFailureToMain(toAppError(error));
         return undefined;
       }
     },
@@ -445,7 +440,7 @@ export function AppShellProvider({
       transport,
       raiseConfirmation,
       clearIntentError,
-      setIntentError,
+      raiseFailureToMain,
     ],
   );
 
@@ -618,10 +613,10 @@ export function AppShellProvider({
   const closeWorkspace = useCallback(
     (workspaceId: string) => {
       void transport.closeWorkspace(workspaceId).catch((error: unknown) => {
-        setIntentError(toAppError(error));
+        raiseFailureToMain(toAppError(error));
       });
     },
-    [setIntentError, transport],
+    [raiseFailureToMain, transport],
   );
 
   const answerWorktreeClose = useCallback(

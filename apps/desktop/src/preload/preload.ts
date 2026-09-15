@@ -109,8 +109,10 @@ const devhub: DevhubApi = {
 
 	openModal: (request: ModalRequest) =>
 		ipcRenderer.invoke(CHANNELS.openModal, request) as Promise<string>,
-	raiseFailure: (error: AppError) =>
-		ipcRenderer.invoke(CHANNELS.raiseFailure, error) as Promise<void>,
+	// One way, and it has to be: see `raiseFailure` in `ipc/contract.ts`.
+	raiseFailure: (error: AppError) => {
+		ipcRenderer.send(CHANNELS.raiseFailure, error);
+	},
 	reportNoticeRetired: (retired: NoticeRetiredWire) =>
 		ipcRenderer.invoke(CHANNELS.noticeRetired, retired) as Promise<void>,
 	closeModal: (id: string, response?: number) =>

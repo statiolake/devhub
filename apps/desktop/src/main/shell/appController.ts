@@ -184,6 +184,7 @@ import {
 	shellWindow,
 	shellWindowIfCreated,
 } from "./shellWindow.js";
+import { displayAudience, projectionAudience } from "./publishAudience.js";
 import {
 	crash,
 	InvariantViolation,
@@ -1684,19 +1685,22 @@ export class AppController {
 		return this.config;
 	}
 
-	/**
-	 * Push one projection to every page that draws from it.
-	 *
-	 * The App Shell page and the modal overlay are two views of the same model
-	 * — an alert about a workspace is the same workspace the sidebar lists —
-	 * so they are told the same things at the same moment rather than the
-	 * overlay fetching its own copy on a second path.
-	 */
+	/** Push one projection to every page that draws from the model. */
 	private send(channel: string, payload: unknown): void {
-		const shell = shellWindow();
-		if (shell.window.isDestroyed()) return;
-		shell.window.webContents.send(channel, payload);
-		shell.modals.contents()?.send(channel, payload);
+		for (const contents of projectionAudience(shellWindow())) {
+			contents.send(channel, payload);
+		}
+	}
+
+	/**
+	 * Push to the one page that draws this, and to no other. See
+	 * `publishAudience.ts` for why a failure has a smaller audience than a
+	 * projection does.
+	 */
+	private sendToDisplay(channel: string, payload: unknown): void {
+		for (const contents of displayAudience(shellWindow())) {
+			contents.send(channel, payload);
+		}
 	}
 
 	private publishSnapshot(): void {
@@ -1871,7 +1875,7 @@ export class AppController {
 			identity: appFailureIdentity(error.code),
 			reason: error.detail ?? error.summary,
 		});
-		this.send(CHANNELS.nativeError, error);
+		this.sendToDisplay(CHANNELS.nativeError, error);
 	}
 
 	/**
@@ -4891,6 +4895,7 @@ export class AppController {
 
 	private registerIpc(): void {
 		const handle = electron.ipcMain.handle.bind(electron.ipcMain);
+		const receive = electron.ipcMain.on.bind(electron.ipcMain);
 
 		handle(CHANNELS.getSnapshot, () => {
 			// A page asking for the world is the first moment there is anywhere
@@ -5280,10 +5285,12 @@ export class AppController {
 		handle(CHANNELS.openModal, (_event, request: ModalRequest) =>
 			shellWindow().modals.openModal(request),
 		);
-		// A page that has nowhere to draw a failure hands it here, and it goes
-		// out on the same channel every failure main raises goes out on. One
-		// display site, one lifetime rule, whichever page the failure began on.
-		handle(CHANNELS.raiseFailure, (_event, error: AppErrorWire) => {
+		// A failure that *began* on a page arrives here, and goes out on the
+		// same channel every failure main raises goes out on. One display site,
+		// one lifetime rule, whichever page the failure began on. One way, and
+		// received-is-never-raised on the page side, is what keeps this from
+		// being a loop — see `raiseFailure` in `ipc/contract.ts`.
+		receive(CHANNELS.raiseFailure, (_event, error: AppErrorWire) => {
 			this.publishError(error);
 		});
 		// The other half of the journal: main sees every raise and none of the
