@@ -53,8 +53,8 @@
  * # Why it is here and not in main
  *
  * Because main is not the only publisher. The App Shell page raises its own
- * failures without main hearing about them — a `setContentRect` that a
- * `ResizeObserver` rejected, an unhandled rejection, a sheet's action — and a
+ * failures without main hearing about them — an unhandled rejection, a
+ * sheet's action, a request main refused — and a
  * gate in `publishError` would have left every one of those unguarded. The
  * one place they all arrive is the hook that holds what is on screen, so that
  * is where the rule goes. Main publishes as often as it likes and writes down

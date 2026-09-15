@@ -49,6 +49,34 @@ vi.mock("../electron.js", () => ({
 }));
 
 const { ToastsView } = await import("./toastsView.js");
+const { windowLayout } = await import("./windowLayout.js");
+
+/**
+ * Where the layout owner would put this layer, for the size it now reports.
+ *
+ * The same function the window uses, asked with this test's window size, so
+ * what is asserted below is the placement DevHub actually makes rather than a
+ * second copy of the arithmetic.
+ */
+function placementFor(
+	toasts: InstanceType<typeof ToastsView>,
+): Electron.Rectangle | undefined {
+	const children = windowLayout({
+		windowSize: { width: 1000, height: 800 },
+		state: {
+			titleBar: "hidden",
+			density: "compact",
+			sidebar: { width: 248, collapsed: false },
+			surface: { kind: "none" },
+			keyboard: "page",
+		},
+		editors: [],
+		asking: undefined,
+		toasts: toasts.contentSize(),
+		picker: "none",
+	});
+	return children.find((child) => child.identity.kind === "toasts")?.rect;
+}
 
 describe("the notice layer", () => {
 	let toasts: InstanceType<typeof ToastsView>;
@@ -60,6 +88,9 @@ describe("the notice layer", () => {
 		returned = 0;
 		toasts = new ToastsView("preload.js", "devhub-app://shell/toasts.html");
 		toasts.adopt({
+			sizeChanged: () => {
+				toasts.place(placementFor(toasts));
+			},
 			window: {
 				isDestroyed: () => false,
 				getContentSize: () => [1000, 800],
@@ -77,7 +108,7 @@ describe("the notice layer", () => {
 	const view = () => (toasts as unknown as { view: FakeWebContentsView }).view;
 
 	it("is not in the window at all while there is nothing to say", () => {
-		toasts.reposition();
+		toasts.place(placementFor(toasts));
 		expect(toasts.isPresent()).toBe(false);
 		expect(children).toEqual([]);
 	});
@@ -143,8 +174,8 @@ describe("the notice layer", () => {
 	 */
 	it("raises itself again on every pass, not only on the one it arrived on", () => {
 		toasts.setSize({ width: 320, height: 96 });
-		toasts.reposition();
-		toasts.reposition();
+		toasts.place(placementFor(toasts));
+		toasts.place(placementFor(toasts));
 		expect(children).toEqual(["added", "added", "added"]);
 	});
 });

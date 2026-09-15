@@ -35,11 +35,10 @@ import {
 	type ModalRequest,
 	type OpenModal,
 } from "../../ipc/contract.js";
+import type { PickerScope } from "./windowLayout.js";
 
 export interface PickerViewHost {
 	readonly window: Electron.BrowserWindow;
-	/** The rectangle a workbench's own question is clipped to. */
-	workbenchRect(): Electron.Rectangle;
 	/**
 	 * Put the keyboard back where it belongs, and say so.
 	 *
@@ -233,52 +232,46 @@ export class PickerView {
 	//#region presentation
 
 	/**
-	 * Where the overlay goes.
+	 * How much of the window this layer covers, for the owner to place it.
 	 *
 	 * A workbench's question covers that workbench and nothing else, so the
 	 * sidebar and every other workspace stay both visible *and* clickable — the
 	 * view simply does not extend over them. Everything else is the application
 	 * asking, and covers the window.
 	 */
-	private boundsFor(
-		host: PickerViewHost,
-		modals: readonly OpenModal[],
-	): Electron.Rectangle {
-		const windowScoped = modals.some(
-			(modal) => modal.request.kind !== "workbench-dialog",
-		);
-		if (!windowScoped) return host.workbenchRect();
-		const [width, height] = host.window.getContentSize();
-		return { x: 0, y: 0, width, height };
+	scope(): PickerScope {
+		if (this.open.length === 0) return "none";
+		return this.open.some((modal) => modal.request.kind !== "workbench-dialog")
+			? "window"
+			: "workbench";
 	}
 
 	/**
-	 * Bring the layer into line with the set that is open.
+	 * Put the layer where the owner says, or take it out of the window.
 	 *
 	 * Called from the one place that decides what is on screen, so there is no
 	 * arrangement of reveals, resizes and modal opens that leaves the overlay
 	 * at stale bounds or present with nothing to show.
 	 */
-	reposition(): void {
+	place(rect: Electron.Rectangle | undefined): void {
 		const host = this.host;
 		if (!host || host.window.isDestroyed()) return;
 		const modals: readonly OpenModal[] = this.open;
 
-		if (modals.length === 0) {
+		if (!rect || modals.length === 0) {
 			this.withdraw();
 			return;
 		}
 
 		const view = this.view;
-		view.setBounds(this.boundsFor(host, modals));
+		view.setBounds(rect);
 		// Re-adding an existing child moves it to the end of the list, which is
 		// the top of the stack. Nothing else establishes that order, and the
 		// whole point of this layer is that it is above everything.
 		//
-		// It is re-added on *every* reposition, not only when the layer
-		// arrives. `ShellWindow.layout` raises the workbench on screen exactly
-		// the same way, and it runs whenever anything about the arrangement
-		// moves — a window resize, a sidebar drag, the split divider, a second
+		// It is re-added on *every* pass, not only when the layer arrives.
+		// The owner places every child in its own order, and it does so
+		// whenever anything about the arrangement moves — a window resize, a sidebar drag, the split divider, a second
 		// modal opening. Raising this layer once meant the first such layout
 		// after a modal opened put the workbench back on top of it: the sheet
 		// still held the keyboard, but the editor was what was drawn and what

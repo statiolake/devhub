@@ -370,10 +370,33 @@ export interface RepositoryStatusWire {
  * the wait before the model is ready. Main does not distinguish them, because
  * the answer to both questions is the same for all of them.
  */
-export type ContentSurfaceWire = "workbench" | "split" | "page";
+/**
+ * A drag in progress, as the page's own hand reports it.
+ *
+ * The sidebar's handle and the split's seam move under the pointer, and the
+ * model only learns where they stopped: an intent per pointer move would put a
+ * round trip in the middle of the one interaction that has to feel direct. So
+ * while a drag lasts, the number being dragged to is told to main, which is
+ * where the layout is computed.
+ *
+ * What is reported is a *pointer*, which the page owns. It is deliberately not
+ * a rectangle: the page used to measure the hole it leaves for a workbench and
+ * report that, and main's idea of the layout was then a page's idea of the
+ * layout, one frame late. `null` ends a drag — the model has the number now.
+ */
+export interface LayoutPreviewWire {
+	readonly sidebarWidth?: number | null;
+	readonly splitRatio?: number | null;
+}
 
-/** The rectangle, in page CSS pixels, that workbench views must cover. */
-export interface ContentRect {
+/**
+ * The rectangle a workbench is laid into, as main computed it.
+ *
+ * Pushed to the page so it can leave exactly that hole. This is the direction
+ * the old `setContentRect` ran in, reversed: whoever owns the layout says
+ * where the seam is, and the page draws to it.
+ */
+export interface WorkbenchAreaWire {
 	readonly x: number;
 	readonly y: number;
 	readonly width: number;
@@ -514,6 +537,8 @@ export interface DevhubApi {
 	replay(cursor: number): Promise<ReplayWire>;
 
 	onSnapshot(listener: (snapshot: AppSnapshot) => void): () => void;
+	/** Where main has laid the workbench, so the page leaves that hole. */
+	onWorkbenchArea(listener: (area: WorkbenchAreaWire) => void): () => void;
 	onAppearance(listener: (appearance: AppAppearance) => void): () => void;
 	onTheme(listener: (palette: ShellPalette) => void): () => void;
 	onWindowTitle(listener: (title: string) => void): () => void;
@@ -780,10 +805,8 @@ export interface DevhubApi {
 	 */
 	writeClipboard(text: string): Promise<void>;
 
-	/** Where main must lay the selected workspace's workbench view. */
-	setContentRect(rect: ContentRect): Promise<void>;
-	/** What the page has put in the content area. */
-	setContentSurface(surface: ContentSurfaceWire): Promise<void>;
+	/** A sidebar or split drag in progress; `null` on either ends it. */
+	previewLayout(preview: LayoutPreviewWire): Promise<void>;
 	/**
 	 * Hand the keyboard back to whatever is on screen.
 	 *
@@ -846,11 +869,12 @@ export const CHANNELS = {
 	openSettings: "devhub:open-settings",
 	openExternalUrl: "devhub:open-external-url",
 	writeClipboard: "devhub:write-clipboard",
-	setContentRect: "devhub:set-content-rect",
-	setContentSurface: "devhub:set-content-surface",
+	previewLayout: "devhub:preview-layout",
 	focusSurface: "devhub:focus-surface",
 
 	snapshotChanged: "devhub:snapshot-changed",
+	/** Where main has put the workbench, so the page leaves that hole. */
+	workbenchAreaChanged: "devhub:workbench-area-changed",
 	appearanceChanged: "devhub:appearance-changed",
 	/** The Workbench changed colour theme, so DevHub's chrome changes with it. */
 	themeChanged: "devhub:theme-changed",

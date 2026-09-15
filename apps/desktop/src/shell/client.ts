@@ -21,7 +21,8 @@ import type {
   AgentActionWire,
   AppConditionWire,
   AssignmentBranchWire,
-  ContentSurfaceWire,
+  LayoutPreviewWire,
+  WorkbenchAreaWire,
   DevhubApi,
   GitHubLoginWire,
   IssueAssignment,
@@ -129,13 +130,12 @@ export interface AppShellClient {
   chooseWorkspaceFolder(): Promise<string | undefined>;
   openSettings(): Promise<void>;
   openExternalUrl(url: string): Promise<void>;
-  setContentRect(rect: {
-    x: number;
-    y: number;
-    width: number;
-    height: number;
-  }): Promise<void>;
-  setContentSurface(surface: ContentSurfaceWire): Promise<void>;
+  /** A sidebar or split drag in progress; `null` on either ends it. */
+  previewLayout(preview: LayoutPreviewWire): Promise<void>;
+  /** Where main has laid the workbench, so the page leaves that hole. */
+  subscribeWorkbenchArea(
+    listener: (area: WorkbenchAreaWire) => void,
+  ): () => void;
   /** Hand the keyboard back to whatever is on screen — Escape in the chrome. */
   focusSurface(): Promise<void>;
   /** Put a modal on the overlay layer; the id is what takes it off again. */
@@ -225,8 +225,8 @@ export function createShellClient(api: DevhubApi = devhub()): AppShellClient {
     chooseWorkspaceFolder: () => api.chooseWorkspaceFolder(),
     openSettings: () => api.openSettings(),
     openExternalUrl: (url) => api.openExternalUrl(url),
-    setContentRect: (rect) => api.setContentRect(rect),
-    setContentSurface: (surface) => api.setContentSurface(surface),
+    previewLayout: (preview) => api.previewLayout(preview),
+    subscribeWorkbenchArea: (listener) => api.onWorkbenchArea(listener),
     focusSurface: () => api.focusSurface(),
     openModal: (request) => api.openModal(request),
     raiseFailure: (error) => {

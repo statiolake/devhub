@@ -50,8 +50,7 @@ import {
 	type AgentActionWire,
 	type AppConditionWire,
 	type ChordHelpRowWire,
-	type ContentRect,
-	type ContentSurfaceWire,
+	type LayoutPreviewWire,
 	type AssignmentBranchWire,
 	type IssueAssignment,
 	type WorkspacePlaceWire,
@@ -73,7 +72,6 @@ import {
 	type ReplayWire,
 } from "../../ipc/appShell.js";
 import { AppCoordinator, type Effect } from "../../model/coordinator.js";
-import { editorReveal } from "./editorReveal.js";
 import {
 	CLOSE_BUDGET_MS,
 	CloseTimeout,
@@ -184,6 +182,7 @@ import {
 	shellWindow,
 	shellWindowIfCreated,
 } from "./shellWindow.js";
+import { reconcileEditors, type SurfaceArrangement } from "./windowLayout.js";
 import { displayAudience, projectionAudience } from "./publishAudience.js";
 import { WindowAttention, platformDock } from "./windowAttention.js";
 
@@ -491,7 +490,9 @@ export class AppController {
 	 * Workspaces, two windows and two rows, and one map entry would have made
 	 * them share a workbench.
 	 */
-	private readonly viewsByEditorKey = new Map<string, number>();
+	private editorViewId(folder: string): number | undefined {
+		return shellWindowIfCreated()?.editorViewId(folder);
+	}
 
 	/**
 	 * The one budget for "this folder has no workbench and the last try failed".
@@ -1751,6 +1752,9 @@ export class AppController {
 		// is answered, rather than by a page that can only be seen when there
 		// is no workbench over it. See `windowAttention.ts`.
 		this.attention.observe(this.snapshot());
+		// The arrangement is a function of the projection like everything else
+		// here, so it is said here rather than at each place a selection moves.
+		this.publishLayoutState();
 		// The window's name says which Workspace, and what in it, so it moves
 		// whenever the projection does — here rather than at each place that
 		// changes a selection, for the same reason the menu is rebuilt here.
@@ -1798,9 +1802,108 @@ export class AppController {
 		this.send(CHANNELS.windowTitleChanged, title);
 	}
 
+	/**
+	 * Tell the window what the arrangement is.
+	 *
+	 * Everything the layout is a function of that is not the window's own size,
+	 * read off the model in one breath so no half of it can be newer than the
+	 * other. It replaces two channels that carried the same facts *up* from the
+	 * page — a measured rectangle, and one word for what was in the content
+	 * area — and it is better than both for the same reason: the page was
+	 * reporting what it had drawn from the projection, and the projection is
+	 * right here.
+	 *
+	 * A drag preview is the one number the page does own while it lasts: the
+	 * pointer is in the page, and the model learns where the person stopped
+	 * rather than where they are. See `CHANNELS.previewLayout`.
+	 */
+	publishLayoutState(): void {
+		const shell = shellWindowIfCreated();
+		if (!shell || shell.window.isDestroyed()) return;
+		const snapshot = this.snapshot();
+		const appearance = this.config?.appearance;
+		const layout = snapshot.layout;
+		const restarting =
+			layout.kind === "workbench" || layout.kind === "split"
+				? this.restartingEditors.has(
+						this.editorKeyForSurfaceKey(layout.editorKey) ?? "",
+					)
+				: false;
+		// Nothing is drawn in the content area until the model is ready, and a
+		// workbench being rebuilt is a state of the area rather than a reason
+		// to leave it — in both cases the page has the rectangle and no
+		// workbench is over it.
+		const surface: SurfaceArrangement =
+			snapshot.readiness !== "ready" || restarting
+				? { kind: "none" }
+				: layout.kind === "unavailable"
+					? { kind: "none" }
+					: layout.kind === "agent"
+						? { kind: "agent" }
+						: layout.kind === "split"
+							? {
+									kind: "split",
+									editorKey: layout.editorKey,
+									ratio: snapshot.splitRatio,
+								}
+							: { kind: "editor", editorKey: layout.editorKey };
+		// Both panes of a split are drawn; which of them holds the keyboard is
+		// which half is selected. An Agent selected `beside` is the Agent half
+		// in front, and the workspace selected `beside` is the editor half.
+		const keyboard =
+			surface.kind === "editor" ||
+			(surface.kind === "split" && snapshot.selection.context.kind !== "agent")
+				? "editor"
+				: "page";
+		shell.setLayoutState({
+			// The window was built with one of the two chromes and the setting
+			// can have moved since; the setting wins, because it is what the
+			// page is drawing. Anything the config does not recognise is the
+			// chrome the window has, which is the one on screen.
+			titleBar: appearance?.titleBar === "hidden" ? "hidden" : "shown",
+			density:
+				appearance?.sidebarDensity === "comfortable"
+					? "comfortable"
+					: "compact",
+			sidebar: {
+				width: this.sidebarWidthPreview ?? snapshot.sidebar.width,
+				collapsed: snapshot.sidebar.collapsed,
+			},
+			surface:
+				surface.kind === "split" && this.splitRatioPreview !== undefined
+					? { ...surface, ratio: this.splitRatioPreview }
+					: surface,
+			keyboard,
+		});
+		// The page draws its own states in the same rectangle the workbench is
+		// laid into, and the split's seam is where that rectangle ends. It is
+		// given the number rather than asked for it, so there is no
+		// arrangement in which the two can disagree about where the seam is.
+		this.send(CHANNELS.workbenchAreaChanged, shell.workbenchRect());
+	}
+
+	/**
+	 * A drag in progress, in the page's own hand.
+	 *
+	 * The sidebar's handle and the split's seam move under the pointer, and the
+	 * model only learns where they stopped — sending an intent per pointer move
+	 * would put a round trip in the middle of the one thing that has to feel
+	 * direct. So the number the person is dragging to is told to main as it
+	 * moves and forgotten when the model has it: what is being reported is a
+	 * pointer, which the page owns, and not a rectangle, which it does not.
+	 */
+	private sidebarWidthPreview: number | undefined;
+	private splitRatioPreview: number | undefined;
+
+	/** Folders whose workbench is being rebuilt, as the page is told. */
+	private readonly restartingEditors = new Set<string>();
+
 	private publishAppearance(): void {
 		if (!this.config) return;
 		this.send(CHANNELS.appearanceChanged, this.appearance());
+		// The title bar and the sidebar's density are two of the numbers the
+		// layout is made of: changing either moves every child in the window.
+		this.publishLayoutState();
 	}
 
 	/**
@@ -2727,7 +2830,7 @@ export class AppController {
 	 * The `CodeWindow` bound to a folder, or nothing when there is no workbench
 	 * for it any more.
 	 *
-	 * The binding in `viewsByEditorKey` outlives the view it names: a workbench
+	 * The binding outlives the view it names: a workbench
 	 * that VS Code closed, or whose view DevHub destroyed, leaves its id
 	 * behind. So "there is an entry in the map" is not "there is a workbench",
 	 * and asking the window service is the only answer worth having. Reading
@@ -2737,7 +2840,7 @@ export class AppController {
 	private async editorWindowFor(
 		folder: string,
 	): Promise<ICodeWindow | undefined> {
-		const viewId = this.viewsByEditorKey.get(folder);
+		const viewId = this.editorViewId(folder);
 		if (viewId === undefined) return undefined;
 		return (await this.services())
 			.windows()
@@ -3107,8 +3210,8 @@ export class AppController {
 	private disposeEditorView(workspaceId: WorkspaceId): void {
 		const key = this.coordinator.model.workspace(workspaceId)?.key;
 		if (key === undefined) return;
-		const viewId = this.viewsByEditorKey.get(key);
-		this.viewsByEditorKey.delete(key);
+		const viewId = this.editorViewId(key);
+		shellWindow().unbindEditorKey(key);
 		if (viewId === undefined) return;
 		shellWindow().getViewById(viewId)?.destroy();
 	}
@@ -3200,11 +3303,12 @@ export class AppController {
 		if (folder === undefined) return;
 		const view = await this.ensureEditorView(folder);
 		if (!view) return;
-		// `reveal` is the whole of it: what is on screen and where the keyboard
-		// is are one decision, made in one place (`ShellWindow.focusSurface`).
-		// Focusing the view from here as well would take the keyboard into a
-		// workbench even when the page's own Surface is the thing on screen.
-		shellWindow().reveal(view);
+		// Nothing is revealed here, because nothing reveals anything any more:
+		// what is on screen is the layout owner's answer to the selection, and
+		// the only thing this open changed is that the child it names now
+		// exists. So the arrangement is asked again — see
+		// `ShellWindow.assertArrangement`.
+		shellWindow().assertArrangement();
 	}
 
 	/**
@@ -3220,7 +3324,7 @@ export class AppController {
 	 * folder.
 	 */
 	private ensureEditorView(folder: string): Promise<WorkbenchView | undefined> {
-		const existingId = this.viewsByEditorKey.get(folder);
+		const existingId = this.editorViewId(folder);
 		const existing =
 			existingId === undefined
 				? undefined
@@ -3232,7 +3336,7 @@ export class AppController {
 		// here rather than anywhere else, because this is the one place that
 		// reads it and can act on the answer.
 		if (existing && isLiveWorkbench(existing)) return Promise.resolve(existing);
-		if (existing) this.viewsByEditorKey.delete(folder);
+		if (existing) shellWindow().unbindEditorKey(folder);
 
 		const inFlight = this.editorOpens.get(folder);
 		if (inFlight) return inFlight;
@@ -3486,7 +3590,7 @@ export class AppController {
 		// screen said so. A dead view is not an answer, so the open failed.
 		const view =
 			candidate && isLiveWorkbench(candidate) ? candidate : undefined;
-		if (opened && view) this.viewsByEditorKey.set(editorKey, opened.id);
+		if (opened && view) shellWindow().bindEditorKey(opened.id, editorKey);
 		if (view) {
 			this.superviseEditorView(editorKey, view);
 			// A workbench that is up again is no longer restarting. Waiting for
@@ -3545,8 +3649,13 @@ export class AppController {
 						.filter((workspace) => workspace.root === folder)
 						.map((workspace) => `workspace-editor:${workspace.id}`)
 						.at(0);
+		if (restarting) this.restartingEditors.add(folder);
+		else this.restartingEditors.delete(folder);
 		if (surfaceKey === undefined) return;
 		this.send(CHANNELS.editorRestarting, { surfaceKey, restarting });
+		// A workbench that is away is not the thing in the content area, and
+		// the one that is back is; both move the arrangement.
+		this.publishLayoutState();
 	}
 
 	private superviseEditorView(folder: string, view: WorkbenchView): void {
@@ -3559,8 +3668,8 @@ export class AppController {
 			if (isQuitting()) return;
 			// A view DevHub destroyed on purpose is not a casualty: its folder is
 			// no longer in the table, because that is what destroying it means.
-			if (this.viewsByEditorKey.get(folder) !== view.id) return;
-			this.viewsByEditorKey.delete(folder);
+			if (this.editorViewId(folder) !== view.id) return;
+			shellWindow().unbindEditorKey(folder);
 			this.editorFailed(folder, reason);
 		};
 		view.webContents.once("destroyed", () => {
@@ -3653,13 +3762,13 @@ export class AppController {
 		const shell = shellWindowIfCreated();
 		if (!shell) return;
 		const dead = deadEditorKeys(
-			[...this.viewsByEditorKey].map(([key, viewId]) => {
+			shell.editorBindings().map(([key, viewId]) => {
 				const view = shell.getViewById(viewId);
 				return { key, alive: view !== undefined && isLiveWorkbench(view) };
 			}),
 		);
 		for (const folder of dead) {
-			this.viewsByEditorKey.delete(folder);
+			shell.unbindEditorKey(folder);
 			this.editorFailed(
 				folder,
 				"The workbench did not survive the computer going to sleep.",
@@ -3798,21 +3907,36 @@ export class AppController {
 		// what used to put VS Code's "path does not exist" box on screen. It is
 		// asked for again the moment it is relocated or retried back to
 		// available, because that is a projection change and this runs on it.
-		const wanted = new Set<string>([
+		//
+		// The decision itself is `reconcileEditors`, which is pure: what comes
+		// in is the projection and the answers the supervisor and the restart
+		// timers already hold, and what comes out is what to do. What is left
+		// here is the doing.
+		const wanted = [
 			SCRATCH_EDITOR,
 			...this.coordinator.model.workspaces
 				.filter((workspace) => workspace.state.kind !== "unavailable")
 				.map((workspace) => workspace.key),
-		]);
-		for (const folder of [...this.viewsByEditorKey.keys()]) {
-			if (wanted.has(folder)) continue;
-			const viewId = this.viewsByEditorKey.get(folder);
-			this.viewsByEditorKey.delete(folder);
+		];
+		const gaveUp = this.editorSupervisor.gaveUpKeys();
+		const plan = reconcileEditors({
+			wanted,
+			existing: shellWindow()
+				.editorBindings()
+				.map(([folder]) => folder),
+			selected,
+			gaveUp,
+			parked: gaveUp.filter((folder) => this.editorSupervisor.parked(folder)),
+			waiting: [...this.editorRestartTimers.keys()],
+		});
+
+		for (const folder of plan.dispose) {
+			const viewId = this.editorViewId(folder);
+			shellWindow().unbindEditorKey(folder);
 			if (viewId !== undefined) {
 				shellWindow().getViewById(viewId)?.destroy();
 			}
 		}
-
 		// The one way out of the supervisor's verdict, and it is a person's.
 		//
 		// Giving up on a Workspace's workbench makes that Workspace
@@ -3824,27 +3948,10 @@ export class AppController {
 		// it. Scratch never leaves `wanted`, so it never parks and never
 		// forgets itself: its giving up is terminal for the run, which is what
 		// an app-wide notice that cannot be retried should mean.
-		for (const folder of this.editorSupervisor.gaveUpKeys()) {
-			if (!wanted.has(folder)) {
-				this.editorSupervisor.park(folder);
-			} else if (this.editorSupervisor.parked(folder)) {
-				this.editorSupervisor.forget(folder);
-			}
-		}
+		for (const folder of plan.park) this.editorSupervisor.park(folder);
+		for (const folder of plan.forget) this.editorSupervisor.forget(folder);
 
-		// The selected workbench first: it is the one being waited for.
-		const ordered =
-			selected === undefined
-				? [...wanted]
-				: [selected, ...[...wanted].filter((folder) => folder !== selected)];
-		for (const folder of ordered) {
-			// A folder the supervisor has given up on, and one whose restart is
-			// waiting out its backoff, are both already answered. Asking again
-			// here is what turned a bounded supervisor into a retry per
-			// projection tick — which after a wake is the reconcile cadence, and
-			// which is what the person saw flickering.
-			if (this.editorSupervisor.gaveUp(folder)) continue;
-			if (this.editorRestartTimers.has(folder)) continue;
+		for (const folder of plan.create) {
 			void this.ensureEditorView(folder).then(
 				(view) => {
 					// No view and still wanted is a failure that said nothing:
@@ -3857,57 +3964,26 @@ export class AppController {
 					}
 				},
 				(error: unknown) => {
+					// A child reconciled away before its open finished is not an
+					// app failure. Startup asks for every folder at once and the
+					// projection moves underneath those opens — a workspace is
+					// relocated, a folder turns out to be unreadable, a close
+					// lands — and VS Code answers an open it no longer has a
+					// window for by cancelling it. Ten of those arrived at
+					// launch as ten "the native app shell is unavailable"
+					// notices about nothing (measured, stage 0). The folder
+					// being out of `wanted` *is* the answer; it is said in the
+					// log, where somebody looking for it can find it.
+					if (!this.wantsWorkbench(folder)) {
+						console.log(
+							`[devhub] open: '${folder}' was reconciled away while it was opening — ${describeFailure(error)}`,
+						);
+						return;
+					}
 					this.editorFailed(folder, describeFailure(error));
 				},
 			);
 		}
-	}
-
-	/**
-	 * Put the selected workbench on screen, waiting for it if it is coming.
-	 *
-	 * Called when the page says the native surface is the one to show. A view
-	 * that is already revealed is the whole answer; one whose open is in flight
-	 * is waited for and then revealed; a folder with neither is the invariant
-	 * violation the page's request is checked against, and it is thrown at the
-	 * page rather than absorbed.
-	 */
-	private async revealSelectedEditor(): Promise<void> {
-		const surfaceKey = this.selectedEditorSurfaceKey();
-		const folder =
-			surfaceKey === undefined
-				? undefined
-				: this.editorKeyForSurfaceKey(surfaceKey);
-		// *This* folder's view, not "some workbench is revealed". Reading the
-		// second as the first meant that selecting a workspace whose view was
-		// not yet built, while another workbench was on screen, returned
-		// "on-screen" with the wrong editor showing — rescued only by whichever
-		// of `syncEditorViewInBackground` and this ran first.
-		const viewId =
-			folder === undefined ? undefined : this.viewsByEditorKey.get(folder);
-		const revealed = shellWindow().revealedView();
-		const reveal = editorReveal({
-			revealed: viewId !== undefined && revealed?.id === viewId,
-			opening: folder !== undefined && this.editorOpens.has(folder),
-		});
-		if (reveal === "on-screen") return;
-		if (reveal === "coming" && surfaceKey !== undefined) {
-			await this.revealEditorFor(surfaceKey);
-			const now = shellWindow().revealedView();
-			if (
-				now !== undefined &&
-				folder !== undefined &&
-				this.viewsByEditorKey.get(folder) === now.id
-			) {
-				return;
-			}
-		}
-		throw asIpcError(
-			withDetail(
-				errorWireAt("editor_unavailable"),
-				`the page asked to show ${surfaceKey ?? "the editor surface"}, which has no live workbench view`,
-			),
-		);
 	}
 
 	private editorKeyForSurfaceKey(surfaceKey: string): string | undefined {
@@ -3970,7 +4046,7 @@ export class AppController {
 	 * the page knows its surfaces by key, not by view id.
 	 */
 	editorSurfaceKeyForView(viewId: number): string | undefined {
-		for (const [key, id] of this.viewsByEditorKey) {
+		for (const [key, id] of shellWindow().editorBindings()) {
 			if (id !== viewId) continue;
 			if (key === SCRATCH_EDITOR) return "global-editor";
 			const workspace = this.coordinator.model.workspaces.find(
@@ -3983,11 +4059,11 @@ export class AppController {
 
 	/** The `openInBrowserWindow` override's half of the folder binding. */
 	viewIdForEditorKey(folder: string): number | undefined {
-		return this.viewsByEditorKey.get(folder);
+		return this.editorViewId(folder);
 	}
 
 	bindEditorKeyView(folder: string, viewId: number): void {
-		this.viewsByEditorKey.set(folder, viewId);
+		shellWindow().bindEditorKey(viewId, folder);
 	}
 
 	/**
@@ -4150,7 +4226,7 @@ export class AppController {
 
 	/** The `ICodeWindow` behind a folder's view; a missing one is a bug. */
 	private async workbenchWindow(folder: string): Promise<ICodeWindow> {
-		const viewId = this.viewsByEditorKey.get(folder);
+		const viewId = this.editorViewId(folder);
 		const window =
 			viewId === undefined
 				? undefined
@@ -4672,11 +4748,16 @@ export class AppController {
 
 	//#region workbench views
 
-	revealEditorKeyView(folder: string): void {
-		const viewId = this.viewsByEditorKey.get(folder);
-		const view =
-			viewId === undefined ? undefined : shellWindow().getViewById(viewId);
-		if (view) shellWindow().reveal(view);
+	/**
+	 * VS Code routed an open into a workbench that already exists.
+	 *
+	 * Which changes nothing about what is on screen: the selection decides
+	 * that, and an open arriving for a folder nobody selected must not take the
+	 * screen from the folder they did. The arrangement is asked again because
+	 * the child list may have moved, and for no other reason.
+	 */
+	assertArrangement(): void {
+		shellWindow().assertArrangement();
 	}
 
 	//#endregion
@@ -5358,15 +5439,18 @@ export class AppController {
 		handle(CHANNELS.writeClipboard, (_event, text: string) => {
 			electron.clipboard.writeText(text);
 		});
-		// Reported from a `ResizeObserver`, so it arrives at whatever rate the
-		// layout is churning at — which after a wake is frame rate — and it
-		// keeps arriving through teardown, when the window it is about is
-		// already gone. A window that is not there is not a failure: it is the
-		// answer to "where should the workbench be" being "nowhere", and
-		// throwing it made the page republish an app-wide alert per frame. A
-		// real failure still throws, and still reaches the page.
-		handle(CHANNELS.setContentRect, (_event, rect: ContentRect) => {
-			shellWindowIfCreated()?.setContentRect(rect);
+		// A drag in progress, which is the one geometric fact the page owns
+		// while it lasts: the pointer is in the page, and the model only learns
+		// where the person stopped. Everything else about the layout is
+		// computed here — see `publishLayoutState`.
+		handle(CHANNELS.previewLayout, (_event, preview: LayoutPreviewWire) => {
+			if (preview.sidebarWidth !== undefined) {
+				this.sidebarWidthPreview = preview.sidebarWidth ?? undefined;
+			}
+			if (preview.splitRatio !== undefined) {
+				this.splitRatioPreview = preview.splitRatio ?? undefined;
+			}
+			this.publishLayoutState();
 		});
 		// Escape in the Sidebar. The page can blur its own row but it cannot
 		// focus a native workbench view, so where the keyboard goes stays main's
@@ -5374,25 +5458,6 @@ export class AppController {
 		handle(CHANNELS.focusSurface, () => {
 			this.placeKeyboardOnSurface();
 		});
-		handle(
-			CHANNELS.setContentSurface,
-			async (_event, surface: ContentSurfaceWire) => {
-				// Being asked to show a workbench that no longer exists is a broken
-				// invariant, not a state to accommodate: the page only says this when
-				// the Editor activity resolved to a surface, and every surface it can
-				// resolve to has a view. Answering it by quietly showing nothing —
-				// or by handing a destroyed view to Electron — turns a bug here into
-				// a blank pane over there.
-				//
-				// A workbench that has not been built *yet* is a different fact, and
-				// at launch it is the normal one: the restored selection is asked for
-				// before the eager open for that folder has finished. So the reveal
-				// joins the open already in flight and answers when the view is on
-				// screen.
-				if (surface !== "page") await this.revealSelectedEditor();
-				shellWindow().setContentSurface(surface);
-			},
-		);
 		// One way in and one way out for every modal DevHub shows. Main owns the
 		// set that is open because the overlay view is a fact about the window,
 		// not about whichever page happened to ask.

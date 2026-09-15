@@ -23,8 +23,8 @@ import {
 	type ModalRequest,
 	type OpenModal,
 	type AgentActionWire,
-	type ContentRect,
-	type ContentSurfaceWire,
+	type LayoutPreviewWire,
+	type WorkbenchAreaWire,
 	type DevhubApi,
 	type GitHubLoginWire,
 	type AppConditionWire,
@@ -85,6 +85,8 @@ const devhub: DevhubApi = {
 		ipcRenderer.invoke(CHANNELS.replay, cursor) as Promise<ReplayWire>,
 
 	onSnapshot: (listener) => on<AppSnapshot>(CHANNELS.snapshotChanged, listener),
+	onWorkbenchArea: (listener) =>
+		on<WorkbenchAreaWire>(CHANNELS.workbenchAreaChanged, listener),
 	onAppearance: (listener) =>
 		on<AppAppearance>(CHANNELS.appearanceChanged, listener),
 	onTheme: (listener) => on<ShellPalette>(CHANNELS.themeChanged, listener),
@@ -241,10 +243,8 @@ const devhub: DevhubApi = {
 	writeClipboard: (text: string) =>
 		ipcRenderer.invoke(CHANNELS.writeClipboard, text) as Promise<void>,
 
-	setContentRect: (rect: ContentRect) =>
-		ipcRenderer.invoke(CHANNELS.setContentRect, rect) as Promise<void>,
-	setContentSurface: (surface: ContentSurfaceWire) =>
-		ipcRenderer.invoke(CHANNELS.setContentSurface, surface) as Promise<void>,
+	previewLayout: (preview: LayoutPreviewWire) =>
+		ipcRenderer.invoke(CHANNELS.previewLayout, preview) as Promise<void>,
 	focusSurface: () =>
 		ipcRenderer.invoke(CHANNELS.focusSurface) as Promise<void>,
 

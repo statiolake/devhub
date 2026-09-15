@@ -55,6 +55,9 @@ vi.mock("../electron.js", () => ({
 
 const { PickerView } = await import("./pickerView.js");
 
+/** The rectangle the layout owner gives this layer in these tests. */
+const RECT = { x: 0, y: 0, width: 100, height: 100 };
+
 describe("the keyboard while a sheet stands", () => {
 	let modals: InstanceType<typeof PickerView>;
 	/** Every contents `focusModal` was asked to put the keyboard in, in order. */
@@ -79,7 +82,6 @@ describe("the keyboard while a sheet stands", () => {
 					removeChildView: () => undefined,
 				},
 			} as unknown as Electron.BrowserWindow,
-			workbenchRect: () => ({ x: 0, y: 0, width: 100, height: 100 }),
 			focusSurface: () => undefined,
 			// The real gate: `ShellWindow.placeKeyboardIn` declines outright
 			// while another window is in front, and says nothing about it.
@@ -88,7 +90,7 @@ describe("the keyboard while a sheet stands", () => {
 				placed.push(fake);
 				if (windowIsFront) fake.focused = true;
 			},
-			modalsChanged: () => modals.reposition(),
+			modalsChanged: () => modals.place(RECT),
 		});
 	});
 
@@ -124,7 +126,7 @@ describe("the keyboard while a sheet stands", () => {
 		expect(overlay().focused).toBe(false);
 
 		windowIsFront = true;
-		modals.reposition();
+		modals.place(RECT);
 
 		expect(placed).toHaveLength(2);
 		expect(overlay().focused).toBe(true);
@@ -136,8 +138,8 @@ describe("the keyboard while a sheet stands", () => {
 
 		// Every layout repositions the layer — a window resize, a sidebar drag,
 		// a workbench being revealed behind the sheet.
-		modals.reposition();
-		modals.reposition();
+		modals.place(RECT);
+		modals.place(RECT);
 
 		expect(placed).toHaveLength(before);
 		expect(added).toBeGreaterThan(before);
@@ -148,7 +150,7 @@ describe("the keyboard while a sheet stands", () => {
 		const before = placed.length;
 
 		modals.closeModal(id);
-		modals.reposition();
+		modals.place(RECT);
 
 		expect(modals.isPresent()).toBe(false);
 		expect(placed).toHaveLength(before);

@@ -1071,13 +1071,21 @@ export function Sidebar({ snapshot, onDispatch }: SidebarProps) {
       setInProgressWidth(width);
       void dispatch({ type: "resize_sidebar", width }).finally(() => {
         setInProgressWidth(null);
+        // The model has the number now, so the preview is over: main goes back
+        // to reading the sidebar's width off the projection.
+        void devhub().previewLayout({ sidebarWidth: null });
       });
     },
     [dispatch],
   );
 
+  // The handle moves under the pointer and the workbench beside it is a native
+  // view main has to move with it — and main computes where that view goes.
+  // What is reported is the *pointer*, which this page owns while the drag
+  // lasts, and never a rectangle, which it does not. See `windowLayout.ts`.
   const previewResize = useCallback((width: number) => {
     setInProgressWidth(width);
+    void devhub().previewLayout({ sidebarWidth: width });
   }, []);
 
   /**

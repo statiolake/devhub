@@ -49,6 +49,8 @@ export interface ToastsSize {
 
 export interface ToastsViewHost {
 	readonly window: Electron.BrowserWindow;
+	/** The stack changed size, so the arrangement has to be decided again. */
+	sizeChanged(): void;
 	/**
 	 * Put the keyboard back where it belongs, and say so.
 	 *
@@ -62,15 +64,6 @@ export interface ToastsViewHost {
 	 */
 	focusSurface(): void;
 }
-
-/**
- * How far the stack sits from the window's corner.
- *
- * In main rather than in the page's stylesheet, because it is the *view's*
- * placement in the window, and the page cannot see the window. The page draws
- * its notices at the origin of whatever rectangle it is given.
- */
-const MARGIN = 12;
 
 export class ToastsView {
 	private readonly view: Electron.WebContentsView;
@@ -113,40 +106,38 @@ export class ToastsView {
 	/** The page measured its stack. Zero height means it has nothing to say. */
 	setSize(size: ToastsSize): void {
 		this.size = size;
-		this.reposition();
+		this.host?.sizeChanged();
 	}
 
 	/**
-	 * Bring the layer into line with what the page has to say.
+	 * How big the notices are — the one thing about this layer the page owns.
 	 *
-	 * A state, not an event: called from the one place that decides what is on
-	 * screen and from the page's own measurement, so there is no arrangement of
-	 * resizes, reveals and arriving notices that leaves this at stale bounds or
-	 * present with nothing on it.
+	 * Its size is its content and nothing else can know it; *where* that
+	 * rectangle goes in the window is the layout owner's, like every other
+	 * child's. See `windowLayout.ts`.
 	 */
-	reposition(): void {
+	contentSize(): ToastsSize | undefined {
+		return this.size.width > 0 && this.size.height > 0 ? this.size : undefined;
+	}
+
+	/**
+	 * Put the layer where the owner says, or take it out of the window.
+	 *
+	 * `undefined` is "there is nothing to say", and a layer that is not in the
+	 * child list cannot take a click — which is the whole reason this view is
+	 * the size of the notices and not the size of the window.
+	 */
+	place(rect: Electron.Rectangle | undefined): void {
 		const host = this.host;
 		if (!host || host.window.isDestroyed()) return;
-
-		if (this.size.height <= 0 || this.size.width <= 0) {
+		if (!rect) {
 			this.withdraw();
 			return;
 		}
-
-		const [windowWidth, windowHeight] = host.window.getContentSize();
-		const width = Math.min(Math.round(this.size.width), windowWidth);
-		const height = Math.min(Math.round(this.size.height), windowHeight);
-		this.view.setBounds({
-			x: Math.max(0, windowWidth - width - MARGIN),
-			y: Math.max(0, windowHeight - height - MARGIN),
-			width,
-			height,
-		});
+		this.view.setBounds(rect);
 		// Re-added on every pass, because re-adding an existing child moves it
-		// to the end of the list, which is the top of the stack. Nothing else
-		// establishes that order, and `ShellWindow.layout` raises the workbench
-		// on screen exactly the same way whenever anything about the
-		// arrangement moves.
+		// to the end of the list, which is the top of the stack. The owner
+		// places its children in order and this is that order arriving.
 		//
 		// The keyboard is deliberately *not* placed here. A notice is not a
 		// question; it arrives while the person is in the middle of something

@@ -1,7 +1,6 @@
 import {
   useCallback,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -15,7 +14,6 @@ import {
   type AppSnapshot,
   type WorkspaceSnapshot,
 } from "../../../ipc/appShell";
-import type { ContentSurfaceWire } from "../../../ipc/contract";
 import { useAppShell } from "../../useAppShell";
 import { devhub } from "../../client";
 import { runningAgentSurfaces } from "./surfacePool";
@@ -28,6 +26,25 @@ import { Failure, Waiting } from "./SurfaceState";
 import { useRestartingEditors } from "./workbenchDialogs";
 import { TerminalSurface } from "../../terminal/TerminalSurface";
 import { AgentShortcuts } from "./AgentShortcuts";
+
+/**
+ * The width main laid the workbench into, as it says so.
+ *
+ * `undefined` until the first one arrives, which is one frame at launch and
+ * never again: the flex fallback is the whole area, which is what a page with
+ * no split has anyway.
+ */
+function useWorkbenchWidth(): number | undefined {
+  const [width, setWidth] = useState<number | undefined>(undefined);
+  useEffect(
+    () =>
+      devhub().onWorkbenchArea((area) => {
+        setWidth(area.width);
+      }),
+    [],
+  );
+  return width;
+}
 
 export interface SurfaceViewportProps {
   readonly snapshot: AppSnapshot;
@@ -266,15 +283,15 @@ export function Unavailable({
  * Agent's pane beside it.
  *
  * The workbench is a native `WebContentsView` that main lays over a rectangle
- * this page leaves empty and measures. So the page draws *nothing* where the
- * workbench goes; what it draws is the hole's neighbours — the divider and the
- * Agent pane — and what it sends is where the hole is and whether a workbench
- * belongs in it at all.
+ * this page leaves empty. So the page draws *nothing* where the workbench
+ * goes; what it draws is the hole's neighbours — the divider and the Agent
+ * pane.
  *
- * The hole is measured rather than computed from the ratio. The ratio is what
- * the flex basis is set from, but the pixels the divider and the window's own
- * rounding actually leave are the pixels the native view has to match, and
- * measuring is the only way those two cannot drift.
+ * Where the hole is, is main's answer, not this page's. The seam is one number
+ * computed in one place (`main/shell/windowLayout.ts`) and pushed here, so the
+ * pixels the divider leaves and the pixels the native view covers cannot
+ * drift. This page used to measure the hole and report it back, which made
+ * main's idea of the layout a page's idea of it, one frame late.
  */
 export function SurfaceViewport({
   snapshot,
@@ -297,10 +314,21 @@ export function SurfaceViewport({
       setDragRatio(next);
       void dispatch({ type: "resize_split", ratio: next }).finally(() => {
         setDragRatio(null);
+        // The model has the number now, so the preview is over: main goes back
+        // to reading the seam off the projection like everything else.
+        void devhub().previewLayout({ splitRatio: null });
       });
     },
     [dispatch],
   );
+
+  // A drag moves the seam under the pointer, and the workbench is a native
+  // view main has to move with it. The *pointer* is what is reported — the
+  // number this page owns — and never a rectangle.
+  const previewRatio = useCallback((next: number) => {
+    setDragRatio(next);
+    void devhub().previewLayout({ splitRatio: next });
+  }, []);
 
   const unavailableActions =
     workspace?.state.kind === "unavailable"
@@ -354,15 +382,6 @@ export function SurfaceViewport({
   let agentPresentation: "full" | "beside" = "beside";
   let agentKey: string | undefined;
   let editorKey: string | undefined;
-  /**
-   * What this page has put in the content area, as main needs to know it.
-   *
-   * One word rather than a visibility flag, because main asks two things of it
-   * — whether to draw the native workbench view, and whether that view is what
-   * the person is typing into — and in a split those have different answers.
-   * See `ContentSurfaceWire`.
-   */
-  let contentSurface: ContentSurfaceWire = "page";
   // Only the transient states announce themselves; a workbench speaks for
   // itself, and `aria-live` on it would narrate every frame of output.
   let announce = true;
@@ -398,61 +417,21 @@ export function SurfaceViewport({
   } else {
     surfaceState = layout.kind;
     editorKey = layout.editorKey;
-    contentSurface = "workbench";
     announce = false;
     if (layout.kind === "split") {
       split = true;
       agentPresentation = "beside";
       agentKey = layout.agentKey;
-      // Both are drawn; which of them holds the keyboard is which half is
-      // selected. An Agent selected `beside` is the Agent half in front, and
-      // the workspace selected `beside` is the editor half — the same two
-      // panes, and `contentSurface` is the only place that difference is
-      // spoken. See `SurfacePresentation`.
-      contentSurface =
-        snapshot.selection.context.kind === "agent" ? "split" : "workbench";
     }
   }
 
-  // The workbench view is a native sibling of this document, so the only way
-  // main can place it is for the page to measure the hole it left. The hole is
-  // watched rather than reported once: the divider moves it, and so does the
-  // window, and so does the sidebar.
-  useLayoutEffect(() => {
-    const element = holeRef.current;
-    if (!element) return;
-    // Only a rectangle that is *different* is news. A `ResizeObserver` fires
-    // for every layout pass the element takes part in, most of which leave it
-    // exactly where it was, and each one used to be a round trip to main — and
-    // when main was refusing them, a republished alert per frame. The hole's
-    // position is the fact being reported, so reporting the same one twice
-    // says nothing either time.
-    let last = "";
-    const report = () => {
-      const rect = element.getBoundingClientRect();
-      const measured = {
-        x: rect.left,
-        y: rect.top,
-        width: rect.width,
-        height: rect.height,
-      };
-      const identity = JSON.stringify(measured);
-      if (identity === last) return;
-      last = identity;
-      void devhub().setContentRect(measured);
-    };
-    const observer = new ResizeObserver(report);
-    observer.observe(element);
-    report();
-    return () => {
-      observer.disconnect();
-    };
-  }, []);
-
-  // One word, sent whenever it changes: what is in the content area.
-  useEffect(() => {
-    void devhub().setContentSurface(contentSurface);
-  }, [contentSurface]);
+  // The hole is the width main laid the workbench into. It is *given*, not
+  // measured: the page used to watch this element with a `ResizeObserver` and
+  // report the rectangle back, which made main's idea of the layout a page's
+  // idea of it, one frame late, and made every window resize a round trip
+  // through a renderer. Now the seam is one number, computed in one place, and
+  // the page and the native view cannot disagree about where it is.
+  const holeWidth = useWorkbenchWidth();
 
   return (
     <section
@@ -468,14 +447,18 @@ export function SurfaceViewport({
         <div
           className="workbench-hole"
           ref={holeRef}
-          style={split ? { flex: `0 0 ${String(ratio * 100)}%` } : undefined}
+          style={
+            split && holeWidth !== undefined
+              ? { flex: `0 0 ${String(holeWidth)}px` }
+              : undefined
+          }
         >
           {body}
         </div>
         {split ? (
           <SplitDivider
             ratio={ratio}
-            onPreview={setDragRatio}
+            onPreview={previewRatio}
             onCommit={commitRatio}
             containerRef={contentRef}
           />

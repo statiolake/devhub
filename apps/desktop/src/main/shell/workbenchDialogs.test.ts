@@ -67,7 +67,6 @@ describe("a workbench's question", () => {
 				once: () => undefined,
 				isDestroyed: () => false,
 			} as unknown as Electron.BrowserWindow,
-			workbenchRect: () => ({ x: 0, y: 0, width: 100, height: 100 }),
 			focusSurface: () => undefined,
 			focusModal: () => undefined,
 			modalsChanged: () => undefined,

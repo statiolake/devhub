@@ -136,6 +136,13 @@ class FakeShell {
 	reveal(view: WorkbenchView): void {
 		this.revealed = view;
 	}
+	/**
+	 * What the real shell does with VS Code's `show`, `showInactive` and
+	 * `moveTop`: it decides the arrangement again, from the selection, and the
+	 * asking view does not win by asking. So nothing here changes what is on
+	 * screen — which is the fact under test.
+	 */
+	assertArrangement(): void {}
 	isRevealed(view: WorkbenchView): boolean {
 		return this.revealed === view;
 	}
@@ -295,10 +302,14 @@ describe("a workbench view's window state", () => {
 	});
 
 	it("stays visible while another view is the selected one", () => {
-		view.show();
+		shell.reveal(view);
 		expect(shell.isRevealed(view)).toBe(true);
 
+		// VS Code asking for the other one does not make it the one on screen;
+		// the selection does. What this is about is what happens to *this* view
+		// once it is not.
 		other.show();
+		shell.reveal(other);
 		// The person switched workspace, or to the Terminal activity. This view is
 		// now behind what is on screen — which is a window behind other windows,
 		// not a hidden one.

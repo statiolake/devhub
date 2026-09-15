@@ -195,7 +195,7 @@ const upstreamOpenInBrowserWindow = (
 		console.log(
 			`[devhub] open: '${editorKey}' already has a view — showing it`,
 		);
-		controller.revealEditorKeyView(editorKey);
+		controller.assertArrangement();
 		return existing;
 	}
 

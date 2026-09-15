@@ -326,15 +326,21 @@ export class WorkbenchView {
 		this.contents.reload();
 	}
 
-	/** The shell decides what is on screen; `show()` is a request to be it. */
+	/**
+	 * The shell decides what is on screen; `show()` is a request to ask again.
+	 *
+	 * Not a request to *be* it. VS Code calls this from its own open and focus
+	 * paths, and honouring it would let whichever workbench finished loading
+	 * last win the screen from the one the person selected.
+	 */
 	show(): void {
 		this.hidden = false;
-		this.shell.reveal(this);
+		this.shell.assertArrangement();
 	}
 
 	showInactive(): void {
 		this.hidden = false;
-		this.shell.reveal(this);
+		this.shell.assertArrangement();
 	}
 
 	hide(): void {
@@ -784,7 +790,7 @@ export class WorkbenchView {
 	}
 
 	moveTop(): void {
-		this.shell.reveal(this);
+		this.shell.assertArrangement();
 	}
 
 	//#endregion
