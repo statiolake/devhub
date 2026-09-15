@@ -153,12 +153,14 @@ describe("a Workspace row whose folder is on another machine", () => {
       name: /Create agent in api/u,
     });
     expect(button).not.toBeDisabled();
-    expect(button).toHaveAttribute("title", "Create agent");
+    expect(button).toHaveAttribute("data-tooltip", "Create agent");
   });
 
   it("says the path is over there, in the tooltip that carries the whole of it", () => {
     mount(REMOTE);
-    expect(screen.getByTitle("build.example.com:/srv/api")).toBeInTheDocument();
+    expect(
+      document.querySelector('[data-tooltip="build.example.com:/srv/api"]'),
+    ).not.toBeNull();
   });
 
   it("changes nothing about a row whose folder is on this machine", () => {

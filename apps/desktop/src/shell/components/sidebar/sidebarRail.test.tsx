@@ -167,7 +167,7 @@ describe("the collapsed rail", () => {
     mount(true);
     expect(
       screen.getByRole("button", { name: "Scratch terminal" }),
-    ).toHaveAttribute("title", "Scratch");
+    ).toHaveAttribute("data-tooltip", "Scratch");
   });
 
   it("takes away the resize handle, because a rail has no width to set", () => {
@@ -236,9 +236,9 @@ describe("what a rail entry does under the pointer", () => {
     mount(true, REPOSITORY);
     expect(
       screen.getByRole("button", { name: /widget workspace/ }),
-    ).toHaveAttribute("title", expandedWorkspace);
+    ).toHaveAttribute("data-tooltip", expandedWorkspace);
     expect(screen.getByRole("button", { name: /^Codex,/ })).toHaveAttribute(
-      "title",
+      "data-tooltip",
       expandedAgent,
     );
   });
@@ -247,7 +247,7 @@ describe("what a rail entry does under the pointer", () => {
     mount(true, REPOSITORY);
     const title = screen
       .getByRole("button", { name: /widget workspace/ })
-      .getAttribute("title");
+      .getAttribute("data-tooltip");
     expect(title).toBe(
       [
         "widget workspace, path /projects/widget",

@@ -59,7 +59,7 @@ export function StatusMark({ status }: StatusMarkProps) {
     <span
       className={`status-mark status-mark-${status}`}
       data-status={status}
-      title={label}
+      data-tooltip={label}
       aria-label={label}
       role="img"
     >

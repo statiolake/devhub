@@ -484,7 +484,7 @@ describe("a workspace row, continued", () => {
       const button = screen.getByRole("button", {
         name: "Close the worktree widget",
       });
-      expect(button).toHaveAttribute("title", "Close worktree…");
+      expect(button).toHaveAttribute("data-tooltip", "Close worktree…");
     });
 
     it("says only 'close' where nothing is going to be deleted", () => {
@@ -503,7 +503,7 @@ describe("a workspace row, continued", () => {
       ]) {
         mount({ sequence: 1, workspaces });
         const button = screen.getByRole("button", { name: "Close widget" });
-        expect(button).toHaveAttribute("title", "Close workspace");
+        expect(button).toHaveAttribute("data-tooltip", "Close workspace");
         cleanup();
       }
     });
