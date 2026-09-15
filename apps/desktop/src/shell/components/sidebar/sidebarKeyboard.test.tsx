@@ -100,7 +100,7 @@ function snapshotOn(context: AppSnapshot["selection"]["context"]): AppSnapshot {
   } as unknown as AppSnapshot;
 }
 
-const dismissNewestNotice = vi.fn();
+const retry = vi.fn();
 
 function mount(snapshot: AppSnapshot) {
   const value = {
@@ -109,7 +109,7 @@ function mount(snapshot: AppSnapshot) {
     answerWorktreeClose: vi.fn(() => Promise.resolve({})),
     closeWorkspace: vi.fn(),
     reportFailure: vi.fn(),
-    dismissNewestNotice,
+    retry,
     agentProfiles: { sequence: 1, availability: "available", profiles: [] },
     repositoryStatus: { sequence: 1, workspaces: [] },
   } as unknown as AppShellContextValue;
@@ -189,10 +189,24 @@ describe("Escape in the Sidebar", () => {
   });
 });
 
-describe("dismiss_alert", () => {
-  it("retires the newest notice the page is showing", () => {
+/**
+ * The two ends of one button, in two pages.
+ *
+ * "Try Again" is drawn on the `toasts` view and what it restarts is this
+ * page's projection, so main is what joins them. `dismiss_alert` is not here
+ * any more, for the same reason in the other direction: the page that has the
+ * notice is the page that can retire it.
+ */
+describe("retry_app", () => {
+  it("starts this page's projection over", () => {
+    mount(snapshotOn({ kind: "global" }));
+    send("retry_app");
+    expect(retry).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not answer for a notice it cannot see", () => {
     mount(snapshotOn({ kind: "global" }));
     send("dismiss_alert");
-    expect(dismissNewestNotice).toHaveBeenCalledTimes(1);
+    expect(retry).not.toHaveBeenCalled();
   });
 });

@@ -58,6 +58,8 @@ import {
 } from "../ipc/settings";
 import { isImeComposing } from "../shell/accessibility/ime";
 import { useAlertLifetime } from "../shell/alertLifetime";
+import { devhub } from "../shell/client";
+import type { AppError } from "../ipc/appShell";
 import { Picker } from "../shell/components/shell/Picker";
 import {
   createSettingsClient,
@@ -346,6 +348,30 @@ export function SettingsApp({ client }: { readonly client?: SettingsClient }) {
     dismiss: dismissError,
   } = useAlertLifetime<SettingsError>(settingsErrorIdentity);
 
+  /**
+   * An app-scoped failure that began in *this* window.
+   *
+   * Settings is an independent window with its own page and its own root
+   * handler, and what that handler catches goes to main like every other
+   * page's does — main journals it, because one journal is the point of the
+   * journal. What comes back comes back *here*, and not to the shell window's
+   * notices: a report about the thing the person is looking at, drawn on a
+   * window they are not looking at, is a report nobody reads. See
+   * `main/shell/publishAudience.ts`.
+   *
+   * Its own slot, beside the refusal rather than sharing it. A refused save is
+   * about a field in this window and an app-scoped failure is about DevHub;
+   * they are not alternatives, and either can stand while the other does.
+   */
+  const {
+    alert: appFailure,
+    raise: drawAppFailure,
+    dismiss: dismissAppFailure,
+  } = useAlertLifetime<AppError>(
+    useCallback((failure: AppError) => failure.code, []),
+  );
+  useEffect(() => devhub().onNativeError(drawAppFailure), [drawAppFailure]);
+
   const generation = useRef(0);
   const lastSequence = useRef(0);
   const saveTimer = useRef<number | undefined>(undefined);
@@ -625,6 +651,25 @@ export function SettingsApp({ client }: { readonly client?: SettingsClient }) {
           ) : null}
           <button type="button" className="mac-button" onClick={reload}>
             Reload
+          </button>
+        </div>
+      ) : null}
+
+      {/*
+        A failure that happened in this window, said in this window. Not a
+        refused save — that is the band above, about a field — but something
+        DevHub was doing here that did not happen, which is why it carries no
+        Reload: there is nothing about the file to read again.
+      */}
+      {appFailure ? (
+        <div className="settings-notice" role="alert">
+          <span>{appFailure.detail ?? appFailure.summary}</span>
+          <button
+            type="button"
+            className="mac-button"
+            onClick={dismissAppFailure}
+          >
+            Dismiss
           </button>
         </div>
       ) : null}

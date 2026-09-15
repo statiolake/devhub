@@ -1,0 +1,23 @@
+/*
+ * The notice page's own frame.
+ *
+ * Everything it does not draw must be transparent, because what is behind it
+ * is the real window: a live workbench, the sidebar, the title bar. A page
+ * background here would paint a rectangle around the notices, and the corner
+ * of the editor would be a grey box.
+ *
+ * The document is the size of the notices, not the size of the window — main
+ * gives this view the rectangle the page reported, so the stack's own origin
+ * is the view's origin. Nothing here positions anything: where the notices go
+ * in the window is `main/shell/toastsView.ts`'s to decide, because only main
+ * can see the window.
+ */
+
+:root,
+body,
+#root {
+  overflow: visible;
+  height: auto;
+  margin: 0;
+  background: transparent;
+}

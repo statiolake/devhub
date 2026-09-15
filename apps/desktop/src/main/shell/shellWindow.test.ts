@@ -418,11 +418,11 @@ describe("the shell window's workbench views", () => {
 		const theWindow = () => shell.window as unknown as FakeWindow;
 		/** The modal layer's own contents, once a sheet has put it on screen. */
 		const layer = () =>
-			(shell.modals.contents() as unknown as { id: number } | undefined)?.id;
+			(shell.picker.contents() as unknown as { id: number } | undefined)?.id;
 
 		it("does not take the keyboard out of an open modal", () => {
 			shell.reveal(a);
-			shell.modals.openModal({ kind: "workspace-picker" });
+			shell.picker.openModal({ kind: "workspace-picker" });
 			focused = undefined;
 			shell.setContentSurface("page");
 			shell.reveal(b);
@@ -434,7 +434,7 @@ describe("the shell window's workbench views", () => {
 
 		it("gives the keyboard to the sheet, not to what is behind it", () => {
 			shell.reveal(a);
-			shell.modals.openModal({ kind: "workspace-picker" });
+			shell.picker.openModal({ kind: "workspace-picker" });
 			expect(focused).toBe(layer());
 		});
 
@@ -450,7 +450,7 @@ describe("the shell window's workbench views", () => {
 		 */
 		it("puts the keyboard back in the sheet when the window comes forward", () => {
 			shell.reveal(a);
-			const id = shell.modals.openModal({ kind: "workspace-picker" });
+			const id = shell.picker.openModal({ kind: "workspace-picker" });
 			theWindow().inFront = false;
 			theWindow().emit("blur");
 			focused = undefined;
@@ -460,7 +460,7 @@ describe("the shell window's workbench views", () => {
 			expect(focused).toBe(layer());
 
 			// And when the sheet goes, the surface has it again.
-			shell.modals.closeModal(id);
+			shell.picker.closeModal(id);
 			expect(focused).toBe(contentsOf(a));
 		});
 	});
@@ -521,12 +521,12 @@ describe("the shell window's modal layer", () => {
 	it("is not in the window at all while nothing is being asked", () => {
 		shell.reveal(editor);
 		expect(overlayChild()).toBeUndefined();
-		expect(shell.modals.isPresent()).toBe(false);
+		expect(shell.picker.isPresent()).toBe(false);
 	});
 
 	it("is the topmost child for as long as a modal is open", () => {
 		shell.reveal(editor);
-		const id = shell.modals.openModal({ kind: "workspace-picker" });
+		const id = shell.picker.openModal({ kind: "workspace-picker" });
 
 		const children = shell.window.contentView.children as unknown as FakeView[];
 		expect(overlayChild()).toBeDefined();
@@ -534,7 +534,7 @@ describe("the shell window's modal layer", () => {
 		// And the workbench is still on screen underneath, not stood down.
 		expect(shell.visibleViews()).toEqual([editor]);
 
-		shell.modals.closeModal(id);
+		shell.picker.closeModal(id);
 		expect(overlayChild()).toBeUndefined();
 	});
 
@@ -548,13 +548,13 @@ describe("the shell window's modal layer", () => {
 		// the keyboard, but the workbench was what was drawn and what took the
 		// clicks, which reads exactly as an editor that activates itself.
 		shell.reveal(editor);
-		shell.modals.openModal({ kind: "workspace-picker" });
+		shell.picker.openModal({ kind: "workspace-picker" });
 		const children = shell.window.contentView.children as unknown as FakeView[];
 
 		shell.setContentRect({ x: 248, y: 38, width: 1000, height: 837 });
 		expect(children[children.length - 1]).toBe(overlayChild());
 
-		shell.modals.openModal({ kind: "issue-assignment" });
+		shell.picker.openModal({ kind: "issue-assignment" });
 		expect(children[children.length - 1]).toBe(overlayChild());
 
 		shell.reveal(other);
@@ -566,7 +566,7 @@ describe("the shell window's modal layer", () => {
 
 	it("covers the window for a DevHub modal and one workbench for its own", () => {
 		shell.reveal(editor);
-		const picker = shell.modals.openModal({ kind: "workspace-picker" });
+		const picker = shell.picker.openModal({ kind: "workspace-picker" });
 		expect(overlayChild()?.getBounds()).toEqual({
 			x: 0,
 			y: 0,
@@ -574,8 +574,8 @@ describe("the shell window's modal layer", () => {
 			height: 900,
 		});
 
-		shell.modals.closeModal(picker);
-		void shell.modals.ask(DIALOG);
+		shell.picker.closeModal(picker);
+		void shell.picker.ask(DIALOG);
 		// The sidebar is outside this rectangle, which is what keeps it usable.
 		expect(overlayChild()?.getBounds()).toEqual({
 			x: 248,
@@ -587,7 +587,7 @@ describe("the shell window's modal layer", () => {
 
 	it("keeps the workbench being asked about on screen, whatever is selected", () => {
 		shell.reveal(other);
-		void shell.modals.ask(DIALOG);
+		void shell.picker.ask(DIALOG);
 		expect(shell.visibleViews()).toEqual([editor]);
 
 		// Even when the page says its own surface is the one in the viewport:
@@ -597,36 +597,36 @@ describe("the shell window's modal layer", () => {
 	});
 
 	it("answers a question with the button pressed, and cancel when dismissed", async () => {
-		const answered = shell.modals.ask(DIALOG);
-		shell.modals.closeModal(shell.modals.askingId(), 1);
+		const answered = shell.picker.ask(DIALOG);
+		shell.picker.closeModal(shell.picker.askingId(), 1);
 		expect(await answered).toBe(1);
 
-		const dismissed = shell.modals.ask(DIALOG);
-		shell.modals.closeModal(shell.modals.askingId());
+		const dismissed = shell.picker.ask(DIALOG);
+		shell.picker.closeModal(shell.picker.askingId());
 		expect(await dismissed).toBe(DIALOG.cancelId);
 	});
 
 	it("replaces a question rather than stacking a second one on it", () => {
-		shell.modals.openModal({ kind: "workspace-picker" });
-		shell.modals.openModal({ kind: "workspace-picker" });
-		expect(shell.modals.openModals()).toHaveLength(1);
+		shell.picker.openModal({ kind: "workspace-picker" });
+		shell.picker.openModal({ kind: "workspace-picker" });
+		expect(shell.picker.openModals()).toHaveLength(1);
 
 		// A different workbench's question is a different question.
-		void shell.modals.ask(DIALOG);
-		void shell.modals.ask({ ...DIALOG, surfaceKey: "workspace-editor:two" });
-		expect(shell.modals.openModals()).toHaveLength(3);
+		void shell.picker.ask(DIALOG);
+		void shell.picker.ask({ ...DIALOG, surfaceKey: "workspace-editor:two" });
+		expect(shell.picker.openModals()).toHaveLength(3);
 	});
 
 	it("gives the keyboard back to the surface on screen when the last one goes", () => {
 		shell.reveal(editor);
-		const id = shell.modals.openModal({ kind: "workspace-picker" });
-		shell.modals.closeModal(id);
+		const id = shell.picker.openModal({ kind: "workspace-picker" });
+		shell.picker.closeModal(id);
 		expect(focused).toBe(editor.webContents.id);
 
 		// And to the page when the page is what is showing.
 		shell.setContentSurface("page");
-		const next = shell.modals.openModal({ kind: "workspace-picker" });
-		shell.modals.closeModal(next);
+		const next = shell.picker.openModal({ kind: "workspace-picker" });
+		shell.picker.closeModal(next);
 		expect(focused).toBe(shell.window.webContents.id);
 	});
 });
@@ -839,7 +839,7 @@ describe("the shell window's focus reporting", () => {
 
 	it("says nothing again while a modal stands in front", () => {
 		shell.reveal(a);
-		shell.modals.openModal({ kind: "workspace-picker" });
+		shell.picker.openModal({ kind: "workspace-picker" });
 		announced.length = 0;
 
 		a.webContents.emit("focus");
@@ -848,13 +848,13 @@ describe("the shell window's focus reporting", () => {
 
 	it("puts the keyboard back through the one path when the last modal goes", () => {
 		shell.reveal(a);
-		shell.modals.openModal({ kind: "workspace-picker" });
+		shell.picker.openModal({ kind: "workspace-picker" });
 		expect(a.isFocused()).toBe(false);
 		announced.length = 0;
 
 		// Withdrawing used to focus the contents directly, which moved the
 		// keyboard without anybody being told it had moved.
-		shell.modals.closeWhere(() => true);
+		shell.picker.closeWhere(() => true);
 		expect(focused).toBe(a.webContents.id);
 		expect(a.isFocused()).toBe(true);
 		expect(announced).toEqual([`browser-window-focus:${a.id}`]);
@@ -867,7 +867,7 @@ describe("the shell window's focus reporting", () => {
 		shell.reveal(a);
 		expect(a.isFocused()).toBe(true);
 
-		shell.modals.openModal({ kind: "workspace-picker" });
+		shell.picker.openModal({ kind: "workspace-picker" });
 		expect(a.isFocused()).toBe(false);
 		expect(b.isFocused()).toBe(false);
 	});
@@ -999,14 +999,14 @@ describe("when the shell window may come to the front", () => {
 	it("opens a modal without raising, and not at all from behind", () => {
 		shell.reveal(a);
 		focused = undefined;
-		shell.modals.openModal({ kind: "workspace-picker" });
+		shell.picker.openModal({ kind: "workspace-picker" });
 		expect(focused).not.toBe(a.webContents.id);
 		expect(raised).toEqual([]);
 
-		shell.modals.closeWhere(() => true);
+		shell.picker.closeWhere(() => true);
 		window.inFront = false;
 		focused = undefined;
-		shell.modals.openModal({ kind: "workspace-picker" });
+		shell.picker.openModal({ kind: "workspace-picker" });
 		expect(focused).toBeUndefined();
 	});
 

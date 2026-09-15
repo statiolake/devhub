@@ -877,13 +877,8 @@ function ClosingGhostRow({ label }: { label: string }) {
 }
 
 export function Sidebar({ snapshot, onDispatch }: SidebarProps) {
-  const {
-    dispatch,
-    agentProfiles,
-    repositoryStatus,
-    closeWorkspace,
-    dismissNewestNotice,
-  } = useAppShell();
+  const { dispatch, agentProfiles, repositoryStatus, closeWorkspace, retry } =
+    useAppShell();
   const repositories = useMemo(
     () =>
       new Map(
@@ -1024,13 +1019,15 @@ export function Sidebar({ snapshot, onDispatch }: SidebarProps) {
         // keyboard belong in this document".
         if (command === "focus_agent_pane") focusMainSurface();
         if (command === "focus_sidebar") focusSidebar();
-        // The keyboard's version of the alert's `×`, and the same gesture: the
-        // third of the three things that retire a failure. With nothing on
-        // screen it records nothing and changes nothing, which is what makes
-        // the chord a no-op rather than a case anybody has to check for.
-        if (command === "dismiss_alert") dismissNewestNotice();
+        // "Try Again" on an app-scoped notice. The notice is drawn on the
+        // `toasts` view and what it restarts is this page's projection, so the
+        // button's two ends are in two pages and main is what joins them. The
+        // chord that puts a notice *away* is not here any more, for the same
+        // reason in the other direction: the page that has the notice is the
+        // page that can retire it.
+        if (command === "retry_app") retry();
       }),
-    [dismissNewestNotice, focusSidebar, openPicker],
+    [focusSidebar, openPicker, retry],
   );
 
   const [inProgressWidth, setInProgressWidth] = useState<number | null>(null);

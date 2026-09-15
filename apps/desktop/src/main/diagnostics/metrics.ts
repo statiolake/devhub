@@ -15,18 +15,37 @@ import type { RuntimeId, RuntimeReading } from "../runtime/runtime.js";
 import type { NoticesReading } from "./notices.js";
 import type { WorkspaceRepositoryRound } from "./rounds.js";
 
-/** What DevHub knows about one of its own workbench renderers. */
+/**
+ * What DevHub knows about one of its own renderers.
+ *
+ * Both kinds: a workbench, and one of DevHub's own chrome pages. It used to be
+ * workbenches only, which was the right shape while the window held one page
+ * and N workbenches — a reading then named everything it could. The window is
+ * becoming a tree of child views, one per region, so a reading that could not
+ * name them would answer "did splitting the pages cost anything" with a list
+ * of anonymous renderers.
+ */
 export interface ViewIdentity {
 	/** The OS process the renderer runs in. This is what joins it to a metric. */
 	readonly pid: number;
 	/** The `webContents` id, which is how the rest of DevHub names a view. */
 	readonly id: number;
 	/**
-	 * The workspace the view is showing, or `undefined` for one the model has
-	 * no surface for — a view being torn down, or one not yet adopted.
+	 * What this view is showing: a workspace's surface key for a workbench, or
+	 * `chrome:<name>` for one of DevHub's own pages. `undefined` is a workbench
+	 * the model has no surface for — one being torn down, or one not yet
+	 * adopted.
 	 */
 	readonly surfaceKey: string | undefined;
-	/** Whether this is the workbench on screen. At most one view is. */
+	/**
+	 * Whether this view is on screen.
+	 *
+	 * For a workbench that is "the one the person is looking at", and at most
+	 * one is. For a chrome child it is "in the window's child list" — which for
+	 * `toasts` and `picker` is a fact that follows what they have to draw, and
+	 * is the one thing worth reading back about them: a layer that is present
+	 * with nothing on it is a rectangle taking clicks for no reason.
+	 */
 	readonly onScreen: boolean;
 }
 
@@ -83,6 +102,17 @@ export interface MetricsReport {
 	readonly mainProcessCpu: CpuTime;
 	/** Every process in the app, heaviest first. */
 	readonly processes: readonly ProcessReading[];
+	/**
+	 * Every renderer DevHub owns, named, whether or not it has a process to
+	 * itself.
+	 *
+	 * `processes` can carry only one name per pid, because that is what a
+	 * process metric is — several views share one renderer, and there the one
+	 * on screen wins. That rule is right for "what is costing the most" and
+	 * wrong for "what exists": two chrome children in one process would leave
+	 * one of them unnamed. So the list is reported as well as joined.
+	 */
+	readonly views: readonly ViewIdentity[];
 	/** Every process's CPU added up, which is what a fan responds to. */
 	readonly totalCpuPercent: number;
 	readonly counters: CountersReading;
@@ -256,6 +286,7 @@ export function metricsReport(input: MetricsInput): MetricsReport {
 		titleBar: input.titleBar,
 		mainProcessCpu: input.mainProcessCpu,
 		processes,
+		views: input.views,
 		totalCpuPercent: processes.reduce(
 			(sum, process) => sum + process.cpuPercent,
 			0,

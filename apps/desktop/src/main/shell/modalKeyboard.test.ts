@@ -53,10 +53,10 @@ vi.mock("../electron.js", () => ({
 	},
 }));
 
-const { ModalOverlay } = await import("./modalOverlay.js");
+const { PickerView } = await import("./pickerView.js");
 
 describe("the keyboard while a sheet stands", () => {
-	let modals: InstanceType<typeof ModalOverlay>;
+	let modals: InstanceType<typeof PickerView>;
 	/** Every contents `focusModal` was asked to put the keyboard in, in order. */
 	let placed: FakeWebContents[];
 	let added: number;
@@ -66,33 +66,30 @@ describe("the keyboard while a sheet stands", () => {
 		placed = [];
 		added = 0;
 		windowIsFront = true;
-		modals = new ModalOverlay(
-			{
-				window: {
-					once: () => undefined,
-					isDestroyed: () => false,
-					getContentSize: () => [800, 600],
-					contentView: {
-						addChildView: () => {
-							added += 1;
-						},
-						removeChildView: () => undefined,
+		modals = new PickerView("preload.js", "devhub-app://shell/picker.html");
+		modals.adopt({
+			window: {
+				once: () => undefined,
+				isDestroyed: () => false,
+				getContentSize: () => [800, 600],
+				contentView: {
+					addChildView: () => {
+						added += 1;
 					},
-				} as unknown as Electron.BrowserWindow,
-				workbenchRect: () => ({ x: 0, y: 0, width: 100, height: 100 }),
-				focusSurface: () => undefined,
-				// The real gate: `ShellWindow.placeKeyboardIn` declines outright
-				// while another window is in front, and says nothing about it.
-				focusModal: (contents) => {
-					const fake = contents as unknown as FakeWebContents;
-					placed.push(fake);
-					if (windowIsFront) fake.focused = true;
+					removeChildView: () => undefined,
 				},
-				modalsChanged: () => modals.reposition(),
+			} as unknown as Electron.BrowserWindow,
+			workbenchRect: () => ({ x: 0, y: 0, width: 100, height: 100 }),
+			focusSurface: () => undefined,
+			// The real gate: `ShellWindow.placeKeyboardIn` declines outright
+			// while another window is in front, and says nothing about it.
+			focusModal: (contents: Electron.WebContents) => {
+				const fake = contents as unknown as FakeWebContents;
+				placed.push(fake);
+				if (windowIsFront) fake.focused = true;
 			},
-			"preload.js",
-			"devhub-app://shell/index.html?window=overlay",
-		);
+			modalsChanged: () => modals.reposition(),
+		});
 	});
 
 	const overlay = (): FakeWebContents =>

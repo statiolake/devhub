@@ -5,22 +5,34 @@
  * raised "Could not establish connection to …" over its own editor, and
  * closing the workspace destroyed the view without taking the question with
  * it. What was left was an alert about a workspace that no longer existed, on
- * an overlay layer clipped to a rectangle nothing was in, with no button that
+ * a picker layer clipped to a rectangle nothing was in, with no button that
  * could answer it — and the next attempt put another one there.
  */
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../electron.js", () => ({
-	electron: { WebContentsView: class {}, shell: { openExternal: () => {} } },
+	electron: {
+		WebContentsView: class {
+			readonly webContents = {
+				on: () => undefined,
+				loadURL: () => Promise.resolve(),
+				isDestroyed: () => false,
+				setWindowOpenHandler: () => undefined,
+			};
+			setBackgroundColor(): void {}
+			setBounds(): void {}
+		},
+		shell: { openExternal: () => {} },
+	},
 }));
 
-const shellWindowStub = { modals: undefined as unknown };
+const shellWindowStub = { picker: undefined as unknown };
 vi.mock("./shellWindow.js", () => ({
 	shellWindow: () => shellWindowStub,
 }));
 
-const { ModalOverlay } = await import("./modalOverlay.js");
+const { PickerView } = await import("./pickerView.js");
 const { askWorkbenchDialog } = await import("./workbenchDialogs.js");
 type WorkbenchView = import("./workbenchView.js").WorkbenchView;
 
@@ -45,25 +57,22 @@ class FakeWorkbench {
 }
 
 describe("a workbench's question", () => {
-	let modals: InstanceType<typeof ModalOverlay>;
+	let modals: InstanceType<typeof PickerView>;
 	let view: FakeWorkbench;
 
 	beforeEach(() => {
-		modals = new ModalOverlay(
-			{
-				window: {
-					once: () => undefined,
-					isDestroyed: () => false,
-				} as unknown as Electron.BrowserWindow,
-				workbenchRect: () => ({ x: 0, y: 0, width: 100, height: 100 }),
-				focusSurface: () => undefined,
-				focusModal: () => undefined,
-				modalsChanged: () => undefined,
-			},
-			"preload.js",
-			"devhub-app://overlay/index.html",
-		);
-		shellWindowStub.modals = modals;
+		modals = new PickerView("preload.js", "devhub-app://shell/picker.html");
+		modals.adopt({
+			window: {
+				once: () => undefined,
+				isDestroyed: () => false,
+			} as unknown as Electron.BrowserWindow,
+			workbenchRect: () => ({ x: 0, y: 0, width: 100, height: 100 }),
+			focusSurface: () => undefined,
+			focusModal: () => undefined,
+			modalsChanged: () => undefined,
+		});
+		shellWindowStub.picker = modals;
 		view = new FakeWorkbench();
 	});
 

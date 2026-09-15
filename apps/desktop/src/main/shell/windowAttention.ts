@@ -79,7 +79,7 @@ const BADGE = "●";
  *
  * Told everything that can change the answer, and idempotent, so nothing has
  * to work out whether it is the call that turns it on. That is the same shape
- * `ModalOverlay.reposition` has, and for the same reason: an attention signal
+ * `PickerView.reposition` has, and for the same reason: an attention signal
  * raised by an event and retracted by a different event is two rules that can
  * disagree, and the one that survives a disagreement is the one that leaves
  * the Dock bouncing at nothing.

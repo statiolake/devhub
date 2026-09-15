@@ -27,17 +27,7 @@ import {
   type WorkspacePickerEvent,
 } from "./client";
 import { subscribeToUnhandled, toAppError } from "./failure";
-import { useAppNotices } from "./notices";
 import { AppShellContext, type AppShellContextValue } from "./useAppShell";
-
-/**
- * Which app-wide condition the repository watcher's diagnostic is.
- *
- * One source, so one name: every look publishes either a reason the last round
- * was incomplete or nothing at all, so a notice raised under this name is
- * replaced or retracted by the next look and by nothing else.
- */
-const REPOSITORY_STATUS_CONDITION = "repository_status";
 
 /**
  * What a dispatch came back asking to have confirmed.
@@ -101,36 +91,6 @@ export function AppShellProvider({
     profiles: [],
   });
   /**
-   * What the application has to say, and the one rule that decides when it
-   * stops saying it.
-   *
-   * The rule is `useAlertLifetime`, shared with every other window DevHub has,
-   * so there is no second implementation to drift from; `useAppNotices` is
-   * what says which sources share a slot under it and which of them the
-   * person's next action retires. Everything here is app-scoped: a failure
-   * about one Agent or one workspace never reaches this page's alert channel,
-   * because main routed it to that Agent or that workspace instead.
-   */
-  const {
-    notices,
-    raiseFailure: raiseHere,
-    observeCondition,
-    clearFailure: clearIntentError,
-    dismiss: dismissNotice,
-    dismissNewest: dismissNewestNotice,
-  } = useAppNotices(
-    // Straight to main, where the log is. `void` and not awaited: a retirement
-    // is a thing to write down, and a page that waited on the write would make
-    // closing a toast depend on main answering.
-    useCallback(
-      (retired) => {
-        void transport.reportNoticeRetired(retired);
-      },
-      [transport],
-    ),
-  );
-
-  /**
    * A failure that began here, said once, to main.
    *
    * Every page raises the same way and none of them decides where the failure
@@ -153,22 +113,6 @@ export function AppShellProvider({
   const [repositoryStatus, setRepositoryStatus] =
     useState<RepositoryStatusWire>({ sequence: 0, workspaces: [] });
 
-  /**
-   * Why what the rows say may be out of date, said where the application says
-   * everything else it has to say.
-   *
-   * It is a *condition*, not a failed action: nobody asked for the look that
-   * did not finish, and the reason it did not — `gh` missing, a network that
-   * dropped — is still true after the person's next click. So it is raised as
-   * one, which is what makes the exception the watcher has always documented
-   * ("it is gone when a later round succeeds, and by no other rule") an
-   * ordinary property of a notice rather than a rule the Sidebar kept for
-   * itself: a round that succeeds publishes no diagnostic, and the source
-   * retracting it is the only thing besides the person that takes it away.
-   */
-  useEffect(() => {
-    observeCondition(REPOSITORY_STATUS_CONDITION, repositoryStatus.diagnostic);
-  }, [observeCondition, repositoryStatus.diagnostic]);
   const [pickerBusy, setPickerBusy] = useState(false);
   /**
    * How many sources the last run had to ask.
@@ -305,23 +249,6 @@ export function AppShellProvider({
             processPickerEvent(event);
           }),
         );
-        // Delivered for display, so it is drawn and nothing else. It is never
-        // handed back to main: that is the half of the rule that lives here.
-        disposers.push(
-          transport.subscribeNativeError((error) => {
-            if (live()) raiseHere(error);
-          }),
-        );
-        // A condition, not a failure: it is drawn until its own source
-        // retracts it (`summary` absent) or the person puts it away, and the
-        // same source saying the same thing again replaces itself in its one
-        // slot rather than blinking. See `notices.ts` and, for what main does
-        // before it says anything at all, `main/shell/machineConditions.ts`.
-        disposers.push(
-          transport.subscribeAppCondition((condition) => {
-            if (live()) observeCondition(condition.source, condition.summary);
-          }),
-        );
         disposers.push(transport.subscribeAppearance(applyAppearanceIfActive));
         disposers.push(
           transport.subscribeWindowTitle((title) => {
@@ -408,19 +335,11 @@ export function AppShellProvider({
         dispose();
       }
     };
-  }, [
-    applySnapshot,
-    attempt,
-    transport,
-    reportFailure,
-    raiseHere,
-    observeCondition,
-  ]);
+  }, [applySnapshot, attempt, transport, reportFailure]);
 
   const dispatch = useCallback(
     async (intent: AppIntent): Promise<AppOutcome | undefined> => {
       const dispatchGeneration = generation.current;
-      clearIntentError();
       try {
         const outcome = await transport.dispatch(intent);
         if (generation.current !== dispatchGeneration) return undefined;
@@ -442,21 +361,14 @@ export function AppShellProvider({
         return undefined;
       }
     },
-    [
-      applySnapshot,
-      transport,
-      raiseConfirmation,
-      clearIntentError,
-      raiseFailureToMain,
-    ],
+    [applySnapshot, transport, raiseConfirmation, raiseFailureToMain],
   );
 
   const retry = useCallback(() => {
     generation.current += 1;
-    clearIntentError();
     setState({ status: "loading" });
     setAttempt((current) => current + 1);
-  }, [clearIntentError]);
+  }, []);
 
   const openExternalUrl = useCallback(
     (url: string) => {
@@ -768,9 +680,6 @@ export function AppShellProvider({
       state,
       appearance,
       windowTitle,
-      notices,
-      dismissNotice,
-      dismissNewestNotice,
       reportFailure,
       dispatch,
       retry,
@@ -835,10 +744,7 @@ export function AppShellProvider({
       assignIssue,
       confirmPending,
       dismissCloseConfirmation,
-      dismissNotice,
-      dismissNewestNotice,
       dispatch,
-      notices,
       openExternalUrl,
       openSettings,
       pendingConfirmation,

@@ -27,22 +27,32 @@
  * `main/shell/shellTitle.ts` is what keeps it true.
  */
 
-/** The `?window=` value each surface is served with; the shell has none. */
-export type ShellWindowKind = "shell" | "settings" | "overlay";
+/** Which of DevHub's own pages this is. */
+export type ShellWindowKind = "shell" | "settings" | "toasts" | "picker";
 
 export const WINDOW_TITLES: Readonly<Record<ShellWindowKind, string>> = {
 	shell: "DevHub",
 	settings: "DevHub Settings",
-	// The overlay is a view inside the shell window rather than a window of its
-	// own, so nothing displays this. It is here so the page can set a title
-	// unconditionally instead of branching on which surface may have one.
-	overlay: "DevHub",
+	// `toasts` and `picker` are views inside the shell window rather than
+	// windows of their own, so nothing displays either of these. They are here
+	// so a page can set a title unconditionally instead of branching on
+	// whether it is the kind of page that has one.
+	toasts: "DevHub",
+	picker: "DevHub",
 };
 
-/** Which surface a page URL asks for. Anything unrecognised is the shell. */
+/**
+ * Which surface a page URL asks for.
+ *
+ * Only `index.html` still carries a role, and only because the App Shell and
+ * the Settings window are still one bundle behind `?window=settings`. Each of
+ * the children that has been split out is an entry of its own and answers this
+ * question by being a different file.
+ */
 export function windowKindOf(search: string): ShellWindowKind {
-	const which = new URLSearchParams(search).get("window");
-	return which === "settings" || which === "overlay" ? which : "shell";
+	return new URLSearchParams(search).get("window") === "settings"
+		? "settings"
+		: "shell";
 }
 
 /**

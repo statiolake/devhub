@@ -116,6 +116,40 @@ export function testSnapshot(
   };
 }
 
+/**
+ * The one thing the Settings window needs from the *shell* bridge.
+ *
+ * Settings talks to main over `SETTINGS_CHANNELS` and has its own client for
+ * it. It reaches `window.devhub` for exactly one thing: an app-scoped failure
+ * that began in this window comes back to this window to be drawn, and that
+ * arrives on `nativeError` like it does on every other page. A test that
+ * renders the window therefore needs the bridge to exist, and this is all of
+ * it that is used.
+ */
+export function stubShellBridge(): { raise: (error: unknown) => void } {
+  // One holder for the process, so calling this twice — the harness installs
+  // it, and a test that wants to raise through it asks again — does not leave
+  // one of the two handles wired to a bridge that has been replaced.
+  const listeners = new Set<(error: unknown) => void>();
+  const existing = (window as unknown as { devhub?: { listeners?: unknown } })
+    .devhub;
+  const holder =
+    (existing?.listeners as Set<(error: unknown) => void> | undefined) ??
+    listeners;
+  (window as unknown as { devhub: unknown }).devhub = {
+    listeners: holder,
+    onNativeError: (listener: (error: unknown) => void) => {
+      holder.add(listener);
+      return () => holder.delete(listener);
+    },
+  };
+  return {
+    raise: (error) => {
+      for (const listener of [...holder]) listener(error);
+    },
+  };
+}
+
 export function testClient(initial: SettingsConfig): {
   readonly saves: SettingsConfig[];
   /** Which keys each "reset this screen" asked main to drop. */
@@ -124,6 +158,11 @@ export function testClient(initial: SettingsConfig): {
 } {
   const saves: SettingsConfig[] = [];
   const resets: (readonly string[])[] = [];
+  // Every test that renders the window needs the shell bridge to exist, for
+  // the one thing the window uses it for. Here rather than in each test,
+  // because a harness that leaves one thing out is a harness the next test
+  // forgets about.
+  stubShellBridge();
   let current = initial;
   const snapshot = () => testSnapshot(current, saves.length + 1);
   const client: SettingsClient = {

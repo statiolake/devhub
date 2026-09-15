@@ -186,6 +186,15 @@ import {
 } from "./shellWindow.js";
 import { displayAudience, projectionAudience } from "./publishAudience.js";
 import { WindowAttention, platformDock } from "./windowAttention.js";
+
+/**
+ * Which app-wide condition the repository watcher's diagnostic is.
+ *
+ * One source, so one name: every look publishes either a reason the last round
+ * was incomplete or nothing at all, so a notice raised under this name is
+ * replaced or retracted by the next look and by nothing else.
+ */
+const REPOSITORY_STATUS_CONDITION = "repository_status";
 import {
 	crash,
 	InvariantViolation,
@@ -587,10 +596,7 @@ export class AppController {
 			};
 			if (summary === undefined) this.notices.retracted(event);
 			else this.notices.raised(event);
-			this.send(CHANNELS.appCondition, {
-				source,
-				...(summary === undefined ? {} : { summary }),
-			} satisfies AppConditionWire);
+			this.publishCondition(source, summary);
 		},
 	});
 	private readonly agentReconcilers = new AgentReconcilers({
@@ -942,21 +948,21 @@ export class AppController {
 				this.send(CHANNELS.menuCommand, "open_workspace_picker");
 			},
 			openTabPicker: () => {
-				shellWindow().modals.openModal({ kind: "tab-picker" });
+				shellWindow().picker.openModal({ kind: "tab-picker" });
 			},
 			openAgentPicker: (workspaceId) => {
 				// The same door the sidebar's `+` goes through: it asks main to
 				// open this modal, and this *is* main.
-				shellWindow().modals.openModal({ kind: "agent-picker", workspaceId });
+				shellWindow().picker.openModal({ kind: "agent-picker", workspaceId });
 			},
 			openIssuePicker: () => {
-				shellWindow().modals.openModal({ kind: "issue-assignment" });
+				shellWindow().picker.openModal({ kind: "issue-assignment" });
 			},
 			openAgentActions: (agentId) => {
-				shellWindow().modals.openModal({ kind: "agent-actions", agentId });
+				shellWindow().picker.openModal({ kind: "agent-actions", agentId });
 			},
 			renameAgent: (agentId) => {
-				shellWindow().modals.openModal({ kind: "agent-rename", agentId });
+				shellWindow().picker.openModal({ kind: "agent-rename", agentId });
 			},
 			markAgentUnread: (agentId) => {
 				// The same intent the row menu dispatches, through the same
@@ -975,14 +981,14 @@ export class AppController {
 				this.dispatchOwn({ type: "toggle_sidebar" });
 			},
 			dismissAlert: () => {
-				// The App Shell page and nowhere else. Every failure main raises
-				// is published to this one page and drawn in one place
-				// (`publishError` → `SurfaceViewport`'s inline alert), so there is
-				// one alert to put away however it got there. The Settings
-				// window's own refusal is not this: its Dismiss button is
-				// ordinary DOM in a window where Tab works, so it was never out
-				// of the keyboard's reach.
-				this.send(CHANNELS.menuCommand, "dismiss_alert");
+				// The page that draws app-scoped notices, and nowhere else.
+				// Every failure main raises goes to that one page, so there is
+				// one alert to put away however it got there — and the chord has
+				// to reach the page that has it rather than every page that
+				// might. The Settings window's own refusal is not this: its
+				// Dismiss button is ordinary DOM in a window where Tab works, so
+				// it was never out of the keyboard's reach.
+				this.sendToDisplay(CHANNELS.menuCommand, "dismiss_alert");
 			},
 			closeAgent: (agentId) => {
 				this.requestCloseAgent(agentId);
@@ -1005,7 +1011,7 @@ export class AppController {
 				this.repositoryStatus.look();
 			},
 			openChordHelp: () => {
-				shellWindow().modals.openModal({
+				shellWindow().picker.openModal({
 					kind: "chord-help",
 					rows: this.chordHelpRows(),
 				});
@@ -1185,7 +1191,7 @@ export class AppController {
 			this.requestCloseWorkspace(workspaceId, "remove");
 			return;
 		}
-		shellWindow().modals.openModal({
+		shellWindow().picker.openModal({
 			kind: "worktree-close",
 			workspaceId,
 			label:
@@ -1213,7 +1219,7 @@ export class AppController {
 		agentId?: string,
 	): AppOutcomeWire {
 		if (outcome.kind === "confirmation_required") {
-			shellWindow().modals.openModal({
+			shellWindow().picker.openModal({
 				kind: "close-confirmation",
 				confirmationId: outcome.confirmationId,
 				purpose: outcome.purpose,
@@ -1696,10 +1702,30 @@ export class AppController {
 	 * `publishAudience.ts` for why a failure has a smaller audience than a
 	 * projection does.
 	 */
-	private sendToDisplay(channel: string, payload: unknown): void {
-		for (const contents of displayAudience(shellWindow())) {
+	private sendToDisplay(
+		channel: string,
+		payload: unknown,
+		origin?: Electron.WebContents,
+	): void {
+		for (const contents of displayAudience(shellWindow(), origin)) {
 			contents.send(channel, payload);
 		}
+	}
+
+	/**
+	 * A standing condition going up, or its own source taking it down.
+	 *
+	 * To the page that draws notices and to no other — the same audience a
+	 * failure has, for the same reason. A condition used to go out on the
+	 * projection audience, which was every page that draws from the model; a
+	 * condition is not the model, and the page that draws it is the one page
+	 * that has no model at all.
+	 */
+	private publishCondition(source: string, summary: string | undefined): void {
+		this.sendToDisplay(CHANNELS.appCondition, {
+			source,
+			...(summary === undefined ? {} : { summary }),
+		} satisfies AppConditionWire);
 	}
 
 	private publishSnapshot(): void {
@@ -1824,6 +1850,22 @@ export class AppController {
 			const before = this.orderedWorkspaceIds();
 			this.lastRepositoryStatus = status;
 			this.send(CHANNELS.repositoryStatusChanged, status);
+			// Why what the rows say may be out of date, said where the
+			// application says everything else it has to say. It is a
+			// *condition*, not a failed action: nobody asked for the look that
+			// did not finish, and the reason it did not — `gh` missing, a
+			// network that dropped — is still true after the person's next
+			// click. The watcher has always documented exactly this ("it is
+			// gone when a later round succeeds, and by no other rule"), and a
+			// condition is the shape that rule already has: a round that
+			// succeeds publishes no diagnostic, and the source retracting it is
+			// the only thing besides the person that takes it away.
+			//
+			// It used to be raised in the App Shell page, from the projection
+			// it had just received. The page that draws notices has no
+			// projection now — it does not need one — so the source says it
+			// itself, which is where every other condition is already said.
+			this.publishCondition(REPOSITORY_STATUS_CONDITION, status.diagnostic);
 			const after = this.orderedWorkspaceIds();
 			if (before.join("\0") !== after.join("\0")) {
 				this.send(CHANNELS.snapshotChanged, this.snapshot());
@@ -1868,7 +1910,16 @@ export class AppController {
 	 * would then record the rate main *allowed* rather than the rate something
 	 * published at. The second number is the whole point of the journal.
 	 */
-	private publishError(error: AppErrorWire): void {
+	private publishError(
+		error: AppErrorWire,
+		/**
+		 * The page a failure began on, when main knows it.
+		 *
+		 * Consulted for one thing only — a failure raised in the Settings
+		 * window is drawn in the Settings window. See `publishAudience.ts`.
+		 */
+		origin?: Electron.WebContents,
+	): void {
 		// A failure published before there is a page — or into a window that has
 		// gone — is in the log too. `module` is the source: it is already the
 		// wire's own answer to "which part of DevHub said this", so no raising
@@ -1880,7 +1931,7 @@ export class AppController {
 			identity: appFailureIdentity(error.code),
 			reason: error.detail ?? error.summary,
 		});
-		this.sendToDisplay(CHANNELS.nativeError, error);
+		this.sendToDisplay(CHANNELS.nativeError, error, origin);
 	}
 
 	/**
@@ -2510,7 +2561,7 @@ export class AppController {
 		// it. That simultaneity is the point: the person reads and edits while
 		// the program boots, and whichever of the two finishes last is what the
 		// send waits on.
-		shellWindow().modals.openModal({
+		shellWindow().picker.openModal({
 			kind: "injection-review",
 			agentId,
 			injectionId,
@@ -4407,8 +4458,9 @@ export class AppController {
 	 * take one.
 	 */
 	async metricsFromCli(): Promise<string> {
-		const onScreen = shellWindow().onScreenViewId();
-		const views = shellWindow()
+		const shell = shellWindow();
+		const onScreen = shell.onScreenViewId();
+		const workbenches = shell
 			.getViews()
 			.filter((view) => !view.isDestroyed())
 			.map((view) => ({
@@ -4417,6 +4469,44 @@ export class AppController {
 				surfaceKey: this.editorSurfaceKeyForView(view.id),
 				onScreen: view.id === onScreen,
 			}));
+		// DevHub's own pages, named the same way, because a reading that can
+		// only name workbenches cannot answer what splitting the pages cost.
+		// `onScreen` for these is "in the window's child list", which for the
+		// two that come and go is the fact worth reading back: a notice layer
+		// standing with nothing on it is a rectangle taking clicks for nothing.
+		const chrome = [
+			{
+				contents: shell.window.webContents,
+				name: "shell",
+				present: true,
+			},
+			{
+				contents: shell.toasts.contents(),
+				name: "toasts",
+				present: shell.toasts.isPresent(),
+			},
+			{
+				contents: shell.picker.contents(),
+				name: "picker",
+				present: shell.picker.isPresent(),
+			},
+		]
+			.filter(
+				(
+					page,
+				): page is {
+					contents: Electron.WebContents;
+					name: string;
+					present: boolean;
+				} => page.contents !== undefined,
+			)
+			.map((page) => ({
+				pid: page.contents.getOSProcessId(),
+				id: page.contents.id,
+				surfaceKey: `chrome:${page.name}`,
+				onScreen: page.present,
+			}));
+		const views = [...workbenches, ...chrome];
 		const cpu = process.cpuUsage();
 		// A terminal DevHub cannot reach has no clients to report, which is a
 		// different sentence from "none are attached" only to a reader who has
@@ -4929,9 +5019,17 @@ export class AppController {
 		// name the OS is showing, which is the only thing the bar may letter.
 		handle(CHANNELS.getWindowTitle, () => shellWindow().window.getTitle());
 		handle(CHANNELS.getAgentProfiles, () => this.agentProfiles());
-		handle(CHANNELS.dispatch, (_event, intent: AppIntentWire) =>
-			this.dispatchFromPage(intent),
-		);
+		handle(CHANNELS.dispatch, (_event, intent: AppIntentWire) => {
+			// The person asked for something, which is one of the three things
+			// that retire a failure — they have moved on, and a report about the
+			// last thing is in the way of the next. The page that draws notices
+			// cannot see this for itself and does not want to: main sees every
+			// dispatch a page makes, so main says so. `dispatchOwn` deliberately
+			// does not, because DevHub raising its own intent is not the person
+			// starting an action.
+			this.sendToDisplay(CHANNELS.actionStarted, undefined);
+			return this.dispatchFromPage(intent);
+		});
 		handle(
 			CHANNELS.replay,
 			(_event, cursor: number): ReplayWire =>
@@ -5299,15 +5397,34 @@ export class AppController {
 		// set that is open because the overlay view is a fact about the window,
 		// not about whichever page happened to ask.
 		handle(CHANNELS.openModal, (_event, request: ModalRequest) =>
-			shellWindow().modals.openModal(request),
+			shellWindow().picker.openModal(request),
 		);
 		// A failure that *began* on a page arrives here, and goes out on the
 		// same channel every failure main raises goes out on. One display site,
 		// one lifetime rule, whichever page the failure began on. One way, and
 		// received-is-never-raised on the page side, is what keeps this from
 		// being a loop — see `raiseFailure` in `ipc/contract.ts`.
-		receive(CHANNELS.raiseFailure, (_event, error: AppErrorWire) => {
-			this.publishError(error);
+		receive(CHANNELS.raiseFailure, (event, error: AppErrorWire) => {
+			// The sender is passed on so that a failure raised in the Settings
+			// window is drawn there. Every page in the shell window is answered
+			// the same way whatever it was; see `publishAudience.ts`.
+			this.publishError(error, event.sender);
+		});
+		// The `toasts` view is exactly as big as the notices it is drawing,
+		// because a native view takes every click inside its bounds whether or
+		// not anything is painted there. This is the page saying how big that
+		// is; see `toastsView.ts`.
+		receive(
+			CHANNELS.toastsSize,
+			(_event, size: { readonly width: number; readonly height: number }) => {
+				shellWindow().toasts.setSize(size);
+			},
+		);
+		// "Try Again" on a notice. The button is on the toasts page and what it
+		// restarts is the App Shell page's projection, so main is what joins
+		// them — the same shape as every other command a page carries out.
+		receive(CHANNELS.retryApp, () => {
+			this.send(CHANNELS.menuCommand, "retry_app");
 		});
 		// The other half of the journal: main sees every raise and none of the
 		// ways a notice leaves the screen, two of which are gestures in the
@@ -5318,7 +5435,7 @@ export class AppController {
 		handle(
 			CHANNELS.closeModal,
 			(_event, id: string, response: number | undefined) => {
-				shellWindow().modals.closeModal(id, response);
+				shellWindow().picker.closeModal(id, response);
 			},
 		);
 	}

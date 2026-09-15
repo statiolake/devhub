@@ -97,6 +97,7 @@ const devhub: DevhubApi = {
 	onNativeError: (listener) => on<AppError>(CHANNELS.nativeError, listener),
 	onAppCondition: (listener) =>
 		on<AppConditionWire>(CHANNELS.appCondition, listener),
+	onActionStarted: (listener) => on<void>(CHANNELS.actionStarted, listener),
 	onMenuCommand: (listener) => on<MenuCommand>(CHANNELS.menuCommand, listener),
 	onEditorRestarting: (listener) =>
 		on<EditorRestartingWire>(CHANNELS.editorRestarting, listener),
@@ -112,6 +113,15 @@ const devhub: DevhubApi = {
 	// One way, and it has to be: see `raiseFailure` in `ipc/contract.ts`.
 	raiseFailure: (error: AppError) => {
 		ipcRenderer.send(CHANNELS.raiseFailure, error);
+	},
+	reportToastsSize: (size: {
+		readonly width: number;
+		readonly height: number;
+	}) => {
+		ipcRenderer.send(CHANNELS.toastsSize, size);
+	},
+	retryApp: () => {
+		ipcRenderer.send(CHANNELS.retryApp);
 	},
 	reportNoticeRetired: (retired: NoticeRetiredWire) =>
 		ipcRenderer.invoke(CHANNELS.noticeRetired, retired) as Promise<void>,

@@ -18,7 +18,6 @@ import type {
   SshHostWire,
   WorkspacePickerCandidate,
 } from "./client";
-import type { Notice } from "./notices";
 
 export interface AppShellContextValue {
   readonly state: AppLoadState;
@@ -32,18 +31,13 @@ export interface AppShellContextValue {
    */
   readonly windowTitle: string;
   /**
-   * What the application itself has to say right now, oldest first.
+   * Hand a failure to main rather than explaining it locally.
    *
-   * App-scoped only, and drawn in exactly one place (`Toasts`). A failure
-   * about one Agent or one workspace is not here: main routes it to that
-   * Agent's pane or that workspace's surface instead.
+   * This page does not draw app-scoped notices and is not told any: they are
+   * drawn on the `toasts` view, which is the one page that has them. What is
+   * here is the raising half — what began on this page goes to main, once, and
+   * is drawn wherever main decides. See `main/shell/publishAudience.ts`.
    */
-  readonly notices: readonly Notice[];
-  /** The person put one notice away. */
-  readonly dismissNotice: (identity: string) => void;
-  /** The person put the newest notice away — what `dismiss_alert` reaches. */
-  readonly dismissNewestNotice: () => void;
-  /** Hand a failure to the shell rather than explaining it locally. */
   readonly reportFailure: (error: unknown) => void;
   readonly dispatch: (intent: AppIntent) => Promise<AppOutcome | undefined>;
   readonly retry: () => void;

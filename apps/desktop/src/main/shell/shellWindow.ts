@@ -13,7 +13,8 @@ import { sendLinksToTheBrowser } from "./externalLinks.js";
 import type { ContentRect, ContentSurfaceWire } from "../../ipc/contract.js";
 import type { TitleBarMode } from "../../model/config.js";
 import { WINDOW_TITLES } from "../../ipc/windowTitles.js";
-import { ModalOverlay } from "./modalOverlay.js";
+import { PickerView } from "./pickerView.js";
+import { ToastsView } from "./toastsView.js";
 import { shellTheme } from "./shellTheme.js";
 import type { ShellPalette } from "../../ipc/palette.js";
 import type { WorkbenchView } from "./workbenchView.js";
@@ -97,7 +98,16 @@ export class ShellWindow {
 	 * about the window's child list: the last child paints on top, and that is
 	 * the whole of what makes a modal a modal here.
 	 */
-	readonly modals: ModalOverlay;
+	/**
+	 * The two chrome children this window has beside its workbenches.
+	 *
+	 * Both are built here, at startup, and never destroyed. Ordering is what
+	 * `layout()` establishes and it is fixed: every workbench, then `toasts`,
+	 * then `picker` — a question about something is above a notice about
+	 * something, and both are above the thing.
+	 */
+	readonly toasts: ToastsView;
+	readonly picker: PickerView;
 	/** How the surface key of the workbench on screen is looked up. */
 	private surfaceKeyOfView: (view: WorkbenchView) => string | undefined = () =>
 		undefined;
@@ -145,6 +155,12 @@ export class ShellWindow {
 
 		sendLinksToTheBrowser(this.window.webContents);
 
+		// Every child page is a file beside the App Shell page's own, served by
+		// the same scheme out of the same directory. One entry each, and no
+		// `?window=` role for either: which page a view is showing is decided
+		// by which page main loads into it.
+		const pageBase = pageUrl.slice(0, pageUrl.lastIndexOf("/"));
+
 		// DevHub names this window, and only DevHub. Electron hands a page's
 		// `document.title` to its window by default, which would let the App
 		// Shell page — served from the same `index.html` as the Settings
@@ -154,23 +170,28 @@ export class ShellWindow {
 			event.preventDefault();
 		});
 
-		this.modals = new ModalOverlay(
-			{
-				window: this.window,
-				workbenchRect: () => this.currentRect(),
-				focusSurface: () => this.focusSurface(),
-				focusModal: (contents) => this.focusModal(contents),
-				modalsChanged: () => {
-					this.layout();
-					// A modal owns the keyboard while it stands, so every
-					// workbench loses focus when one opens and the one on
-					// screen gets it back when the last one goes.
-					this.publishFocus();
-				},
+		// Built before anything can ask for them, and with their pages already
+		// loading. Creation used to be the first modal's job, and the first
+		// modal of a session was drawn on a page that had not run yet.
+		this.toasts = new ToastsView(preloadPath, `${pageBase}/toasts.html`);
+		this.toasts.adopt({
+			window: this.window,
+			focusSurface: () => this.focusSurface(),
+		});
+		this.picker = new PickerView(preloadPath, `${pageBase}/picker.html`);
+		this.picker.adopt({
+			window: this.window,
+			workbenchRect: () => this.currentRect(),
+			focusSurface: () => this.focusSurface(),
+			focusModal: (contents) => this.focusModal(contents),
+			modalsChanged: () => {
+				this.layout();
+				// A modal owns the keyboard while it stands, so every workbench
+				// loses focus when one opens and the one on screen gets it back
+				// when the last one goes.
+				this.publishFocus();
 			},
-			preloadPath,
-			`${pageUrl}?window=overlay`,
-		);
+		});
 
 		this.pageUrl = pageUrl;
 		this.window.once("ready-to-show", () => this.window.show());
@@ -424,8 +445,8 @@ export class ShellWindow {
 		// window's `focus` event, macOS having restored the keyboard to
 		// whatever held it before — measured, the App Shell page — and standing
 		// aside left the sheet on screen with the keys going behind it.
-		if (this.modals.isPresent()) {
-			const modal = this.modals.contents();
+		if (this.picker.isPresent()) {
+			const modal = this.picker.contents();
 			if (modal) this.placeKeyboardIn(modal);
 			return;
 		}
@@ -450,7 +471,7 @@ export class ShellWindow {
 	 *   workbench 5ms later.
 	 * - `setContentSurface`, when the page swaps a terminal in for an editor.
 	 * - the window's own `focus` event, coming back from another app.
-	 * - `ModalOverlay.withdraw`, when the last sheet goes.
+	 * - `PickerView.withdraw`, when the last sheet goes.
 	 * - `WorkbenchView.focus`, which is VS Code's `hostService.focus()` →
 	 *   `nativeHostMainService.focusWindow` → `CodeWindow.focus()` arriving
 	 *   through the proxy. VS Code calls it on hover and on drag
@@ -591,7 +612,7 @@ export class ShellWindow {
 	isSurfaceFocused(view: WorkbenchView): boolean {
 		if (this.window.isDestroyed() || view.isDestroyed()) return false;
 		if (!this.window.isFocused()) return false;
-		if (this.modals.isPresent()) return false;
+		if (this.picker.isPresent()) return false;
 		return this.focusTarget() === view.webContents;
 	}
 
@@ -674,7 +695,7 @@ export class ShellWindow {
 		resolve: (view: WorkbenchView) => string | undefined,
 	): void {
 		this.surfaceKeyOfView = resolve;
-		this.modals.reposition();
+		this.picker.reposition();
 	}
 
 	boundsOf(_view: WorkbenchView): Electron.Rectangle {
@@ -746,7 +767,7 @@ export class ShellWindow {
 	 * where the keyboard is starts by asking this.
 	 */
 	private askingView(): WorkbenchView | undefined {
-		const asking = this.modals.askingSurfaceKey();
+		const asking = this.picker.askingSurfaceKey();
 		if (asking === undefined) return undefined;
 		return this.views.find(
 			(candidate) =>
@@ -775,9 +796,11 @@ export class ShellWindow {
 			this.window.contentView.addChildView(onScreen.view);
 			onScreen.view.setVisible(true);
 		}
-		// The modal layer is last, always: whatever this just decided about the
-		// workbench, a question about it is above it.
-		this.modals.reposition();
+		// The chrome children are last, always, and in this order: whatever this
+		// just decided about the workbench, a notice about the application is
+		// above it, and a question is above the notice.
+		this.toasts.reposition();
+		this.picker.reposition();
 	}
 
 	/**

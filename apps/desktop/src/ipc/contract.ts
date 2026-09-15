@@ -525,6 +525,8 @@ export interface DevhubApi {
 	onNativeError(listener: (error: AppError) => void): () => void;
 	/** Standing facts, raised and retracted by the source that watches them. */
 	onAppCondition(listener: (condition: AppConditionWire) => void): () => void;
+	/** The person started another action; see `actionStarted` in `CHANNELS`. */
+	onActionStarted(listener: () => void): () => void;
 	onMenuCommand(listener: (command: MenuCommand) => void): () => void;
 	onEditorRestarting(
 		listener: (event: EditorRestartingWire) => void,
@@ -538,8 +540,8 @@ export interface DevhubApi {
 	/**
 	 * Put a modal on screen. Resolves to the id that closes it again.
 	 *
-	 * The page never draws a modal itself: main owns the set that is open, and
-	 * the overlay view draws it. That is what makes stacking a fact about the
+	 * A page never draws a modal itself: main owns the set that is open, and
+	 * the `picker` view draws it. That is what makes stacking a fact about the
 	 * window rather than something each page has to reconstruct.
 	 */
 	openModal(request: ModalRequest): Promise<string>;
@@ -558,6 +560,34 @@ export interface DevhubApi {
 	 * the same loop by another route. Telling main is not asking it.
 	 */
 	raiseFailure(error: AppError): void;
+	/**
+	 * How much room the notices this page is drawing take up.
+	 *
+	 * The `toasts` page's whole protocol with the window, and it exists
+	 * because a `WebContentsView` is a native view whose hit testing is by
+	 * rectangle: every click inside its bounds is its own, whether or not
+	 * anything is painted there, and Electron has no per-view way to stand
+	 * aside. So the view is exactly as big as the notices, and this is the page
+	 * saying how big that is. Nothing to say is a size of zero, which takes the
+	 * view out of the window entirely.
+	 *
+	 * One way, like `raiseFailure` and for a weaker version of the same reason:
+	 * a measurement is a fact the page has, not a request it is waiting on.
+	 */
+	reportToastsSize(size: {
+		readonly width: number;
+		readonly height: number;
+	}): void;
+	/**
+	 * "Try Again", pressed on a notice.
+	 *
+	 * The notices are drawn on a page of their own now, and what an app-scoped
+	 * failure's retry means — start the App Shell page's projection over — is
+	 * something only that other page can do. So it is routed: this reaches
+	 * main, and main asks the page that owns the projection. Every other way of
+	 * doing it would be a second page reaching into the first.
+	 */
+	retryApp(): void;
 	/**
 	 * Tell main a notice has left the screen, and by which rule.
 	 *
@@ -838,8 +868,21 @@ export const CHANNELS = {
 	nativeError: "devhub:native-error",
 	/** A standing condition going up, or the source taking it down again. */
 	appCondition: "devhub:app-condition",
+	/**
+	 * The person asked DevHub for something.
+	 *
+	 * One of the three things that retire a failure: they have moved on, and a
+	 * report about the last thing is in the way of the next. The page that
+	 * draws notices cannot see a dispatch — it has no model and does not want
+	 * one — so main, which sees every dispatch a page makes, says so.
+	 */
+	actionStarted: "devhub:action-started",
 	/** A page handing main a failure it has no place to draw. */
 	raiseFailure: "devhub:raise-failure",
+	/** The `toasts` page saying how much room its notices take up. */
+	toastsSize: "devhub:toasts-size",
+	/** "Try Again" on a notice, on its way to the page that owns the boot. */
+	retryApp: "devhub:retry-app",
 	/** A page telling main that a notice has left the screen, and why. */
 	noticeRetired: "devhub:notice-retired",
 	workspacePicker: "devhub:workspace-picker",
@@ -849,7 +892,7 @@ export const CHANNELS = {
 	openModal: "devhub:open-modal",
 	/** Take a modal off screen, with the answer if it asked for one. */
 	closeModal: "devhub:close-modal",
-	/** The set of open modals, pushed to the overlay page whenever it moves. */
+	/** The set of open modals, pushed to the `picker` page whenever it moves. */
 	modalsChanged: "devhub:modals-changed",
 	/** A workbench died unasked and is being built again in the same slot. */
 	editorRestarting: "devhub:editor-restarting",
@@ -1054,4 +1097,13 @@ export type MenuCommand =
 	 * only ask; a page with nothing on screen answers with nothing, which is
 	 * what makes one chord right in every window.
 	 */
-	| "dismiss_alert";
+	| "dismiss_alert"
+	/**
+	 * Start the projection over — "Try Again" on an app-scoped notice.
+	 *
+	 * The notices are drawn on a page of their own and the projection is this
+	 * page's, so the two ends of one button are in two pages and main is what
+	 * joins them. It is a message for the same reason the two focus commands
+	 * are: what it acts on is here.
+	 */
+	| "retry_app";

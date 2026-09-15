@@ -1,11 +1,11 @@
 /**
  * The App Shell page's entry point.
  *
- * One page serves all three surfaces: the App Shell itself, the Settings
- * window (`?window=settings`), and the modal overlay laid over the shell
- * window (`?window=overlay`). They share the tokens, the selection guard and
- * the root failure handler, which is the only reason they share an entry
- * point.
+ * Two surfaces still share it: the App Shell itself and the Settings window
+ * (`?window=settings`). The `toasts` and `picker` children used to be here
+ * too, behind roles of their own; each is its own entry now, which is what a
+ * page in a view of its own means. What is left is the last of the role
+ * switching, and it goes when Settings gets an entry too.
  */
 
 import { StrictMode } from "react";
@@ -17,14 +17,11 @@ import { PageBoundary } from "./PageBoundary";
 import { installSelectionGuard } from "./selection";
 import { installFocusHome } from "./focusHome";
 import { SettingsApp } from "../settings/SettingsApp";
-import { OverlayApp } from "./overlay/OverlayApp";
 import { WINDOW_TITLES, windowKindOf } from "../ipc/windowTitles";
 import "./styles/tokens.css";
 import "./styles/shell.css";
 import "./styles/macos.css";
 import "./styles/reorder.css";
-import "./styles/toast.css";
-import "./overlay/overlay.css";
 
 const container = document.getElementById("root");
 if (!container) {
@@ -42,34 +39,20 @@ installPalette(document);
 const which = windowKindOf(window.location.search);
 
 // Electron gives a window its page's title, so the title main chose when it
-// created the window lasts only until the page loads. Both windows are served
+// created the window lasts only until the page loads. Both surfaces are served
 // from one `index.html`, so the page has to say which of them it is — otherwise
 // the Settings window takes the shell's `<title>` and calls itself "DevHub".
 document.title = WINDOW_TITLES[which];
 
 if (which === "shell") {
   // The keyboard's home is the main area, and only this window has one. The
-  // Settings window is an ordinary form, and the overlay layer exists to hold
-  // the keyboard for as long as something is being asked.
+  // Settings window is an ordinary form.
   installFocusHome(document);
 }
 
-if (which === "overlay") {
-  // The layer is a sheet of glass over the whole window: whatever it does not
-  // draw has to show the live workbench through it, not a page background.
-  document.documentElement.dataset.window = "overlay";
-}
+const app = which === "settings" ? <SettingsApp /> : <AppShell />;
 
-const app =
-  which === "settings" ? (
-    <SettingsApp />
-  ) : which === "overlay" ? (
-    <OverlayApp />
-  ) : (
-    <AppShell />
-  );
-
-// One boundary per page role, and this is where a page role begins. It is the
+// One boundary per page, and this is where this one begins. It is the
 // only catch React can reach — a component that throws while rendering takes
 // the tree with it, and the window handler that would report it has nothing
 // left to report into. See `PageBoundary.tsx`.

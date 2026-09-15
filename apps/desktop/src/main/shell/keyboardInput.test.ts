@@ -191,9 +191,7 @@ describe("a chord, as Electron delivers it", () => {
 	it("completes in one view what was armed in another", () => {
 		const { calls, chordHost } = host();
 		expect(type(chordHost, [PREFIX], WORKBENCH)).toEqual([true]);
-		expect(type(chordHost, [input("KeyF", "f")], SHELL_ORIGIN)).toEqual([
-			true,
-		]);
+		expect(type(chordHost, [input("KeyF", "f")], SHELL_ORIGIN)).toEqual([true]);
 		expect(calls).toEqual(["openWorkspacePicker"]);
 	});
 

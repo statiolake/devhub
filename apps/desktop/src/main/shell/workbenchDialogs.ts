@@ -66,7 +66,7 @@ export async function askWorkbenchDialog(
 	surfaceKey: string,
 	view: WorkbenchView,
 ): Promise<Electron.MessageBoxReturnValue> {
-	const modals = shellWindow().modals;
+	const modals = shellWindow().picker;
 	const buttons = options.buttons ?? ["OK"];
 	const subjectGone = (): void => {
 		modals.closeWhere(

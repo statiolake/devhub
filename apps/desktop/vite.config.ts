@@ -17,12 +17,29 @@ const electronStub = fileURLToPath(
 
 // The App Shell page is loaded from disk by the shell BrowserWindow, so the
 // build has to be relative: there is no server root to be absolute against.
+//
+// One entry per child page, because a child page *is* its own page: its own
+// script, its own subscriptions, its own root failure handler. DevHub used to
+// serve three surfaces from `index.html` under a `?window=` role, which meant
+// every surface loaded every other surface's code and took every other
+// surface's subscriptions — and it is why `page-title-updated` has to be
+// refused, why the modal layer's `onModals` was on the bridge for pages that
+// could never receive it, and why one provider had to grow props to say which
+// role it was in. `toasts` and `picker` are entries instead; `index.html` still
+// serves the App Shell and Settings until the rest of the split lands.
 export default defineConfig({
   base: "./",
   plugins: [react()],
   build: {
     outDir: "dist/shell",
     emptyOutDir: true,
+    rollupOptions: {
+      input: {
+        index: fileURLToPath(new URL("./index.html", import.meta.url)),
+        toasts: fileURLToPath(new URL("./toasts.html", import.meta.url)),
+        picker: fileURLToPath(new URL("./picker.html", import.meta.url)),
+      },
+    },
   },
   test: {
     // `out/` is the main process's compiled output. Vitest's default include

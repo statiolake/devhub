@@ -13,10 +13,13 @@ import { describe, expect, it } from "vitest";
 import { displayAudience, projectionAudience } from "./publishAudience.js";
 
 const SHELL = "shell page";
-const OVERLAY = "overlay page";
+const PICKER = "picker page";
+const TOASTS = "toasts page";
+const SETTINGS = "settings page";
 
 function pages(options?: {
-	readonly overlay?: boolean;
+	readonly picker?: boolean;
+	readonly toasts?: boolean;
 	readonly gone?: boolean;
 }) {
 	return {
@@ -24,30 +27,55 @@ function pages(options?: {
 			isDestroyed: () => options?.gone === true,
 			webContents: SHELL,
 		},
-		modals: {
-			contents: () => (options?.overlay === false ? undefined : OVERLAY),
+		picker: {
+			contents: () => (options?.picker === false ? undefined : PICKER),
+		},
+		toasts: {
+			contents: () => (options?.toasts === false ? undefined : TOASTS),
 		},
 	};
 }
 
 describe("a projection", () => {
 	it("goes to every page that draws from the model", () => {
-		expect(projectionAudience(pages())).toEqual([SHELL, OVERLAY]);
+		expect(projectionAudience(pages())).toEqual([SHELL, PICKER]);
 	});
 
-	it("goes to the one page there is before the overlay exists", () => {
-		expect(projectionAudience(pages({ overlay: false }))).toEqual([SHELL]);
+	it("goes to the one page there is before the picker exists", () => {
+		expect(projectionAudience(pages({ picker: false }))).toEqual([SHELL]);
 	});
 });
 
 describe("a failure", () => {
 	it("reaches exactly one page: the one that draws failures", () => {
-		expect(displayAudience(pages())).toEqual([SHELL]);
+		expect(displayAudience(pages())).toEqual([TOASTS]);
 		expect(displayAudience(pages())).toHaveLength(1);
 	});
 
-	it("reaches that page whether or not the overlay is up", () => {
-		expect(displayAudience(pages({ overlay: false }))).toEqual([SHELL]);
+	/**
+	 * The page it began on makes no difference while that page is one of this
+	 * window's own. The App Shell page, the picker and the toasts page itself
+	 * all draw a failure in the same place, because there is one place.
+	 */
+	it("is drawn on the toasts view wherever in this window it began", () => {
+		expect(displayAudience(pages(), SHELL)).toEqual([TOASTS]);
+		expect(displayAudience(pages(), PICKER)).toEqual([TOASTS]);
+		expect(displayAudience(pages(), TOASTS)).toEqual([TOASTS]);
+	});
+
+	/**
+	 * Settings is its own window. A failure raised there and drawn on the shell
+	 * window's notices is a report about what the person is looking at, put on
+	 * a window they are not — and possibly on one that is hidden.
+	 */
+	it("goes back to the window it began in when that is not this one", () => {
+		expect(displayAudience(pages(), SETTINGS)).toEqual([SETTINGS]);
+	});
+
+	it("still reaches Settings when the shell window has gone", () => {
+		expect(displayAudience(pages({ gone: true }), SETTINGS)).toEqual([
+			SETTINGS,
+		]);
 	});
 });
 

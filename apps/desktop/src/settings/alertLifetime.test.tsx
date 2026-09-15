@@ -31,7 +31,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SettingsError, SettingsSnapshot } from "../ipc/settings";
 import type { SettingsClient } from "./client";
 import { SettingsApp } from "./SettingsApp";
-import { testClient, testConfig, testSnapshot } from "./testHarness";
+import {
+  stubShellBridge,
+  testClient,
+  testConfig,
+  testSnapshot,
+} from "./testHarness";
 
 Element.prototype.scrollIntoView = vi.fn();
 
@@ -228,5 +233,66 @@ describe("how long a refusal stays on the Settings window", () => {
     refuseWith({ code: "external_edit_conflict" });
     await refuseASave();
     expect(screen.getByRole("alert")).not.toHaveTextContent(/socket/iu);
+  });
+});
+
+/**
+ * Settings is its own window, and so is what it has to say.
+ *
+ * Every page raises what began in it to main, this one included, and main
+ * journals it — one journal is the point of the journal. Where it is drawn is
+ * the separate question, and for the Settings window the answer is here: a
+ * report about the thing the person is looking at, drawn on the shell window's
+ * notices, is a report nobody reads, and the shell window may not even be on
+ * screen.
+ */
+describe("a failure that began in the Settings window", () => {
+  it("is drawn in the Settings window, beside the refusals and not in them", async () => {
+    const bridge = stubShellBridge();
+    const { client } = testClient(testConfig());
+    render(<SettingsApp client={client} />);
+    await screen.findByRole("tab", { name: "Terminal" });
+
+    act(() => {
+      bridge.raise({
+        code: "native_unavailable",
+        summary: "The native app shell is unavailable.",
+        module: "settings",
+        timestampMs: 1,
+        runtimeVersion: "test",
+        actions: ["retry"],
+        detail: "the tmux socket could not be opened",
+      });
+    });
+
+    expect(
+      screen.getByText("the tmux socket could not be opened"),
+    ).toBeInTheDocument();
+  });
+
+  it("is the person's to put away, like every other alert DevHub draws", async () => {
+    const bridge = stubShellBridge();
+    const { client } = testClient(testConfig());
+    render(<SettingsApp client={client} />);
+    await screen.findByRole("tab", { name: "Terminal" });
+
+    act(() => {
+      bridge.raise({
+        code: "native_unavailable",
+        summary: "The native app shell is unavailable.",
+        module: "settings",
+        timestampMs: 1,
+        runtimeVersion: "test",
+        actions: ["retry"],
+        detail: "the tmux socket could not be opened",
+      });
+    });
+    await act(async () => {
+      screen.getByRole("button", { name: "Dismiss" }).click();
+    });
+
+    expect(
+      screen.queryByText("the tmux socket could not be opened"),
+    ).toBeNull();
   });
 });
