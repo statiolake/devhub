@@ -1096,22 +1096,17 @@ export interface WorkbenchDialogRequest {
 export type MenuCommand =
 	| "open_workspace_picker"
 	/**
-	 * Put the keyboard in the Agent's pane.
-	 *
-	 * The one thing the selection does not already answer. Side by side, both
-	 * halves of a workspace are on screen at once, so `Cmd+Q Cmd+J` moves the
-	 * keyboard rather than the selection — and the editor is a native view the
-	 * window focuses directly while the Agent's pane is drawn by this page, so
-	 * only this half can be a message. See `shell/focusHome.ts`, which is the
-	 * page's half of the focus rule and already knows how to find the pane.
-	 */
-	| "focus_agent_pane"
-	/**
 	 * Put the keyboard on the Sidebar's selected row.
 	 *
-	 * The reverse of `focus_agent_pane`, and a message for the same reason: the
-	 * Sidebar is drawn by this page, so only this page can say which row is the
-	 * roving tab stop and focus it.
+	 * Half of one act, and the half main cannot do: main moves the keyboard
+	 * into the Sidebar's view, because no page can focus another page, and the
+	 * Sidebar's page puts it on the selected row, because no one but that page
+	 * knows which row that is.
+	 *
+	 * There used to be a `focus_agent_pane` beside this, for the other end of
+	 * `Cmd+Q Cmd+J`. It is gone: the Agents are a view of their own now, so
+	 * "put the keyboard in the Agent's pane" is a focus call in main like every
+	 * other one, and there is nothing left for a page to be asked.
 	 */
 	| "focus_sidebar"
 	/**

@@ -25,7 +25,6 @@ import { devhub } from "../../client";
 import { isImeComposing } from "../../accessibility/ime";
 import { Glyph, type GlyphName } from "./icons";
 import { RowMenu, type RowMenuItem } from "./RowMenu";
-import { focusMainSurface } from "../../focusHome";
 import { SidebarHeader } from "./SidebarHeader";
 import { StatusMark } from "./StatusMark";
 import { mergeExitingRows, useClosingExit } from "./closingExit";
@@ -1001,11 +1000,15 @@ export function Sidebar({ snapshot, onDispatch }: SidebarProps) {
    * Everything main asks this page to do, in one subscription.
    *
    * Every one of these is a command main cannot carry out itself because what
-   * it acts on is drawn here: the picker's trigger, the Agent's pane, the
-   * Sidebar's roving tab stop, the alert's lifetime. They arrive on one channel
-   * and are answered in one place, so a command added later is a line here
-   * rather than a second listener somewhere with its own idea of when it is
-   * mounted.
+   * it acts on is drawn here: the picker's trigger, the Sidebar's roving tab
+   * stop, the projection this page is retrying. They arrive on one channel and
+   * are answered in one place, so a command added later is a line here rather
+   * than a second listener somewhere with its own idea of when it is mounted.
+   *
+   * It is a shorter list than it was, and it goes on shrinking as the pages
+   * split: a command whose subject is drawn on another page is delivered to
+   * that page instead of being routed through whichever page happened to be
+   * listening.
    */
   useEffect(
     () =>
@@ -1013,11 +1016,11 @@ export function Sidebar({ snapshot, onDispatch }: SidebarProps) {
         // File ▸ Add Workspace… is the same command as the sidebar's +, so it
         // opens the same picker rather than a second way of adding a workspace.
         if (command === "open_workspace_picker") openPicker();
-        // The page's half of `Cmd+Q Cmd+J` in the side-by-side layout: main
-        // decides *that* the keyboard should move and this finds the pane,
-        // through the one function that already answers "where does the
-        // keyboard belong in this document".
-        if (command === "focus_agent_pane") focusMainSurface();
+        // Main's half of `Cmd+Q S` has already put the keyboard in this view;
+        // this is the half only this page can do, which is saying which row it
+        // lands on. The other end of that chord — the Agent's pane — needs no
+        // message at all any more: the Agents are a view of their own, so main
+        // focuses them the way it focuses a workbench.
         if (command === "focus_sidebar") focusSidebar();
         // "Try Again" on an app-scoped notice. The notice is drawn on the
         // `toasts` view and what it restarts is this page's projection, so the

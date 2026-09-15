@@ -134,7 +134,7 @@ describe("the window's two chromes", () => {
     // On the content area's top edge, not the bar's bottom one: the bar and
     // the Sidebar are one surface, and a line between them would cut it.
     expect(shell)
-      .toContain(`.app-shell[data-title-bar="shown"] .app-shell-content > .surface {
+      .toContain(`.app-shell[data-title-bar="shown"] .app-shell-content .surface {
   border-top: 1px solid var(--line-strong);
 }`);
     expect(shell).not.toMatch(/\.title-bar \{[^}]*border-bottom:/s);

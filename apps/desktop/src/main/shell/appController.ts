@@ -182,7 +182,11 @@ import {
 	shellWindow,
 	shellWindowIfCreated,
 } from "./shellWindow.js";
-import { reconcileEditors, type SurfaceArrangement } from "./windowLayout.js";
+import {
+	reconcileEditors,
+	type KeyboardHalf,
+	type SurfaceArrangement,
+} from "./windowLayout.js";
 import { displayAudience, projectionAudience } from "./publishAudience.js";
 import { WindowAttention, platformDock } from "./windowAttention.js";
 
@@ -973,6 +977,13 @@ export class AppController {
 				);
 			},
 			focusSidebar: () => {
+				// Two halves, and both are needed: main moves the keyboard into
+				// the Sidebar's view, because no page can focus another page,
+				// and the Sidebar's page puts it on the row that is selected,
+				// because no one but that page knows which row that is.
+				this.keyboardInSidebar = true;
+				this.publishLayoutState();
+				shellWindow().focusSurface();
 				this.send(CHANNELS.menuCommand, "focus_sidebar");
 			},
 			toggleSidebar: () => {
@@ -1092,10 +1103,13 @@ export class AppController {
 	/**
 	 * Put the keyboard on whatever the selection has on screen.
 	 *
-	 * The two halves of one rule, and the only place either is spoken: an
-	 * Agent's pane is drawn by the App Shell page, so the page is asked to find
-	 * it; everything else is a native view the window focuses directly, which is
-	 * `ShellWindow.focusSurface`'s single answer.
+	 * One sentence now, where it used to be two. An Agent's pane was drawn by
+	 * the App Shell page, so "focus the Agent" could not be a focus call at
+	 * all — it was a message asking that page to go and find the pane in its
+	 * own DOM, which is the whole of what `shell/focusHome.ts` was. The Agents
+	 * are a child of the window like a workbench now, so both halves are the
+	 * window's one answer: the arrangement already says which child the keys
+	 * belong to (`keyboardChild`), and this is asking it again.
 	 *
 	 * Both callers are "the keyboard should go back to the surface now" —
 	 * swapping the halves of a split, and Escape out of the Sidebar — and they
@@ -1103,12 +1117,27 @@ export class AppController {
 	 * is how the split ended up focusing the wrong pane once already.
 	 */
 	private placeKeyboardOnSurface(): void {
-		if (this.coordinator.model.selection.context.kind === "agent") {
-			this.send(CHANNELS.menuCommand, "focus_agent_pane");
-			return;
-		}
+		this.keyboardInSidebar = false;
+		// The arrangement said "the Sidebar" a moment ago and says something
+		// else now, so the window is told the new one before it is asked to
+		// act on it.
+		this.publishLayoutState();
 		shellWindow().focusSurface();
 	}
+
+	/**
+	 * Whether the person asked for the Sidebar, rather than for what is on
+	 * screen.
+	 *
+	 * The one fact about the keyboard that is not a function of the model.
+	 * Everything else — the workbench, the Agent beside it, which half of a
+	 * split — is read off the selection, and this is not: selecting a
+	 * Workspace while standing in the Sidebar is a perfectly ordinary thing to
+	 * do and does not mean "and now leave". So it is a fact of its own, set by
+	 * the one command that means it and cleared by the two that mean the
+	 * opposite, and `publishLayoutState` is where it joins the rest.
+	 */
+	private keyboardInSidebar = false;
 
 	/**
 	 * Stop an Agent, asking first, exactly as its own row does.
@@ -1851,11 +1880,13 @@ export class AppController {
 		// Both panes of a split are drawn; which of them holds the keyboard is
 		// which half is selected. An Agent selected `beside` is the Agent half
 		// in front, and the workspace selected `beside` is the editor half.
-		const keyboard =
-			surface.kind === "editor" ||
-			(surface.kind === "split" && snapshot.selection.context.kind !== "agent")
+		const keyboard: KeyboardHalf = this.keyboardInSidebar
+			? "sidebar"
+			: surface.kind === "editor" ||
+				  (surface.kind === "split" &&
+						snapshot.selection.context.kind !== "agent")
 				? "editor"
-				: "page";
+				: "agents";
 		shell.setLayoutState({
 			// The window was built with one of the two chromes and the setting
 			// can have moved since; the setting wins, because it is what the

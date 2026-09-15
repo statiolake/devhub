@@ -80,7 +80,7 @@ import {
 import { createPortal } from "react-dom";
 import { score } from "../../../model/fuzzy";
 import { isImeComposing } from "../../accessibility/ime";
-import { useInitialFocus } from "../../accessibility/initialFocus";
+import { useInitialFocus } from "../../picker/initialFocus";
 
 /** One row: what is drawn, and what the query is matched against. */
 export interface PickerItem {

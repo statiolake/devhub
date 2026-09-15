@@ -1,7 +1,23 @@
+/**
+ * What is left for the window's own page to draw in the content area.
+ *
+ * Almost nothing, and that is the point. A workbench is a native view the
+ * owner lays over this rectangle; an Agent is another view beside or over it.
+ * Neither is here. What is here is the three states in which there is no view
+ * to show — starting up, a workbench being rebuilt, a Workspace whose folder
+ * has gone — and the seam between the two halves of a split.
+ *
+ * Those states belong to this page rather than to a fourth view because they
+ * are drawn *in place of* a child, in that child's own rectangle, and a view
+ * that existed only to say "there is nothing here" would be a renderer for an
+ * empty room. The window's own page is already under every child and already
+ * the whole window; drawing in the rectangle a child is not covering costs it
+ * nothing.
+ */
+
 import {
   useCallback,
   useEffect,
-  useMemo,
   useRef,
   useState,
   type PointerEvent as ReactPointerEvent,
@@ -10,45 +26,34 @@ import {
 import {
   clampSplitRatio,
   workspaceForContext,
-  type AppAppearance,
   type AppSnapshot,
   type WorkspaceSnapshot,
 } from "../../../ipc/appShell";
 import { useAppShell } from "../../useAppShell";
 import { devhub } from "../../client";
-import { runningAgentSurfaces } from "./surfacePool";
-import {
-  agentFailureSummary,
-  closeDiagnosticLabel,
-  closeFailureLabel,
-} from "./diagnosticLabel";
+import { closeDiagnosticLabel, closeFailureLabel } from "./diagnosticLabel";
 import { Failure, Waiting } from "./SurfaceState";
 import { useRestartingEditors } from "./workbenchDialogs";
-import { TerminalSurface } from "../../terminal/TerminalSurface";
-import { AgentShortcuts } from "./AgentShortcuts";
+import type { WorkbenchAreaWire } from "../../../ipc/contract";
 
 /**
- * The width main laid the workbench into, as it says so.
+ * The rectangle main laid the workbench into, as it says so.
  *
  * `undefined` until the first one arrives, which is one frame at launch and
- * never again: the flex fallback is the whole area, which is what a page with
- * no split has anyway.
+ * never again — and this page draws nothing at all until it has one, because
+ * there is no rectangle to guess. The page used to measure this element with a
+ * `ResizeObserver` and report it back, which made main's idea of the layout a
+ * page's idea of it, one frame late, and made every window resize a round trip
+ * through a renderer.
  */
-function useWorkbenchWidth(): number | undefined {
-  const [width, setWidth] = useState<number | undefined>(undefined);
-  useEffect(
-    () =>
-      devhub().onWorkbenchArea((area) => {
-        setWidth(area.width);
-      }),
-    [],
-  );
-  return width;
+function useWorkbenchArea(): WorkbenchAreaWire | undefined {
+  const [area, setArea] = useState<WorkbenchAreaWire | undefined>(undefined);
+  useEffect(() => devhub().onWorkbenchArea(setArea), []);
+  return area;
 }
 
 export interface SurfaceViewportProps {
   readonly snapshot: AppSnapshot;
-  readonly appearance?: AppAppearance;
 }
 
 /**
@@ -67,20 +72,25 @@ function SplitDivider({
   ratio,
   onPreview,
   onCommit,
-  containerRef,
+  area,
 }: {
   readonly ratio: number;
   readonly onPreview: (ratio: number) => void;
   readonly onCommit: (ratio: number) => void;
-  readonly containerRef: React.RefObject<HTMLElement | null>;
+  /** Where the content area starts and how wide it is, in window pixels. */
+  readonly area: { readonly left: number; readonly width: number };
 }) {
   const [dragging, setDragging] = useState(false);
   const preview = useRef(ratio);
 
+  // Against the content area, which is what the ratio is a ratio *of* — not
+  // against this element's neighbours, because its neighbours are native views
+  // and this document cannot measure them. The numbers are the owner's: the
+  // area begins where the workbench's rectangle begins and runs to the
+  // window's trailing edge.
   const ratioAt = (clientX: number): number | undefined => {
-    const bounds = containerRef.current?.getBoundingClientRect();
-    if (!bounds || bounds.width <= 0) return undefined;
-    return clampSplitRatio((clientX - bounds.left) / bounds.width);
+    if (area.width <= 0) return undefined;
+    return clampSplitRatio((clientX - area.left) / area.width);
   };
 
   useEffect(() => {
@@ -133,93 +143,6 @@ function SplitDivider({
         }
       }}
     />
-  );
-}
-
-/**
- * Every running Agent, mounted; the selected one shown.
- *
- * The pool is why switching between two Agents does not restart either of
- * them: a parked surface keeps its attachment and its scrollback, and coming
- * back to it is unhiding it. There is no cheaper set to keep — these are the
- * Agents the person started.
- */
-export function AgentPane({
-  snapshot,
-  appearance,
-  activeKey,
-  presentation,
-}: {
-  readonly snapshot: AppSnapshot;
-  readonly appearance: AppAppearance | undefined;
-  readonly activeKey: string | undefined;
-  readonly presentation: "full" | "beside";
-}) {
-  const { repositoryStatus } = useAppShell();
-  const pool = useMemo(() => runningAgentSurfaces(snapshot), [snapshot]);
-  // The shortcuts belong to the Agent on screen and to no other. The pool
-  // keeps every running Agent mounted so that coming back to one is unhiding a
-  // pane, and a set of buttons per hidden pane would be three more things
-  // reading the projection for a workspace nobody is looking at.
-  const active = snapshot.workspaces
-    .flatMap((workspace) => workspace.agents)
-    .find((agent) => `agent:${agent.id}` === activeKey);
-  const repository = active
-    ? repositoryStatus.workspaces.find(
-        (entry) => entry.workspaceId === active.workspaceId,
-      )
-    : undefined;
-  return (
-    <div
-      className="agent-pane"
-      hidden={activeKey === undefined}
-      data-presentation={presentation}
-    >
-      {[...pool.values()].map((surface) => (
-        <div
-          className="surface-pool-entry"
-          key={surface.key}
-          hidden={surface.key !== activeKey}
-        >
-          <TerminalSurface
-            surfaceKey={surface.key}
-            surfaceLabel={surface.label}
-            appearance={appearance}
-            hidden={surface.key !== activeKey}
-            // The Sidebar already names the Agent on screen; a title inside
-            // the pane would say it twice.
-            hideTitle
-          />
-        </div>
-      ))}
-      {/* A failure about this Agent is drawn over this Agent's pane, because
-          that is where its subject is. It covers nothing else: the sidebar,
-          the workbench and every other Agent stay usable, which is the whole
-          difference between this and the app-wide alert it used to be.
-
-          There is no dismiss and no timer. It is retired by the next
-          reconcile that reads this Agent, so the pane simply stops drawing it
-          when the condition stops being true — and goes on saying it for as
-          long as it is true, which a dismissible banner could not. */}
-      {active?.failure ? (
-        <div className="agent-pane-failure">
-          {/* The code's own sentence leads, and the detail is whatever the
-              raising site was allowed to carry. A fixed summary over the top
-              of it would put "could not be reached" above a runtime that
-              answered and refused — the very conflation this split exists to
-              undo. */}
-          <Failure
-            summary={agentFailureSummary(active.failure.code)}
-            {...(active.failure.detail === undefined
-              ? {}
-              : { detail: active.failure.detail })}
-          />
-        </div>
-      ) : null}
-      {active ? (
-        <AgentShortcuts agent={active} repository={repository} />
-      ) : null}
-    </div>
   );
 }
 
@@ -279,30 +202,27 @@ export function Unavailable({
 }
 
 /**
- * The content area: the workbench, and — when an Agent is selected — the
- * Agent's pane beside it.
+ * The states there is no child view to show, drawn where that child would be.
  *
- * The workbench is a native `WebContentsView` that main lays over a rectangle
- * this page leaves empty. So the page draws *nothing* where the workbench
- * goes; what it draws is the hole's neighbours — the divider and the Agent
- * pane.
+ * The rectangle is the owner's, pushed here (`WorkbenchAreaWire`), and this
+ * element is laid at exactly it — absolutely, over the window's own page,
+ * rather than as a flex item in a row that no longer exists. There is no
+ * "hole" any more: what used to be a hole with a native view over it is a
+ * native view, and what used to be the row around it is four sibling views the
+ * owner places.
  *
- * Where the hole is, is main's answer, not this page's. The seam is one number
- * computed in one place (`main/shell/windowLayout.ts`) and pushed here, so the
- * pixels the divider leaves and the pixels the native view covers cannot
- * drift. This page used to measure the hole and report it back, which made
- * main's idea of the layout a page's idea of it, one frame late.
+ * The seam is the one thing here that is not a state. It is a real element in
+ * the one strip of the content area no child covers, which is exactly what
+ * makes it draggable: a hairline drawn on a native view's edge would be
+ * painted over, and one hung off the Agent's leading edge would put the grab
+ * area a few pixels from where the eye says the seam is.
  */
-export function SurfaceViewport({
-  snapshot,
-  appearance,
-}: SurfaceViewportProps) {
+export function SurfaceViewport({ snapshot }: SurfaceViewportProps) {
   const { dispatch, closeWorkspace, chooseWorkspaceFolder } = useAppShell();
   const layout = snapshot.layout;
   const workspace = workspaceForContext(snapshot, snapshot.selection.context);
   const restartingEditors = useRestartingEditors();
-  const holeRef = useRef<HTMLDivElement | null>(null);
-  const contentRef = useRef<HTMLElement | null>(null);
+  const area = useWorkbenchArea();
 
   // The divider moves under the pointer; the model learns where it stopped.
   // Sending an intent per pointer move would put a round trip in the middle of
@@ -322,9 +242,9 @@ export function SurfaceViewport({
     [dispatch],
   );
 
-  // A drag moves the seam under the pointer, and the workbench is a native
-  // view main has to move with it. The *pointer* is what is reported — the
-  // number this page owns — and never a rectangle.
+  // A drag moves the seam under the pointer, and both panes are native views
+  // main has to move with it. The *pointer* is what is reported — the number
+  // this page owns — and never a rectangle.
   const previewRatio = useCallback((next: number) => {
     setDragRatio(next);
     void devhub().previewLayout({ splitRatio: next });
@@ -370,17 +290,6 @@ export function SurfaceViewport({
 
   let surfaceState: string;
   let body: ReactNode = null;
-  let split = false;
-  /**
-   * Whether the Agent's pane covers the content area or sits beside it.
-   *
-   * Read straight off the layout rather than from the selection: the layout is
-   * already the one answer to "what is in the content area", and asking the
-   * selection separately would be a second reading of the same fact that could
-   * disagree with the first.
-   */
-  let agentPresentation: "full" | "beside" = "beside";
-  let agentKey: string | undefined;
   let editorKey: string | undefined;
   // Only the transient states announce themselves; a workbench speaks for
   // itself, and `aria-live` on it would narrate every frame of output.
@@ -401,12 +310,10 @@ export function SurfaceViewport({
       />
     );
   } else if (layout.kind === "agent") {
-    // No workbench in this arrangement, so none is asked for and none is
-    // revealed. The views stay built and running behind it: this is the Agent
-    // covering the workbench, not the workbench going away.
+    // The Agents' view covers this rectangle entirely, so there is nothing to
+    // draw under it. The workbenches stay built and running behind both: this
+    // is an Agent covering a workbench, not a workbench going away.
     surfaceState = "agent";
-    agentPresentation = "full";
-    agentKey = layout.agentKey;
   } else if (restartingEditors.has(layout.editorKey)) {
     // The workbench is being rebuilt in this same slot. The selection has not
     // moved and must not: what changed is that there is nothing to show yet,
@@ -418,62 +325,51 @@ export function SurfaceViewport({
     surfaceState = layout.kind;
     editorKey = layout.editorKey;
     announce = false;
-    if (layout.kind === "split") {
-      split = true;
-      agentPresentation = "beside";
-      agentKey = layout.agentKey;
-    }
   }
 
-  // The hole is the width main laid the workbench into. It is *given*, not
-  // measured: the page used to watch this element with a `ResizeObserver` and
-  // report the rectangle back, which made main's idea of the layout a page's
-  // idea of it, one frame late, and made every window resize a round trip
-  // through a renderer. Now the seam is one number, computed in one place, and
-  // the page and the native view cannot disagree about where it is.
-  const holeWidth = useWorkbenchWidth();
+  // Nothing at all until the owner has said where this rectangle is. One frame
+  // at launch, and never again — and a guessed rectangle for that frame would
+  // be the page having an opinion about the layout, which is the whole thing
+  // this direction of travel removes.
+  if (!area) return null;
+  const split = layout.kind === "split";
+  const content = { left: area.x, width: window.innerWidth - area.x };
 
   return (
-    <section
-      className="surface"
-      aria-label="Surface"
-      aria-busy={snapshot.readiness !== "ready" ? "true" : undefined}
-      aria-live={announce ? "polite" : undefined}
-      data-surface-key={editorKey}
-      data-surface-state={surfaceState}
-      ref={contentRef}
-    >
-      <div className="surface-panes">
+    <>
+      <section
+        className="surface"
+        aria-label="Surface"
+        aria-busy={snapshot.readiness !== "ready" ? "true" : undefined}
+        aria-live={announce ? "polite" : undefined}
+        data-surface-key={editorKey}
+        data-surface-state={surfaceState}
+        style={{
+          left: `${String(area.x)}px`,
+          top: `${String(area.y)}px`,
+          width: `${String(area.width)}px`,
+          height: `${String(area.height)}px`,
+        }}
+      >
+        {body}
+      </section>
+      {split ? (
         <div
-          className="workbench-hole"
-          ref={holeRef}
-          style={
-            split && holeWidth !== undefined
-              ? { flex: `0 0 ${String(holeWidth)}px` }
-              : undefined
-          }
+          className="split-seam"
+          style={{
+            left: `${String(area.x + area.width)}px`,
+            top: `${String(area.y)}px`,
+            height: `${String(area.height)}px`,
+          }}
         >
-          {body}
-        </div>
-        {split ? (
           <SplitDivider
             ratio={ratio}
             onPreview={previewRatio}
             onCommit={commitRatio}
-            containerRef={contentRef}
+            area={content}
           />
-        ) : null}
-        {/* Mounted whether or not it is on screen. That is the whole of what
-            the pool is for: an Agent parked behind another context keeps its
-            attachment and its scrollback, so coming back to it is unhiding a
-            pane rather than reconnecting a session. */}
-        <AgentPane
-          snapshot={snapshot}
-          appearance={appearance}
-          activeKey={agentKey}
-          presentation={agentPresentation}
-        />
-      </div>
-    </section>
+        </div>
+      ) : null}
+    </>
   );
 }

@@ -159,7 +159,7 @@
  * Sidebar carries on its trailing edge, and the same colour — and it runs
  * only across the width the content actually has.
  */
-.app-shell[data-title-bar="shown"] .app-shell-content > .surface {
+.app-shell[data-title-bar="shown"] .app-shell-content .surface {
   border-top: 1px solid var(--line-strong);
 }
 
@@ -1218,13 +1218,23 @@ body.is-resizing-sidebar {
 
 /* --------------------------------------------------------------- surface */
 
+/*
+ * The rectangle a workbench would be in, when there is no workbench to put
+ * there.
+ *
+ * Laid at the owner's rectangle rather than flexed into a row: the row is
+ * gone. The Sidebar, the workbenches and the Agents are sibling views over
+ * this page now, and what this element draws is the three states in which none
+ * of them has anything to show — so it is positioned exactly where the missing
+ * child would have been, and the page's own document is simply the ground
+ * under all of them.
+ */
 .surface {
-  position: relative;
+  position: absolute;
   display: flex;
   overflow: hidden;
   min-width: 0;
   min-height: 0;
-  flex: 1;
   flex-direction: column;
   /* The content area is the workbench's ground. It used to be whichever of
      three surfaces was selected, set per activity from the page; there is one
@@ -1236,51 +1246,46 @@ body.is-resizing-sidebar {
 
 /* ----------------------------------------------------------------- panes */
 
-.surface-panes {
-  position: relative;
+/* The seam, laid in the one strip of the content area no child view covers.
+   The owner reserves it — `SPLIT_DIVIDER` in `main/shell/windowLayout.ts` —
+   and reserves it wide enough to be grabbed, because an element here cannot
+   reach over its neighbours any more: outside this strip the pointer belongs
+   to the workbench or to the Agent. It paints a hairline down its middle and
+   the window's chrome either side of it, so what the eye sees is still a seam
+   and what the hand finds is the whole strip. */
+.split-seam {
+  position: absolute;
   display: flex;
-  overflow: hidden;
-  flex: 1;
-  min-width: 0;
-  min-height: 0;
+  width: 6px;
+  justify-content: center;
+  background: var(--chrome);
 }
 
-/* The hole. It draws nothing at all when a workbench is in it — main lays the
-   native view over exactly this rectangle — and its states when there is not.
-   `min-width: 0` because a flex item's automatic minimum would otherwise stop
-   the divider short of the ratio the person dragged to. */
-.workbench-hole {
-  position: relative;
-  display: flex;
-  overflow: hidden;
-  flex: 1;
-  flex-direction: column;
-  min-width: 0;
-  min-height: 0;
-}
-
-/* The seam. Its own element between the two panes, never on top of either: the
-   workbench is a native view and paints over anything in the page that
-   overlaps it. Wider to the pointer than to the eye, the way a Mac's split
-   handles are — a hairline you have to hit exactly is a hairline you miss. */
 .split-divider {
   position: relative;
-  width: 1px;
-  flex: 0 0 1px;
-  background: var(--line-strong);
+  width: 100%;
+  height: 100%;
+  background: transparent;
   cursor: col-resize;
 }
 
 .split-divider::after {
-  position: absolute;
+  display: block;
+  width: 1px;
+  height: 100%;
+  margin-inline: auto;
+  background: var(--line-strong);
   content: "";
-  inset: 0 -3px;
+  transition: background-color 120ms ease;
 }
 
-.split-divider:hover,
-.split-divider.is-dragging,
-.split-divider:focus-visible {
+.split-divider:hover::after,
+.split-divider.is-dragging::after,
+.split-divider:focus-visible::after {
   background: var(--accent);
+}
+
+.split-divider:focus-visible {
   outline: none;
 }
 
@@ -1480,19 +1485,6 @@ body.is-resizing-sidebar {
 
 .agent-shortcuts-failure {
   color: var(--danger);
-}
-
-/* An Agent on its own covers the whole content area, hole included.
- *
- * Laid over the hole rather than replacing it, because the hole is what the
- * page measures and reports as the workbench's rectangle. Collapsing it to
- * nothing would tell main the workbench is zero-sized, and a workbench laid
- * out against nothing does not recover when it comes back — so the hole keeps
- * its full size, the native view is simply not the thing on screen, and the
- * Agent is painted on top of where it would have been. */
-.agent-pane[data-presentation="full"] {
-  position: absolute;
-  inset: 0;
 }
 
 body.is-resizing-split {

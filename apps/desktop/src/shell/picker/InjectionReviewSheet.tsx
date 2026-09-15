@@ -23,7 +23,7 @@
 import { useCallback, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { isImeComposing } from "../accessibility/ime";
-import { useInitialFocus } from "../accessibility/initialFocus";
+import { useInitialFocus } from "./initialFocus";
 import { useAppShell } from "../useAppShell";
 
 export interface InjectionReviewSheetProps {

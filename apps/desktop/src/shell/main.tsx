@@ -1,11 +1,18 @@
 /**
  * The App Shell page's entry point.
  *
- * Two surfaces still share it: the App Shell itself and the Settings window
- * (`?window=settings`). The `toasts` and `picker` children used to be here
- * too, behind roles of their own; each is its own entry now, which is what a
- * page in a view of its own means. What is left is the last of the role
- * switching, and it goes when Settings gets an entry too.
+ * Two surfaces still share it: the window's own page and the Settings window
+ * (`?window=settings`). The `toasts`, `picker`, `sidebar` and `agents`
+ * children used to be here too, behind roles of their own or as DOM in this
+ * one; each is its own entry now, which is what a page in a view of its own
+ * means. What is left is the last of the role switching, and it goes when
+ * Settings gets an entry too.
+ *
+ * `installFocusHome` used to be here, for the `shell` role only. It is gone
+ * with the file: it existed because the Sidebar's DOM and an Agent's DOM were
+ * in one document, so a click on a row left the keyboard on that row while the
+ * Agent was what was on screen. Two views cannot have that problem, and where
+ * the keyboard goes is the window's one answer (`keyboardChild`).
  */
 
 import { StrictMode } from "react";
@@ -15,7 +22,6 @@ import { installPalette } from "./appearance";
 import { installRootFailureHandler } from "./failure";
 import { PageBoundary } from "./PageBoundary";
 import { installSelectionGuard } from "./selection";
-import { installFocusHome } from "./focusHome";
 import { SettingsApp } from "../settings/SettingsApp";
 import { WINDOW_TITLES, windowKindOf } from "../ipc/windowTitles";
 import "./styles/tokens.css";
@@ -43,12 +49,6 @@ const which = windowKindOf(window.location.search);
 // from one `index.html`, so the page has to say which of them it is — otherwise
 // the Settings window takes the shell's `<title>` and calls itself "DevHub".
 document.title = WINDOW_TITLES[which];
-
-if (which === "shell") {
-  // The keyboard's home is the main area, and only this window has one. The
-  // Settings window is an ordinary form.
-  installFocusHome(document);
-}
 
 const app = which === "settings" ? <SettingsApp /> : <AppShell />;
 

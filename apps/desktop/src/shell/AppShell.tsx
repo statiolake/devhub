@@ -14,7 +14,6 @@ import { useCallback } from "react";
 import { AppShellProvider } from "./AppShellContext";
 import { devhub, type AppShellClient } from "./client";
 import { useAppShell } from "./useAppShell";
-import { Sidebar } from "./components/sidebar/Sidebar";
 import { TitleBar } from "./components/shell/TitleBar";
 import { SurfaceViewport } from "./components/shell/SurfaceViewport";
 import type { AppError } from "../ipc/appShell";
@@ -145,9 +144,14 @@ function Workbench() {
         sidebarCollapsed={state.snapshot.sidebar.collapsed}
         onDispatch={onDispatch}
       />
+      {/* No Sidebar here either, and no Agent's pane. Both are children of
+          the window in their own right — `shell/sidebar` and `shell/agents` —
+          which is what lets the owner put an Agent beside an editor, or an
+          editor over a rail, without either page knowing the other exists.
+          What is left of the content area is the three states in which there
+          is no child view to show, and the seam of a split. */}
       <div className="app-shell-content">
-        <Sidebar snapshot={state.snapshot} onDispatch={onDispatch} />
-        <SurfaceViewport snapshot={state.snapshot} appearance={appearance} />
+        <SurfaceViewport snapshot={state.snapshot} />
         {/* No notices here. What the application has to say is drawn on the
             `toasts` view, above every workbench — which is the one placement
             with neither of the limits this page could offer it. See

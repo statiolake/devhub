@@ -14,7 +14,7 @@
  */
 
 import { createPortal } from "react-dom";
-import { useInitialFocus } from "../accessibility/initialFocus";
+import { useInitialFocus } from "./initialFocus";
 import type { ChordHelpRowWire } from "../../ipc/contract";
 
 export interface ChordHelpSheetProps {
