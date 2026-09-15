@@ -1522,17 +1522,6 @@ body.is-resizing-split {
   text-wrap: balance;
 }
 
-.failure-icon {
-  width: 14px;
-  height: 14px;
-  flex: 0 0 14px;
-  align-self: center;
-  fill: none;
-  stroke: var(--danger);
-  stroke-linecap: round;
-  stroke-width: 1.5;
-}
-
 /* Informative text: prose, so it is set as prose. Monospace here would say
    "this is code" about an ordinary sentence. */
 .failure-detail {
@@ -1550,29 +1539,6 @@ body.is-resizing-split {
   text-align: center;
 }
 
-.surface-spinner {
-  width: 14px;
-  height: 14px;
-  margin-bottom: var(--space-3);
-  border: 2px solid var(--line-strong);
-  border-radius: 50%;
-  animation: surface-spin 700ms linear infinite;
-  border-top-color: var(--accent);
-}
-
-@keyframes surface-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-.surface-actions {
-  display: flex;
-  flex-wrap: wrap;
-  margin-top: var(--space-5);
-  gap: var(--space-2);
-}
-
 /* Identifiers for a bug report. Monospace belongs here and only here. */
 .surface-meta {
   margin: var(--space-4) 0 0;
@@ -1584,26 +1550,6 @@ body.is-resizing-split {
 /* One Editor, in a document of its own. The frame is what keeps VS Code's
    assumptions about owning a window — fixed-position modals, document-level
    keys, page focus — inside the Editor and out of the Sidebar and the tabs. */
-.editor-frame {
-  position: relative;
-  display: flex;
-  min-width: 0;
-  min-height: 0;
-  flex: 1;
-  flex-direction: column;
-}
-
-.editor-frame-document {
-  min-width: 0;
-  min-height: 0;
-  flex: 1;
-  border: 0;
-}
-
-.editor-frame-document[hidden] {
-  display: none;
-}
-
 /* Every Surface is mounted, and the selection decides which is on screen.
    Only the active entry is in flow; the rest are `display: none`, which also
    takes them out of the accessibility tree. Coming back to one costs no
@@ -1633,39 +1579,6 @@ body.is-resizing-split {
 
 /* Native control height, with enough padding that the hit target stays
    comfortable at every supported text zoom. */
-.primary-button,
-.secondary-button {
-  min-height: 28px;
-  padding: var(--space-1) var(--space-4);
-  border: 1px solid var(--line-strong);
-  border-radius: var(--radius-control);
-  background: var(--raised);
-  box-shadow: var(--shadow-raised);
-  font-size: 12px;
-}
-
-.primary-button {
-  border-color: transparent;
-  background: var(--accent);
-  color: var(--accent-ink);
-  font-weight: 590;
-}
-
-.primary-button:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--accent) 88%, black);
-}
-
-.secondary-button:hover:not(:disabled) {
-  background: var(--wash);
-}
-
-.primary-button:disabled,
-.secondary-button:disabled {
-  box-shadow: none;
-  color: var(--disabled-ink);
-  opacity: 0.6;
-}
-
 /* --------------------------------------------------- pickers and dialogs */
 
 .workspace-picker {
@@ -1687,133 +1600,10 @@ body.is-resizing-split {
   inset: 0;
 }
 
-.confirmation-dialog,
-.workspace-picker-panel,
-.agent-profile-picker-panel {
-  width: min(460px, 100%);
-  padding: var(--space-5);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-panel);
-  background: var(--raised);
-  box-shadow: var(--shadow-dialog);
-}
-
-.confirmation-dialog h2 {
-  margin: 0 0 var(--space-2);
-  font-size: 15px;
-  font-weight: 620;
-}
-
-.confirmation-dialog p {
-  margin: 0;
-  color: var(--secondary);
-  line-height: 1.5;
-}
-
-.confirmation-resources {
-  padding: var(--space-2) 0 0;
-  margin: var(--space-3) 0 0;
-  border-top: 1px solid var(--line-soft);
-  list-style: none;
-}
-
-.confirmation-resources li {
-  display: flex;
-  justify-content: space-between;
-  padding: var(--space-1) 0;
-  color: var(--secondary);
-  font-size: 12px;
-}
-
-.confirmation-actions,
-.workspace-picker-header {
-  display: flex;
-  align-items: center;
-  margin-top: var(--space-5);
-  gap: var(--space-2);
-}
-
-.confirmation-actions {
-  justify-content: flex-end;
-}
-
 .workspace-picker,
 .agent-profile-picker {
   align-items: flex-start;
   padding-top: 12vh;
-}
-
-.workspace-picker-header {
-  margin: 0 0 var(--space-3);
-}
-
-.workspace-picker-header input {
-  width: 100%;
-  height: 28px;
-  padding: 0 var(--space-3);
-  border: 1px solid var(--line-strong);
-  border-radius: var(--radius-control);
-  background: var(--surface);
-}
-
-.workspace-picker-results {
-  overflow-y: auto;
-  max-height: 46vh;
-  padding: 0;
-  margin: 0;
-  list-style: none;
-}
-
-.workspace-picker-result {
-  display: flex;
-  width: 100%;
-  flex-direction: column;
-  align-items: flex-start;
-  padding: var(--space-2) var(--space-3);
-  border: 0;
-  border-radius: var(--radius-row);
-  background: transparent;
-  gap: 2px;
-  text-align: left;
-}
-
-.workspace-picker-result:hover,
-.workspace-picker-result[aria-selected="true"] {
-  background: var(--selection);
-}
-
-.workspace-picker-result span:last-child {
-  overflow: hidden;
-  max-width: 100%;
-  color: var(--secondary);
-  font-size: 11px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.agent-profile-picker-card {
-  display: flex;
-  width: 100%;
-  flex-direction: column;
-  align-items: flex-start;
-  padding: var(--space-3);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-row);
-  margin-bottom: var(--space-2);
-  background: var(--surface);
-  gap: 2px;
-  text-align: left;
-}
-
-.agent-profile-card:hover,
-.agent-profile-picker-card:hover {
-  border-color: var(--accent);
-}
-
-.agent-profile-options {
-  display: grid;
-  margin: var(--space-3) 0 0;
-  gap: var(--space-2);
 }
 
 /* -------------------------------------------------------------- terminal */

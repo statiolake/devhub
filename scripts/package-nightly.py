@@ -678,8 +678,9 @@ for (const [flag, value] of [
 
 // The bundled main process, at upstream's own entry path. `out/main/` beside
 // this file is the module-by-module compile the bundle was built from; it
-// still ships, because the preload script, the App Shell page and the `devhub`
-// CLI are loaded from it by path, but nothing imports it.
+// still ships, because the pages' preloads (one per page), the pages
+// themselves and the `devhub` CLI are loaded from it by path, but nothing
+// imports it.
 await import("./node_modules/code-oss-dev/out/main.js");
 '''
 
