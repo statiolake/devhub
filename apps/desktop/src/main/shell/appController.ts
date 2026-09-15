@@ -1104,16 +1104,14 @@ export class AppController {
 	 * and not a second way to stop an Agent.
 	 */
 	private requestCloseAgent(agentId: string): void {
-		void this.dispatchFromPage({ type: "stop_agent", agentId })
-			.then((outcome) => {
+		void this.dispatchFromPage({ type: "stop_agent", agentId }).then(
+			(outcome) => {
 				// An idle Agent is stopped without a question — the model decides
 				// that, from `agentIsIdle` — and then there is no confirmation in
 				// the outcome and nothing to open.
 				this.raiseCloseConfirmation(outcome, agentId);
-			})
-			.catch((error: unknown) => {
-				this.publishError(errorWire(error));
-			});
+			},
+		);
 	}
 
 	/**
@@ -1241,15 +1239,11 @@ export class AppController {
 			type: "request_close_workspace",
 			workspaceId: parseWorkspaceId(workspaceId),
 			worktree,
-		})
-			.then((settled) => {
-				this.raiseCloseConfirmation(
-					outcomeWire(settled, this.coordinator.readiness, this.repositoryOf),
-				);
-			})
-			.catch((error: unknown) => {
-				this.publishError(errorWire(error));
-			});
+		}).then((settled) => {
+			this.raiseCloseConfirmation(
+				outcomeWire(settled, this.coordinator.readiness, this.repositoryOf),
+			);
+		});
 	}
 
 	get terminalRuntime(): TerminalWiring | undefined {
@@ -1435,21 +1429,16 @@ export class AppController {
 			(candidate) => candidate.root === folder,
 		);
 		if (!workspace) return;
-		try {
-			this.coordinator.dispatchUser({
-				intentId: parseIntentId(randomUUID()),
-				operationId: this.freshOperationId(),
-				intent: {
-					type: "workspace_root_unreadable",
-					workspaceId: workspace.id,
-					reason,
-				},
-			});
-		} catch (error: unknown) {
-			this.publishError(errorWire(error));
-			return;
-		}
-		this.drain();
+		// Through `dispatchOwn`, which is what "DevHub raised this intent
+		// itself" means everywhere else: it drains, and a refusal goes to the
+		// root. This used to have its own copy of both, with the drain skipped
+		// on failure — the second way of saying one thing, and the one that was
+		// slightly different.
+		this.dispatchOwn({
+			type: "workspace_root_unreadable",
+			workspaceId: workspace.id,
+			reason,
+		});
 	}
 
 	windowFocusChanged(focused: boolean): void {
@@ -1508,12 +1497,9 @@ export class AppController {
 			this.machineConditions.forget(runtime.id);
 			this.launchers.delete(runtime.id);
 			this.launcherStatus.delete(runtime.id);
-			void disposeRuntime(runtime.id).catch((error: unknown) => {
-				console.error(
-					`[devhub] ${runtime.id} could not be let go of`,
-					error instanceof Error ? error.stack : error,
-				);
-			});
+			// A machine DevHub could not let go of is a machine it may still have
+			// a connection and sessions on, which is worth more than a log line.
+			void disposeRuntime(runtime.id);
 		}
 	}
 
@@ -1876,6 +1862,19 @@ export class AppController {
 			reason: error.detail ?? error.summary,
 		});
 		this.sendToDisplay(CHANNELS.nativeError, error);
+	}
+
+	/**
+	 * The main process's root boundary: a failure nothing caught.
+	 *
+	 * Published like any other app-scoped failure, because to the person there
+	 * is no difference — something DevHub was doing did not happen. What makes
+	 * it worth a door of its own is that until there was one, main's unhandled
+	 * rejections went to a stderr warning and nowhere else. See
+	 * `mainFailureRoot.ts`.
+	 */
+	raiseUnhandled(reason: unknown): void {
+		this.publishError(errorWire(reason));
 	}
 
 	/**
@@ -4641,14 +4640,12 @@ export class AppController {
 	 * A projection changes for reasons with no caller — a reconciler round, a
 	 * workbench finishing its open — so the promise has no `await` above it. A
 	 * bare `void` on one of those routes its failure to the process's
-	 * `unhandledRejection`, which is where the crash this replaced went; it
-	 * belongs on the page's one error surface, the same as every failure with a
-	 * caller.
+	 * `unhandledRejection`, which is now main's root boundary and publishes it
+	 * to the page's one error surface, the same as every failure with a caller.
+	 * See `mainFailureRoot.ts`; this used to carry its own copy of that rule.
 	 */
 	private syncEditorViewInBackground(): void {
-		void this.syncEditorView().catch((error: unknown) => {
-			this.publishError(errorWire(error));
-		});
+		void this.syncEditorView();
 	}
 
 	private async syncEditorView(): Promise<void> {

@@ -189,7 +189,6 @@ export function WorkspacePicker({ onDismiss }: WorkspacePickerProps) {
     selectWorkspacePicker,
     chooseWorkspaceFolder,
     openSshWorkspace,
-    reportFailure,
   } = useAppShell();
 
   // The machines `~/.ssh/config` names, as rows in the same list as the
@@ -273,10 +272,9 @@ export function WorkspacePicker({ onDismiss }: WorkspacePickerProps) {
     (action?: () => Promise<unknown>) => {
       void cancelWorkspacePicker()
         .then(() => action?.())
-        .catch(reportFailure)
         .finally(onDismiss);
     },
-    [cancelWorkspacePicker, onDismiss, reportFailure],
+    [cancelWorkspacePicker, onDismiss],
   );
 
   // Leaving the list for a form ends the search behind it: nothing is going to
@@ -288,11 +286,11 @@ export function WorkspacePicker({ onDismiss }: WorkspacePickerProps) {
   // it twice.
   const ask = useCallback(
     (next: "new" | "clone", query: string) => {
-      void cancelWorkspacePicker().catch(reportFailure);
+      void cancelWorkspacePicker();
       setTypedQuery(query);
       setAsking(next);
     },
-    [cancelWorkspacePicker, reportFailure],
+    [cancelWorkspacePicker],
   );
 
   /**
@@ -310,7 +308,7 @@ export function WorkspacePicker({ onDismiss }: WorkspacePickerProps) {
           finish(() => selectWorkspacePicker(row.path, row.create, profileId));
           return;
         case "ssh-connect":
-          void cancelWorkspacePicker().catch(reportFailure);
+          void cancelWorkspacePicker();
           setAsking("ssh-destination");
           return;
         case "ssh": {
@@ -319,7 +317,7 @@ export function WorkspacePicker({ onDismiss }: WorkspacePickerProps) {
           // it is asked rather than finished.
           const { host, path } = row;
           if (path === undefined) {
-            void cancelWorkspacePicker().catch(reportFailure);
+            void cancelWorkspacePicker();
             setSshHost(host);
             setAsking("ssh-folder");
             return;
@@ -337,7 +335,6 @@ export function WorkspacePicker({ onDismiss }: WorkspacePickerProps) {
       cancelWorkspacePicker,
       finish,
       openSshWorkspace,
-      reportFailure,
       selectWorkspacePicker,
     ],
   );
@@ -478,7 +475,7 @@ export function WorkspacePicker({ onDismiss }: WorkspacePickerProps) {
                         false,
                     };
         if (choice.split) {
-          void cancelWorkspacePicker().catch(reportFailure);
+          void cancelWorkspacePicker();
           setChosen(row);
           setAsking("agent");
           return;

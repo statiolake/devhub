@@ -114,31 +114,30 @@ describe("the shortcut buttons", () => {
     expect(runAgentAction).toHaveBeenCalledWith("a-1", "commit_changes");
   });
 
-  it("reports a refusal instead of doing nothing visible", async () => {
+  it("lets a refusal reach the page's root rather than catching it here", async () => {
     // A button that silently fails is the worst of the three things it could
-    // do, so the failure goes to the one place the shell shows them.
-    //
-    // The rejection is made *when the mock is called*, not when it is set up.
-    // `mockReturnValue(Promise.reject(…))` builds a rejected promise here and
-    // now, and the `await` below then yields several times before anything
-    // attaches a handler to it — which is an unhandled rejection, reported
-    // against a test that passed. Building it inside the implementation keeps
-    // the handler in the same tick as the promise.
-    //
-    // That is also what keeps this test honest: the component attaches its
-    // `.catch` synchronously to whatever the call returns, so if it ever
-    // stopped doing so the unhandled rejection would come back and fail the
-    // run rather than the failure quietly going nowhere.
+    // do. It used to catch and report, which is the same sentence the page's
+    // root handler says — and two ways of saying one thing is one of them
+    // going wrong later. So the rejection is left to float: the page root
+    // (`shell/failure.ts`) turns it into something a person sees, and what is
+    // pinned here is that nothing in this component takes it first.
     const refusal = new Error("That agent is not running.");
     const { runAgentAction, reportFailure } = mount(DIRTY);
     const button = await screen.findByRole("button", {
       name: /Commit the changes/u,
     });
-    runAgentAction.mockImplementation(() => Promise.reject(refusal));
-    fireEvent.click(button);
-    await waitFor(() => {
-      expect(reportFailure).toHaveBeenCalledWith(refusal);
+    let refused: Promise<never> | undefined;
+    runAgentAction.mockImplementation(() => {
+      refused = Promise.reject(refusal);
+      return refused;
     });
+    fireEvent.click(button);
+
+    expect(refused).toBeDefined();
+    await expect(refused).rejects.toBe(refusal);
+    // Not reported from in here, and not turned into anything else: the
+    // rejection is exactly what the caller handed back.
+    expect(reportFailure).not.toHaveBeenCalled();
   });
 
   it("is offered but disabled for an agent whose screen nothing can read", async () => {

@@ -280,8 +280,7 @@ export function SurfaceViewport({
   snapshot,
   appearance,
 }: SurfaceViewportProps) {
-  const { dispatch, closeWorkspace, chooseWorkspaceFolder, reportFailure } =
-    useAppShell();
+  const { dispatch, closeWorkspace, chooseWorkspaceFolder } = useAppShell();
   const layout = snapshot.layout;
   const workspace = workspaceForContext(snapshot, snapshot.selection.context);
   const restartingEditors = useRestartingEditors();
@@ -440,7 +439,7 @@ export function SurfaceViewport({
       const identity = JSON.stringify(measured);
       if (identity === last) return;
       last = identity;
-      void devhub().setContentRect(measured).catch(reportFailure);
+      void devhub().setContentRect(measured);
     };
     const observer = new ResizeObserver(report);
     observer.observe(element);
@@ -448,12 +447,12 @@ export function SurfaceViewport({
     return () => {
       observer.disconnect();
     };
-  }, [reportFailure]);
+  }, []);
 
   // One word, sent whenever it changes: what is in the content area.
   useEffect(() => {
-    void devhub().setContentSurface(contentSurface).catch(reportFailure);
-  }, [contentSurface, reportFailure]);
+    void devhub().setContentSurface(contentSurface);
+  }, [contentSurface]);
 
   return (
     <section

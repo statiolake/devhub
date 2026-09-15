@@ -13,6 +13,7 @@ import { createRoot } from "react-dom/client";
 import { AppShell } from "./AppShell";
 import { installPalette } from "./appearance";
 import { installRootFailureHandler } from "./failure";
+import { PageBoundary } from "./PageBoundary";
 import { installSelectionGuard } from "./selection";
 import { installFocusHome } from "./focusHome";
 import { SettingsApp } from "../settings/SettingsApp";
@@ -68,4 +69,12 @@ const app =
     <AppShell />
   );
 
-createRoot(container).render(<StrictMode>{app}</StrictMode>);
+// One boundary per page role, and this is where a page role begins. It is the
+// only catch React can reach — a component that throws while rendering takes
+// the tree with it, and the window handler that would report it has nothing
+// left to report into. See `PageBoundary.tsx`.
+createRoot(container).render(
+  <StrictMode>
+    <PageBoundary>{app}</PageBoundary>
+  </StrictMode>,
+);

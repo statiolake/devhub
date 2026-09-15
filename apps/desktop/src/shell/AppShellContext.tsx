@@ -347,6 +347,8 @@ export function AppShellProvider({
         try {
           applyAppearanceIfActive(await transport.getAppearance());
         } catch (error: unknown) {
+          // Recovers in place: boot continues on the defaults, and the failure
+          // is said out loud rather than made to stand for the whole page.
           reportFailure(error);
         }
         // The name between two pushes. Main pushes it whenever it moves, and
@@ -355,6 +357,9 @@ export function AppShellProvider({
           const title = await transport.getWindowTitle();
           if (live()) setWindowTitle(title);
         } catch (error: unknown) {
+          // Recovers in place: the bar stays empty — which is what it draws
+          // until the first answer anyway — and main pushes the name on its
+          // next move.
           reportFailure(error);
         }
         try {
@@ -375,6 +380,8 @@ export function AppShellProvider({
             );
           }
         } catch (error: unknown) {
+          // Recovers in place: the rows draw what the live subscription brings
+          // them, one round later than they would have.
           reportFailure(error);
         }
 
@@ -453,9 +460,9 @@ export function AppShellProvider({
 
   const openExternalUrl = useCallback(
     (url: string) => {
-      void transport.openExternalUrl(url).catch(reportFailure);
+      void transport.openExternalUrl(url);
     },
-    [transport, reportFailure],
+    [transport],
   );
 
   const openSettings = useCallback(async () => {
@@ -501,14 +508,10 @@ export function AppShellProvider({
     pickerOperation.current = null;
     pickerSequence.current = -1;
     pickerBufferedEvents.current = [];
-    setPickerCandidates([]);
     setPickerBusy(false);
-    try {
-      await transport.cancelWorkspacePicker();
-    } catch (error: unknown) {
-      reportFailure(error);
-    }
-  }, [transport, reportFailure]);
+    setPickerCandidates([]);
+    await transport.cancelWorkspacePicker();
+  }, [transport]);
 
   const selectWorkspacePicker = useCallback(
     async (path: string, create: boolean, withAgent?: string) => {

@@ -48,7 +48,7 @@ export function WorktreeCloseSheet({
   dirty,
   onDismiss,
 }: WorktreeCloseSheetProps) {
-  const { answerWorktreeClose, reportFailure } = useAppShell();
+  const { answerWorktreeClose } = useAppShell();
 
   return (
     <Picker
@@ -88,7 +88,7 @@ export function WorktreeCloseSheet({
         // close rule entirely. Cancel is this sheet dismissing itself, so it
         // is the one answer nothing is sent for.
         if (id === "close" || id === "delete") {
-          void answerWorktreeClose(workspaceId, id).catch(reportFailure);
+          void answerWorktreeClose(workspaceId, id);
         }
         onDismiss();
       }}

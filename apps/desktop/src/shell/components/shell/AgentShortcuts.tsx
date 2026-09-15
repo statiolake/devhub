@@ -140,8 +140,7 @@ export function AgentShortcuts({
   readonly agent: AgentSnapshot;
   readonly repository: WorkspaceRepositoryWire | undefined;
 }) {
-  const { agentActions, subscribeAgentActions, runAgentAction, reportFailure } =
-    useAppShell();
+  const { agentActions, subscribeAgentActions, runAgentAction } = useAppShell();
   const [actions, setActions] = useState<readonly AgentActionWire[]>([]);
 
   // The wording is a setting, so it is read from main rather than known here —
@@ -156,12 +155,12 @@ export function AgentShortcuts({
     });
     void agentActions().then((loaded) => {
       if (live) setActions(loaded);
-    }, reportFailure);
+    });
     return () => {
       live = false;
       unsubscribe();
     };
-  }, [agentActions, subscribeAgentActions, reportFailure]);
+  }, [agentActions, subscribeAgentActions]);
 
   const blocked = unavailableReason(agent);
   // Only the shortcuts whose condition holds *and* which have wording behind
@@ -192,7 +191,7 @@ export function AgentShortcuts({
             blocked ?? `${action.displayName} — sent to ${agent.displayName}`
           }
           onClick={() => {
-            void runAgentAction(agent.id, action.id).catch(reportFailure);
+            void runAgentAction(agent.id, action.id);
           }}
         >
           <Glyph name={MARK[trigger]} />

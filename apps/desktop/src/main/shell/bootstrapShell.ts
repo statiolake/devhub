@@ -13,6 +13,7 @@ import { fileURLToPath } from "node:url";
 import type { NativeParsedArgs } from "code-oss-dev/out/vs/platform/environment/common/argv.js";
 import type { IThemeMainService } from "code-oss-dev/out/vs/platform/theme/electron-main/themeMainService.js";
 import { createAppController } from "./appController.js";
+import { installMainFailureRoot } from "./mainFailureRoot.js";
 import { shellTheme } from "./shellTheme.js";
 import {
 	registerShellPageProtocol,
@@ -193,6 +194,10 @@ export async function bootstrapShell(
 		titleBar,
 	);
 	const controller = await createAppController(userDataPath, cliArgs);
+	// From here main has somewhere to put a failure nobody caught. Installed as
+	// early as there is a controller to publish through, because everything
+	// after this line is a thing that can fail.
+	installMainFailureRoot(controller);
 	if (settingsProblem) {
 		controller.noteStartupFailure(
 			unreadableSettingsError(userDataPath, settingsProblem),

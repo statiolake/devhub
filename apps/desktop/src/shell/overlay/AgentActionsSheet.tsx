@@ -30,7 +30,7 @@ export function AgentActionsSheet({
   agentId,
   onDismiss,
 }: AgentActionsSheetProps) {
-  const { agentActions, runAgentAction, reportFailure, state } = useAppShell();
+  const { agentActions, runAgentAction, state } = useAppShell();
   const [actions, setActions] = useState<readonly AgentActionWire[]>([]);
   const [loaded, setLoaded] = useState(false);
 
@@ -40,11 +40,11 @@ export function AgentActionsSheet({
       if (!live) return;
       setActions(all);
       setLoaded(true);
-    }, reportFailure);
+    });
     return () => {
       live = false;
     };
-  }, [agentActions, reportFailure]);
+  }, [agentActions]);
 
   const agent =
     state.status === "ready"
@@ -77,7 +77,7 @@ export function AgentActionsSheet({
       emptyNoMatch="No configured action matches that."
       emptyNoItems="There are no agent actions configured. Settings ▸ Actions is where they are written."
       onChoose={({ id }) => {
-        void runAgentAction(agentId, id).catch(reportFailure);
+        void runAgentAction(agentId, id);
         onDismiss();
       }}
       onCancel={onDismiss}

@@ -212,9 +212,10 @@ export function TerminalSurface({
       if (detachedAttachmentIds.has(targetReceipt.attachmentId)) return;
       detachedAttachmentIds.add(targetReceipt.attachmentId);
       if (receipt === targetReceipt) receiptDetached = true;
-      void clientRef.current
-        .detach(detachRequest(surfaceKey, targetReceipt))
-        .catch(() => undefined);
+      // Not caught: a detach that fails leaves an attachment open in main,
+      // and a person whose terminals stop attaching needs the first one to
+      // have said so. It goes to the root like any other unhandled rejection.
+      void clientRef.current.detach(detachRequest(surfaceKey, targetReceipt));
     };
 
     const fail = (serial: number, failure: unknown) => {
