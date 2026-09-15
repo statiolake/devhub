@@ -266,19 +266,26 @@ const BOOTSTRAP_ENV_PREFIX = "DEVHUB_BOOTSTRAP_E_";
 export const DEVHUB_ORIGIN = "DEVHUB_ORIGIN";
 
 /**
- * `<machine>\t<workspaceId | "scratch">`.
+ * `<machine>\t<workspaceId | "scratch">\t<agentId | "none">`.
  *
- * A tab, because the two halves must stay unambiguous and neither can contain
- * one: a `RuntimeId` is `local` or `ssh:<host>`, and a workspace id is a UUID.
- * Not a general-purpose bag — one variable saying one thing, and a second fact
- * about a pane gets a second variable rather than another field in here.
+ * A tab, because the three parts must stay unambiguous and none can contain
+ * one: a `RuntimeId` is `local` or `ssh:<host>`, and a workspace or Agent id is
+ * a UUID. Still one variable saying one thing — *which pane of DevHub is
+ * asking* — and the Agent is the rest of that answer rather than a second fact:
+ * an Agent's pane belongs to its Workspace's window **and** to the Agent, and a
+ * reader told only the first cannot tell the two kinds of pane apart.
+ *
+ * The Agent field is always there, `none` when the session is not an Agent's.
+ * See `NO_AGENT_ORIGIN` in `../cli/route.ts`, which is the one reader.
  */
 export function originValue(
 	machine: RuntimeId,
 	context: string,
 	workspaceId: string,
+	agentId: string,
 ): string {
-	return `${machine}\t${context === GLOBAL_CONTEXT ? "scratch" : workspaceId}`;
+	const window = context === GLOBAL_CONTEXT ? "scratch" : workspaceId;
+	return `${machine}\t${window}\t${agentId}`;
 }
 
 /** The session environment, as the variables the bootstrap config reads it from. */
@@ -2332,6 +2339,7 @@ export class TmuxTerminalRuntime {
 				this.machine,
 				spec.context,
 				spec.workspaceId,
+				spec.agentId,
 			),
 		};
 	}

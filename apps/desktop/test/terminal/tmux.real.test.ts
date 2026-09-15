@@ -800,20 +800,21 @@ describe.skipIf(TMUX === undefined)(
       // `createSession` — two different code paths, and the pane cannot tell
       // which one made it, so neither may leave the variable out.
       expect(sessionOrigin(test.socket, SCRATCH_SESSION)).toBe(
-        "local\tscratch",
+        "local\tscratch\tnone",
       );
       const workspaceSession = `ws-${workspaceDigest(root).slice(0, 20)}`;
       expect(sessionOrigin(test.socket, workspaceSession)).toBe(
-        `local\t${workspaceId}`,
+        `local\t${workspaceId}\tnone`,
       );
     });
 
     /**
      * An Agent belongs to a Workspace, so an Agent's pane is that Workspace's
-     * window. That is what the owner asked for, and it is why the Agent's
-     * origin is its Workspace's id and not its own.
+     * window — and it is also the Agent's own pane, which is what lets an open
+     * from it land *beside* the Agent. So the origin says both: the window in
+     * the second field, the Agent in the third.
      */
-    it("gives an Agent's session its Workspace's origin, not one of its own", async () => {
+    it("gives an Agent's session its Workspace's window and its own id", async () => {
       const test = fixture("origin-agent");
       const workspaceId = "00000000-0000-4000-8000-0000000000a2";
       const agentId = "00000000-0000-4000-8000-0000000000b2";
@@ -829,7 +830,7 @@ describe.skipIf(TMUX === undefined)(
       );
 
       expect(sessionOrigin(test.socket, agentSessionName(agentId))).toBe(
-        `local\t${workspaceId}`,
+        `local\t${workspaceId}\t${agentId}`,
       );
     });
 
@@ -854,7 +855,9 @@ describe.skipIf(TMUX === undefined)(
       );
 
       const session = agentSessionName(agentId);
-      expect(sessionOrigin(test.socket, session)).toBe(`local\t${workspaceId}`);
+      expect(sessionOrigin(test.socket, session)).toBe(
+        `local\t${workspaceId}\t${agentId}`,
+      );
       expect(
         sessionEnvironment(test.socket, session, "AGENT_OWN_VARIABLE"),
       ).toBe("yes");
@@ -871,7 +874,7 @@ describe.skipIf(TMUX === undefined)(
       await test.runtime.ensure(SCRATCH_TARGET);
 
       expect(sessionOrigin(test.socket, SCRATCH_SESSION)).toBe(
-        "ssh:build.example.com\tscratch",
+        "ssh:build.example.com\tscratch\tnone",
       );
     });
 

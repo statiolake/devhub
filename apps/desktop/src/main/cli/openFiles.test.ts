@@ -259,8 +259,14 @@ describe("a --wait open", () => {
 		workspaceId: "alpha-id",
 		root: "/work/alpha",
 		machine: "local",
+		agents: [],
 	};
-	const beta = { workspaceId: "beta-id", root: "/work/beta", machine: "local" };
+	const beta = {
+		workspaceId: "beta-id",
+		root: "/work/beta",
+		machine: "local",
+		agents: [],
+	};
 	const open = [alpha, beta];
 	const marker = "/var/folders/devhub-wait/marker";
 
@@ -289,7 +295,7 @@ describe("a --wait open", () => {
 
 	it("carries its marker into the window the origin named", () => {
 		// Outside every Workspace, so without the origin this would be Scratch.
-		expect(openThrough("/etc/hosts", "local\talpha-id")).toEqual({
+		expect(openThrough("/etc/hosts", "local\talpha-id\tnone")).toEqual({
 			landedIn: "alpha-id",
 			marker,
 		});
@@ -311,7 +317,7 @@ describe("a --wait open", () => {
 
 	/** A pane that outlived its window still ends its wait somewhere real. */
 	it("carries its marker through a stale origin to the containing Workspace", () => {
-		expect(openThrough("/work/beta/x.ts", "local\tclosed-id")).toEqual({
+		expect(openThrough("/work/beta/x.ts", "local\tclosed-id\tnone")).toEqual({
 			landedIn: "beta-id",
 			marker,
 		});
@@ -319,10 +325,10 @@ describe("a --wait open", () => {
 
 	it("routes exactly as it would without a marker", () => {
 		for (const [path, origin] of [
-			["/etc/hosts", "local\talpha-id"],
+			["/etc/hosts", "local\talpha-id\tnone"],
 			["/work/beta/x.ts", undefined],
 			["/etc/hosts", undefined],
-			["/work/beta/x.ts", "local\tclosed-id"],
+			["/work/beta/x.ts", "local\tclosed-id\tnone"],
 		] as const) {
 			const withMarker = openThrough(path, origin);
 			const plain = routeOpen(path, "local", open, origin);

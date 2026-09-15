@@ -82,3 +82,67 @@ describe("what a --wait open goes back to", () => {
 		expect(returns.take(MARKER, B)).toEqual(A);
 	});
 });
+
+/**
+ * A `--wait` from an Agent's pane arranges the window — the editor beside that
+ * Agent — and the arrangement *is* the selection, so it is recorded and checked
+ * by the one rule above rather than by a second set of bookkeeping.
+ */
+describe("a --wait that arranged the window", () => {
+	const WORKSPACE_BESIDE: NavigationSelection = {
+		context: {
+			kind: "workspace",
+			workspaceId: workspaceId("11111111-1111-4111-8111-111111111111"),
+		},
+		presentation: "beside",
+	};
+
+	it("restores the arrangement the open replaced", () => {
+		const returns = new WaitSelectionReturns();
+		returns.push(MARKER, AGENT_BESIDE, WORKSPACE_BESIDE);
+		expect(returns.take(MARKER, WORKSPACE_BESIDE)).toEqual(AGENT_BESIDE);
+	});
+
+	/** Already split, and the same split: there is nothing to put back. */
+	it("restores nothing when the open changed nothing", () => {
+		const returns = new WaitSelectionReturns();
+		returns.push(MARKER, WORKSPACE_BESIDE, WORKSPACE_BESIDE);
+		expect(returns.take(MARKER, WORKSPACE_BESIDE)).toBeUndefined();
+	});
+
+	/** The split toggled by hand during the edit is the person's choice. */
+	it("restores nothing when the split was changed by hand during the wait", () => {
+		const returns = new WaitSelectionReturns();
+		returns.push(MARKER, AGENT_BESIDE, WORKSPACE_BESIDE);
+		expect(
+			returns.take(MARKER, { ...WORKSPACE_BESIDE, presentation: "full" }),
+		).toBeUndefined();
+	});
+
+	/**
+	 * Two waits from the same Agent's pane produce the *same* selection, so the
+	 * exact-record check alone cannot tell the earlier one's window from the
+	 * later one's. Ending the earlier one first must not take the later one's
+	 * split away while its editor is still open.
+	 */
+	it("never undoes an arrangement a later wait set", () => {
+		const returns = new WaitSelectionReturns();
+		const second = "/tmp/devhub-wait-def/marker";
+		returns.push(MARKER, AGENT_BESIDE, WORKSPACE_BESIDE);
+		returns.push(second, WORKSPACE_BESIDE, WORKSPACE_BESIDE);
+
+		expect(returns.take(MARKER, WORKSPACE_BESIDE)).toBeUndefined();
+		expect(returns.take(second, WORKSPACE_BESIDE)).toBeUndefined();
+	});
+
+	/** Ended the other way round — innermost first — each one comes back. */
+	it("restores both when nested waits end innermost first", () => {
+		const returns = new WaitSelectionReturns();
+		const inner = "/tmp/devhub-wait-def/marker";
+		returns.push(MARKER, A, WORKSPACE_BESIDE);
+		returns.push(inner, WORKSPACE_BESIDE, AGENT_BESIDE);
+
+		expect(returns.take(inner, AGENT_BESIDE)).toEqual(WORKSPACE_BESIDE);
+		expect(returns.take(MARKER, WORKSPACE_BESIDE)).toEqual(A);
+	});
+});

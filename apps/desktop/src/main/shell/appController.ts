@@ -4407,10 +4407,27 @@ export class AppController {
 			root,
 			runtimeMachine(destination.workspace.machine),
 		);
+		// An Agent's pane gets the split, and the split is made the way a person
+		// makes one: the Agent is selected `beside`, which is what pairs it with
+		// the Workspace, and then the editor half is what is in front — because
+		// the editor is what this open is handing the person to type in. Two
+		// ordinary selections, and no second notion of "arrangement" for the
+		// layout to be reconciled with; see `model/appModel.ts`.
+		const besideAgent =
+			destination.reason === "origin-agent"
+				? this.runningAgent(destination.agentId)
+				: undefined;
+		if (besideAgent) {
+			await this.dispatchAwaiting({
+				type: "select_context",
+				context: { kind: "agent", agentId: besideAgent.id },
+				presentation: "beside",
+			});
+		}
 		await this.dispatchAwaiting({
 			type: "select_context",
 			context: { kind: "workspace", workspaceId: workspace.id },
-			presentation: "full",
+			presentation: besideAgent ? "beside" : "full",
 		});
 		await this.syncEditorView();
 		openFileInWorkbench(
@@ -4427,7 +4444,13 @@ export class AppController {
 		);
 		this.rememberWaitReturn(waitMarkerPath, before);
 		this.bringToFront();
-		return `${target.path}${at(position)} is open in the workspace at ${root}: ${because(destination.reason)}`;
+		// Named rather than left implicit: a split the person did not ask for by
+		// hand is a rearrangement of their window, and the terminal that caused
+		// it is the one place they will see why it happened.
+		const beside = besideAgent
+			? `, beside the Agent ${besideAgent.displayName}`
+			: "";
+		return `${target.path}${at(position)} is open in the workspace at ${root}${beside}: ${because(destination.reason)}`;
 	}
 
 	/**
@@ -4747,7 +4770,25 @@ export class AppController {
 			workspaceId: workspace.id,
 			root: workspace.root,
 			machine: runtimeIdFor(workspace.location),
+			agents: workspace.agents.map((agent) => agent.id),
 		}));
+	}
+
+	/**
+	 * The Agent `routeOpen` answered with, as the model holds it.
+	 *
+	 * It cannot miss: the rule answers with an id out of the very list this
+	 * class handed it a moment ago, and nothing runs in between. If it ever did
+	 * miss, the list asked and the list answered from would have to be two
+	 * lists — and going on from there would be splitting somebody's window for
+	 * an Agent that is not there.
+	 */
+	private runningAgent(id: string) {
+		const agent = this.coordinator.model.agent(parseAgentId(id));
+		if (!agent) {
+			throw new Error(`no Agent ${id} is running`);
+		}
+		return agent;
 	}
 
 	/** The one Workspace rooted at a path on a machine — `workspaceRoots`' inverse. */
@@ -5594,6 +5635,8 @@ function because(reason: OpenReason): string {
 	switch (reason) {
 		case "origin":
 			return "it is the window this terminal belongs to.";
+		case "origin-agent":
+			return "it is the Agent this terminal belongs to.";
 		case "containing":
 			return "it is the open workspace that contains it.";
 		case "no-containing-workspace":

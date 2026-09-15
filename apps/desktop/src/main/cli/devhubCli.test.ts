@@ -159,7 +159,8 @@ describe("what the devhub command was asked to do", () => {
 	 */
 	it("carries the pane's origin and machine into the open", () => {
 		const caller = callerContext({
-			DEVHUB_ORIGIN: "ssh:build-host\t00000000-0000-4000-8000-000000000001",
+			DEVHUB_ORIGIN:
+				"ssh:build-host\t00000000-0000-4000-8000-000000000001\tnone",
 			DEVHUB_MACHINE: "ssh:build-host",
 		});
 
@@ -176,7 +177,7 @@ describe("what the devhub command was asked to do", () => {
 			path: "/srv/app/notes.md",
 			cwd: "/srv/app",
 			machine: "ssh:build-host",
-			origin: "ssh:build-host\t00000000-0000-4000-8000-000000000001",
+			origin: "ssh:build-host\t00000000-0000-4000-8000-000000000001\tnone",
 		});
 	});
 

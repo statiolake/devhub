@@ -106,8 +106,10 @@ export type ControlRequest =
 			 */
 			readonly machine?: string;
 			/**
-			 * Which workbench the request came from: `<machine>\t<workspaceId |
-			 * "scratch">`, as the pane's `DEVHUB_ORIGIN` spells it.
+			 * Which pane the request came from: `<machine>\t<workspaceId |
+			 * "scratch">\t<agentId | "none">`, as the pane's `DEVHUB_ORIGIN`
+			 * spells it. The Agent is the difference between "in that window"
+			 * and "beside the thing in it that asked".
 			 *
 			 * Separate from `machine` because they answer separate questions.
 			 * `machine` is which computer the *path* is on; `origin` is which

@@ -48,6 +48,27 @@
  * (see `AppModel.closeWorkspace`), and a second rule for this one case would
  * be a rule nobody else follows.
  *
+ * # What "where you are" includes
+ *
+ * The whole arrangement, because that is what a `NavigationSelection` is: the
+ * context and the presentation, and the presentation is the split. So a
+ * `--wait` from an Agent's pane — which puts the file in that Workspace's
+ * editor *beside* the Agent (see `route.ts`) — pushes and pops by exactly the
+ * rule above, with no second thing to record and no second thing to check. An
+ * open that was already in that arrangement recorded a `before` equal to its
+ * `produced`, and restores nothing.
+ *
+ * # Waits inside waits
+ *
+ * A restore must never undo an arrangement a *later* wait set. So a record
+ * whose wait began before one that is still in flight restores nothing: the
+ * arrangement on screen belongs to the later wait, and the exact-record check
+ * alone cannot see that — two waits from the same Agent's pane produce the
+ * same selection, and the earlier one would recognise the later one's window
+ * as its own and take it away. Ending them in the order they began is
+ * therefore a no-op for all but the last, and ending them innermost-first —
+ * which is what nesting does — restores each in turn.
+ *
  * # Restarts
  *
  * Nothing here is persisted, deliberately, and consistently with `wait.ts`:
@@ -72,7 +93,14 @@ interface WaitSelectionRecord {
 export class WaitSelectionReturns {
 	private readonly records = new Map<string, WaitSelectionRecord>();
 
-	/** Remember where a `--wait` open came from, and where it went. */
+	/**
+	 * Remember where a `--wait` open came from, and where it went.
+	 *
+	 * Every `--wait` is recorded, including one that arranged nothing — a
+	 * `devhub --wait` from an Agent whose window is already the split it would
+	 * have made. It restores nothing when it ends, but it is a wait in flight
+	 * while it lasts, and the rule below counts them.
+	 */
 	push(
 		markerPath: string,
 		before: NavigationSelection,
@@ -96,7 +124,17 @@ export class WaitSelectionReturns {
 	): NavigationSelection | undefined {
 		const record = this.records.get(markerPath);
 		if (record === undefined) return undefined;
+		// A `Map` keeps the order things were put into it, so "a wait that began
+		// after this one and has not ended" is a question this can answer
+		// without a second structure that could disagree about the order.
+		const inFlight = [...this.records.keys()];
+		const laterWaitStands = inFlight.indexOf(markerPath) < inFlight.length - 1;
 		this.records.delete(markerPath);
+		// A wait that arranged nothing has nothing to put back. Asked here
+		// rather than refused at `push`, so that it is still a wait in flight
+		// for the rule above while it lasts.
+		if (sameSelection(record.before, record.produced)) return undefined;
+		if (laterWaitStands) return undefined;
 		return sameSelection(record.produced, current) ? record.before : undefined;
 	}
 

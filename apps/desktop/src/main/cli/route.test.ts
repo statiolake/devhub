@@ -5,8 +5,9 @@ function workspace(
 	workspaceId: string,
 	root: string,
 	machine: string,
+	agents: readonly string[] = [],
 ): RoutableWorkspace {
-	return { workspaceId, root, machine };
+	return { workspaceId, root, machine, agents };
 }
 
 describe("where an open lands", () => {
@@ -120,7 +121,7 @@ describe("an open that says which workbench it came from", () => {
 	const alpha = workspace("alpha-id", "/work/alpha", "local");
 	const beta = workspace("beta-id", "/work/beta", "local");
 	const open = [alpha, beta];
-	const fromAlpha = "local\talpha-id";
+	const fromAlpha = "local\talpha-id\tnone";
 
 	it("lands in that window even when no Workspace contains the path", () => {
 		expect(routeOpen("/etc/hosts", "local", open, fromAlpha)).toEqual({
@@ -145,7 +146,7 @@ describe("an open that says which workbench it came from", () => {
 
 	it("lands in Scratch when the terminal is Scratch's own", () => {
 		expect(
-			routeOpen("/work/alpha/f.ts", "local", open, "local\tscratch"),
+			routeOpen("/work/alpha/f.ts", "local", open, "local\tscratch\tnone"),
 		).toEqual({ kind: "scratch", reason: "origin" });
 	});
 
@@ -157,12 +158,14 @@ describe("an open that says which workbench it came from", () => {
 	 */
 	it("falls through to the containing Workspace when the origin's window is gone", () => {
 		expect(
-			routeOpen("/work/beta/x.ts", "local", open, "local\tclosed-id"),
+			routeOpen("/work/beta/x.ts", "local", open, "local\tclosed-id\tnone"),
 		).toEqual({ kind: "workspace", reason: "containing", workspace: beta });
 	});
 
 	it("falls through to Scratch when the origin is gone and nothing contains the path", () => {
-		expect(routeOpen("/etc/hosts", "local", open, "local\tclosed-id")).toEqual({
+		expect(
+			routeOpen("/etc/hosts", "local", open, "local\tclosed-id\tnone"),
+		).toEqual({
 			kind: "scratch",
 			reason: "no-containing-workspace",
 		});
@@ -174,7 +177,12 @@ describe("an open that says which workbench it came from", () => {
 	 */
 	it("ignores an origin whose machine disagrees with the Workspace's", () => {
 		expect(
-			routeOpen("/work/beta/x.ts", "local", open, "ssh:build-host\talpha-id"),
+			routeOpen(
+				"/work/beta/x.ts",
+				"local",
+				open,
+				"ssh:build-host\talpha-id\tnone",
+			),
 		).toEqual({ kind: "workspace", reason: "containing", workspace: beta });
 	});
 
@@ -183,7 +191,13 @@ describe("an open that says which workbench it came from", () => {
 	 * writes came from somewhere else and says nothing about DevHub.
 	 */
 	it("ignores an origin that is not the shape DevHub writes", () => {
-		for (const malformed of ["", "local", "local\talpha-id\textra", "\t"]) {
+		for (const malformed of [
+			"",
+			"local",
+			"local\talpha-id",
+			"local\talpha-id\tnone\textra",
+			"\t\t",
+		]) {
 			expect(routeOpen("/etc/hosts", "local", open, malformed)).toEqual({
 				kind: "scratch",
 				reason: "no-containing-workspace",
@@ -200,8 +214,69 @@ describe("an open that says which workbench it came from", () => {
 				"/etc/hosts",
 				"ssh:build-host",
 				[alpha, remote],
-				"ssh:build-host\tremote-id",
+				"ssh:build-host\tremote-id\tnone",
 			),
 		).toEqual({ kind: "workspace", reason: "origin", workspace: remote });
+	});
+});
+
+/**
+ * The pane an Agent runs in names the Agent, and that is the whole of what
+ * makes `EDITOR='devhub --wait'` inside a Claude Code pane bearable: the file
+ * appears next to the thing that asked for it rather than over the top of it.
+ */
+describe("an open that came from an Agent's own pane", () => {
+	const agent = "agent-id";
+	const alpha = workspace("alpha-id", "/work/alpha", "local", [agent]);
+	const beta = workspace("beta-id", "/work/beta", "local");
+	const open = [alpha, beta];
+	const fromAgent = `local\talpha-id\t${agent}`;
+
+	it("goes beside that Agent, in its Workspace's editor", () => {
+		expect(routeOpen("/work/alpha/f.ts", "local", open, fromAgent)).toEqual({
+			kind: "workspace",
+			reason: "origin-agent",
+			workspace: alpha,
+			agentId: agent,
+		});
+	});
+
+	/** The window rule is unchanged by it: the Agent's window still wins. */
+	it("goes beside that Agent even when another Workspace contains the path", () => {
+		expect(routeOpen("/work/beta/x.ts", "local", open, fromAgent)).toEqual({
+			kind: "workspace",
+			reason: "origin-agent",
+			workspace: alpha,
+			agentId: agent,
+		});
+	});
+
+	/**
+	 * An Agent that has exited leaves its pane behind for a moment. The window
+	 * it named is still right, so the open still lands there — there is just no
+	 * Agent left to be beside.
+	 */
+	it("is an ordinary origin when the Agent it names is no longer running", () => {
+		expect(
+			routeOpen("/etc/hosts", "local", open, "local\talpha-id\tgone-id"),
+		).toEqual({ kind: "workspace", reason: "origin", workspace: alpha });
+	});
+
+	/** An Agent id belongs to one Workspace; another Workspace's is not it. */
+	it("is an ordinary origin when the Agent runs in a different Workspace", () => {
+		expect(
+			routeOpen(
+				"/etc/hosts",
+				"local",
+				[alpha, beta],
+				`local\tbeta-id\t${agent}`,
+			),
+		).toEqual({ kind: "workspace", reason: "origin", workspace: beta });
+	});
+
+	it("is an ordinary origin for a Workspace's own terminal", () => {
+		expect(
+			routeOpen("/etc/hosts", "local", open, "local\talpha-id\tnone"),
+		).toEqual({ kind: "workspace", reason: "origin", workspace: alpha });
 	});
 });
