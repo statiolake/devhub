@@ -85,17 +85,40 @@ export class KeyRouter {
 	 */
 	setLayout(layout: ChordLayout): void {
 		this.layout = layout;
-		this.armedUntil = undefined;
+		this.disarm();
 	}
 
 	/**
-	 * A change of what is focused invalidates an armed prefix.
+	 * Forget an armed prefix.
 	 *
-	 * Otherwise a second stroke lands on whatever happens to be focused a
-	 * moment later, which is not what the person armed it against.
+	 * The table changing is the only thing in the application that does this,
+	 * and it is not a *focus* rule: an armed prefix deliberately survives the
+	 * keyboard moving between DevHub's own children.
+	 *
+	 * It used to be disarmed on every `focus` of every web contents DevHub
+	 * owns, against a window that held two pages and N workbenches — where an
+	 * inter-contents focus move was rare enough that the rule was almost never
+	 * reached. The window is becoming a tree of child views, one per region,
+	 * and a focus move between them is the ordinary case: arming over the
+	 * sidebar and completing after clicking into an editor would be a chord
+	 * silently cancelled, with nothing on screen to say why.
+	 *
+	 * The queue is one queue for the whole application, which is what makes
+	 * that safe to allow. A chord is about DevHub, not about whichever child
+	 * happens to hold the keyboard, and every command a chord resolves to is
+	 * addressed to the application too — so the second stroke completing
+	 * somewhere else completes the same chord, against the same model. The
+	 * one-second window (`PREFIX_TIMEOUT_MS`) is what bounds it, and it always
+	 * was: what the person armed against is the table and the second, not the
+	 * view.
 	 */
-	focusChanged(): void {
+	private disarm(): void {
 		this.armedUntil = undefined;
+	}
+
+	/** For tests only: start the next case with nothing armed. */
+	forgetArmingForTests(): void {
+		this.disarm();
 	}
 
 	isArmed(now: number): boolean {

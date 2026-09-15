@@ -126,6 +126,26 @@ describe("the Command-Q chord", () => {
 		router.setLayout(defaultChordLayout());
 		expect(router.route(stroke("KeyF"), 10)).toEqual({ kind: "pass" });
 	});
+
+	/**
+	 * The table changing is the *only* thing that drops an armed prefix.
+	 *
+	 * The router has no other way to be told to forget one, and that is the
+	 * whole of the "no disarm on focus change" rule: there is one queue for the
+	 * application, so nothing about which child view holds the keyboard can
+	 * reach it. The second is what bounds an arming, and it always was.
+	 */
+	it("has no way to be disarmed by anything but its own table", () => {
+		const reachable = new Set<string>();
+		for (
+			let level: object | null = router;
+			level && level !== Object.prototype;
+			level = Object.getPrototypeOf(level) as object | null
+		) {
+			for (const name of Object.getOwnPropertyNames(level)) reachable.add(name);
+		}
+		expect([...reachable].filter((name) => /focus/iu.test(name))).toEqual([]);
+	});
 });
 
 /**

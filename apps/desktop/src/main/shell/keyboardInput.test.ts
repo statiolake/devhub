@@ -179,6 +179,24 @@ describe("a chord, as Electron delivers it", () => {
 		expect(calls).toEqual(["openWorkspacePicker"]);
 	});
 
+	/**
+	 * One queue for the application, not one per view.
+	 *
+	 * The window is a tree of child views, and the keyboard moving between two
+	 * of them is what using DevHub looks like. The prefix is armed over a
+	 * workbench here and completed over one of DevHub's own pages — a
+	 * different `WebContents`, which is all a focus move is to this layer —
+	 * and it is the same chord.
+	 */
+	it("completes in one view what was armed in another", () => {
+		const { calls, chordHost } = host();
+		expect(type(chordHost, [PREFIX], WORKBENCH)).toEqual([true]);
+		expect(type(chordHost, [input("KeyF", "f")], SHELL_ORIGIN)).toEqual([
+			true,
+		]);
+		expect(calls).toEqual(["openWorkspacePicker"]);
+	});
+
 	it("keeps the chord through the Shift that arrives before the key", () => {
 		// The sequence the reporter typed. `ShiftLeft` is not taken, because a
 		// surface underneath is entitled to know Shift went down; the `P` is.

@@ -1,12 +1,21 @@
 /**
  * Where the chord layer meets Electron.
  *
- * Every `WebContents` DevHub owns — the App Shell page, each workbench, the
- * Settings window — gets the same handler, because a chord is about the
- * application, not about whichever surface happens to be focused. One router,
- * so arming in a terminal and completing in an editor is the same chord rather
- * than two half ones; and a change of focus disarms, so the second stroke
- * cannot land somewhere the person did not arm it against.
+ * Every `WebContents` DevHub owns — each of DevHub's own pages, each workbench,
+ * the Settings window — gets the same handler, because a chord is about the
+ * application, not about whichever surface happens to be focused. There is one
+ * router for the whole process and therefore **one queue**: arming over a
+ * terminal and completing over an editor is one chord, and no surface holds a
+ * half-chord of its own that a switch away from it could strand.
+ *
+ * Moving the keyboard does **not** disarm it, and that is a decision rather
+ * than an omission. It used to: every `focus` on every web contents cleared
+ * the armed prefix. That was written for a window with two pages in it, where
+ * the keyboard moving between contents was rare. DevHub's window is becoming a
+ * tree of child views — sidebar, agents, editors, toasts, picker — and a focus
+ * move between them is what using the app looks like, so the old rule would
+ * have cancelled chords for going on with the work. The prefix belongs to the
+ * application for one second; see `KeyRouter.disarm`.
  *
  * `before-input-event` is the only place this can work, and for two reasons.
  * A chord typed over a workbench or an xterm has to be caught before that
@@ -251,9 +260,6 @@ function attach(contents: Electron.WebContents, host: ChordHost): void {
 			},
 		);
 	});
-	contents.on("focus", () => {
-		router.focusChanged();
-	});
 }
 
 /**
@@ -279,7 +285,7 @@ export function installKeyboard(host: ChordHost): void {
 	}
 }
 
-/** For tests only: forget the arming and the table between cases. */
+/** For tests only: forget the arming between cases. */
 export function resetChordRouterForTests(): void {
-	router.focusChanged();
+	router.forgetArmingForTests();
 }
