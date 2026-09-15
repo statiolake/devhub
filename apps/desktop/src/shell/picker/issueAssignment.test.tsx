@@ -12,8 +12,8 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { AppShellContextValue } from "../useAppShell";
-import { AppShellContext } from "../useAppShell";
+import type { PickerValue } from "./PickerContext";
+import { PickerContext } from "./PickerContext";
 import { IssueAssignmentSheet } from "./IssueAssignmentSheet";
 
 Element.prototype.scrollIntoView = vi.fn();
@@ -22,7 +22,7 @@ afterEach(cleanup);
 const ISSUE = "https://github.com/example/widget/issues/128";
 const PULL_REQUEST = "https://github.com/example/widget/pull/128";
 
-function mount(overrides: Partial<AppShellContextValue> = {}) {
+function mount(overrides: Partial<PickerValue> = {}) {
   const assignIssue = vi.fn().mockResolvedValue(undefined);
   // One repository, checked out in one place: the shape most of these walk.
   const findIssueRepositories = vi.fn().mockResolvedValue([
@@ -66,11 +66,11 @@ function mount(overrides: Partial<AppShellContextValue> = {}) {
       { id: "commit_changes", displayName: "Commit", trigger: "commit" },
     ]),
     ...overrides,
-  } as unknown as AppShellContextValue;
+  } as unknown as PickerValue;
   render(
-    <AppShellContext.Provider value={value}>
+    <PickerContext.Provider value={value}>
       <IssueAssignmentSheet onDismiss={onDismiss} />
-    </AppShellContext.Provider>,
+    </PickerContext.Provider>,
   );
   return {
     assignIssue,
@@ -83,7 +83,7 @@ function mount(overrides: Partial<AppShellContextValue> = {}) {
 }
 
 /** The same, for a test that has to change the context after mounting. */
-function mountFor(agentProfiles: AppShellContextValue["agentProfiles"]) {
+function mountFor(agentProfiles: PickerValue["agentProfiles"]) {
   const value = {
     agentProfiles,
     findIssueRepositories: vi.fn().mockResolvedValue([]),
@@ -99,19 +99,19 @@ function mountFor(agentProfiles: AppShellContextValue["agentProfiles"]) {
       // "what should the agent do with this Issue", so it must not be a row.
       { id: "commit_changes", displayName: "Commit", trigger: "commit" },
     ]),
-  } as unknown as AppShellContextValue;
+  } as unknown as PickerValue;
   const view = render(
-    <AppShellContext.Provider value={value}>
+    <PickerContext.Provider value={value}>
       <IssueAssignmentSheet onDismiss={vi.fn()} />
-    </AppShellContext.Provider>,
+    </PickerContext.Provider>,
   );
   return {
     value,
-    rerender: (next: AppShellContextValue) => {
+    rerender: (next: PickerValue) => {
       view.rerender(
-        <AppShellContext.Provider value={next}>
+        <PickerContext.Provider value={next}>
           <IssueAssignmentSheet onDismiss={vi.fn()} />
-        </AppShellContext.Provider>,
+        </PickerContext.Provider>,
       );
     },
   };
@@ -180,7 +180,7 @@ describe("assigning an Issue", () => {
           ],
         },
       ]),
-    } as unknown as Partial<AppShellContextValue>);
+    } as unknown as Partial<PickerValue>);
 
     await answer("Assign Issue", ISSUE);
     await answer(/Agent for/u);
@@ -207,7 +207,7 @@ describe("assigning an Issue", () => {
         reachable: true,
         checkedOutAt: "/projects/widget_alice_fix-the-crash",
       }),
-    } as unknown as Partial<AppShellContextValue>);
+    } as unknown as Partial<PickerValue>);
 
     await answer("Assign Issue", PULL_REQUEST);
     await answer(/Agent for/u);
@@ -244,7 +244,7 @@ describe("assigning an Issue", () => {
         },
       ]),
       assignmentBranch,
-    } as unknown as Partial<AppShellContextValue>);
+    } as unknown as Partial<PickerValue>);
     await answer("Assign Issue", ISSUE);
     await answer(/Agent for/u);
     await choose(/Where to work on/u, /New branch/u);
@@ -267,7 +267,7 @@ describe("assigning an Issue", () => {
         fork: "alice/widget",
         reachable: false,
       }),
-    } as unknown as Partial<AppShellContextValue>);
+    } as unknown as Partial<PickerValue>);
 
     await answer("Assign Issue", PULL_REQUEST);
     await answer(/Agent for/u);
@@ -317,7 +317,7 @@ describe("assigning an Issue", () => {
       sequence: 1,
       availability: "unavailable",
       profiles: [],
-    } as unknown as AppShellContextValue["agentProfiles"];
+    } as unknown as PickerValue["agentProfiles"];
     const { rerender, value } = mountFor(empty);
 
     rerender({
@@ -326,7 +326,7 @@ describe("assigning an Issue", () => {
         sequence: 2,
         availability: "available",
         profiles: [{ id: "claude", displayName: "Claude", kind: "claude" }],
-      } as unknown as AppShellContextValue["agentProfiles"],
+      } as unknown as PickerValue["agentProfiles"],
     });
     await answer("Assign Issue", ISSUE);
 
@@ -375,7 +375,7 @@ describe("assigning an Issue", () => {
       .mockResolvedValue({ branch: "alice/fix-the-crash", reachable: true });
     const { assignIssue } = mount({
       assignmentBranch,
-    } as unknown as Partial<AppShellContextValue>);
+    } as unknown as Partial<PickerValue>);
 
     await answer("Assign Issue", PULL_REQUEST);
     await answer(/Agent for example\/widget#128/u);
@@ -407,7 +407,7 @@ describe("assigning an Issue", () => {
       assignmentBranch: vi
         .fn()
         .mockResolvedValue({ branch: "alice/fix-the-crash", reachable: true }),
-    } as unknown as Partial<AppShellContextValue>);
+    } as unknown as Partial<PickerValue>);
 
     await answer("Assign Issue", PULL_REQUEST);
     await answer(/Agent for/u);
@@ -433,7 +433,7 @@ describe("assigning an Issue", () => {
       assignmentBranch: vi
         .fn()
         .mockResolvedValue({ branch: "alice/fix-the-crash", reachable: true }),
-    } as unknown as Partial<AppShellContextValue>);
+    } as unknown as Partial<PickerValue>);
 
     await answer("Assign Issue", PULL_REQUEST);
     await answer(/Agent for/u);
@@ -464,7 +464,7 @@ describe("assigning an Issue", () => {
     // they are being asked where a clone should go.
     mount({
       findIssueRepositories: vi.fn().mockResolvedValue([]),
-    } as unknown as Partial<AppShellContextValue>);
+    } as unknown as Partial<PickerValue>);
 
     await answer("Assign Issue", ISSUE);
     await answer(/Agent for/u);
@@ -517,7 +517,7 @@ describe("assigning an Issue", () => {
       .fn()
       .mockRejectedValueOnce(failure)
       .mockResolvedValueOnce(undefined);
-    mount({ assignIssue } as unknown as Partial<AppShellContextValue>);
+    mount({ assignIssue } as unknown as Partial<PickerValue>);
 
     await answer("Assign Issue", ISSUE);
     await answer(/Agent for/u);
@@ -543,7 +543,7 @@ describe("assigning an Issue", () => {
   it("clones when there is no clone to work in", async () => {
     const { cloneRepository, assignIssue } = mount({
       findIssueRepositories: vi.fn().mockResolvedValue([]),
-    } as unknown as Partial<AppShellContextValue>);
+    } as unknown as Partial<PickerValue>);
 
     await answer("Assign Issue", ISSUE);
     await answer(/Agent for/u);
@@ -571,7 +571,7 @@ describe("assigning an Issue", () => {
     // replaced: a path nobody offered, typed, and taken by the pinned row.
     const { cloneRepository } = mount({
       findIssueRepositories: vi.fn().mockResolvedValue([]),
-    } as unknown as Partial<AppShellContextValue>);
+    } as unknown as Partial<PickerValue>);
 
     await answer("Assign Issue", ISSUE);
     await answer(/Agent for/u);

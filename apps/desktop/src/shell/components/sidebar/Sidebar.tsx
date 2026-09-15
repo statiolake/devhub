@@ -20,8 +20,8 @@ import { clampSidebarWidth } from "../../../ipc/appShell";
 import { SCRATCH_NAME } from "../../../ipc/windowTitles";
 import type { WorkspaceRepositoryWire } from "../../../ipc/contract";
 import { closingDeletesWorktree } from "../../../model/worktrees";
-import { useAppShell } from "../../useAppShell";
-import { devhub } from "../../client";
+import { useSidebar } from "../../sidebar/SidebarContext";
+import { devhub } from "../../sidebar/client";
 import { isImeComposing } from "../../accessibility/ime";
 import { Glyph, type GlyphName } from "./icons";
 import { RowMenu, type RowMenuItem } from "./RowMenu";
@@ -591,7 +591,7 @@ function WorkspaceGlyph({
   readonly location: WorkspaceLocationWire;
   readonly repository: WorkspaceRepositoryWire | undefined;
 }) {
-  const { openExternalUrl } = useAppShell();
+  const { openExternalUrl } = useSidebar();
   const name = workspaceGlyphName(location, repository);
   const url = repository?.repositoryUrl;
   if (url === undefined) {
@@ -693,7 +693,7 @@ function RepositoryLinks({
 }: {
   readonly repository: WorkspaceRepositoryWire | undefined;
 }) {
-  const { openExternalUrl } = useAppShell();
+  const { openExternalUrl } = useSidebar();
   if (!repository) return null;
   const issue = repository.issue;
   const pullRequest = repository.pullRequest;
@@ -877,7 +877,7 @@ function ClosingGhostRow({ label }: { label: string }) {
 
 export function Sidebar({ snapshot, onDispatch }: SidebarProps) {
   const { dispatch, agentProfiles, repositoryStatus, closeWorkspace, retry } =
-    useAppShell();
+    useSidebar();
   const repositories = useMemo(
     () =>
       new Map(

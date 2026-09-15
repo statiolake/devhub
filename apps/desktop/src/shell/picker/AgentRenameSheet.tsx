@@ -27,7 +27,7 @@
 
 import { useEffect, useState } from "react";
 import { Picker } from "../components/shell/Picker";
-import { useAppShell } from "../useAppShell";
+import { usePicker } from "./PickerContext";
 
 export interface AgentRenameSheetProps {
   readonly agentId: string;
@@ -41,7 +41,7 @@ export function AgentRenameSheet({
   agentId,
   onDismiss,
 }: AgentRenameSheetProps) {
-  const { state, dispatch } = useAppShell();
+  const { state, dispatch } = usePicker();
   /**
    * Every Agent there is, or nothing while this page is still being told.
    *

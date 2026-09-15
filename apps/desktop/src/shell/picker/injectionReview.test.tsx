@@ -26,8 +26,8 @@ import type {
   AppOutcome,
   AppSnapshot,
 } from "../../ipc/appShell";
-import { AppShellProvider } from "../AppShellContext";
-import type { AppShellClient } from "../client";
+import { PickerProvider } from "./PickerContext";
+import type { PickerBridge } from "../../ipc/contract";
 import { InjectionReviewSheet } from "./InjectionReviewSheet";
 
 const AGENT_ID = "5d7fd0e2-2a0e-4a2b-9f3e-9a1a0a0b1c2d";
@@ -110,8 +110,8 @@ const PROFILES: AgentProfiles = {
 /** Projections that arrive after the first render, as they always do here. */
 function client(
   snapshot: AppSnapshot,
-  overrides: Partial<AppShellClient> = {},
-): AppShellClient {
+  overrides: Partial<PickerBridge> = {},
+): PickerBridge {
   const later = <T,>(value: T) =>
     new Promise<T>((resolve) => setTimeout(() => resolve(value), 0));
   return {
@@ -122,39 +122,41 @@ function client(
     dispatch: vi.fn(
       async (): Promise<AppOutcome> => ({ kind: "applied", snapshot }) as never,
     ),
-    subscribe: () => () => undefined,
-    subscribeAppearance: () => () => undefined,
+    onSnapshot: () => () => undefined,
+    onTheme: () => () => undefined,
+    onAppearance: () => () => undefined,
     getWindowTitle: async () => "DevHub",
-    subscribeWindowTitle: () => () => undefined,
-    subscribeAgentProfiles: () => () => undefined,
-    subscribeAppCondition: () => () => undefined,
-    subscribeNativeError: () => () => undefined,
-    subscribeWorkspacePicker: () => () => undefined,
+    onWindowTitle: () => () => undefined,
+    onAgentProfiles: () => () => undefined,
+    onAppCondition: () => () => undefined,
+    onNativeError: () => () => undefined,
+    onWorkspacePicker: () => () => undefined,
     getRepositoryStatus: () => later({ sequence: 0, workspaces: [] }),
-    subscribeRepositoryStatus: () => () => undefined,
+    onRepositoryStatus: () => () => undefined,
     startWorkspacePicker: async () => "",
     cancelWorkspacePicker: async () => undefined,
     selectWorkspacePicker: async () => ({}) as never,
     chooseWorkspaceFolder: async () => undefined,
     openSettings: async () => undefined,
     openExternalUrl: async () => undefined,
-    setContentRect: async () => undefined,
-    setContentSurface: async () => undefined,
     openModal: async () => "",
     closeModal: async () => undefined,
     confirmInjection: async () => ({ kind: "applied", snapshot }) as never,
     cancelInjection: async () => ({ kind: "applied", snapshot }) as never,
     ...overrides,
-  } as unknown as AppShellClient;
+  } as unknown as PickerBridge;
 }
 
 function mount(
   snapshot: AppSnapshot,
-  overrides: Partial<AppShellClient> = {},
+  overrides: Partial<PickerBridge> = {},
 ): { readonly onDismiss: () => void } {
   const onDismiss = vi.fn();
+  // The bridge is what a page has, so the fake is installed the way the
+  // preload installs the real one.
+  window.devhub = client(snapshot, overrides);
   render(
-    <AppShellProvider client={client(snapshot, overrides)}>
+    <PickerProvider>
       <InjectionReviewSheet
         agentId={AGENT_ID}
         injectionId={INJECTION_ID}
@@ -162,7 +164,7 @@ function mount(
         text={TEMPLATE}
         onDismiss={onDismiss}
       />
-    </AppShellProvider>,
+    </PickerProvider>,
   );
   return { onDismiss };
 }

@@ -39,6 +39,12 @@ export default tseslint.config(
     rules: { "@typescript-eslint/triple-slash-reference": "off" },
   },
   {
+    // Build scripts are ES modules run by Node, so Node's globals — `URL`
+    // among them — are what they are written against.
+    files: ["scripts/**/*.mjs"],
+    languageOptions: { globals: { ...globals.node } },
+  },
+  {
     // `.cjs` is CommonJS by extension, so `module` and `require` are globals
     // rather than undefined names.
     files: ["**/*.cjs"],

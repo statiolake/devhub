@@ -43,7 +43,7 @@
  */
 
 import { useCallback, useEffect } from "react";
-import { devhub } from "../client";
+import { devhub } from "./client";
 import { useAppNotices } from "../notices";
 import { ToastStack } from "./ToastStack";
 import { useStackSize } from "./stackSize";

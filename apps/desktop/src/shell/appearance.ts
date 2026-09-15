@@ -19,7 +19,8 @@ import {
   type ShellPalette,
   type ShellPaletteBase,
 } from "../ipc/palette";
-import { devhub } from "./client";
+import type { PageBridge } from "../ipc/contract";
+import { pageBridge } from "./bridge";
 
 export function applyPalette(
   root: HTMLElement,
@@ -43,7 +44,7 @@ export function applyPalette(
  * only the one with a Sidebar in it.
  */
 export function installPalette(document: Document): () => void {
-  return devhub().onTheme((palette) => {
+  return pageBridge<PageBridge>("current").onTheme((palette) => {
     applyPalette(document.documentElement, palette);
   });
 }

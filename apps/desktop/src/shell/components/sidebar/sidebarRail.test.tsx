@@ -16,8 +16,8 @@ import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AppSnapshot } from "../../../ipc/appShell";
 import { AppModel } from "../../../model/appModel";
-import type { AppShellContextValue } from "../../useAppShell";
-import { AppShellContext } from "../../useAppShell";
+import type { SidebarValue } from "../../sidebar/SidebarContext";
+import { SidebarContext } from "../../sidebar/SidebarContext";
 import { Sidebar } from "./Sidebar";
 
 window.devhub = {
@@ -118,11 +118,11 @@ function mount(
       sequence: 1,
       workspaces: repository ? [repository] : [],
     },
-  } as unknown as AppShellContextValue;
+  } as unknown as SidebarValue;
   render(
-    <AppShellContext.Provider value={value}>
+    <SidebarContext.Provider value={value}>
       <Sidebar snapshot={snapshot(collapsed)} onDispatch={dispatch} />
-    </AppShellContext.Provider>,
+    </SidebarContext.Provider>,
   );
   return Object.assign(
     screen.getByRole("complementary", { name: "Workspace navigation" }),

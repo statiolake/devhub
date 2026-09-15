@@ -22,8 +22,8 @@ import {
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AppSnapshot } from "../../../ipc/appShell";
 import type { MenuCommand } from "../../../ipc/contract";
-import type { AppShellContextValue } from "../../useAppShell";
-import { AppShellContext } from "../../useAppShell";
+import type { SidebarValue } from "../../sidebar/SidebarContext";
+import { SidebarContext } from "../../sidebar/SidebarContext";
 import { Sidebar } from "./Sidebar";
 
 /** What main has asked the page to do, replayable from the test. */
@@ -112,11 +112,11 @@ function mount(snapshot: AppSnapshot) {
     retry,
     agentProfiles: { sequence: 1, availability: "available", profiles: [] },
     repositoryStatus: { sequence: 1, workspaces: [] },
-  } as unknown as AppShellContextValue;
+  } as unknown as SidebarValue;
   render(
-    <AppShellContext.Provider value={value}>
+    <SidebarContext.Provider value={value}>
       <Sidebar snapshot={snapshot} onDispatch={vi.fn()} />
-    </AppShellContext.Provider>,
+    </SidebarContext.Provider>,
   );
 }
 

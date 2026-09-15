@@ -173,7 +173,11 @@ export async function bootstrapShell(
 		() => shellWindowIfCreated()?.revealedView()?.id,
 	);
 
-	const preloadPath = join(APP_ROOT, "out", "preload", "preload.js");
+	// One preload per page, in one directory, named after the page. Which
+	// preload a page is loaded with is what decides what that page can spell:
+	// see `ipc/contract.ts` for the bridges and `scripts/build-preloads.mjs`
+	// for why they are six bundles rather than one.
+	const preloadDirectory = join(APP_ROOT, "out", "preload");
 	registerShellPageProtocol(join(APP_ROOT, "dist", "shell"), () =>
 		shellTheme().palette(),
 	);
@@ -188,7 +192,7 @@ export async function bootstrapShell(
 	// (which is part of starting the runtimes) turned it from unlucky into
 	// normal. Ordering is the fix, not speed.
 	createShellWindow(
-		preloadPath,
+		preloadDirectory,
 		`${SHELL_ORIGIN}/index.html`,
 		palette,
 		titleBar,
@@ -294,7 +298,7 @@ export async function bootstrapShell(
 		// A window rebuilt after its own was closed has the whole app behind it
 		// already, so its page runs at once.
 		createShellWindow(
-			preloadPath,
+			preloadDirectory,
 			`${SHELL_ORIGIN}/index.html`,
 			shellTheme().palette(),
 			titleBar,
@@ -340,7 +344,7 @@ export async function bootstrapShell(
 	installSettingsWindow({
 		store: controller.configStore,
 		logDirectory: logDirectoryFor(userDataPath),
-		preloadPath,
+		preloadPath: join(preloadDirectory, "settings.js"),
 		previousExit: () => controller.previousExit(),
 		launchEnvironment: () => controller.launchEnvironmentValue(),
 		loginEnvironment: () => controller.loginEnvironmentValue(),

@@ -15,6 +15,7 @@
  * resize a round trip through a renderer. The page is now *given* the hole.
  */
 
+import { join } from "node:path";
 import { electron } from "../electron.js";
 import { allowListenersFor } from "./appListenerCeiling.js";
 import { sendLinksToTheBrowser } from "./externalLinks.js";
@@ -29,7 +30,7 @@ import {
 	type LayoutState,
 } from "./windowLayout.js";
 import type { TitleBarMode } from "../../model/config.js";
-import { WINDOW_TITLES } from "../../ipc/windowTitles.js";
+import { WINDOW_TITLES, type ShellWindowKind } from "../../ipc/windowTitles.js";
 import { ChromeView } from "./chromeView.js";
 import { PickerView } from "./pickerView.js";
 import { ToastsView } from "./toastsView.js";
@@ -189,15 +190,22 @@ export class ShellWindow {
 	private pageOpened = false;
 
 	constructor(
-		preloadPath: string,
+		preloadDirectory: string,
 		pageUrl: string,
 		palette: ShellPalette | undefined,
 		titleBar: TitleBarMode,
 	) {
 		this.titleBar = titleBar;
 		this.state = { ...this.state, titleBar };
+		// One preload per page, named after the page. What a page can spell is
+		// what its own preload exposes and nothing else — see
+		// `ipc/contract.ts`, where each page's bridge is an interface of its
+		// own, and `preload/bridge.ts`, which is shared as source rather than
+		// as a file because a sandboxed preload cannot `require` a chunk.
+		const preloadFor = (page: ShellWindowKind) =>
+			join(preloadDirectory, `${page}.js`);
 		this.window = new electron.BrowserWindow(
-			shellWindowOptions(preloadPath, palette),
+			shellWindowOptions(preloadFor("shell"), palette),
 		);
 
 		sendLinksToTheBrowser(this.window.webContents);
@@ -209,10 +217,9 @@ export class ShellWindow {
 		const pageBase = pageUrl.slice(0, pageUrl.lastIndexOf("/"));
 
 		// DevHub names this window, and only DevHub. Electron hands a page's
-		// `document.title` to its window by default, which would let the App
-		// Shell page — served from the same `index.html` as the Settings
-		// window, and with no idea what is on screen — overwrite a name that
-		// says which Workspace and which file are being worked on.
+		// `document.title` to its window by default, which would let the
+		// window's own page — which has no idea what is on screen — overwrite
+		// a name that says which Workspace and which file are being worked on.
 		this.window.on("page-title-updated", (event) => {
 			event.preventDefault();
 		});
@@ -220,11 +227,20 @@ export class ShellWindow {
 		// Built before anything can ask for them, and with their pages already
 		// loading. Creation used to be the first modal's job, and the first
 		// modal of a session was drawn on a page that had not run yet.
-		this.sidebar = new ChromeView(preloadPath, `${pageBase}/sidebar.html`);
+		this.sidebar = new ChromeView(
+			preloadFor("sidebar"),
+			`${pageBase}/sidebar.html`,
+		);
 		this.sidebar.adopt(this.window);
-		this.agents = new ChromeView(preloadPath, `${pageBase}/agents.html`);
+		this.agents = new ChromeView(
+			preloadFor("agents"),
+			`${pageBase}/agents.html`,
+		);
 		this.agents.adopt(this.window);
-		this.toasts = new ToastsView(preloadPath, `${pageBase}/toasts.html`);
+		this.toasts = new ToastsView(
+			preloadFor("toasts"),
+			`${pageBase}/toasts.html`,
+		);
 		this.toasts.adopt({
 			window: this.window,
 			sizeChanged: () => {
@@ -232,7 +248,10 @@ export class ShellWindow {
 			},
 			focusSurface: () => this.focusSurface(),
 		});
-		this.picker = new PickerView(preloadPath, `${pageBase}/picker.html`);
+		this.picker = new PickerView(
+			preloadFor("picker"),
+			`${pageBase}/picker.html`,
+		);
 		this.picker.adopt({
 			window: this.window,
 			focusSurface: () => this.focusSurface(),
@@ -1051,7 +1070,7 @@ export function isQuitting(): boolean {
 }
 
 export function createShellWindow(
-	preloadPath: string,
+	preloadDirectory: string,
 	pageUrl: string,
 	palette: ShellPalette | undefined,
 	titleBar: TitleBarMode,
@@ -1059,7 +1078,7 @@ export function createShellWindow(
 	if (current) {
 		throw new Error("the App Shell window already exists");
 	}
-	current = new ShellWindow(preloadPath, pageUrl, palette, titleBar);
+	current = new ShellWindow(preloadDirectory, pageUrl, palette, titleBar);
 	return current;
 }
 

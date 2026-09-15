@@ -23,7 +23,7 @@
  */
 
 import { useCallback, useEffect, useRef } from "react";
-import { devhub } from "../client";
+import { devhub } from "./client";
 
 /** What was last sent, so an identical measurement is not sent again. */
 function same(

@@ -24,9 +24,9 @@ import type {
   AppError,
   AppSnapshot,
 } from "../ipc/appShell";
-import { AppShellProvider } from "./AppShellContext";
-import type { AppShellClient } from "./client";
-import { useAppShell } from "./useAppShell";
+import { ShellPageProvider } from "./ShellPageContext";
+import type { ShellPageBridge } from "../ipc/contract";
+import { useShellPage } from "./ShellPageContext";
 
 const SNAPSHOT = {
   schemaVersion: 1,
@@ -49,7 +49,7 @@ const PROFILES = {
 
 /** What this page does with a failure of its own: hand it to main. */
 function Probe() {
-  const { dispatch } = useAppShell();
+  const { dispatch } = useShellPage();
   return (
     <button
       type="button"
@@ -70,33 +70,35 @@ function mount() {
     getAgentProfiles: async () => PROFILES,
     replay: async () => ({ cursor: 0, events: [], snapshot: SNAPSHOT }),
     dispatch: vi.fn(async () => ({ kind: "updated", snapshot: SNAPSHOT })),
-    subscribe: () => () => undefined,
-    subscribeAppearance: () => () => undefined,
+    onSnapshot: () => () => undefined,
+    onTheme: () => () => undefined,
+    onAppearance: () => () => undefined,
     getWindowTitle: async () => "DevHub",
-    subscribeWindowTitle: () => () => undefined,
-    subscribeAgentProfiles: () => () => undefined,
-    subscribeWorkspacePicker: () => () => undefined,
+    onWindowTitle: () => () => undefined,
+    onAgentProfiles: () => () => undefined,
+    onWorkspacePicker: () => () => undefined,
     getRepositoryStatus: async () => ({ sequence: 0, workspaces: [] }),
-    subscribeRepositoryStatus: () => () => undefined,
+    onRepositoryStatus: () => () => undefined,
     startWorkspacePicker: async () => "",
     cancelWorkspacePicker: async () => undefined,
     selectWorkspacePicker: async () => ({}) as never,
     chooseWorkspaceFolder: async () => undefined,
     openSettings: async () => undefined,
     openExternalUrl: async () => undefined,
-    setContentRect: async () => undefined,
-    setContentSurface: async () => undefined,
     openModal: async () => "",
     closeModal: async () => undefined,
     reportNoticeRetired: async () => undefined,
     raiseFailure: (error: AppError) => {
       raised.push(error);
     },
-  } as unknown as AppShellClient;
+  } as unknown as ShellPageBridge;
+  // The bridge is what a page has, so the fake is installed the way the
+  // preload installs the real one.
+  window.devhub = client;
   render(
-    <AppShellProvider client={client}>
+    <ShellPageProvider>
       <Probe />
-    </AppShellProvider>,
+    </ShellPageProvider>,
   );
   return { client, raised };
 }

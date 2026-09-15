@@ -37,7 +37,7 @@
  * does, so there is one path from either.
  */
 
-import { useAppShell } from "../../useAppShell";
+import { useShellPage } from "../../ShellPageContext";
 import type { AppIntent } from "../../../ipc/appShell";
 
 export interface TitleBarProps {
@@ -70,7 +70,7 @@ function SidebarMark() {
 }
 
 export function TitleBar({ sidebarCollapsed, onDispatch }: TitleBarProps) {
-  const { windowTitle } = useAppShell();
+  const { windowTitle } = useShellPage();
 
   return (
     // A `header`, not a `div`: it is the window's banner, and it is the only

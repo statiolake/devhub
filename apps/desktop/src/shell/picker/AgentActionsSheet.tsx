@@ -19,7 +19,7 @@ import { useEffect, useState } from "react";
 import type { AgentActionWire } from "../../ipc/contract";
 import { TRIGGER_NAMES } from "../../model/agentActions";
 import { Picker, type PickerItem } from "../components/shell/Picker";
-import { useAppShell } from "../useAppShell";
+import { usePicker } from "./PickerContext";
 
 export interface AgentActionsSheetProps {
   readonly agentId: string;
@@ -30,7 +30,7 @@ export function AgentActionsSheet({
   agentId,
   onDismiss,
 }: AgentActionsSheetProps) {
-  const { agentActions, runAgentAction, state } = useAppShell();
+  const { agentActions, runAgentAction, state } = usePicker();
   const [actions, setActions] = useState<readonly AgentActionWire[]>([]);
   const [loaded, setLoaded] = useState(false);
 

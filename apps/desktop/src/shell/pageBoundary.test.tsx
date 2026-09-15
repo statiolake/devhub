@@ -16,9 +16,10 @@ import { PageBoundary } from "./PageBoundary";
 
 const raiseFailure = vi.fn();
 
-vi.mock("./client", () => ({
-  devhub: () => ({ raiseFailure }),
-}));
+// The boundary is on every page and so is `raiseFailure`, which is why the
+// boundary reads the bridge page-agnostically rather than through any one
+// page's client.
+window.devhub = { raiseFailure };
 
 function Breaks(): never {
   throw new Error("the sidebar could not be drawn");

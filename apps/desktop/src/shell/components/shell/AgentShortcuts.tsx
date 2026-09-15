@@ -40,7 +40,7 @@ import type {
   WorkspaceRepositoryWire,
 } from "../../../ipc/contract";
 import { Glyph, type GlyphName } from "../sidebar/icons";
-import { useAppShell } from "../../useAppShell";
+import { useAgents } from "../../agents/AgentsContext";
 
 /**
  * Which shortcuts this workspace is offering, in the order they happen.
@@ -140,7 +140,7 @@ export function AgentShortcuts({
   readonly agent: AgentSnapshot;
   readonly repository: WorkspaceRepositoryWire | undefined;
 }) {
-  const { agentActions, subscribeAgentActions, runAgentAction } = useAppShell();
+  const { agentActions, subscribeAgentActions, runAgentAction } = useAgents();
   const [actions, setActions] = useState<readonly AgentActionWire[]>([]);
 
   // The wording is a setting, so it is read from main rather than known here —

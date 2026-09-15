@@ -28,7 +28,7 @@
  */
 
 import { Picker } from "../components/shell/Picker";
-import { useAppShell } from "../useAppShell";
+import { usePicker } from "./PickerContext";
 
 export interface WorktreeCloseSheetProps {
   readonly workspaceId: string;
@@ -48,7 +48,7 @@ export function WorktreeCloseSheet({
   dirty,
   onDismiss,
 }: WorktreeCloseSheetProps) {
-  const { answerWorktreeClose } = useAppShell();
+  const { answerWorktreeClose } = usePicker();
 
   return (
     <Picker

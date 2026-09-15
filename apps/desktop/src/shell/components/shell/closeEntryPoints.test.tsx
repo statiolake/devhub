@@ -26,8 +26,11 @@ import type {
   WorkspaceCloseWire,
   WorkspaceStateWire,
 } from "../../../ipc/appShell";
-import type { AppShellContextValue } from "../../useAppShell";
-import { AppShellContext } from "../../useAppShell";
+import { ShellPageContext, type ShellPageValue } from "../../ShellPageContext";
+import {
+  SidebarContext,
+  type SidebarValue,
+} from "../../sidebar/SidebarContext";
 import { Sidebar } from "../sidebar/Sidebar";
 import { Unavailable } from "./SurfaceViewport";
 
@@ -114,32 +117,38 @@ function mount(where: "sidebar" | "surface", row: Row) {
     agentProfiles: { sequence: 1, availability: "available", profiles: [] },
     repositoryStatus: { sequence: 1, workspaces: [] },
     state: { status: "ready", snapshot: snapshotWith(row) },
-  } as unknown as AppShellContextValue;
+  };
+  // Two pages, one close. The row is drawn on the `sidebar` view and the
+  // surface state on the window's own page, so the two are given the same
+  // `closeWorkspace` here for the same reason main gives them the same
+  // channel: "close this" has to mean one thing wherever it is asked.
   render(
-    <AppShellContext.Provider value={value}>
-      {where === "sidebar" ? (
-        <Sidebar snapshot={snapshotWith(row)} onDispatch={onDispatch} />
-      ) : (
-        <Unavailable
-          workspace={snapshotWith(row).workspaces[0]}
-          actions={
-            row.state.kind === "unavailable"
-              ? [
-                  {
-                    label: "Close",
-                    run: () => {
-                      closeWorkspace(WORKSPACE_ID);
+    <ShellPageContext.Provider value={value as unknown as ShellPageValue}>
+      <SidebarContext.Provider value={value as unknown as SidebarValue}>
+        {where === "sidebar" ? (
+          <Sidebar snapshot={snapshotWith(row)} onDispatch={onDispatch} />
+        ) : (
+          <Unavailable
+            workspace={snapshotWith(row).workspaces[0]}
+            actions={
+              row.state.kind === "unavailable"
+                ? [
+                    {
+                      label: "Close",
+                      run: () => {
+                        closeWorkspace(WORKSPACE_ID);
+                      },
                     },
-                  },
-                ]
-              : undefined
-          }
-          onClose={() => {
-            closeWorkspace(WORKSPACE_ID);
-          }}
-        />
-      )}
-    </AppShellContext.Provider>,
+                  ]
+                : undefined
+            }
+            onClose={() => {
+              closeWorkspace(WORKSPACE_ID);
+            }}
+          />
+        )}
+      </SidebarContext.Provider>
+    </ShellPageContext.Provider>,
   );
   // Both dispatch sinks come back because the Sidebar has one of its own, and
   // "the page sent a lifecycle intent instead" is the bug being pinned rather

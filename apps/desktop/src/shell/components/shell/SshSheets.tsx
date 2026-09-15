@@ -16,8 +16,8 @@
  */
 
 import { useEffect, useState } from "react";
-import type { SshHostWire } from "../../client";
-import { useAppShell } from "../../useAppShell";
+import type { SshHostWire } from "../../../ipc/contract";
+import { usePicker } from "../../picker/PickerContext";
 import { Picker, type PickerItem } from "./Picker";
 
 /** The row that means "the destination typed above". */
@@ -81,7 +81,7 @@ export function sshHostItems(
  * empty list, which is no rows — not a failure.
  */
 export function useSshHosts(): readonly SshHostWire[] {
-  const { listSshHosts, reportFailure } = useAppShell();
+  const { listSshHosts, reportFailure } = usePicker();
   const [hosts, setHosts] = useState<readonly SshHostWire[]>([]);
   useEffect(() => {
     let live = true;

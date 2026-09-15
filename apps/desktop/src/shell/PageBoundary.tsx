@@ -22,7 +22,8 @@
 
 import { Component, type ErrorInfo, type ReactNode } from "react";
 import type { AppError } from "../ipc/appShell";
-import { devhub } from "./client";
+import type { PageBridge } from "../ipc/contract";
+import { pageBridge } from "./bridge";
 import { toAppError } from "./failure";
 
 interface PageBoundaryProps {
@@ -47,7 +48,7 @@ export class PageBoundary extends Component<
     // The component stack is the whole diagnosis and React hands it over
     // exactly once, here. It goes to main's log with the failure, because a
     // page that has stopped is not a place to keep a record.
-    devhub().raiseFailure({
+    pageBridge<PageBridge>("current").raiseFailure({
       ...toAppError(error),
       detail: [toAppError(error).detail, info.componentStack]
         .filter((part) => part !== undefined && part !== null && part !== "")

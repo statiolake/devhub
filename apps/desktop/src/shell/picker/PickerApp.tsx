@@ -16,10 +16,11 @@
  *   `onModals` was on the bridge for every page while one `index.html` served
  *   three surfaces, so a page that took the subscription simply never heard
  *   anything. A page per view is what makes that trap unspellable.
- * - the projections the sheets read: `snapshotChanged`, `appearanceChanged`,
- *   `workspacePicker`, `agentProfilesChanged`, `agentActionsChanged`,
- *   `repositoryStatusChanged`, `themeChanged`. A modal is drawn from the same
- *   model the sidebar lists, which is why it is told rather than asking.
+ * - the projections the sheets read: `snapshotChanged`, `workspacePicker`,
+ *   `agentProfilesChanged`, `agentActionsChanged`, `themeChanged`. A modal is
+ *   drawn from the same model the sidebar lists, which is why it is told
+ *   rather than asking. Not the appearance and not the repository status: no
+ *   sheet reads either, and this page's bridge cannot spell them.
  *
  * **Leaving for main**
  * - `devhub:close-modal`, and the sheets' own invokes: the workspace picker,
@@ -34,8 +35,8 @@
  */
 
 import { useSyncExternalStore } from "react";
-import { AppShellProvider } from "../AppShellContext";
-import { devhub } from "../client";
+import { PickerProvider } from "./PickerContext";
+import { devhub } from "./client";
 import type { OpenModal } from "../../ipc/contract";
 import { WorkspacePicker } from "../components/shell/WorkspacePicker";
 import { ViewScopedAlert } from "../components/shell/ViewScopedAlert";
@@ -205,8 +206,8 @@ export function PickerApp() {
     // raises what began in it to main and draws only what main sent it, and
     // main sends `nativeError` to the page that draws failures. Nothing
     // arrives here, so nothing is drawn here.
-    <AppShellProvider>
+    <PickerProvider>
       <ModalLayer />
-    </AppShellProvider>
+    </PickerProvider>
   );
 }

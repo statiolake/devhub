@@ -24,7 +24,7 @@ import { useCallback, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { isImeComposing } from "../accessibility/ime";
 import { useInitialFocus } from "./initialFocus";
-import { useAppShell } from "../useAppShell";
+import { usePicker } from "./PickerContext";
 
 export interface InjectionReviewSheetProps {
   readonly agentId: string;
@@ -41,7 +41,7 @@ export function InjectionReviewSheet({
   text,
   onDismiss,
 }: InjectionReviewSheetProps) {
-  const { state, confirmInjection, cancelInjection } = useAppShell();
+  const { state, confirmInjection, cancelInjection } = usePicker();
   const [value, setValue] = useState(text);
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string>();

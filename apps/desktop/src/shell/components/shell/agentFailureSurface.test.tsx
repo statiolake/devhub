@@ -25,8 +25,8 @@ vi.mock("../../terminal/TerminalSurface", () => ({
 vi.mock("./AgentShortcuts", () => ({
   AgentShortcuts: () => null,
 }));
-vi.mock("../../useAppShell", () => ({
-  useAppShell: () => ({ repositoryStatus: { workspaces: [] } }),
+vi.mock("../../agents/AgentsContext", () => ({
+  useAgents: () => ({ repositoryStatus: { workspaces: [] } }),
 }));
 
 function snapshotWith(failure: AgentFailureStateWire | undefined): AppSnapshot {

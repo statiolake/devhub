@@ -21,10 +21,9 @@
  *   `focus_sidebar` and `retry_app`. The other two commands that used to
  *   arrive here belong to other pages now and are delivered to them.
  * - **asks**: `dispatch`, `openModal`, `closeWorkspace`, `openExternalUrl`,
- *   `openSettings`, `previewLayout` (the width under the pointer, while a
- *   drag lasts), `focusSurface` (Escape, which is a request to main because
- *   what should get the keys is usually a native view this document cannot
- *   focus).
+ *   `previewLayout` (the width under the pointer, while a drag lasts),
+ *   `focusSurface` (Escape, which is a request to main because what should get
+ *   the keys is usually a native view this document cannot focus).
  * - **draws no failure it raised.** What goes wrong here is handed to main and
  *   drawn on the `toasts` view, over whatever is on screen. See
  *   `main/shell/publishAudience.ts`.
@@ -40,27 +39,17 @@
  * region declared inside a child view composes into one handle.
  */
 
-import { AppShellProvider } from "../AppShellContext";
-import { devhub } from "../client";
-import { useAppShell } from "../useAppShell";
+import { SidebarProvider } from "./SidebarContext";
+import { devhub } from "./client";
+import { useSidebar } from "./SidebarContext";
 import { Sidebar } from "../components/sidebar/Sidebar";
 import type { AppIntent } from "../../ipc/appShell";
 
 export function SidebarApp() {
   return (
-    <AppShellProvider
-      // This page draws no modals; they stand on the `picker` view, one layer
-      // above every workbench. So a confirmation goes to main, which is the
-      // one place in DevHub where a question can be both seen and answered.
-      raiseConfirmation={(confirmation) => {
-        void devhub().openModal({
-          kind: "close-confirmation",
-          ...confirmation,
-        });
-      }}
-    >
+    <SidebarProvider>
       <Column />
-    </AppShellProvider>
+    </SidebarProvider>
   );
 }
 
@@ -74,7 +63,7 @@ export function SidebarApp() {
  * drawing the chrome.
  */
 function Column() {
-  const { state, appearance } = useAppShell();
+  const { state, appearance } = useSidebar();
   if (state.status !== "ready") return null;
   const onDispatch = (intent: AppIntent) => {
     void devhub().dispatch(intent);

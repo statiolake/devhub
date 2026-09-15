@@ -11,7 +11,7 @@
  * `invoke` are the Electron preload's channel id and `ipcRenderer.invoke`.
  */
 
-import { devhub } from "../client";
+import { devhub } from "../agents/client";
 import {
   MAX_INPUT_BYTES,
   TerminalFailure,

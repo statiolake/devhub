@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import type { AppAppearance, AppSnapshot } from "../../ipc/appShell";
-import { useAppShell } from "../useAppShell";
+import { useAgents } from "./AgentsContext";
 import { runningAgentSurfaces } from "../components/shell/surfacePool";
 import { agentFailureSummary } from "../components/shell/diagnosticLabel";
 import { Failure } from "../components/shell/SurfaceState";
@@ -33,7 +33,7 @@ export function AgentPane({
    */
   readonly activeKey: string | undefined;
 }) {
-  const { repositoryStatus } = useAppShell();
+  const { repositoryStatus } = useAgents();
   const pool = useMemo(() => runningAgentSurfaces(snapshot), [snapshot]);
   // The shortcuts belong to the Agent on screen and to no other. The pool
   // keeps every running Agent mounted so that coming back to one is unhiding a

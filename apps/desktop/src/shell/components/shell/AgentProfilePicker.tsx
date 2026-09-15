@@ -17,7 +17,7 @@
  */
 
 import type { AgentProfileKindWire } from "../../../ipc/appShell";
-import { useAppShell } from "../../useAppShell";
+import { usePicker } from "../../picker/PickerContext";
 import { Picker } from "./Picker";
 import type { ReactNode } from "react";
 
@@ -44,7 +44,7 @@ export function AgentProfilePicker({
   onChoose,
   onCancel,
 }: AgentProfilePickerProps) {
-  const { agentProfiles } = useAppShell();
+  const { agentProfiles } = usePicker();
 
   return (
     <Picker

@@ -20,7 +20,7 @@ import { WebglAddon } from "@xterm/addon-webgl";
 import { Terminal, type ITheme } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import "./xtermSession.css";
-import { devhub } from "../client";
+import { devhub } from "../agents/client";
 import { editingSequence } from "./keys";
 import {
   terminalFontStack,

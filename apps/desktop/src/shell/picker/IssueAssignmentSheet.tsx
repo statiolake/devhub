@@ -36,11 +36,11 @@ import {
   cloneParentItems,
   cloneTypedItem,
 } from "../components/shell/cloneDestination";
-import type { AgentActionWire, IssueRepository } from "../client";
+import type { AgentActionWire, IssueRepository } from "../../ipc/contract";
 import { folderName, githubCloneTarget } from "../../model/projects";
 import { placeLabel, type WorkspacePlaceWire } from "../../ipc/contract";
 import { toAppError } from "../failure";
-import { useAppShell } from "../useAppShell";
+import { usePicker } from "./PickerContext";
 
 export interface IssueAssignmentSheetProps {
   readonly onDismiss: () => void;
@@ -89,7 +89,7 @@ export function IssueAssignmentSheet({ onDismiss }: IssueAssignmentSheetProps) {
     cloneParentDirectories,
     assignmentBranch,
     agentActions,
-  } = useAppShell();
+  } = usePicker();
 
   /**
    * The profiles as they are *now*, not as they were when the flow started.

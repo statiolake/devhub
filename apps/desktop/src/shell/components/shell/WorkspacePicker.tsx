@@ -25,7 +25,7 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
-import { useAppShell } from "../../useAppShell";
+import { usePicker } from "../../picker/PickerContext";
 import { AgentProfilePicker } from "./AgentProfilePicker";
 import { Picker, type PickerItem } from "./Picker";
 import { PathLabel } from "./PathLabel";
@@ -189,7 +189,7 @@ export function WorkspacePicker({ onDismiss }: WorkspacePickerProps) {
     selectWorkspacePicker,
     chooseWorkspaceFolder,
     openSshWorkspace,
-  } = useAppShell();
+  } = usePicker();
 
   // The machines `~/.ssh/config` names, as rows in the same list as the
   // folders the local sources found — because to the person opening one they

@@ -28,7 +28,7 @@
  */
 
 import { useEffect, useState } from "react";
-import { useAppShell } from "../useAppShell";
+import { usePicker } from "./PickerContext";
 import { Picker } from "../components/shell/Picker";
 import type { CloseResourceWire } from "../../ipc/appShell";
 import type { ModalRequest } from "../../ipc/contract";
@@ -135,7 +135,7 @@ export function CloseConfirmationSheet({
     confirmPending,
     dismissCloseConfirmation,
     adoptConfirmation,
-  } = useAppShell();
+  } = usePicker();
 
   /**
    * Whether this page's model client has taken the confirmation on yet.

@@ -30,7 +30,7 @@ import {
   type GitHubLogin,
 } from "../../../model/projects";
 import { toAppError } from "../../failure";
-import { useAppShell } from "../../useAppShell";
+import { usePicker } from "../../picker/PickerContext";
 import {
   CLONE_INTO_TYPED,
   cloneParentItems,
@@ -48,7 +48,7 @@ function reasonOf(error: unknown): string {
  * separator so the person types a name and nothing else.
  */
 function useDefaultDirectory(): string | undefined {
-  const { projectDefaultDirectory, reportFailure } = useAppShell();
+  const { projectDefaultDirectory, reportFailure } = usePicker();
   const [directory, setDirectory] = useState<string>();
   useEffect(() => {
     let live = true;
@@ -71,7 +71,7 @@ function useDefaultDirectory(): string | undefined {
  * about `gh auth login` in front of somebody who is signed in perfectly well.
  */
 function useGitHubLogin(): GitHubLogin {
-  const { githubLogin } = useAppShell();
+  const { githubLogin } = usePicker();
   const [login, setLogin] = useState<GitHubLogin>({ kind: "pending" });
   useEffect(() => {
     let live = true;
@@ -156,7 +156,7 @@ export function NewProjectSheet({
   withAgent,
   onDismiss,
 }: ProjectSheetProps) {
-  const { createProject } = useAppShell();
+  const { createProject } = usePicker();
   const defaultDirectory = useDefaultDirectory();
   const [failure, setFailure] = useState<string>();
   /** What was typed into the attempt that failed, so it comes back with it. */
@@ -234,7 +234,7 @@ export function CloneProjectSheet({
   withAgent,
   onDismiss,
 }: ProjectSheetProps) {
-  const { cloneProject, cloneParentDirectories, reportFailure } = useAppShell();
+  const { cloneProject, cloneParentDirectories, reportFailure } = usePicker();
   const login = useGitHubLogin();
   const [asking, setAsking] = useState<"repository" | "where">("repository");
   /** The repository as it was last committed to, and as it is being typed. */

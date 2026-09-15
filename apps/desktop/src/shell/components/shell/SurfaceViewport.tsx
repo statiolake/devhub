@@ -29,7 +29,7 @@ import {
   type AppSnapshot,
   type WorkspaceSnapshot,
 } from "../../../ipc/appShell";
-import { useAppShell } from "../../useAppShell";
+import { useShellPage } from "../../ShellPageContext";
 import { devhub } from "../../client";
 import { closeDiagnosticLabel, closeFailureLabel } from "./diagnosticLabel";
 import { Failure, Waiting } from "./SurfaceState";
@@ -218,7 +218,7 @@ export function Unavailable({
  * area a few pixels from where the eye says the seam is.
  */
 export function SurfaceViewport({ snapshot }: SurfaceViewportProps) {
-  const { dispatch, closeWorkspace, chooseWorkspaceFolder } = useAppShell();
+  const { dispatch, closeWorkspace, chooseWorkspaceFolder } = useShellPage();
   const layout = snapshot.layout;
   const workspace = workspaceForContext(snapshot, snapshot.selection.context);
   const restartingEditors = useRestartingEditors();

@@ -1,44 +1,51 @@
 /**
- * DevHub's App Shell: the thing outside VS Code.
+ * The window's own page: what is left of the window when every other part of
+ * it is a view of its own.
  *
- * A Sidebar of Workspaces and their Agents, and the content area beside it,
- * with a title bar over both of them when `appearance.title_bar` says so.
- * There is no activity switcher: a Workspace *is* its workbench, and an Agent
- * is that workbench with the Agent's pane beside it. The content area is
- * deliberately a hole — main lays a workbench `WebContentsView` over it — and
- * everything else on this page is DOM, the window's drag handle included,
- * which is the bar when there is one and the Sidebar when there is not.
+ * # What this page is
+ *
+ * The title bar over both columns when `appearance.title_bar` says `shown`,
+ * the three states in which there is no child view to draw — starting, stopped
+ * before it started, and nothing selected — and the seam between the two
+ * halves of a split. The Sidebar, the Agents, the notices and the questions
+ * are children of the window in their own right and are drawn over this page,
+ * not in it.
+ *
+ * # Its contract with main
+ *
+ * - **reads**: the snapshot, the appearance, the window's name, and the
+ *   palette it was served wearing.
+ * - **is pushed**: `snapshotChanged`, `appearanceChanged`, `themeChanged`,
+ *   `windowTitleChanged`, `workbenchAreaChanged` (where main laid the
+ *   workbench, so this page leaves that hole), `editorRestarting`.
+ * - **asks**: `dispatch`, `openModal` (a confirmation, which is drawn on the
+ *   `picker` view), `closeWorkspace`, `chooseWorkspaceFolder`, `openSettings`,
+ *   `previewLayout` (the split ratio under the pointer, while a drag lasts).
+ * - **draws no failure it raised.** What goes wrong here is handed to main and
+ *   drawn on the `toasts` view. The one exception is the failure that stopped
+ *   this page from starting at all, which fills the content area, because
+ *   there is nothing behind it to draw instead.
+ *
+ * # `window.innerWidth` is not the window
+ *
+ * This document is a `BrowserWindow`'s own page and the others are views, but
+ * the same rule holds for all of them: what a page measures is stale for a
+ * frame after main moves it, and nothing here reads it. Where anything is, is
+ * `main/shell/windowLayout.ts`.
  */
 
 import { useCallback } from "react";
-import { AppShellProvider } from "./AppShellContext";
-import { devhub, type AppShellClient } from "./client";
-import { useAppShell } from "./useAppShell";
+import { ShellPageProvider, useShellPage } from "./ShellPageContext";
 import { TitleBar } from "./components/shell/TitleBar";
 import { SurfaceViewport } from "./components/shell/SurfaceViewport";
 import type { AppError } from "../ipc/appShell";
 import { Failure, Waiting } from "./components/shell/SurfaceState";
 
-export interface AppShellProps {
-  readonly client?: AppShellClient;
-}
-
-export function AppShell({ client }: AppShellProps) {
+export function AppShell() {
   return (
-    <AppShellProvider
-      client={client}
-      // This page draws no modals. A confirmation goes to main, which shows it
-      // on the overlay layer above every workbench — the one place in DevHub
-      // where a modal can be both seen and answered.
-      raiseConfirmation={(confirmation) => {
-        void devhub().openModal({
-          kind: "close-confirmation",
-          ...confirmation,
-        });
-      }}
-    >
+    <ShellPageProvider>
       <Workbench />
-    </AppShellProvider>
+    </ShellPageProvider>
   );
 }
 
@@ -89,7 +96,7 @@ function ErrorSurface({
 }
 
 function Workbench() {
-  const { state, appearance, dispatch, retry, openSettings } = useAppShell();
+  const { state, appearance, dispatch, retry, openSettings } = useShellPage();
   const onDispatch = useCallback(
     (intent: Parameters<typeof dispatch>[0]) => {
       void dispatch(intent);

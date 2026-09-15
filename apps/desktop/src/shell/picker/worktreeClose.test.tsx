@@ -19,7 +19,7 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { AppShellContext, type AppShellContextValue } from "../useAppShell";
+import { PickerContext, type PickerValue } from "./PickerContext";
 import { WorktreeCloseSheet } from "./WorktreeCloseSheet";
 
 // jsdom implements no layout, so it has no `scrollIntoView`. Keeping the
@@ -34,13 +34,13 @@ function mount(dirty: boolean | undefined) {
   const reportFailure = vi.fn();
   const onDismiss = vi.fn();
   render(
-    <AppShellContext.Provider
+    <PickerContext.Provider
       value={
         {
           dispatch,
           answerWorktreeClose,
           reportFailure,
-        } as unknown as AppShellContextValue
+        } as unknown as PickerValue
       }
     >
       <WorktreeCloseSheet
@@ -51,7 +51,7 @@ function mount(dirty: boolean | undefined) {
         dirty={dirty}
         onDismiss={onDismiss}
       />
-    </AppShellContext.Provider>,
+    </PickerContext.Provider>,
   );
   return { dispatch, answerWorktreeClose, reportFailure, onDismiss };
 }

@@ -14,9 +14,9 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AppSnapshot, WorkspaceCloseWire } from "../../../ipc/appShell";
-import type { RepositoryStatusWire } from "../../client";
-import type { AppShellContextValue } from "../../useAppShell";
-import { AppShellContext } from "../../useAppShell";
+import type { RepositoryStatusWire } from "../../../ipc/contract";
+import type { SidebarValue } from "../../sidebar/SidebarContext";
+import { SidebarContext } from "../../sidebar/SidebarContext";
 import { Sidebar } from "./Sidebar";
 
 // The Sidebar asks main to put modals on screen and listens for menu
@@ -78,7 +78,7 @@ function mount(
     reportFailure,
     agentProfiles: { sequence: 1, availability: "available", profiles: [] },
     repositoryStatus,
-  } as unknown as AppShellContextValue;
+  } as unknown as SidebarValue;
   const snapshot = {
     ...SNAPSHOT,
     workspaces: SNAPSHOT.workspaces.map((workspace) => ({
@@ -87,9 +87,9 @@ function mount(
     })),
   } as unknown as AppSnapshot;
   render(
-    <AppShellContext.Provider value={value}>
+    <SidebarContext.Provider value={value}>
       <Sidebar snapshot={snapshot} onDispatch={onDispatch} />
-    </AppShellContext.Provider>,
+    </SidebarContext.Provider>,
   );
   return {
     openExternalUrl,

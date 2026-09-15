@@ -208,7 +208,6 @@ import {
 	editorGaveUpFailure,
 	EditorSupervisor,
 } from "./editorSupervisor.js";
-import { shellTheme } from "./shellTheme.js";
 import { appearanceMode } from "./appearanceMode.js";
 import { editorElement, shellTitleFor } from "./shellTitle.js";
 import type { ShellPalette } from "../../ipc/palette.js";
@@ -5149,7 +5148,6 @@ export class AppController {
 			return this.snapshot();
 		});
 		handle(CHANNELS.getAppearance, () => this.appearance());
-		handle(CHANNELS.getTheme, () => shellTheme().palette() ?? null);
 		// Read back off the window rather than composed again: this is the
 		// name the OS is showing, which is the only thing the bar may letter.
 		handle(CHANNELS.getWindowTitle, () => shellWindow().window.getTitle());

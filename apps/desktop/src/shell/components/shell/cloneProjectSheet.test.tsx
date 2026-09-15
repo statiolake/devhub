@@ -17,10 +17,10 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { AppShellContextValue } from "../../useAppShell";
-import { AppShellContext } from "../../useAppShell";
+import type { PickerValue } from "../../picker/PickerContext";
+import { PickerContext } from "../../picker/PickerContext";
 import { CloneProjectSheet } from "./ProjectSheets";
-import type { GitHubLoginWire } from "../../client";
+import type { GitHubLoginWire } from "../../../ipc/contract";
 
 Element.prototype.scrollIntoView = vi.fn();
 afterEach(cleanup);
@@ -34,11 +34,11 @@ function mount(login: GitHubLoginWire = SIGNED_IN, initialQuery?: string) {
     cloneParentDirectories: vi.fn().mockResolvedValue(["/projects"]),
     githubLogin: vi.fn().mockResolvedValue(login),
     reportFailure: vi.fn(),
-  } as unknown as AppShellContextValue;
+  } as unknown as PickerValue;
   render(
-    <AppShellContext.Provider value={value}>
+    <PickerContext.Provider value={value}>
       <CloneProjectSheet initialQuery={initialQuery} onDismiss={vi.fn()} />
-    </AppShellContext.Provider>,
+    </PickerContext.Provider>,
   );
   return { cloneProject };
 }

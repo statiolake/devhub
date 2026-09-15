@@ -30,8 +30,8 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { AppShellContextValue } from "../../useAppShell";
-import { AppShellContext } from "../../useAppShell";
+import type { PickerValue } from "../../picker/PickerContext";
+import { PickerContext } from "../../picker/PickerContext";
 import { WorkspacePicker } from "./WorkspacePicker";
 
 Element.prototype.scrollIntoView = vi.fn();
@@ -74,11 +74,11 @@ function mount() {
     listSshHosts: vi.fn().mockResolvedValue([]),
     openSshWorkspace: vi.fn(),
     reportFailure: vi.fn(),
-  } as unknown as AppShellContextValue;
+  } as unknown as PickerValue;
   render(
-    <AppShellContext.Provider value={value}>
+    <PickerContext.Provider value={value}>
       <WorkspacePicker onDismiss={vi.fn()} />
-    </AppShellContext.Provider>,
+    </PickerContext.Provider>,
   );
   return { selectWorkspacePicker, createProject };
 }

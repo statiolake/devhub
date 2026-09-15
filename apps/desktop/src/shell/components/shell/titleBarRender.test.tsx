@@ -16,8 +16,8 @@ import "@testing-library/jest-dom/vitest";
 import { act, cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AppAppearance, AppSnapshot } from "../../../ipc/appShell";
-import type { AppShellClient } from "../../client";
-import { AppShellProvider } from "../../AppShellContext";
+import type { ShellPageBridge } from "../../../ipc/contract";
+import { ShellPageProvider } from "../../ShellPageContext";
 import { TitleBar } from "./TitleBar";
 
 const SNAPSHOT = {
@@ -44,25 +44,29 @@ function mount(collapsed: boolean) {
     getAgentProfiles: async () => ({ sequence: 1, profiles: [] }),
     replay: async () => ({ cursor: 0, events: [], snapshot: SNAPSHOT }),
     dispatch: vi.fn(async () => ({ kind: "updated", snapshot: SNAPSHOT })),
-    subscribe: () => () => undefined,
-    subscribeAppearance: () => () => undefined,
+    onSnapshot: () => () => undefined,
+    onTheme: () => () => undefined,
+    onAppearance: () => () => undefined,
     getWindowTitle: async () => "index.ts — devhub — DevHub",
-    subscribeWindowTitle: (listener: (title: string) => void) => {
+    onWindowTitle: (listener: (title: string) => void) => {
       publishTitle = listener;
       return () => undefined;
     },
-    subscribeAgentProfiles: () => () => undefined,
-    subscribeAppCondition: () => () => undefined,
-    subscribeNativeError: () => () => undefined,
-    subscribeWorkspacePicker: () => () => undefined,
+    onAgentProfiles: () => () => undefined,
+    onAppCondition: () => () => undefined,
+    onNativeError: () => () => undefined,
+    onWorkspacePicker: () => () => undefined,
     getRepositoryStatus: async () => ({ sequence: 0, workspaces: [] }),
-    subscribeRepositoryStatus: () => () => undefined,
-  } as unknown as AppShellClient;
+    onRepositoryStatus: () => () => undefined,
+  } as unknown as ShellPageBridge;
 
+  // The bridge is what a page has, so the fake is installed the way the
+  // preload installs the real one.
+  window.devhub = client;
   render(
-    <AppShellProvider client={client}>
+    <ShellPageProvider>
       <TitleBar sidebarCollapsed={collapsed} onDispatch={onDispatch} />
-    </AppShellProvider>,
+    </ShellPageProvider>,
   );
 
   return {

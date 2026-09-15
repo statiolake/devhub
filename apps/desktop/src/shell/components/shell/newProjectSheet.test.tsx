@@ -13,8 +13,8 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { AppShellContextValue } from "../../useAppShell";
-import { AppShellContext } from "../../useAppShell";
+import type { PickerValue } from "../../picker/PickerContext";
+import { PickerContext } from "../../picker/PickerContext";
 import { NewProjectSheet } from "./ProjectSheets";
 
 Element.prototype.scrollIntoView = vi.fn();
@@ -25,11 +25,11 @@ function mount(initialQuery?: string, createProject = vi.fn()) {
     createProject,
     projectDefaultDirectory: vi.fn().mockResolvedValue("/projects"),
     reportFailure: vi.fn(),
-  } as unknown as AppShellContextValue;
+  } as unknown as PickerValue;
   render(
-    <AppShellContext.Provider value={value}>
+    <PickerContext.Provider value={value}>
       <NewProjectSheet initialQuery={initialQuery} onDismiss={vi.fn()} />
-    </AppShellContext.Provider>,
+    </PickerContext.Provider>,
   );
   return { createProject };
 }

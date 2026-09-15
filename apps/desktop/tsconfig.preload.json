@@ -1,6 +1,6 @@
 {
-  // The App Shell page's preload. Vite bundles it (see vite.config.preload.ts);
-  // this config only type-checks it.
+  // The pages' preloads, one per page. Vite bundles each of them (see
+  // scripts/build-preloads.mjs); this config only type-checks them.
   "compilerOptions": {
     "target": "ES2024",
     "lib": ["ES2024", "DOM", "DOM.Iterable"],

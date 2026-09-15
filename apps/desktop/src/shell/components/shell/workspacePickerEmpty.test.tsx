@@ -15,8 +15,8 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { AppShellContextValue } from "../../useAppShell";
-import { AppShellContext } from "../../useAppShell";
+import type { PickerValue } from "../../picker/PickerContext";
+import { PickerContext } from "../../picker/PickerContext";
 import { WorkspacePicker } from "./WorkspacePicker";
 
 Element.prototype.scrollIntoView = vi.fn();
@@ -34,11 +34,11 @@ function mount(pickerSourceCount: number | undefined) {
     listSshHosts: vi.fn().mockResolvedValue([]),
     openSshWorkspace: vi.fn(),
     reportFailure: vi.fn(),
-  } as unknown as AppShellContextValue;
+  } as unknown as PickerValue;
   render(
-    <AppShellContext.Provider value={value}>
+    <PickerContext.Provider value={value}>
       <WorkspacePicker onDismiss={vi.fn()} />
-    </AppShellContext.Provider>,
+    </PickerContext.Provider>,
   );
 }
 

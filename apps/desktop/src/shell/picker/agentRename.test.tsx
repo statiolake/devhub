@@ -28,8 +28,8 @@ import type {
   AppOutcome,
   AppSnapshot,
 } from "../../ipc/appShell";
-import { AppShellProvider } from "../AppShellContext";
-import type { AppShellClient } from "../client";
+import { PickerProvider } from "./PickerContext";
+import type { PickerBridge } from "../../ipc/contract";
 import { AgentRenameSheet } from "./AgentRenameSheet";
 
 // jsdom implements no layout, so it has no `scrollIntoView`. Keeping the
@@ -114,7 +114,7 @@ const PROFILES: AgentProfiles = {
 function client(
   snapshot: AppSnapshot,
   dispatch: (action: unknown) => Promise<AppOutcome | undefined>,
-): AppShellClient {
+): PickerBridge {
   const later = <T,>(value: T) =>
     new Promise<T>((resolve) => setTimeout(() => resolve(value), 0));
   return {
@@ -123,28 +123,27 @@ function client(
     getAgentProfiles: () => later(PROFILES),
     replay: () => later({ cursor: 0, events: [], snapshot }),
     dispatch,
-    subscribe: () => () => undefined,
-    subscribeAppearance: () => () => undefined,
+    onSnapshot: () => () => undefined,
+    onTheme: () => () => undefined,
+    onAppearance: () => () => undefined,
     getWindowTitle: async () => "DevHub",
-    subscribeWindowTitle: () => () => undefined,
-    subscribeAgentProfiles: () => () => undefined,
-    subscribeAppCondition: () => () => undefined,
-    subscribeNativeError: () => () => undefined,
-    subscribeWorkspacePicker: () => () => undefined,
+    onWindowTitle: () => () => undefined,
+    onAgentProfiles: () => () => undefined,
+    onAppCondition: () => () => undefined,
+    onNativeError: () => () => undefined,
+    onWorkspacePicker: () => () => undefined,
     getRepositoryStatus: () => later({ sequence: 0, workspaces: [] }),
-    subscribeRepositoryStatus: () => () => undefined,
+    onRepositoryStatus: () => () => undefined,
     startWorkspacePicker: async () => "",
     cancelWorkspacePicker: async () => undefined,
     selectWorkspacePicker: async () => ({}) as never,
     chooseWorkspaceFolder: async () => undefined,
     openSettings: async () => undefined,
     openExternalUrl: async () => undefined,
-    setContentRect: async () => undefined,
-    setContentSurface: async () => undefined,
     openModal: async () => "",
     closeModal: async () => undefined,
     raiseFailure: () => undefined,
-  } as unknown as AppShellClient;
+  } as unknown as PickerBridge;
 }
 
 function mount(
@@ -155,10 +154,13 @@ function mount(
       ({ kind: "applied", snapshot }) as unknown as AppOutcome,
   ),
 ) {
+  // The bridge is what a page has, so the fake is installed the way the
+  // preload installs the real one.
+  window.devhub = client(snapshot, dispatch);
   render(
-    <AppShellProvider client={client(snapshot, dispatch)}>
+    <PickerProvider>
       <AgentRenameSheet agentId={AGENT_ID} onDismiss={onDismiss} />
-    </AppShellProvider>,
+    </PickerProvider>,
   );
   return dispatch;
 }

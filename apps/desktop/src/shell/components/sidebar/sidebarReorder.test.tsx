@@ -16,8 +16,8 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppIntent, AppSnapshot } from "../../../ipc/appShell";
-import type { AppShellContextValue } from "../../useAppShell";
-import { AppShellContext } from "../../useAppShell";
+import type { SidebarValue } from "../../sidebar/SidebarContext";
+import { SidebarContext } from "../../sidebar/SidebarContext";
 import { Sidebar } from "./Sidebar";
 
 window.devhub = {
@@ -130,11 +130,11 @@ function mount(onDispatch: (intent: AppIntent) => void) {
     dismissNewestNotice: vi.fn(),
     agentProfiles: { sequence: 1, availability: "available", profiles: [] },
     repositoryStatus: { sequence: 1, workspaces: [] },
-  } as unknown as AppShellContextValue;
+  } as unknown as SidebarValue;
   render(
-    <AppShellContext.Provider value={value}>
+    <SidebarContext.Provider value={value}>
       <Sidebar snapshot={snapshot()} onDispatch={onDispatch} />
-    </AppShellContext.Provider>,
+    </SidebarContext.Provider>,
   );
 }
 

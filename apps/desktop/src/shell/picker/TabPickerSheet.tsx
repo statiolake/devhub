@@ -15,7 +15,7 @@
 
 import { useMemo } from "react";
 import { Picker, type PickerItem } from "../components/shell/Picker";
-import { useAppShell } from "../useAppShell";
+import { usePicker } from "./PickerContext";
 
 const EMPTY: readonly never[] = [];
 
@@ -29,7 +29,7 @@ function rowId(kind: "workspace" | "agent" | "global", id: string): string {
 }
 
 export function TabPickerSheet({ onDismiss }: TabPickerSheetProps) {
-  const { state, dispatch } = useAppShell();
+  const { state, dispatch } = usePicker();
   // Before the first projection there is nothing to list. The sheet still
   // stands — it was asked for — and shows its own "nothing to go to" line.
   const workspaces =

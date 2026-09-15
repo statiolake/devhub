@@ -21,8 +21,8 @@ import {
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AgentSnapshot } from "../../../ipc/appShell";
 import type { WorkspaceRepositoryWire } from "../../../ipc/contract";
-import type { AppShellContextValue } from "../../useAppShell";
-import { AppShellContext } from "../../useAppShell";
+import type { AgentsValue } from "../../agents/AgentsContext";
+import { AgentsContext } from "../../agents/AgentsContext";
 import { AgentShortcuts } from "./AgentShortcuts";
 
 afterEach(cleanup);
@@ -72,11 +72,11 @@ function mount(
     subscribeAgentActions: () => () => undefined,
     runAgentAction,
     reportFailure,
-  } as unknown as AppShellContextValue;
+  } as unknown as AgentsValue;
   render(
-    <AppShellContext.Provider value={value}>
+    <AgentsContext.Provider value={value}>
       <AgentShortcuts agent={agent(over)} repository={repository} />
-    </AppShellContext.Provider>,
+    </AgentsContext.Provider>,
   );
   return { runAgentAction, reportFailure };
 }
@@ -237,11 +237,11 @@ describe("the shortcut buttons", () => {
       },
       runAgentAction: vi.fn(),
       reportFailure: vi.fn(),
-    } as unknown as AppShellContextValue;
+    } as unknown as AgentsValue;
     render(
-      <AppShellContext.Provider value={value}>
+      <AgentsContext.Provider value={value}>
         <AgentShortcuts agent={agent()} repository={DIRTY} />
-      </AppShellContext.Provider>,
+      </AgentsContext.Provider>,
     );
     expect(await screen.findByText("Commit the changes")).toBeInTheDocument();
     publish?.([
@@ -264,11 +264,11 @@ describe("the shortcut buttons", () => {
       subscribeAgentActions: () => () => undefined,
       runAgentAction: vi.fn(),
       reportFailure: vi.fn(),
-    } as unknown as AppShellContextValue;
+    } as unknown as AgentsValue;
     render(
-      <AppShellContext.Provider value={value}>
+      <AgentsContext.Provider value={value}>
         <AgentShortcuts agent={agent()} repository={DIRTY} />
-      </AppShellContext.Provider>,
+      </AgentsContext.Provider>,
     );
     await waitFor(() => {
       expect(document.querySelector(".agent-shortcuts")).toBeNull();

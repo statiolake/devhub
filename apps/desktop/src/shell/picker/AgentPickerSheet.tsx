@@ -13,7 +13,7 @@
  * already open, so the answer is dispatched straight at it.
  */
 
-import { useAppShell } from "../useAppShell";
+import { usePicker } from "./PickerContext";
 import { AgentProfilePicker } from "../components/shell/AgentProfilePicker";
 
 export interface AgentPickerSheetProps {
@@ -25,7 +25,7 @@ export function AgentPickerSheet({
   workspaceId,
   onDismiss,
 }: AgentPickerSheetProps) {
-  const { dispatch } = useAppShell();
+  const { dispatch } = usePicker();
 
   return (
     <AgentProfilePicker

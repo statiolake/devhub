@@ -24,8 +24,8 @@ import type {
   AgentStatus,
   AppSnapshot,
 } from "../../../ipc/appShell";
-import type { AppShellContextValue } from "../../useAppShell";
-import { AppShellContext } from "../../useAppShell";
+import type { SidebarValue } from "../../sidebar/SidebarContext";
+import { SidebarContext } from "../../sidebar/SidebarContext";
 import { Sidebar } from "./Sidebar";
 import { closeDiagnosticLabel } from "../shell/diagnosticLabel";
 
@@ -90,14 +90,14 @@ function mount(
     openExternalUrl: vi.fn(),
     agentProfiles: { sequence: 1, availability: "available", profiles: [] },
     repositoryStatus: { sequence: 1, workspaces: [] },
-  } as unknown as AppShellContextValue;
+  } as unknown as SidebarValue;
   render(
-    <AppShellContext.Provider value={value}>
+    <SidebarContext.Provider value={value}>
       <Sidebar
         snapshot={snapshotWithAgent(activity, unread, controlState)}
         onDispatch={vi.fn()}
       />
-    </AppShellContext.Provider>,
+    </SidebarContext.Provider>,
   );
 }
 

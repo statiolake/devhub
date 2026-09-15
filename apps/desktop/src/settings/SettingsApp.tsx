@@ -58,7 +58,8 @@ import {
 } from "../ipc/settings";
 import { isImeComposing } from "../shell/accessibility/ime";
 import { useAlertLifetime } from "../shell/alertLifetime";
-import { devhub } from "../shell/client";
+import { subscribeToUnhandled } from "../shell/failure";
+import { devhub } from "./client";
 import type { AppError } from "../ipc/appShell";
 import { Picker } from "../shell/components/shell/Picker";
 import {
@@ -371,6 +372,19 @@ export function SettingsApp({ client }: { readonly client?: SettingsClient }) {
     useCallback((failure: AppError) => failure.code, []),
   );
   useEffect(() => devhub().onNativeError(drawAppFailure), [drawAppFailure]);
+  // And the raising half. This window's root handler catches what nothing else
+  // did — a rejected save nobody awaited, a listener that threw — and hands it
+  // to main, once. Main journals it and sends it back here, which is the line
+  // above. Without this the handler collected failures and told nobody: the
+  // window went on looking as though the thing it had been asked to do had
+  // happened.
+  useEffect(
+    () =>
+      subscribeToUnhandled((failure) => {
+        devhub().raiseFailure(failure);
+      }),
+    [],
+  );
 
   const generation = useRef(0);
   const lastSequence = useRef(0);

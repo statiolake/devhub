@@ -43,26 +43,15 @@
  *   Agent's pane because that is where its subject is.
  */
 
-import { AppShellProvider } from "../AppShellContext";
-import { devhub } from "../client";
-import { useAppShell } from "../useAppShell";
+import { AgentsProvider } from "./AgentsContext";
+import { useAgents } from "./AgentsContext";
 import { AgentPane } from "./AgentPane";
 
 export function AgentsApp() {
   return (
-    <AppShellProvider
-      // This page draws no modals; they stand on the `picker` view. A
-      // confirmation goes to main, which is the one place in DevHub where a
-      // question can be both seen and answered.
-      raiseConfirmation={(confirmation) => {
-        void devhub().openModal({
-          kind: "close-confirmation",
-          ...confirmation,
-        });
-      }}
-    >
+    <AgentsProvider>
       <Panes />
-    </AppShellProvider>
+    </AgentsProvider>
   );
 }
 
@@ -75,7 +64,7 @@ export function AgentsApp() {
  * can see.
  */
 function Panes() {
-  const { state, appearance } = useAppShell();
+  const { state, appearance } = useAgents();
   if (state.status !== "ready") return null;
   const layout = state.snapshot.layout;
   // Which Agent is on screen is the projection's answer, read the one way it

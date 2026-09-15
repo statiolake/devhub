@@ -6,6 +6,8 @@ import type {
   SettingsSnapshot,
   SettingsSocketPreflightWire,
 } from "../ipc/settings";
+import type { SettingsPageBridge } from "../ipc/contract";
+import { pageBridge } from "../shell/bridge";
 
 export interface SettingsClient {
   getSnapshot(): Promise<SettingsSnapshot>;
@@ -25,6 +27,16 @@ declare global {
   interface Window {
     readonly devhubSettings?: SettingsApi;
   }
+}
+
+/**
+ * The other half every DevHub page has: what began here is told to main, and
+ * what main tells back is drawn here. Everything Settings is *for* is on
+ * `devhubSettings`; this is on `window.devhub`, like every other page's, and
+ * on this page it carries nothing else. See `SettingsPageBridge`.
+ */
+export function devhub(): SettingsPageBridge {
+  return pageBridge<SettingsPageBridge>("Settings");
 }
 
 export function settingsApi(): SettingsApi {

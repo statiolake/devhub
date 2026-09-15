@@ -502,74 +502,31 @@ export type WorkspacePickerEvent =
 			readonly truncated: boolean;
 	  };
 
-/** The surface the preload puts on `window.devhub`. */
-export interface DevhubApi {
-	getSnapshot(): Promise<AppSnapshot>;
-	getAppearance(): Promise<AppAppearance>;
-	/**
-	 * The colours of the Workbench's theme, which DevHub's chrome wears too.
-	 *
-	 * Separate from `getAppearance`, and not folded into it, because it has a
-	 * different source: appearance is what the person wrote in `config.toml`,
-	 * and this is what the Workbench is wearing. A config that will not parse
-	 * must not take the window's colours down with it.
-	 *
-	 * `null` means this profile has never run a workbench, so there is no theme
-	 * to follow and the tokens keep their own light/dark defaults.
-	 */
-	getTheme(): Promise<ShellPalette | null>;
-	/**
-	 * What this window is called, right now.
-	 *
-	 * The name is composed in main (`shellTitle.ts`) out of the model and what
-	 * the workbench on screen calls itself, and it is *the* name — the one the
-	 * OS shows in Mission Control and the window menu. When DevHub draws its
-	 * own title bar the page has to letter that same string, and asking for it
-	 * is the only way to do that without a second composition that could say
-	 * something different from the window it is written on.
-	 *
-	 * Pushed by `onWindowTitle` whenever it moves; read here once on mount,
-	 * for the moments between two pushes.
-	 */
-	getWindowTitle(): Promise<string>;
-	getAgentProfiles(): Promise<AgentProfiles>;
-	dispatch(intent: AppIntent): Promise<AppOutcome>;
-	replay(cursor: number): Promise<ReplayWire>;
+/**
+ * What a preload puts on `window.devhub` — one interface per page.
+ *
+ * There used to be one, `DevhubApi`, and every page got all of it. That was
+ * not a convenience; it was the reason a page could take a subscription that
+ * could never fire. `devhub:modals-changed` is sent to the `picker` view
+ * directly rather than through `send()`, so `onModals` on any other page was a
+ * listener on a channel nobody was ever going to write to — spellable, silent,
+ * and indistinguishable from a bug in the modal layer. The same shape of trap
+ * was available for every other member a page had no business with.
+ *
+ * So the contract is the preload. Each page is loaded with a preload of its
+ * own (`preload/<page>.ts`) that exposes exactly the members that page's
+ * header declares, and a member a page does not own is not *refused* there —
+ * it is absent, which is a thing TypeScript can say and a running page cannot
+ * work around. A page cannot subscribe to what it does not own because there
+ * is nothing on the bridge to subscribe with.
+ *
+ * The fragments below are the parts several pages genuinely share, written
+ * once so that "the projection" means the same four calls everywhere it
+ * appears. A page interface is what it extends plus what only it has.
+ */
 
-	onSnapshot(listener: (snapshot: AppSnapshot) => void): () => void;
-	/** Where main has laid the workbench, so the page leaves that hole. */
-	onWorkbenchArea(listener: (area: WorkbenchAreaWire) => void): () => void;
-	onAppearance(listener: (appearance: AppAppearance) => void): () => void;
-	onTheme(listener: (palette: ShellPalette) => void): () => void;
-	onWindowTitle(listener: (title: string) => void): () => void;
-	onAgentProfiles(listener: (profiles: AgentProfiles) => void): () => void;
-	onAgentActions(
-		listener: (actions: readonly AgentActionWire[]) => void,
-	): () => void;
-	/** Failures that happen between requests, such as a startup mount. */
-	onNativeError(listener: (error: AppError) => void): () => void;
-	/** Standing facts, raised and retracted by the source that watches them. */
-	onAppCondition(listener: (condition: AppConditionWire) => void): () => void;
-	/** The person started another action; see `actionStarted` in `CHANNELS`. */
-	onActionStarted(listener: () => void): () => void;
-	onMenuCommand(listener: (command: MenuCommand) => void): () => void;
-	onEditorRestarting(
-		listener: (event: EditorRestartingWire) => void,
-	): () => void;
-	/** What each workspace is working on, re-read on its own clock. */
-	getRepositoryStatus(): Promise<RepositoryStatusWire>;
-	onRepositoryStatus(
-		listener: (status: RepositoryStatusWire) => void,
-	): () => void;
-
-	/**
-	 * Put a modal on screen. Resolves to the id that closes it again.
-	 *
-	 * A page never draws a modal itself: main owns the set that is open, and
-	 * the `picker` view draws it. That is what makes stacking a fact about the
-	 * window rather than something each page has to reconstruct.
-	 */
-	openModal(request: ModalRequest): Promise<string>;
+/** What every page can do, whatever else it can. */
+export interface PageBridge {
 	/**
 	 * Say that a failure *began on this page*, so main can journal it and
 	 * publish it to the page that draws failures.
@@ -586,57 +543,85 @@ export interface DevhubApi {
 	 */
 	raiseFailure(error: AppError): void;
 	/**
-	 * How much room the notices this page is drawing take up.
+	 * The colours of the Workbench's theme, which DevHub's chrome wears too.
 	 *
-	 * The `toasts` page's whole protocol with the window, and it exists
-	 * because a `WebContentsView` is a native view whose hit testing is by
-	 * rectangle: every click inside its bounds is its own, whether or not
-	 * anything is painted there, and Electron has no per-view way to stand
-	 * aside. So the view is exactly as big as the notices, and this is the page
-	 * saying how big that is. Nothing to say is a size of zero, which takes the
-	 * view out of the window entirely.
-	 *
-	 * One way, like `raiseFailure` and for a weaker version of the same reason:
-	 * a measurement is a fact the page has, not a request it is waiting on.
+	 * Every page is served wearing the last palette main persisted, and this is
+	 * what keeps it current. Separate from the appearance, and not folded into
+	 * it, because it has a different source: appearance is what the person
+	 * wrote in `config.toml`, and this is what the Workbench is wearing. A
+	 * config that will not parse must not take the window's colours down with
+	 * it.
 	 */
-	reportToastsSize(size: {
-		readonly width: number;
-		readonly height: number;
-	}): void;
-	/**
-	 * "Try Again", pressed on a notice.
-	 *
-	 * The notices are drawn on a page of their own now, and what an app-scoped
-	 * failure's retry means — start the App Shell page's projection over — is
-	 * something only that other page can do. So it is routed: this reaches
-	 * main, and main asks the page that owns the projection. Every other way of
-	 * doing it would be a second page reaching into the first.
-	 */
-	retryApp(): void;
-	/**
-	 * Tell main a notice has left the screen, and by which rule.
-	 *
-	 * Main publishes every app-scoped notice and would otherwise never learn
-	 * that one came down: two of the three rules that retire a notice are
-	 * gestures in the page — the person dismissing it, and the person starting
-	 * another action — and the third is main's own retraction. A log that saw
-	 * only the raises could not tell a notice that stood for a minute from one
-	 * that blinked, which is the whole question a flicker report asks.
-	 *
-	 * It reports and nothing more: nothing in main acts on it, and a page that
-	 * cannot reach main loses a log line rather than a notice.
-	 */
-	reportNoticeRetired(retired: NoticeRetiredWire): Promise<void>;
-	/**
-	 * Take one modal off screen.
-	 *
-	 * `response` is the button a workbench's own question was answered with;
-	 * every other modal has nothing to answer and passes nothing.
-	 */
-	closeModal(id: string, response?: number): Promise<void>;
-	/** The modals that are open, newest last. The overlay page draws these. */
-	onModals(listener: (modals: readonly OpenModal[]) => void): () => void;
+	onTheme(listener: (palette: ShellPalette) => void): () => void;
+}
 
+/**
+ * The model as main projects it, and the one way to ask for a change.
+ *
+ * Four members and not three: a page reads the snapshot once, replays whatever
+ * it missed, is told about every move, and dispatches. Every page that draws
+ * from the model takes all four, because a page that took fewer would be a
+ * page whose picture of the model could be older than main's without anything
+ * saying so.
+ */
+export interface ProjectionBridge {
+	getSnapshot(): Promise<AppSnapshot>;
+	replay(cursor: number): Promise<ReplayWire>;
+	onSnapshot(listener: (snapshot: AppSnapshot) => void): () => void;
+	dispatch(intent: AppIntent): Promise<AppOutcome>;
+}
+
+/** What the person wrote in `config.toml` about how DevHub should look. */
+export interface AppearanceBridge {
+	getAppearance(): Promise<AppAppearance>;
+	onAppearance(listener: (appearance: AppAppearance) => void): () => void;
+}
+
+/** What each workspace is working on, re-read on its own clock. */
+export interface RepositoryStatusBridge {
+	getRepositoryStatus(): Promise<RepositoryStatusWire>;
+	onRepositoryStatus(
+		listener: (status: RepositoryStatusWire) => void,
+	): () => void;
+}
+
+/** The agents Settings knows how to start, and whether discovery could say. */
+export interface AgentProfilesBridge {
+	getAgentProfiles(): Promise<AgentProfiles>;
+	onAgentProfiles(listener: (profiles: AgentProfiles) => void): () => void;
+}
+
+/** The configured things one can say to a running agent. */
+export interface AgentActionsBridge {
+	/** The ways of starting an agent on an Issue, in the order Settings lists. */
+	agentActions(): Promise<readonly AgentActionWire[]>;
+	/**
+	 * The same list again whenever the configuration changes. Reading once was
+	 * enough while the actions were only read as a flow opened; a row of
+	 * buttons stands for as long as its pane does, so it has to be told.
+	 */
+	onAgentActions(
+		listener: (actions: readonly AgentActionWire[]) => void,
+	): () => void;
+	/**
+	 * Say one of the configured actions to a running agent.
+	 *
+	 * Queued rather than sent, on the same terms as the Issue flow's first
+	 * message: the injection waits for a settled idle screen, so a shortcut
+	 * pressed while the agent is working lands when the agent is next listening
+	 * rather than into the middle of its output.
+	 */
+	runAgentAction(agentId: string, actionId: string): Promise<AppOutcome>;
+}
+
+/**
+ * Every way a Workspace can be started, and the questions each one asks.
+ *
+ * One fragment because they are one page's job: the sheets that ask where a
+ * Workspace is coming from all stand on the `picker` view, and nothing else in
+ * DevHub opens one.
+ */
+export interface WorkspaceOpeningBridge {
 	/** Opens the native folder picker; resolves to the pick, or nothing. */
 	chooseWorkspaceFolder(): Promise<string | undefined>;
 	startWorkspacePicker(query: string): Promise<string>;
@@ -667,6 +652,13 @@ export interface DevhubApi {
 	): Promise<AppOutcome>;
 	/** Where a new project goes unless the person says otherwise. */
 	projectDefaultDirectory(): Promise<string>;
+	/**
+	 * The folders a clone could go into: the parents of everything the workspace
+	 * sources find, in the sources' own order. Answers once, with all of them.
+	 */
+	cloneParentDirectories(): Promise<readonly string[]>;
+	/** Clone, and answer with the directory git made. Opens nothing. */
+	cloneRepository(url: string, parentDirectory: string): Promise<string>;
 
 	/**
 	 * The machines `~/.ssh/config` already names.
@@ -678,7 +670,6 @@ export interface DevhubApi {
 	 * picker draws as "no rows", not as a failure.
 	 */
 	listSshHosts(): Promise<readonly SshHostWire[]>;
-
 	/**
 	 * Open a folder on another machine as a Workspace.
 	 *
@@ -704,62 +695,6 @@ export interface DevhubApi {
 	 * A single call would have one failure for five questions.
 	 */
 	findIssueRepositories(issueUrl: string): Promise<readonly IssueRepository[]>;
-	/**
-	 * Answer the three-way question about a worktree main is closing.
-	 *
-	 * The page answers a question main asked; it does not decide `--force`.
-	 * This used to be `removeWorktree(workspaceId, force)` — a destructive verb
-	 * of its own, with the renderer choosing the flag — beside a raw
-	 * `request_close_workspace` for the other answer, so one question was
-	 * carried out down two paths and only one of them went through the close
-	 * rule. `cancel` is the third answer and is the sheet's own dismissal, so
-	 * it is not sent.
-	 */
-	answerWorktreeClose(
-		workspaceId: string,
-		answer: "close" | "delete",
-	): Promise<AppOutcome>;
-	/**
-	 * Get rid of a workspace, whatever kind of workspace it is.
-	 *
-	 * **The one path.** The sidebar's close button, `Cmd+Q Shift+W` and
-	 * `Cmd+Q X` on a workspace row all come here, because "close this" has to
-	 * mean one thing: an ordinary workspace is closed, and a worktree is
-	 * deleted — without a question when there is nothing in it to lose, and with
-	 * the three-way one when there is. It answers nothing, because what happens
-	 * next may be a question; the projection says how it ended.
-	 */
-	closeWorkspace(workspaceId: string): Promise<void>;
-	/**
-	 * Say one of the configured actions to a running agent.
-	 *
-	 * Queued rather than sent, on the same terms as the Issue flow's first
-	 * message: the injection waits for a settled idle screen, so a shortcut
-	 * pressed while the agent is working lands when the agent is next listening
-	 * rather than into the middle of its output.
-	 */
-	runAgentAction(agentId: string, actionId: string): Promise<AppOutcome>;
-	/**
-	 * The wording, as the person settled on it. Nothing is sent by this call.
-	 *
-	 * Confirming only removes the reason the queue was refusing to send; the
-	 * idle gate is untouched and still decides the instant. See
-	 * `main/agent/injection.ts`.
-	 */
-	confirmInjection(
-		agentId: string,
-		injectionId: string,
-		text: string,
-	): Promise<AppOutcome>;
-	/** Drop the intent without sending it. The agent keeps running. */
-	cancelInjection(agentId: string, injectionId: string): Promise<AppOutcome>;
-	/** Clone, and answer with the directory git made. Opens nothing. */
-	cloneRepository(url: string, parentDirectory: string): Promise<string>;
-	/**
-	 * The folders a clone could go into: the parents of everything the workspace
-	 * sources find, in the sources' own order. Answers once, with all of them.
-	 */
-	cloneParentDirectories(): Promise<readonly string[]>;
 	/**
 	 * Which GitHub account this machine is signed in as, so a repository typed
 	 * as a bare name means the same thing to DevHub as to `gh repo clone`.
@@ -789,11 +724,108 @@ export interface DevhubApi {
 	 * open it, write the Issue down against it, and start the agent.
 	 */
 	assignIssue(request: IssueAssignment): Promise<AppOutcome>;
+}
 
-	/** The ways of starting an agent on an Issue, in the order Settings lists. */
-	agentActions(): Promise<readonly AgentActionWire[]>;
-
+/**
+ * The window's own page — `index.html`.
+ *
+ * What is left of the window when the Sidebar, the Agents, the notices and the
+ * questions are views of their own: the title bar, the states in which there
+ * is no child view to show, and the seam of a split.
+ */
+export interface ShellPageBridge
+	extends PageBridge,
+		ProjectionBridge,
+		AppearanceBridge {
+	/**
+	 * What this window is called, right now.
+	 *
+	 * The name is composed in main (`shellTitle.ts`) out of the model and what
+	 * the workbench on screen calls itself, and it is *the* name — the one the
+	 * OS shows in Mission Control and the window menu. When DevHub draws its
+	 * own title bar the page has to letter that same string, and asking for it
+	 * is the only way to do that without a second composition that could say
+	 * something different from the window it is written on.
+	 *
+	 * Pushed by `onWindowTitle` whenever it moves; read once on mount, for the
+	 * moments between two pushes.
+	 */
+	getWindowTitle(): Promise<string>;
+	onWindowTitle(listener: (title: string) => void): () => void;
+	/** Where main has laid the workbench, so the page leaves that hole. */
+	onWorkbenchArea(listener: (area: WorkbenchAreaWire) => void): () => void;
+	onEditorRestarting(
+		listener: (event: EditorRestartingWire) => void,
+	): () => void;
+	/**
+	 * Put a modal on screen. Resolves to the id that closes it again.
+	 *
+	 * A page never draws a modal itself: main owns the set that is open, and
+	 * the `picker` view draws it. That is what makes stacking a fact about the
+	 * window rather than something each page has to reconstruct.
+	 */
+	openModal(request: ModalRequest): Promise<string>;
+	/**
+	 * Get rid of a workspace, whatever kind of workspace it is.
+	 *
+	 * **The one path.** The sidebar's close button, `Cmd+Q Shift+W` and
+	 * `Cmd+Q X` on a workspace row all come here, because "close this" has to
+	 * mean one thing: an ordinary workspace is closed, and a worktree is
+	 * deleted — without a question when there is nothing in it to lose, and with
+	 * the three-way one when there is. It answers nothing, because what happens
+	 * next may be a question; the projection says how it ended.
+	 */
+	closeWorkspace(workspaceId: string): Promise<void>;
+	/** Opens the native folder picker; resolves to the pick, or nothing. */
+	chooseWorkspaceFolder(): Promise<string | undefined>;
+	/** A split drag in progress; `null` ends it. */
+	previewLayout(preview: LayoutPreviewWire): Promise<void>;
 	openSettings(): Promise<void>;
+}
+
+/** The Sidebar — `sidebar.html`. Its header states the whole of this. */
+export interface SidebarBridge
+	extends PageBridge,
+		ProjectionBridge,
+		AppearanceBridge,
+		RepositoryStatusBridge,
+		AgentProfilesBridge {
+	/**
+	 * The menu commands whose subject is drawn here, and no others.
+	 *
+	 * `open_workspace_picker`, `focus_sidebar` and `retry_app`. A command about
+	 * something drawn on another page is delivered to that page: main addresses
+	 * the view, so there is no longer a "whichever page happened to be
+	 * listening".
+	 */
+	onMenuCommand(listener: (command: MenuCommand) => void): () => void;
+	/** Put a modal on screen. Resolves to the id that closes it again. */
+	openModal(request: ModalRequest): Promise<string>;
+	/** Get rid of a workspace, whatever kind. **The one path**; see above. */
+	closeWorkspace(workspaceId: string): Promise<void>;
+	openExternalUrl(url: string): Promise<void>;
+	/** The sidebar's width under the pointer while a drag lasts; `null` ends it. */
+	previewLayout(preview: LayoutPreviewWire): Promise<void>;
+	/**
+	 * Hand the keyboard back to whatever is on screen.
+	 *
+	 * Escape in the Sidebar. It is a request to main rather than a `blur()`
+	 * here, because the surface is usually a native `WebContentsView` that this
+	 * document cannot focus — where the keyboard goes is the window's single
+	 * answer, and asking it is the only way not to write a second one.
+	 */
+	focusSurface(): Promise<void>;
+}
+
+/** Every Agent, in one view — `agents.html`. */
+export interface AgentsBridge
+	extends PageBridge,
+		ProjectionBridge,
+		AppearanceBridge,
+		RepositoryStatusBridge,
+		AgentActionsBridge {
+	/** Put a modal on screen — an injection to review. */
+	openModal(request: ModalRequest): Promise<string>;
 	openExternalUrl(url: string): Promise<void>;
 	/**
 	 * Put text on the Mac's clipboard.
@@ -804,20 +836,6 @@ export interface DevhubApi {
 	 * `clipboardProvider` in `shell/surfaces/xtermSession.ts`.
 	 */
 	writeClipboard(text: string): Promise<void>;
-
-	/** A sidebar or split drag in progress; `null` on either ends it. */
-	previewLayout(preview: LayoutPreviewWire): Promise<void>;
-	/**
-	 * Hand the keyboard back to whatever is on screen.
-	 *
-	 * Escape in the Sidebar. It is a request to main rather than a `blur()`
-	 * here, because the surface is usually a native `WebContentsView` that this
-	 * document cannot focus — where the keyboard goes is `ShellWindow
-	 * .focusSurface`'s single answer, and asking it is the only way not to
-	 * write a second one.
-	 */
-	focusSurface(): Promise<void>;
-
 	/**
 	 * The Surface runtime.
 	 *
@@ -831,14 +849,140 @@ export interface DevhubApi {
 	readonly terminal: DevhubTerminalApi;
 }
 
+/** The page DevHub speaks from — `toasts.html`. No model, by design. */
+export interface ToastsBridge extends PageBridge {
+	/** Failures that happen between requests, such as a startup mount. */
+	onNativeError(listener: (error: AppError) => void): () => void;
+	/** Standing facts, raised and retracted by the source that watches them. */
+	onAppCondition(listener: (condition: AppConditionWire) => void): () => void;
+	/** The person started another action; see `actionStarted` in `CHANNELS`. */
+	onActionStarted(listener: () => void): () => void;
+	/** Only `dismiss_alert`: the notice is here, so the chord is delivered here. */
+	onMenuCommand(listener: (command: MenuCommand) => void): () => void;
+	/**
+	 * Tell main a notice has left the screen, and by which rule.
+	 *
+	 * Main publishes every app-scoped notice and would otherwise never learn
+	 * that one came down: two of the three rules that retire a notice are
+	 * gestures in the page — the person dismissing it, and the person starting
+	 * another action — and the third is main's own retraction. A log that saw
+	 * only the raises could not tell a notice that stood for a minute from one
+	 * that blinked, which is the whole question a flicker report asks.
+	 *
+	 * It reports and nothing more: nothing in main acts on it, and a page that
+	 * cannot reach main loses a log line rather than a notice.
+	 */
+	reportNoticeRetired(retired: NoticeRetiredWire): Promise<void>;
+	/**
+	 * How much room the notices this page is drawing take up.
+	 *
+	 * This page's whole geometry protocol with the window, and it exists
+	 * because a `WebContentsView` is a native view whose hit testing is by
+	 * rectangle: every click inside its bounds is its own, whether or not
+	 * anything is painted there, and Electron has no per-view way to stand
+	 * aside. So the view is exactly as big as the notices, and this is the page
+	 * saying how big that is. Nothing to say is a size of zero, which takes the
+	 * view out of the window entirely.
+	 *
+	 * One way, like `raiseFailure` and for a weaker version of the same reason:
+	 * a measurement is a fact the page has, not a request it is waiting on.
+	 */
+	reportToastsSize(size: {
+		readonly width: number;
+		readonly height: number;
+	}): void;
+	/**
+	 * "Try Again", pressed on a notice.
+	 *
+	 * The notices are drawn on a page of their own, and what an app-scoped
+	 * failure's retry means — start the App Shell page's projection over — is
+	 * something only another page can do. So it is routed: this reaches main,
+	 * and main asks the page that owns the projection. Every other way of
+	 * doing it would be a second page reaching into the first.
+	 */
+	retryApp(): void;
+	openSettings(): Promise<void>;
+}
+
+/** Everything DevHub stops to ask — `picker.html`. */
+export interface PickerBridge
+	extends PageBridge,
+		ProjectionBridge,
+		AgentProfilesBridge,
+		AgentActionsBridge,
+		WorkspaceOpeningBridge {
+	/**
+	 * The modals that are open, newest last.
+	 *
+	 * On this bridge and on no other. Main sends `devhub:modals-changed` to
+	 * this view directly rather than through `send()`, so the member's absence
+	 * elsewhere is not a restriction — it is the truth about which page can
+	 * ever hear it.
+	 */
+	onModals(listener: (modals: readonly OpenModal[]) => void): () => void;
+	/**
+	 * Take one modal off screen.
+	 *
+	 * `response` is the button a workbench's own question was answered with;
+	 * every other modal has nothing to answer and passes nothing.
+	 */
+	closeModal(id: string, response?: number): Promise<void>;
+	/**
+	 * The wording, as the person settled on it. Nothing is sent by this call.
+	 *
+	 * Confirming only removes the reason the queue was refusing to send; the
+	 * idle gate is untouched and still decides the instant. See
+	 * `main/agent/injection.ts`.
+	 */
+	confirmInjection(
+		agentId: string,
+		injectionId: string,
+		text: string,
+	): Promise<AppOutcome>;
+	/** Drop the intent without sending it. The agent keeps running. */
+	cancelInjection(agentId: string, injectionId: string): Promise<AppOutcome>;
+	/**
+	 * Answer the three-way question about a worktree main is closing.
+	 *
+	 * The page answers a question main asked; it does not decide `--force`.
+	 * This used to be `removeWorktree(workspaceId, force)` — a destructive verb
+	 * of its own, with the renderer choosing the flag — beside a raw
+	 * `request_close_workspace` for the other answer, so one question was
+	 * carried out down two paths and only one of them went through the close
+	 * rule. `cancel` is the third answer and is the sheet's own dismissal, so
+	 * it is not sent.
+	 */
+	answerWorktreeClose(
+		workspaceId: string,
+		answer: "close" | "delete",
+	): Promise<AppOutcome>;
+}
+
 /**
- * Channel names. Requests are `invoke`/`handle`; the pushes are the four
- * projections the page mirrors. Main→page traffic carries nothing else.
+ * The Settings window's failure contract — `settings.html`.
+ *
+ * Everything Settings *does* is on `window.devhubSettings` (`ipc/settings.ts`).
+ * This is the other half every page has: what began here is told to main, and
+ * what main tells back is drawn here rather than on the shell window's
+ * notices, because a report about the window the person is looking at, drawn
+ * on a window they are not, is a report nobody reads. See
+ * `main/shell/publishAudience.ts`.
+ */
+export interface SettingsPageBridge extends PageBridge {
+	onNativeError(listener: (error: AppError) => void): () => void;
+}
+
+/**
+ * Channel names, for every page there is.
+ *
+ * Requests are `invoke`/`handle`, except the three that answer nothing and
+ * cannot (`raiseFailure`, `toastsSize`, `retryApp`); the rest are pushes. No
+ * page reaches all of them — which page may spell which is decided by the
+ * preload it was loaded with, and stated by the bridge interfaces above.
  */
 export const CHANNELS = {
 	getSnapshot: "devhub:get-snapshot",
 	getAppearance: "devhub:get-appearance",
-	getTheme: "devhub:get-theme",
 	getWindowTitle: "devhub:get-window-title",
 	getAgentProfiles: "devhub:get-agent-profiles",
 	dispatch: "devhub:dispatch",
