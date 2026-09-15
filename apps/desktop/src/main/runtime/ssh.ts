@@ -42,6 +42,7 @@ import { mkdir, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, posix } from "node:path";
 import { activityCounters, COUNTER } from "../diagnostics/counters.js";
+import { RollingTally } from "../diagnostics/rollingTally.js";
 import { errorWireAt, TypedFailure, withSummary } from "../../model/wire.js";
 import {
 	OperationDeadline,
@@ -665,7 +666,12 @@ export class SshRuntime implements Runtime {
 	readonly #tmuxDelivery: TmuxDelivery | undefined;
 
 	readonly #latencies: number[] = [];
-	#recentExecs: number[] = [];
+	/**
+	 * Execs of the last minute, counted rather than listed: a rate is a count,
+	 * and a list of every exec since launch is what this used to be. See
+	 * `diagnostics/rollingTally.ts`.
+	 */
+	readonly #recentExecs = new RollingTally(A_MINUTE);
 	#lastFailure: string | undefined;
 	#connected = false;
 	#masterPid: number | undefined;
@@ -891,7 +897,7 @@ export class SshRuntime implements Runtime {
 		);
 		await this.#ensureControlDirectory();
 		const startedAt = Date.now();
-		this.#recentExecs.push(startedAt);
+		this.#recentExecs.record();
 		let result: ExecResult;
 		// Queued behind the other commands on this master, because sshd counts
 		// sessions per connection and refuses the one over its limit. See
@@ -1648,15 +1654,13 @@ export class SshRuntime implements Runtime {
 	}
 
 	reading(): RuntimeReading {
-		const since = Date.now() - A_MINUTE;
-		this.#recentExecs = this.#recentExecs.filter((at) => at >= since);
 		return {
 			id: this.id,
 			connected: this.#connected,
 			masterPid: this.#masterPid,
 			medianRoundTripMs: this.#medianRoundTripMs(),
 			reconcileIntervalMs: this.cadence.reconcileIntervalMs,
-			execsLastMinute: this.#recentExecs.length,
+			execsLastMinute: this.#recentExecs.count(),
 			muxSessionsHeld: this.#sessions.held,
 			muxSessionsWaiting: this.#sessions.waiting,
 			muxFallbacks: this.#muxFallbacks,

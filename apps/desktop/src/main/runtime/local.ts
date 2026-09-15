@@ -30,6 +30,7 @@ import {
 import { homedir, tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { activityCounters, COUNTER } from "../diagnostics/counters.js";
+import { RollingTally } from "../diagnostics/rollingTally.js";
 import { runBounded } from "../terminal/command.js";
 import { openPty, type Pty } from "../terminal/pty.js";
 import { gitDirectoryOf } from "./gitDirectory.js";
@@ -118,8 +119,12 @@ export class LocalRuntime implements Runtime {
 
 	/** Round-trip times of the last few execs, newest last. */
 	readonly #latencies: number[] = [];
-	/** When each exec of the last minute started, so a rate is a count. */
-	#recentExecs: number[] = [];
+	/**
+	 * Execs of the last minute, counted rather than listed: a rate is a count,
+	 * and a list of every exec since launch is what this used to be. See
+	 * `diagnostics/rollingTally.ts`.
+	 */
+	readonly #recentExecs = new RollingTally(A_MINUTE);
 	#lastFailure: string | undefined;
 
 	home(): Promise<string> {
@@ -211,7 +216,7 @@ export class LocalRuntime implements Runtime {
 		// are; counted here, the rate is a fact rather than a guess.
 		activityCounters.record(COUNTER.process(basename(file)));
 		const startedAt = Date.now();
-		this.#recentExecs.push(startedAt);
+		this.#recentExecs.record();
 		try {
 			const output = await runBounded(
 				{
@@ -422,8 +427,6 @@ export class LocalRuntime implements Runtime {
 	}
 
 	reading(): RuntimeReading {
-		const since = Date.now() - A_MINUTE;
-		this.#recentExecs = this.#recentExecs.filter((at) => at >= since);
 		const sorted = [...this.#latencies].sort((left, right) => left - right);
 		return {
 			id: this.id,
@@ -433,7 +436,7 @@ export class LocalRuntime implements Runtime {
 			masterPid: undefined,
 			medianRoundTripMs: sorted[Math.floor(sorted.length / 2)] ?? 0,
 			reconcileIntervalMs: this.cadence.reconcileIntervalMs,
-			execsLastMinute: this.#recentExecs.length,
+			execsLastMinute: this.#recentExecs.count(),
 			// Nothing to multiplex: main is already on this machine.
 			muxSessionsHeld: 0,
 			muxSessionsWaiting: 0,
