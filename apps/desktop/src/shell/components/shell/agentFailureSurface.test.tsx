@@ -14,7 +14,7 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AgentFailureStateWire, AppSnapshot } from "../../../ipc/appShell";
-import { AgentPane } from "./SurfaceViewport";
+import { AgentPane } from "../../agents/AgentPane";
 
 // The pane mounts a live terminal surface per running Agent, which wants a
 // channel to main. The failure is drawn beside that, not by it, so the surface
@@ -65,7 +65,6 @@ function renderPane(failure: AgentFailureStateWire | undefined) {
       snapshot={snapshotWith(failure)}
       appearance={undefined}
       activeKey="agent:agent-1"
-      presentation="full"
     />,
   );
 }
@@ -116,7 +115,6 @@ describe("a failure about one Agent", () => {
         snapshot={snapshotWith(undefined)}
         appearance={undefined}
         activeKey="agent:agent-1"
-        presentation="full"
       />,
     );
     expect(container.querySelector(".agent-pane-failure")).toBeNull();

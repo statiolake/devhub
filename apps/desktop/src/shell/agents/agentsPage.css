@@ -1,0 +1,26 @@
+/*
+ * The Agents' own frame, now that the panes are the whole document.
+ *
+ * `styles/shell.css` describes an Agent's pane as one pane in a row: `flex: 1`
+ * beside the workbench's hole, and `position: absolute; inset: 0` over it when
+ * an Agent covers the area instead of sitting beside it. Neither is true here.
+ * The view *is* the rectangle the owner decided — the whole content area, or
+ * the trailing share of a split — so the pane simply fills it, and the two
+ * presentations that used to be a class on this element are two rectangles in
+ * `main/shell/windowLayout.ts`.
+ */
+
+.agents-page {
+  width: 100%;
+  height: 100%;
+  /* The terminal's own ground. The window's own page is behind this view and
+     is the chrome's colour, which is not the editor's, and a pane that let it
+     through would be a terminal with the wrong surface behind its cells for
+     as long as the emulator took to paint. */
+  background: var(--surface);
+}
+
+.agents-page > .agent-pane {
+  width: 100%;
+  height: 100%;
+}
