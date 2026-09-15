@@ -18,7 +18,7 @@ const { editingCommandFor, EDITING_COMMAND_GROUPS } = await import(
 	"./editingCommands.js"
 );
 
-const SETTINGS = "devhub-app://shell/index.html?window=settings";
+const SETTINGS = "devhub-app://shell/settings.html";
 const APP_SHELL = "devhub-app://shell/index.html";
 const WORKBENCH =
 	"vscode-file://vscode-app/out/vs/code/electron-sandbox/x.html";

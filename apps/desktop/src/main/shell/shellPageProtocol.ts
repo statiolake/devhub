@@ -36,8 +36,9 @@ const CONTENT_TYPES: Readonly<Record<string, string>> = {
  * runs, because the point of persisting it is that the window never shows a
  * colour it is about to change: a page that asks for its palette has already
  * painted by the time the answer arrives. Every page this scheme serves gets
- * it — the App Shell, the modal overlay and the Settings window are one bundle
- * under three query strings, and all three are DevHub chrome.
+ * it — the window's own page, the Sidebar, the Agents, the notices, the
+ * questions and the Settings window are one bundle with an entry apiece, and
+ * every one of them is DevHub chrome.
  */
 export function registerShellPageProtocol(
 	root: string,

@@ -368,7 +368,7 @@ describe("a chord, as Electron delivers it", () => {
 		handleInput(
 			chordHost,
 			input("KeyA", "a", { meta: true }),
-			`${SHELL_ORIGIN}/index.html?window=settings`,
+			`${SHELL_ORIGIN}/settings.html`,
 			() => undefined,
 			(role) => roles.push(role),
 			10,

@@ -18,15 +18,16 @@ const electronStub = fileURLToPath(
 // The App Shell page is loaded from disk by the shell BrowserWindow, so the
 // build has to be relative: there is no server root to be absolute against.
 //
-// One entry per child page, because a child page *is* its own page: its own
-// script, its own subscriptions, its own root failure handler. DevHub used to
-// serve three surfaces from `index.html` under a `?window=` role, which meant
-// every surface loaded every other surface's code and took every other
-// surface's subscriptions — and it is why `page-title-updated` has to be
-// refused, why the modal layer's `onModals` was on the bridge for pages that
-// could never receive it, and why one provider had to grow props to say which
-// role it was in. `toasts` and `picker` are entries instead; `index.html` still
-// serves the App Shell and Settings until the rest of the split lands.
+// One entry per page, because a page *is* its own page: its own script, its
+// own subscriptions, its own preload, its own root failure handler. DevHub
+// used to serve three surfaces from `index.html` under a `?window=` role,
+// which meant every surface loaded every other surface's code and took every
+// other surface's subscriptions — and it is why the modal layer's `onModals`
+// was on the bridge for pages that could never receive it, and why one
+// provider had to grow props to say which role it was in.
+//
+// `index.html` is the window's own page and nothing else now. There is no
+// role left to switch on: which page this is, is which file was loaded.
 export default defineConfig({
   base: "./",
   plugins: [react()],
@@ -40,6 +41,7 @@ export default defineConfig({
         picker: fileURLToPath(new URL("./picker.html", import.meta.url)),
         sidebar: fileURLToPath(new URL("./sidebar.html", import.meta.url)),
         agents: fileURLToPath(new URL("./agents.html", import.meta.url)),
+        settings: fileURLToPath(new URL("./settings.html", import.meta.url)),
       },
     },
   },

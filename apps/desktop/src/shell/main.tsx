@@ -1,18 +1,22 @@
 /**
- * The App Shell page's entry point.
+ * The window's own page, and its entry point.
  *
- * Two surfaces still share it: the window's own page and the Settings window
- * (`?window=settings`). The `toasts`, `picker`, `sidebar` and `agents`
- * children used to be here too, behind roles of their own or as DOM in this
- * one; each is its own entry now, which is what a page in a view of its own
- * means. What is left is the last of the role switching, and it goes when
- * Settings gets an entry too.
+ * `index.html` is this page and nothing else. It used to be three surfaces
+ * behind a `?window=` role — the App Shell, the modal overlay and the Settings
+ * window — which meant each of them loaded the other two's code and took the
+ * other two's subscriptions. Every one of them is its own entry now, Settings
+ * last, and there is no role left to switch on: which page this is, is which
+ * file main loaded.
  *
- * `installFocusHome` used to be here, for the `shell` role only. It is gone
- * with the file: it existed because the Sidebar's DOM and an Agent's DOM were
- * in one document, so a click on a row left the keyboard on that row while the
- * Agent was what was on screen. Two views cannot have that problem, and where
- * the keyboard goes is the window's one answer (`keyboardChild`).
+ * What is drawn here is what is left when the Sidebar, the Agents, the notices
+ * and the questions are all views of their own: the title bar, the states in
+ * which there is no child view to show, and the seam of a split.
+ *
+ * `installFocusHome` used to be here. It is gone with the file: it existed
+ * because the Sidebar's DOM and an Agent's DOM were in one document, so a
+ * click on a row left the keyboard on that row while the Agent was what was on
+ * screen. Two views cannot have that problem, and where the keyboard goes is
+ * the window's one answer (`main/shell/windowLayout.ts`, `keyboardChild`).
  */
 
 import { StrictMode } from "react";
@@ -22,8 +26,7 @@ import { installPalette } from "./appearance";
 import { installRootFailureHandler } from "./failure";
 import { PageBoundary } from "./PageBoundary";
 import { installSelectionGuard } from "./selection";
-import { SettingsApp } from "../settings/SettingsApp";
-import { WINDOW_TITLES, windowKindOf } from "../ipc/windowTitles";
+import { WINDOW_TITLES } from "../ipc/windowTitles";
 import "./styles/tokens.css";
 import "./styles/shell.css";
 import "./styles/macos.css";
@@ -34,23 +37,17 @@ if (!container) {
   throw new Error("the App Shell page has no #root element");
 }
 
-// Installed outside React so no remount can drop any of them, and so every
-// window gets them from the one entry point they share. The palette is one of
-// these: the page was served wearing it, and this is only what keeps it
+// Installed outside React so no remount can drop any of them. The palette is
+// one of these: the page was served wearing it, and this is only what keeps it
 // current when a workbench changes theme.
 installRootFailureHandler();
 installSelectionGuard(document);
 installPalette(document);
 
-const which = windowKindOf(window.location.search);
-
-// Electron gives a window its page's title, so the title main chose when it
-// created the window lasts only until the page loads. Both surfaces are served
-// from one `index.html`, so the page has to say which of them it is — otherwise
-// the Settings window takes the shell's `<title>` and calls itself "DevHub".
-document.title = WINDOW_TITLES[which];
-
-const app = which === "settings" ? <SettingsApp /> : <AppShell />;
+// Set, and then ignored: this window's name depends on what is on screen,
+// which only main knows, so main refuses the page's title and names the window
+// itself. See `ipc/windowTitles.ts`.
+document.title = WINDOW_TITLES.shell;
 
 // One boundary per page, and this is where this one begins. It is the
 // only catch React can reach — a component that throws while rendering takes
@@ -58,6 +55,8 @@ const app = which === "settings" ? <SettingsApp /> : <AppShell />;
 // left to report into. See `PageBoundary.tsx`.
 createRoot(container).render(
   <StrictMode>
-    <PageBoundary>{app}</PageBoundary>
+    <PageBoundary>
+      <AppShell />
+    </PageBoundary>
   </StrictMode>,
 );

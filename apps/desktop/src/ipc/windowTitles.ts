@@ -1,13 +1,18 @@
 /**
- * What each of DevHub's windows is called.
+ * What each of DevHub's pages is called.
  *
  * Two processes need this and they need it at different moments, which is why
  * it is stated here rather than in either of them. Main sets the title when it
- * creates the window, so the window has a name before its page exists; the page
+ * creates a window, so the window has a name before its page exists; the page
  * sets `document.title` when it loads, because Electron applies a page's title
- * to its window and would otherwise overwrite whatever main chose. Both windows
- * are served from the same `index.html`, so without this the Settings window
- * inherited the shell's title and called itself "DevHub".
+ * to its window and would otherwise overwrite whatever main chose.
+ *
+ * There is one name per entry, and a page reads its own. It used to be one
+ * name per *role*, looked up with the query string the page had been served
+ * under, because one `index.html` served the shell window and the Settings
+ * window and neither could say which it was. Every page is its own entry now,
+ * so the question has no runtime half left: a page names itself by naming the
+ * constant it is.
  *
  * The shell window is the exception, and it is an exception in the other
  * direction: its name depends on what is on screen, which only main knows, so
@@ -27,7 +32,7 @@
  * `main/shell/shellTitle.ts` is what keeps it true.
  */
 
-/** Which of DevHub's own pages this is. */
+/** Which of DevHub's own pages this is — one per entry point. */
 export type ShellWindowKind =
 	| "shell"
 	| "settings"
@@ -40,28 +45,14 @@ export const WINDOW_TITLES: Readonly<Record<ShellWindowKind, string>> = {
 	shell: "DevHub",
 	settings: "DevHub Settings",
 	// Every one of these but `shell` and `settings` is a view inside the shell
-	// window rather than a window of its own, so nothing displays them. They are here
-	// so a page can set a title unconditionally instead of branching on
-	// whether it is the kind of page that has one.
+	// window rather than a window of its own, so nothing displays them. They
+	// are here so a page can set a title unconditionally instead of branching
+	// on whether it is the kind of page that has one.
 	toasts: "DevHub",
 	picker: "DevHub",
 	sidebar: "DevHub",
 	agents: "DevHub",
 };
-
-/**
- * Which surface a page URL asks for.
- *
- * Only `index.html` still carries a role, and only because the App Shell and
- * the Settings window are still one bundle behind `?window=settings`. Each of
- * the children that has been split out is an entry of its own and answers this
- * question by being a different file.
- */
-export function windowKindOf(search: string): ShellWindowKind {
-	return new URLSearchParams(search).get("window") === "settings"
-		? "settings"
-		: "shell";
-}
 
 /**
  * What the Navigation Context is called when nothing is selected in it.

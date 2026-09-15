@@ -1,8 +1,13 @@
 /**
  * The Settings window.
  *
- * A second real `BrowserWindow` showing the same page with `?window=settings`,
- * and the small IPC surface behind it: read the config, save it against the
+ * A second real `BrowserWindow`, showing a page of its own — `settings.html`,
+ * its own entry with its own preload and its own root failure handler, the
+ * way every other page in DevHub is. It used to be the shell's `index.html`
+ * under `?window=settings`, which is why the page had to be told which of the
+ * two windows it was in before it could draw either.
+ *
+ * And the small IPC surface behind it: read the config, save it against the
  * revision it was drafted from, reload, re-resolve the runtimes, and reach the
  * two diagnostics affordances.
  *
@@ -122,7 +127,7 @@ export function openSettingsWindow(): void {
 			nodeIntegration: false,
 		},
 	});
-	void window.loadURL(`${SHELL_ORIGIN}/index.html?window=settings`);
+	void window.loadURL(`${SHELL_ORIGIN}/settings.html`);
 	window.once("ready-to-show", () => {
 		window?.show();
 	});
