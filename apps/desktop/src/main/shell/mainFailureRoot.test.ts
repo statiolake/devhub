@@ -85,3 +85,37 @@ describe("taking the root off again", () => {
 		expect(host.listenerCount("unhandledRejection")).toBe(0);
 	});
 });
+
+describe("a cancellation nothing caught", () => {
+	it("is not raised: somebody asked for it", () => {
+		// Measured at launch: VS Code's `RequestStore` cancels each pty-host
+		// request's timeout token when the reply arrives, and the cancellation
+		// reaches a promise that is already settled. Ten of those came up as
+		// "the native app shell is unavailable" at every launch.
+		const raiseUnhandled = vi.fn();
+		const host = processWithListeners();
+		installMainFailureRoot({ raiseUnhandled }, host.on, host.off);
+
+		const canceled = new Error("Canceled");
+		canceled.name = "Canceled";
+		host.emit("unhandledRejection", canceled);
+
+		const cancelError = new Error("");
+		cancelError.name = "CanceledError";
+		host.emit("unhandledRejection", cancelError);
+
+		expect(raiseUnhandled).not.toHaveBeenCalled();
+	});
+
+	it("is not what an error that merely mentions cancelling is", () => {
+		// The name is the test, not the words. A failure whose message happens
+		// to say "cancelled" is still a failure, and it still has to be seen.
+		const raiseUnhandled = vi.fn();
+		const host = processWithListeners();
+		installMainFailureRoot({ raiseUnhandled }, host.on, host.off);
+
+		const failure = new Error("the clone was cancelled by the server");
+		host.emit("unhandledRejection", failure);
+		expect(raiseUnhandled).toHaveBeenCalledWith(failure);
+	});
+});

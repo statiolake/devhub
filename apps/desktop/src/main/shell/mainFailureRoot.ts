@@ -24,7 +24,51 @@
  * should stop, not paint. A rejection is different only because nothing stops
  * for one today either — reporting it adds what a person can see without
  * changing what the process does.
+ *
+ * # Except a cancellation
+ *
+ * A cancellation is not a failure. It is something that was *asked for* —
+ * by DevHub, or by VS Code, or by the thing being cancelled going away — and
+ * the request that carried it is over because somebody ended it.
+ *
+ * Measured at launch (stage 0: ten `native_unavailable` raises, and the
+ * `flickering` reading that goes with them; stage 2, the same instance, with
+ * the stack): VS Code's `RequestStore` gives every pty-host request a timeout
+ * with a cancellation token, and disposes it when the reply arrives
+ * (`PtyHostService.acceptPtyHostResolvedVariables` → `RequestStore.acceptReply`
+ * → `FunctionDisposable.dispose`). Disposing cancels the token, the
+ * cancellation is delivered through an `Emitter` to a promise that has already
+ * been settled, and it arrives here as an unhandled rejection. One per
+ * resolved request, at the moment each workbench asks for its terminal's
+ * variables — so the burst is exactly as long as the number of workbenches
+ * starting, and every one of it says "the native app shell is unavailable"
+ * about nothing at all.
+ *
+ * Reporting those is worse than not reporting them: a notice that appears at
+ * every launch and means nothing is a notice nobody reads, and the flicker
+ * reading said so. So a cancellation is dropped here, at the one boundary,
+ * rather than at the several places that can produce one — and it is dropped
+ * *loudly enough to find*, on the log, because a cancellation nobody expected
+ * is still worth being able to look up.
  */
+
+/**
+ * Whether this is somebody having cancelled something.
+ *
+ * VS Code's own test, spelled here rather than imported: this module is main's
+ * boundary and must not depend on the editor being loaded to decide what a
+ * failure is. `CancellationError` sets both the name and the message, and
+ * older paths throw a bare `Error` wearing the same name.
+ */
+export function isCancellation(reason: unknown): boolean {
+	if (!(reason instanceof Error)) return false;
+	return reason.name === "Canceled" || reason.name === "CanceledError";
+}
+
+function describeCancellation(reason: unknown): string {
+	const message = reason instanceof Error ? reason.message : String(reason);
+	return message === "" ? "a request with no message" : message;
+}
 
 export interface FailureRoot {
 	/** Where an unhandled failure goes: journalled, logged, and drawn once. */
@@ -40,6 +84,10 @@ export function installMainFailureRoot(
 	off: NodeJS.Process["off"] = process.off.bind(process),
 ): () => void {
 	const listener = (reason: unknown) => {
+		if (isCancellation(reason)) {
+			console.log(`[devhub] cancelled: ${describeCancellation(reason)}`);
+			return;
+		}
 		root.raiseUnhandled(reason);
 	};
 	on("unhandledRejection", listener);
