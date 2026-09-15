@@ -38,6 +38,8 @@ export default defineConfig({
         index: fileURLToPath(new URL("./index.html", import.meta.url)),
         toasts: fileURLToPath(new URL("./toasts.html", import.meta.url)),
         picker: fileURLToPath(new URL("./picker.html", import.meta.url)),
+        sidebar: fileURLToPath(new URL("./sidebar.html", import.meta.url)),
+        agents: fileURLToPath(new URL("./agents.html", import.meta.url)),
       },
     },
   },

@@ -1,0 +1,51 @@
+/*
+ * The Sidebar's own frame, now that the Sidebar is the whole document.
+ *
+ * `styles/shell.css` describes the column as one pane in a row of them — a
+ * fixed share of the window's width, beside a content area. In its own view
+ * there is no row: the view *is* the column, main gave it exactly the width
+ * the same number decided (`main/shell/windowLayout.ts`, `sidebarColumnWidth`),
+ * and the pane simply fills it. So the width is not set here and must not be:
+ * two places deciding how wide this column is, one of them a stylesheet main
+ * cannot read, is the disagreement this whole redesign exists to end.
+ *
+ * What is left in `--sidebar-width` is still read — the resize handle reports
+ * against it, and the rail's own width comes from the density tokens — but
+ * nothing lays anything out from it any more.
+ */
+
+.sidebar-page {
+  width: 100%;
+  height: 100%;
+}
+
+/*
+ * One pane, filling the view. The trailing hairline stays: it is inside this
+ * column's width — every pane is `border-box` — which is why the content area
+ * begins at exactly the width the owner gave this view and not one pixel
+ * later.
+ */
+.sidebar-page > .sidebar {
+  width: 100%;
+  flex: 1 1 auto;
+}
+
+/*
+ * The resize handle, kept inside the view.
+ *
+ * It used to straddle the column's trailing edge — five pixels either side of
+ * it — because the pane beside it was in this same document and an element
+ * could hang over it. It cannot any more: outside this view's bounds the
+ * pointer belongs to whatever child is there, which is a workbench, and a grab
+ * area that is silently half as wide as it looks is worse than a narrower one
+ * that is honest. So the whole handle is inside the column, against its
+ * trailing edge, and the hairline it lights up is the edge itself.
+ */
+.sidebar-page .sidebar-resize-handle {
+  right: 0;
+  width: 10px;
+}
+
+.sidebar-page .sidebar-resize-handle::after {
+  margin-inline: 9px 0;
+}

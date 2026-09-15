@@ -28,17 +28,25 @@
  */
 
 /** Which of DevHub's own pages this is. */
-export type ShellWindowKind = "shell" | "settings" | "toasts" | "picker";
+export type ShellWindowKind =
+	| "shell"
+	| "settings"
+	| "toasts"
+	| "picker"
+	| "sidebar"
+	| "agents";
 
 export const WINDOW_TITLES: Readonly<Record<ShellWindowKind, string>> = {
 	shell: "DevHub",
 	settings: "DevHub Settings",
-	// `toasts` and `picker` are views inside the shell window rather than
-	// windows of their own, so nothing displays either of these. They are here
+	// Every one of these but `shell` and `settings` is a view inside the shell
+	// window rather than a window of its own, so nothing displays them. They are here
 	// so a page can set a title unconditionally instead of branching on
 	// whether it is the kind of page that has one.
 	toasts: "DevHub",
 	picker: "DevHub",
+	sidebar: "DevHub",
+	agents: "DevHub",
 };
 
 /**
