@@ -939,8 +939,7 @@
 
 /*
  * Reduce Motion keeps the statement and drops the motion — the row is still
- * plainly dimmed, which is the half that carries the meaning. Same rule as
- * the attention glow below.
+ * plainly dimmed, which is the half that carries the meaning.
  */
 @media (prefers-reduced-motion: reduce) {
   .sidebar-tree-item.is-closing {
@@ -1896,7 +1895,7 @@ body.is-resizing-split {
   -webkit-app-region: no-drag;
 }
 
-/* ------------------------------------------------- unread, and the attention */
+/* ------------------------------------------------------------- unread */
 
 /*
  * An Agent wanted you and you have not been.
@@ -1954,56 +1953,14 @@ body.is-resizing-split {
 }
 
 /*
- * The window says "over here" with its own edge, not with a banner.
+ * The window's "over here" is not drawn here any more.
  *
- * An inset ring that breathes, with the same blue spilling inward behind it:
- * at rest it is nearly out, at its peak the whole window is visibly rimmed. A
- * hairline was not enough — on a large display the frame merely tinted, which
- * is exactly the failure the affordance exists to avoid, so the edge is thick
- * enough to read from across a desk and the halo gives it somewhere to fade
- * into. It is drawn over everything, including a workbench view, because a
- * native view paints outside the DOM and an overlay that sat under it would be
- * hidden exactly when there is something to say.
+ * It was: a fixed ring over the whole page, breathing. The page is one child
+ * of this window among several now, and a native view paints above it, so the
+ * ring was hidden exactly when there was something to say. It is a Dock badge
+ * and a critical Dock bounce instead — the window speaking for itself, from
+ * main. See `main/shell/windowAttention.ts`.
  */
-.attention-glow {
-  position: fixed;
-  inset: 0;
-  z-index: 40;
-  pointer-events: none;
-  border-radius: inherit;
-  opacity: 0;
-  box-shadow:
-    inset 0 0 0 3.5px var(--status-waiting),
-    inset 0 0 24px var(--attention-halo);
-}
-
-.app-shell[data-attention="true"] .attention-glow {
-  animation: attention-breathe 2.4s ease-in-out infinite;
-}
-
-@keyframes attention-breathe {
-  0%,
-  100% {
-    opacity: 0.15;
-  }
-  50% {
-    opacity: var(--attention-peak);
-  }
-}
-
-/*
- * Reduce Motion turns the pulse into a steady edge rather than into nothing.
- * The point of the affordance is that something is waiting; removing the
- * animation must not remove the message.
- */
-@media (prefers-reduced-motion: reduce) {
-  .app-shell[data-attention="true"] .attention-glow {
-    animation: none;
-    /* Just under the breath's peak: still unmistakable, but a shade quieter
-       than the brightest instant of something that was moving. */
-    opacity: calc(var(--attention-peak) - 0.2);
-  }
-}
 
 /* ------------------------------------------------------------- row menu */
 

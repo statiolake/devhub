@@ -185,6 +185,7 @@ import {
 	shellWindowIfCreated,
 } from "./shellWindow.js";
 import { displayAudience, projectionAudience } from "./publishAudience.js";
+import { WindowAttention, platformDock } from "./windowAttention.js";
 import {
 	crash,
 	InvariantViolation,
@@ -567,6 +568,14 @@ export class AppController {
 	 * `diagnostics/notices.ts`.
 	 */
 	private readonly notices = new NoticeJournal();
+	/**
+	 * The window's own way of saying "over here".
+	 *
+	 * A state, told everything that can change it — the projection moving and
+	 * the window coming forward — and idempotent, so no site has to know
+	 * whether it is the one that turns it on. See `windowAttention.ts`.
+	 */
+	private readonly attention = new WindowAttention(platformDock());
 	private readonly machineConditions = new MachineConditions({
 		publish: (source, summary, reason) => {
 			const event = {
@@ -1442,6 +1451,10 @@ export class AppController {
 	}
 
 	windowFocusChanged(focused: boolean): void {
+		// Whether the window is in front decides how loudly an unread Agent is
+		// announced — a badge either way, a Dock bounce only while the person
+		// is somewhere else. See `windowAttention.ts`.
+		this.attention.windowFocusChanged(focused);
 		// Coming back to the window is a reason to look at the repositories
 		// again, and the trigger DevHub was missing: a person leaves for a
 		// terminal, commits, switches a branch, comes back — and until the poll's
@@ -1706,6 +1719,12 @@ export class AppController {
 	 */
 	private projectionChanged(): void {
 		refreshMenu();
+		// An Agent nobody has read yet is the window asking to be looked at,
+		// and it is a fact about the projection like the menu and the title —
+		// so it is answered here, where everything that follows the projection
+		// is answered, rather than by a page that can only be seen when there
+		// is no workbench over it. See `windowAttention.ts`.
+		this.attention.observe(this.snapshot());
 		// The window's name says which Workspace, and what in it, so it moves
 		// whenever the projection does — here rather than at each place that
 		// changes a selection, for the same reason the menu is rebuilt here.

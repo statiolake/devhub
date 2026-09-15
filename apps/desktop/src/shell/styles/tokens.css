@@ -129,18 +129,6 @@
   --status-idle: light-dark(#1d7f36, #30d158); /* testing.iconPassed */
   --status-error: var(--danger); /* testing.iconFailed */
 
-  /* The window's own "over here".
-   *
-   * Both halves of the glow are the waiting blue, so the edge that asks for a
-   * person says the same thing the row's mark says, and neither theme needs a
-   * second value: `--status-waiting` already carries both. The halo is the
-   * blue thinned to a wash so the edge reads as light spilling inward rather
-   * than as a second, softer border; the peak is how bright the breath gets at
-   * its top, named once because both the animation and the Reduce Motion
-   * steady state are measured from it. */
-  --attention-halo: color-mix(in srgb, var(--status-waiting) 35%, transparent);
-  --attention-peak: 0.9;
-
   /* GitHub's own: green for what is open, purple for what is finished, red for
      what was abandoned. The green is the same one an idle Agent wears, because
      both mean "nothing is wrong here", and a second green would only invite the
