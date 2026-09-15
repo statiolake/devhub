@@ -37,7 +37,16 @@ const TRAFFIC_LIGHT_SPAN = 76;
 const SIDEBAR_RAIL_WIDTH = 14;
 /** `--sidebar-glyph-width`, per density. */
 const SIDEBAR_GLYPH_WIDTH = { compact: 16, comfortable: 18 } as const;
-/** The Sidebar's trailing hairline, and the content area's top one. */
+/**
+ * The line between the content area and the title bar above it.
+ *
+ * The Sidebar's trailing hairline is *not* here: every pane is `border-box`,
+ * so the Sidebar's border is inside its width and the content area starts at
+ * exactly the width the Sidebar was given. The bar's is, because it is drawn
+ * on the content area's own top edge — the one place a border adds to an
+ * offset rather than being absorbed by one. (Measured against the page: with
+ * the bar shown the hole starts at y 39, not 38.)
+ */
 const HAIRLINE = 1;
 /** `.split-divider`'s own width. The seam is an element, not a border. */
 const SPLIT_DIVIDER = 1;
@@ -129,7 +138,7 @@ export interface LayoutChild {
 }
 
 /**
- * How wide the Sidebar's column is, including its hairline.
+ * How wide the Sidebar's column is, hairline included.
  *
  * Collapsed it is a rail, and how wide a rail may be is a fact about the
  * *window*: with no title bar of DevHub's own the Sidebar carries the traffic
@@ -157,7 +166,7 @@ export function surfaceRect(
 	state: LayoutState,
 ): LayoutRect {
 	const bar = state.titleBar === "shown" ? TITLE_BAR_HEIGHT + HAIRLINE : 0;
-	const x = sidebarColumnWidth(state) + HAIRLINE;
+	const x = sidebarColumnWidth(state);
 	return {
 		x,
 		y: bar,

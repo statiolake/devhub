@@ -40,9 +40,9 @@ const kinds = (children: ReturnType<typeof windowLayout>) =>
 describe("the rectangle the workbench is laid into", () => {
 	it("is the content area minus the sidebar and the bar", () => {
 		expect(workbenchRect(WINDOW, state())).toEqual({
-			x: 249,
+			x: 248,
 			y: 39,
-			width: 1191,
+			width: 1192,
 			height: 861,
 		});
 	});
@@ -59,8 +59,8 @@ describe("the rectangle the workbench is laid into", () => {
 			WINDOW,
 			state({ sidebar: { width: 400, collapsed: false } }),
 		);
-		expect(wide.x).toBe(249);
-		expect(wider.x).toBe(401);
+		expect(wide.x).toBe(248);
+		expect(wider.x).toBe(400);
 		expect(wide.width - wider.width).toBe(152);
 	});
 
@@ -90,8 +90,8 @@ describe("the rectangle the workbench is laid into", () => {
 			WINDOW,
 			state({ surface: { kind: "split", editorKey: "/a", ratio: 0.5 } }),
 		);
-		expect(rect.x).toBe(249);
-		expect(rect.width).toBe(595);
+		expect(rect.x).toBe(248);
+		expect(rect.width).toBe(596);
 	});
 });
 

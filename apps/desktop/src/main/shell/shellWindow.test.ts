@@ -233,7 +233,7 @@ type WorkbenchView = InstanceType<typeof WorkbenchView>;
  * 1440x900, no title bar of DevHub's own, a sidebar at its default width and
  * its hairline. Nothing measures it: see `windowLayout.ts`.
  */
-const AREA = { x: 249, y: 0, width: 1191, height: 900 };
+const AREA = { x: 248, y: 0, width: 1192, height: 900 };
 
 /** The folder each workbench in these tests is showing. */
 const keys = new WeakMap<WorkbenchView, string>();
@@ -345,10 +345,10 @@ describe("the shell window's workbench views", () => {
 			...shell.layoutState(),
 			sidebar: { width: 400, collapsed: false },
 		});
-		expect(boundsOf(b)).toEqual({ x: 401, y: 0, width: 1039, height: 900 });
+		expect(boundsOf(b)).toEqual({ x: 400, y: 0, width: 1040, height: 900 });
 		// The one behind it too: a view shown at the size it had when it was
 		// hidden reflows visibly when it catches up.
-		expect(boundsOf(a)).toEqual({ x: 401, y: 0, width: 1039, height: 900 });
+		expect(boundsOf(a)).toEqual({ x: 400, y: 0, width: 1040, height: 900 });
 		invariantHolds(b);
 	});
 

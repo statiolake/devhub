@@ -1823,12 +1823,17 @@ export class AppController {
 		const snapshot = this.snapshot();
 		const appearance = this.config?.appearance;
 		const layout = snapshot.layout;
-		const restarting =
+		// The projection names a workbench by its *surface key*, which is the
+		// model's name for it; the window's children are folders, which is the
+		// window's. This is where the two are joined, and joining them anywhere
+		// else is how "the editor is on screen" and "no editor is on screen"
+		// came to be two true answers to one question.
+		const editorKey =
 			layout.kind === "workbench" || layout.kind === "split"
-				? this.restartingEditors.has(
-						this.editorKeyForSurfaceKey(layout.editorKey) ?? "",
-					)
-				: false;
+				? this.editorKeyForSurfaceKey(layout.editorKey)
+				: undefined;
+		const restarting =
+			editorKey !== undefined && this.restartingEditors.has(editorKey);
 		// Nothing is drawn in the content area until the model is ready, and a
 		// workbench being rebuilt is a state of the area rather than a reason
 		// to leave it — in both cases the page has the rectangle and no
@@ -1836,17 +1841,13 @@ export class AppController {
 		const surface: SurfaceArrangement =
 			snapshot.readiness !== "ready" || restarting
 				? { kind: "none" }
-				: layout.kind === "unavailable"
-					? { kind: "none" }
-					: layout.kind === "agent"
-						? { kind: "agent" }
+				: layout.kind === "agent"
+					? { kind: "agent" }
+					: editorKey === undefined
+						? { kind: "none" }
 						: layout.kind === "split"
-							? {
-									kind: "split",
-									editorKey: layout.editorKey,
-									ratio: snapshot.splitRatio,
-								}
-							: { kind: "editor", editorKey: layout.editorKey };
+							? { kind: "split", editorKey, ratio: snapshot.splitRatio }
+							: { kind: "editor", editorKey };
 		// Both panes of a split are drawn; which of them holds the keyboard is
 		// which half is selected. An Agent selected `beside` is the Agent half
 		// in front, and the workspace selected `beside` is the editor half.
