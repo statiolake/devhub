@@ -68,7 +68,7 @@ function placementFor(
 			density: "compact",
 			sidebar: { width: 248, collapsed: false },
 			surface: { kind: "none" },
-			keyboard: "page",
+			keyboard: "agents",
 		},
 		editors: [],
 		asking: undefined,

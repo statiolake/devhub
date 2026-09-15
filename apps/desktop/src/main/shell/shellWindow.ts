@@ -30,6 +30,7 @@ import {
 } from "./windowLayout.js";
 import type { TitleBarMode } from "../../model/config.js";
 import { WINDOW_TITLES } from "../../ipc/windowTitles.js";
+import { ChromeView } from "./chromeView.js";
 import { PickerView } from "./pickerView.js";
 import { ToastsView } from "./toastsView.js";
 import { shellTheme } from "./shellTheme.js";
@@ -122,7 +123,9 @@ export class ShellWindow {
 		density: "compact",
 		sidebar: { width: 248, collapsed: false },
 		surface: { kind: "none" },
-		keyboard: "page",
+		// Nothing is on screen yet, so this is the answer that resolves to the
+		// window's own page: there is no workbench for it to name.
+		keyboard: "editor",
 	};
 	/** The workbench on screen as of the last pass, to notice it changing. */
 	private onScreen: string | undefined;
@@ -135,13 +138,20 @@ export class ShellWindow {
 	 * the whole of what makes a modal a modal here.
 	 */
 	/**
-	 * The two chrome children this window has beside its workbenches.
+	 * The chrome children this window has beside its workbenches.
 	 *
-	 * Both are built here, at startup, and never destroyed. Ordering is what
-	 * `layout()` establishes and it is fixed: every workbench, then `toasts`,
-	 * then `picker` — a question about something is above a notice about
-	 * something, and both are above the thing.
+	 * All four are built here, at startup, and never destroyed. Ordering is
+	 * what `layout()` establishes and it is fixed: the Sidebar, every
+	 * workbench, the Agents, then `toasts`, then `picker` — a question about
+	 * something is above a notice about something, and both are above the
+	 * thing.
+	 *
+	 * `sidebar` and `agents` are `ChromeView`s rather than layers: they are
+	 * always in the window and the only thing that moves is their rectangle
+	 * and whether they are drawn. See `chromeView.ts`.
 	 */
+	readonly sidebar: ChromeView;
+	readonly agents: ChromeView;
 	readonly toasts: ToastsView;
 	readonly picker: PickerView;
 	/** How the surface key of the workbench on screen is looked up. */
@@ -210,6 +220,10 @@ export class ShellWindow {
 		// Built before anything can ask for them, and with their pages already
 		// loading. Creation used to be the first modal's job, and the first
 		// modal of a session was drawn on a page that had not run yet.
+		this.sidebar = new ChromeView(preloadPath, `${pageBase}/sidebar.html`);
+		this.sidebar.adopt(this.window);
+		this.agents = new ChromeView(preloadPath, `${pageBase}/agents.html`);
+		this.agents.adopt(this.window);
 		this.toasts = new ToastsView(preloadPath, `${pageBase}/toasts.html`);
 		this.toasts.adopt({
 			window: this.window,
@@ -682,6 +696,10 @@ export class ShellWindow {
 		switch (identity.kind) {
 			case "shell":
 				return this.window.webContents;
+			case "sidebar":
+				return this.sidebar.contents() ?? this.window.webContents;
+			case "agents":
+				return this.agents.contents() ?? this.window.webContents;
 			case "toasts":
 				return this.toasts.contents() ?? this.window.webContents;
 			case "picker":
@@ -901,6 +919,14 @@ export class ShellWindow {
 		// anything is shown: a view made visible before it is sized shows its
 		// previous size for a frame.
 		for (const child of children) {
+			if (child.identity.kind === "agents" && !child.visible) {
+				// Sized while hidden, for the reason a workbench is: a view
+				// shown at the size it had when it was last hidden lays itself
+				// out against that size first, and an xterm reflows visibly
+				// when it catches up.
+				this.agents.place(this.window, child.rect, false);
+				continue;
+			}
 			if (child.identity.kind !== "editor") continue;
 			const view = this.viewForEditorKey(child.identity.editorKey);
 			if (!view) continue;
@@ -935,6 +961,12 @@ export class ShellWindow {
 					// The window's own page: always under every child view and
 					// always the whole window. It is in the list because the
 					// layout has to be able to say the keyboard belongs to it.
+					break;
+				case "sidebar":
+					this.sidebar.place(this.window, child.rect, child.visible);
+					break;
+				case "agents":
+					this.agents.place(this.window, child.rect, child.visible);
 					break;
 				case "toasts":
 					this.toasts.place(child.visible ? child.rect : undefined);

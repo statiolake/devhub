@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
 	keyboardChild,
 	reconcileEditors,
+	agentsRect,
 	sidebarColumnWidth,
+	sidebarRect,
 	windowLayout,
 	workbenchRect,
 	type LayoutInput,
@@ -91,7 +93,7 @@ describe("the rectangle the workbench is laid into", () => {
 			state({ surface: { kind: "split", editorKey: "/a", ratio: 0.5 } }),
 		);
 		expect(rect.x).toBe(248);
-		expect(rect.width).toBe(596);
+		expect(rect.width).toBe(593);
 	});
 });
 
@@ -102,8 +104,10 @@ describe("the child list", () => {
 		);
 		expect(kinds(children)).toEqual([
 			"shell",
+			"sidebar",
 			"editor",
 			"editor",
+			"agents",
 			"toasts",
 			"picker",
 		]);
@@ -162,10 +166,11 @@ describe("the child list", () => {
 	});
 
 	it("has the notices and the questions in it only when they have content", () => {
-		expect(kinds(windowLayout(input()))).toEqual(["shell", "editor", "editor"]);
+		const bare = ["shell", "sidebar", "editor", "editor", "agents"];
+		expect(kinds(windowLayout(input()))).toEqual(bare);
 		expect(
 			kinds(windowLayout(input({ toasts: { width: 0, height: 0 } }))),
-		).toEqual(["shell", "editor", "editor"]);
+		).toEqual(bare);
 	});
 
 	it("clips a workbench's question to that workbench", () => {
@@ -185,7 +190,14 @@ describe("the child list", () => {
 		];
 		for (const arrangement of arrangements) {
 			const order = kinds(windowLayout(arrangement));
-			const rank = { shell: 0, editor: 1, toasts: 2, picker: 3 } as const;
+			const rank = {
+				shell: 0,
+				sidebar: 1,
+				editor: 2,
+				agents: 3,
+				toasts: 4,
+				picker: 5,
+			} as const;
 			expect(order[0]).toBe("shell");
 			for (let index = 1; index < order.length; index += 1) {
 				expect(rank[order[index]!]).toBeGreaterThanOrEqual(
@@ -211,13 +223,34 @@ describe("where the keyboard goes", () => {
 		expect(keyboardChild(input())).toEqual({ kind: "editor", editorKey: "/a" });
 	});
 
-	it("goes to the page when the page has put something over the area", () => {
+	it("goes to the Agent beside a workbench, not to the workbench", () => {
 		expect(
 			keyboardChild(
 				input({
 					state: state({
 						surface: { kind: "split", editorKey: "/a", ratio: 0.5 },
-						keyboard: "page",
+						keyboard: "agents",
+					}),
+				}),
+			),
+		).toEqual({ kind: "agents" });
+	});
+
+	it("goes to the Sidebar when the Sidebar is what was asked for", () => {
+		expect(
+			keyboardChild(input({ state: state({ keyboard: "sidebar" }) })),
+		).toEqual({ kind: "sidebar" });
+	});
+
+	it("refuses to put the keys in an Agents view that is not drawn", () => {
+		// The invisible-focus bug, stated as a property: `agents` is only ever
+		// the answer where there is an Agent on screen to type into.
+		expect(
+			keyboardChild(
+				input({
+					state: state({
+						surface: { kind: "editor", editorKey: "/a" },
+						keyboard: "agents",
 					}),
 				}),
 			),
@@ -299,5 +332,102 @@ describe("reconciling the workbenches against the projection", () => {
 			selected: undefined,
 		});
 		expect(plan.create).toEqual(["/scratch"]);
+	});
+});
+
+describe("the Sidebar and the Agents as children of their own", () => {
+	it("gives the Sidebar the leading column under the bar", () => {
+		expect(sidebarRect(WINDOW, state())).toEqual({
+			x: 0,
+			y: 39,
+			width: 248,
+			height: 861,
+		});
+	});
+
+	it("gives it the whole height when it carries the traffic lights", () => {
+		expect(sidebarRect(WINDOW, state({ titleBar: "hidden" }))).toEqual({
+			x: 0,
+			y: 0,
+			width: 248,
+			height: 900,
+		});
+	});
+
+	it("narrows it to the rail rather than taking it out of the window", () => {
+		const rail = windowLayout(
+			input({ state: state({ sidebar: { width: 248, collapsed: true } }) }),
+		).find((child) => child.identity.kind === "sidebar");
+		expect(rail?.visible).toBe(true);
+		expect(rail?.rect.width).toBe(44);
+	});
+
+	it("is always in the window, in every arrangement", () => {
+		for (const arrangement of [
+			input(),
+			input({ editors: [] }),
+			input({ state: state({ surface: { kind: "none" } }) }),
+			input({ picker: "window", toasts: { width: 10, height: 10 } }),
+		]) {
+			expect(kinds(windowLayout(arrangement))).toContain("sidebar");
+		}
+	});
+
+	it("gives the Agents the whole content area when one covers it", () => {
+		expect(agentsRect(WINDOW, state({ surface: { kind: "agent" } }))).toEqual({
+			x: 248,
+			y: 39,
+			width: 1192,
+			height: 861,
+		});
+	});
+
+	it("gives the Agents the trailing share of a split, past the seam", () => {
+		const split = state({
+			surface: { kind: "split", editorKey: "/a", ratio: 0.5 },
+		});
+		const workbench = workbenchRect(WINDOW, split);
+		const agents = agentsRect(WINDOW, split);
+		// The seam belongs to neither: it is drawn on the window's own page,
+		// in the one strip of the content area no child view covers, which is
+		// what makes it draggable at all.
+		expect(agents.x - (workbench.x + workbench.width)).toBe(6);
+		expect(workbench.width + 6 + agents.width).toBe(1192);
+	});
+
+	it("draws exactly one of the Agents and a workbench for a selection", () => {
+		const onScreen = (arrangement: LayoutInput) =>
+			windowLayout(arrangement)
+				.filter((child) => child.visible)
+				.map((child) => child.identity.kind)
+				.filter((kind) => kind === "editor" || kind === "agents");
+
+		expect(onScreen(input())).toEqual(["editor"]);
+		expect(
+			onScreen(input({ state: state({ surface: { kind: "agent" } }) })),
+		).toEqual(["agents"]);
+		// A split is the one arrangement with two, and that is what a split is.
+		expect(
+			onScreen(
+				input({
+					state: state({
+						surface: { kind: "split", editorKey: "/a", ratio: 0.5 },
+					}),
+				}),
+			),
+		).toEqual(["editor", "agents"]);
+		expect(
+			onScreen(input({ state: state({ surface: { kind: "none" } }) })),
+		).toEqual([]);
+	});
+
+	it("sizes the Agents' view even while it is not drawn", () => {
+		const agents = windowLayout(input()).find(
+			(child) => child.identity.kind === "agents",
+		);
+		expect(agents?.visible).toBe(false);
+		// The whole content area — the size it will be shown at, so that being
+		// shown is not also a resize.
+		expect(agents?.rect).toEqual({ x: 248, y: 39, width: 1192, height: 861 });
 	});
 });

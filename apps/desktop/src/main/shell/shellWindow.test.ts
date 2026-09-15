@@ -274,7 +274,7 @@ function showPage(shell: ShellWindow): void {
 	shell.setLayoutState({
 		...BASE,
 		surface: { kind: "agent" },
-		keyboard: "page",
+		keyboard: "agents",
 	});
 }
 
@@ -283,7 +283,7 @@ function showSplit(shell: ShellWindow, view: WorkbenchView): void {
 	shell.setLayoutState({
 		...BASE,
 		surface: { kind: "split", editorKey: keyOf(view), ratio: 0.5 },
-		keyboard: "page",
+		keyboard: "agents",
 	});
 }
 
@@ -404,7 +404,14 @@ describe("the shell window's workbench views", () => {
 	 * the "the chord works once and then stops" report.
 	 */
 	describe("and where the keyboard goes", () => {
-		const page = () => shell.window.webContents.id;
+		/**
+		 * The Agents' view — where the keyboard goes when an Agent is on
+		 * screen. It used to be the window's own page, because the Agent's
+		 * pane was drawn in that document; it is a child of its own now, and
+		 * "the page has it" has stopped being a thing anybody can say.
+		 */
+		const page = () =>
+			(shell.agents.contents() as unknown as { id: number } | undefined)?.id;
 		const contentsOf = (view: WorkbenchView): number =>
 			(view.webContents as unknown as { id: number }).id;
 
@@ -574,10 +581,23 @@ describe("the shell window's modal layer", () => {
 		tone: "warning",
 	} as const;
 
+	/**
+	 * The modal layer, as a child of the window.
+	 *
+	 * Found by its contents rather than by elimination: every chrome child is
+	 * in this list now, and "the one that is not a workbench" stopped naming
+	 * one thing the moment the Sidebar and the Agents became views.
+	 */
 	function overlayChild(): FakeView | undefined {
 		const children = shell.window.contentView.children as unknown as FakeView[];
-		const views = shell.getViews().map((view) => view.view);
-		return children.find((child) => !views.includes(child as never));
+		const contents = shell.picker.contents();
+		return contents === undefined
+			? undefined
+			: children.find(
+					(child) =>
+						(child.webContents as unknown) === (contents as unknown) &&
+						child.visible !== undefined,
+				);
 	}
 
 	beforeEach(() => {
@@ -702,11 +722,13 @@ describe("the shell window's modal layer", () => {
 		shell.picker.closeModal(id);
 		expect(focused).toBe(editor.webContents.id);
 
-		// And to the page when the page is what is showing.
+		// And to the Agents' view when an Agent is what is showing.
 		showPage(shell);
 		const next = shell.picker.openModal({ kind: "workspace-picker" });
 		shell.picker.closeModal(next);
-		expect(focused).toBe(shell.window.webContents.id);
+		expect(focused).toBe(
+			(shell.agents.contents() as unknown as { id: number } | undefined)?.id,
+		);
 	});
 });
 

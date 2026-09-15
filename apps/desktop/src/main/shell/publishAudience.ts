@@ -3,8 +3,8 @@
  *
  * Two audiences, because there are two kinds of thing main says.
  *
- * A *projection* is a description of the model. The App Shell page and the
- * picker are two views of the same model — an alert about a workspace is the
+ * A *projection* is a description of the model. The window's own page, the
+ * Sidebar, the Agents and the picker are views of the same model — an alert about a workspace is the
  * same workspace the sidebar lists — so they are told the same things at the
  * same moment rather than the picker fetching its own copy on a second path. A
  * page with no use for a projection draws nothing, and that is the end of it.
@@ -39,6 +39,8 @@ export interface Pages<Contents> {
 		isDestroyed(): boolean;
 		readonly webContents: Contents;
 	};
+	readonly sidebar: { contents(): Contents | undefined };
+	readonly agents: { contents(): Contents | undefined };
 	readonly picker: { contents(): Contents | undefined };
 	readonly toasts: { contents(): Contents | undefined };
 }
@@ -48,10 +50,16 @@ export function projectionAudience<Contents>(
 	pages: Pages<Contents>,
 ): readonly Contents[] {
 	if (pages.window.isDestroyed()) return [];
-	const picker = pages.picker.contents();
-	return picker
-		? [pages.window.webContents, picker]
-		: [pages.window.webContents];
+	// The window's own page, and every child page that draws from the model.
+	// They are views of one model — an alert about a workspace is the same
+	// workspace the Sidebar lists — so they are told the same things at the
+	// same moment rather than each fetching its own copy on a second path.
+	return [
+		pages.window.webContents,
+		pages.sidebar.contents(),
+		pages.agents.contents(),
+		pages.picker.contents(),
+	].filter((contents): contents is Contents => contents !== undefined);
 }
 
 /**
@@ -81,6 +89,8 @@ function ownedBy<Contents>(
 	if (pages.window.isDestroyed()) return false;
 	return (
 		contents === pages.window.webContents ||
+		contents === pages.sidebar.contents() ||
+		contents === pages.agents.contents() ||
 		contents === pages.picker.contents() ||
 		contents === pages.toasts.contents()
 	);

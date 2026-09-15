@@ -13,6 +13,8 @@ import { describe, expect, it } from "vitest";
 import { displayAudience, projectionAudience } from "./publishAudience.js";
 
 const SHELL = "shell page";
+const SIDEBAR = "sidebar page";
+const AGENTS = "agents page";
 const PICKER = "picker page";
 const TOASTS = "toasts page";
 const SETTINGS = "settings page";
@@ -27,6 +29,8 @@ function pages(options?: {
 			isDestroyed: () => options?.gone === true,
 			webContents: SHELL,
 		},
+		sidebar: { contents: () => SIDEBAR as string | undefined },
+		agents: { contents: () => AGENTS as string | undefined },
 		picker: {
 			contents: () => (options?.picker === false ? undefined : PICKER),
 		},
@@ -38,11 +42,20 @@ function pages(options?: {
 
 describe("a projection", () => {
 	it("goes to every page that draws from the model", () => {
-		expect(projectionAudience(pages())).toEqual([SHELL, PICKER]);
+		expect(projectionAudience(pages())).toEqual([
+			SHELL,
+			SIDEBAR,
+			AGENTS,
+			PICKER,
+		]);
 	});
 
 	it("goes to the one page there is before the picker exists", () => {
-		expect(projectionAudience(pages({ picker: false }))).toEqual([SHELL]);
+		expect(projectionAudience(pages({ picker: false }))).toEqual([
+			SHELL,
+			SIDEBAR,
+			AGENTS,
+		]);
 	});
 });
 
@@ -59,6 +72,8 @@ describe("a failure", () => {
 	 */
 	it("is drawn on the toasts view wherever in this window it began", () => {
 		expect(displayAudience(pages(), SHELL)).toEqual([TOASTS]);
+		expect(displayAudience(pages(), SIDEBAR)).toEqual([TOASTS]);
+		expect(displayAudience(pages(), AGENTS)).toEqual([TOASTS]);
 		expect(displayAudience(pages(), PICKER)).toEqual([TOASTS]);
 		expect(displayAudience(pages(), TOASTS)).toEqual([TOASTS]);
 	});

@@ -48,8 +48,19 @@ const SIDEBAR_GLYPH_WIDTH = { compact: 16, comfortable: 18 } as const;
  * the bar shown the hole starts at y 39, not 38.)
  */
 const HAIRLINE = 1;
-/** `.split-divider`'s own width. The seam is an element, not a border. */
-const SPLIT_DIVIDER = 1;
+/**
+ * `.split-divider`'s own width. The seam is an element, not a border.
+ *
+ * Six pixels rather than the one it paints, because the seam is also the thing
+ * the split is dragged by and it is now the only strip of the content area no
+ * child view covers. It used to be one pixel with a three-pixel hit area hung
+ * off each side — an element reaching over its neighbours, which it could do
+ * while both neighbours were boxes in the same document. Over a native view it
+ * cannot: outside this strip the pointer belongs to the workbench or to the
+ * Agent, so a grab area wider than the strip is a grab area that is silently
+ * not there. The strip is the honest width instead.
+ */
+const SPLIT_DIVIDER = 6;
 /** How far the notices sit from the window's corner. */
 const TOASTS_MARGIN = 12;
 
@@ -98,8 +109,14 @@ export type SurfaceArrangement =
  * person selected is the Agent — a split is only ever entered by asking for an
  * Agent beside its editor. Reading visibility gave the keys to the editor
  * every time.
+ *
+ * It used to be two words, `editor` and `page`, because everything that was
+ * not a workbench was one document. `page` named the Sidebar and the Agent's
+ * pane at once, and the page then sorted out which of them it meant — which is
+ * the whole of what `focusHome.ts` was. Both are children of the window now,
+ * so the answer names one of them.
  */
-export type KeyboardHalf = "editor" | "page";
+export type KeyboardHalf = "editor" | "agents" | "sidebar";
 
 /** Everything about the arrangement that is not the window's own size. */
 export interface LayoutState {
@@ -127,6 +144,8 @@ export interface LayoutInput {
 
 export type ChildIdentity =
 	| { readonly kind: "shell" }
+	| { readonly kind: "sidebar" }
+	| { readonly kind: "agents" }
 	| { readonly kind: "editor"; readonly editorKey: string }
 	| { readonly kind: "toasts" }
 	| { readonly kind: "picker" };
@@ -172,6 +191,61 @@ export function surfaceRect(
 		y: bar,
 		width: Math.max(0, windowSize.width - x),
 		height: Math.max(0, windowSize.height - bar),
+	};
+}
+
+/**
+ * The Sidebar's own rectangle: the leading column, under the bar if there is
+ * one.
+ *
+ * The bar is not part of it. DevHub's title bar spans the whole window above
+ * both columns and it is the window's drag handle, and a drag region is a
+ * rectangle Electron hands to macOS rather than a hit test the page performs —
+ * so it stays on the window's own page, which is under every child and is the
+ * one surface no child is laid over. With `hidden` there is no bar, the
+ * Sidebar carries the traffic lights itself, and this rectangle is the whole
+ * height of the window; that is the arrangement the rail's floor exists for
+ * (see `sidebarColumnWidth`).
+ */
+export function sidebarRect(
+	windowSize: LayoutSize,
+	state: LayoutState,
+): LayoutRect {
+	const bar = state.titleBar === "shown" ? TITLE_BAR_HEIGHT + HAIRLINE : 0;
+	return {
+		x: 0,
+		y: bar,
+		width: sidebarColumnWidth(state),
+		height: Math.max(0, windowSize.height - bar),
+	};
+}
+
+/**
+ * The rectangle the Agents' view is laid into.
+ *
+ * The whole content area when an Agent covers it, and the trailing share of it
+ * when one is open beside its editor — the workbench's rectangle, the seam,
+ * and then this. The seam itself belongs to neither: it is a real element on
+ * the window's own page, in the one strip no child covers, which is what keeps
+ * the pixels the pointer meets and the pixels the eye sees the same pixels.
+ *
+ * Computed whether or not an Agent is on screen, for the same reason a
+ * workbench is: a view shown at the size it had when it was last hidden lays
+ * itself out against that size first, and an xterm reflows visibly when it
+ * catches up.
+ */
+export function agentsRect(
+	windowSize: LayoutSize,
+	state: LayoutState,
+): LayoutRect {
+	const surface = surfaceRect(windowSize, state);
+	if (state.surface.kind !== "split") return surface;
+	const workbench = workbenchRect(windowSize, state);
+	const x = workbench.x + workbench.width + SPLIT_DIVIDER;
+	return {
+		...surface,
+		x,
+		width: Math.max(0, surface.x + surface.width - x),
 	};
 }
 
@@ -241,22 +315,41 @@ export function keyboardChild(input: LayoutInput): ChildIdentity {
 	if (input.asking !== undefined && input.editors.includes(input.asking)) {
 		return { kind: "editor", editorKey: input.asking };
 	}
-	if (input.state.keyboard === "page") return { kind: "shell" };
+	if (input.state.keyboard === "sidebar") return { kind: "sidebar" };
+	if (input.state.keyboard === "agents") {
+		// Only where there is one to type into. An Agent's view is drawn for an
+		// `agent` or a `split` arrangement and for nothing else, and handing
+		// the keys to a view that is not in the window is the invisible-focus
+		// bug this whole redesign exists to end — so anything else falls to
+		// the window's own page, which is always there.
+		return agentsVisible(input.state) ? { kind: "agents" } : { kind: "shell" };
+	}
 	const editorKey = onScreenEditor(input);
 	return editorKey === undefined
 		? { kind: "shell" }
 		: { kind: "editor", editorKey };
 }
 
+/** Whether an Agent is drawn at all: over the content area, or beside it. */
+function agentsVisible(state: LayoutState): boolean {
+	return state.surface.kind === "agent" || state.surface.kind === "split";
+}
+
 /**
  * The window's children, in the order they are stacked.
  *
- * The order *is* the z-order, lowest first: the App Shell page, then every
- * workbench with the one on screen last among them, then the notices, then the
- * questions. A notice about the application is above the thing it is about,
- * and a question is above the notice. Nothing in this list is conditional on
- * anything but content: `toasts` and `picker` are in it exactly when they have
- * something to draw, because a layer that is not there cannot take a click.
+ * The order *is* the z-order, lowest first: the window's own page, the
+ * Sidebar, then every workbench with the one on screen last among them, then
+ * the Agents, then the notices, then the questions. A notice about the
+ * application is above the thing it is about, and a question is above the
+ * notice. Nothing in this list is conditional on anything but content:
+ * `toasts` and `picker` are in it exactly when they have something to draw,
+ * because a layer that is not there cannot take a click.
+ *
+ * `sidebar` and `agents` are always in it, because both exist for the life of
+ * the window and neither is ever a layer over anything: they are columns
+ * beside the workbench, so their being present costs nothing and their
+ * ordering against each other never comes up.
  */
 export function windowLayout(input: LayoutInput): readonly LayoutChild[] {
 	const { windowSize, state } = input;
@@ -271,6 +364,16 @@ export function windowLayout(input: LayoutInput): readonly LayoutChild[] {
 
 	const children: LayoutChild[] = [
 		{ identity: { kind: "shell" }, rect: shellRect, visible: true },
+		// Always there, and always under everything else that is drawn over
+		// the content area: the Sidebar is the one child that is never covered
+		// and never absent, so nothing above it in this list can be wrong
+		// about it. Collapsed it is a rail rather than gone — `collapsed` is a
+		// width, not a visibility.
+		{
+			identity: { kind: "sidebar" },
+			rect: sidebarRect(windowSize, state),
+			visible: true,
+		},
 	];
 	// Every workbench is sized, whether or not it is drawn: a view that is
 	// shown at the size it had when it was last hidden lays itself out against
@@ -290,6 +393,15 @@ export function windowLayout(input: LayoutInput): readonly LayoutChild[] {
 			visible: true,
 		});
 	}
+	// One view for every Agent there is, showing the selected one. It is drawn
+	// exactly when a workbench is not — or beside one, which is what a split
+	// is — so "one of {the Agents, a workbench} is on the content area" is a
+	// property of this list rather than a rule somebody has to keep.
+	children.push({
+		identity: { kind: "agents" },
+		rect: agentsRect(windowSize, state),
+		visible: agentsVisible(state),
+	});
 	if (input.toasts && input.toasts.width > 0 && input.toasts.height > 0) {
 		children.push({
 			identity: { kind: "toasts" },
