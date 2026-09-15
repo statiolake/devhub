@@ -333,7 +333,11 @@ export function SurfaceViewport({ snapshot }: SurfaceViewportProps) {
   // this direction of travel removes.
   if (!area) return null;
   const split = layout.kind === "split";
-  const content = { left: area.x, width: window.innerWidth - area.x };
+  // The content area, as main says it is. Not `window.innerWidth - area.x`:
+  // what a page measures is its own box and is one frame stale after main
+  // moves it, so a pointer landing in the first frame after a window resize
+  // computed the ratio against the width the window used to be.
+  const content = { left: area.x, width: area.contentWidth };
 
   return (
     <>

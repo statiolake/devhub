@@ -24,8 +24,8 @@ import { useSidebar } from "../../sidebar/SidebarContext";
 import { devhub } from "../../sidebar/client";
 import { isImeComposing } from "../../accessibility/ime";
 import { Glyph, type GlyphName } from "./icons";
+import { RowTooltip } from "./RowTooltip";
 import { RowMenu, type RowMenuItem } from "./RowMenu";
-import { SidebarHeader } from "./SidebarHeader";
 import { StatusMark } from "./StatusMark";
 import { mergeExitingRows, useClosingExit } from "./closingExit";
 import { moveIntent, sourceOfTreeItem } from "./reorder";
@@ -197,7 +197,7 @@ function WorkspaceRow({
             // which named the row and said nothing about the branch it is on
             // or the Issue it is for — the two facts the expanded row spends
             // its other two lines on, and the two a rail is hiding.
-            title={description}
+            data-tooltip={description}
             onClick={() =>
               dispatch({
                 type: "select_context",
@@ -229,7 +229,7 @@ function WorkspaceRow({
               className="row-action-button"
               type="button"
               aria-label={`Create agent in ${workspace.label}${agentProfilesAvailability === "unavailable" || agentProfiles.length === 0 ? ", unavailable" : ""}`}
-              title={
+              data-tooltip={
                 agentProfilesAvailability === "degraded"
                   ? "Agent profiles need attention"
                   : agentProfiles.length > 0
@@ -262,7 +262,7 @@ function WorkspaceRow({
                   ? `Close the worktree ${workspace.label}`
                   : `Close ${workspace.label}`
               }
-              title={
+              data-tooltip={
                 closeFailed
                   ? "Retry close"
                   : deletesWorktree
@@ -301,7 +301,7 @@ function WorkspaceRow({
             {workspace.location.kind === "ssh" && (
               <span
                 className="row-branch"
-                title={`${workspace.location.host}:${workspace.root}`}
+                data-tooltip={`${workspace.location.host}:${workspace.root}`}
               >
                 {workspace.location.host}
               </span>
@@ -312,7 +312,7 @@ function WorkspaceRow({
               </span>
             )}
             {repository?.branch && (
-              <span className="row-branch" title={repository.branch}>
+              <span className="row-branch" data-tooltip={repository.branch}>
                 {repository.branch}
               </span>
             )}
@@ -354,7 +354,9 @@ function WorkspaceRow({
             {(repository?.issue?.title ?? repository?.pullRequest?.title) ? (
               <span
                 className="row-issue"
-                title={repository.issue?.title ?? repository.pullRequest?.title}
+                data-tooltip={
+                  repository.issue?.title ?? repository.pullRequest?.title
+                }
               >
                 {repository.issue?.title ?? repository.pullRequest?.title}
               </span>
@@ -388,7 +390,7 @@ function WorkspaceRow({
             {repository?.unavailable ? (
               <span
                 className="row-issue-unavailable"
-                title={
+                data-tooltip={
                   repository.unavailable.number === undefined
                     ? repository.unavailable.reason
                     : `Issue #${String(repository.unavailable.number)}: ${repository.unavailable.reason}`
@@ -501,7 +503,7 @@ function WorkspaceRow({
                       // this is. It is the accessible name and not a shorter
                       // version of it: a rail is the sighted reader's turn at
                       // being told rather than shown.
-                      title={agentDescription}
+                      data-tooltip={agentDescription}
                       disabled={agent.controlState.kind === "stopping"}
                       // Command-click opens the Agent beside its workbench; a
                       // plain click gives it the whole content area. The same
@@ -531,7 +533,7 @@ function WorkspaceRow({
                         className="row-action-button agent-row-action"
                         type="button"
                         aria-label={`Stop ${agent.displayName}`}
-                        title={stopFailed ? "Retry stop" : "Stop agent"}
+                        data-tooltip={stopFailed ? "Retry stop" : "Stop agent"}
                         onClick={() =>
                           dispatch(
                             stopFailed
@@ -607,7 +609,7 @@ function WorkspaceGlyph({
       className="row-glyph row-glyph-button"
       type="button"
       aria-label={`Open ${page} on GitHub`}
-      title={`Open ${page} on GitHub`}
+      data-tooltip={`Open ${page} on GitHub`}
       onClick={() => {
         openExternalUrl(url);
       }}
@@ -704,7 +706,7 @@ function RepositoryLinks({
           className={`row-link-button is-issue-${issue.state}`}
           type="button"
           aria-label={issueLabel(issue)}
-          title={issueMark(issue)}
+          data-tooltip={issueMark(issue)}
           onClick={() => {
             openExternalUrl(issue.url);
           }}
@@ -719,7 +721,7 @@ function RepositoryLinks({
           className={`row-link-button is-pr-${pullRequest.state}`}
           type="button"
           aria-label={pullRequestLabel(pullRequest)}
-          title={pullRequestMark(pullRequest)}
+          data-tooltip={pullRequestMark(pullRequest)}
           onClick={() => {
             openExternalUrl(pullRequest.url);
           }}
@@ -749,7 +751,7 @@ function ScratchRow({
       type="button"
       aria-current={selected ? "page" : undefined}
       aria-label="Scratch terminal"
-      title={SCRATCH_NAME}
+      data-tooltip={SCRATCH_NAME}
       onClick={() =>
         onDispatch({ type: "select_context", context: { kind: "global" } })
       }
@@ -1128,7 +1130,6 @@ export function Sidebar({ snapshot, onDispatch }: SidebarProps) {
     >
       {/* The Sidebar runs the full height of the window, so its own top strip
           is where the window buttons live and where the window is dragged. */}
-      <SidebarHeader />
       <div className="sidebar-scroll-region">
         <ScratchRow
           snapshot={snapshot}
@@ -1145,7 +1146,7 @@ export function Sidebar({ snapshot, onDispatch }: SidebarProps) {
               className="section-action-button"
               type="button"
               aria-label="Assign issue"
-              title="Assign issue"
+              data-tooltip="Assign issue"
               onClick={openIssueAssignment}
             >
               {/* An act, not a state: DevHub's own mark, the same one the
@@ -1159,7 +1160,7 @@ export function Sidebar({ snapshot, onDispatch }: SidebarProps) {
               className="section-action-button"
               type="button"
               aria-label="Open workspace picker"
-              title="Open workspace picker"
+              data-tooltip="Open workspace picker"
               onClick={openPicker}
             >
               <Glyph name="plus" />
@@ -1311,6 +1312,11 @@ export function Sidebar({ snapshot, onDispatch }: SidebarProps) {
           onCommit={resize}
         />
       )}
+      {/* One tooltip for the whole tree, drawn by this page rather than by
+          Chromium. See `RowTooltip.tsx` — the rail is the row that most needs
+          one, and it is exactly the row a native tooltip would be raised
+          inside a view too narrow to hold it. */}
+      <RowTooltip />
       {agentMenu ? (
         <RowMenu
           at={agentMenu.at}

@@ -163,24 +163,6 @@
   border-top: 1px solid var(--line-strong);
 }
 
-/* --------------------------------------------------- the sidebar's header */
-
-/* The strip the window is dragged by, when the window has no bar of its own.
-   Exactly the traffic lights' band height and inset past the lights, so the
-   row the lights sit in stays theirs alone. It carries no control: the Sidebar
-   is always the pane.
-
-   With a system title bar `--titlebar-reserve` is zero and the strip collapses
-   to nothing — there is a real bar above the content area doing this job, and
-   a second empty band under it would only push the Sidebar down. */
-.sidebar-header {
-  display: flex;
-  flex: 0 0 var(--titlebar-reserve);
-  align-items: center;
-  padding: 0 var(--space-2) 0 var(--traffic-light-inset);
-  height: var(--titlebar-reserve);
-}
-
 /* --------------------------------------------------------------- sidebar */
 
 .sidebar {
@@ -1844,50 +1826,34 @@ body.is-resizing-split {
 
 /* --------------------------------------------------------- window dragging */
 
-/* With the titlebar gone the Sidebar is the handle: the pane is a drag
-   region, and every part of it that does something opts back out.
-
-   The opt-out list is written as "anything interactive" rather than as a list
-   of the classes that exist today, because a draggable region swallows the
-   clicks that land on it — so a control added later that is not on the list
-   would be a control nobody can press, and it would look like a bug in the
-   control rather than in this rule. What is left draggable is what is left
-   over: the header strip and the pane's own edges.
-
-   Only when there is no title bar. With a system bar the window already has a
-   handle, and a draggable Sidebar would be a pane whose empty room swallows
-   clicks for no reason anybody could see. */
-.app-shell[data-title-bar="hidden"] .sidebar {
+/*
+ * The band the window is dragged by, in the chrome that has no bar.
+ *
+ * It is on the window's own page and nowhere else, in both chromes: with
+ * `shown` it is `.title-bar` above, and with `hidden` it is this strip. A drag
+ * region is not a CSS hit test — Electron collects its rectangles from layout
+ * and hands them to macOS, which takes the mouse before any page sees it — and
+ * it collects them from the *window's own* web contents. This document is that
+ * contents; the Sidebar is a `WebContentsView`, and whether a region declared
+ * in one composes into the same handle is not something this codebase can
+ * check. So it does not depend on it.
+ *
+ * It spans the window, and the owner leaves it uncovered exactly where it is
+ * meant to be reachable: over the Sidebar's column, which starts below this
+ * band (`windowLayout.ts`, `sidebarRect`). Everywhere else a child view is
+ * drawn over it, which is what a strip under every child means.
+ *
+ * It carries nothing and can carry nothing: a control inside a drag rectangle
+ * is a control nobody can press, because the region takes the mouse first. The
+ * traffic lights are the window's own and are drawn by macOS into this band.
+ */
+.app-shell[data-title-bar="hidden"] .window-drag-strip {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: var(--titlebar-height);
   -webkit-app-region: drag;
-}
-
-/* The list is not a handle, and neither is its scrollbar.
-
-   A drag region is not a CSS hit-test: Electron collects the region's
-   rectangles from layout and hands them to the window system, which takes
-   the mouse before the page ever sees it. A scrollbar inside one of those
-   rectangles is therefore a scrollbar that moves the window when dragged —
-   which is what the Sidebar's did. The whole scroll region opts out, and not
-   only its scrollbar, for two reasons: the scrollbar has no element of its
-   own to opt out with, and the rectangles are collected on layout rather
-   than on scroll, so a drag region inside a scroller is a region that stays
-   where the content was before it scrolled. The empty room below the rows
-   stops being a handle; the header strip, which never scrolls, is the one
-   that was always meant. */
-.sidebar-scroll-region {
-  -webkit-app-region: no-drag;
-}
-
-.sidebar button,
-.sidebar a,
-.sidebar input,
-.sidebar [role="separator"],
-.sidebar [role="menu"],
-.sidebar [tabindex]:not([tabindex="-1"]),
-/* The whole row, not only the buttons in it: a row answers a right-click with
-   its context menu, and that gesture starts on the row's own background. */
-.sidebar-row {
-  -webkit-app-region: no-drag;
 }
 
 /* ------------------------------------------------------------- unread */

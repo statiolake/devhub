@@ -345,12 +345,22 @@ describe("the Sidebar and the Agents as children of their own", () => {
 		});
 	});
 
-	it("gives it the whole height when it carries the traffic lights", () => {
+	/**
+	 * With no bar there is still a band, and it is still the window's.
+	 *
+	 * The traffic lights are drawn over this column in that chrome, and what
+	 * the window is dragged by has to be a rectangle the *window's own page*
+	 * declares — a drag region is handed to macOS by the window's contents, and
+	 * whether one declared inside a child view composes into the same handle is
+	 * not a thing this codebase can check. So the band is left out of the
+	 * Sidebar's rectangle and the Sidebar starts under it.
+	 */
+	it("leaves the traffic lights' band to the window's own page", () => {
 		expect(sidebarRect(WINDOW, state({ titleBar: "hidden" }))).toEqual({
 			x: 0,
-			y: 0,
+			y: 38,
 			width: 248,
-			height: 900,
+			height: 862,
 		});
 	});
 

@@ -22,6 +22,7 @@ import { sendLinksToTheBrowser } from "./externalLinks.js";
 import {
 	keyboardChild,
 	onScreenEditor,
+	surfaceRect,
 	windowLayout,
 	workbenchRect,
 	type ChildIdentity,
@@ -30,6 +31,7 @@ import {
 	type LayoutState,
 } from "./windowLayout.js";
 import type { TitleBarMode } from "../../model/config.js";
+import type { WorkbenchAreaWire } from "../../ipc/contract.js";
 import { WINDOW_TITLES, type ShellWindowKind } from "../../ipc/windowTitles.js";
 import { ChromeView } from "./chromeView.js";
 import { PickerView } from "./pickerView.js";
@@ -859,6 +861,22 @@ export class ShellWindow {
 	 */
 	workbenchRect(): LayoutRect {
 		return workbenchRect(this.windowSize(), this.state);
+	}
+
+	/**
+	 * The workbench's rectangle, and how wide the content area around it is.
+	 *
+	 * What the window's own page is told, and the whole of what it knows about
+	 * where anything is. The second number is there so the page never has to
+	 * ask its own document how wide the window is: a view's `innerWidth` is
+	 * stale for a frame after main moves it, and the split ratio is a ratio of
+	 * this width.
+	 */
+	workbenchArea(): WorkbenchAreaWire {
+		return {
+			...this.workbenchRect(),
+			contentWidth: surfaceRect(this.windowSize(), this.state).width,
+		};
 	}
 
 	boundsOf(_view: WorkbenchView): Electron.Rectangle {

@@ -1910,7 +1910,7 @@ export class AppController {
 		// laid into, and the split's seam is where that rectangle ends. It is
 		// given the number rather than asked for it, so there is no
 		// arrangement in which the two can disagree about where the seam is.
-		this.send(CHANNELS.workbenchAreaChanged, shell.workbenchRect());
+		this.send(CHANNELS.workbenchAreaChanged, shell.workbenchArea());
 	}
 
 	/**

@@ -28,6 +28,13 @@
  *   drawn on the `toasts` view, over whatever is on screen. See
  *   `main/shell/publishAudience.ts`.
  *
+ *
+ * # `window.innerWidth` is not the window
+ *
+ * This page is a `WebContentsView`, and what it measures is its own box — one
+ * frame stale after main calls `setBounds` on it. Nothing here reads it, and
+ * nothing here should: where anything is, is `main/shell/windowLayout.ts`, and
+ * a page that needs a number from it is told the number.
  * # Why the title bar is not here
  *
  * With `title_bar = shown` the bar spans the whole window above both columns,

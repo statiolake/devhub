@@ -26,6 +26,13 @@
  * laid into a hole in it; it is two rectangles the owner computes now
  * (`main/shell/windowLayout.ts`, `agentsRect`).
  *
+ *
+ * # `window.innerWidth` is not the window
+ *
+ * This page is a `WebContentsView`, and what it measures is its own box — one
+ * frame stale after main calls `setBounds` on it. Nothing here reads it, and
+ * nothing here should: where anything is, is `main/shell/windowLayout.ts`, and
+ * a page that needs a number from it is told the number.
  * # Its contract with main
  *
  * - **reads**: the snapshot (the running Agents, the selection, each Agent's

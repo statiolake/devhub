@@ -8,6 +8,14 @@
  * nothing; with `hidden` there is no bar and the Sidebar keeps the lights'
  * band clear itself, with a rail wide enough to hold them.
  *
+ * The band the lights sit in belongs to the *window's own page* in both, and
+ * that is the one thing the two chromes are not free to differ about: a drag
+ * region is collected from the window's own web contents, and whether one
+ * declared inside a `WebContentsView` composes into the same handle is not
+ * something this codebase can check. So with `shown` the band is the bar and
+ * with `hidden` it is `.window-drag-strip`, and the Sidebar's *view* starts
+ * under it either way (`main/shell/windowLayout.ts`, `sidebarRect`).
+ *
  * This is the test that the two answers stay two answers, and that neither of
  * them is "the other one with a rule missing".
  */
@@ -51,20 +59,14 @@ describe("the window's two chromes", () => {
       declared('.app-shell[data-title-bar="shown"]', "--titlebar-bar"),
     ).toBe("var(--titlebar-height)");
     expect(
-      declared('.app-shell[data-title-bar="shown"]', "--titlebar-reserve"),
-    ).toBe("0px");
-    expect(
       declared('.app-shell[data-title-bar="shown"]', "--traffic-light-inset"),
     ).toBe("0px");
   });
 
-  it("draws no bar, and keeps the lights' band on the Sidebar, with none", () => {
+  it("draws no bar, and a drag strip of its own instead, with none", () => {
     expect(
       declared('.app-shell[data-title-bar="hidden"]', "--titlebar-bar"),
     ).toBe("0px");
-    expect(
-      declared('.app-shell[data-title-bar="hidden"]', "--titlebar-reserve"),
-    ).toBe("var(--titlebar-height)");
     expect(
       declared('.app-shell[data-title-bar="hidden"]', "--traffic-light-inset"),
     ).toBe("88px");
@@ -176,27 +178,38 @@ describe("the window's two chromes", () => {
     ).toBe("var(--traffic-light-span)");
   });
 
-  it("leaves the rail and the header strip reading one token each", () => {
-    // Neither the rail nor the strip knows which chrome it is in: the mode is
-    // answered once, in tokens.css, and every rule that follows reads a token.
+  it("leaves the rail reading one token, whichever chrome it is in", () => {
+    // The rail does not know which chrome it is in: the mode is answered once,
+    // in tokens.css, and every rule that follows reads a token.
     expect(shell).toContain(`.sidebar[data-collapsed="true"] {
   width: var(--sidebar-rail-collapsed-width);
   flex-basis: var(--sidebar-rail-collapsed-width);
 }`);
-    expect(shell).toContain(`.sidebar-header {
-  display: flex;
-  flex: 0 0 var(--titlebar-reserve);
-  align-items: center;
-  padding: 0 var(--space-2) 0 var(--traffic-light-inset);
-  height: var(--titlebar-reserve);
-}`);
   });
 
-  it("makes the Sidebar a drag handle only when the window has no bar of its own", () => {
-    expect(shell).toContain(`.app-shell[data-title-bar="hidden"] .sidebar {
-  -webkit-app-region: drag;
-}`);
-    expect(shell).not.toMatch(/\n\.sidebar \{\n\s*-webkit-app-region: drag;/);
+  /**
+   * The handle is the window's page's in both chromes, and the Sidebar's in
+   * neither.
+   *
+   * It used to be `-webkit-app-region: drag` on the Sidebar pane with an
+   * opt-out for everything in it that does something — a rule the next control
+   * added to the Sidebar would have had to remember, and one that also carried
+   * "a scrollbar inside a drag rectangle moves the window". Both are gone: the
+   * Sidebar is a `WebContentsView`, a drag region is collected from the
+   * window's own contents, and this document is those contents.
+   */
+  it("keeps the drag region on the window's own page, in both chromes", () => {
+    expect(shell).toContain(
+      `.app-shell[data-title-bar="hidden"] .window-drag-strip {`,
+    );
+    expect(shell).toMatch(
+      /\.app-shell\[data-title-bar="hidden"\] \.window-drag-strip \{[^}]*-webkit-app-region: drag;/s,
+    );
+    expect(appShell).toContain('<div className="window-drag-strip"');
+    // Nothing in the Sidebar declares one, in either chrome.
+    expect(shell).not.toMatch(
+      /\.sidebar[^{]*\{[^}]*-webkit-app-region: drag;/s,
+    );
   });
 
   it("names neither chrome's geometry at the root, where it could apply to both", () => {
@@ -204,7 +217,6 @@ describe("the window's two chromes", () => {
     const body = root.slice(0, root.indexOf("\n}"));
     expect(body).not.toContain("--traffic-light-inset:");
     expect(body).not.toContain("--sidebar-rail-collapsed-width:");
-    expect(body).not.toContain("--titlebar-reserve:");
     expect(body).not.toContain("--titlebar-bar:");
   });
 });

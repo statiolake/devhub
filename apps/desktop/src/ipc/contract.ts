@@ -401,6 +401,19 @@ export interface WorkbenchAreaWire {
 	readonly y: number;
 	readonly width: number;
 	readonly height: number;
+	/**
+	 * How wide the whole content area is — the workbench, the seam and the
+	 * Agent beside it — from `x` to the window's trailing edge.
+	 *
+	 * Said by main rather than measured, and `width` is not enough to work it
+	 * out: in a split `width` is the leading share only. The page needs the
+	 * whole of it because the split ratio is a ratio *of* it, and the
+	 * alternative was `window.innerWidth - x`. A view's `innerWidth` is its
+	 * own, and is one frame stale after main moves it either way, so a pointer
+	 * landing in the first frame after a resize computed a ratio against the
+	 * width the window used to be.
+	 */
+	readonly contentWidth: number;
 }
 
 /**

@@ -8,6 +8,13 @@
  * exactly as long as something is being asked. Nothing else lives on this
  * page: no sidebar, no titlebar, no surfaces.
  *
+ *
+ * # `window.innerWidth` is not the window
+ *
+ * This page is a `WebContentsView`, and what it measures is its own box — one
+ * frame stale after main calls `setBounds` on it. Nothing here reads it, and
+ * nothing here should: where anything is, is `main/shell/windowLayout.ts`, and
+ * a page that needs a number from it is told the number.
  * # The contract, said once
  *
  * **Arriving from main**

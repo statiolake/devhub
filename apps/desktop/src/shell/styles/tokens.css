@@ -309,16 +309,17 @@
  * the App Shell always stamps the attribute — so exactly one of these always
  * applies and no rule below has to ask which window it is in.
  *
- * `--titlebar-bar` is how tall the bar DevHub draws is, `--titlebar-reserve`
- * is the band the *Sidebar* keeps clear at its top, and `--traffic-light-inset`
- * is how far into whichever of the two holds the lights its own content
- * starts. Exactly one of the first two is ever more than zero: the lights sit
- * in one band, and a second empty one under it would be a strip of nothing.
+ * `--titlebar-bar` is how tall the bar DevHub draws is, and
+ * `--traffic-light-inset` is how far past the lights whichever band holds them
+ * starts its own content. The band itself is the *window's own page's* in both
+ * chromes — with `shown` it is the title bar, with `hidden` it is the drag
+ * strip — because a drag region is only collected from the window's own web
+ * contents. The Sidebar's view begins under it either way; see
+ * `windowLayout.ts`, `sidebarRect`.
  */
 .app-shell[data-title-bar="shown"] {
   /* The bar is drawn, and it is where the lights are. */
   --titlebar-bar: var(--titlebar-height);
-  --titlebar-reserve: 0px;
   --traffic-light-inset: 0px;
   /*
    * How much of each end of the bar is not the name.
@@ -352,9 +353,6 @@
   /* No bar of DevHub's own above the content area. */
   --titlebar-bar: 0px;
   --titlebar-controls-inset: 0px;
-  /* The band the traffic lights sit in, which is the Sidebar's to keep clear:
-     with no title bar there is nothing else above the content area. */
-  --titlebar-reserve: var(--titlebar-height);
   /* Where the drag strip may start — past the lights, with a gap. Deliberately
      not the same token as the rail width below: "as wide as the lights" and
      "clear of the lights" are two answers that only happen to be close. */

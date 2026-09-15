@@ -151,6 +151,13 @@ function Workbench() {
         sidebarCollapsed={state.snapshot.sidebar.collapsed}
         onDispatch={onDispatch}
       />
+      {/* And the same band in the other chrome, where there is no bar to be
+          it. Drawn here and not in the Sidebar for the reason the bar is: a
+          drag region is collected from the *window's own* web contents, and
+          this document is that contents while every other page is a
+          `WebContentsView`. The owner leaves it uncovered over the Sidebar's
+          column, which starts below it. See `styles/shell.css`. */}
+      <div className="window-drag-strip" aria-hidden="true" />
       {/* No Sidebar here either, and no Agent's pane. Both are children of
           the window in their own right — `shell/sidebar` and `shell/agents` —
           which is what lets the owner put an Agent beside an editor, or an

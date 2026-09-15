@@ -179,6 +179,20 @@ export class WorkbenchView {
 		// same teardown for the ending DevHub did not ask for — VS Code closing
 		// the contents — so that there is no way for a view to outlive its
 		// contents on any table in main.
+		// How long it took to get an editor on screen, said once per view.
+		//
+		// It is the number that says whether the chrome around the editor is in
+		// the way of it: everything DevHub does at startup — the window, the
+		// child pages, the runtimes, the model — happens before or alongside
+		// this, and a change that costs half a second here is a change somebody
+		// feels on every launch. Measured from the process's own start, which
+		// is what the first line of the log is.
+		this.contents.once("did-finish-load", () => {
+			console.log(
+				`[devhub] workbench view ${this.id}: its page has finished loading`,
+			);
+		});
+
 		this.contents.once("destroyed", () => {
 			this.end();
 		});

@@ -7,6 +7,13 @@
  * — it has nothing else that could fail while it is telling you something
  * failed.
  *
+ *
+ * # `window.innerWidth` is not the window
+ *
+ * This page is a `WebContentsView`, and what it measures is its own box — one
+ * frame stale after main calls `setBounds` on it. Nothing here reads it, and
+ * nothing here should: where anything is, is `main/shell/windowLayout.ts`, and
+ * a page that needs a number from it is told the number.
  * # The whole contract, said once
  *
  * **Arriving from main**

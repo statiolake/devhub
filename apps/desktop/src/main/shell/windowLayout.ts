@@ -195,28 +195,43 @@ export function surfaceRect(
 }
 
 /**
- * The Sidebar's own rectangle: the leading column, under the bar if there is
- * one.
+ * The Sidebar's own rectangle: the leading column, under the band the window
+ * is dragged by.
  *
- * The bar is not part of it. DevHub's title bar spans the whole window above
- * both columns and it is the window's drag handle, and a drag region is a
- * rectangle Electron hands to macOS rather than a hit test the page performs —
- * so it stays on the window's own page, which is under every child and is the
- * one surface no child is laid over. With `hidden` there is no bar, the
- * Sidebar carries the traffic lights itself, and this rectangle is the whole
- * height of the window; that is the arrangement the rail's floor exists for
- * (see `sidebarColumnWidth`).
+ * **The band is never part of it, in either chrome.** A drag region is not a
+ * hit test the page performs: Electron collects the region's rectangles from
+ * layout and hands them to macOS, which takes the mouse before any page sees
+ * it — and it collects them from the *window's own* web contents. Whether a
+ * region declared inside a `WebContentsView` composes into that handle at all
+ * is not something this codebase can decide or check, so it does not depend on
+ * it: the handle is drawn on the window's own page, which is the
+ * `BrowserWindow`'s own contents and is under every child.
+ *
+ * With `shown` that is the title bar, spanning the whole window above both
+ * columns, and this rectangle starts under it and its hairline. With `hidden`
+ * there is no bar — but there are still the traffic lights, and something has
+ * to be draggable around them, so the same band is left to the window's page
+ * over this column and the Sidebar starts under it. It used to be the
+ * Sidebar's own, declared as `-webkit-app-region: drag` on the pane and opted
+ * out of by everything in it that does something; that rule also carried the
+ * "a scrollbar inside a drag rectangle moves the window" gotcha, and both are
+ * gone with it.
+ *
+ * The rail's floor is still about the lights (see `sidebarColumnWidth`): they
+ * are drawn over this column whether or not the band belongs to it, and a rail
+ * narrower than their span would put the close button on a workbench.
  */
 export function sidebarRect(
 	windowSize: LayoutSize,
 	state: LayoutState,
 ): LayoutRect {
-	const bar = state.titleBar === "shown" ? TITLE_BAR_HEIGHT + HAIRLINE : 0;
+	const band =
+		state.titleBar === "shown" ? TITLE_BAR_HEIGHT + HAIRLINE : TITLE_BAR_HEIGHT;
 	return {
 		x: 0,
-		y: bar,
+		y: band,
 		width: sidebarColumnWidth(state),
-		height: Math.max(0, windowSize.height - bar),
+		height: Math.max(0, windowSize.height - band),
 	};
 }
 
