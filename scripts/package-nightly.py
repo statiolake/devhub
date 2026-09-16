@@ -214,7 +214,7 @@ def check_compiled_output_is_current() -> None:
 		(DESKTOP_DIR / "src", DESKTOP_DIR / "out", "pnpm --filter @devhub/desktop build"),
 		(DESKTOP_DIR / "src", DESKTOP_DIR / "dist", "pnpm --filter @devhub/desktop build"),
 		(BRIDGE_DIR / "src", BRIDGE_DIR / "dist", "pnpm --filter @devhub/bridge build"),
-		(REMOTE_DIR / "src", REMOTE_DIR / "dist", "pnpm --filter @devhub/remote build"),
+		(REMOTE_DIR / "src", REMOTE_DIR / "dist", "pnpm --filter devhub-remote build"),
 	):
 		if not source.is_dir() or not built.is_dir():
 			continue
@@ -241,7 +241,7 @@ def check_inputs() -> None:
 		# SSH Workspace opens a workbench that waits for an authority nothing
 		# answers. It is a built-in for the same reason the bridge is: a person
 		# cannot be without it.
-		(REMOTE_DIR / "dist" / "extension.js", "pnpm --filter @devhub/remote build"),
+		(REMOTE_DIR / "dist" / "extension.js", "pnpm --filter devhub-remote build"),
 	]
 	for path, command in required:
 		if not path.exists():

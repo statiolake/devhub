@@ -97,4 +97,52 @@ if (
 if (extension.includes(": any") || resolver.includes(": any")) {
   throw new Error("the resolver must use the pinned VS Code types");
 }
+/**
+ * The identity product.json has to match, checked against product.json.
+ *
+ * VS Code composes this extension's identity as `<publisher>.<name>` from the
+ * manifest and looks *that* key up in `extensionEnabledApiProposals`
+ * (`extensionsProposedApi.ts`). Get it wrong and nothing says so where anyone
+ * is looking: the grant silently does not apply, `resolvers` is not enabled,
+ * the authority is never resolved, and the only trace is one line in the
+ * extension host log. The window just sits there.
+ *
+ * Two ways to get it wrong, and this catches both. A scoped npm name — the
+ * repo's own convention for every other workspace package — would make the
+ * identity `devhub.@devhub/remote`, which is not even a legal extension id.
+ * And a grant that names a different extension is the same failure with a
+ * different cause. So the name in the manifest is the extension's, the
+ * workspace filter is `devhub-remote`, and the two halves are compared here.
+ */
+const identity = `${manifest.publisher}.${manifest.name}`;
+if (!/^[a-zA-Z0-9][a-zA-Z0-9-]*\.[a-zA-Z0-9][a-zA-Z0-9-]*$/.test(identity)) {
+  throw new Error(
+    `${identity} is not a legal VS Code extension identifier, so no ` +
+      `product.json grant can name it (EXTENSION_IDENTIFIER_PATTERN)`,
+  );
+}
+const metadata = await readFile(
+  new URL("../../../scripts/product_metadata.py", import.meta.url),
+  "utf8",
+);
+const granted = new RegExp(
+  `"${identity.replace(/[.]/gu, "\\.")}"\\s*:\\s*\\[([^\\]]*)\\]`,
+  "u",
+).exec(metadata);
+if (granted === null) {
+  throw new Error(
+    `scripts/product_metadata.py grants no API proposals to ${identity}, so ` +
+      `the resolver would load and be refused 'resolvers' with nothing said ` +
+      `anywhere a person is looking`,
+  );
+}
+for (const proposal of manifest.enabledApiProposals ?? []) {
+  if (!granted[1].includes(`"${proposal}"`)) {
+    throw new Error(
+      `${identity} asks for the '${proposal}' API proposal and ` +
+        `scripts/product_metadata.py does not grant it`,
+    );
+  }
+}
+
 console.log("DevHub remote resolver static checks passed");

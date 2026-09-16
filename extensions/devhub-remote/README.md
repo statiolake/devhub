@@ -61,7 +61,7 @@ copy that can drift.
 ## Checks
 
 ```sh
-pnpm --filter @devhub/remote check
+pnpm --filter devhub-remote check
 ```
 
 builds the extension, typechecks it, runs the tests, runs the static checks

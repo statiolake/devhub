@@ -73,7 +73,7 @@ if [ ! -f "$BRIDGE/dist/extension.js" ]; then
 	exit 1
 fi
 if [ ! -f "$REMOTE/dist/extension.js" ]; then
-	echo "the remote resolver extension is not built — run 'pnpm --filter @devhub/remote build'" >&2
+	echo "the remote resolver extension is not built — run 'pnpm --filter devhub-remote build'" >&2
 	exit 1
 fi
 

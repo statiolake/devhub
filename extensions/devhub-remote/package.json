@@ -1,5 +1,5 @@
 {
-  "name": "@devhub/remote",
+  "name": "devhub-remote",
   "displayName": "DevHub Remote",
   "description": "DevHub's built-in ssh-remote authority resolver: it asks the running DevHub for the endpoint of a remote extension host and hands VS Code the answer.",
   "version": "0.1.0",
