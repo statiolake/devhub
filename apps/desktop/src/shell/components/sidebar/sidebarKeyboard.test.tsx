@@ -138,7 +138,7 @@ describe("focus_sidebar", () => {
     mount(snapshotOn({ kind: "agent", agentId: "a-1" }));
     send("focus_sidebar");
     expect(document.activeElement).toBe(
-      screen.getByRole("button", { name: /^a-1,/ }),
+      screen.getByRole("button", { name: /^a-1/ }),
     );
   });
 
@@ -157,7 +157,7 @@ describe("focus_sidebar", () => {
       key: "ArrowDown",
     });
     expect(document.activeElement).toBe(
-      screen.getByRole("button", { name: /^a-1,/ }),
+      screen.getByRole("button", { name: /^a-1/ }),
     );
   });
 });

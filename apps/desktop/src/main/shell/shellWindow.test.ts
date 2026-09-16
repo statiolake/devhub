@@ -370,7 +370,7 @@ describe("the shell window's workbench views", () => {
 	 */
 	it("takes the tooltip down when a question comes up", () => {
 		shell.tooltip.show({
-			text: "widget workspace",
+			lines: [{ text: "widget", style: "name" }],
 			anchor: { x: 14, y: 120, width: 16, height: 24 },
 			prefer: "right",
 		});

@@ -1,21 +1,25 @@
 // @vitest-environment jsdom
 
 /**
- * How an Agent's row is laid out: what leads it, what is under that, and where
- * its marks are.
+ * How an Agent's row is laid out: what leads it, what follows on the same line,
+ * and where its one mark is.
  *
- * The word is the Agent's own — the title its program set. It *leads* the row,
- * at the size a row's name is set in, because the Agents under one Workspace
- * are told apart by what each is doing and not by being called "Claude" and
- * "Codex". The name follows on the quiet second line, and it is still always
- * there: a row that said only "Reading the reconciler" would not say which of
- * three Agents was reading it.
+ * The word that leads is the Agent's own — the title its program set — at the
+ * size a row's name is set in, because the Agents under one Workspace are told
+ * apart by what each is doing and not by being called "Claude" and "Codex".
+ * What follows it, dimmed, is what tells two of them apart when the doing does
+ * not: the ordinal, or a name somebody gave it. The bare kind word is dropped,
+ * because it is the one fact on the row that nobody needs — it is what you
+ * chose when you started the Agent, and there is a status mark in front of it.
  *
- * An Agent that has said nothing leads with its name instead, because the
- * leading line is never empty.
+ * An Agent that has said nothing leads with its name instead, because the line
+ * is never empty.
+ *
+ * One mark, and it is the status. Unread is drawn *by* that mark and only when
+ * the Agent is idle — see `unreadShows` — because an Agent that is working,
+ * waiting or in error is already asking to be looked at.
  */
 
-import { readFileSync } from "node:fs";
 import "@testing-library/jest-dom/vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -93,7 +97,13 @@ function mount(
   const value = {
     dispatch: vi.fn(),
     openExternalUrl: vi.fn(),
-    agentProfiles: { sequence: 1, availability: "available", profiles: [] },
+    agentProfiles: {
+      sequence: 1,
+      availability: "available",
+      // The kind word the row drops, as the row learns it: from the profile
+      // the Agent was started from.
+      profiles: [{ id: "claude", displayName: "Claude" }],
+    },
     repositoryStatus: { sequence: 1, workspaces: [] },
   } as unknown as SidebarValue;
   render(
@@ -106,96 +116,182 @@ function mount(
   );
 }
 
-/** The text of an Agent row's leading line, and of the line under it. */
+/** The same row, with a name and a status of the test's choosing. */
+function mountNamed(
+  displayName: string,
+  activity: string | undefined,
+  status: AgentStatus = "working",
+  unread: AgentStatus | undefined = undefined,
+): void {
+  const value = {
+    dispatch: vi.fn(),
+    openExternalUrl: vi.fn(),
+    agentProfiles: {
+      sequence: 1,
+      availability: "available",
+      profiles: [{ id: "claude", displayName: "Claude" }],
+    },
+    repositoryStatus: { sequence: 1, workspaces: [] },
+  } as unknown as SidebarValue;
+  const snapshot = snapshotWithAgent(activity, unread);
+  const withAgent = {
+    ...snapshot,
+    workspaces: snapshot.workspaces.map((workspace) => ({
+      ...workspace,
+      agents: workspace.agents.map((agent) => ({
+        ...agent,
+        displayName,
+        status,
+      })),
+    })),
+  } as unknown as AppSnapshot;
+  render(
+    <SidebarContext.Provider value={value}>
+      <Sidebar snapshot={withAgent} onDispatch={vi.fn()} />
+    </SidebarContext.Provider>,
+  );
+}
+
+/** An Agent that is idle, which is the one state unread is drawn in. */
+function mountIdle(unread: AgentStatus | undefined): void {
+  mountNamed("Claude 1", undefined, "idle", unread);
+}
+
+/** What an Agent row leads with, and what follows it on the same line. */
 function agentLines(): {
   readonly leading: string | undefined;
-  readonly under: string | undefined;
+  readonly after: string | undefined;
 } {
   const row = document.querySelector(".agent-row");
+  const after = [
+    row?.querySelector(".row-name")?.textContent,
+    row?.querySelector(".row-note")?.textContent,
+  ].filter((part) => part !== null && part !== undefined);
   return {
     leading: row?.querySelector(".row-label")?.textContent ?? undefined,
-    under: row?.querySelector(".row-line-secondary")?.textContent ?? undefined,
+    after: after.length > 0 ? after.join(" ") : undefined,
   };
 }
 
+/** Which mark the row's one status glyph is drawing. */
+function statusGlyph(): string | null | undefined {
+  return document
+    .querySelector(".agent-row .status-mark svg")
+    ?.getAttribute("data-glyph");
+}
+
 describe("what an Agent's row leads with", () => {
-  it("leads with what the Agent is doing, and names itself underneath", () => {
+  it("leads with what the Agent is doing, and names itself after it", () => {
     mount("Reading the reconciler");
     expect(agentLines()).toEqual({
       leading: "Reading the reconciler",
-      under: "Claude 1",
+      after: "Claude 1",
     });
   });
 
-  it("says both in the row's accessible name too", () => {
-    mount("Reading the reconciler");
+  /**
+   * The kind word is the profile's own name, and it says nothing a person did
+   * not already know from the mark in front of it. "Claude 1" is kept because
+   * the ordinal is what tells two Claudes apart; a lone "Claude" is dropped.
+   */
+  it("drops the name when the name is only the kind of Agent it is", () => {
+    mountNamed("Claude", "Reading the reconciler");
+    expect(agentLines()).toEqual({
+      leading: "Reading the reconciler",
+      after: undefined,
+    });
+  });
+
+  /**
+   * The row's accessible name is the same facts in words, from the same
+   * composition — including the name the *row* drops, because a reader has no
+   * mark to read the kind off and the words are all they get.
+   */
+  it("says all of it in the row's accessible name, kind word included", () => {
+    mountNamed("Claude", "Reading the reconciler");
     expect(
-      screen.getByRole("button", { name: /Claude 1.*Reading the reconciler/ }),
+      screen.getByRole("button", {
+        name: /Claude[\s\S]*Reading the reconciler/u,
+      }),
     ).toBeInTheDocument();
   });
 
   it("leads with its name when the Agent has said nothing", () => {
     mount(undefined);
-    // No second line at all: the name has been promoted to the first, and
-    // repeating it below would be the row saying one thing twice.
-    expect(agentLines()).toEqual({ leading: "Claude 1", under: undefined });
+    // Nothing after it: the name is the leading word, and repeating it would
+    // be the row saying one thing twice.
+    expect(agentLines()).toEqual({ leading: "Claude 1", after: undefined });
   });
 });
 
-describe("where an Agent's unread mark is", () => {
-  it("sits in the row's leading rail, and nowhere else", () => {
-    mount("Reading the reconciler", "waiting");
+/**
+ * Where an Agent's mark is: a gutter at the row's leading edge, before any
+ * depth, so that every Agent's status is at the same x whatever its row is
+ * nested under. The marks used to sit after the indent, which stepped them
+ * right as the tree went deeper and left no column to run an eye down.
+ */
+describe("the column an Agent's status is in", () => {
+  it("is the row's leading gutter, outside the row's own button", () => {
+    mount("Reading the reconciler");
     const row = document.querySelector(".agent-row");
-    expect(row?.querySelector(".row-rail > .row-unread")).toBeInTheDocument();
-    // One mark, at one end. Two of them at opposite ends of the row is the
-    // arrangement this replaced.
-    expect(row?.querySelectorAll(".row-unread")).toHaveLength(1);
+    expect(row?.querySelector(".row-rail > .status-mark")).toBeInTheDocument();
+    expect(
+      row?.querySelector(".sidebar-context-button .status-mark"),
+    ).toBeNull();
   });
 
-  it("is absent when the Agent is not owed an answer", () => {
+  /** The same column on a Workspace row, and empty: it is the statuses this
+      exists for, and a column of folders and statuses alternately is not one. */
+  it("is reserved and empty on a Workspace row", () => {
     mount("Reading the reconciler");
-    expect(document.querySelector(".row-unread")).toBeNull();
+    const rail = document.querySelector(".workspace-row .row-rail");
+    expect(rail).toBeInTheDocument();
+    expect(rail?.childElementCount).toBe(0);
+  });
+});
+
+describe("how an Agent says it has not been read", () => {
+  /**
+   * One mark, not two. The dot used to sit in the row's leading rail beside
+   * the status glyph, which is two marks about one Agent in a column sixteen
+   * pixels wide — and the second one only ever added anything in one case.
+   */
+  it("is the status mark itself when the Agent finished while nobody looked", () => {
+    mountIdle("idle");
+    expect(statusGlyph()).toBe("statusUnread");
+    expect(document.querySelectorAll(".agent-row .status-mark")).toHaveLength(
+      1,
+    );
   });
 
   /**
-   * The dot says why it is there, in the colour of the status that earned it.
-   * A finish and a question are not the same errand, and one blue dot for both
-   * is the dot saying they are. The class is the whole of the difference: the
-   * colours themselves are the status tokens, in `shell.css`.
+   * The case the second mark was for, and the reason it is gone: an Agent that
+   * is waiting is already asking to be looked at, in its own colour, and a dot
+   * beside it only said "and also look at it".
    */
-  it("wears the colour of the reason it is there", () => {
-    for (const reason of [
-      "waiting",
-      "idle",
-      "error",
-      "working",
-      "unknown",
-    ] as const) {
-      mount("Reading the reconciler", reason);
-      expect(document.querySelector(".row-unread")).toHaveClass(
-        `row-unread-${reason}`,
-      );
-      cleanup();
-    }
+  it("leaves a busy Agent's own mark alone, unread or not", () => {
+    mount("Reading the reconciler", "waiting");
+    expect(statusGlyph()).toBe("statusWorking");
   });
 
-  it("draws each reason in that status's own colour, and invents none", () => {
-    // Vitest runs from the package root, and the stylesheet is one file, not
-    // a module this test can import under jsdom.
-    const css = readFileSync("src/shell/styles/shell.css", "utf8");
-    for (const [reason, token] of [
-      ["waiting", "--status-waiting"],
-      ["idle", "--status-idle"],
-      ["error", "--status-error"],
-      ["working", "--status-working"],
-      // Not a verdict, and it does not get a status colour: the same secondary
-      // ink the `unknown` status mark takes.
-      ["unknown", "--secondary"],
-    ] as const) {
-      expect(css).toContain(
-        `.row-unread-${reason} {\n  background: var(${token});\n}`,
-      );
-    }
+  it("draws the ordinary idle mark when there is nothing owed", () => {
+    mountIdle(undefined);
+    expect(statusGlyph()).toBe("statusIdle");
+  });
+
+  /** And says so, for the reader who cannot see which mark it is. */
+  it("says unread in the mark's own label, and only then", () => {
+    mountIdle("waiting");
+    expect(document.querySelector(".agent-row .status-mark")).toHaveAttribute(
+      "aria-label",
+      "Idle, unread",
+    );
+    cleanup();
+    mount("Reading the reconciler", "waiting");
+    expect(document.querySelector(".agent-row .status-mark")).toHaveAttribute(
+      "aria-label",
+      "Working",
+    );
   });
 });
 
@@ -213,10 +309,10 @@ describe("an Agent that would not stop", () => {
       kind: "stop-failed",
       diagnostic: "close_agents_unknown",
     });
-    expect(agentLines().under).toContain(
+    expect(agentLines().after).toContain(
       closeDiagnosticLabel("close_agents_unknown"),
     );
-    expect(agentLines().under).not.toBe("Stop failed");
+    expect(agentLines().after).not.toBe("Stop failed");
   });
 
   it("says it in the row's accessible name too", () => {

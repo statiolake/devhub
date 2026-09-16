@@ -144,9 +144,9 @@ describe("the window's two chromes", () => {
   });
 
   it("collapses the Sidebar to its glyph column with a bar, and to the lights without one", () => {
-    // The rail is a token, not a number, so what is asserted is the arithmetic
-    // it stands for: the density's glyph with the leading rail on each side.
-    const rail = Number(/--sidebar-rail-width: (\d+)px;/.exec(tokens)?.[1]);
+    // The margin is a token, not a number, so what is asserted is the
+    // arithmetic it stands for: the density's glyph with a step on each side.
+    const step = Number(/--space-3: (\d+)px;/.exec(tokens)?.[1]);
     const compact = Number(
       /data-sidebar-density="compact"[^}]*--sidebar-glyph-width: (\d+)px;/s.exec(
         tokens,
@@ -157,17 +157,15 @@ describe("the window's two chromes", () => {
         tokens,
       )?.[1],
     );
-    expect([rail, compact, comfortable]).toEqual([14, 16, 18]);
-    expect(compact + 2 * rail).toBe(44);
-    expect(comfortable + 2 * rail).toBe(46);
+    expect([step, compact, comfortable]).toEqual([12, 16, 18]);
+    expect(compact + 2 * step).toBe(40);
+    expect(comfortable + 2 * step).toBe(42);
     expect(
       declared(
         '.app-shell[data-title-bar="shown"]',
         "--sidebar-rail-collapsed-width",
       ),
-    ).toBe(
-      "calc( var(--sidebar-glyph-width) + 2 * var(--sidebar-rail-width) )",
-    );
+    ).toBe("calc( var(--sidebar-glyph-width) + 2 * var(--space-3) )");
     // The rail with no bar is the lights' span, said once at the root and read
     // here rather than written out a second time.
     expect(

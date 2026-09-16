@@ -150,7 +150,7 @@ describe("the collapsed rail", () => {
     expect(
       screen.getByRole("button", { name: /widget workspace/ }),
     ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /^Codex,/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Codex/ })).toBeInTheDocument();
   });
 
   it("keeps the tree, so the keyboard is unchanged", () => {
@@ -163,9 +163,17 @@ describe("the collapsed rail", () => {
     ).toHaveAttribute("tabindex", "0");
   });
 
-  it("keeps the unread dot, which is the mark a rail can least afford to lose", () => {
+  /**
+   * "This one asked for you and you have not been" is the fact a rail is least
+   * able to afford to lose, and there is no separate dot to keep any more: the
+   * status mark draws it — see `unreadShows` — so the rail keeps it by keeping
+   * the one mark it was always going to keep.
+   */
+  it("keeps the unread mark, which is the status mark itself", () => {
     mount(true);
-    expect(document.querySelector(".row-unread")).not.toBeNull();
+    expect(
+      document.querySelector(".agent-row .status-mark.is-unread svg"),
+    ).toHaveAttribute("data-glyph", "statusUnread");
   });
 
   it("names each row in a tooltip, since the words are off", () => {
@@ -218,10 +226,10 @@ describe("what a rail entry does under the pointer", () => {
     });
   });
 
-  it("leaves the expanded row's mark as the link it is", () => {
+  it("leaves the expanded row's repository mark as the link it is", () => {
     const expanded = mount(false, REPOSITORY);
     screen
-      .getByRole("button", { name: "Open example/widget on GitHub" })
+      .getByRole("button", { name: "Open github.com/example/widget on GitHub" })
       .click();
     expect(expanded.openExternalUrl).toHaveBeenCalledWith(
       "https://github.com/example/widget",
@@ -229,35 +237,57 @@ describe("what a rail entry does under the pointer", () => {
     expect(expanded.dispatch).not.toHaveBeenCalled();
   });
 
-  it("says in the tooltip exactly what the expanded row is named", () => {
+  it("says in the tooltip exactly what the expanded row says", () => {
     mount(false, REPOSITORY);
     const expandedWorkspace = screen
       .getByRole("button", { name: /widget workspace/ })
-      .getAttribute("aria-label");
+      .getAttribute("data-tooltip-lines");
     const expandedAgent = screen
-      .getByRole("button", { name: /^Codex,/ })
-      .getAttribute("aria-label");
+      .getByRole("button", { name: /^Codex/ })
+      .getAttribute("data-tooltip-lines");
     cleanup();
     mount(true, REPOSITORY);
     expect(
       screen.getByRole("button", { name: /widget workspace/ }),
-    ).toHaveAttribute("data-tooltip", expandedWorkspace);
-    expect(screen.getByRole("button", { name: /^Codex,/ })).toHaveAttribute(
-      "data-tooltip",
+    ).toHaveAttribute("data-tooltip-lines", expandedWorkspace);
+    expect(screen.getByRole("button", { name: /^Codex/ })).toHaveAttribute(
+      "data-tooltip-lines",
       expandedAgent,
     );
   });
 
-  it("carries the branch and the work into the name, not only the path", () => {
+  /**
+   * The facts, and no label words: the mark in front of each line is what the
+   * word "branch" used to be. The words survive in `aria-label`, which is the
+   * one reader that has no mark to look at.
+   */
+  it("carries the branch and the work as facts, each behind its own mark", () => {
     mount(true, REPOSITORY);
-    const title = screen
-      .getByRole("button", { name: /widget workspace/ })
-      .getAttribute("data-tooltip");
-    expect(title).toBe(
+    const row = screen.getByRole("button", { name: /widget workspace/ });
+    expect(JSON.parse(row.getAttribute("data-tooltip-lines") ?? "[]")).toEqual([
+      { text: "widget", style: "name" },
+      { text: "/projects/widget", style: "muted" },
+      {
+        icon: "repository",
+        text: "github.com/example/widget",
+        style: "muted",
+      },
+      { icon: "branch", text: "feature/128-tidy", style: "muted" },
+      { icon: "issueOpen", text: "#128 Tidy the rail", style: "muted" },
+      {
+        icon: "pullRequestDraft",
+        text: "#131 Tidy the rail",
+        style: "muted",
+      },
+    ]);
+    expect(row.getAttribute("aria-label")).toBe(
       [
-        "widget workspace, path /projects/widget",
+        "widget workspace",
+        "path /projects/widget",
+        "repository github.com/example/widget",
         "branch feature/128-tidy",
-        "Issue #128 (open), Pull request #131 (draft), Tidy the rail",
+        "Issue #128, open: Tidy the rail",
+        "Pull request #131, draft: Tidy the rail",
       ].join("\n"),
     );
   });

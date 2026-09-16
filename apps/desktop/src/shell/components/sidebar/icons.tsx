@@ -65,7 +65,9 @@ export type GlyphName =
   | "statusWaiting"
   | "statusIdle"
   | "statusError"
-  | "statusUnknown";
+  | "statusUnknown"
+  | "statusUnread"
+  | "branch";
 
 const GLYPHS: Record<GlyphName, ReactNode> = {
   /* Removing a worktree. A bin rather than an X, because the two things a row
@@ -307,7 +309,50 @@ const GLYPHS: Record<GlyphName, ReactNode> = {
       <path d="M5.6 8h4.8" />
     </>
   ),
+
+  /* Unread: the Agent asked for you and you have not been.
+   *
+   * It is a status mark and not a mark beside one. An Agent that is working,
+   * waiting or in error already has something to say and says it in its own
+   * colour; the only case where being unread adds anything is an Agent that is
+   * *idle* — it finished while nobody was watching — and a check mark does not
+   * say that. So this is the mark that idle-and-unread wears, in place of the
+   * check, and it is the filled disc the leading rail used to carry, at the
+   * glyph size, in the colour of the status that earned it
+   * (`.status-mark.is-unread`).
+   *
+   * Filled, because it is the one mark in the set that is not reporting a
+   * shape: it is a bullet, the same one Mail puts against a message nobody has
+   * opened. */
+  statusUnread: <circle className="glyph-fill" cx="8" cy="8" r="3.1" />,
+
+  /* ----------------------------------------------- what a row is working on
+   *
+   * Drawn for the tooltip rather than for a row: the tooltip lists a row's
+   * facts one per line, each one recognised by the mark in front of it, and
+   * the branch is the one fact in that list the Sidebar had never had a mark
+   * for. GitHub's own `git-branch`, on the shared grid at the shared weight.
+   */
+  branch: (
+    <>
+      <path d="M4.5 3.5v9" />
+      <circle cx="4.5" cy="2.6" r="1.35" />
+      <circle cx="11.5" cy="2.6" r="1.35" />
+      <circle cx="4.5" cy="13.4" r="1.35" />
+      <path d="M11.5 3.95v1.3a2.5 2.5 0 0 1-2.5 2.5H7a2.5 2.5 0 0 0-2.5 2.5" />
+    </>
+  ),
 };
+
+/**
+ * Every mark there is, by name.
+ *
+ * Exported because the tooltip page is given a mark's *name* over the bridge
+ * and has to decide whether it is one — see `TooltipApp`. It is derived from
+ * the table rather than written out beside it, so a mark cannot be added and
+ * left unspellable on the wire.
+ */
+export const GLYPH_NAMES = Object.keys(GLYPHS) as readonly GlyphName[];
 
 export interface GlyphProps {
   readonly name: GlyphName;

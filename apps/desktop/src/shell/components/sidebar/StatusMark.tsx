@@ -51,19 +51,55 @@ const GLYPH_FOR: Record<AgentStatus, GlyphName> = {
 
 export interface StatusMarkProps {
   readonly status: AgentStatus;
+  /**
+   * The status this Agent went into while nobody was watching, or nothing.
+   *
+   * It is drawn by this mark and by nothing else. See `unreadShows`.
+   */
+  readonly unread?: AgentStatus | undefined;
 }
 
-export function StatusMark({ status }: StatusMarkProps) {
-  const label = statusLabel(status);
+/**
+ * Whether being unread is what this mark should say.
+ *
+ * Unread used to be a second element — a dot in the row's leading rail, beside
+ * the status glyph — and the two were about the same Agent at the same moment
+ * saying two different things. That is one mark too many in a column 16 pixels
+ * wide, and it was the wrong one: *unread* only adds anything while the Agent
+ * is idle. An Agent that is working, waiting, in error or unreadable is already
+ * asking to be looked at, and its own mark says so in its own colour; putting
+ * a dot beside it says "and also look at it".
+ *
+ * So there is one mark, and this is the whole rule: idle and unread is drawn as
+ * the unread mark, everything else is drawn as its status. Nothing else in the
+ * Sidebar draws `unread` — the model's rule for when an Agent *becomes* unread
+ * is untouched, this is only what it looks like.
+ */
+export function unreadShows(
+  status: AgentStatus,
+  unread: AgentStatus | undefined,
+): boolean {
+  return status === "idle" && unread !== undefined;
+}
+
+export function StatusMark({ status, unread }: StatusMarkProps) {
+  const showsUnread = unreadShows(status, unread);
+  const label = showsUnread
+    ? `${statusLabel(status)}, unread`
+    : statusLabel(status);
   return (
     <span
-      className={`status-mark status-mark-${status}`}
+      className={`status-mark status-mark-${status}${showsUnread ? " is-unread" : ""}`}
       data-status={status}
+      data-unread={showsUnread ? "true" : undefined}
       data-tooltip={label}
       aria-label={label}
       role="img"
     >
-      <Glyph name={GLYPH_FOR[status]} className="status-glyph" />
+      <Glyph
+        name={showsUnread ? "statusUnread" : GLYPH_FOR[status]}
+        className="status-glyph"
+      />
     </span>
   );
 }

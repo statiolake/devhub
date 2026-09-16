@@ -67,6 +67,7 @@ import { useCallback, useEffect, useRef } from "react";
 import { devhub } from "../../sidebar/client";
 import type {
   SidebarAreaWire,
+  TooltipLineWire,
   TooltipRequestWire,
 } from "../../../ipc/contract";
 
@@ -80,6 +81,42 @@ import type {
  * arrows was chosen, not crossed.
  */
 const HOVER_DELAY_MS = 300;
+
+/**
+ * What this element has to say, as the lines a tooltip draws.
+ *
+ * Two attributes, because there are two kinds of thing with a tooltip in the
+ * Sidebar and they are genuinely different. A control says one thing — *Create
+ * agent*, *Retry close* — and carries it as `data-tooltip`, a plain string,
+ * which is all such a thing has ever needed. A row is a list of facts about
+ * something, composed by `rowDescription.ts`, and carries it as
+ * `data-tooltip-lines`: the same list the row's accessible name is made of,
+ * serialised onto the element that raises it.
+ *
+ * It is on the element rather than in a lookup because *which* element the
+ * pointer came to rest on is the whole question, and the answer is found by
+ * `closest()` on the DOM. A map from row id to lines would be the same facts
+ * kept in a second place, keyed by something the pointer does not carry.
+ *
+ * Bad JSON draws nothing rather than throwing: this runs on every pointer move
+ * over the column, and the one thing a tooltip must never do is take the
+ * Sidebar down with it. It cannot be bad in practice — the only writer is
+ * `JSON.stringify` three files away — which is exactly why an exception here
+ * would be unactionable noise.
+ */
+function tooltipFor(
+  element: HTMLElement,
+): readonly TooltipLineWire[] | undefined {
+  const rich = element.dataset["tooltipLines"];
+  if (rich !== undefined && rich !== "") {
+    const parsed: unknown = JSON.parse(rich);
+    return Array.isArray(parsed) && parsed.length > 0
+      ? (parsed as TooltipLineWire[])
+      : undefined;
+  }
+  const text = element.dataset["tooltip"];
+  return text === undefined || text === "" ? undefined : [{ text }];
+}
 
 /**
  * Which side of the row its sentence goes on.
@@ -113,8 +150,8 @@ export function RowTooltip({ prefer }: { readonly prefer: TooltipSide }) {
   }, []);
 
   const show = useCallback((element: HTMLElement) => {
-    const text = element.dataset["tooltip"];
-    if (text === undefined || text === "") return;
+    const lines = tooltipFor(element);
+    if (lines === undefined) return;
     const sidebar = area.current;
     if (!sidebar) return;
     const box = element.getBoundingClientRect();
@@ -133,7 +170,7 @@ export function RowTooltip({ prefer }: { readonly prefer: TooltipSide }) {
     );
     if (bottom <= top) return;
     devhub().showTooltip({
-      text,
+      lines,
       anchor: {
         x,
         y: top,
@@ -156,7 +193,9 @@ export function RowTooltip({ prefer }: { readonly prefer: TooltipSide }) {
     const anchorFor = (event: Event): HTMLElement | undefined => {
       const target = event.target;
       if (!(target instanceof Element)) return undefined;
-      const element = target.closest<HTMLElement>("[data-tooltip]");
+      const element = target.closest<HTMLElement>(
+        "[data-tooltip], [data-tooltip-lines]",
+      );
       if (!element || element === anchor.current) return undefined;
       return element;
     };

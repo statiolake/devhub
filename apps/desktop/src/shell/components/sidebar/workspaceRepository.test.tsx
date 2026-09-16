@@ -128,49 +128,45 @@ const WORKING_ON: RepositoryStatusWire = {
 };
 
 describe("a workspace row", () => {
-  it("says which branch it is on and what that branch is for", () => {
-    mount(WORKING_ON);
-    expect(screen.getByText("feature/128-tidy")).toBeInTheDocument();
-    expect(screen.getByText("Tidy the picker")).toBeInTheDocument();
-  });
-
-  it("gives the name, the branch and the work a line each", () => {
-    // Three lines because they are three subjects. The branch is long and ends
-    // in the part that identifies it, so it shares with nothing; what the work
-    // is — the marks and the title — is one sentence and sits together on the
-    // last line.
+  it("says its name and the branch it is on, and nothing else in words", () => {
+    // One line, and the words on it are the two facts that tell this row from
+    // the next. Everything else the row knows is a mark at its trailing edge
+    // and a line in its tooltip.
     mount(WORKING_ON);
     const row = document.querySelector(".workspace-row");
+    expect(row?.querySelector(".row-text")?.textContent).toBe(
+      "widgetfeature/128-tidy",
+    );
     expect(row?.querySelector(".row-label")?.textContent).toBe("widget");
-    expect(row?.querySelector(".row-line-secondary")?.textContent).toBe(
+    expect(row?.querySelector(".row-branch")?.textContent).toBe(
       "feature/128-tidy",
     );
-    expect(row?.querySelector(".row-line-links")?.textContent).toContain(
+  });
+
+  it("spends no words on the Issue's number or its title", () => {
+    // Both used to be on a line of their own. A Sidebar column is about twenty
+    // characters wide and those twenty belong to the name and the branch: the
+    // number is the part a person already knows, and the title is what the
+    // Issue's own mark says the moment it is hovered.
+    mount(WORKING_ON);
+    const row = document.querySelector(".workspace-row");
+    expect(row?.querySelector(".row-text")?.textContent).not.toContain("#128");
+    expect(row?.querySelector(".row-text")?.textContent).not.toContain(
       "Tidy the picker",
     );
-  });
-
-  it("spends no line on the number the marks already link to", () => {
-    // `#128` used to lead the title on the third line. It is the part a person
-    // already knows — they are looking at the row because of it — and it was
-    // four characters that never shrank, taken off the front of the only text
-    // on the line that says what the work actually is.
-    mount(WORKING_ON);
-    const line = document.querySelector(".row-line-links");
-    expect(line?.textContent).not.toContain("#128");
-    // Still one click away, and still named for anyone who cannot see it.
+    // Still one click away, still named for anyone who cannot see it, and the
+    // whole of it under the pointer.
+    const mark = document.querySelector(".row-link-button.is-issue-open");
+    expect(mark).toHaveAttribute(
+      "aria-label",
+      "Issue #128, open: Tidy the picker",
+    );
     expect(
-      screen.getByRole("button", {
-        name: /Issue #128, open: Tidy the picker/u,
-      }),
-    ).toBeInTheDocument();
+      JSON.parse(mark?.getAttribute("data-tooltip-lines") ?? "[]"),
+    ).toEqual([{ icon: "issueOpen", text: "#128 Tidy the picker" }]);
   });
 
-  it("has no third line for a workspace that is only a repository", () => {
-    // The line used to appear for the repository link alone, so every
-    // workspace in a GitHub repository spent a third of its height on one icon
-    // that said the same thing for all of them. That link is the row's first
-    // mark now.
+  it("is the same one line for a workspace that is only a repository", () => {
     mount({
       sequence: 1,
       workspaces: [
@@ -182,13 +178,18 @@ describe("a workspace row", () => {
         },
       ],
     });
-    expect(document.querySelector(".row-line-links")).toBeNull();
+    expect(document.querySelectorAll(".workspace-row .row-text")).toHaveLength(
+      1,
+    );
+    expect(document.querySelector(".workspace-row")?.textContent).toBe(
+      "widgetmain",
+    );
   });
 
-  it("says what the pull request is called when there is no Issue", () => {
+  it("says what the pull request is called in the mark's own hover", () => {
     // A branch that names no Issue can still have a pull request out from it,
-    // and then the pull request's title is what the work is called. The old
-    // lookup could not even ask about such a branch.
+    // and then the pull request is what the work is called. It is the mark's
+    // sentence rather than the row's words, like every other mark here.
     mount({
       sequence: 1,
       workspaces: [
@@ -204,9 +205,13 @@ describe("a workspace row", () => {
         },
       ],
     });
-    expect(document.querySelector(".row-line-links")?.textContent).toContain(
-      "Rework the picker",
-    );
+    expect(
+      JSON.parse(
+        document
+          .querySelector(".row-link-button.is-pr-open")
+          ?.getAttribute("data-tooltip-lines") ?? "[]",
+      ),
+    ).toEqual([{ icon: "pullRequest", text: "#7 Rework the picker" }]);
   });
 
   /**
@@ -240,11 +245,12 @@ describe("a workspace row", () => {
         },
       ],
     });
-    const mark = screen.getByRole("button", {
-      name: new RegExp(`Pull request #9, ${state}`, "u"),
-    });
-    expect(mark).toHaveClass(`is-pr-${state}`);
-    expect(mark.querySelector("svg")?.dataset.glyph).toBe(glyph);
+    const mark = document.querySelector(`.row-link-button.is-pr-${state}`);
+    expect(mark).toHaveAttribute(
+      "aria-label",
+      expect.stringContaining(`Pull request #9, ${state}`),
+    );
+    expect(mark?.querySelector("svg")?.getAttribute("data-glyph")).toBe(glyph);
   });
 
   it.each([
@@ -261,11 +267,12 @@ describe("a workspace row", () => {
         },
       ],
     });
-    const mark = screen.getByRole("button", {
-      name: new RegExp(`Issue #128, ${state}`, "u"),
-    });
-    expect(mark).toHaveClass(`is-issue-${state}`);
-    expect(mark.querySelector("svg")?.dataset.glyph).toBe(glyph);
+    const mark = document.querySelector(`.row-link-button.is-issue-${state}`);
+    expect(mark).toHaveAttribute(
+      "aria-label",
+      expect.stringContaining(`Issue #128, ${state}`),
+    );
+    expect(mark?.querySelector("svg")?.getAttribute("data-glyph")).toBe(glyph);
   });
 
   it("gives every pull-request state a drawing of its own", () => {
@@ -284,7 +291,8 @@ describe("a workspace row", () => {
         ],
       });
       drawn.add(
-        document.querySelector(".row-link-button svg")?.innerHTML ?? "",
+        document.querySelector(".row-marks .row-link-button svg")?.innerHTML ??
+          "",
       );
     }
     expect(drawn.size).toBe(4);
@@ -292,11 +300,14 @@ describe("a workspace row", () => {
 });
 
 /**
- * Which of the three marks a row starts with.
+ * Which mark a row starts with.
  *
- * A plain folder, a repository, and a worktree of one are three kinds of
- * Workspace, and the leading mark is how a person tells them apart down a
- * column without reading a word of any of them.
+ * Two, where there were four. A repository and a worktree of one had marks of
+ * their own and the column paid twice: three silhouettes to tell apart at
+ * thirteen pixels, bought with a distinction that changes nothing about what
+ * the row is or what can be done to it. Every Workspace is a folder you have
+ * open. The one distinction left is *where* — a folder on another machine is a
+ * different thing to open, to close and to run an Agent in.
  */
 describe("the mark a workspace row starts with", () => {
   function leadingGlyph(): string | undefined {
@@ -307,15 +318,10 @@ describe("the mark a workspace row starts with", () => {
     );
   }
 
-  it("is a folder when the workspace is not a repository", () => {
-    mount({ sequence: 1, workspaces: [{ workspaceId: "w-1" }] });
-    expect(leadingGlyph()).toBe("folder");
-  });
-
-  it("is the repository when the checkout is the repository itself", () => {
-    mount({
-      sequence: 1,
-      workspaces: [
+  it("is a folder, whatever kind of checkout the folder is", () => {
+    for (const workspaces of [
+      [{ workspaceId: "w-1" }],
+      [
         {
           workspaceId: "w-1",
           branch: "main",
@@ -323,11 +329,24 @@ describe("the mark a workspace row starts with", () => {
           worktree: "/projects/widget",
         },
       ],
-    });
-    expect(leadingGlyph()).toBe("repository");
+      [
+        {
+          workspaceId: "w-1",
+          branch: "feature/128-tidy",
+          mainWorktree: "/projects/other",
+          worktree: "/projects/widget",
+        },
+      ],
+    ]) {
+      mount({ sequence: 1, workspaces });
+      expect(leadingGlyph()).toBe("folder");
+      cleanup();
+    }
   });
 
-  it("is a worktree when the checkout is not the repository itself", () => {
+  /** Being a worktree is still said — in words, where it is a fact and not a
+      shape a person has to learn. */
+  it("says a worktree is one in the row's facts, not in its mark", () => {
     mount({
       sequence: 1,
       workspaces: [
@@ -339,15 +358,23 @@ describe("the mark a workspace row starts with", () => {
         },
       ],
     });
-    expect(leadingGlyph()).toBe("worktree");
+    const row = document.querySelector("[data-tree-item-id='workspace:w-1']");
+    expect(
+      JSON.parse(row?.getAttribute("data-tooltip-lines") ?? "[]"),
+    ).toContainEqual({
+      icon: "worktree",
+      text: "/projects/other",
+      style: "muted",
+    });
+    expect(row?.getAttribute("aria-label")).toContain(
+      "worktree of /projects/other",
+    );
   });
 
-  it("is the repository for a subdirectory of one, not a worktree", () => {
+  it("offers no worktree removal for a folder inside one", () => {
     // The row is /projects/widget and the checkout it is in starts at
-    // /projects, which is also the repository. Comparing the *row's* path to
-    // `mainWorktree` said "not the main worktree" — true, and not the question
-    // — so every folder opened inside a repository drew a worktree's mark and
-    // was offered a button that would have deleted the checkout around it.
+    // /projects, which is also the repository, so nothing here is a worktree
+    // root and nothing is going to be deleted.
     mount({
       sequence: 1,
       workspaces: [
@@ -359,15 +386,15 @@ describe("the mark a workspace row starts with", () => {
         },
       ],
     });
-    expect(leadingGlyph()).toBe("repository");
     expect(
       screen.queryByRole("button", { name: /Remove the worktree/u }),
     ).toBeNull();
   });
 
-  it("is the way to the repository's page when there is one", () => {
-    // The mark *is* the link. It used to be a fourth button on the third line,
-    // which meant a row with no Issue spent a whole line on a single icon.
+  it("is not the link: the link is a mark of its own at the row's other end", () => {
+    // The leading mark says which kind of row this is, and that is all it says.
+    // The way to the repository's page is a mark in the trailing group with the
+    // other marks that lead to GitHub.
     const { openExternalUrl } = mount({
       sequence: 1,
       workspaces: [
@@ -380,19 +407,21 @@ describe("the mark a workspace row starts with", () => {
         },
       ],
     });
+    expect(leadingGlyph()).toBe("folder");
+    expect(document.querySelector(".row-glyph")?.tagName).toBe("SPAN");
     const mark = screen.getByRole("button", {
-      name: /Open example\/widget on GitHub/u,
+      name: "Open github.com/example/widget on GitHub",
     });
-    expect(mark).toHaveClass("row-glyph");
+    expect(mark).toHaveClass("row-mark-repository");
     fireEvent.click(mark);
     expect(openExternalUrl).toHaveBeenCalledWith(
       "https://github.com/example/widget",
     );
   });
 
-  it("takes a worktree to the repository's page too", () => {
-    // A worktree is not a separate thing on GitHub. It keeps its own mark, and
-    // the mark leads to the page the repository has.
+  it("takes a worktree to the repository's page, under the same one mark", () => {
+    // A worktree is not a separate thing on GitHub, so the link that leads to
+    // the repository's page wears the repository's own drawing either way.
     const { openExternalUrl } = mount({
       sequence: 1,
       workspaces: [
@@ -406,9 +435,9 @@ describe("the mark a workspace row starts with", () => {
       ],
     });
     const mark = screen.getByRole("button", {
-      name: /Open example\/widget on GitHub/u,
+      name: "Open github.com/example/widget on GitHub",
     });
-    expect(mark.querySelector("svg")?.dataset.glyph).toBe("worktree");
+    expect(mark.querySelector("svg")?.dataset.glyph).toBe("repository");
     fireEvent.click(mark);
     expect(openExternalUrl).toHaveBeenCalledWith(
       "https://github.com/example/widget",
@@ -417,11 +446,11 @@ describe("the mark a workspace row starts with", () => {
 });
 
 describe("a workspace row, continued", () => {
-  it("has no second line when there is nothing to put on it", () => {
+  it("says only its name when there is nothing else to say", () => {
     mount({ sequence: 1, workspaces: [] });
     const row = document.querySelector(".workspace-row");
     expect(row?.querySelector(".row-label")?.textContent).toBe("widget");
-    expect(row?.querySelector(".row-line-secondary")).toBeNull();
+    expect(row?.querySelector(".row-branch")).toBeNull();
   });
 
   it("offers no repository button for a remote it cannot name a page for", () => {
@@ -534,13 +563,15 @@ describe("a workspace row, continued", () => {
   it("opens the Issue and the pull request on GitHub", () => {
     const { openExternalUrl } = mount(WORKING_ON);
 
-    fireEvent.click(screen.getByRole("button", { name: /Issue #128, open/u }));
+    fireEvent.click(
+      document.querySelector(".row-link-button.is-issue-open") as HTMLElement,
+    );
     expect(openExternalUrl).toHaveBeenCalledWith(
       "https://github.com/example/widget/issues/128",
     );
 
     fireEvent.click(
-      screen.getByRole("button", { name: /Pull request #210, draft/u }),
+      document.querySelector(".row-link-button.is-pr-draft") as HTMLElement,
     );
     expect(openExternalUrl).toHaveBeenCalledWith(
       "https://github.com/example/widget/pull/210",
@@ -553,7 +584,9 @@ describe("a workspace row, continued", () => {
       workspaces: [{ workspaceId: "w-1", branch: "main" }],
     });
     expect(screen.getByText("main")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Issue #/u })).toBeNull();
+    expect(
+      document.querySelector(".row-link-button[class*='is-issue']"),
+    ).toBeNull();
   });
 
   it("says which Issue it is about, and why, when the look failed", () => {
@@ -574,14 +607,24 @@ describe("a workspace row, continued", () => {
         },
       ],
     });
-    const row = document.querySelector(".workspace-row");
-    expect(row?.querySelector(".row-issue-unavailable")).toHaveTextContent(
+    // A mark rather than a sentence, and still on the row rather than only in
+    // the tooltip: a failure nobody can see without hovering is a failure
+    // nobody sees.
+    const mark = document.querySelector(".row-mark-unavailable");
+    expect(mark).toHaveAttribute(
+      "aria-label",
+      "#128 · GitHub has no issue example/widget#128.",
+    );
+    expect(mark).toHaveAttribute(
+      "data-tooltip",
       "#128 · GitHub has no issue example/widget#128.",
     );
     // The branch is still said; it is the fact this row is named by.
     expect(screen.getByText("feature/128-tidy")).toBeInTheDocument();
     // And no Issue mark, because DevHub does not know the state to draw.
-    expect(screen.queryByRole("button", { name: /Issue #/u })).toBeNull();
+    expect(
+      document.querySelector(".row-link-button[class*='is-issue']"),
+    ).toBeNull();
   });
 
   it("gives the reason alone when the failure never reached an Issue number", () => {
@@ -602,9 +645,10 @@ describe("a workspace row, continued", () => {
     });
     const note = document
       .querySelector(".workspace-row")
-      ?.querySelector(".row-issue-unavailable");
-    expect(note).toHaveTextContent("detected dubious ownership");
-    expect(note?.textContent).not.toMatch(/undefined|^#/u);
+      ?.querySelector(".row-mark-unavailable")
+      ?.getAttribute("aria-label");
+    expect(note).toContain("detected dubious ownership");
+    expect(note).not.toMatch(/undefined|^#/u);
   });
 
   it("keeps what it knows when a look fails, and leaves the why to the toast", () => {
@@ -612,7 +656,9 @@ describe("a workspace row, continued", () => {
     // reason it dropped is about the whole application, not about this list,
     // so the Sidebar's foot is not where it is said. See `shell/notices.ts`.
     mount({ ...WORKING_ON, diagnostic: "GitHub answered 502." });
-    expect(screen.getByText("Tidy the picker")).toBeInTheDocument();
+    expect(
+      document.querySelector(".row-link-button.is-issue-open"),
+    ).toBeInTheDocument();
     expect(screen.queryByText("GitHub answered 502.")).not.toBeInTheDocument();
     expect(document.querySelector(".sidebar-status-note")).toBeNull();
   });
@@ -662,97 +708,73 @@ describe("the ink every mark in a row rests at", () => {
 });
 
 /**
- * The depth an Agent row sits at.
+ * The depth an Agent row sits at, and the line that says what it is inside.
  *
  * The same reason as above: the indent is a custom property in a stylesheet,
  * and jsdom resolves neither `calc` nor a custom property, so what can be
- * asserted is that there is one term and that both places that need it read
- * that term rather than a number of their own.
+ * asserted is that there is one term and that every place that needs it reads
+ * that term rather than a number of its own.
  */
 describe("how far an Agent row is indented under its Workspace", () => {
   const shell = readFileSync("src/shell/styles/shell.css", "utf8");
+  const tokens = readFileSync("src/shell/styles/tokens.css", "utf8");
+  const reorder = readFileSync("src/shell/styles/reorder.css", "utf8");
 
-  it("is one term, zero for every row that is not an Agent", () => {
+  it("is one term, declared once, zero for every row that is not an Agent", () => {
+    expect(tokens).toContain("--sidebar-agent-indent: var(--space-3);");
     expect(shell).toContain("  --row-agent-inset: 0px;");
     expect(shell).toContain(
-      ".agent-row {\n  --row-agent-inset: calc(var(--sidebar-glyph-width) + var(--space-2));\n}",
+      ".agent-row {\n  --row-agent-inset: var(--sidebar-agent-indent);\n}",
     );
   });
 
-  it("is one glyph column, so the status mark lands under the Workspace's name", () => {
-    // Not a chosen number: the glyph column plus the gap after it is exactly
-    // the distance from a Workspace's glyph to a Workspace's label, which is
-    // the same distance `--row-text-inset` is built from.
-    expect(shell).toContain(
-      "  --row-text-inset: calc(\n    var(--sidebar-rail-width) + var(--row-agent-inset) +\n      var(--sidebar-glyph-width) + var(--space-2)\n  );",
+  /**
+   * It was a whole glyph column plus the gap after it, chosen so that an
+   * Agent's status mark landed under the first letter of its Workspace's name.
+   * That is a fine thing to line up with and it cost the row the wrong
+   * currency: every one of those pixels came out of the name.
+   */
+  it("is smaller than the glyph column it used to be", () => {
+    expect(shell).not.toContain(
+      "--row-agent-inset: calc(var(--sidebar-glyph-width) + var(--space-2));",
     );
   });
 
-  it("draws the stem down the Workspace's own glyph column", () => {
-    // The indent says an Agent is inside something; the stem says what, and how
-    // many rows are. It is a `::before` on the row rather than an element, so
-    // the tree the keyboard and the accessibility tree walk is unchanged — and
-    // its x is the same two terms the indent is measured from, so the line and
-    // the depth cannot come to disagree.
+  /**
+   * An indent guide, and nothing else: one thin vertical rule down the middle
+   * of the indent, the full height of the row, meeting the rules above and
+   * below because the rows sit flush. What it replaced was `tree`(1)'s
+   * drawing — a stem, a horizontal lead into every row, and a `└─` under the
+   * last one — which was three strokes per row saying a thing the indent and
+   * the marks already said, in the heaviest ink in the column.
+   */
+  it("draws one vertical guide and no lead into the row", () => {
+    expect(shell).toContain(".agent-row::before {\n  position: absolute;");
     expect(shell).toContain(
-      "  --row-stem-x: calc(\n    var(--sidebar-rail-width) + var(--sidebar-glyph-width) / 2\n  );",
+      '  left: calc(\n    var(--sidebar-rail-width) + var(--sidebar-glyph-width) + var(--space-2) +\n      var(--sidebar-agent-indent) / 2\n  );\n  width: 1px;\n  background: var(--line);\n  content: "";\n}',
     );
-    expect(shell).toContain(
-      '.agent-row::before {\n  position: absolute;\n  top: 0;\n  bottom: 0;\n  left: var(--row-stem-x);\n  width: 1px;\n  background: var(--row-glyph-ink);\n  content: "";\n}',
-    );
-    // At rest, on hover and on the selected row alike: the hierarchy is not
-    // something to point at, and a guide that lit up would be the brightest
-    // thing in a Sidebar whose whole design is that only a status has colour.
+    // No branch, and no last-child stem to close: an indent guide has no last
+    // one, which is two rules and a selector that no longer have to be right.
+    expect(shell).not.toContain(".agent-row::after");
+    expect(shell).not.toContain(".agent-tree > li:last-child");
+  });
+
+  it("is the Sidebar's hairline, and never lights up", () => {
+    // `--line`, the same ink as the rule under the section heading, because
+    // that is what it is. The hierarchy is not a thing you can point at.
     expect(shell).not.toContain(".agent-row:hover::before");
-    expect(shell).not.toContain(".agent-row:hover::after");
     expect(shell).not.toContain(".agent-row.is-selected::before");
-    expect(shell).not.toContain(".agent-row.is-selected::after");
   });
 
-  it("turns the stem into each Agent's status mark", () => {
-    // `├─`. Two edges rather than an offset and a width: the near edge is the
-    // stem's own x, so the corner cannot come apart, and the far edge is the
-    // mark's, so the gap before the mark is `--space-1` and not a subtraction
-    // that has to come out right.
+  it("moves the row and its drop line together", () => {
+    // The row's own inset, the guide down the middle of it, and the drop line
+    // the reorder draws all start from the one term, so none of the three can
+    // drift from the others.
     expect(shell).toContain(
-      "  --row-mark-x: calc(var(--sidebar-rail-width) + var(--row-agent-inset));",
+      "  padding-left: calc(\n    var(--sidebar-glyph-width) + var(--space-2) + var(--row-agent-inset)\n  );",
     );
-    expect(shell).toContain(
-      '.agent-row::after {\n  position: absolute;\n  top: var(--row-branch-y);\n  right: calc(100% - var(--row-mark-x) + var(--space-1));\n  left: var(--row-stem-x);\n  height: 1px;\n  background: var(--row-glyph-ink);\n  content: "";\n}',
+    expect(reorder).toContain(
+      "    var(--sidebar-rail-width) + var(--sidebar-agent-indent) +\n      var(--sidebar-glyph-width) + var(--space-2)",
     );
-  });
-
-  it("meets the mark where the mark is, whatever else the row has to say", () => {
-    // A row's first line carries the floor, so its mark centres at
-    // `--row-height / 2` whether the Agent has a second line under it or not;
-    // the mark then takes the optical drop every leading glyph takes, so the
-    // branch takes it too. One term, read by the branch and by the stem the
-    // last Agent stops.
-    expect(shell).toContain(
-      "  min-height: calc(var(--row-height) - 2 * var(--row-pad-block));",
-    );
-    expect(shell).toContain(
-      "  --row-branch-y: calc(\n    var(--row-height) / 2 + var(--sidebar-glyph-optical-shift)\n  );",
-    );
-  });
-
-  it("closes the stem under the last Agent of a Workspace", () => {
-    // `└─`, and nothing running on below it. Which Agent is last is a fact
-    // about the list, and the list is in the markup: a Workspace's Agents are
-    // the whole of its own `.agent-tree`, so `li:last-child` is exactly "the
-    // last Agent of this Workspace" — whether another Workspace follows, or
-    // the section ends. No `:has()`, and no class to keep in step with it.
-    expect(shell).toContain(
-      ".agent-tree > li:last-child .agent-row::before {\n  bottom: calc(100% - var(--row-branch-y));\n}",
-    );
-  });
-
-  it("moves the row's two lines together", () => {
-    // The first line by the button's padding, the second by the inset it is
-    // already part of. One term in both places, so they cannot drift apart.
-    expect(shell).toContain(
-      ".agent-row .sidebar-context-button {\n  padding-left: var(--row-agent-inset);\n}",
-    );
-    expect(shell).toContain("padding-inline: var(--row-text-inset)");
   });
 });

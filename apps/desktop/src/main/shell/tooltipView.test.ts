@@ -114,7 +114,7 @@ describe("the tooltip layer", () => {
 	const view = () => (tooltip as unknown as { view: FakeWebContentsView }).view;
 	const show = () => {
 		tooltip.show({
-			text: "widget workspace",
+			lines: [{ text: "widget", style: "name" }],
 			anchor: RAIL_GLYPH,
 			prefer: "right",
 		});
@@ -181,14 +181,14 @@ describe("the tooltip layer", () => {
 		show();
 		tooltip.setSize({ width: 220, height: 34 });
 		tooltip.show({
-			text: "another row entirely",
+			lines: [{ text: "another row entirely", style: "name" }],
 			anchor: { x: 14, y: 300, width: 16, height: 24 },
 			prefer: "right",
 		});
 		expect(tooltip.isPresent()).toBe(true);
 		expect(view().bounds?.y).toBe(300);
 		expect(view().webContents.sent.at(-1)).toEqual({
-			text: "another row entirely",
+			lines: [{ text: "another row entirely", style: "name" }],
 		});
 	});
 

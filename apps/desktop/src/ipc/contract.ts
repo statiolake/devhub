@@ -15,6 +15,7 @@ import type { ShellPalette } from "./palette.js";
 import type { DevhubTerminalApi } from "./terminal.js";
 import type {
 	AgentProfiles,
+	AgentStatusWire,
 	AppAppearance,
 	AppError,
 	AppIntent,
@@ -463,15 +464,63 @@ export interface SidebarAreaWire {
  * conversion is the one thing the page must get right, and it is one addition.
  */
 export interface TooltipRequestWire {
-	readonly text: string;
+	readonly lines: readonly TooltipLineWire[];
 	readonly anchor: SidebarAreaWire;
 	/** Beside a glyph on the rail, or under a row in the expanded column. */
 	readonly prefer: "right" | "below";
 }
 
-/** What the tooltip page is given to draw: the sentence, and nothing else. */
-export interface TooltipTextWire {
+/**
+ * One fact, as a tooltip draws it: a mark, the fact itself, and how it is set.
+ *
+ * A tooltip used to be a string, and the string was a sentence about a row
+ * composed out of label words — *widget workspace, path /projects/widget,
+ * branch main*. Nobody reads that: the words "workspace", "path" and "branch"
+ * are three quarters of the ink and they are the part the reader already knows,
+ * because they are asking about a row in a list of workspaces.
+ *
+ * So a line is a fact and the mark in front of it is what the label word was:
+ * the branch mark, then the branch. The reader recognises the mark the same way
+ * they recognise it on the row, because it *is* the row's mark — `icon` is a
+ * `GlyphName`, an identifier and never a drawing, so the tooltip page maps it
+ * through the same `icons.tsx` the Sidebar draws from. Two pages, one set of
+ * marks, and no SVG on the wire.
+ *
+ * `spoken` is what the words would have been. It is not sent — a screen reader
+ * is never shown this — it is what the same composition produces for the row's
+ * `aria-label`, which is the one place a label word still belongs. See
+ * `shell/components/sidebar/rowDescription.ts`, where both come from one list
+ * of facts, so the tooltip and the accessible name cannot come to disagree.
+ */
+export interface TooltipLineWire {
+	readonly icon?: GlyphNameWire;
 	readonly text: string;
+	/**
+	 * How the line is set. The name of the thing is `name`; anything that
+	 * qualifies it is `muted`; `note` is the stronger dim ink for a reason
+	 * something is not happening; `danger` is a failure.
+	 */
+	readonly style?: "name" | "muted" | "note" | "danger";
+	/**
+	 * The status colour this line's mark and words take, when the line is about
+	 * an Agent's status. Absent everywhere else, because nothing else in the
+	 * Sidebar is coloured.
+	 */
+	readonly tone?: AgentStatusWire;
+}
+
+/**
+ * Which mark a tooltip line carries, by name.
+ *
+ * It is a plain string on the wire and is checked against the drawings the
+ * tooltip page actually has: a name that does not resolve draws no mark rather
+ * than throwing, because a missing icon beside a fact still says the fact.
+ */
+export type GlyphNameWire = string;
+
+/** What the tooltip page is given to draw: the facts, and nothing else. */
+export interface TooltipContentWire {
+	readonly lines: readonly TooltipLineWire[];
 }
 
 /**
@@ -1017,7 +1066,7 @@ export interface ToastsBridge extends PageBridge {
 export interface TooltipBridge extends PageBridge {
 	/** The sentence to draw, or nothing at all to draw none. */
 	onTooltip(
-		listener: (tooltip: TooltipTextWire | undefined) => void,
+		listener: (tooltip: TooltipContentWire | undefined) => void,
 	): () => void;
 	/**
 	 * How big the box came out.

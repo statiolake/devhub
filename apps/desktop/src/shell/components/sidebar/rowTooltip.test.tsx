@@ -39,7 +39,12 @@ import type {
   TooltipRequestWire,
 } from "../../../ipc/contract";
 
-const DESCRIPTION = "widget workspace, path /projects/widget\nbranch main";
+/** The facts a row carries, as `rowDescription.ts` composes them. */
+const FACTS = [
+  { text: "widget", style: "name" },
+  { text: "/projects/widget", style: "muted" },
+  { icon: "branch", text: "main", style: "muted" },
+];
 
 /** Everything this page asked main for, in order. `null` is a hide. */
 let sent: (TooltipRequestWire | null)[] = [];
@@ -66,7 +71,7 @@ function Row({
   return (
     <button
       type="button"
-      data-tooltip={DESCRIPTION}
+      data-tooltip-lines={JSON.stringify(FACTS)}
       ref={(node) => {
         if (!node) return;
         // jsdom lays nothing out, so the row says where it is.
@@ -155,7 +160,7 @@ describe("the Sidebar's tooltips", () => {
     act(() => {
       vi.advanceTimersByTime(1);
     });
-    expect(raised().text).toBe(DESCRIPTION);
+    expect(raised().lines).toEqual(FACTS);
   });
 
   it("asks for nothing for a row the pointer only crossed", () => {
@@ -174,16 +179,46 @@ describe("the Sidebar's tooltips", () => {
     mount(100);
     layOut(COLUMN);
     fireEvent.focusIn(screen.getByRole("button"));
-    expect(raised().text).toBe(DESCRIPTION);
+    expect(raised().lines).toEqual(FACTS);
   });
 
-  it("says the row's sentence, with the row's own lines", () => {
+  it("says the row's facts, each one as the row composed it", () => {
     mount(100);
     layOut(COLUMN);
     hover(screen.getByRole("button"));
-    // `pre-line` on the tooltip page is the formatting rule; the string
-    // carries the newline so that it has something to honour.
-    expect(raised().text).toBe(DESCRIPTION);
+    expect(raised().lines).toEqual(FACTS);
+  });
+
+  /**
+   * The other kind of thing with a tooltip: a control, which says one thing
+   * and carries it as a plain string. It arrives as one line with no mark, so
+   * the page that draws it has one shape to draw and not two.
+   */
+  it("carries a control's plain tooltip as a single line", () => {
+    render(
+      <>
+        <button
+          type="button"
+          data-tooltip="Create agent"
+          ref={(node) => {
+            if (!node) return;
+            node.getBoundingClientRect = () =>
+              ({
+                left: 8,
+                right: 28,
+                top: 100,
+                bottom: 120,
+                width: 20,
+                height: 20,
+              }) as DOMRect;
+          }}
+        />
+        <RowTooltip prefer="below" />
+      </>,
+    );
+    layOut(COLUMN);
+    hover(screen.getByRole("button"));
+    expect(raised().lines).toEqual([{ text: "Create agent" }]);
   });
 
   /**
@@ -231,7 +266,7 @@ describe("the Sidebar's tooltips", () => {
     layOut(RAIL);
     hover(screen.getByRole("button"));
     expect(raised().prefer).toBe("right");
-    expect(raised().text).toBe(DESCRIPTION);
+    expect(raised().lines).toEqual(FACTS);
   });
 
   it("asks for one under the row in the expanded column", () => {
@@ -323,6 +358,6 @@ describe("the Sidebar's tooltips", () => {
     fireEvent.pointerOut(row);
     hover(row);
     expect(sent.length).toBeGreaterThan(first);
-    expect(raised().text).toBe(DESCRIPTION);
+    expect(raised().lines).toEqual(FACTS);
   });
 });

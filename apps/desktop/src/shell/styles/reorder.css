@@ -71,9 +71,9 @@
   position: absolute;
   z-index: 1;
   right: 0;
-  /* The row's own `--row-text-inset` is set on the row and not on the item this
-     hangs from, so the terms are restated rather than inherited. The one thing
-     the line has to line up with is where the names start. */
+  /* The terms are restated rather than inherited: this hangs off the tree item
+     and not off the row inside it. The one thing the line has to line up with
+     is where the names start. */
   left: calc(
     var(--sidebar-rail-width) + var(--sidebar-glyph-width) + var(--space-2)
   );
@@ -93,12 +93,12 @@
 }
 
 /* An Agent sits a step in from its Workspace, and its line starts where its own
-   name does — the same two terms `--row-agent-inset` is made of, in the same
-   order, because they are the same column. */
+   name does: the row's line plus one indent, in the same term the indent and
+   its guide are written in. */
 .agent-tree [data-drop-before="true"]::after,
 .agent-tree [data-drop-after="true"]::after {
   left: calc(
-    var(--sidebar-rail-width) + var(--sidebar-glyph-width) + var(--space-2) +
+    var(--sidebar-rail-width) + var(--sidebar-agent-indent) +
       var(--sidebar-glyph-width) + var(--space-2)
   );
 }

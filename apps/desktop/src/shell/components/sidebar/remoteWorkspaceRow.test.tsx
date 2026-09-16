@@ -103,23 +103,32 @@ const LOCAL = {
 };
 
 describe("a Workspace row whose folder is on another machine", () => {
-  it("names the machine where a local row has its branch", () => {
-    // The one long fact that identifies the row and is not its name. Somebody
-    // with the same folder checked out on three machines is reading the row
-    // for exactly this.
+  it("says it is on another machine with the row's own leading mark", () => {
+    // The fact that decides whether what you are about to do happens here or
+    // over there, and it is the first thing on the row rather than words on the
+    // line: this column is scanned, and a fact you have to read for is a fact
+    // you do not have while scanning. Which machine is the tooltip's business —
+    // there is one silhouette for "not here", and the host is a name.
     mount(REMOTE);
-    expect(screen.getByText("build.example.com")).toBeInTheDocument();
+    expect(
+      document.querySelector(".workspace-row .row-glyph svg"),
+    ).toHaveAttribute("data-glyph", "remote");
+    // And not a second copy of the same drawing in the trailing group.
+    expect(document.querySelectorAll('[data-glyph="remote"]')).toHaveLength(1);
   });
 
-  it("draws the branch its own machine's git reported, beside the machine", () => {
+  it("draws the branch its own machine's git reported, beside the name", () => {
     // The whole of what changed. git runs where the folder is, so there is a
-    // branch to draw for a remote checkout — and the machine stays, because a
-    // row with a branch and no machine cannot be told from a local one.
+    // branch to draw for a remote checkout — and the machine mark stays,
+    // because a row with a branch and no machine cannot be told from a local
+    // one.
     mount(REMOTE, {
       workspaceId: "w-1",
       branch: "feature/128-tidy",
     });
-    expect(screen.getByText("build.example.com")).toBeInTheDocument();
+    expect(
+      document.querySelector(".workspace-row .row-glyph svg"),
+    ).toHaveAttribute("data-glyph", "remote");
     expect(screen.getByText("feature/128-tidy")).toBeInTheDocument();
   });
 
@@ -140,13 +149,15 @@ describe("a Workspace row whose folder is on another machine", () => {
         url: "https://github.com/example/widget/pull/131",
       },
     });
-    expect(screen.getByText("Tidy the widget")).toBeInTheDocument();
+    // The marks, and only the marks: the number and the title are what the
+    // Issue's own hover says, and the row's words are its name and its branch.
+    expect(screen.queryByText("Tidy the widget")).toBeNull();
     expect(
-      screen.getByLabelText(/Issue #128, open: Tidy the widget/u),
-    ).toBeInTheDocument();
+      document.querySelector(".row-link-button.is-issue-open"),
+    ).toHaveAttribute("aria-label", "Issue #128, open: Tidy the widget");
     expect(
-      screen.getByLabelText(/Pull request #131, open: Tidy the widget/u),
-    ).toBeInTheDocument();
+      document.querySelector(".row-link-button.is-pr-open"),
+    ).toHaveAttribute("aria-label", "Pull request #131, open: Tidy the widget");
   });
 
   it("offers New Agent on the row, exactly as a local one does", () => {
@@ -161,11 +172,19 @@ describe("a Workspace row whose folder is on another machine", () => {
     expect(button).toHaveAttribute("data-tooltip", "Create agent");
   });
 
-  it("says the path is over there, in the tooltip that carries the whole of it", () => {
+  it("says the path and the machine in the row's own facts", () => {
     mount(REMOTE);
-    expect(
-      document.querySelector('[data-tooltip="build.example.com:/srv/api"]'),
-    ).not.toBeNull();
+    const lines = JSON.parse(
+      document
+        .querySelector("[data-tree-item-id='workspace:w-1']")
+        ?.getAttribute("data-tooltip-lines") ?? "[]",
+    ) as { icon?: string; text: string }[];
+    expect(lines).toContainEqual({ text: "/srv/api", style: "muted" });
+    expect(lines).toContainEqual({
+      icon: "remote",
+      text: "ssh:build.example.com",
+      style: "muted",
+    });
   });
 
   it("changes nothing about a row whose folder is on this machine", () => {

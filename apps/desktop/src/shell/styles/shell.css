@@ -239,15 +239,18 @@
   list-style: none;
 }
 
-/* A row is fixed leading columns and then a stack of one or two lines, so no
-   row can push the Sidebar into horizontal overflow regardless of label, branch
-   or path length.
+/* A row is one line: fixed leading columns, then the words, then the marks and
+ * the controls. No row can push the Sidebar into horizontal overflow whatever
+ * its label, branch or path is, and no row is taller than another.
  *
- * The height is a minimum rather than a fixture: the second line is drawn only
- * when there is something for it, so a Workspace with no branch and an Agent
- * that has not said anything are the single-line rows they always were, and the
- * ones with more to say are taller. Every row is at least `--row-height`, which
- * is what keeps a list of one-line rows on the density's own rhythm.
+ * It used to be a stack of one, two or three lines — the name; the machine and
+ * the branch; the Issue and what it is called — and the height of a Workspace
+ * varied with how much DevHub happened to know about it. A list whose rows are
+ * three different heights is a list you cannot scan down, and the two extra
+ * lines were saying in words what the trailing marks say in marks. So the words
+ * are the name and the branch, the rest is the mark group at the trailing edge,
+ * and the whole of what a row knows is in its tooltip where there is room for
+ * it.
  *
  * A Workspace row is a `div` and the Scratch row is a `button`, and the user
  * agent pads a button by `1px 6px` while leaving a div alone. Left unstated,
@@ -280,15 +283,6 @@
      inset below is one expression with one term for depth, instead of two
      calcs that have to be kept agreeing. */
   --row-agent-inset: 0px;
-  /* Where a row's text starts, measured from the row's leading edge: past the
-     rail, past whatever depth the row is at, past the glyph column, past the
-     gap between the glyph and the label. The second line is indented to it so
-     both lines share a left margin, and it is derived rather than measured so
-     it follows the density. */
-  --row-text-inset: calc(
-    var(--sidebar-rail-width) + var(--row-agent-inset) +
-      var(--sidebar-glyph-width) + var(--space-2)
-  );
 }
 
 /*
@@ -427,16 +421,18 @@
   stroke: none;
 }
 
-/* The leading rail every row reserves before its glyph.
+/* The leading gutter every row reserves before anything else.
  *
- * It is where a mark about the row as a whole goes, and there is exactly one:
- * an Agent's unread dot. A Workspace is always open, so there is no disclosure
- * to put here, and the rail is also what keeps the glyph column off the
- * Sidebar's edge. */
+ * What is in it is exactly one thing: an Agent's status mark. See
+ * `--sidebar-rail-width` in `tokens.css` for why it is a column rather than an
+ * inset, and why a Workspace leaves it empty.
+ */
 .row-rail {
   display: flex;
   width: var(--sidebar-rail-width);
   flex: 0 0 var(--sidebar-rail-width);
+  align-items: center;
+  justify-content: center;
   align-self: stretch;
   align-items: center;
   justify-content: center;
@@ -524,86 +520,102 @@
 }
 
 /*
- * A row's text: one line, or two.
+ * A row's text: the name, then what is worth knowing beside it, on one line
+ * that fades out rather than ellipsising.
  *
- * Everything a row has to say used to share one line, and everything on it
- * fought for the same pixels. A branch name is long, and the part that
- * identifies it is at the *end*, so what a person actually got was
- * `feature/128-tidy-the…` — the half that says nothing — while the workspace
- * name beside it shrank to make room. Shrink factors were tuned to decide who
- * lost first, which is a way of choosing which of two unreadable things to
- * show.
+ * Everything a row had to say used to share one line and fight for the same
+ * pixels, so the row became a stack of lines; the stack made every row a
+ * different height, so it is one line again. What is different this time is
+ * that the line is not a competition. The name leads and is followed by what
+ * qualifies it — a Workspace's branch, an Agent's own name and its runtime
+ * note — in one run of text that is simply allowed to be longer than the
+ * column, and the marks that used to fight it for room are in a group of their
+ * own at the trailing edge which this run passes *under*.
  *
- * So the row is a stack instead. The first line is what tells this row from
- * the rows beside it; the second is the rest of what it has to say, small and
- * dimmed, and drawn only when there is some. Nothing on either line competes
- * with anything on the other, and each line has the row's whole width.
+ * The fade is that passing-under, drawn. An ellipsis is a statement that
+ * something was cut, made at a particular character, and the row would be
+ * making it several times over — once for the name, once for the branch. A
+ * fade says the same thing about the whole run at once and says it where the
+ * text actually meets the marks: the words simply run out of column. The
+ * gradient is a mask on this element only, so nothing under it is affected,
+ * and a run that is shorter than the column never reaches the faded part and
+ * is drawn whole.
+ *
+ * Nothing here ranks one field above another, which is what the old tuned
+ * shrink factors did. The order is the ranking: the name is first, so the name
+ * is the last thing to go.
  */
-.row-line {
+.row-text {
   display: flex;
   overflow: hidden;
   min-width: 0;
+  flex: 1 1 auto;
   align-items: baseline;
   gap: var(--space-2);
-  line-height: 1.25;
+  white-space: nowrap;
+  /* Opaque up to the last 20 pixels, then out. `mask-image` and not a
+     gradient overlay: an overlay would have to be painted in the row's own
+     colour, and a row's colour changes under the pointer and under selection,
+     so it would be a third place that has to know the fill. A mask takes the
+     text out instead, whatever is behind it. */
+  mask-image: linear-gradient(
+    to right,
+    #000 calc(100% - 20px),
+    transparent 100%
+  );
 }
 
-/* The whole of the second line is context, so the whole of it is dimmed and
-   set small. What is on it differs by row — a branch and an Issue for a
-   Workspace, the Agent's own name and its runtime note for an Agent — and
-   nothing about the line cares which.
-
-   It is indented to where the line above starts its text, so the two read as
-   one block, and it takes the row's whole remaining width: nothing on it is
-   competing with a control, because the controls are on the line above. */
-.row-line-secondary,
-.row-line-links {
-  padding-inline: var(--row-text-inset) var(--space-2);
+/* Everything after the name on that run is context, so it is dimmed and set
+   small: a Workspace's branch, an Agent's own name, an Agent's runtime note.
+   They are `flex: none` — they do not shrink, they are simply carried past the
+   edge of the column and faded, which is the one truncation rule this row
+   has. */
+.row-branch,
+.row-name,
+.row-note {
+  flex: none;
   color: var(--tertiary);
   font-size: 11px;
   font-weight: 400;
 }
 
-.row-line-secondary {
-  margin-block-start: -2px;
+/* Why the row may not be doing what its status says: it is stopping, its
+   runtime is unavailable. In the stronger of the two dim inks, because it is
+   the one thing on this line that is not simply context. */
+.row-note {
+  color: var(--secondary);
 }
 
-/* The machine a remote row's folder is on, before its branch on the same
-   line. The separator is padding rather than a character with a space either
-   side, so the two facts stay one line's worth of ink. */
-.row-secondary-separator {
-  padding-inline: var(--space-1);
-}
-
-/* What GitHub says, on a line of its own: the marks and then the words about
-   the same subject. The marks are the line's leading edge rather than the
-   row's trailing one — they belong to the sentence beside them — and the line
-   is centred on them rather than on its text, because a 20px control and an
-   11px caption share no baseline worth aligning to. */
-.row-line-links {
+/*
+ * What a row is, as marks, at its trailing edge.
+ *
+ * The group is `flex: none`: it is the one part of the row that never gives
+ * way, because every mark in it is either a state you scan the column for or a
+ * control you press. The words beside it are what gives way, by fading under
+ * nothing — the group is not over the text, it is after it.
+ */
+.row-marks {
+  display: flex;
+  flex: none;
   align-items: center;
-  gap: var(--space-1);
+  gap: 1px;
 }
 
-/* Every part of a line shrinks in proportion to its own length, and ellipsises
-   what it cannot fit. No part is ranked above another, which is the rule that
-   replaced a set of tuned shrink factors deciding who lost first — a decision
-   that only had to be made because everything the row knew was on one line.
-   In a Sidebar too narrow for both, "feature/128-tidy…" and "Tidy the pic…" is
-   what a person gets, and neither field is gone. */
-.row-line > * {
-  overflow: hidden;
-  min-width: 0;
-  flex: 0 1 auto;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+/* The one mark in the group that is coloured before it is asked, and the one
+   that is not a link. Everything else here is grey at rest and takes its colour
+   under the pointer; this one is a failure, and a failure that has to be
+   hovered to be seen is a failure nobody sees. */
+.row-mark-unavailable {
+  color: var(--danger);
 }
 
+/* The row's name. It does not shrink and it does not ellipsise: it is the one
+   field a row cannot be read without, and what happens when there is not room
+   for it is the same thing that happens to everything else on the run — it
+   fades out at the column's edge. */
 .row-label {
-  overflow: hidden;
+  flex: none;
   min-width: 0;
-  flex: 1 1 auto;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
@@ -615,58 +627,15 @@
   font-weight: 590;
 }
 
-/* An Agent's own name, under what it is doing.
- *
- * "Codex 2" is the row's name and it is on the quiet line, which is the one
- * inversion in the Sidebar and is deliberate. The Agents under one Workspace
- * are told apart by what each one is on, not by their names — see
- * `agentLabelFor`, which is the same observation one layer down, dropping the
- * ordinal from a name that has nothing to be told apart from. */
-/* Why the row may not be doing what its status says: it is stopping, its
-   runtime is unavailable. In the stronger of the two dim inks, because it is
-   the one thing on this line that is not simply context. */
-.row-note {
-  color: var(--secondary);
-}
-
-/* What a Workspace is working on: the branch, then what that branch is for.
-   The branch first, because it is the thing that changes under you and the
-   thing the report was about; the Issue title after it, in the stronger ink,
-   because it is the sentence a person actually reads. */
-.row-issue {
-  color: var(--secondary);
-}
-
-/* Which Issue, before what it is called. Four characters that never shrink:
-   the number is the identifier, the title is the description, and a line too
-   narrow for both should lose the description's tail rather than the name. */
-/* Small enough to sit on a caption's line without pushing it about. */
+/* The spinner that stands in for an Issue mark while the Issue is being read.
+   It sits in the mark group and is the size of the marks around it, so the
+   group does not change width when the answer arrives. */
 .row-issue-spinner {
-  width: 10px;
-  height: 10px;
+  width: 14px;
+  height: 14px;
   flex: none;
+  margin-inline: 3px;
   border-width: 1.5px;
-}
-
-.row-issue-number {
-  flex: none;
-  color: var(--secondary);
-  font-variant-numeric: tabular-nums;
-}
-
-/* Why the row can say which Issue it is about and nothing more. It is a
-   failure and reads as one — the same ink every other failure in this window
-   uses — because a reason drawn in the caption grey beside an Issue title is a
-   reason that looks like an Issue title. */
-.row-issue-unavailable {
-  color: var(--danger);
-  /* The one part of a line that gives way before the others, and the only one
-     with a reason to: it is a sentence, not an identifier. The branch beside it
-     is what tells this row from the next, and the whole of this text is in the
-     row's tooltip and at the foot of the Sidebar — so losing its tail costs
-     nothing that is not said twice elsewhere, while losing the branch's tail
-     costs the row its name. */
-  flex-shrink: 6;
 }
 
 /* A link out to GitHub. Shaped like the row's other trailing controls, but
@@ -744,121 +713,85 @@
 }
 
 /*
- * An Agent row is indented by exactly one glyph column, and no further.
+ * An Agent sits one indent step in from its Workspace, and the step is small.
  *
- * Agents used to be indented a whole level, the way a file tree indents a
- * child, and then they were not indented at all. Both were answers to the same
- * measurement: a Sidebar 248px wide has about twenty characters to spend on a
- * name, and the Agent row — the one whose second line carries the name *and*
- * the runtime note — is the row that pays for depth. A full level cost more
- * than the hierarchy was worth; no indent at all left the two kinds of row on
- * one flush edge, and the mark at the head of each was doing all of the work.
+ * It was a whole glyph column plus the gap after it — 24 pixels at the compact
+ * density — chosen so that an Agent's status mark landed under the first letter
+ * of its Workspace's name. That is a fine thing to line up with and it was
+ * costing the row the wrong currency: a Sidebar 248px wide has about twenty
+ * characters to spend on a name, and every one of those pixels came out of the
+ * one field the row cannot be read without.
  *
- * So the step is one glyph column plus the gap after it, which is not an
- * amount picked to look right: it is exactly the distance from a Workspace's
- * glyph to a Workspace's label. An Agent's status mark lands under the name of
- * the Workspace it belongs to, so the indent is readable against something
- * already on screen rather than against itself, and the name beside it gives
- * up one column instead of a level's worth.
- *
- * One term, `--row-agent-inset`, does the whole of it: the button's padding
- * puts the mark there, and `--row-text-inset` — which every row derives its
- * second line from — has the same term in it, so the Agent's two lines keep
- * the one left margin every other row's two lines have. The levels are in the
- * markup too, where `aria-level` and the arrow-key walk mean something.
- *
- * The padding is stated rather than inherited: the button's own `padding: 0
- * var(--space-2)` would otherwise be counted alongside the gap the inset is
- * already derived from, and the mark would miss the column by eight pixels.
+ * So the step is `--space-3` — enough that an Agent is visibly inside
+ * something, and no more, because the guide beside it is what says *what* it is
+ * inside. It is one term, `--sidebar-agent-indent`, declared in `tokens.css`
+ * beside the rail's own width, because the drop line in `reorder.css` starts at
+ * the same column and a second copy of the number is how the two come apart.
  */
 .agent-row {
-  --row-agent-inset: calc(var(--sidebar-glyph-width) + var(--space-2));
+  --row-agent-inset: var(--sidebar-agent-indent);
 }
 
+/* Where an Agent's words start: where its Workspace's words start, plus one
+   step. The gutter is before all of this and is not part of it — the status
+   mark does not move with the depth, which is the whole point of the gutter —
+   so the depth is spent on the text alone.
+
+   Stated rather than inherited: the button's own `padding: 0 var(--space-2)`
+   would otherwise be counted alongside the terms below and the line would miss
+   the column by eight pixels. */
 .agent-row .sidebar-context-button {
-  padding-left: var(--row-agent-inset);
+  padding-left: calc(
+    var(--sidebar-glyph-width) + var(--space-2) + var(--row-agent-inset)
+  );
 }
 
 /*
- * The lines that say which Workspace these rows belong to — `tree`(1)'s.
+ * The line that says which Workspace these rows belong to: an indent guide,
+ * and nothing else.
  *
- * The indent alone says an Agent is *inside* something; it does not say what,
- * and it does not say how many rows are. A plain vertical rule down the
- * Workspace's glyph column said how many, and still left each row to be joined
- * to the rule by eye. So the rows are joined: a stem down the Workspace's own
- * glyph column, and out of it into each Agent a branch stopping just short of
- * that Agent's status mark. The last Agent's stem ends at its own branch and
- * draws nothing below it, which is the whole of what `└─` says — and the only
- * mark in the Sidebar that says a group is over without anything being counted.
+ * It was `tree`(1)'s drawing — a stem down the Workspace's glyph column, a
+ * horizontal branch out of it into each Agent, and a stem that stopped at the
+ * last of them to draw `└─`. It is an honest picture of a tree and it is the
+ * wrong picture for this one. `tree`(1) draws a structure that is *the
+ * content*: the lines are what you are reading. Here the structure is one level
+ * deep, it is already said by the indent and by the marks, and the connectors
+ * were the heaviest ink in a Sidebar whose whole design is that only a status
+ * has colour. Three strokes per row, to say a thing two other things already
+ * said.
  *
- * They are pseudo-elements on the row rather than elements. There is nothing to
- * read here — the tree is already in the markup, where `aria-level` and the
- * arrow-key walk are — so a `span` for either would be a node the keyboard and
- * the accessibility tree would have to be taught to ignore.
+ * So it is what an editor draws down a fold: one thin vertical rule at the
+ * indent, running the full height of the row, meeting the rule on the row above
+ * and the row below because the rows sit flush. No lead into the row, no
+ * special drawing for the last one — an indent guide does not have a last one,
+ * which is also two rules and a `:last-child` selector that no longer have to
+ * be right.
  *
- * The ink is `--row-glyph-ink`, the same rest colour every mark in a row takes,
- * and it does not change on hover or on selection: the hierarchy is not a thing
- * you can point at, and a guide that lit up would be the brightest thing in a
- * Sidebar whose whole design is that only a status has colour.
+ * It is a pseudo-element rather than an element. There is nothing to read here
+ * — the tree is in the markup, where `aria-level` and the arrow-key walk are —
+ * so a `span` would be a node the keyboard and the accessibility tree would
+ * have to be taught to ignore.
+ *
+ * `--line` and not `--row-glyph-ink`: it is the Sidebar's hairline, the same
+ * ink as the rule under the section heading, because that is what it is. It
+ * does not light up on hover or on selection — the hierarchy is not a thing you
+ * can point at.
  */
-.agent-row {
-  /* Where the stem runs: the middle of the Workspace's glyph column, past the
-     rail and half a glyph in. The same two terms `--row-agent-inset` is
-     measured from, so a change to either moves the lines and the rows they
-     belong to together. */
-  --row-stem-x: calc(
-    var(--sidebar-rail-width) + var(--sidebar-glyph-width) / 2
-  );
-  /* Where the Agent's status mark starts: past the rail, past the depth. The
-     same expression the button's padding puts it at. */
-  --row-mark-x: calc(var(--sidebar-rail-width) + var(--row-agent-inset));
-  /* Where the branch meets the mark. Every row centres its first line at
-     `--row-height / 2` — see `.row-head` — and every leading mark then takes
-     the same optical drop the folder glyph does, so the branch takes it too:
-     it is aimed at the mark, and this is where the mark is. */
-  --row-branch-y: calc(
-    var(--row-height) / 2 + var(--sidebar-glyph-optical-shift)
-  );
-}
-
-/* The stem. Rows sit flush against each other with no gap, so consecutive
-   Agents draw one unbroken line. */
 .agent-row::before {
   position: absolute;
   top: 0;
   bottom: 0;
-  left: var(--row-stem-x);
+  /* Down the middle of the indent step — which begins where the Workspace's own
+     words begin, so the guide stands between the parent's text and the child's.
+     Every term is one the indent itself is made of, so moving the indent moves
+     the guide with it. */
+  left: calc(
+    var(--sidebar-rail-width) + var(--sidebar-glyph-width) + var(--space-2) +
+      var(--sidebar-agent-indent) / 2
+  );
   width: 1px;
-  background: var(--row-glyph-ink);
+  background: var(--line);
   content: "";
-}
-
-/* The branch, from the stem to `--space-1` short of the status mark. Stated as
-   two edges rather than an offset and a width: the near edge is the stem's own
-   x, so the corner cannot come apart, and the far edge is the mark's, so the
-   gap before it is the gap and not a subtraction that has to come out right. */
-.agent-row::after {
-  position: absolute;
-  top: var(--row-branch-y);
-  right: calc(100% - var(--row-mark-x) + var(--space-1));
-  left: var(--row-stem-x);
-  height: 1px;
-  background: var(--row-glyph-ink);
-  content: "";
-}
-
-/* `└─`: the last Agent's stem stops at its own branch, and nothing runs on
- * below it.
- *
- * Which Agent is last is a fact about the list and not about the row, and the
- * list is in the markup: a Workspace's Agents are the whole of its own
- * `.agent-tree`, so `li:last-child` is exactly "the last Agent of this
- * Workspace" — for a Workspace followed by another, for the last Workspace in
- * the section, and for a Workspace whose Agents are followed by nothing at all.
- * No `:has()` and no class for the markup to keep in step with the list.
- */
-.agent-tree > li:last-child .agent-row::before {
-  bottom: calc(100% - var(--row-branch-y));
 }
 
 /* A workspace that is not simply open reads as secondary ink, and nothing
@@ -1653,54 +1586,31 @@ body.is-resizing-split {
 /* ------------------------------------------------------------- unread */
 
 /*
- * An Agent wanted you and you have not been.
+ * An Agent finished while nobody was watching.
  *
- * A small filled disc in the row's leading rail, in the colour of the status
- * that earned it, because it is that fact one step later: the status mark says
- * what the Agent is doing now, the dot says what it did while you were away
- * and is still owed a look. Two marks rather than one, because an Agent can be
- * idle and unread — it finished, you never came — and that is exactly the case
- * a single mark would lose.
+ * It was a second mark — a small filled disc in the row's leading rail, beside
+ * the status glyph — and two marks about one Agent in a 16-pixel column is one
+ * mark too many. The one that went is the right one: *unread* only adds
+ * anything while the Agent is **idle**. Working, waiting, in error, unreadable
+ * — each of those is already asking to be looked at and says so in its own
+ * colour, and a dot beside it only said "and also look at it".
+ *
+ * So idle-and-unread is a status of its own drawing: the disc the rail used to
+ * carry, at the glyph size, in the colour of the status the Agent went into
+ * while you were away. The rule is one line of TypeScript (`unreadShows`) and
+ * there is no second element anywhere that can disagree with it.
  *
  * Finishing and asking are different errands, so they are different colours:
  * the same four status tokens the marks themselves use, and no fifth colour
- * invented for the rail. Blue is the default only because a state file written
- * by a DevHub that could only mean "it asked" is loaded as `waiting`.
- *
- * Both marks are at the leading edge, in adjacent columns. The dot used to
- * trail the row while the status glyph led it, which put two marks about one
- * Agent at opposite ends of a row too narrow to read them together — and made
- * the far end of the row mean something, so the eye had to sweep it. One end
- * carries the marks now, and it is the end every row already starts at.
+ * invented for this. Blue is the default only because a state file written by a
+ * DevHub that could only mean "it asked" is loaded as `waiting`.
  */
-.row-unread {
-  flex: none;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--status-waiting);
-}
-
-.row-unread-working {
-  background: var(--status-working);
-}
-
-.row-unread-waiting {
-  background: var(--status-waiting);
-}
-
-.row-unread-idle {
-  background: var(--status-idle);
-}
-
-.row-unread-error {
-  background: var(--status-error);
-}
-
-/* No detector read this Agent's screen; the same secondary ink the `unknown`
-   status mark takes, for the same reason — it is visibly not a verdict. */
-.row-unread-unknown {
-  background: var(--secondary);
+.status-mark.is-unread {
+  color: var(--status-waiting);
+  /* Idle is what the Agent is; unread is what the mark is drawing instead. The
+     waiting tint belongs to the bubble and would read as a second waiting
+     status here. */
+  background: transparent;
 }
 
 .agent-row.is-unread .row-label {
@@ -1801,22 +1711,20 @@ body.is-resizing-split {
   justify-content: center;
 }
 
-/* The unread dot comes out of the flow and hangs in the leading margin.
+/* An empty gutter is not drawn at all here.
  *
- * It has to, or it decides where the glyph column is: in the flow it is a
- * 14px column, so a row that has a dot centres two marks and a row that does
- * not centres one, and the glyphs land in two different places down the rail,
- * at whatever width the window's chrome allows it. Out of the flow, every glyph is on the rail's centre line and the
- * dot sits beside the one row that has it — which is the arrangement the
- * expanded Sidebar has too, where the rail is a fixed column to the left of
- * the glyphs and not something the glyphs are centred with. */
-.sidebar[data-collapsed="true"] .row-rail {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: var(--space-1);
-  width: auto;
-  flex: 0 0 auto;
+ * In the expanded column the gutter is a fixed column every row reserves, so
+ * that the Agents' marks line up whatever depth they are at. In the rail there
+ * is no depth and there is one mark per entry, centred — so a Workspace row,
+ * whose gutter is empty, must not reserve it: two centred boxes and one centred
+ * box put their contents in different places, and the glyphs would step from
+ * side to side down the column.
+ *
+ * `:empty` is the condition because it is the fact — this row has nothing in
+ * its gutter — rather than a class the markup would have to keep in step with
+ * which rows have a status. */
+.sidebar[data-collapsed="true"] .row-rail:empty {
+  display: none;
 }
 
 .sidebar[data-collapsed="true"] .sidebar-context-button {
@@ -1824,13 +1732,13 @@ body.is-resizing-split {
   padding: 0;
 }
 
-/* Words, and everything that is only words: the label, the branch, the machine
-   name, the Issue and its title. Not `visibility` and
-   not a clip — the row's height is the first line's height here, and a hidden
-   second line that still took space would make the rail taller than the marks
-   in it. */
-.sidebar[data-collapsed="true"] .row-label,
-.sidebar[data-collapsed="true"] .row-line,
+/* Words, and everything that is only words: the name, the branch, an Agent's
+   own name and its note. Not `visibility` and not a clip — the rail's row is
+   the height of its marks, and words that still took space would make it taller
+   than they are. The mark group is not here to hide: the rail does not draw
+   one — see `Sidebar.tsx` — because a link that is merely invisible is still a
+   link the pointer can find. */
+.sidebar[data-collapsed="true"] .row-text,
 .sidebar[data-collapsed="true"] .sidebar-empty {
   display: none;
 }
@@ -1874,14 +1782,20 @@ body.is-resizing-split {
   white-space: nowrap;
 }
 
-/* The tree lines join an Agent to the Workspace above it across an indent that
-   is not there any more. Two rows one above the other, both centred, are
-   already as joined as they can be. */
-.sidebar[data-collapsed="true"] .agent-row::before,
-.sidebar[data-collapsed="true"] .agent-row::after {
+/* The indent guide marks an indent that is not there in the rail. Two rows one
+   above the other, both centred, are already as joined as they can be. */
+.sidebar[data-collapsed="true"] .agent-row::before {
   content: none;
 }
 
 .sidebar[data-collapsed="true"] .agent-row .sidebar-context-button {
   padding-left: 0;
+}
+
+/* Nothing is left in an Agent's button in the rail — its one mark is in the
+   gutter beside it — so the button must take no width of its own, or it would
+   push that mark off the centre line. */
+.sidebar[data-collapsed="true"] .agent-row .sidebar-context-button {
+  flex: 0 0 0;
+  padding: 0;
 }

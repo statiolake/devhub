@@ -214,12 +214,15 @@
      mark, and short enough to leave air above and below it in the band. */
   --titlebar-control-size: 22px;
   --sidebar-width: 248px;
-  /* The Sidebar's leading rail. Every row reserves the rail first, then the
-     glyph column; a section heading aligns to the glyph so the headings and
-     the icons beneath them share one left edge. The rail is the one part of a
-     row that does not follow the density: it is the inset the glyph column
-     hangs off, and it reads as the pane's edge, not as space around a row. */
-  --sidebar-rail-width: 14px;
+  /* One level of depth in the Sidebar's tree, which in practice is the step an
+     Agent sits in from its Workspace.
+   *
+   * It is the width of an indent guide's column, not space around a row, so it
+   * does not follow the density. It is here rather than on `.agent-row` because
+   * three stylesheets start a line at this column — the row's own inset, the
+   * guide down the middle of it, and the drop line in `reorder.css` — and a
+   * second copy of the number is how they come apart. */
+  --sidebar-agent-indent: var(--space-3);
   /* How far a row's leading glyph drops to sit level with its label.
    *
    * A row centres its glyph and its label on the same box, and that is the
@@ -265,35 +268,65 @@
  * the font, not from the row, and 1px stays correct at every row height.
  */
 .app-shell[data-sidebar-density="compact"] {
-  --row-height: 28px;
+  /* Every row is one line now — see `.row-head` in `shell.css` — so the row's
+     height is no longer a floor a two-line row stood well clear of: it is what
+     a row measures. What sets it is the tallest thing on the line, which is a
+     20px control, and the padding is the slack around it. 26 is 20 plus three
+     either side, which is the least a row can take without the controls
+     touching the row above. */
+  --row-height: 26px;
   /* The space above a row's content and below it, and it is the same value in
      both places whatever the row has to say. It used to be whatever fell out
      of a one-line row being centred in `--row-height`, which meant a row with
      a branch under its name had a real gap above its text and none at all
      below it. `--row-height` is still the floor, so a short row keeps the
      density's rhythm — it only ever adds space, and adds it to both ends. */
-  --row-pad-block: 5px;
+  --row-pad-block: 3px;
   --sidebar-glyph-width: 16px;
   --sidebar-glyph-ink: 14px;
+  /*
+   * The Sidebar's leading gutter: one column at every row's leading edge,
+   * before any depth, holding the one mark that says what an Agent is doing.
+   *
+   * It was 14px of nothing — an inset the glyph column hung off, with an unread
+   * dot in it — and it is a column with a job now. An Agent's status is the one
+   * thing in this pane a person looks at from across the room, and it used to
+   * sit *after* the row's indent, so the marks stepped right as the tree went
+   * deeper and there was no column to run an eye down. Here they are all at one
+   * x, whatever depth the row is at.
+   *
+   * A Workspace row leaves it empty. Its own folder mark stays where it is, in
+   * the row's own layout after the gutter, because a column that held folders
+   * and statuses alternately would not be a column of statuses — and it is the
+   * statuses this exists for.
+   *
+   * It is the glyph column's width, so it follows the density: the mark in it
+   * is a glyph, and a gutter narrower than its own contents is not a gutter. */
+  --sidebar-rail-width: var(--sidebar-glyph-width);
   /* On the 16-unit box every Sidebar mark is drawn on, scaled to this
      density's ink size. Both densities land on 1.5 device pixels — 16/14 ×
      1.5 here, 16/16 × 1.5 there — so a mark weighs the same in both and only
      grows, which is what the Finder control this setting imitates does. */
   --sidebar-glyph-stroke: 1.71;
   --sidebar-row-gap: var(--space-1);
-  --sidebar-section-gap: var(--space-3);
-  --sidebar-scroll-inset: var(--space-2);
+  /* The step between the Scratch row and the workspaces under it. It was a
+     whole `--space-3`, which is a paragraph break in a list whose rows are
+     26px tall; at one section boundary in the whole Sidebar it is a rule and
+     the air around it, and the air is the smaller half. */
+  --sidebar-section-gap: var(--space-2);
+  --sidebar-scroll-inset: var(--space-1);
 }
 
 .app-shell[data-sidebar-density="comfortable"] {
-  --row-height: 34px;
-  --row-pad-block: 6px;
+  --row-height: 30px;
+  --row-pad-block: 5px;
   --sidebar-glyph-width: 18px;
   --sidebar-glyph-ink: 16px;
+  --sidebar-rail-width: var(--sidebar-glyph-width);
   --sidebar-glyph-stroke: 1.5;
   --sidebar-row-gap: var(--space-2);
-  --sidebar-section-gap: var(--space-5);
-  --sidebar-scroll-inset: var(--space-3);
+  --sidebar-section-gap: var(--space-3);
+  --sidebar-scroll-inset: var(--space-2);
 }
 
 /*
@@ -340,12 +373,17 @@
    *
    * With a native title bar the collapsed Sidebar owes the window nothing:
    * what is left is the glyph column and the room around it, so that is what
-   * it is — the density's glyph, with the leading rail's width on each side of
-   * it. 44px compact and 46px comfortable, and it moves with the density
-   * rather than being a number that happens to suit one of them.
+   * it is — the density's glyph, with a step of space on each side of it. 40px
+   * compact and 42px comfortable, and it moves with the density rather than
+   * being a number that happens to suit one of them.
+   *
+   * The margin is `--space-3` and not the leading gutter, which is what it used
+   * to be. The gutter is the glyph column's own width now (it holds an Agent's
+   * status mark), so "glyph plus a gutter either side" would be three glyph
+   * columns of rail to centre one mark in.
    */
   --sidebar-rail-collapsed-width: calc(
-    var(--sidebar-glyph-width) + 2 * var(--sidebar-rail-width)
+    var(--sidebar-glyph-width) + 2 * var(--space-3)
   );
 }
 

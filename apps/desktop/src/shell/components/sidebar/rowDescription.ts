@@ -1,6 +1,15 @@
-import type { AgentSnapshot, WorkspaceSnapshot } from "../../../ipc/appShell";
-import type { WorkspaceRepositoryWire } from "../../../ipc/contract";
+import type {
+  AgentSnapshot,
+  WorkspaceLocationWire,
+  WorkspaceSnapshot,
+} from "../../../ipc/appShell";
+import type {
+  TooltipLineWire,
+  WorkspaceRepositoryWire,
+} from "../../../ipc/contract";
+import type { GlyphName } from "./icons";
 import { statusLabel } from "./status";
+import { unreadShows } from "./StatusMark";
 import {
   agentFailureLabel,
   closeDiagnosticLabel,
@@ -8,65 +17,119 @@ import {
 } from "../shell/diagnosticLabel";
 
 /**
- * What a row says, for anyone who is not reading the row itself.
+ * What a row knows, as a list of facts — for everyone who is not reading the
+ * row itself.
  *
- * There is one sentence per row and two readers of it. A screen reader is
- * given it as the row's accessible name, and the collapsed rail is given the
- * same string as the pointer's tooltip — because the rail is in exactly the
- * position a screen reader is always in: the words are off, the glyph is all
- * there is, and the only way to ask which row this is is to ask for its name.
+ * There are two such readers and they want the same facts in different forms. A
+ * screen reader is given the row's accessible name and needs the words: it
+ * cannot see a mark, so *branch* has to be said. The pointer is given the
+ * tooltip and needs the opposite: it can see the mark, it is looking at a list
+ * of workspaces, and a tooltip that read "widget workspace, path
+ * /projects/widget, branch main" spent three quarters of its ink on label words
+ * naming the categories of facts a person had already recognised.
  *
- * They are one function and not two so that they cannot drift. Two
- * compositions of the same facts is how a row ends up naming its Issue to one
- * reader and not the other, and neither reader can tell that they did.
+ * So there is one list of facts and two renderings of it. `describe` turns the
+ * list into the sentence a reader hears — `spoken` where a fact has words of
+ * its own, the fact itself where the fact *is* the words. `tooltipLines` turns
+ * the same list into the lines the tooltip page draws, each behind the same
+ * mark the row would have drawn. Neither is composed twice, which is how a row
+ * used to end up naming its Issue to one reader and not the other with nobody
+ * able to tell.
  *
- * The composition rule is the row's own drawing: **one line per line the
- * expanded row draws, in the order it draws them, joined with a newline; the
- * marks on a line become the words they would have been read as, joined with
- * a comma.** A line the row does not draw is a line the sentence does not
- * have — so a plain folder's name is one line, and a worktree with an Issue
- * and a pull request is three. `title` honours the newlines; the accessible
- * name computation folds them into spaces, which is the same sentence.
+ * The composition rule is the row's own facts, in the order a person asks for
+ * them: what it is, where it is, what it is a checkout of, what it is on, what
+ * it is for, how it is going out, and which machine it is all happening on.
  */
-function describe(lines: readonly (string | undefined)[]): string {
-  return lines.filter((line) => line !== undefined).join("\n");
+export interface RowFact {
+  /** The mark this fact is drawn behind, by name. Never a drawing. */
+  readonly icon?: GlyphName;
+  /** The fact itself, in the words the row would draw. */
+  readonly text: string;
+  /**
+   * What a reader is told instead, where the mark carries what the words would
+   * have been. Absent when the fact already says itself.
+   */
+  readonly spoken?: string;
+  readonly style?: TooltipLineWire["style"];
+  readonly tone?: TooltipLineWire["tone"];
 }
 
-function clause(parts: readonly (string | undefined)[]): string | undefined {
-  const said = parts.filter((part) => part !== undefined);
-  return said.length > 0 ? said.join(", ") : undefined;
+function said(facts: readonly (RowFact | undefined)[]): RowFact[] {
+  return facts.filter((fact): fact is RowFact => fact !== undefined);
+}
+
+/** The sentence a screen reader is given: one fact per line, in words. */
+export function describe(facts: readonly RowFact[]): string {
+  return facts.map((fact) => fact.spoken ?? fact.text).join("\n");
+}
+
+/** The same facts, as the tooltip page draws them. */
+export function tooltipLines(facts: readonly RowFact[]): TooltipLineWire[] {
+  return facts.map((fact) => ({
+    ...(fact.icon === undefined ? {} : { icon: fact.icon }),
+    text: fact.text,
+    ...(fact.style === undefined ? {} : { style: fact.style }),
+    ...(fact.tone === undefined ? {} : { tone: fact.tone }),
+  }));
 }
 
 /**
- * The Issue mark, as the words it stands for: which Issue, and what became of
- * it. The mark's own tooltip says exactly this, because it is the same
- * question — *which Issue is this* — asked by a pointer instead of a reader.
+ * Which silhouette a Workspace wears: a folder, or a folder somewhere else.
  *
- * The title is not in it. The mark sits on the line the title is written on,
- * so a sentence that repeated it would be saying the row's own words back; the
- * mark's `aria-label` carries the title for the reader who has no line to read.
+ * Two, where there were four. A repository and a worktree of one used to have
+ * marks of their own, and the column paid for it twice: three silhouettes that
+ * have to be told apart at thirteen pixels are three silhouettes a person has
+ * to *learn*, and what they bought was a distinction — this checkout is a
+ * worktree — that changes nothing about what the row is or what you can do to
+ * it. Every Workspace is a folder you have open. Which kind of checkout it is
+ * is in the row's facts, where it is a word rather than a shape, and the
+ * `worktree` and `repository` drawings are still what GitHub's own link mark
+ * and the close button's promise are built from.
+ *
+ * The one distinction that survives is *where*: a folder on another machine is
+ * a different thing to open, a different thing to close and a different place
+ * for an Agent to run, and it is the fact a person needs before any other. It
+ * is also the only one this column can carry, being the only mark the rail
+ * keeps.
  */
+export function workspaceGlyphName(location: WorkspaceLocationWire): GlyphName {
+  return location.kind === "ssh" ? "remote" : "folder";
+}
+
+/**
+ * Which silhouette the mark that links to GitHub wears.
+ *
+ * One, and it is the repository's: the link leads to a repository's page
+ * whether this checkout is the main worktree or a worktree of it — a worktree
+ * is not a separate thing on GitHub — so a second drawing here would be a
+ * distinction the destination does not have.
+ */
+export function repositoryGlyphName(): GlyphName {
+  return "repository";
+}
+
+/** The Issue, as the row draws it: which one, and what it is called. */
 export function issueMark(
   issue: NonNullable<WorkspaceRepositoryWire["issue"]>,
 ): string {
-  return `Issue #${String(issue.number)} (${issue.state})`;
+  return `#${String(issue.number)} ${issue.title}`;
 }
 
-/** The Issue mark, in full, for a reader who cannot see the line beside it. */
+/** The Issue, in full, for a reader who cannot see the mark beside it. */
 export function issueLabel(
   issue: NonNullable<WorkspaceRepositoryWire["issue"]>,
 ): string {
   return `Issue #${String(issue.number)}, ${issue.state}: ${issue.title}`;
 }
 
-/** The pull request mark, as the words it stands for. */
+/** The pull request, as the row draws it. */
 export function pullRequestMark(
   pullRequest: NonNullable<WorkspaceRepositoryWire["pullRequest"]>,
 ): string {
-  return `Pull request #${String(pullRequest.number)} (${pullRequest.state})`;
+  return `#${String(pullRequest.number)} ${pullRequest.title}`;
 }
 
-/** The pull request mark, in full. */
+/** The pull request, in full. */
 export function pullRequestLabel(
   pullRequest: NonNullable<WorkspaceRepositoryWire["pullRequest"]>,
 ): string {
@@ -82,45 +145,157 @@ export function unavailableText(
     : `#${String(unavailable.number)} · ${unavailable.reason}`;
 }
 
+/** The page a repository mark leads to, as it would be written down. */
+function repositoryPage(url: string): string {
+  return url.replace(/^https:\/\//, "");
+}
+
+const ISSUE_GLYPH: Record<
+  NonNullable<WorkspaceRepositoryWire["issue"]>["state"],
+  GlyphName
+> = { open: "issueOpen", closed: "issueClosed" };
+
+/**
+ * Which mark a pull request wears, by what became of it.
+ *
+ * Four states, four of GitHub's own drawings — there is no state here that has
+ * to be told from another by colour, which is what lets the whole column go
+ * grey at rest. See `icons.tsx`.
+ */
+export function pullRequestGlyphName(
+  state: NonNullable<WorkspaceRepositoryWire["pullRequest"]>["state"],
+): GlyphName {
+  return PULL_REQUEST_GLYPH[state];
+}
+
+const PULL_REQUEST_GLYPH: Record<
+  NonNullable<WorkspaceRepositoryWire["pullRequest"]>["state"],
+  GlyphName
+> = {
+  open: "pullRequest",
+  draft: "pullRequestDraft",
+  closed: "pullRequestClosed",
+  merged: "pullRequestMerged",
+};
+
+export function workspaceRowFacts(
+  workspace: WorkspaceSnapshot,
+  repository: WorkspaceRepositoryWire | undefined,
+): RowFact[] {
+  const closeFailed =
+    workspace.close.kind === "failed" ? workspace.close : undefined;
+  const issue = repository?.issue;
+  const pullRequest = repository?.pullRequest;
+  return said([
+    // What it is. The name, and it is the only fact in the list that is set as
+    // one — everything under it qualifies it.
+    {
+      text: workspace.label,
+      spoken: `${workspace.label} workspace`,
+      style: "name",
+    },
+    // Where it is. The path is the one fact a row never draws and always has,
+    // because two workspaces with the same folder name are told apart by
+    // nothing else.
+    { text: workspace.root, spoken: `path ${workspace.root}`, style: "muted" },
+    // A close that stopped. Said and not only drawn: the row's colour is what a
+    // sighted reader gets, and this is the same statement for everyone else.
+    closeFailed
+      ? {
+          icon: "statusError",
+          text: closeFailureLabel(
+            closeFailed.step,
+            closeFailed.diagnostic,
+            closeFailed.detail,
+          ),
+          spoken: `close failed: ${closeFailureLabel(closeFailed.step, closeFailed.diagnostic, closeFailed.detail)}`,
+          style: "danger",
+        }
+      : undefined,
+    // What it is a checkout of, and where that page is.
+    repository?.repositoryUrl === undefined
+      ? undefined
+      : {
+          icon: repositoryGlyphName(),
+          text: repositoryPage(repository.repositoryUrl),
+          spoken: `repository ${repositoryPage(repository.repositoryUrl)}`,
+          style: "muted",
+        },
+    // That this checkout is a worktree, and of what. The row's own mark stopped
+    // saying it — every Workspace is a folder there — and it is worth saying
+    // once, here, where there is room for the repository it was cut from.
+    repository?.mainWorktree !== undefined &&
+    repository.worktree !== undefined &&
+    repository.worktree !== repository.mainWorktree
+      ? {
+          icon: "worktree",
+          text: repository.mainWorktree,
+          spoken: `worktree of ${repository.mainWorktree}`,
+          style: "muted",
+        }
+      : undefined,
+    // What it is on.
+    repository?.branch === undefined
+      ? undefined
+      : {
+          icon: "branch",
+          text: repository.unborn
+            ? `${repository.branch} · empty`
+            : repository.branch,
+          spoken: repository.unborn
+            ? `branch ${repository.branch}, no commits yet`
+            : `branch ${repository.branch}`,
+          style: "muted",
+        },
+    // What it is for, and how it is going out.
+    issue
+      ? {
+          icon: ISSUE_GLYPH[issue.state],
+          text: issueMark(issue),
+          spoken: issueLabel(issue),
+          style: "muted",
+        }
+      : undefined,
+    pullRequest
+      ? {
+          icon: PULL_REQUEST_GLYPH[pullRequest.state],
+          text: pullRequestMark(pullRequest),
+          spoken: pullRequestLabel(pullRequest),
+          style: "muted",
+        }
+      : undefined,
+    repository?.pending
+      ? {
+          text: `Reading #${String(repository.pending.number)}`,
+          spoken: `reading #${String(repository.pending.number)}`,
+          style: "muted",
+        }
+      : undefined,
+    // Why it cannot say what it is working on.
+    repository?.unavailable
+      ? {
+          icon: "statusError",
+          text: unavailableText(repository.unavailable),
+          style: "danger",
+        }
+      : undefined,
+    // Which machine all of it is happening on, when it is not this one.
+    workspace.location.kind === "ssh"
+      ? {
+          icon: "remote",
+          text: `ssh:${workspace.location.host}`,
+          spoken: `on ${workspace.location.host}`,
+          style: "muted",
+        }
+      : undefined,
+  ]);
+}
+
 export function workspaceRowDescription(
   workspace: WorkspaceSnapshot,
   repository: WorkspaceRepositoryWire | undefined,
 ): string {
-  const closeFailed =
-    workspace.close.kind === "failed" ? workspace.close : undefined;
-  return describe([
-    // Line one: what the row is, and where. A close that stopped is said and
-    // not only drawn — the row's colour is what a sighted reader gets, and
-    // this is the same statement for everyone else.
-    `${workspace.label} workspace, path ${workspace.root}${
-      closeFailed
-        ? `, close failed: ${closeFailureLabel(closeFailed.step, closeFailed.diagnostic, closeFailed.detail)}`
-        : ""
-    }`,
-    // Line two: the machine, when it is not this one, and the branch.
-    clause([
-      workspace.location.kind === "ssh"
-        ? `on ${workspace.location.host}`
-        : undefined,
-      repository?.branch === undefined
-        ? undefined
-        : `branch ${repository.branch}`,
-    ]),
-    // Line three: what the branch is working on.
-    clause([
-      repository?.issue ? issueMark(repository.issue) : undefined,
-      repository?.pullRequest
-        ? pullRequestMark(repository.pullRequest)
-        : undefined,
-      repository?.issue?.title ?? repository?.pullRequest?.title,
-      repository?.pending
-        ? `reading #${String(repository.pending.number)}`
-        : undefined,
-      repository?.unavailable
-        ? unavailableText(repository.unavailable)
-        : undefined,
-    ]),
-  ]);
+  return describe(workspaceRowFacts(workspace, repository));
 }
 
 function runtimeHealthLabel(health: AgentSnapshot["runtimeHealth"]): string {
@@ -141,8 +316,8 @@ function runtimeHealthLabel(health: AgentSnapshot["runtimeHealth"]): string {
 /**
  * Why this Agent may not be doing what its status says.
  *
- * The row draws it on its second line and the sentence says it, from here, so
- * the two cannot disagree about what stopped.
+ * The row draws it and the sentence says it, from here, so the two cannot
+ * disagree about what stopped.
  */
 export function agentNote(agent: AgentSnapshot): string | undefined {
   const control = agent.controlState;
@@ -155,11 +330,52 @@ export function agentNote(agent: AgentSnapshot): string | undefined {
     : runtimeHealthLabel(agent.runtimeHealth);
 }
 
-export function agentRowDescription(agent: AgentSnapshot): string {
-  // One line, because an Agent row's own name is one line: the status glyph,
-  // the unread dot and the activity are all on it, and its second line is the
-  // name and the note this sentence already leads with.
-  return `${agent.displayName}, ${statusLabel(agent.status)} agent, ${
-    agentNote(agent) ?? runtimeHealthLabel(agent.runtimeHealth)
-  }${agent.unread ? ", unread" : ""}${agent.activity ? `, ${agent.activity}` : ""}`;
+const STATUS_GLYPH: Record<AgentSnapshot["status"], GlyphName> = {
+  working: "statusWorking",
+  waiting: "statusWaiting",
+  idle: "statusIdle",
+  error: "statusError",
+  unknown: "statusUnknown",
+};
+
+export function agentRowFacts(
+  agent: AgentSnapshot,
+  /** The Workspace this Agent is in, for the fact that says which. */
+  owner?: { readonly label: string; readonly icon: GlyphName },
+): RowFact[] {
+  const note = agentNote(agent);
+  const unread = unreadShows(agent.status, agent.unread);
+  return said([
+    { text: agent.displayName, style: "name" },
+    // What it is doing, in its own colour — the one coloured thing anywhere in
+    // this window, and the reason a person looked at the row at all. Unread is
+    // part of this fact and not a fact of its own: it only means anything while
+    // the Agent is idle, and then it *is* the status. See `unreadShows`.
+    {
+      icon: unread ? "statusUnread" : STATUS_GLYPH[agent.status],
+      text: unread
+        ? `${statusLabel(agent.status)} · unread`
+        : statusLabel(agent.status),
+      spoken: unread
+        ? `${statusLabel(agent.status)} agent, unread`
+        : `${statusLabel(agent.status)} agent`,
+      tone: agent.unread !== undefined && unread ? agent.unread : agent.status,
+    },
+    // What it says it is doing, in its own words.
+    agent.activity === undefined
+      ? undefined
+      : { text: agent.activity, style: "muted" },
+    // Why it may not be doing what its status says.
+    note === undefined ? undefined : { text: note, style: "note" },
+    owner === undefined
+      ? undefined
+      : { icon: owner.icon, text: owner.label, style: "muted" },
+  ]);
+}
+
+export function agentRowDescription(
+  agent: AgentSnapshot,
+  owner?: { readonly label: string; readonly icon: GlyphName },
+): string {
+  return describe(agentRowFacts(agent, owner));
 }

@@ -13,7 +13,6 @@ import {
   type AgentSnapshot,
   type AppIntent,
   type AppSnapshot,
-  type WorkspaceLocationWire,
   type WorkspaceSnapshot,
 } from "../../../ipc/appShell";
 import { clampSidebarWidth } from "../../../ipc/appShell";
@@ -23,22 +22,27 @@ import { closingDeletesWorktree } from "../../../model/worktrees";
 import { useSidebar } from "../../sidebar/SidebarContext";
 import { devhub } from "../../sidebar/client";
 import { isImeComposing } from "../../accessibility/ime";
-import { Glyph, type GlyphName } from "./icons";
+import { Glyph } from "./icons";
 import { RowTooltip } from "./RowTooltip";
 import { RowMenu, type RowMenuItem } from "./RowMenu";
-import { StatusMark } from "./StatusMark";
+import { StatusMark, unreadShows } from "./StatusMark";
 import { mergeExitingRows, useClosingExit } from "./closingExit";
 import { moveIntent, sourceOfTreeItem } from "./reorder";
 import { useReorder, type Reorder } from "./useReorder";
 import {
   agentNote,
-  agentRowDescription,
+  agentRowFacts,
   issueLabel,
   issueMark,
   pullRequestLabel,
   pullRequestMark,
+  repositoryGlyphName,
+  tooltipLines,
+  describe,
+  pullRequestGlyphName,
   unavailableText,
-  workspaceRowDescription,
+  workspaceGlyphName,
+  workspaceRowFacts,
 } from "./rowDescription";
 
 export interface SidebarProps {
@@ -132,7 +136,13 @@ function WorkspaceRow({
   // What this row says, for whoever is not reading the row: the screen reader
   // and, in the rail, the pointer. One composition (`rowDescription`), so the
   // two cannot come to say different things.
-  const description = workspaceRowDescription(workspace, repository);
+  // What this row says, for whoever is not reading the row. One list of facts
+  // (`rowDescription`) rendered twice: as the sentence a screen reader hears,
+  // and as the lines the tooltip page draws behind the row's own marks. Two
+  // compositions of the same facts is how a row comes to name its Issue to one
+  // reader and not the other, with neither able to tell.
+  const facts = workspaceRowFacts(workspace, repository);
+  const description = describe(facts);
   const collapsed = snapshot.sidebar.collapsed;
 
   return (
@@ -156,23 +166,17 @@ function WorkspaceRow({
       >
         <div className="row-head">
           <span className="row-rail" aria-hidden="true" />
-          {/* Outside the row's own button, because when there is a GitHub page
-              for this workspace the mark is the link to it, and a button
-              cannot go inside a button. It keeps the glyph column either way:
-              a folder and a repository start at the same pixel.
-
-              In the rail it is inside the button instead, because in the rail
-              the glyph *is* the entry: the label it sits beside is off, so a
-              mark that opened GitHub would be the only thing left to click and
-              the row could not be selected with a pointer at all. The rule is
-              one sentence — in the rail, the whole entry is the select control
-              — and it is said by rendering the glyph as part of that control
-              rather than by catching the link's click and refusing it. */}
+          {/* Which kind of Workspace this is, in the column every row's first
+              mark is in. It is a plain mark now and never a link: the link to
+              the repository's page is in the trailing group, with the other
+              marks that lead to GitHub, so this one is left saying the one
+              thing it is for — which of the four kinds of row this is. That is
+              also what the rail draws, from the same function, which is what
+              makes the rail the row with its words taken off. */}
           {collapsed ? null : (
-            <WorkspaceGlyph
-              location={workspace.location}
-              repository={repository}
-            />
+            <span className="row-glyph" aria-hidden="true">
+              <Glyph name={workspaceGlyphName(workspace.location)} />
+            </span>
           )}
           <button
             className="sidebar-context-button"
@@ -193,11 +197,10 @@ function WorkspaceRow({
             // is what a sighted reader sees and this is the same statement
             // for everyone else.
             aria-label={description}
-            // The same sentence, for the rail. It used to be the path alone,
-            // which named the row and said nothing about the branch it is on
-            // or the Issue it is for — the two facts the expanded row spends
-            // its other two lines on, and the two a rail is hiding.
-            data-tooltip={description}
+            // The same facts, drawn. The expanded row shows two of them and
+            // the rail shows none, and this is where all of them are — which
+            // is why it is the same list and not a shorter version of it.
+            data-tooltip-lines={JSON.stringify(tooltipLines(facts))}
             onClick={() =>
               dispatch({
                 type: "select_context",
@@ -205,15 +208,40 @@ function WorkspaceRow({
               })
             }
           >
+            {/* The rail's one mark, and the expanded row's none.
+
+                In the rail the glyph *is* the entry: the label beside it is
+                off, so a mark that opened GitHub would be the only thing left
+                to click and the row could not be selected with a pointer at
+                all. In the expanded row there is no leading glyph any more —
+                the words start at the rail, and what the row is a checkout of
+                is said by the repository mark in the trailing group, where it
+                is the link to the page it names. */}
             {collapsed ? (
               <span className="row-glyph" aria-hidden="true">
-                <Glyph
-                  name={workspaceGlyphName(workspace.location, repository)}
-                />
+                <Glyph name={workspaceGlyphName(workspace.location)} />
               </span>
             ) : null}
-            <span className="row-label">{workspace.label}</span>
+            {/* The name, then the branch, on one line that fades out under the
+                marks rather than ellipsising into them — see `.row-text`. */}
+            <span className="row-text">
+              <span className="row-label">{workspace.label}</span>
+              {repository?.branch === undefined ? null : (
+                <span className="row-branch">
+                  {repository.branch}
+                  {repository.unborn ? " · empty" : ""}
+                </span>
+              )}
+            </span>
           </button>
+          {/* The trailing group: what this row is, as marks, each one its own
+              hover. Nothing here is words — the numbers and the titles are in
+              the tooltip, where there is room for all of them at once. */}
+          {/* Not drawn in the rail at all, rather than drawn and hidden: the
+              rail's rule is that the whole entry is the select control, and a
+              link that is merely invisible is still a link the pointer can
+              find. */}
+          {collapsed ? null : <WorkspaceMarks repository={repository} />}
           {/* The links trail the label rather than leading it, which is the one
             place this differs from the sketch: they are buttons, a button
             cannot go inside the row's own button, and putting them before it
@@ -283,136 +311,6 @@ function WorkspaceRow({
             </button>
           )}
         </div>
-        {/* Line two: the branch, and nothing else on it.
-            
-            It is alone because it is long, it ends in the part that identifies
-            it, and it is the fact that changes under you — sharing a line it
-            got whatever the neighbours left over, and what survived was
-            `feature/128-tidy-the…`, the half that says nothing. */}
-        {workspace.location.kind === "ssh" || repository?.branch ? (
-          <div className="row-line row-line-secondary">
-            {/* The machine first, and only when it is not this one: it is the
-                one long fact that identifies the row and is not its name, and
-                somebody with the same folder checked out on three machines is
-                reading the row for exactly this. It used to be *instead* of
-                the branch, because git was never asked about a remote folder;
-                git runs on the folder's own machine now, so the branch is
-                there too and the row says both. */}
-            {workspace.location.kind === "ssh" && (
-              <span
-                className="row-branch"
-                data-tooltip={`${workspace.location.host}:${workspace.root}`}
-              >
-                {workspace.location.host}
-              </span>
-            )}
-            {workspace.location.kind === "ssh" && repository?.branch && (
-              <span aria-hidden="true" className="row-secondary-separator">
-                ·
-              </span>
-            )}
-            {repository?.branch && (
-              <span
-                className="row-branch"
-                // A branch with no commit under it is not the same fact as a
-                // branch, and drawn as one it reads as an ordinary checkout
-                // somebody can cut a worktree from. The name is still what the
-                // tooltip says, because the name is still true.
-                data-tooltip={
-                  repository.unborn
-                    ? `${repository.branch} — no commits yet`
-                    : repository.branch
-                }
-              >
-                {repository.branch}
-                {repository.unborn ? " · empty" : ""}
-              </span>
-            )}
-          </div>
-        ) : null}
-        {/* Line three: what this branch is working on — the Issue, the pull
-            request out from it, and what the work is called.
-
-            It is drawn only when there is one of those to draw. It used to
-            appear for the repository link alone, which meant every workspace
-            in a GitHub repository spent a third of its height on a single icon
-            that said the same thing for all of them; that link is the row's
-            first mark now, and this line is back to being about the work.
-
-            The marks lead the line rather than trailing the name, which is the
-            one place this differs from the row above: they are about the same
-            subject as the words beside them, so they read as a sentence
-            starting with its icons. Nothing here is on the name's line any
-            more, which is what stopped four buttons from deciding how much of
-            a branch name a person got to see. */}
-        {/* One line for every row, wherever the folder is. This used to be
-            replaced on a remote row by the sentence saying DevHub could not
-            read anything over there; it can now — git, the HEAD watcher and
-            the Issue lookup all go through the folder's own machine — so the
-            row draws what it found. What is still missing on a remote row is
-            Agents and terminals, and that sentence stays where it is about
-            something: on the New Agent button that is disabled by it. */}
-        {(repository?.issue ??
-        repository?.pullRequest ??
-        repository?.pending ??
-        repository?.unavailable) ? (
-          <div className="row-line row-line-links">
-            <RepositoryLinks repository={repository} />
-            {/* The Issue's title if there is an Issue, and the pull request's
-                if there is not. One line of words, whichever of the two is
-                carrying the meaning: a workspace with both is working on the
-                Issue and delivering it through the pull request, and the
-                Issue is the half that says what the work is. */}
-            {(repository?.issue?.title ?? repository?.pullRequest?.title) ? (
-              <span
-                className="row-issue"
-                data-tooltip={
-                  repository.issue?.title ?? repository.pullRequest?.title
-                }
-              >
-                {repository.issue?.title ?? repository.pullRequest?.title}
-              </span>
-            ) : null}
-            {/* Asking. The branch is read every couple of seconds and GitHub
-                once a minute, so a branch just switched to is on screen well
-                before what it is about — and without this the gap looks
-                exactly like a branch that is about no Issue. */}
-            {repository?.pending ? (
-              <>
-                <span className="row-issue-number">
-                  {`#${String(repository.pending.number)}`}
-                </span>
-                <span
-                  className="mac-spinner row-issue-spinner"
-                  role="status"
-                  aria-label={`Reading Issue #${String(repository.pending.number)}`}
-                />
-              </>
-            ) : null}
-            {/* The row cannot say what it is working on, and this is why.
-                Without it the row looked exactly like a branch that is about
-                no Issue, while the reason sat at the foot of the Sidebar
-                attached to nothing — so "it just does not link" had no answer
-                on screen. The number says which Issue when the branch got far
-                enough to name one; the failures upstream of that — git that
-                would not run, a remote that is not a GitHub repository — have
-                no number to show and lead with the reason instead. The whole
-                of it is in the tooltip either way, because a Sidebar this
-                narrow will always cut a sentence. */}
-            {repository?.unavailable ? (
-              <span
-                className="row-issue-unavailable"
-                data-tooltip={
-                  repository.unavailable.number === undefined
-                    ? repository.unavailable.reason
-                    : `Issue #${String(repository.unavailable.number)}: ${repository.unavailable.reason}`
-                }
-              >
-                {unavailableText(repository.unavailable)}
-              </span>
-            ) : null}
-          </div>
-        ) : null}
       </div>
       {workspace.agents.length > 0 && (
         <ul
@@ -445,15 +343,37 @@ function WorkspaceRow({
              * a column of those tells you nothing you did not already know
              * from having started them. What tells them apart is what each one
              * is doing, so that is what leads, at the size a row's own name is
-             * set in, and the name follows underneath it small and dimmed.
+             * set in.
              *
              * An Agent that has not said anything yet leads with its name
-             * instead. The leading line is never empty: a row whose only text
-             * was 11px dimmed would be a row you cannot read the name of.
+             * instead. The leading text is never empty: a row whose only words
+             * were 11px dimmed would be a row you cannot read the name of.
              */
             const leading = agent.activity ?? agent.displayName;
-            const agentDescription = agentRowDescription(agent);
-            const naming = agent.activity ? agent.displayName : undefined;
+            const agentFacts = agentRowFacts(agent, {
+              label: workspace.label,
+              icon: workspaceGlyphName(workspace.location),
+            });
+            const agentDescription = describe(agentFacts);
+            /**
+             * The Agent's own name, when the name is a name.
+             *
+             * `agentLabelFor` gives the only Claude under a Workspace the bare
+             * word "Claude", and two of them "Claude 1" and "Claude 2". The
+             * bare word is the *kind* of Agent and nothing else — it is on the
+             * row's status mark, it is what you chose when you started it, and
+             * a row that spent its remaining width repeating it was spending it
+             * on the one fact nobody was going to read. What is worth keeping
+             * is what tells two Agents apart: the ordinal, or the name somebody
+             * gave it. So the kind word is dropped and anything else is kept.
+             */
+            const profileName = agentProfiles.find(
+              (profile) => profile.id === agent.profileId,
+            )?.displayName;
+            const naming =
+              agent.activity && agent.displayName !== profileName
+                ? agent.displayName
+                : undefined;
             return (
               <li
                 key={agent.id}
@@ -468,7 +388,7 @@ function WorkspaceRow({
                 aria-selected={agentSelected}
               >
                 <div
-                  className={`sidebar-row agent-row${agentSelected ? " is-selected" : ""}${agent.unread ? " is-unread" : ""}`}
+                  className={`sidebar-row agent-row${agentSelected ? " is-selected" : ""}${unreadShows(agent.status, agent.unread) ? " is-unread" : ""}`}
                   data-control-state={agent.controlState.kind}
                   onContextMenu={(event) => {
                     event.preventDefault();
@@ -478,30 +398,22 @@ function WorkspaceRow({
                     });
                   }}
                 >
-                  {/* The unread mark, in the same leading rail every row
-                      reserves — one column, at the leading edge, where Mail
-                      puts the same fact. It used to trail the row while the
-                      status glyph led it, which put two marks about one Agent
-                      at opposite ends of a row narrow enough that the two
-                      could not be read together.
-
-                      It is not a second status. It says the Agent asked for
-                      you and you have not been, which is a fact about the
-                      person and outlives whatever the Agent is doing now — an
-                      Agent can be idle and unread, and that is exactly the
-                      case one mark would lose.
-
-                      Its colour is the reason it is there: the status the
-                      Agent went into while nobody was watching. A finish and a
-                      question are not the same errand, and a dot that is
-                      always blue would say they were. */}
                   <div className="row-head">
-                    <span className="row-rail" aria-hidden="true">
-                      {agent.unread ? (
-                        <span
-                          className={`row-unread row-unread-${agent.unread}`}
-                        />
-                      ) : null}
+                    {/* The rail, empty on an Agent row. It used to carry the
+                        unread dot; the status mark carries that now — see
+                        `unreadShows` in `StatusMark.tsx` — and what is left
+                        here is the column itself, which every row reserves so
+                        that the marks below it line up with the marks above. */}
+                    {/* The gutter, and what is in it: this Agent's one mark.
+                        It is outside the row's own button and at the row's
+                        leading edge rather than beside the name, so that every
+                        Agent's mark is at the same x whatever depth its row is
+                        at — which is what makes the statuses a column a person
+                        can run an eye down. The button's hit area covers the
+                        whole row (`.sidebar-context-button::after`), so the
+                        mark is still part of what selects the row. */}
+                    <span className="row-rail">
+                      <StatusMark status={agent.status} unread={agent.unread} />
                     </span>
                     <button
                       className="sidebar-context-button"
@@ -515,7 +427,9 @@ function WorkspaceRow({
                       // this is. It is the accessible name and not a shorter
                       // version of it: a rail is the sighted reader's turn at
                       // being told rather than shown.
-                      data-tooltip={agentDescription}
+                      data-tooltip-lines={JSON.stringify(
+                        tooltipLines(agentFacts),
+                      )}
                       disabled={agent.controlState.kind === "stopping"}
                       // Command-click opens the Agent beside its workbench; a
                       // plain click gives it the whole content area. The same
@@ -534,11 +448,16 @@ function WorkspaceRow({
                       // to be guessed is worse than one that is not there.
                       onDoubleClick={() => onRenameAgent(agent)}
                     >
-                      {/* The leading glyph *is* the status. There is no second
-                        mark trailing the row saying the same thing in a
-                        smaller size. */}
-                      <StatusMark status={agent.status} />
-                      <span className="row-label">{leading}</span>
+                      {/* What it is doing, then which Agent it is, then why it
+                          may not be doing it — one line, fading out under the
+                          row's own controls. */}
+                      <span className="row-text">
+                        <span className="row-label">{leading}</span>
+                        {naming ? (
+                          <span className="row-name">{naming}</span>
+                        ) : null}
+                        {note ? <span className="row-note">{note}</span> : null}
+                      </span>
                     </button>
                     {agent.controlState.kind === "stopping" ? null : (
                       <button
@@ -558,17 +477,6 @@ function WorkspaceRow({
                       </button>
                     )}
                   </div>
-                  {/* The Agent's own name, and why it may not be doing what its
-                      status says. The same second line a Workspace row has, and
-                      it runs the full width for the same reason. */}
-                  {(naming ?? note) ? (
-                    <div className="row-line row-line-secondary">
-                      {naming ? (
-                        <span className="row-name">{naming}</span>
-                      ) : null}
-                      {note ? <span className="row-note">{note}</span> : null}
-                    </div>
-                  ) : null}
                 </div>
               </li>
             );
@@ -580,145 +488,73 @@ function WorkspaceRow({
 }
 
 /**
- * What a Workspace row begins with, and where clicking it goes.
+ * What a Workspace row ends with: marks, and only marks.
  *
- * Three marks, and which one a row starts with is how a person tells the three
- * kinds of Workspace apart at a glance: a plain folder, a repository, and a
- * worktree of one. They are three silhouettes rather than one silhouette with
- * a badge, because this column is scanned rather than read — see `icons.tsx`,
- * where they are drawn together for exactly that reason.
+ * The row's words are its name and its branch, and they are the whole of what
+ * it says in words. Everything else it knows — which repository this is a
+ * checkout of, which Issue it is for, which pull request is delivering it,
+ * and how it is going out — is a mark in this group, at the trailing edge, in
+ * the order a person asks the questions: what this is a checkout of, what it is
+ * for, and how it is being delivered.
  *
- * When there is a GitHub page for it, the mark *is* the link to it. It used to
- * be a fourth button down on the third line, which meant a row with no Issue
- * spent a whole line on a single icon — and it is the same question either
- * way: *show me this on GitHub*. So the row's first mark answers it, and the
- * third line is left for what the row is working on.
+ * The machine is the exception, and it is an exception because it is already
+ * drawn: a Workspace on another machine wears the `remote` silhouette as the
+ * row's own leading mark, which is the first thing on the row and the one mark
+ * the rail keeps. A second copy of it here would be the same drawing twice in
+ * one row saying one thing. The host itself — which machine — is in the
+ * tooltip, on its own line behind the same mark.
  *
- * A worktree keeps its own silhouette here and still links to the repository's
- * page, because that is the page it has: a worktree is not a separate thing on
- * GitHub, and a mark that led somewhere else would be inventing one.
+ * They are marks and not words because there is one line now and a line is
+ * about twenty characters wide. A number and a title beside them would be
+ * spending that line on what the tooltip says in full a moment later — and it
+ * is the tooltip that says it: each mark carries its own sentence, so hovering
+ * the Issue gives the Issue and hovering the row gives the row.
+ *
  */
-function WorkspaceGlyph({
-  location,
+function WorkspaceMarks({
   repository,
 }: {
-  readonly location: WorkspaceLocationWire;
   readonly repository: WorkspaceRepositoryWire | undefined;
 }) {
   const { openExternalUrl } = useSidebar();
-  const name = workspaceGlyphName(location, repository);
   const url = repository?.repositoryUrl;
-  if (url === undefined) {
-    return (
-      <span className="row-glyph" aria-hidden="true">
-        <Glyph name={name} />
-      </span>
-    );
-  }
-  const page = url.replace("https://github.com/", "");
+  // The page as it would be written down — `github.com/owner/repo` — which is
+  // what the mark's hover says and what the row's own facts carry.
+  const page = url?.replace(/^https:\/\//, "");
+  const issue = repository?.issue;
+  const pullRequest = repository?.pullRequest;
   return (
-    <button
-      className="row-glyph row-glyph-button"
-      type="button"
-      aria-label={`Open ${page} on GitHub`}
-      data-tooltip={`Open ${page} on GitHub`}
-      onClick={() => {
-        openExternalUrl(url);
-      }}
-    >
-      <Glyph name={name} />
-    </button>
-  );
-}
-
-/**
- * Which of the four silhouettes a Workspace wears.
- *
- * Its own function because the rail draws the same mark inside the row's
- * select button, where there is no link to hang it on.
- */
-function workspaceGlyphName(
-  location: WorkspaceLocationWire,
-  repository: WorkspaceRepositoryWire | undefined,
-): GlyphName {
-  // `mainWorktree` is git's own answer to "which repository is this a checkout
-  // of", so its absence is the whole of what "not a repository" means here.
-  //
-  // Which *kind* of checkout is the two roots compared with each other, and
-  // never with the row's own path: a workspace opened at `repo/packages/app` is
-  // in the main worktree and is neither of them, and comparing it to
-  // `mainWorktree` answered "not the main worktree" — which is true, and is not
-  // the question. That is what drew a plain subdirectory as a worktree.
-  // A fourth silhouette, and it comes first: whether the folder is on this
-  // machine is the thing a person needs to know before anything else about
-  // the row, and it outranks whether git calls the checkout a repository or a
-  // worktree — a fact the row's branch line now carries for a remote folder
-  // too.
-  return location.kind === "ssh"
-    ? "remote"
-    : repository?.mainWorktree === undefined ||
-        repository.worktree === undefined
-      ? "folder"
-      : repository.worktree === repository.mainWorktree
-        ? "repository"
-        : "worktree";
-}
-
-/**
- * Which mark a pull request wears, by what became of it.
- *
- * Four states, four of GitHub's own drawings — there is no state here that has
- * to be told from another by colour, which is what lets the whole column go
- * grey at rest. See `icons.tsx`.
- */
-const PULL_REQUEST_GLYPH: Record<
-  NonNullable<WorkspaceRepositoryWire["pullRequest"]>["state"],
-  GlyphName
-> = {
-  open: "pullRequest",
-  draft: "pullRequestDraft",
-  closed: "pullRequestClosed",
-  merged: "pullRequestMerged",
-};
-
-/**
- * The Issue this workspace is for and the pull request out from its branch, as
- * marks that open GitHub.
- *
- * They are marks rather than words because the row already has words, and they
- * are GitHub's marks rather than DevHub's because what they say is GitHub's:
- * somebody who reads pull requests all day recognises these silhouettes
- * without being told. What each one says in full is in its label, for anyone
- * who cannot use a picture.
- *
- * The Issue leads, because the Issue is what the work is *for* and the pull
- * request is how it is being delivered. The number is in the label rather than
- * beside the mark: the line's words are the title, and a row that spent four
- * characters on `#128` before every title was spending them on the part a
- * person already knows.
- *
- * They are grey at rest and take GitHub's state colours under the pointer. The
- * state is never lost by that, because it is carried by the shape; what the
- * grey buys is a Sidebar in which the one coloured thing is an Agent that
- * wants something. `shell.css` carries the rule.
- */
-function RepositoryLinks({
-  repository,
-}: {
-  readonly repository: WorkspaceRepositoryWire | undefined;
-}) {
-  const { openExternalUrl } = useSidebar();
-  if (!repository) return null;
-  const issue = repository.issue;
-  const pullRequest = repository.pullRequest;
-  return (
-    <>
+    <span className="row-marks">
+      {/* The repository this is a checkout of, and the link to its page. It
+          was the row's leading glyph; it is here because the leading column is
+          gone and because it is the same question the other marks answer —
+          *show me this on GitHub*. A worktree keeps its own silhouette and
+          still leads to the repository's page, because that is the page it
+          has: a worktree is not a separate thing on GitHub. */}
+      {url !== undefined && page !== undefined ? (
+        <button
+          className="row-link-button row-mark-repository"
+          type="button"
+          aria-label={`Open ${page} on GitHub`}
+          data-tooltip={page}
+          onClick={() => {
+            openExternalUrl(url);
+          }}
+        >
+          <Glyph name={repositoryGlyphName()} />
+        </button>
+      ) : null}
       {issue ? (
         <button
           className={`row-link-button is-issue-${issue.state}`}
           type="button"
           aria-label={issueLabel(issue)}
-          data-tooltip={issueMark(issue)}
+          data-tooltip-lines={JSON.stringify([
+            {
+              icon: issue.state === "closed" ? "issueClosed" : "issueOpen",
+              text: issueMark(issue),
+            },
+          ])}
           onClick={() => {
             openExternalUrl(issue.url);
           }}
@@ -733,15 +569,48 @@ function RepositoryLinks({
           className={`row-link-button is-pr-${pullRequest.state}`}
           type="button"
           aria-label={pullRequestLabel(pullRequest)}
-          data-tooltip={pullRequestMark(pullRequest)}
+          data-tooltip-lines={JSON.stringify([
+            {
+              icon: pullRequestGlyphName(pullRequest.state),
+              text: pullRequestMark(pullRequest),
+            },
+          ])}
           onClick={() => {
             openExternalUrl(pullRequest.url);
           }}
         >
-          <Glyph name={PULL_REQUEST_GLYPH[pullRequest.state]} />
+          <Glyph name={pullRequestGlyphName(pullRequest.state)} />
         </button>
       ) : null}
-    </>
+      {/* Asking. The branch is read every couple of seconds and GitHub once a
+          minute, so a branch just switched to is on screen well before what it
+          is about — and without this the gap looks exactly like a branch that
+          is about no Issue. */}
+      {repository?.pending ? (
+        <span
+          className="mac-spinner row-issue-spinner"
+          role="status"
+          aria-label={`Reading Issue #${String(repository.pending.number)}`}
+          data-tooltip={`Reading #${String(repository.pending.number)}`}
+        />
+      ) : null}
+      {/* The row cannot say what it is working on, and this is why. It is a
+          mark rather than a sentence now, and it is still on the row rather
+          than only in the tooltip: a failure nobody can see without hovering
+          is a failure nobody sees. It wears the danger ink at rest — the one
+          thing in this group that is coloured before it is asked — because it
+          is the one thing here that is not simply context. */}
+      {repository?.unavailable ? (
+        <span
+          className="row-link-button row-mark-unavailable"
+          role="img"
+          aria-label={unavailableText(repository.unavailable)}
+          data-tooltip={unavailableText(repository.unavailable)}
+        >
+          <Glyph name="statusError" />
+        </span>
+      ) : null}
+    </span>
   );
 }
 
@@ -777,7 +646,12 @@ function ScratchRow({
           <Glyph name="terminal" />
         </span>
         <span className="sidebar-context-button">
-          <span className="row-label">{SCRATCH_NAME}</span>
+          {/* In `.row-text` like every other row's words, because that is what
+              the rail takes off. A label outside it would be the one row whose
+              name survived the collapse. */}
+          <span className="row-text">
+            <span className="row-label">{SCRATCH_NAME}</span>
+          </span>
         </span>
       </span>
     </button>
@@ -881,7 +755,9 @@ function ClosingGhostRow({ label }: { label: string }) {
         <div className="row-head">
           <span className="row-rail" />
           <span className="sidebar-context-button">
-            <span className="row-label">{label}</span>
+            <span className="row-text">
+              <span className="row-label">{label}</span>
+            </span>
           </span>
         </div>
       </div>

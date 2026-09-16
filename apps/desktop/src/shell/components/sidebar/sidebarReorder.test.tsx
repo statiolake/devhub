@@ -314,10 +314,10 @@ describe("letting go", () => {
   it("moves an Agent within its own workspace", () => {
     const onDispatch = vi.fn();
     mount(onDispatch);
-    const second = row(/^a-2,/);
+    const second = row(/^a-2/);
     fireEvent.dragStart(second, { dataTransfer: transfer() });
-    dragOver(row(/^a-1,/), "top");
-    fireEvent.drop(row(/^a-1,/), { dataTransfer: transfer() });
+    dragOver(row(/^a-1/), "top");
+    fireEvent.drop(row(/^a-1/), { dataTransfer: transfer() });
 
     expect(onDispatch).toHaveBeenCalledWith({
       type: "reorder_agents",
@@ -328,9 +328,9 @@ describe("letting go", () => {
 
   it("keeps an Agent out of another workspace's list", () => {
     mount(vi.fn());
-    fireEvent.dragStart(row(/^a-1,/), { dataTransfer: transfer() });
+    fireEvent.dragStart(row(/^a-1/), { dataTransfer: transfer() });
     expect(row(ZEBRA)).toHaveAttribute("data-reorder-target", "false");
-    expect(row(/^a-2,/)).toHaveAttribute("data-reorder-target", "true");
+    expect(row(/^a-2/)).toHaveAttribute("data-reorder-target", "true");
   });
 
   it("asks for nothing when the row is let go outside the range", () => {
@@ -383,7 +383,7 @@ describe("moving a row with the keyboard", () => {
   it("moves an Agent within its own workspace", () => {
     const onDispatch = vi.fn();
     mount(onDispatch);
-    arrow(focus(/^a-1,/), "ArrowDown");
+    arrow(focus(/^a-1/), "ArrowDown");
     expect(onDispatch).toHaveBeenCalledWith({
       type: "reorder_agents",
       workspaceId: "w-alpha",
@@ -413,7 +413,7 @@ describe("moving a row with the keyboard", () => {
     fireEvent.keyDown(focus(ALPHA), { key: "ArrowDown" });
     expect(onDispatch).not.toHaveBeenCalled();
     expect(document.activeElement).toBe(
-      screen.getByRole("button", { name: /^a-1,/ }),
+      screen.getByRole("button", { name: /^a-1/ }),
     );
   });
 });

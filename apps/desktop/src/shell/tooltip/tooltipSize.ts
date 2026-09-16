@@ -34,15 +34,20 @@ function same(
 /**
  * A ref for the tooltip's box, which reports its size whenever it changes.
  *
- * `text` is a dependency because the element itself goes away when there is
+ * `drawn` is a dependency because the element itself goes away when there is
  * nothing to draw: a `ResizeObserver` on a detached node reports nothing at
  * all, so "the tooltip is gone" has to be said by the effect that watched it
  * rather than by the observer that no longer can. It is also the thing that
  * *changes* the size — a different row is a different sentence — so
  * re-measuring on it is not an optimisation, it is the measurement.
+ *
+ * It is `unknown` rather than the lines themselves because this hook has no
+ * business reading them: what it needs is a value that changes when the box
+ * does, and the page has one — the array it just rendered.
  */
 export function useTooltipSize(
-  text: string | undefined,
+  /** What is being drawn. Its identity is what says the box is a new size. */
+  drawn: unknown,
 ): (element: HTMLElement | null) => void {
   const element = useRef<HTMLElement | null>(null);
   const sent = useRef({ width: 0, height: 0 });
@@ -60,7 +65,7 @@ export function useTooltipSize(
 
   useEffect(() => {
     const node = element.current;
-    if (!node || text === undefined) {
+    if (!node || drawn === undefined) {
       report(0, 0);
       return;
     }
@@ -74,7 +79,7 @@ export function useTooltipSize(
     return () => {
       observer.disconnect();
     };
-  }, [text, report]);
+  }, [drawn, report]);
 
   return measure;
 }

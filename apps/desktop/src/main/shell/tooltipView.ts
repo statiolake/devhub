@@ -51,7 +51,7 @@
  */
 
 import { electron } from "../electron.js";
-import { CHANNELS } from "../../ipc/contract.js";
+import { CHANNELS, type TooltipLineWire } from "../../ipc/contract.js";
 import { sendLinksToTheBrowser } from "./externalLinks.js";
 import type {
 	LayoutRect,
@@ -65,9 +65,9 @@ export interface TooltipSize {
 	readonly height: number;
 }
 
-/** What the Sidebar asked for: a sentence, about a rectangle, on a side. */
+/** What the Sidebar asked for: some facts, about a rectangle, on a side. */
 export interface TooltipRequest {
-	readonly text: string;
+	readonly lines: readonly TooltipLineWire[];
 	readonly anchor: LayoutRect;
 	readonly prefer: TooltipSide;
 }
@@ -135,7 +135,7 @@ export class TooltipView {
 	 */
 	show(request: TooltipRequest): void {
 		this.request = request;
-		this.send({ text: request.text });
+		this.send({ lines: request.lines });
 		this.host?.tooltipChanged();
 	}
 
@@ -219,9 +219,11 @@ export class TooltipView {
 		return this.present;
 	}
 
-	private send(text: { readonly text: string } | undefined): void {
+	private send(
+		content: { readonly lines: readonly TooltipLineWire[] } | undefined,
+	): void {
 		const contents = this.contents();
 		if (!contents) return;
-		contents.send(CHANNELS.tooltipText, text);
+		contents.send(CHANNELS.tooltipText, content);
 	}
 }

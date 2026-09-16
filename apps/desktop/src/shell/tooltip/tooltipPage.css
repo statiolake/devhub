@@ -40,10 +40,11 @@ body,
  * the tooltip would ratchet itself narrower one row at a time — the notices
  * have the same rule, for the same reason (`toasts/stackSize.ts`).
  *
- * `pre-line`, because the row's description composes its own lines and those
- * lines are the lines the expanded row would have drawn. `--tooltip-max-width`
- * is the point at which a sentence stops being one line and starts being a
- * paragraph; past it the text wraps rather than running to the window's edge.
+ * `--tooltip-max-width` is the point at which a fact stops being one line and
+ * starts being a paragraph; past it the text wraps rather than running to the
+ * window's edge. The lines are elements now rather than newlines in a string,
+ * because each one carries a mark: the box no longer needs `pre-line`, and the
+ * wrapping it used to do for a `\n` is done by the rows themselves.
  *
  * `pointer-events: none` is belt-and-braces here rather than the load-bearing
  * rule it was in the Sidebar's document: this view is never in the window's
@@ -66,8 +67,121 @@ body,
   color: var(--label);
   font-size: 11px;
   line-height: 1.35;
-  white-space: pre-line;
   overflow-wrap: anywhere;
   box-shadow: 0 4px 12px rgb(0 0 0 / 22%);
   pointer-events: none;
+}
+
+/*
+ * One fact per line, behind the mark the row would have drawn for it.
+ *
+ * The mark column is reserved on every line whether or not that line has one,
+ * so the facts line up down the box the way the rows they came from line up
+ * down the Sidebar — and a tooltip whose first two lines have no mark does not
+ * read as two different kinds of tooltip.
+ *
+ * The marks are the Sidebar's own, resolved by name on this page from
+ * `icons.tsx`: one set of drawings for both pages, and no SVG on the bridge.
+ * The rules below are the four lines of `.sidebar-glyph` that a mark needs to
+ * be drawn at all, restated here because this page does not import
+ * `styles/shell.css` — it draws one box and has no business carrying a
+ * stylesheet about panes and rows.
+ */
+.tooltip-line {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+}
+
+/* The column, reserved whether or not this line has a mark in it. */
+.tooltip-line-mark {
+  display: flex;
+  width: 13px;
+  height: 13px;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  /* The same optical drop a row's leading mark takes, so a mark beside 11px
+     text sits on the text and not above it. */
+  transform: translateY(2px);
+  color: var(--tertiary);
+}
+
+.tooltip-line-mark .sidebar-glyph {
+  display: block;
+  width: 13px;
+  height: 13px;
+  fill: none;
+  stroke: currentcolor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.5;
+}
+
+.tooltip-line-mark .glyph-fill {
+  fill: currentcolor;
+  stroke: none;
+}
+
+.tooltip-line-text {
+  min-width: 0;
+}
+
+/* What the thing is called. The one line in the box set as a name — everything
+   under it qualifies it, which is the same relation the row draws between its
+   label and everything trailing it. */
+.tooltip-line.is-name .tooltip-line-text {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.tooltip-line.is-muted .tooltip-line-text {
+  color: var(--secondary);
+}
+
+/* Why something is not doing what it says it is. The stronger of the two dim
+   inks, because it is the one line here that is not simply context. */
+.tooltip-line.is-note .tooltip-line-text {
+  color: var(--label);
+}
+
+/* A failure, in the ink every failure in this window uses — mark and words
+   together, because the mark is the half that is seen first. */
+.tooltip-line.is-danger,
+.tooltip-line.is-danger .tooltip-line-mark {
+  color: var(--danger);
+}
+
+/*
+ * An Agent's status, in the status's own colour.
+ *
+ * The one coloured thing in the Sidebar is an Agent that wants something, and
+ * that is true of its tooltip too: the mark here is the mark from the row,
+ * wearing the same four tokens, so the sentence and the row agree at a glance
+ * and not merely in words.
+ */
+.tooltip-line[data-tone] .tooltip-line-mark {
+  color: var(--status-idle);
+}
+
+.tooltip-line[data-tone="working"] .tooltip-line-mark {
+  color: var(--status-working);
+}
+
+.tooltip-line[data-tone="waiting"] .tooltip-line-mark {
+  color: var(--status-waiting);
+}
+
+.tooltip-line[data-tone="idle"] .tooltip-line-mark {
+  color: var(--status-idle);
+}
+
+.tooltip-line[data-tone="error"] .tooltip-line-mark {
+  color: var(--status-error);
+}
+
+/* No detector read this Agent's screen: the secondary ink the `unknown` mark
+   takes on the row, for the same reason — it is visibly not a verdict. */
+.tooltip-line[data-tone="unknown"] .tooltip-line-mark {
+  color: var(--secondary);
 }

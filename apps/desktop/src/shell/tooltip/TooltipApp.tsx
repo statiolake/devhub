@@ -2,8 +2,8 @@
  * The page a tooltip is drawn on.
  *
  * Its own view, its own entry, its own root handler, and less in it than any
- * other page DevHub has: one box with one string in it. No model, no snapshot,
- * no appearance, no notices.
+ * other page DevHub has: one box with a list of facts in it. No model, no
+ * snapshot, no appearance, no notices.
  *
  * # Why this is a page at all
  *
@@ -27,7 +27,7 @@
  * # The whole contract, said once
  *
  * **Arriving from main**
- * - `devhub:tooltip-text` — the sentence to draw, or nothing to draw none.
+ * - `devhub:tooltip-text` — the facts to draw, or nothing to draw none.
  * - `devhub:theme-changed` — the palette, handled outside React by
  *   `installPalette`, so the box wears the Workbench's colours.
  *
@@ -47,26 +47,68 @@
  */
 
 import { devhub } from "./client";
-import { useTooltipText } from "./tooltipText";
+import { useTooltipLines } from "./tooltipText";
 import { useTooltipSize } from "./tooltipSize";
+import {
+  Glyph,
+  GLYPH_NAMES,
+  type GlyphName,
+} from "../components/sidebar/icons";
+import type { TooltipLineWire } from "../../ipc/contract";
+
+/**
+ * Whether this is a mark this page can draw.
+ *
+ * The wire carries an identifier and never a drawing, so the two pages share
+ * one set of marks (`icons.tsx`) and no SVG crosses the bridge. A name that
+ * does not resolve draws no mark rather than throwing: the fact beside it is
+ * still the fact, and a tooltip is the last place in DevHub that should be
+ * able to take a view down.
+ */
+function glyphName(icon: string | undefined): GlyphName | undefined {
+  return icon !== undefined && (GLYPH_NAMES as readonly string[]).includes(icon)
+    ? (icon as GlyphName)
+    : undefined;
+}
 
 export function TooltipApp() {
-  const text = useTooltipText(devhub);
-  const measure = useTooltipSize(text);
+  const lines = useTooltipLines(devhub);
+  const measure = useTooltipSize(lines);
   // Nothing to say is a size of zero, which is how this view leaves the
   // window altogether — reported by `useTooltipSize`, which watches the
   // element going away rather than waiting for an observer that cannot fire
   // on a detached node.
-  if (text === undefined) return null;
+  if (lines === undefined) return null;
   return (
     // Not `role="tooltip"`, and hidden from the accessibility tree outright:
-    // the row's own accessible name *is* this sentence (`rowDescription.ts`
-    // composes both), so a reader announced it as the row was reached.
-    // Exposing it again would read the row twice, once as itself and once as
-    // its own tooltip. It is doubly true now that the two are in different
-    // documents — nothing here is in the Sidebar's tree to be read at all.
+    // the row's own accessible name is these same facts in words
+    // (`rowDescription.ts` composes both), so a reader announced them as the
+    // row was reached. Exposing them again would read the row twice, once as
+    // itself and once as its own tooltip. It is doubly true now that the two
+    // are in different documents — nothing here is in the Sidebar's tree to be
+    // read at all.
     <div className="tooltip-box" aria-hidden="true" ref={measure}>
-      {text}
+      {lines.map((line: TooltipLineWire, index: number) => {
+        const icon = glyphName(line.icon);
+        return (
+          <div
+            className={`tooltip-line${line.style ? ` is-${line.style}` : ""}`}
+            // The lines of one tooltip have no identity of their own: they are
+            // a row's facts in a fixed order, and a row that changes is a new
+            // list from top to bottom. The index is the identity.
+            key={index}
+            data-tone={line.tone}
+          >
+            {/* The column is reserved whether or not this line has a mark, so
+                the facts line up down the box the way the rows they came from
+                line up down the Sidebar. */}
+            <span className="tooltip-line-mark">
+              {icon ? <Glyph name={icon} /> : null}
+            </span>
+            <span className="tooltip-line-text">{line.text}</span>
+          </div>
+        );
+      })}
     </div>
   );
 }
