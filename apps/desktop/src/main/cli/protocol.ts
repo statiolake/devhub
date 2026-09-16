@@ -198,6 +198,35 @@ export type ControlRequest =
 	  }
 	| {
 			/**
+			 * Where a workbench on another machine should connect to, and with
+			 * what token. Sent by `extensions/devhub-remote`, never by a person.
+			 *
+			 * VS Code asks an extension to resolve `ssh-remote+<host>` and gives
+			 * it nothing but the authority; DevHub already holds the connection to
+			 * that host, already installs the remote extension host on it and
+			 * already owns the forward. So the extension asks, and the answer is
+			 * an endpoint on this Mac. It is on this socket rather than through a
+			 * channel of the extension's own because a `ui`-kind extension is on
+			 * the machine DevHub runs on, so the socket it derives from its own
+			 * global-storage directory is this DevHub's and no other's — the same
+			 * derivation `install-cli` uses, for the same reason.
+			 *
+			 * `machine` is a `RuntimeId` — `ssh:<host>` — and not a bare host,
+			 * because it is the key everything else about a machine is filed
+			 * under and because a second kind of remote will be a second prefix
+			 * rather than a second request.
+			 *
+			 * `attempt` is VS Code's own `resolveAttempt`, which counts up across
+			 * a reconnection. DevHub does not branch on it: it is carried so that
+			 * a log line about a host that is being asked for the fourth time
+			 * says so, which is the difference between "slow" and "looping".
+			 */
+			readonly kind: "resolve-remote";
+			readonly machine: string;
+			readonly attempt: number;
+	  }
+	| {
+			/**
 			 * How this workbench's integrated terminal attaches to its DevHub
 			 * session. Sent by the terminal launcher, never by a person.
 			 *
@@ -253,6 +282,23 @@ export interface TerminalProfileAnswer {
 	readonly env: Readonly<Record<string, string>>;
 }
 
+/**
+ * Where a remote workbench connects, as the resolver extension is told it.
+ *
+ * A port on 127.0.0.1 and a token, which is exactly what `ResolvedAuthority`
+ * takes — so the extension's whole job is to put these three values in a
+ * constructor. Nothing about how they came to exist is in here: the host, the
+ * install directory, the socket on the far side and the ControlMaster carrying
+ * it are DevHub's, and an extension that knew any of them would be an extension
+ * with a second opinion about them.
+ */
+export interface RemoteEndpointAnswer {
+	readonly port: number;
+	readonly connectionToken: string;
+	/** What the far extension host needs in its environment, or nothing. */
+	readonly extensionHostEnv?: Readonly<Record<string, string>>;
+}
+
 export interface ControlResponse {
 	readonly ok: boolean;
 	/**
@@ -270,6 +316,28 @@ export interface ControlResponse {
 	 * failure is a sentence, whoever is reading.
 	 */
 	readonly profile?: TerminalProfileAnswer;
+	/**
+	 * The endpoint a `resolve-remote` asked for, when there is one.
+	 *
+	 * Data rather than a sentence, for the same reason `profile` is: the
+	 * resolver puts it into a `ResolvedAuthority`, and a port squeezed through a
+	 * human sentence would have to be parsed back out of it. Absent on a failed
+	 * answer — a failure is a sentence, whoever is reading.
+	 */
+	readonly remote?: RemoteEndpointAnswer;
+	/**
+	 * Whether asking again could get a different answer.
+	 *
+	 * Only ever on a failed `resolve-remote`, and it is the whole of what the
+	 * resolver decides with: `true` becomes VS Code's `TemporarilyNotAvailable`,
+	 * which both of its retry loops retry, and anything else becomes
+	 * `NotAvailable`, which makes it give up at once. So the question DevHub is
+	 * answering here is exactly "will this get better on its own" — a host that
+	 * is asleep or away will, a host that is not a machine DevHub supports will
+	 * not — and it is answered where the failure happened rather than guessed at
+	 * from its wording.
+	 */
+	readonly retry?: boolean;
 }
 
 /** Reject anything that is not a request this server understands. */
@@ -346,6 +414,12 @@ export function parseControlRequest(line: string): ControlRequest {
 			};
 		case "install-cli":
 			return { kind: "install-cli" };
+		case "resolve-remote":
+			return {
+				kind: "resolve-remote",
+				machine: requireString(record["machine"], "machine"),
+				attempt: requireCount(record["attempt"], "attempt"),
+			};
 		case "terminal-profile":
 			return {
 				kind: "terminal-profile",
@@ -410,6 +484,14 @@ function requirePosition(value: unknown): ControlPosition {
 		line: requireLineOrColumn(record["line"], "line"),
 		column: requireLineOrColumn(record["column"], "column"),
 	};
+}
+
+/** A whole number from zero up: how many times something has happened. */
+function requireCount(value: unknown, field: string): number {
+	if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
+		throw new Error(`${field} must be a whole number from 0 up`);
+	}
+	return value;
 }
 
 function requireLineOrColumn(value: unknown, field: string): number {

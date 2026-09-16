@@ -45,6 +45,7 @@ import type { AppErrorWire } from "../../ipc/appShell.js";
 import { errorWireAt, withDetail } from "../../model/wire.js";
 import { answerFinderOpens, finderOpen } from "./openFromFinder.js";
 import { launchCommandFor } from "../cli/launch.js";
+import { resolveRemoteEndpoint } from "./resolveRemote.js";
 
 /** How long a quit waits for the runtimes to let go before leaving anyway. */
 const SHUTDOWN_DEADLINE_MS = 3_000;
@@ -261,6 +262,11 @@ export async function bootstrapShell(
 		metrics: () => controller.metricsFromCli(),
 		terminalProfile: (machine, root) =>
 			controller.terminalProfileFor(machine, root),
+		// Not on the controller: resolving an authority needs the runtime
+		// registry and the REH delivery and nothing about windows, workspaces or
+		// the model. See `resolveRemote.ts`.
+		resolveRemote: (machine, attempt) =>
+			resolveRemoteEndpoint(machine, attempt),
 		installCli: () =>
 			Promise.resolve(
 				installLauncher({

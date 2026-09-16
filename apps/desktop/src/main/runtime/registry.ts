@@ -24,6 +24,7 @@ import {
 } from "../../model/domain.js";
 import { LocalRuntime } from "./local.js";
 import type { Runtime, RuntimeId } from "./runtime.js";
+import type { RehDelivery, RemoteServerHost } from "./remoteServer.js";
 import { chooseControlDirectory, SshRuntime } from "./ssh.js";
 import type { TmuxDelivery } from "./tmuxDelivery.js";
 
@@ -75,6 +76,15 @@ export interface RuntimeProfile {
 	 * a thing each host could be given a different answer to.
 	 */
 	readonly tmux: TmuxDelivery;
+	/**
+	 * Where the remote extension host DevHub installs on a machine comes from.
+	 *
+	 * Beside `tmux` and for the same reasons: it is one statement of one product
+	 * fact — the release this build was made against — cached under this
+	 * profile's own data directory, and read here rather than in
+	 * `main/runtime/` so that nothing under it needs Electron at import time.
+	 */
+	readonly reh: RehDelivery;
 }
 
 let profile: RuntimeProfile | undefined;
@@ -211,6 +221,44 @@ export function locationOnMachine(
 	return id === "local"
 		? { kind: "local", path }
 		: { kind: "ssh", host: sshHost(id.slice("ssh:".length)), path };
+}
+
+/**
+ * The machine a remote workbench's endpoint is produced on, and the delivery
+ * that stocks it.
+ *
+ * A fourth reading of the same switch, and it is here for the third time for
+ * the same reason: this module is the only one that knows how a machine id is
+ * spelled. It is separate from `runtimeById` because what it answers is not on
+ * `Runtime` and must not be — `Runtime`'s own rule is that every method on it
+ * is answerable on every machine, and "give me a local port that reaches your
+ * remote extension host" is a question this Mac has no answer to. A window on
+ * this Mac has no authority to resolve at all, so the refusal is a fact about
+ * the design rather than a gap in it, and it says so in those words.
+ */
+export function remoteServerFor(id: RuntimeId): {
+	readonly host: RemoteServerHost;
+	readonly delivery: RehDelivery;
+} {
+	if (profile === undefined) {
+		throw new Error(
+			"a remote endpoint was asked for before the runtime profile was set",
+		);
+	}
+	if (id === "local") {
+		throw new Error(
+			"this machine is the one DevHub is running on, so a workbench on it " +
+				"has no remote authority to resolve and no remote extension host to " +
+				"reach",
+		);
+	}
+	const runtime = runtimeById(id);
+	if (!(runtime instanceof SshRuntime)) {
+		throw new Error(
+			`${id} does not name a machine DevHub can reach a server on`,
+		);
+	}
+	return { host: runtime, delivery: profile.reh };
 }
 
 export function runtimeById(id: RuntimeId): Runtime {

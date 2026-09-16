@@ -1,0 +1,60 @@
+{
+  "name": "@devhub/remote",
+  "displayName": "DevHub Remote",
+  "description": "DevHub's built-in ssh-remote authority resolver: it asks the running DevHub for the endpoint of a remote extension host and hands VS Code the answer.",
+  "version": "0.1.0",
+  "publisher": "devhub",
+  "license": "MIT",
+  "private": true,
+  "engines": {
+    "vscode": "^1.109.0"
+  },
+  "main": "./dist/extension.js",
+  "extensionKind": [
+    "ui"
+  ],
+  "api": "none",
+  "enabledApiProposals": [
+    "resolvers"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": true
+    }
+  },
+  "activationEvents": [
+    "onResolveRemoteAuthority:ssh-remote"
+  ],
+  "contributes": {
+    "resourceLabelFormatters": [
+      {
+        "scheme": "vscode-remote",
+        "authority": "ssh-remote+*",
+        "formatting": {
+          "label": "${path}",
+          "separator": "/",
+          "tildify": true,
+          "workspaceSuffix": "SSH"
+        }
+      }
+    ]
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "package": "node scripts/package.mjs",
+    "reproducible": "node scripts/reproducible.mjs",
+    "fmt:check": "prettier --check src scripts test package.json tsconfig.json README.md",
+    "fmt": "prettier --write src scripts test package.json tsconfig.json README.md",
+    "lint": "node scripts/check.mjs",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "node scripts/test.mjs",
+    "check": "pnpm run build && pnpm run typecheck && pnpm run test && pnpm run lint && pnpm run package && pnpm run reproducible"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.1",
+    "@types/vscode": "1.109.0",
+    "esbuild": "0.25.12",
+    "prettier": "3.6.2",
+    "typescript": "5.9.2"
+  }
+}

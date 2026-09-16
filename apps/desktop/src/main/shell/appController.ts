@@ -20,16 +20,23 @@ import { dirname, join, posix } from "node:path";
 import { fileURLToPath } from "node:url";
 import vscodeProduct from "code-oss-dev/out/vs/platform/product/common/product.js";
 /**
- * The three tmux facts, which are DevHub's own and not VS Code's.
+ * The product facts that are DevHub's own and not VS Code's.
  *
  * `product.json` is one file and VS Code's type for it names only VS Code's
  * fields, so the fields `apps/desktop/product-overrides.json` adds are read
  * through this rather than by widening a type that is not DevHub's to widen.
+ *
+ * `serverDownloadUrlTemplate` is in here for a different reason than the tmux
+ * three: VS Code *has* the field, its type simply does not name it, because
+ * upstream's own builds read it only inside the server bundle. DevHub reads it
+ * on the client now — it is the client that fetches the tarball — so it is
+ * named here rather than left as a cast at the one call site.
  */
-const tmuxProduct = vscodeProduct as unknown as {
+const devhubProduct = vscodeProduct as unknown as {
 	readonly tmuxVersion?: string;
 	readonly tmuxDownloadUrlTemplate?: string;
 	readonly tmuxDownloadSha256?: Readonly<Record<string, string>>;
+	readonly serverDownloadUrlTemplate?: string;
 };
 import { activityCounters } from "../diagnostics/counters.js";
 import {
@@ -253,6 +260,7 @@ import {
 	runtimeMachine,
 	setRuntimeProfile,
 } from "../runtime/registry.js";
+import { ReleaseRehDelivery } from "../runtime/remoteServer.js";
 import {
 	ReleaseTmuxDelivery,
 	tmuxInstallDirectory,
@@ -5896,13 +5904,25 @@ export async function createAppController(
 		// thing a person configures — and read here for the same reason the
 		// profile is passed in at all.
 		tmux: new ReleaseTmuxDelivery({
-			version: tmuxProduct.tmuxVersion ?? "",
+			version: devhubProduct.tmuxVersion ?? "",
 			directory: tmuxInstallDirectory(
 				vscodeProduct.serverDataFolderName ?? ".vscode-server",
 			),
-			urlTemplate: tmuxProduct.tmuxDownloadUrlTemplate ?? "",
-			sha256: tmuxProduct.tmuxDownloadSha256 ?? {},
+			urlTemplate: devhubProduct.tmuxDownloadUrlTemplate ?? "",
+			sha256: devhubProduct.tmuxDownloadSha256 ?? {},
 			cacheDirectory: join(userDataPath, "tmux"),
+		}),
+		// And where the remote extension host comes from. The same three
+		// product facts the connection used to hand a vendored extension —
+		// the URL template, the application name and the data folder — read
+		// once, here, now that DevHub is the thing that installs it.
+		reh: new ReleaseRehDelivery({
+			commit: vscodeProduct.commit,
+			version: vscodeProduct.version,
+			dataFolderName: vscodeProduct.serverDataFolderName ?? ".vscode-server",
+			applicationName: vscodeProduct.serverApplicationName ?? "code-server",
+			urlTemplate: devhubProduct.serverDownloadUrlTemplate ?? "",
+			cacheDirectory: join(userDataPath, "reh"),
 		}),
 	});
 

@@ -122,11 +122,15 @@ EXTENSION_ENABLED_API_PROPOSALS: dict[str, list[str]] = {
 		"treeItemMarkdownLabel",
 		"treeViewMarkdownMessage",
 	],
-	# Open Remote - SSH, vendored as a built-in from Open VSX 0.3.1; see
-	# extensions/vendor/README.md. `resolvers` is what lets it answer
-	# `onResolveRemoteAuthority:ssh-remote` at all, so without this entry an
-	# SSH Workspace opens a workbench that never connects.
-	"jeanp413.open-remote-ssh": ["contribViewsRemote", "resolvers"],
+	# DevHub's own `ssh-remote` resolver, extensions/devhub-remote. `resolvers`
+	# is what lets it answer `onResolveRemoteAuthority:ssh-remote` at all, so
+	# without this entry an SSH Workspace opens a workbench that never
+	# connects — the extension host only logs
+	# `CANNOT use API proposal: resolvers.` and nothing resolves the authority.
+	# There is no `contribViewsRemote` here: that was for the vendored
+	# extension's `sshHosts` tree view, and DevHub's own Sidebar is the host
+	# list.
+	"devhub.devhub-remote": ["resolvers"],
 }
 
 

@@ -19,6 +19,7 @@ import {
 	type ControlOpenRequest,
 	type ControlRequest,
 	type ControlResponse,
+	type RemoteEndpointAnswer,
 	type TerminalProfileAnswer,
 } from "./protocol.js";
 
@@ -62,7 +63,28 @@ export interface ControlHandlers {
 		machine: string,
 		root: string | null,
 	): Promise<TerminalProfileAnswer>;
+	/**
+	 * Where a workbench on `machine` connects, and with what token.
+	 *
+	 * It answers rather than throws, and that is the one thing about this
+	 * handler that is not like the others. Every other request here fails into
+	 * one shape — a sentence — because there is one thing to do with a failed
+	 * `devhub open`. A failed resolve has *two*, and VS Code picks between them
+	 * from the error class the extension throws: a `TemporarilyNotAvailable` is
+	 * retried by both of its loops, a `NotAvailable` makes it give up at once.
+	 * Whether asking again could help is known where the failure happened and
+	 * nowhere else — a host that is asleep against a host that is not a machine
+	 * DevHub supports — so it travels with the failure instead of being guessed
+	 * at from its wording downstream.
+	 */
+	resolveRemote(machine: string, attempt: number): Promise<RemoteResolution>;
 }
+
+/** What `resolveRemote` answers: an endpoint, or a refusal that says whether
+ * it is worth asking again. */
+export type RemoteResolution =
+	| { readonly ok: true; readonly remote: RemoteEndpointAnswer }
+	| { readonly ok: false; readonly message: string; readonly retry: boolean };
 
 export interface ControlServer {
 	readonly socketPath: string;
@@ -154,7 +176,7 @@ function serve(socket: Socket, handlers: ControlHandlers): void {
 		if (newline < 0) return;
 		const line = buffer.slice(0, newline);
 		buffer = "";
-		void handle(line, handlers).then(answer);
+		void answerControlRequest(line, handlers).then(answer);
 	});
 	socket.on("error", (error) => {
 		// A client that vanished is not DevHub's failure to report; anything
@@ -164,7 +186,18 @@ function serve(socket: Socket, handlers: ControlHandlers): void {
 	});
 }
 
-async function handle(
+/**
+ * One request, answered — the whole protocol, with no socket in it.
+ *
+ * Exported because it is the part worth testing on its own: everything the
+ * dispatch decides (which handler, what a thrown handler becomes, how a
+ * resolve's two outcomes are spelled on the wire) is a function of a line of
+ * text and a set of handlers, and a test that had to bind a unix socket to
+ * reach it would be a test about unix sockets. The socket's own properties —
+ * the framing, its mode, a stale file — are tested through the real one, which
+ * is the other half of the same file.
+ */
+export async function answerControlRequest(
 	line: string,
 	handlers: ControlHandlers,
 ): Promise<ControlResponse> {
@@ -228,6 +261,38 @@ async function handle(
 				return { ok: true, message: await handlers.metrics() };
 			case "install-cli":
 				return { ok: true, message: await handlers.installCli() };
+			case "resolve-remote": {
+				// Caught here rather than by the `catch` below, because that one
+				// produces a failure with no `retry` on it — which the resolver
+				// reads as "permanent" and VS Code acts on by giving up. A
+				// failure DevHub did not anticipate is the one case where it has
+				// no opinion, and the safer of the two answers is the one that
+				// lets the workbench try again: a resolve that keeps failing
+				// stops on VS Code's own attempt limit, where a resolve that
+				// wrongly gave up needs the window reopening by hand.
+				let resolution: RemoteResolution;
+				try {
+					resolution = await handlers.resolveRemote(
+						request.machine,
+						request.attempt,
+					);
+				} catch (error) {
+					return { ok: false, message: messageOf(error), retry: true };
+				}
+				return resolution.ok
+					? {
+							ok: true,
+							// The sentence is for a log and for whoever sends this
+							// by hand; the endpoint is the answer.
+							message: `127.0.0.1:${String(resolution.remote.port)}`,
+							remote: resolution.remote,
+						}
+					: {
+							ok: false,
+							message: resolution.message,
+							retry: resolution.retry,
+						};
+			}
 			case "terminal-profile": {
 				const profile = await handlers.terminalProfile(
 					request.machine,

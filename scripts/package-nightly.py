@@ -59,7 +59,8 @@ The layout inside the bundle, and why:
             product.json            patched to say DevHub
             extensions/             the built-in set, production-bundled by
                                     VS Code's own `compile-extensions-build`,
-                                    plus DevHub's bridge. This is
+                                    plus DevHub's own bridge and ssh-remote
+                                    resolver. This is
                                     `appRoot/extensions`, which is exactly
                                     where VS Code looks for built-ins, so the
                                     packaged app needs no `--builtin-
@@ -129,9 +130,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 VSCODE_DIR = REPO_ROOT / "vscode"
 DESKTOP_DIR = REPO_ROOT / "apps" / "desktop"
 BRIDGE_DIR = REPO_ROOT / "extensions" / "devhub-bridge"
-# Third-party built-ins, vendored from a published VSIX rather than built
-# here. See extensions/vendor/README.md.
-VENDOR_DIR = REPO_ROOT / "extensions" / "vendor"
+REMOTE_DIR = REPO_ROOT / "extensions" / "devhub-remote"
 
 # Everything DevHub says about itself that VS Code reads out of product.json —
 # its name, its data folders, its extension gallery, and which build this is —
@@ -215,6 +214,7 @@ def check_compiled_output_is_current() -> None:
 		(DESKTOP_DIR / "src", DESKTOP_DIR / "out", "pnpm --filter @devhub/desktop build"),
 		(DESKTOP_DIR / "src", DESKTOP_DIR / "dist", "pnpm --filter @devhub/desktop build"),
 		(BRIDGE_DIR / "src", BRIDGE_DIR / "dist", "pnpm --filter @devhub/bridge build"),
+		(REMOTE_DIR / "src", REMOTE_DIR / "dist", "pnpm --filter @devhub/remote build"),
 	):
 		if not source.is_dir() or not built.is_dir():
 			continue
@@ -237,6 +237,11 @@ def check_inputs() -> None:
 		(DESKTOP_DIR / "out" / "main" / "main.js", "pnpm --filter @devhub/desktop build"),
 		(DESKTOP_DIR / "dist" / "shell" / "index.html", "pnpm --filter @devhub/desktop build"),
 		(BRIDGE_DIR / "dist" / "extension.js", "pnpm --filter @devhub/bridge build"),
+		# Without this the packaged app has no `ssh-remote` resolver, and every
+		# SSH Workspace opens a workbench that waits for an authority nothing
+		# answers. It is a built-in for the same reason the bridge is: a person
+		# cannot be without it.
+		(REMOTE_DIR / "dist" / "extension.js", "pnpm --filter @devhub/remote build"),
 	]
 	for path, command in required:
 		if not path.exists():
@@ -742,20 +747,13 @@ def assemble_app_directory(app: Path, version: str, staged_extensions: Path) -> 
 
 	step("built-in extensions")
 	copy_tree(staged_extensions, code_oss / "extensions")
-	copy_tree(
-		BRIDGE_DIR,
-		code_oss / "extensions" / "devhub-bridge",
-		ignore=lambda d, names: ignore_tests(d, names) | {"src", "build", "scripts", "tsconfig.json"},
-	)
-	# The vendored set is copied whole: it is a published extension as
-	# published, and `compile-extensions-build` knows only about VS Code's own
-	# two halves — the submodule's extensions and the ones product.json
-	# downloads. This is the same list stage-builtin-extensions.sh links for a
-	# development launch, so the two builds ship the same built-ins.
-	for vendored in sorted(VENDOR_DIR.iterdir()):
-		if not (vendored / "package.json").is_file():
-			continue
-		copy_tree(vendored, code_oss / "extensions" / vendored.name, ignore=ignore_tests)
+	for source, name in ((BRIDGE_DIR, "devhub-bridge"), (REMOTE_DIR, "devhub-remote")):
+		copy_tree(
+			source,
+			code_oss / "extensions" / name,
+			ignore=lambda d, names: ignore_tests(d, names)
+			| {"src", "build", "scripts", "test", "tsconfig.json"},
+		)
 	count = len([p for p in (code_oss / "extensions").iterdir() if p.is_dir()])
 	print(f"    {count} built-in extensions")
 

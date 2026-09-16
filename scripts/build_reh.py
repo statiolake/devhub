@@ -1,19 +1,17 @@
 #!/usr/bin/env python3
 """Build the Remote Extension Host — the half of DevHub that runs over SSH.
 
-DevHub connects to a remote machine the way VSCodium does: the client asks the
-Open Remote - SSH extension to open a host, the extension downloads a *server*
-tarball onto that host, unpacks it and starts it, and the workbench then talks
-to it over the SSH tunnel. That tarball is what this script builds. VS Code
-calls it the REH, the remote extension host; the file people see is
-`devhub-reh-linux-x64-<commit>.tar.gz`.
+DevHub connects to a remote machine the way VSCodium does: main downloads a
+*server* tarball onto that host over SSH, unpacks it and starts it, and the
+workbench then talks to it over the SSH tunnel. That tarball is what this
+script builds. VS Code calls it the REH, the remote extension host; the file
+people see is `devhub-reh-linux-x64-<commit>.tar.gz`.
 
-## The contract with the extension
+## The contract with the remote-server install
 
-The extension's install script is generated from `src/scripts/server-setup.sh`
-in jeanp413/open-remote-ssh, and every name below is something that script
-reads out of DevHub's `product.json` and then expects to find inside the
-tarball. Nothing here is a preference:
+Every name below is something DevHub's own remote-server install reads out of
+`product.json` and then expects to find inside the tarball. Nothing here is a
+preference:
 
     product.json key            what the remote does with it
     ------------------------    -----------------------------------------
@@ -36,17 +34,17 @@ exactly one top-level directory, and under it `bin/<serverApplicationName>`,
 three relative to itself.
 
 `${quality}` and `${release}` are deliberately absent from DevHub's template.
-DevHub states neither key, and the extension substitutes a missing one with the
-string `undefined` (PowerShell) or the empty string (sh) rather than failing —
-a URL that is wrong in a way no error message mentions. What is left is
-`${os}`, `${arch}` and `${commit}`, all three of which DevHub does state.
+DevHub states neither key, and a missing one substitutes as the empty string
+rather than failing — a URL that is wrong in a way no error message mentions.
+What is left is `${os}`, `${arch}` and `${commit}`, all three of which DevHub
+does state.
 
 ## Why `commit` is the whole design
 
 `product.commit` is the VS Code submodule's HEAD; `scripts/product_metadata.py`
 explains why it is that and not DevHub's own hash. The remote server refuses a
 client whose commit differs from its own — that is `serverValidation: strict`,
-the extension's default — so the REH's `product.json` and the packaged app's
+the default — so the REH's `product.json` and the packaged app's
 `product.json` have to state the same forty characters. They do, because both
 come from `packaged_metadata()`.
 
@@ -142,7 +140,7 @@ def release_tag(commit: str) -> str:
 def top_level_dir(os_name: str, arch: str) -> str:
 	"""The single directory inside the tarball.
 
-	`tar --strip-components 1` in the extension's install script requires
+	`tar --strip-components 1` in the remote-server install script requires
 	exactly one, and does not care what it is called.
 	"""
 	return f"devhub-reh-{os_name}-{arch}"

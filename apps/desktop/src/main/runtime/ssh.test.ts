@@ -25,6 +25,7 @@ import {
 	stat,
 	writeFile,
 } from "node:fs/promises";
+import { connect as netConnect } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -57,6 +58,11 @@ import {
 	unreachableFailure,
 } from "./ssh.js";
 import { tmuxTopLevelDirectory, type TmuxDelivery } from "./tmuxDelivery.js";
+import {
+	isPermanent,
+	rehTopLevelDirectory,
+	type RehDelivery,
+} from "./remoteServer.js";
 
 /**
  * An `ssh` that never leaves this machine.
@@ -73,12 +79,14 @@ const FAKE_SSH = `#!/bin/sh
 control=''
 operation=''
 forward=''
+direction=''
 host=''
 while [ $# -gt 0 ]; do
   case "$1" in
     -o) case "$2" in ControlPath=*) control="\${2#ControlPath=}";; esac; shift 2;;
     -O) operation="$2"; shift 2;;
-    -R) forward="$2"; shift 2;;
+    -R) forward="$2"; direction=-R; shift 2;;
+    -L) forward="$2"; direction=-L; shift 2;;
     -tt|-T|-q) shift;;
     --) shift; break;;
     *) host="$1"; shift;;
@@ -90,6 +98,37 @@ case "$operation" in
          echo "Master running (pid=4242)"; exit 0;;
   exit)  rm -f "$marker"; echo 'Exit request sent.'; exit 0;;
   forward)
+    if [ "$direction" = "-L" ]; then
+      # <port>:<remote socket>. A real listener on the port, because the
+      # runtime checks its own forward by connecting to it -- which is the
+      # whole point of that check and would be untested against a stub.
+      port="\${forward%%:*}"
+      case "\${DEVHUB_FAKE_FORWARD:-bind}" in
+        refuse) echo 'channel_setup_fwd_listener_tcpip: cannot listen to port' >&2; exit 255;;
+        # -O forward reporting success and binding nothing is a real
+        # OpenSSH behaviour and the reason the check exists.
+        silent) exit 0;;
+        *) [ ! -f "\${control%/*}/L$port" ] || exit 0
+           : > "\${control%/*}/L$port"
+           nohup python3 -c 'import socket,sys,time
+sock = socket.socket()
+sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+sock.bind(("127.0.0.1", int(sys.argv[1])))
+sock.listen(8)
+time.sleep(600)' "$port" >/dev/null 2>&1 &
+           echo $! > "\${control%/*}/L$port.pid"
+           # Bound before this returns, so the runtime's check is not a race.
+           n=0
+           while ! python3 -c 'import socket,sys
+s = socket.socket()
+s.settimeout(0.2)
+sys.exit(0 if s.connect_ex(("127.0.0.1", int(sys.argv[1]))) == 0 else 1)' "$port" 2>/dev/null; do
+             n=$((n+1)); [ "$n" -gt 100 ] && exit 255
+             sleep 0.05
+           done
+           exit 0;;
+      esac
+    fi
     case "\${DEVHUB_FAKE_FORWARD:-bind}" in
       refuse) echo 'unix_listener: cannot bind: Address already in use' >&2; exit 255;;
       silent) exit 0;;
@@ -105,6 +144,13 @@ sock.bind(sys.argv[1].split(":", 1)[0])
 sock.listen(1)' "$forward";;
     esac;;
   cancel)
+    if [ "$direction" = "-L" ]; then
+      port="\${forward%%:*}"
+      [ -f "\${control%/*}/L$port.pid" ] || { echo 'Cancel forwarding request failed.' >&2; exit 255; }
+      kill "$(cat "\${control%/*}/L$port.pid")" 2>/dev/null || :
+      rm -f "\${control%/*}/L$port" "\${control%/*}/L$port.pid"
+      echo 'Cancel forwarding request accepted.'; exit 0
+    fi
     remote="\${forward%%:*}"
     [ -f "$remote.fwd" ] || { echo 'Cancel forwarding request failed.' >&2; exit 255; }
     rm -f "$remote.fwd" "$remote"; echo 'Cancel forwarding request accepted.'; exit 0;;
@@ -1373,3 +1419,296 @@ describe("waking up", () => {
 		await inFlight;
 	});
 });
+
+/**
+ * The remote extension host, installed and started on a "host" that is this
+ * machine.
+ *
+ * The fake ssh runs the composed script with `/bin/sh -c`, which is exactly
+ * what a real sshd's login shell does with it — so what is under test is the
+ * script DevHub actually sends, on a real filesystem, with a real `nohup` and
+ * a real socket. The only thing standing in is the server binary, and it
+ * stands in by *being* one: a shell script that binds the socket path it was
+ * given, which is the whole of what the start script waits for.
+ */
+describe("the remote extension host on a host", () => {
+	let remoteHome: string;
+	let log: string;
+
+	/**
+	 * A `devhub-server` that does the one thing the start script watches for.
+	 *
+	 * It binds the socket and stays alive. It also records its argv, because
+	 * the flags DevHub starts the server with — the socket path and above all
+	 * `--connection-token-file` — are the contract between this side and the
+	 * handshake, and a change to them would otherwise show up as a workbench
+	 * that will not come up.
+	 */
+	const FAKE_SERVER = `#!/bin/sh
+printf '%s\\n' "$*" >> "$(dirname "$0")/../../../argv.log"
+sock=''
+for arg do
+  case "$arg" in --socket-path=*) sock="\${arg#--socket-path=}";; esac
+done
+exec python3 -c 'import socket,sys,time
+s = socket.socket(socket.AF_UNIX)
+s.bind(sys.argv[1])
+s.listen(4)
+time.sleep(600)' "$sock"
+`;
+
+	const COMMIT = "0123456789abcdef0123456789abcdef01234567";
+
+	/** A tarball of one directory holding a `bin/devhub-server`. */
+	async function serverTarball(): Promise<Uint8Array> {
+		const staging = await mkdtemp("/tmp/devhub-reh-pack-");
+		const top = join(staging, rehTopLevelDirectory("darwin-arm64"));
+		await mkdir(join(top, "bin"), { recursive: true });
+		await writeFile(join(top, "bin", "devhub-server"), FAKE_SERVER, {
+			mode: 0o755,
+		});
+		await chmod(join(top, "bin", "devhub-server"), 0o755);
+		const tar = join(staging, "reh.tar.gz");
+		await new Promise<void>((resolve, reject) => {
+			const child = spawn(
+				"tar",
+				["czf", tar, "-C", staging, rehTopLevelDirectory("darwin-arm64")],
+				{ stdio: "ignore" },
+			);
+			child.on("error", reject);
+			child.on("close", (code) =>
+				code === 0
+					? resolve()
+					: reject(new Error(`tar exited ${String(code)}`)),
+			);
+		});
+		const bytes = await readFile(tar);
+		await rm(staging, { recursive: true, force: true });
+		return new Uint8Array(bytes);
+	}
+
+	let tarball: Uint8Array;
+	let asked: number;
+
+	function delivery(): RehDelivery {
+		return {
+			commit: COMMIT,
+			dataFolderName: ".devhub-server",
+			applicationName: "devhub-server",
+			tarball: () => {
+				asked += 1;
+				return Promise.resolve({
+					bytes: tarball,
+					topLevelDirectory: rehTopLevelDirectory("darwin-arm64"),
+				});
+			},
+		};
+	}
+
+	function hosted(): SshRuntime {
+		return new SshRuntime({
+			host: "build-box.example.com",
+			controlDirectory: control,
+			sshPath: join(bin, "ssh"),
+			localEnvironment: {
+				...FAKE_ENVIRONMENT,
+				HOME: remoteHome,
+				DEVHUB_FAKE_SSH_LOG: log,
+			},
+			tmux: FAKE_TMUX,
+		});
+	}
+
+	beforeAll(async () => {
+		tarball = await serverTarball();
+	});
+
+	beforeEach(async () => {
+		remoteHome = await mkdtemp("/tmp/dh-reh-");
+		log = join(remoteHome, "ssh.log");
+		asked = 0;
+	});
+	afterEach(async () => {
+		// The fake server and the fake forward both outlive the command that
+		// started them, which is the point of them; nothing else would stop
+		// them.
+		for (const name of ["pid", "L"]) void name;
+		await rm(remoteHome, { recursive: true, force: true });
+	});
+
+	it("installs the server, starts it, and forwards it to a local port", async () => {
+		const runtime = hosted();
+		const endpoint = await runtime.remoteServer(delivery());
+		expect(endpoint.port).toBeGreaterThan(0);
+		expect(endpoint.connectionToken).toMatch(/^[0-9a-f]{64}$/u);
+		// The install is where the tarball said it goes, and the server is the
+		// file `remoteTerminalPaths` names the Node beside.
+		expect(
+			await runtime.stat(
+				`${remoteHome}/.devhub-server/bin/${COMMIT}/bin/devhub-server`,
+			),
+		).toBe("file");
+		// The forward is a port on this Mac that something answers on. That is
+		// the whole product of this call, so it is what is asserted.
+		await expect(canConnect(endpoint.port)).resolves.toBe(true);
+		await runtime.dispose();
+	});
+
+	it("starts the server with the token file, never the token", async () => {
+		const runtime = hosted();
+		await runtime.remoteServer(delivery());
+		const argv = await readFile(
+			`${remoteHome}/.devhub-server/argv.log`,
+			"utf8",
+		);
+		expect(argv).toContain(
+			`--connection-token-file=${remoteHome}/.devhub-server/.${COMMIT}.token`,
+		);
+		expect(argv).toContain(
+			`--socket-path=${remoteHome}/.devhub-server/.${COMMIT}.sock`,
+		);
+		// The token is a secret and argv is world-readable in `ps`, so it must
+		// not be anywhere on that line.
+		const token = (
+			await readFile(`${remoteHome}/.devhub-server/.${COMMIT}.token`, "utf8")
+		).trim();
+		expect(token).toHaveLength(64);
+		expect(argv).not.toContain(token);
+		await runtime.dispose();
+	});
+
+	it("keeps the token a running server was started with, rather than a new one", async () => {
+		const runtime = hosted();
+		const first = await runtime.remoteServer(delivery());
+		// A second DevHub — or this one after a dispose — must adopt the token
+		// in the file. Generating a fresh one for a server that is already
+		// running fails the handshake with a message that does not say "wrong
+		// token", which is the failure this rule exists to prevent.
+		await runtime.dispose();
+		const again = hosted();
+		const second = await again.remoteServer(delivery());
+		expect(second.connectionToken).toBe(first.connectionToken);
+		// And the server was adopted, not restarted: one argv line, not two.
+		const argv = await readFile(
+			`${remoteHome}/.devhub-server/argv.log`,
+			"utf8",
+		);
+		expect(argv.trim().split("\n")).toHaveLength(1);
+		await again.dispose();
+	});
+
+	it("does not fetch or unpack a server that is already installed", async () => {
+		const runtime = hosted();
+		await runtime.remoteServer(delivery());
+		expect(asked).toBe(1);
+		await runtime.dispose();
+		const again = hosted();
+		await again.remoteServer(delivery());
+		expect(asked).toBe(1);
+		await again.dispose();
+	});
+
+	it("answers a second ask with the same port, so a reconnect costs nothing", async () => {
+		const runtime = hosted();
+		const first = await runtime.remoteServer(delivery());
+		const second = await runtime.remoteServer(delivery());
+		expect(second.port).toBe(first.port);
+		expect(second.connectionToken).toBe(first.connectionToken);
+		await runtime.dispose();
+	});
+
+	it("refuses a forward ssh said it made and did not", async () => {
+		const runtime = new SshRuntime({
+			host: "build-box.example.com",
+			controlDirectory: control,
+			sshPath: join(bin, "ssh"),
+			localEnvironment: {
+				...FAKE_ENVIRONMENT,
+				HOME: remoteHome,
+				DEVHUB_FAKE_SSH_LOG: log,
+				DEVHUB_FAKE_FORWARD: "silent",
+			},
+			tmux: FAKE_TMUX,
+		});
+		// `-O forward` can report success and bind nothing. A workbench pointed
+		// at a port nothing answers on is exactly the silent failure the check
+		// exists to prevent, so this is a sentence rather than an endpoint.
+		await expect(runtime.remoteServer(delivery())).rejects.toThrow(
+			/nothing answers on 127\.0\.0\.1:/u,
+		);
+		await runtime.dispose();
+	});
+
+	it("refuses a source build by name, permanently", async () => {
+		const runtime = hosted();
+		const sourceRun: RehDelivery = { ...delivery(), commit: undefined };
+		const failure = await runtime
+			.remoteServer(sourceRun)
+			.then(() => undefined)
+			.catch((error: unknown) => error);
+		expect(String(failure)).toContain("states no commit");
+		// Permanent: the resolver turns this into `NotAvailable`, which is what
+		// makes VS Code say the sentence instead of retrying five times.
+		expect(isPermanent(failure)).toBe(true);
+		await runtime.dispose();
+	});
+
+	it("leaves a master alone while it is carrying a forward", async () => {
+		const runtime = hosted();
+		await runtime.remoteServer(delivery());
+		// The forward dies with the master, and `resumed()` exists to kill the
+		// master — so a power event arriving after the workbench has already
+		// reconnected through a brand-new forward would destroy the very thing
+		// the reconnection just built.
+		const before = await readFile(log, "utf8");
+		runtime.resumed();
+		await new Promise((resolve) => setTimeout(resolve, 200));
+		const after = await readFile(log, "utf8");
+		expect(after.slice(before.length)).not.toMatch(/-O exit/u);
+		expect(runtime.reading().connected).toBe(true);
+		await runtime.dispose();
+	});
+
+	it("lets go of the master again once its forward has been given up", async () => {
+		const runtime = hosted();
+		await runtime.remoteServer(delivery());
+		// `dispose` cancels the forwards, which is what puts a runtime back in
+		// the state where a wake may drop its master. Without that the guard
+		// above would be a master nothing ever reclaims.
+		await runtime.dispose();
+		const after = hosted();
+		await run(after, ["true"]);
+		const before = await readFile(log, "utf8");
+		after.resumed();
+		const deadline = Date.now() + 2_000;
+		let said = "";
+		while (!/-O exit/u.test(said)) {
+			if (Date.now() > deadline) {
+				throw new Error(`no master was asked to exit; ssh saw:\n${said}`);
+			}
+			await new Promise((resolve) => setTimeout(resolve, 5));
+			said = (await readFile(log, "utf8").catch(() => "")).slice(before.length);
+		}
+	});
+});
+
+/** Whether anything answers on a port of this machine. */
+function canConnect(port: number): Promise<boolean> {
+	return new Promise<boolean>((resolve) => {
+		const socket = netConnect({ host: "127.0.0.1", port });
+		socket.setTimeout(2000);
+		const done = (answer: boolean): void => {
+			socket.destroy();
+			resolve(answer);
+		};
+		socket.on("connect", () => {
+			done(true);
+		});
+		socket.on("timeout", () => {
+			done(false);
+		});
+		socket.on("error", () => {
+			done(false);
+		});
+	});
+}

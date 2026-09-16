@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """The URL the remote fetches has to be the URL CI published.
 
-There is no handshake between the two. The extension reads
-`serverDownloadUrlTemplate` out of DevHub's `product.json`, substitutes six
-names into it with `sed` on the remote machine, and downloads whatever comes
-back; the nightly workflow, on the other side, names a file with
+There is no handshake between the two. DevHub's own remote-server install
+reads `serverDownloadUrlTemplate` out of `product.json`, substitutes six names
+into it with `sed` on the remote machine, and downloads whatever comes back; the nightly workflow, on the other side, names a file with
 `scripts/build_reh.py` and uploads it to a release. If those two disagree by one
 character the only symptom is "Error downloading server from <url>" in a log
 nobody is looking at.
@@ -41,16 +40,15 @@ from product_metadata import PRODUCT_OVERRIDES, vscode_commit
 # A hash of the right shape that is obviously not a real one.
 COMMIT = "0" * 32 + "abcdef01"
 
-# What `src/scripts/server-setup.sh` in jeanp413/open-remote-ssh substitutes,
-# and the whole of it: the script runs one `sed` per name and leaves anything
-# else in the URL alone.
+# What DevHub's own remote-server install script substitutes, and the whole of
+# it: the script runs one `sed` per name and leaves anything else in the URL
+# alone.
 PLACEHOLDERS = ("quality", "version", "commit", "os", "arch", "release")
 
 # The two DevHub does not state. `product.json` has no `quality` and no
-# `release`, and the extension turns a missing one into the string "undefined"
-# (PowerShell) or into nothing at all (sh) instead of refusing to continue — so
-# a template that mentions either resolves to an address that is wrong without
-# saying so.
+# `release`, and a missing one substitutes as the empty string rather than
+# stopping the install — so a template that mentions either resolves to an
+# address that is wrong without saying so.
 UNSTATED_PLACEHOLDERS = ("quality", "release")
 
 TEMPLATE = PRODUCT_OVERRIDES["serverDownloadUrlTemplate"]
@@ -86,11 +84,11 @@ class DownloadTemplate(unittest.TestCase):
 		for key in UNSTATED_PLACEHOLDERS:
 			self.assertNotIn(key, PRODUCT_OVERRIDES)
 
-	def test_points_at_github_so_the_extension_can_read_it(self) -> None:
-		# `fetchRelease` in the extension refuses to look up releases on any
-		# other host, and falls back to the client's own version. That fallback
-		# is what DevHub wants anyway (`serverVersion: match`), but the URL
-		# still has to be a URL the extension's `new URL(...)` accepts.
+	def test_points_at_github_so_the_release_lookup_can_read_it(self) -> None:
+		# The REH is published as a GitHub release asset and nowhere else, so
+		# the template has to name that host; and it has to stay a URL that
+		# `new URL(...)` accepts, because that is how it is parsed before any
+		# substitution happens.
 		self.assertTrue(TEMPLATE.startswith("https://github.com/statiolake/devhub/"))
 
 

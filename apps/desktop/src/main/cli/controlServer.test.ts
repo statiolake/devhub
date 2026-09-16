@@ -12,6 +12,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { makeScratchDir, removeScratchDir } from "../../model/testScratch.js";
 import {
+	answerControlRequest,
 	startControlServer,
 	type ControlHandlers,
 	type ControlServer,
@@ -28,6 +29,11 @@ function everythingSaysOk(): ControlHandlers {
 		installExtensions: () => Promise.resolve("ok"),
 		uninstallExtensions: () => Promise.resolve("ok"),
 		listExtensions: () => Promise.resolve("ok"),
+		resolveRemote: () =>
+			Promise.resolve({
+				ok: true as const,
+				remote: { port: 1234, connectionToken: "t" },
+			}),
 		metrics: () => Promise.resolve("ok"),
 		version: () => Promise.resolve("ok"),
 		installCli: () => Promise.resolve("ok"),
@@ -120,6 +126,35 @@ describe("the DevHub control socket", () => {
 					file: "/usr/bin/tmux",
 					args: ["-L", "devhub", "attach-session", "-t", "ws-abc"],
 					env: { TERMINFO: "/home/dev/.devhub-server/tmux/3.7c/terminfo" },
+				});
+			},
+			resolveRemote: (machine, attempt) => {
+				calls.push(`resolve ${machine} #${String(attempt)}`);
+				if (machine === "ssh:asleep") {
+					return Promise.resolve({
+						ok: false as const,
+						message: "DevHub cannot reach asleep.",
+						retry: true,
+					});
+				}
+				if (machine === "ssh:vax") {
+					return Promise.resolve({
+						ok: false as const,
+						message:
+							"DevHub supports Linux and macOS hosts, and vax reports VMS.",
+						retry: false,
+					});
+				}
+				if (machine === "ssh:boom") {
+					return Promise.reject(new Error("something nobody wrote a case for"));
+				}
+				return Promise.resolve({
+					ok: true as const,
+					remote: {
+						port: 51234,
+						connectionToken: "0123456789abcdef",
+						extensionHostEnv: { SSH_AUTH_SOCK: "/tmp/agent.7" },
+					},
 				});
 			},
 		});
@@ -534,5 +569,150 @@ describe("the DevHub control socket", () => {
 			ok: false,
 			message: "no DevHub workspace is rooted at /work/gone",
 		});
+	});
+});
+
+/**
+ * The resolve a remote workbench's resolver makes, and the two shapes its
+ * answer can take.
+ *
+ * No socket: what is under test is the dispatch, and the socket is tested
+ * above. See `answerControlRequest`.
+ */
+describe("resolving where a remote workbench connects", () => {
+	const seen: string[] = [];
+
+	function handlers(
+		resolveRemote: ControlHandlers["resolveRemote"],
+	): ControlHandlers {
+		return {
+			...everythingSaysOk(),
+			resolveRemote: (machine, attempt) => {
+				seen.push(`${machine} #${String(attempt)}`);
+				return resolveRemote(machine, attempt);
+			},
+		};
+	}
+
+	function ask(machine: unknown, attempt: unknown): string {
+		return JSON.stringify({ kind: "resolve-remote", machine, attempt });
+	}
+
+	beforeEach(() => {
+		seen.length = 0;
+	});
+
+	it("carries the machine and the attempt through to DevHub", async () => {
+		await answerControlRequest(
+			ask("ssh:build-box", 3),
+			handlers(() =>
+				Promise.resolve({
+					ok: true,
+					remote: { port: 1, connectionToken: "t" },
+				}),
+			),
+		);
+		expect(seen).toEqual(["ssh:build-box #3"]);
+	});
+
+	it("answers an endpoint as data, not as a sentence to parse", async () => {
+		const response = await answerControlRequest(
+			ask("ssh:build-box", 1),
+			handlers(() =>
+				Promise.resolve({
+					ok: true,
+					remote: {
+						port: 51234,
+						connectionToken: "0123456789abcdef",
+						extensionHostEnv: { SSH_AUTH_SOCK: "/tmp/agent.7" },
+					},
+				}),
+			),
+		);
+		expect(response.ok).toBe(true);
+		expect(response.remote).toEqual({
+			port: 51234,
+			connectionToken: "0123456789abcdef",
+			extensionHostEnv: { SSH_AUTH_SOCK: "/tmp/agent.7" },
+		});
+	});
+
+	it("says a transient refusal is worth asking about again", async () => {
+		// `retry: true` is what the resolver turns into
+		// `TemporarilyNotAvailable`, which both of VS Code's loops retry. A host
+		// that is asleep is exactly that.
+		const response = await answerControlRequest(
+			ask("ssh:asleep", 1),
+			handlers(() =>
+				Promise.resolve({
+					ok: false,
+					message: "DevHub cannot reach asleep.",
+					retry: true,
+				}),
+			),
+		);
+		expect(response).toMatchObject({
+			ok: false,
+			message: "DevHub cannot reach asleep.",
+			retry: true,
+		});
+		expect(response.remote).toBeUndefined();
+	});
+
+	it("says a permanent refusal is not", async () => {
+		// `retry: false` becomes `NotAvailable`, which makes VS Code stop and
+		// show the sentence rather than try five times and show it anyway.
+		const response = await answerControlRequest(
+			ask("ssh:vax", 1),
+			handlers(() =>
+				Promise.resolve({
+					ok: false,
+					message:
+						"DevHub supports Linux and macOS hosts, and vax reports VMS.",
+					retry: false,
+				}),
+			),
+		);
+		expect(response).toMatchObject({ ok: false, retry: false });
+	});
+
+	it("treats a failure nobody wrote a case for as worth retrying", async () => {
+		// The one place DevHub has no opinion. The two mistakes are not equal: a
+		// resolve that goes on retrying stops on VS Code's own attempt limit and
+		// says so, and one that wrongly gave up needs the window reopening by
+		// hand. So an unanticipated failure is retried.
+		const response = await answerControlRequest(
+			ask("ssh:boom", 1),
+			handlers(() => Promise.reject(new Error("a thing nobody expected"))),
+		);
+		expect(response).toMatchObject({
+			ok: false,
+			message: "a thing nobody expected",
+			retry: true,
+		});
+	});
+
+	it("refuses a request that does not say which machine or which attempt", async () => {
+		for (const line of [
+			ask("", 1),
+			ask("ssh:build-box", -1),
+			ask("ssh:build-box", 1.5),
+			ask("ssh:build-box", "3"),
+			JSON.stringify({ kind: "resolve-remote", machine: "ssh:a" }),
+		]) {
+			const response = await answerControlRequest(
+				line,
+				handlers(() =>
+					Promise.resolve({
+						ok: true,
+						remote: { port: 1, connectionToken: "t" },
+					}),
+				),
+			);
+			expect(response.ok, line).toBe(false);
+		}
+		// None of them reached DevHub: a request that cannot be read is refused
+		// before anything is asked to act on it.
+		expect(seen).toEqual([]);
 	});
 });

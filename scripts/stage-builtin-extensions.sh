@@ -48,10 +48,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VSCODE_EXTENSIONS="$REPO_ROOT/vscode/extensions"
 BRIDGE="$REPO_ROOT/extensions/devhub-bridge"
-# Third-party extensions DevHub ships as built-ins, vendored from a published
-# VSIX. See extensions/vendor/README.md for what is there and why it is not
-# downloaded.
-VENDOR="$REPO_ROOT/extensions/vendor"
+REMOTE="$REPO_ROOT/extensions/devhub-remote"
 BUILD="$REPO_ROOT/vscode/.build"
 # VS Code's built-in set is not all in the submodule. `product.builtInExtensions`
 # names the ones upstream *downloads* at build time — js-debug and friends — and
@@ -75,6 +72,10 @@ if [ ! -f "$BRIDGE/dist/extension.js" ]; then
 	echo "the bridge extension is not built — run 'pnpm --filter @devhub/bridge build'" >&2
 	exit 1
 fi
+if [ ! -f "$REMOTE/dist/extension.js" ]; then
+	echo "the remote resolver extension is not built — run 'pnpm --filter @devhub/remote build'" >&2
+	exit 1
+fi
 
 # The names to link, in a fixed order so the hash below names the *set* and not
 # the order the filesystem happened to hand them over in.
@@ -82,11 +83,6 @@ names=()
 for entry in "$VSCODE_EXTENSIONS"/*/; do
 	[ -f "$entry/package.json" ] || continue
 	names+=("$(basename "${entry%/}")")
-done
-vendored=()
-for entry in "$VENDOR"/*/; do
-	[ -f "$entry/package.json" ] || continue
-	vendored+=("$(basename "${entry%/}")")
 done
 # The downloaded half of VS Code's own set. The names come from product.json
 # rather than from whatever happens to be on disk, so a download that did not
@@ -113,17 +109,13 @@ if [ "${#names[@]}" -eq 0 ]; then
 fi
 IFS=$'\n' names=($(printf '%s\n' "${names[@]}" | LC_ALL=C sort)) || true
 unset IFS
-if [ "${#vendored[@]}" -gt 0 ]; then
-	IFS=$'\n' vendored=($(printf '%s\n' "${vendored[@]}" | LC_ALL=C sort)) || true
-	unset IFS
-fi
 
 # What the generation is: these names, linked out of this checkout, plus
 # DevHub's own. Anything that would change the resulting directory has to be in
 # here, or a stale generation would be reused.
 digest="$(
-	printf '%s\n' "$VSCODE_EXTENSIONS" "$BRIDGE" "$VENDOR" "$DOWNLOADED" "${names[@]}" \
-		${vendored[@]+"${vendored[@]}"} ${downloaded[@]+"${downloaded[@]}"} |
+	printf '%s\n' "$VSCODE_EXTENSIONS" "$BRIDGE" "$REMOTE" "$DOWNLOADED" "${names[@]}" \
+		${downloaded[@]+"${downloaded[@]}"} |
 		shasum -a 256 | cut -d' ' -f1
 )"
 generation="$GENERATIONS/$digest"
@@ -138,14 +130,12 @@ if [ ! -d "$generation" ]; then
 	for name in "${names[@]}"; do
 		ln -s "$VSCODE_EXTENSIONS/$name" "$building/$name"
 	done
-	for name in ${vendored[@]+"${vendored[@]}"}; do
-		ln -s "$VENDOR/$name" "$building/$name"
-	done
 	for name in ${downloaded[@]+"${downloaded[@]}"}; do
 		ln -s "$DOWNLOADED/$name" "$building/$name"
 	done
 	# DevHub's own, last, so a name clash would be visible rather than silent.
 	ln -s "$BRIDGE" "$building/devhub-bridge"
+	ln -s "$REMOTE" "$building/devhub-remote"
 
 	# Whoever gets there first wins; the loser's copy is identical by
 	# construction, so it is simply discarded.
