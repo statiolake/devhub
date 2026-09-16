@@ -276,6 +276,19 @@ export class ShellWindow {
 			focusSurface: () => this.focusSurface(),
 			focusModal: (contents) => this.focusModal(contents),
 			modalsChanged: () => {
+				// A question coming up takes the tooltip down, and it has to be
+				// said here rather than left to the pointer. The Sidebar hides
+				// its tooltip when the pointer leaves the row, which covers a
+				// question opened by clicking something — but a question opened
+				// from the keyboard, with the pointer still resting on a row,
+				// leaves the pointer exactly where it was. Measured: the
+				// tooltip stayed up and stood over the sheet.
+				//
+				// So it is the window's rule, decided where the modal set is
+				// known, and it is one direction only: a tooltip is about a row
+				// behind a modal the person has to answer first, which makes it
+				// a sentence about something they cannot act on.
+				this.tooltip.hide();
 				this.layout();
 				// A modal owns the keyboard while it stands, so every workbench
 				// loses focus when one opens and the one on screen gets it back

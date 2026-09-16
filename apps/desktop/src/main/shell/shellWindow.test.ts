@@ -349,6 +349,28 @@ describe("the shell window's workbench views", () => {
 		expect(shell.sidebarArea().x).toBe(0);
 	});
 
+	/**
+	 * A question coming up takes the tooltip down.
+	 *
+	 * The Sidebar hides its own when the pointer leaves the row, which covers
+	 * a question opened by clicking something. It does not cover one opened
+	 * from the keyboard with the pointer still resting on a row — measured on
+	 * a running instance, the tooltip stayed up and stood over the sheet. So
+	 * it is the window's rule, decided where the modal set is known.
+	 */
+	it("takes the tooltip down when a question comes up", () => {
+		shell.tooltip.show({
+			text: "widget workspace",
+			anchor: { x: 14, y: 120, width: 16, height: 24 },
+			prefer: "right",
+		});
+		shell.tooltip.setSize({ width: 220, height: 34 });
+		expect(shell.tooltip.isPresent()).toBe(true);
+
+		shell.picker.openModal({ kind: "workspace-picker" });
+		expect(shell.tooltip.isPresent()).toBe(false);
+	});
+
 	it("shows nothing until the selection says what to show", () => {
 		// Creating a workbench must not put it on screen: three of them open at
 		// launch, and whichever finished last would otherwise take the screen.
