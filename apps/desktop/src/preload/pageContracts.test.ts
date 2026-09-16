@@ -14,7 +14,7 @@
  * what `?window=` used to make normal.
  */
 
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
@@ -114,7 +114,6 @@ describe("the pages, and what each of them may say", () => {
 
 /** `client.tsx` or `client.ts`, whichever is on disk. */
 function resolveExtension(relative: string): string {
-	const { existsSync } = require("node:fs") as typeof import("node:fs");
 	const base = relative.replace(/\.tsx$/, "");
 	for (const extension of [".ts", ".tsx"]) {
 		const candidate = `${base}${extension}`;
@@ -138,7 +137,6 @@ function resolveExtension(relative: string): string {
  * `./client` in one directory is never the `./client` in another.
  */
 function reachableFrom(entry: string): ReadonlySet<string> {
-	const { existsSync } = require("node:fs") as typeof import("node:fs");
 	const exists = (relative: string) =>
 		existsSync(fileURLToPath(new URL(`../shell/${relative}`, import.meta.url)));
 

@@ -14,7 +14,14 @@ arrangement to a list of children — each with a rectangle, a visibility and a
 position in the list. **The list's order is the z-order**, lowest first:
 
     the window's own page → the Sidebar → every workbench (the one on screen
-    last among them) → the Agents → the notices → the questions
+    last among them) → the Agents → the notices → the questions → the tooltip
+
+The tooltip is on top of everything, the questions included. Not because it
+may stand over a modal — it may not, and in practice cannot: a question covers
+the window, which takes the pointer off the row that raised the tooltip, and
+the Sidebar hides it before the sheet is drawn. It is last because it is the
+one child that takes no click and hides nothing, so there is nothing for it to
+be underneath.
 
 `ShellWindow.layout()` is the only thing that reads it, and it is the only
 thing that calls `setBounds` or `setVisible` on anything. Nothing else in
@@ -36,16 +43,17 @@ says so, because the next page is the one that will not know.
 
 ## The pages, and what each of them may say
 
-Six entries, six preloads, six bridges. There is no `?window=` role and no
-runtime question about which page this is: **which page this is, is which file
-main loaded.**
+Seven entries, seven preloads, seven bridges. There is no `?window=` role and
+no runtime question about which page this is: **which page this is, is which
+file main loaded.**
 
 | Page | Entry | What it draws | What it may ask for |
 |---|---|---|---|
 | the window's own page | `index.html` | the title bar, the drag strip, the three states in which there is no child view to show, the seam of a split | the projection, the appearance, the window's name, the workbench area, `openModal`, `closeWorkspace`, `chooseWorkspaceFolder`, `openSettings`, `previewLayout` |
-| the Sidebar | `sidebar.html` | the leading column: workspaces and their agents, the rail, the row menu, the drag-reorder, the resize handle | the projection, the appearance, the agent profiles, the repository status, `menuCommand`, `openModal`, `closeWorkspace`, `openExternalUrl`, `previewLayout`, `focusSurface` |
+| the Sidebar | `sidebar.html` | the leading column: workspaces and their agents, the rail, the row menu, the drag-reorder, the resize handle | the projection, the appearance, the agent profiles, the repository status, its own rectangle, `menuCommand`, `openModal`, `closeWorkspace`, `openExternalUrl`, `previewLayout`, `focusSurface`, `showTooltip`, `hideTooltip` |
 | the Agents | `agents.html` | every running Agent's pane, all mounted, the selected one not hidden | the projection, the appearance, the repository status, the agent actions, the terminal transport, `openModal`, `openExternalUrl`, `writeClipboard` |
 | the notices | `toasts.html` | what the application has to say, over whatever is on screen | `nativeError`, `appCondition`, `actionStarted`, `menuCommand`, `reportNoticeRetired`, `reportToastsSize`, `retryApp`, `openSettings` |
+| the tooltip | `tooltip.html` | one box with one sentence in it, over whatever is on screen | `tooltipText` in, `tooltipSize` out. **Nothing else.** |
 | the questions | `picker.html` | every sheet DevHub stops on, over every workbench | `modalsChanged` **(only here)**, the projection, the agent profiles and actions, every way of opening a Workspace, the two ends of a reviewed message, the worktree close, `closeModal` |
 | Settings | `settings.html` | its own window | `SETTINGS_CHANNELS` in full, plus the failure contract every page has |
 
@@ -96,6 +104,24 @@ The Settings window is the one exception, and it is about being seen rather
 than about routing: a failure that began there is drawn there, because a report
 about the window the person is looking at, drawn on a window they are not, is a
 report nobody reads.
+
+## The palette is a third audience
+
+There are three kinds of thing main says, not two. A *projection* describes the
+model and goes to every page that draws from it. A *failure* is an event and
+goes to the one page that draws failures. A *palette* is neither: it is how
+everything in the window is painted, and it goes to every page DevHub draws
+chrome on — which is all seven.
+
+That last one used to go out on the projection audience, which coincided with
+"every page that draws chrome" until the `toasts` page arrived: it has `onTheme`
+on its bridge, no model behind it, and had therefore never been recoloured at
+runtime. Nobody noticed, because a stale palette is only visible after a theme
+change. The tooltip would have been the second page with the same silent gap —
+the Sidebar *is* in the projection audience, so the tooltip it used to draw
+recoloured correctly, and one on its own page would not have. `chromeAudience`
+states the rule instead of it being a coincidence, and the test on it is that
+every page with `onTheme` is in it.
 
 Three scopes survive underneath this, and they are about *subject* rather than
 about routing: an Agent's own failure is drawn over that Agent's pane, a
@@ -164,14 +190,30 @@ also retires the opt-out list every new control had to remember and the
 
 The same reasoning retires `title=` in the Sidebar: a native tooltip raised
 inside a view may be clipped by it, and the row that most needs one is on the
-collapsed rail. `RowTooltip.tsx` draws it in-page instead — and draws none at
-all in a view too narrow to read one in, because a tooltip that does not fit is
-worse than none. Giving the rail one means giving it a child of the *window*
-whose rectangle is its own content, the way the `toasts` view already is.
+collapsed rail. `RowTooltip.tsx` drew it in-page next — which made the clipping
+decidable, and the answer was that it is clipped, because the rail's view is
+44px wide with a title bar and 76px without. That version refused to draw one
+below a readable width at all, so the rail had no hover and an expanded row's
+sentence wrapped into a ribbon: one cause, two complaints.
+
+So the tooltip is a child of the *window* whose rectangle is its own content,
+the way the `toasts` view already is. `RowTooltip.tsx` is a sender now. It
+keeps the three things only it can know — that the pointer has to *rest*
+(300ms; the keyboard does not, because a row reached with the arrows was
+chosen), that there is one tooltip for the whole tree, and what it says — and
+sends an anchor in the *window's* coordinates. That conversion is one addition:
+the row's box, plus the rectangle main tells the view it occupies
+(`sidebarAreaChanged`). Never `window.screenX`, and never the view's own box,
+which is stale for a while after main moves it.
+
+Where it then goes is `windowLayout.ts`'s `tooltipRect`: the side the row
+prefers, flipped to the other side of the anchor when that one has no room, and
+clamped to the window last. It flips rather than narrows — one rectangle with
+one width, because narrowing to fit is how the ribbon happened.
 
 ## What it costs
 
-One main process, one renderer per page (six, of which Settings exists only
+One main process, one renderer per page (seven, of which Settings exists only
 while it is open), and one per workbench — though several workbench views can
 share a renderer, which Chromium's same-site grouping decides.
 
