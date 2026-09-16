@@ -415,7 +415,13 @@ body,
 }
 
 /* The window carries an NSVisualEffectView; the shell lets it through in the
-   chrome and paints content surfaces opaquely on top of it. */
+   chrome and paints content surfaces opaquely on top of it.
+ *
+ * Transparent is the base for every page, with no exception written here. What
+ * to do when there is no material to let through belongs to the pages that
+ * paint a window — `styles/windowBackground.css`, imported by those three and
+ * by nothing else — because the questions and the notices are drawn over a
+ * live workbench and must never have a ground of their own. */
 body {
   overflow: hidden;
   background: transparent;
@@ -452,17 +458,6 @@ input,
 textarea {
   cursor: auto;
   user-select: text;
-}
-
-/* Reduce Transparency asks for a solid window instead of the material. */
-@media (prefers-reduced-transparency: reduce) {
-  body {
-    background: var(--canvas);
-  }
-}
-
-:root[data-window-material="none"] body {
-  background: var(--canvas);
 }
 
 button,

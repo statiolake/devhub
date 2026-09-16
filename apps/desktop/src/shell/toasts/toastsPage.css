@@ -11,6 +11,12 @@
  * is the view's origin. Nothing here positions anything: where the notices go
  * in the window is `main/shell/toastsView.ts`'s to decide, because only main
  * can see the window.
+ *
+ * The transparency here is unconditional, and it is safe to state it plainly:
+ * this page does not import `styles/windowBackground.css`, so no rule with a
+ * `:root[...]`'s specificity can reach this body and paint the window's canvas
+ * over what is behind the layer. That import list is the whole guard — see
+ * `styles/windowBackground.test.ts`.
  */
 
 :root,

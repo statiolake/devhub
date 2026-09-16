@@ -28,6 +28,7 @@ import { PageBoundary } from "./PageBoundary";
 import { installSelectionGuard } from "./selection";
 import { WINDOW_TITLES } from "../ipc/windowTitles";
 import "./styles/tokens.css";
+import "./styles/windowBackground.css";
 import "./styles/shell.css";
 import "./styles/macos.css";
 import "./styles/reorder.css";

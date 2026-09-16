@@ -78,6 +78,7 @@ import {
   WorkspacesSection,
 } from "./sections";
 import "../shell/styles/tokens.css";
+import "../shell/styles/windowBackground.css";
 import "../shell/styles/macos.css";
 import "./settings.css";
 
