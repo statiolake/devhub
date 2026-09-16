@@ -312,8 +312,20 @@ function WorkspaceRow({
               </span>
             )}
             {repository?.branch && (
-              <span className="row-branch" data-tooltip={repository.branch}>
+              <span
+                className="row-branch"
+                // A branch with no commit under it is not the same fact as a
+                // branch, and drawn as one it reads as an ordinary checkout
+                // somebody can cut a worktree from. The name is still what the
+                // tooltip says, because the name is still true.
+                data-tooltip={
+                  repository.unborn
+                    ? `${repository.branch} — no commits yet`
+                    : repository.branch
+                }
+              >
                 {repository.branch}
+                {repository.unborn ? " · empty" : ""}
               </span>
             )}
           </div>

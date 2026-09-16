@@ -283,6 +283,8 @@ function branchFromLocal(
 interface LocalReading {
 	readonly workspace: WatchedWorkspace;
 	readonly branch?: string;
+	/** The branch is checked out and has no commit under it yet. */
+	readonly unborn?: boolean;
 	/** The repository this workspace is a checkout of, as git identifies it. */
 	readonly mainWorktree?: string;
 	/** The root of the checkout it sits in, which may be neither of the above. */
@@ -736,6 +738,7 @@ export class RepositoryStatusWatcher {
 				return {
 					workspace,
 					branch: facts?.branch,
+					unborn: facts?.unborn,
 					dirty,
 					ahead,
 					defaultBranch: facts?.defaultBranch,
@@ -961,6 +964,7 @@ export class RepositoryStatusWatcher {
 			return {
 				workspaceId: entry.workspace.id,
 				branch: entry.branch,
+				unborn: entry.unborn,
 				mainWorktree: entry.mainWorktree,
 				worktree: entry.worktree,
 				repositoryUrl: entry.repositoryUrl,

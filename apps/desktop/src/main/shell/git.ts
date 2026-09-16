@@ -862,6 +862,16 @@ export async function ensureWorktree(
 	if (!repository) {
 		throw workspaceFailure(`${directory} is not a Git repository.`);
 	}
+	// A worktree is a second checkout of a commit, and this repository has no
+	// commit to check out: `git worktree add` answers "invalid reference" for
+	// whatever base it is given. Refused here, in a sentence that says what
+	// would fix it, rather than letting git refuse it in terms that describe
+	// the argument DevHub built instead of the thing the person asked for.
+	if (repository.unborn) {
+		throw workspaceFailure(
+			`${repositoryName(repository.mainWorktree)} has no commits yet, so there is nothing for a worktree to check out. Make the first commit and push it, then try again.`,
+		);
+	}
 
 	const existing = parseWorktrees(
 		await runGit(command, ["worktree", "list", "--porcelain"], {

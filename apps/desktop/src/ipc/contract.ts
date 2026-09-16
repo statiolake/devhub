@@ -185,6 +185,17 @@ export interface WorkspaceRepositoryWire {
 	/** What is checked out, or nothing when the workspace is not a repository. */
 	readonly branch?: string;
 	/**
+	 * The branch is checked out but nothing has been committed to it yet.
+	 *
+	 * A repository made on GitHub a minute ago and cloned. `branch` is set — git
+	 * has a branch in mind and says so — but there is no commit under it, and
+	 * every question about what is *in* the repository has no answer rather than
+	 * a boring one. The row says so instead of showing a branch that looks like
+	 * every other branch, because the two are not the same thing to a person
+	 * deciding whether to cut a worktree from it.
+	 */
+	readonly unborn?: boolean;
+	/**
 	 * The repository this workspace belongs to: its main worktree's path.
 	 *
 	 * The identity git itself answers with, and the only honest way to tell that

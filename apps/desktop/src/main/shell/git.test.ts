@@ -417,6 +417,15 @@ describe("a clone of an empty repository", () => {
 		expect(facts?.defaultBranch).toBeUndefined();
 	});
 
+	it("refuses a worktree, because there is no commit to check one out at", async () => {
+		// git's own refusal here names the ref DevHub built rather than the
+		// thing the person asked for, so the sentence is written where the
+		// reason is known — and it says what would fix it.
+		await expect(
+			ensureWorktree(command, empty, "feature/1-start"),
+		).rejects.toThrow(/no commits yet/u);
+	});
+
 	it("is not mistaken for a folder that is not a repository", async () => {
 		const plain = join(parent, "not-a-repository");
 		await mkdir(plain, { recursive: true });
