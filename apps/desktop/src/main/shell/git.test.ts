@@ -363,9 +363,64 @@ describe("git worktree list", () => {
 				].join("\n"),
 			),
 		).toEqual([
-			{ path: "/projects/widget", branch: "main" },
-			{ path: "/projects/widget_detached", branch: undefined },
+			{ path: "/projects/widget", branch: "main", unborn: false },
+			{ path: "/projects/widget_detached", branch: undefined, unborn: false },
 		]);
+	});
+
+	it("reads the all-zero head of a checkout with no commits as unborn", () => {
+		// What git prints for a clone of an empty repository: the branch is
+		// named and checked out, and there is no commit under it.
+		expect(
+			parseWorktrees(
+				[
+					"worktree /projects/fresh",
+					`HEAD ${"0".repeat(40)}`,
+					"branch refs/heads/main",
+					"",
+				].join("\n"),
+			),
+		).toEqual([{ path: "/projects/fresh", branch: "main", unborn: true }]);
+	});
+});
+
+/**
+ * A repository somebody made on GitHub a minute ago and has not pushed to.
+ *
+ * `git clone` of one exits zero with a warning, so DevHub has a real checkout
+ * on disk with a branch checked out and no commit under it. Every question the
+ * open path asks about it is asked here against a real empty clone, because the
+ * failure this covers was a command answering a *fatal* where the code expected
+ * a value — and a mock of git would have answered whatever the mock's author
+ * expected, which is precisely the thing that was wrong.
+ */
+describe("a clone of an empty repository", () => {
+	let empty: string;
+
+	beforeEach(async () => {
+		const origin = join(parent, "empty-origin.git");
+		await runGit(command, ["init", "--bare", "-q", origin], { cwd: parent });
+		empty = join(parent, "empty");
+		await runGit(command, ["clone", "--", origin, empty], { cwd: parent });
+	});
+
+	it("is read as a repository, with the branch that has no commits yet", async () => {
+		const facts = await readRepository(command, empty);
+		expect(facts).toBeDefined();
+		expect(facts?.mainWorktree).toBe(empty);
+		expect(facts?.unborn).toBe(true);
+		// The branch is checked out; it simply has nothing on it. Reporting no
+		// branch would be as wrong as refusing to read the repository at all.
+		expect(facts?.branch).toBeDefined();
+		// Nobody has told this clone what origin's HEAD is, because origin has
+		// no HEAD to tell it about. Not knowing is the honest answer.
+		expect(facts?.defaultBranch).toBeUndefined();
+	});
+
+	it("is not mistaken for a folder that is not a repository", async () => {
+		const plain = join(parent, "not-a-repository");
+		await mkdir(plain, { recursive: true });
+		expect(await readRepository(command, plain)).toBeUndefined();
 	});
 });
 

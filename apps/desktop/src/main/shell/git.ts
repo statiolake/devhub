@@ -81,6 +81,17 @@ export interface GitCommand {
 export interface GitRunOptions {
 	readonly cwd?: string;
 	readonly timeoutMs?: number;
+	/**
+	 * The token that abandons this git, and kills the process with it.
+	 *
+	 * Every call used to mint a fresh one here, which is the same as having
+	 * none: a caller who had stopped waiting — the person pressed Escape, the
+	 * lookup around it ran out of time — had no way to say so, and the child
+	 * went on running against a repository nobody was looking at any more. A
+	 * caller that can be abandoned passes its own token; one that cannot leaves
+	 * it out and gets the old behaviour, minted here.
+	 */
+	readonly cancel?: CancellationToken;
 }
 
 /** How long a git that talks to a network gets before DevHub stops waiting. */
@@ -129,7 +140,7 @@ export async function runGit(
 			cwd: options.cwd,
 			env: command.environment,
 			deadline: OperationDeadline.in(timeoutMs),
-			cancel: new CancellationToken(),
+			cancel: options.cancel ?? new CancellationToken(),
 			limits: GIT_LIMITS,
 		});
 	} catch (failure: unknown) {
@@ -164,6 +175,11 @@ function gitDidNotAnswer(
 	timeoutMs: number,
 ): unknown {
 	if (!(failure instanceof PortFailure)) return failure;
+	// Nobody is waiting for this answer, so there is nobody to write a sentence
+	// for. It travels as itself so that whoever abandoned the git — a lookup
+	// that ran out of time, a sheet the person escaped — is the one that says
+	// what happened, once, instead of every git in flight saying it separately.
+	if (failure.code === "cancelled") return failure;
 	if (failure.code === "timed_out") {
 		return workspaceFailure(
 			`git ${args[0] ?? ""} did not answer in ${String(Math.round(timeoutMs / 1000))}s.`,
@@ -222,6 +238,19 @@ export interface RepositoryFacts {
 	readonly worktree: string;
 	/** The branch checked out here, or nothing when the head is detached. */
 	readonly branch: string | undefined;
+	/**
+	 * The checkout has no commits yet.
+	 *
+	 * A clone of an empty repository is a real repository in a real state, and
+	 * not a failure: `git clone` prints a warning and exits zero, and the person
+	 * who has just made a repository on GitHub and cloned it is exactly the
+	 * person this happens to. It is a field rather than an absence because every
+	 * question that is answered differently here — what the row says, whether a
+	 * worktree can be cut from it, whether a status poll is worth running — is
+	 * answered by asking *this*, and a `branch` with no commit under it is
+	 * otherwise indistinguishable from a branch with one.
+	 */
+	readonly unborn: boolean;
 	/**
 	 * What this branch is called on the remote it is pushed to.
 	 *
@@ -296,14 +325,18 @@ export async function readBranch(
 	command: GitCommand,
 	directory: string,
 ): Promise<string | undefined> {
-	const branch = await ask(
-		command,
-		["rev-parse", "--abbrev-ref", "HEAD"],
-		directory,
-	);
-	return branch === undefined || branch.length === 0 || branch === "HEAD"
-		? undefined
-		: branch;
+	// `branch --show-current` and not `rev-parse --abbrev-ref HEAD`, because the
+	// two disagree on exactly the checkout this is asked about most often after
+	// a clone: one with no commits yet. `rev-parse` asks about a commit and
+	// answers a checkout that has none with a fatal, which the Sidebar turned
+	// into "DevHub could not read this repository" for a repository that is
+	// perfectly readable and merely empty. `branch --show-current` asks the
+	// question actually being asked — what is checked out here — and answers it
+	// for an unborn branch, exits zero and prints nothing when the head is
+	// detached, and still fails the ordinary way when this is not a repository
+	// at all. All three of those are this function's documented answers.
+	const branch = await ask(command, ["branch", "--show-current"], directory);
+	return branch === undefined || branch.length === 0 ? undefined : branch;
 }
 
 /**
@@ -416,8 +449,16 @@ export async function readRepository(
 	if (worktrees === undefined) return undefined;
 	// The first record is always the main worktree, which is the one every
 	// worktree path in DevHub is measured from.
-	const mainWorktree = parseWorktrees(worktrees)[0]?.path;
+	const records = parseWorktrees(worktrees);
+	const mainWorktree = records[0]?.path;
 	if (mainWorktree === undefined) return undefined;
+	// Which record describes the directory that was asked about — the main
+	// worktree for the repository itself, one of the others for a worktree of
+	// it. Whether *that* checkout has a commit is the question; the main
+	// worktree's answer would be the wrong one for a worktree beside it.
+	const here =
+		records.find((record) => record.path === directory) ?? records[0];
+	const unborn = here?.unborn ?? false;
 
 	// Where this checkout starts, which is not where DevHub was asked to look:
 	// the workspace may be any directory inside it.
@@ -428,11 +469,14 @@ export async function readRepository(
 	);
 	if (worktree === undefined) return undefined;
 
-	const branch = await ask(
-		command,
-		["rev-parse", "--abbrev-ref", "HEAD"],
-		directory,
-	);
+	// `rev-parse HEAD` is a question about a commit, and a checkout with no
+	// commits answers it with a fatal — "ambiguous argument 'HEAD'" — which is
+	// not a broken repository and was read as one. `git worktree list` already
+	// named the branch that is checked out there, so the answer is in hand and
+	// the command that cannot be asked is not asked.
+	const branch = unborn
+		? here?.branch
+		: await ask(command, ["rev-parse", "--abbrev-ref", "HEAD"], directory);
 	const pushBranch =
 		branch === undefined || branch === "HEAD"
 			? undefined
@@ -455,6 +499,7 @@ export async function readRepository(
 		worktree,
 		pushBranch,
 		upstream,
+		unborn,
 		branch: branch === undefined || branch === "HEAD" ? undefined : branch,
 		remote,
 	};
@@ -539,22 +584,39 @@ export interface WorktreeRecord {
 	readonly path: string;
 	/** The branch checked out in it, short form, or nothing when detached. */
 	readonly branch: string | undefined;
+	/**
+	 * The branch is checked out but has no commit yet.
+	 *
+	 * A repository cloned from an empty one is in this state, and git says so
+	 * here for free: it lists the worktree with an all-zero `HEAD` and names the
+	 * branch anyway. Reading it from a command that is already run is what keeps
+	 * "there are no commits yet" from being discovered the expensive way — by
+	 * asking `rev-parse HEAD` and reading the fatal it answers with.
+	 */
+	readonly unborn: boolean;
 }
+
+/** git's stand-in for "no commit", which is what an unborn HEAD lists as. */
+const NO_COMMIT = "0".repeat(40);
 
 /** `git worktree list --porcelain`, as records. */
 export function parseWorktrees(output: string): readonly WorktreeRecord[] {
 	const records: WorktreeRecord[] = [];
 	let path: string | undefined;
 	let branch: string | undefined;
+	let unborn = false;
 	const flush = () => {
-		if (path !== undefined) records.push({ path, branch });
+		if (path !== undefined) records.push({ path, branch, unborn });
 		path = undefined;
 		branch = undefined;
+		unborn = false;
 	};
 	for (const line of output.split("\n")) {
 		if (line.startsWith("worktree ")) {
 			flush();
 			path = line.slice("worktree ".length).trim();
+		} else if (line.startsWith("HEAD ")) {
+			unborn = line.slice("HEAD ".length).trim() === NO_COMMIT;
 		} else if (line.startsWith("branch ")) {
 			branch = line
 				.slice("branch ".length)
