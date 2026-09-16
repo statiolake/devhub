@@ -32,6 +32,11 @@ import { closeDiagnosticLabel } from "../shell/diagnosticLabel";
 window.devhub = {
   openModal: () => Promise.resolve(""),
   onMenuCommand: () => () => undefined,
+  // The Sidebar asks main for its tooltips now rather than drawing them
+  // (`RowTooltip.tsx`), so every render of it reaches these three.
+  onSidebarArea: () => () => undefined,
+  showTooltip: () => undefined,
+  hideTooltip: () => undefined,
 } as unknown as typeof window.devhub;
 
 afterEach(cleanup);

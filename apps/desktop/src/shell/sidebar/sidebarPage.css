@@ -49,37 +49,3 @@
 .sidebar-page .sidebar-resize-handle::after {
   margin-inline: 9px 0;
 }
-
-/*
- * The Sidebar's own tooltip.
- *
- * Fixed to this view's box rather than to any row: the row scrolls, the view
- * does not, and the placement is computed against the view for exactly that
- * reason (see `RowTooltip.tsx`). `z-index` is against this document only —
- * this page is a `WebContentsView` and nothing here is ever above a native
- * view — so the number needs to beat the tree and the resize handle and
- * nothing else.
- *
- * `pre-line` is the whole of the formatting rule: the row description's
- * newlines are the lines the expanded row would have drawn, so they are the
- * lines this draws.
- *
- * `pointer-events: none` is not a nicety. The tooltip is raised over the row
- * that raised it; one that took the pointer would take it from that row, and
- * the row would then be told the pointer had left.
- */
-.row-tooltip {
-  position: fixed;
-  z-index: 70;
-  pointer-events: none;
-  padding: 4px 7px;
-  border-radius: 5px;
-  border: 1px solid var(--separator);
-  background: var(--chrome-raised, var(--chrome));
-  color: var(--label);
-  font-size: 11px;
-  line-height: 1.35;
-  white-space: pre-line;
-  overflow-wrap: anywhere;
-  box-shadow: 0 4px 12px rgb(0 0 0 / 22%);
-}

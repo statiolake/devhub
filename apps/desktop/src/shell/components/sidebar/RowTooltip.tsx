@@ -1,140 +1,146 @@
 /**
- * The Sidebar's tooltips, drawn by the Sidebar.
+ * The Sidebar's tooltips — decided here, drawn somewhere else.
  *
- * # Why not `title=`
+ * # Why this page stopped drawing them
  *
- * They were sixteen `title` attributes, and a `title` is Chromium's own
+ * They were sixteen `title` attributes first. A `title` is Chromium's own
  * tooltip widget: a native popup the page does not own, positioned by the
- * browser, and — this is the part that matters — raised inside a
+ * browser, and — this is the part that mattered — raised inside a
  * `WebContentsView`. Whether such a popup may paint outside the view's bounds
- * is not something this codebase gets to decide, and it is not something it
- * can rely on either: it is Chromium's, per platform, and it changes.
+ * is not something this codebase gets to decide, and not something it can rely
+ * on either: it is Chromium's, per platform, and it changes.
  *
- * That is a bad thing to depend on, because the row that most needs a tooltip
- * is the one on a collapsed rail — where the words are gone, the glyph is all
- * there is, and the tooltip is wider than the column it is raised in. A
- * tooltip the view clips is worse than no tooltip: it appears, it is
- * unreadable, and nothing on screen says why.
+ * So this file replaced them with a `<div>` in the Sidebar's own document,
+ * which made the clipping decidable. And the answer was that it is clipped.
+ * The row that most needs a tooltip is the glyph on a collapsed rail, and that
+ * view is 44px wide with a title bar and 76px without — the first cut drew a
+ * three-line description into it as a 42px-wide column 809px tall that ran off
+ * the top of the view. The same failure `title` was replaced to avoid, drawn
+ * by DevHub instead of by Chromium.
  *
- * So it is decided by construction instead. This is a DOM element in the
- * Sidebar's own document, positioned by the Sidebar against the Sidebar's own
- * box, and there is no arrangement in which it can be clipped by something it
- * does not know about. What it cannot do is leave the view — see below.
+ * `MIN_READABLE_WIDTH` was the answer to that: below a readable width, draw
+ * nothing. It was honest, and it was the wrong shape — it accepted the
+ * premise that the tooltip has to fit inside the column. The rail then had no
+ * hover at all, and an expanded row's sentence wrapped into a narrow ribbon,
+ * which are one complaint and not two.
  *
- * # What it is
+ * # What it is now
  *
- * One tooltip for the whole tree, not one per row: only one can be up, and
- * saying so here is what makes that true rather than hoping every row hides
- * its own when another shows. Anything with `data-tooltip` gets one, from the
- * pointer and from the keyboard alike, because a row reached with the arrows
- * has exactly the same question to answer as a row under the pointer.
+ * A sender. The tooltip is a child of the *window* whose rectangle is its own
+ * content (`main/shell/tooltipView.ts`), exactly as the notices are, so it may
+ * run out over the editor and there is no width at which it stops being
+ * readable. This page keeps the three things only it can know:
  *
- * The text is the row's description (`rowDescription.ts`), which is also its
- * accessible name — one composition, two readers, so they cannot drift. It is
- * drawn one line per line: `pre-line`, because the description's newlines are
- * the lines the expanded row would have drawn.
+ * - **When.** The pointer has to *rest* on a row (`HOVER_DELAY_MS`); a pointer
+ *   crossing the column on its way somewhere else raises nothing. The keyboard
+ *   has no such delay, because a row reached with the arrows was chosen rather
+ *   than crossed.
+ * - **One tooltip for the whole tree**, not one per row. Saying so here is
+ *   what makes it true rather than hoping every row hides its own when another
+ *   shows — and main cannot hold two either, so the rule is kept twice.
+ * - **What it says.** The row's description (`rowDescription.ts`), which is
+ *   also its accessible name: one composition, two readers, so they cannot
+ *   drift. Drawn one line per line, because the description's newlines are the
+ *   lines the expanded row would have drawn.
  *
- * # Where it goes, and where it does not
+ * # The anchor is in the window's coordinates
  *
- * Beside the row, and inside this view. It flips upward when the row is near
- * the bottom, so the last row's tooltip is as readable as the first's, and it
- * is clamped to the view's box in both directions, because the box is the
- * whole of what this page has.
+ * Which is the one thing this component has to get right, and it is one
+ * addition: the row's box, plus the rectangle main told this view it occupies
+ * (`onSidebarArea`). Not `window.screenX`, which is the screen's and needs the
+ * window's own origin taken back off; not `documentElement`'s box, which is
+ * this view's and is stale for a while after main moves it. Where anything is,
+ * is `main/shell/windowLayout.ts`, and a page that needs a number from it is
+ * told the number.
  *
- * **It is as wide as this view and no wider — so on a rail there is none.**
- * That is not a preference; it is what the rail measures. With
- * `title_bar = hidden` the collapsed Sidebar's view is the traffic lights'
- * span, 76px, and the first cut of this file drew a three-line description
- * into it as a 42px-wide column 809px tall that ran off the top of the view.
- * Clipped by the view, which is the exact failure `title` was replaced to
- * avoid — the same failure, drawn by DevHub instead of by Chromium.
+ * The anchor is clipped to the Sidebar's rectangle, because a row scrolled
+ * half out of the column has half a row on screen and a tooltip pointing at
+ * the invisible half points at nothing.
  *
- * So the rule is the one the replacement was made under: a tooltip that does
- * not fit is worse than no tooltip, and `MIN_READABLE_WIDTH` is where this
- * page stops drawing one. The rail keeps what it always had — the row's
- * accessible name, which is this same sentence, and the glyph.
- *
- * Giving the rail a tooltip means giving it something that is not this view:
- * a child of the *window* whose rectangle is its own content, the way the
- * `toasts` view already is (`main/shell/toastsView.ts`). Widening the
- * Sidebar's view instead does not work — the Sidebar is deliberately the one
- * child nothing is ever drawn over, and that is only true because its
- * rectangle never overlaps anything.
- *
- * `pointer-events: none`, always: a tooltip is something to read, never
- * something to hit, and one that took a click would take it from the row that
- * raised it.
+ * Nothing here decides *where* the tooltip goes. `prefer` is a fact about the
+ * row — a glyph has its sentence beside it, a line of text has it underneath —
+ * and the owner turns that into a rectangle, flipping and clamping against a
+ * window this page cannot see.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
-
-/** Where the tooltip is, in this view's own pixels. */
-interface Placement {
-  readonly text: string;
-  readonly left: number;
-  readonly top: number;
-  readonly maxWidth: number;
-  /** Anchored by its bottom edge, because the row is near the view's. */
-  readonly flipped: boolean;
-}
-
-/** How far from the anchor the tooltip sits, and from the view's edges. */
-const GAP = 6;
-const MARGIN = 4;
-
-/**
- * Narrower than this and no tooltip is drawn at all.
- *
- * A row description is a sentence, and a sentence in a 42px column is not
- * something anybody reads — it is a tall thin ribbon that runs off the top of
- * the view. Measured: the rail is 76px with `title_bar = hidden` and 44px
- * with a bar. This is the width at which the first line of the shortest
- * description still fits on one line.
- */
-const MIN_READABLE_WIDTH = 160;
+import { useCallback, useEffect, useRef } from "react";
+import { devhub } from "../../sidebar/client";
+import type {
+  SidebarAreaWire,
+  TooltipRequestWire,
+} from "../../../ipc/contract";
 
 /**
  * How long the pointer rests on a row before its tooltip is drawn.
  *
  * A pointer crossing the Sidebar on its way somewhere else passes over every
- * row it crosses, and a tooltip raised on entry for each of them is a
- * flicker of sentences nobody asked for. Resting on a row is the question;
- * this is how long resting takes. The keyboard has no such delay: a row
- * reached with the arrows was chosen, not crossed.
+ * row it crosses, and a tooltip raised on entry for each of them is a flicker
+ * of sentences nobody asked for. Resting on a row is the question; this is how
+ * long resting takes. The keyboard has no such delay: a row reached with the
+ * arrows was chosen, not crossed.
  */
 const HOVER_DELAY_MS = 300;
 
-export function RowTooltip() {
-  const [placement, setPlacement] = useState<Placement | undefined>(undefined);
+/**
+ * Which side of the row its sentence goes on.
+ *
+ * A fact about the row rather than about the window: on a rail there is a
+ * glyph and the words belong beside it, and in the expanded column there is a
+ * line of text and they belong under it. Whether there is *room* on that side
+ * is the owner's question — see `tooltipRect`.
+ */
+export type TooltipSide = TooltipRequestWire["prefer"];
+
+export function RowTooltip({ prefer }: { readonly prefer: TooltipSide }) {
+  /**
+   * Where main has laid this view, which is the whole of what this page
+   * knows about where it is. Undefined until the first push, and a tooltip
+   * is simply not raised until then: a guessed origin would put the sentence
+   * somewhere that is not beside the row, which is worse than a tooltip that
+   * is a moment late.
+   */
+  const area = useRef<SidebarAreaWire | undefined>(undefined);
+  useEffect(() => devhub().onSidebarArea((next) => (area.current = next)), []);
+
+  // The side is read through a ref so that the effect below subscribes once:
+  // collapsing the Sidebar changes `prefer` and must not tear down and
+  // rebuild every pointer listener on the document.
+  const side = useRef(prefer);
+  side.current = prefer;
+
   const hide = useCallback(() => {
-    setPlacement(undefined);
+    devhub().hideTooltip();
   }, []);
 
   const show = useCallback((element: HTMLElement) => {
     const text = element.dataset["tooltip"];
     if (text === undefined || text === "") return;
+    const sidebar = area.current;
+    if (!sidebar) return;
     const box = element.getBoundingClientRect();
-    // The view's own box, which is the whole of what this page has to place
-    // anything in. `documentElement` and not `window.innerWidth`: the same
-    // number, and this one says where it came from.
-    const view = document.documentElement.getBoundingClientRect();
-    // A rail has no room for a sentence. See `MIN_READABLE_WIDTH`.
-    if (view.width < MIN_READABLE_WIDTH) return;
-    const left = Math.min(
-      Math.max(MARGIN, box.left),
-      Math.max(MARGIN, view.width - MARGIN),
+    // This view's own pixels plus this view's origin in the window. The
+    // row's box is relative to the view; main's rectangle says where the
+    // view is; the sum is where the row is on the window.
+    const x = sidebar.x + box.left;
+    const y = sidebar.y + box.top;
+    // Clipped to the column, because a row scrolled half out of it has
+    // half a row on screen. `top` and `bottom` are clipped independently
+    // so that a row leaving by either edge shrinks rather than moves.
+    const top = Math.max(sidebar.y, Math.min(y, sidebar.y + sidebar.height));
+    const bottom = Math.max(
+      sidebar.y,
+      Math.min(y + box.height, sidebar.y + sidebar.height),
     );
-    const below = box.bottom + GAP;
-    // Flipped when there is more room above than below. The row's own height
-    // is the unit: a tooltip that would start below the halfway line has more
-    // room the other way, whatever it turns out to be tall.
-    const flipped = below > view.height / 2;
-    setPlacement({
+    if (bottom <= top) return;
+    devhub().showTooltip({
       text,
-      left,
-      top: flipped ? view.height - box.top + GAP : below,
-      maxWidth: Math.max(0, view.width - left - MARGIN),
-      flipped,
+      anchor: {
+        x,
+        y: top,
+        width: Math.min(box.width, sidebar.width),
+        height: bottom - top,
+      },
+      prefer: side.current,
     });
   }, []);
 
@@ -181,20 +187,26 @@ export function RowTooltip() {
       anchor.current = null;
       hide();
     };
-    // Pointer and keyboard alike: a row reached with the arrows has the same
-    // question to answer as a row under the pointer, and on a rail it is the
-    // only way to ask it.
+    // Pointer and keyboard alike: a row reached with the arrows has the
+    // same question to answer as a row under the pointer.
     document.addEventListener("pointerover", pointerEnter);
     document.addEventListener("pointerout", leave);
     document.addEventListener("focusin", keyboardEnter);
     document.addEventListener("focusout", leave);
     // Anything that can move the row out from under the tooltip takes it
-    // down rather than leaving it pointing at nothing.
+    // down rather than leaving it pointing at nothing. It matters more now
+    // than it did: the tooltip is a separate view and cannot be scrolled
+    // or resized away by the document that raised it.
     window.addEventListener("scroll", hide, true);
     window.addEventListener("resize", hide);
     window.addEventListener("blur", hide);
     return () => {
       cancelRest();
+      // A tooltip outlives this component otherwise. It is drawn by
+      // another view, so unmounting takes nothing off the screen —
+      // which is the one new way this could leave a sentence standing
+      // over the editor with nothing under it.
+      hide();
       document.removeEventListener("pointerover", pointerEnter);
       document.removeEventListener("pointerout", leave);
       document.removeEventListener("focusin", keyboardEnter);
@@ -205,23 +217,6 @@ export function RowTooltip() {
     };
   }, [hide, show]);
 
-  if (!placement) return null;
-  return (
-    <div
-      className="row-tooltip"
-      // Not `role="tooltip"`, and hidden from the accessibility tree
-      // outright: the row's own accessible name *is* this sentence
-      // (`rowDescription.ts` composes both), so a reader announced it as the
-      // row was reached. Exposing it again would read the row twice, once as
-      // itself and once as its own tooltip.
-      aria-hidden="true"
-      style={{
-        left: `${String(placement.left)}px`,
-        [placement.flipped ? "bottom" : "top"]: `${String(placement.top)}px`,
-        maxWidth: `${String(placement.maxWidth)}px`,
-      }}
-    >
-      {placement.text}
-    </div>
-  );
+  // Nothing is drawn here. That is the point of the file.
+  return null;
 }

@@ -1312,11 +1312,13 @@ export function Sidebar({ snapshot, onDispatch }: SidebarProps) {
           onCommit={resize}
         />
       )}
-      {/* One tooltip for the whole tree, drawn by this page rather than by
-          Chromium. See `RowTooltip.tsx` — the rail is the row that most needs
-          one, and it is exactly the row a native tooltip would be raised
-          inside a view too narrow to hold it. */}
-      <RowTooltip />
+      {/* One tooltip for the whole tree, decided here and drawn on a child of
+          the window. See `RowTooltip.tsx` — this view is 44px wide on a
+          collapsed rail, so a tooltip drawn in it is clipped by it, which is
+          the exact failure `title` was replaced to avoid. The side is a fact
+          about the row: a rail is a glyph with its sentence beside it, and an
+          expanded row is a line of text with its sentence underneath. */}
+      <RowTooltip prefer={collapsed ? "right" : "below"} />
       {agentMenu ? (
         <RowMenu
           at={agentMenu.at}
