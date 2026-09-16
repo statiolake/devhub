@@ -132,6 +132,7 @@ interface FlowServices {
   readonly agentProfiles: () => AgentProfilesWire;
   readonly findIssueRepositories: (
     url: string,
+    signal?: AbortSignal,
   ) => Promise<readonly IssueRepository[]>;
   readonly cloneRepository: (url: string, parent: string) => Promise<string>;
   readonly assignIssue: (request: {
@@ -282,7 +283,10 @@ function repositoryStep(
   return async (input) => {
     const repositories = await input.working(
       `Looking for ${item.owner}/${item.repository}…`,
-      () => services.findIssueRepositories(gitHubItemUrl(item)),
+      // The signal is the wizard's: it fires when the person stops waiting, and
+      // carrying it into the call is what makes Escape reach the `gh` or `git`
+      // that is running rather than only the spinner drawn over it.
+      (signal) => services.findIssueRepositories(gitHubItemUrl(item), signal),
     );
     if (repositories.length === 0) {
       return cloneDestinationStep(services, item, agent, nothingCloned(item));

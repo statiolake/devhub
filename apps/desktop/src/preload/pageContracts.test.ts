@@ -75,6 +75,35 @@ describe("the pages, and what each of them may say", () => {
 	 * answers. That is the failure `?window=` made normal and the split exists
 	 * to end.
 	 */
+	/**
+	 * The other half of "a member a page does not own is absent": a member main
+	 * answers for one page only must be spelled in that page's preload and in no
+	 * other, or the absence is a comment rather than a fact.
+	 *
+	 * `cancelRepositoryLookup` is the case that made this worth asserting. Main
+	 * keeps one repository lookup and cancels "the one that is running", so a
+	 * second page able to call it could stop a lookup it never started — a bug
+	 * with no error in it, because cancelling is a thing that succeeds quietly.
+	 */
+	it("spells a picker-only member in the picker preload and nowhere else", () => {
+		const pickerOnly = "cancelRepositoryLookup";
+		// It is on the bridge the picker's preload builds, so it is a real member
+		// and not a name this test invented and then failed to find anywhere.
+		expect(read("../ipc/contract.ts")).toContain(pickerOnly);
+		for (const page of PAGES) {
+			const spelled = read(`./${page}.ts`).includes(pickerOnly);
+			expect(
+				spelled,
+				spelled
+					? `the ${page} page can cancel a lookup it never started`
+					: "the picker preload does not expose cancelRepositoryLookup",
+			).toBe(page === "picker");
+		}
+		// `bridge.ts` is shared by every preload, so a member that reached it
+		// would reach every page — the same failure by a different route.
+		expect(read("./bridge.ts")).not.toContain(pickerOnly);
+	});
+
 	it("reaches each page's bridge from that page's entry and from no other", () => {
 		const entries = {
 			shell: "main.tsx",

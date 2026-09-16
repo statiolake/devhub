@@ -54,6 +54,8 @@ const api: PickerBridge = {
 			workspaceId,
 			answer,
 		) as Promise<AppOutcome>,
+	cancelRepositoryLookup: () =>
+		ipcRenderer.invoke(CHANNELS.cancelRepositoryLookup) as Promise<void>,
 };
 
 contextBridge.exposeInMainWorld("devhub", api);

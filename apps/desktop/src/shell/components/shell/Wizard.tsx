@@ -94,14 +94,18 @@ export function Wizard({ start, onFinished }: WizardProps) {
       // left resolves a promise the runner has already stopped reading.
       working: (message, task) =>
         new Promise((resolve, reject) => {
+          // One controller per slow step, so the signal cannot outlive the step
+          // that owns it or be fired twice by a later one.
+          const abandon = new AbortController();
           setScreen({
             kind: "working",
             message,
             back: () => {
+              abandon.abort();
               reject(WIZARD_ABANDONED);
             },
           });
-          task().then(resolve, reject);
+          task(abandon.signal).then(resolve, reject);
         }),
       // A failure with no words of its own is rethrown by the runner, and
       // reaches the root handler as an unhandled rejection — the one place the

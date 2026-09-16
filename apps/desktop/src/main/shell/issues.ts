@@ -148,11 +148,19 @@ export async function findClones(
 
 	const found: RepositoryCandidate[] = [];
 	for (const place of repositories.values()) {
+		cancel.check();
 		found.push({
 			place,
 			worktrees: await worktreesOf(await gitFor(place), place, cancel),
 		});
 	}
+	// A cancelled lookup never *answers*. Every step above stops early when the
+	// token fires, so the honest result of stopping early is a short list — and
+	// a short list is indistinguishable from the real one. "Nobody is waiting
+	// any more" and "this machine has no clone of it" would then arrive as the
+	// same value, and the second one sends a person off to clone a repository
+	// they already have.
+	cancel.check();
 	return found;
 }
 

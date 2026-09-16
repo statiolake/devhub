@@ -589,4 +589,35 @@ describe("assigning an Issue", () => {
       );
     });
   });
+
+  it("aborts the lookup's signal when the person escapes the spinner", async () => {
+    // The end of "spins forever, and then nothing can be cancelled". Escape on
+    // the working panel has to reach the lookup itself, not only the spinner
+    // drawn over it, or the `gh` main started outlives the question by up to a
+    // whole deadline.
+    let signal: AbortSignal | undefined;
+    const findIssueRepositories = vi.fn((_url: string, given?: AbortSignal) => {
+      signal = given;
+      // Never settles: the state being tested is the one where the lookup
+      // does not come back on its own.
+      return new Promise<never>(() => {});
+    });
+    mount({ findIssueRepositories } as unknown as Partial<PickerValue>);
+
+    await answer("Assign Issue", ISSUE);
+    await answer(/Agent for/u);
+
+    const working = await screen.findByRole("dialog", {
+      name: /Looking for example\/widget/u,
+    });
+    expect(signal?.aborted).toBe(false);
+
+    fireEvent.keyDown(working, { key: "Escape" });
+
+    // The signal is what PickerContext turns into `cancelRepositoryLookup`, so
+    // this is the renderer's whole half of killing the child.
+    await vi.waitFor(() => {
+      expect(signal?.aborted).toBe(true);
+    });
+  });
 });

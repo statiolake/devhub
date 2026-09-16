@@ -106,6 +106,14 @@ export interface PickerValue {
    */
   readonly findIssueRepositories: (
     issueUrl: string,
+    /**
+     * Stops the lookup in main, and the `gh` or `git` it started with it.
+     *
+     * Here rather than on a separate `cancel…()` the caller has to remember to
+     * pair with this one: the signal arrives with the call it belongs to, so
+     * there is no way to start a lookup and forget how to stop it.
+     */
+    signal?: AbortSignal,
   ) => Promise<readonly IssueRepository[]>;
   readonly cloneRepository: (
     url: string,
@@ -290,8 +298,14 @@ export function PickerProvider({ children }: { children: ReactNode }) {
       projectDefaultDirectory: () => bridge.projectDefaultDirectory(),
       cloneParentDirectories: () => bridge.cloneParentDirectories(),
       githubLogin: () => bridge.githubLogin(),
-      findIssueRepositories: (issueUrl) =>
-        bridge.findIssueRepositories(issueUrl),
+      findIssueRepositories: (issueUrl, signal) => {
+        // Main keeps one lookup and cancels it by name of being the one that is
+        // running, so there is nothing to pass and nothing to match up.
+        signal?.addEventListener("abort", () => {
+          void bridge.cancelRepositoryLookup();
+        });
+        return bridge.findIssueRepositories(issueUrl);
+      },
       cloneRepository: (url, parentDirectory) =>
         bridge.cloneRepository(url, parentDirectory),
       assignmentBranch: (url, place) => bridge.assignmentBranch(url, place),

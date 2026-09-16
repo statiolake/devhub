@@ -16,6 +16,7 @@ import { makeScratchDir, removeScratchDir } from "../../model/testScratch.js";
 import { localRuntime } from "../runtime/registry.js";
 import { runGit, type GitCommand } from "./git.js";
 import { findClones } from "./issues.js";
+import { CancellationToken } from "../terminal/ports.js";
 
 const GIT: GitCommand = {
 	runtime: localRuntime(),
@@ -216,5 +217,34 @@ describe("a clone on another machine", () => {
 				)
 				.toSorted(),
 		).toEqual(["one.example.com", "two.example.com"]);
+	});
+});
+
+describe("a lookup that is abandoned", () => {
+	it("stops at the next candidate rather than working through them all", async () => {
+		await repository("widget");
+		const cancel = new CancellationToken();
+		// The person pressed Escape before the first git was asked for. What must
+		// not happen is the lookup finishing anyway and answering as though the
+		// question were still on screen.
+		cancel.cancel();
+
+		await expect(
+			findClones(configWith(), () => Promise.resolve(GIT), ISSUE, [], cancel),
+		).rejects.toThrow();
+	});
+
+	it("still answers normally when nothing cancels it", async () => {
+		// The other half, so the test above is known to be about cancellation
+		// and not about the fixture.
+		const main = await repository("widget");
+		const found = await findClones(
+			configWith(),
+			() => Promise.resolve(GIT),
+			ISSUE,
+			[],
+			new CancellationToken(),
+		);
+		expect(found.map((f) => f.place.path)).toEqual([main]);
 	});
 });

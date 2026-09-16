@@ -88,8 +88,16 @@ export interface WizardInput {
   /**
    * Do something slow with the person watching — a clone, a worktree, a
    * search. The message is what is being done, in the present tense.
+   *
+   * The task is handed the signal that fires when the person stops waiting, so
+   * that abandoning the wait and abandoning the *work* are the same event
+   * rather than two that have to be kept in step. A task with nothing to stop
+   * ignores it and reads exactly as it did.
    */
-  working<T>(message: string, task: () => Promise<T>): Promise<T>;
+  working<T>(
+    message: string,
+    task: (signal: AbortSignal) => Promise<T>,
+  ): Promise<T>;
 }
 
 /**
@@ -120,7 +128,10 @@ export interface WizardAsking {
 /** What the runner needs from whoever is drawing. */
 export interface WizardPresenter {
   prompt(prompt: WizardPrompt, asking: WizardAsking): Promise<WizardAnswer>;
-  working<T>(message: string, task: () => Promise<T>): Promise<T>;
+  working<T>(
+    message: string,
+    task: (signal: AbortSignal) => Promise<T>,
+  ): Promise<T>;
 }
 
 /**

@@ -54,7 +54,9 @@ function scripted(script: readonly (string | typeof WIZARD_BACK)[]) {
         ? Promise.reject(WIZARD_BACK)
         : Promise.resolve(answer(reply));
     },
-    working: (_message, task) => task(),
+    // Nothing in the runner's own tests is abandoned part-way, so the signal
+    // handed over is one that never fires.
+    working: (_message, task) => task(new AbortController().signal),
   };
   return { presenter, asked };
 }

@@ -528,6 +528,16 @@ export class AppController {
 	/** Handed over by `setServices`; released to the gate by `markReady`. */
 	private handedOverServices: MainServices | undefined;
 	private config: Config | undefined;
+	/**
+	 * The repository lookup that is running, if one is.
+	 *
+	 * One, not a map, and that is a fact about the picker rather than a
+	 * simplification: a lookup is started by a question on screen, and there is
+	 * one question on screen. So "the lookup" always names exactly one thing,
+	 * a second one beginning means the first is not wanted, and there is no
+	 * identifier for the page to keep and get wrong.
+	 */
+	private repositoryLookup: CancellationToken | undefined;
 	private state: PersistedAppState;
 	private appearanceSequence = 0;
 	private profileSequence = 0;
@@ -5418,8 +5428,21 @@ export class AppController {
 			// sum — and a person is watching a spinner for the whole of it. When
 			// the deadline passes the token kills whatever is in flight and the
 			// sheet is told, in a sentence, rather than going on spinning.
+			//
+			// Asking is also what ends the lookup before it: there is one picker
+			// and one question at a time, so a second lookup means the answer to
+			// the first is not wanted any more. That is what makes typing a new
+			// query cancel the old search without the page having to say so.
+			this.repositoryLookup?.cancel();
 			const cancel = new CancellationToken();
+			this.repositoryLookup = cancel;
+			// Which of the two ways this could end, because they are not the same
+			// thing to say. A deadline is DevHub giving up and owes the person a
+			// sentence; a person pressing Escape is not a failure and owes them
+			// nothing, least of all a refusal for a question they withdrew.
+			let expired = false;
 			const timer = setTimeout(() => {
+				expired = true;
 				cancel.cancel();
 			}, REPOSITORY_LOOKUP_DEADLINE_MS);
 			try {
@@ -5443,7 +5466,7 @@ export class AppController {
 					cancel,
 				);
 			} catch (error: unknown) {
-				if (cancel.isCancelled) {
+				if (expired) {
 					throw asIpcError(
 						errorWire(
 							workspaceFailure(
@@ -5454,10 +5477,29 @@ export class AppController {
 						),
 					);
 				}
+				if (cancel.isCancelled) {
+					// Nobody is reading this: the page stopped waiting, which is why
+					// the lookup stopped. It is thrown rather than answered with an
+					// empty list so that a caller who somehow is still listening
+					// cannot mistake "withdrawn" for "there are no clones".
+					throw asIpcError(
+						errorWire(workspaceFailure("The lookup was cancelled.")),
+					);
+				}
 				throw asIpcError(errorWire(error));
 			} finally {
 				clearTimeout(timer);
+				if (this.repositoryLookup === cancel) this.repositoryLookup = undefined;
 			}
+		});
+
+		// Escape, or the sheet going away. There is one lookup at a time, so
+		// there is nothing to identify: this ends the one that is running, and
+		// the `gh` or `git` child dies with it rather than at the deadline.
+		handle(CHANNELS.cancelRepositoryLookup, () => {
+			this.repositoryLookup?.cancel();
+			this.repositoryLookup = undefined;
+			return Promise.resolve();
 		});
 		handle(
 			CHANNELS.cloneRepository,

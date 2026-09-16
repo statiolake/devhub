@@ -1079,6 +1079,25 @@ export interface PickerBridge
 		workspaceId: string,
 		answer: "close" | "delete",
 	): Promise<AppOutcome>;
+	/**
+	 * Stop the repository lookup that is running, and kill what it started.
+	 *
+	 * On this bridge and on no other, because the picker is the only page that
+	 * can start one: a lookup begins when a question is asked and there is never
+	 * a second one in flight, so it needs no identifier — "the one that is
+	 * running" is the whole of what there is to name.
+	 *
+	 * This exists because a deadline alone is not an answer to Escape. Main
+	 * already bounds the lookup, so nothing runs forever either way; what this
+	 * adds is that the `gh` or `git` child dies *when the person stops waiting*
+	 * rather than up to twenty seconds later, which is the difference between a
+	 * sheet that has let go and one that is still quietly holding on.
+	 *
+	 * Asking again is how "typing a new query" cancels the old lookup — main
+	 * cancels whatever is in flight when a new lookup arrives — so the page only
+	 * has to say this for the case where no new question follows.
+	 */
+	cancelRepositoryLookup(): Promise<void>;
 }
 
 /**
@@ -1117,6 +1136,7 @@ export const CHANNELS = {
 	selectWorkspacePicker: "devhub:select-workspace-picker",
 	createProject: "devhub:create-project",
 	findIssueRepositories: "devhub:find-issue-repositories",
+	cancelRepositoryLookup: "devhub:cancel-repository-lookup",
 	cloneRepository: "devhub:clone-repository",
 	listBranches: "devhub:list-branches",
 	assignIssue: "devhub:assign-issue",
