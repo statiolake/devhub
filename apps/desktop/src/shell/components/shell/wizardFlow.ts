@@ -182,10 +182,20 @@ export async function runWizard(
     } catch (error: unknown) {
       if (error === WIZARD_CANCELLED) return;
       if (error === WIZARD_ABANDONED) {
-        // The step stays where it is and is asked again from the top of its own
-        // code, exactly as a step that failed is. There is no reason to show —
-        // the person chose to stop waiting and already knows why.
+        // Escape goes back to the last question that was really asked — the
+        // rule this runner already keeps for steps that decide for themselves,
+        // applied to the step that was interrupted.
+        //
+        // Which step that is depends on whether this one had asked anything
+        // before it started waiting. A step that asked and *then* did something
+        // slow is re-run, so the person lands on the question they just
+        // answered and can answer it differently. A step that begins with the
+        // slow thing has no question of its own to come back to, and re-running
+        // it would start the very work they escaped: a second lookup, a third,
+        // and a spinner that never reports anything however long they wait.
+        // That one unwinds to the step before it instead.
         failure = undefined;
+        if (!asked) walked.pop();
         step = walked.pop();
         continue;
       }

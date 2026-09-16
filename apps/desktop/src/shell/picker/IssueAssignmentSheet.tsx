@@ -39,7 +39,7 @@ import {
 import type { AgentActionWire, IssueRepository } from "../../ipc/contract";
 import { folderName, githubCloneTarget } from "../../model/projects";
 import { placeLabel, type WorkspacePlaceWire } from "../../ipc/contract";
-import { toAppError } from "../failure";
+import { spokenFailure, toAppError } from "../failure";
 import { usePicker } from "./PickerContext";
 
 export interface IssueAssignmentSheetProps {
@@ -47,6 +47,8 @@ export interface IssueAssignmentSheetProps {
 }
 
 /** Rows that do something rather than name something that already exists. */
+/** The row that runs the search again after one that did not finish. */
+const LOOK_AGAIN = "devhub:look-again";
 const CLONE_ELSEWHERE = "devhub:clone-elsewhere";
 const ACCEPT_TYPED = "devhub:accept-typed";
 /** A row that is one of the person's own actions, by its id. */
@@ -281,13 +283,56 @@ function repositoryStep(
   agent: AgentChoice,
 ): WizardStep {
   return async (input) => {
-    const repositories = await input.working(
-      `Looking for ${item.owner}/${item.repository}…`,
-      // The signal is the wizard's: it fires when the person stops waiting, and
-      // carrying it into the call is what makes Escape reach the `gh` or `git`
-      // that is running rather than only the spinner drawn over it.
-      (signal) => services.findIssueRepositories(gitHubItemUrl(item), signal),
-    );
+    let repositories: readonly IssueRepository[];
+    try {
+      repositories = await input.working(
+        `Looking for ${item.owner}/${item.repository}…`,
+        // The signal is the wizard's: it fires when the person stops waiting,
+        // and carrying it into the call is what makes Escape reach the `gh` or
+        // `git` that is running rather than only the spinner drawn over it.
+        (signal) => services.findIssueRepositories(gitHubItemUrl(item), signal),
+      );
+    } catch (error: unknown) {
+      // A lookup that failed cannot be answered by looking again on its own.
+      // The runner re-runs a step that failed, and this step *begins* with the
+      // lookup — so handing the failure back would start a second lookup
+      // immediately, and a third, and the person would watch a spinner that
+      // reports nothing no matter how long they wait. That is the bug this
+      // whole change is about, arrived at from the other side.
+      //
+      // So the refusal becomes a question, which is the only thing a person
+      // can act on: here is what happened, and here is what you may do about
+      // it. Looking again is one of the answers rather than something DevHub
+      // decides on their behalf.
+      const spoken = spokenFailure(error);
+      if (!spoken) throw error;
+      const answer = await input.ask({
+        ...SHEET,
+        title: `Looking for ${item.owner}/${item.repository}`,
+        question: spoken.summary,
+        items: [],
+        pinned: [
+          {
+            id: LOOK_AGAIN,
+            label: "Look again",
+            detail: `Search this machine for ${item.owner}/${item.repository} once more`,
+          },
+          {
+            id: CLONE_ELSEWHERE,
+            label: "Clone…",
+            detail: `Clone ${item.owner}/${item.repository} instead of looking for it`,
+          },
+        ],
+      });
+      return answer.id === LOOK_AGAIN
+        ? repositoryStep(services, item, agent)
+        : cloneDestinationStep(
+            services,
+            item,
+            agent,
+            `${item.owner}/${item.repository} is being cloned because the search for it did not finish.`,
+          );
+    }
     if (repositories.length === 0) {
       return cloneDestinationStep(services, item, agent, nothingCloned(item));
     }

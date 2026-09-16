@@ -590,6 +590,44 @@ describe("assigning an Issue", () => {
     });
   });
 
+  it("turns a lookup that failed into a question, not another lookup", async () => {
+    // The runner re-runs a step that failed, and this step begins with the
+    // lookup — so a failure handed straight back starts a second lookup, and a
+    // third. The person watches a spinner that reports nothing however long
+    // they wait, which is the original complaint arrived at from the other
+    // side. The refusal has to become something answerable.
+    // The shape main's refusal actually arrives in: an Error whose message
+    // carries the wire payload, which is what `spokenFailure` reads.
+    const findIssueRepositories = vi.fn().mockRejectedValue(
+      new Error(
+        `Error: ${JSON.stringify({
+          code: "workspace_unavailable",
+          summary: "example/widget could not be found within 20s.",
+          module: "app",
+          timestampMs: 0,
+          runtimeVersion: "0.1.0",
+          actions: ["retry"],
+        })}`,
+      ),
+    );
+    mount({ findIssueRepositories } as unknown as Partial<PickerValue>);
+
+    await answer("Assign Issue", ISSUE);
+    await answer(/Agent for/u);
+
+    const sheet = await screen.findByRole("dialog", {
+      name: /Looking for example\/widget/u,
+    });
+    // The words main refused with, drawn where the person is looking.
+    expect(sheet).toHaveTextContent(/could not be found within 20s/u);
+    // And rows to act on, rather than a spinner that keeps its own counsel.
+    expect(screen.getByRole("option", { name: /Look again/u })).toBeVisible();
+    expect(screen.getByRole("option", { name: /Clone/u })).toBeVisible();
+
+    // One lookup, not a stream of them.
+    expect(findIssueRepositories).toHaveBeenCalledTimes(1);
+  });
+
   it("aborts the lookup's signal when the person escapes the spinner", async () => {
     // The end of "spins forever, and then nothing can be cancelled". Escape on
     // the working panel has to reach the lookup itself, not only the spinner
@@ -619,5 +657,12 @@ describe("assigning an Issue", () => {
     await vi.waitFor(() => {
       expect(signal?.aborted).toBe(true);
     });
+
+    // And it goes back to the question before it rather than re-running the
+    // step, which would start the very lookup the person just escaped.
+    expect(
+      await screen.findByRole("dialog", { name: /Agent for/u }),
+    ).toBeVisible();
+    expect(findIssueRepositories).toHaveBeenCalledTimes(1);
   });
 });
