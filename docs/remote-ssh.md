@@ -4,71 +4,168 @@ Open a folder on another machine and work in it as if it were local: the
 workbench stays on your Mac, everything it drives — the terminal, the file
 system, extensions, language servers — runs over there.
 
-DevHub does this the way VSCodium does, with two pieces that have never met
-before they are asked to talk to each other.
+Two pieces make that work, and DevHub owns both of them.
 
-- **Open Remote - SSH**, `jeanp413.open-remote-ssh`, vendored as a built-in
-  from Open VSX. It is what resolves `ssh-remote://<host>` authorities. See
-  `extensions/vendor/README.md`.
+- **The resolver**, `extensions/devhub-remote` — a built-in extension of about
+  sixty lines whose whole job is to answer `onResolveRemoteAuthority:ssh-remote`
+  with a port. It has no SSH client, no settings and no opinion; it asks DevHub
+  and passes the answer on.
 - **The remote extension host**, or REH — VS Code's own server, built from the
   same VS Code commit DevHub's client is built from and published on this
   repository's releases. That is `scripts/build_reh.py` and the `reh-*` jobs in
   `.github/workflows/nightly.yml`.
 
+Everything between those two — the connection, the install, the server, the
+token and the port — is `main/runtime/remoteServer.ts` and `main/runtime/ssh.ts`,
+over the ControlMaster DevHub is already holding for git, terminals and Agents.
+
+## Why DevHub resolves its own authorities
+
+It did not used to. Until this was written the resolver was a vendored copy of
+`jeanp413.open-remote-ssh`, and it brought a whole second SSH client with it: a
+JavaScript one (`ssh2`, from an unpinned git fork), its own `~/.ssh/config`
+parser, its own private-key handling and passphrase prompts, its own generated
+bash install script, a port scraped out of the server's log, and a tunnel opened
+beside the connection DevHub already had.
+
+So there were two clients talking to one host, and every question either could
+answer had two answers free to differ: which `Host` block applies, which key,
+whether `ProxyJump` works, what the login environment is. The one that broke in
+practice was the install script — it was bash, and a NAS whose `/bin/sh` is
+BusyBox with no bash anywhere answered `sh: bash: not found`, which arrived as
+`Failed parsing install script output` because none of the markers the script
+prints had been printed.
+
+DevHub already knew how to do all of it. It holds a ControlMaster per host, runs
+POSIX `sh` over it, reads the host's login environment, fetches payloads here and
+delivers them there as bytes on a `tar` stdin (that is the tmux install). What
+was missing was two things — installing and starting the server, and a `-L`
+forward — and adding them is smaller than keeping a second SSH client correct.
+
+What that costs is upstream's breadth. `ProxyJump`, `ProxyCommand`, passwords
+and keyboard-interactive all move to the system `ssh`, which is a gain on
+correctness but means a host that only worked because `ssh2` was lenient now
+behaves the way `ssh` does. Windows remotes are dropped outright; DevHub did not
+support them anyway.
+
 ## What happens when you open a host
 
-1. The extension SSHes in and runs a shell script it generates from
-   `src/scripts/server-setup.sh` in its own source, piped into `sh -l`.
-2. That script reads five things out of DevHub's `product.json` — the client's,
-   over the SSH connection's near end — and uses them to work out what to
-   fetch and where to put it:
+The workbench opens on `vscode-remote://ssh-remote+<host>/<path>` and waits.
+`extensions/devhub-remote` is activated by that authority, parses the host out
+of it, and sends one JSON line over DevHub's control socket — the same socket
+the `devhub` command and "Install 'devhub' command in PATH" use, found the same
+way, from the extension's own global-storage directory:
 
-   | key                         | value                        | what the remote does with it                                         |
-   | --------------------------- | ---------------------------- | -------------------------------------------------------------------- |
-   | `serverDownloadUrlTemplate` | see below                    | the URL, after substitution                                          |
-   | `commit`                    | the VS Code submodule's HEAD | names the install directory, and is checked against the server's own |
-   | `version`                   | `1.136.1`                    | substituted as `${version}`, if the template asks                    |
-   | `serverApplicationName`     | `devhub-server`              | the script it runs: `bin/devhub-server`                              |
-   | `serverDataFolderName`      | `.devhub-server`             | `$HOME/.devhub-server` on the remote                                 |
+```json
+{ "kind": "resolve-remote", "machine": "ssh:<host>", "attempt": 1 }
+```
 
-3. It downloads the tarball, unpacks it with `tar --strip-components 1` into
-   `$HOME/.devhub-server/bin/<commit>/`, and starts
-   `bin/devhub-server --start-server --host=127.0.0.1 --port=0 ...`.
-4. It reads the port the server printed out of the log, forwards it over the
-   SSH connection, and the workbench connects.
+DevHub answers it in five steps, all over the ControlMaster it already has.
+
+1. **Ask the machine what it is.** `$HOME`, `uname -s`, `uname -m` and `$SHELL`,
+   in one command, cached for the life of the connection. A machine that is not
+   Linux or macOS is refused by name here.
+2. **Install the server, if it is not there.** The question that decides is
+   `test -x ~/.devhub-server/bin/<commit>/bin/devhub-server`, so an install that
+   has happened is an install that is skipped — whether this DevHub did it, an
+   older one did, or somebody unpacked the tarball by hand. Otherwise the
+   tarball is fetched **here**, over this Mac's network, and handed to the host
+   as bytes on the stdin of a `tar`: a staging directory and a `mv`, not
+   `--strip-components`, which POSIX does not require.
+3. **Start it, or adopt the one that is running.** A pidfile and the socket
+   together answer "is it up"; if it is not, the server is started under `nohup`
+   with `--start-server --host=127.0.0.1 --socket-path=… --connection-token-file=…`
+   and the script waits for the socket to appear (or for the process to exit,
+   which it reports with the log path rather than waiting out the timeout).
+4. **Forward it.** `ssh -O forward -L <local port>:<remote socket>` on the master
+   that is already up, so no second connection and no reconnect.
+5. **Answer** `{ port, connectionToken }`, and the extension returns
+   `new vscode.ResolvedAuthority("127.0.0.1", port, connectionToken)`.
 
 The server then checks the connecting client's commit against its own and
-refuses if they differ. That is the extension's default,
-`remote.SSH.serverValidation: strict`, and it is the reason everything below is
-keyed on a commit rather than on a version or a date.
+refuses if they differ, which is why everything below is keyed on a commit
+rather than on a version or a date.
+
+### A socket, not a port
+
+The server is started with `--socket-path` and reached with `ssh -L
+<port>:<remote socket>`, which OpenSSH has supported since 6.7. The alternative
+— `--port=0` and then asking the server which port it picked — has only one
+place to read the answer, the server's own log, so the connection would depend
+on scraping a line whose format is upstream's to change. A socket path is a name
+DevHub chose, so there is nothing to discover and nothing to parse.
+
+### The token file is the single source of truth
+
+A connection token is generated **here** and offered to the start script on
+**stdin** — never in the command line, because the composed script is the remote
+shell's argv and argv is world-readable in `ps`. The script writes it only if
+`~/.devhub-server/.<commit>.token` is not already there, and prints back
+whatever the file contains either way.
+
+That read-back is the whole point. A server that is already running was started
+against the token in that file, and a DevHub that handed the workbench a fresh
+one would fail the handshake with a message that does not say "wrong token" —
+`remoteAgentConnection.ts` simply sees a connection that never comes up.
+
+### Reconnecting costs nothing
+
+VS Code calls `resolve()` again on **every** reconnect — that is
+`nativeExtensionService.ts` wiring `ConnectionLost` to `_clearResolvedAuthority`
+and `onReconnecting` to `_resolveAuthorityAgain` — so the answer has to be cheap
+and idempotent on the happy path. It is: DevHub probes the forward it is holding
+by connecting to it, and a forward that still answers is re-answered with the
+same port and the same token. Without that, closing a laptop lid would restart
+the extension host on the far machine, and every language server and every
+extension's state with it.
+
+A forward dies with the ControlMaster, and `resumed()` exists to kill a master
+that slept through a suspend — so `resumed()` will not drop a master that is
+carrying one. The ordering is real: a power event delivered *after* the workbench
+has already reconnected through a brand-new forward would otherwise destroy
+exactly what the reconnection built. A forward that has stopped answering is not
+held for long — the next `resolve()` cancels it, which is what lets a wake go
+back to dropping the master.
+
+### Transient or permanent, decided where it happened
+
+A failed resolve has two outcomes, and VS Code picks between them from the error
+class the extension throws: `TemporarilyNotAvailable` is retried by its reconnect
+loop and by `_resolveAuthorityInitial`'s five attempts, and `NotAvailable` makes
+it give up at once and show the sentence.
+
+Which is right is known where the failure happened and nowhere else, so it is
+marked there and carried on the failure — never read back out of its wording,
+because a rule applied to wording is wrong the first time somebody rephrases a
+sentence, and wrong in silence.
+
+| failure | asking again? |
+| --- | --- |
+| the host is asleep, away, or not answering | yes |
+| this Mac cannot reach the release right now | yes |
+| anything DevHub did not anticipate | yes |
+| no key for the host — DevHub's ssh runs `BatchMode=yes` and has no pane to prompt in | no |
+| the host key is not known | no |
+| the host is not Linux or macOS | no |
+| the release has no server for that `<os>-<arch>` (an HTTP 404, not a network error) | no |
+| this is a source build and states no commit | no |
+
+The default is "yes", and deliberately: a resolve that goes on retrying stops on
+VS Code's own attempt limit and says so, and one that wrongly gave up needs the
+window reopening by hand.
 
 ## Everything DevHub sends a host is POSIX `sh`
 
-Upstream's extension writes that install script in bash and pipes it into
-`bash -l`. A host without bash — a NAS whose `/bin/sh` is BusyBox, with no bash
-anywhere on it — answered `sh: bash: not found`, and because the
-script never ran, not one of the result markers it prints was in the output:
-all the extension could say was `Failed parsing install script output`.
+Every script `main/runtime/remoteShellRuntime.ts` and `main/runtime/ssh.ts`
+compose is `sh`: `case`, `[ ]`, `printf`, `command -v`, `set -C` for an exclusive
+create, `cd -P && pwd -P` for a realpath, `kill -0` for "is that pid alive". The
+server install is the same rule — a staging directory and a `mv`, not
+`tar --strip-components`, which GNU tar and bsdtar have and POSIX does not
+require — and so is the wait loop, which sleeps whole seconds because BusyBox's
+`sleep` refuses a fraction.
 
-So DevHub's copy of the script is POSIX `sh`, and DevHub's copy of the
-extension pipes it into `sh -l`. The port is
-`extensions/vendor/patches/open-remote-ssh/0001-posix-server-setup.patch`, and
-what it changes is only how things are said, never what is said: the lines
-`parseServerInstallOutput` greps for and the `%%…%%` placeholders
-`compileTemplate` fills are byte-identical, and
-`scripts/patch_vendored_extensions_test.py` asserts each of them.
-
-The login shell is deliberate. The script itself only needs the ordinary
-`/bin`, but the extension host it starts inherits that environment, so a remote
-terminal's `PATH` is whatever the login shell set — on the NAS above, that is
-what puts `/usr/local/bin/git` within reach. `-l` is accepted by bash, dash, ksh and
-BusyBox ash alike.
-
-Two portability fixes travel with it, for the same reason: `ps -p` is not a
-BusyBox option, so the "is the server already running" check now scans the
-whole table the way upstream's own fallback did — before, every resolve started
-another extension host — and `sleep 0.5` is asked for once and dropped to a
-whole second where the shell refuses it.
+This is not a style preference. There is no bash on a Synology and no guarantee
+of one anywhere, and the host this product exists for is exactly that host.
 
 ## The URL
 
@@ -78,18 +175,21 @@ Stated once, in `apps/desktop/product-overrides.json`:
 https://github.com/statiolake/devhub/releases/download/reh-${commit}/devhub-reh-${os}-${arch}-${commit}.tar.gz
 ```
 
-The remote substitutes six names into a template, with one `sed` each:
-`${quality}`, `${version}`, `${commit}`, `${os}`, `${arch}`, `${release}`.
-DevHub's uses three of them.
+Six names may appear in that template — `${quality}`, `${version}`, `${commit}`,
+`${os}` and `${arch}`, `${release}` — and DevHub's uses three. They are
+substituted **here**, by `rehDownloadUrl` in `main/runtime/remoteServer.ts`, and
+nowhere else: the URL is built on the machine that does the fetching.
 
-`${os}` is `linux`, `darwin`, `alpine` or `freebsd`, decided by `uname -s` on
-the remote (and by `/etc/os-release` for Alpine). `${arch}` is `x64`, `arm64`,
-`armhf`, `ppc64le`, `riscv64`, `loong64` or `s390x`, from `uname -m`.
+`${os}` and `${arch}` come from `uname -s` and `uname -m` on the host, folded to
+the names the release uses (`x86_64` and `amd64` both become `x64`; `aarch64`
+and `arm64` both become `arm64`). An architecture DevHub does not recognise keeps
+its own word rather than being rounded to one that looks close, so the 404 names
+the machine it is actually about.
 
 `${quality}` and `${release}` are deliberately not in it. DevHub states neither
-key, and a missing one is substituted with the string `undefined` or with
-nothing at all rather than reported — a URL that is wrong in a way no error
-message mentions. `scripts/build_reh_test.py` fails if either appears.
+key, so either would be substituted with nothing at all rather than reported — a
+URL that is wrong in a way no error message mentions.
+`scripts/build_reh_test.py` fails if either appears.
 
 ## What is built, where, and when
 
@@ -194,10 +294,14 @@ The tarballs are around 100 MB: 103 MB for linux-x64, 99 MB for linux-arm64,
 
 `pnpm dev` has no `commit` — deliberately, and it cannot be given one: VS Code
 reads `product.commit` as "this is a packaged build" and sends a source run
-looking for a `node_modules.asar` that a checkout does not have. But `commit`
-is also what the extension puts in the download URL and what the remote server
-checks the connecting client against, so a source run asks for
-`devhub-reh-linux-x64-undefined.tar.gz` and gets a 404.
+looking for a `node_modules.asar` that a checkout does not have. But `commit` is also
+what names the install directory, what goes in the download URL and what the
+remote server checks the connecting client against — so there is nothing to
+install and nothing that would accept a connection.
+
+A source run therefore refuses the resolve by name, permanently: the workbench
+gets `NotAvailable` with the sentence rather than five attempts at a URL ending
+`-undefined.tar.gz`.
 
 **SSH workspaces need a packaged build.** Test them against `pnpm build`'s
 `dist/DevHub.app` or a nightly, not against `pnpm dev`. See
@@ -218,14 +322,14 @@ tar -xzf devhub-reh-linux-x64-$commit.tar.gz \
     --strip-components 1 -C ~/.devhub-server/bin/$commit
 ```
 
-The extension looks for `bin/devhub-server` under that exact directory and
-skips the download when it finds it. Nothing else about the flow changes.
+DevHub looks for `bin/devhub-server` under that exact directory and skips the
+download when it finds it. Nothing else about the flow changes: it starts that
+server, writes the token file beside it and forwards its socket exactly as if it
+had put it there itself.
 
-If the commit has to differ — you are running a DevHub built from a different
-submodule than the server you have — say so explicitly rather than renaming the
-directory: `"remote.SSH.serverValidation": "force"` rewrites the server's
-`product.json` to match the client. It is a way to get connected, not a way to
-be sure the two halves agree.
+The commit has to match. There is no override that makes a client of one commit
+talk to a server of another — the server checks, and the check is the reason
+everything here is keyed on a commit. Build or fetch the right one.
 
 ## tmux on the host
 
@@ -353,22 +457,37 @@ build says so on its own output.
 
 ## Pointing one host somewhere else
 
-`remote.SSH.serverDownloadUrlTemplate` overrides the product's template for
-every host. There is no per-host form of it; a host that needs its own server
-gets it installed by hand, above.
+There is no setting for this, per host or otherwise. `serverDownloadUrlTemplate`
+in `apps/desktop/product-overrides.json` is a fact about the build — which
+release these binaries were made alongside — and a person who could point one
+host at a different server could point it at a server of a different commit,
+which the server itself would then refuse. A host that needs its own server gets
+it installed by hand, above.
+
+The `remote.SSH.*` settings the vendored extension had —
+`serverDownloadUrlTemplate`, `serverValidation`, `serverInstallPath`,
+`enableDynamicForwarding` and the rest — are gone with it, and nothing in DevHub
+reads them.
 
 ## Where to look when it does not connect
 
-The alert over the workspace says why, not only which host: DevHub's copy of
-the extension carries the last line the remote wrote to stderr into the
-dialog's detail, so `sh: bash: not found` is on screen rather than three clicks
-away. That alert belongs to the workspace, and closing the workspace takes it
-with it.
+The sentence the workbench shows is DevHub's own, composed where the failure
+happened and passed through the resolver unchanged — the extension adds no
+vocabulary of its own, so there is one wording per failure rather than two.
 
-For everything else, the extension logs the whole install script and its output
-to **Output → Remote - SSH**. Everything the remote decided is in there: the
-URL it built, whether the download succeeded, and the server's own log path
-(`~/.devhub-server/.<commit>.log`) if it started and then failed.
+Beyond that, in order:
+
+- **DevHub's log** has a line per resolve naming the host and the attempt
+  number, which is the difference between a slow connection and a loop, and a
+  line for the failure if there was one.
+- **`devhub --metrics`** names the host, whether its runtime is connected, and
+  the last thing that went wrong on it.
+- **The server's own log on the host**, `~/.devhub-server/.<commit>.log`. When
+  the server starts and then exits, the start script says so with that path in
+  the message rather than waiting out its timeout.
+- **`~/.devhub-server/.<commit>.pid` and `.sock`** on the host say what DevHub
+  thinks is running. A socket file with no live pid behind it is what the start
+  script removes before starting a new server.
 
 ## The integrated terminal of a remote window
 
@@ -641,9 +760,17 @@ a button that was never there.
 
 ### What a first real run must check
 
-None of this can be verified without a reachable host, so nothing below has
-been. In order, against a host with a DevHub server already installed:
+Nothing here can be verified without a reachable host, and a packaged build:
+`pnpm dev` states no commit and so refuses the resolve by name. In order:
 
+0. **The authority resolves at all.** The window comes up with `SSH: <host>` in
+   the status bar rather than sitting on "Opening Remote…". On the host,
+   `~/.devhub-server/bin/<commit>/bin/devhub-server` exists,
+   `~/.devhub-server/.<commit>.sock` is a socket and `.<commit>.pid` names a
+   live process; on the Mac, `lsof -nP -iTCP@127.0.0.1 -sTCP:LISTEN` shows the
+   forwarded port and the `ssh` holding it. Reopening the same host a second
+   time must *not* add a second line to `~/.devhub-server/.<commit>.log` — the
+   running server is adopted, not restarted.
 1. `ls -l ~/.devhub/terminal/` on the host after opening an ssh window: the
    launcher is there, mode 0755, and `js/package.json` says `{"type":"module"}`.
 2. `~/.devhub-server/bin/<commit>/node --version` runs — the commit is the one
@@ -678,6 +805,13 @@ nc -U ~/.devhub/terminal/control-<tag>.sock` answers a line of JSON. If it
 11. A host with no `tmux`: git, the branch and the Issue row still work, and
     only the terminal and the Agent refuse, with the sentence naming `tmux` and
     the host.
+12. **Reconnecting.** `ssh -O exit <host>` from a terminal on the Mac, or a real
+    sleep and wake: the workbench notices, reconnects through a fresh
+    `resolve()`, and the extension host on the host is the *same process* —
+    `.<commit>.pid` has not changed and the log has not grown. A workbench that
+    came back with a new server is a resolve that was not idempotent, and it
+    would take every language server on that machine with it each time a lid
+    closed.
 
 ## Two facts about running one by hand
 
