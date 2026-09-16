@@ -63,6 +63,10 @@ const HAIRLINE = 1;
 const SPLIT_DIVIDER = 6;
 /** How far the notices sit from the window's corner. */
 const TOASTS_MARGIN = 12;
+/** Between a tooltip and the row it is about. */
+const TOOLTIP_GAP = 6;
+/** How close a tooltip may come to the window's own edges. */
+const TOOLTIP_MARGIN = 4;
 
 export type SidebarDensity = keyof typeof SIDEBAR_GLYPH_WIDTH;
 
@@ -140,6 +144,42 @@ export interface LayoutInput {
 	/** How big the notices are, as the page measured its own stack. */
 	readonly toasts: LayoutSize | undefined;
 	readonly picker: PickerScope;
+	/** The tooltip that is up, if one is. See `TooltipPlacement`. */
+	readonly tooltip: TooltipPlacement | undefined;
+}
+
+/**
+ * Which way a tooltip leans off the thing it is about.
+ *
+ * Two answers and not four, because it is two questions about the *row*
+ * rather than four positions: a rail entry is a glyph with the sentence
+ * beside it (`right`), and a row in the expanded column is a line of text
+ * with the sentence under it (`below`). Where it actually lands is
+ * `tooltipRect`'s, which flips and clamps — this is only which side is
+ * preferred when there is room for either.
+ */
+export type TooltipSide = "right" | "below";
+
+/**
+ * Everything the owner needs to place a tooltip, and nothing the page keeps.
+ *
+ * The anchor is in the *window's* coordinates, which is the whole point of
+ * this layer existing: the Sidebar's own box stops at its column, and a
+ * tooltip that cannot leave that column is the tooltip this replaced. The
+ * page converts its row's box once, against the rectangle the owner told it
+ * it occupies (`sidebarAreaChanged`), and never against `window.screenX` or
+ * its own `innerWidth` — both of which are a view's, and stale for a frame
+ * after main moves it.
+ *
+ * `size` is the page's and only the page's: how big a sentence is depends on
+ * how it wraps, which is the one thing here a renderer knows and main does
+ * not. It arrives the way the notices' size does, and for the same reason —
+ * see `tooltipView.ts`.
+ */
+export interface TooltipPlacement {
+	readonly anchor: LayoutRect;
+	readonly prefer: TooltipSide;
+	readonly size: LayoutSize;
 }
 
 export type ChildIdentity =
@@ -148,7 +188,8 @@ export type ChildIdentity =
 	| { readonly kind: "agents" }
 	| { readonly kind: "editor"; readonly editorKey: string }
 	| { readonly kind: "toasts" }
-	| { readonly kind: "picker" };
+	| { readonly kind: "picker" }
+	| { readonly kind: "tooltip" };
 
 export interface LayoutChild {
 	readonly identity: ChildIdentity;
@@ -297,6 +338,74 @@ function toastsRect(windowSize: LayoutSize, size: LayoutSize): LayoutRect {
 	};
 }
 
+/** Hold `value` inside `[low, high]`, with `low` winning if they cross. */
+function clamp(value: number, low: number, high: number): number {
+	return Math.max(low, Math.min(value, high));
+}
+
+/**
+ * Where a tooltip goes: beside the row it is about, inside the window.
+ *
+ * This is the placement that used to be done inside the Sidebar's own
+ * document, against the Sidebar's own box — which is why it could not be done
+ * at all on a rail. The arithmetic is the same shape; what changed is the box
+ * it is against. It is the *window* now, so the sentence runs out over the
+ * editor the way a tooltip is supposed to, and "does it fit" stopped being a
+ * question about a 44px column.
+ *
+ * Three rules, in order:
+ *
+ * - **The preferred side**, which is about the row and not about the window:
+ *   beside a glyph, or under a line of text. See `TooltipSide`.
+ * - **Flip** when that side has no room — to the other side of the anchor,
+ *   not to a squeezed version of the same side. A tooltip is one rectangle
+ *   with one width, and narrowing it to fit is how a sentence becomes a
+ *   ribbon.
+ * - **Clamp** to the window, which is the last word. A flip can still land
+ *   out of bounds when the anchor is itself near an edge, and off-window is
+ *   the one result that is never readable.
+ *
+ * The cross-axis is aligned with the anchor's leading edge and then clamped,
+ * so a tooltip beside a row starts level with that row — the eye has one line
+ * to follow from the glyph to the words.
+ */
+export function tooltipRect(
+	windowSize: LayoutSize,
+	placement: TooltipPlacement,
+): LayoutRect {
+	const { anchor, prefer, size } = placement;
+	// Never wider or taller than the window itself: everything below is
+	// about *where* it goes, and a rectangle bigger than the window has no
+	// position that is inside it.
+	const width = Math.min(Math.round(size.width), windowSize.width);
+	const height = Math.min(Math.round(size.height), windowSize.height);
+	const lastX = Math.max(0, windowSize.width - width - TOOLTIP_MARGIN);
+	const lastY = Math.max(0, windowSize.height - height - TOOLTIP_MARGIN);
+
+	if (prefer === "right") {
+		const right = anchor.x + anchor.width + TOOLTIP_GAP;
+		// Flipped to the anchor's leading side when the trailing side would
+		// run past the window's edge.
+		const x = right > lastX ? anchor.x - TOOLTIP_GAP - width : right;
+		return {
+			x: clamp(x, TOOLTIP_MARGIN, lastX),
+			y: clamp(anchor.y, TOOLTIP_MARGIN, lastY),
+			width,
+			height,
+		};
+	}
+	const below = anchor.y + anchor.height + TOOLTIP_GAP;
+	// Flipped above the row when there is no room under it — the last row's
+	// tooltip is as readable as the first's.
+	const y = below > lastY ? anchor.y - TOOLTIP_GAP - height : below;
+	return {
+		x: clamp(anchor.x, TOOLTIP_MARGIN, lastX),
+		y: clamp(y, TOOLTIP_MARGIN, lastY),
+		width,
+		height,
+	};
+}
+
 /**
  * Which workbench is on screen, if any.
  *
@@ -355,11 +464,13 @@ function agentsVisible(state: LayoutState): boolean {
  *
  * The order *is* the z-order, lowest first: the window's own page, the
  * Sidebar, then every workbench with the one on screen last among them, then
- * the Agents, then the notices, then the questions. A notice about the
- * application is above the thing it is about, and a question is above the
- * notice. Nothing in this list is conditional on anything but content:
- * `toasts` and `picker` are in it exactly when they have something to draw,
- * because a layer that is not there cannot take a click.
+ * the Agents, then the notices, then the questions, then the tooltip. A
+ * notice about the application is above the thing it is about, a question is
+ * above the notice, and the tooltip is above all of them because it is the
+ * only child that neither takes a click nor hides anything. Nothing in this
+ * list is conditional on anything but content: `toasts`, `picker` and
+ * `tooltip` are in it exactly when they have something to draw, because a
+ * layer that is not there cannot take a click.
  *
  * `sidebar` and `agents` are always in it, because both exist for the life of
  * the window and neither is ever a layer over anything: they are columns
@@ -431,6 +542,23 @@ export function windowLayout(input: LayoutInput): readonly LayoutChild[] {
 			// the Sidebar and every other workspace stay visible *and*
 			// clickable. Everything else is the application asking.
 			rect: input.picker === "workbench" ? editorRect : shellRect,
+			visible: true,
+		});
+	}
+	// Above everything, the questions included. Not because a tooltip may
+	// stand over a modal — it may not, and in practice cannot: a question
+	// covers the window, which takes the pointer off the row that raised the
+	// tooltip, and the page hides it before the sheet is drawn. It is on top
+	// because it is the one child that is never anything but a few words to
+	// read: it takes no click (it is never in the list unless it has
+	// something to say, and what it says is the size of what it draws), it
+	// takes no keys, and nothing is ever meant to be seen *through* it. A
+	// layer with nothing behind it to protect is a layer with no reason to be
+	// underneath anything.
+	if (input.tooltip) {
+		children.push({
+			identity: { kind: "tooltip" },
+			rect: tooltipRect(windowSize, input.tooltip),
 			visible: true,
 		});
 	}

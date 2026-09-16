@@ -730,6 +730,13 @@ export class ShellWindow {
 					this.viewForEditorKey(identity.editorKey)?.webContents ??
 					this.window.webContents
 				);
+			case "tooltip":
+				// There is nothing in a tooltip to type into, and
+				// `keyboardChild` never names it. Reaching here means the one
+				// answer to "where do the keys go" has started giving an
+				// answer that is not a place keys can go, which is a broken
+				// invariant rather than a case to handle.
+				throw new Error("the keyboard cannot be put in the tooltip view");
 		}
 	}
 
@@ -898,6 +905,7 @@ export class ShellWindow {
 			asking: this.askingEditorKey(),
 			toasts: this.toasts.contentSize(),
 			picker: this.picker.scope(),
+			tooltip: undefined,
 		};
 	}
 

@@ -74,6 +74,7 @@ function placementFor(
 		asking: undefined,
 		toasts: toasts.contentSize(),
 		picker: "none",
+		tooltip: undefined,
 	});
 	return children.find((child) => child.identity.kind === "toasts")?.rect;
 }
