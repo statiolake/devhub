@@ -3,8 +3,9 @@
  *
  * `styles/windowBackground.css` is the only place that paints a page's body,
  * and it is reachable from exactly three entries. The layer pages — the
- * questions and the notices — are drawn over a live workbench, so a body with
- * a ground of their own is the picker painted grey over the editor. Their own
+ * questions, the notices and the tooltip — are drawn over a live workbench, so
+ * a body with a ground of their own is the picker painted grey over the
+ * editor. Their own
  * `background: transparent` cannot outrank a `:root[...] body` rule, so the
  * rule simply must not be in their stylesheet graph: that is what this asserts.
  */
@@ -33,6 +34,7 @@ const WINDOW_PAGES = [
 const LAYER_PAGES = [
   ["the questions", "../picker/main.tsx"],
   ["the notices", "../toasts/main.tsx"],
+  ["the tooltip", "../tooltip/main.tsx"],
 ] as const;
 
 describe("the window background", () => {

@@ -41,6 +41,7 @@ export default defineConfig({
         picker: fileURLToPath(new URL("./picker.html", import.meta.url)),
         sidebar: fileURLToPath(new URL("./sidebar.html", import.meta.url)),
         agents: fileURLToPath(new URL("./agents.html", import.meta.url)),
+        tooltip: fileURLToPath(new URL("./tooltip.html", import.meta.url)),
         settings: fileURLToPath(new URL("./settings.html", import.meta.url)),
       },
     },

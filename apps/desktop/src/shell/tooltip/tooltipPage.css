@@ -1,0 +1,73 @@
+/*
+ * The tooltip page's own frame, and the tooltip itself.
+ *
+ * These rules were `.row-tooltip` in `sidebar/sidebarPage.css`, where the
+ * Sidebar drew its own. Nothing about how it *looks* changed in the move; what
+ * changed is what it is drawn on. It was a `position: fixed` box inside the
+ * Sidebar's document, clamped to the Sidebar's column, and on a rail there was
+ * no column to clamp it to. Here the document *is* the tooltip: the page draws
+ * one box, measures it, and main makes the view exactly that big.
+ *
+ * So there is no positioning here at all. Where the box goes in the window is
+ * `main/shell/windowLayout.ts`'s `tooltipRect`, because only main can see the
+ * window — the same division the notices keep.
+ *
+ * Everything the box does not cover must be transparent, because what is
+ * behind it is the real window: a live workbench, the Sidebar, the title bar.
+ * A page background would paint a rectangle around the tooltip and the editor
+ * under it would be a grey box. As with the notices, this is safe to state
+ * plainly because this page does not import `styles/windowBackground.css`, so
+ * no `:root[...]` rule can reach this body and paint the window's canvas over
+ * what is behind the layer. See `styles/windowBackground.test.ts`.
+ */
+
+:root,
+body,
+#root {
+  overflow: visible;
+  height: auto;
+  margin: 0;
+  background: transparent;
+}
+
+/*
+ * One box, sized by its own text.
+ *
+ * `width: max-content` with a maximum is what makes the measurement mean
+ * anything: an element sized by its content is not constrained by the viewport
+ * it is in, so the answer does not depend on the rectangle main last gave this
+ * view. Without it the width would be a function of its own last result, and
+ * the tooltip would ratchet itself narrower one row at a time — the notices
+ * have the same rule, for the same reason (`toasts/stackSize.ts`).
+ *
+ * `pre-line`, because the row's description composes its own lines and those
+ * lines are the lines the expanded row would have drawn. `--tooltip-max-width`
+ * is the point at which a sentence stops being one line and starts being a
+ * paragraph; past it the text wraps rather than running to the window's edge.
+ *
+ * `pointer-events: none` is belt-and-braces here rather than the load-bearing
+ * rule it was in the Sidebar's document: this view is never in the window's
+ * child list unless a tooltip is up, and its bounds are the size of this box,
+ * so there is nothing under it to steal a click from. It stays because the
+ * cost is nothing and the failure it prevents — a tooltip eating the click
+ * aimed at the row it is about — is silent.
+ */
+.tooltip-box {
+  --tooltip-max-width: 480px;
+
+  display: inline-block;
+  box-sizing: border-box;
+  width: max-content;
+  max-width: var(--tooltip-max-width);
+  padding: 4px 7px;
+  border: 1px solid var(--separator);
+  border-radius: 5px;
+  background: var(--chrome-raised, var(--chrome));
+  color: var(--label);
+  font-size: 11px;
+  line-height: 1.35;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+  box-shadow: 0 4px 12px rgb(0 0 0 / 22%);
+  pointer-events: none;
+}

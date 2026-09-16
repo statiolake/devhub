@@ -417,6 +417,53 @@ export interface WorkbenchAreaWire {
 }
 
 /**
+ * The rectangle the Sidebar's view is laid into, as main computed it.
+ *
+ * Pushed for one reason: the Sidebar has to be able to say where one of its
+ * rows is *in the window*, and a page cannot work that out. `window.screenX`
+ * is the screen's and needs the window's own origin subtracted back off;
+ * `documentElement`'s box is the view's own and is one frame stale after main
+ * moves it — measured, the collapsed Sidebar went on answering 249 for seconds
+ * after being narrowed to 76. So the origin is the owner's number, told to the
+ * page, exactly as the workbench area is.
+ *
+ * It is the whole rectangle rather than just the origin because the page has
+ * to clip its anchor to it: a row scrolled half out of the column has half a
+ * rectangle, and a tooltip pointing at the invisible half points at nothing.
+ */
+export interface SidebarAreaWire {
+	readonly x: number;
+	readonly y: number;
+	readonly width: number;
+	readonly height: number;
+}
+
+/**
+ * A tooltip the Sidebar is asking for, in the window's own coordinates.
+ *
+ * The Sidebar composes the sentence and knows which row the pointer is
+ * resting on; main owns where anything in the window goes. So the page sends
+ * the three facts only it has — what to say, which rectangle it is about, and
+ * which side of that rectangle the row would rather have it on — and never
+ * learns where it ended up.
+ *
+ * `anchor` is in **window** coordinates, converted by the page from its own
+ * box plus the rectangle main told it it occupies (`SidebarAreaWire`). That
+ * conversion is the one thing the page must get right, and it is one addition.
+ */
+export interface TooltipRequestWire {
+	readonly text: string;
+	readonly anchor: SidebarAreaWire;
+	/** Beside a glyph on the rail, or under a row in the expanded column. */
+	readonly prefer: "right" | "below";
+}
+
+/** What the tooltip page is given to draw: the sentence, and nothing else. */
+export interface TooltipTextWire {
+	readonly text: string;
+}
+
+/**
  * One candidate the workspace picker found. `searchText` is what the filter
  * matches against and `score` is the rank main assigned, so two sources that
  * disagree about ordering still merge into one list.
@@ -828,6 +875,30 @@ export interface SidebarBridge
 	 * answer, and asking it is the only way not to write a second one.
 	 */
 	focusSurface(): Promise<void>;
+	/**
+	 * Where main has laid this view, so a row can say where it is in the
+	 * window. See `SidebarAreaWire` — the origin is the owner's number.
+	 */
+	onSidebarArea(listener: (area: SidebarAreaWire) => void): () => void;
+	/**
+	 * Raise a tooltip over the window, about a row in this column.
+	 *
+	 * The Sidebar used to draw its own, which is why the rail had none: a box
+	 * in this document is clipped by this view, and this view is 44px wide on
+	 * a collapsed rail. It asks now, and the tooltip is a child of the window
+	 * (`main/shell/tooltipView.ts`), so the sentence may run out over the
+	 * editor.
+	 *
+	 * One way, like `raiseFailure` and for the same reason: what is being sent
+	 * is a fact about the pointer, not a request waiting on an answer, and a
+	 * tooltip that had to await a round trip would arrive after the pointer
+	 * had moved on. The page still owns *when* — the rest delay, the one
+	 * tooltip for the whole tree, and hiding on leave — because only it can
+	 * see the pointer.
+	 */
+	showTooltip(request: TooltipRequestWire): void;
+	/** Take the tooltip down. The pointer left, or something moved under it. */
+	hideTooltip(): void;
 }
 
 /** Every Agent, in one view — `agents.html`. */
@@ -917,6 +988,45 @@ export interface ToastsBridge extends PageBridge {
 	openSettings(): Promise<void>;
 }
 
+/**
+ * The one box a tooltip is drawn in — `tooltip.html`.
+ *
+ * The smallest bridge DevHub has, smaller than the notices': a tooltip is a
+ * sentence somebody else composed, and this page only draws it and says how
+ * big it came out.
+ *
+ * **What is deliberately not here is the anchor and the preferred side.** The
+ * Sidebar sends both (`TooltipRequestWire`) and main keeps both: they are
+ * inputs to `windowLayout.ts`, which turns them into a rectangle this page
+ * never sees. Putting them on this bridge would be two members whose page has
+ * no use for them — the shape `onModals` had on four bridges that could never
+ * receive it, and the exact thing the per-page contract exists to make
+ * unspellable.
+ */
+export interface TooltipBridge extends PageBridge {
+	/** The sentence to draw, or nothing at all to draw none. */
+	onTooltip(
+		listener: (tooltip: TooltipTextWire | undefined) => void,
+	): () => void;
+	/**
+	 * How big the box came out.
+	 *
+	 * This page's whole geometry protocol with the window, and it exists
+	 * because a `WebContentsView` is a native view whose hit testing is by
+	 * rectangle: every click inside its bounds is its own, whether or not
+	 * anything is painted there. So the view is exactly as big as the tooltip,
+	 * and this is the page saying how big that is. Nothing to say is a size of
+	 * zero, which takes the view out of the window entirely.
+	 *
+	 * One way, like `reportToastsSize`: a measurement is a fact the page has,
+	 * not a request it is waiting on.
+	 */
+	reportTooltipSize(size: {
+		readonly width: number;
+		readonly height: number;
+	}): void;
+}
+
 /** Everything DevHub stops to ask — `picker.html`. */
 export interface PickerBridge
 	extends PageBridge,
@@ -988,8 +1098,9 @@ export interface SettingsPageBridge extends PageBridge {
 /**
  * Channel names, for every page there is.
  *
- * Requests are `invoke`/`handle`, except the three that answer nothing and
- * cannot (`raiseFailure`, `toastsSize`, `retryApp`); the rest are pushes. No
+ * Requests are `invoke`/`handle`, except the six that answer nothing and
+ * cannot (`raiseFailure`, `toastsSize`, `retryApp`, `showTooltip`,
+ * `hideTooltip`, `tooltipSize`); the rest are pushes. No
  * page reaches all of them — which page may spell which is decided by the
  * preload it was loaded with, and stated by the bridge interfaces above.
  */
@@ -1062,6 +1173,16 @@ export const CHANNELS = {
 	raiseFailure: "devhub:raise-failure",
 	/** The `toasts` page saying how much room its notices take up. */
 	toastsSize: "devhub:toasts-size",
+	/** Where main laid the Sidebar, so a row can say where it is in the window. */
+	sidebarAreaChanged: "devhub:sidebar-area-changed",
+	/** The Sidebar asking for a tooltip over the window, about one of its rows. */
+	showTooltip: "devhub:show-tooltip",
+	/** The Sidebar taking it down again. */
+	hideTooltip: "devhub:hide-tooltip",
+	/** The sentence the `tooltip` page is to draw, or nothing to draw none. */
+	tooltipText: "devhub:tooltip-text",
+	/** The `tooltip` page saying how big the box it drew came out. */
+	tooltipSize: "devhub:tooltip-size",
 	/** "Try Again" on a notice, on its way to the page that owns the boot. */
 	retryApp: "devhub:retry-app",
 	/** A page telling main that a notice has left the screen, and why. */
